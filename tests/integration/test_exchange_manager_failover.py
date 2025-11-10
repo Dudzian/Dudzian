@@ -7,6 +7,10 @@ from collections.abc import Mapping
 import pytest
 
 from bot_core.exchanges.errors import ExchangeNetworkError, ExchangeThrottlingError
+import subprocess
+import sys
+from pathlib import Path
+
 from bot_core.exchanges.manager import (
     ExchangeManager,
     Mode,
@@ -156,6 +160,7 @@ def cleanup_native_adapter(exchange_id: str):
 @pytest.mark.integration
 def test_exchange_manager_failover_to_ccxt_backend(manager: ExchangeManager, exchange_id: str) -> None:
     captured: list[_FailingNativeAdapter] = []
+    manager.configure_native_adapter(settings={"decision_journal": {"signed": True}})
     _register_failing_native(
         exchange_id=exchange_id,
         error_factory=lambda: ExchangeNetworkError("native backend unavailable"),
@@ -168,6 +173,8 @@ def test_exchange_manager_failover_to_ccxt_backend(manager: ExchangeManager, exc
     assert result.extra["raw_response"]["orderId"].startswith(f"{exchange_id}-order-"), "Fallback CCXT order ID expected"
     assert captured and captured[0].calls == 1, "Native adapter should be attempted exactly once"
     assert "rate_limit_rules" in captured[0].settings, "Shared rate limit rules should be passed to native adapter"
+    assert captured[0].settings.get("decision_journal", {}).get("signed") is True
+    assert manager._active_backend == "ccxt"
 
 
 @pytest.mark.integration
@@ -187,3 +194,16 @@ def test_exchange_manager_stays_on_ccxt_after_rate_limit(
     assert first.extra["order_id"] == 1
     assert second.extra["order_id"] == 2, "Subsequent orders should reuse CCXT fallback"
     assert captured and captured[0].calls == 1, "Rate limit failure should switch permanently to CCXT during cooldown"
+    assert manager._active_backend == "ccxt"
+
+
+@pytest.mark.integration
+def test_exchange_adapter_listing_includes_futures(tmp_path: Path) -> None:
+    output = tmp_path / "adapters.csv"
+    subprocess.run(
+        [sys.executable, "scripts/list_exchange_adapters.py", "--output", str(output)],
+        check=True,
+    )
+    content = output.read_text(encoding="utf-8")
+    assert "deribit" in content and "https://stream.hyperion.dudzian.ai/exchanges" in content
+    assert "bitmex" in content and "https://stream.sandbox.dudzian.ai/exchanges" in content

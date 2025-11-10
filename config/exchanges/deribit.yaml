@@ -30,6 +30,8 @@ testnet:
       retry_policy:
         max_attempts: 5
         base_delay: 0.4
+        max_delay: 3.0
+        jitter: 0.3
     rate_limit_rules:
       - rate: 40
         per: 1
@@ -38,7 +40,9 @@ testnet:
     native_adapter:
       settings:
         stream:
-          base_url: http://127.0.0.1:8765
+          base_url: https://stream.sandbox.dudzian.ai/exchanges
+          public_path: /deribit/futures/public
+          private_path: /deribit/futures/private
     failover:
       enabled: true
       failure_threshold: 2
@@ -56,13 +60,17 @@ live:
       retry_policy:
         max_attempts: 3
         base_delay: 0.6
+        max_delay: 3.5
+        jitter: 0.35
       circuit_breaker:
         failure_threshold: 4
         recovery_time_seconds: 90
     native_adapter:
       settings:
         stream:
-          base_url: http://127.0.0.1:8765
+          base_url: https://stream.hyperion.dudzian.ai/exchanges
+          public_path: /deribit/futures/public
+          private_path: /deribit/futures/private
     rate_limit_rules:
       - rate: 40
         per: 1
