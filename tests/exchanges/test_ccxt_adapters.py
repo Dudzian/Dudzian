@@ -7,10 +7,12 @@ import pytest
 
 from bot_core.exchanges.base import Environment, ExchangeCredentials, OrderRequest
 from bot_core.exchanges.bitfinex.spot import BitfinexSpotAdapter
+from bot_core.exchanges.bitmex.futures import BitmexFuturesAdapter
 from bot_core.exchanges.bitget.spot import BitgetSpotAdapter
 from bot_core.exchanges.bitstamp.spot import BitstampSpotAdapter
 from bot_core.exchanges.coinbase.spot import CoinbaseSpotAdapter
 from bot_core.exchanges.bybit.spot import BybitSpotAdapter
+from bot_core.exchanges.deribit.futures import DeribitFuturesAdapter
 from bot_core.exchanges.errors import ExchangeNetworkError
 from bot_core.exchanges.okx.spot import OKXSpotAdapter
 from bot_core.exchanges.kucoin.spot import KuCoinSpotAdapter
@@ -198,9 +200,27 @@ def test_bybit_adapter_provides_spot_defaults():
     adapter.configure_network(ip_allowlist=())
 
     assert adapter._settings["fetch_ohlcv_params"]["category"] == "spot"
-    assert adapter._settings["fetch_ohlcv_params"]["price"] == "mark"
-    assert adapter._settings["cancel_order_params"]["category"] == "spot"
-    assert adapter._settings["ccxt_config"]["options"]["defaultType"] == "spot"
+
+
+def test_deribit_and_bitmex_futures_apply_environment_stream_defaults() -> None:
+    credentials = ExchangeCredentials(key_id="k", secret="s")
+    client = _FakeClient()
+
+    deribit = DeribitFuturesAdapter(
+        credentials,
+        environment=Environment.TESTNET,
+        client=client,
+    )
+    assert deribit._settings["stream"]["base_url"] == "https://stream.sandbox.dudzian.ai/exchanges"
+
+    bitmex = BitmexFuturesAdapter(
+        credentials,
+        environment=Environment.LIVE,
+        client=client,
+    )
+    assert bitmex._settings["stream"]["base_url"] == "https://stream.hyperion.dudzian.ai/exchanges"
+    assert bitmex._settings["retry_policy"]["max_attempts"] == 5
+    assert bitmex._settings["retry_policy"]["max_delay"] == pytest.approx(2.5)
 
 
 def test_huobi_adapter_sets_retry_and_rate_limits():

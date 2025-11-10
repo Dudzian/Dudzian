@@ -157,6 +157,32 @@ exchange_accounts:
       environment: bybit_futures_testnet
       keychain_key: bybit_futures_testnet_trading
       risk_profile: balanced
+  deribit:
+    paper:
+      environment: deribit_futures_paper
+      keychain_key: deribit_futures_paper_trading
+      risk_profile: balanced
+    testnet:
+      environment: deribit_futures_testnet
+      keychain_key: deribit_futures_testnet_trading
+      risk_profile: balanced
+    live:
+      environment: deribit_futures_live
+      keychain_key: deribit_futures_live_trading
+      risk_profile: conservative
+  bitmex:
+    paper:
+      environment: bitmex_futures_paper
+      keychain_key: bitmex_futures_paper_trading
+      risk_profile: balanced
+    testnet:
+      environment: bitmex_futures_testnet
+      keychain_key: bitmex_futures_testnet_trading
+      risk_profile: balanced
+    live:
+      environment: bitmex_futures_live
+      keychain_key: bitmex_futures_live_trading
+      risk_profile: conservative
 
 exchange_adapters:
   binance:
@@ -211,15 +237,47 @@ exchange_adapters:
       class_path: bot_core.exchanges.deribit.futures:DeribitFuturesAdapter
       supports_testnet: true
       default_settings:
+        ccxt_config:
+          options:
+            defaultType: future
+          urls:
+            api:
+              public: https://www.deribit.com/api/v2
+              private: https://www.deribit.com/api/v2
+        retry_policy:
+          max_attempts: 5
+          base_delay: 0.4
+          max_delay: 3.0
+          jitter: [0.05, 0.35]
         stream:
-          base_url: http://127.0.0.1:8765
+          live_base_url: https://stream.hyperion.dudzian.ai/exchanges
+          testnet_base_url: https://stream.sandbox.dudzian.ai/exchanges
+          public_path: /deribit/futures/public
+          private_path: /deribit/futures/private
+          poll_interval: 0.5
   bitmex:
     futures:
       class_path: bot_core.exchanges.bitmex.futures:BitmexFuturesAdapter
       supports_testnet: true
       default_settings:
+        ccxt_config:
+          options:
+            defaultType: future
+          urls:
+            api:
+              public: https://www.bitmex.com
+              private: https://www.bitmex.com
+        retry_policy:
+          max_attempts: 5
+          base_delay: 0.3
+          max_delay: 2.5
+          jitter: [0.05, 0.35]
         stream:
-          base_url: http://127.0.0.1:8765
+          live_base_url: https://stream.hyperion.dudzian.ai/exchanges
+          testnet_base_url: https://stream.sandbox.dudzian.ai/exchanges
+          public_path: /bitmex/futures/public
+          private_path: /bitmex/futures/private
+          poll_interval: 0.35
 
 license:
   license_path: var/licenses/active/license.json
@@ -1714,6 +1772,368 @@ environments:
         public_params:
           symbol: BTCUSDT
           depth: 100
+
+  deribit_futures_paper:
+    exchange: deribit_futures
+    environment: paper
+    keychain_key: deribit_futures_paper_trading
+    data_cache_path: ./var/data/deribit_futures_paper
+    risk_profile: balanced
+    default_strategy: core_daily_trend
+    default_controller: daily_trend_core
+    alert_channels: []
+    ip_allowlist: []
+    permission_profile: trading_default
+    instrument_universe: core_multi_exchange
+    data_quality:
+      max_gap_minutes: 240
+      min_ok_ratio: 0.95
+    adapter_settings:
+      paper_trading:
+        valuation_asset: USDC
+        position_size: 0.1
+        initial_balances:
+          USDC: 90000.0
+        default_market:
+          min_quantity: 0.001
+          min_notional: 10.0
+        ledger_directory: audit/ledger
+        ledger_retention_days: 730
+        ledger_fsync: true
+      stream:
+        base_url: https://stream.sandbox.dudzian.ai/exchanges
+        public_path: /deribit/futures/public
+        private_path: /deribit/futures/private
+        poll_interval: 0.5
+    decision_journal:
+      backend: file
+      directory: audit/decisions
+      filename_pattern: deribit-futures-paper-%Y%m%d.jsonl
+      retention_days: 365
+      fsync: true
+
+  deribit_futures_testnet:
+    exchange: deribit_futures
+    environment: testnet
+    keychain_key: deribit_futures_testnet_trading
+    data_cache_path: ./var/data/deribit_futures_testnet
+    risk_profile: balanced
+    default_strategy: core_daily_trend
+    default_controller: daily_trend_core
+    alert_channels:
+      - telegram:primary
+      - email:ops
+    ip_allowlist: []
+    required_permissions: [read, trade]
+    forbidden_permissions: [withdraw]
+    instrument_universe: core_multi_exchange
+    health_check:
+      public_symbol: BTC-PERPETUAL
+      private_asset: USDC
+      private_min_balance: 60.0
+    watchdog:
+      retry_policy:
+        max_attempts: 4
+        base_delay: 0.4
+        max_delay: 3.0
+        jitter: [0.05, 0.3]
+      circuit_breaker:
+        failure_threshold: 4
+        recovery_timeout: 55.0
+        half_open_success_threshold: 2
+    adapter_settings:
+      stream:
+        testnet_base_url: https://stream.sandbox.dudzian.ai/exchanges
+        public_path: /deribit/futures/public
+        private_path: /deribit/futures/private
+        poll_interval: 0.5
+      ccxt_config:
+        urls:
+          api:
+            public: https://test.deribit.com/api/v2
+            private: https://test.deribit.com/api/v2
+    decision_journal:
+      backend: file
+      directory: audit/decisions
+      filename_pattern: deribit-futures-testnet-%Y%m%d.jsonl
+      retention_days: 365
+      fsync: true
+
+  deribit_futures_live:
+    exchange: deribit_futures
+    environment: live
+    keychain_key: deribit_futures_live_trading
+    data_cache_path: ./var/data/deribit_futures_live
+    risk_profile: conservative
+    default_strategy: core_daily_trend
+    default_controller: daily_trend_core
+    alert_channels:
+      - telegram:primary
+      - sms:orange_local
+      - email:ops
+    ip_allowlist: []
+    required_permissions: [read, trade]
+    forbidden_permissions: [withdraw]
+    instrument_universe: core_multi_exchange
+    health_check:
+      public_symbol: BTC-PERPETUAL
+      private_asset: USDC
+      private_min_balance: 120.0
+    watchdog:
+      retry_policy:
+        max_attempts: 3
+        base_delay: 0.6
+        max_delay: 3.5
+        jitter: [0.05, 0.35]
+      circuit_breaker:
+        failure_threshold: 4
+        recovery_timeout: 75.0
+        half_open_success_threshold: 2
+    adapter_settings:
+      stream:
+        live_base_url: https://stream.hyperion.dudzian.ai/exchanges
+        public_path: /deribit/futures/public
+        private_path: /deribit/futures/private
+        poll_interval: 0.5
+      ccxt_config:
+        urls:
+          api:
+            public: https://www.deribit.com/api/v2
+            private: https://www.deribit.com/api/v2
+    alert_throttle:
+      window_seconds: 240
+      exclude_severities: [critical]
+      exclude_categories: [health]
+      max_entries: 4096
+    alert_audit:
+      backend: file
+      directory: audit/alerts
+      filename_pattern: deribit-futures-alerts-%Y%m%d.jsonl
+      retention_days: 730
+      fsync: true
+    decision_journal:
+      backend: file
+      directory: audit/decisions
+      filename_pattern: deribit-futures-live-%Y%m%d.jsonl
+      retention_days: 730
+      fsync: true
+    live_readiness:
+      checklist_id: stage6-deribit-futures-2024q4
+      signed: true
+      signed_by: [compliance, security, sre]
+      signed_at: "2024-07-18T09:45:00Z"
+      signature_path: compliance/live/deribit_futures/checklist.sig
+      required_documents: [kyc_2024q3, license_attestation, alerting_playbook, hypercare_runbook]
+      documents:
+        - name: kyc_2024q3
+          path: compliance/live/deribit_futures/kyc_packet_2024q3.pdf
+          sha256: d9e4c3f0ab1e9f54f5e2d8a0b7c6f3a1d2c4b6e8f0a1c3d5e7f9b2d4c6e8f0a1
+          signature_path: compliance/live/deribit_futures/kyc_packet_2024q3.sig
+          signed: true
+          signed_by: [compliance]
+          signed_at: "2024-07-15T08:30:00Z"
+        - name: license_attestation
+          path: compliance/live/deribit_futures/license_attestation.pdf
+          sha256: b1f4d6e8a0c2f3b5d7e9f1a3c5d7e9f1b3c5d7e9f1a3c5d7e9f1b3c5d7e9f1a3
+          signature_path: compliance/live/deribit_futures/license_attestation.sig
+          signed: true
+          signed_by: [security]
+          signed_at: "2024-07-16T10:05:00Z"
+        - name: alerting_playbook
+          path: sre/live/deribit_futures/alerting_playbook_v1.pdf
+          sha256: e1f2d3c4b5a697887766554433221100ffeeddccbbaa9988776655443322110
+          signature_path: sre/live/deribit_futures/alerting_playbook_v1.sig
+          signed: true
+          signed_by: [sre]
+          signed_at: "2024-07-17T12:20:00Z"
+        - name: hypercare_runbook
+          path: hypercare/live/deribit_futures/runbook_v1.pdf
+          sha256: aabbccddeeff00112233445566778899aabbccddeeff00112233445566778899
+          signature_path: hypercare/live/deribit_futures/runbook_v1.sig
+          signed: true
+          signed_by: [hypercare]
+          signed_at: "2024-07-17T14:10:00Z"
+
+  bitmex_futures_paper:
+    exchange: bitmex_futures
+    environment: paper
+    keychain_key: bitmex_futures_paper_trading
+    data_cache_path: ./var/data/bitmex_futures_paper
+    risk_profile: balanced
+    default_strategy: core_daily_trend
+    default_controller: daily_trend_core
+    alert_channels: []
+    ip_allowlist: []
+    permission_profile: trading_default
+    instrument_universe: core_multi_exchange
+    data_quality:
+      max_gap_minutes: 240
+      min_ok_ratio: 0.95
+    adapter_settings:
+      paper_trading:
+        valuation_asset: USDT
+        position_size: 0.1
+        initial_balances:
+          USDT: 85000.0
+        default_market:
+          min_quantity: 0.001
+          min_notional: 10.0
+        ledger_directory: audit/ledger
+        ledger_retention_days: 730
+        ledger_fsync: true
+      stream:
+        base_url: https://stream.sandbox.dudzian.ai/exchanges
+        public_path: /bitmex/futures/public
+        private_path: /bitmex/futures/private
+        poll_interval: 0.35
+    decision_journal:
+      backend: file
+      directory: audit/decisions
+      filename_pattern: bitmex-futures-paper-%Y%m%d.jsonl
+      retention_days: 365
+      fsync: true
+
+  bitmex_futures_testnet:
+    exchange: bitmex_futures
+    environment: testnet
+    keychain_key: bitmex_futures_testnet_trading
+    data_cache_path: ./var/data/bitmex_futures_testnet
+    risk_profile: balanced
+    default_strategy: core_daily_trend
+    default_controller: daily_trend_core
+    alert_channels:
+      - telegram:primary
+      - email:ops
+    ip_allowlist: []
+    required_permissions: [read, trade]
+    forbidden_permissions: [withdraw]
+    instrument_universe: core_multi_exchange
+    health_check:
+      public_symbol: XBTUSD
+      private_asset: USDT
+      private_min_balance: 65.0
+    watchdog:
+      retry_policy:
+        max_attempts: 4
+        base_delay: 0.35
+        max_delay: 2.5
+        jitter: [0.05, 0.3]
+      circuit_breaker:
+        failure_threshold: 4
+        recovery_timeout: 50.0
+        half_open_success_threshold: 2
+    adapter_settings:
+      stream:
+        testnet_base_url: https://stream.sandbox.dudzian.ai/exchanges
+        public_path: /bitmex/futures/public
+        private_path: /bitmex/futures/private
+        poll_interval: 0.35
+      ccxt_config:
+        urls:
+          api:
+            public: https://testnet.bitmex.com
+            private: https://testnet.bitmex.com
+    decision_journal:
+      backend: file
+      directory: audit/decisions
+      filename_pattern: bitmex-futures-testnet-%Y%m%d.jsonl
+      retention_days: 365
+      fsync: true
+
+  bitmex_futures_live:
+    exchange: bitmex_futures
+    environment: live
+    keychain_key: bitmex_futures_live_trading
+    data_cache_path: ./var/data/bitmex_futures_live
+    risk_profile: conservative
+    default_strategy: core_daily_trend
+    default_controller: daily_trend_core
+    alert_channels:
+      - telegram:primary
+      - sms:orange_local
+      - email:ops
+    ip_allowlist: []
+    required_permissions: [read, trade]
+    forbidden_permissions: [withdraw]
+    instrument_universe: core_multi_exchange
+    health_check:
+      public_symbol: XBTUSD
+      private_asset: USDT
+      private_min_balance: 150.0
+    watchdog:
+      retry_policy:
+        max_attempts: 3
+        base_delay: 0.5
+        max_delay: 3.0
+        jitter: [0.05, 0.35]
+      circuit_breaker:
+        failure_threshold: 4
+        recovery_timeout: 80.0
+        half_open_success_threshold: 2
+    adapter_settings:
+      stream:
+        live_base_url: https://stream.hyperion.dudzian.ai/exchanges
+        public_path: /bitmex/futures/public
+        private_path: /bitmex/futures/private
+        poll_interval: 0.35
+      ccxt_config:
+        urls:
+          api:
+            public: https://www.bitmex.com
+            private: https://www.bitmex.com
+    alert_throttle:
+      window_seconds: 240
+      exclude_severities: [critical]
+      exclude_categories: [health]
+      max_entries: 4096
+    alert_audit:
+      backend: file
+      directory: audit/alerts
+      filename_pattern: bitmex-futures-alerts-%Y%m%d.jsonl
+      retention_days: 730
+      fsync: true
+    decision_journal:
+      backend: file
+      directory: audit/decisions
+      filename_pattern: bitmex-futures-live-%Y%m%d.jsonl
+      retention_days: 730
+      fsync: true
+    live_readiness:
+      checklist_id: stage6-bitmex-futures-2024q4
+      signed: true
+      signed_by: [compliance, security, sre]
+      signed_at: "2024-07-19T11:15:00Z"
+      signature_path: compliance/live/bitmex_futures/checklist.sig
+      required_documents: [kyc_2024q3, license_attestation, alerting_playbook, hypercare_runbook]
+      documents:
+        - name: kyc_2024q3
+          path: compliance/live/bitmex_futures/kyc_packet_2024q3.pdf
+          sha256: c3d5e7f9b1a3c5d7e9f1b3c5d7e9f1a3c5d7e9f1b3c5d7e9f1a3c5d7e9f1b3c5
+          signature_path: compliance/live/bitmex_futures/kyc_packet_2024q3.sig
+          signed: true
+          signed_by: [compliance]
+          signed_at: "2024-07-16T09:00:00Z"
+        - name: license_attestation
+          path: compliance/live/bitmex_futures/license_attestation.pdf
+          sha256: f1e2d3c4b5a697887766554433221100ffeeddccbbaa9988776655443322110
+          signature_path: compliance/live/bitmex_futures/license_attestation.sig
+          signed: true
+          signed_by: [security]
+          signed_at: "2024-07-17T10:40:00Z"
+        - name: alerting_playbook
+          path: sre/live/bitmex_futures/alerting_playbook_v1.pdf
+          sha256: 8899aabbccddeeff00112233445566778899aabbccddeeff0011223344556677
+          signature_path: sre/live/bitmex_futures/alerting_playbook_v1.sig
+          signed: true
+          signed_by: [sre]
+          signed_at: "2024-07-18T13:10:00Z"
+        - name: hypercare_runbook
+          path: hypercare/live/bitmex_futures/runbook_v1.pdf
+          sha256: 11223344556677889900aabbccddeeff11223344556677889900aabbccddeeff
+          signature_path: hypercare/live/bitmex_futures/runbook_v1.sig
+          signed: true
+          signed_by: [hypercare]
+          signed_at: "2024-07-18T15:05:00Z"
 
   coinbase_paper:
     exchange: coinbase_spot

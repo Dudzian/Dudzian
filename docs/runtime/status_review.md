@@ -11,7 +11,7 @@
 ## Najważniejsze luki
 - **Alerty SLA dla feedu** – `feedHealth` udostępnia surowe metryki long-polla, ale brak progów i eskalacji (np. sygnałów degradacji do HyperCare), przez co operatorzy muszą ręcznie interpretować dane.【F:ui/backend/runtime_service.py†L600-L820】【F:ui/qml/dashboard/RuntimeOverview.qml†L640-L760】
 - **Marketplace presetów** – benchmark nadal wskazuje brak publicznego katalogu oraz procesu publikacji presetów, co blokuje dystrybucję konfiguracji dla użytkowników końcowych.【F:docs/benchmark/cryptohopper_comparison.md†L24-L37】【F:docs/benchmark/cryptohopper_comparison.md†L65-L97】
-- **Roadmapa giełd futures** – plan CryptoHoppera obejmuje Deribit/BitMEX, natomiast aktualne konfiguracje kończą się na Bybit/MEXC, więc potrzebne są kolejne adaptery i profile środowiskowe.【F:docs/benchmark/cryptohopper_comparison.md†L35-L66】
+- **Monitoring futures** – adaptery Deribit/BitMEX zostały wdrożone, ale wymagają automatycznego monitoringu HyperCare (raporty `scripts/list_exchange_adapters.py`, alerty long-polla) oraz cyklicznej walidacji podpisanych checklist.【F:scripts/list_exchange_adapters.py†L1-L150】【F:docs/benchmark/cryptohopper_comparison.md†L65-L90】
 
 ### Konfiguracja środowiska runtime
 - `BOT_CORE_UI_GRPC_ENDPOINT` / `BOT_CORE_TRADING_GRPC_ADDRESS` – adres serwera gRPC, z którego RuntimeService pobiera dziennik decyzji. Pierwsza zmienna ma najwyższy priorytet i pozwala na wskazanie lokalnego stubu lub tunelu SSH podczas diagnostyki.【F:ui/backend/runtime_service.py†L780-L820】
@@ -32,7 +32,7 @@
 ## Priorytetowe poprawki
 1. **Alerty degradacji feedu** – zdefiniować progi SLA i integrację z HyperCare, aby `feedHealth` generowało ostrzeżenia push/mail przy przekroczeniu limitów latencji lub liczby błędów.【F:ui/backend/runtime_service.py†L600-L990】
 2. **Uporządkowanie API AutoTradera** – udostępnić publiczną metodę wyzwalającą pojedynczy cykl decyzyjny oraz zredukować zależności od atrybutów `_execution_context`/`_schedule_mode`, co uprości dalszą automatyzację i testowanie.【F:bot_core/auto_trader/app.py†L1-L200】
-3. **Marketplace i roadmapa giełdowa** – przygotować proces publikacji presetów wraz z podpisami, a także rozszerzyć adaptery o Deribit/BitMEX, żeby zrównać się z konkurencją w segmencie futures.【F:docs/benchmark/cryptohopper_comparison.md†L35-L97】
+3. **Marketplace i raportowanie futures** – przygotować proces publikacji presetów wraz z podpisami oraz zautomatyzować raport `reports/exchanges/*.csv`, by utrzymać parytet futures z CryptoHopperem i dokumentować checklisty HyperCare.【F:docs/benchmark/cryptohopper_comparison.md†L35-L97】【F:scripts/list_exchange_adapters.py†L1-L150】
 
 ## Proponowane sprinty
 ### Sprint 3 – Obserwowalność runtime

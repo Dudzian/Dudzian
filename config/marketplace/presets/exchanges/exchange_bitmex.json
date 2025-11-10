@@ -72,7 +72,9 @@
                   "watchdog": {
                     "retry_policy": {
                       "max_attempts": 5,
-                      "base_delay": 0.3
+                      "base_delay": 0.3,
+                      "max_delay": 2.5,
+                      "jitter": 0.3
                     }
                   },
                   "rate_limit_rules": [
@@ -88,7 +90,9 @@
                   "native_adapter": {
                     "settings": {
                       "stream": {
-                        "base_url": "http://127.0.0.1:8765"
+                        "base_url": "https://stream.sandbox.dudzian.ai/exchanges",
+                        "public_path": "/bitmex/futures/public",
+                        "private_path": "/bitmex/futures/private"
                       }
                     }
                   },
@@ -97,6 +101,10 @@
                     "failure_threshold": 2,
                     "cooldown_seconds": 40
                   }
+                },
+                "decision_journal": {
+                  "filename": "bitmex-futures-testnet-%Y%m%d.jsonl",
+                  "signed": true
                 },
                 "credentials": {
                   "key_id": "${BITMEX_TESTNET_KEY}",
@@ -115,7 +123,9 @@
                   "watchdog": {
                     "retry_policy": {
                       "max_attempts": 3,
-                      "base_delay": 0.5
+                      "base_delay": 0.5,
+                      "max_delay": 3.0,
+                      "jitter": 0.35
                     },
                     "circuit_breaker": {
                       "failure_threshold": 4,
@@ -135,7 +145,9 @@
                   "native_adapter": {
                     "settings": {
                       "stream": {
-                        "base_url": "http://127.0.0.1:8765"
+                        "base_url": "https://stream.hyperion.dudzian.ai/exchanges",
+                        "public_path": "/bitmex/futures/public",
+                        "private_path": "/bitmex/futures/private"
                       }
                     }
                   },
@@ -144,6 +156,10 @@
                     "failure_threshold": 3,
                     "cooldown_seconds": 60
                   }
+                },
+                "decision_journal": {
+                  "filename": "bitmex-futures-live-%Y%m%d.jsonl",
+                  "signed": true
                 },
                 "credentials": {
                   "key_id": "${BITMEX_LIVE_KEY}",
