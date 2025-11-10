@@ -9,6 +9,7 @@ import queue
 import sys
 import threading
 import urllib.request
+from contextlib import suppress
 from logging.handlers import QueueHandler, QueueListener, RotatingFileHandler
 from pathlib import Path
 from typing import Iterable, Optional
@@ -28,11 +29,40 @@ def _env(name: str) -> str | None:
 _PACKAGE_ROOT = Path(__file__).resolve().parents[1]
 LOGS_DIR = Path(_env("BOT_CORE_LOG_DIR") or (_PACKAGE_ROOT / "logs"))
 LOGS_DIR.mkdir(parents=True, exist_ok=True)
-DEFAULT_LOG_FILE = Path(_env("BOT_CORE_LOG_FILE") or (LOGS_DIR / "trading.log"))
+DEFAULT_LOG_FILE = Path(
+    _env("BOT_CORE_LOG_FILE", legacy="KRYPT_LOWCA_LOG_FILE") or (LOGS_DIR / "trading.log")
+)
 
 _QUEUE: Optional[queue.Queue[logging.LogRecord]] = None
 _LISTENER: Optional[QueueListener] = None
 _QUEUE_LOCK = threading.Lock()
+_ATEEXIT_REGISTERED = False
+
+
+def _stop_queue_listener() -> None:
+    """Safely stop the background QueueListener (used in tests/atexit)."""
+
+    global _QUEUE, _LISTENER, _ATEEXIT_REGISTERED
+
+    if _ATEEXIT_REGISTERED:
+        with suppress(Exception):
+            atexit.unregister(_stop_queue_listener)
+        _ATEEXIT_REGISTERED = False
+
+    listener = _LISTENER
+    if listener is None:
+        return
+
+    thread = getattr(listener, "_thread", None)
+    if thread is None:
+        _QUEUE = None
+        _LISTENER = None
+        return
+
+    with suppress(Exception):
+        listener.stop()
+    _QUEUE = None
+    _LISTENER = None
 
 
 class VectorHttpHandler(logging.Handler):
@@ -85,13 +115,15 @@ def _build_formatter(format_type: str, service_name: str) -> logging.Formatter:
 
 
 def _ensure_queue_listener(handlers: Iterable[logging.Handler]) -> QueueHandler:
-    global _QUEUE, _LISTENER
+    global _QUEUE, _LISTENER, _ATEEXIT_REGISTERED
     with _QUEUE_LOCK:
         if _QUEUE is None:
             _QUEUE = queue.Queue()
             _LISTENER = QueueListener(_QUEUE, *handlers, respect_handler_level=True)
             _LISTENER.start()
-            atexit.register(lambda: _LISTENER and _LISTENER.stop())
+            if not _ATEEXIT_REGISTERED:
+                atexit.register(_stop_queue_listener)
+                _ATEEXIT_REGISTERED = True
         assert _QUEUE is not None
         return QueueHandler(_QUEUE)
 
@@ -106,7 +138,7 @@ def setup_app_logging(
 ) -> logging.Logger:
     """Configure the primary ``bot_core`` logger with queue-based handlers."""
 
-    logger_name = _env("BOT_CORE_LOGGER_NAME") or "bot_core"
+    logger_name = _env("BOT_CORE_LOGGER_NAME", legacy="KRYPT_LOWCA_LOGGER_NAME") or "bot_core"
     root = logging.getLogger(logger_name)
     if getattr(root, "_bot_core_logging_configured", False):
         return root
@@ -152,7 +184,11 @@ def get_logger(name: Optional[str] = None) -> logging.Logger:
     """Return a configured logger, installing the app logging configuration if needed."""
 
     setup_app_logging()
-    target = name or _env("BOT_CORE_LOGGER_NAME") or "bot_core"
+    target = (
+        name
+        or _env("BOT_CORE_LOGGER_NAME", legacy="KRYPT_LOWCA_LOGGER_NAME")
+        or "bot_core"
+    )
     return logging.getLogger(target if name is None else name)
 
 

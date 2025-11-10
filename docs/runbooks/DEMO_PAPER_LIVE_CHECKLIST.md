@@ -38,6 +38,18 @@ Zapewnienie, że każda promocja środowiska tradingowego spełnia wymagania tec
 | 2. Jeśli klient korzysta z zaszyfrowanego pliku `SecurityManager`, poinformuj go o konieczności użycia narzędzia migracyjnego opisanego w [docs/migrations/2024-legacy-storage-removal.md](../migrations/2024-legacy-storage-removal.md); runtime Stage6 nie obsługuje już odczytu tych plików. | Operator Stage6 | Notatka migracyjna | Potwierdzenie, że migracja została wykonana poza środowiskiem runtime (w decision logu) |
 | 2. Dołącz plik `migration_summary.json` do decision logu (`audit/decision_logs/stage6.jsonl`) i podpisz wpis HMAC | Compliance/Risk Stage6 | Decision log Stage6, plik podsumowania | Wpis zawiera hash SHA-384 podsumowania oraz status `stage6_profile_ready` |
 
+> **Podpowiedź CLI:** wywołanie `python -m bot_core.runtime.stage6_preset_cli --core-config config/core.yaml --legacy-preset presets/gui.json --help`
+> prezentuje wyłącznie aktywne flagi migratora. Najważniejsze przełączniki:
+> ```bash
+> --core-config CORE_CONFIG      Ścieżka do docelowego pliku core.yaml
+> --legacy-preset LEGACY_PRESET  Preset GUI (JSON/YAML) do zaimportowania
+> --secrets-input PATH           Plik z legacy sekretami
+> --secrets-output PATH          Docelowy magazyn EncryptedFileSecretStorage
+> --secret-passphrase{,-env,-file}
+>                                Dostarczenie hasła magazynu sekretów
+> --summary-json PATH            Raport audytowy migracji (JSON)
+> ```
+
 ## Artefakty/Akceptacja
 - Decision logi: `audit/decision_logs/demo.jsonl`, `audit/decision_logs/paper.jsonl`, `audit/decision_logs/live_execution.jsonl` z podpisami HMAC-SHA384.
 - Raporty Paper Labs (JSON + PDF), smoke paper, logi dry-run live.

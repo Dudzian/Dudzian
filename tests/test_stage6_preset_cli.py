@@ -198,6 +198,14 @@ def test_stage6_cli_rejects_legacy_security_flags(tmp_path: Path, capsys) -> Non
     assert "unrecognized arguments: --legacy-security-file" in stderr
 
 
+def test_stage6_cli_help_hides_legacy_security_options() -> None:
+    parser = preset_editor_cli._configure_migration_parser()
+    help_text = parser.format_help()
+
+    assert "--legacy-security-file" not in help_text
+    assert "--secret-passphrase" in help_text
+
+
 def test_stage6_cli_defaults_desktop_vault(tmp_path: Path, capsys) -> None:
     core_copy = _copy_core_config(tmp_path)
     preset_path = tmp_path / "preset.yaml"
