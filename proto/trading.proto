@@ -203,6 +203,31 @@ message MetricsAck {
   bool accepted = 1;
 }
 
+message DecisionRecordEntry {
+  map<string, string> fields = 1;
+}
+
+message StreamDecisionsRequest {
+  uint32 limit = 1;
+  bool skip_snapshot = 2;
+  double poll_interval_seconds = 3;
+}
+
+message StreamDecisionsSnapshot {
+  repeated DecisionRecordEntry records = 1;
+}
+
+message StreamDecisionsIncrement {
+  DecisionRecordEntry record = 1;
+}
+
+message StreamDecisionsUpdate {
+  oneof payload {
+    StreamDecisionsSnapshot snapshot = 1;
+    StreamDecisionsIncrement increment = 2;
+  }
+}
+
 message HealthCheckRequest {}
 
 message HealthCheckResponse {
@@ -285,6 +310,11 @@ service RiskService {
 service MetricsService {
   rpc StreamMetrics(MetricsRequest) returns (stream MetricsSnapshot);
   rpc PushMetrics(MetricsSnapshot) returns (MetricsAck);
+}
+
+service RuntimeService {
+  rpc StreamDecisions(StreamDecisionsRequest)
+      returns (stream StreamDecisionsUpdate);
 }
 
 service HealthService {

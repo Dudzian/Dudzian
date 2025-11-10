@@ -98,6 +98,27 @@ def test_stream_repeat_mode(trading_modules) -> None:
         channel.close()
 
 
+def test_runtime_service_streams_decisions(trading_modules) -> None:
+    trading_pb2, trading_pb2_grpc = trading_modules
+    dataset = build_default_dataset()
+
+    with TradingStubServer(dataset, port=0, stream_repeat=True, stream_interval=0.0) as server:
+        channel = grpc.insecure_channel(server.address)
+        grpc.channel_ready_future(channel).result(timeout=5)
+        runtime_stub = trading_pb2_grpc.RuntimeServiceStub(channel)
+
+        stream = runtime_stub.StreamDecisions(
+            trading_pb2.StreamDecisionsRequest(limit=1)
+        )
+        updates = list(islice(stream, 3))
+        assert updates[0].HasField("snapshot")
+        assert len(updates[0].snapshot.records) == 1
+        assert updates[1].HasField("increment")
+        event_name = updates[1].increment.record.fields.get("event")
+        assert event_name == "risk_update"
+        channel.close()
+
+
 def test_orders_risk_metrics_and_health(trading_modules) -> None:
     trading_pb2, trading_pb2_grpc = trading_modules
     dataset = build_default_dataset()

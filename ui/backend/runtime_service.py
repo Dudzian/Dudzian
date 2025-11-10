@@ -4,14 +4,19 @@ from __future__ import annotations
 import json
 import logging
 import os
-from collections import Counter
+import math
+import queue
+import statistics
+import threading
+import time
+from collections import Counter, deque
 from collections.abc import Iterable, Mapping, MutableMapping
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import TYPE_CHECKING, Callable
 
-from PySide6.QtCore import QObject, Property, Signal, Slot
+from PySide6.QtCore import QObject, Property, QTimer, Signal, Slot
 
 from bot_core.config import load_core_config
 from bot_core.portfolio import resolve_decision_log_config
@@ -37,6 +42,11 @@ if TYPE_CHECKING:  # pragma: no cover - adnotacje tylko w czasie statycznym
     from bot_core.config.models import RuntimeAppConfig
 
 _LOGGER = logging.getLogger(__name__)
+
+try:  # pragma: no cover - gRPC może nie być dostępne w trybach light
+    import grpc
+except Exception:  # pragma: no cover - fallback gdy brak gRPC
+    grpc = None  # type: ignore[assignment]
 
 DecisionRecord = Mapping[str, str]
 DecisionLoader = Callable[[int], Iterable[DecisionRecord]]
@@ -588,6 +598,7 @@ class RuntimeService(QObject):
         self._cached_core_config = None
         self._active_profile: str | None = None
         self._active_log_path: Path | None = None
+        self._active_stream_label: str | None = None
         self._runtime_config_path = Path(runtime_config_path).expanduser() if runtime_config_path else None
         self._runtime_config_cache: "RuntimeAppConfig | None" = None
         self._retrain_next_run: str = ""
@@ -595,6 +606,20 @@ class RuntimeService(QObject):
         self._risk_metrics: dict[str, object] = {}
         self._risk_timeline: list[dict[str, object]] = []
         self._last_operator_action: dict[str, object] | None = None
+        self._grpc_thread: threading.Thread | None = None
+        self._grpc_stop_event: threading.Event | None = None
+        self._grpc_queue: "queue.Queue[tuple[str, object]] | None" = None
+        self._grpc_timer: QTimer | None = None
+        self._grpc_stream_active = False
+        self._grpc_target: str | None = None
+        self._grpc_metadata: list[tuple[str, str]] = self._load_grpc_metadata()
+        self._grpc_limit = self._default_limit
+        metrics_path_env = os.environ.get("BOT_CORE_UI_FEED_LATENCY_PATH")
+        if metrics_path_env:
+            self._feed_metrics_path = Path(metrics_path_env).expanduser()
+        else:
+            self._feed_metrics_path = Path("reports/ci/decision_feed_metrics.json")
+        self._feed_latencies: deque[float] = deque(maxlen=1024)
         try:
             self._update_runtime_metadata(invalidate_cache=False)
         except Exception:  # pragma: no cover - defensywna inicjalizacja
@@ -639,6 +664,9 @@ class RuntimeService(QObject):
         size = int(limit)
         if size <= 0:
             size = self._default_limit
+        if self._grpc_stream_active:
+            subset = self._decisions[:size]
+            return [dict(entry) for entry in subset]
         try:
             raw_entries = list(self._loader(size))
         except Exception as exc:  # pragma: no cover - diagnostyka
@@ -673,6 +701,8 @@ class RuntimeService(QObject):
     # ------------------------------------------------------------------
     @Property(str, notify=liveSourceChanged)
     def activeDecisionLogPath(self) -> str:  # type: ignore[override]
+        if self._active_stream_label:
+            return self._active_stream_label
         if self._active_log_path is None:
             return ""
         return str(self._active_log_path)
@@ -681,8 +711,28 @@ class RuntimeService(QObject):
     def attachToLiveDecisionLog(self, profile: str = "") -> bool:  # type: ignore[override]
         """Przełącza loader na rzeczywisty decision log skonfigurowany w core.yaml."""
 
+        self._stop_grpc_stream()
+        sanitized_profile = profile.strip()
+        target = self._resolve_grpc_target(sanitized_profile or None)
+        if target:
+            try:
+                self._start_grpc_stream(target, self._default_limit)
+            except Exception as exc:  # pragma: no cover - diagnostyka
+                _LOGGER.debug("attachToLiveDecisionLog gRPC failed", exc_info=True)
+                self._error_message = str(exc)
+                self.errorMessageChanged.emit()
+            else:
+                self._loader = lambda limit: []
+                self._active_profile = sanitized_profile or None
+                self._active_log_path = None
+                self._active_stream_label = f"grpc://{target}"
+                self._error_message = ""
+                self.errorMessageChanged.emit()
+                self.liveSourceChanged.emit()
+                return True
+
         try:
-            loader, log_path = self._build_live_loader(profile.strip() or None)
+            loader, log_path = self._build_live_loader(sanitized_profile or None)
         except Exception as exc:  # pragma: no cover - diagnostyka
             _LOGGER.debug("attachToLiveDecisionLog failed", exc_info=True)
             self._error_message = str(exc)
@@ -690,8 +740,9 @@ class RuntimeService(QObject):
             return False
 
         self._loader = loader
-        self._active_profile = profile.strip() or None
+        self._active_profile = sanitized_profile or None
         self._active_log_path = log_path
+        self._active_stream_label = None
         self._error_message = ""
         self.errorMessageChanged.emit()
         self.liveSourceChanged.emit()
@@ -774,12 +825,264 @@ class RuntimeService(QObject):
         return _loader
 
     # ------------------------------------------------------------------ risk aggregation helpers --
+    def _resolve_grpc_target(self, profile: str | None) -> str | None:
+        candidates = (
+            os.environ.get("BOT_CORE_UI_GRPC_ENDPOINT"),
+            os.environ.get("BOT_CORE_TRADING_GRPC_ADDRESS"),
+            os.environ.get("BOT_CORE_RUNTIME_GRPC_ADDRESS"),
+        )
+        for candidate in candidates:
+            if candidate and candidate.strip():
+                return candidate.strip()
+        return None
+
+    def _load_grpc_metadata(self) -> list[tuple[str, str]]:
+        raw = os.environ.get("BOT_CORE_UI_GRPC_METADATA", "")
+        if not raw:
+            return []
+        metadata: list[tuple[str, str]] = []
+        for item in raw.split(","):
+            if not item:
+                continue
+            if "=" not in item:
+                continue
+            key, value = item.split("=", 1)
+            key = key.strip().lower()
+            value = value.strip()
+            if key:
+                metadata.append((key, value))
+        return metadata
+
+    def _ensure_grpc_timer(self) -> None:
+        if self._grpc_timer is not None:
+            return
+        timer = QTimer(self)
+        timer.setInterval(200)
+        timer.setSingleShot(False)
+        timer.timeout.connect(self._drain_grpc_queue)
+        timer.start()
+        self._grpc_timer = timer
+
+    def _start_grpc_stream(self, target: str, limit: int) -> None:
+        if grpc is None:
+            raise RuntimeError("Pakiet grpcio jest wymagany do połączenia z RuntimeService.")
+        try:
+            from bot_core.generated import trading_pb2, trading_pb2_grpc
+        except ImportError as exc:  # pragma: no cover - brak stubów
+            raise RuntimeError(
+                "Brak wygenerowanych stubów trading_pb2*_grpc – uruchom scripts/generate_trading_stubs.py"
+            ) from exc
+
+        self._grpc_stop_event = threading.Event()
+        self._grpc_queue = queue.Queue()
+        self._grpc_target = target
+        self._grpc_stream_active = True
+        self._grpc_limit = max(1, int(limit))
+        self._decisions = []
+        self._ensure_grpc_timer()
+        worker = threading.Thread(
+            target=self._grpc_worker,
+            args=(target, trading_pb2, trading_pb2_grpc, self._grpc_limit),
+            name="RuntimeServiceGrpc",
+            daemon=True,
+        )
+        self._grpc_thread = worker
+        worker.start()
+
+    def _grpc_worker(
+        self,
+        target: str,
+        trading_pb2,
+        trading_pb2_grpc,
+        limit: int,
+    ) -> None:
+        queue_obj = self._grpc_queue
+        if queue_obj is None:
+            return
+        stop_event = self._grpc_stop_event
+        request = trading_pb2.StreamDecisionsRequest(
+            limit=max(0, int(limit)),
+            skip_snapshot=False,
+            poll_interval_seconds=1.0,
+        )
+        metadata = tuple(self._grpc_metadata)
+        channel = None
+        try:
+            channel = grpc.insecure_channel(target)
+            stub = trading_pb2_grpc.RuntimeServiceStub(channel)
+            if metadata:
+                stream = stub.StreamDecisions(request, metadata=metadata)
+            else:
+                stream = stub.StreamDecisions(request)
+            for update in stream:
+                if stop_event is not None and stop_event.is_set():
+                    break
+                if update.HasField("snapshot"):
+                    payload = [dict(entry.fields) for entry in update.snapshot.records]
+                    queue_obj.put(("snapshot", payload))
+                elif update.HasField("increment"):
+                    queue_obj.put(("increment", dict(update.increment.record.fields)))
+            queue_obj.put(("done", None))
+        except Exception as exc:  # pragma: no cover - diagnostyka
+            queue_obj.put(("error", str(exc)))
+            queue_obj.put(("done", None))
+        finally:
+            if channel is not None:
+                try:
+                    channel.close()
+                except Exception:
+                    pass
+
+    def _drain_grpc_queue(self) -> None:
+        queue_obj = self._grpc_queue
+        if queue_obj is None:
+            return
+        updated = False
+        while True:
+            try:
+                kind, payload = queue_obj.get_nowait()
+            except queue.Empty:
+                break
+            if kind == "snapshot":
+                if isinstance(payload, list):
+                    self._apply_grpc_snapshot(payload)
+                    updated = True
+            elif kind == "increment":
+                if isinstance(payload, Mapping):
+                    self._append_grpc_record(payload)
+                    updated = True
+            elif kind == "error":
+                self._error_message = str(payload)
+                self.errorMessageChanged.emit()
+            elif kind == "done":
+                if self._grpc_stop_event is None or not self._grpc_stop_event.is_set():
+                    self._grpc_stream_active = False
+            queue_obj.task_done()
+
+        if updated:
+            self.decisionsChanged.emit()
+            self._apply_risk_context(self._decisions)
+            self._update_runtime_metadata(invalidate_cache=False)
+            self._error_message = ""
+            self.errorMessageChanged.emit()
+            self._write_feed_metrics()
+
+    def _apply_grpc_snapshot(self, records: Iterable[Mapping[str, str]]) -> None:
+        collected: list[dict[str, object]] = []
+        for record in reversed(list(records)):
+            if not isinstance(record, Mapping):
+                continue
+            try:
+                entry = _parse_entry(record)
+            except Exception:  # pragma: no cover - diagnostyka
+                _LOGGER.debug("Nie udało się sparsować snapshotu gRPC", exc_info=True)
+                continue
+            payload = entry.to_payload()
+            collected.append(payload)
+            self._record_feed_latency(record)
+        if not collected:
+            return
+        max_size = max(1, self._default_limit)
+        if len(collected) > max_size:
+            collected = collected[:max_size]
+        self._decisions = collected
+
+    def _append_grpc_record(self, record: Mapping[str, str]) -> None:
+        try:
+            entry = _parse_entry(record)
+        except Exception:  # pragma: no cover - diagnostyka
+            _LOGGER.debug("Nie udało się sparsować przyrostu gRPC", exc_info=True)
+            return
+        payload = entry.to_payload()
+        self._record_feed_latency(record)
+        self._decisions.insert(0, payload)
+        if len(self._decisions) > self._default_limit:
+            self._decisions = self._decisions[: self._default_limit]
+
+    def _record_feed_latency(self, record: Mapping[str, str]) -> None:
+        timestamp_raw = record.get("timestamp")
+        if not timestamp_raw:
+            return
+        text = str(timestamp_raw).strip()
+        if not text:
+            return
+        try:
+            parsed = datetime.fromisoformat(text.replace("Z", "+00:00"))
+        except ValueError:
+            return
+        if parsed.tzinfo is None:
+            parsed = parsed.replace(tzinfo=timezone.utc)
+        latency_ms = (datetime.now(timezone.utc) - parsed.astimezone(timezone.utc)).total_seconds() * 1000.0
+        if latency_ms < 0:
+            latency_ms = 0.0
+        self._feed_latencies.append(float(latency_ms))
+
+    def _write_feed_metrics(self) -> None:
+        latencies = list(self._feed_latencies)
+        if not latencies:
+            return
+        stats_payload = {
+            "generated_at": datetime.now(timezone.utc).isoformat(),
+            "count": len(latencies),
+            "min_ms": min(latencies),
+            "max_ms": max(latencies),
+            "avg_ms": sum(latencies) / len(latencies),
+            "p50_ms": statistics.median(latencies),
+            "p95_ms": self._percentile(latencies, 95.0),
+        }
+        try:
+            self._feed_metrics_path.parent.mkdir(parents=True, exist_ok=True)
+            self._feed_metrics_path.write_text(
+                json.dumps(stats_payload, ensure_ascii=False, indent=2),
+                encoding="utf-8",
+            )
+        except Exception:  # pragma: no cover - zapisy metryk nie powinny blokować UI
+            _LOGGER.debug("Nie udało się zapisać metryk latencji feedu", exc_info=True)
+
+    @staticmethod
+    def _percentile(values: Iterable[float], percentile: float) -> float:
+        data = sorted(values)
+        if not data:
+            return 0.0
+        if percentile <= 0:
+            return data[0]
+        if percentile >= 100:
+            return data[-1]
+        rank = (percentile / 100.0) * (len(data) - 1)
+        low = math.floor(rank)
+        high = math.ceil(rank)
+        if low == high:
+            return data[int(rank)]
+        fraction = rank - low
+        return data[low] + (data[high] - data[low]) * fraction
+
+    def _stop_grpc_stream(self) -> None:
+        if self._grpc_stop_event is not None:
+            self._grpc_stop_event.set()
+        if self._grpc_thread is not None and self._grpc_thread.is_alive():
+            self._grpc_thread.join(timeout=1.5)
+        self._grpc_thread = None
+        self._grpc_stop_event = None
+        self._grpc_queue = None
+        if self._grpc_timer is not None:
+            self._grpc_timer.stop()
+            self._grpc_timer.deleteLater()
+            self._grpc_timer = None
+        self._grpc_stream_active = False
+        self._active_stream_label = None
+
     def _apply_risk_context(self, entries: Iterable[Mapping[str, object]]) -> None:
         metrics, timeline = _build_risk_context(entries)
         self._risk_metrics = metrics
         self._risk_timeline = timeline
         self.riskMetricsChanged.emit()
         self.riskTimelineChanged.emit()
+
+    def __del__(self) -> None:  # pragma: no cover - defensywne sprzątanie
+        try:
+            self._stop_grpc_stream()
+        except Exception:
+            pass
 
     def _record_operator_action(
         self, action: str, entry: Mapping[str, object] | None
