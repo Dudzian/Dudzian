@@ -2928,9 +2928,36 @@ class TradingStrategies:
             logger=self._logger
         )
 
-    def run_strategy(self, *args, **kwargs):
-        """Minimal stub for legacy callers expecting run_strategy."""
-        return {"status": "ok"}, pd.DataFrame(), pd.Series(dtype=float)
+    def run_strategy(
+        self,
+        data: pd.DataFrame,
+        initial_capital: float = 10000.0,
+        fee: float = 0.0004,
+        slippage: float = 0.0002,
+        fraction: float = 0.05,
+        allow_short: bool = False,
+        **kwargs,
+    ) -> Tuple[Dict, pd.DataFrame, pd.Series]:
+        """Uruchom strategię w trybie zgodnym z historycznym API TradingGUI."""
+
+        ai_model = kwargs.pop("ai_model", None)
+        ai_weight = float(kwargs.pop("ai_weight", 0.0) or 0.0)
+        ai_threshold_bps = float(kwargs.pop("ai_threshold_bps", 5.0) or 5.0)
+
+        if kwargs:
+            self._logger.debug("Nieobsługiwane argumenty run_strategy zostały zignorowane: %s", sorted(kwargs))
+
+        return self.backtest(
+            data=data,
+            initial_capital=initial_capital,
+            fee=fee,
+            slippage=slippage,
+            fraction=fraction,
+            allow_short=allow_short,
+            ai_model=ai_model,
+            ai_weight=ai_weight,
+            ai_threshold_bps=ai_threshold_bps,
+        )
 
     def backtest(
         self,

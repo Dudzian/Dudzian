@@ -51,7 +51,7 @@ pytest tests/integration/test_execution_router_failover.py
 ## 4. Checklist zamknięcia okna
 
 1. Archiwizuj logi audytu (`alerts/`, `risk_decisions.jsonl`, `live_execution`) w `var/audit/live/<YYYYMMDD>/`.
-2. Uzupełnij raport `migration_summary.json` o status KYC, limity, alerty oraz czas trwania okna live.
+2. Uzupełnij raport `migration_summary.json` o status KYC, limity, alerty oraz czas trwania okna live; weryfikuj, że sekcja `secrets` zawiera metadane `output_passphrase` i – jeśli rotacja była wykonana – `rotation_passphrase` z poprawnie wskazanym źródłem (inline/plik/env) i statusem użycia.
 3. Aktualizuj tablicę decyzji w `TradingDecisionJournal` (oznaczenie przejścia paper→live) i zgłoś do compliance.
 4. Potwierdź z zespołem SRE, że metryki SLO/SLI nie przekraczają progów (`bot_ui_*`, `risk_service` etc.).
 

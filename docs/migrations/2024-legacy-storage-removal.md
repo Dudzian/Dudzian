@@ -1,11 +1,11 @@
-# Migracja po usunięciu legacy storage
+# Migracja po usunięciu archiwalnego magazynu danych
 
 Od wersji 2024.09 runtime usuwa wsparcie dla automatycznego wczytywania zasobów z dawnych ścieżek (`var/state/ui_settings.json`, `~/.kryptolowca/api_credentials.json`, zaszyfrowane pliki `SecurityManager`). Poniższe kroki pozwalają istniejącym instalacjom przeprowadzić migrację przed aktualizacją.
 
 ## 1. Magazyn sekretów (`api_credentials.json`)
 
 1. Zainstaluj pomocniczy pakiet narzędziowy `dudzian-migrate` (dostarczany razem z aktualizacją) i uruchom skrypt `python -m dudzian_migrate.secret_store --input ~/.kryptolowca/api_credentials.json --output ~/.dudzian/secret_index.json`.
-2. Skrypt zapisze klucze API w natywnym magazynie (`KeyringSecretStorage`) oraz zarchiwizuje stary plik jako `api_credentials.json.legacy`.
+2. Skrypt zapisze klucze API w natywnym magazynie (`KeyringSecretStorage`) oraz zarchiwizuje stary plik jako `api_credentials.json.backup`.
 3. Po pomyślnym zakończeniu usuń oryginalny plik `~/.kryptolowca/api_credentials.json`. Runtime zweryfikuje brak pliku przy pierwszym uruchomieniu.
 4. Nowa lokalizacja danych konfiguracyjnych to katalog `~/.dudzian/`. Możesz nadpisać go przez zmienną `DUDZIAN_HOME`.
 5. Środowiska headless zapisują zaszyfrowany magazyn (`secrets.age`) w `~/.dudzian/` (również respektując `DUDZIAN_HOME`).
@@ -17,13 +17,13 @@ Od wersji 2024.09 runtime usuwa wsparcie dla automatycznego wczytywania zasobów
 
 ## 3. Pliki `SecurityManager`
 
-1. Runtime nie obsługuje już flag `--legacy-security-*` w migratorze Stage6. Użyj narzędzia `python -m dudzian_migrate.security_manager --input /ścieżka/do/api_keys.enc --output secrets/api_keys.vault --passphrase-env LEGACY_PASS`, które konwertuje zaszyfrowany plik do formatu Stage6.
-2. Zanotuj użyte źródła haseł (parametr, plik, zmienna środowiskowa) w decision logu. Narzędzie zapisuje raport kompatybilny z formatem `migration_summary.json`.
+1. Runtime nie obsługuje już flag `--legacy-security-*` w migratorze Stage6 (flagi zostały usunięte z CLI). Użyj narzędzia `python -m dudzian_migrate.security_manager --input /ścieżka/do/api_keys.enc --output secrets/api_keys.vault --passphrase-env STAGE6_MIGRATION_PASS`, które konwertuje zaszyfrowany plik do formatu Stage6.
+2. Zanotuj użyte źródła haseł (parametr, plik, zmienna środowiskowa) w decision logu. Narzędzie zapisuje raport kompatybilny z formatem `migration_summary.json`, który zawiera metadane `secrets.output_passphrase` i `secrets.rotation_passphrase` (źródło, identyfikator, informacja o użyciu) ułatwiające udokumentowanie rotacji.
 3. Po migracji usuń zaszyfrowane pliki i powiązaną sól z katalogu użytkownika.
 
 ## 4. Weryfikacja po migracji
 
-- Uruchom `python -m bot_core.runtime.stage6_preset_cli --core-config config/core.yaml --legacy-preset ... --secrets-output secrets/api_keys.vault --summary-json var/audit/stage6/migration_summary.json` (bez flag `--legacy-security-*`).
+- Uruchom `python -m bot_core.runtime.stage6_preset_cli --core-config config/core.yaml --preset ... --secrets-output secrets/api_keys.vault --summary-json var/audit/stage6/migration_summary.json` (flagi `--legacy-security-*` zostały usunięte, CLI zwróci błąd przy próbie ich użycia).
 - Sprawdź, czy katalog `~/.dudzian/` zawiera `secret_index.json`, `ui_settings.json` i brak w nim artefaktów `api_credentials.json`.
 - Upewnij się, że `docs/runbooks/DEMO_PAPER_LIVE_CHECKLIST.md` została uaktualniona i decision log zawiera wpis o migracji.
 

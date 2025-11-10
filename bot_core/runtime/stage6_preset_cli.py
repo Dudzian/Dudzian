@@ -23,7 +23,7 @@ from bot_core.runtime.paths import build_desktop_app_paths_from_root
 from bot_core.runtime.preset_service import (
     PresetConfigService,
     flatten_secret_payload,
-    load_legacy_preset,
+    load_preset_payload,
 )
 from bot_core.security.file_storage import EncryptedFileSecretStorage
 
@@ -58,15 +58,8 @@ def _summarise_overrides(overrides: Dict[str, Dict[str, object]]) -> str:
 
 _STAGE6_SENSITIVE_FLAGS = {
     "--secret-passphrase",
-    "--legacy-security-passphrase",
+    "--secrets-rotate-passphrase",
 }
-
-
-_LEGACY_SECURITY_REMOVAL_MESSAGE = (
-    "Obsługa zaszyfrowanych plików SecurityManager została przeniesiona do pakietu "
-    "'dudzian-migrate'. Uruchom narzędzie migracyjne z pakietu pomocniczego lub skorzystaj "
-    "z instrukcji w docs/migrations/2024-legacy-storage-removal.md."
-)
 
 
 def _sanitise_stage6_invocation(argv: Sequence[str]) -> Dict[str, object]:
@@ -100,19 +93,6 @@ def _sanitise_stage6_invocation(argv: Sequence[str]) -> Dict[str, object]:
 
     command = " ".join(shlex.quote(item) for item in sanitised)
     return {"argv": sanitised, "command": command}
-
-
-def _ensure_legacy_security_not_requested(args: argparse.Namespace) -> None:
-    if any(
-        (
-            args.legacy_security_file,
-            args.legacy_security_salt,
-            args.legacy_security_passphrase,
-            args.legacy_security_passphrase_file,
-            args.legacy_security_passphrase_env,
-        )
-    ):
-        raise SystemExit(_LEGACY_SECURITY_REMOVAL_MESSAGE)
 
 
 def _collect_stage6_tool_metadata() -> tuple[Dict[str, object], list[str]]:
@@ -645,7 +625,7 @@ def _configure_migration_parser() -> argparse.ArgumentParser:
         description="Migracja presetów GUI do Stage6 core.yaml"
     )
     parser.add_argument("--core-config", required=True, help="Ścieżka do docelowego pliku core.yaml")
-    parser.add_argument("--legacy-preset", required=True, help="Preset GUI (JSON/YAML) do zaimportowania")
+    parser.add_argument("--preset", required=True, help="Preset GUI (JSON/YAML) do zaimportowania")
     parser.add_argument("--profile-name", help="Nazwa profilu ryzyka utworzonego na bazie presetu")
     parser.add_argument("--template-profile", help="Profil bazowy użyty do uzupełnienia brakujących pól")
     parser.add_argument(
@@ -669,7 +649,7 @@ def _configure_migration_parser() -> argparse.ArgumentParser:
         help="Po migracji wypisz diff zmian w core.yaml względem poprzedniej zawartości.",
     )
     parser.add_argument("--dry-run", action="store_true", help="Wyświetl wynik YAML bez zapisywania")
-    parser.add_argument("--secrets-input", help="Plik z legacy sekretami (JSON/YAML)")
+    parser.add_argument("--secrets-input", help="Plik z sekretami GUI (JSON/YAML)")
     parser.add_argument(
         "--secrets-output",
         help="Docelowy zaszyfrowany magazyn sekretów (plik EncryptedFileSecretStorage)",
@@ -734,29 +714,6 @@ def _configure_migration_parser() -> argparse.ArgumentParser:
         help="Nowa liczba iteracji PBKDF2 używana do zaszyfrowania magazynu sekretów",
     )
     parser.add_argument(
-        "--legacy-security-file",
-        help=(
-            "(wyłączone) Obsługa plików SecurityManager została przeniesiona do pakietu "
-            "'dudzian-migrate' – użycie flagi zakończy się błędem"
-        ),
-    )
-    parser.add_argument(
-        "--legacy-security-salt",
-        help="(wyłączone) patrz docs/migrations/2024-legacy-storage-removal.md",
-    )
-    parser.add_argument(
-        "--legacy-security-passphrase",
-        help="(wyłączone) patrz docs/migrations/2024-legacy-storage-removal.md",
-    )
-    parser.add_argument(
-        "--legacy-security-passphrase-file",
-        help="(wyłączone) patrz docs/migrations/2024-legacy-storage-removal.md",
-    )
-    parser.add_argument(
-        "--legacy-security-passphrase-env",
-        help="(wyłączone) patrz docs/migrations/2024-legacy-storage-removal.md",
-    )
-    parser.add_argument(
         "--desktop-root",
         help=(
             "Katalog aplikacji desktopowej. Jeśli podany, domyślnie zapisze sekrety w api_keys.vault"
@@ -774,8 +731,6 @@ def _run_stage6_migration(argv: Sequence[str]) -> int:
     provided_args = list(argv)
     args = parser.parse_args(provided_args)
 
-    _ensure_legacy_security_not_requested(args)
-
     core_path = Path(args.core_config)
     if not core_path.exists():
         raise SystemExit(f"Plik core.yaml nie istnieje: {core_path}")
@@ -787,7 +742,7 @@ def _run_stage6_migration(argv: Sequence[str]) -> int:
     if args.desktop_root:
         desktop_paths = build_desktop_app_paths_from_root(args.desktop_root)
 
-    preset = load_legacy_preset(args.legacy_preset)
+    preset = load_preset_payload(args.preset)
     service = PresetConfigService(core_path)
     profile = service.import_gui_preset(
         preset,
@@ -1159,6 +1114,14 @@ def _run_stage6_migration(argv: Sequence[str]) -> int:
     output_passphrase_info["used"] = bool(secrets_written or rotation_performed or recovered_from_backup)
     output_passphrase_info["rotated"] = bool(rotation_performed)
 
+    rotation_passphrase_info = _describe_passphrase_args(
+        inline=getattr(args, "secrets_rotate_passphrase", None),
+        file=getattr(args, "secrets_rotate_passphrase_file", None),
+        env=getattr(args, "secrets_rotate_passphrase_env", None),
+    )
+    rotation_passphrase_info["used"] = bool(rotation_performed)
+    rotation_passphrase_info["rotated"] = bool(rotation_performed)
+
     tool_metadata, metadata_warnings = _collect_stage6_tool_metadata()
     warnings.extend(metadata_warnings)
 
@@ -1189,6 +1152,7 @@ def _run_stage6_migration(argv: Sequence[str]) -> int:
                 "rotation_performed": bool(rotation_performed),
                 "rotation_iterations": args.secrets_rotate_iterations,
                 "used_default_vault": bool(used_default_vault and secrets_output_path is not None),
+                "rotation_passphrase": rotation_passphrase_info,
                 "filters": {
                     "include": include_filters,
                     "exclude": exclude_filters,
@@ -1234,11 +1198,11 @@ def main(argv: Iterable[str] | None = None) -> int:
 
         provided = sys.argv[1:]
 
-    trigger_flags = {"--core-config", "--legacy-preset", "--secrets-input", "--secrets-output"}
+    trigger_flags = {"--core-config", "--preset", "--secrets-input", "--secrets-output"}
     if any(flag in provided for flag in trigger_flags):
         return _run_stage6_migration(provided)
     raise SystemExit(
-        "Stage6 migrator wymaga flag --core-config oraz --legacy-preset. "
+        "Stage6 migrator wymaga flag --core-config oraz --preset. "
         "Funkcje marketplace zostały usunięte z tej komendy."
     )
 

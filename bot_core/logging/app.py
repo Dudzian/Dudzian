@@ -19,19 +19,14 @@ except Exception:  # pragma: no cover - json logging is optional in tests/CI
     jsonlogger = None  # type: ignore
 
 
-def _env(name: str, legacy: str | None = None) -> str | None:
-    """Read environment variable supporting the new and legacy prefixes."""
+def _env(name: str) -> str | None:
+    """Read an environment variable for the logging module."""
 
-    value = os.getenv(name)
-    if value is not None:
-        return value
-    if legacy:
-        return os.getenv(legacy)
-    return None
+    return os.getenv(name)
 
 
 _PACKAGE_ROOT = Path(__file__).resolve().parents[1]
-LOGS_DIR = Path(_env("BOT_CORE_LOG_DIR", "KRYPT_LOWCA_LOG_DIR") or (_PACKAGE_ROOT / "logs"))
+LOGS_DIR = Path(_env("BOT_CORE_LOG_DIR") or (_PACKAGE_ROOT / "logs"))
 LOGS_DIR.mkdir(parents=True, exist_ok=True)
 DEFAULT_LOG_FILE = Path(_env("BOT_CORE_LOG_FILE") or (LOGS_DIR / "trading.log"))
 
@@ -116,12 +111,12 @@ def setup_app_logging(
     if getattr(root, "_bot_core_logging_configured", False):
         return root
 
-    env_level = _env("BOT_CORE_LOG_LEVEL", "KRYPT_LOWCA_LOG_LEVEL")
+    env_level = _env("BOT_CORE_LOG_LEVEL")
     resolved_level = level or env_level or "INFO"
     if isinstance(resolved_level, str):
         resolved_level = getattr(logging, resolved_level.upper(), logging.INFO)
 
-    format_type = _env("BOT_CORE_LOG_FORMAT", "KRYPT_LOWCA_LOG_FORMAT") or "json"
+    format_type = _env("BOT_CORE_LOG_FORMAT") or "json"
     formatter = _build_formatter(format_type, service_name)
 
     file_handler = RotatingFileHandler(
@@ -138,7 +133,7 @@ def setup_app_logging(
 
     handlers: list[logging.Handler] = [file_handler, stream_handler]
 
-    vector_endpoint = _env("BOT_CORE_LOG_SHIP_VECTOR", "KRYPT_LOWCA_LOG_SHIP_VECTOR")
+    vector_endpoint = _env("BOT_CORE_LOG_SHIP_VECTOR")
     if vector_endpoint:
         vector_handler = VectorHttpHandler(vector_endpoint)
         vector_handler.setFormatter(formatter)

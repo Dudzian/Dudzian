@@ -35,9 +35,9 @@ def test_import_gui_preset_updates_core_config(core_config_copy: Path) -> None:
         history_size=128,
         profiles=("balanced",),
     )
-    profile = service.import_gui_preset(preset, profile_name="Legacy GUI")
+    profile = service.import_gui_preset(preset, profile_name="Stage6 GUI")
 
-    assert profile.name == "legacy_gui"
+    assert profile.name == "stage6_gui"
     assert pytest.approx(profile.max_daily_loss_pct, rel=1e-6) == 0.04
     assert pytest.approx(profile.max_position_pct, rel=1e-6) == 0.12
     assert pytest.approx(profile.target_volatility, rel=1e-6) == 0.18
@@ -45,22 +45,22 @@ def test_import_gui_preset_updates_core_config(core_config_copy: Path) -> None:
     assert pytest.approx(profile.hard_drawdown_pct, rel=1e-6) == 0.22
 
     updated_entrypoint = service.core_config.runtime_entrypoints["trading_gui"]
-    assert updated_entrypoint.risk_profile == "legacy_gui"
+    assert updated_entrypoint.risk_profile == "stage6_gui"
 
-    decision_override = service.core_config.decision_engine.profile_overrides["legacy_gui"]
+    decision_override = service.core_config.decision_engine.profile_overrides["stage6_gui"]
     assert pytest.approx(decision_override.max_daily_loss_pct, rel=1e-6) == 0.04
     assert pytest.approx(decision_override.max_position_ratio, rel=1e-6) == 0.12
     assert decision_override.max_open_positions == 6
     assert pytest.approx(decision_override.max_drawdown_pct, rel=1e-6) == 0.22
 
     risk_profiles = service.core_config.risk_service.profiles
-    assert risk_profiles[-1] == "legacy_gui"
+    assert risk_profiles[-1] == "stage6_gui"
 
     rendered = service.save(dry_run=True)
-    assert "legacy_gui" in rendered
+    assert "stage6_gui" in rendered
 
     payload = yaml.safe_load(rendered)
     budgets = payload["portfolio_governors"]["stage6_core"]["risk_budgets"]
-    assert "legacy_gui" in budgets
-    assert pytest.approx(budgets["legacy_gui"]["max_drawdown_pct"], rel=1e-6) == 0.22
-    assert pytest.approx(budgets["legacy_gui"]["max_leverage"], rel=1e-6) == 3.5
+    assert "stage6_gui" in budgets
+    assert pytest.approx(budgets["stage6_gui"]["max_drawdown_pct"], rel=1e-6) == 0.22
+    assert pytest.approx(budgets["stage6_gui"]["max_leverage"], rel=1e-6) == 3.5
