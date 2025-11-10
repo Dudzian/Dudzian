@@ -6,8 +6,17 @@ import argparse
 import json
 import sys
 from pathlib import Path
-from typing import Any, Mapping
+from typing import Any, Mapping, Sequence
 
+from packaging.version import InvalidVersion, Version
+
+from bot_core.marketplace import (
+    MarketplaceIndex,
+    PresetRepository,
+    build_marketplace_preset,
+    parse_preset_document,
+)
+from bot_core.marketplace.assignments import PresetAssignmentStore
 from bot_core.strategies.catalog import (
     StrategyCatalog,
     StrategyPresetProfile,
@@ -77,6 +86,11 @@ def _write_license_store(path: Path, store: Mapping[str, Any]) -> None:
     path.write_text(serialized, encoding="utf-8")
 
 
+def _assignment_store(presets_dir: Path) -> PresetAssignmentStore:
+    repository = PresetRepository(presets_dir)
+    return PresetAssignmentStore(repository.root / ".meta" / "assignments.json")
+
+
 def _build_hwid_provider(override: str | None) -> HwIdProvider | None:
     if override is None:
         return HwIdProvider()
@@ -131,13 +145,118 @@ def _command_list(args: argparse.Namespace) -> None:
     )
     profile = args.profile
     include_strategies = bool(args.include_strategies)
-    summaries = catalog.describe_presets(
-        profile=profile,
-        include_strategies=include_strategies,
-        hwid_provider=provider,
-    )
-    document = {"presets": summaries, "licenses": store.get("licenses", {})}
+    summaries = [
+        dict(entry)
+        for entry in catalog.describe_presets(
+            profile=profile,
+            include_strategies=include_strategies,
+            hwid_provider=provider,
+        )
+    ]
+
+    repository = PresetRepository(presets_dir)
+    documents = repository.load_all(signing_keys=signing_keys)
+    index = MarketplaceIndex.from_documents(documents)
+    assignments_store = PresetAssignmentStore(repository.root / ".meta" / "assignments.json")
+
+    for summary in summaries:
+        preset_id = summary.get("preset_id") or summary.get("presetId")
+        if not isinstance(preset_id, str):
+            continue
+        package = index.get(preset_id)
+        if package is None:
+            preset_entry = catalog.find(preset_id)
+            if preset_entry is not None:
+                try:
+                    document_payload = parse_preset_document(
+                        preset_entry.artifact_path.read_bytes(),
+                        source=preset_entry.artifact_path,
+                    )
+                except Exception:  # pragma: no cover - defensywne logowanie
+                    package = None
+                else:
+                    package = build_marketplace_preset(document_payload)
+        if package is None:
+            continue
+        summary["dependencies"] = [dep.to_payload() for dep in package.dependencies]
+        summary["update_channels"] = [channel.to_payload() for channel in package.update_channels]
+        summary["preferred_channel"] = package.preferred_channel
+        installed_doc = next((doc for doc in documents if doc.preset_id == preset_id), None)
+        installed_version = installed_doc.version if installed_doc else None
+        available_version = package.version
+        upgrade_available = False
+        upgrade_version = None
+        if installed_version and available_version:
+            try:
+                if Version(installed_version) < Version(available_version):
+                    upgrade_available = True
+                    upgrade_version = available_version
+            except InvalidVersion:
+                upgrade_available = False
+        summary["installed_version"] = installed_version
+        summary["available_version"] = available_version
+        summary["upgrade_available"] = upgrade_available
+        summary["upgrade_version"] = upgrade_version
+        summary["assigned_portfolios"] = list(assignments_store.assigned_portfolios(preset_id))
+        license_info = summary.get("license")
+        if isinstance(license_info, Mapping):
+            metadata = license_info.get("metadata")
+            if isinstance(metadata, Mapping):
+                validation = metadata.get("validation")
+                if isinstance(validation, Mapping):
+                    warning_messages = validation.get("warning_messages")
+                    if not isinstance(warning_messages, Sequence) or isinstance(warning_messages, (str, bytes)):
+                        warning_messages = validation.get("warningMessages")
+                    if isinstance(warning_messages, Sequence) and not isinstance(warning_messages, (str, bytes)):
+                        summary["warning_messages"] = [
+                            str(item)
+                            for item in warning_messages
+                            if isinstance(item, str) and item.strip()
+                        ]
+                    warning_codes = validation.get("warning_codes")
+                    if not isinstance(warning_codes, Sequence) or isinstance(warning_codes, (str, bytes)):
+                        warning_codes = validation.get("warningCodes")
+                    if isinstance(warning_codes, Sequence) and not isinstance(warning_codes, (str, bytes)):
+                        summary["warnings"] = [
+                            str(item)
+                            for item in warning_codes
+                            if isinstance(item, str) and item.strip()
+                        ]
+        summary.setdefault("warnings", [])
+        summary.setdefault("warning_messages", [])
+        summary["warningMessages"] = list(summary["warning_messages"])
+
+    document = {
+        "presets": summaries,
+        "licenses": store.get("licenses", {}),
+        "assignments": assignments_store.all_assignments(),
+    }
     json.dump(document, sys.stdout, ensure_ascii=False, indent=2, sort_keys=True)
+    sys.stdout.write("\n")
+
+
+def _command_plan(args: argparse.Namespace) -> None:
+    presets_dir = Path(args.presets_dir)
+    signing_keys = _load_signing_keys(args.signing_key or [], args.signing_key_file or [])
+    repository = PresetRepository(presets_dir)
+    documents = repository.load_all(signing_keys=signing_keys)
+
+    catalog_docs: dict[str, Any] = {}
+    for document in documents:
+        if document.preset_id:
+            catalog_docs[document.preset_id] = document
+
+    index = MarketplaceIndex.from_documents(list(catalog_docs.values()))
+    installed_versions = {
+        doc.preset_id: doc.version
+        for doc in documents
+        if doc.preset_id and doc.version
+    }
+    selection = [value.strip() for value in (args.preset_id or []) if value and value.strip()]
+    plan = index.plan_installation(selection, installed_versions=installed_versions)
+    payload = plan.to_payload()
+    payload["selection"] = selection
+    json.dump(payload, sys.stdout, ensure_ascii=False, indent=2, sort_keys=True)
     sys.stdout.write("\n")
 
 
@@ -195,6 +314,30 @@ def _command_deactivate(args: argparse.Namespace) -> None:
     sys.stdout.write("\n")
 
 
+def _command_assign(args: argparse.Namespace) -> None:
+    presets_dir = Path(args.presets_dir)
+    store = _assignment_store(presets_dir)
+    assigned = store.assign(args.preset_id, args.portfolio_id)
+    result = {
+        "preset_id": args.preset_id,
+        "assigned_portfolios": list(assigned),
+    }
+    json.dump(result, sys.stdout, ensure_ascii=False, indent=2, sort_keys=True)
+    sys.stdout.write("\n")
+
+
+def _command_unassign(args: argparse.Namespace) -> None:
+    presets_dir = Path(args.presets_dir)
+    store = _assignment_store(presets_dir)
+    assigned = store.unassign(args.preset_id, args.portfolio_id)
+    result = {
+        "preset_id": args.preset_id,
+        "assigned_portfolios": list(assigned),
+    }
+    json.dump(result, sys.stdout, ensure_ascii=False, indent=2, sort_keys=True)
+    sys.stdout.write("\n")
+
+
 def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--presets-dir", default="data/strategies", help="Katalog z plikami presetów JSON")
@@ -228,6 +371,25 @@ def _build_parser() -> argparse.ArgumentParser:
     deactivate_parser = subparsers.add_parser("deactivate", help="Dezaktywacja licencji presetu")
     deactivate_parser.add_argument("--preset-id", required=True, help="Identyfikator presetu")
 
+    assign_parser = subparsers.add_parser("assign", help="Przydziela preset do portfela")
+    assign_parser.add_argument("--preset-id", required=True, help="Identyfikator presetu")
+    assign_parser.add_argument("--portfolio-id", required=True, help="Identyfikator portfela")
+
+    unassign_parser = subparsers.add_parser("unassign", help="Usuwa powiązanie presetu z portfelem")
+    unassign_parser.add_argument("--preset-id", required=True, help="Identyfikator presetu")
+    unassign_parser.add_argument("--portfolio-id", required=True, help="Identyfikator portfela")
+
+    plan_parser = subparsers.add_parser(
+        "plan",
+        help="Oblicza plan instalacji presetów wraz z zależnościami i aktualizacjami",
+    )
+    plan_parser.add_argument(
+        "--preset-id",
+        action="append",
+        required=True,
+        help="Identyfikator presetu (można podać wiele razy)",
+    )
+
     return parser
 
 
@@ -240,6 +402,12 @@ def main(argv: list[str] | None = None) -> None:
         _command_activate(args)
     elif args.command == "deactivate":
         _command_deactivate(args)
+    elif args.command == "assign":
+        _command_assign(args)
+    elif args.command == "unassign":
+        _command_unassign(args)
+    elif args.command == "plan":
+        _command_plan(args)
     else:  # pragma: no cover - argparse zapewnia poprawność
         parser.error(f"Nieznane polecenie: {args.command}")
 

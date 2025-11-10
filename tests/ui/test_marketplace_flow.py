@@ -39,6 +39,14 @@ def test_marketplace_service_lists_and_installs(tmp_path: Path) -> None:
     selected = next(item for item in payloads if item["presetId"] == entry.preset_id)
     assert selected["installed"] is True
     assert selected["installedVersion"] == entry.version
+    assert "warnings" in selected
+    assert "warningMessages" in selected
+    license_payload = selected.get("license")
+    assert isinstance(license_payload, dict)
+    assert "seat_summary" in license_payload
+    validation_payload = license_payload.get("validation")
+    if validation_payload is not None:
+        assert "warning_messages" in validation_payload
 
     exported_payload, blob = service.export_preset(entry.preset_id)
     assert exported_payload["metadata"]["id"] == entry.preset_id
@@ -50,3 +58,9 @@ def test_marketplace_service_lists_and_installs(tmp_path: Path) -> None:
     copy_path.write_bytes((MARKETPLACE_DIR / "presets" / "mean_reversion_demo.json").read_bytes())
     reinstall = service.install_from_file(copy_path)
     assert reinstall.success is True
+
+    plan = service.plan_installation([entry.preset_id])
+    assert plan.install_order
+    plan_payload = service.plan_installation_payload([entry.preset_id])
+    assert plan_payload["selection"] == [entry.preset_id]
+    assert plan_payload["installOrder"]

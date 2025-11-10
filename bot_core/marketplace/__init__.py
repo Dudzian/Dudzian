@@ -8,6 +8,16 @@ from .exchange_presets import (
     reconcile_exchange_presets,
     validate_exchange_presets,
 )
+from .api import (
+    MarketplaceIndex,
+    MarketplacePlan,
+    MarketplacePreset,
+    PresetDependency,
+    PresetUpdateChannel,
+    PresetUpdateDirective,
+    UpdateStep,
+    build_marketplace_preset,
+)
 from .presets import (
     PresetDocument,
     PresetRepository,
@@ -24,6 +34,13 @@ from .presets import (
 from .signed import MarketplaceSyncResult, SignedPresetMarketplace
 
 __all__ = [
+    "MarketplaceIndex",
+    "MarketplacePlan",
+    "MarketplacePreset",
+    "PresetDependency",
+    "PresetUpdateChannel",
+    "PresetUpdateDirective",
+    "UpdateStep",
     "ExchangePresetSpec",
     "ExchangePresetValidationResult",
     "generate_exchange_presets",
@@ -41,6 +58,7 @@ __all__ = [
     "serialize_preset_document",
     "sign_preset_payload",
     "verify_preset_signature",
+    "build_marketplace_preset",
     "SignedPresetMarketplace",
     "MarketplaceSyncResult",
 ]

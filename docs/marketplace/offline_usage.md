@@ -29,6 +29,7 @@ Do pracy z presetami służy zaktualizowane narzędzie
 | `package` | Buduje podpisany preset na podstawie specyfikacji JSON/YAML. |
 | `validate` | Weryfikuje podpisy oraz fingerprint licencyjny paczek. |
 | `list`/`show` | Przegląda lokalny katalog marketplace. |
+| `plan` | Oblicza plan instalacji presetów wraz z zależnościami i aktualizacjami. |
 
 Przykład generowania podpisanego presetu:
 

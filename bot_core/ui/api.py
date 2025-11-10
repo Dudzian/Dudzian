@@ -8,8 +8,17 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Callable, Mapping, MutableMapping, Sequence
 
+from packaging.version import InvalidVersion, Version
+
 from bot_core.ai import parse_explainability_payload
-from bot_core.marketplace import PresetRepository
+from bot_core.marketplace import (
+    MarketplaceIndex,
+    MarketplacePlan,
+    PresetDocument,
+    PresetRepository,
+    build_marketplace_preset,
+)
+from bot_core.marketplace.assignments import PresetAssignmentStore
 from bot_core.runtime.journal import TradingDecisionJournal
 from bot_core.strategies.installer import (
     MarketplaceInstallResult,
@@ -129,7 +138,16 @@ class MarketplacePresetView:
     signature_verified: bool
     fingerprint_verified: bool | None
     issues: Sequence[str]
+    warnings: Sequence[str] = field(default_factory=tuple)
+    warning_messages: Sequence[str] = field(default_factory=tuple)
     installed_version: str | None = None
+    dependencies: Sequence[Mapping[str, object]] = field(default_factory=tuple)
+    update_channels: Sequence[Mapping[str, object]] = field(default_factory=tuple)
+    preferred_channel: str | None = None
+    assigned_portfolios: Sequence[str] = field(default_factory=tuple)
+    upgrade_available: bool = False
+    upgrade_version: str | None = None
+    license: Mapping[str, Any] | None = None
 
     def to_payload(self) -> dict[str, Any]:
         return {
@@ -144,9 +162,28 @@ class MarketplacePresetView:
             "signatureVerified": self.signature_verified,
             "fingerprintVerified": self.fingerprint_verified,
             "issues": list(self.issues),
+            "warnings": list(self.warnings),
+            "warningMessages": list(self.warning_messages),
             "installedVersion": self.installed_version,
             "installed": self.installed_version is not None,
+            "dependencies": [dict(entry) for entry in self.dependencies],
+            "updateChannels": [dict(entry) for entry in self.update_channels],
+            "preferredChannel": self.preferred_channel,
+            "assignedPortfolios": list(self.assigned_portfolios),
+            "upgradeAvailable": self.upgrade_available,
+            "upgradeVersion": self.upgrade_version,
+            "license": _to_json_compatible(self.license) if self.license is not None else None,
         }
+
+
+def _to_json_compatible(value: Any) -> Any:
+    if value is None:
+        return None
+    if isinstance(value, Mapping):
+        return {str(key): _to_json_compatible(val) for key, val in value.items()}
+    if isinstance(value, Sequence) and not isinstance(value, (str, bytes)):
+        return [_to_json_compatible(item) for item in value]
+    return value
 
 
 def _extract_payload(record: Mapping[str, str]) -> str | None:
@@ -521,6 +558,17 @@ class MarketplaceService:
     def __init__(self, installer: MarketplacePresetInstaller, repository: PresetRepository) -> None:
         self._installer = installer
         self._repository = repository
+        meta_root = repository.root / ".meta"
+        self._assignments = PresetAssignmentStore(meta_root / "assignments.json")
+
+    @staticmethod
+    def _normalize_selection(preset_ids: Sequence[object]) -> list[str]:
+        normalized: list[str] = []
+        for value in preset_ids:
+            text = str(value).strip()
+            if text:
+                normalized.append(text)
+        return normalized
 
     def list_presets(self) -> list[MarketplacePresetView]:
         installed_docs = {doc.preset_id: doc for doc in self._repository.load_all()}
@@ -528,6 +576,62 @@ class MarketplaceService:
         for preset in self._installer.list_available():
             preview = self._installer.preview_installation(preset.preset_id)
             installed_doc = installed_docs.get(preset.preset_id)
+            try:
+                catalog_doc = self._installer.load_catalog_document(preset.preset_id)
+            except Exception:  # pragma: no cover - katalog może nie zawierać presetu
+                catalog_doc = installed_doc
+
+            marketplace_entry = None
+            if catalog_doc is not None:
+                marketplace_entry = build_marketplace_preset(catalog_doc)
+            elif installed_doc is not None:
+                marketplace_entry = build_marketplace_preset(installed_doc)
+
+            dependencies: Sequence[Mapping[str, object]] = ()
+            update_channels: Sequence[Mapping[str, object]] = ()
+            preferred_channel: str | None = None
+            available_version = preset.version
+            if marketplace_entry is not None:
+                dependencies = [dep.to_payload() for dep in marketplace_entry.dependencies]
+                update_channels = [channel.to_payload() for channel in marketplace_entry.update_channels]
+                preferred_channel = marketplace_entry.preferred_channel
+                available_version = marketplace_entry.version or available_version
+
+            installed_version = installed_doc.version if installed_doc else None
+            upgrade_available = False
+            upgrade_version = None
+            if available_version and installed_version:
+                try:
+                    if Version(installed_version) < Version(available_version):
+                        upgrade_available = True
+                        upgrade_version = available_version
+                except InvalidVersion:
+                    upgrade_available = False
+
+            assigned = self._assignments.assigned_portfolios(preset.preset_id)
+
+            license_payload: Mapping[str, Any] | None
+            if isinstance(preview.license_payload, Mapping):
+                license_payload = dict(preview.license_payload)
+            else:
+                license_payload = None
+
+            warning_messages: tuple[str, ...] = ()
+            if license_payload:
+                validation_section = license_payload.get("validation")
+                if isinstance(validation_section, Mapping):
+                    messages = validation_section.get("warning_messages")
+                    if not isinstance(messages, Sequence) or isinstance(messages, (str, bytes)):
+                        messages = validation_section.get("warningMessages")
+                    if isinstance(messages, Sequence) and not isinstance(messages, (str, bytes)):
+                        normalized_messages: list[str] = []
+                        for item in messages:
+                            if isinstance(item, str):
+                                text = item.strip()
+                                if text:
+                                    normalized_messages.append(text)
+                        warning_messages = tuple(normalized_messages)
+
             views.append(
                 MarketplacePresetView(
                     preset_id=preset.preset_id,
@@ -541,7 +645,16 @@ class MarketplaceService:
                     signature_verified=preview.signature_verified,
                     fingerprint_verified=preview.fingerprint_verified,
                     issues=preview.issues,
+                    warnings=preview.warnings,
+                    warning_messages=warning_messages,
                     installed_version=installed_doc.version if installed_doc else None,
+                    dependencies=dependencies,
+                    update_channels=update_channels,
+                    preferred_channel=preferred_channel,
+                    assigned_portfolios=assigned,
+                    upgrade_available=upgrade_available,
+                    upgrade_version=upgrade_version,
+                    license=license_payload,
                 )
             )
         return views
@@ -561,6 +674,52 @@ class MarketplaceService:
     def export_preset(self, preset_id: str, *, format: str = "json") -> tuple[dict[str, Any], bytes]:
         document, payload = self._repository.export_preset(preset_id, format=format)
         return document.payload, payload
+
+    def assign_to_portfolio(self, preset_id: str, portfolio_id: str) -> tuple[str, ...]:
+        return self._assignments.assign(preset_id, portfolio_id)
+
+    def unassign_from_portfolio(self, preset_id: str, portfolio_id: str) -> tuple[str, ...]:
+        return self._assignments.unassign(preset_id, portfolio_id)
+
+    def assignments_payload(self) -> Mapping[str, tuple[str, ...]]:
+        return self._assignments.all_assignments()
+
+    def plan_installation(self, preset_ids: Sequence[str]) -> MarketplacePlan:
+        selection = self._normalize_selection(preset_ids)
+        documents: list[PresetDocument] = []
+        seen: set[str] = set()
+
+        for descriptor in self._installer.list_available():
+            preset_id = getattr(descriptor, "preset_id", None)
+            if not isinstance(preset_id, str) or not preset_id.strip():
+                continue
+            try:
+                document = self._installer.load_catalog_document(preset_id)
+            except Exception:
+                continue
+            if not document.preset_id or document.preset_id in seen:
+                continue
+            documents.append(document)
+            seen.add(document.preset_id)
+
+        installed_docs = self._repository.load_all()
+        installed_versions: dict[str, str] = {}
+        for document in installed_docs:
+            if document.preset_id and document.preset_id not in seen:
+                documents.append(document)
+                seen.add(document.preset_id)
+            if document.preset_id and document.version:
+                installed_versions[document.preset_id] = document.version
+
+        index = MarketplaceIndex.from_documents(documents)
+        return index.plan_installation(selection, installed_versions=installed_versions)
+
+    def plan_installation_payload(self, preset_ids: Sequence[str]) -> Mapping[str, object]:
+        selection = self._normalize_selection(preset_ids)
+        plan = self.plan_installation(selection)
+        payload = dict(plan.to_payload())
+        payload["selection"] = selection
+        return payload
 
 
 __all__ = [

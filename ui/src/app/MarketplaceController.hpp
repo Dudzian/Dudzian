@@ -41,6 +41,8 @@ public:
     Q_INVOKABLE bool refreshPresets();
     Q_INVOKABLE bool activatePreset(const QString& presetId, const QVariantMap& licensePayload);
     Q_INVOKABLE bool deactivatePreset(const QString& presetId);
+    Q_INVOKABLE bool assignPresetToPortfolio(const QString& presetId, const QString& portfolioId);
+    Q_INVOKABLE bool unassignPresetFromPortfolio(const QString& presetId, const QString& portfolioId);
     Q_INVOKABLE QVariantList presetsForCategory(const QString& category) const;
     Q_INVOKABLE QVariantMap presetDetails(const QString& presetId) const;
 
