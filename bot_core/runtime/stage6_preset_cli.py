@@ -735,26 +735,23 @@ def _configure_migration_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument(
         "--legacy-security-file",
-        help=(
-            "(wyłączone) Obsługa plików SecurityManager została przeniesiona do pakietu "
-            "'dudzian-migrate' – użycie flagi zakończy się błędem"
-        ),
+        help=argparse.SUPPRESS,
     )
     parser.add_argument(
         "--legacy-security-salt",
-        help="(wyłączone) patrz docs/migrations/2024-legacy-storage-removal.md",
+        help=argparse.SUPPRESS,
     )
     parser.add_argument(
         "--legacy-security-passphrase",
-        help="(wyłączone) patrz docs/migrations/2024-legacy-storage-removal.md",
+        help=argparse.SUPPRESS,
     )
     parser.add_argument(
         "--legacy-security-passphrase-file",
-        help="(wyłączone) patrz docs/migrations/2024-legacy-storage-removal.md",
+        help=argparse.SUPPRESS,
     )
     parser.add_argument(
         "--legacy-security-passphrase-env",
-        help="(wyłączone) patrz docs/migrations/2024-legacy-storage-removal.md",
+        help=argparse.SUPPRESS,
     )
     parser.add_argument(
         "--desktop-root",
