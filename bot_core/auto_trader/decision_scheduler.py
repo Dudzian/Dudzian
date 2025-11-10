@@ -5,13 +5,26 @@ import asyncio
 import logging
 import threading
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Protocol
 
 
 LOGGER = logging.getLogger(__name__)
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
-    from .app import AutoTrader
+    from .app import AutoTrader, DecisionCycleReport
+
+
+class AutoTraderSchedulerHooks(Protocol):
+    """Lifecycle callbacks invoked by :class:`AutoTraderDecisionScheduler`."""
+
+    def on_bootstrap(self, scheduler: "AutoTraderDecisionScheduler") -> None:  # pragma: no cover - interface only
+        """Execute bootstrap logic right before the first cycle."""
+
+    def on_cycle_success(self, report: "DecisionCycleReport") -> None:  # pragma: no cover - interface only
+        """Handle a successful decision cycle."""
+
+    def on_cycle_failure(self, exc: BaseException) -> float | None:  # pragma: no cover - interface only
+        """Handle a failed cycle and optionally override the restart delay."""
 
 
 @dataclass(slots=True)
@@ -21,6 +34,9 @@ class AutoTraderDecisionScheduler:
     trader: "AutoTrader"
     interval_s: float = 30.0
     loop: asyncio.AbstractEventLoop | None = None
+    hooks: AutoTraderSchedulerHooks | None = None
+    restart_backoff_s: float = 1.0
+    restart_backoff_max_s: float = 30.0
     _task: asyncio.Task[None] | None = field(init=False, default=None, repr=False)
     _stop_event: asyncio.Event | None = field(init=False, default=None, repr=False)
     _thread: threading.Thread | None = field(init=False, default=None, repr=False)
@@ -59,12 +75,25 @@ class AutoTraderDecisionScheduler:
         self._thread_stop = stop_event
 
         def _worker() -> None:
+            self._invoke_bootstrap_hook()
+            retry_delay = 0.0
+            base_backoff = max(0.0, float(self.restart_backoff_s) or 0.0)
+            max_backoff = max(base_backoff or 1.0, float(self.restart_backoff_max_s) or 1.0)
             while not stop_event.is_set():
+                if retry_delay > 0.0:
+                    if stop_event.wait(retry_delay):
+                        break
+                    retry_delay = 0.0
                 try:
-                    self.trader.run_cycle_once()
-                except Exception:  # pragma: no cover - defensive guard
+                    report = self.trader.run_cycle_once()
+                except Exception as exc:  # pragma: no cover - defensive guard
                     LOGGER.exception("AutoTraderDecisionScheduler cycle failed")
+                    retry_delay = self._handle_failure(exc, max_backoff=max_backoff)
+                    if retry_delay <= 0.0:
+                        retry_delay = min(max_backoff, base_backoff or 1.0)
+                    continue
                 else:
+                    self._handle_success(report)
                     self._drain_model_change_events()
                 if stop_event.wait(max(0.0, float(self.interval_s))):
                     break
@@ -113,12 +142,29 @@ class AutoTraderDecisionScheduler:
         assert self._stop_event is not None
         stop_event = self._stop_event
         interval = max(0.0, float(self.interval_s))
+        retry_delay = 0.0
+        base_backoff = max(0.0, float(self.restart_backoff_s) or 0.0)
+        max_backoff = max(base_backoff or 1.0, float(self.restart_backoff_max_s) or 1.0)
+        self._invoke_bootstrap_hook()
         while not stop_event.is_set():
+            if retry_delay > 0.0:
+                try:
+                    await asyncio.wait_for(stop_event.wait(), timeout=retry_delay)
+                except asyncio.TimeoutError:
+                    pass
+                else:
+                    break
+                retry_delay = 0.0
             try:
-                await asyncio.to_thread(self.trader.run_cycle_once)
-            except Exception:  # pragma: no cover - defensive guard
+                report = await asyncio.to_thread(self.trader.run_cycle_once)
+            except Exception as exc:  # pragma: no cover - defensive guard
                 LOGGER.exception("AutoTraderDecisionScheduler async cycle failed")
+                retry_delay = self._handle_failure(exc, max_backoff=max_backoff)
+                if retry_delay <= 0.0:
+                    retry_delay = min(max_backoff, base_backoff or 1.0)
+                continue
             else:
+                self._handle_success(report)
                 self._drain_model_change_events()
             try:
                 await asyncio.wait_for(stop_event.wait(), timeout=interval)
@@ -126,4 +172,43 @@ class AutoTraderDecisionScheduler:
                 continue
 
 
-__all__ = ["AutoTraderDecisionScheduler"]
+    def _invoke_bootstrap_hook(self) -> None:
+        hooks = self.hooks
+        if hooks is None:
+            return
+        try:
+            hooks.on_bootstrap(self)
+        except Exception:  # pragma: no cover - defensive guard
+            LOGGER.exception("AutoTraderDecisionScheduler bootstrap hook failed")
+
+    def _handle_success(self, report: "DecisionCycleReport") -> None:
+        hooks = self.hooks
+        if hooks is None:
+            return
+        try:
+            hooks.on_cycle_success(report)
+        except Exception:  # pragma: no cover - lifecycle hook must not break scheduling
+            LOGGER.exception("AutoTraderDecisionScheduler success hook failed")
+
+    def _handle_failure(self, exc: BaseException, *, max_backoff: float) -> float:
+        hooks = self.hooks
+        delay = max(0.0, float(self.restart_backoff_s) or 0.0)
+        if hooks is None:
+            return min(delay or max_backoff, max_backoff)
+        try:
+            override = hooks.on_cycle_failure(exc)
+        except Exception:  # pragma: no cover - lifecycle hook must not break scheduling
+            LOGGER.exception("AutoTraderDecisionScheduler failure hook failed")
+            return min(delay or max_backoff, max_backoff)
+        if override is None:
+            return min(delay or max_backoff, max_backoff)
+        try:
+            resolved = max(0.0, float(override))
+        except (TypeError, ValueError):  # pragma: no cover - defensive conversion
+            resolved = delay
+        if resolved <= 0.0:
+            return min(max_backoff, delay or max_backoff)
+        return min(resolved, max_backoff)
+
+
+__all__ = ["AutoTraderDecisionScheduler", "AutoTraderSchedulerHooks"]
