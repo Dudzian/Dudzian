@@ -6,6 +6,8 @@ from typing import Callable, Iterator, Tuple
 
 import pytest
 
+from tests.ui._qt import require_pyside6
+
 pytestmark = pytest.mark.qml
 
 from tests.utils.libgl import ensure_libgl_available
@@ -18,7 +20,7 @@ except RuntimeError as exc:  # pragma: no cover - brak możliwości instalacji l
         allow_module_level=True,
     )
 
-PySide6 = pytest.importorskip("PySide6", reason="Wymagany PySide6 do testów UI")
+PySide6 = require_pyside6()
 
 qt_root = Path(PySide6.__file__).resolve().parent
 os.environ.setdefault("QML2_IMPORT_PATH", str(qt_root / "Qt" / "qml"))

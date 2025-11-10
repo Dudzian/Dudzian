@@ -9,6 +9,7 @@ Od wersji 2024.09 runtime usuwa wsparcie dla automatycznego wczytywania zasobów
 3. Po pomyślnym zakończeniu usuń oryginalny plik `~/.kryptolowca/api_credentials.json`. Runtime zweryfikuje brak pliku przy pierwszym uruchomieniu.
 4. Nowa lokalizacja danych konfiguracyjnych to katalog `~/.dudzian/`. Możesz nadpisać go przez zmienną `DUDZIAN_HOME`.
 5. Środowiska headless zapisują zaszyfrowany magazyn (`secrets.age`) w `~/.dudzian/` (również respektując `DUDZIAN_HOME`).
+6. Nowy format magazynu wymaga pól `key_id` oraz `secret`; dotychczasowe klucze `api_key` / `api_secret` są odrzucane przez Stage6 i muszą zostać przemapowane podczas migracji.
 
 ## 2. Ustawienia UI
 

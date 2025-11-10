@@ -48,6 +48,7 @@
 * `tests/ui/test_setup_wizard.py` – weryfikuje kroki kreatora, aktualizację list giełd/instrumentów i zapis preferencji UI.
 * `tests/ui/test_portfolio_dashboard.py` – sprawdza przetwarzanie ekspozycji i historii P&L oraz renderowanie alertów.
 * Uruchomienie: `QT_QPA_PLATFORM=offscreen pytest tests/ui/test_setup_wizard.py tests/ui/test_portfolio_dashboard.py`.
+* Runbook testów QML z opisem artefaktów: [qml_testing.md](qml_testing.md).
 
 ## Wskazówki QA
 

@@ -41,7 +41,7 @@
                   "paper_fee_rate": 0.0015
                 },
                 "credentials": {
-                  "api_key": null,
+                  "key_id": null,
                   "secret": null
                 }
               }
@@ -56,7 +56,7 @@
                   "testnet": true
                 },
                 "credentials": {
-                  "api_key": "${BITFINEX_TESTNET_KEY}",
+                  "key_id": "${BITFINEX_TESTNET_KEY}",
                   "secret": "${BITFINEX_TESTNET_SECRET}"
                 }
               }
@@ -77,7 +77,7 @@
                   }
                 },
                 "credentials": {
-                  "api_key": "${BITFINEX_LIVE_KEY}",
+                  "key_id": "${BITFINEX_LIVE_KEY}",
                   "secret": "${BITFINEX_LIVE_SECRET}"
                 }
               }

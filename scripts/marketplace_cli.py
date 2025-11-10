@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 import sys
 from datetime import datetime
 from pathlib import Path
@@ -38,6 +39,10 @@ from bot_core.marketplace import (  # noqa: E402
     sign_preset_payload,
     reconcile_exchange_presets,
     validate_exchange_presets,
+)
+
+_PACKAGE_VERSION_REF_PATTERN = re.compile(
+    r"^[a-z0-9][a-z0-9._-]{2,63}@" r"[0-9]+\.[0-9]+\.[0-9]+(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?$"
 )
 
 _MARKETPLACE_DIR = REPO_ROOT / "config" / "marketplace"
@@ -154,6 +159,60 @@ def _load_preset_spec(path: Path) -> Mapping[str, Any]:
     return dict(payload)
 
 
+def _validate_release_metadata(
+    catalog: MarketplaceCatalog,
+    repo_root: Path,
+) -> tuple[list[str], list[str]]:
+    """Waliduje dodatkowe pola release/versioning katalogu."""
+
+    errors: list[str] = []
+    warnings: list[str] = []
+    presets_root = repo_root / "config" / "marketplace" / "presets"
+
+    for package in catalog.packages:
+        review_status = (package.release.review_status or "").strip().lower()
+        if review_status not in {"", "pending", "in_review", "approved", "rejected"}:
+            warnings.append(
+                f"{package.package_id}: nieznany status recenzji '{package.release.review_status}'."
+            )
+        if review_status == "approved":
+            if not package.release.reviewers:
+                errors.append(
+                    f"{package.package_id}: zatwierdzona paczka wymaga listy recenzentów."
+                )
+            if package.release.approved_at is None:
+                errors.append(
+                    f"{package.package_id}: brak pola approved_at dla zatwierdzonej paczki."
+                )
+
+        for entry in package.exchange_compatibility:
+            status = (entry.status or "").strip().lower()
+            if status in {"certified", "production"} and entry.last_verified_at is None:
+                errors.append(
+                    f"{package.package_id}: wpis kompatybilności {entry.exchange} w statusie '{entry.status}' wymaga last_verified_at."
+                )
+
+        for ref in package.versioning.supersedes + package.versioning.superseded_by:
+            if not _PACKAGE_VERSION_REF_PATTERN.match(ref):
+                errors.append(
+                    f"{package.package_id}: niepoprawny format odwołania wersji '{ref}'."
+                )
+
+        source = package.versioning.source
+        if source:
+            spec_path = presets_root / source
+            if not spec_path.exists():
+                errors.append(
+                    f"{package.package_id}: wskazana ścieżka presetu '{source}' nie istnieje."
+                )
+        else:
+            warnings.append(
+                f"{package.package_id}: brak pola versioning.source – nie będzie możliwe automatyczne odtworzenie presetu."
+            )
+
+    return errors, warnings
+
+
 def _cmd_list(repo: MarketplaceRepository, _: argparse.Namespace) -> int:
     catalog = repo.load_catalog()
     if not catalog.packages:
@@ -208,6 +267,12 @@ def _cmd_validate(repo: MarketplaceRepository, args: argparse.Namespace) -> int:
         for error in result.errors:
             failures += 1
             print(f"  ✖ {error}")
+    rel_errors, rel_warnings = _validate_release_metadata(catalog, repo.root)
+    for warning in rel_warnings:
+        print(f"[META] ⚠ {warning}")
+    for error in rel_errors:
+        failures += 1
+        print(f"[META] ✖ {error}")
     return 0 if failures == 0 else 2
 
 
@@ -538,6 +603,9 @@ def main(argv: Sequence[str] | None = None) -> int:
     repo = MarketplaceRepository(Path(args.root))
     repo.ensure_initialized()
     return args.func(repo, args)
+
+
+validate_release_metadata = _validate_release_metadata
 
 
 if __name__ == "__main__":  # pragma: no cover - CLI entrypoint

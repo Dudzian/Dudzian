@@ -8,7 +8,7 @@ paper:
     paper_initial_cash: 10000
     paper_cash_asset: PLN
   credentials:
-    api_key: null
+    key_id: null
     secret: null
 
 testnet:
@@ -17,7 +17,7 @@ testnet:
     mode: spot
     testnet: true
   credentials:
-    api_key: ${ZONDA_TESTNET_KEY}
+    key_id: ${ZONDA_TESTNET_KEY}
     secret: ${ZONDA_TESTNET_SECRET}
 
 live:
@@ -30,5 +30,5 @@ live:
         max_attempts: 3
         base_delay: 1.0
   credentials:
-    api_key: ${ZONDA_LIVE_KEY}
+    key_id: ${ZONDA_LIVE_KEY}
     secret: ${ZONDA_LIVE_SECRET}

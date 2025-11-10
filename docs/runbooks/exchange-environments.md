@@ -26,6 +26,11 @@ The output mirrors the structure of the YAML file, making it easy to
 verify watchdog settings, simulator parameters and native adapter
 overrides before switching the runtime.
 
+> **Uwaga:** Sekcja `credentials` w profilach wymaga pól `key_id`,
+> `secret` oraz opcjonalnie `passphrase`. Nazwy `key` lub `api_key`
+> są traktowane jako legacy i powodują błąd walidacji podczas
+> ładowania środowiska lub uruchamiania `health-check`.
+
 When the YAML file provides `defaults.environment`, the `health-check`
 command can consume the configuration without explicitly specifying the
 environment name:

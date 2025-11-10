@@ -6,6 +6,7 @@ import functools
 import gzip
 import json
 import logging
+import math
 import random
 import socket
 import threading
@@ -31,6 +32,8 @@ from bot_core.observability.metrics import (
     CounterMetric,
     GaugeMetric,
     HistogramMetric,
+    HistogramState,
+    LabelTuple,
     MetricsRegistry,
     get_global_metrics_registry,
 )
@@ -116,6 +119,296 @@ _DEFAULT_BUFFER_SIZE = 64
 _DEFAULT_LATENCY_BUCKETS = (0.05, 0.1, 0.25, 0.5, 1.0, 2.0, 5.0, 10.0)
 _DEFAULT_RECONNECT_BUCKETS = (0.1, 0.25, 0.5, 1.0, 2.5, 5.0, 10.0, 30.0, 60.0)
 _DEFAULT_LAG_BUCKETS = (0.01, 0.05, 0.1, 0.25, 0.5, 1.0, 2.0, 5.0)
+
+
+def _labels_tuple_to_dict(labels: LabelTuple) -> dict[str, str]:
+    return {key: value for key, value in labels}
+
+
+def _matches_labels(source: Mapping[str, str], expected: Mapping[str, str]) -> bool:
+    for key, value in expected.items():
+        if source.get(key) != value:
+            return False
+    return True
+
+
+def _histogram_quantile(*, snapshot: HistogramState, quantile: float) -> float | None:
+    total = snapshot.count
+    if total <= 0 or quantile < 0 or quantile > 1:
+        return None
+    target = quantile * total
+    cumulative = 0.0
+    previous_cumulative = 0.0
+    previous_boundary = snapshot.minimum if snapshot.minimum is not None else 0.0
+    for boundary in sorted(snapshot.counts):
+        cumulative = float(snapshot.counts.get(boundary, 0))
+        bucket_count = cumulative - previous_cumulative
+        if cumulative >= target:
+            if bucket_count <= 0:
+                if math.isinf(boundary):
+                    if snapshot.maximum is None:
+                        return previous_boundary
+                    return float(snapshot.maximum)
+                return float(boundary)
+            ratio = (target - previous_cumulative) / bucket_count
+            lower = previous_boundary
+            upper = float(boundary)
+            if math.isinf(upper):
+                upper = (
+                    float(snapshot.maximum)
+                    if snapshot.maximum is not None
+                    else lower
+                )
+            interpolated = lower + max(0.0, min(1.0, ratio)) * (upper - lower)
+            return interpolated
+        previous_cumulative = cumulative
+        previous_boundary = float(boundary)
+    if snapshot.maximum is not None:
+        return float(snapshot.maximum)
+    return None
+
+
+def _summarize_histogram_state(state: HistogramState) -> dict[str, float | None]:
+    if state.count <= 0:
+        return {"count": 0, "avg": None, "p50": None, "p95": None, "max": None}
+    average = state.sum / state.count if state.count else None
+    p50 = _histogram_quantile(snapshot=state, quantile=0.5)
+    p95 = _histogram_quantile(snapshot=state, quantile=0.95)
+    maximum = float(state.maximum) if state.maximum is not None else None
+    return {
+        "count": state.count,
+        "avg": average,
+        "p50": p50,
+        "p95": p95,
+        "max": maximum,
+    }
+
+
+def _histogram_summary(
+    metric: HistogramMetric,
+    *,
+    labels: Mapping[str, str],
+) -> dict[str, float | None]:
+    state = metric.snapshot(labels=labels)
+    return _summarize_histogram_state(state)
+
+
+def _counter_total(
+    metric: CounterMetric,
+    *,
+    base_labels: Mapping[str, str],
+    extra: Mapping[str, str] | None = None,
+) -> float:
+    total = 0.0
+    for labels_tuple, value in metric.samples():
+        labels_dict = _labels_tuple_to_dict(labels_tuple)
+        if not _matches_labels(labels_dict, base_labels):
+            continue
+        if extra and not _matches_labels(labels_dict, extra):
+            continue
+        total += float(value)
+    return total
+
+
+def _group_counter(
+    metric: CounterMetric,
+    *,
+    base_labels: Mapping[str, str],
+    key: str,
+) -> dict[str, float]:
+    grouped: dict[str, float] = {}
+    for labels_tuple, value in metric.samples():
+        labels_dict = _labels_tuple_to_dict(labels_tuple)
+        if not _matches_labels(labels_dict, base_labels):
+            continue
+        group_key = labels_dict.get(key, "")
+        grouped[group_key] = grouped.get(group_key, 0.0) + float(value)
+    return {key: int(round(val)) for key, val in grouped.items()}
+
+
+def _group_histogram(
+    metric: HistogramMetric,
+    *,
+    base_labels: Mapping[str, str],
+    key: str,
+) -> dict[str, dict[str, float | None]]:
+    grouped_states: dict[str, list[HistogramState]] = {}
+    for labels_tuple, state in metric.samples():
+        labels_dict = _labels_tuple_to_dict(labels_tuple)
+        if not _matches_labels(labels_dict, base_labels):
+            continue
+        group_value = labels_dict.get(key, "")
+        grouped_states.setdefault(group_value, []).append(state)
+
+    results: dict[str, dict[str, float | None]] = {}
+    for group_value, states in grouped_states.items():
+        combined = _combine_histogram_states(states)
+        results[group_value] = _summarize_histogram_state(combined)
+    return results
+
+
+def _combine_histogram_states(states: Sequence[HistogramState]) -> HistogramState:
+    combined_counts: dict[float, float] = {}
+    total_sum = 0.0
+    total_count = 0
+    minimum: float | None = None
+    maximum: float | None = None
+    total_squares = 0.0
+    for state in states:
+        total_sum += state.sum
+        total_count += state.count
+        total_squares += state.sum_of_squares
+        if state.minimum is not None:
+            minimum = state.minimum if minimum is None else min(minimum, state.minimum)
+        if state.maximum is not None:
+            maximum = state.maximum if maximum is None else max(maximum, state.maximum)
+        for boundary, value in state.counts.items():
+            combined_counts[float(boundary)] = combined_counts.get(float(boundary), 0.0) + float(
+                value
+            )
+    return HistogramState(
+        counts=combined_counts,
+        sum=total_sum,
+        count=total_count,
+        minimum=minimum,
+        maximum=maximum,
+        sum_of_squares=total_squares,
+    )
+
+
+def export_long_poll_metrics_snapshot(
+    *,
+    registry: MetricsRegistry,
+    labels: Mapping[str, str],
+) -> dict[str, object]:
+    summary: dict[str, object] = {
+        "labels": dict(labels),
+    }
+    try:
+        latency_metric = registry.get("bot_exchange_stream_long_poll_latency_seconds")
+    except KeyError:
+        latency_metric = None
+    if isinstance(latency_metric, HistogramMetric):
+        summary["requestLatency"] = _histogram_summary(latency_metric, labels=labels)
+
+    try:
+        lag_metric = registry.get("bot_exchange_stream_delivery_lag_seconds")
+    except KeyError:
+        lag_metric = None
+    if isinstance(lag_metric, HistogramMetric):
+        summary["deliveryLag"] = _histogram_summary(lag_metric, labels=labels)
+
+    try:
+        http_errors_metric = registry.get("bot_exchange_stream_http_errors_total")
+    except KeyError:
+        http_errors_metric = None
+    if isinstance(http_errors_metric, CounterMetric):
+        summary["httpErrors"] = {
+            "total": int(round(_counter_total(http_errors_metric, base_labels=labels))),
+            "byStatusCode": _group_counter(
+                http_errors_metric,
+                base_labels=labels,
+                key="status_code",
+            ),
+        }
+
+    try:
+        http_latency_metric = registry.get("bot_exchange_stream_http_error_duration_seconds")
+    except KeyError:
+        http_latency_metric = None
+    if isinstance(http_latency_metric, HistogramMetric):
+        summary.setdefault("httpErrors", {})["latency"] = _group_histogram(
+            http_latency_metric,
+            base_labels=labels,
+            key="status_code",
+        )
+
+    try:
+        reconnect_metric = registry.get("bot_exchange_stream_reconnects_total")
+    except KeyError:
+        reconnect_metric = None
+    if isinstance(reconnect_metric, CounterMetric):
+        summary["reconnects"] = {
+            "attempts": int(
+                round(
+                    _counter_total(
+                        reconnect_metric,
+                        base_labels=labels,
+                        extra={"status": "attempt"},
+                    )
+                )
+            ),
+            "success": int(
+                round(
+                    _counter_total(
+                        reconnect_metric,
+                        base_labels=labels,
+                        extra={"status": "success"},
+                    )
+                )
+            ),
+            "failure": int(
+                round(
+                    _counter_total(
+                        reconnect_metric,
+                        base_labels=labels,
+                        extra={"status": "failure"},
+                    )
+                )
+            ),
+        }
+
+    try:
+        reconnect_latency_metric = registry.get("bot_exchange_stream_reconnect_duration_seconds")
+    except KeyError:
+        reconnect_latency_metric = None
+    if isinstance(reconnect_latency_metric, HistogramMetric):
+        summary.setdefault("reconnects", {})["latency"] = _group_histogram(
+            reconnect_latency_metric,
+            base_labels=labels,
+            key="status",
+        )
+
+    try:
+        reconnect_state_metric = registry.get("bot_exchange_stream_reconnect_in_progress")
+    except KeyError:
+        reconnect_state_metric = None
+    if isinstance(reconnect_state_metric, GaugeMetric):
+        summary.setdefault("reconnects", {})["inProgress"] = reconnect_state_metric.value(
+            labels=labels
+        )
+
+    try:
+        backpressure_metric = registry.get("bot_exchange_stream_backpressure_total")
+    except KeyError:
+        backpressure_metric = None
+    if isinstance(backpressure_metric, CounterMetric):
+        summary["backpressure"] = int(
+            round(
+                _counter_total(
+                    backpressure_metric,
+                    base_labels=labels,
+                )
+            )
+        )
+
+    try:
+        queue_metric = registry.get("bot_exchange_stream_pending_batches")
+    except KeyError:
+        queue_metric = None
+    if isinstance(queue_metric, GaugeMetric):
+        summary["queueSize"] = queue_metric.value(labels=labels)
+
+    try:
+        lag_latest_metric = registry.get("bot_exchange_stream_last_delivery_lag_seconds")
+    except KeyError:
+        lag_latest_metric = None
+    if isinstance(lag_latest_metric, GaugeMetric):
+        summary.setdefault("deliveryLag", {})["latest"] = lag_latest_metric.value(
+            labels=labels
+        )
+
+    return summary
 
 
 @dataclass(slots=True)
@@ -386,6 +679,14 @@ class LocalLongPollStream(Iterable[StreamBatch]):
         """Zwraca informację, czy iterator został już zamknięty."""
 
         return self._closed
+
+    def export_metrics_snapshot(self) -> dict[str, object]:
+        """Zwraca agregat metryk long-pollowego streamu dla bieżących etykiet."""
+
+        return export_long_poll_metrics_snapshot(
+            registry=self._metrics,
+            labels=self._metric_labels,
+        )
 
     def __next__(self) -> StreamBatch:
         if self._closed:

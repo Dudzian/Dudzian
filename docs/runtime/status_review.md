@@ -3,13 +3,26 @@
 ## Co już działa
 - **Strumieniowanie long-poll** – adaptery giełdowe korzystają z neutralnego interfejsu `MarketStreamHandle` i klas bazowych REST, dzięki czemu eliminują zależności po WebSocketach i zachowują zgodność z menedżerem giełd.【F:bot_core/exchanges/interfaces.py†L1-L105】【F:bot_core/exchanges/streaming.py†L1-L168】
 - **Autonomiczny AutoTrader** – publiczne API `run_decision_cycle()` deleguje do pętli decyzyjnej, integrując klasyfikator reżimów, orkiestrator decyzji, dziennik audytu i usługę egzekucji, a nowe testy E2E korzystają z raportu metryk w scenariuszach paper/live z udaną i nieudaną egzekucją.【F:bot_core/auto_trader/app.py†L8400-L8610】【F:tests/e2e/test_autotrader_autonomy.py†L1-L200】【F:tests/e2e/fixtures/execution.py†L1-L80】
-- **UI runtime** – `RuntimeService` udostępnia QML-owi znormalizowane wpisy `TradingDecisionJournal`, agreguje metryki ryzyka (`riskMetrics`, `riskTimeline`, `lastOperatorAction`) i zasila karty „Decyzje AI” oraz nowy panel „Risk Journal” z drill-downem, akcjami operatora, podsumowaniem ostatniej interwencji i histogramami najczęstszych flag/stress failure.【F:ui/backend/runtime_service.py†L1-L460】【F:ui/qml/dashboard/RuntimeOverview.qml†L1-L200】
+- **UI runtime** – `RuntimeService` udostępnia QML-owi znormalizowane wpisy `TradingDecisionJournal`, agreguje metryki ryzyka (`riskMetrics`, `riskTimeline`, `lastOperatorAction`) i zasila karty „Decyzje AI” oraz panel „Risk Journal” z drill-downem, akcjami operatora, podsumowaniem ostatniej interwencji i histogramami najczęstszych flag/stress failure.【F:ui/backend/runtime_service.py†L1-L520】【F:ui/qml/dashboard/RuntimeOverview.qml†L1-L420】
+- **gRPC decision journal** – serwis `RuntimeService.ListDecisions` udostępnia filtrowalne okno `TradingDecisionJournal` (limit, kursor, filtry po strategii/symbolu/statusie oraz przedział czasowy), co pozwala backendowi i narzędziom audytowym pobierać wpisy bezpośrednio z procesu runtime.【F:proto/trading.proto†L205-L286】【F:bot_core/api/server.py†L1470-L1606】
+- **Metryki cyklu decyzyjnego** – `ListDecisions` i `StreamDecisions` dołączają mapę metryk (`cycles_total`, `strategy_switch_total`, `guardrail_blocks_total`), a `RuntimeService` eksponuje je w QML jako panel „Metryki cyklu decyzyjnego”.【F:proto/trading.proto†L233-L320】【F:bot_core/api/server.py†L1460-L1650】【F:ui/backend/runtime_service.py†L560-L990】【F:ui/qml/dashboard/RuntimeOverview.qml†L540-L640】
+- **Fallback long-poll** – `LocalLongPollStream.export_metrics_snapshot()` rejestruje latencje p50/p95, błędy HTTP i reconnecty, cache `ui_metrics.long_poll_snapshots` publikuje je do UI, a panel „Fallback long-poll” wizualizuje kondycję każdego adaptera.【F:bot_core/exchanges/streaming.py†L150-L420】【F:bot_core/observability/ui_metrics.py†L1-L200】【F:ui/backend/runtime_service.py†L600-L990】【F:ui/qml/dashboard/RuntimeOverview.qml†L640-L760】
 
 ## Najważniejsze luki
-- **Brak integracji runtime_service ↔ gRPC** – `RuntimeService` ładuje dane bezpośrednio z lokalnego dziennika i nie korzysta z transportu gRPC, więc w środowiskach produkcyjnych UI wciąż nie zobaczy decyzji z procesu backendowego.【F:ui/backend/runtime_service.py†L200-L260】
-- **Testy UI zależne od PySide6** – regresyjne testy QML są domyślnie pomijane, bo środowisko nie zapewnia PySide6, co utrudnia automatyczną weryfikację nowych kart dashboardu.【F:tests/ui/test_runtime_overview.py†L1-L40】
-- **Brak konsumpcji metryk w UI** – mimo że `run_decision_cycle()` raportuje metryki cyklu, warstwa runtime nie publikuje ich jeszcze do paneli QML, więc dashboard wciąż opiera się na historycznych snapshotach z dziennika decyzji.【F:bot_core/auto_trader/app.py†L8400-L8610】【F:ui/backend/runtime_service.py†L200-L460】
-- **Monitorowanie strumieni** – `LocalLongPollStream` nie raportuje metryk ani statystyk błędów, przez co brak widoczności kondycji połączeń w telemetryce runtime.【F:bot_core/exchanges/streaming.py†L131-L200】
+- **Alerty SLA dla feedu** – `feedHealth` udostępnia surowe metryki long-polla, ale brak progów i eskalacji (np. sygnałów degradacji do HyperCare), przez co operatorzy muszą ręcznie interpretować dane.【F:ui/backend/runtime_service.py†L600-L820】【F:ui/qml/dashboard/RuntimeOverview.qml†L640-L760】
+- **Marketplace presetów** – benchmark nadal wskazuje brak publicznego katalogu oraz procesu publikacji presetów, co blokuje dystrybucję konfiguracji dla użytkowników końcowych.【F:docs/benchmark/cryptohopper_comparison.md†L24-L37】【F:docs/benchmark/cryptohopper_comparison.md†L65-L97】
+- **Roadmapa giełd futures** – plan CryptoHoppera obejmuje Deribit/BitMEX, natomiast aktualne konfiguracje kończą się na Bybit/MEXC, więc potrzebne są kolejne adaptery i profile środowiskowe.【F:docs/benchmark/cryptohopper_comparison.md†L35-L66】
+
+### Konfiguracja środowiska runtime
+- `BOT_CORE_UI_GRPC_ENDPOINT` / `BOT_CORE_TRADING_GRPC_ADDRESS` – adres serwera gRPC, z którego RuntimeService pobiera dziennik decyzji. Pierwsza zmienna ma najwyższy priorytet i pozwala na wskazanie lokalnego stubu lub tunelu SSH podczas diagnostyki.【F:ui/backend/runtime_service.py†L780-L820】
+- `BOT_CORE_UI_FEED_LATENCY_PATH` – ścieżka do pliku JSON z metrykami kanału (latencja p50/p95, licznik reconnectów, łączny czas niedostępności). Jeśli nie zostanie ustawiona, raport trafia do `reports/ci/decision_feed_metrics.json` i jest zbierany przez pipeline CI.【F:ui/backend/runtime_service.py†L614-L652】【F:tests/integration/test_grpc_transport.py†L228-L274】
+- `BOT_CORE_UI_GRPC_RETRY_LIMIT` – liczba nieudanych prób nawiązania strumienia gRPC, po której UI przełącza się na fallback JSONL. Domyślnie 3, co umożliwia krótką degradację bez utraty gRPC w przypadku chwilowych zakłóceń.【F:ui/backend/runtime_service.py†L598-L640】
+- `BOT_CORE_UI_GRPC_RETRY_BASE_SECONDS`, `BOT_CORE_UI_GRPC_RETRY_MULTIPLIER`, `BOT_CORE_UI_GRPC_RETRY_MAX_SECONDS` – parametry backoffu wykorzystywane przez wątek `_grpc_worker`. Pozwalają kontrolować interwały autoreconnectu (bazowy czas, mnożnik wykładniczy oraz maksymalny limit).【F:ui/backend/runtime_service.py†L912-L1005】
+- `BOT_CORE_UI_GRPC_READY_TIMEOUT` – czas (w sekundach), jaki UI czeka na gotowość kanału gRPC (`grpc.channel_ready_future`). Po przekroczeniu limitu próba uznawana jest za nieudaną i trafia w mechanizm backoffu.【F:ui/backend/runtime_service.py†L889-L954】
+
+### Etap CI `ui-tests`
+- Job `ui-tests` zależy od `prepare-pyside6-wheel`, pobiera wstępnie zbudowane wheel’e PySide6 i instaluje je wraz z zależnościami `.[dev]`, aby uruchomić `pytest -m qml` na platformie `offscreen` (Qt Quick Software).【F:.github/workflows/ci.yml†L220-L310】
+- Testy generują artefakt `test-results/qml`, który zawiera logi Qt (`logs/*.log`), manifest JSON z wynikami (`manifest.json`) oraz katalog `screenshots/` na przyszłe raporty wizualne, co ułatwia analizę niepowodzeń UI bez dostępu do środowiska graficznego.【F:tests/ui/conftest.py†L1-L190】
 
 ### Wymagania danych dla Risk Journal
 - wpisy dziennika powinny uzupełniać pola `risk_flags`, `stress_failures` oraz `stress_overrides` (lista powodów) lub `risk_action`, aby panel mógł policzyć blokady, zamrożenia, podświetlić stress overrides, policzyć histogramy strategii/flag/stress failure, wskazać ostatnią blokadę/zamrożenie/override oraz poprawnie opisać ostatnią akcję operatora; brak tych pól skutkuje pustym wykresem, filtrami bez wartości oraz pustymi żetonami statystyk.【F:ui/backend/runtime_service.py†L200-L460】【F:ui/qml/dashboard/RiskJournalPanel.qml†L200-L360】
@@ -17,22 +30,17 @@
 - akcje operatora (`requestFreeze`, `requestUnfreeze`, `requestUnblock`) wykorzystują metadane wpisu – należy upewnić się, że log zawiera pola identyfikujące decyzję (np. `event`, `timestamp`, `portfolio`) na potrzeby audytu.【F:ui/backend/runtime_service.py†L300-L360】
 
 ## Priorytetowe poprawki
-1. **Integracja decyzji przez gRPC** – należy dodać serwis backendowy, który serializuje wpisy dziennika po gRPC i wykorzystać go w `RuntimeService`, aby UI odczytywało dane z procesu runtime zamiast lokalnych stubów.【F:ui/backend/runtime_service.py†L200-L260】
-2. **Stabilizacja testów UI** – zapewnić binaria PySide6 (np. przez wheel w repo lub kontener testowy) i zautomatyzować uruchamianie `tests/ui/test_runtime_overview.py`, aby nowe widoki były realnie testowane.【F:tests/ui/test_runtime_overview.py†L1-L40】
-3. **Uporządkowanie API AutoTradera** – udostępnić publiczną metodę wyzwalającą pojedynczy cykl decyzyjny oraz zredukować zależności od atrybutów `_execution_context`/`_schedule_mode`, co uprości dalszą automatyzację i testowanie.【F:bot_core/auto_trader/app.py†L1-L200】
+1. **Alerty degradacji feedu** – zdefiniować progi SLA i integrację z HyperCare, aby `feedHealth` generowało ostrzeżenia push/mail przy przekroczeniu limitów latencji lub liczby błędów.【F:ui/backend/runtime_service.py†L600-L990】
+2. **Uporządkowanie API AutoTradera** – udostępnić publiczną metodę wyzwalającą pojedynczy cykl decyzyjny oraz zredukować zależności od atrybutów `_execution_context`/`_schedule_mode`, co uprości dalszą automatyzację i testowanie.【F:bot_core/auto_trader/app.py†L1-L200】
+3. **Marketplace i roadmapa giełdowa** – przygotować proces publikacji presetów wraz z podpisami, a także rozszerzyć adaptery o Deribit/BitMEX, żeby zrównać się z konkurencją w segmencie futures.【F:docs/benchmark/cryptohopper_comparison.md†L35-L97】
 
 ## Proponowane sprinty
-### Sprint A – Integracja decyzji przez gRPC
-- Dodać endpoint w `bot_core/api/server` zwracający wpisy `TradingDecisionJournal` (limit, filtrowanie).【F:bot_core/api/server.py†L1-L120】
-- Rozszerzyć `RuntimeService`, aby pobierał dane z gRPC i przełączał się na lokalny dziennik tylko w trybie offline.【F:ui/backend/runtime_service.py†L200-L260】
-- Uzupełnić testy integracyjne o scenariusz `grpc_decision_feed`, pokrywający serializację i obsługę błędów połączenia.【F:tests/integration/test_grpc_transport.py†L1-L120】
+### Sprint 3 – Obserwowalność runtime
+- Zdefiniować progi SLA i kanały eskalacji dla `feedHealth`, generując alerty HyperCare i widoki statusu na podstawie metryk long-pollowych.【F:ui/backend/runtime_service.py†L600-L990】【F:ui/qml/dashboard/RuntimeOverview.qml†L640-L760】
+- Dodać eksport metryk long-polla do centralnego `MetricsRegistry` (np. Prometheus/OpenMetrics) i zbudować dashboard porównujący gRPC vs fallback.【F:bot_core/observability/ui_metrics.py†L1-L200】【F:bot_core/exchanges/streaming.py†L150-L420】
+- Rozszerzyć testy (`tests/integration/test_grpc_transport.py`, `tests/ui/test_runtime_overview.py`) o scenariusze degradacji feedu i brakujących metadanych, aby potwierdzić alerty.【F:tests/integration/test_grpc_transport.py†L200-L360】【F:tests/ui/test_runtime_overview.py†L1-L220】
 
-### Sprint B – Automatyzacja testów UI
-- Przygotować zależność PySide6 w środowisku CI (np. paczka wheel lub kontener z Qt).【F:tests/ui/test_runtime_overview.py†L1-L40】
-- Zaktualizować testy QML tak, aby korzystały z mocku `RuntimeService` i weryfikowały przełączanie kart oraz komunikaty błędów.【F:tests/ui/test_runtime_overview.py†L40-L160】
-- Dodać raport z uruchomień UI do pipeline’u (artefakt zrzutów ekranów / logów QML).【F:ui/qml/dashboard/RuntimeOverview.qml†L1-L200】
-
-### Sprint C – Uprawnienie API AutoTradera
-- Zapewnić publiczne API `run_decision_cycle()` delegujące do dotychczasowej logiki `_auto_trade_loop` bez przecieków atrybutów prywatnych.【F:bot_core/auto_trader/app.py†L1-L120】
-- Zrefaktoryzować `_build_trader` i testy E2E, aby używały nowego API oraz jawnego `ExecutionContext`.【F:tests/e2e/test_autotrader_autonomy.py†L60-L200】
-- Podłączyć rejestrowanie metryk strumieni i decyzji do `MetricsRegistry`, aby dashboard mógł raportować błędy z long-pollingu i wykonania zleceń.【F:bot_core/auto_trader/app.py†L1-L200】【F:bot_core/exchanges/streaming.py†L131-L200】
+### Sprint 4 – Marketplace i roadmapa giełdowa
+- Utrzymać pipeline publikacji presetów (`scripts/build_marketplace_catalog.py`, workflow `marketplace-catalog`) i skalować katalog do ≥15 publicznych presetów wraz z recenzjami.【F:docs/benchmark/cryptohopper_comparison.md†L24-L97】【F:docs/marketplace/README.md†L1-L99】
+- Dodać adaptery Deribit/BitMEX (REST + long-poll) wraz z profilami paper/live, aby zrównać liczbę giełd z konkurencją CryptoHopper.【F:docs/benchmark/cryptohopper_comparison.md†L35-L66】
+- Skorelować marketing Stress Lab z roadmapą produktów – eksportować raporty stres-testów i linkować je w materiałach sprzedażowych.【F:docs/benchmark/cryptohopper_comparison.md†L15-L37】

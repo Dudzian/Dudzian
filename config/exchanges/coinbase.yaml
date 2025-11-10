@@ -9,7 +9,7 @@ paper:
     paper_cash_asset: USDC
     paper_fee_rate: 0.001
   credentials:
-    api_key: null
+    key_id: null
     secret: null
 
 testnet:
@@ -22,7 +22,7 @@ testnet:
         max_attempts: 4
         base_delay: 0.75
   credentials:
-    api_key: ${COINBASE_TESTNET_KEY}
+    key_id: ${COINBASE_TESTNET_KEY}
     secret: ${COINBASE_TESTNET_SECRET}
     passphrase: ${COINBASE_TESTNET_PASSPHRASE}
 
@@ -42,6 +42,6 @@ live:
       settings:
         venue: "advanced"
   credentials:
-    api_key: ${COINBASE_LIVE_KEY}
+    key_id: ${COINBASE_LIVE_KEY}
     secret: ${COINBASE_LIVE_SECRET}
     passphrase: ${COINBASE_LIVE_PASSPHRASE}

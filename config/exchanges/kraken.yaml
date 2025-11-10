@@ -16,7 +16,7 @@ paper:
       - rate: 120
         per: 60
   credentials:
-    api_key: null
+    key_id: null
     secret: null
 
 testnet:
@@ -38,7 +38,7 @@ testnet:
       failure_threshold: 2
       cooldown_seconds: 45
   credentials:
-    api_key: ${KRAKEN_TESTNET_KEY}
+    key_id: ${KRAKEN_TESTNET_KEY}
     secret: ${KRAKEN_TESTNET_SECRET}
 
 live:
@@ -63,5 +63,5 @@ live:
       failure_threshold: 3
       cooldown_seconds: 60
   credentials:
-    api_key: ${KRAKEN_LIVE_KEY}
+    key_id: ${KRAKEN_LIVE_KEY}
     secret: ${KRAKEN_LIVE_SECRET}

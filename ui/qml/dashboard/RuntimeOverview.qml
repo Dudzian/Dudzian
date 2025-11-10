@@ -26,6 +26,8 @@ Item {
     property var riskMetrics: runtimeService && runtimeService.riskMetrics ? runtimeService.riskMetrics : ({})
     property var riskTimeline: runtimeService && runtimeService.riskTimeline ? runtimeService.riskTimeline : []
     property var lastOperatorAction: runtimeService && runtimeService.lastOperatorAction ? runtimeService.lastOperatorAction : ({})
+    property var longPollMetrics: runtimeService && runtimeService.longPollMetrics ? runtimeService.longPollMetrics : []
+    property var cycleMetrics: runtimeService && runtimeService.cycleMetrics ? runtimeService.cycleMetrics : ({})
 
     function componentForCard(cardId) {
         switch (cardId) {
@@ -61,6 +63,8 @@ Item {
         root.riskMetrics = root.runtimeService ? root.runtimeService.riskMetrics : ({})
         root.riskTimeline = root.runtimeService ? root.runtimeService.riskTimeline : []
         root.lastOperatorAction = root.runtimeService ? root.runtimeService.lastOperatorAction : ({})
+        root.longPollMetrics = root.runtimeService ? root.runtimeService.longPollMetrics : []
+        root.cycleMetrics = root.runtimeService ? root.runtimeService.cycleMetrics : ({})
     }
 
     function refreshAll() {
@@ -116,6 +120,18 @@ Item {
             if (!root.runtimeService)
                 return
             root.lastOperatorAction = root.runtimeService.lastOperatorAction
+        }
+
+        function onLongPollMetricsChanged() {
+            if (!root.runtimeService)
+                return
+            root.longPollMetrics = root.runtimeService.longPollMetrics
+        }
+
+        function onCycleMetricsChanged() {
+            if (!root.runtimeService)
+                return
+            root.cycleMetrics = root.runtimeService.cycleMetrics
         }
     }
 
@@ -548,6 +564,154 @@ Item {
                                   : qsTr("Brak aktywnych presetów adaptacyjnych")
                             color: Styles.AppTheme.textSecondary
                             wrapMode: Text.WordWrap
+                        }
+                    }
+                }
+
+                GroupBox {
+                    objectName: "runtimeOverviewCycleMetricsGroup"
+                    title: qsTr("Metryki cyklu decyzyjnego")
+                    Layout.fillWidth: true
+
+                    ColumnLayout {
+                        spacing: 6
+                        readonly property real cycleCount: Number(root.cycleMetrics.cycles_total || 0)
+                        readonly property real strategySwitches: Number(root.cycleMetrics.strategy_switch_total || 0)
+                        readonly property real guardrailBlocks: Number(root.cycleMetrics.guardrail_blocks_total || 0)
+                        readonly property bool guardrailAlert: guardrailBlocks > 0
+                        readonly property bool strategyAlert: strategySwitches > 5
+
+                        RowLayout {
+                            Layout.fillWidth: true
+                            Text {
+                                text: qsTr("Łączna liczba cykli")
+                                color: Styles.AppTheme.textSecondary
+                            }
+                            Item { Layout.fillWidth: true }
+                            Text {
+                                objectName: "runtimeOverviewCycleCount"
+                                text: parent.cycleCount.toFixed(0)
+                                font.bold: true
+                                color: Styles.AppTheme.textPrimary
+                            }
+                        }
+
+                        RowLayout {
+                            Layout.fillWidth: true
+                            Text {
+                                text: qsTr("Przełączenia strategii")
+                                color: Styles.AppTheme.textSecondary
+                            }
+                            Item { Layout.fillWidth: true }
+                            Text {
+                                objectName: "runtimeOverviewStrategySwitches"
+                                readonly property bool alert: parent.strategyAlert
+                                text: parent.strategySwitches.toFixed(0)
+                                font.bold: alert
+                                color: alert ? Qt.rgba(0.95, 0.65, 0.2, 1) : Styles.AppTheme.textPrimary
+                            }
+                        }
+
+                        RowLayout {
+                            Layout.fillWidth: true
+                            Text {
+                                text: qsTr("Blokady guardrail")
+                                color: Styles.AppTheme.textSecondary
+                            }
+                            Item { Layout.fillWidth: true }
+                            Text {
+                                objectName: "runtimeOverviewGuardrailBlocks"
+                                readonly property bool alert: parent.guardrailAlert
+                                text: parent.guardrailBlocks.toFixed(0)
+                                font.bold: alert
+                                color: alert ? Qt.rgba(0.9, 0.25, 0.3, 1) : Styles.AppTheme.textPrimary
+                            }
+                        }
+
+                        Text {
+                            objectName: "runtimeOverviewGuardrailAlert"
+                            visible: parent.guardrailAlert
+                            text: qsTr("Blokady guardrail wymagają uwagi – sprawdź kartę Guardrail'e")
+                            color: Qt.rgba(0.9, 0.25, 0.3, 1)
+                            font.bold: true
+                            wrapMode: Text.WordWrap
+                        }
+                    }
+                }
+
+                GroupBox {
+                    title: qsTr("Fallback long-poll")
+                    Layout.fillWidth: true
+
+                    ColumnLayout {
+                        spacing: 6
+                        objectName: "runtimeOverviewLongPollContainer"
+
+                        Repeater {
+                            id: longPollRepeater
+                            model: root.longPollMetrics
+                            visible: root.longPollMetrics.length > 0
+                            delegate: ColumnLayout {
+                                objectName: "runtimeOverviewLongPollEntry"
+                                spacing: 2
+
+                                readonly property var labels: modelData && modelData.labels ? modelData.labels : ({})
+                                readonly property string adapterLabel: labels.adapter || qsTr("n/d")
+                                readonly property string scopeLabel: labels.scope || qsTr("n/d")
+                                readonly property string envLabel: labels.environment || qsTr("n/d")
+
+                                Text {
+                                    objectName: "runtimeOverviewLongPollHeader"
+                                    text: qsTr("%1 • %2 • %3").arg(parent.adapterLabel).arg(parent.scopeLabel).arg(parent.envLabel)
+                                    font.bold: true
+                                    color: Styles.AppTheme.textPrimary
+                                }
+
+                                Text {
+                                    objectName: "runtimeOverviewLongPollLatency"
+                                    text: {
+                                        const latency = modelData.requestLatency || {}
+                                        const hasP95 = typeof latency.p95 === "number"
+                                        const hasP50 = typeof latency.p50 === "number"
+                                        if (!hasP95 && !hasP50)
+                                            return qsTr("Brak próbek latencji long-pollowych")
+                                        const p95 = hasP95 ? latency.p95.toFixed(3) : qsTr("n/d")
+                                        const p50 = hasP50 ? latency.p50.toFixed(3) : qsTr("n/d")
+                                        return qsTr("Latencja p50: %1 s • p95: %2 s").arg(p50).arg(p95)
+                                    }
+                                    color: Styles.AppTheme.textSecondary
+                                }
+
+                                Text {
+                                    objectName: "runtimeOverviewLongPollErrors"
+                                    text: {
+                                        const errors = modelData.httpErrors || {}
+                                        const total = typeof errors.total === "number" ? errors.total : 0
+                                        if (total === 0)
+                                            return qsTr("Błędy HTTP: brak prób w ostatnich próbkach")
+                                        return qsTr("Błędy HTTP: %1").arg(total)
+                                    }
+                                    color: Styles.AppTheme.textSecondary
+                                }
+
+                                Text {
+                                    objectName: "runtimeOverviewLongPollReconnects"
+                                    text: {
+                                        const reconnects = modelData.reconnects || {}
+                                        const attempts = typeof reconnects.attempts === "number" ? reconnects.attempts : 0
+                                        const failures = typeof reconnects.failure === "number" ? reconnects.failure : 0
+                                        return qsTr("Reconnecty: próby %1 • błędy %2").arg(attempts).arg(failures)
+                                    }
+                                    color: Styles.AppTheme.textSecondary
+                                }
+                            }
+                        }
+
+                        Label {
+                            objectName: "runtimeOverviewLongPollEmpty"
+                            visible: root.longPollMetrics.length === 0
+                            text: qsTr("Fallback long-poll: brak aktywnych streamów")
+                            color: Styles.AppTheme.textSecondary
                         }
                     }
                 }

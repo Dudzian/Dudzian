@@ -18,7 +18,7 @@ paper:
       - rate: 300
         per: 60
   credentials:
-    api_key: null
+    key_id: null
     secret: null
 
 testnet:
@@ -40,7 +40,7 @@ testnet:
       failure_threshold: 2
       cooldown_seconds: 40
   credentials:
-    api_key: ${OKX_TESTNET_KEY}
+    key_id: ${OKX_TESTNET_KEY}
     secret: ${OKX_TESTNET_SECRET}
     passphrase: ${OKX_TESTNET_PASSPHRASE}
 
@@ -69,6 +69,6 @@ live:
       failure_threshold: 3
       cooldown_seconds: 60
   credentials:
-    api_key: ${OKX_LIVE_KEY}
+    key_id: ${OKX_LIVE_KEY}
     secret: ${OKX_LIVE_SECRET}
     passphrase: ${OKX_LIVE_PASSPHRASE}

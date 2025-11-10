@@ -13,7 +13,7 @@ paper:
       - rate: 600
         per: 60
   credentials:
-    api_key: null
+    key_id: null
     secret: null
 
 testnet:
@@ -35,7 +35,7 @@ testnet:
       failure_threshold: 2
       cooldown_seconds: 45
   credentials:
-    api_key: ${BYBIT_TESTNET_KEY}
+    key_id: ${BYBIT_TESTNET_KEY}
     secret: ${BYBIT_TESTNET_SECRET}
 
 live:
@@ -63,5 +63,5 @@ live:
       failure_threshold: 3
       cooldown_seconds: 60
   credentials:
-    api_key: ${BYBIT_LIVE_KEY}
+    key_id: ${BYBIT_LIVE_KEY}
     secret: ${BYBIT_LIVE_SECRET}

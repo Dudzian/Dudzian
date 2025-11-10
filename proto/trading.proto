@@ -207,6 +207,56 @@ message DecisionRecordEntry {
   map<string, string> fields = 1;
 }
 
+message DecisionJournalFilters {
+  // Filtruje zdarzenia dziennika według typu zdarzenia (np. "order", "signal").
+  repeated string events = 1;
+  // Filtruje po strategii odpowiedzialnej za decyzję.
+  repeated string strategies = 2;
+  // Filtruje po symbolu instrumentu.
+  repeated string symbols = 3;
+  // Filtruje po statusie decyzji (np. "accepted", "rejected").
+  repeated string statuses = 4;
+  // Filtruje po kierunku zlecenia.
+  repeated string sides = 5;
+  // Filtruje po środowisku (np. "paper", "live").
+  repeated string environments = 6;
+  // Filtruje po portfelu.
+  repeated string portfolios = 7;
+  // Filtruje po profilu ryzyka.
+  repeated string risk_profiles = 8;
+  // Uwzględnia rekordy wygenerowane nie wcześniej niż w tym momencie.
+  google.protobuf.Timestamp since = 9;
+  // Uwzględnia rekordy wygenerowane przed wskazanym momentem.
+  google.protobuf.Timestamp until = 10;
+}
+
+message DecisionCycleMetrics {
+  // Numeryczne metryki ostatniego cyklu decyzyjnego.
+  map<string, double> values = 1;
+}
+
+message ListDecisionsRequest {
+  // Maksymalna liczba rekordów do zwrócenia. Wartość 0 oznacza brak limitu.
+  uint32 limit = 1;
+  // Indeks rekordu od którego rozpocząć zwracanie wyników.
+  uint32 cursor = 2;
+  // Zestaw filtrów zawężających wynik.
+  DecisionJournalFilters filters = 3;
+}
+
+message ListDecisionsResponse {
+  // Zwracane rekordy dziennika decyzji.
+  repeated DecisionRecordEntry records = 1;
+  // Pozycja kursora wskazująca kolejny rekord po zwróconym oknie.
+  uint32 cursor = 2;
+  // Łączna liczba rekordów spełniających kryteria.
+  uint32 total = 3;
+  // Czy dostępne są kolejne rekordy po zwróconym oknie.
+  bool has_more = 4;
+  // Metryki ostatniego cyklu decyzyjnego.
+  DecisionCycleMetrics cycle_metrics = 5;
+}
+
 message StreamDecisionsRequest {
   uint32 limit = 1;
   bool skip_snapshot = 2;
@@ -226,6 +276,8 @@ message StreamDecisionsUpdate {
     StreamDecisionsSnapshot snapshot = 1;
     StreamDecisionsIncrement increment = 2;
   }
+  // Metryki ostatniego cyklu decyzyjnego.
+  DecisionCycleMetrics cycle_metrics = 3;
 }
 
 message HealthCheckRequest {}
@@ -313,6 +365,7 @@ service MetricsService {
 }
 
 service RuntimeService {
+  rpc ListDecisions(ListDecisionsRequest) returns (ListDecisionsResponse);
   rpc StreamDecisions(StreamDecisionsRequest)
       returns (stream StreamDecisionsUpdate);
 }

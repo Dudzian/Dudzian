@@ -1,36 +1,37 @@
 {
-  "schema_version": "1.0",
-  "generated_at": "2025-10-29T15:04:33.972702Z",
+  "schema_version": "1.1",
+  "generated_at": "2025-11-01T22:38:01Z",
   "packages": [
     {
-      "schema_version": "1.0",
-      "package_id": "mean_reversion.v1",
-      "display_name": "Mean Reversion Starter",
-      "summary": "Konfiguracja startowa strategii mean-reversion dla rynku spot.",
-      "description": "Pakiet zawiera przyk\u0142adow\u0105 strategi\u0119 mean-reversion z predefiniowanymi parametrami oraz profilami ryzyka do szybkiego wdro\u017cenia w \u015brodowisku demo.",
-      "version": "1.0.0",
-      "revision": "a1b2c3d",
-      "release_date": "2025-10-29T15:04:33.972716Z",
+      "schema_version": "1.1",
+      "package_id": "exchange_binance.v1",
+      "display_name": "Binance Exchange Environments",
+      "summary": "Preset środowisk paper/testnet/live dla giełdy Binance.",
+      "description": "Pakiet udostępnia kompletny zestaw środowisk i guardraili dla integracji Binance wraz z podpisanym presetem.",
+      "version": "1.0.0+3f04577c8d9eef4d",
+      "revision": "2025.01",
+      "release_date": "2025-11-01T22:38:01Z",
       "maintainers": [
         {
           "name": "Marketplace Labs",
           "email": "marketplace@example.com",
           "organization": "Marketplace Guild",
-          "role": "maintainer"
+          "role": "maintainer",
+          "url": null
         }
       ],
       "license": {
         "name": "Marketplace Evaluation License",
         "spdx_id": "Proprietary",
         "url": "https://configs.example.com/licenses/marketplace-eval",
-        "terms_summary": "Do u\u017cytku ewaluacyjnego w \u015brodowiskach testowych.",
+        "terms_summary": "Do użytku ewaluacyjnego.",
         "redistributable": false,
         "commercial_use": false
       },
       "tags": [
-        "mean-reversion",
-        "demo",
-        "spot"
+        "exchange",
+        "binance",
+        "connectivity"
       ],
       "data_requirements": {
         "inputs": [
@@ -38,38 +39,31 @@
             "asset_type": "market",
             "provider": "ccxt.binance",
             "access_level": "restricted",
-            "retention_days": 30,
-            "min_history_days": 14,
-            "sampling": "1m"
-          },
-          {
-            "asset_type": "account",
-            "provider": "internal.portfolio-service",
-            "access_level": "confidential",
             "retention_days": 7,
-            "min_history_days": null,
-            "sampling": "event"
+            "min_history_days": 2,
+            "sampling": "1m",
+            "notes": null
           }
         ],
         "requires_personal_data": false,
         "requires_realtime_access": true,
-        "pii_handling_notes": "Pakiet nie gromadzi danych klient\u00f3w, ale wymaga po\u0142\u0105czenia z kontem API."
+        "pii_handling_notes": "Preset wymaga tylko kluczy API Binance."
       },
       "distribution": [
         {
-          "name": "config-bundle",
-          "uri": "packages/mean_reversion/bundle.json",
-          "kind": "config",
-          "description": "G\u0142\u00f3wna paczka konfiguracyjna.",
-          "size_bytes": 512,
+          "name": "preset-document",
+          "uri": "packages/exchanges/exchange_binance_v1.json",
+          "kind": "preset",
+          "description": "Podpisany preset środowisk Binance.",
+          "size_bytes": 3951,
           "integrity": {
             "algorithm": "sha256",
-            "digest": "d7e6768050cb265468d864359b11202800de4f6f9f8d07816cfd6fc6b558b78f"
+            "digest": "67cafa5efac33bfdd4c1d35b2b968b8b71cc66b995e1c6e699cb56a978e77412"
           },
           "signature": {
             "algorithm": "HMAC-SHA256",
             "key_id": "dev-hmac",
-            "value": "svDXgp++ZiSh95Ku+vOancVWASTCB7/0Glhx1nH0ESU=",
+            "value": "Fno+PBYUPqaToGMJq9oEDCfsFurKEFC8FYCRZwEs714=",
             "signed_fields": [
               "package_id",
               "version",
@@ -84,17 +78,157 @@
         {
           "component": "bot_core",
           "minimum": "5.2.0",
-          "recommended": "5.3.1"
+          "maximum": null,
+          "recommended": "5.3.1",
+          "channel": null,
+          "notes": "Zweryfikowano z adapterem Stage6 Binance"
+        }
+      ],
+      "documentation_url": "https://configs.example.com/marketplace/exchanges/binance",
+      "release_notes": [
+        "Pierwsze publiczne wydanie presetów środowisk Binance.",
+        "Dodano guardraile watchdog i ustawienia margin."
+      ],
+      "security": {
+        "mode": "none",
+        "allowed_fingerprints": [],
+        "require_strict_match": false,
+        "audit_message": "Brak ograniczeń fingerprint dla presetów exchange."
+      },
+      "release": {
+        "channel": "beta",
+        "review_status": "approved",
+        "reviewers": [
+          {
+            "name": "Integration QA",
+            "email": "integration.qa@example.com",
+            "role": "qa"
+          }
+        ],
+        "ticket": "https://jira.example.com/browse/MKT-1107",
+        "approved_at": "2025-01-12T11:45:00Z",
+        "notes": "Beta – monitoruj wpływ zmian limitów API."
+      },
+      "exchange_compatibility": [
+        {
+          "exchange": "BINANCE",
+          "environments": [
+            "paper",
+            "testnet",
+            "live"
+          ],
+          "trading_modes": [
+            "spot",
+            "margin"
+          ],
+          "status": "beta",
+          "last_verified_at": "2025-01-11T22:00:00Z",
+          "notes": "Certyfikacja Stage6 sandbox."
+        }
+      ],
+      "versioning": {
+        "channel": "beta",
+        "iteration": "minor",
+        "supersedes": [],
+        "superseded_by": [],
+        "migration_required": false,
+        "source": "exchanges/exchange_binance.json"
+      }
+    },
+    {
+      "schema_version": "1.1",
+      "package_id": "mean_reversion.v1",
+      "display_name": "Mean Reversion Starter",
+      "summary": "Konfiguracja mean-reversion z guardrailami Stage6 do szybkiego wdrożenia.",
+      "description": "Pakiet obejmuje parametry strategii mean-reversion, profil ryzyka oraz rekomendowane guardraile Stage6. Zaprojektowany do pełnej automatyzacji decyzji handlowych na rynku spot.",
+      "version": "1.0.0",
+      "revision": "2025.01",
+      "release_date": "2025-01-15T12:00:00Z",
+      "maintainers": [
+        {
+          "name": "Marketplace Labs",
+          "email": "marketplace@example.com",
+          "organization": "Marketplace Guild",
+          "role": "maintainer",
+          "url": null
+        }
+      ],
+      "license": {
+        "name": "Marketplace Evaluation License",
+        "spdx_id": "Proprietary",
+        "url": "https://configs.example.com/licenses/marketplace-eval",
+        "terms_summary": "Do użytku ewaluacyjnego w środowiskach demo.",
+        "redistributable": false,
+        "commercial_use": false
+      },
+      "tags": [
+        "mean-reversion",
+        "spot",
+        "stage6"
+      ],
+      "data_requirements": {
+        "inputs": [
+          {
+            "asset_type": "market",
+            "provider": "ccxt.binance",
+            "access_level": "restricted",
+            "retention_days": 30,
+            "min_history_days": 14,
+            "sampling": "1m",
+            "notes": null
+          }
+        ],
+        "requires_personal_data": false,
+        "requires_realtime_access": true,
+        "pii_handling_notes": "Preset nie przetwarza danych wrażliwych."
+      },
+      "distribution": [
+        {
+          "name": "preset-document",
+          "uri": "packages/strategies/mean_reversion_v1.json",
+          "kind": "preset",
+          "description": "Podpisany preset mean-reversion z guardrailami Stage6.",
+          "size_bytes": 1538,
+          "integrity": {
+            "algorithm": "sha256",
+            "digest": "b6efa2291f9cbb06d609190c007eacf873f69b139abc19a624ed8038bba1b6b3"
+          },
+          "signature": {
+            "algorithm": "HMAC-SHA256",
+            "key_id": "dev-hmac",
+            "value": "VRTsfdv2MzP+B0YGyC3ZEwozMYa2tbd8sYKijb+OgMM=",
+            "signed_fields": [
+              "package_id",
+              "version",
+              "artifact",
+              "uri",
+              "sha256"
+            ]
+          }
+        }
+      ],
+      "compatibility": [
+        {
+          "component": "bot_core",
+          "minimum": "5.2.0",
+          "maximum": null,
+          "recommended": "5.3.1",
+          "channel": null,
+          "notes": "Zweryfikowano na staging Stage6"
         },
         {
           "component": "ui",
-          "minimum": "2.4.0"
+          "minimum": "2.4.0",
+          "maximum": null,
+          "recommended": null,
+          "channel": null,
+          "notes": "Wymaga dashboardu RuntimeOverview 2025.01"
         }
       ],
       "documentation_url": "https://configs.example.com/marketplace/mean-reversion",
       "release_notes": [
-        "Pocz\u0105tkowa publikacja pakietu.",
-        "Dodano profil danych CCXT Binance."
+        "Początkowa publikacja presetów mean-reversion.",
+        "Dodano guardraile Stage6 i profil danych Binance/COINBASE."
       ],
       "security": {
         "mode": "allowlist",
@@ -102,7 +236,62 @@
           "OEM-1234567890ABCDEF"
         ],
         "require_strict_match": false,
-        "audit_message": "Pakiet dost\u0119pny tylko dla urz\u0105dze\u0144 zatwierdzonych przez Marketplace Guild."
+        "audit_message": "Preset dostępny tylko dla licencjonowanych instalacji OEM."
+      },
+      "release": {
+        "channel": "public",
+        "review_status": "approved",
+        "reviewers": [
+          {
+            "name": "QA Guild",
+            "email": "qa@example.com",
+            "role": "quality"
+          },
+          {
+            "name": "Compliance Board",
+            "email": "compliance@example.com",
+            "role": "compliance"
+          }
+        ],
+        "ticket": "https://jira.example.com/browse/MKT-1024",
+        "approved_at": "2025-01-14T09:30:00Z",
+        "notes": "Wymagane monitorowanie drawdownu podczas pierwszego tygodnia rollout'u."
+      },
+      "exchange_compatibility": [
+        {
+          "exchange": "BINANCE",
+          "environments": [
+            "paper",
+            "live"
+          ],
+          "trading_modes": [
+            "spot",
+            "margin"
+          ],
+          "status": "certified",
+          "last_verified_at": "2025-01-10T18:00:00Z",
+          "notes": "Certyfikacja Stage6 QA dla rynku spot i margin."
+        },
+        {
+          "exchange": "COINBASE",
+          "environments": [
+            "paper"
+          ],
+          "trading_modes": [
+            "spot"
+          ],
+          "status": "beta",
+          "last_verified_at": null,
+          "notes": "Wersja beta – wymagany follow-up telemetryczny"
+        }
+      ],
+      "versioning": {
+        "channel": "public",
+        "iteration": "minor",
+        "supersedes": [],
+        "superseded_by": [],
+        "migration_required": false,
+        "source": "strategies/mean_reversion_v1.json"
       }
     }
   ]

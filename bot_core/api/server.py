@@ -1453,6 +1453,128 @@ class _RuntimeServicer(trading_pb2_grpc.RuntimeServiceServicer):
         return record
 
     @staticmethod
+    def _filters_to_mapping(filters) -> Mapping[str, Any]:
+        if filters is None:
+            return {}
+
+        mapping: dict[str, Any] = {}
+
+        def _assign(keys: tuple[str, ...], values: Iterable[str]) -> None:
+            normalized = [str(value).strip() for value in values if str(value).strip()]
+            if not normalized:
+                return
+            payload: Any = normalized if len(normalized) > 1 else normalized[0]
+            for key in keys:
+                mapping[key] = payload
+
+        _assign(("event", "events"), getattr(filters, "events", ()))
+        _assign(("strategy", "strategies"), getattr(filters, "strategies", ()))
+        _assign(("symbol", "symbols"), getattr(filters, "symbols", ()))
+        _assign(("status", "statuses"), getattr(filters, "statuses", ()))
+        _assign(("side", "sides"), getattr(filters, "sides", ()))
+        _assign(("environment",), getattr(filters, "environments", ()))
+        _assign(("portfolio",), getattr(filters, "portfolios", ()))
+        _assign(("risk_profile", "riskProfile"), getattr(filters, "risk_profiles", ()))
+
+        def _timestamp_to_iso(ts: timestamp_pb2.Timestamp | None) -> str | None:
+            if ts is None:
+                return None
+            if ts.seconds == 0 and ts.nanos == 0:
+                return None
+            dt = ts.ToDatetime().replace(tzinfo=timezone.utc)
+            return dt.isoformat().replace("+00:00", "Z")
+
+        since = None
+        until = None
+        if hasattr(filters, "HasField"):
+            if filters.HasField("since"):
+                since = _timestamp_to_iso(getattr(filters, "since"))
+            if filters.HasField("until"):
+                until = _timestamp_to_iso(getattr(filters, "until"))
+        else:
+            since = _timestamp_to_iso(getattr(filters, "since", None))
+            until = _timestamp_to_iso(getattr(filters, "until", None))
+
+        if since:
+            mapping["since"] = since
+        if until:
+            mapping["until"] = until
+
+        return mapping
+
+    @staticmethod
+    def _normalize_cycle_metrics(metrics: Mapping[str, Any] | None) -> dict[str, float]:
+        if not isinstance(metrics, Mapping):
+            return {}
+        normalized: dict[str, float] = {}
+        for key, value in metrics.items():
+            if value is None:
+                continue
+            try:
+                normalized[str(key)] = float(value)
+            except (TypeError, ValueError):
+                continue
+        return normalized
+
+    def _collect_cycle_metrics(self) -> dict[str, float]:
+        auto_trader = getattr(self._context, "auto_trader", None)
+        if auto_trader is None:
+            return {}
+
+        snapshot_fn = getattr(auto_trader, "_snapshot_decision_metrics", None)
+        base_labels = getattr(auto_trader, "_base_metric_labels", None)
+        if callable(snapshot_fn) and isinstance(base_labels, Mapping):
+            try:
+                metrics = snapshot_fn(dict(base_labels))
+            except Exception:  # pragma: no cover - diagnostyka metryk cyklu
+                _LOGGER.debug("Nie udało się uzyskać metryk cyklu z AutoTradera", exc_info=True)
+            else:
+                normalized = self._normalize_cycle_metrics(metrics if isinstance(metrics, Mapping) else None)
+                if normalized:
+                    return normalized
+
+        builder = getattr(auto_trader, "build_auto_mode_snapshot", None)
+        if callable(builder):
+            try:
+                snapshot = builder(include_history=False)
+            except TypeError:
+                snapshot = builder()
+            except Exception:  # pragma: no cover - diagnostyka snapshotu
+                _LOGGER.debug("Nie udało się zbudować snapshotu automode dla metryk", exc_info=True)
+            else:
+                metrics_section = {}
+                if isinstance(snapshot, Mapping):
+                    metrics_section = snapshot.get("metrics", {})
+                normalized = self._normalize_cycle_metrics(metrics_section if isinstance(metrics_section, Mapping) else None)
+                if normalized:
+                    return normalized
+
+        return {}
+
+    def _build_cycle_metrics_message(self) -> trading_pb2.DecisionCycleMetrics | None:
+        metrics = self._collect_cycle_metrics()
+        if not metrics:
+            return None
+        message = trading_pb2.DecisionCycleMetrics()
+        for key, value in metrics.items():
+            message.values[key] = float(value)
+        return message
+
+    def _attach_cycle_metrics(
+        self,
+        message,
+        metrics_message: trading_pb2.DecisionCycleMetrics | None = None,
+    ) -> None:
+        if metrics_message is None:
+            metrics_message = self._build_cycle_metrics_message()
+        if metrics_message is None:
+            return
+        try:
+            message.cycle_metrics.CopyFrom(metrics_message)
+        except AttributeError:  # pragma: no cover - brak pola w komunikacie
+            return
+
+    @staticmethod
     def _sleep_with_context(duration: float, context) -> None:
         if duration <= 0.0:
             return
@@ -1481,6 +1603,7 @@ class _RuntimeServicer(trading_pb2_grpc.RuntimeServiceServicer):
         first_iteration = True
 
         while True:
+            metrics_message = self._build_cycle_metrics_message()
             if context is not None and hasattr(context, "is_active"):
                 try:
                     if not context.is_active():
@@ -1506,7 +1629,9 @@ class _RuntimeServicer(trading_pb2_grpc.RuntimeServiceServicer):
                     snapshot_msg = trading_pb2.StreamDecisionsSnapshot()
                     for entry in snapshot_records:
                         snapshot_msg.records.append(self._record_from_mapping(entry))
-                    yield trading_pb2.StreamDecisionsUpdate(snapshot=snapshot_msg)
+                    update = trading_pb2.StreamDecisionsUpdate(snapshot=snapshot_msg)
+                    self._attach_cycle_metrics(update, metrics_message)
+                    yield update
                 skip_snapshot = True
                 cursor = total
             else:
@@ -1515,11 +1640,40 @@ class _RuntimeServicer(trading_pb2_grpc.RuntimeServiceServicer):
                         increment = trading_pb2.StreamDecisionsIncrement(
                             record=self._record_from_mapping(entry)
                         )
-                        yield trading_pb2.StreamDecisionsUpdate(increment=increment)
+                        update = trading_pb2.StreamDecisionsUpdate(increment=increment)
+                        self._attach_cycle_metrics(update, metrics_message)
+                        yield update
                     cursor = total
 
             first_iteration = False
             self._sleep_with_context(poll_interval, context)
+
+    def ListDecisions(self, request, context):  # noqa: N802
+        self._context.authorize(context)
+        limit = int(getattr(request, "limit", 0) or 0)
+        cursor = int(getattr(request, "cursor", 0) or 0)
+        if cursor < 0:
+            cursor = 0
+
+        records = self._export_records()
+        filters = self._filters_to_mapping(getattr(request, "filters", None))
+        filtered = _filter_decision_records(records, filters if isinstance(filters, Mapping) else None)
+
+        total = len(filtered)
+        start_index = min(cursor, total)
+        if limit and limit > 0:
+            end_index = min(total, start_index + limit)
+        else:
+            end_index = total
+
+        response = trading_pb2.ListDecisionsResponse()
+        for entry in filtered[start_index:end_index]:
+            response.records.append(self._record_from_mapping(entry))
+        response.cursor = end_index
+        response.total = total
+        response.has_more = end_index < total
+        self._attach_cycle_metrics(response)
+        return response
 
 
 class _HealthServicer(trading_pb2_grpc.HealthServiceServicer):

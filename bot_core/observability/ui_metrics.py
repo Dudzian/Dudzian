@@ -4,9 +4,11 @@ from __future__ import annotations
 
 import json
 import logging
+import threading
 import time
 from typing import Any, Mapping
 
+from bot_core.exchanges.streaming import export_long_poll_metrics_snapshot
 from bot_core.observability.metrics import (
     CounterMetric,
     GaugeMetric,
@@ -30,6 +32,11 @@ def _require_observability_module(message: str) -> None:
     if guard is None:
         return
     guard.require_module("observability_ui", message=message)
+
+
+_LONG_POLL_DEFAULT_REFRESH_SECONDS = 2.0
+_LONG_POLL_CACHE_LOCK = threading.Lock()
+_LONG_POLL_CACHE: "LongPollStreamMetricsCache | None" = None
 
 
 def _safe_json_loads(payload: str) -> Mapping[str, Any]:
@@ -1619,5 +1626,82 @@ class UiTelemetryPrometheusExporter:
         self._retry_incident_started_epoch = None
 
 
-__all__ = ["UiTelemetryPrometheusExporter"]
+class LongPollStreamMetricsCache:
+    """Buforuje snapshoty metryk long-pollowych streamów na potrzeby UI."""
+
+    def __init__(
+        self,
+        *,
+        registry: MetricsRegistry | None = None,
+        refresh_interval_seconds: float = _LONG_POLL_DEFAULT_REFRESH_SECONDS,
+    ) -> None:
+        self._registry = registry or get_global_metrics_registry()
+        self._refresh_interval = max(0.1, float(refresh_interval_seconds))
+        self._lock = threading.Lock()
+        self._cached: tuple[float, list[dict[str, object]]] | None = None
+
+    def _collect(self) -> list[dict[str, object]]:
+        try:
+            latency_metric = self._registry.get("bot_exchange_stream_long_poll_latency_seconds")
+        except KeyError:
+            return []
+        if not isinstance(latency_metric, HistogramMetric):
+            return []
+
+        snapshots: list[dict[str, object]] = []
+        seen: set[tuple[str, str, str]] = set()
+        for labels_tuple, _state in latency_metric.samples():
+            labels = {key: value for key, value in labels_tuple}
+            adapter = labels.get("adapter")
+            scope = labels.get("scope")
+            environment = labels.get("environment")
+            if not adapter or not scope or not environment:
+                continue
+            key = (adapter, scope, environment)
+            if key in seen:
+                continue
+            seen.add(key)
+            snapshot = export_long_poll_metrics_snapshot(
+                registry=self._registry,
+                labels={
+                    "adapter": adapter,
+                    "scope": scope,
+                    "environment": environment,
+                },
+            )
+            snapshots.append(snapshot)
+        return snapshots
+
+    def snapshot(self, *, force_refresh: bool = False) -> list[dict[str, object]]:
+        now = time.monotonic()
+        with self._lock:
+            cached = self._cached
+            if (
+                not force_refresh
+                and cached is not None
+                and now - cached[0] < self._refresh_interval
+            ):
+                return [dict(item) for item in cached[1]]
+
+        snapshots = self._collect()
+        with self._lock:
+            self._cached = (now, [dict(item) for item in snapshots])
+        return [dict(item) for item in snapshots]
+
+
+def get_long_poll_metrics_cache() -> LongPollStreamMetricsCache:
+    """Zwraca globalny cache snapshotów long-pollowych na potrzeby UI."""
+
+    global _LONG_POLL_CACHE
+    with _LONG_POLL_CACHE_LOCK:
+        if _LONG_POLL_CACHE is None:
+            _LONG_POLL_CACHE = LongPollStreamMetricsCache()
+        return _LONG_POLL_CACHE
+
+
+__all__ = [
+    "UiTelemetryPrometheusExporter",
+    "LongPollStreamMetricsCache",
+    "get_long_poll_metrics_cache",
+]
 

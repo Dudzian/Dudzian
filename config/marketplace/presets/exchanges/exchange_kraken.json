@@ -44,7 +44,7 @@
                   }
                 },
                 "credentials": {
-                  "api_key": null,
+                  "key_id": null,
                   "secret": null
                 }
               }
@@ -65,7 +65,7 @@
                   }
                 },
                 "credentials": {
-                  "api_key": "${KRAKEN_TESTNET_KEY}",
+                  "key_id": "${KRAKEN_TESTNET_KEY}",
                   "secret": "${KRAKEN_TESTNET_SECRET}"
                 }
               }
@@ -91,7 +91,7 @@
                   }
                 },
                 "credentials": {
-                  "api_key": "${KRAKEN_LIVE_KEY}",
+                  "key_id": "${KRAKEN_LIVE_KEY}",
                   "secret": "${KRAKEN_LIVE_SECRET}"
                 }
               }

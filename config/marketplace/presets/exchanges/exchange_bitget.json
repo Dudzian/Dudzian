@@ -41,7 +41,7 @@
                   "paper_fee_rate": 0.0006
                 },
                 "credentials": {
-                  "api_key": null,
+                  "key_id": null,
                   "secret": null
                 }
               }
@@ -62,7 +62,7 @@
                   }
                 },
                 "credentials": {
-                  "api_key": "${BITGET_TESTNET_KEY}",
+                  "key_id": "${BITGET_TESTNET_KEY}",
                   "secret": "${BITGET_TESTNET_SECRET}",
                   "passphrase": "${BITGET_TESTNET_PASSPHRASE}"
                 }
@@ -88,7 +88,7 @@
                   }
                 },
                 "credentials": {
-                  "api_key": "${BITGET_LIVE_KEY}",
+                  "key_id": "${BITGET_LIVE_KEY}",
                   "secret": "${BITGET_LIVE_SECRET}",
                   "passphrase": "${BITGET_LIVE_PASSPHRASE}"
                 }

@@ -40,7 +40,7 @@
                   "paper_cash_asset": "USDT"
                 },
                 "credentials": {
-                  "api_key": null,
+                  "key_id": null,
                   "secret": null
                 }
               }
@@ -61,7 +61,7 @@
                   }
                 },
                 "credentials": {
-                  "api_key": "${BYBIT_TESTNET_KEY}",
+                  "key_id": "${BYBIT_TESTNET_KEY}",
                   "secret": "${BYBIT_TESTNET_SECRET}"
                 }
               }
@@ -91,7 +91,7 @@
                   }
                 },
                 "credentials": {
-                  "api_key": "${BYBIT_LIVE_KEY}",
+                  "key_id": "${BYBIT_LIVE_KEY}",
                   "secret": "${BYBIT_LIVE_SECRET}"
                 }
               }

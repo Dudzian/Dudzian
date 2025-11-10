@@ -30,11 +30,11 @@ def test_exchange_profiles_require_all_modes(tmp_path: Path) -> None:
     config = {
         "paper": {
             "exchange_manager": {"mode": "paper"},
-            "credentials": {"api_key": None, "secret": None},
+            "credentials": {"key_id": None, "secret": None},
         },
         "live": {
             "exchange_manager": {"mode": "spot", "testnet": False},
-            "credentials": {"api_key": "a", "secret": "b"},
+            "credentials": {"key_id": "a", "secret": "b"},
         },
     }
     path = tmp_path / "foo.yaml"
@@ -49,15 +49,15 @@ def test_exchange_profiles_require_boolean_testnet(tmp_path: Path) -> None:
     config = {
         "paper": {
             "exchange_manager": {"mode": "paper"},
-            "credentials": {"api_key": None, "secret": None},
+            "credentials": {"key_id": None, "secret": None},
         },
         "testnet": {
             "exchange_manager": {"mode": "spot", "testnet": "yes"},
-            "credentials": {"api_key": "x", "secret": "y"},
+            "credentials": {"key_id": "x", "secret": "y"},
         },
         "live": {
             "exchange_manager": {"mode": "spot", "testnet": False},
-            "credentials": {"api_key": "a", "secret": "b"},
+            "credentials": {"key_id": "a", "secret": "b"},
         },
     }
     path = tmp_path / "foo.yaml"

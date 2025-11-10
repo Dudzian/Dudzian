@@ -3,11 +3,13 @@ from pathlib import Path
 
 import pytest
 
+from tests.ui._qt import require_pyside6
+
 pytestmark = pytest.mark.qml
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
-pytest.importorskip("PySide6", reason="Wymagany PySide6 do testów UI")
+require_pyside6()
 
 from PySide6.QtCore import QObject, Property, Qt, QUrl, Signal, Slot, QMetaObject, Q_ARG
 from PySide6.QtQml import QQmlApplicationEngine

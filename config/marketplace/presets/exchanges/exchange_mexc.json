@@ -40,7 +40,7 @@
                   "paper_cash_asset": "USDT"
                 },
                 "credentials": {
-                  "api_key": null,
+                  "key_id": null,
                   "secret": null
                 }
               }
@@ -61,7 +61,7 @@
                   }
                 },
                 "credentials": {
-                  "api_key": "${MEXC_TESTNET_KEY}",
+                  "key_id": "${MEXC_TESTNET_KEY}",
                   "secret": "${MEXC_TESTNET_SECRET}"
                 }
               }
@@ -86,7 +86,7 @@
                   }
                 },
                 "credentials": {
-                  "api_key": "${MEXC_LIVE_KEY}",
+                  "key_id": "${MEXC_LIVE_KEY}",
                   "secret": "${MEXC_LIVE_SECRET}"
                 }
               }

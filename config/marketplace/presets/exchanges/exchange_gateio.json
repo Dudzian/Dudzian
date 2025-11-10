@@ -40,7 +40,7 @@
                   "paper_cash_asset": "USDT"
                 },
                 "credentials": {
-                  "api_key": null,
+                  "key_id": null,
                   "secret": null
                 }
               }
@@ -61,7 +61,7 @@
                   }
                 },
                 "credentials": {
-                  "api_key": "${GATEIO_TESTNET_KEY}",
+                  "key_id": "${GATEIO_TESTNET_KEY}",
                   "secret": "${GATEIO_TESTNET_SECRET}"
                 }
               }
@@ -86,7 +86,7 @@
                   }
                 },
                 "credentials": {
-                  "api_key": "${GATEIO_LIVE_KEY}",
+                  "key_id": "${GATEIO_LIVE_KEY}",
                   "secret": "${GATEIO_LIVE_SECRET}"
                 }
               }

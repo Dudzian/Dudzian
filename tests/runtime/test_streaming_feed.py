@@ -12,7 +12,7 @@ import bot_core.runtime.pipeline as pipeline_module
 from bot_core.config.models import EnvironmentConfig, EnvironmentStreamConfig
 from bot_core.decision.models import DecisionEvaluation
 from bot_core.exchanges.base import Environment
-from bot_core.exchanges.streaming import StreamBatch
+from bot_core.exchanges.streaming import LocalLongPollStream, StreamBatch
 from bot_core.observability.metrics import MetricsRegistry
 from bot_core.runtime.pipeline import (
     DecisionAwareSignalSink,
@@ -291,6 +291,42 @@ def test_streaming_strategy_feed_start_async_idempotent() -> None:
         assert feed._async_task is None
 
     asyncio.run(_run())
+
+
+def test_local_long_poll_stream_export_metrics_snapshot() -> None:
+    registry = MetricsRegistry()
+    stream = LocalLongPollStream(
+        base_url="http://127.0.0.1:9999",
+        path="/stream/demo",
+        channels=["ticker"],
+        adapter="binance",
+        scope="spot",
+        environment="paper",
+        metrics_registry=registry,
+    )
+
+    stream._record_poll_latency(0.12)
+    stream._record_poll_latency(0.35)
+
+    batch = StreamBatch(channel="ticker", events=(), received_at=stream._clock() - 0.05)
+    stream._record_delivery_lag(batch)
+
+    stream._record_http_error(status=502, retryable=True, duration=0.2, reason="network")
+    stream._record_reconnect_attempt(reason="network", attempt=1)
+    stream._record_reconnect_result(status="failure", duration=0.6, reason="network")
+
+    snapshot = stream.export_metrics_snapshot()
+
+    assert snapshot["labels"] == {"adapter": "binance", "scope": "spot", "environment": "paper"}
+    latency = snapshot.get("requestLatency")
+    assert latency is not None and latency["count"] == 2
+    assert latency["p95"] is not None and latency["p50"] is not None
+    http_errors = snapshot.get("httpErrors")
+    assert http_errors is not None and http_errors["total"] == 1
+    reconnects = snapshot.get("reconnects")
+    assert reconnects is not None
+    assert reconnects["attempts"] == 1
+    assert reconnects["failure"] == 1
 
 
 def test_multi_strategy_runtime_start_stream_async_and_shutdown() -> None:

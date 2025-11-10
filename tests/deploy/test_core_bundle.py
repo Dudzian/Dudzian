@@ -14,7 +14,11 @@ import pytest
 import deploy.packaging.build_core_bundle as build_core_bundle_module
 
 
-from deploy.packaging import BundleInputs, CoreBundleBuilder, build_from_cli
+from deploy.packaging import (
+    BundleInputs,
+    CoreBundleBuilder,
+    build_core_bundle_from_cli,
+)
 from bot_core.security.signing import canonical_json_bytes
 
 
@@ -316,7 +320,7 @@ def test_build_from_cli_rejects_config_path_traversal(tmp_path):
     args = _base_cli_args(env) + ["--config", f"../core.yaml={config_file}"]
 
     with pytest.raises(ValueError):
-        build_from_cli(args)
+        build_core_bundle_from_cli(args)
 
 
 def test_build_from_cli_requires_version_without_dry_run(tmp_path):
@@ -340,7 +344,7 @@ def test_build_from_cli_requires_version_without_dry_run(tmp_path):
     ]
 
     with pytest.raises(ValueError, match="--version is required"):
-        build_from_cli(args)
+        build_core_bundle_from_cli(args)
 
 
 def test_build_from_cli_rejects_invalid_version(tmp_path):
@@ -353,7 +357,7 @@ def test_build_from_cli_rejects_invalid_version(tmp_path):
     args += ["--config", f"core.yaml={config_file}"]
 
     with pytest.raises(ValueError, match="unsupported character"):
-        build_from_cli(args)
+        build_core_bundle_from_cli(args)
 
 
 def test_build_from_cli_rejects_existing_bundle_archive(tmp_path):
@@ -363,11 +367,11 @@ def test_build_from_cli_rejects_existing_bundle_archive(tmp_path):
 
     args = _base_cli_args(env) + ["--config", f"core.yaml={config_file}"]
 
-    first_output = build_from_cli(args)
+    first_output = build_core_bundle_from_cli(args)
     assert first_output.exists()
 
     with pytest.raises(FileExistsError, match="already exists"):
-        build_from_cli(args)
+        build_core_bundle_from_cli(args)
 
 
 def test_build_from_cli_dry_run_uses_defaults_and_creates_no_artifacts(tmp_path):
@@ -391,7 +395,7 @@ def test_build_from_cli_dry_run_uses_defaults_and_creates_no_artifacts(tmp_path)
         "--dry-run",
     ]
 
-    destination = build_from_cli(args)
+    destination = build_core_bundle_from_cli(args)
     expected = env["output_dir"].resolve() / "core-oem-0.0.0-dry-run-linux.tar.gz"
     assert destination == expected
     assert not env["output_dir"].exists()
@@ -401,7 +405,7 @@ def test_build_from_cli_dry_run_uses_defaults_and_creates_no_artifacts(tmp_path)
 def test_build_from_cli_dry_run_without_additional_arguments(monkeypatch, tmp_path):
     monkeypatch.chdir(tmp_path)
 
-    destination = build_from_cli(["--dry-run", "--platform", "linux"])
+    destination = build_core_bundle_from_cli(["--dry-run", "--platform", "linux"])
 
     expected = (tmp_path / "var" / "dist" / "core-oem-0.0.0-dry-run-linux.tar.gz").resolve()
     assert destination == expected
@@ -439,7 +443,7 @@ def test_build_from_cli_dry_run_without_samples(monkeypatch, tmp_path):
         tmp_path / "missing" / "signing.key",
     )
 
-    destination = build_from_cli(["--dry-run", "--platform", "linux"])
+    destination = build_core_bundle_from_cli(["--dry-run", "--platform", "linux"])
 
     expected = (tmp_path / "var" / "dist" / "core-oem-0.0.0-dry-run-linux.tar.gz").resolve()
     assert destination == expected
@@ -463,7 +467,7 @@ def test_build_from_cli_dry_run_detects_existing_bundle(tmp_path):
     existing.write_text("placeholder", encoding="utf-8")
 
     with pytest.raises(FileExistsError, match="already exists"):
-        build_from_cli(args)
+        build_core_bundle_from_cli(args)
 
     assert existing.exists()
 
@@ -519,7 +523,7 @@ def test_build_from_cli_writes_pipeline_report(tmp_path):
         str(report_path),
     ]
 
-    archive_path = build_from_cli(args)
+    archive_path = build_core_bundle_from_cli(args)
     assert archive_path.exists()
 
     assert report_path.exists()
@@ -560,7 +564,7 @@ def test_build_from_cli_rejects_symlink_signing_key(tmp_path):
     args += ["--config", f"core.yaml={config_file}"]
 
     with pytest.raises(ValueError, match="Signing key path must not be a symlink"):
-        build_from_cli(args)
+        build_core_bundle_from_cli(args)
 
 
 def test_build_from_cli_rejects_directory_signing_key(tmp_path):
@@ -576,7 +580,7 @@ def test_build_from_cli_rejects_directory_signing_key(tmp_path):
     args += ["--config", f"core.yaml={config_file}"]
 
     with pytest.raises(ValueError, match="must reference a file"):
-        build_from_cli(args)
+        build_core_bundle_from_cli(args)
 
 
 @pytest.mark.skipif(os.name == "nt", reason="POSIX permission model not available")
@@ -593,7 +597,7 @@ def test_build_from_cli_rejects_insecure_signing_key_permissions(tmp_path):
     args += ["--config", f"core.yaml={config_file}"]
 
     with pytest.raises(ValueError, match="file permissions must restrict access"):
-        build_from_cli(args)
+        build_core_bundle_from_cli(args)
 
 
 @pytest.mark.skipif(not hasattr(os, "symlink"), reason="OS does not support symlinks")
@@ -615,7 +619,7 @@ def test_build_from_cli_rejects_symlink_output_dir(tmp_path):
     args += ["--config", f"core.yaml={config_file}"]
 
     with pytest.raises(ValueError, match="must not be a symlink"):
-        build_from_cli(args)
+        build_core_bundle_from_cli(args)
 
 
 def test_build_from_cli_rejects_file_output_dir(tmp_path):
@@ -631,7 +635,7 @@ def test_build_from_cli_rejects_file_output_dir(tmp_path):
     args += ["--config", f"core.yaml={config_file}"]
 
     with pytest.raises(ValueError, match="is not a directory"):
-        build_from_cli(args)
+        build_core_bundle_from_cli(args)
 
 
 def test_core_bundle_builder_rejects_control_char_in_version(tmp_path):
@@ -846,7 +850,7 @@ def test_build_from_cli_rejects_config_directory(tmp_path):
     args = _base_cli_args(env) + ["--config", f"core.yaml={config_dir}"]
 
     with pytest.raises(ValueError, match="must reference a file"):
-        build_from_cli(args)
+        build_core_bundle_from_cli(args)
 
 
 def test_build_from_cli_rejects_duplicate_config_entries(tmp_path):
@@ -864,7 +868,7 @@ def test_build_from_cli_rejects_duplicate_config_entries(tmp_path):
     ]
 
     with pytest.raises(ValueError):
-        build_from_cli(args)
+        build_core_bundle_from_cli(args)
 
 
 def test_build_from_cli_rejects_casefold_config_collisions(tmp_path):
@@ -882,7 +886,7 @@ def test_build_from_cli_rejects_casefold_config_collisions(tmp_path):
     ]
 
     with pytest.raises(ValueError, match="case-insensitive filesystem"):
-        build_from_cli(args)
+        build_core_bundle_from_cli(args)
 
 
 def test_build_from_cli_rejects_reserved_config_name(tmp_path):
@@ -896,7 +900,7 @@ def test_build_from_cli_rejects_reserved_config_name(tmp_path):
     ]
 
     with pytest.raises(ValueError, match="reserved name"):
-        build_from_cli(args)
+        build_core_bundle_from_cli(args)
 
 
 def test_build_from_cli_rejects_config_name_ending_with_sig(tmp_path):
@@ -910,7 +914,7 @@ def test_build_from_cli_rejects_config_name_ending_with_sig(tmp_path):
     ]
 
     with pytest.raises(ValueError, match=r"must not end with '.sig'"):
-        build_from_cli(args)
+        build_core_bundle_from_cli(args)
 
 
 def test_build_from_cli_rejects_config_signature_collision(tmp_path):
@@ -928,7 +932,7 @@ def test_build_from_cli_rejects_config_signature_collision(tmp_path):
     ]
 
     with pytest.raises(ValueError, match=r"must not end with '.sig'"):
-        build_from_cli(args)
+        build_core_bundle_from_cli(args)
 
 
 def test_build_from_cli_rejects_windows_reserved_config_name(tmp_path):
@@ -939,7 +943,7 @@ def test_build_from_cli_rejects_windows_reserved_config_name(tmp_path):
     args = _base_cli_args(env) + ["--config", f"CON={config_file}"]
 
     with pytest.raises(ValueError, match="Windows reserved device name"):
-        build_from_cli(args)
+        build_core_bundle_from_cli(args)
 
 
 def test_build_from_cli_rejects_windows_reserved_config_component(tmp_path):
@@ -950,7 +954,7 @@ def test_build_from_cli_rejects_windows_reserved_config_component(tmp_path):
     args = _base_cli_args(env) + ["--config", f"profiles/PRN.json={config_file}"]
 
     with pytest.raises(ValueError, match="Windows reserved device name"):
-        build_from_cli(args)
+        build_core_bundle_from_cli(args)
 
 
 def test_build_from_cli_rejects_config_name_with_trailing_dot(tmp_path):
@@ -961,7 +965,7 @@ def test_build_from_cli_rejects_config_name_with_trailing_dot(tmp_path):
     args = _base_cli_args(env) + ["--config", f"core.={config_file}"]
 
     with pytest.raises(ValueError, match="ending with a space or dot"):
-        build_from_cli(args)
+        build_core_bundle_from_cli(args)
 
 
 def test_build_from_cli_rejects_config_name_with_invalid_windows_character(tmp_path):
@@ -972,7 +976,7 @@ def test_build_from_cli_rejects_config_name_with_invalid_windows_character(tmp_p
     args = _base_cli_args(env) + ["--config", f"core|secure.yaml={config_file}"]
 
     with pytest.raises(ValueError, match="disallowed on Windows"):
-        build_from_cli(args)
+        build_core_bundle_from_cli(args)
 
 
 def test_build_from_cli_rejects_config_name_with_control_character(tmp_path):
@@ -984,7 +988,7 @@ def test_build_from_cli_rejects_config_name_with_control_character(tmp_path):
     args = _base_cli_args(env) + ["--config", f"core{control_char}.yaml={config_file}"]
 
     with pytest.raises(ValueError, match="control character"):
-        build_from_cli(args)
+        build_core_bundle_from_cli(args)
 
 
 def test_build_from_cli_rejects_config_file_with_control_character(tmp_path):
@@ -996,7 +1000,7 @@ def test_build_from_cli_rejects_config_file_with_control_character(tmp_path):
     args = _base_cli_args(env) + ["--config", f"core.yaml={config_file}"]
 
     with pytest.raises(ValueError, match="control character"):
-        build_from_cli(args)
+        build_core_bundle_from_cli(args)
 
 
 def test_build_from_cli_rejects_nested_config_entries(tmp_path):
@@ -1014,7 +1018,7 @@ def test_build_from_cli_rejects_nested_config_entries(tmp_path):
     ]
 
     with pytest.raises(ValueError, match="nests within another entry"):
-        build_from_cli(args)
+        build_core_bundle_from_cli(args)
 
 
 def test_build_from_cli_rejects_config_becoming_parent(tmp_path):
@@ -1032,7 +1036,7 @@ def test_build_from_cli_rejects_config_becoming_parent(tmp_path):
     ]
 
     with pytest.raises(ValueError, match="parent directory of another entry"):
-        build_from_cli(args)
+        build_core_bundle_from_cli(args)
 
 
 def test_build_from_cli_rejects_signature_directory_collision(tmp_path):
@@ -1050,7 +1054,7 @@ def test_build_from_cli_rejects_signature_directory_collision(tmp_path):
     ]
 
     with pytest.raises(ValueError, match="signature file"):
-        build_from_cli(args)
+        build_core_bundle_from_cli(args)
 
 
 def test_build_from_cli_rejects_duplicate_daemon_entries(tmp_path):
@@ -1066,7 +1070,7 @@ def test_build_from_cli_rejects_duplicate_daemon_entries(tmp_path):
     ]
 
     with pytest.raises(ValueError):
-        build_from_cli(args)
+        build_core_bundle_from_cli(args)
 
 
 def test_build_from_cli_rejects_casefold_daemon_name_collision(tmp_path):
@@ -1086,7 +1090,7 @@ def test_build_from_cli_rejects_casefold_daemon_name_collision(tmp_path):
     ]
 
     with pytest.raises(ValueError, match="case-insensitive filesystem"):
-        build_from_cli(args)
+        build_core_bundle_from_cli(args)
 
 
 def test_build_from_cli_rejects_casefold_daemon_directory_contents(tmp_path):
@@ -1103,7 +1107,7 @@ def test_build_from_cli_rejects_casefold_daemon_directory_contents(tmp_path):
     args[args.index("--daemon") + 1] = str(colliding)
 
     with pytest.raises(ValueError, match="case-insensitive filesystem"):
-        build_from_cli(args)
+        build_core_bundle_from_cli(args)
 
 
 @pytest.mark.skipif(not hasattr(os, "symlink"), reason="symlink not supported")
@@ -1124,7 +1128,7 @@ def test_build_from_cli_rejects_symlink_daemon(tmp_path):
     args[args.index("--daemon") + 1] = str(link_path)
 
     with pytest.raises(ValueError, match="Daemon artifact must not be a symlink"):
-        build_from_cli(args)
+        build_core_bundle_from_cli(args)
 
 
 @pytest.mark.skipif(not hasattr(os, "symlink"), reason="symlink not supported")
@@ -1143,7 +1147,7 @@ def test_build_from_cli_rejects_symlink_inside_daemon_directory(tmp_path):
     ]
 
     with pytest.raises(ValueError, match="Daemon artifact contains forbidden symlink"):
-        build_from_cli(args)
+        build_core_bundle_from_cli(args)
 
 
 @pytest.mark.skipif(not hasattr(os, "symlink"), reason="symlink not supported")
@@ -1161,7 +1165,7 @@ def test_build_from_cli_rejects_symlink_config(tmp_path):
     ]
 
     with pytest.raises(ValueError, match="Config entry 'core.yaml' must not be a symlink"):
-        build_from_cli(args)
+        build_core_bundle_from_cli(args)
 
 
 def test_build_from_cli_rejects_duplicate_ui_entries(tmp_path):
@@ -1177,7 +1181,7 @@ def test_build_from_cli_rejects_duplicate_ui_entries(tmp_path):
     ]
 
     with pytest.raises(ValueError):
-        build_from_cli(args)
+        build_core_bundle_from_cli(args)
 
 
 def test_build_from_cli_rejects_windows_reserved_daemon_entry(tmp_path):
@@ -1196,7 +1200,7 @@ def test_build_from_cli_rejects_windows_reserved_daemon_entry(tmp_path):
     ]
 
     with pytest.raises(ValueError, match="Windows reserved device name"):
-        build_from_cli(args)
+        build_core_bundle_from_cli(args)
 
 
 def test_build_from_cli_rejects_casefold_ui_name_collision(tmp_path):
@@ -1216,7 +1220,7 @@ def test_build_from_cli_rejects_casefold_ui_name_collision(tmp_path):
     ]
 
     with pytest.raises(ValueError, match="case-insensitive filesystem"):
-        build_from_cli(args)
+        build_core_bundle_from_cli(args)
 
 
 def test_build_from_cli_rejects_casefold_ui_directory_contents(tmp_path):
@@ -1233,7 +1237,7 @@ def test_build_from_cli_rejects_casefold_ui_directory_contents(tmp_path):
     args[args.index("--ui") + 1] = str(colliding)
 
     with pytest.raises(ValueError, match="case-insensitive filesystem"):
-        build_from_cli(args)
+        build_core_bundle_from_cli(args)
 
 
 def test_build_from_cli_rejects_invalid_resource_directory(tmp_path):
@@ -1253,7 +1257,7 @@ def test_build_from_cli_rejects_invalid_resource_directory(tmp_path):
     ]
 
     with pytest.raises(ValueError):
-        build_from_cli(args)
+        build_core_bundle_from_cli(args)
 
 
 def test_build_from_cli_rejects_reserved_resource_directory(tmp_path):
@@ -1274,7 +1278,7 @@ def test_build_from_cli_rejects_reserved_resource_directory(tmp_path):
     ]
 
     with pytest.raises(ValueError, match="reserved prefix"):
-        build_from_cli(args)
+        build_core_bundle_from_cli(args)
 
 
 def test_build_from_cli_rejects_reserved_resource_directory_casefold(tmp_path):
@@ -1295,7 +1299,7 @@ def test_build_from_cli_rejects_reserved_resource_directory_casefold(tmp_path):
     ]
 
     with pytest.raises(ValueError, match="reserved prefix"):
-        build_from_cli(args)
+        build_core_bundle_from_cli(args)
 
 
 def test_build_from_cli_rejects_duplicate_resources(tmp_path):
@@ -1322,7 +1326,7 @@ def test_build_from_cli_rejects_duplicate_resources(tmp_path):
     ]
 
     with pytest.raises(ValueError):
-        build_from_cli(args)
+        build_core_bundle_from_cli(args)
 
 
 def test_build_from_cli_rejects_resource_directory_casefold_collision(tmp_path):
@@ -1349,7 +1353,7 @@ def test_build_from_cli_rejects_resource_directory_casefold_collision(tmp_path):
     ]
 
     with pytest.raises(ValueError, match="case-insensitive filesystem"):
-        build_from_cli(args)
+        build_core_bundle_from_cli(args)
 
 
 def test_build_from_cli_rejects_resource_basename_casefold_collision(tmp_path):
@@ -1376,7 +1380,7 @@ def test_build_from_cli_rejects_resource_basename_casefold_collision(tmp_path):
     ]
 
     with pytest.raises(ValueError, match="Duplicate resource entry"):
-        build_from_cli(args)
+        build_core_bundle_from_cli(args)
 
 
 def test_build_from_cli_rejects_windows_reserved_resource_file(tmp_path):
@@ -1398,7 +1402,7 @@ def test_build_from_cli_rejects_windows_reserved_resource_file(tmp_path):
     ]
 
     with pytest.raises(ValueError, match="Windows reserved device name"):
-        build_from_cli(args)
+        build_core_bundle_from_cli(args)
 
 
 def test_build_from_cli_rejects_resource_directory_casefold_contents(tmp_path):
@@ -1422,7 +1426,7 @@ def test_build_from_cli_rejects_resource_directory_casefold_contents(tmp_path):
     ]
 
     with pytest.raises(ValueError, match="case-insensitive filesystem"):
-        build_from_cli(args)
+        build_core_bundle_from_cli(args)
 
 def test_build_from_cli_rejects_empty_fingerprint_placeholder(tmp_path):
     env = _create_basic_cli_environment(tmp_path)
@@ -1437,7 +1441,7 @@ def test_build_from_cli_rejects_empty_fingerprint_placeholder(tmp_path):
     ]
 
     with pytest.raises(ValueError, match="cannot be empty"):
-        build_from_cli(args)
+        build_core_bundle_from_cli(args)
 
 
 def test_build_from_cli_rejects_fingerprint_placeholder_with_space(tmp_path):
@@ -1453,4 +1457,4 @@ def test_build_from_cli_rejects_fingerprint_placeholder_with_space(tmp_path):
     ]
 
     with pytest.raises(ValueError, match="unsupported character"):
-        build_from_cli(args)
+        build_core_bundle_from_cli(args)

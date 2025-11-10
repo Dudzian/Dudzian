@@ -3,11 +3,13 @@ from pathlib import Path
 
 import pytest
 
+from tests.ui._qt import require_pyside6
+
 pytestmark = pytest.mark.qml
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
-PySide6 = pytest.importorskip("PySide6", reason="Wymagany PySide6 do testów UI")
+PySide6 = require_pyside6()
 
 try:  # pragma: no cover - zależne od środowiska CI
     from PySide6.QtWidgets import QApplication  # type: ignore[attr-defined]

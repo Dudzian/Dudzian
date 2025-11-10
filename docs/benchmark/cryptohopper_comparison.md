@@ -23,8 +23,14 @@
 | --- | --- | --- | --- | --- |
 | Strategia | 🟡 Parzystość z luką marketplace | liczba presetów publicznych (≥15), SLA publikacji (≤48 h), pokrycie Stress Labs w marketingu (100% kampanii) | Zespół Strategii i AI | Udostępnić katalog presetów beta, zsynchronizować komunikację Stress Labs z marketingiem productowym |
 | Automatyzacja | 🟢 Przewaga Stage6 | liczba pełnych cykli hypercare/miesiąc (≥4), odsetek podpisanych raportów (100%), średni czas self-healingu (≤5 min) | Zespół Hypercare | Włączyć regresję adapterów do nightly, raportować czasy self-healingu w status_review |
-| UI | 🔴 Luka krytyczna | opóźnienie feedu gRPC p95 (≤3 s), pokrycie telemetrii decyzji (100%), testy UI gRPC w CI (zielone) | Zespół UI Runtime | Dostarczyć endpoint gRPC, dodać test PySide6 do pipeline’u, zorganizować demo L2 |
+| UI | 🔴 Luka krytyczna | opóźnienie feedu gRPC p95 (≤3 s), pokrycie telemetrii decyzji (100%), testy UI gRPC w CI (zielone) | Zespół UI Runtime | Dostarczyć endpoint gRPC, dodać test PySide6 do pipeline’u, utrzymać artefakt `decision-feed-metrics` i zorganizować demo L2 |
 | Compliance | 🟢 Przewaga | pokrycie podpisów HMAC (100%), audyty kwartalne bez zastrzeżeń (100%), kompletność TradingDecisionJournal (≥99%) | Zespół Compliance & Audyt | Zestawić wyniki audytu Q2, odświeżyć materiały produktowe i checklisty |
+
+## Stress Lab i materiały marketingowe
+- **Whitepaper:** [`docs/marketing/stage6_stress_lab_whitepaper.md`](../marketing/stage6_stress_lab_whitepaper.md) – kompendium przewag technologicznych, integracji z Portfolio Governor oraz wymogów operacyjnych Stress Lab.
+- **Case studies:** [`docs/marketing/stage6_stress_lab_case_studies.md`](../marketing/stage6_stress_lab_case_studies.md) – scenariusze wykorzystania Stress Lab u klientów OEM (desk prop, OEM on-prem, rollout marketplace).
+- **Artefakty audytowe:** `var/audit/stage6/` – podpisane raporty i manifesty (JSON/CSV/HMAC) stanowią źródło danych dla materiałów marketingowych.
+- **Workflow eksportu:** patrz sekcja „Automatyzacja eksportu Stress Lab” w niniejszym dokumencie (poniżej) – pipeline CI publikuje artefakt `stress-lab-report` dla każdego releasu.
 
 ## Tabela funkcji i różnic
 
@@ -62,7 +68,7 @@
 | Kwartał | Fokus | Kluczowe kroki | Artefakty kontroli |
 | --- | --- | --- | --- |
 | Q3 2024 | Integracja UI ↔ runtime | Implementacja kanału gRPC, testy PySide6 w CI, runbook demo dla operatorów L2 | Raport z `docs/runtime/status_review.md`, zaktualizowany benchmark (sekcja UI) |
-| Q4 2024 | Marketplace presetów | Publikacja katalogu presetów z recenzjami, rollout procesu wersjonowania offline | Release notes, listing w README, bundler presetów w `var/audit/marketplace/` |
+| Q4 2024 | Marketplace presetów | Publikacja katalogu presetów z recenzjami, rollout procesu wersjonowania offline | Release notes, listing w README, bundler presetów w `var/audit/marketplace/`, workflow `marketplace-catalog` + runbook marketingowy |
 | Q1 2025 | Rozszerzenie giełd | Dodanie adapterów do poziomu 15+, testy failover, aktualizacja konfiguracji paper/live (Deribit, BitMEX) | Raport resilience, log failover w `var/audit/` |
 
 ## Cadence utrzymania benchmarku
@@ -95,9 +101,15 @@
 1. **Zrzut metryk automatyzacji:** uruchom `python scripts/run_stage6_hypercare_cycle.py --export var/audit/hypercare/<data>/summary.json` i zweryfikuj podpis HMAC (`python scripts/verify_stage6_hypercare_summary.py`).
 2. **Pokrycie giełd:** wywołaj `python scripts/list_exchange_adapters.py --output reports/exchanges/<data>.csv` i oznacz adaptery w trybie live/paper.
 3. **Marketplace presetów:** wygeneruj raport `python scripts/export_preset_catalog.py --format markdown --output reports/strategy/presets_<data>.md` zawierający liczbę presetów publicznych i status recenzji.
-4. **Telemetria UI:** z CI pobierz najnowszy log testów `reports/ui/tests/<build_id>/grpc_feed.json` i oblicz p95 opóźnienia feedu (`python scripts/calc_ui_feed_latency.py`).
+4. **Telemetria UI:** z CI pobierz artefakt `decision-feed-metrics` (plik `reports/ci/decision_feed_metrics.json`) generowany przez job „gRPC Decision Feed Integration” i oblicz p50/p95 opóźnienia feedu (`python scripts/calc_ui_feed_latency.py` lub szybka analiza w arkuszu).
 5. **Compliance:** zaktualizuj `var/audit/compliance/` o wyniki audytów (`python scripts/export_compliance_report.py`) i zweryfikuj kompletność wpisów `TradingDecisionJournal` (`python scripts/validate_decision_journal.py`).
 6. **Aktualizacja benchmarku:** nanieś wartości metryk w tabeli wyników, odśwież priorytety oraz dopisz wpis w sekcji „Historia aktualizacji benchmarku”.
+
+### Automatyzacja eksportu Stress Lab
+1. Workflow CI `stress-lab-report.yml` uruchamia `python scripts/run_stress_lab.py run --config config/core.yaml --output reports/stress_lab/ci_report.json --signing-key-env STRESS_LAB_HMAC --fail-on-breach`, a następnie zapisuje podpis `.sig` oraz manifest `.manifest.json` do katalogu artefaktów `stress-lab-report`.
+2. Raport i podpis są kopiowane do `var/audit/stage6/ci/` podczas przygotowania release notes.
+3. Marketing dodaje link do artefaktu w whitepaperze oraz case studies i aktualizuje sekcję Stress Lab w niniejszym benchmarku.
+4. Test `tests/docs/test_marketing_links.py` pilnuje spójności linków do materiałów marketingowych i raportów Stress Lab.
 
 ### Walidacja konsystencji
 - Zestaw metryki z raportem `docs/runtime/status_review.md` – różnice >5% wymagają otwarcia zadania w Jira/Linear.

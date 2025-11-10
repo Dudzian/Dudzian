@@ -206,6 +206,20 @@ exchange_adapters:
       supports_testnet: true
       default_settings:
         hedgeMode: true
+  deribit:
+    futures:
+      class_path: bot_core.exchanges.deribit.futures:DeribitFuturesAdapter
+      supports_testnet: true
+      default_settings:
+        stream:
+          base_url: http://127.0.0.1:8765
+  bitmex:
+    futures:
+      class_path: bot_core.exchanges.bitmex.futures:BitmexFuturesAdapter
+      supports_testnet: true
+      default_settings:
+        stream:
+          base_url: http://127.0.0.1:8765
 
 license:
   license_path: var/licenses/active/license.json

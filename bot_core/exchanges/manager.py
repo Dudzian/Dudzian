@@ -423,7 +423,17 @@ def _validate_exchange_profiles(
             raise ValueError(
                 f"Profil '{name}' w konfiguracji {path} wymaga sekcji 'credentials'.",
             )
-        for required_key in ("api_key", "secret"):
+        if "key" in credentials_cfg:
+            raise ValueError(
+                "Profil '%s' w konfiguracji %s musi używać pola credentials.key_id zamiast legacy credentials.key"
+                % (name, path),
+            )
+        if "api_key" in credentials_cfg:
+            raise ValueError(
+                "Profil '%s' w konfiguracji %s musi używać pola credentials.key_id zamiast credentials.api_key"
+                % (name, path),
+            )
+        for required_key in ("key_id", "secret"):
             if required_key not in credentials_cfg:
                 raise ValueError(
                     "Profil '%s' w konfiguracji %s wymaga klucza credentials.%s"
@@ -1502,7 +1512,7 @@ class ExchangeManager:
         secret_length = len(self._secret or "")
         passphrase_length = len(self._passphrase or "")
         log.info(
-            "Credentials set (lengths): api_key=%d, secret=%d, passphrase=%d",
+            "Credentials set (lengths): key_id=%d, secret=%d, passphrase=%d",
             api_key_length,
             secret_length,
             passphrase_length,
@@ -1633,6 +1643,7 @@ class ExchangeManager:
         config_dir: str | os.PathLike[str] | None = None,
         overrides: Mapping[str, Any] | None = None,
     ) -> None:
+        config_path = _resolve_exchange_config_path(exchange or self.exchange_id, config_dir=config_dir)
         profile = dict(self.load_environment_profile(name, exchange=exchange, config_dir=config_dir))
         if overrides:
             profile = _deep_merge(profile, overrides)
@@ -1642,8 +1653,18 @@ class ExchangeManager:
             self._apply_manager_profile(manager_cfg)
         credentials_cfg = expanded.get("credentials")
         if isinstance(credentials_cfg, Mapping):
+            if "key" in credentials_cfg:
+                raise ValueError(
+                    "Profil '%s' w konfiguracji %s musi używać pola credentials.key_id zamiast legacy credentials.key"
+                    % (name, config_path),
+                )
+            if "api_key" in credentials_cfg:
+                raise ValueError(
+                    "Profil '%s' w konfiguracji %s musi używać pola credentials.key_id zamiast credentials.api_key"
+                    % (name, config_path),
+                )
             self.set_credentials(
-                credentials_cfg.get("api_key"),
+                credentials_cfg.get("key_id"),
                 credentials_cfg.get("secret"),
                 passphrase=credentials_cfg.get("passphrase"),
             )

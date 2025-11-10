@@ -14,7 +14,7 @@ paper:
       - rate: 1200
         per: 60
   credentials:
-    api_key: null
+    key_id: null
     secret: null
 
 paper_margin:
@@ -33,7 +33,7 @@ paper_margin:
       - rate: 1200
         per: 60
   credentials:
-    api_key: null
+    key_id: null
     secret: null
 
 paper_futures:
@@ -52,7 +52,7 @@ paper_futures:
       - rate: 1200
         per: 60
   credentials:
-    api_key: null
+    key_id: null
     secret: null
 
 testnet:
@@ -74,7 +74,7 @@ testnet:
       failure_threshold: 2
       cooldown_seconds: 45
   credentials:
-    api_key: ${BINANCE_TESTNET_KEY}
+    key_id: ${BINANCE_TESTNET_KEY}
     secret: ${BINANCE_TESTNET_SECRET}
 
 live:
@@ -102,5 +102,5 @@ live:
       settings:
         margin_type: cross
   credentials:
-    api_key: ${BINANCE_LIVE_KEY}
+    key_id: ${BINANCE_LIVE_KEY}
     secret: ${BINANCE_LIVE_SECRET}

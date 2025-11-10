@@ -8,7 +8,7 @@ paper:
     paper_initial_cash: 25000
     paper_cash_asset: USD
   credentials:
-    api_key: null
+    key_id: null
     secret: null
 
 testnet:
@@ -17,7 +17,7 @@ testnet:
     mode: spot
     testnet: true
   credentials:
-    api_key: ${BITSTAMP_SANDBOX_KEY}
+    key_id: ${BITSTAMP_SANDBOX_KEY}
     secret: ${BITSTAMP_SANDBOX_SECRET}
 
 live:
@@ -30,5 +30,5 @@ live:
         max_attempts: 3
         base_delay: 1.0
   credentials:
-    api_key: ${BITSTAMP_LIVE_KEY}
+    key_id: ${BITSTAMP_LIVE_KEY}
     secret: ${BITSTAMP_LIVE_SECRET}

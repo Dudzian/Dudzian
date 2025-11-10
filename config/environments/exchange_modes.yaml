@@ -13,7 +13,7 @@ paper:
     paper_initial_cash: 25000
     paper_cash_asset: USDT
   credentials:
-    api_key: null
+    key_id: null
     secret: null
   telemetry:
     margin_events: enabled
@@ -50,7 +50,7 @@ testnet:
         max_attempts: 5
         base_delay: 0.5
   credentials:
-    api_key: ${TESTNET_API_KEY}
+    key_id: ${TESTNET_API_KEY}
     secret: ${TESTNET_SECRET}
 
 spot_testnet:
@@ -63,7 +63,7 @@ spot_testnet:
         max_attempts: 5
         base_delay: 0.5
   credentials:
-    api_key: ${SPOT_TESTNET_API_KEY}
+    key_id: ${SPOT_TESTNET_API_KEY}
     secret: ${SPOT_TESTNET_SECRET}
 
 futures_testnet:
@@ -76,7 +76,7 @@ futures_testnet:
         max_attempts: 5
         base_delay: 0.5
   credentials:
-    api_key: ${FUTURES_TESTNET_API_KEY}
+    key_id: ${FUTURES_TESTNET_API_KEY}
     secret: ${FUTURES_TESTNET_SECRET}
 
 live:
@@ -95,7 +95,7 @@ live:
       settings:
         margin_type: cross
   credentials:
-    api_key: ${LIVE_API_KEY}
+    key_id: ${LIVE_API_KEY}
     secret: ${LIVE_SECRET}
   health_check:
     private_asset: USDT

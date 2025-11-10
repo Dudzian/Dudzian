@@ -104,9 +104,15 @@ DEFAULT_ENVIRONMENT_CONFIG_PATH = Path("config/environments/exchange_modes.yaml"
 
 _ENV_PLACEHOLDER_RE = re.compile(r"^\$\{([A-Z0-9_]+)\}$")
 _CREDENTIAL_ALIASES = {
-    "key": ("key", "api_key", "apiKey"),
-    "secret": ("secret", "api_secret", "apiSecret"),
-    "passphrase": ("passphrase", "password", "passPhrase"),
+    "key_id": ("key_id", "keyId", "keyID"),
+    "secret": ("secret",),
+    "passphrase": ("passphrase",),
+}
+
+_DEPRECATED_CREDENTIAL_KEYS = {
+    "key_id": ("key", "api_key", "apiKey"),
+    "secret": ("api_secret", "apiSecret"),
+    "passphrase": ("password", "passPhrase"),
 }
 
 _SUPPORTED_HEALTH_CHECKS = ("public_api", "private_api")
@@ -145,21 +151,39 @@ def create_parser() -> argparse.ArgumentParser:
     health.add_argument(
         "--credentials-file",
         default=str(DEFAULT_CREDENTIALS_PATH),
-        help="Ścieżka do pliku TOML z poświadczeniami (domyślnie secrets/desktop.toml).",
+        help=(
+            "Ścieżka do pliku TOML z poświadczeniami (domyślnie secrets/desktop.toml). "
+            "Obsługiwane są wyłącznie pola 'key_id', 'secret' i 'passphrase' – wpisy typu 'api_key' są odrzucane."
+        ),
     )
-    health.add_argument("--key", help="Klucz API – jeżeli nie podano, zostanie odczytany z pliku")
     health.add_argument(
-        "--key-env",
-        help="Nazwa zmiennej środowiskowej z kluczem API (gdy brak wartości bezpośredniej)",
+        "--key-id",
+        help=(
+            "Identyfikator klucza API (pole 'key_id' w konfiguracji) – jeżeli nie podano, zostanie odczytany z pliku. "
+            "Nazwy 'api_key' ani 'key' nie są już wspierane."
+        ),
     )
-    health.add_argument("--secret", help="Sekret API – jeżeli nie podano, zostanie odczytany z pliku")
+    health.add_argument(
+        "--key-id-env",
+        help="Nazwa zmiennej środowiskowej z identyfikatorem klucza API (gdy brak wartości bezpośredniej)",
+    )
+    health.add_argument(
+        "--secret",
+        help=(
+            "Sekret API (pole 'secret' w konfiguracji) – jeżeli nie podano, zostanie odczytany z pliku. "
+            "Nazwy 'api_secret' nie są już wspierane."
+        ),
+    )
     health.add_argument(
         "--secret-env",
         help="Nazwa zmiennej środowiskowej z sekretem API (gdy brak wartości bezpośredniej)",
     )
     health.add_argument(
         "--passphrase",
-        help="Passphrase API – jeżeli nie podano, zostanie odczytany z pliku",
+        help=(
+            "Passphrase API (pole 'passphrase' w konfiguracji) – jeżeli nie podano, zostanie odczytana z pliku. "
+            "Alias 'password' został wycofany."
+        ),
     )
     health.add_argument(
         "--passphrase-env",
@@ -2554,6 +2578,24 @@ def _resolve_credential(
             value = _coerce_credential_value(source.get(alias), key=key)
             if value is not None:
                 return value
+
+    for source_label, source in (
+        ("konfiguracji środowiska", environment),
+        ("profilu giełdy", profile),
+    ):
+        if not isinstance(source, Mapping):
+            continue
+        for deprecated in _DEPRECATED_CREDENTIAL_KEYS.get(key, ()):  # pragma: no branch - mało wartości
+            if deprecated in source:
+                raise CLIUsageError(
+                    "{label} używa przestarzałego pola '{deprecated}'. Zastąp je wpisem "
+                    "'{canonical}' lub podaj wartość flagą --{flag_name}.".format(
+                        label=source_label.capitalize(),
+                        deprecated=deprecated,
+                        canonical=key,
+                        flag_name=key.replace("_", "-"),
+                    )
+                )
     return None
 
 
@@ -2839,11 +2881,11 @@ def run_health_check(
     profile_mapping = profile if profile else None
     environment_credentials = environment_profile.get("credentials") if isinstance(environment_profile.get("credentials"), Mapping) else None
     api_key = _resolve_credential(
-        inline=getattr(args, "key", None),
-        env_name=getattr(args, "key_env", None),
+        inline=getattr(args, "key_id", None),
+        env_name=getattr(args, "key_id_env", None),
         profile=profile_mapping,
         environment=environment_credentials,
-        key="key",
+        key="key_id",
     )
     secret = _resolve_credential(
         inline=getattr(args, "secret", None),
@@ -2903,11 +2945,11 @@ def run_health_check(
     profile_mapping = profile if profile else None
     environment_credentials = environment_profile.get("credentials") if isinstance(environment_profile.get("credentials"), Mapping) else None
     api_key = _resolve_credential(
-        inline=getattr(args, "key", None),
-        env_name=getattr(args, "key_env", None),
+        inline=getattr(args, "key_id", None),
+        env_name=getattr(args, "key_id_env", None),
         profile=profile_mapping,
         environment=environment_credentials,
-        key="key",
+        key="key_id",
     )
     secret = _resolve_credential(
         inline=getattr(args, "secret", None),

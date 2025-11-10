@@ -9,7 +9,7 @@ paper:
     paper_cash_asset: USDT
     paper_fee_rate: 0.0015
   credentials:
-    api_key: null
+    key_id: null
     secret: null
 
 testnet:
@@ -27,7 +27,7 @@ testnet:
       - rate: 900
         per: 60.0
   credentials:
-    api_key: ${HUOBI_TESTNET_KEY}
+    key_id: ${HUOBI_TESTNET_KEY}
     secret: ${HUOBI_TESTNET_SECRET}
 
 live:
@@ -49,5 +49,5 @@ live:
       - rate: 900
         per: 60.0
   credentials:
-    api_key: ${HUOBI_LIVE_KEY}
+    key_id: ${HUOBI_LIVE_KEY}
     secret: ${HUOBI_LIVE_SECRET}
