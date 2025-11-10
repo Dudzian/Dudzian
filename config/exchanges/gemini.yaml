@@ -7,6 +7,7 @@ paper:
     paper_variant: spot
     paper_initial_cash: 15000
     paper_cash_asset: USD
+    paper_fee_rate: 0.0035
   credentials:
     api_key: null
     secret: null
@@ -16,6 +17,15 @@ testnet:
   exchange_manager:
     mode: spot
     testnet: true
+    failover:
+      enabled: true
+      failure_threshold: 1
+      cooldown_seconds: 60
+    rate_limit_rules:
+      - rate: 15
+        per: 1.0
+      - rate: 1200
+        per: 60.0
   credentials:
     api_key: ${GEMINI_SANDBOX_KEY}
     secret: ${GEMINI_SANDBOX_SECRET}
@@ -29,6 +39,15 @@ live:
       retry_policy:
         max_attempts: 3
         base_delay: 1.2
+    failover:
+      enabled: true
+      failure_threshold: 1
+      cooldown_seconds: 75
+    rate_limit_rules:
+      - rate: 15
+        per: 1.0
+      - rate: 1200
+        per: 60.0
   credentials:
     api_key: ${GEMINI_LIVE_KEY}
     secret: ${GEMINI_LIVE_SECRET}

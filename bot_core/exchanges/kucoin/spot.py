@@ -5,6 +5,7 @@ from typing import Any, Mapping
 
 from bot_core.exchanges.base import Environment, ExchangeCredentials
 from bot_core.exchanges.ccxt_adapter import CCXTSpotAdapter, merge_adapter_settings
+from bot_core.exchanges.rate_limiter import RateLimitRule
 
 
 class KuCoinSpotAdapter(CCXTSpotAdapter):
@@ -27,6 +28,17 @@ class KuCoinSpotAdapter(CCXTSpotAdapter):
                 "options": {"defaultType": "spot"},
             },
             "fetch_ohlcv_params": {"type": "spot"},
+            "cancel_order_params": {"type": "spot"},
+            "rate_limit_rules": (
+                RateLimitRule(rate=30, per=3.0),
+                RateLimitRule(rate=1_800, per=60.0),
+            ),
+            "retry_policy": {
+                "max_attempts": 4,
+                "base_delay": 0.2,
+                "max_delay": 2.0,
+                "jitter": (0.1, 0.3),
+            },
         }
         combined_settings = merge_adapter_settings(defaults, settings or {})
         combined_settings.setdefault(
