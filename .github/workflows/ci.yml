@@ -5,7 +5,45 @@ on:
     branches: ["main", "master", "develop"]
   pull_request:
 
+env:
+  PYSIDE6_VERSION: "6.6.1"
+
 jobs:
+  prepare-pyside6-wheel:
+    name: Prepare PySide6 wheels (Linux)
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+
+    steps:
+      - name: Set up Python
+        id: setup-python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Prepare wheelhouse directory
+        run: mkdir -p wheelhouse
+
+      - name: Cache PySide6 wheels
+        id: wheel-cache
+        uses: actions/cache@v4
+        with:
+          path: wheelhouse
+          key: pyside6-${{ runner.os }}-py${{ steps.setup-python.outputs.python-version }}-${{ env.PYSIDE6_VERSION }}
+
+      - name: Download PySide6 distribution
+        if: steps.wheel-cache.outputs.cache-hit != 'true'
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip download PySide6==${{ env.PYSIDE6_VERSION }} --dest wheelhouse --only-binary=:all:
+
+      - name: Upload PySide6 wheels
+        uses: actions/upload-artifact@v4
+        with:
+          name: pyside6-wheels-linux-${{ env.PYSIDE6_VERSION }}
+          path: wheelhouse
+          if-no-files-found: error
+
   lint-and-test:
     name: Lint and Test
     runs-on: ubuntu-latest
@@ -251,6 +289,61 @@ jobs:
         with:
           name: coverage-runner-smoke
           path: violation.json
+
+  qml-tests:
+    name: UI QML Tests
+    runs-on: ubuntu-latest
+    needs: prepare-pyside6-wheel
+    env:
+      QT_QPA_PLATFORM: offscreen
+      QT_QUICK_BACKEND: software
+      PYTEST_REQUIRE_QML: "1"
+      QML_DIAGNOSTICS_DIR: test-results/qml
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libegl1 libgl1 libpulse0 libxkbcommon-x11-0 \
+            libxcb-cursor0 libxcb-xinerama0
+
+      - name: Download PySide6 wheel artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: pyside6-wheels-linux-${{ env.PYSIDE6_VERSION }}
+          path: wheelhouse
+
+      - name: Install Python dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install --no-index --find-links wheelhouse \
+            PySide6==${{ env.PYSIDE6_VERSION }} \
+            PySide6_Addons==${{ env.PYSIDE6_VERSION }} \
+            PySide6_Essentials==${{ env.PYSIDE6_VERSION }} \
+            shiboken6==${{ env.PYSIDE6_VERSION }}
+          pip install .[dev]
+
+      - name: Run QML pytest suite
+        run: |
+          mkdir -p test-results/qml
+          pytest -m qml --maxfail=1 --disable-warnings \
+            --junitxml=test-results/qml/pytest.xml --durations=15
+
+      - name: Upload QML diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: qml-test-diagnostics
+          path: test-results/qml
+          if-no-files-found: warn
 
   ui-packaging:
     name: UI Packaging

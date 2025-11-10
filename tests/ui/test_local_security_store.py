@@ -6,6 +6,8 @@ from typing import Iterator
 
 import pytest
 
+pytestmark = pytest.mark.qml
+
 PySide6 = pytest.importorskip("PySide6", reason="Wymagany PySide6 do testów LocalSecurityStore")
 
 from PySide6.QtCore import QCoreApplication
