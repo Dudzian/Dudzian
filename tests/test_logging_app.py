@@ -32,59 +32,35 @@ def _reload_logging_app() -> None:
     importlib.import_module(module_name)
 
 
-def test_logging_env_rejects_legacy_log_dir(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
-) -> None:
+def test_logging_env_ignores_legacy_variables(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     monkeypatch.delenv("BOT_CORE_LOG_DIR", raising=False)
-    monkeypatch.setenv("KRYPT_LOWCA_LOG_DIR", str(tmp_path))
+    monkeypatch.delenv("BOT_CORE_LOG_FILE", raising=False)
+    monkeypatch.delenv("BOT_CORE_LOGGER_NAME", raising=False)
+    monkeypatch.delenv("BOT_CORE_LOG_LEVEL", raising=False)
+    monkeypatch.delenv("BOT_CORE_LOG_FORMAT", raising=False)
+    monkeypatch.delenv("BOT_CORE_LOG_SHIP_VECTOR", raising=False)
 
-    with pytest.raises(RuntimeError) as excinfo:
-        _reload_logging_app()
-
-    assert "KRYPT_LOWCA_LOG_DIR" in str(excinfo.value)
-    assert "BOT_CORE_LOG_DIR" in str(excinfo.value)
-    assert "kryptolowca_namespace_mapping" in str(excinfo.value)
-    assert "bot_core.logging.app" not in sys.modules
-
-
-@pytest.mark.parametrize(
-    "legacy,current",
-    [
-        ("KRYPT_LOWCA_LOG_LEVEL", "BOT_CORE_LOG_LEVEL"),
-        ("KRYPT_LOWCA_LOG_FORMAT", "BOT_CORE_LOG_FORMAT"),
-        ("KRYPT_LOWCA_LOG_SHIP_VECTOR", "BOT_CORE_LOG_SHIP_VECTOR"),
-        ("KRYPT_LOWCA_LOGGER_NAME", "BOT_CORE_LOGGER_NAME"),
-    ],
-)
-def test_logging_env_rejects_other_legacy_variables(
-    monkeypatch: pytest.MonkeyPatch, legacy: str, current: str
-) -> None:
-    monkeypatch.delenv(current, raising=False)
-    monkeypatch.setenv(legacy, "legacy-value")
+    monkeypatch.setenv("KRYPT_LOWCA_LOG_DIR", str(tmp_path / "legacy_dir"))
+    monkeypatch.setenv("KRYPT_LOWCA_LOG_FILE", str(tmp_path / "legacy.log"))
+    monkeypatch.setenv("KRYPT_LOWCA_LOGGER_NAME", "legacy.logger")
+    monkeypatch.setenv("KRYPT_LOWCA_LOG_LEVEL", "debug")
+    monkeypatch.setenv("KRYPT_LOWCA_LOG_FORMAT", "text")
+    monkeypatch.setenv("KRYPT_LOWCA_LOG_SHIP_VECTOR", "https://legacy.invalid")
 
     _reload_logging_app()
     module = sys.modules["bot_core.logging.app"]
 
-    with pytest.raises(RuntimeError) as excinfo:
-        module.setup_app_logging()
+    assert module.LOGS_DIR == module._PACKAGE_ROOT / "logs"
+    assert module.DEFAULT_LOG_FILE == module.LOGS_DIR / "trading.log"
 
-    message = str(excinfo.value)
-    assert legacy in message
-    assert current in message
-    assert "kryptolowca_namespace_mapping" in message
+    logger = module.setup_app_logging()
+    assert logger.name == "bot_core"
+    assert logger.level == logging.INFO
 
-
-def test_logging_env_rejects_legacy_log_file(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
-    monkeypatch.delenv("BOT_CORE_LOG_FILE", raising=False)
-    monkeypatch.setenv("KRYPT_LOWCA_LOG_FILE", str(tmp_path / "legacy.log"))
-
-    with pytest.raises(RuntimeError) as excinfo:
-        _reload_logging_app()
-
-    message = str(excinfo.value)
-    assert "KRYPT_LOWCA_LOG_FILE" in message
-    assert "BOT_CORE_LOG_FILE" in message
-    assert "kryptolowca_namespace_mapping" in message
+    listener = getattr(module, "_LISTENER")
+    assert listener is None or not any(
+        isinstance(handler, module.VectorHttpHandler) for handler in listener.handlers
+    )
 
 
 def test_logging_env_uses_new_prefix(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
