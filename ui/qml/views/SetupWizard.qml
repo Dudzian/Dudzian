@@ -448,7 +448,7 @@ Item {
                         Label {
                             Layout.fillWidth: true
                             wrapMode: Text.WordWrap
-                            text: qsTr("Dostosuj wygląd aplikacji do swoich preferencji. Ustawienia zostaną zapisane lokalnie w pliku config/ui_prefs.json.")
+                            text: qsTr("Dostosuj wygląd aplikacji do swoich preferencji. Ustawienia zostaną zapisane lokalnie w ~/.dudzian/ui_settings.json (lub w ścieżce wskazanej przez zmienną BOT_CORE_UI_SETTINGS_PATH).")
                             font.family: Styles.AppTheme.fontFamily
                             font.pixelSize: Styles.AppTheme.fontSizeBody
                             color: Styles.AppTheme.textSecondary

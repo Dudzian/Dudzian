@@ -13,6 +13,13 @@ from bot_core.security.keyring_storage import KeyringSecretStorage
 _GUI_ENV_VARS = ("DISPLAY", "WAYLAND_DISPLAY", "DBUS_SESSION_BUS_ADDRESS")
 
 
+def _default_dudzian_home() -> Path:
+    override = os.environ.get("DUDZIAN_HOME")
+    if override:
+        return Path(override).expanduser()
+    return Path.home() / ".dudzian"
+
+
 def _has_graphical_session() -> bool:
     return any(os.environ.get(var) for var in _GUI_ENV_VARS)
 
@@ -38,7 +45,10 @@ def create_default_secret_storage(
             raise SecretStorageError(
                 "W środowisku headless Linux wymagane jest hasło do szyfrowania magazynu sekretów."
             )
-        path = Path(headless_path or Path.home() / ".dudzian" / "secrets.age")
+        base_dir = _default_dudzian_home()
+        default_path = base_dir / "secrets.age"
+        path = Path(headless_path).expanduser() if headless_path else default_path
+        path.parent.mkdir(parents=True, exist_ok=True)
         return EncryptedFileSecretStorage(path, headless_passphrase)
 
     # Domyślnie traktujemy pozostałe systemy jak środowisko desktopowe

@@ -10,7 +10,6 @@ import sys
 import pytest
 import yaml
 from bot_core.security.file_storage import EncryptedFileSecretStorage
-from bot_core.security.legacy import SecurityManager
 from bot_core.runtime import stage6_preset_cli as preset_editor_cli
 
 
@@ -125,12 +124,7 @@ def test_stage6_cli_accepts_passphrase_file(tmp_path: Path) -> None:
         "used": True,
         "rotated": False,
     }
-    assert payload["secrets"]["legacy_security_passphrase"] == {
-        "provided": False,
-        "source": None,
-        "identifier": None,
-        "used": False,
-    }
+    assert "legacy_security_passphrase" not in payload["secrets"]
     tool = payload["tool"]
     expected_python = platform.python_version()
     assert tool["module"] == "bot_core.runtime.stage6_preset_cli"
@@ -180,113 +174,10 @@ def test_stage6_cli_requires_matching_secret_flags(tmp_path: Path, capsys) -> No
     assert "--secrets-output" in stderr
 
 
-def test_stage6_cli_imports_security_manager_file(tmp_path: Path, capsys) -> None:
+def test_stage6_cli_rejects_legacy_security_flags(tmp_path: Path) -> None:
     core_copy = _copy_core_config(tmp_path)
     preset_path = tmp_path / "legacy.json"
     preset_path.write_text(json.dumps({"fraction": 0.2}), encoding="utf-8")
-
-    legacy_file = tmp_path / "api_keys.enc"
-    salt_file = tmp_path / "salt.bin"
-    manager = SecurityManager(key_file=str(legacy_file), salt_file=str(salt_file))
-    manager.save_encrypted_keys(
-        {"binance": {"api_key": "AAA", "secret_key": "BBB"}},
-        password="legacy-pass",
-    )
-
-    vault_path = tmp_path / "stage6.vault"
-
-    exit_code = preset_editor_cli.main(
-        [
-            "--core-config",
-            str(core_copy),
-            "--legacy-preset",
-            str(preset_path),
-            "--profile-name",
-            "legacy-security",
-            "--secrets-output",
-            str(vault_path),
-            "--secret-passphrase",
-            "stage6-pass",
-            "--legacy-security-file",
-            str(legacy_file),
-            "--legacy-security-salt",
-            str(salt_file),
-            "--legacy-security-passphrase",
-            "legacy-pass",
-        ]
-    )
-
-    assert exit_code == 0
-
-    storage = EncryptedFileSecretStorage(vault_path, "stage6-pass")
-    assert storage.get_secret("binance") == '{"api_key":"AAA","secret_key":"BBB"}'
-
-    output = capsys.readouterr().out
-    assert "legacy SecurityManager" in output
-
-
-def test_stage6_cli_imports_security_manager_passphrase_env(
-    tmp_path: Path, capsys, monkeypatch
-) -> None:
-    core_copy = _copy_core_config(tmp_path)
-    preset_path = tmp_path / "legacy.json"
-    preset_path.write_text(json.dumps({"fraction": 0.2}), encoding="utf-8")
-
-    legacy_file = tmp_path / "api_keys.enc"
-    salt_file = tmp_path / "salt.bin"
-    manager = SecurityManager(key_file=str(legacy_file), salt_file=str(salt_file))
-    manager.save_encrypted_keys(
-        {"binance": {"api_key": "ENV", "secret_key": "PASS"}},
-        password="env-pass",
-    )
-
-    monkeypatch.setenv("LEGACY_SECURITY_PASS", "env-pass")
-
-    vault_path = tmp_path / "stage6.vault"
-
-    exit_code = preset_editor_cli.main(
-        [
-            "--core-config",
-            str(core_copy),
-            "--legacy-preset",
-            str(preset_path),
-            "--profile-name",
-            "legacy-security-env",
-            "--secrets-output",
-            str(vault_path),
-            "--secret-passphrase",
-            "stage6-pass",
-            "--legacy-security-file",
-            str(legacy_file),
-            "--legacy-security-salt",
-            str(salt_file),
-            "--legacy-security-passphrase-env",
-            "LEGACY_SECURITY_PASS",
-        ]
-    )
-
-    assert exit_code == 0
-
-    storage = EncryptedFileSecretStorage(vault_path, "stage6-pass")
-    assert storage.get_secret("binance") == '{"api_key":"ENV","secret_key":"PASS"}'
-
-    output = capsys.readouterr().out
-    assert "legacy SecurityManager" in output
-
-
-def test_stage6_cli_requires_legacy_passphrase_env(tmp_path: Path) -> None:
-    core_copy = _copy_core_config(tmp_path)
-    preset_path = tmp_path / "legacy.json"
-    preset_path.write_text(json.dumps({"fraction": 0.2}), encoding="utf-8")
-
-    legacy_file = tmp_path / "api_keys.enc"
-    manager = SecurityManager(key_file=str(legacy_file))
-    manager.save_encrypted_keys(
-        {"ftx": {"api_key": "A", "secret_key": "B"}},
-        password="missing",
-    )
-
-    vault_path = tmp_path / "stage6.vault"
 
     with pytest.raises(SystemExit) as excinfo:
         preset_editor_cli.main(
@@ -296,22 +187,15 @@ def test_stage6_cli_requires_legacy_passphrase_env(tmp_path: Path) -> None:
                 "--legacy-preset",
                 str(preset_path),
                 "--profile-name",
-                "legacy-missing-env",
-                "--secrets-output",
-                str(vault_path),
-                "--secret-passphrase",
-                "stage6-pass",
+                "legacy-security",
                 "--legacy-security-file",
-                str(legacy_file),
-                "--legacy-security-passphrase-env",
-                "LEGACY_MISSING",
+                str(tmp_path / "api_keys.enc"),
             ]
         )
 
-    assert (
-        excinfo.value.code
-        == "Zmienna środowiskowa LEGACY_MISSING nie została ustawiona lub jest pusta."
-    )
+    message = str(excinfo.value)
+    assert "SecurityManager" in message
+    assert "dudzian-migrate" in message
 
 
 def test_stage6_cli_defaults_desktop_vault(tmp_path: Path, capsys) -> None:
@@ -833,8 +717,8 @@ def test_stage6_cli_writes_summary_file(tmp_path: Path) -> None:
     assert payload["secrets"]["output_checksum"] == hashlib.sha256(
         vault_path.read_bytes()
     ).hexdigest()
-    assert payload["secrets"]["legacy_security_salt_path"] is None
-    assert payload["secrets"]["legacy_security_salt_checksum"] is None
+    assert "legacy_security_salt_path" not in payload["secrets"]
+    assert "legacy_security_salt_checksum" not in payload["secrets"]
     assert payload["secrets"]["output_passphrase"] == {
         "provided": True,
         "source": "inline",
@@ -842,12 +726,7 @@ def test_stage6_cli_writes_summary_file(tmp_path: Path) -> None:
         "used": True,
         "rotated": False,
     }
-    assert payload["secrets"]["legacy_security_passphrase"] == {
-        "provided": False,
-        "source": None,
-        "identifier": None,
-        "used": False,
-    }
+    assert "legacy_security_passphrase" not in payload["secrets"]
     invocation = payload["cli_invocation"]
     assert isinstance(invocation["argv"], list)
     assert "***REDACTED***" in invocation["argv"]
@@ -901,12 +780,7 @@ def test_stage6_cli_summary_tracks_secret_passphrase_env(
         "used": True,
         "rotated": False,
     }
-    assert payload["secrets"]["legacy_security_passphrase"] == {
-        "provided": False,
-        "source": None,
-        "identifier": None,
-        "used": False,
-    }
+    assert "legacy_security_passphrase" not in payload["secrets"]
 
 
 def test_stage6_cli_summary_records_original_checksum(tmp_path: Path) -> None:
@@ -938,24 +812,16 @@ def test_stage6_cli_summary_records_original_checksum(tmp_path: Path) -> None:
     ).hexdigest()
 
 
-def test_stage6_cli_summary_records_security_source_checksums(
-    tmp_path: Path, monkeypatch
-) -> None:
+def test_stage6_cli_summary_records_security_source_checksums(tmp_path: Path) -> None:
     core_copy = _copy_core_config(tmp_path)
     preset_path = tmp_path / "legacy.json"
     preset_path.write_text(json.dumps({"fraction": 0.41}), encoding="utf-8")
 
-    legacy_file = tmp_path / "api_keys.enc"
-    salt_file = tmp_path / "salt.bin"
-    manager = SecurityManager(key_file=str(legacy_file), salt_file=str(salt_file))
-    manager.save_encrypted_keys(
-        {"binance": {"api_key": "AAA", "secret_key": "BBB"}},
-        password="legacy-pass",
-    )
+    secrets_input = tmp_path / "legacy_secrets.yaml"
+    secrets_input.write_text("binance:\n  api_key: AAA\n  secret_key: BBB\n", encoding="utf-8")
 
     summary_path = tmp_path / "summary.json"
-
-    monkeypatch.setenv("LEGACY_SUMMARY_PASS", "legacy-pass")
+    vault_path = tmp_path / "stage6.vault"
 
     exit_code = preset_editor_cli.main(
         [
@@ -965,14 +831,10 @@ def test_stage6_cli_summary_records_security_source_checksums(
             str(preset_path),
             "--profile-name",
             "checksum-security",
-            "--legacy-security-file",
-            str(legacy_file),
-            "--legacy-security-salt",
-            str(salt_file),
-            "--legacy-security-passphrase-env",
-            "LEGACY_SUMMARY_PASS",
+            "--secrets-input",
+            str(secrets_input),
             "--secrets-output",
-            str(tmp_path / "stage6.vault"),
+            str(vault_path),
             "--secret-passphrase",
             "stage6-pass",
             "--summary-json",
@@ -983,28 +845,14 @@ def test_stage6_cli_summary_records_security_source_checksums(
     assert exit_code == 0
 
     payload = json.loads(summary_path.read_text(encoding="utf-8"))
-    assert payload["secrets"]["source_path"] == str(legacy_file)
-    assert payload["secrets"]["source_checksum"] == hashlib.sha256(
-        legacy_file.read_bytes()
-    ).hexdigest()
-    assert payload["secrets"]["legacy_security_salt_path"] == str(salt_file)
-    assert payload["secrets"]["legacy_security_salt_checksum"] == hashlib.sha256(
-        salt_file.read_bytes()
-    ).hexdigest()
-    assert payload["secrets"]["output_passphrase"] == {
-        "provided": True,
-        "source": "inline",
-        "identifier": None,
-        "used": True,
-        "rotated": False,
-    }
-    assert payload["secrets"]["legacy_security_passphrase"] == {
-        "provided": True,
-        "source": "env",
-        "identifier": "LEGACY_SUMMARY_PASS",
-        "used": True,
-    }
-    assert payload["warnings"] == []
+    secrets = payload["secrets"]
+    assert secrets["source_label"] == f"plik {secrets_input}"
+    assert secrets["source_path"] == str(secrets_input)
+    assert secrets["source_checksum"] == hashlib.sha256(secrets_input.read_bytes()).hexdigest()
+    assert secrets["output_path"] == str(vault_path)
+    assert secrets["output_checksum"] == hashlib.sha256(vault_path.read_bytes()).hexdigest()
+    assert "legacy_security_salt_path" not in secrets
+    assert "legacy_security_passphrase" not in secrets
 
 
 def test_stage6_cli_summary_redacts_inline_passphrases(tmp_path: Path) -> None:
@@ -1012,13 +860,8 @@ def test_stage6_cli_summary_redacts_inline_passphrases(tmp_path: Path) -> None:
     preset_path = tmp_path / "legacy.json"
     preset_path.write_text(json.dumps({"fraction": 0.27}), encoding="utf-8")
 
-    legacy_file = tmp_path / "legacy_keys.enc"
-    legacy_salt = tmp_path / "legacy_keys.salt"
-    manager = SecurityManager(key_file=str(legacy_file), salt_file=str(legacy_salt))
-    manager.save_encrypted_keys(
-        {"binance": {"api_key": "AAA", "secret_key": "BBB"}},
-        password="legacy-inline-pass",
-    )
+    secrets_input = tmp_path / "legacy_secrets.yaml"
+    secrets_input.write_text("binance:\n  api_key: AAA\n", encoding="utf-8")
 
     summary_path = tmp_path / "summary.json"
     vault_path = tmp_path / "preview.vault"
@@ -1031,16 +874,12 @@ def test_stage6_cli_summary_redacts_inline_passphrases(tmp_path: Path) -> None:
             str(preset_path),
             "--profile-name",
             "redacted-profile",
-            "--legacy-security-file",
-            str(legacy_file),
-            "--legacy-security-salt",
-            str(legacy_salt),
-            "--legacy-security-passphrase",
-            "legacy-inline-pass",
+            "--secrets-input",
+            str(secrets_input),
             "--secrets-output",
             str(vault_path),
             "--secret-passphrase",
-            "stage6-inline-pass",
+            "inline-pass",
             "--dry-run",
             "--summary-json",
             str(summary_path),
@@ -1050,12 +889,10 @@ def test_stage6_cli_summary_redacts_inline_passphrases(tmp_path: Path) -> None:
     assert exit_code == 0
     payload = json.loads(summary_path.read_text(encoding="utf-8"))
     invocation = payload["cli_invocation"]
-    assert invocation["argv"].count("***REDACTED***") == 2
-    assert "stage6-inline-pass" not in invocation["command"]
-    assert "legacy-inline-pass" not in invocation["command"]
+    assert invocation["argv"].count("***REDACTED***") >= 1
+    assert "inline-pass" not in invocation["command"]
     summary_text = summary_path.read_text(encoding="utf-8")
-    assert "stage6-inline-pass" not in summary_text
-    assert "legacy-inline-pass" not in summary_text
+    assert "inline-pass" not in summary_text
 
 
 def test_stage6_cli_summary_includes_checksum_warnings(

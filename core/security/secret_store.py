@@ -5,9 +5,10 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 import json
 import logging
+import os
 from pathlib import Path
 from threading import RLock
-from typing import Dict, Iterable
+from typing import Iterable
 
 from bot_core.security.base import SecretStorageError
 from bot_core.security.keyring_storage import KeyringSecretStorage
@@ -46,19 +47,24 @@ class SecretStore:
         service_name: str | None = None,
         legacy_path: str | Path | None = None,
         index_path: str | Path | None = None,
+        data_dir: str | Path | None = None,
     ) -> None:
-        self._legacy_path = Path(legacy_path) if legacy_path is not None else _default_path()
-        self._legacy_path = self._legacy_path.expanduser().resolve()
-        self._legacy_path.parent.mkdir(parents=True, exist_ok=True)
+        base_dir = Path(data_dir).expanduser() if data_dir is not None else _default_data_dir()
+        base_dir.mkdir(parents=True, exist_ok=True)
 
         if storage is not None:
             self._storage = storage
         else:
-            derived_index = index_path or _default_index_path()
+            derived_index = Path(index_path).expanduser() if index_path is not None else base_dir / "secret_index.json"
             self._storage = KeyringSecretStorage(
                 service_name=service_name or "dudzian.trading.desktop",
                 index_path=derived_index,
             )
+
+        if legacy_path:
+            self._legacy_hint_path = Path(legacy_path).expanduser()
+        else:
+            self._legacy_hint_path = _default_legacy_path()
 
         self._lock = RLock()
         self._migration_checked = False
@@ -149,92 +155,13 @@ class SecretStore:
             return
         self._migration_checked = True
 
-        if not self._legacy_path.exists():
-            return
-
-        legacy_payload = self._read_legacy_payload()
-        if not legacy_payload:
-            self._archive_legacy_file()
-            return
-
-        try:
-            registered_keys = self._storage.list_registered_keys()
-        except SecretStorageError as exc:
-            raise SecretStoreError(str(exc)) from exc
-
-        existing = {
-            self._extract_exchange_id(key)
-            for key in registered_keys
-            if self._extract_exchange_id(key)
-        }
-
-        for exchange_id, payload in legacy_payload.items():
-            if exchange_id in existing:
-                LOGGER.info(
-                    "Pomijam migrację kluczy API dla '%s' – wpis istnieje już w keychainie.",
-                    exchange_id,
-                )
-                continue
-            payload.setdefault("version", 1)
-            payload.setdefault("migrated_from", "plaintext_v1")
-            try:
-                self._storage.set_secret(self._storage_key(exchange_id), json.dumps(payload))
-            except SecretStorageError as exc:
-                raise SecretStoreError(
-                    "Migracja starego magazynu kluczy API nie powiodła się. Usuń plik \"api_credentials.json\" lub "
-                    "napraw jego zawartość, a następnie spróbuj ponownie."
-                ) from exc
-
-        self._archive_legacy_file()
-
-    def _read_legacy_payload(self) -> Dict[str, Dict[str, str | None]]:
-        try:
-            raw = self._legacy_path.read_text(encoding="utf-8")
-        except OSError as exc:
-            raise SecretStoreError(f"Nie można odczytać magazynu sekretów: {exc}") from exc
-
-        if not raw.strip():
-            return {}
-
-        try:
-            data = json.loads(raw)
-        except json.JSONDecodeError as exc:
-            raise SecretStoreError("Magazyn sekretów jest uszkodzony") from exc
-
-        if not isinstance(data, dict):
-            raise SecretStoreError("Nieprawidłowy format magazynu sekretów")
-
-        result: Dict[str, Dict[str, str | None]] = {}
-        for key, value in data.items():
-            if not isinstance(key, str) or not isinstance(value, dict):
-                continue
-            normalized = key.strip().lower()
-            if not normalized:
-                continue
-            api_key = str(value.get("api_key", "")).strip()
-            api_secret = str(value.get("api_secret", "")).strip()
-            api_passphrase = value.get("api_passphrase")
-            if api_passphrase is not None:
-                api_passphrase = str(api_passphrase).strip() or None
-            if not api_key or not api_secret:
-                continue
-            result[normalized] = {
-                "api_key": api_key,
-                "api_secret": api_secret,
-                "api_passphrase": api_passphrase,
-            }
-        return result
-
-    def _archive_legacy_file(self) -> None:
-        try:
-            backup_path = self._legacy_path.with_name(self._legacy_path.stem + ".legacy")
-            if backup_path.exists():
-                backup_path.unlink()
-            self._legacy_path.replace(backup_path)
-        except FileNotFoundError:  # pragma: no cover - plik mógł zostać usunięty równolegle
-            return
-        except OSError as exc:  # pragma: no cover - ostrzegawcze logowanie
-            LOGGER.warning("Nie udało się zarchiwizować starego magazynu sekretów: %s", exc)
+        if self._legacy_hint_path and self._legacy_hint_path.exists():
+            raise SecretStoreError(
+                "Wykryto legacy magazyn kluczy API w {path}. Migracja automatyczna została usunięta – "
+                "uruchom narzędzie z pakietu 'dudzian-migrate' opisane w docs/migrations/2024-legacy-storage-removal.md "
+                "i usuń plik przed dalszym korzystaniem z aplikacji."
+                .format(path=self._legacy_hint_path)
+            )
 
     def _storage_key(self, exchange_id: str) -> str:
         return f"{self._STORAGE_NAMESPACE}:{exchange_id}"
@@ -273,16 +200,15 @@ class SecretStore:
         return str(exchange or "").strip().lower()
 
 
-def _default_path() -> Path:
-    config_dir = Path.home() / ".kryptolowca"
-    config_dir.mkdir(parents=True, exist_ok=True)
-    return config_dir / "api_credentials.json"
+def _default_data_dir() -> Path:
+    override = os.environ.get("DUDZIAN_HOME")
+    if override:
+        return Path(override).expanduser()
+    return Path.home() / ".dudzian"
 
 
-def _default_index_path() -> Path:
-    config_dir = Path.home() / ".kryptolowca"
-    config_dir.mkdir(parents=True, exist_ok=True)
-    return config_dir / "secret_index.json"
+def _default_legacy_path() -> Path:
+    return (Path.home() / ".kryptolowca" / "api_credentials.json").expanduser()
 
 
 __all__ = ["ExchangeCredentials", "SecretStore", "SecretStoreError"]

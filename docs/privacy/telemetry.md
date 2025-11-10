@@ -29,7 +29,7 @@ Wszystkie wartości są sanitizowane do typów prostych (napisy, liczby, wartoś
 
 ## Buforowanie i eksport
 
-- Zdarzenia są zapisywane lokalnie w pliku `~/.kryptolowca/telemetry/queue.jsonl`.
+- Zdarzenia są zapisywane lokalnie w pliku `~/.dudzian/telemetry/queue.jsonl` (lub w katalogu `DUDZIAN_HOME/telemetry/queue.jsonl`).
 - Kolejka jest ograniczona do 1000 wpisów; najstarsze elementy są usuwane po przekroczeniu limitu.
 - Eksport danych tworzy plik `telemetry_YYYYmmddTHHMMSS.json` w katalogu `exports/`, zawierający
   zestawienie zdarzeń wraz z pseudonimem i identyfikatorem instalacji.

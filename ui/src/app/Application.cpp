@@ -77,6 +77,7 @@ constexpr int kMinRiskRefreshIntervalMs = 1000;
 constexpr int kMaxRiskRefreshIntervalMs = 300000;
 constexpr int kUiSettingsDebounceMs = 500;
 constexpr auto kUiSettingsEnv = QByteArrayLiteral("BOT_CORE_UI_SETTINGS_PATH");
+constexpr auto kDudzianHomeEnv = QByteArrayLiteral("DUDZIAN_HOME");
 constexpr auto kUiSettingsDisableEnv = QByteArrayLiteral("BOT_CORE_UI_SETTINGS_DISABLE");
 constexpr auto kRiskHistoryExportDirEnv = QByteArrayLiteral("BOT_CORE_UI_RISK_HISTORY_EXPORT_DIR");
 constexpr auto kRiskHistoryExportLimitEnv = QByteArrayLiteral("BOT_CORE_UI_RISK_HISTORY_EXPORT_LIMIT");
@@ -1736,8 +1737,24 @@ void Application::initializeUiSettingsStorage()
                 candidate = expandPath(trimmed);
         }
 
-        if (candidate.isEmpty())
-            candidate = QDir::current().absoluteFilePath(QStringLiteral("config/ui_prefs.json"));
+        if (candidate.isEmpty()) {
+            QString basePath;
+            if (const auto envHome = envValue(kDudzianHomeEnv); envHome.has_value()) {
+                const QString trimmedHome = envHome->trimmed();
+                if (!trimmedHome.isEmpty())
+                    basePath = expandPath(trimmedHome);
+            }
+
+            if (basePath.isEmpty()) {
+                const QDir homeDir = QDir::home();
+                basePath = homeDir.absoluteFilePath(QStringLiteral(".dudzian"));
+            }
+
+            const QDir baseDir(basePath);
+            candidate = baseDir.absoluteFilePath(QStringLiteral("ui_settings.json"));
+        }
+
+        candidate = expandPath(candidate);
 
         QFileInfo info(candidate);
         if (!info.isAbsolute())
@@ -2403,15 +2420,16 @@ void Application::loadUiSettings()
 
     const QString desiredPath = m_uiSettingsPath;
     QFile file(desiredPath);
-    bool loadedFromLegacy = false;
     if (!file.exists()) {
         const QString legacyPath = QDir::current().absoluteFilePath(QStringLiteral("var/state/ui_settings.json"));
         if (!legacyPath.isEmpty() && legacyPath != desiredPath && QFile::exists(legacyPath)) {
-            file.setFileName(legacyPath);
-            loadedFromLegacy = true;
-        } else {
-            return;
+            qCWarning(lcAppMetrics)
+                << "Wykryto przestarzały plik ustawień UI w" << legacyPath
+                << "– automatyczna migracja została usunięta. Przenieś plik ręcznie do"
+                << desiredPath
+                << "zgodnie z instrukcją w docs/migrations/2024-legacy-storage-removal.md.";
         }
+        return;
     }
 
     if (!file.open(QIODevice::ReadOnly | QIODevice::Text)) {
@@ -2681,10 +2699,6 @@ void Application::loadUiSettings()
 
     m_loadingUiSettings = false;
 
-    if (loadedFromLegacy && desiredPath != file.fileName()) {
-        m_uiSettingsPath = desiredPath;
-        scheduleUiSettingsPersist();
-    }
 }
 
 void Application::scheduleUiSettingsPersist()

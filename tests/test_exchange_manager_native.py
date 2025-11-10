@@ -173,8 +173,34 @@ def stub_ccxt(monkeypatch: pytest.MonkeyPatch) -> None:
 def stub_native(monkeypatch: pytest.MonkeyPatch) -> None:
     _StubMarginAdapter.instances.clear()
     _StubFuturesAdapter.instances.clear()
-    monkeypatch.setitem(manager_module._NATIVE_MARGIN_ADAPTERS, "binance", _StubMarginAdapter)
-    monkeypatch.setitem(manager_module._NATIVE_FUTURES_ADAPTERS, "binance", _StubFuturesAdapter)
+    monkeypatch.setattr(manager_module, "_NATIVE_ADAPTER_REGISTRY", {})
+    monkeypatch.setattr(manager_module, "_NATIVE_MARGIN_ADAPTERS", {})
+    monkeypatch.setattr(manager_module, "_NATIVE_FUTURES_ADAPTERS", {})
+    monkeypatch.setattr(manager_module, "_DYNAMIC_ADAPTER_KEYS", set())
+
+    class _StubDatabaseManager:
+        def __init__(self, *args, **kwargs) -> None:
+            self.sync = SimpleNamespace(
+                init_db=lambda *a, **k: None,
+                record_order=lambda *a, **k: 1,
+                record_trade=lambda *a, **k: None,
+                record_execution=lambda *a, **k: None,
+                record_account_snapshot=lambda *a, **k: None,
+                record_position=lambda *a, **k: None,
+            )
+
+    monkeypatch.setattr(manager_module, "DatabaseManager", _StubDatabaseManager)
+
+    manager_module.register_native_adapter(
+        exchange_id="binance",
+        mode=Mode.MARGIN,
+        factory=_StubMarginAdapter,
+    )
+    manager_module.register_native_adapter(
+        exchange_id="binance",
+        mode=Mode.FUTURES,
+        factory=_StubFuturesAdapter,
+    )
 
 
 def test_load_markets_and_quantizers() -> None:

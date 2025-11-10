@@ -27,12 +27,12 @@
 ## Alerty – powiadomienia toast
 
 * Komponent `ui/qml/components/AlertToastOverlay.qml` reaguje na sygnał `AlertsModel::alertRaised` i prezentuje powiadomienia toast.
-* Preferencja `alertToastsEnabled` jest zapisywana w `config/ui_prefs.json`; przełączenie jej w aplikacji natychmiast czyści kolejkę toastów.
+* Preferencja `alertToastsEnabled` jest zapisywana wraz z pozostałymi ustawieniami w pliku `~/.dudzian/ui_settings.json` (lub w lokalizacji wskazanej przez `BOT_CORE_UI_SETTINGS_PATH`); przełączenie jej w aplikacji natychmiast czyści kolejkę toastów.
 
 ## Personalizacja interfejsu
 
-* Preferencje motywu (`dark`, `light`, `midnight`), układu (`classic`, `compact`, `advanced`) i powiadomień są budowane przez `Application::buildPersonalizationPayload()` i przechowywane w `config/ui_prefs.json`.
-* Migracja ze starej ścieżki `var/state/ui_settings.json` wykonywana jest w `Application::loadUiSettings()` – testy `tests/ui/test_setup_wizard.py` pokrywają scenariusz zapisu/odczytu podstawowych ustawień.
+* Preferencje motywu (`dark`, `light`, `midnight`), układu (`classic`, `compact`, `advanced`) i powiadomień są budowane przez `Application::buildPersonalizationPayload()` i zapisywane w `~/.dudzian/ui_settings.json` (lub w ścieżce nadpisanej zmienną `BOT_CORE_UI_SETTINGS_PATH`).
+* `Application::loadUiSettings()` wymaga, aby ustawienia były dostępne w aktualnym magazynie (domyślnie `~/.dudzian/ui_settings.json` lub ścieżka z `BOT_CORE_UI_SETTINGS_PATH`). Pliki `var/state/ui_settings.json` nie są już ładowane – aplikacja loguje komunikat o koniecznej migracji opisanej w [docs/migrations/2024-legacy-storage-removal.md](../migrations/2024-legacy-storage-removal.md).
 
 ## Panel Strategy Management
 

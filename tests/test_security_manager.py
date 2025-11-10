@@ -56,10 +56,31 @@ def fake_keyring() -> types.ModuleType:
     """Podmienia moduł ``keyring`` na wariant in-memory, aby testy były deterministyczne."""
     module = types.ModuleType("keyring")
     backend = _InMemoryKeyring()
+
+    class SecretServiceKeyring:
+        __slots__ = ("_backend",)
+        __module__ = "keyring.backends.SecretService"
+
+        def __init__(self, store: _InMemoryKeyring) -> None:
+            self._backend = store
+
+        def get_password(self, service: str, username: str) -> str | None:
+            return self._backend.get_password(service, username)
+
+        def set_password(self, service: str, username: str, password: str) -> None:
+            self._backend.set_password(service, username, password)
+
+        def delete_password(self, service: str, username: str) -> None:
+            self._backend.delete_password(service, username)
+
+    native_backend = SecretServiceKeyring(backend)
+
     module.get_password = backend.get_password
     module.set_password = backend.set_password
     module.delete_password = backend.delete_password
     module.errors = backend.errors
+    module.get_keyring = lambda: native_backend
+    module.set_keyring = lambda _: None
     sys.modules["keyring"] = module
     yield module
     sys.modules.pop("keyring", None)
@@ -272,6 +293,27 @@ def test_create_default_secret_storage_linux_headless(
 
     reloaded = EncryptedFileSecretStorage(tmp_path / "vault.age", passphrase="bardzotajne")
     assert reloaded.get_secret("kraken") == "sekret"
+
+
+def test_create_default_secret_storage_headless_respects_dudzian_home(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.delenv("DISPLAY", raising=False)
+    monkeypatch.delenv("WAYLAND_DISPLAY", raising=False)
+    monkeypatch.delenv("DBUS_SESSION_BUS_ADDRESS", raising=False)
+    monkeypatch.setattr("platform.system", lambda: "Linux")
+    monkeypatch.setenv("DUDZIAN_HOME", str(tmp_path / "custom-home"))
+
+    pytest.importorskip("cryptography.fernet")
+
+    storage = create_default_secret_storage(
+        namespace="unit.headless.env",
+        headless_passphrase="supersecret",
+    )
+
+    assert isinstance(storage, EncryptedFileSecretStorage)
+    expected_path = (tmp_path / "custom-home" / "secrets.age").resolve()
+    assert storage._path == expected_path  # type: ignore[attr-defined]
 
 
 def test_create_default_secret_storage_headless_requires_passphrase(

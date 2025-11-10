@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import os
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Iterable, Mapping, MutableMapping, Sequence
@@ -14,7 +15,14 @@ __all__ = [
     "UISettingsStore",
 ]
 
-DEFAULT_UI_SETTINGS_PATH = Path("~/.kryptolowca/ui_settings.json").expanduser()
+def _default_ui_settings_path() -> Path:
+    base_override = os.environ.get("DUDZIAN_HOME")
+    if base_override:
+        return (Path(base_override).expanduser() / "ui_settings.json").expanduser()
+    return (Path.home() / ".dudzian" / "ui_settings.json").expanduser()
+
+
+DEFAULT_UI_SETTINGS_PATH = _default_ui_settings_path()
 
 
 class UISettingsError(RuntimeError):
