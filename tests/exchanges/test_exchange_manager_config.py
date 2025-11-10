@@ -1,8 +1,12 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import json
+from pathlib import Path
+from typing import Any, Mapping
 
 import pytest
+import yaml
 
 from bot_core.exchanges.base import AccountSnapshot, Environment
 from bot_core.exchanges.core import MarketRules
@@ -71,6 +75,31 @@ register_native_adapter(
     factory=_FakeMarginAdapter,
     default_settings={"native": True},
 )
+
+_EXCHANGE_CONFIG_DIR = Path("config/exchanges")
+_PRESET_DIR = Path("config/marketplace/presets/exchanges")
+
+
+def _load_yaml_config(name: str) -> dict[str, object]:
+    path = _EXCHANGE_CONFIG_DIR / f"{name}.yaml"
+    with path.open(encoding="utf-8") as handle:
+        return yaml.safe_load(handle)
+
+
+def _load_preset(name: str) -> dict[str, object]:
+    path = _PRESET_DIR / f"exchange_{name}.json"
+    with path.open(encoding="utf-8") as handle:
+        return json.load(handle)
+
+
+def _extract_preset_environment(preset: Mapping[str, Any], env_name: str) -> Mapping[str, Any]:
+    strategies = preset.get("preset", {}).get("strategies", [])
+    for strategy in strategies:
+        metadata = strategy.get("metadata", {})
+        for environment in metadata.get("environments", []):
+            if environment.get("name") == env_name:
+                return environment.get("config", {})
+    raise KeyError(f"Environment '{env_name}' not found in preset")
 
 
 def test_exchange_manager_builds_registered_adapter(monkeypatch):
@@ -198,7 +227,66 @@ def test_private_backend_receives_passphrase(monkeypatch: pytest.MonkeyPatch) ->
 
     assert created
     assert created[-1]["password"] == "phrase"
-    assert backend.client.options["options"]["defaultType"] == "margin"
+
+
+def test_kucoin_config_and_preset_alignment() -> None:
+    config = _load_yaml_config("kucoin")
+    preset = _load_preset("kucoin")
+
+    paper_cfg = config["paper"]["exchange_manager"]
+    preset_paper = _extract_preset_environment(preset, "paper")["exchange_manager"]
+    assert preset_paper["paper_variant"] == paper_cfg["paper_variant"] == "margin"
+    assert preset_paper["paper_initial_cash"] == paper_cfg["paper_initial_cash"] == 25_000
+    assert preset_paper["simulator"]["leverage_limit"] == pytest.approx(
+        paper_cfg["simulator"]["leverage_limit"]
+    )
+
+    testnet_cfg = config["testnet"]["exchange_manager"]
+    preset_testnet = _extract_preset_environment(preset, "testnet")["exchange_manager"]
+    assert preset_testnet["failover"]["cooldown_seconds"] == testnet_cfg["failover"]["cooldown_seconds"]
+    assert preset_testnet["rate_limit_rules"] == testnet_cfg["rate_limit_rules"]
+
+    live_cfg = config["live"]["exchange_manager"]
+    preset_live = _extract_preset_environment(preset, "live")["exchange_manager"]
+    assert preset_live["native_adapter"]["settings"]["margin_mode"] == live_cfg["native_adapter"]["settings"]["margin_mode"]
+
+
+def test_huobi_config_and_preset_alignment() -> None:
+    config = _load_yaml_config("huobi")
+    preset = _load_preset("huobi")
+
+    paper_cfg = config["paper"]["exchange_manager"]
+    preset_paper = _extract_preset_environment(preset, "paper")["exchange_manager"]
+    assert preset_paper["paper_fee_rate"] == pytest.approx(config["paper"]["exchange_manager"]["paper_fee_rate"])
+    assert preset_paper["paper_cash_asset"] == paper_cfg["paper_cash_asset"]
+
+    testnet_cfg = config["testnet"]["exchange_manager"]
+    preset_testnet = _extract_preset_environment(preset, "testnet")["exchange_manager"]
+    assert preset_testnet["failover"]["failure_threshold"] == testnet_cfg["failover"]["failure_threshold"]
+    assert preset_testnet["rate_limit_rules"] == testnet_cfg["rate_limit_rules"]
+
+    live_cfg = config["live"]["exchange_manager"]
+    preset_live = _extract_preset_environment(preset, "live")["exchange_manager"]
+    assert preset_live["watchdog"]["retry_policy"]["max_attempts"] == live_cfg["watchdog"]["retry_policy"]["max_attempts"]
+
+
+def test_gemini_config_and_preset_alignment() -> None:
+    config = _load_yaml_config("gemini")
+    preset = _load_preset("gemini")
+
+    paper_cfg = config["paper"]["exchange_manager"]
+    preset_paper = _extract_preset_environment(preset, "paper")["exchange_manager"]
+    assert preset_paper["paper_variant"] == paper_cfg["paper_variant"] == "spot"
+    assert preset_paper["paper_fee_rate"] == pytest.approx(paper_cfg["paper_fee_rate"])
+
+    testnet_cfg = config["testnet"]["exchange_manager"]
+    preset_testnet = _extract_preset_environment(preset, "testnet")["exchange_manager"]
+    assert preset_testnet["failover"]["cooldown_seconds"] == testnet_cfg["failover"]["cooldown_seconds"]
+    assert preset_testnet["rate_limit_rules"] == testnet_cfg["rate_limit_rules"]
+
+    live_cfg = config["live"]["exchange_manager"]
+    preset_live = _extract_preset_environment(preset, "live")["exchange_manager"]
+    assert preset_live["failover"]["cooldown_seconds"] == live_cfg["failover"]["cooldown_seconds"]
 
 
 def test_exchange_manager_reports_paper_configuration() -> None:

@@ -179,6 +179,10 @@ def test_kucoin_adapter_merges_nested_settings():
     assert adapter._settings["ccxt_config"]["options"]["defaultType"] == "spot"
     assert adapter._settings["ccxt_config"]["options"]["adjust"] is True
     assert adapter._settings.get("sandbox_mode") is False
+    assert adapter._settings["cancel_order_params"]["type"] == "spot"
+    rate_rules = adapter._settings["rate_limit_rules"]
+    assert rate_rules[0].rate == 30 and rate_rules[0].per == pytest.approx(3.0)
+    assert rate_rules[1].rate == 1_800 and rate_rules[1].per == pytest.approx(60.0)
 
 
 def test_bybit_adapter_provides_spot_defaults():
@@ -197,6 +201,49 @@ def test_bybit_adapter_provides_spot_defaults():
     assert adapter._settings["fetch_ohlcv_params"]["price"] == "mark"
     assert adapter._settings["cancel_order_params"]["category"] == "spot"
     assert adapter._settings["ccxt_config"]["options"]["defaultType"] == "spot"
+
+
+def test_huobi_adapter_sets_retry_and_rate_limits():
+    credentials = ExchangeCredentials(key_id="k")
+    client = _FakeClient()
+    adapter = HuobiSpotAdapter(
+        credentials,
+        environment=Environment.TESTNET,
+        client=client,
+    )
+
+    adapter.configure_network(ip_allowlist=())
+
+    assert adapter._settings["fetch_ohlcv_params"]["type"] == "spot"
+    assert adapter._settings["cancel_order_params"]["type"] == "spot"
+    assert adapter._settings["sandbox_mode"] is True
+    retry = adapter._retry_policy
+    assert retry.max_attempts == 4
+    assert retry.base_delay == pytest.approx(0.15)
+    rate_rules = adapter._settings["rate_limit_rules"]
+    assert rate_rules[0].rate == 90 and rate_rules[0].per == pytest.approx(3.0)
+    assert rate_rules[1].rate == 900 and rate_rules[1].per == pytest.approx(60.0)
+
+
+def test_gemini_adapter_configures_account_and_retry_policy():
+    credentials = ExchangeCredentials(key_id="k", secret="s")
+    client = _FakeClient()
+    adapter = GeminiSpotAdapter(
+        credentials,
+        environment=Environment.PAPER,
+        client=client,
+    )
+
+    adapter.configure_network(ip_allowlist=())
+
+    assert adapter._settings["ccxt_config"]["options"]["account"] == "primary"
+    assert adapter._settings["sandbox_mode"] is True
+    retry = adapter._retry_policy
+    assert retry.max_attempts == 5
+    assert retry.base_delay == pytest.approx(0.25)
+    rate_rules = adapter._settings["rate_limit_rules"]
+    assert rate_rules[0].rate == 15 and rate_rules[0].per == pytest.approx(1.0)
+    assert rate_rules[1].rate == 1_200 and rate_rules[1].per == pytest.approx(60.0)
 
 
 def test_bitstamp_adapter_uses_spot_defaults():

@@ -7,6 +7,7 @@ paper:
     paper_variant: spot
     paper_initial_cash: 20000
     paper_cash_asset: USDT
+    paper_fee_rate: 0.0015
   credentials:
     api_key: null
     secret: null
@@ -16,6 +17,15 @@ testnet:
   exchange_manager:
     mode: spot
     testnet: true
+    failover:
+      enabled: true
+      failure_threshold: 2
+      cooldown_seconds: 45
+    rate_limit_rules:
+      - rate: 90
+        per: 3.0
+      - rate: 900
+        per: 60.0
   credentials:
     api_key: ${HUOBI_TESTNET_KEY}
     secret: ${HUOBI_TESTNET_SECRET}
@@ -29,6 +39,15 @@ live:
       retry_policy:
         max_attempts: 4
         base_delay: 1.0
+    failover:
+      enabled: true
+      failure_threshold: 2
+      cooldown_seconds: 60
+    rate_limit_rules:
+      - rate: 90
+        per: 3.0
+      - rate: 900
+        per: 60.0
   credentials:
     api_key: ${HUOBI_LIVE_KEY}
     secret: ${HUOBI_LIVE_SECRET}

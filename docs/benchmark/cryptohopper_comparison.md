@@ -13,7 +13,7 @@
 
 ## Skrót statusu obszarów
 - **Strategia:** funkcje core pokrywają scenariusze CryptoHopper, wymaga dopracowania publicznego marketplace’u presetów i komunikacji Stress Labs.
-- **Automatyzacja:** Stage6 utrzymuje przewagę dzięki Hypercare Orchestratorowi (podpisy HMAC, resilience/offline). Trzeba pilnować regresji autonomii przy nowych adapterach.
+- **Automatyzacja:** Stage6 utrzymuje przewagę dzięki Hypercare Orchestratorowi (podpisy HMAC, resilience/offline) i nowym fallbackom CCXT dla KuCoin/Huobi/Gemini.
 - **UI:** wciąż luka – integracja feedu gRPC „Decyzje AI” oraz telemetrii live to priorytet przed release Stage6.
 - **Compliance:** przewaga dzięki offline-first journalingowi i podpisom HMAC. Konieczne regularne audyty bundli i aktualizacja materiałów produktowych.
 
@@ -32,7 +32,7 @@
 | --- | --- | --- | --- |
 | Portfolio adaptacyjne / rebalancing | PortfolioGovernor z integracją Stress Lab, override SLO i logiem HMAC. | Automatyczne rebalancingi strategii Pro, oparte o sygnały i copy trading. | Parzystość – kontrolować poziom konfiguracji limitów ryzyka. |
 | Poziomy automatyzacji | Stage6 Hypercare Orchestrator łączy cykle portfela, resilience i observability w jednym przebiegu podpisanym HMAC. | Tryby automatyczny/półautomatyczny (strategie, trailing stop, copy bots). | Przewaga Dudzian – utrzymać autonomiczny hypercare offline. |
-| Obsługa wielu giełd | Integracje Binance, Coinbase, Kraken, OKX, Bitget, Bybit w trybie live/paper. | Wsparcie >16 giełd, w tym Binance, Coinbase, Kraken, KuCoin, Huobi. | Luka – zaplanować rozszerzenie pokrycia do poziomu 15+ giełd. |
+| Obsługa wielu giełd | Integracje Binance, Coinbase, Kraken, OKX, Bitget, Bybit **oraz KuCoin, Huobi i Gemini** (paper/testnet/failover). | Wsparcie >16 giełd, w tym Binance, Coinbase, Kraken, KuCoin, Huobi. | Luka maleje – kolejny krok to Deribit/BitMEX dla parytetu 15+ giełd. |
 | Marketplace strategii | Lokalny marketplace presetów i pipeline AI walk-forward. | Globalny marketplace z copy tradingiem, algorytmami społeczności. | Luka – przygotować publiczne listingi presetów i recenzje. |
 | Stress Lab i symulacje | Scenariusze multi-market, blackout infrastrukturalny i bundling raportów podpisanych HMAC. | Backtesting i paper trading, brak publicznych stres testów multi-market. | Przewaga Dudzian – komunikować stress labs w marketingu. |
 | Resilience / DR | ResilienceHypercareCycle, self-healing runtime, failover drill i bundler artefaktów podpisanych HMAC. | Failover podstawowy (API failover, monitoring uptime). | Przewaga Dudzian – utrzymać przewagę w audycie DR. |
@@ -41,7 +41,7 @@
 
 ## Priorytety uzupełniania luk
 1. **Rozszerzenie pokrycia giełdowego**
-   - Cel: minimum 15 giełd obsługiwanych w trybie live i paper, wyrównanie z CryptoHopper Pro.
+   - Cel: po wdrożeniu KuCoin/Huobi/Gemini osiągnąć ≥12 giełd i przygotować wejście na rynki futures (Deribit/BitMEX).
    - Metryki: liczba aktywnych adapterów, czasy latencji failover, procent giełd z automatycznym provisioningiem API.
    - Wymagane działania: roadmapa integracji, testy regresyjne adapterów, bundling certyfikatów w resilience cycle.
 2. **Marketplace presetów i społeczności**
@@ -63,7 +63,7 @@
 | --- | --- | --- | --- |
 | Q3 2024 | Integracja UI ↔ runtime | Implementacja kanału gRPC, testy PySide6 w CI, runbook demo dla operatorów L2 | Raport z `docs/runtime/status_review.md`, zaktualizowany benchmark (sekcja UI) |
 | Q4 2024 | Marketplace presetów | Publikacja katalogu presetów z recenzjami, rollout procesu wersjonowania offline | Release notes, listing w README, bundler presetów w `var/audit/marketplace/` |
-| Q1 2025 | Rozszerzenie giełd | Dodanie adapterów do poziomu 15+, testy failover, aktualizacja konfiguracji paper/live | Raport resilience, log failover w `var/audit/` |
+| Q1 2025 | Rozszerzenie giełd | Dodanie adapterów do poziomu 15+, testy failover, aktualizacja konfiguracji paper/live (Deribit, BitMEX) | Raport resilience, log failover w `var/audit/` |
 
 ## Cadence utrzymania benchmarku
 - **Miesięcznie:** aktualizacja tablicy wyników Stage6 na podstawie raportu `docs/runtime/status_review.md` i logów hypercare.
@@ -87,6 +87,7 @@
 | 2024-06-30 | UI, Marketplace | Dodano status 🔴 dla feedu gRPC, otwarto działania korygujące Q3. | `docs/runtime/status_review.md`, `reports/ui/grpc_gap_demo.mp4` |
 | 2024-07-31 | Automatyzacja | Potwierdzono status 🟢 po regresjach nightly; rozszerzono checklistę wsparcia. | `var/audit/hypercare/2024-07/summary.json`, `docs/support/plan.md` |
 | 2024-08-31 | Strategia, Compliance | Publikacja roadmapy presetów i wyników audytu Q2. | `reports/strategy/presets_beta.md`, `var/audit/compliance/2024-Q2.pdf` |
+| 2024-09-30 | Integracje giełdowe | Dodano adaptery KuCoin/Huobi/Gemini (paper/testnet/failover) oraz zaktualizowano marketplace i benchmark. | `docs/roadmap/exchange_adapter_rollout.md`, `config/marketplace/presets/exchanges/` |
 
 > Utrzymuj tabelę w formacie kroniki – każdy wpis powinien mieć link do źródłowych artefaktów oraz krótkie streszczenie wpływu na plan domykania luk.
 
