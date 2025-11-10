@@ -1,4 +1,4 @@
 {
   "version": 1,
-  "remote_index_url": "https://configs.example.com/marketplace/catalog.json"
+  "remote_index_url": "file://./data/marketplace/catalog.json"
 }

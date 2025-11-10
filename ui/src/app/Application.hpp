@@ -38,6 +38,7 @@
 #include "telemetry/TelemetryTlsConfig.hpp"
 #include "telemetry/PerformanceTelemetryController.hpp"
 #include "runtime/RuntimeDecisionBridge.hpp"
+#include "app/DecisionMonitorController.hpp"
 
 class QQuickWindow;
 class QScreen;
@@ -85,6 +86,7 @@ class Application : public QObject {
     Q_PROPERTY(QObject*         supportController READ supportController CONSTANT)
     Q_PROPERTY(QObject*         healthController READ healthController CONSTANT)
     Q_PROPERTY(QObject*         decisionLogModel READ decisionLogModel CONSTANT)
+    Q_PROPERTY(QObject*         decisionMonitorController READ decisionMonitorController CONSTANT)
     Q_PROPERTY(QObject*         moduleManager READ moduleManager CONSTANT)
     Q_PROPERTY(QObject*         moduleViewsModel READ moduleViewsModel CONSTANT)
     Q_PROPERTY(QObject*         marketplaceController READ marketplaceController CONSTANT)
@@ -149,6 +151,7 @@ public:
     QObject*         supportController() const;
     QObject*         healthController() const;
     QObject*         decisionLogModel() const;
+    QObject*         decisionMonitorController() const;
     QObject*         decisionFilterModel() const { return const_cast<DecisionLogFilterProxyModel*>(&m_decisionLogFilter); }
     QObject*         moduleManager() const;
     QObject*         moduleViewsModel() const;
@@ -448,6 +451,7 @@ private:
     RiskLimitsModel        m_riskLimitsModel;
     RiskCostModel          m_riskCostModel;
     DecisionLogModel       m_decisionLogModel;
+    DecisionMonitorController m_decisionMonitor;
     DecisionLogFilterProxyModel m_decisionLogFilter;
     TradingClient          m_client;
     std::unique_ptr<OfflineRuntimeBridge> m_offlineBridge;

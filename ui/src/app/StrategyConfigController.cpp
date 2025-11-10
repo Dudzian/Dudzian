@@ -158,6 +158,7 @@ bool StrategyConfigController::refresh()
 
     Q_EMIT decisionConfigChanged();
     Q_EMIT schedulerListChanged();
+    Q_EMIT riskPoliciesChanged();
     return true;
 }
 
@@ -174,6 +175,16 @@ QVariantList StrategyConfigController::schedulerList() const
 QVariantMap StrategyConfigController::schedulerConfigSnapshot(const QString& name) const
 {
     return m_schedulerConfigs.value(name);
+}
+
+QVariantList StrategyConfigController::riskPolicies() const
+{
+    return m_riskPolicyList;
+}
+
+QVariantMap StrategyConfigController::riskPolicySnapshot(const QString& name) const
+{
+    return m_riskPolicies.value(name);
 }
 
 bool StrategyConfigController::saveDecisionConfig(const QVariantMap& config)
@@ -264,42 +275,6 @@ bool StrategyConfigController::removeSchedulerConfig(const QString& name)
     return refresh();
 }
 
-bool StrategyConfigController::removeSchedulerConfig(const QString& name)
-{
-    if (!ensureReady())
-        return false;
-
-    const QString trimmed = name.trimmed();
-    if (trimmed.isEmpty()) {
-        m_lastError = tr("Nie wskazano nazwy schedulera do usunięcia.");
-        Q_EMIT lastErrorChanged();
-        return false;
-    }
-
-    QJsonObject schedulers;
-    schedulers.insert(trimmed, QJsonValue());
-
-    QJsonObject root;
-    root.insert(QStringLiteral("schedulers"), schedulers);
-    const QByteArray payload = QJsonDocument(root).toJson(QJsonDocument::Compact);
-
-    m_busy = true;
-    Q_EMIT busyChanged();
-
-    const BridgeResult result = invokeBridge({QStringLiteral("--apply")}, payload);
-
-    m_busy = false;
-    Q_EMIT busyChanged();
-
-    if (!result.ok) {
-        m_lastError = result.errorMessage;
-        Q_EMIT lastErrorChanged();
-        return false;
-    }
-
-    return refresh();
-}
-
 bool StrategyConfigController::runSchedulerNow(const QString& name)
 {
     if (!ensureReady())
@@ -331,6 +306,74 @@ bool StrategyConfigController::runSchedulerNow(const QString& name)
         Q_EMIT lastErrorChanged();
     }
     return true;
+}
+
+bool StrategyConfigController::saveRiskPolicy(const QString& name, const QVariantMap& config)
+{
+    if (!ensureReady())
+        return false;
+
+    const QString trimmed = name.trimmed();
+    if (trimmed.isEmpty()) {
+        m_lastError = tr("Nie wskazano identyfikatora polityki ryzyka do zapisania.");
+        Q_EMIT lastErrorChanged();
+        return false;
+    }
+
+    QJsonObject riskPolicies;
+    riskPolicies.insert(trimmed, variantMapToJson(config));
+
+    QJsonObject root;
+    root.insert(QStringLiteral("riskPolicies"), riskPolicies);
+
+    const QByteArray payload = QJsonDocument(root).toJson(QJsonDocument::Compact);
+
+    m_busy = true;
+    Q_EMIT busyChanged();
+
+    const BridgeResult result = invokeBridge({QStringLiteral("--apply")}, payload);
+
+    m_busy = false;
+    Q_EMIT busyChanged();
+
+    if (!handleBridgeValidation(result))
+        return false;
+
+    return refresh();
+}
+
+bool StrategyConfigController::removeRiskPolicy(const QString& name)
+{
+    if (!ensureReady())
+        return false;
+
+    const QString trimmed = name.trimmed();
+    if (trimmed.isEmpty()) {
+        m_lastError = tr("Nie wskazano identyfikatora polityki ryzyka do usunięcia.");
+        Q_EMIT lastErrorChanged();
+        return false;
+    }
+
+    QJsonObject riskPolicies;
+    riskPolicies.insert(trimmed, QJsonValue());
+
+    QJsonObject root;
+    root.insert(QStringLiteral("riskPolicies"), riskPolicies);
+
+    const QByteArray payload = QJsonDocument(root).toJson(QJsonDocument::Compact);
+
+    m_busy = true;
+    Q_EMIT busyChanged();
+
+    const BridgeResult result = invokeBridge({QStringLiteral("--apply")}, payload);
+
+    m_busy = false;
+    Q_EMIT busyChanged();
+
+    if (!handleBridgeValidation(result))
+        return false;
+
+    return refresh();
 }
 
 StrategyConfigController::BridgeResult StrategyConfigController::invokeBridge(const QStringList& args,
@@ -508,6 +551,8 @@ bool StrategyConfigController::parseDump(const QByteArray& payload)
 
     m_schedulerList.clear();
     m_schedulerConfigs.clear();
+    m_riskPolicies.clear();
+    m_riskPolicyList.clear();
 
     if (root.contains(QStringLiteral("schedulers")) && root.value(QStringLiteral("schedulers")).isObject()) {
         const QJsonObject schedulersObject = root.value(QStringLiteral("schedulers")).toObject();
@@ -522,6 +567,38 @@ bool StrategyConfigController::parseDump(const QByteArray& payload)
             m_schedulerConfigs.insert(map.value(QStringLiteral("name")).toString(), map);
         }
         m_schedulerList = list;
+    }
+
+    if (root.contains(QStringLiteral("riskPolicies"))) {
+        const QJsonValue riskValue = root.value(QStringLiteral("riskPolicies"));
+        if (riskValue.isObject()) {
+            const QJsonObject riskObject = riskValue.toObject();
+            QVariantList list;
+            for (auto it = riskObject.begin(); it != riskObject.end(); ++it) {
+                if (!it->isObject())
+                    continue;
+                QVariantMap map = jsonObjectToVariantMap(it->toObject());
+                if (!map.contains(QStringLiteral("name")))
+                    map.insert(QStringLiteral("name"), it.key());
+                const QString key = map.value(QStringLiteral("name")).toString();
+                m_riskPolicies.insert(key, map);
+                list.append(map);
+            }
+            m_riskPolicyList = list;
+        } else if (riskValue.isArray()) {
+            const QJsonArray riskArray = riskValue.toArray();
+            QVariantList list;
+            for (const QJsonValue& entry : riskArray) {
+                if (!entry.isObject())
+                    continue;
+                QVariantMap map = jsonObjectToVariantMap(entry.toObject());
+                const QString key = map.value(QStringLiteral("name")).toString();
+                if (!key.isEmpty())
+                    m_riskPolicies.insert(key, map);
+                list.append(map);
+            }
+            m_riskPolicyList = list;
+        }
     }
 
     return true;

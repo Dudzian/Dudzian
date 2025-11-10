@@ -1,0 +1,18 @@
+{
+  "schema_version": "1.0",
+  "generated_at": "2024-01-01T00:00:00Z",
+  "packages": [
+    {
+      "package_id": "demo.strategy.mean_reversion",
+      "display_name": "Strategia mean reversion (demo)",
+      "version": "0.1.0",
+      "description": "Pakiet demonstracyjny do testów offline.",
+      "artifacts": [
+        {
+          "type": "strategy",
+          "path": "strategies/mean_reversion.qml"
+        }
+      ]
+    }
+  ]
+}

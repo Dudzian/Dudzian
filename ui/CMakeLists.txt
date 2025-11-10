@@ -92,6 +92,7 @@ set(UI_SOURCES
     src/app/UiModuleViewsModel.cpp
     src/app/ActivationController.cpp
     src/app/ConfigurationWizardController.cpp
+    src/app/DecisionMonitorController.cpp
     src/app/StrategyConfigController.cpp
     src/app/StrategyWorkbenchController.cpp
     src/app/UserProfileController.cpp

@@ -13,6 +13,7 @@ class StrategyConfigController : public QObject {
     Q_PROPERTY(bool busy READ busy NOTIFY busyChanged)
     Q_PROPERTY(QString lastError READ lastError NOTIFY lastErrorChanged)
     Q_PROPERTY(QStringList validationIssues READ validationIssues NOTIFY validationIssuesChanged)
+    Q_PROPERTY(QVariantList riskPolicies READ riskPolicies NOTIFY riskPoliciesChanged)
 
 public:
     explicit StrategyConfigController(QObject* parent = nullptr);
@@ -30,10 +31,14 @@ public:
     Q_INVOKABLE QVariantMap decisionConfigSnapshot() const;
     Q_INVOKABLE QVariantList schedulerList() const;
     Q_INVOKABLE QVariantMap schedulerConfigSnapshot(const QString& name) const;
+    Q_INVOKABLE QVariantList riskPolicies() const;
+    Q_INVOKABLE QVariantMap riskPolicySnapshot(const QString& name) const;
     Q_INVOKABLE bool saveDecisionConfig(const QVariantMap& config);
     Q_INVOKABLE bool saveSchedulerConfig(const QString& name, const QVariantMap& config);
     Q_INVOKABLE bool removeSchedulerConfig(const QString& name);
     Q_INVOKABLE bool runSchedulerNow(const QString& name);
+    Q_INVOKABLE bool saveRiskPolicy(const QString& name, const QVariantMap& config);
+    Q_INVOKABLE bool removeRiskPolicy(const QString& name);
 
 signals:
     void busyChanged();
@@ -41,6 +46,7 @@ signals:
     void validationIssuesChanged();
     void decisionConfigChanged();
     void schedulerListChanged();
+    void riskPoliciesChanged();
 
 private:
     struct BridgeResult {
@@ -61,6 +67,8 @@ private:
     QVariantMap m_decisionConfig;
     QHash<QString, QVariantMap> m_schedulerConfigs;
     QVariantList m_schedulerList;
+    QHash<QString, QVariantMap> m_riskPolicies;
+    QVariantList m_riskPolicyList;
 
     bool m_busy = false;
     QString m_lastError;

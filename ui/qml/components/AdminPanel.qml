@@ -4,6 +4,7 @@ import QtQuick.Dialogs
 import QtQuick.Layouts
 import QtCore
 import "security"
+import "../views" as Views
 
 Drawer {
     id: adminPanel
@@ -3145,6 +3146,24 @@ Drawer {
                         Layout.fillHeight: true
                     }
                 }
+            }
+        }
+
+        Tab {
+            title: qsTr("Ryzyko i limity")
+
+            Views.StrategyRiskConsole {
+                anchors.fill: parent
+                controller: strategyController
+                appController: appController
+            }
+        }
+
+        Tab {
+            title: qsTr("Monitoring decyzji")
+
+            Views.DecisionMonitoringView {
+                anchors.fill: parent
             }
         }
 
