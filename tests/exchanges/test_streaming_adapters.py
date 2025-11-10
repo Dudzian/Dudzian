@@ -292,6 +292,10 @@ def test_local_long_poll_stream_backpressure_metrics(monkeypatch: pytest.MonkeyP
     assert lag_state.count == 2
     assert lag_state.sum == pytest.approx(2.2, rel=1e-6)
 
+    lag_gauge = registry.get("bot_exchange_stream_last_delivery_lag_seconds")
+    assert isinstance(lag_gauge, GaugeMetric)
+    assert lag_gauge.value(labels=expected_labels) >= 0.0
+
 
 def test_local_long_poll_stream_reconnect_metrics(monkeypatch: pytest.MonkeyPatch) -> None:
     registry = MetricsRegistry()
@@ -352,6 +356,69 @@ def test_local_long_poll_stream_reconnect_metrics(monkeypatch: pytest.MonkeyPatc
     )
     assert latency_state.count == 1
     assert latency_state.sum > 0.0
+
+
+def test_local_long_poll_stream_http_error_metrics(monkeypatch: pytest.MonkeyPatch) -> None:
+    registry = MetricsRegistry()
+    payload = {"batches": [{"channel": "ticker", "events": [{"seq": 7}], "cursor": "xyz"}]}
+
+    attempts = 0
+
+    def fake_urlopen(request, timeout=0.0):  # noqa: D401
+        nonlocal attempts
+        attempts += 1
+        if attempts == 1:
+            url = getattr(request, "full_url", "http://127.0.0.1/stream")
+            raise HTTPError(url, 502, "Bad Gateway", {"Retry-After": "0.1"}, None)
+        return _FakeResponse(json.dumps(payload).encode("utf-8"))
+
+    current = -0.1
+
+    def fake_clock() -> float:
+        nonlocal current
+        current += 0.1
+        return current
+
+    stream = LocalLongPollStream(
+        base_url="http://127.0.0.1",
+        path="/stream",
+        channels=["ticker"],
+        adapter="test",
+        scope="public",
+        environment="test",
+        poll_interval=0.0,
+        timeout=0.1,
+        max_retries=3,
+        backoff_base=0.0,
+        backoff_cap=0.0,
+        jitter=(0.0, 0.0),
+        clock=fake_clock,
+        sleep=lambda _: None,
+        metrics_registry=registry,
+    )
+
+    monkeypatch.setattr("bot_core.exchanges.streaming.urlopen", fake_urlopen)
+
+    batch = next(stream)
+    assert batch.events and batch.events[0]["seq"] == 7
+    stream.close()
+
+    base_labels = {"adapter": "test", "scope": "public", "environment": "test"}
+    error_labels = {**base_labels, "status_code": "502", "retryable": "true", "reason": "http_5xx"}
+
+    http_errors_metric = registry.get("bot_exchange_stream_http_errors_total")
+    assert isinstance(http_errors_metric, CounterMetric)
+    assert http_errors_metric.value(labels=error_labels) == pytest.approx(1.0)
+
+    http_latency_metric = registry.get("bot_exchange_stream_http_error_duration_seconds")
+    assert isinstance(http_latency_metric, HistogramMetric)
+    http_latency_state = http_latency_metric.snapshot(labels=error_labels)
+    assert http_latency_state.count == 1
+    assert http_latency_state.sum >= 0.0
+
+    reconnect_gauge = registry.get("bot_exchange_stream_reconnect_in_progress")
+    assert isinstance(reconnect_gauge, GaugeMetric)
+    assert reconnect_gauge.value(labels=base_labels) == pytest.approx(0.0)
 
 
 def test_local_long_poll_stream_prefetches_in_background(

@@ -265,6 +265,25 @@ class LocalLongPollStream(Iterable[StreamBatch]):
             "Czas potrzebny na odzyskanie połączenia long-pollowego streamu",
             buckets=_DEFAULT_RECONNECT_BUCKETS,
         )
+        self._metric_reconnect_state: GaugeMetric = self._metrics.gauge(
+            "bot_exchange_stream_reconnect_in_progress",
+            "Liczba aktualnych prób ponownego połączenia long-pollowego streamu",
+        )
+        self._metric_delivery_lag_latest: GaugeMetric = self._metrics.gauge(
+            "bot_exchange_stream_last_delivery_lag_seconds",
+            "Ostatnio zmierzona różnica między pobraniem a konsumpcją paczki long-pollowej",
+        )
+        self._metric_http_errors: CounterMetric = self._metrics.counter(
+            "bot_exchange_stream_http_errors_total",
+            "Liczba błędów HTTP zwróconych przez long-pollowy stream",
+        )
+        self._metric_http_error_latency: HistogramMetric = self._metrics.histogram(
+            "bot_exchange_stream_http_error_duration_seconds",
+            "Czas do wystąpienia błędu HTTP podczas zapytania long-pollowego",
+            buckets=_DEFAULT_LATENCY_BUCKETS,
+        )
+        self._metric_reconnect_state.set(0.0, labels=self._metric_labels)
+        self._metric_delivery_lag_latest.set(0.0, labels=self._metric_labels)
         self._update_queue_metric()
 
     def start(self) -> "LocalLongPollStream":
@@ -508,7 +527,14 @@ class LocalLongPollStream(Iterable[StreamBatch]):
                     headers = getattr(response, "headers", None)
             except HTTPError as exc:
                 server_retry_after = self._retry_after(exc.headers)
+                error_duration = max(0.0, self._clock() - poll_started)
                 if exc.code in {401, 403}:
+                    self._record_http_error(
+                        status=exc.code,
+                        retryable=False,
+                        duration=error_duration,
+                        reason="auth",
+                    )
                     raise ExchangeAuthError(
                         f"Stream {self._adapter}/{self._scope} odrzucił uwierzytelnienie.",
                         exc.code,
@@ -522,6 +548,13 @@ class LocalLongPollStream(Iterable[StreamBatch]):
                         payload=None,
                     )
                     retryable = True
+                    reason_label = self._classify_reconnect_reason(last_error)
+                    self._record_http_error(
+                        status=exc.code,
+                        retryable=True,
+                        duration=error_duration,
+                        reason=reason_label,
+                    )
                     if server_retry_after is not None and server_retry_after > 0:
                         self._sleep(server_retry_after)
                         should_backoff = False
@@ -531,7 +564,21 @@ class LocalLongPollStream(Iterable[StreamBatch]):
                         reason=exc,
                     )
                     retryable = True
+                    reason_label = self._classify_reconnect_reason(last_error)
+                    self._record_http_error(
+                        status=exc.code,
+                        retryable=True,
+                        duration=error_duration,
+                        reason=reason_label,
+                    )
                 else:
+                    reason_label = f"http_{exc.code}"
+                    self._record_http_error(
+                        status=exc.code,
+                        retryable=False,
+                        duration=error_duration,
+                        reason=reason_label,
+                    )
                     raise ExchangeAPIError(
                         f"Stream {self._adapter}/{self._scope} zwrócił kod {exc.code}.",
                         exc.code,
@@ -563,7 +610,10 @@ class LocalLongPollStream(Iterable[StreamBatch]):
                 reconnect_started_at = reconnect_started_at or poll_started
                 reconnect_reason = self._classify_reconnect_reason(last_error)
                 reconnect_attempts += 1
-                self._record_reconnect_attempt(reason=reconnect_reason)
+                self._record_reconnect_attempt(
+                    reason=reconnect_reason,
+                    attempt=reconnect_attempts,
+                )
             attempt += 1
             if self._closed:
                 break
@@ -1110,19 +1160,37 @@ class LocalLongPollStream(Iterable[StreamBatch]):
     def _record_delivery_lag(self, batch: StreamBatch) -> None:
         lag = max(0.0, self._clock() - batch.received_at)
         self._metric_delivery_lag.observe(lag, labels=self._metric_labels)
+        self._metric_delivery_lag_latest.set(lag, labels=self._metric_labels)
 
-    def _record_reconnect_attempt(self, *, reason: str) -> None:
+    def _record_reconnect_attempt(self, *, reason: str, attempt: int) -> None:
         labels = dict(self._metric_labels)
         labels["status"] = "attempt"
         labels["reason"] = reason
+        self._metric_reconnect_state.set(float(max(attempt, 0)), labels=self._metric_labels)
         self._metric_reconnects.inc(labels=labels)
 
     def _record_reconnect_result(self, *, status: str, duration: float, reason: str) -> None:
         labels = dict(self._metric_labels)
         labels["status"] = status
         labels["reason"] = reason
+        self._metric_reconnect_state.set(0.0, labels=self._metric_labels)
         self._metric_reconnects.inc(labels=labels)
         self._metric_reconnect_latency.observe(max(0.0, duration), labels=labels)
+
+    def _record_http_error(
+        self,
+        *,
+        status: int,
+        retryable: bool,
+        duration: float,
+        reason: str,
+    ) -> None:
+        labels = dict(self._metric_labels)
+        labels["status_code"] = str(status)
+        labels["retryable"] = "true" if retryable else "false"
+        labels["reason"] = reason
+        self._metric_http_errors.inc(labels=labels)
+        self._metric_http_error_latency.observe(max(0.0, duration), labels=labels)
 
     def _classify_reconnect_reason(self, error: Exception | None) -> str:
         if isinstance(error, ExchangeThrottlingError):
