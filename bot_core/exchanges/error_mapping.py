@@ -12,7 +12,6 @@ from bot_core.exchanges.errors import (
     ExchangeThrottlingError,
 )
 
-
 _HTTP_THROTTLE_STATUS_CODES = {
     408,
     418,
@@ -117,6 +116,71 @@ _NETWORK_THROTTLE_KEYWORDS = (
     "err_network_changed",
     "err_failed",
 )
+
+
+_DERIBIT_AUTH_CODES = {
+    13001,
+    13002,
+    13004,
+    13005,
+    13006,
+    13007,
+    13008,
+    13009,
+    13041,
+    13042,
+    13043,
+    13076,
+}
+
+_DERIBIT_THROTTLE_CODES = {
+    10028,
+    10029,
+    11046,
+    13033,
+    13034,
+}
+
+_DERIBIT_AUTH_KEYWORDS = (
+    "auth",
+    "sign",
+    "permission",
+    "privilege",
+    "credential",
+    "api key",
+    "not allowed",
+)
+
+_DERIBIT_THROTTLE_KEYWORDS = (
+    "too many",
+    "rate limit",
+    "burst limit",
+    "busy",
+    "temporarily",
+    "capacity",
+) + _NETWORK_THROTTLE_KEYWORDS
+
+_BITMEX_AUTH_NAMES = {
+    "unauthorized",
+    "authenticationerror",
+    "invalidapikey",
+    "apikeydisabled",
+    "expiredapikey",
+    "forbidden",
+}
+
+_BITMEX_THROTTLE_NAMES = {
+    "ratelimit",
+    "ratelimiterror",
+}
+
+_BITMEX_THROTTLE_KEYWORDS = (
+    "too many",
+    "rate limit",
+    "busy",
+    "retry",
+    "throttle",
+) + _NETWORK_THROTTLE_KEYWORDS
 
 
 @dataclass(slots=True)
@@ -551,8 +615,103 @@ def raise_for_zonda_error(*, status_code: int, payload: Mapping[str, object], de
     raise ExchangeAPIError(message=message, status_code=status_code, payload=payload)
 
 
+def _coerce_payload_mapping(payload: object) -> Mapping[str, object] | None:
+    if isinstance(payload, Mapping):
+        return payload
+    if isinstance(payload, (bytes, bytearray)):
+        try:
+            payload = payload.decode("utf-8")
+        except Exception:  # pragma: no cover - fallback dekodowania
+            return None
+    if isinstance(payload, str):
+        text = payload.strip()
+        if text.startswith(('{', '[')):
+            try:
+                parsed = json.loads(text)
+            except (TypeError, ValueError):
+                return None
+            if isinstance(parsed, Mapping):
+                return parsed
+    return None
+
+
+def raise_for_deribit_error(*, status_code: int, payload: Mapping[str, object], default_message: str) -> None:
+    """Mapuje odpowiedź Deribit na wyjątki domenowe."""
+
+    message = default_message
+    code = _parse_int(payload.get("code"))
+    error_section = payload.get("error")
+    if isinstance(error_section, Mapping):
+        code = _parse_int(error_section.get("code")) or code
+        message = str(error_section.get("message") or message)
+        data = error_section.get("data")
+        if isinstance(data, Mapping) and not code:
+            code = _parse_int(data.get("error")) or _parse_int(data.get("code"))
+        elif isinstance(data, (str, bytes)):
+            try:
+                extra = json.loads(data)
+            except (TypeError, ValueError):  # pragma: no cover - dane bez JSON
+                extra = None
+            if isinstance(extra, Mapping) and not code:
+                code = _parse_int(extra.get("code"))
+
+    normalized = message.lower()
+    if (
+        status_code in {401, 403}
+        or code in _DERIBIT_AUTH_CODES
+        or any(keyword in normalized for keyword in _DERIBIT_AUTH_KEYWORDS)
+    ):
+        raise ExchangeAuthError(message=message, status_code=status_code or 401, payload=payload)
+
+    if (
+        status_code in {418, 429}
+        or code in _DERIBIT_THROTTLE_CODES
+        or any(keyword in normalized for keyword in _DERIBIT_THROTTLE_KEYWORDS)
+    ):
+        raise ExchangeThrottlingError(message=message, status_code=status_code or 429, payload=payload)
+
+    raise ExchangeAPIError(message=message, status_code=status_code or 500, payload=payload)
+
+
+def raise_for_bitmex_error(*, status_code: int, payload: Mapping[str, object], default_message: str) -> None:
+    """Mapuje błędy BitMEX na wyjątki domenowe."""
+
+    message = default_message
+    code = _parse_int(payload.get("errorCode"))
+    error_section = payload.get("error")
+    name = None
+    if isinstance(error_section, Mapping):
+        name_value = error_section.get("name")
+        if isinstance(name_value, str):
+            name = name_value.strip().lower()
+        message_value = error_section.get("message")
+        if isinstance(message_value, (str, bytes)):
+            message = next(_iter_error_messages(message_value), message)
+        code = _parse_int(error_section.get("code")) or code
+
+    normalized_message = message.lower()
+    if (
+        status_code in {401, 403}
+        or name in _BITMEX_AUTH_NAMES
+        or any(keyword in normalized_message for keyword in ("auth", "signature", "permission"))
+    ):
+        raise ExchangeAuthError(message=message, status_code=status_code or 401, payload=payload)
+
+    if (
+        status_code in {418, 429}
+        or name in _BITMEX_THROTTLE_NAMES
+        or code == 429
+        or any(keyword in normalized_message for keyword in _BITMEX_THROTTLE_KEYWORDS)
+    ):
+        raise ExchangeThrottlingError(message=message, status_code=status_code or 429, payload=payload)
+
+    raise ExchangeAPIError(message=message, status_code=status_code or 500, payload=payload)
+
+
 __all__ = [
     "raise_for_binance_error",
     "raise_for_kraken_error",
     "raise_for_zonda_error",
+    "raise_for_deribit_error",
+    "raise_for_bitmex_error",
 ]

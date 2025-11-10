@@ -21,7 +21,11 @@ from typing import TYPE_CHECKING, Callable
 from PySide6.QtCore import QObject, Property, QTimer, Signal, Slot
 
 from bot_core.config import load_core_config
-from bot_core.observability.ui_metrics import get_long_poll_metrics_cache
+from bot_core.observability.ui_metrics import (
+    FeedHealthMetricsExporter,
+    get_feed_health_metrics_exporter,
+    get_long_poll_metrics_cache,
+)
 from bot_core.portfolio import resolve_decision_log_config
 from bot_core.runtime.journal import TradingDecisionJournal
 from .demo_data import load_demo_decisions
@@ -40,6 +44,14 @@ try:  # pragma: no cover - funkcja ładowania runtime może nie być dostępna w
     from bot_core.config.loader import load_runtime_app_config
 except Exception:  # pragma: no cover - fallback gdy brak unified loadera
     load_runtime_app_config = None  # type: ignore[assignment]
+
+try:  # pragma: no cover - alerty feedu są opcjonalne w dystrybucjach light
+    from bot_core.runtime.metrics_alerts import UiTelemetryAlertSink, get_feed_health_alert_sink
+except Exception:  # pragma: no cover - fallback gdy brak infrastruktury alertów
+    UiTelemetryAlertSink = None  # type: ignore[assignment]
+
+    def get_feed_health_alert_sink(*_args: object, **_kwargs: object) -> None:
+        return None
 
 if TYPE_CHECKING:  # pragma: no cover - adnotacje tylko w czasie statycznym
     from bot_core.config.models import RuntimeAppConfig
@@ -589,6 +601,8 @@ class RuntimeService(QObject):
         default_limit: int = 20,
         core_config_path: str | os.PathLike[str] | None = None,
         runtime_config_path: str | os.PathLike[str] | None = None,
+        feed_alert_sink: UiTelemetryAlertSink | None = None,
+        feed_metrics_exporter: FeedHealthMetricsExporter | None = None,
     ) -> None:
         super().__init__(parent)
         if decision_loader is not None:
@@ -648,12 +662,14 @@ class RuntimeService(QObject):
             "downtimeMs": 0.0,
             "lastError": "",
         }
-        self._last_grpc_update: float = time.monotonic()
-        self._grpc_idle_flag = False
-        self._metrics_last_write: float = 0.0
-        self._metrics_next_write: float = 0.0
-        self._metrics_last_status: str = ""
-        self._metrics_last_reconnects: int = 0
+        self._feed_metrics_exporter = feed_metrics_exporter or get_feed_health_metrics_exporter()
+        self._feed_alert_sink = feed_alert_sink or get_feed_health_alert_sink()
+        self._feed_thresholds = self._load_feed_thresholds()
+        self._feed_alert_state: dict[str, str] = {
+            "latency": "ok",
+            "reconnects": "ok",
+            "downtime": "ok",
+        }
         self._longpoll_metrics_cache = get_long_poll_metrics_cache()
         self._longpoll_metrics: list[dict[str, object]] = []
         self._longpoll_timer = QTimer(self)
@@ -740,12 +756,320 @@ class RuntimeService(QObject):
             payload["nextRetrySeconds"] = max(0.0, float(next_retry))
         else:
             payload.pop("nextRetrySeconds", None)
+        latencies = list(self._feed_latencies)
+        latency_p95: float | None = None
+        if latencies:
+            latency_p95 = float(self._percentile(latencies, 95.0))
+            payload["p95LatencyMs"] = latency_p95
+        else:
+            payload.pop("p95LatencyMs", None)
         self._feed_health = payload
         self.feedHealthChanged.emit()
-        current_status = payload.get("status")
-        current_reconnects = int(payload.get("reconnects", previous_reconnects))
-        force_flush = (current_status != previous_status) or (current_reconnects != previous_reconnects)
-        self._write_feed_metrics(force=force_flush)
+        self._publish_feed_metrics(payload, latency_p95)
+        self._evaluate_feed_health_alerts(payload, latency_p95)
+
+    def _publish_feed_metrics(self, payload: Mapping[str, object], latency_p95: float | None) -> None:
+        exporter = self._feed_metrics_exporter
+        if exporter is None:
+            return
+        status = str(payload.get("status", "unknown"))
+        adapter = self._current_feed_adapter_label(status)
+        reconnects_raw = payload.get("reconnects", 0)
+        downtime_raw = payload.get("downtimeMs", 0.0)
+        last_error = str(payload.get("lastError", self._feed_last_error))
+        try:
+            reconnects_value = int(reconnects_raw)
+        except (TypeError, ValueError):
+            reconnects_value = 0
+        try:
+            downtime_ms = float(downtime_raw)
+        except (TypeError, ValueError):
+            downtime_ms = 0.0
+        exporter.record(
+            adapter=adapter,
+            status=status,
+            latency_p95_ms=latency_p95,
+            reconnects=reconnects_value,
+            downtime_ms=downtime_ms,
+            last_error=last_error,
+        )
+
+    def _evaluate_feed_health_alerts(
+        self,
+        payload: Mapping[str, object],
+        latency_p95: float | None,
+    ) -> None:
+        thresholds = self._feed_thresholds
+        status = str(payload.get("status", "unknown"))
+        adapter = self._current_feed_adapter_label(status)
+        reconnects_raw = payload.get("reconnects", 0)
+        downtime_raw = payload.get("downtimeMs", 0.0)
+        last_error = str(payload.get("lastError", self._feed_last_error))
+        try:
+            reconnects_value = int(reconnects_raw)
+        except (TypeError, ValueError):
+            reconnects_value = 0
+        try:
+            downtime_ms = float(downtime_raw)
+        except (TypeError, ValueError):
+            downtime_ms = 0.0
+        downtime_seconds = max(0.0, downtime_ms / 1000.0)
+
+        latency_state = self._classify_threshold(
+            latency_p95,
+            warning=thresholds["latency_warning_ms"],
+            critical=thresholds["latency_critical_ms"],
+        )
+        self._maybe_emit_feed_alert(
+            "latency",
+            latency_state,
+            metric_label="Latencja p95 decision feedu",
+            unit="ms",
+            value=latency_p95,
+            warning=thresholds["latency_warning_ms"],
+            critical=thresholds["latency_critical_ms"],
+            status=status,
+            adapter=adapter,
+            reconnects=reconnects_value,
+            downtime_seconds=downtime_seconds,
+            latency_p95=latency_p95,
+            last_error=last_error,
+        )
+
+        reconnect_state = self._classify_threshold(
+            float(reconnects_value),
+            warning=thresholds["reconnects_warning"],
+            critical=thresholds["reconnects_critical"],
+        )
+        self._maybe_emit_feed_alert(
+            "reconnects",
+            reconnect_state,
+            metric_label="Liczba reconnectów decision feedu",
+            unit="",
+            value=float(reconnects_value),
+            warning=thresholds["reconnects_warning"],
+            critical=thresholds["reconnects_critical"],
+            status=status,
+            adapter=adapter,
+            reconnects=reconnects_value,
+            downtime_seconds=downtime_seconds,
+            latency_p95=latency_p95,
+            last_error=last_error,
+        )
+
+        downtime_state = self._classify_threshold(
+            downtime_seconds,
+            warning=thresholds["downtime_warning_seconds"],
+            critical=thresholds["downtime_critical_seconds"],
+        )
+        self._maybe_emit_feed_alert(
+            "downtime",
+            downtime_state,
+            metric_label="Łączny downtime decision feedu",
+            unit="s",
+            value=downtime_seconds,
+            warning=thresholds["downtime_warning_seconds"],
+            critical=thresholds["downtime_critical_seconds"],
+            status=status,
+            adapter=adapter,
+            reconnects=reconnects_value,
+            downtime_seconds=downtime_seconds,
+            latency_p95=latency_p95,
+            last_error=last_error,
+        )
+
+    def _current_feed_adapter_label(self, status: str) -> str:
+        if status == "fallback":
+            return "fallback"
+        label = self._active_stream_label or ""
+        if label.startswith("grpc://"):
+            return "grpc"
+        if label == "offline-demo":
+            return "demo"
+        if label:
+            prefix, _, _ = label.partition("://")
+            if prefix:
+                return prefix
+            return label
+        if self._active_log_path is not None:
+            return "jsonl"
+        if self._loader is _default_loader:
+            return "demo"
+        return "unknown"
+
+    @staticmethod
+    def _classify_threshold(
+        value: float | None,
+        *,
+        warning: float | None,
+        critical: float | None,
+    ) -> str:
+        if value is None:
+            return "ok"
+        if critical is not None and value >= critical:
+            return "critical"
+        if warning is not None and value >= warning:
+            return "warning"
+        return "ok"
+
+    def _maybe_emit_feed_alert(
+        self,
+        key: str,
+        severity: str,
+        *,
+        metric_label: str,
+        unit: str,
+        value: float | None,
+        warning: float | None,
+        critical: float | None,
+        status: str,
+        adapter: str,
+        reconnects: int,
+        downtime_seconds: float,
+        latency_p95: float | None,
+        last_error: str,
+    ) -> None:
+        previous = self._feed_alert_state.get(key, "ok")
+        if severity == previous:
+            return
+        self._feed_alert_state[key] = severity
+        sink = self._feed_alert_sink
+        if sink is None:
+            return
+
+        severity_label = severity
+        state = severity
+        if severity == "ok":
+            severity_label = "info"
+            state = "recovered"
+        else:
+            state = "degraded"
+
+        threshold_value: float | None = None
+        if severity == "critical" and critical is not None:
+            threshold_value = critical
+        elif severity == "warning" and warning is not None:
+            threshold_value = warning
+        elif previous in {"critical", "warning"}:
+            threshold_value = critical if previous == "critical" and critical is not None else warning
+
+        body_parts: list[str] = []
+        metric_value_text = self._format_feed_metric(value, unit)
+        threshold_text = self._format_feed_metric(threshold_value, unit) if threshold_value is not None else None
+        if severity == "ok":
+            title = f"{metric_label} w normie"
+            body_parts.append(f"{metric_label} powróciła do normy ({metric_value_text}).")
+            if threshold_text:
+                body_parts.append(f"Poprzedni próg odniesienia: {threshold_text}.")
+        else:
+            title = f"{metric_label} przekroczyła próg"
+            if severity == "critical":
+                title = f"Krytyczne odchylenie – {metric_label}"
+            if threshold_text:
+                body_parts.append(
+                    f"{metric_label} wynosi {metric_value_text} (próg {threshold_text})."
+                )
+            else:
+                body_parts.append(f"{metric_label} wynosi {metric_value_text}.")
+        if last_error:
+            body_parts.append(f"Ostatni błąd: {last_error}.")
+        body = " ".join(body_parts)
+
+        context: dict[str, str] = {
+            "adapter": adapter,
+            "status": status,
+            "metric": key,
+            "metric_label": metric_label,
+            "metric_unit": unit,
+            "state": state,
+            "reconnects": str(reconnects),
+            "downtime_seconds": f"{downtime_seconds:.3f}",
+        }
+        if value is not None:
+            context["metric_value"] = (
+                f"{value:.3f}" if unit in {"ms", "s"} else str(int(round(value)))
+            )
+        if warning is not None:
+            context["warning_threshold"] = (
+                f"{warning:.3f}" if unit in {"ms", "s"} else str(int(round(warning)))
+            )
+        if critical is not None:
+            context["critical_threshold"] = (
+                f"{critical:.3f}" if unit in {"ms", "s"} else str(int(round(critical)))
+            )
+        if latency_p95 is not None:
+            context["latency_p95_ms"] = f"{latency_p95:.3f}"
+        if last_error:
+            context["last_error"] = last_error
+
+        payload: dict[str, object] = {
+            "metric": key,
+            "metric_label": metric_label,
+            "metric_unit": unit,
+            "metric_value": value,
+            "warning_threshold": warning,
+            "critical_threshold": critical,
+            "status": status,
+            "adapter": adapter,
+            "reconnects": reconnects,
+            "downtime_seconds": downtime_seconds,
+            "latency_p95_ms": latency_p95,
+            "state": state,
+        }
+        if last_error:
+            payload["last_error"] = last_error
+
+        sink.emit_feed_health_event(
+            severity=severity_label,
+            title=title,
+            body=body,
+            context=context,
+            payload=payload,
+        )
+
+    @staticmethod
+    def _format_feed_metric(value: float | None, unit: str) -> str:
+        if value is None:
+            return "brak danych"
+        if unit == "ms":
+            return f"{value:.1f} ms"
+        if unit == "s":
+            return f"{value:.1f} s"
+        return f"{int(round(value))}"
+
+    def _load_feed_thresholds(self) -> dict[str, float | None]:
+        def _env_float(name: str, default: float | None) -> float | None:
+            raw = os.environ.get(name)
+            if raw is None or str(raw).strip() == "":
+                return default
+            try:
+                value = float(raw)
+            except (TypeError, ValueError):
+                return default
+            if value <= 0:
+                return None
+            return value
+
+        def _env_int(name: str, default: int | None) -> float | None:
+            raw = os.environ.get(name)
+            if raw is None or str(raw).strip() == "":
+                return default
+            try:
+                value = int(float(raw))
+            except (TypeError, ValueError):
+                return default
+            if value <= 0:
+                return None
+            return float(value)
+
+        return {
+            "latency_warning_ms": _env_float("BOT_CORE_UI_FEED_LATENCY_P95_WARNING_MS", 2500.0),
+            "latency_critical_ms": _env_float("BOT_CORE_UI_FEED_LATENCY_P95_CRITICAL_MS", 5000.0),
+            "reconnects_warning": _env_int("BOT_CORE_UI_FEED_RECONNECT_WARNING", 3),
+            "reconnects_critical": _env_int("BOT_CORE_UI_FEED_RECONNECT_CRITICAL", 6),
+            "downtime_warning_seconds": _env_float("BOT_CORE_UI_FEED_DOWNTIME_WARNING_SECONDS", 30.0),
+            "downtime_critical_seconds": _env_float("BOT_CORE_UI_FEED_DOWNTIME_CRITICAL_SECONDS", 120.0),
+        }
 
     def _mark_feed_disconnected(self) -> None:
         if self._feed_downtime_started is None:

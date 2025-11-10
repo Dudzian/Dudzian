@@ -72,6 +72,7 @@ from bot_core.risk.engine import ThresholdRiskEngine
 from bot_core.observability import MetricsRegistry, get_global_metrics_registry
 from bot_core.trading.strategies import StrategyCatalog
 from bot_core.trading.strategy_aliasing import (
+    MIGRATION_FALLBACK_SUFFIX,
     StrategyAliasResolver,
     canonical_alias_map,
     normalise_suffixes,
@@ -444,7 +445,7 @@ class AutoTrader:
     method executed inside a worker thread when the user confirms auto-trading.
     """
 
-    _STRATEGY_SUFFIXES: tuple[str, ...] = ("_probing",)
+    _STRATEGY_SUFFIXES: tuple[str, ...] = ("_probing", MIGRATION_FALLBACK_SUFFIX)
     _STRATEGY_ALIAS_MAP: Mapping[str, str] = {
         "intraday_breakout": "day_trading",
     }
@@ -1573,6 +1574,40 @@ class AutoTrader:
             else:
                 self._cancel_auto_trade_thread_locked()
 
+    def apply_lifecycle_bootstrap(
+        self,
+        *,
+        risk_profile: str | None = None,
+        market_regime: str | None = None,
+        decision_state: str | None = None,
+        decision_signal: str | None = None,
+    ) -> None:
+        """Przywraca stan AutoTradera na podstawie metadanych bootstrapa."""
+
+        if risk_profile:
+            try:
+                self._apply_risk_profile_transition(risk_profile, silent=True)
+            except Exception:  # pragma: no cover - zachowawcze logowanie
+                LOGGER.debug("Nie udało się odtworzyć profilu ryzyka podczas bootstrapa", exc_info=True)
+
+        metadata = dict(self._decision_cycle_metadata or {})
+        changed = False
+        for key, value in (
+            ("market_regime", market_regime),
+            ("decision_state", decision_state),
+            ("decision_signal", decision_signal),
+        ):
+            if not value:
+                continue
+            normalized = str(value)
+            if metadata.get(key) == normalized:
+                continue
+            metadata[key] = normalized
+            changed = True
+        if changed:
+            self._decision_cycle_metadata = metadata
+            self._decision_cycle_metadata_revision += 1
+
     def stop(self) -> None:
         with self._lock:
             if not self._started:
@@ -2415,6 +2450,7 @@ class AutoTrader:
         *,
         assessment: MarketRegimeAssessment | None = None,
         summary: RegimeSummary | None = None,
+        silent: bool = False,
     ) -> bool:
         target = str(profile or "").strip()
         if not target:
@@ -2455,22 +2491,23 @@ class AutoTrader:
             level = getattr(summary, "risk_level", None)
             if isinstance(level, RiskLevel):
                 payload["risk_level"] = level.value
-        self._log(
-            "Risk profile switched by regime autonomy",
-            level=logging.INFO,
-            previous=current,
-            selected=target,
-        )
-        self._log_decision_event(
-            "risk_profile_transition",
-            status="updated",
-            metadata=payload,
-        )
-        self._record_decision_audit_stage(
-            "risk_profile_transition",
-            symbol=_SCHEDULE_SYMBOL,
-            payload=payload,
-        )
+        if not silent:
+            self._log(
+                "Risk profile switched by regime autonomy",
+                level=logging.INFO,
+                previous=current,
+                selected=target,
+            )
+            self._log_decision_event(
+                "risk_profile_transition",
+                status="updated",
+                metadata=payload,
+            )
+            self._record_decision_audit_stage(
+                "risk_profile_transition",
+                symbol=_SCHEDULE_SYMBOL,
+                payload=payload,
+            )
         return True
 
     def _update_risk_profile_from_assessment(

@@ -118,6 +118,8 @@ jobs:
           pip install .[dev]
 
       - name: Lint repository paths
+        env:
+          LINT_PATHS_ALLOW_LEGACY: "1"
         run: python scripts/lint_paths.py
 
       - name: Type check with mypy

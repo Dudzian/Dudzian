@@ -21,6 +21,8 @@ from bot_core.exchanges import interfaces as exchange_interfaces
 from bot_core.exchanges import streaming as exchange_streaming
 from bot_core.exchanges.base import AccountSnapshot
 from bot_core.execution.paper import MarketMetadata
+from bot_core.observability.metrics import MetricsRegistry
+from bot_core.observability.ui_metrics import FeedHealthMetricsExporter
 from bot_core.testing import TradingStubServer, build_default_dataset
 from bot_core.testing.trading_stub_server import InMemoryTradingDataset
 from bot_core.generated import trading_pb2, trading_pb2_grpc
@@ -570,3 +572,63 @@ def test_local_runtime_gateway_streams_decision_journal_with_cursor() -> None:
     )
     assert filtered_epoch["records"]
     assert all(entry["event"] == "order_filled" for entry in filtered_epoch["records"])
+
+
+def test_feed_health_threshold_alerts_and_metrics(monkeypatch: pytest.MonkeyPatch) -> None:
+    pytest.importorskip("PySide6")
+    os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+    from PySide6.QtCore import QCoreApplication  # type: ignore[attr-defined]
+
+    monkeypatch.setenv("BOT_CORE_UI_FEED_LATENCY_P95_WARNING_MS", "1.0")
+    monkeypatch.setenv("BOT_CORE_UI_FEED_LATENCY_P95_CRITICAL_MS", "2.0")
+    monkeypatch.setenv("BOT_CORE_UI_FEED_RECONNECT_WARNING", "1")
+    monkeypatch.setenv("BOT_CORE_UI_FEED_RECONNECT_CRITICAL", "2")
+    monkeypatch.setenv("BOT_CORE_UI_FEED_DOWNTIME_WARNING_SECONDS", "0.001")
+    monkeypatch.setenv("BOT_CORE_UI_FEED_DOWNTIME_CRITICAL_SECONDS", "0.002")
+
+    events: list[dict[str, object]] = []
+
+    class _Sink:
+        def emit_feed_health_event(self, **payload: object) -> None:
+            events.append({"severity": payload.get("severity"), "payload": payload.get("payload")})
+
+    exporter = FeedHealthMetricsExporter(registry=MetricsRegistry())
+    sink = _Sink()
+
+    app = QCoreApplication.instance() or QCoreApplication([])
+    service = RuntimeService(feed_alert_sink=sink, feed_metrics_exporter=exporter)
+    try:
+        service._active_stream_label = "grpc://demo"
+
+        service._feed_latencies.clear()
+        service._feed_latencies.append(10.0)
+        service._update_feed_health(status="connected", reconnects=0, last_error="")
+
+        service._feed_latencies.clear()
+        service._feed_latencies.append(0.1)
+        service._update_feed_health(status="connected", reconnects=0, last_error="")
+
+        service._update_feed_health(status="connected", reconnects=5, last_error="retry")
+
+        service._update_feed_health(status="connected", reconnects=0, last_error="")
+
+        service._feed_downtime_total = 0.01
+        service._update_feed_health(status="degraded", reconnects=0, last_error="timeout")
+
+        service._feed_downtime_total = 0.0
+        service._update_feed_health(status="connected", reconnects=0, last_error="")
+
+        assert len(events) >= 6
+        severity_sequence = [entry["severity"] for entry in events[:6]]
+        assert severity_sequence == ["critical", "info", "critical", "info", "critical", "info"]
+
+        dashboard = exporter.dashboard()
+        assert dashboard, "Eksporter feedHealth powinien zawierać wpis adaptera"
+        grpc_entry = next(entry for entry in dashboard if entry["adapter"] == "grpc")
+        assert grpc_entry["status"] in {"connected", "degraded"}
+        assert grpc_entry["latency_p95_ms"] is not None
+        assert grpc_entry["reconnects"] >= 0
+        assert grpc_entry["downtime_seconds"] >= 0.0
+    finally:
+        service._stop_grpc_stream()
+        app.quit()

@@ -1,0 +1,50 @@
+{
+  "exchange": "testex",
+  "failures": 0,
+  "fill_ratio": 1.0,
+  "records": [
+    {
+      "backend": "ccxt",
+      "executed_price": 101.0,
+      "extra": {
+        "client_order_id": null,
+        "mode": "margin"
+      },
+      "filled_quantity": 0.02,
+      "latency": 0.0001224499997078965,
+      "order_type": "MARKET",
+      "requested_price": null,
+      "requested_quantity": 0.02,
+      "side": "BUY",
+      "slippage_bps": null,
+      "status": "filled",
+      "symbol": "BTC/USDT",
+      "timestamp": "2025-11-10T17:41:43.673613+00:00"
+    },
+    {
+      "backend": "ccxt",
+      "executed_price": 101.0,
+      "extra": {
+        "client_order_id": null,
+        "mode": "margin"
+      },
+      "filled_quantity": 0.03,
+      "latency": 3.286299988758401e-05,
+      "order_type": "MARKET",
+      "requested_price": null,
+      "requested_quantity": 0.03,
+      "side": "BUY",
+      "slippage_bps": null,
+      "status": "filled",
+      "symbol": "BTC/USDT",
+      "timestamp": "2025-11-10T17:41:43.674079+00:00"
+    }
+  ],
+  "slippage_bps": 0.0,
+  "total": 2,
+  "watchdog": {
+    "alerts": [],
+    "last_status": {},
+    "recent": []
+  }
+}

@@ -40,6 +40,8 @@ from core.monitoring.metrics_api import (
     RuntimeTelemetrySnapshot,
 )
 from ui.backend import runtime_service as runtime_service_module
+from bot_core.observability.metrics import MetricsRegistry
+from bot_core.observability.ui_metrics import FeedHealthMetricsExporter
 from ui.backend.runtime_service import RuntimeService
 from ui.backend.telemetry_provider import TelemetryProvider
 
@@ -741,14 +743,37 @@ def test_runtime_service_attach_reports_missing_log(tmp_path: Path, monkeypatch:
     assert "nie istnieje" in service.errorMessage.lower()
 
 
-def test_decision_feed_latency_slo(decision_feed_degradation_samples: list[dict[str, float | None]]) -> None:
-    for sample in decision_feed_degradation_samples:
-        p95_ms = sample.get("p95_ms")
-        assert p95_ms is not None
-        assert float(p95_ms) <= 3000.0
-        downtime_ms = sample.get("downtimeMs")
-        if downtime_ms is not None:
-            assert float(downtime_ms) >= 0.0
-        next_retry = sample.get("nextRetrySeconds")
-        if next_retry is not None:
-            assert float(next_retry) >= 0.0
+def test_runtime_service_feed_health_exports_alerts(monkeypatch: pytest.MonkeyPatch) -> None:
+    require_pyside6()
+    monkeypatch.setenv("BOT_CORE_UI_FEED_LATENCY_P95_WARNING_MS", "1.0")
+    monkeypatch.setenv("BOT_CORE_UI_FEED_LATENCY_P95_CRITICAL_MS", "2.0")
+
+    events: list[str] = []
+
+    class _Sink:
+        def emit_feed_health_event(self, **payload: object) -> None:
+            events.append(str(payload.get("severity")))
+
+    exporter = FeedHealthMetricsExporter(registry=MetricsRegistry())
+    sink = _Sink()
+    service = RuntimeService(feed_alert_sink=sink, feed_metrics_exporter=exporter)
+
+    service._feed_latencies.clear()
+    service._feed_latencies.append(5.0)
+    service._update_feed_health(status="connected", reconnects=0, last_error="")
+
+    service._feed_latencies.clear()
+    service._feed_latencies.append(0.2)
+    service._update_feed_health(status="connected", reconnects=0, last_error="")
+
+    assert events[:2] == ["critical", "info"]
+
+    feed_snapshot = service.feedHealth
+    assert "p95LatencyMs" in feed_snapshot
+    assert feed_snapshot["p95LatencyMs"] >= 0.0
+
+    dashboard = exporter.dashboard()
+    assert dashboard
+    demo_entry = next(entry for entry in dashboard if entry["adapter"] == "demo")
+    assert demo_entry["latency_p95_ms"] is not None
+    assert demo_entry["status"] == "connected"

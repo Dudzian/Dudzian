@@ -38,7 +38,7 @@
 | --- | --- | --- | --- |
 | Portfolio adaptacyjne / rebalancing | PortfolioGovernor z integracją Stress Lab, override SLO i logiem HMAC. | Automatyczne rebalancingi strategii Pro, oparte o sygnały i copy trading. | Parzystość – kontrolować poziom konfiguracji limitów ryzyka. |
 | Poziomy automatyzacji | Stage6 Hypercare Orchestrator łączy cykle portfela, resilience i observability w jednym przebiegu podpisanym HMAC. | Tryby automatyczny/półautomatyczny (strategie, trailing stop, copy bots). | Przewaga Dudzian – utrzymać autonomiczny hypercare offline. |
-| Obsługa wielu giełd | Integracje Binance, Coinbase, Kraken, OKX, Bitget, Bybit **oraz KuCoin, Huobi i Gemini** (paper/testnet/failover). | Wsparcie >16 giełd, w tym Binance, Coinbase, Kraken, KuCoin, Huobi. | Luka maleje – kolejny krok to Deribit/BitMEX dla parytetu 15+ giełd. |
+| Obsługa wielu giełd | Integracje Binance, Coinbase, Kraken, OKX, Bitget, Bybit, KuCoin, Huobi, Gemini **oraz Deribit/BitMEX futures** (paper/testnet/live z podpisanymi checklistami). | Wsparcie >16 giełd, w tym Binance, Coinbase, Kraken, KuCoin, Huobi. | Luka domknięta w segmencie futures – utrzymać regresje adapterów i monitoring HyperCare. |
 | Marketplace strategii | Lokalny marketplace presetów i pipeline AI walk-forward. | Globalny marketplace z copy tradingiem, algorytmami społeczności. | Luka – przygotować publiczne listingi presetów i recenzje. |
 | Stress Lab i symulacje | Scenariusze multi-market, blackout infrastrukturalny i bundling raportów podpisanych HMAC. | Backtesting i paper trading, brak publicznych stres testów multi-market. | Przewaga Dudzian – komunikować stress labs w marketingu. |
 | Resilience / DR | ResilienceHypercareCycle, self-healing runtime, failover drill i bundler artefaktów podpisanych HMAC. | Failover podstawowy (API failover, monitoring uptime). | Przewaga Dudzian – utrzymać przewagę w audycie DR. |
@@ -46,10 +46,10 @@
 | Compliance i audyt | TradingDecisionJournal, podpisy HMAC dla raportów hypercare oraz logowanie decyzji AI. | Raporty działania bota, brak potwierdzonych podpisów HMAC offline. | Przewaga Dudzian – utrzymać offline-first compliance. |
 
 ## Priorytety uzupełniania luk
-1. **Rozszerzenie pokrycia giełdowego**
-   - Cel: po wdrożeniu KuCoin/Huobi/Gemini osiągnąć ≥12 giełd i przygotować wejście na rynki futures (Deribit/BitMEX).
-   - Metryki: liczba aktywnych adapterów, czasy latencji failover, procent giełd z automatycznym provisioningiem API.
-   - Wymagane działania: roadmapa integracji, testy regresyjne adapterów, bundling certyfikatów w resilience cycle.
+1. **Utrzymanie pokrycia giełdowego**
+   - Cel: utrzymać ≥12 giełd (w tym Deribit/BitMEX futures) z podpisanymi checklistami HyperCare oraz raportem `scripts/list_exchange_adapters.py` w pakiecie benchmarkowym.
+   - Metryki: liczba aktywnych adapterów, czas failover (p95), potwierdzenie `live_readiness_signed` w raporcie CSV.
+   - Wymagane działania: regresje adapterów nightly, publikacja raportu `reports/exchanges/<data>.csv`, aktualizacja checklist HyperCare.
 2. **Marketplace presetów i społeczności**
    - Cel: publiczny katalog presetów z recenzjami i kontrolą wersji offline.
    - Metryki: liczba presetów, liczba aktywnych użytkowników marketplace, czas publikacji nowego presetu.

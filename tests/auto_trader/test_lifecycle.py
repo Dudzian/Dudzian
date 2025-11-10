@@ -284,3 +284,43 @@ def test_lifecycle_snapshot_metadata_uses_aliases_for_probing_variants() -> None
         "capabilities": ["day_trading"],
         "tags": ["intraday", "momentum"],
     }
+
+
+def test_apply_lifecycle_bootstrap_restores_metadata() -> None:
+    bootstrap = SimpleNamespace(risk_profile_name="paper", portfolio_id="demo")
+    trader = AutoTrader(
+        emitter=DummyEmitter(),
+        gui=SimpleNamespace(),
+        symbol_getter=lambda: "BTCUSDT",
+        enable_auto_trade=False,
+        bootstrap_context=bootstrap,
+    )
+
+    initial_revision = trader._decision_cycle_metadata_revision
+
+    trader.apply_lifecycle_bootstrap(
+        risk_profile="balanced",
+        market_regime="trend",
+        decision_state="guardrail",
+        decision_signal="hold",
+    )
+
+    assert trader._risk_profile_name == "balanced"
+    assert trader._decision_journal_context["risk_profile"] == "balanced"
+    assert trader._base_metric_labels["risk_profile"] == "balanced"
+
+    metadata = trader._decision_cycle_metadata
+    assert metadata is not None
+    assert metadata["market_regime"] == "trend"
+    assert metadata["decision_state"] == "guardrail"
+    assert metadata["decision_signal"] == "hold"
+    assert trader._decision_cycle_metadata_revision == initial_revision + 1
+
+    trader.apply_lifecycle_bootstrap(
+        risk_profile="balanced",
+        market_regime="trend",
+        decision_state="guardrail",
+        decision_signal="hold",
+    )
+
+    assert trader._decision_cycle_metadata_revision == initial_revision + 1
