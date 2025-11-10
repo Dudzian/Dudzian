@@ -35,6 +35,45 @@ Zapewnienie w pełni offline'owego procesu wydawania licencji dla bundla Core OE
 4. (Jeśli użyto QR/USB) wykonaj testowe importy licencji po stronie klienta i dołącz zrzuty ekranów do biletu.
 5. Zaktualizuj runbook instalacyjny (`OEM_INSTALLER_ACCEPTANCE.md`) o numer licencji i fingerprint urządzenia.
 
+## Self-service instalacji presetów Marketplace
+Operatorzy i zespoły wsparcia mogą w pełni samodzielnie przeprowadzić instalację
+pakietu Marketplace na stanowisku klienta (offline), korzystając z nowego
+workflow CLI/UI:
+
+1. Przygotuj artefakty:
+   - plik licencji OEM (`licenses/<preset_id>.json`) z wygenerowanego procesu
+     provisioning (sekcja powyżej);
+   - katalog manifestu Marketplace (np. podpisany pakiet OEM zawierający
+     `catalog.yaml` i folder `presets/` lub `artifacts/`).
+2. Uruchom komendę instalacyjną, podając ścieżki do repozytorium presetów,
+   indeksu licencji oraz docelowego portfela:
+
+   ```bash
+   python scripts/ui_marketplace_bridge.py \
+       --presets-dir data/strategies \
+       --licenses-path var/marketplace_licenses.json \
+       --fingerprint DEVICE-XYZ \
+       --signing-key=catalog=$(cat config/marketplace/keys/catalog.hex) \
+       install \
+       --preset-id automation-ai \
+       --portfolio-id master-portfolio \
+       --license-json /media/offline/licenses/automation-ai.json \
+       --licenses-dir var/licenses/presets \
+       --catalog-path /media/offline/catalog \
+       --preferences-json docs/samples/preferences_balanced.json
+   ```
+
+   Pole `--preferences-json` przyjmuje budżet i target ryzyka użytkownika, które
+   zostaną zmapowane na parametry strategii oraz zapisane w
+   `.meta/preferences.json` (np. maksymalna liczba pozycji, mnożnik ryzyka).
+3. Polecenie generuje raport JSON zawierający wynik weryfikacji podpisu,
+   ścieżki do zaktualizowanych store'ów (`assignments`, `preferences`, indeks
+   licencji) oraz listę przypisanych portfeli. Raport należy załączyć do biletu
+   hypercare lub dokumentacji audytowej.
+4. Po instalacji można zweryfikować przydziały i licencje z poziomu UI (zakładka
+   Marketplace) – backend korzysta z tych samych store'ów, więc operacja CLI nie
+   wymaga restartu aplikacji.
+
 ## Artefakty wyjściowe
 - `var/licenses/registry.jsonl` – podpisane dokumenty licencyjne.
 - `var/licenses/key_rotation.json` – log rotacji klucza HMAC.

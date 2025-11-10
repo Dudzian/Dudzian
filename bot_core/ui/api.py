@@ -19,10 +19,15 @@ from bot_core.marketplace import (
     build_marketplace_preset,
 )
 from bot_core.marketplace.assignments import PresetAssignmentStore
+from bot_core.marketplace.preferences import PresetPreferenceStore
 from bot_core.runtime.journal import TradingDecisionJournal
 from bot_core.strategies.installer import (
     MarketplaceInstallResult,
     MarketplacePresetInstaller,
+)
+from bot_core.strategies.personalization.preferences import (
+    PresetPreferencePersonalizer,
+    UserPreferenceConfig,
 )
 from bot_core.security.license import summarize_license_payload
 
@@ -561,6 +566,7 @@ class MarketplaceService:
         self._repository = repository
         meta_root = repository.root / ".meta"
         self._assignments = PresetAssignmentStore(meta_root / "assignments.json")
+        self._preferences = PresetPreferenceStore(meta_root / "preferences.json")
 
     @staticmethod
     def _normalize_selection(preset_ids: Sequence[object]) -> list[str]:
@@ -1033,6 +1039,91 @@ class MarketplaceService:
         portfolio_summaries = self._plan_portfolio_summaries(assignment_summaries)
         if portfolio_summaries:
             payload["portfolioSummaries"] = portfolio_summaries
+        return payload
+
+    def set_preset_preferences(
+        self,
+        preset_id: str,
+        portfolio_id: str,
+        *,
+        preferences: Mapping[str, object],
+        overrides: Mapping[str, Mapping[str, object]] | None = None,
+    ) -> Mapping[str, object]:
+        return self._preferences.set_entry(
+            preset_id,
+            portfolio_id,
+            preferences=preferences,
+            overrides=overrides,
+        )
+
+    def clear_preset_preferences(self, preset_id: str, portfolio_id: str) -> bool:
+        return self._preferences.clear_entry(preset_id, portfolio_id)
+
+    def preferences_payload(self) -> Mapping[str, Mapping[str, Mapping[str, object]]]:
+        return self._preferences.all_preferences()
+
+    def install_preset_workflow(
+        self,
+        preset_id: str,
+        portfolios: Sequence[str],
+        *,
+        user_preferences: Mapping[str, object] | UserPreferenceConfig | None = None,
+        personalizer: PresetPreferencePersonalizer | None = None,
+    ) -> Mapping[str, object]:
+        result = self.install_from_catalog(preset_id)
+        normalized_portfolios = [
+            str(portfolio).strip()
+            for portfolio in portfolios
+            if str(portfolio).strip()
+        ]
+
+        assignments: dict[str, list[str]] = {}
+        if result.success:
+            for portfolio_id in normalized_portfolios:
+                assigned = self._assignments.assign(preset_id, portfolio_id)
+                assignments[portfolio_id] = list(assigned)
+        else:
+            for portfolio_id in normalized_portfolios:
+                assignments[portfolio_id] = list(self._assignments.assigned_portfolios(preset_id))
+
+        preference_entries: dict[str, Mapping[str, object]] = {}
+        if user_preferences and result.success:
+            if isinstance(user_preferences, UserPreferenceConfig):
+                preference_config = user_preferences
+            else:
+                preference_config = UserPreferenceConfig.from_mapping(user_preferences)
+            personalizer = personalizer or PresetPreferencePersonalizer()
+            overrides: Mapping[str, Mapping[str, object]] = {}
+            try:
+                document, _ = self._repository.export_preset(preset_id)
+            except FileNotFoundError:
+                document = None
+            if document is not None:
+                overrides = personalizer.build_overrides(document, preference_config)
+            for portfolio_id in normalized_portfolios:
+                entry = self.set_preset_preferences(
+                    preset_id,
+                    portfolio_id,
+                    preferences=preference_config.as_payload(),
+                    overrides=overrides,
+                )
+                preference_entries[portfolio_id] = entry
+
+        payload: dict[str, Any] = {
+            "presetId": preset_id,
+            "install": {
+                "success": result.success,
+                "issues": list(result.issues),
+                "warnings": list(result.warnings),
+                "signatureVerified": result.signature_verified,
+                "fingerprintVerified": result.fingerprint_verified,
+            },
+            "assignments": assignments,
+        }
+        if result.installed_path is not None:
+            payload["installedPath"] = str(result.installed_path)
+        if preference_entries:
+            payload["preferences"] = preference_entries
         return payload
 
 
