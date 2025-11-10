@@ -8,6 +8,10 @@ from types import MappingProxyType
 from typing import Any
 
 
+MIGRATION_FALLBACK_SUFFIX = "_migration_fallback"
+"""Suffix used to mark migration fallback strategy aliases."""
+
+
 def canonical_alias_map(alias_map: Mapping[str, Any] | None) -> dict[str, str]:
     """Return canonical alias mapping with normalised keys and values."""
 

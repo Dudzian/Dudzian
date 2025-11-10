@@ -7,6 +7,7 @@ import pathlib
 import re
 import subprocess
 import sys
+from typing import Callable
 
 # Paths are relative to repository root.
 _BANNED_ROOTS = {
@@ -15,10 +16,31 @@ _BANNED_ROOTS = {
 BANNED_PATHS = sorted(_BANNED_ROOTS)
 
 _IMPORT_PATTERN = re.compile(r"^\s*(?:from|import)\s+KryptoLowca\b", re.MULTILINE)
+_LEGACY_TOKEN_PATTERN = re.compile(r"(?<![A-Za-z0-9_])legacy(?![A-Za-z0-9_])", re.IGNORECASE)
+_KRYPTOLowca_TOKEN_PATTERN = re.compile(
+    r"(?<![A-Za-z0-9_])kryptolowca(?![A-Za-z0-9_])", re.IGNORECASE
+)
 
 
-def _collect_new_legacy_lines(repo_root: pathlib.Path) -> list[str]:
-    """Zwraca listę nowych linii zawierających słowo 'legacy' spoza docs/migrations."""
+def _should_skip_doc_migration(path: pathlib.Path) -> bool:
+    parts = path.parts
+    return "docs" in parts and "migrations" in parts
+
+
+def _should_skip_guarded_tokens(path: pathlib.Path) -> bool:
+    if path == pathlib.Path("scripts/lint_paths.py"):
+        return True
+    return _should_skip_doc_migration(path)
+
+
+def _collect_added_lines(
+    repo_root: pathlib.Path,
+    *,
+    description: str,
+    predicate: Callable[[str], bool],
+    skip_file: Callable[[pathlib.Path], bool] | None = None,
+) -> list[str]:
+    """Return added lines matching ``predicate`` with optional path filtering."""
 
     def _diff_output(args: list[str]) -> str:
         result = subprocess.run(
@@ -64,11 +86,14 @@ def _collect_new_legacy_lines(repo_root: pathlib.Path) -> list[str]:
             continue
         if current_file is None:
             continue
-        if "docs" in current_file.parts and "migrations" in current_file.parts:
+        if skip_file and skip_file(current_file):
             new_line_no += 1
             continue
-        if "legacy" in line.lower():
-            occurrences.append(f"{current_file}:{new_line_no}: {line[1:].strip()}")
+        text = line[1:]
+        if predicate(text):
+            occurrences.append(
+                f"{current_file}:{new_line_no}: {text.strip()} ({description})"
+            )
         new_line_no += 1
     return occurrences
 
@@ -124,16 +149,29 @@ def main() -> int:
             + ". Use bot_core instead."
         )
 
-    new_legacy_occurrences = _collect_new_legacy_lines(repo_root)
+    new_legacy_occurrences = _collect_added_lines(
+        repo_root,
+        description="legacy token",
+        predicate=lambda text: bool(_LEGACY_TOKEN_PATTERN.search(text)),
+        skip_file=_should_skip_guarded_tokens,
+    )
     if new_legacy_occurrences:
-        message = (
+        failures.append(
             "Detected new occurrences of 'legacy' outside migration docs:\n"
             + "\n".join(new_legacy_occurrences)
         )
-        if allow_legacy:
-            warnings.append(message)
-        else:
-            failures.append(message)
+
+    new_krypto_occurrences = _collect_added_lines(
+        repo_root,
+        description="KryptoLowca token",
+        predicate=lambda text: bool(_KRYPTOLowca_TOKEN_PATTERN.search(text)),
+        skip_file=_should_skip_guarded_tokens,
+    )
+    if new_krypto_occurrences:
+        failures.append(
+            "Detected new occurrences of 'KryptoLowca' outside migration docs:\n"
+            + "\n".join(new_krypto_occurrences)
+        )
 
     if warnings:
         print("\n".join(f"WARNING: {warning}" for warning in warnings))

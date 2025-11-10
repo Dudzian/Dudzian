@@ -38,6 +38,7 @@ from bot_core.trading.signal_thresholds import SUPPORTED_SIGNAL_THRESHOLD_METRIC
 from bot_core.trading.regime_workflow import RegimeSwitchDecision
 from bot_core.trading.strategies import StrategyCatalog
 from bot_core.trading.strategy_aliasing import (
+    MIGRATION_FALLBACK_SUFFIX,
     StrategyAliasResolver,
     canonical_alias_map,
     normalise_suffixes,
@@ -274,7 +275,7 @@ class AutoTradeEngine:
         RiskLevel.CRITICAL: 4,
     }
 
-    _STRATEGY_SUFFIXES: tuple[str, ...] = ("_probing",)
+    _STRATEGY_SUFFIXES: tuple[str, ...] = ("_probing", MIGRATION_FALLBACK_SUFFIX)
     _STRATEGY_ALIAS_MAP: Mapping[str, str] = MappingProxyType({
         "intraday_breakout": "day_trading",
     })
