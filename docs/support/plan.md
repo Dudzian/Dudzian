@@ -53,6 +53,27 @@ Dodatkowe informacje (zrzuty ekranu, preset strategii):
 - Miesięczne raporty KPI (czas reakcji, czas rozwiązania, liczba incydentów).
 - Przegląd kwartalny jakości wsparcia wraz z planem usprawnień.
 
+## Checklist aktualizacji benchmarku Stage6
+> Checklistę traktuj jako wymaganie bramki release – dopiero po jej odhaczeniu podpisujemy releas hypercare.
+
+1. Zweryfikuj aktualność danych w `docs/benchmark/cryptohopper_comparison.md` (obszar strategia, automatyzacja, UI, compliance) po każdym releasie hypercare.
+2. Zaktualizuj status priorytetów (pokrycie giełdowe, marketplace presetów, integracja UI ↔ runtime, przewagi compliance) i oznacz zmiany w dzienniku releasu.
+3. Potwierdź, że artefakty audytowe Stage6 zawierają podpisy HMAC i są zarchiwizowane w `var/audit/` wraz z raportami benchmarku.
+4. Zaktualizuj tablicę wyników i harmonogram działań korygujących w `docs/benchmark/cryptohopper_comparison.md` (statusy 🟢/🟡/🔴, odpowiedzialni, cele metryk).
+5. Dodaj wpis do sekcji „Historia aktualizacji benchmarku” z datą releasu, opisem zmian i linkami do artefaktów (hypercare, marketplace, audyt compliance, testy UI).
+6. Przekaż aktualizację zespołowi produktowemu podczas przeglądu wsparcia, linkując do zaktualizowanego benchmarku i status_review.
+7. Potwierdź synchronizację z `docs/runtime/status_review.md` – rozbieżności otwierają zadania follow-up.
+
+### Raportowanie benchmarku
+- **Odpowiedzialny operacyjny:** Owner Stage6 Support (koordynuje aktualizację checklisty i benchmarku).
+- **Artefakty wymagane przy releasie:**
+  - `var/audit/hypercare/<data>/summary.json` (podpisany raport cyklu hypercare).
+  - `reports/exchanges/<data>.csv` (stan adapterów live/paper) oraz log aktualizacji adapterów.
+  - `reports/strategy/presets_<data>.md` (lista presetów publicznych z recenzjami) wraz z potwierdzeniem marketingu.
+  - `reports/ui/tests/<build_id>/grpc_feed.json` z p95 opóźnień feedu i odniesieniem do wyników testów UI w CI.
+  - `var/audit/compliance/<okres>.pdf` lub JSON z wynikami audytu decyzji.
+- **Dystrybucja:** pakiet benchmarku (tabela wyników + historia) archiwizujemy w `var/audit/benchmark/<data>/` i wysyłamy do zespołów produktowych w ramach notatki release’owej.
+
 ## Materiały dodatkowe
 - Troubleshooting: `docs/user_manual/troubleshooting.md`.
 - Procedury bezpieczeństwa: `docs/security/runbook.md`.

@@ -161,11 +161,12 @@ oraz punkty kontrolne dla skryptów `scripts/run_stage6_*.py` i szablonów w `co
 - [ ] Runbook demo → paper → live zaktualizowany o sekcję Stage6 (migracja presetów i sekretów
       `preset_editor_cli --core-diff --core-backup --summary-json` z sumami kontrolnymi SHA-256 w
       podsumowaniu obejmującymi core, backup, magazyn oraz źródła sekretów i opcjonalną sól, wraz z
-      identyfikacją źródeł haseł inline/plik/env oraz kontrolą, że pole `warnings` w
-      `migration_summary.json` jest puste lub odnotowane w decision logu; sekcja `cli_invocation`
-      przechowuje zanonimizowane argumenty CLI z hasłami zastąpionymi `***REDACTED***`, a sekcja
-      `tool` rejestruje interpreter, wersję pakietu i rewizję git migratora i jest archiwizowana w
-      decision logu).
+      identyfikacją źródeł haseł w polach `secrets.output_passphrase` oraz – jeżeli rotacja została
+      wykonana – `secrets.rotation_passphrase` (inline/plik/env) oraz kontrolą, że pole
+      `warnings` w `migration_summary.json` jest puste lub odnotowane w decision logu; sekcja
+      `cli_invocation` przechowuje zanonimizowane argumenty CLI z hasłami zastąpionymi
+      `***REDACTED***`, a sekcja `tool` rejestruje interpreter, wersję pakietu i rewizję git
+      migratora i jest archiwizowana w decision logu).
 - [ ] Zaktualizowana checklista wstępna podpisana HMAC i zarchiwizowana w `var/audit/stage6/` wraz
       z metadanymi review.
 

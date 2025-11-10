@@ -20,24 +20,14 @@ except Exception:  # pragma: no cover - json logging is optional in tests/CI
     jsonlogger = None  # type: ignore
 
 
-_LEGACY_ENV_HINT = (
-    "Zmienna środowiskowa {legacy} została wycofana. Ustaw {current} i usuń pozostałości "
-    "po pakiecie KryptoLowca (patrz docs/migrations/kryptolowca_namespace_mapping.md)."
-)
+def _env(name: str) -> str | None:
+    """Read an environment variable for the logging module."""
 
-
-def _env(name: str, *, legacy: str | None = None) -> str | None:
-    """Read environment variable ensuring legacy prefixes are not used."""
-
-    if legacy and legacy in os.environ:
-        raise RuntimeError(_LEGACY_ENV_HINT.format(legacy=legacy, current=name))
     return os.getenv(name)
 
 
 _PACKAGE_ROOT = Path(__file__).resolve().parents[1]
-LOGS_DIR = Path(
-    _env("BOT_CORE_LOG_DIR", legacy="KRYPT_LOWCA_LOG_DIR") or (_PACKAGE_ROOT / "logs")
-)
+LOGS_DIR = Path(_env("BOT_CORE_LOG_DIR") or (_PACKAGE_ROOT / "logs"))
 LOGS_DIR.mkdir(parents=True, exist_ok=True)
 DEFAULT_LOG_FILE = Path(
     _env("BOT_CORE_LOG_FILE", legacy="KRYPT_LOWCA_LOG_FILE") or (LOGS_DIR / "trading.log")
@@ -153,12 +143,12 @@ def setup_app_logging(
     if getattr(root, "_bot_core_logging_configured", False):
         return root
 
-    env_level = _env("BOT_CORE_LOG_LEVEL", legacy="KRYPT_LOWCA_LOG_LEVEL")
+    env_level = _env("BOT_CORE_LOG_LEVEL")
     resolved_level = level or env_level or "INFO"
     if isinstance(resolved_level, str):
         resolved_level = getattr(logging, resolved_level.upper(), logging.INFO)
 
-    format_type = _env("BOT_CORE_LOG_FORMAT", legacy="KRYPT_LOWCA_LOG_FORMAT") or "json"
+    format_type = _env("BOT_CORE_LOG_FORMAT") or "json"
     formatter = _build_formatter(format_type, service_name)
 
     file_handler = RotatingFileHandler(
@@ -175,9 +165,7 @@ def setup_app_logging(
 
     handlers: list[logging.Handler] = [file_handler, stream_handler]
 
-    vector_endpoint = _env(
-        "BOT_CORE_LOG_SHIP_VECTOR", legacy="KRYPT_LOWCA_LOG_SHIP_VECTOR"
-    )
+    vector_endpoint = _env("BOT_CORE_LOG_SHIP_VECTOR")
     if vector_endpoint:
         vector_handler = VectorHttpHandler(vector_endpoint)
         vector_handler.setFormatter(formatter)

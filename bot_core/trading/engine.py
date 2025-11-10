@@ -1730,25 +1730,6 @@ class TradingEngine:
                 "Optimization completed after %d iterations without a valid score; returning baseline parameters",
                 iterations,
             )
-        elif score_value > best_score:
-            best_score = score_value
-            best_params = params
-            best_result = result
-            self._last_optimization_summary = OptimizationSummary(
-                params=best_params,
-                score=best_score,
-                iterations=iterations,
-                objective=objective_label,
-                result=result,
-                fallback_used=False,
-            )
-            self._logger.info(f"New best {objective_label}: {score_value:.4f}")
-
-        if best_params is None:
-            self._logger.warning(
-                "Optimization completed after %d iterations without a valid score; returning baseline parameters",
-                iterations,
-            )
             fallback_used = True
             best_params = base_params
             try:
@@ -1757,6 +1738,11 @@ class TradingEngine:
                     best_score = float(objective(fallback_result))
                 else:
                     best_score = float(getattr(fallback_result, objective))
+                if np.isnan(best_score):
+                    self._logger.warning(
+                        "Fallback objective '%s' returned NaN – using -inf score", objective_label
+                    )
+                    best_score = float("-inf")
                 best_result = fallback_result
             except AttributeError:
                 raise AttributeError(
@@ -1776,6 +1762,7 @@ class TradingEngine:
                 result=best_result,
                 fallback_used=fallback_used,
             )
+            self._last_optimization_result = best_result
 
         self._logger.info(f"Optimization completed after {iterations} iterations")
         return best_params, best_score
@@ -2928,9 +2915,36 @@ class TradingStrategies:
             logger=self._logger
         )
 
-    def run_strategy(self, *args, **kwargs):
-        """Minimal stub for legacy callers expecting run_strategy."""
-        return {"status": "ok"}, pd.DataFrame(), pd.Series(dtype=float)
+    def run_strategy(
+        self,
+        data: pd.DataFrame,
+        initial_capital: float = 10000.0,
+        fee: float = 0.0004,
+        slippage: float = 0.0002,
+        fraction: float = 0.05,
+        allow_short: bool = False,
+        **kwargs,
+    ) -> Tuple[Dict, pd.DataFrame, pd.Series]:
+        """Uruchom strategię w trybie zgodnym z historycznym API TradingGUI."""
+
+        ai_model = kwargs.pop("ai_model", None)
+        ai_weight = float(kwargs.pop("ai_weight", 0.0) or 0.0)
+        ai_threshold_bps = float(kwargs.pop("ai_threshold_bps", 5.0) or 5.0)
+
+        if kwargs:
+            self._logger.debug("Nieobsługiwane argumenty run_strategy zostały zignorowane: %s", sorted(kwargs))
+
+        return self.backtest(
+            data=data,
+            initial_capital=initial_capital,
+            fee=fee,
+            slippage=slippage,
+            fraction=fraction,
+            allow_short=allow_short,
+            ai_model=ai_model,
+            ai_weight=ai_weight,
+            ai_threshold_bps=ai_threshold_bps,
+        )
 
     def backtest(
         self,

@@ -22,12 +22,15 @@ from bot_core.config.models import (
     RuntimeEntrypointConfig,
 )
 
-__all__ = ["PresetConfigService", "load_legacy_preset", "flatten_secret_payload"]
+__all__ = ["PresetConfigService", "load_preset_payload", "flatten_secret_payload"]
+
+
+_DEFAULT_PROFILE_NAME = "stage6_gui"
 
 
 def _normalise_profile_name(name: str | None) -> str:
-    candidate = (name or "legacy_trading_gui").strip()
-    return candidate.replace(" ", "_").lower() or "legacy_trading_gui"
+    candidate = (name or _DEFAULT_PROFILE_NAME).strip()
+    return candidate.replace(" ", "_").lower() or _DEFAULT_PROFILE_NAME
 
 
 class PresetConfigService:
@@ -286,8 +289,8 @@ class PresetConfigService:
             budgets[profile.name] = new_budget
 
 
-def load_legacy_preset(path: str | os.PathLike[str]) -> Mapping[str, Any]:
-    """Wczytuje preset GUI zapisany jako JSON/YAML."""
+def load_preset_payload(path: str | os.PathLike[str]) -> Mapping[str, Any]:
+    """Wczytuje preset GUI zapisany jako JSON lub YAML."""
 
     data_path = Path(path)
     try:

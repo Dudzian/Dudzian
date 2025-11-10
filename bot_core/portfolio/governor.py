@@ -948,6 +948,15 @@ class StrategyPortfolioGovernor:
     def current_weights(self) -> Mapping[str, float]:
         return dict(self._current_weights)
 
+    def current_weights_snapshot(self) -> Mapping[str, float]:
+        """Zwraca kopię aktualnych wag strategii.
+
+        Metoda pomocnicza zachowana dla kompatybilności z miejscami,
+        które oczekiwały wywołania funkcyjnego (np. ``governor.current_weights()``).
+        """
+
+        return dict(self._current_weights)
+
     @property
     def last_decision(self) -> PortfolioRebalanceDecision | None:
         return self._last_decision
@@ -1041,11 +1050,6 @@ class StrategyPortfolioGovernor:
             max_signal_hint=state.config.baseline_max_signals,
             metadata=metadata,
         )
-
-    def current_weights(self) -> Mapping[str, float]:
-        """Zwraca aktualne wagi przypisane strategiom."""
-
-        return dict(self._current_weights)
 
     def capital_allocation_breakdown(self) -> Sequence[Mapping[str, object]]:
         """Buduje szczegółową listę alokacji strategii.

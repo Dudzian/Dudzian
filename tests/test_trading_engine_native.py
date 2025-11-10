@@ -644,7 +644,7 @@ class TestNativeTradingEngine(unittest.TestCase):
 
         self.assertEqual(params, TradingParameters())
         self.assertEqual(score, float("-inf"))
-        self.assertEqual(self.engine.run_strategy.call_count, max_iterations)
+        self.assertEqual(self.engine.run_strategy.call_count, max_iterations + 1)
 
         warning_messages = [call.args[0] for call in self.engine._logger.warning.call_args_list]
         self.assertTrue(

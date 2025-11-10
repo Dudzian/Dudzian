@@ -24,6 +24,13 @@ Szczegółowe instrukcje znajdują się w dokumentacji:
 - [Plan wsparcia](docs/support/plan.md)
 - [Instalacja i budowa instalatorów](docs/deployment/installer_build.md)
 - [Monitorowanie offline](docs/monitoring_offline.md)
+- [Benchmark Stage6 vs CryptoHopper](docs/benchmark/cryptohopper_comparison.md)
+
+> **Szybki skrót benchmarku:** Stage6 jest na parytecie strategii z przewagą automatyzacji i compliance; największą luką pozostaje integracja UI (feed gRPC „Decyzje AI”) oraz skalowanie marketplace’u presetów.
+>
+> **Nowości:** tablica wyników i harmonogram działań korygujących w benchmarku są aktualizowane miesięcznie na podstawie `docs/runtime/status_review.md` i checklisty wsparcia. Dzięki temu zespoły produktowe widzą, kto odpowiada za domykanie luk i jakie są cele metryczne na kolejne kwartały.
+>
+> **Kronika benchmarku:** `docs/benchmark/cryptohopper_comparison.md` prowadzi historię aktualizacji oraz opisuje procedurę zbierania metryk (hypercare, adaptery giełdowe, marketplace, UI, compliance). To miejsce referencyjne przy audytach releasowych i syncach produktowych.
 
 ## Aktualizacje
 - Nowe wersje dystrybuujemy w formie podpisanych instalatorów. Procedura: [docs/deployment/oem_installation.md](docs/deployment/oem_installation.md).
