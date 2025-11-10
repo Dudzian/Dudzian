@@ -1,11 +1,11 @@
 from __future__ import annotations
 
-import logging
 import json
 import os
 import sys
 import threading
 import time
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
@@ -20,6 +20,7 @@ from bot_core.exchanges.base import AccountSnapshot
 from bot_core.execution.paper import MarketMetadata
 from bot_core.testing import TradingStubServer, build_default_dataset
 from ui.backend.runtime_service import RuntimeService
+from bot_core.runtime.journal import InMemoryTradingDecisionJournal, TradingDecisionEvent
 
 
 def _build_stub_context(*, preset_dir: Path | None = None):
@@ -259,3 +260,91 @@ def test_runtime_service_consumes_grpc_stream(tmp_path: Path) -> None:
             app.quit()
         os.environ.pop("BOT_CORE_UI_GRPC_ENDPOINT", None)
         os.environ.pop("BOT_CORE_UI_FEED_LATENCY_PATH", None)
+
+
+def test_runtime_service_handles_grpc_connection_error(monkeypatch) -> None:
+    pytest.importorskip("PySide6")
+    os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+    from PySide6.QtCore import QCoreApplication  # type: ignore[attr-defined]
+
+    monkeypatch.setenv("BOT_CORE_UI_GRPC_ENDPOINT", "grpc.invalid:0")
+
+    def failing_start(self, target, limit):
+        raise RuntimeError("gRPC unavailable")
+
+    monkeypatch.setattr(RuntimeService, "_start_grpc_stream", failing_start)
+
+    app = QCoreApplication.instance() or QCoreApplication([])
+    service = RuntimeService(default_limit=3)
+    try:
+        demo = service.loadRecentDecisions(2)
+        assert demo, "Fallback loader powinien zwrócić dane demo"
+
+        assert service.attachToLiveDecisionLog("") is True
+        assert not service._grpc_stream_active
+        assert service.decisions, "Po błędzie gRPC oczekiwano decyzji z fallbacku"
+        assert "grpc" in service.errorMessage.lower()
+    finally:
+        service._stop_grpc_stream()
+        app.quit()
+        monkeypatch.delenv("BOT_CORE_UI_GRPC_ENDPOINT", raising=False)
+
+
+def test_local_runtime_gateway_streams_decision_journal_with_cursor() -> None:
+    context = _build_stub_context()
+    journal = InMemoryTradingDecisionJournal()
+    base_time = datetime(2024, 1, 1, tzinfo=timezone.utc)
+    for index in range(5):
+        event = TradingDecisionEvent(
+            event_type="order_submitted" if index % 2 == 0 else "order_filled",
+            timestamp=base_time + timedelta(minutes=index),
+            environment="demo",
+            portfolio="alpha",
+            risk_profile="balanced",
+            symbol="BTC/USDT",
+            status="ok" if index % 2 == 0 else "filled",
+            strategy="trend",
+        )
+        journal.record(event)
+    context.auto_trader._decision_journal = journal  # type: ignore[attr-defined]
+
+    gateway = LocalRuntimeGateway(context)
+
+    first_batch = gateway.dispatch("autotrader.stream_decision_journal", {"limit": 2})
+    assert first_batch["cursor"] == 2
+    assert first_batch["total"] == 5
+    assert len(first_batch["records"]) == 2
+
+    second_batch = gateway.dispatch(
+        "autotrader.stream_decision_journal",
+        {"cursor": first_batch["cursor"], "limit": 2},
+    )
+    assert second_batch["cursor"] == 4
+    assert len(second_batch["records"]) == 2
+    assert all(entry["event"] in {"order_submitted", "order_filled"} for entry in second_batch["records"])
+
+    filtered = gateway.dispatch(
+        "autotrader.stream_decision_journal",
+        {
+            "filters": {
+                "event": "order_filled",
+                "since": (base_time + timedelta(minutes=2)).isoformat(),
+            }
+        },
+    )
+    assert filtered["cursor"] == filtered["total"]
+    assert filtered["records"]
+    assert all(entry["event"] == "order_filled" for entry in filtered["records"])
+
+    filtered_epoch = gateway.dispatch(
+        "autotrader.stream_decision_journal",
+        {
+            "filters": {
+                "event": "order_filled",
+                "since": int((base_time + timedelta(minutes=2)).timestamp() * 1000),
+                "until": int((base_time + timedelta(minutes=5)).timestamp()),
+            }
+        },
+    )
+    assert filtered_epoch["records"]
+    assert all(entry["event"] == "order_filled" for entry in filtered_epoch["records"])
