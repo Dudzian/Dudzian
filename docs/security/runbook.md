@@ -73,6 +73,7 @@ Wszystkie zgłoszenia muszą zostać zarejestrowane w narzędziu śledzenia incy
    - Na maszynie docelowej uruchom proces weryfikacji (np. `python -m bot_core.security.license_service` poprzez narzędzia instalatora) wskazując plik licencji.
    - Po poprawnej weryfikacji powstaje plik `var/security/license_status.json` zawierający możliwości licencji oraz podpis HMAC (`HMAC-SHA384`) powiązany z lokalnym fingerprintem sprzętowym.
    - Lokalny sekret HMAC jest generowany automatycznie przy pierwszej aktywacji, zapisywany w natywnym keychainie (Keychain/DPAPI/libsecret), a dodatkowo utrwalany w zaszyfrowanym pliku `var/security/license_secret.key` powiązanym z fingerprintem urządzenia.
+   - Pliki w formacie legacy (czysty base64) są blokowane błędem „Sekret licencji ma nieobsługiwany format 'legacy'”. Zastosuj narzędzie `python -m dudzian_migrate.license_secret` zgodnie z [docs/migrations/2024-legacy-storage-removal.md](../migrations/2024-legacy-storage-removal.md).
 
 2. **Ochrona przed rollbackiem**
    - Każde kolejne uruchomienie licencji porównuje monotoniczny stan (`sequence`, `issued_at`, `effective_date`).

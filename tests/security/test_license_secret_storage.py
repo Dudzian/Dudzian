@@ -59,7 +59,7 @@ def test_license_secret_uses_keyring_and_encrypts_disk(monkeypatch: pytest.Monke
     assert document["hwid_digest"]
 
 
-def test_license_secret_migrates_plaintext_file(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+def test_license_secret_requires_migration_for_plaintext_file(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     monkeypatch.setattr(fp, "_load_secret_from_keyring", lambda: None, raising=False)
     monkeypatch.setattr(fp, "_store_secret_in_keyring", lambda _secret: False, raising=False)
     monkeypatch.setattr(fp, "get_local_fingerprint", lambda: "DEVICE-ABC")
@@ -68,12 +68,12 @@ def test_license_secret_migrates_plaintext_file(monkeypatch: pytest.MonkeyPatch,
     secret_bytes = b"S" * 48
     secret_path.write_text(base64.b64encode(secret_bytes).decode("ascii"), encoding="utf-8")
 
-    loaded = fp.load_license_secret(secret_path)
-    assert loaded == secret_bytes
+    with pytest.raises(FingerprintError) as excinfo:
+        fp.load_license_secret(secret_path)
 
-    payload = json.loads(secret_path.read_text(encoding="utf-8"))
-    assert payload["version"] == fp.LICENSE_SECRET_FILE_VERSION
-    assert payload["hwid_digest"]
+    message = str(excinfo.value)
+    assert "format 'legacy'" in message
+    assert "dudzian_migrate.license_secret" in message
 
 
 def test_license_secret_rejects_mismatched_fingerprint(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:

@@ -45,7 +45,6 @@ class SecretStore:
         *,
         storage: KeyringSecretStorage | None = None,
         service_name: str | None = None,
-        legacy_path: str | Path | None = None,
         index_path: str | Path | None = None,
         data_dir: str | Path | None = None,
     ) -> None:
@@ -60,11 +59,6 @@ class SecretStore:
                 service_name=service_name or "dudzian.trading.desktop",
                 index_path=derived_index,
             )
-
-        if legacy_path:
-            self._legacy_hint_path = Path(legacy_path).expanduser()
-        else:
-            self._legacy_hint_path = _default_legacy_path()
 
         self._lock = RLock()
         self._migration_checked = False
@@ -155,13 +149,9 @@ class SecretStore:
             return
         self._migration_checked = True
 
-        if self._legacy_hint_path and self._legacy_hint_path.exists():
-            raise SecretStoreError(
-                "Wykryto legacy magazyn kluczy API w {path}. Migracja automatyczna została usunięta – "
-                "uruchom narzędzie z pakietu 'dudzian-migrate' opisane w docs/migrations/2024-legacy-storage-removal.md "
-                "i usuń plik przed dalszym korzystaniem z aplikacji."
-                .format(path=self._legacy_hint_path)
-            )
+        # Walidacja plików w formacie legacy została przeniesiona do narzędzia migracyjnego
+        # `dudzian_migrate.secret_store`. Runtime zakłada, że środowisko zostało już
+        # przygotowane zgodnie z dokumentacją migracyjną.
 
     def _storage_key(self, exchange_id: str) -> str:
         return f"{self._STORAGE_NAMESPACE}:{exchange_id}"
@@ -205,10 +195,4 @@ def _default_data_dir() -> Path:
     if override:
         return Path(override).expanduser()
     return Path.home() / ".dudzian"
-
-
-def _default_legacy_path() -> Path:
-    return (Path.home() / ".kryptolowca" / "api_credentials.json").expanduser()
-
-
 __all__ = ["ExchangeCredentials", "SecretStore", "SecretStoreError"]
