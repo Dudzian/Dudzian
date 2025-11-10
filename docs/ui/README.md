@@ -16,6 +16,7 @@
   - listę aktywnych alertów wraz z akcjami potwierdzenia.
 * Widok aktualizuje się automatycznie po każdej zmianie snapshotu ryzyka lub historii.
 * Nowy panel **Explainability** korzysta z `bot_core.ui.api.build_explainability_feed`, aby prezentować listę ostatnich decyzji AI wraz z wiodącymi cechami modelu. Dane pobierane są z dziennika decyzji (`TradingDecisionJournal`) i zawierają nazwę modelu, metodę wyjaśnienia oraz top cechy pozytywne/negatywne.
+* Sekcja **Runtime Overview** otrzymała panel **Risk Journal**, który łączy się z usługą `RuntimeService.riskMetrics`/`riskTimeline` i prezentuje zagregowane blokady, zamrożenia oraz stress overrides. Panel zawiera wykres aktywności decyzji, filtry po strategii i sygnałach ryzyka, żetony z najczęściej flagowanymi strategiami oraz najczęściej pojawiającymi się flagami/stress failure, podsumowanie ostatniej akcji operatora, sygnalizację ostatnich blokad/zamrożeń/override'ów, karty ze statusem strategii wymagających uwagi (liczniki blokad/zamrożeń/override'ów + ostatnie zdarzenie) oraz modal do drill-downu (z akcjami zamrożenia/odblokowania portfela wywoływanymi na `RuntimeService`).
 
 ## Offline Runtime API dla UI
 
