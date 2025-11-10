@@ -87,7 +87,7 @@ from .models import (
     ModelScore,
     load_model_artifact_bundle,
 )
-from .validation import ModelArtifactValidationError
+from .validation import ModelArtifactValidationError, validate_model_artifact_schema
 from .regime import (
     MarketRegimeAssessment,
     MarketRegimeClassifier,
