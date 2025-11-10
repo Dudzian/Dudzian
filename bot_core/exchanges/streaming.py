@@ -7,6 +7,7 @@ import gzip
 import json
 import logging
 import random
+import socket
 import threading
 import time
 import zlib
@@ -113,6 +114,7 @@ _DEFAULT_BACKOFF_CAP = 2.0
 _DEFAULT_JITTER = (0.05, 0.30)
 _DEFAULT_BUFFER_SIZE = 64
 _DEFAULT_LATENCY_BUCKETS = (0.05, 0.1, 0.25, 0.5, 1.0, 2.0, 5.0, 10.0)
+_DEFAULT_RECONNECT_BUCKETS = (0.1, 0.25, 0.5, 1.0, 2.5, 5.0, 10.0, 30.0, 60.0)
 _DEFAULT_LAG_BUCKETS = (0.01, 0.05, 0.1, 0.25, 0.5, 1.0, 2.0, 5.0)
 
 
@@ -253,6 +255,15 @@ class LocalLongPollStream(Iterable[StreamBatch]):
         self._metric_backpressure: CounterMetric = self._metrics.counter(
             "bot_exchange_stream_backpressure_total",
             "Liczba paczek usuniętych z kolejki long-pollowej z powodu backpressure",
+        )
+        self._metric_reconnects: CounterMetric = self._metrics.counter(
+            "bot_exchange_stream_reconnects_total",
+            "Liczba prób ponownego połączenia long-pollowych streamów według statusu",
+        )
+        self._metric_reconnect_latency: HistogramMetric = self._metrics.histogram(
+            "bot_exchange_stream_reconnect_duration_seconds",
+            "Czas potrzebny na odzyskanie połączenia long-pollowego streamu",
+            buckets=_DEFAULT_RECONNECT_BUCKETS,
         )
         self._update_queue_metric()
 
@@ -482,11 +493,15 @@ class LocalLongPollStream(Iterable[StreamBatch]):
 
         attempt = 0
         last_error: Exception | None = None
+        reconnect_started_at: float | None = None
+        reconnect_attempts = 0
+        reconnect_reason = "unknown"
         while attempt < self._max_retries and not self._closed:
             request = self._build_request()
             should_backoff = True
             headers = None
             poll_started = self._clock()
+            retryable = False
             try:
                 with urlopen(request, timeout=self._timeout) as response:
                     raw_payload = response.read()
@@ -506,6 +521,7 @@ class LocalLongPollStream(Iterable[StreamBatch]):
                         exc.code,
                         payload=None,
                     )
+                    retryable = True
                     if server_retry_after is not None and server_retry_after > 0:
                         self._sleep(server_retry_after)
                         should_backoff = False
@@ -514,6 +530,7 @@ class LocalLongPollStream(Iterable[StreamBatch]):
                         f"Stream {self._adapter}/{self._scope} zwrócił błąd {exc.code}.",
                         reason=exc,
                     )
+                    retryable = True
                 else:
                     raise ExchangeAPIError(
                         f"Stream {self._adapter}/{self._scope} zwrócił kod {exc.code}.",
@@ -525,16 +542,28 @@ class LocalLongPollStream(Iterable[StreamBatch]):
                     f"Nie udało się połączyć ze streamem {self._adapter}/{self._scope}.",
                     reason=exc,
                 )
+                retryable = True
             else:
                 payload = self._parse_payload(raw_payload, headers)
                 retry_after = self._enqueue_batches(payload)
                 finished = self._clock()
                 self._record_poll_latency(max(0.0, finished - poll_started))
                 self._last_poll = finished
+                if reconnect_attempts > 0 and reconnect_started_at is not None:
+                    self._record_reconnect_result(
+                        status="success",
+                        duration=max(0.0, finished - reconnect_started_at),
+                        reason=reconnect_reason,
+                    )
                 if retry_after > 0:
                     self._sleep(retry_after)
                 return
 
+            if retryable:
+                reconnect_started_at = reconnect_started_at or poll_started
+                reconnect_reason = self._classify_reconnect_reason(last_error)
+                reconnect_attempts += 1
+                self._record_reconnect_attempt(reason=reconnect_reason)
             attempt += 1
             if self._closed:
                 break
@@ -543,6 +572,13 @@ class LocalLongPollStream(Iterable[StreamBatch]):
                 jitter = random.uniform(*self._jitter) if self._jitter[1] > 0 else 0.0
                 if delay + jitter > 0:
                     self._sleep(delay + jitter)
+
+        if reconnect_attempts > 0 and reconnect_started_at is not None:
+            self._record_reconnect_result(
+                status="failed",
+                duration=max(0.0, self._clock() - reconnect_started_at),
+                reason=reconnect_reason,
+            )
 
         if last_error is not None:
             raise last_error
@@ -1074,6 +1110,45 @@ class LocalLongPollStream(Iterable[StreamBatch]):
     def _record_delivery_lag(self, batch: StreamBatch) -> None:
         lag = max(0.0, self._clock() - batch.received_at)
         self._metric_delivery_lag.observe(lag, labels=self._metric_labels)
+
+    def _record_reconnect_attempt(self, *, reason: str) -> None:
+        labels = dict(self._metric_labels)
+        labels["status"] = "attempt"
+        labels["reason"] = reason
+        self._metric_reconnects.inc(labels=labels)
+
+    def _record_reconnect_result(self, *, status: str, duration: float, reason: str) -> None:
+        labels = dict(self._metric_labels)
+        labels["status"] = status
+        labels["reason"] = reason
+        self._metric_reconnects.inc(labels=labels)
+        self._metric_reconnect_latency.observe(max(0.0, duration), labels=labels)
+
+    def _classify_reconnect_reason(self, error: Exception | None) -> str:
+        if isinstance(error, ExchangeThrottlingError):
+            return "throttling"
+        if isinstance(error, ExchangeNetworkError):
+            reason = getattr(error, "reason", None)
+            if isinstance(reason, HTTPError):
+                code = getattr(reason, "code", None)
+                if isinstance(code, int) and 500 <= code < 600:
+                    return "http_5xx"
+                return "network_http"
+            if reason is not None:
+                name = type(reason).__name__.lower()
+                if "timeout" in name:
+                    return "timeout"
+            return "network"
+        if isinstance(error, ExchangeAPIError):
+            status_code = getattr(error, "status_code", None)
+            if isinstance(status_code, int):
+                if status_code == 429:
+                    return "throttling"
+                if 500 <= status_code < 600:
+                    return "http_5xx"
+                return f"http_{status_code}"
+            return "api_error"
+        return "unknown"
 
     @staticmethod
     def _coerce_positive_float(value: object) -> float | None:

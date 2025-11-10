@@ -77,6 +77,8 @@ def test_stage5_dashboard_contains_expected_metrics(metric_substring: str) -> No
         "bot_core_stage6_failover_success_ratio_pct",
         "bot_core_stage6_stress_lab_failure_count",
         "bot_core_stage6_slo_breach_rate_pct",
+        "bot_core_stage6_stream_reconnect_attempt_rate",
+        "bot_core_stage6_stream_reconnect_duration_p95_seconds",
     ],
 )
 def test_stage6_dashboard_contains_expected_metrics(metric_substring: str) -> None:

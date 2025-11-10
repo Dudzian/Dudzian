@@ -71,3 +71,26 @@ groups:
         annotations:
           summary: "Wzrost naruszeń SLO Stage6"
           description: "Średni odsetek naruszeń SLO Stage6 przekroczył 3% w ciągu ostatniej godziny – zweryfikuj raport Observability++."
+
+  - name: stage6_stream_health
+    rules:
+      - alert: Stage6StreamReconnectSpike
+        expr: max_over_time(bot_core_stage6_stream_reconnect_attempt_rate[10m]) > 0.1
+        for: 10m
+        labels:
+          severity: warning
+          team: trading-ops
+          service: stage6-stream
+        annotations:
+          summary: "Wzrost prób ponownego połączenia long-polla"
+          description: "Średnia liczba prób ponownego połączenia long-pollowych streamów przekracza 0.1/s w ciągu ostatnich 10 minut – sprawdź łączność hypercare/offline."
+      - alert: Stage6StreamReconnectDurationHigh
+        expr: max_over_time(bot_core_stage6_stream_reconnect_duration_p95_seconds[10m]) > 15
+        for: 10m
+        labels:
+          severity: critical
+          team: trading-ops
+          service: stage6-stream
+        annotations:
+          summary: "Wydłużony czas odzyskiwania long-polla"
+          description: "95 centyl czasu przywracania long-pollowych streamów przekracza 15 s przez 10 minut – ryzyko utraty danych w trybie hypercare/offline."

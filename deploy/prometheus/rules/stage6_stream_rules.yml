@@ -1,0 +1,19 @@
+# Recording rules dla monitoringu long-pollowych streamów Stage6.
+groups:
+  - name: stage6_stream_health
+    interval: 30s
+    rules:
+      - record: bot_core_stage6_stream_reconnect_attempt_rate
+        expr: sum by (adapter, scope, environment, reason) (rate(bot_exchange_stream_reconnects_total{status="attempt"}[5m]))
+      - record: bot_core_stage6_stream_reconnect_failure_rate
+        expr: sum by (adapter, scope, environment, reason) (rate(bot_exchange_stream_reconnects_total{status="failed"}[5m]))
+      - record: bot_core_stage6_stream_reconnect_success_rate
+        expr: sum by (adapter, scope, environment, reason) (rate(bot_exchange_stream_reconnects_total{status="success"}[5m]))
+      - record: bot_core_stage6_stream_reconnect_duration_p95_seconds
+        expr: |
+          histogram_quantile(
+            0.95,
+            sum by (le, adapter, scope, environment, reason) (
+              rate(bot_exchange_stream_reconnect_duration_seconds_bucket{status="success"}[5m])
+            )
+          )
