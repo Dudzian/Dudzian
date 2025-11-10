@@ -23,7 +23,7 @@ from bot_core.runtime.paths import build_desktop_app_paths_from_root
 from bot_core.runtime.preset_service import (
     PresetConfigService,
     flatten_secret_payload,
-    load_legacy_preset,
+    load_preset,
 )
 from bot_core.security.file_storage import EncryptedFileSecretStorage
 
@@ -645,7 +645,7 @@ def _configure_migration_parser() -> argparse.ArgumentParser:
         description="Migracja presetów GUI do Stage6 core.yaml"
     )
     parser.add_argument("--core-config", required=True, help="Ścieżka do docelowego pliku core.yaml")
-    parser.add_argument("--legacy-preset", required=True, help="Preset GUI (JSON/YAML) do zaimportowania")
+    parser.add_argument("--preset", required=True, help="Preset GUI (JSON/YAML) do zaimportowania")
     parser.add_argument("--profile-name", help="Nazwa profilu ryzyka utworzonego na bazie presetu")
     parser.add_argument("--template-profile", help="Profil bazowy użyty do uzupełnienia brakujących pól")
     parser.add_argument(
@@ -787,7 +787,7 @@ def _run_stage6_migration(argv: Sequence[str]) -> int:
     if args.desktop_root:
         desktop_paths = build_desktop_app_paths_from_root(args.desktop_root)
 
-    preset = load_legacy_preset(args.legacy_preset)
+    preset = load_preset(args.preset)
     service = PresetConfigService(core_path)
     profile = service.import_gui_preset(
         preset,
@@ -1234,11 +1234,11 @@ def main(argv: Iterable[str] | None = None) -> int:
 
         provided = sys.argv[1:]
 
-    trigger_flags = {"--core-config", "--legacy-preset", "--secrets-input", "--secrets-output"}
+    trigger_flags = {"--core-config", "--preset", "--secrets-input", "--secrets-output"}
     if any(flag in provided for flag in trigger_flags):
         return _run_stage6_migration(provided)
     raise SystemExit(
-        "Stage6 migrator wymaga flag --core-config oraz --legacy-preset. "
+        "Stage6 migrator wymaga flag --core-config oraz --preset. "
         "Funkcje marketplace zostały usunięte z tej komendy."
     )
 

@@ -23,7 +23,7 @@ Od wersji 2024.09 runtime usuwa wsparcie dla automatycznego wczytywania zasobów
 
 ## 4. Weryfikacja po migracji
 
-- Uruchom `python -m bot_core.runtime.stage6_preset_cli --core-config config/core.yaml --legacy-preset ... --secrets-output secrets/api_keys.vault --summary-json var/audit/stage6/migration_summary.json` (bez flag `--legacy-security-*`).
+- Uruchom `python -m bot_core.runtime.stage6_preset_cli --core-config config/core.yaml --preset ... --secrets-output secrets/api_keys.vault --summary-json var/audit/stage6/migration_summary.json` (bez flag `--legacy-security-*`).
 - Sprawdź, czy katalog `~/.dudzian/` zawiera `secret_index.json`, `ui_settings.json` i brak w nim artefaktów `api_credentials.json`.
 - Upewnij się, że `docs/runbooks/DEMO_PAPER_LIVE_CHECKLIST.md` została uaktualniona i decision log zawiera wpis o migracji.
 

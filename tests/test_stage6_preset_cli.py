@@ -45,7 +45,7 @@ def test_stage6_cli_migrates_preset_and_secrets(tmp_path: Path, capsys) -> None:
         [
             "--core-config",
             str(core_copy),
-            "--legacy-preset",
+            "--preset",
             str(preset_path),
             "--profile-name",
             "CLI Stage6",
@@ -96,7 +96,7 @@ def test_stage6_cli_accepts_passphrase_file(tmp_path: Path) -> None:
         [
             "--core-config",
             str(core_copy),
-            "--legacy-preset",
+            "--preset",
             str(preset_path),
             "--profile-name",
             "file-pass",  # sprawdzamy tylko przebieg migracji
@@ -160,7 +160,7 @@ def test_stage6_cli_requires_matching_secret_flags(tmp_path: Path, capsys) -> No
             [
                 "--core-config",
                 str(core_copy),
-                "--legacy-preset",
+                "--preset",
                 str(preset_path),
                 "--secrets-input",
                 str(secrets_input),
@@ -184,7 +184,7 @@ def test_stage6_cli_rejects_legacy_security_flags(tmp_path: Path) -> None:
             [
                 "--core-config",
                 str(core_copy),
-                "--legacy-preset",
+                "--preset",
                 str(preset_path),
                 "--profile-name",
                 "legacy-security",
@@ -212,7 +212,7 @@ def test_stage6_cli_defaults_desktop_vault(tmp_path: Path, capsys) -> None:
         [
             "--core-config",
             str(core_copy),
-            "--legacy-preset",
+            "--preset",
             str(preset_path),
             "--profile-name",
             "auto-vault",
@@ -245,7 +245,7 @@ def test_stage6_cli_allows_desktop_root_without_secrets(tmp_path: Path, capsys) 
         [
             "--core-config",
             str(core_copy),
-            "--legacy-preset",
+            "--preset",
             str(preset_path),
             "--profile-name",
             "desktop-only",
@@ -284,7 +284,7 @@ def test_stage6_cli_dry_run_skips_writes(tmp_path: Path, capsys) -> None:
         [
             "--core-config",
             str(core_copy),
-            "--legacy-preset",
+            "--preset",
             str(preset_path),
             "--profile-name",
             "dry-run-check",
@@ -322,7 +322,7 @@ def test_stage6_cli_filters_secret_keys(tmp_path: Path, capsys) -> None:
         [
             "--core-config",
             str(core_copy),
-            "--legacy-preset",
+            "--preset",
             str(preset_path),
             "--profile-name",
             "filters",  # tylko sprawdzamy filtrację sekretów
@@ -372,7 +372,7 @@ def test_stage6_cli_previews_secret_keys(tmp_path: Path, capsys) -> None:
         [
             "--core-config",
             str(core_copy),
-            "--legacy-preset",
+            "--preset",
             str(preset_path),
             "--profile-name",
             "preview",
@@ -409,7 +409,7 @@ def test_stage6_cli_preview_without_output_path(tmp_path: Path, capsys) -> None:
         [
             "--core-config",
             str(core_copy),
-            "--legacy-preset",
+            "--preset",
             str(preset_path),
             "--profile-name",
             "preview-only",
@@ -449,7 +449,7 @@ def test_stage6_cli_secret_filters_support_glob_patterns(tmp_path: Path, capsys)
         [
             "--core-config",
             str(core_copy),
-            "--legacy-preset",
+            "--preset",
             str(preset_path),
             "--profile-name",
             "glob-filters",
@@ -495,7 +495,7 @@ def test_stage6_cli_secret_filters_can_skip_all(tmp_path: Path, capsys) -> None:
         [
             "--core-config",
             str(core_copy),
-            "--legacy-preset",
+            "--preset",
             str(preset_path),
             "--profile-name",
             "filters-empty",
@@ -528,7 +528,7 @@ def test_stage6_cli_can_create_backup(tmp_path: Path, capsys) -> None:
         [
             "--core-config",
             str(core_copy),
-            "--legacy-preset",
+            "--preset",
             str(preset_path),
             "--profile-name",
             "backup-test",
@@ -556,7 +556,7 @@ def test_stage6_cli_skips_backup_in_dry_run(tmp_path: Path, capsys) -> None:
         [
             "--core-config",
             str(core_copy),
-            "--legacy-preset",
+            "--preset",
             str(preset_path),
             "--profile-name",
             "backup-dry-run",
@@ -584,7 +584,7 @@ def test_stage6_cli_rejects_backup_same_path(tmp_path: Path) -> None:
             [
                 "--core-config",
                 str(core_copy),
-                "--legacy-preset",
+                "--preset",
                 str(preset_path),
                 "--profile-name",
                 "backup-same",
@@ -606,7 +606,7 @@ def test_stage6_cli_prints_core_diff(tmp_path: Path, capsys) -> None:
         [
             "--core-config",
             str(core_copy),
-            "--legacy-preset",
+            "--preset",
             str(preset_path),
             "--profile-name",
             "diff-check",
@@ -632,7 +632,7 @@ def test_stage6_cli_core_diff_for_new_output(tmp_path: Path, capsys) -> None:
         [
             "--core-config",
             str(core_copy),
-            "--legacy-preset",
+            "--preset",
             str(preset_path),
             "--profile-name",
             "diff-new-output",
@@ -667,7 +667,7 @@ def test_stage6_cli_writes_summary_file(tmp_path: Path) -> None:
         [
             "--core-config",
             str(core_copy),
-            "--legacy-preset",
+            "--preset",
             str(preset_path),
             "--profile-name",
             "summary-profile",
@@ -752,7 +752,7 @@ def test_stage6_cli_summary_tracks_secret_passphrase_env(
         [
             "--core-config",
             str(core_copy),
-            "--legacy-preset",
+            "--preset",
             str(preset_path),
             "--profile-name",
             "env-secret-profile",
@@ -794,7 +794,7 @@ def test_stage6_cli_summary_records_original_checksum(tmp_path: Path) -> None:
         [
             "--core-config",
             str(core_copy),
-            "--legacy-preset",
+            "--preset",
             str(preset_path),
             "--profile-name",
             "checksum-profile",
@@ -827,7 +827,7 @@ def test_stage6_cli_summary_records_security_source_checksums(tmp_path: Path) ->
         [
             "--core-config",
             str(core_copy),
-            "--legacy-preset",
+            "--preset",
             str(preset_path),
             "--profile-name",
             "checksum-security",
@@ -870,7 +870,7 @@ def test_stage6_cli_summary_redacts_inline_passphrases(tmp_path: Path) -> None:
         [
             "--core-config",
             str(core_copy),
-            "--legacy-preset",
+            "--preset",
             str(preset_path),
             "--profile-name",
             "redacted-profile",
@@ -915,7 +915,7 @@ def test_stage6_cli_summary_includes_checksum_warnings(
         [
             "--core-config",
             str(core_copy),
-            "--legacy-preset",
+            "--preset",
             str(preset_path),
             "--profile-name",
             "warnings-profile",
