@@ -4,13 +4,13 @@ from pathlib import Path
 import pytest
 
 from bot_core.portfolio import (
+    AssetPortfolioGovernorConfig,
     PortfolioAssetConfig,
     PortfolioCycleConfig,
     PortfolioCycleInputs,
     PortfolioCycleOutputConfig,
     PortfolioDecisionLog,
     PortfolioGovernor,
-    PortfolioGovernorConfig,
     PortfolioHypercareCycle,
 )
 from bot_core.security.signing import verify_hmac_signature
@@ -22,7 +22,7 @@ def _write_json(path: Path, payload: dict[str, object]) -> None:
 
 
 def _build_governor(tmp_path: Path) -> tuple[PortfolioGovernor, PortfolioDecisionLog]:
-    config = PortfolioGovernorConfig(
+    config = AssetPortfolioGovernorConfig(
         name="core",
         portfolio_id="core",
         assets=(
