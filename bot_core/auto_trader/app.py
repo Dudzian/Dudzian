@@ -1,15 +1,12 @@
-"""Lightweight auto-trading controller used by tests and runtime scaffolding.
+"""Kontroler AutoTrader w wariancie Stage6 używany przez testy i scaffolding.
 
-This module re-implements the bare minimum of the archival ``AutoTrader``
-behaviour in a dependency-free manner so that it can operate without the
-monolithic application package.  The original implementation pulled a large
-amount of infrastructure (event emitters, Prometheus exporters, runtime
-services).  For unit tests we only need predictable threading semantics and
-state transitions.
-
-The implementation below focuses on deterministic start/stop logic, manual
-activation flow and logging hooks.  It still exposes a small ``RiskDecision``
-structure for compatibility with code that serialises decisions.
+Implementacja zapewnia deterministyczne uruchamianie/zatrzymywanie,
+manualny przepływ aktywacji oraz haki logujące bez konieczności ładowania
+pełnego runtime'u Stage6.  Warstwa nie przechowuje już aliasów ani
+konfiguracji trybu legacy – wszystkie wejścia/wyjścia wykorzystują formaty
+Stage6 (np. ``RiskDecision`` przy serializacji decyzji).  Udostępniamy tylko
+publiczne API wymagane przez testy i narzędzia Stage6, zachowując spójność ze
+schematem decyzji używanym w środowiskach produkcyjnych.
 """
 from __future__ import annotations
 
@@ -72,7 +69,6 @@ from bot_core.risk.engine import ThresholdRiskEngine
 from bot_core.observability import MetricsRegistry, get_global_metrics_registry
 from bot_core.trading.strategies import StrategyCatalog
 from bot_core.trading.strategy_aliasing import (
-    MIGRATION_FALLBACK_SUFFIX,
     StrategyAliasResolver,
     canonical_alias_map,
     normalise_suffixes,
@@ -439,13 +435,13 @@ class AutoTrader:
     """Small cooperative wrapper around an auto-trading loop.
 
     The class is intentionally tiny – it exists so that unit tests can exercise
-    manual confirmation logic without pulling in the whole archival runtime.  It
+    manual confirmation logic without pulling in the full Stage6 runtime.  It
     exposes the same public attributes that the tests rely on (``enable_auto_trade``
     and ``_auto_trade_user_confirmed``) and uses an overridable ``_auto_trade_loop``
     method executed inside a worker thread when the user confirms auto-trading.
     """
 
-    _STRATEGY_SUFFIXES: tuple[str, ...] = ("_probing", MIGRATION_FALLBACK_SUFFIX)
+    _STRATEGY_SUFFIXES: tuple[str, ...] = ("_probing",)
     _STRATEGY_ALIAS_MAP: Mapping[str, str] = {
         "intraday_breakout": "day_trading",
     }
@@ -1395,8 +1391,11 @@ class AutoTrader:
             if isinstance(metadata, Mapping):
                 for key, value in metadata.items():
                     combined[str(key)] = value
-            else:  # pragma: no cover - defensive fallback for archival payloads
-                combined["metadata"] = metadata
+            else:  # pragma: no cover - defensive guard for unexpected payloads
+                LOGGER.debug(
+                    "Ignoring non-mapping metadata payload in Stage6 feature columns",
+                    extra={"payload_type": type(metadata).__name__},
+                )
         return combined or None
 
     def _normalise_cycle_history_limit(self, limit: int | None) -> int:

@@ -4,17 +4,17 @@ from typing import Mapping, Sequence
 from bot_core.market_intel import MarketIntelSnapshot
 from bot_core.observability.slo import SLOStatus
 from bot_core.portfolio import (
+    AssetPortfolioGovernorConfig,
     PortfolioAssetConfig,
     PortfolioDecisionLog,
     PortfolioGovernor,
-    PortfolioGovernorConfig,
 )
 from bot_core.risk import StressOverrideRecommendation
 from bot_core.runtime.portfolio_coordinator import PortfolioRuntimeCoordinator
 
 
 def _governor() -> PortfolioGovernor:
-    config = PortfolioGovernorConfig(
+    config = AssetPortfolioGovernorConfig(
         name="core",
         portfolio_id="core",
         assets=(

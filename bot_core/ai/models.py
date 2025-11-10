@@ -95,7 +95,7 @@ def _normalize_feature_scalers(
 
 
 class _MetricsView(Mapping[str, object]):
-    """Widok na metryki artefaktu zachowujący kompatybilność wsteczną."""
+    """Structured Stage6 view over model metric payloads."""
 
     def __init__(self, base: Mapping[str, Mapping[str, float]]) -> None:
         self._base = base
@@ -210,20 +210,34 @@ class ModelMetrics(_MetricsView):
         if isinstance(raw, ModelMetrics):
             raw = raw.blocks()
 
-        if isinstance(raw, Mapping) and raw:
-            if all(isinstance(value, Mapping) for value in raw.values()):
-                for split, payload in raw.items():
-                    if isinstance(payload, Mapping):
-                        structured[str(split)] = _coerce_block(payload)
-            else:
-                archival_block: dict[str, float] = {}
-                for key, value in raw.items():
-                    try:
-                        archival_block[str(key)] = float(value)  # type: ignore[arg-type]
-                    except (TypeError, ValueError):
-                        continue
-                if archival_block:
-                    structured["summary"] = archival_block
+        raw_payload: Mapping[str, object] | None
+        if isinstance(raw, ModelMetrics):
+            raw_payload = raw.blocks()
+        elif isinstance(raw, Mapping):
+            raw_payload = raw
+        else:
+            raw_payload = None
+
+        invalid_entries: list[str] = []
+        if raw_payload:
+            for split, payload in raw_payload.items():
+                key = str(split)
+                if isinstance(payload, Mapping):
+                    structured[key] = _coerce_block(payload)
+                    continue
+                if payload is None and key in required_keys:
+                    structured[key] = {}
+                    continue
+                if key in {"schema_version", "generated_at", "version"}:
+                    continue
+                invalid_entries.append(key)
+
+        if invalid_entries:
+            joined = ", ".join(sorted(set(invalid_entries)))
+            raise ValueError(
+                "ModelMetrics wymaga formatu Stage6 (summary/train/validation/test); "
+                f"wykryto legacy pola: {joined}"
+            )
 
         for key in required_keys:
             structured.setdefault(key, {})
@@ -1022,14 +1036,13 @@ _TRAINING_METADATA_SOURCE = "bot_core.ai.models.AIModels"
 
 
 class AIModels:
-    """Minimal high-level wrapper compatible with archival API built on ``ModelArtifact``.
+    """Minimal Stage6 wrapper around ``ModelArtifact`` and the training pipeline.
 
     The class translates numpy-style training arrays into :class:`FeatureDataset`
     instances, delegates learning to :class:`bot_core.ai.training.ModelTrainer`
     and keeps the resulting :class:`ModelArtifact` as the single source of
     truth.  Predictions are executed by rebuilding the inference model from the
-    stored artifact, which keeps the implementation aligned with the modern AI
-    pipeline.
+    stored artifact to stay aligned with the Stage6 AI pipeline.
     """
 
     def __init__(
@@ -1201,7 +1214,7 @@ class AIModels:
         verbose: bool = False,
     ) -> ModelArtifact:
         if progress_callback is not None:
-            logger.debug("progress_callback is ignored by AIModels fallback trainer")
+            logger.debug("progress_callback is ignored by the lightweight AIModels trainer")
         dataset = self._build_dataset(X, y)
         artifact = self._trainer.train(dataset)
         self._artifact = artifact

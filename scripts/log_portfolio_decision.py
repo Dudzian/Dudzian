@@ -16,11 +16,11 @@ if str(REPO_ROOT) not in sys.path:
 from bot_core.config import load_core_config
 from bot_core.observability import SLOStatus
 from bot_core.portfolio import (
+    AssetPortfolioGovernorConfig,
+    PortfolioAssetConfig,
     PortfolioDecisionLog,
     PortfolioDriftTolerance,
     PortfolioGovernor,
-    PortfolioGovernorConfig,
-    PortfolioAssetConfig,
     load_allocations_file,
     load_json_or_yaml,
     parse_market_intel_payload,
@@ -39,7 +39,7 @@ def _default_output(governor: str) -> Path:
 def _fallback_governor_config(
     raw_config: Mapping[str, object],
     name: str,
-) -> PortfolioGovernorConfig | None:
+) -> AssetPortfolioGovernorConfig | None:
     if not isinstance(raw_config, Mapping):
         return None
     assets_cfg: list[PortfolioAssetConfig] = []
@@ -68,7 +68,7 @@ def _fallback_governor_config(
             relative=float(drift_entry.get("relative", drift_entry.get("rel", drift.relative))),
         )
 
-    return PortfolioGovernorConfig(
+    return AssetPortfolioGovernorConfig(
         name=str(raw_config.get("name", name)),
         portfolio_id=str(raw_config.get("portfolio_id", name)),
         drift_tolerance=drift,

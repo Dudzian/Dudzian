@@ -39,21 +39,21 @@ except Exception:  # pragma: no cover
 try:
     # asset-based config wprost z bot_core.portfolio
     from bot_core.portfolio import (  # type: ignore[attr-defined]
+        AssetPortfolioGovernorConfig,
         PortfolioAssetConfig,
         PortfolioDriftTolerance,
         PortfolioDecisionLog,
         PortfolioGovernor,
-        PortfolioGovernorConfig as PortfolioGovernorConfig_Asset,
         PortfolioRiskBudgetConfig,
         PortfolioSloOverrideConfig,
     )
     _HAVE_PORTFOLIO_ASSET_CONFIG = True
 except Exception:  # pragma: no cover
+    AssetPortfolioGovernorConfig = None  # type: ignore[assignment]
     PortfolioAssetConfig = None  # type: ignore[assignment]
     PortfolioDriftTolerance = None  # type: ignore[assignment]
     PortfolioDecisionLog = None  # type: ignore[assignment]
     PortfolioGovernor = None  # type: ignore[assignment]
-    PortfolioGovernorConfig_Asset = None  # type: ignore[assignment]
     PortfolioRiskBudgetConfig = None  # type: ignore[assignment]
     PortfolioSloOverrideConfig = None  # type: ignore[assignment]
     _HAVE_PORTFOLIO_ASSET_CONFIG = False
@@ -139,10 +139,10 @@ def _snapshot(
     )
 
 
-def _governor_config_asset() -> "PortfolioGovernorConfig_Asset":
+def _governor_config_asset() -> "AssetPortfolioGovernorConfig":
     if not _supports_asset_api():
         pytest.skip("Asset-based PortfolioGovernor API not available")
-    return PortfolioGovernorConfig_Asset(  # type: ignore[misc]
+    return AssetPortfolioGovernorConfig(  # type: ignore[misc]
         name="core",
         portfolio_id="core",
         drift_tolerance=PortfolioDriftTolerance(absolute=0.02, relative=0.1),  # type: ignore[call-arg]
@@ -224,7 +224,7 @@ def test_portfolio_governor_applies_slo_overrides() -> None:
     if not _supports_asset_api():
         pytest.skip("Asset-based PortfolioGovernor API not available")
 
-    config = PortfolioGovernorConfig_Asset(  # type: ignore[misc]
+    config = AssetPortfolioGovernorConfig(  # type: ignore[misc]
         name="core",
         portfolio_id="core",
         drift_tolerance=PortfolioDriftTolerance(absolute=0.01, relative=0.05),  # type: ignore[call-arg]
@@ -287,7 +287,7 @@ def test_portfolio_governor_applies_stress_override_for_symbol() -> None:
         pytest.skip("Asset-based API or stress override recommendation not available")
 
     config = _governor_config_asset()
-    config = PortfolioGovernorConfig_Asset(  # type: ignore[misc]
+    config = AssetPortfolioGovernorConfig(  # type: ignore[misc]
         name=config.name,
         portfolio_id=config.portfolio_id,
         drift_tolerance=config.drift_tolerance,

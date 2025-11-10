@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import json
 import sys
 import types
 from pathlib import Path
@@ -101,31 +100,6 @@ def test_secret_store_saves_and_loads_credentials(secret_store_factory: Callable
     assert "desktop.exchange:binance" in stored_keys
 
 
-def test_secret_store_rejects_plaintext_archival_file(
-    secret_store_factory: Callable[[], Tuple[SecretStore, _InMemoryKeyring, Path]],
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    existing_store, _, data_dir = secret_store_factory()
-    archival_path = tmp_path / "api_credentials.json"
-    archival_path.write_text(
-        json.dumps({"binance": {"api_key": "LEGACY", "api_secret": "SECRET"}}),
-        encoding="utf-8",
-    )
-
-    with pytest.raises(SecretStoreError) as excinfo:
-        subject = SecretStore(
-            storage=existing_store._storage,  # type: ignore[arg-type]
-            deprecated_path=archival_path,
-            data_dir=data_dir,
-        )
-        subject.list_exchanges()
-
-    message = str(excinfo.value)
-    assert "archiwalny magazyn" in message
-    assert "dudzian-migrate" in message
-
-
 def test_secret_store_rotate_master_key_delegates(secret_store_factory: Callable[[], Tuple[SecretStore, _InMemoryKeyring, Path]]) -> None:
     store, _, _ = secret_store_factory()
 
@@ -164,7 +138,6 @@ def test_secret_store_errors_are_wrapped(monkeypatch: pytest.MonkeyPatch, tmp_pa
     monkeypatch.setenv("HOME", str(tmp_path))
     store = SecretStore(
         storage=_FailingStorage(),
-        deprecated_path=tmp_path / "api_credentials.json",
         data_dir=tmp_path / "dudzian-home",
     )
 
