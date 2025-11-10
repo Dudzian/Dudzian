@@ -2915,228 +2915,36 @@ class TradingStrategies:
             logger=self._logger
         )
 
-    def _coerce_parameters(
-        self,
-        params: TradingParameters | Mapping[str, Any] | None,
-    ) -> TradingParameters:
-        if params is None:
-            return TradingParameters()
-        if isinstance(params, TradingParameters):
-            return params
-        if isinstance(params, Mapping):
-            return TradingParameters(**{str(key): params[key] for key in params.keys()})
-        raise TypeError("Trading parameters must be TradingParameters or mapping")
-
-    def _coerce_parameter_mapping(
-        self,
-        data: Mapping[str, pd.DataFrame],
-        params: TradingParameters | Mapping[str, Any] | Mapping[str, TradingParameters] | None,
-    ) -> dict[str, TradingParameters]:
-        normalized: dict[str, TradingParameters] = {}
-        if isinstance(params, Mapping) and all(
-            isinstance(value, (TradingParameters, Mapping)) for value in params.values()
-        ):
-            for session, frame in data.items():
-                _ = frame  # keep explicit for readability
-                candidate = params.get(session)
-                normalized[str(session)] = self._coerce_parameters(candidate)
-        else:
-            base_params = self._coerce_parameters(params if not isinstance(params, Mapping) else None)
-            for session in data.keys():
-                normalized[str(session)] = base_params
-        return normalized
-
-    @staticmethod
-    def _summarize_result(result: BacktestResult) -> dict[str, Any]:
-        max_dd_days = result.max_drawdown_duration.total_seconds() / 86400.0
-        avg_trade_days = result.avg_trade_duration.total_seconds() / 86400.0
-        summary = {
-            "total_return": float(result.total_return),
-            "annualized_return": float(result.annualized_return),
-            "volatility": float(result.volatility),
-            "sharpe_ratio": float(result.sharpe_ratio),
-            "sortino_ratio": float(result.sortino_ratio),
-            "calmar_ratio": float(result.calmar_ratio),
-            "omega_ratio": float(result.omega_ratio),
-            "max_drawdown": float(result.max_drawdown),
-            "max_drawdown_duration_days": float(max_dd_days),
-            "win_rate": float(result.win_rate),
-            "profit_factor": float(result.profit_factor),
-            "tail_ratio": float(result.tail_ratio),
-            "var_95": float(result.var_95),
-            "expected_shortfall_95": float(result.expected_shortfall_95),
-            "trades": int(result.total_trades),
-            "total_trades": int(result.total_trades),
-            "avg_trade_duration_days": float(avg_trade_days),
-            "largest_win": float(result.largest_win),
-            "largest_loss": float(result.largest_loss),
-        }
-        return summary
-
-    @staticmethod
-    def _combine_multi_session_trades(result: MultiSessionBacktestResult) -> pd.DataFrame:
-        session_frames: list[pd.DataFrame] = []
-        base_columns = list(result.aggregate.trades.columns)
-        for session, session_result in result.sessions.items():
-            trades = session_result.trades.copy()
-            if trades.empty and base_columns:
-                trades = pd.DataFrame(columns=base_columns)
-            trades = trades.copy()
-            trades.insert(0, "session", session)
-            session_frames.append(trades)
-        if not session_frames:
-            columns = ["session", *base_columns]
-            return pd.DataFrame(columns=columns)
-        combined = pd.concat(session_frames, ignore_index=True, sort=False)
-        ordered_columns = ["session", *[col for col in base_columns if col in combined.columns]]
-        return combined.reindex(columns=ordered_columns, fill_value=pd.NA)
-
     def run_strategy(
         self,
-        data: pd.DataFrame | Mapping[str, pd.DataFrame],
-        params: TradingParameters | Mapping[str, Any] | Mapping[str, TradingParameters] | None = None,
-        *,
+        data: pd.DataFrame,
         initial_capital: float = 10000.0,
-        fee_bps: float = 5.0,
-        allow_short: bool | None = None,
-        session_weights: Mapping[str, float] | None = None,
-        risk_profile: str | None = None,
-        metadata: Mapping[str, Any] | None = None,
-        ai_model: Any | None = None,
-        ai_weight: float = 0.0,
-        ai_threshold_bps: float = 5.0,
-    ) -> tuple[dict[str, Any], pd.DataFrame, pd.Series]:
-        """Uruchamia strategię w trybie kompatybilnym z dawnym GUI."""
+        fee: float = 0.0004,
+        slippage: float = 0.0002,
+        fraction: float = 0.05,
+        allow_short: bool = False,
+        **kwargs,
+    ) -> Tuple[Dict, pd.DataFrame, pd.Series]:
+        """Uruchom strategię w trybie zgodnym z historycznym API TradingGUI."""
 
-        allow_short = bool(True if allow_short is None else allow_short)
-        engine = self._mk_engine(allow_short)
+        ai_model = kwargs.pop("ai_model", None)
+        ai_weight = float(kwargs.pop("ai_weight", 0.0) or 0.0)
+        ai_threshold_bps = float(kwargs.pop("ai_threshold_bps", 5.0) or 5.0)
 
-        is_multi_session = isinstance(data, Mapping)
-        if is_multi_session:
-            assert isinstance(data, Mapping)
-            normalized_params = self._coerce_parameter_mapping(data, params)
-        else:
-            normalized_params = self._coerce_parameters(params)
+        if kwargs:
+            self._logger.debug("Nieobsługiwane argumenty run_strategy zostały zignorowane: %s", sorted(kwargs))
 
-        session_count = len(data) if isinstance(data, Mapping) else 1
-        context_msg = f"risk_profile={risk_profile!s}" if risk_profile else "risk_profile=<unset>"
-        self._logger.info(
-            "TradingStrategies.run_strategy invoked (sessions=%d, allow_short=%s, %s)",
-            session_count,
-            allow_short,
-            context_msg,
+        return self.backtest(
+            data=data,
+            initial_capital=initial_capital,
+            fee=fee,
+            slippage=slippage,
+            fraction=fraction,
+            allow_short=allow_short,
+            ai_model=ai_model,
+            ai_weight=ai_weight,
+            ai_threshold_bps=ai_threshold_bps,
         )
-
-        def _execute_single(session_data: pd.DataFrame) -> BacktestResult:
-            if ai_model is not None and ai_weight > 0.0:
-                with _capture_pandas_warnings(
-                    engine._logger, component="trading_engine.pipeline"
-                ):
-                    validated_data = engine._validator.validate_ohlcv(session_data)
-                    indicators = engine._indicator_calculator.calculate_indicators(
-                        validated_data, normalized_params
-                    )
-                    raw_signals = engine._signal_generator.generate_signals(
-                        indicators, normalized_params
-                    )
-                    try:
-                        from bridges.ai_trading_bridge import AITradingBridge
-                    except Exception:  # pragma: no cover - opcjonalny most AI
-                        AITradingBridge = None  # type: ignore[assignment]
-                    if AITradingBridge is None:
-                        self._logger.warning(
-                            "AITradingBridge niedostępny – uruchamiam czystą strategię TA"
-                        )
-                        managed_positions = engine._risk_manager.apply_risk_management(
-                            validated_data, raw_signals, indicators, normalized_params
-                        )
-                    else:
-                        bridge = AITradingBridge(
-                            ai_model,
-                            weight_ai=float(ai_weight),
-                            threshold_bps=float(ai_threshold_bps),
-                        )
-                        fused_signals = bridge.integrate(validated_data, raw_signals)
-                        managed_positions = engine._risk_manager.apply_risk_management(
-                            validated_data, fused_signals, indicators, normalized_params
-                        )
-                    return engine._backtest_engine.run_backtest(
-                        validated_data,
-                        managed_positions,
-                        normalized_params,
-                        engine._config,
-                        initial_capital,
-                        fee_bps,
-                    )
-            return engine.run_strategy(
-                session_data,
-                normalized_params,
-                initial_capital=initial_capital,
-                fee_bps=fee_bps,
-            )
-
-        with _capture_pandas_warnings(
-            engine._logger, component="trading_engine.legacy_shim"
-        ):
-            if is_multi_session:
-                result = engine.run_strategy(
-                    data,
-                    normalized_params,
-                    initial_capital=initial_capital,
-                    fee_bps=fee_bps,
-                    session_weights=session_weights,
-                )
-            else:
-                assert isinstance(data, pd.DataFrame)
-                result = _execute_single(data)
-
-        if isinstance(result, MultiSessionBacktestResult):
-            aggregate_metrics = self._summarize_result(result.aggregate)
-            aggregate_metrics.update(
-                {
-                    "initial_capital": float(initial_capital),
-                    "fee_bps": float(fee_bps),
-                    "allow_short": bool(allow_short),
-                    "session_count": session_count,
-                    "weights": dict(result.weights),
-                }
-            )
-            if risk_profile:
-                aggregate_metrics["risk_profile"] = risk_profile
-            if metadata:
-                aggregate_metrics["metadata"] = dict(metadata)
-            aggregate_metrics["sessions"] = {
-                name: self._summarize_result(session_result)
-                for name, session_result in result.sessions.items()
-            }
-            trades = self._combine_multi_session_trades(result)
-            equity = result.aggregate.equity_curve.copy()
-            metrics = aggregate_metrics
-        else:
-            metrics = self._summarize_result(result)
-            metrics.update(
-                {
-                    "initial_capital": float(initial_capital),
-                    "fee_bps": float(fee_bps),
-                    "allow_short": bool(allow_short),
-                    "session_count": 1,
-                }
-            )
-            if risk_profile:
-                metrics["risk_profile"] = risk_profile
-            if metadata:
-                metrics["metadata"] = dict(metadata)
-            trades = result.trades.copy()
-            equity = result.equity_curve.copy()
-
-        self._logger.info(
-            "TradingStrategies.run_strategy completed (sessions=%d, total_return=%.2f%%, sharpe=%.2f)",
-            metrics.get("session_count", 1),
-            metrics.get("total_return", 0.0) * 100.0,
-            metrics.get("sharpe_ratio", 0.0),
-        )
-
-        return metrics, trades, equity
 
     def backtest(
         self,
