@@ -59,7 +59,7 @@ def test_audit_service_tokens_success_with_rbac():
     assert risk["coverage"]["risk.read"] == ["risk-reader"]
 
 
-def test_audit_warns_when_env_missing_and_legacy_only():
+def test_audit_warns_when_env_missing_and_shared_secret_only():
     token_config = ServiceTokenConfig(
         token_id="metrics-env",
         token_env="MISSING_TOKEN",
@@ -68,12 +68,12 @@ def test_audit_warns_when_env_missing_and_legacy_only():
     core_config = _base_core_config(
         metrics_service=MetricsServiceConfig(
             enabled=True,
-            auth_token="legacy",
+            auth_token="static",
             rbac_tokens=(token_config,),
         ),
         risk_service=RiskServiceConfig(
             enabled=True,
-            auth_token="legacy",
+            auth_token="static",
             rbac_tokens=(),
         ),
     )
@@ -83,7 +83,7 @@ def test_audit_warns_when_env_missing_and_legacy_only():
 
     assert payload["warnings"]
     metrics = next(service for service in payload["services"] if service["service"] == "metrics_service")
-    assert any("legacy" in finding["message"] for finding in metrics["findings"])
+    assert any("statycznego" in finding["message"] for finding in metrics["findings"])
     assert any("nie jest ustawiona" in finding["message"] for finding in metrics["findings"])
     risk = next(service for service in payload["services"] if service["service"] == "risk_service")
     assert any(finding["level"] == "warning" for finding in risk["findings"])

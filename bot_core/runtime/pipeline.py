@@ -7,11 +7,11 @@ import json
 import logging
 import math
 import threading
+import time
 from collections import Counter, defaultdict, deque
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
 from datetime import datetime, timezone, timedelta
-import time
 from pathlib import Path
 from typing import (
     Any,
@@ -3115,14 +3115,15 @@ class DecisionAwareSignalSink(StrategySignalSink):
             )
         return tuple(history)
 
-    def evaluation_summary(self) -> Mapping[str, object]:
-        evaluations = tuple(self._evaluations)
-        history_limit = self._evaluations.maxlen or len(evaluations)
+    def evaluation_summary_v2(self) -> Mapping[str, object]:
         if summarize_evaluation_payloads is None:
-            return self._legacy_evaluation_summary(
-                evaluations, history_limit=history_limit
+            raise RuntimeError(
+                "Decision summary aggregation module is unavailable – Stage6 "
+                "runtime wymaga bot_core.decision.summarize_evaluation_payloads"
             )
 
+        evaluations = tuple(self._evaluations)
+        history_limit = self._evaluations.maxlen or len(evaluations)
         payloads = [
             self._serialize_evaluation_payload(evaluation, include_candidate=True)
             for evaluation in evaluations
@@ -3132,146 +3133,6 @@ class DecisionAwareSignalSink(StrategySignalSink):
             history_limit=history_limit,
         )
         return summary.model_dump(exclude_none=True)
-
-    def _legacy_evaluation_summary(
-        self,
-        evaluations: Sequence[DecisionEvaluation],
-        *,
-        history_limit: int,
-    ) -> Mapping[str, object]:
-        total = len(evaluations)
-        summary: dict[str, object] = {
-            "total": total,
-            "accepted": 0,
-            "rejected": 0,
-            "acceptance_rate": 0.0,
-            "history_limit": history_limit,
-            "rejection_reasons": {},
-            "history_window": total,
-        }
-        if not evaluations:
-            return summary
-
-        accepted = sum(
-            1 for evaluation in evaluations if getattr(evaluation, "accepted", False)
-        )
-        summary["accepted"] = accepted
-        summary["rejected"] = total - accepted
-        summary["acceptance_rate"] = accepted / total if total else 0.0
-
-        rejection_reasons: Counter[str] = Counter()
-        net_edges: list[float] = []
-        costs: list[float] = []
-        probabilities: list[float] = []
-        expected_returns: list[float] = []
-        notionals: list[float] = []
-        model_probabilities: list[float] = []
-        model_returns: list[float] = []
-        latencies: list[float] = []
-
-        for evaluation in evaluations:
-            if not getattr(evaluation, "accepted", False):
-                for reason in getattr(evaluation, "reasons", ()):
-                    rejection_reasons[str(reason)] += 1
-
-            net_edge = self._coerce_float(getattr(evaluation, "net_edge_bps", None))
-            if net_edge is not None:
-                net_edges.append(net_edge)
-
-            cost = self._coerce_float(getattr(evaluation, "cost_bps", None))
-            if cost is not None:
-                costs.append(cost)
-
-            model_prob = self._coerce_float(
-                getattr(evaluation, "model_success_probability", None)
-            )
-            if model_prob is not None:
-                model_probabilities.append(model_prob)
-
-            model_return = self._coerce_float(
-                getattr(evaluation, "model_expected_return_bps", None)
-            )
-            if model_return is not None:
-                model_returns.append(model_return)
-
-            latency = self._coerce_float(getattr(evaluation, "latency_ms", None))
-            if latency is not None:
-                latencies.append(latency)
-
-            candidate = getattr(evaluation, "candidate", None)
-            if candidate is not None:
-                probability = self._coerce_float(
-                    getattr(candidate, "expected_probability", None)
-                )
-                if probability is not None:
-                    probabilities.append(probability)
-                expected_return = self._coerce_float(
-                    getattr(candidate, "expected_return_bps", None)
-                )
-                if expected_return is not None:
-                    expected_returns.append(expected_return)
-                notional = self._coerce_float(getattr(candidate, "notional", None))
-                if notional is not None:
-                    notionals.append(notional)
-
-        summary["rejection_reasons"] = dict(
-            sorted(rejection_reasons.items(), key=lambda item: item[1], reverse=True)
-        )
-
-        if net_edges:
-            summary["avg_net_edge_bps"] = sum(net_edges) / len(net_edges)
-        if costs:
-            summary["avg_cost_bps"] = sum(costs) / len(costs)
-        if probabilities:
-            summary["avg_expected_probability"] = sum(probabilities) / len(probabilities)
-        if expected_returns:
-            summary["avg_expected_return_bps"] = sum(expected_returns) / len(
-                expected_returns
-            )
-        if notionals:
-            summary["avg_notional"] = sum(notionals) / len(notionals)
-        if model_probabilities:
-            summary["avg_model_success_probability"] = sum(model_probabilities) / len(
-                model_probabilities
-            )
-        if model_returns:
-            summary["avg_model_expected_return_bps"] = sum(model_returns) / len(
-                model_returns
-            )
-        if latencies:
-            summary["avg_latency_ms"] = sum(latencies) / len(latencies)
-
-        latest = evaluations[-1]
-        latest_model = getattr(latest, "model_name", None)
-        if latest_model:
-            summary["latest_model"] = str(latest_model)
-        latest_thresholds = self._normalize_thresholds(
-            getattr(latest, "thresholds_snapshot", None)
-        )
-        if latest_thresholds:
-            summary["latest_thresholds"] = dict(latest_thresholds)
-
-        latest_candidate = getattr(latest, "candidate", None)
-        if latest_candidate is not None:
-            summary["latest_candidate"] = {
-                "symbol": getattr(latest_candidate, "symbol", None),
-                "action": getattr(latest_candidate, "action", None),
-                "strategy": getattr(latest_candidate, "strategy", None),
-                "expected_probability": getattr(
-                    latest_candidate, "expected_probability", None
-                ),
-                "expected_return_bps": getattr(
-                    latest_candidate, "expected_return_bps", None
-                ),
-            }
-
-        metadata = getattr(latest_candidate, "metadata", None)
-        if isinstance(metadata, Mapping):
-            generated_at = metadata.get("generated_at") or metadata.get("timestamp")
-            if generated_at is not None:
-                summary["latest_generated_at"] = generated_at
-
-        return summary
 
     def _record_evaluation(
         self,

@@ -2421,10 +2421,10 @@ void Application::loadUiSettings()
     const QString desiredPath = m_uiSettingsPath;
     QFile file(desiredPath);
     if (!file.exists()) {
-        const QString legacyPath = QDir::current().absoluteFilePath(QStringLiteral("var/state/ui_settings.json"));
-        if (!legacyPath.isEmpty() && legacyPath != desiredPath && QFile::exists(legacyPath)) {
+        const QString deprecatedPath = QDir::current().absoluteFilePath(QStringLiteral("var/state/ui_settings.json"));
+        if (!deprecatedPath.isEmpty() && deprecatedPath != desiredPath && QFile::exists(deprecatedPath)) {
             qCWarning(lcAppMetrics)
-                << "Wykryto przestarzały plik ustawień UI w" << legacyPath
+                << "Wykryto przestarzały plik ustawień UI w" << deprecatedPath
                 << "– automatyczna migracja została usunięta. Przenieś plik ręcznie do"
                 << desiredPath
                 << "zgodnie z instrukcją w docs/migrations/2024-legacy-storage-removal.md.";

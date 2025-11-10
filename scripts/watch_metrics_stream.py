@@ -2450,7 +2450,7 @@ def _apply_core_config_defaults(
         if getattr(metrics_config, "auth_token", None):
             args.auth_token = metrics_config.auth_token
             metrics_meta["auth_token_source"] = "config"
-            metrics_meta["auth_token_scope_reason"] = "legacy_token"
+            metrics_meta["auth_token_scope_reason"] = "shared_secret_token"
             metrics_meta.setdefault("auth_token_configured", True)
         elif getattr(metrics_config, "auth_token_env", None):
             env_name = str(metrics_config.auth_token_env)
@@ -2461,7 +2461,7 @@ def _apply_core_config_defaults(
                 args.auth_token = env_value
                 metrics_meta.setdefault("auth_token_configured", True)
                 metrics_meta["auth_token_env_present"] = True
-                metrics_meta["auth_token_scope_reason"] = "legacy_token_env"
+                metrics_meta["auth_token_scope_reason"] = "shared_secret_token_env"
             else:
                 metrics_meta.setdefault("auth_token_configured", False)
                 metrics_meta["auth_token_env_present"] = False
@@ -2476,7 +2476,7 @@ def _apply_core_config_defaults(
             if file_value:
                 args.auth_token = file_value
                 metrics_meta.setdefault("auth_token_configured", True)
-                metrics_meta["auth_token_scope_reason"] = "legacy_token_file"
+                metrics_meta["auth_token_scope_reason"] = "shared_secret_token_file"
             else:
                 metrics_meta.setdefault("auth_token_configured", False)
         elif (

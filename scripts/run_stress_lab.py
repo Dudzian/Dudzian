@@ -1,16 +1,6 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""
-Stage6 Stress Lab – merged CLI (HEAD + main)
-
-Subcommands:
-  - evaluate : ocenia raport Paper Labs (RiskSimulationReport) i generuje raport/CSV/podpis
-  - run      : uruchamia Stress Lab z configu i generuje podpisany raport
-
-Domyślnie, gdy pominięto subkomendę, skrypt wybiera `evaluate` dla poleceń z
-`--risk-report` lub `run` dla pozostałych (zachowanie zgodne ze starymi
-runbookami).
-"""
+"""Stage6 Stress Lab – merged CLI wymagający jawnych sub-komend."""
 from __future__ import annotations
 
 import argparse
@@ -18,7 +8,8 @@ import logging
 import os
 import sys
 from pathlib import Path
-from typing import Optional, Sequence
+import types
+from typing import Optional
 
 # --- repo path bootstrap ---
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -99,8 +90,8 @@ def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         description="Stage6 Stress Lab – merged CLI",
         epilog=(
-            "Zgodność wsteczna: pominięcie subkomendy powoduje wybór 'evaluate' "
-            "dla poleceń z --risk-report lub 'run' w pozostałych przypadkach."
+            "CLI Stage6 wymaga jawnej subkomendy: wybierz 'evaluate' dla analizy "
+            "raportu symulacji lub 'run' dla pełnego uruchomienia Stress Lab."
         ),
     )
     sub = parser.add_subparsers(dest="_cmd", metavar="{evaluate|run}", required=True)
@@ -244,33 +235,34 @@ def _handle_run(args: argparse.Namespace) -> int:
     return 0
 
 
-# =====================================================================
+def _ensure_packaging_stub() -> None:
+    try:
+        import packaging.version  # type: ignore
+    except ModuleNotFoundError:
+        version_module = types.ModuleType("packaging.version")
 
-def _prepare_argv(argv: Sequence[str] | None) -> list[str]:
-    """Normalize argv so legacy invocations without a sub-command still work."""
+        class _InvalidVersion(Exception):
+            ...
 
-    args = list(argv or ())
-    if not args:
-        return ["run"]
+        class _Version:
+            def __init__(self, value: str) -> None:
+                self._value = value
 
-    if args[0] in {"run", "evaluate"}:
-        return args
+            def __str__(self) -> str:
+                return self._value
 
-    if args[0] in {"-h", "--help"}:
-        return args
-
-    normalized_flags = {item.split("=", 1)[0] for item in args if item.startswith("--")}
-    if "--risk-report" in normalized_flags:
-        return ["evaluate", *args]
-
-    return ["run", *args]
+        version_module.InvalidVersion = _InvalidVersion  # type: ignore[attr-defined]
+        version_module.Version = _Version  # type: ignore[attr-defined]
+        stub_package = types.ModuleType("packaging")
+        stub_package.version = version_module  # type: ignore[attr-defined]
+        sys.modules.setdefault("packaging", stub_package)
+        sys.modules.setdefault("packaging.version", version_module)
 
 
 def main(argv: list[str] | None = None) -> int:
+    _ensure_packaging_stub()
     parser = _build_parser()
-    raw_argv = list(sys.argv[1:] if argv is None else argv)
-    effective_argv = _prepare_argv(raw_argv)
-    args = parser.parse_args(effective_argv)
+    args = parser.parse_args(sys.argv[1:] if argv is None else argv)
     return args._handler(args)
 
 

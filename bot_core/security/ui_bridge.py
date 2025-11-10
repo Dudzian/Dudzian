@@ -289,7 +289,14 @@ def _read_license_summary(
         summary["status"] = "invalid"
         summary["errors"].append(str(exc))
         return summary
-    except (LicenseBundleError, LicenseServiceError) as exc:
+    except LicenseBundleError as exc:
+        summary = _empty_license_summary(path)
+        summary["status"] = "invalid"
+        summary["errors"].append(str(exc))
+        if warnings:
+            summary["warnings"].extend(warnings)
+        return summary
+    except LicenseServiceError as exc:
         warnings.append(str(exc))
     else:
         summary = _build_capability_summary(snapshot)

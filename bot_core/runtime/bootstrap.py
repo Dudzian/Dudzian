@@ -2673,7 +2673,7 @@ def bootstrap_environment(
             if not token_file_exists:
                 metrics_security_warnings.append(
                     (
-                        "Wskazany plik legacy tokenu MetricsService nie istnieje "
+                        "Wskazany plik statycznego tokenu MetricsService nie istnieje "
                         "(runtime.metrics_service.auth_token_file)."
                     )
                 )

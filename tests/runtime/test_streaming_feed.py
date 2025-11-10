@@ -811,7 +811,7 @@ def test_decision_aware_sink_exposes_history_and_summary() -> None:
     assert history_without_candidates[0]["model_name"] == "gbm_v2"
     assert history_without_candidates[1]["model_name"] == "gbm_v3"
 
-    summary = sink.evaluation_summary()
+    summary = sink.evaluation_summary_v2()
     assert summary["total"] == 3
     assert summary["accepted"] == 2
     assert summary["rejected"] == 1
