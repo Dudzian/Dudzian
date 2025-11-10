@@ -30,6 +30,23 @@ podpisami HMAC oraz integracją z obserwowalnością i Market Intelligence.
 4. Przygotuj plik alokacji (np. `var/audit/allocations/<data>.json`) z wagami
    aktywów przekazanymi z runtime lub Stress Lab oraz raport Stress Lab
    (`var/audit/stress_lab/<data>.json`) jeśli generował overridy.
+   Wygeneruj również raport `portfolio_stress`:
+   ```bash
+   python scripts/run_portfolio_stress.py \
+     --config config/core.yaml \
+     --baseline stage6_samples/portfolio_stress_baseline.json \
+     --output-json var/audit/risk/portfolio_stress.json \
+     --output-csv var/audit/risk/portfolio_stress.csv \
+     --signing-key-path secrets/hmac/stage6_portfolio_stress.key \
+     --signing-key-id stage6-portfolio-stress
+  ```
+  Zalecenia kalibracyjne opisano w `docs/risk/portfolio_stress.md`. Sekcja
+  `summary` wygenerowanego raportu podsumowuje liczbę scenariuszy, maksymalny
+  drawdown, P&L ważone prawdopodobieństwem oraz kwantylowe metryki VaR95/CVaR95 –
+  te pola są wykorzystywane w dashboardzie hypercare. Dodatkowo sekcja
+  `tag_aggregates` grupuje scenariusze po kluczowych tagach (np. `liquidity`,
+  `macro`), co pozwala szybko ocenić gdzie kumuluje się ryzyko i które zespoły
+  powinny przygotować działania mitigacyjne.
 5. Uruchom automatyczny cykl hypercare portfela (zapisując podpis do osobnego
    pliku):
    ```bash

@@ -380,6 +380,69 @@ class StressLabConfig:
 
 
 @dataclass(slots=True)
+class PortfolioStressFactorShockConfig:
+    """Definicja szoku makro dla czynnika ryzyka."""
+
+    factor: str
+    return_pct: float
+    liquidity_haircut_pct: float | None = None
+    notes: str | None = None
+
+
+@dataclass(slots=True)
+class PortfolioStressAssetShockConfig:
+    """Dodatkowy szok przypisany do konkretnego aktywa."""
+
+    symbol: str
+    return_pct: float
+    liquidity_haircut_pct: float | None = None
+    notes: str | None = None
+
+
+@dataclass(slots=True)
+class PortfolioStressScenarioConfig:
+    """Opis scenariusza makro w module portfolio_stress."""
+
+    name: str
+    title: str | None = None
+    description: str | None = None
+    horizon_days: float | None = None
+    probability: float | None = None
+    factors: Sequence[PortfolioStressFactorShockConfig] = field(default_factory=tuple)
+    assets: Sequence[PortfolioStressAssetShockConfig] = field(default_factory=tuple)
+    tags: Sequence[str] = field(default_factory=tuple)
+    metadata: Mapping[str, Any] = field(default_factory=dict)
+    cash_return_pct: float | None = None
+
+
+@dataclass(slots=True)
+class PortfolioStressDataSourceConfig:
+    """Źródło danych baseline wykorzystywane przez portfolio_stress."""
+
+    name: str
+    path: str
+    format: str = "json"
+    required: bool = True
+    description: str | None = None
+
+
+@dataclass(slots=True)
+class PortfolioStressConfig:
+    """Konfiguracja modułu portfolio_stress Stage6."""
+
+    enabled: bool = False
+    portfolio_id: str | None = None
+    default_horizon_days: float | None = None
+    report_directory: str = "var/audit/stage6/portfolio_stress"
+    signing_key_env: str | None = None
+    signing_key_path: str | None = None
+    signing_key_id: str | None = None
+    baseline_sources: Sequence[PortfolioStressDataSourceConfig] = field(default_factory=tuple)
+    scenarios: Sequence[PortfolioStressScenarioConfig] = field(default_factory=tuple)
+    metadata: Mapping[str, Any] = field(default_factory=dict)
+
+
+@dataclass(slots=True)
 class ResilienceDrillThresholdsConfig:
     """Progi akceptacyjne dla drillów failover w Stage6."""
     max_latency_ms: float = 250.0
@@ -1391,6 +1454,7 @@ class CoreConfig:
     # Stage6
     portfolio_governor: PortfolioGovernorV6Config | None = None
     stress_lab: StressLabConfig | None = None
+    portfolio_stress: PortfolioStressConfig | None = None
     resilience: ResilienceConfig | None = None
 
     reporting: CoreReportingConfig | None = None
@@ -1804,6 +1868,11 @@ __all__ = [
     "StressLabScenarioConfig",
     "StressLabShockConfig",
     "StressLabThresholdsConfig",
+    "PortfolioStressConfig",
+    "PortfolioStressScenarioConfig",
+    "PortfolioStressFactorShockConfig",
+    "PortfolioStressAssetShockConfig",
+    "PortfolioStressDataSourceConfig",
     "ResilienceConfig",
     "ResilienceDrillConfig",
     "ResilienceDrillThresholdsConfig",

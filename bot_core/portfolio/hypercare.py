@@ -14,6 +14,7 @@ from bot_core.portfolio.governor import PortfolioDecision, PortfolioGovernor
 from bot_core.portfolio.io import load_allocations_file, load_market_intel_report
 from bot_core.risk import StressOverrideRecommendation
 from bot_core.runtime.portfolio_inputs import (
+    build_portfolio_stress_provider,
     build_slo_status_provider,
     build_stress_override_provider,
 )
@@ -29,11 +30,13 @@ class PortfolioCycleInputs:
     portfolio_value: float
     slo_report_path: Path | None = None
     stress_report_path: Path | None = None
+    portfolio_stress_report_path: Path | None = None
     fallback_directories: Sequence[Path] = ()
     market_intel_required_symbols: Sequence[str] | None = None
     market_intel_max_age: timedelta | None = None
     slo_max_age: timedelta | None = None
     stress_max_age: timedelta | None = None
+    portfolio_stress_max_age: timedelta | None = None
 
 
 @dataclass(slots=True)
@@ -69,6 +72,7 @@ class PortfolioCycleResult:
     market_intel_metadata: Mapping[str, Any]
     slo_statuses: Mapping[str, SLOStatus]
     stress_overrides: Sequence[StressOverrideRecommendation]
+    portfolio_stress: Mapping[str, Any]
 
 
 class PortfolioHypercareCycle:
@@ -87,6 +91,7 @@ class PortfolioHypercareCycle:
 
         slo_statuses = self._load_slo_statuses()
         stress_overrides = self._load_stress_overrides()
+        portfolio_stress = self._load_portfolio_stress_summary()
 
         log_context = dict(self._config.log_context or {})
         log_context.setdefault("source", "portfolio_hypercare_cycle")
@@ -97,6 +102,9 @@ class PortfolioHypercareCycle:
                 "market_intel": str(inputs.market_intel_path),
                 "slo_report": str(inputs.slo_report_path) if inputs.slo_report_path else None,
                 "stress_report": str(inputs.stress_report_path) if inputs.stress_report_path else None,
+                "portfolio_stress": str(inputs.portfolio_stress_report_path)
+                if inputs.portfolio_stress_report_path
+                else None,
             },
         )
         log_context.setdefault("portfolio_value", float(inputs.portfolio_value))
@@ -110,7 +118,13 @@ class PortfolioHypercareCycle:
             log_context=log_context,
         )
 
-        summary = self._build_summary(decision, market_meta, slo_statuses, stress_overrides)
+        summary = self._build_summary(
+            decision,
+            market_meta,
+            slo_statuses,
+            stress_overrides,
+            portfolio_stress,
+        )
         summary_path = self._write_summary(summary)
         csv_path = self._write_csv(decision)
         signature_path = self._write_signature(summary)
@@ -123,6 +137,7 @@ class PortfolioHypercareCycle:
             market_intel_metadata=market_meta,
             slo_statuses=slo_statuses,
             stress_overrides=stress_overrides,
+            portfolio_stress=portfolio_stress,
         )
 
     def _validate_market_intel(
@@ -174,12 +189,24 @@ class PortfolioHypercareCycle:
         )
         return tuple(provider())
 
+    def _load_portfolio_stress_summary(self) -> Mapping[str, Any]:
+        path = self._config.inputs.portfolio_stress_report_path
+        if not path:
+            return {}
+        provider = build_portfolio_stress_provider(
+            path,
+            fallback_directories=self._config.inputs.fallback_directories,
+            max_age=self._config.inputs.portfolio_stress_max_age,
+        )
+        return dict(provider())
+
     def _build_summary(
         self,
         decision: PortfolioDecision,
         market_meta: Mapping[str, Any],
         slo_statuses: Mapping[str, SLOStatus],
         stress_overrides: Sequence[StressOverrideRecommendation],
+        portfolio_stress: Mapping[str, Any],
     ) -> dict[str, Any]:
         now = datetime.now(timezone.utc)
         summary: dict[str, Any] = {
@@ -233,6 +260,8 @@ class PortfolioHypercareCycle:
                 }
                 for override in stress_overrides
             ]
+        if portfolio_stress:
+            summary["portfolio_stress"] = portfolio_stress
         return summary
 
     def _write_summary(self, payload: Mapping[str, Any]) -> Path:

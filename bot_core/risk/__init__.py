@@ -16,6 +16,16 @@ from bot_core.risk.guardrails import (
     LossGuardrailConfig,
     RiskGuardrailMetricSet,
 )
+from bot_core.risk.portfolio_stress import (
+    PortfolioStressBaseline,
+    PortfolioStressPosition,
+    PortfolioStressPositionResult,
+    PortfolioStressScenarioResult,
+    PortfolioStressReport,
+    baseline_from_mapping as portfolio_stress_baseline_from_mapping,
+    load_portfolio_stress_baseline,
+    run_portfolio_stress,
+)
 from bot_core.risk.portfolio import (
     CorrelationAnalyzer,
     PositionSizing,
@@ -151,6 +161,14 @@ __all__ = [
     "create_risk_manager",
     "backtest_risk_strategy",
     "calculate_optimal_leverage",
+    "PortfolioStressBaseline",
+    "PortfolioStressPosition",
+    "PortfolioStressPositionResult",
+    "PortfolioStressScenarioResult",
+    "PortfolioStressReport",
+    "run_portfolio_stress",
+    "load_portfolio_stress_baseline",
+    "portfolio_stress_baseline_from_mapping",
 ]
 
 # Eksporty Stress Lab (HEAD) – tylko jeśli moduły istnieją

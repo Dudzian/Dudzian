@@ -5,7 +5,7 @@ import json
 import logging
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import Callable, Iterable, Mapping, Sequence
+from typing import Any, Callable, Iterable, Mapping, Sequence, cast
 
 from bot_core.observability.slo import SLOStatus
 from bot_core.risk import StressOverrideRecommendation
@@ -15,6 +15,8 @@ __all__ = [
     "build_stress_override_provider",
     "load_slo_statuses",
     "load_stress_overrides",
+    "load_portfolio_stress_summary",
+    "build_portfolio_stress_provider",
 ]
 
 
@@ -222,6 +224,214 @@ def load_stress_overrides(
     return tuple(overrides)
 
 
+def load_portfolio_stress_summary(
+    report_path: Path,
+    *,
+    max_age: timedelta | None = None,
+) -> Mapping[str, Any]:
+    """Ładuje skondensowany raport portfolio_stress (scenariusze, drawdowny)."""
+
+    if not _ensure_fresh(report_path, max_age=max_age):
+        return {}
+    try:
+        content = report_path.read_text(encoding="utf-8")
+    except FileNotFoundError:
+        return {}
+    except Exception:  # pragma: no cover
+        _LOGGER.exception("Błąd odczytu raportu portfolio_stress %s", report_path)
+        return {}
+
+    try:
+        payload = json.loads(content)
+    except json.JSONDecodeError:
+        _LOGGER.exception("Niepoprawny JSON raportu portfolio_stress w %s", report_path)
+        return {}
+
+    scenarios_raw = payload.get("scenarios")
+    if not isinstance(scenarios_raw, Sequence):
+        return {}
+
+    scenarios: list[dict[str, Any]] = []
+    worst_drawdown: float | None = None
+    worst_entry: dict[str, Any] | None = None
+    for entry in scenarios_raw:
+        if not isinstance(entry, Mapping):
+            continue
+        name = str(entry.get("name", "")).strip() or None
+        total_return = _to_float(entry.get("total_return_pct"))
+        drawdown = _to_float(entry.get("drawdown_pct"))
+        total_pnl = _to_float(entry.get("total_pnl_usd"))
+        liquidity = _to_float(entry.get("liquidity_impact_usd"))
+        cash_pnl = _to_float(entry.get("cash_pnl_usd"))
+        worst_section = entry.get("worst_position")
+        worst_symbol = None
+        worst_symbol_return = None
+        worst_symbol_pnl = None
+        if isinstance(worst_section, Mapping):
+            symbol_value = worst_section.get("symbol")
+            worst_symbol = str(symbol_value).strip() if isinstance(symbol_value, str) else None
+            worst_symbol_return = _to_float(worst_section.get("return_pct"))
+            worst_symbol_pnl = _to_float(worst_section.get("pnl_usd"))
+        scenario_summary: dict[str, Any] = {
+            "name": name,
+            "title": entry.get("title"),
+            "horizon_days": _to_float(entry.get("horizon_days")),
+            "probability": _to_float(entry.get("probability")),
+            "total_return_pct": total_return,
+            "drawdown_pct": drawdown,
+            "total_pnl_usd": total_pnl,
+            "cash_pnl_usd": cash_pnl,
+            "liquidity_impact_usd": liquidity,
+            "worst_position": {
+                "symbol": worst_symbol,
+                "return_pct": worst_symbol_return,
+                "pnl_usd": worst_symbol_pnl,
+            },
+        }
+        tags = entry.get("tags")
+        if isinstance(tags, Sequence) and not isinstance(tags, (str, bytes)):
+            scenario_summary["tags"] = [str(tag) for tag in tags]
+        scenarios.append(scenario_summary)
+        if drawdown is not None:
+            if worst_drawdown is None or drawdown > worst_drawdown:
+                worst_drawdown = drawdown
+                worst_entry = scenario_summary
+
+    summary_raw = payload.get("summary")
+    summary_section: Mapping[str, Any] | None
+    summary_section = summary_raw if isinstance(summary_raw, Mapping) else None
+
+    scenario_count = int(
+        (summary_section.get("scenario_count") if summary_section else None)
+        or len(scenarios)
+    )
+    summary_payload: dict[str, Any] = {
+        "portfolio_id": payload.get("portfolio_id"),
+        "generated_at": payload.get("generated_at"),
+        "scenario_count": scenario_count,
+        "scenarios": scenarios,
+    }
+
+    summary_details: dict[str, Any] = {"scenario_count": scenario_count}
+
+    max_drawdown = _to_float(summary_section.get("max_drawdown_pct")) if summary_section else None
+    if max_drawdown is None:
+        max_drawdown = worst_drawdown
+    if max_drawdown is not None:
+        summary_payload["max_drawdown_pct"] = max_drawdown
+        summary_details["max_drawdown_pct"] = max_drawdown
+
+    min_total_return = _to_float(summary_section.get("min_total_return_pct")) if summary_section else None
+    if min_total_return is not None:
+        summary_payload["min_total_return_pct"] = min_total_return
+        summary_details["min_total_return_pct"] = min_total_return
+
+    max_liquidity = _to_float(summary_section.get("max_liquidity_impact_usd")) if summary_section else None
+    if max_liquidity is not None:
+        summary_payload["max_liquidity_impact_usd"] = max_liquidity
+        summary_details["max_liquidity_impact_usd"] = max_liquidity
+
+    worst_summary: Mapping[str, Any] | None = None
+    if summary_section and isinstance(summary_section.get("worst_scenario"), Mapping):
+        worst_summary = cast(Mapping[str, Any], summary_section.get("worst_scenario"))
+
+    if worst_summary is not None:
+        worst_payload = {
+            "name": worst_summary.get("name"),
+            "title": worst_summary.get("title"),
+            "drawdown_pct": _to_float(worst_summary.get("drawdown_pct")),
+            "total_return_pct": _to_float(worst_summary.get("total_return_pct")),
+            "total_pnl_usd": _to_float(worst_summary.get("total_pnl_usd")),
+            "liquidity_impact_usd": _to_float(worst_summary.get("liquidity_impact_usd")),
+        }
+    elif worst_entry is not None:
+        worst_payload = {
+            "name": worst_entry.get("name"),
+            "drawdown_pct": worst_entry.get("drawdown_pct"),
+            "total_return_pct": worst_entry.get("total_return_pct"),
+            "total_pnl_usd": worst_entry.get("total_pnl_usd"),
+        }
+    else:
+        worst_payload = None
+
+    if worst_payload is not None:
+        summary_payload["worst_scenario"] = worst_payload
+        summary_details["worst_scenario"] = worst_payload
+
+    if summary_section is not None:
+        total_probability = _to_float(summary_section.get("total_probability"))
+        if total_probability is not None:
+            summary_details["total_probability"] = total_probability
+        expected_pnl = _to_float(summary_section.get("expected_pnl_usd"))
+        if expected_pnl is not None:
+            summary_details["expected_pnl_usd"] = expected_pnl
+        expected_return = _to_float(summary_section.get("expected_return_pct"))
+        if expected_return is not None:
+            summary_details["expected_return_pct"] = expected_return
+        var_return = _to_float(summary_section.get("var_95_return_pct"))
+        if var_return is not None:
+            summary_details["var_95_return_pct"] = var_return
+        var_pnl = _to_float(summary_section.get("var_95_pnl_usd"))
+        if var_pnl is not None:
+            summary_details["var_95_pnl_usd"] = var_pnl
+        cvar_return = _to_float(summary_section.get("cvar_95_return_pct"))
+        if cvar_return is not None:
+            summary_details["cvar_95_return_pct"] = cvar_return
+        cvar_pnl = _to_float(summary_section.get("cvar_95_pnl_usd"))
+        if cvar_pnl is not None:
+            summary_details["cvar_95_pnl_usd"] = cvar_pnl
+        tag_aggregates_raw = summary_section.get("tag_aggregates")
+        if isinstance(tag_aggregates_raw, Sequence):
+            aggregates: list[dict[str, Any]] = []
+            for entry in tag_aggregates_raw:
+                if not isinstance(entry, Mapping):
+                    continue
+                tag_value = entry.get("tag")
+                if not isinstance(tag_value, str):
+                    continue
+                scenario_count_raw = entry.get("scenario_count")
+                try:
+                    scenario_count = int(scenario_count_raw)
+                except (TypeError, ValueError):
+                    scenario_count = None
+                aggregate: dict[str, Any] = {"tag": tag_value}
+                if scenario_count is not None:
+                    aggregate["scenario_count"] = scenario_count
+                max_drawdown_tag = _to_float(entry.get("max_drawdown_pct"))
+                if max_drawdown_tag is not None:
+                    aggregate["max_drawdown_pct"] = max_drawdown_tag
+                worst_return_tag = _to_float(entry.get("worst_return_pct"))
+                if worst_return_tag is not None:
+                    aggregate["worst_return_pct"] = worst_return_tag
+                total_probability_tag = _to_float(entry.get("total_probability"))
+                if total_probability_tag is not None:
+                    aggregate["total_probability"] = total_probability_tag
+                expected_pnl_tag = _to_float(entry.get("expected_pnl_usd"))
+                if expected_pnl_tag is not None:
+                    aggregate["expected_pnl_usd"] = expected_pnl_tag
+                worst_tag_raw = entry.get("worst_scenario")
+                if isinstance(worst_tag_raw, Mapping):
+                    aggregate["worst_scenario"] = {
+                        "name": worst_tag_raw.get("name"),
+                        "title": worst_tag_raw.get("title"),
+                        "drawdown_pct": _to_float(worst_tag_raw.get("drawdown_pct")),
+                        "total_return_pct": _to_float(
+                            worst_tag_raw.get("total_return_pct")
+                        ),
+                        "total_pnl_usd": _to_float(worst_tag_raw.get("total_pnl_usd")),
+                    }
+                aggregates.append(aggregate)
+            if aggregates:
+                summary_details["tag_aggregates"] = aggregates
+
+    summary_payload["summary"] = summary_details
+
+    metadata = payload.get("metadata")
+    if isinstance(metadata, Mapping):
+        summary_payload["metadata"] = dict(metadata)
+    return summary_payload
+
+
 def build_slo_status_provider(
     path: str | Path,
     *,
@@ -274,5 +484,36 @@ def build_stress_override_provider(
             ", ".join(str(item) for item in fallbacks) or "brak",
         )
         return ()
+
+    return _provider
+
+
+def build_portfolio_stress_provider(
+    path: str | Path,
+    *,
+    fallback_directories: Sequence[Path] = (),
+    max_age: timedelta | None = None,
+) -> Callable[[], Mapping[str, Any]]:
+    target = Path(path)
+    fallbacks = tuple(Path(item) for item in fallback_directories)
+
+    def _provider() -> Mapping[str, Any]:
+        for candidate in _candidate_paths(target, fallbacks):
+            try:
+                summary = load_portfolio_stress_summary(candidate, max_age=max_age)
+            except Exception:  # pragma: no cover - log diagnostyczny
+                _LOGGER.exception(
+                    "Błąd ładowania raportu portfolio_stress z %s",
+                    candidate,
+                )
+                return {}
+            if summary:
+                return summary
+        _LOGGER.debug(
+            "Nie znaleziono aktualnego raportu portfolio_stress dla ścieżki %s (fallbacki: %s)",
+            target,
+            ", ".join(str(item) for item in fallbacks) or "brak",
+        )
+        return {}
 
     return _provider
