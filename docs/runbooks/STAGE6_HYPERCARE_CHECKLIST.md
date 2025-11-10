@@ -15,7 +15,9 @@ artefakty audytowe.
   który tworzy katalog docelowy, sprawdza poprawność JSON oraz liczbę
   pomiarów), Resilience (plan
   failover, manifesty paczek, polityka) oraz Portfolio
-  (alokacje, Market Intel, raporty SLO/Stress Lab).
+  (alokacje, Market Intel, raporty SLO/Stress Lab oraz raport portfolio_stress;
+  szczegóły i kalibracja w `docs/risk/portfolio_stress.md`, łącznie z
+  agregatami tagów `tag_aggregates`, które wskazują dominujące klastry ryzyka).
 - Raport Market Intel wygenerowany do oczekiwanej lokalizacji hypercare:
   ```bash
   python scripts/build_market_intel_metrics.py \
@@ -73,6 +75,7 @@ artefakty audytowe.
        portfolio_value: 125000
        slo_report: var/audit/observability/slo_report.json
        stress_report: var/audit/risk/stress_lab.json
+       portfolio_stress_report: var/audit/risk/portfolio_stress.json
    ```
 2. Upewnij się, że w katalogu `var/metrics/` znajduje się aktualny plik
    `stage6_measurements.json`. Jeżeli otrzymujesz go z innego środowiska,

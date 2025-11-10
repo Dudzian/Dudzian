@@ -1,0 +1,70 @@
+{
+  "portfolio_id": "stage6_core",
+  "as_of": "2024-06-01T00:00:00Z",
+  "cash_usd": 150000.0,
+  "total_value_usd": 1250000.0,
+  "positions": [
+    {
+      "symbol": "btc_usdt",
+      "value_usd": 500000.0,
+      "factor_betas": {
+        "usd_liquidity": 0.65,
+        "global_rates": 0.3
+      },
+      "metadata": {
+        "risk_budget": "core",
+        "notes": "BTC w koszyku płynności"
+      }
+    },
+    {
+      "symbol": "eth_usdt",
+      "value_usd": 300000.0,
+      "factor_betas": {
+        "usd_liquidity": 0.45,
+        "alt_beta": 0.25
+      },
+      "metadata": {
+        "risk_budget": "core"
+      }
+    },
+    {
+      "symbol": "sol_usdt",
+      "value_usd": 120000.0,
+      "factor_betas": {
+        "alt_beta": 0.65,
+        "alt_liquidity": 0.5
+      },
+      "metadata": {
+        "risk_budget": "alt"
+      }
+    },
+    {
+      "symbol": "ada_usdt",
+      "value_usd": 80000.0,
+      "factor_betas": {
+        "alt_beta": 0.55,
+        "alt_liquidity": 0.45
+      }
+    },
+    {
+      "symbol": "dot_usdt",
+      "value_usd": 50000.0,
+      "factor_betas": {
+        "alt_beta": 0.5,
+        "alt_liquidity": 0.4
+      }
+    },
+    {
+      "symbol": "bnb_usdt",
+      "value_usd": 70000.0,
+      "factor_betas": {
+        "global_rates": 0.4,
+        "usd_liquidity": 0.35
+      }
+    }
+  ],
+  "metadata": {
+    "notes": "Baseline exposures for Stage6 portfolio stress scenarios.",
+    "portfolio_value_usd": 1250000.0
+  }
+}

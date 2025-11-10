@@ -492,6 +492,93 @@ stress_lab:
         max_latency_spike_ms: 180.0
         max_blackout_minutes: 55.0
 
+portfolio_stress:
+  enabled: true
+  portfolio_id: stage6_core
+  default_horizon_days: 7
+  report_directory: var/audit/stage6/portfolio_stress
+  signing_key_env: PORTFOLIO_STRESS_SIGNING_KEY
+  baseline_sources:
+    - name: stage6_snapshot
+      path: stage6_samples/portfolio_stress_baseline.json
+      format: json
+      required: true
+      description: Aktualny snapshot wartości portfela i ekspozycji czynnikowych Stage6.
+  scenarios:
+    - name: usd_liquidity_crunch
+      title: Kryzys płynności USD
+      description: Ucieczka płynności dolarowej i wzrost zmienności na parach bazowych.
+      horizon_days: 5
+      probability: 0.15
+      factors:
+        - factor: usd_liquidity
+          return_pct: -0.18
+          liquidity_haircut_pct: 0.35
+          notes: Zwinięcie płynności on/off-ramp USD.
+        - factor: funding_rates
+          return_pct: -0.05
+          notes: Silne ujemne fundingi na perpetuals.
+      assets:
+        - symbol: btc_usdt
+          return_pct: -0.22
+          liquidity_haircut_pct: 0.25
+        - symbol: eth_usdt
+          return_pct: -0.2
+          liquidity_haircut_pct: 0.2
+      tags: [liquidity, systemic]
+      metadata:
+        stress_score: 0.82
+    - name: alt_season_boom_and_bust
+      title: Hossa/załamanie altcoinów
+      description: Dwufazowy scenariusz dynamicznych przepływów do altów i gwałtownej korekty.
+      horizon_days: 10
+      probability: 0.25
+      factors:
+        - factor: alt_beta
+          return_pct: 0.12
+          notes: Wczesna faza rajdu altcoinów.
+        - factor: alt_liquidity
+          return_pct: -0.16
+          liquidity_haircut_pct: 0.3
+          notes: Gwałtowna realizacja zysków i drenowanie płynności.
+      assets:
+        - symbol: sol_usdt
+          return_pct: -0.24
+          liquidity_haircut_pct: 0.28
+        - symbol: ada_usdt
+          return_pct: -0.18
+        - symbol: dot_usdt
+          return_pct: -0.17
+      tags: [altcoins, dispersion]
+      metadata:
+        phases: 2
+        comment: Rotacja altów -> korekta
+    - name: rates_regime_shift
+      title: Szok stóp procentowych
+      description: Skokowe podniesienie stóp i odpływ kapitału z ryzykownych aktywów.
+      horizon_days: 7
+      probability: 0.2
+      factors:
+        - factor: global_rates
+          return_pct: -0.1
+          notes: Dyskontowanie agresywnej ścieżki stóp.
+        - factor: usd_liquidity
+          return_pct: -0.08
+          liquidity_haircut_pct: 0.18
+        - factor: vol_targeting
+          return_pct: -0.05
+      assets:
+        - symbol: btc_usdt
+          return_pct: -0.15
+        - symbol: eth_usdt
+          return_pct: -0.17
+        - symbol: bnb_usdt
+          return_pct: -0.14
+      cash_return_pct: 0.01
+      tags: [macro, rates]
+      metadata:
+        scenario_source: fomc_minutes
+
 resilience:
   enabled: true
   require_success: true

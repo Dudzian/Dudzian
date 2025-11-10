@@ -284,6 +284,21 @@ except Exception:
 
 try:
     from bot_core.config.models import (  # type: ignore
+        PortfolioStressConfig,
+        PortfolioStressScenarioConfig,
+        PortfolioStressFactorShockConfig,
+        PortfolioStressAssetShockConfig,
+        PortfolioStressDataSourceConfig,
+    )
+except Exception:
+    PortfolioStressConfig = None  # type: ignore
+    PortfolioStressScenarioConfig = None  # type: ignore
+    PortfolioStressFactorShockConfig = None  # type: ignore
+    PortfolioStressAssetShockConfig = None  # type: ignore
+    PortfolioStressDataSourceConfig = None  # type: ignore
+
+try:
+    from bot_core.config.models import (  # type: ignore
         ResilienceConfig,
         ResilienceDrillConfig,
         ResilienceDrillThresholdsConfig,
@@ -3727,6 +3742,299 @@ def _load_stress_lab_config(
     return StressLabConfig(**config_kwargs)  # type: ignore[arg-type]
 
 
+def _load_portfolio_stress_config(
+    raw_root: Mapping[str, Any], *, base_dir: Path | None
+) -> PortfolioStressConfig | None:
+    if PortfolioStressConfig is None:
+        return None
+
+    section: Mapping[str, Any] | None = None
+    top_level = raw_root.get("portfolio_stress")
+    if isinstance(top_level, Mapping):
+        section = top_level
+    if section is None:
+        runtime_section = raw_root.get("runtime")
+        if isinstance(runtime_section, Mapping):
+            runtime_entry = runtime_section.get("portfolio_stress")
+            if isinstance(runtime_entry, Mapping):
+                section = runtime_entry
+    if section is None:
+        return None
+
+    enabled = bool(section.get("enabled", False))
+    portfolio_id_raw = section.get("portfolio_id")
+    portfolio_id = (
+        str(portfolio_id_raw).strip()
+        if isinstance(portfolio_id_raw, str) and portfolio_id_raw.strip()
+        else None
+    )
+
+    default_horizon_raw = section.get("default_horizon_days")
+    if default_horizon_raw in (None, ""):
+        default_horizon = None
+    else:
+        try:
+            default_horizon = float(default_horizon_raw)
+        except (TypeError, ValueError) as exc:
+            raise ValueError("portfolio_stress.default_horizon_days musi być liczbą") from exc
+
+    report_dir_raw = section.get("report_directory") or "var/audit/stage6/portfolio_stress"
+    report_directory = _normalize_runtime_path(report_dir_raw, base_dir=base_dir)
+    if report_directory is None:
+        report_directory = "var/audit/stage6/portfolio_stress"
+
+    signing_key_env = _normalize_env_var(section.get("signing_key_env"))
+    signing_key_path = _normalize_runtime_path(section.get("signing_key_path"), base_dir=base_dir)
+    signing_key_id = _normalize_env_var(section.get("signing_key_id"))
+
+    metadata_raw = section.get("metadata")
+    metadata = dict(metadata_raw) if isinstance(metadata_raw, Mapping) else {}
+
+    sources_raw = section.get("baseline_sources") or []
+    if not isinstance(sources_raw, Sequence):
+        raise ValueError("portfolio_stress.baseline_sources musi być listą")
+    baseline_sources: list[PortfolioStressDataSourceConfig] = []
+    for index, entry in enumerate(sources_raw, start=1):
+        if not isinstance(entry, Mapping):
+            raise ValueError(
+                f"Element portfolio_stress.baseline_sources[{index}] musi być mapą"
+            )
+        name_raw = entry.get("name")
+        name = (
+            str(name_raw).strip()
+            if isinstance(name_raw, str) and name_raw.strip()
+            else f"source_{index}"
+        )
+        path_raw = entry.get("path")
+        if path_raw in (None, ""):
+            raise ValueError(f"portfolio_stress.baseline_sources[{name}] wymaga pola 'path'")
+        path = _normalize_runtime_path(path_raw, base_dir=base_dir)
+        if path is None:
+            raise ValueError(
+                f"portfolio_stress.baseline_sources[{name}] posiada niepoprawną ścieżkę"
+            )
+        format_raw = entry.get("format", "json")
+        fmt = str(format_raw).strip().lower() or "json"
+        required = bool(entry.get("required", True))
+        description_value = entry.get("description")
+        description = (
+            str(description_value).strip()
+            if isinstance(description_value, str) and description_value.strip()
+            else None
+        )
+        baseline_sources.append(
+            PortfolioStressDataSourceConfig(
+                name=name,
+                path=str(path),
+                format=fmt,
+                required=required,
+                description=description,
+            )
+        )
+
+    scenarios_raw = section.get("scenarios") or []
+    if not isinstance(scenarios_raw, Sequence):
+        raise ValueError("portfolio_stress.scenarios musi być listą")
+    scenarios: list[PortfolioStressScenarioConfig] = []
+    for index, entry in enumerate(scenarios_raw, start=1):
+        if not isinstance(entry, Mapping):
+            raise ValueError(
+                f"Element portfolio_stress.scenarios[{index}] musi być mapą"
+            )
+        name_raw = entry.get("name")
+        if not isinstance(name_raw, str) or not name_raw.strip():
+            raise ValueError(
+                f"portfolio_stress.scenarios[{index}] wymaga pola 'name'"
+            )
+        name = name_raw.strip()
+        title_value = entry.get("title")
+        title = (
+            str(title_value).strip()
+            if isinstance(title_value, str) and title_value.strip()
+            else None
+        )
+        description_value = entry.get("description")
+        description = (
+            str(description_value).strip()
+            if isinstance(description_value, str) and description_value.strip()
+            else None
+        )
+        horizon_raw = entry.get("horizon_days")
+        if horizon_raw in (None, ""):
+            horizon = default_horizon
+        else:
+            try:
+                horizon = float(horizon_raw)
+            except (TypeError, ValueError) as exc:
+                raise ValueError(
+                    f"portfolio_stress.scenarios['{name}'] posiada niepoprawne 'horizon_days'"
+                ) from exc
+        probability_raw = entry.get("probability")
+        if probability_raw in (None, ""):
+            probability = None
+        else:
+            try:
+                probability = float(probability_raw)
+            except (TypeError, ValueError) as exc:
+                raise ValueError(
+                    f"portfolio_stress.scenarios['{name}'] posiada niepoprawne 'probability'"
+                ) from exc
+
+        factors_raw = entry.get("factors") or []
+        if not isinstance(factors_raw, Sequence):
+            raise ValueError(
+                f"portfolio_stress.scenarios['{name}'].factors musi być listą"
+            )
+        factors: list[PortfolioStressFactorShockConfig] = []
+        for pos, factor_entry in enumerate(factors_raw, start=1):
+            if not isinstance(factor_entry, Mapping):
+                raise ValueError(
+                    f"portfolio_stress.scenarios['{name}'].factors[{pos}] musi być mapą"
+                )
+            factor_name = factor_entry.get("factor")
+            if not isinstance(factor_name, str) or not factor_name.strip():
+                raise ValueError(
+                    f"portfolio_stress.scenarios['{name}'].factors[{pos}] wymaga pola 'factor'"
+                )
+            try:
+                return_pct = float(factor_entry.get("return_pct", 0.0))
+            except (TypeError, ValueError) as exc:
+                raise ValueError(
+                    f"portfolio_stress.scenarios['{name}'].factors[{pos}] posiada niepoprawne 'return_pct'"
+                ) from exc
+            liquidity_raw = factor_entry.get("liquidity_haircut_pct")
+            if liquidity_raw in (None, ""):
+                liquidity = None
+            else:
+                try:
+                    liquidity = float(liquidity_raw)
+                except (TypeError, ValueError) as exc:
+                    raise ValueError(
+                        f"portfolio_stress.scenarios['{name}'].factors[{pos}] posiada niepoprawne 'liquidity_haircut_pct'"
+                    ) from exc
+            notes_value = factor_entry.get("notes")
+            notes = (
+                str(notes_value).strip()
+                if isinstance(notes_value, str) and notes_value.strip()
+                else None
+            )
+            factors.append(
+                PortfolioStressFactorShockConfig(
+                    factor=factor_name.strip(),
+                    return_pct=return_pct,
+                    liquidity_haircut_pct=liquidity,
+                    notes=notes,
+                )
+            )
+
+        assets_raw = entry.get("assets") or []
+        if not isinstance(assets_raw, Sequence):
+            raise ValueError(
+                f"portfolio_stress.scenarios['{name}'].assets musi być listą"
+            )
+        assets: list[PortfolioStressAssetShockConfig] = []
+        for pos, asset_entry in enumerate(assets_raw, start=1):
+            if not isinstance(asset_entry, Mapping):
+                raise ValueError(
+                    f"portfolio_stress.scenarios['{name}'].assets[{pos}] musi być mapą"
+                )
+            symbol_value = asset_entry.get("symbol")
+            if not isinstance(symbol_value, str) or not symbol_value.strip():
+                raise ValueError(
+                    f"portfolio_stress.scenarios['{name}'].assets[{pos}] wymaga pola 'symbol'"
+                )
+            try:
+                asset_return = float(asset_entry.get("return_pct", 0.0))
+            except (TypeError, ValueError) as exc:
+                raise ValueError(
+                    f"portfolio_stress.scenarios['{name}'].assets[{pos}] posiada niepoprawne 'return_pct'"
+                ) from exc
+            liquidity_raw = asset_entry.get("liquidity_haircut_pct")
+            if liquidity_raw in (None, ""):
+                asset_liquidity = None
+            else:
+                try:
+                    asset_liquidity = float(liquidity_raw)
+                except (TypeError, ValueError) as exc:
+                    raise ValueError(
+                        f"portfolio_stress.scenarios['{name}'].assets[{pos}] posiada niepoprawne 'liquidity_haircut_pct'"
+                    ) from exc
+            notes_value = asset_entry.get("notes")
+            notes = (
+                str(notes_value).strip()
+                if isinstance(notes_value, str) and notes_value.strip()
+                else None
+            )
+            assets.append(
+                PortfolioStressAssetShockConfig(
+                    symbol=symbol_value.strip(),
+                    return_pct=asset_return,
+                    liquidity_haircut_pct=asset_liquidity,
+                    notes=notes,
+                )
+            )
+
+        tags_raw = entry.get("tags") or []
+        if isinstance(tags_raw, Sequence) and not isinstance(tags_raw, (str, bytes)):
+            tags = tuple(str(tag) for tag in tags_raw if str(tag).strip())
+        else:
+            tags = ()
+
+        metadata_entry = entry.get("metadata")
+        scenario_metadata = (
+            dict(metadata_entry)
+            if isinstance(metadata_entry, Mapping)
+            else {}
+        )
+
+        cash_return_raw = entry.get("cash_return_pct")
+        if cash_return_raw in (None, ""):
+            cash_return_pct = None
+        else:
+            try:
+                cash_return_pct = float(cash_return_raw)
+            except (TypeError, ValueError) as exc:
+                raise ValueError(
+                    f"portfolio_stress.scenarios['{name}'] posiada niepoprawne 'cash_return_pct'"
+                ) from exc
+
+        scenarios.append(
+            PortfolioStressScenarioConfig(
+                name=name,
+                title=title,
+                description=description,
+                horizon_days=horizon,
+                probability=probability,
+                factors=tuple(factors),
+                assets=tuple(assets),
+                tags=tags,
+                metadata=scenario_metadata,
+                cash_return_pct=cash_return_pct,
+            )
+        )
+
+    config_kwargs: dict[str, Any] = {
+        "enabled": enabled,
+        "report_directory": str(report_directory),
+        "baseline_sources": tuple(baseline_sources),
+        "scenarios": tuple(scenarios),
+    }
+    if portfolio_id is not None:
+        config_kwargs["portfolio_id"] = portfolio_id
+    if default_horizon is not None:
+        config_kwargs["default_horizon_days"] = default_horizon
+    if signing_key_env is not None:
+        config_kwargs["signing_key_env"] = signing_key_env
+    if signing_key_path is not None:
+        config_kwargs["signing_key_path"] = signing_key_path
+    if signing_key_id is not None:
+        config_kwargs["signing_key_id"] = signing_key_id
+    if metadata:
+        config_kwargs["metadata"] = metadata
+
+    return PortfolioStressConfig(**config_kwargs)  # type: ignore[arg-type]
+
+
 def _parse_resilience_thresholds(
     raw: Mapping[str, Any] | None, *, context: str
 ) -> ResilienceDrillThresholdsConfig | None:
@@ -4279,6 +4587,12 @@ def load_core_config(path: str | Path) -> CoreConfig:
     )
     if portfolio_governor_config is not None and _core_has("portfolio_governor"):
         core_kwargs["portfolio_governor"] = portfolio_governor_config
+
+    portfolio_stress_config = _load_portfolio_stress_config(
+        raw, base_dir=config_base_dir
+    )
+    if portfolio_stress_config is not None and _core_has("portfolio_stress"):
+        core_kwargs["portfolio_stress"] = portfolio_stress_config
 
     stress_lab_config = _load_stress_lab_config(raw, base_dir=config_base_dir)
     if stress_lab_config is not None and _core_has("stress_lab"):
