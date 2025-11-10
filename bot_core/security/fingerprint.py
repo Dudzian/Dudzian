@@ -1268,14 +1268,14 @@ def _load_secret_from_disk(path: Path) -> tuple[bytes, str] | None:
 
     try:
         document = json.loads(raw)
-    except json.JSONDecodeError:
-        try:
-            secret = base64.b64decode(raw.encode("ascii"))
-        except Exception as exc:
-            raise FingerprintError("Sekret licencji ma niepoprawny format (legacy).") from exc
-        if len(secret) < 32:
-            raise FingerprintError("Sekret licencji ma niepoprawną długość (legacy).")
-        return secret, "legacy"
+    except json.JSONDecodeError as exc:
+        raise FingerprintError(
+            (
+                f"Plik sekretu licencji {path} ma nieobsługiwany format 'legacy'. "
+                "Uruchom narzędzie migracyjne 'python -m dudzian_migrate.license_secret' opisane w "
+                "docs/migrations/2024-legacy-storage-removal.md i ponownie aktywuj licencję."
+            )
+        ) from exc
 
     if not isinstance(document, Mapping):
         raise FingerprintError("Zaszyfrowany sekret licencji ma niepoprawną strukturę.")
