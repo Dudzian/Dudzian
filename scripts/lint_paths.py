@@ -91,6 +91,20 @@ def main() -> int:
             else:
                 failures.append(message)
 
+    archive_dir = repo_root / "archive"
+    if archive_dir.exists():
+        archive_py_files = sorted(
+            str(path.relative_to(repo_root))
+            for path in archive_dir.rglob("*.py")
+            if path.is_file()
+        )
+        if archive_py_files:
+            failures.append(
+                "Archive directory must not contain Python modules: "
+                + ", ".join(archive_py_files)
+                + ". Przenieś kod do dokumentacji historycznej lub usuń pliki."
+            )
+
     forbidden_imports: list[str] = []
     for py_file in repo_root.rglob("*.py"):
         rel_file = py_file.relative_to(repo_root)
