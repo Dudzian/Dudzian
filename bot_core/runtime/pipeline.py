@@ -4001,7 +4001,16 @@ def build_multi_strategy_runtime(
             label_text = str(label or "governor_dynamic")
 
             def _sync_capital_policy(_decision: PortfolioDecision) -> None:
-                weights = governor.current_weights()
+                if hasattr(governor, "current_weights_snapshot"):
+                    weights = governor.current_weights_snapshot()
+                else:
+                    attr = getattr(governor, "current_weights", None)
+                    if callable(attr):
+                        weights = dict(attr())
+                    elif isinstance(attr, Mapping):
+                        weights = dict(attr)
+                    else:
+                        weights = {}
                 if not weights:
                     return
                 policy = FixedWeightAllocation(dict(weights), label=label_text)
