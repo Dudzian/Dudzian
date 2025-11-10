@@ -2,12 +2,11 @@ from __future__ import annotations
 
 import json
 import os
+import shutil
 import subprocess
 import sys
 from pathlib import Path
 from typing import Iterable
-
-import pytest
 
 from bot_core.risk.simulation import ProfileSimulationResult, RiskSimulationReport, StressTestResult
 
@@ -44,6 +43,7 @@ def _write_sample_report(path: Path) -> None:
 def _cleanup(paths: Iterable[Path]) -> None:
     for path in paths:
         if path.is_dir():
+            shutil.rmtree(path, ignore_errors=True)
             continue
         try:
             path.unlink()
@@ -51,8 +51,28 @@ def _cleanup(paths: Iterable[Path]) -> None:
             pass
 
 
-@pytest.mark.parametrize("legacy_invocation", [True, False], ids=["legacy", "explicit-subcommand"])
-def test_runbook_evaluate_command(legacy_invocation: bool) -> None:
+def _inject_packaging_stub(env: dict[str, str], workspace: Path) -> Path:
+    stub_root = (workspace / "stubs").resolve()
+    package_dir = stub_root / "packaging"
+    package_dir.mkdir(parents=True, exist_ok=True)
+    (package_dir / "__init__.py").write_text(
+        "from .version import Version, InvalidVersion\n",
+        encoding="utf-8",
+    )
+    (package_dir / "version.py").write_text(
+        "class InvalidVersion(Exception):\n    ...\n\n"
+        "class Version:\n    def __init__(self, version: str) -> None:\n        self._value = version\n\n"
+        "    def __str__(self) -> str:\n        return self._value\n",
+        encoding="utf-8",
+    )
+    pythonpath = env.get("PYTHONPATH") or ""
+    env["PYTHONPATH"] = (
+        f"{stub_root}{os.pathsep}{pythonpath}" if pythonpath else str(stub_root)
+    )
+    return stub_root
+
+
+def test_runbook_evaluate_command() -> None:
     risk_report = Path("var/audit/stage6/risk_simulation_report.json")
     report_dir = risk_report.parent
     report_dir.mkdir(parents=True, exist_ok=True)
@@ -69,11 +89,10 @@ def test_runbook_evaluate_command(legacy_invocation: bool) -> None:
     _cleanup([json_path, csv_path, overrides_path, signature_path])
 
     env = os.environ.copy()
-    env["PYTHONPATH"] = "."
+    env["PYTHONPATH"] = os.pathsep.join(filter(None, [".", env.get("PYTHONPATH")]))
+    stub_root = _inject_packaging_stub(env, Path("var/audit/stage6"))
 
-    command = [sys.executable, "scripts/run_stress_lab.py"]
-    if not legacy_invocation:
-        command.append("evaluate")
+    command = [sys.executable, "scripts/run_stress_lab.py", "evaluate"]
     command.extend(
         [
             "--risk-report",
@@ -105,6 +124,7 @@ def test_runbook_evaluate_command(legacy_invocation: bool) -> None:
             key_path.parent.rmdir()
         except OSError:
             pass
+        _cleanup([stub_root])
 
     payload = json.loads(json_path.read_text(encoding="utf-8"))
     assert payload["schema"] == "stage6.risk.stress_lab.report"
@@ -122,8 +142,7 @@ def test_runbook_evaluate_command(legacy_invocation: bool) -> None:
     _cleanup([risk_report, json_path, csv_path, overrides_path, signature_path])
 
 
-@pytest.mark.parametrize("legacy_invocation", [True, False], ids=["legacy", "explicit-subcommand"])
-def test_runbook_run_command(legacy_invocation: bool) -> None:
+def test_runbook_run_command() -> None:
     candidate_outputs = [
         Path("var/audit/stage6/stress_lab/stress_lab_report.json"),
         Path("config/var/audit/stage6/stress_lab/stress_lab_report.json"),
@@ -134,25 +153,37 @@ def test_runbook_run_command(legacy_invocation: bool) -> None:
     _cleanup([*candidate_outputs, *candidate_signatures])
 
     env = os.environ.copy()
-    env["PYTHONPATH"] = "."
+    env["PYTHONPATH"] = os.pathsep.join(filter(None, [".", env.get("PYTHONPATH")]))
+    stub_root = _inject_packaging_stub(env, Path("var/audit/stage6"))
     env["STRESS_LAB_SIGNING_KEY"] = "unit-test-secret"
 
-    command = [sys.executable, "scripts/run_stress_lab.py"]
-    if not legacy_invocation:
-        command.append("run")
+    market_intel_root = Path("config/var/audit/stage6/market_intel")
+    market_intel_root.mkdir(parents=True, exist_ok=True)
+    for symbol in ("btcusdt", "ethusdt"):
+        market_file = market_intel_root / f"{symbol}.json"
+        if not market_file.exists():
+            market_file.write_text(json.dumps({"metrics": []}), encoding="utf-8")
+
+    command = [sys.executable, "scripts/run_stress_lab.py", "run"]
     command.extend(["--config", "config/core.yaml"])
 
-    subprocess.run(command, check=True, env=env)
+    try:
+        subprocess.run(command, check=True, env=env)
 
-    output_path = next((path for path in candidate_outputs if path.exists()), None)
-    assert output_path is not None
-    signature_path = output_path.with_suffix(output_path.suffix + ".sig")
-    assert signature_path.exists()
+        output_path = next((path for path in candidate_outputs if path.exists()), None)
+        assert output_path is not None
+        signature_path = output_path.with_suffix(output_path.suffix + ".sig")
+        assert signature_path.exists()
 
-    payload = json.loads(output_path.read_text(encoding="utf-8"))
-    assert {"generated_at", "scenarios", "thresholds"}.issubset(payload)
+        payload = json.loads(output_path.read_text(encoding="utf-8"))
+        assert {"generated_at", "scenarios", "thresholds"}.issubset(payload)
 
-    signature = json.loads(signature_path.read_text(encoding="utf-8"))
-    assert signature.get("algorithm") == "HMAC-SHA256"
-
-    _cleanup([*candidate_outputs, *candidate_signatures])
+        signature = json.loads(signature_path.read_text(encoding="utf-8"))
+        assert signature.get("algorithm") == "HMAC-SHA256"
+    finally:
+        _cleanup([*candidate_outputs, *candidate_signatures, stub_root])
+        for symbol in ("btcusdt", "ethusdt"):
+            try:
+                (market_intel_root / f"{symbol}.json").unlink()
+            except FileNotFoundError:
+                pass

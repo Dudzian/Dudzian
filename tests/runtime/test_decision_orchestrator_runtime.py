@@ -146,7 +146,7 @@ def test_decision_orchestrator_runtime_filters_and_summarizes() -> None:
     assert len(latest_only) == 1
     assert latest_only[0]["candidate"]["symbol"] == "ETHUSDT"
 
-    summary = sink.evaluation_summary()
+    summary = sink.evaluation_summary_v2()
     assert summary["total"] == 2
     assert summary["accepted"] == 1
     assert summary["rejected"] == 1

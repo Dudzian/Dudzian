@@ -2386,7 +2386,7 @@ class AutoTradeEngine:
                 exc_info=True,
             )
 
-    def _legacy_signal_bundle(self, closes: List[float], frame: pd.DataFrame) -> Dict[str, float]:
+    def _stage6_signal_bundle(self, closes: List[float], frame: pd.DataFrame) -> Dict[str, float]:
         trend_signal = float(self._trend_following_signal(closes))
         day_signal = float(self._day_trading_signal(frame))
         mean_signal = float(self._mean_reversion_signal(closes))
@@ -2660,7 +2660,7 @@ class AutoTradeEngine:
                     weights,
                 )
                 inference_features = self._build_inference_features(indicator_frame, indicators)
-        fallback_signals = self._legacy_signal_bundle(closes, frame)
+        fallback_signals = self._stage6_signal_bundle(closes, frame)
         signals = dict(fallback_signals)
         if plugin_signals:
             signals.update(plugin_signals)

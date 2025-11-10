@@ -738,7 +738,7 @@ def create_server(
             "require_client_auth": tls_require_client_auth,
         },
         "auth": {
-            "legacy_token": bool(auth_token),
+            "shared_secret_token": bool(auth_token),
             "rbac_tokens": token_validator.metadata()["tokens"] if token_validator else [],
             "default_scope": token_validator.default_scope if token_validator else None,
         },

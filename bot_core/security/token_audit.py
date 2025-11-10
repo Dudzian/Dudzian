@@ -38,7 +38,7 @@ class TokenAuditServiceReport:
     service: str
     enabled: bool
     configured: bool
-    legacy_token: bool
+    shared_secret_token: bool
     token_count: int
     required_scopes: Mapping[str, Sequence[str]]
     coverage: Mapping[str, Sequence[str]]
@@ -50,7 +50,7 @@ class TokenAuditServiceReport:
             "service": self.service,
             "enabled": self.enabled,
             "configured": self.configured,
-            "legacy_token": self.legacy_token,
+            "shared_secret_token": self.shared_secret_token,
             "token_count": self.token_count,
             "required_scopes": {k: list(v) for k, v in self.required_scopes.items()},
             "coverage": {k: list(v) for k, v in self.coverage.items()},
@@ -127,7 +127,7 @@ def audit_service_token_configs(
     config: MetricsServiceConfig | RiskServiceConfig | None,
     required_scopes: Sequence[str],
     env: Mapping[str, str],
-    warn_on_legacy: bool = True,
+    warn_on_shared_secret: bool = True,
 ) -> TokenAuditServiceReport:
     findings: list[TokenAuditFinding] = []
     coverage: MutableMapping[str, list[str]] = defaultdict(list)
@@ -138,7 +138,7 @@ def audit_service_token_configs(
             service=service_name,
             enabled=False,
             configured=False,
-            legacy_token=False,
+            shared_secret_token=False,
             token_count=0,
             required_scopes=normalized_required,
             coverage={scope: [] for scope in normalized_required},
@@ -237,7 +237,7 @@ def audit_service_token_configs(
         findings.append(
             TokenAuditFinding(
                 level="warning",
-                message="Plik legacy auth_token wskazany w konfiguracji nie istnieje",
+                message="Plik statycznego auth_token wskazany w konfiguracji nie istnieje",
                 details={
                     "service": service_name,
                     "token_file": str(auth_token_file),
@@ -248,7 +248,7 @@ def audit_service_token_configs(
         findings.append(
             TokenAuditFinding(
                 level="warning",
-                message="Plik legacy auth_token ma zbyt szerokie uprawnienia",
+                message="Plik statycznego auth_token ma zbyt szerokie uprawnienia",
                 details={
                     "service": service_name,
                     "token_file": str(auth_token_file),
@@ -258,16 +258,18 @@ def audit_service_token_configs(
             )
         )
     if auth_token or auth_token_env_present or auth_token_file_exists:
-        if warn_on_legacy:
+        if warn_on_shared_secret:
             findings.append(
                 TokenAuditFinding(
                     level="warning",
-                    message="Usługa używa legacy auth_token – rozważ migrację na RBAC",
+                    message=(
+                        "Usługa używa statycznego auth_token – rozważ migrację na RBAC"
+                    ),
                     details={"service": service_name},
                 )
             )
         for scope in normalized_required:
-            coverage[scope].append("<legacy-auth-token>")
+            coverage[scope].append("<shared-secret-auth-token>")
 
     for scope in normalized_required:
         if enabled and not coverage.get(scope):
@@ -284,7 +286,7 @@ def audit_service_token_configs(
         service=service_name,
         enabled=enabled,
         configured=bool(tokens_cfg) or bool(auth_token) or auth_token_env_present or auth_token_file_exists,
-        legacy_token=bool(auth_token or auth_token_env or auth_token_file),
+        shared_secret_token=bool(auth_token or auth_token_env or auth_token_file),
         token_count=len(tokens_cfg),
         required_scopes=normalized_required,
         coverage={scope: tuple(ids) for scope, ids in coverage.items()},
@@ -302,7 +304,7 @@ def audit_service_tokens(
     scheduler_required_scopes: Mapping[str, Sequence[str]]
     | Sequence[str]
     | None = None,
-    warn_on_legacy: bool = True,
+    warn_on_shared_secret: bool = True,
 ) -> TokenAuditReport:
     env_map = env or {}
     metrics_scopes = metrics_required_scopes or ("metrics.read",)
@@ -344,7 +346,7 @@ def audit_service_tokens(
             config=getattr(core_config, "metrics_service", None),
             required_scopes=metrics_scopes,
             env=env_map,
-            warn_on_legacy=warn_on_legacy,
+            warn_on_shared_secret=warn_on_shared_secret,
         )
     )
     services.append(
@@ -353,7 +355,7 @@ def audit_service_tokens(
             config=getattr(core_config, "risk_service", None),
             required_scopes=risk_scopes,
             env=env_map,
-            warn_on_legacy=warn_on_legacy,
+            warn_on_shared_secret=warn_on_shared_secret,
         )
     )
 
@@ -374,7 +376,7 @@ def audit_service_tokens(
                 ),
                 required_scopes=required_scopes,
                 env=env_map,
-                warn_on_legacy=False,
+                warn_on_shared_secret=False,
             )
         )
 

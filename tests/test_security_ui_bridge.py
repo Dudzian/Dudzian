@@ -159,9 +159,11 @@ def test_dump_state_reads_profiles_and_license(monkeypatch, tmp_path):
     assert {p["user_id"] for p in state["profiles"]} == {"ops", "qa"}
 
 
-def test_dump_state_falls_back_to_legacy_when_bundle_invalid(tmp_path):
+def test_dump_state_rejects_legacy_bundle_format(monkeypatch, tmp_path):
+    monkeypatch.setenv("BOT_CORE_LICENSE_PUBLIC_KEY", "22" * 32)
+
     license_path = tmp_path / "license.json"
-    license_payload = {
+    legacy_payload = {
         "schema": "core.oem.license",
         "schema_version": "1.0",
         "issued_at": "2024-01-01T00:00:00Z",
@@ -172,21 +174,20 @@ def test_dump_state_falls_back_to_legacy_when_bundle_invalid(tmp_path):
         "fingerprint": {"algorithm": "sha256", "value": "LEGACY"},
     }
     bundle = {
-        "payload": license_payload,
+        "payload": legacy_payload,
         "signature": {"algorithm": "HMAC-SHA384", "value": "dummy", "key_id": "lic"},
     }
     license_path.write_text(json.dumps(bundle, ensure_ascii=False), encoding="utf-8")
+
     profiles_path = tmp_path / "profiles.json"
     profiles_path.write_text("[]", encoding="utf-8")
 
     state = ui_bridge.dump_state(license_path=str(license_path), profiles_path=str(profiles_path))
 
-    assert state["license"]["status"] == "active"
-    assert state["license"]["fingerprint"] == "LEGACY"
-    assert state["license"]["local_fingerprint"] is None
-    assert state["license"]["edition"] == "paper"
-    assert state["license"]["schema"] == "core.oem.license"
-    assert state["license"]["license_id"] == "legacy"
+    assert state["license"]["status"] == "invalid"
+    assert any("payload_b64" in error for error in state["license"]["errors"])
+    assert state["license"]["fingerprint"] is None
+    assert state["license"]["license_id"] is None
 
 
 def test_dump_state_reports_invalid_on_corrupted_signature(monkeypatch, tmp_path):

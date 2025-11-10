@@ -53,9 +53,9 @@ def _parse_args(argv: list[str]) -> argparse.Namespace:
         help="Zwróć kod 2 gdy wykryto błędy",
     )
     parser.add_argument(
-        "--allow-legacy",
+        "--allow-shared-secret",
         action="store_true",
-        help="Nie traktuj legacy auth_token jako ostrzeżenia",
+        help="Nie traktuj statycznego auth_token jako ostrzeżenia",
     )
     parser.add_argument(
         "--metrics-scope",
@@ -106,10 +106,10 @@ def _should_fail_on_error(args: argparse.Namespace) -> bool:
     return env_flag(_ENV_PREFIX, "FAIL_ON_ERROR", False)
 
 
-def _should_allow_legacy(args: argparse.Namespace) -> bool:
-    if args.allow_legacy:
+def _should_allow_shared_secret(args: argparse.Namespace) -> bool:
+    if args.allow_shared_secret:
         return True
-    return env_flag(_ENV_PREFIX, "ALLOW_LEGACY", False)
+    return env_flag(_ENV_PREFIX, "ALLOW_SHARED_SECRET", False)
 
 
 def _resolve_scopes(args: argparse.Namespace, *, kind: str) -> tuple[str, ...]:
@@ -139,7 +139,7 @@ def main(argv: list[str] | None = None) -> int:
     print_stdout = _should_print(args)
     fail_on_warning = _should_fail_on_warning(args)
     fail_on_error = _should_fail_on_error(args)
-    allow_legacy = _should_allow_legacy(args)
+    allow_shared_secret = _should_allow_shared_secret(args)
     metrics_scopes = _resolve_scopes(args, kind="metrics")
     risk_scopes = _resolve_scopes(args, kind="risk")
 
@@ -156,7 +156,7 @@ def main(argv: list[str] | None = None) -> int:
         env=os.environ,
         metrics_required_scopes=metrics_scopes,
         risk_required_scopes=risk_scopes,
-        warn_on_legacy=not allow_legacy,
+        warn_on_shared_secret=not allow_shared_secret,
     )
 
     payload = report.as_dict()

@@ -63,7 +63,7 @@ def generate_security_baseline_report(
     scheduler_required_scopes: Mapping[str, Sequence[str]]
     | Sequence[str]
     | None = None,
-    warn_on_legacy_tokens: bool = True,
+    warn_on_shared_secret_tokens: bool = True,
 ) -> SecurityBaselineReport:
     """Generuje zbiorczy raport bezpieczeństwa dla runtime.
 
@@ -85,7 +85,7 @@ def generate_security_baseline_report(
         metrics_required_scopes=metrics_required_scopes,
         risk_required_scopes=risk_required_scopes,
         scheduler_required_scopes=scheduler_required_scopes,
-        warn_on_legacy=warn_on_legacy_tokens,
+        warn_on_shared_secret=warn_on_shared_secret_tokens,
     ).as_dict()
 
     combined_warnings = _deduplicate(

@@ -117,7 +117,7 @@
         "configured": true,
         "coverage": {
           "metrics.read": [
-            "<legacy-auth-token>"
+            "<shared-secret-auth-token>"
           ]
         },
         "enabled": true,
@@ -134,10 +134,10 @@
               "service": "metrics_service"
             },
             "level": "warning",
-            "message": "Usługa używa legacy auth_token – rozważ migrację na RBAC"
+            "message": "Usługa używa statycznego auth_token – rozważ migrację na RBAC"
           }
         ],
-        "legacy_token": true,
+        "shared_secret_token": true,
         "required_scopes": {
           "metrics.read": [
             "metrics.read"
@@ -154,7 +154,7 @@
         },
         "enabled": false,
         "findings": [],
-        "legacy_token": false,
+        "shared_secret_token": false,
         "required_scopes": {
           "risk.read": [
             "risk.read"
@@ -206,7 +206,7 @@
             "message": "Brak tokenu zapewniającego wymagany scope"
           }
         ],
-        "legacy_token": false,
+        "shared_secret_token": false,
         "required_scopes": {
           "runtime.schedule.read": [
             "runtime.schedule.read"
@@ -236,7 +236,7 @@
     ],
     "warnings": [
       "Brak skonfigurowanych tokenów RBAC dla włączonej usługi",
-      "Usługa używa legacy auth_token – rozważ migrację na RBAC",
+      "Usługa używa statycznego auth_token – rozważ migrację na RBAC",
       "Token RBAC nie posiada ani jawnego sekretu ani skrótu",
       "Zmienna środowiskowa tokenu RBAC nie jest ustawiona"
     ]
@@ -246,7 +246,7 @@
     "Katalog nadrzędny nie istnieje – utwórz go przed startem procesu.",
     "Plik materiału TLS jest niedostępny – konfiguracja nie będzie kompletna.",
     "Brak skonfigurowanych tokenów RBAC dla włączonej usługi",
-    "Usługa używa legacy auth_token – rozważ migrację na RBAC",
+    "Usługa używa statycznego auth_token – rozważ migrację na RBAC",
     "Token RBAC nie posiada ani jawnego sekretu ani skrótu",
     "Zmienna środowiskowa tokenu RBAC nie jest ustawiona"
   ]

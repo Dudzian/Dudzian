@@ -35,10 +35,10 @@ def _write_core_yaml(path: Path, *, with_rbac: bool) -> Path:
         risk_profiles: {}
         metrics_service:
           enabled: true
-          auth_token: legacy-token
+          auth_token: static-token
         risk_service:
           enabled: true
-          auth_token: legacy-token
+          auth_token: static-token
         """
     path.write_text(content, encoding="utf-8")
     return path
@@ -55,8 +55,8 @@ def _stub_core_config(with_rbac: bool) -> SimpleNamespace:
         metrics = SimpleNamespace(enabled=True, auth_token=None, rbac_tokens=metrics_tokens)
         risk = SimpleNamespace(enabled=True, auth_token=None, rbac_tokens=risk_tokens)
     else:
-        metrics = SimpleNamespace(enabled=True, auth_token="legacy-token", rbac_tokens=())
-        risk = SimpleNamespace(enabled=True, auth_token="legacy-token", rbac_tokens=())
+        metrics = SimpleNamespace(enabled=True, auth_token="static-token", rbac_tokens=())
+        risk = SimpleNamespace(enabled=True, auth_token="static-token", rbac_tokens=())
     return SimpleNamespace(metrics_service=metrics, risk_service=risk)
 
 
@@ -84,7 +84,7 @@ def test_audit_service_tokens_script_success(tmp_path: Path, monkeypatch: pytest
     assert any(service["service"] == "metrics_service" for service in payload["services"])
 
 
-def test_audit_service_tokens_script_warns_on_legacy(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]) -> None:
+def test_audit_service_tokens_script_warns_on_shared_secret(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]) -> None:
     config_path = _write_core_yaml(tmp_path / "core.yaml", with_rbac=False)
     stub = _stub_core_config(with_rbac=False)
     monkeypatch.setattr(audit_service_tokens_script, "load_core_config", lambda path: stub)
@@ -98,4 +98,4 @@ def test_audit_service_tokens_script_warns_on_legacy(tmp_path: Path, monkeypatch
 
     assert exit_code == 1
     stdout = capsys.readouterr().out
-    assert "legacy" in stdout.lower()
+    assert "statycznego" in stdout.lower()

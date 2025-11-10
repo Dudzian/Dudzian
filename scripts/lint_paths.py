@@ -5,6 +5,7 @@ from __future__ import annotations
 import os
 import pathlib
 import re
+import subprocess
 import sys
 
 # Paths are relative to repository root.
@@ -14,6 +15,62 @@ _BANNED_ROOTS = {
 BANNED_PATHS = sorted(_BANNED_ROOTS)
 
 _IMPORT_PATTERN = re.compile(r"^\s*(?:from|import)\s+KryptoLowca\b", re.MULTILINE)
+
+
+def _collect_new_legacy_lines(repo_root: pathlib.Path) -> list[str]:
+    """Zwraca listę nowych linii zawierających słowo 'legacy' spoza docs/migrations."""
+
+    def _diff_output(args: list[str]) -> str:
+        result = subprocess.run(
+            args,
+            cwd=repo_root,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            check=False,
+        )
+        return result.stdout
+
+    diff = _diff_output(["git", "diff", "--cached", "--unified=0"])
+    if not diff.strip():
+        diff = _diff_output(["git", "diff", "HEAD", "--unified=0"])
+    if not diff.strip():
+        return []
+
+    occurrences: list[str] = []
+    current_file: pathlib.Path | None = None
+    new_line_no = 0
+    for line in diff.splitlines():
+        if line.startswith("+++ b/"):
+            rel = line[6:]
+            try:
+                current_file = pathlib.Path(rel)
+            except ValueError:
+                current_file = None
+            new_line_no = 0
+            continue
+        if line.startswith("@@"):
+            parts = line.split()
+            added = next((part for part in parts if part.startswith("+")), "+0")
+            try:
+                start = int(added.split(",", 1)[0][1:])
+            except ValueError:
+                start = 0
+            new_line_no = start
+            continue
+        if not line.startswith("+") or line.startswith("+++"):
+            if line and not line.startswith("-") and current_file is not None:
+                new_line_no += 1
+            continue
+        if current_file is None:
+            continue
+        if "docs" in current_file.parts and "migrations" in current_file.parts:
+            new_line_no += 1
+            continue
+        if "legacy" in line.lower():
+            occurrences.append(f"{current_file}:{new_line_no}: {line[1:].strip()}")
+        new_line_no += 1
+    return occurrences
 
 
 def main() -> int:
@@ -52,6 +109,17 @@ def main() -> int:
             + ", ".join(sorted(forbidden_imports))
             + ". Use bot_core instead."
         )
+
+    new_legacy_occurrences = _collect_new_legacy_lines(repo_root)
+    if new_legacy_occurrences:
+        message = (
+            "Detected new occurrences of 'legacy' outside migration docs:\n"
+            + "\n".join(new_legacy_occurrences)
+        )
+        if allow_legacy:
+            warnings.append(message)
+        else:
+            failures.append(message)
 
     if warnings:
         print("\n".join(f"WARNING: {warning}" for warning in warnings))
