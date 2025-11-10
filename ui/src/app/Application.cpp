@@ -627,6 +627,8 @@ Application::Application(QQmlApplicationEngine& engine, QObject* parent)
 
     m_decisionLogModel.setParent(this);
     m_decisionLogFilter.setSourceModel(&m_decisionLogModel);
+    m_decisionMonitor.setParent(this);
+    m_decisionMonitor.setDecisionModel(&m_decisionLogModel);
     m_runtimeBridge = std::make_unique<RuntimeDecisionBridge>(this);
     m_performanceTelemetry = std::make_unique<PerformanceTelemetryController>(this);
     m_performanceTelemetry->setPerformanceGuard(m_guard);
@@ -3880,6 +3882,7 @@ void Application::exposeToQml() {
     m_engine.rootContext()->setContextProperty(QStringLiteral("healthController"), m_healthController.get());
     m_engine.rootContext()->setContextProperty(QStringLiteral("decisionLogModel"), &m_decisionLogModel);
     m_engine.rootContext()->setContextProperty(QStringLiteral("decisionFilterModel"), &m_decisionLogFilter);
+    m_engine.rootContext()->setContextProperty(QStringLiteral("decisionMonitorController"), &m_decisionMonitor);
     m_engine.rootContext()->setContextProperty(QStringLiteral("moduleManager"), m_moduleManager.get());
     m_engine.rootContext()->setContextProperty(QStringLiteral("moduleViewsModel"), m_moduleViewsModel.get());
     m_engine.rootContext()->setContextProperty(QStringLiteral("marketplaceController"), m_marketplaceController.get());
@@ -3925,6 +3928,11 @@ QObject* Application::healthController() const
 QObject* Application::decisionLogModel() const
 {
     return const_cast<DecisionLogModel*>(&m_decisionLogModel);
+}
+
+QObject* Application::decisionMonitorController() const
+{
+    return const_cast<DecisionMonitorController*>(&m_decisionMonitor);
 }
 
 QObject* Application::moduleManager() const

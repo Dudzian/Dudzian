@@ -41,6 +41,11 @@ from bot_core.security.rotation_report import (
     build_rotation_summary_entry,
     write_rotation_summary,
 )
+from bot_core.security.install_validation import (
+    FingerprintValidationResult,
+    validate_fingerprint_document,
+    validate_license_bundle,
+)
 from bot_core.security.messages import ValidationMessage, make_error, make_warning
 from bot_core.security.hardware_wallets import LedgerSigner, TrezorSigner
 from bot_core.security.signing import (
@@ -55,6 +60,7 @@ from bot_core.security.profiles import (
     load_profiles,
     save_profiles,
     upsert_profile,
+    remove_profile,
     log_admin_event,
 )
 from bot_core.security.token_audit import (
@@ -166,6 +172,7 @@ __all__ = [
     "RotationSummary",
     "build_rotation_summary_entry",
     "write_rotation_summary",
+    "FingerprintValidationResult",
     "DeviceFingerprintGenerator",
     "FingerprintDocument",
     "FingerprintError",
@@ -193,6 +200,8 @@ __all__ = [
     "ValidationMessage",
     "make_error",
     "make_warning",
+    "validate_fingerprint_document",
+    "validate_license_bundle",
     # tokeny i audyty
     "ServiceToken",
     "ServiceTokenValidator",

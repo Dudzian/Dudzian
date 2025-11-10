@@ -50,6 +50,8 @@
         <file>views/MonitoringDashboard.qml</file>
         <file>views/Marketplace.qml</file>
         <file>views/StrategyConfigurator.qml</file>
+        <file>views/StrategyRiskConsole.qml</file>
+        <file>views/DecisionMonitoringView.qml</file>
         <file>views/SetupWizard.qml</file>
         <file>views/PortfolioDashboard.qml</file>
         <file>views/HypercareDashboard.qml</file>
