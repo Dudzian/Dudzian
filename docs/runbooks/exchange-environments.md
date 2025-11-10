@@ -28,7 +28,7 @@ overrides before switching the runtime.
 
 > **Uwaga:** Sekcja `credentials` w profilach wymaga pól `key_id`,
 > `secret` oraz opcjonalnie `passphrase`. Nazwy `key` lub `api_key`
-> są traktowane jako legacy i powodują błąd walidacji podczas
+> są traktowane jako archiwalne i powodują błąd walidacji podczas
 > ładowania środowiska lub uruchamiania `health-check`.
 
 When the YAML file provides `defaults.environment`, the `health-check`

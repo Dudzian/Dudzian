@@ -1,4 +1,4 @@
-"""Metryki backtestu niezależne od warstwy legacy."""
+"""Metryki backtestu niezależne od warstwy archiwalnej."""
 from __future__ import annotations
 
 from dataclasses import asdict, dataclass

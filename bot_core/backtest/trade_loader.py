@@ -42,7 +42,7 @@ def _infer_exit_reason(row: pd.Series) -> str | None:
 def load_trades(input_dir: pathlib.Path) -> Tuple[pd.DataFrame, pathlib.Path]:
     """Load the trades CSV produced by a backtest run.
 
-    The dataframe mirrors the legacy loader behaviour, enriching the data with
+    The dataframe mirrors the archival loader behaviour, enriching the data with
     derived datetime columns, holding duration and normalized exit reasons.
     """
 

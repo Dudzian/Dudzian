@@ -1,4 +1,4 @@
-"""Generic backtesting helpers niezależne od warstwy legacy."""
+"""Generic backtesting helpers niezależne od warstwy archiwalnej."""
 
 from __future__ import annotations
 

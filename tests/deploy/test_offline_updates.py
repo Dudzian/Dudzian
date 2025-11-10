@@ -341,7 +341,7 @@ def test_delta_manifest_rejects_casefold_duplicates(tmp_path: Path) -> None:
         "target_version": "1.1.0",
         "platform": "linux",
         "changed_files": ["daemon/App.bin", "Daemon/app.bin"],
-        "removed_files": ["config/legacy.cfg"],
+        "removed_files": ["config/archive.cfg"],
     }
     manifest_path = tmp_path / "delta.json"
     manifest_path.write_text(json.dumps(manifest_payload), encoding="utf-8")

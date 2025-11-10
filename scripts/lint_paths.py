@@ -33,6 +33,21 @@ def _should_skip_guarded_tokens(path: pathlib.Path) -> bool:
     return _should_skip_doc_migration(path)
 
 
+def _iter_repository_files(root: pathlib.Path) -> list[pathlib.Path]:
+    files: list[pathlib.Path] = []
+    for path in root.rglob("*"):
+        if not path.is_file():
+            continue
+        try:
+            relative = path.relative_to(root)
+        except ValueError:
+            continue
+        if any(part.startswith(".") for part in relative.parts):
+            continue
+        files.append(relative)
+    return files
+
+
 def _collect_added_lines(
     repo_root: pathlib.Path,
     *,
@@ -108,7 +123,7 @@ def main() -> int:
         candidate = repo_root / rel_path
         if candidate.exists():
             message = (
-                "Disallowed legacy paths detected: "
+                "Disallowed archival paths detected: "
                 f"{rel_path}. Usuń katalog albo przenieś kod do bot_core."
             )
             if allow_legacy:
@@ -161,6 +176,22 @@ def main() -> int:
             + "\n".join(new_legacy_occurrences)
         )
 
+    disallowed_legacy_files: list[str] = []
+    for rel_file in _iter_repository_files(repo_root):
+        if _should_skip_guarded_tokens(rel_file):
+            continue
+        try:
+            text = (repo_root / rel_file).read_text(encoding="utf-8", errors="ignore")
+        except OSError:
+            continue
+        if _LEGACY_TOKEN_PATTERN.search(text):
+            disallowed_legacy_files.append(str(rel_file))
+    if disallowed_legacy_files:
+        failures.append(
+            "Detected forbidden uses of the word 'legacy' outside migration docs: "
+            + ", ".join(sorted(disallowed_legacy_files))
+        )
+
     new_krypto_occurrences = _collect_added_lines(
         repo_root,
         description="KryptoLowca token",
@@ -182,13 +213,13 @@ def main() -> int:
 
     if warnings:
         print(
-            "Repository layout lint passed with warnings: legacy directories "
+            "Repository layout lint passed with warnings: archiwalne katalogi "
             "oznaczono do usunięcia, nowe importy nie zostały znalezione."
         )
     else:
         print(
-            "Repository layout lint passed: legacy directories absent and "
-            "no forbidden KryptoLowca imports found."
+            "Repository layout lint passed: archiwalne katalogi nie występują, "
+            "brak zabronionych importów KryptoLowca."
         )
     return 0
 

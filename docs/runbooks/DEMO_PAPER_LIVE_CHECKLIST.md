@@ -35,23 +35,21 @@ Zapewnienie, że każda promocja środowiska tradingowego spełnia wymagania tec
 | Krok | Odpowiedzialny | Artefakty | Akceptacja |
 | --- | --- | --- | --- |
 | 1. Uruchom migrację Stage6 (`python -m bot_core.runtime.stage6_preset_cli --core-config config/core.yaml --preset presets/gui.json --profile-name stage6_gui --core-backup config/core.yaml.bak --core-diff --secrets-input secrets/preset.yaml --secrets-output secrets/api_keys.vault --secret-passphrase-file secrets/pass.txt --summary-json var/audit/stage6/migration_summary.json`) | Operator Stage6 | `config/core.yaml`, `config/core.yaml.bak`, `secrets/api_keys.vault`, `var/audit/stage6/migration_summary.json` | Diff z `--core-diff` przejrzany, kopia zapasowa zarchiwizowana, magazyn sekretów zaszyfrowany, sumy SHA-256 w `migration_summary.json` potwierdzone (core, backup, magazyn, źródłowe pliki sekretów), zarejestrowane źródła haseł (`secrets.output_passphrase` oraz – jeśli rotacja była wykonana – `secrets.rotation_passphrase`, każde z identyfikacją inline/plik/env) oraz brak ostrzeżeń w polu `warnings` (ewentualne wpisy udokumentowane w decision logu); sekcja `cli_invocation` zawiera zanonimizowaną listę argumentów (hasła zastąpione `***REDACTED***`), a sekcja `tool` rejestruje interpreter, wersję pakietu i rewizję git migratora (wartości potwierdzone w decision logu) |
-| 2. Jeśli klient korzysta z zaszyfrowanego pliku `SecurityManager`, poinformuj go o konieczności użycia narzędzia migracyjnego opisanego w [docs/migrations/2024-legacy-storage-removal.md](../migrations/2024-legacy-storage-removal.md); runtime Stage6 nie obsługuje już odczytu tych plików. | Operator Stage6 | Notatka migracyjna | Potwierdzenie, że migracja została wykonana poza środowiskiem runtime (w decision logu) |
+| 2. Jeśli klient korzysta z zaszyfrowanego pliku `SecurityManager`, poinformuj go o konieczności użycia narzędzia migracyjnego opisanego w [docs/migrations/2024-stage5-storage-removal.md](../migrations/2024-stage5-storage-removal.md); runtime Stage6 nie obsługuje już odczytu tych plików. | Operator Stage6 | Notatka migracyjna | Potwierdzenie, że migracja została wykonana poza środowiskiem runtime (w decision logu) |
 | 2. Dołącz plik `migration_summary.json` do decision logu (`audit/decision_logs/stage6.jsonl`) i podpisz wpis HMAC | Compliance/Risk Stage6 | Decision log Stage6, plik podsumowania | Wpis zawiera hash SHA-384 podsumowania oraz status `stage6_profile_ready` |
 
-> **Podpowiedź CLI:** wywołanie `python -m bot_core.runtime.stage6_preset_cli --core-config config/core.yaml --legacy-preset presets/gui.json --help`
+> **Podpowiedź CLI:** wywołanie `python -m bot_core.runtime.stage6_preset_cli --core-config config/core.yaml --preset presets/gui.json --help`
 > prezentuje wyłącznie aktywne flagi migratora. Najważniejsze przełączniki:
 > ```bash
 > --core-config CORE_CONFIG      Ścieżka do docelowego pliku core.yaml
-> --legacy-preset LEGACY_PRESET  Preset GUI (JSON/YAML) do zaimportowania
-> --secrets-input PATH           Plik z legacy sekretami
+> --preset PRESET                Preset GUI (JSON/YAML) do zaimportowania
+> --secrets-input PATH           Plik z danymi sekretów do zaczytania
 > --secrets-output PATH          Docelowy magazyn EncryptedFileSecretStorage
 > --secret-passphrase{,-env,-file}
 >                                Dostarczenie hasła magazynu sekretów
 > --summary-json PATH            Raport audytowy migracji (JSON)
 >
-> Te przełączniki CLI pozostają wyłącznie jako migration fallback na potrzeby
-> operatorów kończących migrację – nowe wdrożenia powinny korzystać z docelowych
-> presetów i magazynów sekretów Stage6.
+> Nowe wdrożenia powinny korzystać wyłącznie z tych flag – migrator nie udostępnia już przełączników z poprzedniej warstwy.
 > ```
 
 ## Artefakty/Akceptacja

@@ -405,7 +405,7 @@ class TradingSchedule:
                 tzinfo_obj: tzinfo
                 if ZoneInfo is not None:
                     tzinfo_obj = ZoneInfo(timezone_name)
-                else:  # pragma: no cover - fallback for legacy builds
+                else:  # pragma: no cover - fallback for archival builds
                     tzinfo_obj = timezone.utc
                 tz = tzinfo_obj
         self._tz = tz
@@ -708,7 +708,7 @@ class TradingSchedule:
         if isinstance(timezone_name, str) and timezone_name.strip():
             if ZoneInfo is not None:
                 tz = ZoneInfo(timezone_name)
-            else:  # pragma: no cover - legacy builds without zoneinfo
+            else:  # pragma: no cover - archival builds without zoneinfo
                 tz = timezone.utc
         default_mode = str(payload.get("default_mode", "demo"))
 

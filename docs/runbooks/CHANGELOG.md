@@ -1,18 +1,18 @@
 # Changelog runbooków operacyjnych
 
-## 2025-10-30 – Logowanie Stage6 i migrator bez fallbacków legacy
+## 2025-10-30 – Logowanie Stage6 i migrator bez fallbacków archiwalnych
 - **Zakres**: `bot_core/logging/app.py`, migrator Stage6 (`python -m bot_core.runtime.stage6_preset_cli`), dokumentacja runbooków.
-- **Zmiana**: usunięto obsługę zmiennych środowiskowych `KRYPT_LOWCA_*` na rzecz wyłącznych prefiksów `BOT_CORE_*`; legacy
+- **Zmiana**: usunięto obsługę zmiennych środowiskowych `KRYPT_LOWCA_*` na rzecz wyłącznych prefiksów `BOT_CORE_*`; dawne
   zmienne są ignorowane, więc konfiguracja wymaga jawnego ustawienia nowszych nazw. Pomoc CLI migratora Stage6 ukrywa
-  nieaktywne flagi `--legacy-security-*`, dzięki czemu `--help` prezentuje wyłącznie wspierane opcje.
+  nieaktywne flagi poprzedniej warstwy, dzięki czemu `--help` prezentuje wyłącznie wspierane opcje.
 - **Działanie dla zespołów**: zaktualizujcie własne skrypty startowe i pipeline'y CI, aby eksportowały wyłącznie nowe zmienne
   `BOT_CORE_LOG_DIR`, `BOT_CORE_LOG_FILE`, `BOT_CORE_LOGGER_NAME`, `BOT_CORE_LOG_LEVEL`, `BOT_CORE_LOG_FORMAT` i
   `BOT_CORE_LOG_SHIP_VECTOR`. W dokumentacji operacyjnej korzystajcie z odświeżonych przykładów CLI (patrz niżej)
   podczas warsztatów hypercare/migracyjnych.
 
-## 2025-10-25 – Usunięcie archiwalnego pakietu legacy
+## 2025-10-25 – Usunięcie archiwalnego pakietu desktopowego
 - **Zakres**: `archive/` (czyszczenie), dokumentacja migracyjna oraz README.
-- **Zmiana**: skasowano katalog `archive/legacy_bot` i zaktualizowano materiały, aby jasno wskazywały brak shimów legacy.
+- **Zmiana**: skasowano katalog z dawnym botem i zaktualizowano materiały, aby jasno wskazywały brak shimów poprzedniej warstwy.
 - **Działanie dla zespołów**: wszystkie odwołania do dawnych namespace'ów muszą korzystać z `bot_core.*`; repozytorium nie
   zawiera już kopii modułów `KryptoLowca` nawet w trybie archiwalnym.
 

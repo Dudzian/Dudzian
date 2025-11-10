@@ -4,7 +4,7 @@ Moduł ten zapewnia lekki zestaw abstrakcji kompatybilny z poprzednią warstwą
 ``KryptoLowca.exchanges``. Dzięki temu testy oraz narzędzia, które
 oczekują istnienia obiektów takich jak ``MarketSubscription`` czy
 ``MarketStreamHandle``, mogą korzystać bezpośrednio z przestrzeni
-``bot_core`` bez sięgania po warstwę legacy.
+``bot_core`` bez sięgania po warstwę archiwalną.
 """
 
 from __future__ import annotations

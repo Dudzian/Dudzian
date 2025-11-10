@@ -306,19 +306,19 @@ def test_parse_inline_config_variants():
 
 def test_parse_profile_tokens_and_unique_entries():
     tokens = pb._parse_profile_tokens(
-        [" base ", "!legacy", "-obsolete", "", "ci"],
+        [" base ", "!sunset", "-obsolete", "", "ci"],
         allow_remove=True,
         source="cli",
     )
     assert tokens == (
         pb.ProfileToken("base", "add"),
-        pb.ProfileToken("legacy", "remove"),
+        pb.ProfileToken("sunset", "remove"),
         pb.ProfileToken("obsolete", "remove"),
         pb.ProfileToken("ci", "add"),
     )
 
     with pytest.raises(ValueError):
-        pb._parse_profile_tokens(["-legacy"], allow_remove=False, source="config")
+        pb._parse_profile_tokens(["-sunset"], allow_remove=False, source="config")
 
     assert pb._unique_entries(["a", "b", "a", "c"]) == ("a", "b", "c")
 

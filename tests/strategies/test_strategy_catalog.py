@@ -254,17 +254,17 @@ def test_license_telemetry_records_mismatch(tmp_path: Path, monkeypatch) -> None
     assert event["fingerprint_candidate_count"] == 1
 
 
-def test_loader_backfills_metadata_for_legacy_definitions() -> None:
+def test_loader_backfills_metadata_for_archive_definitions() -> None:
     raw = {
         "strategies": {
-            "legacy_trend": {
+            "archive_trend": {
                 "engine": "daily_trend_momentum",
                 "parameters": {"fast_ma": 15},
             }
         }
     }
     result = _load_strategy_definitions(raw)
-    cfg = result["legacy_trend"]
+    cfg = result["archive_trend"]
     assert cfg.license_tier == "standard"
     assert cfg.risk_classes == ("directional", "momentum")
     assert cfg.required_data == ("ohlcv", "technical_indicators")

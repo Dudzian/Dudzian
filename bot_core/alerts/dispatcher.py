@@ -13,7 +13,7 @@ _OFFLINE_LOGGER = logging.getLogger("bot_core.alerts.offline")
 
 
 class AlertSeverity(str, Enum):
-    """Severity levels understood by the legacy UI surfaces."""
+    """Severity levels understood by the archival UI surfaces."""
 
     INFO = "info"
     WARNING = "warning"

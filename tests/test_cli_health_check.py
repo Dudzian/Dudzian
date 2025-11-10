@@ -783,7 +783,7 @@ paper:
     assert exit_code == 2
 
 
-def test_health_check_cli_rejects_legacy_aliases(
+def test_health_check_cli_rejects_archival_aliases(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
     env_yaml = tmp_path / "modes.yaml"

@@ -64,7 +64,7 @@ zainstalowanego `buf`, patrz [instrukcje](https://buf.build/docs/installation)).
   lokalne uruchomienie powyższych poleceń przed wysyłką PR.
 - Klient QML korzysta tylko z gRPC – UI nie łączy się bezpośrednio z giełdami.
 
-## Migracja z REST/legacy
+## Migracja z REST/poprzedniej generacji
 
 Poprzednia warstwa REST została usunięta. Wszystkie integracje powinny korzystać z Stage6 oraz
 bieżących usług gRPC (`MarketDataService`, `OrderService`, `RiskService`, `MetricsService`,

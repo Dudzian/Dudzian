@@ -1,6 +1,6 @@
 """Utility for detecting duplicated Python modules and definitions.
 
-The migration from the legacy ``KryptoLowca`` package to the modernised
+The migration from the archival ``KryptoLowca`` package to the modernised
 "bot_core"/"core" layout left a substantial amount of code that may look
 identical even if it now lives in different directories.  This helper analyses
 the repository, normalises the Python AST (removing docstrings and comments)
@@ -43,7 +43,7 @@ from typing import Dict, Iterable, Iterator, List, Tuple
 REPO_ROOT = Path(__file__).resolve().parent.parent
 
 # Directories that constitute the new code base – we prefer keeping these files
-# and treat other locations as legacy fallbacks.
+# and treat other locations as archival fallbacks.
 CANONICAL_ROOTS = [
     REPO_ROOT / "bot_core",
     REPO_ROOT / "core",
@@ -53,8 +53,8 @@ CANONICAL_ROOTS = [
     REPO_ROOT / "tests",
 ]
 
-# Legacy sources have been removed – we only analyse canonical roots.
-LEGACY_ROOTS: list[Path] = []
+# Historic sources have been removed – we only analyse canonical roots.
+ARCHIVAL_ROOTS: list[Path] = []
 
 SCAN_ROOTS = CANONICAL_ROOTS
 
@@ -110,11 +110,11 @@ class FileInfo:
         for index, base in enumerate(CANONICAL_ROOTS):
             if base in self.path.parents or self.path == base:
                 return (0, f"{index:02d}:{self.relative_path.as_posix()}")
-        for index, base in enumerate(LEGACY_ROOTS):
+        for index, base in enumerate(ARCHIVAL_ROOTS):
             if base in self.path.parents or self.path == base:
                 return (index + 1, self.relative_path.as_posix())
         # Everything else is considered the lowest priority (archival).
-        return (len(LEGACY_ROOTS) + 1, self.relative_path.as_posix())
+        return (len(ARCHIVAL_ROOTS) + 1, self.relative_path.as_posix())
 
 
 @dataclasses.dataclass(slots=True)

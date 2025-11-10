@@ -1,4 +1,4 @@
-"""Trend-following backtest engine niezależny od warstwy legacy."""
+"""Trend-following backtest engine niezależny od warstwy archiwalnej."""
 
 from __future__ import annotations
 
