@@ -15,7 +15,10 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path, PurePosixPath
 from typing import Any, Iterable, List, Mapping, Sequence
 
-from deploy.packaging.build_core_bundle import SUPPORTED_PLATFORMS, build_from_cli
+from deploy.packaging.build_core_bundle import (
+    SUPPORTED_PLATFORMS,
+    build_from_cli as build_core_bundle_from_cli,
+)
 from bot_core.security.signing import build_hmac_signature
 
 from scripts._cli_common import now_iso
@@ -300,7 +303,7 @@ def _run_bundle_step(args: argparse.Namespace) -> dict[str, Any]:
     if args.bundle_fingerprint_placeholder:
         cli_args.extend(["--fingerprint-placeholder", args.bundle_fingerprint_placeholder])
 
-    bundle_path = build_from_cli(cli_args)
+    bundle_path = build_core_bundle_from_cli(cli_args)
     return {"archive": str(bundle_path), "platform": args.bundle_platform, "version": args.bundle_version}
 
 

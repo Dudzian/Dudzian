@@ -1,9 +1,8 @@
 # Kontrakty gRPC (`proto/`)
 
 Ten katalog zawiera definicję Protobuf v1 dla komunikacji pomiędzy powłoką desktopową Qt/QML a rdzeniem
-`bot_core`. Zgodnie z architekturą shell↔daemon wszystkie operacje odbywają się przez gRPC (HTTP/2) –
-brak WebSocketów i brak bezpośrednich połączeń HTTP z giełdami po stronie UI. Warstwa legacy korzysta
-z long-pollingu REST, jeśli potrzebne są strumienie pomocnicze.
+`bot_core`. Zgodnie z architekturą shell↔daemon wszystkie operacje odbywają się wyłącznie przez gRPC
+(HTTP/2) – brak WebSocketów i brak bezpośrednich połączeń HTTP z giełdami po stronie UI.
 
 ## Pliki
 
@@ -64,3 +63,11 @@ zainstalowanego `buf`, patrz [instrukcje](https://buf.build/docs/installation)).
 - Każda zmiana przechodzi przez `buf lint` / `buf breaking` w pipeline CI; rekomendowane jest także
   lokalne uruchomienie powyższych poleceń przed wysyłką PR.
 - Klient QML korzysta tylko z gRPC – UI nie łączy się bezpośrednio z giełdami.
+
+## Migracja z REST/legacy
+
+Poprzednia warstwa REST została usunięta. Wszystkie integracje powinny korzystać z Stage6 oraz
+bieżących usług gRPC (`MarketDataService`, `OrderService`, `RiskService`, `MetricsService`,
+`HealthService`). Narzędzia deweloperskie (m.in. `scripts/generate_trading_stubs.py`, feed Stage6)
+obsługują wyłącznie aktualny protokół. Odwołania do dawnych endpointów REST należy usunąć podczas
+migracji – próba ich użycia zakończy się błędem po stronie klienta lub serwera.

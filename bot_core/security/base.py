@@ -206,12 +206,15 @@ class SecretManager:
                     return value
             return None
 
-        key_id = _first_present("key_id", "keyId", "keyID", "api_key", "apiKey")
+        key_id = _first_present("key_id", "keyId", "keyID")
         if not key_id:
-            raise ValueError("sekret nie zawiera pola 'key_id' ani aliasów 'keyId' / 'api_key'")
+            raise ValueError("sekret nie zawiera pola 'key_id' ani aliasów 'keyId' / 'keyID'")
 
-        secret_value = _first_present("secret", "api_secret", "apiSecret", "secret_key", "secretKey") or ""
-        passphrase = _first_present("passphrase", "api_passphrase", "apiPassphrase")
+        secret_value = _first_present("secret", "secret_key", "secretKey")
+        if secret_value is None:
+            raise ValueError("sekret nie zawiera pola 'secret'")
+
+        passphrase = _first_present("passphrase")
 
         permissions = data.get("permissions")
         if not permissions and "scopes" in data:
@@ -219,22 +222,18 @@ class SecretManager:
 
         environment_value = _first_present("environment", "env")
 
-        environment: Environment | None = None
-        if environment_value not in (None, ""):
-            if isinstance(environment_value, Environment):
-                environment = environment_value
-            else:
-                try:
-                    environment = Environment(str(environment_value).lower())
-                except ValueError as exc:  # pragma: no cover - walidacja formatu
-                    raise ValueError(
-                        f"nieobsługiwane środowisko w sekrecie: {environment_value}"
-                    ) from exc
+        if environment_value in (None, ""):
+            raise ValueError("sekret nie zawiera pola 'environment'")
 
-        if environment is None:
-            if expected_environment is None:
-                raise ValueError("sekret nie zawiera pola 'environment'")
-            environment = expected_environment
+        if isinstance(environment_value, Environment):
+            environment: Environment = environment_value
+        else:
+            try:
+                environment = Environment(str(environment_value).lower())
+            except ValueError as exc:  # pragma: no cover - walidacja formatu
+                raise ValueError(
+                    f"nieobsługiwane środowisko w sekrecie: {environment_value}"
+                ) from exc
 
         return SecretPayload(
             key_id=str(key_id),

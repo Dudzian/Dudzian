@@ -41,7 +41,7 @@
                   "paper_fee_rate": 0.001
                 },
                 "credentials": {
-                  "api_key": null,
+                  "key_id": null,
                   "secret": null
                 }
               }
@@ -62,7 +62,7 @@
                   }
                 },
                 "credentials": {
-                  "api_key": "${BINANCE_TESTNET_KEY}",
+                  "key_id": "${BINANCE_TESTNET_KEY}",
                   "secret": "${BINANCE_TESTNET_SECRET}"
                 }
               }
@@ -92,7 +92,7 @@
                   }
                 },
                 "credentials": {
-                  "api_key": "${BINANCE_LIVE_KEY}",
+                  "key_id": "${BINANCE_LIVE_KEY}",
                   "secret": "${BINANCE_LIVE_SECRET}"
                 }
               }
@@ -119,6 +119,129 @@
         "testnet",
         "live"
       ]
+    }
+  },
+  "catalog": {
+    "schema_version": "1.1",
+    "package_id": "exchange_binance.v1",
+    "display_name": "Binance Exchange Environments",
+    "summary": "Preset środowisk paper/testnet/live dla giełdy Binance.",
+    "description": "Pakiet udostępnia kompletny zestaw środowisk i guardraili dla integracji Binance wraz z podpisanym presetem.",
+    "version": "1.0.0+3f04577c8d9eef4d",
+    "revision": "2025.01",
+    "release_date": "2025-11-01T22:38:01Z",
+    "maintainers": [
+      {
+        "name": "Marketplace Labs",
+        "email": "marketplace@example.com",
+        "organization": "Marketplace Guild",
+        "role": "maintainer"
+      }
+    ],
+    "license": {
+      "name": "Marketplace Evaluation License",
+      "spdx_id": "Proprietary",
+      "url": "https://configs.example.com/licenses/marketplace-eval",
+      "terms_summary": "Do użytku ewaluacyjnego.",
+      "redistributable": false,
+      "commercial_use": false
+    },
+    "tags": [
+      "exchange",
+      "binance",
+      "connectivity"
+    ],
+    "data_requirements": {
+      "inputs": [
+        {
+          "asset_type": "market",
+          "provider": "ccxt.binance",
+          "access_level": "restricted",
+          "retention_days": 7,
+          "min_history_days": 2,
+          "sampling": "1m"
+        }
+      ],
+      "requires_personal_data": false,
+      "requires_realtime_access": true,
+      "pii_handling_notes": "Preset wymaga tylko kluczy API Binance."
+    },
+    "distribution": [
+      {
+        "name": "preset-document",
+        "uri": "packages/exchanges/exchange_binance_v1.json",
+        "kind": "preset",
+        "description": "Podpisany preset środowisk Binance.",
+        "signature": {
+          "algorithm": "HMAC-SHA256",
+          "key_id": "dev-hmac",
+          "signed_fields": [
+            "package_id",
+            "version",
+            "artifact",
+            "uri",
+            "sha256"
+          ]
+        }
+      }
+    ],
+    "compatibility": [
+      {
+        "component": "bot_core",
+        "minimum": "5.2.0",
+        "recommended": "5.3.1",
+        "notes": "Zweryfikowano z adapterem Stage6 Binance"
+      }
+    ],
+    "documentation_url": "https://configs.example.com/marketplace/exchanges/binance",
+    "release_notes": [
+      "Pierwsze publiczne wydanie presetów środowisk Binance.",
+      "Dodano guardraile watchdog i ustawienia margin."
+    ],
+    "security": {
+      "mode": "none",
+      "allowed_fingerprints": [],
+      "require_strict_match": false,
+      "audit_message": "Brak ograniczeń fingerprint dla presetów exchange."
+    },
+    "release": {
+      "channel": "beta",
+      "review_status": "approved",
+      "reviewers": [
+        {
+          "name": "Integration QA",
+          "email": "integration.qa@example.com",
+          "role": "qa"
+        }
+      ],
+      "ticket": "https://jira.example.com/browse/MKT-1107",
+      "approved_at": "2025-01-12T11:45:00Z",
+      "notes": "Beta – monitoruj wpływ zmian limitów API."
+    },
+    "exchange_compatibility": [
+      {
+        "exchange": "BINANCE",
+        "environments": [
+          "paper",
+          "testnet",
+          "live"
+        ],
+        "trading_modes": [
+          "spot",
+          "margin"
+        ],
+        "status": "beta",
+        "last_verified_at": "2025-01-11T22:00:00Z",
+        "notes": "Certyfikacja Stage6 sandbox."
+      }
+    ],
+    "versioning": {
+      "channel": "beta",
+      "iteration": "minor",
+      "supersedes": [],
+      "superseded_by": [],
+      "migration_required": false,
+      "source": "exchanges/exchange_binance.json"
     }
   },
   "signature": {

@@ -8,10 +8,10 @@ import time
 from collections import defaultdict
 from concurrent import futures
 from dataclasses import dataclass, field
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 import sys
-from typing import Any, Dict, List, Optional, Sequence, Tuple
+from typing import Any, Dict, List, Optional, Sequence, Tuple, MutableMapping, Mapping
 
 import grpc
 import yaml
@@ -59,6 +59,7 @@ class InMemoryTradingDataset:
     tradable_instruments: Dict[str, List[Any]] = field(default_factory=dict)
     decision_snapshot: List[Any] = field(default_factory=list)
     decision_increments: List[Any] = field(default_factory=list)
+    decision_cycle_metrics: Dict[str, float] = field(default_factory=dict)
 
     def add_history(self, instrument: Any, granularity: Any, candles: Sequence[Any]) -> None:
         self.history[_instrument_key(instrument, granularity)] = list(candles)
@@ -105,6 +106,15 @@ class InMemoryTradingDataset:
             self.decision_snapshot = [_clone_message(item) for item in snapshot]
         if increments is not None:
             self.decision_increments = [_clone_message(item) for item in increments]
+
+    def set_decision_cycle_metrics(self, metrics: Mapping[str, float]) -> None:
+        normalized: Dict[str, float] = {}
+        for key, value in metrics.items():
+            try:
+                normalized[str(key)] = float(value)
+            except (TypeError, ValueError):
+                continue
+        self.decision_cycle_metrics = normalized
 
 
 def merge_datasets(
@@ -202,6 +212,128 @@ def _decision_snapshot(dataset: InMemoryTradingDataset, request: Any) -> List[An
 
 def _decision_increments(dataset: InMemoryTradingDataset) -> List[Any]:
     return list(dataset.decision_increments)
+
+
+def _apply_cycle_metrics(message: Any, metrics: Mapping[str, float]) -> None:
+    if not isinstance(metrics, Mapping):
+        return
+    container = getattr(getattr(message, "cycle_metrics", None), "values", None)
+    if container is None:
+        return
+    try:
+        container.clear()
+    except AttributeError:
+        pass
+    for key, value in metrics.items():
+        try:
+            container[str(key)] = float(value)
+        except (TypeError, ValueError):
+            continue
+
+
+def _parse_journal_timestamp(value: str | None) -> datetime | None:
+    if not value:
+        return None
+    text = str(value).strip()
+    if not text:
+        return None
+    try:
+        parsed = datetime.fromisoformat(text.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+    return parsed.astimezone(timezone.utc)
+
+
+def _extract_decision_filters(filters) -> Dict[str, Any]:
+    if filters is None:
+        return {}
+
+    extracted: Dict[str, Any] = {}
+
+    def _collect(name: str) -> List[str]:
+        values = getattr(filters, name, [])
+        return [str(value).strip() for value in values if str(value).strip()]
+
+    def _assign(keys: Sequence[str], values: List[str]) -> None:
+        if not values:
+            return
+        normalized = {value.lower() for value in values}
+        if not normalized:
+            return
+        for key in keys:
+            extracted[key] = normalized
+
+    _assign(("event", "events"), _collect("events"))
+    _assign(("strategy", "strategies"), _collect("strategies"))
+    _assign(("symbol", "symbols"), _collect("symbols"))
+    _assign(("status", "statuses"), _collect("statuses"))
+    _assign(("side", "sides"), _collect("sides"))
+    _assign(("environment",), _collect("environments"))
+    _assign(("portfolio",), _collect("portfolios"))
+    _assign(("risk_profile", "riskProfile"), _collect("risk_profiles"))
+
+    if hasattr(filters, "HasField") and filters.HasField("since"):
+        extracted["since"] = filters.since.ToDatetime().replace(tzinfo=timezone.utc)
+    if hasattr(filters, "HasField") and filters.HasField("until"):
+        extracted["until"] = filters.until.ToDatetime().replace(tzinfo=timezone.utc)
+
+    return extracted
+
+
+def _filter_decision_entries(records: Sequence[Any], filters: Dict[str, Any]) -> List[Any]:
+    if not filters:
+        return list(records)
+
+    def _match(entry_value: Optional[str], expected: Optional[Sequence[str]]) -> bool:
+        if not expected:
+            return True
+        if entry_value is None:
+            return False
+        return entry_value.strip().lower() in expected
+
+    since = filters.get("since")
+    until = filters.get("until")
+    expected_event = filters.get("event")
+    expected_strategy = filters.get("strategy")
+    expected_symbol = filters.get("symbol")
+    expected_status = filters.get("status")
+    expected_side = filters.get("side")
+    expected_environment = filters.get("environment")
+    expected_portfolio = filters.get("portfolio")
+    expected_risk = filters.get("risk_profile")
+
+    result: List[Any] = []
+    for entry in records:
+        fields = getattr(entry, "fields", {})
+        timestamp_value = fields.get("timestamp") if isinstance(fields, MutableMapping) else None
+        parsed_timestamp = _parse_journal_timestamp(timestamp_value)
+        if since and (parsed_timestamp is None or parsed_timestamp < since):
+            continue
+        if until and (parsed_timestamp is None or parsed_timestamp >= until):
+            continue
+
+        if not _match(fields.get("event") if isinstance(fields, MutableMapping) else None, expected_event):
+            continue
+        if not _match(fields.get("strategy") if isinstance(fields, MutableMapping) else None, expected_strategy):
+            continue
+        if not _match(fields.get("symbol") if isinstance(fields, MutableMapping) else None, expected_symbol):
+            continue
+        if not _match(fields.get("status") if isinstance(fields, MutableMapping) else None, expected_status):
+            continue
+        if not _match(fields.get("side") if isinstance(fields, MutableMapping) else None, expected_side):
+            continue
+        if not _match(fields.get("environment") if isinstance(fields, MutableMapping) else None, expected_environment):
+            continue
+        if not _match(fields.get("portfolio") if isinstance(fields, MutableMapping) else None, expected_portfolio):
+            continue
+        if not _match(fields.get("risk_profile") if isinstance(fields, MutableMapping) else None, expected_risk):
+            continue
+
+        result.append(entry)
+
+    return result
 
 
 def _clone_message(message: Any) -> Any:
@@ -416,15 +548,19 @@ class _RuntimeService:
             snapshot = _decision_snapshot(self._dataset, request)
             if snapshot:
                 cloned = [_clone_message(entry) for entry in snapshot]
-                yield self._update_cls(
+                update = self._update_cls(
                     snapshot=self._snapshot_cls(records=cloned)
                 )
+                _apply_cycle_metrics(update, self._dataset.decision_cycle_metrics)
+                yield update
 
         increments = _decision_increments(self._dataset)
         if increments:
             for entry in increments:
                 increment = self._increment_cls(record=_clone_message(entry))
-                yield self._update_cls(increment=increment)
+                update = self._update_cls(increment=increment)
+                _apply_cycle_metrics(update, self._dataset.decision_cycle_metrics)
+                yield update
         if not self._repeat_streams or not increments:
             return
 
@@ -435,7 +571,39 @@ class _RuntimeService:
                     if not _context_is_active(context):
                         return
                 increment = self._increment_cls(record=_clone_message(entry))
-                yield self._update_cls(increment=increment)
+                update = self._update_cls(increment=increment)
+                _apply_cycle_metrics(update, self._dataset.decision_cycle_metrics)
+                yield update
+
+    def ListDecisions(self, request, context):  # noqa: N802
+        del context
+        trading_pb2, _ = _ensure_stubs_loaded()
+        limit = int(getattr(request, "limit", 0) or 0)
+        cursor = int(getattr(request, "cursor", 0) or 0)
+        if cursor < 0:
+            cursor = 0
+
+        records = list(self._dataset.decision_snapshot)
+        records.extend(self._dataset.decision_increments)
+
+        filters = _extract_decision_filters(getattr(request, "filters", None))
+        filtered = _filter_decision_entries(records, filters)
+
+        total = len(filtered)
+        start_index = min(cursor, total)
+        if limit and limit > 0:
+            end_index = min(total, start_index + limit)
+        else:
+            end_index = total
+
+        response = trading_pb2.ListDecisionsResponse()
+        response.cursor = end_index
+        response.total = total
+        response.has_more = end_index < total
+        for entry in filtered[start_index:end_index]:
+            response.records.append(_clone_message(entry))
+        _apply_cycle_metrics(response, self._dataset.decision_cycle_metrics)
+        return response
 
 
 class _HealthService:
@@ -679,6 +847,14 @@ def build_default_dataset() -> InMemoryTradingDataset:
                 }
             )
         ],
+    )
+
+    dataset.set_decision_cycle_metrics(
+        {
+            "cycles_total": 128.0,
+            "strategy_switch_total": 7.0,
+            "guardrail_blocks_total": 2.0,
+        }
     )
 
     dataset.health = trading_pb2.HealthCheckResponse(

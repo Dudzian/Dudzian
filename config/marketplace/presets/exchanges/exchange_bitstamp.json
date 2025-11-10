@@ -40,7 +40,7 @@
                   "paper_cash_asset": "USD"
                 },
                 "credentials": {
-                  "api_key": null,
+                  "key_id": null,
                   "secret": null
                 }
               }
@@ -55,7 +55,7 @@
                   "testnet": true
                 },
                 "credentials": {
-                  "api_key": "${BITSTAMP_SANDBOX_KEY}",
+                  "key_id": "${BITSTAMP_SANDBOX_KEY}",
                   "secret": "${BITSTAMP_SANDBOX_SECRET}"
                 }
               }
@@ -76,7 +76,7 @@
                   }
                 },
                 "credentials": {
-                  "api_key": "${BITSTAMP_LIVE_KEY}",
+                  "key_id": "${BITSTAMP_LIVE_KEY}",
                   "secret": "${BITSTAMP_LIVE_SECRET}"
                 }
               }

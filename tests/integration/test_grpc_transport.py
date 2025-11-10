@@ -8,10 +8,13 @@ import time
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from types import SimpleNamespace
-from typing import Any
+from typing import Any, Callable, Iterable, Mapping
 
+import grpc
 import pytest
 import yaml
+
+from google.protobuf import timestamp_pb2
 
 from bot_core.api.server import LocalRuntimeContext, LocalRuntimeGateway
 from bot_core.exchanges import interfaces as exchange_interfaces
@@ -19,6 +22,8 @@ from bot_core.exchanges import streaming as exchange_streaming
 from bot_core.exchanges.base import AccountSnapshot
 from bot_core.execution.paper import MarketMetadata
 from bot_core.testing import TradingStubServer, build_default_dataset
+from bot_core.testing.trading_stub_server import InMemoryTradingDataset
+from bot_core.generated import trading_pb2, trading_pb2_grpc
 from ui.backend.runtime_service import RuntimeService
 from bot_core.runtime.journal import InMemoryTradingDecisionJournal, TradingDecisionEvent
 
@@ -106,6 +111,31 @@ def _build_stub_context(*, preset_dir: Path | None = None):
     context.marketplace_repository = None
     context.marketplace_enabled = False
     return context
+
+
+@pytest.fixture
+def ci_decision_feed_metrics(monkeypatch: pytest.MonkeyPatch) -> Path:
+    target = Path("reports/ci/decision_feed_metrics.json")
+    target.parent.mkdir(parents=True, exist_ok=True)
+    if target.exists():
+        target.unlink()
+    monkeypatch.setenv("BOT_CORE_UI_FEED_LATENCY_PATH", str(target))
+    yield target
+    monkeypatch.delenv("BOT_CORE_UI_FEED_LATENCY_PATH", raising=False)
+
+
+def _wait_for(condition: Callable[[], bool], app, *, timeout: float = 5.0) -> bool:
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        if condition():
+            return True
+        app.processEvents()
+        time.sleep(0.05)
+    return condition()
+
+
+def _to_pb_entries(records: Iterable[Mapping[str, str]]) -> list[trading_pb2.DecisionRecordEntry]:
+    return [trading_pb2.DecisionRecordEntry(fields=dict(record)) for record in records]
 
 
 @pytest.mark.integration
@@ -226,40 +256,45 @@ def test_streaming_layer_exposes_long_poll_only() -> None:
 
 
 @pytest.mark.integration
-def test_runtime_service_consumes_grpc_stream(tmp_path: Path) -> None:
+def test_runtime_service_consumes_grpc_stream(
+    ci_decision_feed_metrics: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     pytest.importorskip("PySide6")
     os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
     from PySide6.QtCore import QCoreApplication  # type: ignore[attr-defined]
 
     dataset = build_default_dataset()
-    metrics_path = tmp_path / "latency.json"
 
     with TradingStubServer(dataset, port=0, stream_repeat=True, stream_interval=0.0) as server:
-        os.environ["BOT_CORE_UI_GRPC_ENDPOINT"] = server.address
-        os.environ["BOT_CORE_UI_FEED_LATENCY_PATH"] = str(metrics_path)
+        monkeypatch.setenv("BOT_CORE_UI_GRPC_ENDPOINT", server.address)
         app = QCoreApplication.instance() or QCoreApplication([])
         service = RuntimeService(default_limit=5)
         try:
             assert service.attachToLiveDecisionLog("") is True
-            deadline = time.time() + 5.0
-            while time.time() < deadline and not service.decisions:
-                app.processEvents()
-                time.sleep(0.05)
-            assert service.decisions, "Brak decyzji z gRPC"
+            assert _wait_for(lambda: bool(service.decisions), app)
 
-            deadline = time.time() + 5.0
-            while time.time() < deadline and not metrics_path.exists():
-                app.processEvents()
-                time.sleep(0.05)
-            assert metrics_path.exists()
-            payload = json.loads(metrics_path.read_text(encoding="utf-8"))
+            assert _wait_for(lambda: ci_decision_feed_metrics.exists(), app)
+            payload = json.loads(ci_decision_feed_metrics.read_text(encoding="utf-8"))
             assert payload["count"] >= 1
             assert payload["max_ms"] >= payload["min_ms"] >= 0.0
+            assert payload["status"] == "connected"
+            assert "reconnects" in payload and payload["reconnects"] >= 0
+            assert "downtime_ms" in payload and payload["downtime_ms"] >= 0.0
+            assert "last_latency_ms" in payload
+            assert "p50_ms" in payload and payload["p50_ms"] >= 0.0
+            assert "p95_ms" in payload and payload["p95_ms"] >= 0.0
+            health = service.feedHealth
+            assert health["status"] == "connected"
+            assert health["reconnects"] == payload["reconnects"]
+            assert _wait_for(lambda: service.cycleMetrics.get("cycles_total", 0.0) >= 1.0, app)
+            metrics = service.cycleMetrics
+            assert metrics["cycles_total"] >= 1.0
+            assert metrics["strategy_switch_total"] >= 0.0
+            assert metrics["guardrail_blocks_total"] >= 0.0
         finally:
             service._stop_grpc_stream()
             app.quit()
-        os.environ.pop("BOT_CORE_UI_GRPC_ENDPOINT", None)
-        os.environ.pop("BOT_CORE_UI_FEED_LATENCY_PATH", None)
+        monkeypatch.delenv("BOT_CORE_UI_GRPC_ENDPOINT", raising=False)
 
 
 def test_runtime_service_handles_grpc_connection_error(monkeypatch) -> None:
@@ -284,11 +319,187 @@ def test_runtime_service_handles_grpc_connection_error(monkeypatch) -> None:
         assert not service._grpc_stream_active
         assert service.decisions, "Po błędzie gRPC oczekiwano decyzji z fallbacku"
         assert "grpc" in service.errorMessage.lower()
+        assert service.feedHealth["status"] == "fallback"
+        assert "grpc" in service.feedHealth["lastError"].lower()
+        assert service.cycleMetrics == {}
     finally:
         service._stop_grpc_stream()
         app.quit()
         monkeypatch.delenv("BOT_CORE_UI_GRPC_ENDPOINT", raising=False)
 
+
+@pytest.mark.integration
+def test_grpc_decision_feed_snapshot_and_reconnect(
+    ci_decision_feed_metrics: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    pytest.importorskip("PySide6")
+    os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+    from PySide6.QtCore import QCoreApplication  # type: ignore[attr-defined]
+
+    base_time = datetime(2024, 1, 1, tzinfo=timezone.utc)
+
+    def _record_event(
+        journal: InMemoryTradingDecisionJournal,
+        *,
+        minute_offset: int,
+        event: str,
+        status: str,
+        confidence: float,
+    ) -> None:
+        journal.record(
+            TradingDecisionEvent(
+                event_type=event,
+                timestamp=base_time + timedelta(minutes=minute_offset),
+                environment="paper",
+                portfolio="alpha",
+                risk_profile="balanced",
+                symbol="BTC/USDT",
+                side="buy",
+                quantity=0.1,
+                price=42000.0 + minute_offset,
+                status=status,
+                schedule="auto",
+                strategy="trend_follow",
+                confidence=confidence,
+                latency_ms=45.0 + minute_offset,
+            )
+        )
+
+    snapshot_journal = InMemoryTradingDecisionJournal()
+    _record_event(snapshot_journal, minute_offset=0, event="order_submitted", status="submitted", confidence=0.82)
+    _record_event(snapshot_journal, minute_offset=1, event="order_filled", status="filled", confidence=0.91)
+
+    increments_journal = InMemoryTradingDecisionJournal()
+    _record_event(
+        increments_journal,
+        minute_offset=2,
+        event="order_partially_filled",
+        status="partial",
+        confidence=0.76,
+    )
+    _record_event(
+        increments_journal,
+        minute_offset=3,
+        event="order_closed",
+        status="closed",
+        confidence=0.88,
+    )
+
+    snapshot_entries = _to_pb_entries(snapshot_journal.export())
+    increment_entries = _to_pb_entries(increments_journal.export())
+    expected_increment_events = [entry.fields.get("event", "") for entry in increment_entries]
+
+    dataset = InMemoryTradingDataset()
+    dataset.set_decision_stream(snapshot=snapshot_entries, increments=increment_entries)
+
+    app = None
+    service: RuntimeService | None = None
+    server_address = ""
+
+    with TradingStubServer(dataset, port=0, stream_repeat=True, stream_interval=0.0) as server:
+        monkeypatch.setenv("BOT_CORE_UI_GRPC_ENDPOINT", server.address)
+        app = QCoreApplication.instance() or QCoreApplication([])
+
+        channel = grpc.insecure_channel(server.address)
+        stub = trading_pb2_grpc.RuntimeServiceStub(channel)
+
+        response = stub.ListDecisions(trading_pb2.ListDecisionsRequest(limit=2))
+        assert response.total == len(snapshot_entries) + len(increment_entries)
+        assert response.cursor == 2
+        assert len(response.records) == 2
+        assert response.records[0].fields["event"] == "order_submitted"
+        assert response.has_more is True
+
+        follow_up = stub.ListDecisions(
+            trading_pb2.ListDecisionsRequest(cursor=response.cursor, limit=10)
+        )
+        assert follow_up.cursor == follow_up.total
+        assert len(follow_up.records) == len(increment_entries)
+
+        since_ts = timestamp_pb2.Timestamp()
+        since_ts.FromDatetime((base_time + timedelta(minutes=2)).astimezone(timezone.utc))
+        filtered = stub.ListDecisions(
+            trading_pb2.ListDecisionsRequest(
+                filters=trading_pb2.DecisionJournalFilters(events=["order_closed"], since=since_ts)
+            )
+        )
+        assert filtered.total == 1
+        assert filtered.records[0].fields["status"] == "closed"
+
+        stream = stub.StreamDecisions(trading_pb2.StreamDecisionsRequest(limit=3))
+        first_update = next(stream)
+        assert first_update.HasField("snapshot")
+        assert len(first_update.snapshot.records) == len(snapshot_entries)
+        streamed_events: list[str] = []
+        for update in stream:
+            if update.HasField("increment"):
+                streamed_events.append(update.increment.record.fields.get("event", ""))
+            if len(streamed_events) == len(expected_increment_events):
+                break
+        assert streamed_events == expected_increment_events
+        channel.close()
+
+        service = RuntimeService(default_limit=4)
+        assert service.attachToLiveDecisionLog("") is True
+        assert _wait_for(lambda: len(service.decisions) >= len(snapshot_entries), app)
+        server_address = server.address
+
+    assert service is not None and app is not None
+
+    try:
+        host, port_text = server_address.split(":", 1)
+        port_value = int(port_text)
+
+        assert _wait_for(
+            lambda: service.feedHealth.get("status") in {"degraded", "retrying", "fallback"},
+            app,
+            timeout=12.0,
+        )
+
+        reconnect_event_name = "order_settled"
+        _record_event(
+            increments_journal,
+            minute_offset=4,
+            event=reconnect_event_name,
+            status="settled",
+            confidence=0.79,
+        )
+        updated_increments = _to_pb_entries(increments_journal.export())
+        dataset.set_decision_stream(increments=updated_increments)
+
+        with TradingStubServer(
+            dataset,
+            host=host,
+            port=port_value,
+            stream_repeat=True,
+            stream_interval=0.0,
+        ):
+            assert _wait_for(
+                lambda: service.feedHealth.get("status") == "connected"
+                and service.feedHealth.get("reconnects", 0) >= 1,
+                app,
+                timeout=10.0,
+            )
+            assert _wait_for(
+                lambda: any(entry.get("event") == reconnect_event_name for entry in service.decisions),
+                app,
+                timeout=5.0,
+            )
+
+            def _metrics_include_reconnects() -> bool:
+                if not ci_decision_feed_metrics.exists():
+                    return False
+                payload = json.loads(ci_decision_feed_metrics.read_text(encoding="utf-8"))
+                return payload.get("reconnects", 0) >= 1
+
+            assert _wait_for(_metrics_include_reconnects, app, timeout=5.0)
+            metrics_payload = json.loads(ci_decision_feed_metrics.read_text(encoding="utf-8"))
+            assert metrics_payload["reconnects"] >= 1
+            assert metrics_payload["p95_ms"] >= metrics_payload["p50_ms"] >= 0.0
+    finally:
+        service._stop_grpc_stream()
+        app.quit()
+        monkeypatch.delenv("BOT_CORE_UI_GRPC_ENDPOINT", raising=False)
 
 def test_local_runtime_gateway_streams_decision_journal_with_cursor() -> None:
     context = _build_stub_context()

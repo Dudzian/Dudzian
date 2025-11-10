@@ -1,0 +1,200 @@
+{
+  "preset": {
+    "name": "Mean Reversion Starter",
+    "strategies": [
+      {
+        "name": "mean-reversion-lite",
+        "engine": "mean_reversion",
+        "parameters": {
+          "lookback": 32,
+          "entry_zscore": 1.5,
+          "exit_zscore": 0.5,
+          "max_positions": 4,
+          "risk_buffer": 0.2
+        },
+        "metadata": {
+          "description": "Startowa konfiguracja mean-reversion zoptymalizowana pod rynek spot.",
+          "owners": ["stage6-core"],
+          "tags": [
+            "mean-reversion",
+            "starter",
+            "spot"
+          ]
+        }
+      }
+    ],
+    "risk": {
+      "max_notional": 50000,
+      "max_positions": 4,
+      "max_drawdown_pct": 12.5,
+      "guardrails": {
+        "max_loss_pct": 7.5,
+        "max_daily_trades": 12
+      }
+    },
+    "metadata": {
+      "id": "mean_reversion_v1",
+      "version": "1.0.0",
+      "summary": "Mean Reversion Starter preset",
+      "tags": [
+        "mean-reversion",
+        "spot",
+        "automation"
+      ],
+      "required_exchanges": [
+        "BINANCE",
+        "COINBASE"
+      ],
+      "profile": "mean_reversion",
+      "environments": [
+        "paper",
+        "live"
+      ]
+    }
+  },
+  "catalog": {
+    "schema_version": "1.1",
+    "package_id": "mean_reversion.v1",
+    "display_name": "Mean Reversion Starter",
+    "summary": "Konfiguracja mean-reversion z guardrailami Stage6 do szybkiego wdrożenia.",
+    "description": "Pakiet obejmuje parametry strategii mean-reversion, profil ryzyka oraz rekomendowane guardraile Stage6. Zaprojektowany do pełnej automatyzacji decyzji handlowych na rynku spot.",
+    "version": "1.0.0",
+    "revision": "2025.01",
+    "release_date": "2025-01-15T12:00:00Z",
+    "maintainers": [
+      {
+        "name": "Marketplace Labs",
+        "email": "marketplace@example.com",
+        "organization": "Marketplace Guild",
+        "role": "maintainer"
+      }
+    ],
+    "license": {
+      "name": "Marketplace Evaluation License",
+      "spdx_id": "Proprietary",
+      "url": "https://configs.example.com/licenses/marketplace-eval",
+      "terms_summary": "Do użytku ewaluacyjnego w środowiskach demo.",
+      "redistributable": false,
+      "commercial_use": false
+    },
+    "tags": [
+      "mean-reversion",
+      "spot",
+      "stage6"
+    ],
+    "data_requirements": {
+      "inputs": [
+        {
+          "asset_type": "market",
+          "provider": "ccxt.binance",
+          "access_level": "restricted",
+          "retention_days": 30,
+          "min_history_days": 14,
+          "sampling": "1m"
+        }
+      ],
+      "requires_personal_data": false,
+      "requires_realtime_access": true,
+      "pii_handling_notes": "Preset nie przetwarza danych wrażliwych."
+    },
+    "distribution": [
+      {
+        "name": "preset-document",
+        "uri": "packages/strategies/mean_reversion_v1.json",
+        "kind": "preset",
+        "description": "Podpisany preset mean-reversion z guardrailami Stage6.",
+        "signature": {
+          "algorithm": "HMAC-SHA256",
+          "key_id": "dev-hmac",
+          "signed_fields": [
+            "package_id",
+            "version",
+            "artifact",
+            "uri",
+            "sha256"
+          ]
+        }
+      }
+    ],
+    "compatibility": [
+      {
+        "component": "bot_core",
+        "minimum": "5.2.0",
+        "recommended": "5.3.1",
+        "notes": "Zweryfikowano na staging Stage6"
+      },
+      {
+        "component": "ui",
+        "minimum": "2.4.0",
+        "notes": "Wymaga dashboardu RuntimeOverview 2025.01"
+      }
+    ],
+    "documentation_url": "https://configs.example.com/marketplace/mean-reversion",
+    "release_notes": [
+      "Początkowa publikacja presetów mean-reversion.",
+      "Dodano guardraile Stage6 i profil danych Binance/COINBASE."
+    ],
+    "security": {
+      "mode": "allowlist",
+      "allowed_fingerprints": [
+        "OEM-1234567890ABCDEF"
+      ],
+      "require_strict_match": false,
+      "audit_message": "Preset dostępny tylko dla licencjonowanych instalacji OEM."
+    },
+    "release": {
+      "channel": "public",
+      "review_status": "approved",
+      "reviewers": [
+        {
+          "name": "QA Guild",
+          "email": "qa@example.com",
+          "role": "quality"
+        },
+        {
+          "name": "Compliance Board",
+          "email": "compliance@example.com",
+          "role": "compliance"
+        }
+      ],
+      "ticket": "https://jira.example.com/browse/MKT-1024",
+      "approved_at": "2025-01-14T09:30:00Z",
+      "notes": "Wymagane monitorowanie drawdownu podczas pierwszego tygodnia rollout'u."
+    },
+    "exchange_compatibility": [
+      {
+        "exchange": "BINANCE",
+        "environments": [
+          "paper",
+          "live"
+        ],
+        "trading_modes": [
+          "spot",
+          "margin"
+        ],
+        "status": "certified",
+        "last_verified_at": "2025-01-10T18:00:00Z",
+        "notes": "Certyfikacja Stage6 QA dla rynku spot i margin."
+      },
+      {
+        "exchange": "COINBASE",
+        "environments": [
+          "paper"
+        ],
+        "trading_modes": [
+          "spot"
+        ],
+        "status": "beta",
+        "notes": "Wersja beta – wymagany follow-up telemetryczny"
+      }
+    ],
+    "versioning": {
+      "channel": "public",
+      "iteration": "minor",
+      "supersedes": [],
+      "superseded_by": [],
+      "migration_required": false,
+      "source": "strategies/mean_reversion_v1.json"
+    }
+  }
+}

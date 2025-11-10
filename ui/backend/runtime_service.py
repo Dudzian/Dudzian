@@ -19,6 +19,7 @@ from typing import TYPE_CHECKING, Callable
 from PySide6.QtCore import QObject, Property, QTimer, Signal, Slot
 
 from bot_core.config import load_core_config
+from bot_core.observability.ui_metrics import get_long_poll_metrics_cache
 from bot_core.portfolio import resolve_decision_log_config
 from bot_core.runtime.journal import TradingDecisionJournal
 from .demo_data import load_demo_decisions
@@ -568,11 +569,14 @@ class RuntimeService(QObject):
     decisionsChanged = Signal()
     errorMessageChanged = Signal()
     liveSourceChanged = Signal()
+    feedHealthChanged = Signal()
+    longPollMetricsChanged = Signal()
     retrainNextRunChanged = Signal()
     adaptiveStrategySummaryChanged = Signal()
     riskMetricsChanged = Signal()
     riskTimelineChanged = Signal()
     operatorActionChanged = Signal()
+    cycleMetricsChanged = Signal()
 
     def __init__(
         self,
@@ -605,6 +609,7 @@ class RuntimeService(QObject):
         self._adaptive_summary: str = ""
         self._risk_metrics: dict[str, object] = {}
         self._risk_timeline: list[dict[str, object]] = []
+        self._cycle_metrics: dict[str, float] = {}
         self._last_operator_action: dict[str, object] | None = None
         self._grpc_thread: threading.Thread | None = None
         self._grpc_stop_event: threading.Event | None = None
@@ -614,17 +619,45 @@ class RuntimeService(QObject):
         self._grpc_target: str | None = None
         self._grpc_metadata: list[tuple[str, str]] = self._load_grpc_metadata()
         self._grpc_limit = self._default_limit
+        self._grpc_retry_attempts = 0
+        self._grpc_retry_limit = max(0, int(os.environ.get("BOT_CORE_UI_GRPC_RETRY_LIMIT", "3")))
+        self._grpc_retry_base = max(0.1, float(os.environ.get("BOT_CORE_UI_GRPC_RETRY_BASE_SECONDS", "1.0")))
+        self._grpc_retry_multiplier = max(1.0, float(os.environ.get("BOT_CORE_UI_GRPC_RETRY_MULTIPLIER", "2.0")))
+        self._grpc_retry_max = max(
+            self._grpc_retry_base,
+            float(os.environ.get("BOT_CORE_UI_GRPC_RETRY_MAX_SECONDS", "15.0")),
+        )
+        self._grpc_ready_timeout = max(1.0, float(os.environ.get("BOT_CORE_UI_GRPC_READY_TIMEOUT", "5.0")))
+        self._feed_reconnects = 0
+        self._feed_downtime_started: float | None = None
+        self._feed_downtime_total = 0.0
+        self._feed_last_error = ""
         metrics_path_env = os.environ.get("BOT_CORE_UI_FEED_LATENCY_PATH")
         if metrics_path_env:
             self._feed_metrics_path = Path(metrics_path_env).expanduser()
         else:
             self._feed_metrics_path = Path("reports/ci/decision_feed_metrics.json")
         self._feed_latencies: deque[float] = deque(maxlen=1024)
+        self._feed_health: dict[str, object] = {
+            "status": "initializing",
+            "reconnects": 0,
+            "downtimeMs": 0.0,
+            "lastError": "",
+        }
+        self._longpoll_metrics_cache = get_long_poll_metrics_cache()
+        self._longpoll_metrics: list[dict[str, object]] = []
+        self._longpoll_timer = QTimer(self)
+        self._longpoll_timer.setInterval(
+            max(1000, int(os.environ.get("BOT_CORE_UI_LONGPOLL_METRICS_INTERVAL_MS", "5000")))
+        )
+        self._longpoll_timer.timeout.connect(self._refresh_long_poll_metrics)
+        self._longpoll_timer.start()
         try:
             self._update_runtime_metadata(invalidate_cache=False)
         except Exception:  # pragma: no cover - defensywna inicjalizacja
             _LOGGER.debug("Nie udało się zainicjalizować metadanych runtime", exc_info=True)
         self._auto_connect_grpc()
+        self._refresh_long_poll_metrics()
 
     # ------------------------------------------------------------------
     @Property("QVariantList", notify=decisionsChanged)
@@ -651,11 +684,87 @@ class RuntimeService(QObject):
     def riskTimeline(self) -> list[dict[str, object]]:  # type: ignore[override]
         return list(self._risk_timeline)
 
+    @Property("QVariantMap", notify=cycleMetricsChanged)
+    def cycleMetrics(self) -> dict[str, object]:  # type: ignore[override]
+        return {key: float(value) for key, value in self._cycle_metrics.items()}
+
     @Property("QVariantMap", notify=operatorActionChanged)
     def lastOperatorAction(self) -> dict[str, object]:  # type: ignore[override]
         if self._last_operator_action is None:
             return {}
         return dict(self._last_operator_action)
+
+    @Property("QVariantMap", notify=feedHealthChanged)
+    def feedHealth(self) -> dict[str, object]:  # type: ignore[override]
+        return dict(self._feed_health)
+
+    @Property("QVariantList", notify=longPollMetricsChanged)
+    def longPollMetrics(self) -> list[dict[str, object]]:  # type: ignore[override]
+        return [dict(entry) for entry in self._longpoll_metrics]
+
+    def _update_feed_health(
+        self,
+        *,
+        status: str | None = None,
+        reconnects: int | None = None,
+        last_error: str | None = None,
+        next_retry: float | None = None,
+        latest_latency: float | None = None,
+    ) -> None:
+        payload = dict(self._feed_health)
+        if status is not None:
+            payload["status"] = status
+        if reconnects is not None:
+            payload["reconnects"] = max(0, int(reconnects))
+        if last_error is not None:
+            payload["lastError"] = last_error
+        if latest_latency is not None:
+            payload["lastLatencyMs"] = max(0.0, float(latest_latency))
+        downtime_ms = self._feed_downtime_total * 1000.0
+        if self._feed_downtime_started is not None:
+            downtime_ms += max(0.0, (time.monotonic() - self._feed_downtime_started) * 1000.0)
+        payload["downtimeMs"] = max(0.0, float(downtime_ms))
+        if next_retry is not None:
+            payload["nextRetrySeconds"] = max(0.0, float(next_retry))
+        else:
+            payload.pop("nextRetrySeconds", None)
+        self._feed_health = payload
+        self.feedHealthChanged.emit()
+
+    def _mark_feed_disconnected(self) -> None:
+        if self._feed_downtime_started is None:
+            self._feed_downtime_started = time.monotonic()
+        self._update_feed_health(status="degraded", reconnects=self._feed_reconnects)
+
+    def _mark_feed_connected(self) -> None:
+        if self._feed_downtime_started is not None:
+            self._feed_downtime_total += max(0.0, time.monotonic() - self._feed_downtime_started)
+            self._feed_downtime_started = None
+        self._grpc_retry_attempts = 0
+        self._update_feed_health(status="connected", reconnects=self._feed_reconnects, last_error="")
+
+    # ------------------------------------------------------------------
+    def _refresh_long_poll_metrics(self) -> None:
+        try:
+            snapshot = self._longpoll_metrics_cache.snapshot()
+        except Exception:  # pragma: no cover - defensywne zbieranie metryk
+            _LOGGER.debug("Nie udało się odczytać metryk long-pollowych", exc_info=True)
+            return
+        if snapshot != self._longpoll_metrics:
+            self._longpoll_metrics = [dict(entry) for entry in snapshot]
+            self.longPollMetricsChanged.emit()
+
+    def _update_cycle_metrics(self, metrics: Mapping[str, object] | None) -> None:
+        normalized: dict[str, float] = {}
+        if isinstance(metrics, Mapping):
+            for key, value in metrics.items():
+                try:
+                    normalized[str(key)] = float(value)
+                except (TypeError, ValueError):
+                    continue
+        if normalized != self._cycle_metrics:
+            self._cycle_metrics = normalized
+            self.cycleMetricsChanged.emit()
 
     # ------------------------------------------------------------------
     @Slot(int, result="QVariantList")
@@ -691,6 +800,7 @@ class RuntimeService(QObject):
         self.decisionsChanged.emit()
         self._apply_risk_context(parsed)
         self._update_runtime_metadata(invalidate_cache=False)
+        self._update_cycle_metrics({})
         return list(self._decisions)
 
     @Slot()
@@ -731,6 +841,10 @@ class RuntimeService(QObject):
                 self._error_message = ""
                 self.errorMessageChanged.emit()
                 self.liveSourceChanged.emit()
+                self._feed_reconnects = 0
+                self._feed_last_error = ""
+                self._mark_feed_disconnected()
+                self._update_feed_health(status="connecting", reconnects=0, last_error="")
                 return True
 
         if self._activate_jsonl_loader(profile_value, silent=False):
@@ -856,6 +970,10 @@ class RuntimeService(QObject):
             self._error_message = ""
             self.errorMessageChanged.emit()
             self.liveSourceChanged.emit()
+            self._feed_reconnects = 0
+            self._feed_last_error = ""
+            self._mark_feed_disconnected()
+            self._update_feed_health(status="connecting", reconnects=0, last_error="")
 
     def _activate_jsonl_loader(self, profile: str | None, *, silent: bool) -> bool:
         try:
@@ -871,6 +989,7 @@ class RuntimeService(QObject):
         self._active_log_path = log_path
         self._active_stream_label = None
         self._grpc_stream_active = False
+        self._update_cycle_metrics({})
         self.liveSourceChanged.emit()
         self.loadRecentDecisions(self._default_limit)
         if not silent:
@@ -884,6 +1003,7 @@ class RuntimeService(QObject):
         self._active_log_path = None
         self._active_stream_label = "offline-demo"
         self._grpc_stream_active = False
+        self._update_cycle_metrics({})
         self.liveSourceChanged.emit()
         self.loadRecentDecisions(self._default_limit)
         if not silent:
@@ -891,13 +1011,27 @@ class RuntimeService(QObject):
             self.errorMessageChanged.emit()
 
     def _handle_grpc_error(self, message: str, *, profile: str | None, silent: bool) -> bool:
+        self._feed_last_error = message
         self._stop_grpc_stream()
+        self._grpc_retry_attempts = 0
         if self._activate_jsonl_loader(profile, silent=True):
             if not silent:
                 self._error_message = message
                 self.errorMessageChanged.emit()
+            self._update_feed_health(
+                status="fallback",
+                reconnects=self._feed_reconnects,
+                last_error=message,
+            )
+            self._write_feed_metrics()
             return True
         self._use_demo_loader(message if not silent else None, profile=profile, silent=silent)
+        self._update_feed_health(
+            status="fallback",
+            reconnects=self._feed_reconnects,
+            last_error=message if not silent else self._feed_last_error,
+        )
+        self._write_feed_metrics()
         return True
 
     def _ensure_grpc_timer(self) -> None:
@@ -926,10 +1060,20 @@ class RuntimeService(QObject):
         self._grpc_stream_active = True
         self._grpc_limit = max(1, int(limit))
         self._decisions = []
+        self._update_cycle_metrics({})
         self._ensure_grpc_timer()
         worker = threading.Thread(
             target=self._grpc_worker,
-            args=(target, trading_pb2, trading_pb2_grpc, self._grpc_limit),
+            args=(
+                target,
+                trading_pb2,
+                trading_pb2_grpc,
+                self._grpc_limit,
+                self._grpc_ready_timeout,
+                self._grpc_retry_base,
+                self._grpc_retry_multiplier,
+                self._grpc_retry_max,
+            ),
             name="RuntimeServiceGrpc",
             daemon=True,
         )
@@ -942,76 +1086,197 @@ class RuntimeService(QObject):
         trading_pb2,
         trading_pb2_grpc,
         limit: int,
+        ready_timeout: float,
+        retry_base: float,
+        retry_multiplier: float,
+        retry_max: float,
     ) -> None:
         queue_obj = self._grpc_queue
         if queue_obj is None:
             return
         stop_event = self._grpc_stop_event
+        metadata = tuple(self._grpc_metadata)
         request = trading_pb2.StreamDecisionsRequest(
             limit=max(0, int(limit)),
             skip_snapshot=False,
             poll_interval_seconds=1.0,
         )
-        metadata = tuple(self._grpc_metadata)
-        channel = None
-        try:
-            channel = grpc.insecure_channel(target)
-            stub = trading_pb2_grpc.RuntimeServiceStub(channel)
-            if metadata:
-                stream = stub.StreamDecisions(request, metadata=metadata)
-            else:
-                stream = stub.StreamDecisions(request)
-            for update in stream:
+        base_backoff = max(0.1, float(retry_base))
+        backoff = base_backoff
+        max_backoff = max(base_backoff, float(retry_max))
+        multiplier = max(1.0, float(retry_multiplier))
+        attempt = 0
+        while stop_event is None or not stop_event.is_set():
+            attempt += 1
+            channel = None
+            try:
+                channel = grpc.insecure_channel(target)
+                ready_future = grpc.channel_ready_future(channel)
+                ready_future.result(timeout=max(1.0, float(ready_timeout)))
+                stub = trading_pb2_grpc.RuntimeServiceStub(channel)
+                if metadata:
+                    stream = stub.StreamDecisions(request, metadata=metadata)
+                else:
+                    stream = stub.StreamDecisions(request)
+                queue_obj.put(("connected", {"attempt": attempt}))
+                backoff = base_backoff
+                terminated_normally = True
+                for update in stream:
+                    if stop_event is not None and stop_event.is_set():
+                        terminated_normally = False
+                        break
+                    metrics_payload = dict(getattr(update.cycle_metrics, "values", {}))
+                    if update.HasField("snapshot"):
+                        payload = {
+                            "records": [dict(entry.fields) for entry in update.snapshot.records],
+                            "metrics": metrics_payload,
+                        }
+                        queue_obj.put(("snapshot", payload))
+                    elif update.HasField("increment"):
+                        queue_obj.put(
+                            (
+                                "increment",
+                                {
+                                    "record": dict(update.increment.record.fields),
+                                    "metrics": metrics_payload,
+                                },
+                            )
+                        )
+                if terminated_normally and (stop_event is None or not stop_event.is_set()):
+                    queue_obj.put(("stream-ended", {"attempt": attempt}))
+            except Exception as exc:  # pragma: no cover - diagnostyka
+                queue_obj.put(("connection-error", {"attempt": attempt, "message": str(exc)}))
+            finally:
+                if channel is not None:
+                    try:
+                        channel.close()
+                    except Exception:
+                        pass
+            if stop_event is not None and stop_event.is_set():
+                break
+            sleep_seconds = min(max_backoff, backoff)
+            queue_obj.put(("retrying", {"attempt": attempt, "sleep": float(sleep_seconds)}))
+            deadline = time.monotonic() + sleep_seconds
+            while time.monotonic() < deadline:
                 if stop_event is not None and stop_event.is_set():
                     break
-                if update.HasField("snapshot"):
-                    payload = [dict(entry.fields) for entry in update.snapshot.records]
-                    queue_obj.put(("snapshot", payload))
-                elif update.HasField("increment"):
-                    queue_obj.put(("increment", dict(update.increment.record.fields)))
-            queue_obj.put(("done", None))
-        except Exception as exc:  # pragma: no cover - diagnostyka
-            queue_obj.put(("error", str(exc)))
-            queue_obj.put(("done", None))
-        finally:
-            if channel is not None:
-                try:
-                    channel.close()
-                except Exception:
-                    pass
+                time.sleep(0.1)
+            backoff = min(max_backoff, backoff * multiplier)
+        queue_obj.put(("done", None))
 
     def _drain_grpc_queue(self) -> None:
         queue_obj = self._grpc_queue
         if queue_obj is None:
             return
         updated = False
+        fallback_reason: str | None = None
         while True:
             try:
                 kind, payload = queue_obj.get_nowait()
             except queue.Empty:
                 break
             if kind == "snapshot":
-                if isinstance(payload, list):
-                    self._apply_grpc_snapshot(payload)
+                records: Iterable[Mapping[str, str]] | None = None
+                metrics_payload: Mapping[str, object] | None = None
+                if isinstance(payload, Mapping):
+                    maybe_records = payload.get("records")
+                    if isinstance(maybe_records, list):
+                        records = maybe_records
+                    maybe_metrics = payload.get("metrics")
+                    if isinstance(maybe_metrics, Mapping):
+                        metrics_payload = maybe_metrics
+                elif isinstance(payload, list):
+                    records = payload
+                if records is not None:
+                    self._apply_grpc_snapshot(records, metrics_payload)
                     updated = True
                 queue_obj.task_done()
                 continue
             if kind == "increment":
+                record_payload: Mapping[str, str] | None = None
+                metrics_payload: Mapping[str, object] | None = None
                 if isinstance(payload, Mapping):
-                    self._append_grpc_record(payload)
+                    candidate = payload.get("record")
+                    if isinstance(candidate, Mapping):
+                        record_payload = candidate  # type: ignore[assignment]
+                    else:
+                        record_payload = payload  # type: ignore[assignment]
+                    maybe_metrics = payload.get("metrics")
+                    if isinstance(maybe_metrics, Mapping):
+                        metrics_payload = maybe_metrics
+                if record_payload is not None:
+                    self._append_grpc_record(record_payload, metrics_payload)
                     updated = True
                 queue_obj.task_done()
                 continue
-            if kind == "error":
-                self._handle_grpc_error(str(payload), profile=self._active_profile, silent=False)
+            if kind == "connected":
+                attempt = 0
+                if isinstance(payload, Mapping):
+                    attempt = int(payload.get("attempt", 0))
+                if attempt > 1:
+                    self._feed_reconnects = max(self._feed_reconnects, attempt - 1)
+                else:
+                    self._feed_reconnects = max(self._feed_reconnects, 0)
+                self._grpc_stream_active = True
+                self._feed_last_error = ""
+                self._mark_feed_connected()
                 queue_obj.task_done()
-                return
+                continue
+            if kind == "retrying":
+                self._mark_feed_disconnected()
+                if isinstance(payload, Mapping):
+                    next_retry_seconds = float(payload.get("sleep", 0.0))
+                    self._update_feed_health(
+                        reconnects=self._feed_reconnects,
+                        status="retrying",
+                        last_error=self._feed_last_error,
+                        next_retry=next_retry_seconds,
+                    )
+                else:
+                    self._update_feed_health(
+                        reconnects=self._feed_reconnects,
+                        status="retrying",
+                        last_error=self._feed_last_error,
+                    )
+                queue_obj.task_done()
+                continue
+            if kind == "connection-error":
+                message = "Nieudane połączenie gRPC"
+                if isinstance(payload, Mapping):
+                    message = str(payload.get("message", message))
+                self._feed_last_error = message
+                self._grpc_stream_active = False
+                self._grpc_retry_attempts += 1
+                self._mark_feed_disconnected()
+                self._update_feed_health(
+                    reconnects=self._feed_reconnects,
+                    status="retrying",
+                    last_error=message,
+                )
+                self._error_message = message
+                self.errorMessageChanged.emit()
+                if self._grpc_retry_limit == 0 or self._grpc_retry_attempts > self._grpc_retry_limit:
+                    fallback_reason = message
+                queue_obj.task_done()
+                continue
+            if kind == "stream-ended":
+                self._grpc_stream_active = False
+                self._grpc_retry_attempts += 1
+                self._mark_feed_disconnected()
+                if self._grpc_retry_limit == 0 or self._grpc_retry_attempts > self._grpc_retry_limit:
+                    fallback_reason = "Strumień gRPC zakończony"
+                queue_obj.task_done()
+                continue
             if kind == "done":
                 if self._grpc_stop_event is None or not self._grpc_stop_event.is_set():
                     self._grpc_stream_active = False
                 queue_obj.task_done()
                 continue
             queue_obj.task_done()
+
+        if fallback_reason:
+            self._handle_grpc_error(fallback_reason, profile=self._active_profile, silent=False)
+            return
 
         if updated:
             self.decisionsChanged.emit()
@@ -1021,7 +1286,11 @@ class RuntimeService(QObject):
             self.errorMessageChanged.emit()
             self._write_feed_metrics()
 
-    def _apply_grpc_snapshot(self, records: Iterable[Mapping[str, str]]) -> None:
+    def _apply_grpc_snapshot(
+        self,
+        records: Iterable[Mapping[str, str]],
+        cycle_metrics: Mapping[str, object] | None = None,
+    ) -> None:
         collected: list[dict[str, object]] = []
         for record in reversed(list(records)):
             if not isinstance(record, Mapping):
@@ -1040,8 +1309,13 @@ class RuntimeService(QObject):
         if len(collected) > max_size:
             collected = collected[:max_size]
         self._decisions = collected
+        self._update_cycle_metrics(cycle_metrics)
 
-    def _append_grpc_record(self, record: Mapping[str, str]) -> None:
+    def _append_grpc_record(
+        self,
+        record: Mapping[str, str],
+        cycle_metrics: Mapping[str, object] | None = None,
+    ) -> None:
         try:
             entry = _parse_entry(record)
         except Exception:  # pragma: no cover - diagnostyka
@@ -1052,6 +1326,7 @@ class RuntimeService(QObject):
         self._decisions.insert(0, payload)
         if len(self._decisions) > self._default_limit:
             self._decisions = self._decisions[: self._default_limit]
+        self._update_cycle_metrics(cycle_metrics)
 
     def _record_feed_latency(self, record: Mapping[str, str]) -> None:
         timestamp_raw = record.get("timestamp")
@@ -1069,21 +1344,45 @@ class RuntimeService(QObject):
         latency_ms = (datetime.now(timezone.utc) - parsed.astimezone(timezone.utc)).total_seconds() * 1000.0
         if latency_ms < 0:
             latency_ms = 0.0
-        self._feed_latencies.append(float(latency_ms))
+        latency_value = float(latency_ms)
+        self._feed_latencies.append(latency_value)
+        self._mark_feed_connected()
+        self._update_feed_health(latest_latency=latency_value, reconnects=self._feed_reconnects, last_error="")
 
     def _write_feed_metrics(self) -> None:
         latencies = list(self._feed_latencies)
-        if not latencies:
-            return
         stats_payload = {
             "generated_at": datetime.now(timezone.utc).isoformat(),
             "count": len(latencies),
-            "min_ms": min(latencies),
-            "max_ms": max(latencies),
-            "avg_ms": sum(latencies) / len(latencies),
-            "p50_ms": statistics.median(latencies),
-            "p95_ms": self._percentile(latencies, 95.0),
+            "reconnects": self._feed_reconnects,
+            "downtime_ms": float(self._feed_health.get("downtimeMs", 0.0)),
+            "status": self._feed_health.get("status", "unknown"),
+            "last_error": self._feed_health.get("lastError", ""),
         }
+        if latencies:
+            stats_payload.update(
+                {
+                    "min_ms": min(latencies),
+                    "max_ms": max(latencies),
+                    "avg_ms": sum(latencies) / len(latencies),
+                    "p50_ms": statistics.median(latencies),
+                    "p95_ms": self._percentile(latencies, 95.0),
+                }
+            )
+        else:
+            stats_payload.update(
+                {
+                    "min_ms": 0.0,
+                    "max_ms": 0.0,
+                    "avg_ms": 0.0,
+                    "p50_ms": 0.0,
+                    "p95_ms": 0.0,
+                }
+            )
+        if "lastLatencyMs" in self._feed_health:
+            stats_payload["last_latency_ms"] = float(self._feed_health["lastLatencyMs"])
+        if "nextRetrySeconds" in self._feed_health:
+            stats_payload["next_retry_seconds"] = float(self._feed_health["nextRetrySeconds"])
         try:
             self._feed_metrics_path.parent.mkdir(parents=True, exist_ok=True)
             self._feed_metrics_path.write_text(

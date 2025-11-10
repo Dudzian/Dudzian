@@ -17,26 +17,19 @@ Metadane zapisujemy w katalogu `config/marketplace/catalog.json`. Do repozytoriu
 
 ## 2. Budowanie paczki
 
-1. Utwórz katalog `config/marketplace/packages/<package_id>/` i umieść w nim spakowaną konfigurację.
-2. Oblicz skrót SHA (zalecany `sha256`).
-3. Zbuduj podpis HMAC:
+Nowy proces bazuje na skrypcie `scripts/build_marketplace_catalog.py`, który podpisuje wszystkie presety oraz odświeża katalog w jednym kroku.
+
+1. Upewnij się, że sekcja `catalog.distribution` w specyfikacji zawiera `uri`, `signature.key_id` oraz opis artefaktu.
+2. Uruchom:
    ```bash
-   python - <<'PY'
-   import base64, hashlib, hmac, json
-   from pathlib import Path
-   payload = {
-       "package_id": "mean_reversion.v1",
-       "version": "1.0.0",
-       "artifact": "config-bundle",
-       "uri": "packages/mean_reversion/bundle.json",
-       "sha256": "<DIGEST>"
-   }
-   key = Path("config/marketplace/keys/dev-hmac.key").read_bytes()
-   mac = hmac.new(key, json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode(), hashlib.sha256)
-   print(base64.b64encode(mac.digest()).decode())
-   PY
+   python scripts/build_marketplace_catalog.py \
+     --private-key config/marketplace/keys/dev-presets-ed25519.key \
+     --key-id dev-presets \
+     --signing-key dev-hmac:config/marketplace/keys/dev-hmac.key
    ```
-4. Uzupełnij sekcję `signature` w katalogu (`key_id`, `algorithm`, `value`, `signed_fields`).
+3. Skrypt zapisze podpisane dokumenty w `config/marketplace/packages/…`, policzy sumy SHA-256 i uzupełni podpis HMAC (`signature.value`).
+4. Wygenerowany `config/marketplace/catalog.json` będzie miał schemat `1.1` oraz zaktualizowane znaczniki `release`, `exchange_compatibility` i `versioning`.
+5. Zweryfikuj wynik `git status` – brak zmian po uruchomieniu oznacza, że repozytorium jest zsynchronizowane z katalogiem publicznym.
 
 ## 3. Walidacja lokalna
 
@@ -49,7 +42,7 @@ python scripts/marketplace_cli.py list
 # Podgląd pełnych metadanych
 python scripts/marketplace_cli.py show mean_reversion.v1
 
-# Walidacja podpisów i fingerprintów
+# Walidacja podpisów, fingerprintów oraz metadanych release/versioning
 python scripts/marketplace_cli.py validate --key dev-hmac:config/marketplace/keys/dev-hmac.key
 ```
 
@@ -58,6 +51,7 @@ Walidator (`bot_core.security.marketplace_validator.MarketplaceValidator`) spraw
 - zgodność skrótu artefaktu z deklaracją `integrity`;
 - podpis HMAC względem podanego klucza (`key_id` -> ścieżka);
 - dopasowanie fingerprintu sprzętowego (`HwIdProvider`).
+- poprawność sekcji `release` (zatwierdzenia) i `versioning` (referencje `package@version`).
 
 ## 4. Testy jakości i eksperymenty A/B
 

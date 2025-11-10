@@ -98,12 +98,12 @@ class _RecordingManager:
 
     def set_credentials(
         self,
-        api_key: str | None,
+        key_id: str | None,
         secret: str | None,
         *,
         passphrase: str | None = None,
     ) -> None:
-        self._credentials = (api_key, secret, passphrase)
+        self._credentials = (key_id, secret, passphrase)
 
     def configure_native_adapter(self, *, settings: Mapping[str, object], mode: Mode | None = None) -> None:
         self._configured_settings = dict(settings)
@@ -209,7 +209,7 @@ def test_health_check_cli_uses_profile_configuration(tmp_path: Path, capsys: pyt
         tmp_path / "desktop.toml",
         """
 [binance]
-key = "KEY"
+key_id = "KEY"
 secret = "SECRET"
 passphrase = "PHRASE"
 mode = "margin"
@@ -281,7 +281,7 @@ def test_health_check_cli_prefers_cli_credentials(tmp_path: Path) -> None:
         tmp_path / "desktop.toml",
         """
 [binance]
-key = "PROFILE_KEY"
+key_id = "PROFILE_KEY_ID"
 secret = "PROFILE_SECRET"
 passphrase = "PROFILE_PHRASE"
 mode = "margin"
@@ -295,8 +295,8 @@ mode = "margin"
             "binance",
             "--credentials-file",
             str(credentials),
-            "--key",
-            "CLI_KEY",
+            "--key-id",
+            "CLI_KEY_ID",
             "--secret",
             "CLI_SECRET",
             "--passphrase",
@@ -307,7 +307,7 @@ mode = "margin"
 
     assert exit_code == 0
     manager = _RecordingManager.instances[-1]
-    assert manager._credentials == ("CLI_KEY", "CLI_SECRET", "CLI_PHRASE")
+    assert manager._credentials == ("CLI_KEY_ID", "CLI_SECRET", "CLI_PHRASE")
 
 
 def test_health_check_cli_loads_environment_yaml(
@@ -337,7 +337,7 @@ paper_margin:
         - builtins.TimeoutError
         - bot_core.exchanges.errors.ExchangeThrottlingError
   credentials:
-    api_key: ${ENV_KEY}
+    key_id: ${ENV_KEY_ID}
     secret: ${ENV_SECRET}
   health_check:
     public_symbol: ETH/USDT
@@ -346,7 +346,7 @@ paper_margin:
         encoding="utf-8",
     )
 
-    monkeypatch.setenv("ENV_KEY", "LIVEKEY")
+    monkeypatch.setenv("ENV_KEY_ID", "LIVEKEY_ID")
     monkeypatch.setenv("ENV_SECRET", "LIVESECRET")
 
     exit_code = main(
@@ -375,7 +375,7 @@ paper_margin:
     retry_excs = manager.watchdog_config.get("retry_exceptions")
     assert retry_excs is not None
     assert set(retry_excs) == {TimeoutError, ExchangeThrottlingError}
-    assert manager._credentials == ("LIVEKEY", "LIVESECRET", None)
+    assert manager._credentials == ("LIVEKEY_ID", "LIVESECRET", None)
     assert manager.fetch_balance_calls == 0
     assert manager.load_markets_calls == 0
     assert manager._health_checks and manager._health_checks[0].name == "public_api"
@@ -631,7 +631,7 @@ paper:
     paper_variant: futures
     paper_initial_cash: 150000
   credentials:
-    api_key: ${DEFAULT_KEY}
+    key_id: ${DEFAULT_KEY}
     secret: ${DEFAULT_SECRET}
 """,
         encoding="utf-8",
@@ -681,7 +681,7 @@ paper:
         encoding="utf-8",
     )
 
-    monkeypatch.delenv("ENV_KEY", raising=False)
+    monkeypatch.delenv("ENV_KEY_ID", raising=False)
     monkeypatch.delenv("ENV_SECRET", raising=False)
 
     exit_code = main(
@@ -764,7 +764,7 @@ paper:
   exchange_manager:
     mode: paper
   credentials:
-    api_key: ${MISSING_KEY}
+    key_id: ${MISSING_KEY}
 """,
         encoding="utf-8",
     )
@@ -783,6 +783,41 @@ paper:
     assert exit_code == 2
 
 
+def test_health_check_cli_rejects_legacy_aliases(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    env_yaml = tmp_path / "modes.yaml"
+    env_yaml.write_text(
+        """
+defaults:
+  exchange: binance
+paper:
+  exchange_manager:
+    mode: paper
+  credentials:
+    api_key: foo
+    secret: bar
+""",
+        encoding="utf-8",
+    )
+
+    exit_code = main(
+        [
+            "health-check",
+            "--environment",
+            "paper",
+            "--environment-config",
+            str(env_yaml),
+        ],
+        manager_factory=_RecordingManager,
+    )
+
+    assert exit_code == 2
+    captured = capsys.readouterr()
+    assert "api_key" in captured.err
+    assert "--key-id" in captured.err
+
+
 def test_health_check_cli_reads_credentials_from_env(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -794,7 +829,7 @@ mode = "margin"
 """,
     )
 
-    monkeypatch.setenv("HC_KEY", "ENV_KEY")
+    monkeypatch.setenv("HC_KEY", "ENV_KEY_ID")
     monkeypatch.setenv("HC_SECRET", "ENV_SECRET")
     monkeypatch.setenv("HC_PASSPHRASE", "ENV_PHRASE")
 
@@ -805,7 +840,7 @@ mode = "margin"
             "binance",
             "--credentials-file",
             str(credentials),
-            "--key-env",
+            "--key-id-env",
             "HC_KEY",
             "--secret-env",
             "HC_SECRET",
@@ -817,7 +852,7 @@ mode = "margin"
 
     assert exit_code == 0
     manager = _RecordingManager.instances[-1]
-    assert manager._credentials == ("ENV_KEY", "ENV_SECRET", "ENV_PHRASE")
+    assert manager._credentials == ("ENV_KEY_ID", "ENV_SECRET", "ENV_PHRASE")
 
 
 def test_health_check_cli_requires_present_env(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -828,7 +863,7 @@ def test_health_check_cli_requires_present_env(monkeypatch: pytest.MonkeyPatch) 
             "health-check",
             "--exchange",
             "binance",
-            "--key-env",
+            "--key-id-env",
             "MISSING_KEY",
             "--skip-private",
         ],
@@ -843,7 +878,7 @@ def test_health_check_cli_returns_nonzero_on_missing_checks(tmp_path: Path) -> N
         tmp_path / "desktop.toml",
         """
 [zonda]
-key = "KEY"
+key_id = "KEY"
 secret = "SECRET"
 mode = "spot"
 [zonda.health_check]
@@ -871,7 +906,7 @@ def test_health_check_cli_outputs_json_payload(tmp_path: Path, capsys: pytest.Ca
         tmp_path / "desktop.toml",
         """
 [binance]
-key = "KEY"
+key_id = "KEY"
 secret = "SECRET"
 """,
     )
@@ -912,7 +947,7 @@ def test_health_check_cli_outputs_pretty_json(tmp_path: Path, capsys: pytest.Cap
         tmp_path / "desktop.toml",
         """
 [binance]
-key = "KEY"
+key_id = "KEY"
 secret = "SECRET"
 """,
     )
@@ -1241,7 +1276,7 @@ live:
             str(env_config),
             "--environment",
             "live",
-            "--key",
+            "--key-id",
             "KEY",
             "--secret",
             "SECRET",
@@ -1286,7 +1321,7 @@ profile:
             str(env_config),
             "--environment",
             "profile",
-            "--key",
+            "--key-id",
             "KEY",
             "--secret",
             "SECRET",
@@ -1316,7 +1351,7 @@ def test_health_check_cli_writes_json_to_file(
         tmp_path / "desktop.toml",
         """
 [binance]
-key = "KEY"
+key_id = "KEY"
 secret = "SECRET"
 """,
     )
@@ -1355,7 +1390,7 @@ def test_health_check_cli_rejects_output_path_in_text_mode(tmp_path: Path, capsy
         tmp_path / "desktop.toml",
         """
 [binance]
-key = "KEY"
+key_id = "KEY"
 secret = "SECRET"
 """,
     )
@@ -1441,7 +1476,7 @@ def test_health_check_cli_runs_only_requested_private_check(tmp_path: Path) -> N
         tmp_path / "desktop.toml",
         """
 [binance]
-key = "KEY"
+key_id = "KEY"
 secret = "SECRET"
 """,
     )
@@ -1501,7 +1536,7 @@ def test_health_check_cli_json_reports_requested_checks(
         tmp_path / "desktop.toml",
         """
 [binance]
-key = "KEY"
+key_id = "KEY"
 secret = "SECRET"
 """,
     )

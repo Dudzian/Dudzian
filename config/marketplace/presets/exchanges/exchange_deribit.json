@@ -1,0 +1,160 @@
+{
+  "preset": {
+    "name": "Deribit Connectivity",
+    "strategies": [
+      {
+        "name": "deribit_connectivity",
+        "engine": "grid_trading",
+        "parameters": {
+          "exchange": "DERIBIT",
+          "default_environment": "paper",
+          "available_environments": [
+            "paper",
+            "testnet",
+            "live"
+          ]
+        },
+        "license_tier": "community",
+        "risk_classes": [
+          "infrastructure"
+        ],
+        "required_data": [
+          "ohlcv"
+        ],
+        "tags": [
+          "exchange",
+          "deribit"
+        ],
+        "metadata": {
+          "description": "Automatycznie wygenerowany preset środowisk dla giełdy Deribit.",
+          "environments": [
+            {
+              "name": "paper",
+              "description": "Papierowy symulator kontraktów perpetual Deribit.",
+              "config": {
+                "description": "Papierowy symulator kontraktów perpetual Deribit.",
+                "exchange_manager": {
+                  "mode": "paper",
+                  "paper_variant": "futures",
+                  "paper_initial_cash": 100000,
+                  "paper_cash_asset": "USDC",
+                  "simulator": {
+                    "leverage_limit": 10.0,
+                    "maintenance_margin_ratio": 0.05,
+                    "funding_rate": 0.0001,
+                    "funding_interval_seconds": 28800
+                  },
+                  "rate_limit_rules": [
+                    {
+                      "rate": 40,
+                      "per": 1
+                    },
+                    {
+                      "rate": 1200,
+                      "per": 60
+                    }
+                  ]
+                },
+                "credentials": {
+                  "key_id": null,
+                  "secret": null
+                }
+              }
+            },
+            {
+              "name": "testnet",
+              "description": "Deribit testnet futures API.",
+              "config": {
+                "description": "Deribit testnet futures API.",
+                "exchange_manager": {
+                  "mode": "futures",
+                  "testnet": true,
+                  "watchdog": {
+                    "retry_policy": {
+                      "max_attempts": 5,
+                      "base_delay": 0.4
+                    }
+                  },
+                  "rate_limit_rules": [
+                    {
+                      "rate": 40,
+                      "per": 1
+                    },
+                    {
+                      "rate": 1200,
+                      "per": 60
+                    }
+                  ],
+                  "native_adapter": {
+                    "settings": {
+                      "stream": {
+                        "base_url": "http://127.0.0.1:8765"
+                      }
+                    }
+                  },
+                  "failover": {
+                    "enabled": true,
+                    "failure_threshold": 2,
+                    "cooldown_seconds": 45
+                  }
+                },
+                "credentials": {
+                  "key_id": "${DERIBIT_TESTNET_KEY}",
+                  "secret": "${DERIBIT_TESTNET_SECRET}"
+                }
+              }
+            },
+            {
+              "name": "live",
+              "description": "Produkcyjne środowisko Deribit futures.",
+              "config": {
+                "description": "Produkcyjne środowisko Deribit futures.",
+                "exchange_manager": {
+                  "mode": "futures",
+                  "testnet": false,
+                  "watchdog": {
+                    "retry_policy": {
+                      "max_attempts": 3,
+                      "base_delay": 0.6
+                    },
+                    "circuit_breaker": {
+                      "failure_threshold": 4,
+                      "recovery_time_seconds": 90
+                    }
+                  },
+                  "rate_limit_rules": [
+                    {
+                      "rate": 40,
+                      "per": 1
+                    },
+                    {
+                      "rate": 1200,
+                      "per": 60
+                    }
+                  ],
+                  "native_adapter": {
+                    "settings": {
+                      "stream": {
+                        "base_url": "http://127.0.0.1:8765"
+                      }
+                    }
+                  },
+                  "failover": {
+                    "enabled": true,
+                    "failure_threshold": 3,
+                    "cooldown_seconds": 60
+                  }
+                },
+                "credentials": {
+                  "key_id": "${DERIBIT_LIVE_KEY}",
+                  "secret": "${DERIBIT_LIVE_SECRET}"
+                }
+              }
+            }
+          ]
+        }
+      }
+    ]
+  }
+}
+

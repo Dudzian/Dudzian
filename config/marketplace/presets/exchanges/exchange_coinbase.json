@@ -41,7 +41,7 @@
                   "paper_fee_rate": 0.001
                 },
                 "credentials": {
-                  "api_key": null,
+                  "key_id": null,
                   "secret": null
                 }
               }
@@ -62,7 +62,7 @@
                   }
                 },
                 "credentials": {
-                  "api_key": "${COINBASE_TESTNET_KEY}",
+                  "key_id": "${COINBASE_TESTNET_KEY}",
                   "secret": "${COINBASE_TESTNET_SECRET}",
                   "passphrase": "${COINBASE_TESTNET_PASSPHRASE}"
                 }
@@ -93,7 +93,7 @@
                   }
                 },
                 "credentials": {
-                  "api_key": "${COINBASE_LIVE_KEY}",
+                  "key_id": "${COINBASE_LIVE_KEY}",
                   "secret": "${COINBASE_LIVE_SECRET}",
                   "passphrase": "${COINBASE_LIVE_PASSPHRASE}"
                 }

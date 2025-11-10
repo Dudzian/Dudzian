@@ -41,7 +41,7 @@
                   "paper_fee_rate": 0.0015
                 },
                 "credentials": {
-                  "api_key": null,
+                  "key_id": null,
                   "secret": null
                 }
               }
@@ -71,7 +71,7 @@
                   ]
                 },
                 "credentials": {
-                  "api_key": "${HUOBI_TESTNET_KEY}",
+                  "key_id": "${HUOBI_TESTNET_KEY}",
                   "secret": "${HUOBI_TESTNET_SECRET}"
                 }
               }
@@ -107,7 +107,7 @@
                   ]
                 },
                 "credentials": {
-                  "api_key": "${HUOBI_LIVE_KEY}",
+                  "key_id": "${HUOBI_LIVE_KEY}",
                   "secret": "${HUOBI_LIVE_SECRET}"
                 }
               }

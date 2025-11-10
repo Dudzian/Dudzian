@@ -1,0 +1,64 @@
+{
+  "preset": {
+    "metadata": {
+      "environments": [
+        "paper",
+        "live"
+      ],
+      "id": "mean_reversion_v1",
+      "profile": "mean_reversion",
+      "required_exchanges": [
+        "BINANCE",
+        "COINBASE"
+      ],
+      "summary": "Mean Reversion Starter preset",
+      "tags": [
+        "mean-reversion",
+        "spot",
+        "automation"
+      ],
+      "version": "1.0.0"
+    },
+    "name": "Mean Reversion Starter",
+    "risk": {
+      "guardrails": {
+        "max_daily_trades": 12,
+        "max_loss_pct": 7.5
+      },
+      "max_drawdown_pct": 12.5,
+      "max_notional": 50000,
+      "max_positions": 4
+    },
+    "strategies": [
+      {
+        "engine": "mean_reversion",
+        "metadata": {
+          "description": "Startowa konfiguracja mean-reversion zoptymalizowana pod rynek spot.",
+          "owners": [
+            "stage6-core"
+          ],
+          "tags": [
+            "mean-reversion",
+            "starter",
+            "spot"
+          ]
+        },
+        "name": "mean-reversion-lite",
+        "parameters": {
+          "entry_zscore": 1.5,
+          "exit_zscore": 0.5,
+          "lookback": 32,
+          "max_positions": 4,
+          "risk_buffer": 0.2
+        }
+      }
+    ]
+  },
+  "signature": {
+    "algorithm": "ed25519",
+    "key_id": "dev-presets",
+    "public_key": "wnD5eTEGDB3CPb6r3oMOmRjFtjCxHISZXHlHX0TIKhY=",
+    "signed_at": "2025-11-10T16:28:23Z",
+    "value": "LtT+x6rBSDCkAFYzEPCHwNooM3dmRWokDuXIwifHVj9YIIfnJ35UHkrCTJ39yiN/lZfpmODuQYdfYdVwx0X3Bg=="
+  }
+}

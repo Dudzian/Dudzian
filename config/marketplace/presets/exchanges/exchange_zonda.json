@@ -40,7 +40,7 @@
                   "paper_cash_asset": "PLN"
                 },
                 "credentials": {
-                  "api_key": null,
+                  "key_id": null,
                   "secret": null
                 }
               }
@@ -55,7 +55,7 @@
                   "testnet": true
                 },
                 "credentials": {
-                  "api_key": "${ZONDA_TESTNET_KEY}",
+                  "key_id": "${ZONDA_TESTNET_KEY}",
                   "secret": "${ZONDA_TESTNET_SECRET}"
                 }
               }
@@ -76,7 +76,7 @@
                   }
                 },
                 "credentials": {
-                  "api_key": "${ZONDA_LIVE_KEY}",
+                  "key_id": "${ZONDA_LIVE_KEY}",
                   "secret": "${ZONDA_LIVE_SECRET}"
                 }
               }

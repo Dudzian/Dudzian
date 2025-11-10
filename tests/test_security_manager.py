@@ -18,6 +18,7 @@ from bot_core.security import (
     SecretStorageError,
     create_default_secret_storage,
 )
+from bot_core.security.base import SecretStorage
 
 
 class _InMemoryKeyring:
@@ -49,6 +50,20 @@ class _StaticHwIdProvider:
 
     def read(self) -> str:
         return self._value
+
+
+class _StaticSecretStorage(SecretStorage):
+    def __init__(self, value: str | None) -> None:
+        self._value = value
+
+    def get_secret(self, key: str) -> str | None:  # pragma: no cover - prosta implementacja
+        return self._value
+
+    def set_secret(self, key: str, value: str) -> None:  # pragma: no cover - nieużywane
+        raise NotImplementedError
+
+    def delete_secret(self, key: str) -> None:  # pragma: no cover - nieużywane
+        raise NotImplementedError
 
 
 @pytest.fixture(autouse=True)
@@ -214,6 +229,53 @@ def test_store_and_load_generic_secret(keyring_storage: Callable[[str], KeyringS
 
     with pytest.raises(SecretStorageError):
         manager.load_secret_value("telegram_bot", purpose="alerts")
+
+
+def test_load_exchange_credentials_missing_environment_raises_error() -> None:
+    storage = _StaticSecretStorage(
+        '{"key_id": "abc", "secret": "sekret", "permissions": ["trade"]}'
+    )
+    manager = SecretManager(storage, namespace="tests")
+
+    with pytest.raises(SecretStorageError) as excinfo:
+        manager.load_exchange_credentials(
+            "binance", expected_environment=Environment.PAPER
+        )
+
+    cause = excinfo.value.__cause__
+    assert isinstance(cause, ValueError)
+    assert "environment" in str(cause)
+
+
+def test_load_exchange_credentials_missing_secret_raises_error() -> None:
+    storage = _StaticSecretStorage('{"key_id": "abc", "environment": "paper"}')
+    manager = SecretManager(storage, namespace="tests")
+
+    with pytest.raises(SecretStorageError) as excinfo:
+        manager.load_exchange_credentials(
+            "binance", expected_environment=Environment.PAPER
+        )
+
+    cause = excinfo.value.__cause__
+    assert isinstance(cause, ValueError)
+    assert "secret" in str(cause)
+
+
+def test_load_exchange_credentials_rejects_legacy_api_fields() -> None:
+    storage = _StaticSecretStorage(
+        '{"api_key": "API123", "api_secret": "SECRET456", "environment": "paper"}'
+    )
+    manager = SecretManager(storage, namespace="tests")
+
+    with pytest.raises(SecretStorageError) as excinfo:
+        manager.load_exchange_credentials(
+            "binance", expected_environment=Environment.PAPER
+        )
+
+    assert "niepoprawny format" in str(excinfo.value)
+    cause = excinfo.value.__cause__
+    assert isinstance(cause, ValueError)
+    assert "key_id" in str(cause)
 
 
 def test_encrypted_file_secret_storage_roundtrip(tmp_path: Path) -> None:

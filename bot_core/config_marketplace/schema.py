@@ -5,7 +5,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Iterable, Mapping, Sequence
 
-from pydantic import AnyUrl, BaseModel, Field, HttpUrl, ValidationError
+from pydantic import AnyUrl, BaseModel, Field, HttpUrl, ValidationError, model_validator
 
 _PACKAGE_ID_PATTERN = r"^[a-z0-9][a-z0-9._-]{2,63}$"
 _SEMVER_PATTERN = r"^[0-9]+\.[0-9]+\.[0-9]+(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?$"
@@ -198,6 +198,131 @@ class VersionCompatibility(BaseModel):
     notes: str | None = Field(None, description="Uwagi dotyczące zgodności.")
 
 
+class ReleaseReviewer(BaseModel):
+    """Informacje o recenzencie odpowiedzialnym za weryfikację paczki."""
+
+    name: str = Field(..., description="Imię i nazwisko lub nazwa recenzenta.")
+    email: str | None = Field(
+        None,
+        pattern=r"^[^@\s]+@[^@\s]+\.[^@\s]+$",
+        description="Adres e-mail recenzenta (opcjonalnie).",
+    )
+    role: str | None = Field(
+        None, description="Rola recenzenta (QA, compliance, produkt...)."
+    )
+
+
+class ReleaseMetadata(BaseModel):
+    """Status recenzji i kanał publikacji paczki Marketplace."""
+
+    channel: str = Field(
+        "internal",
+        description="Kanał dystrybucji (internal, beta, public, deprecated).",
+    )
+    review_status: str = Field(
+        "pending",
+        description="Status procesu review (pending, in_review, approved, rejected).",
+    )
+    reviewers: list[ReleaseReviewer] = Field(
+        default_factory=list,
+        description="Lista osób zatwierdzających publikację.",
+    )
+    ticket: HttpUrl | None = Field(
+        None,
+        description="Link do zgłoszenia/artefaktu zatwierdzającego (np. Jira).",
+    )
+    approved_at: datetime | None = Field(
+        None, description="Znacznik czasu zatwierdzenia publikacji.",
+    )
+    notes: str | None = Field(
+        None, description="Uwagi do publikacji (np. warunki dodatkowe).",
+    )
+
+    @model_validator(mode="after")
+    def _validate_review(cls, values: "ReleaseMetadata") -> "ReleaseMetadata":
+        status = values.review_status.lower().strip()
+        if status == "approved":
+            if not values.reviewers:
+                raise ValueError(
+                    "Zatwierdzone wydanie musi mieć przynajmniej jednego recenzenta."
+                )
+            if values.approved_at is None:
+                raise ValueError(
+                    "Pole approved_at jest wymagane przy statusie review 'approved'."
+                )
+        return values
+
+
+class ExchangeCompatibilityEntry(BaseModel):
+    """Deklaracja kompatybilności paczki z konkretną giełdą."""
+
+    exchange: str = Field(
+        ...,
+        pattern=r"^[A-Z0-9][A-Z0-9._-]{1,31}$",
+        description="Kod giełdy (np. BINANCE, OKX, KRAKEN).",
+    )
+    environments: list[str] = Field(
+        default_factory=list,
+        description="Środowiska obsługiwane przez preset (paper, testnet, live...).",
+    )
+    trading_modes: list[str] = Field(
+        default_factory=list,
+        description="Tryby handlu (spot, margin, futures ...).",
+    )
+    status: str = Field(
+        "beta",
+        description="Status certyfikacji (beta, certified, deprecated...).",
+    )
+    last_verified_at: datetime | None = Field(
+        None, description="Znacznik czasu ostatniej weryfikacji funkcjonalnej.",
+    )
+    notes: str | None = Field(
+        None, description="Uwagi dotyczące ograniczeń lub rekomendacji.",
+    )
+
+
+class VersioningMetadata(BaseModel):
+    """Informacje o wersjonowaniu i następstwie paczki."""
+
+    channel: str = Field(
+        "internal",
+        description="Kanał dystrybucji (internal, beta, public, deprecated).",
+    )
+    iteration: str = Field(
+        "minor",
+        description="Typ wydania (major, minor, patch, hotfix).",
+    )
+    supersedes: list[str] = Field(
+        default_factory=list,
+        description="Lista referencji package@version zastąpionych przez bieżące wydanie.",
+    )
+    superseded_by: list[str] = Field(
+        default_factory=list,
+        description="Lista referencji package@version następnych wydań (jeśli dostępne).",
+    )
+    migration_required: bool = Field(
+        False,
+        description="Czy wdrożenie wymaga migracji ręcznej po stronie klienta.",
+    )
+    source: str | None = Field(
+        None,
+        description="Ścieżka presetu (względnie wobec config/marketplace/presets).",
+    )
+
+    @model_validator(mode="after")
+    def _validate_references(cls, values: "VersioningMetadata") -> "VersioningMetadata":
+        seen = {values.source} if values.source else set()
+        for ref in (*values.supersedes, *values.superseded_by):
+            if "@" not in ref:
+                raise ValueError(
+                    "Wpisy w supersedes/superseded_by muszą mieć format package@version."
+                )
+            if ref in seen:
+                raise ValueError(f"Duplikat odniesienia wersji: {ref}")
+            seen.add(ref)
+        return values
+
+
 class MarketplacePackageMetadata(BaseModel):
     """Metadane pojedynczej paczki Marketplace."""
 
@@ -245,6 +370,18 @@ class MarketplacePackageMetadata(BaseModel):
     security: HardwareFingerprintPolicy = Field(
         default_factory=HardwareFingerprintPolicy,
         description="Zasady bezpieczeństwa (fingerprint).",
+    )
+    release: ReleaseMetadata = Field(
+        default_factory=ReleaseMetadata,
+        description="Status recenzji i kanał publikacji paczki.",
+    )
+    exchange_compatibility: list[ExchangeCompatibilityEntry] = Field(
+        default_factory=list,
+        description="Lista kompatybilnych giełd wraz z zakresem wsparcia.",
+    )
+    versioning: VersioningMetadata = Field(
+        default_factory=VersioningMetadata,
+        description="Informacje o wersjonowaniu i następstwie paczki.",
     )
 
     def signed_payload(self, artifact: DistributionArtifact) -> Mapping[str, object]:
@@ -333,6 +470,10 @@ __all__ = [
     "MarketplaceCatalog",
     "MarketplacePackageMetadata",
     "MarketplaceRepositoryConfig",
+    "ReleaseMetadata",
+    "ReleaseReviewer",
+    "ExchangeCompatibilityEntry",
+    "VersioningMetadata",
     "VersionCompatibility",
     "load_catalog",
     "load_repository_config",

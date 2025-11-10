@@ -4,16 +4,27 @@ import json
 import os
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import Any
 
 import pytest
+
+from tests.ui._qt import require_pyside6
 
 pytestmark = pytest.mark.qml
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
-PySide6 = pytest.importorskip("PySide6", reason="Wymagany PySide6 do testów UI")
+PySide6 = require_pyside6()
 
-from PySide6.QtCore import QObject, QUrl, Qt, QMetaObject, Q_ARG  # type: ignore[attr-defined]
+from PySide6.QtCore import (  # type: ignore[attr-defined]
+    QObject,
+    Property,
+    QUrl,
+    Qt,
+    QMetaObject,
+    Q_ARG,
+    Signal,
+)
 from PySide6.QtQml import QQmlApplicationEngine  # type: ignore[attr-defined]
 
 try:  # pragma: no cover - zależne od środowiska CI
@@ -31,6 +42,120 @@ from core.monitoring.metrics_api import (
 from ui.backend import runtime_service as runtime_service_module
 from ui.backend.runtime_service import RuntimeService
 from ui.backend.telemetry_provider import TelemetryProvider
+
+
+class _StubTelemetryProvider(QObject):
+    """Minimalny provider emitujący zmiany dla testów live."""
+
+    errorMessageChanged = Signal()
+    telemetryUpdated = Signal()
+
+    def __init__(self) -> None:
+        super().__init__()
+        self._last_updated = ""
+        self._error_message = ""
+
+    @Property(str, notify=errorMessageChanged)
+    def lastUpdated(self) -> str:  # type: ignore[override]
+        return self._last_updated
+
+    @Property(str, notify=errorMessageChanged)
+    def errorMessage(self) -> str:  # type: ignore[override]
+        return self._error_message
+
+    def refreshTelemetry(self) -> bool:
+        self._last_updated = datetime.now(timezone.utc).isoformat()
+        self.telemetryUpdated.emit()
+        return True
+
+    def push_error(self, message: str) -> None:
+        self._error_message = message
+        self.errorMessageChanged.emit()
+
+
+class _StubRuntimeService(QObject):
+    """Uproszczony serwis runtime do symulacji sygnałów live."""
+
+    decisionsChanged = Signal()
+    errorMessageChanged = Signal()
+    riskMetricsChanged = Signal()
+    riskTimelineChanged = Signal()
+    operatorActionChanged = Signal()
+    longPollMetricsChanged = Signal()
+    cycleMetricsChanged = Signal()
+
+    def __init__(self) -> None:
+        super().__init__()
+        self._decisions: list[dict[str, Any]] = []
+        self._error_message = ""
+        self._risk_metrics: dict[str, Any] = {}
+        self._risk_timeline: list[dict[str, Any]] = []
+        self._last_operator_action: dict[str, Any] = {}
+        self._longpoll_metrics: list[dict[str, Any]] = []
+        self._cycle_metrics: dict[str, float] = {}
+
+    @Property("QVariantList", notify=decisionsChanged)
+    def decisions(self) -> list[dict[str, Any]]:  # type: ignore[override]
+        return list(self._decisions)
+
+    @Property(str, notify=errorMessageChanged)
+    def errorMessage(self) -> str:  # type: ignore[override]
+        return self._error_message
+
+    @Property("QVariantMap", notify=riskMetricsChanged)
+    def riskMetrics(self) -> dict[str, Any]:  # type: ignore[override]
+        return dict(self._risk_metrics)
+
+    @Property("QVariantList", notify=riskTimelineChanged)
+    def riskTimeline(self) -> list[dict[str, Any]]:  # type: ignore[override]
+        return list(self._risk_timeline)
+
+    @Property("QVariantMap", notify=operatorActionChanged)
+    def lastOperatorAction(self) -> dict[str, Any]:  # type: ignore[override]
+        return dict(self._last_operator_action)
+
+    @Property("QVariantList", notify=longPollMetricsChanged)
+    def longPollMetrics(self) -> list[dict[str, Any]]:  # type: ignore[override]
+        return [dict(entry) for entry in self._longpoll_metrics]
+
+    @Property("QVariantMap", notify=cycleMetricsChanged)
+    def cycleMetrics(self) -> dict[str, Any]:  # type: ignore[override]
+        return {key: float(value) for key, value in self._cycle_metrics.items()}
+
+    def loadRecentDecisions(self, limit: int = 0) -> list[dict[str, Any]]:
+        if limit > 0:
+            return list(self._decisions[:limit])
+        return list(self._decisions)
+
+    def push_decisions(self, payload: list[dict[str, Any]]) -> None:
+        self._decisions = list(payload)
+        self.decisionsChanged.emit()
+
+    def push_error(self, message: str) -> None:
+        self._error_message = message
+        self.errorMessageChanged.emit()
+
+    def push_risk_update(
+        self,
+        metrics: dict[str, Any],
+        timeline: list[dict[str, Any]],
+        action: dict[str, Any] | None = None,
+    ) -> None:
+        self._risk_metrics = dict(metrics)
+        self._risk_timeline = list(timeline)
+        self.riskMetricsChanged.emit()
+        self.riskTimelineChanged.emit()
+        if action is not None:
+            self._last_operator_action = dict(action)
+            self.operatorActionChanged.emit()
+
+    def push_longpoll_metrics(self, payload: list[dict[str, Any]]) -> None:
+        self._longpoll_metrics = [dict(entry) for entry in payload]
+        self.longPollMetricsChanged.emit()
+
+    def push_cycle_metrics(self, payload: dict[str, float]) -> None:
+        self._cycle_metrics = {str(key): float(value) for key, value in payload.items()}
+        self.cycleMetricsChanged.emit()
 
 
 def _sample_snapshot() -> RuntimeTelemetrySnapshot:
@@ -399,6 +524,148 @@ def test_runtime_overview_risk_panel_filters_and_actions() -> None:
     override_text = last_override_label.property("text")
     assert "Ostatni stress override" in override_text
     assert "2025-01-02T09:15:00+00:00" in override_text
+
+    engine.deleteLater()
+    app.quit()
+
+
+@pytest.mark.timeout(30)
+def test_runtime_overview_cards_react_to_live_signals() -> None:
+    provider = _StubTelemetryProvider()
+    runtime_service = _StubRuntimeService()
+
+    app = QApplication.instance() or QApplication([])
+    engine = QQmlApplicationEngine()
+    engine.rootContext().setContextProperty("telemetryProvider", provider)
+    engine.rootContext().setContextProperty("runtimeService", runtime_service)
+    qml_path = Path(__file__).resolve().parents[2] / "ui" / "qml" / "dashboard" / "RuntimeOverview.qml"
+    engine.load(QUrl.fromLocalFile(str(qml_path)))
+    assert engine.rootObjects(), "Nie udało się załadować RuntimeOverview.qml"
+    root = engine.rootObjects()[0]
+
+    provider.refreshTelemetry()
+    runtime_service.push_decisions(
+        [
+            {
+                "event": "order_submitted",
+                "timestamp": "2025-03-01T12:00:00+00:00",
+                "portfolio": "alpha",
+                "environment": "prod",
+                "strategy": "adaptive_alpha",
+                "riskProfile": "balanced",
+                "marketRegime": {"regime": "bull"},
+                "decision": {"state": "trade", "model": "xgb-v6"},
+                "ai": {"confidence": 0.91},
+            }
+        ]
+    )
+    app.processEvents()
+
+    decisions = root.property("aiDecisions")
+    assert isinstance(decisions, list)
+    assert decisions and decisions[0]["event"] == "order_submitted"
+    assert decisions[0]["decision"]["model"] == "xgb-v6"
+
+    runtime_service.push_error("feed degraded")
+    app.processEvents()
+
+    assert root.property("aiDecisionError") == "feed degraded"
+    ai_error_banner = root.findChild(QObject, "runtimeOverviewAiErrorBanner")
+    assert ai_error_banner is not None and ai_error_banner.property("visible") is True
+
+    metrics = {
+        "blockCount": 1,
+        "uniqueRiskFlags": ["latency_spike"],
+        "uniqueStressFailures": ["latency_spike"],
+        "strategySummaries": [
+            {
+                "strategy": "adaptive_alpha",
+                "blockCount": 1,
+                "freezeCount": 0,
+                "stressOverrideCount": 1,
+                "severity": "block",
+                "lastTimestamp": "2025-03-01T12:00:00+00:00",
+                "lastEvent": "risk_blocked",
+                "lastRiskFlags": ["latency_spike"],
+            }
+        ],
+        "lastBlock": {"timestamp": "2025-03-01T12:00:00+00:00", "strategy": "adaptive_alpha"},
+    }
+    timeline = [
+        {
+            "event": "risk_blocked",
+            "timestamp": "2025-03-01T12:00:00+00:00",
+            "strategy": "adaptive_alpha",
+            "riskFlags": ["latency_spike"],
+            "stressFailures": ["latency_spike"],
+        }
+    ]
+    runtime_service.push_risk_update(
+        metrics,
+        timeline,
+        {"action": "freeze", "entry": timeline[0], "timestamp": "2025-03-01T12:05:00+00:00"},
+    )
+    app.processEvents()
+
+    risk_metrics = root.property("riskMetrics")
+    assert risk_metrics.get("blockCount") == 1
+    assert "latency_spike" in risk_metrics.get("uniqueRiskFlags", [])
+
+    risk_timeline = root.property("riskTimeline")
+    assert risk_timeline and risk_timeline[0]["event"] == "risk_blocked"
+
+    operator_action = root.property("lastOperatorAction")
+    assert operator_action.get("action") == "freeze"
+    assert operator_action.get("timestamp") == "2025-03-01T12:05:00+00:00"
+
+    provider.push_error("telemetry degraded")
+    app.processEvents()
+
+    banner = root.findChild(QObject, "runtimeOverviewErrorBanner")
+    assert banner is not None and banner.property("visible") is True
+
+    runtime_service.push_cycle_metrics(
+        {
+            "cycles_total": 42.0,
+            "strategy_switch_total": 6.0,
+            "guardrail_blocks_total": 2.0,
+        }
+    )
+    app.processEvents()
+
+    cycle_group = root.findChild(QObject, "runtimeOverviewCycleMetricsGroup")
+    assert cycle_group is not None
+    cycle_count = cycle_group.findChild(QObject, "runtimeOverviewCycleCount")
+    assert cycle_count is not None and "42" in cycle_count.property("text")
+    strategy_switches = cycle_group.findChild(QObject, "runtimeOverviewStrategySwitches")
+    assert strategy_switches is not None and "6" in strategy_switches.property("text")
+    guardrail_blocks = cycle_group.findChild(QObject, "runtimeOverviewGuardrailBlocks")
+    assert guardrail_blocks is not None and "2" in guardrail_blocks.property("text")
+    guardrail_alert = cycle_group.findChild(QObject, "runtimeOverviewGuardrailAlert")
+    assert guardrail_alert is not None and guardrail_alert.property("visible") is True
+
+    runtime_service.push_longpoll_metrics(
+        [
+            {
+                "labels": {"adapter": "binance", "scope": "spot", "environment": "paper"},
+                "requestLatency": {"p50": 0.150, "p95": 0.480},
+                "httpErrors": {"total": 2},
+                "reconnects": {"attempts": 3, "failure": 1},
+            }
+        ]
+    )
+    app.processEvents()
+
+    longpoll_entries = root.findChildren(QObject, "runtimeOverviewLongPollEntry")
+    assert longpoll_entries, "Brak widocznych wpisów long-pollowych"
+    header = longpoll_entries[0].findChild(QObject, "runtimeOverviewLongPollHeader")
+    assert header is not None and "binance" in header.property("text")
+    latency_label = longpoll_entries[0].findChild(QObject, "runtimeOverviewLongPollLatency")
+    assert latency_label is not None
+    assert "0.480" in latency_label.property("text")
+    reconnect_label = longpoll_entries[0].findChild(QObject, "runtimeOverviewLongPollReconnects")
+    assert reconnect_label is not None
+    assert "próby 3" in reconnect_label.property("text")
 
     engine.deleteLater()
     app.quit()

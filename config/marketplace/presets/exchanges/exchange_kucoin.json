@@ -46,7 +46,7 @@
                   }
                 },
                 "credentials": {
-                  "api_key": null,
+                  "key_id": null,
                   "secret": null
                 }
               }
@@ -82,7 +82,7 @@
                   ]
                 },
                 "credentials": {
-                  "api_key": "${KUCOIN_TESTNET_KEY}",
+                  "key_id": "${KUCOIN_TESTNET_KEY}",
                   "secret": "${KUCOIN_TESTNET_SECRET}",
                   "passphrase": "${KUCOIN_TESTNET_PASSPHRASE}"
                 }
@@ -124,7 +124,7 @@
                   }
                 },
                 "credentials": {
-                  "api_key": "${KUCOIN_LIVE_KEY}",
+                  "key_id": "${KUCOIN_LIVE_KEY}",
                   "secret": "${KUCOIN_LIVE_SECRET}",
                   "passphrase": "${KUCOIN_LIVE_PASSPHRASE}"
                 }

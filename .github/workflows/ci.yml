@@ -225,8 +225,8 @@ jobs:
       - name: Generate trading stubs
         run: python scripts/generate_trading_stubs.py --skip-cpp
 
-  ui-tests:
-    name: UI Tests
+  ui-ctest:
+    name: UI Native Tests
     runs-on: ubuntu-latest
 
     steps:
@@ -290,7 +290,7 @@ jobs:
           name: coverage-runner-smoke
           path: violation.json
 
-  qml-tests:
+  ui-tests:
     name: UI QML Tests
     runs-on: ubuntu-latest
     needs: prepare-pyside6-wheel
@@ -344,6 +344,121 @@ jobs:
           name: qml-test-diagnostics
           path: test-results/qml
           if-no-files-found: warn
+
+  grpc-feed-integration:
+    name: gRPC Decision Feed Integration
+    runs-on: ubuntu-latest
+    needs: prepare-pyside6-wheel
+    env:
+      QT_QPA_PLATFORM: offscreen
+      QT_QUICK_BACKEND: software
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libegl1 libgl1 libpulse0 libxkbcommon-x11-0 \
+            libxcb-cursor0 libxcb-xinerama0
+
+      - name: Download PySide6 wheel artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: pyside6-wheels-linux-${{ env.PYSIDE6_VERSION }}
+          path: wheelhouse
+
+      - name: Install Python dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install --no-index --find-links wheelhouse \
+            PySide6==${{ env.PYSIDE6_VERSION }} \
+            PySide6_Addons==${{ env.PYSIDE6_VERSION }} \
+            PySide6_Essentials==${{ env.PYSIDE6_VERSION }} \
+            shiboken6==${{ env.PYSIDE6_VERSION }}
+          pip install .[dev]
+
+      - name: Generate trading stubs
+        run: python scripts/generate_trading_stubs.py --skip-cpp
+
+      - name: Run gRPC decision feed tests
+        run: |
+          mkdir -p test-results/grpc
+          pytest tests/integration/test_grpc_transport.py -k "grpc" --maxfail=1 --disable-warnings \
+            --junitxml=test-results/grpc/pytest.xml
+
+      - name: Upload pytest results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: grpc-feed-pytest-results
+          path: test-results/grpc
+          if-no-files-found: warn
+
+      - name: Upload decision feed metrics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: decision-feed-metrics
+          path: reports/ci/decision_feed_metrics.json
+          if-no-files-found: warn
+
+  marketplace-catalog:
+    name: Marketplace Catalog Packaging
+    runs-on: ubuntu-latest
+    needs: lint-and-test
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install .[dev]
+
+      - name: Build marketplace catalog
+        run: |
+          python scripts/build_marketplace_catalog.py \
+            --private-key config/marketplace/keys/dev-presets-ed25519.key \
+            --key-id dev-presets \
+            --signing-key dev-hmac:config/marketplace/keys/dev-hmac.key
+
+      - name: Validate catalog metadata
+        run: python scripts/marketplace_cli.py validate --key dev-hmac:config/marketplace/keys/dev-hmac.key
+
+      - name: Run marketplace catalog tests
+        run: pytest tests/test_marketplace_catalog.py --maxfail=1 --disable-warnings
+
+      - name: Ensure repository is clean
+        run: |
+          git status --porcelain
+          git diff --stat
+          git diff --quiet
+
+      - name: Upload marketplace packages
+        if: always()
+        run: |
+          tar -czf marketplace-packages.tar.gz -C config/marketplace packages
+
+      - name: Publish marketplace packages artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: marketplace-packages
+          path: marketplace-packages.tar.gz
+          if-no-files-found: error
 
   ui-packaging:
     name: UI Packaging

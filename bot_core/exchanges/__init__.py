@@ -43,8 +43,10 @@ from bot_core.exchanges.binance.futures import BinanceFuturesAdapter
 from bot_core.exchanges.binance.margin import BinanceMarginAdapter
 from bot_core.exchanges.binance.spot import BinanceSpotAdapter
 from bot_core.exchanges.bitfinex.spot import BitfinexSpotAdapter
+from bot_core.exchanges.bitmex import BitmexFuturesAdapter, BitmexSpotAdapter
 from bot_core.exchanges.bitget.spot import BitgetSpotAdapter
 from bot_core.exchanges.bitstamp.spot import BitstampSpotAdapter
+from bot_core.exchanges.deribit import DeribitFuturesAdapter, DeribitSpotAdapter
 from bot_core.exchanges.bybit import BybitFuturesAdapter, BybitMarginAdapter, BybitSpotAdapter
 from bot_core.exchanges.coinbase import (
     CoinbaseFuturesAdapter,
@@ -112,12 +114,16 @@ __all__ = [
     "BybitSpotAdapter",
     "BybitMarginAdapter",
     "BybitFuturesAdapter",
+    "BitmexSpotAdapter",
+    "BitmexFuturesAdapter",
     "CoinbaseSpotAdapter",
     "CoinbaseMarginAdapter",
     "CoinbaseFuturesAdapter",
     "BitfinexSpotAdapter",
     "BitgetSpotAdapter",
     "BitstampSpotAdapter",
+    "DeribitSpotAdapter",
+    "DeribitFuturesAdapter",
     "GateIOSpotAdapter",
     "GeminiSpotAdapter",
     "HuobiSpotAdapter",

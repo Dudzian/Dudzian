@@ -2,7 +2,9 @@ from __future__ import annotations
 
 import subprocess
 import sys
+from datetime import datetime, timezone
 from itertools import islice
+from pathlib import Path
 
 import pytest
 grpc = pytest.importorskip("grpc")
@@ -116,6 +118,31 @@ def test_runtime_service_streams_decisions(trading_modules) -> None:
         assert updates[1].HasField("increment")
         event_name = updates[1].increment.record.fields.get("event")
         assert event_name == "risk_update"
+        channel.close()
+
+
+def test_runtime_service_list_decisions(trading_modules) -> None:
+    trading_pb2, trading_pb2_grpc = trading_modules
+    dataset = build_default_dataset()
+
+    with TradingStubServer(dataset, port=0, stream_repeat=True, stream_interval=0.0) as server:
+        channel = grpc.insecure_channel(server.address)
+        grpc.channel_ready_future(channel).result(timeout=5)
+        runtime_stub = trading_pb2_grpc.RuntimeServiceStub(channel)
+
+        first = runtime_stub.ListDecisions(trading_pb2.ListDecisionsRequest(limit=2))
+        assert first.total == 3
+        assert len(first.records) == 2
+        assert first.has_more is True
+
+        filters = trading_pb2.DecisionJournalFilters(statuses=["filled"])
+        filters.since.FromDatetime(datetime(2024, 1, 1, 0, 0, 1, tzinfo=timezone.utc))
+        filtered = runtime_stub.ListDecisions(trading_pb2.ListDecisionsRequest(filters=filters))
+        assert filtered.total == 1
+        assert filtered.records[0].fields.get("status") == "filled"
+        assert filtered.cursor == 1
+        assert filtered.has_more is False
+
         channel.close()
 
 

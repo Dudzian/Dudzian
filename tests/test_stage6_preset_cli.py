@@ -36,7 +36,7 @@ def test_stage6_cli_migrates_preset_and_secrets(tmp_path: Path, capsys) -> None:
 
     secrets_input = tmp_path / "preset_secrets.yaml"
     secrets_input.write_text(
-        "api:\n  key: secret_key\n  meta:\n    account: primary\n", encoding="utf-8"
+        "api:\n  key_id: secret_key\n  meta:\n    account: primary\n", encoding="utf-8"
     )
     secrets_output = tmp_path / "vault.json"
     destination = tmp_path / "result.yaml"
@@ -73,7 +73,7 @@ def test_stage6_cli_migrates_preset_and_secrets(tmp_path: Path, capsys) -> None:
 
     storage = EncryptedFileSecretStorage(secrets_output, "stage6-pass")
     assert storage.get_secret("api") is not None
-    assert storage.get_secret("api") == '{"key":"secret_key","meta":{"account":"primary"}}'
+    assert storage.get_secret("api") == '{"key_id":"secret_key","meta":{"account":"primary"}}'
 
     output = capsys.readouterr().out
     assert "Zapisano profil" in output
@@ -86,7 +86,7 @@ def test_stage6_cli_accepts_passphrase_file(tmp_path: Path) -> None:
     preset_path.write_text(json.dumps({"fraction": 0.1}), encoding="utf-8")
 
     secrets_input = tmp_path / "preset_secrets.yaml"
-    secrets_input.write_text("exchange:\n  api_key: k\n", encoding="utf-8")
+    secrets_input.write_text("exchange:\n  key_id: k\n", encoding="utf-8")
     secrets_output = tmp_path / "vault.json"
     pass_file = tmp_path / "pass.txt"
     pass_file.write_text("stage6-file-pass\n", encoding="utf-8")
@@ -113,7 +113,7 @@ def test_stage6_cli_accepts_passphrase_file(tmp_path: Path) -> None:
 
     assert exit_code == 0
     storage = EncryptedFileSecretStorage(secrets_output, "stage6-file-pass")
-    assert storage.get_secret("exchange") == '{"api_key":"k"}'
+    assert storage.get_secret("exchange") == '{"key_id":"k"}'
 
     assert summary_path.exists()
     payload = json.loads(summary_path.read_text(encoding="utf-8"))
@@ -153,7 +153,7 @@ def test_stage6_cli_requires_matching_secret_flags(tmp_path: Path, capsys) -> No
     preset_path.write_text(json.dumps({"fraction": 0.1}), encoding="utf-8")
 
     secrets_input = tmp_path / "preset_secrets.yaml"
-    secrets_input.write_text("api:\n  key: value\n", encoding="utf-8")
+    secrets_input.write_text("api:\n  key_id: value\n", encoding="utf-8")
 
     with pytest.raises(SystemExit) as excinfo:
         preset_editor_cli.main(
@@ -320,7 +320,7 @@ def test_stage6_cli_filters_secret_keys(tmp_path: Path, capsys) -> None:
 
     secrets_input = tmp_path / "preset_secrets.yaml"
     secrets_input.write_text(
-        "api:\n  key: keep\nslack:\n  token: drop\nops:\n  alert: excluded\n",
+        "api:\n  key_id: keep\nslack:\n  token: drop\nops:\n  alert: excluded\n",
         encoding="utf-8",
     )
 
@@ -352,7 +352,7 @@ def test_stage6_cli_filters_secret_keys(tmp_path: Path, capsys) -> None:
     assert exit_code == 0
 
     storage = EncryptedFileSecretStorage(secrets_output, "filters-pass")
-    assert storage.get_secret("api") == '{"key":"keep"}'
+    assert storage.get_secret("api") == '{"key_id":"keep"}'
     assert storage.get_secret("slack") is None
     assert storage.get_secret("ops") is None
 
@@ -370,7 +370,7 @@ def test_stage6_cli_previews_secret_keys(tmp_path: Path, capsys) -> None:
 
     secrets_input = tmp_path / "preset_secrets.yaml"
     secrets_input.write_text(
-        "api:\n  key: preview\nslack:\n  token: keep-private\n",
+        "api:\n  key_id: preview\nslack:\n  token: keep-private\n",
         encoding="utf-8",
     )
 
@@ -409,7 +409,7 @@ def test_stage6_cli_preview_without_output_path(tmp_path: Path, capsys) -> None:
 
     secrets_input = tmp_path / "preset_secrets.yaml"
     secrets_input.write_text(
-        "api:\n  key: preview\nslack:\n  token: dry-run\n",
+        "api:\n  key_id: preview\nslack:\n  token: dry-run\n",
         encoding="utf-8",
     )
 
@@ -444,8 +444,8 @@ def test_stage6_cli_secret_filters_support_glob_patterns(tmp_path: Path, capsys)
     secrets_input = tmp_path / "preset_secrets.yaml"
     secrets_input.write_text(
         (
-            "binance_api_key: keep\n"
-            "binance_api_secret: remove\n"
+            "binance_key_id: keep\n"
+            "binance_secret: remove\n"
             "slack_token: skip-by-include\n"
         ),
         encoding="utf-8",
@@ -468,7 +468,7 @@ def test_stage6_cli_secret_filters_support_glob_patterns(tmp_path: Path, capsys)
             "--secret-passphrase",
             "glob-pass",
             "--secrets-include",
-            "binance_api_*",
+            "binance_*",
             "--secrets-exclude",
             "*secret",
         ]
@@ -477,17 +477,17 @@ def test_stage6_cli_secret_filters_support_glob_patterns(tmp_path: Path, capsys)
     assert exit_code == 0
 
     storage = EncryptedFileSecretStorage(secrets_output, "glob-pass")
-    assert storage.get_secret("binance_api_key") == "keep"
-    assert storage.get_secret("binance_api_secret") is None
+    assert storage.get_secret("binance_key_id") == "keep"
+    assert storage.get_secret("binance_secret") is None
     assert storage.get_secret("slack_token") is None
 
     output = capsys.readouterr().out
     assert (
-        "Nie znaleziono sekretów wymaganych przez --secrets-include: binance_api_*"
+        "Nie znaleziono sekretów wymaganych przez --secrets-include: binance_*"
         not in output
     )
     assert "Pominięto sekrety spoza listy --secrets-include: slack_token" in output
-    assert "Pominięto sekrety oznaczone --secrets-exclude: binance_api_secret" in output
+    assert "Pominięto sekrety oznaczone --secrets-exclude: binance_secret" in output
 
 
 def test_stage6_cli_secret_filters_can_skip_all(tmp_path: Path, capsys) -> None:
@@ -496,7 +496,7 @@ def test_stage6_cli_secret_filters_can_skip_all(tmp_path: Path, capsys) -> None:
     preset_path.write_text(json.dumps({"fraction": 0.13}), encoding="utf-8")
 
     secrets_input = tmp_path / "preset_secrets.yaml"
-    secrets_input.write_text("api:\n  key: keep\n", encoding="utf-8")
+    secrets_input.write_text("api:\n  key_id: keep\n", encoding="utf-8")
     secrets_output = tmp_path / "stage6.vault"
 
     exit_code = preset_editor_cli.main(
@@ -664,7 +664,7 @@ def test_stage6_cli_writes_summary_file(tmp_path: Path) -> None:
     preset_path.write_text(json.dumps({"fraction": 0.3}), encoding="utf-8")
 
     secrets_input = tmp_path / "preset_secrets.yaml"
-    secrets_input.write_text("exchange:\n  api_key: k\n", encoding="utf-8")
+    secrets_input.write_text("exchange:\n  key_id: k\n", encoding="utf-8")
 
     destination = tmp_path / "stage6.yaml"
     backup_path = tmp_path / "stage6.backup.yaml"
@@ -757,7 +757,7 @@ def test_stage6_cli_summary_tracks_secret_passphrase_env(
     preset_path.write_text(json.dumps({"fraction": 0.33}), encoding="utf-8")
 
     secrets_input = tmp_path / "preset_secrets.yaml"
-    secrets_input.write_text("exchange:\n  api_key: token\n", encoding="utf-8")
+    secrets_input.write_text("exchange:\n  key_id: token\n", encoding="utf-8")
     vault_path = tmp_path / "stage6.vault"
     summary_path = tmp_path / "summary.json"
 
@@ -840,7 +840,7 @@ def test_stage6_cli_summary_records_security_source_checksums(tmp_path: Path) ->
     preset_path.write_text(json.dumps({"fraction": 0.41}), encoding="utf-8")
 
     secrets_input = tmp_path / "preset_secrets.yaml"
-    secrets_input.write_text("binance:\n  api_key: AAA\n  secret_key: BBB\n", encoding="utf-8")
+    secrets_input.write_text("binance:\n  key_id: AAA\n  secret_key: BBB\n", encoding="utf-8")
 
     summary_path = tmp_path / "summary.json"
     vault_path = tmp_path / "stage6.vault"
@@ -883,7 +883,7 @@ def test_stage6_cli_summary_redacts_inline_passphrases(tmp_path: Path) -> None:
     preset_path.write_text(json.dumps({"fraction": 0.27}), encoding="utf-8")
 
     secrets_input = tmp_path / "preset_secrets.yaml"
-    secrets_input.write_text("binance:\n  api_key: AAA\n", encoding="utf-8")
+    secrets_input.write_text("binance:\n  key_id: AAA\n", encoding="utf-8")
 
     summary_path = tmp_path / "summary.json"
     vault_path = tmp_path / "preview.vault"
@@ -923,7 +923,7 @@ def test_stage6_cli_summary_redacts_rotation_passphrase(tmp_path: Path) -> None:
     preset_path.write_text(json.dumps({"fraction": 0.18}), encoding="utf-8")
 
     secrets_input = tmp_path / "preset_secrets.yaml"
-    secrets_input.write_text("api:\n  key: rotate\n", encoding="utf-8")
+    secrets_input.write_text("api:\n  key_id: rotate\n", encoding="utf-8")
     vault_path = tmp_path / "stage6.vault"
     summary_path = tmp_path / "summary.json"
 

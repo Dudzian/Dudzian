@@ -538,6 +538,11 @@ class RuntimeServiceStub(object):
         Args:
             channel: A grpc.Channel.
         """
+        self.ListDecisions = channel.unary_unary(
+                '/botcore.trading.v1.RuntimeService/ListDecisions',
+                request_serializer=trading__pb2.ListDecisionsRequest.SerializeToString,
+                response_deserializer=trading__pb2.ListDecisionsResponse.FromString,
+                _registered_method=True)
         self.StreamDecisions = channel.unary_stream(
                 '/botcore.trading.v1.RuntimeService/StreamDecisions',
                 request_serializer=trading__pb2.StreamDecisionsRequest.SerializeToString,
@@ -548,6 +553,12 @@ class RuntimeServiceStub(object):
 class RuntimeServiceServicer(object):
     """Missing associated documentation comment in .proto file."""
 
+    def ListDecisions(self, request, context):
+        """Missing associated documentation comment in .proto file."""
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
     def StreamDecisions(self, request, context):
         """Missing associated documentation comment in .proto file."""
         context.set_code(grpc.StatusCode.UNIMPLEMENTED)
@@ -557,6 +568,11 @@ class RuntimeServiceServicer(object):
 
 def add_RuntimeServiceServicer_to_server(servicer, server):
     rpc_method_handlers = {
+            'ListDecisions': grpc.unary_unary_rpc_method_handler(
+                    servicer.ListDecisions,
+                    request_deserializer=trading__pb2.ListDecisionsRequest.FromString,
+                    response_serializer=trading__pb2.ListDecisionsResponse.SerializeToString,
+            ),
             'StreamDecisions': grpc.unary_stream_rpc_method_handler(
                     servicer.StreamDecisions,
                     request_deserializer=trading__pb2.StreamDecisionsRequest.FromString,
@@ -572,6 +588,33 @@ def add_RuntimeServiceServicer_to_server(servicer, server):
  # This class is part of an EXPERIMENTAL API.
 class RuntimeService(object):
     """Missing associated documentation comment in .proto file."""
+
+    @staticmethod
+    def ListDecisions(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            '/botcore.trading.v1.RuntimeService/ListDecisions',
+            trading__pb2.ListDecisionsRequest.SerializeToString,
+            trading__pb2.ListDecisionsResponse.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
 
     @staticmethod
     def StreamDecisions(request,

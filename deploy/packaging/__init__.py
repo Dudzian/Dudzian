@@ -24,9 +24,6 @@ from .pipeline import (  # noqa: F401
     build_pipeline_from_mapping,
 )
 
-# Backwards compatibility: expose ``build_from_cli`` used by legacy tests.
-build_from_cli = build_core_bundle_from_cli
-
 __all__ = [
     "BundleInputs",
     "CoreBundleBuilder",
@@ -43,5 +40,4 @@ __all__ = [
     "DesktopInstallerBuilder",
     "build_desktop_installer_from_cli",
     "build_pipeline_from_mapping",
-    "build_from_cli",
 ]
