@@ -386,6 +386,81 @@
         "uid": "PROMETHEUS_STAGE6"
       },
       "id": 8
+    },
+    {
+      "id": 9,
+      "type": "timeseries",
+      "title": "Stream reconnect rate",
+      "description": "Liczba prób ponownego połączenia long-pollowych streamów Stage6 (wyższa wartość = potencjalny problem z łącznością).",
+      "gridPos": {
+        "x": 0,
+        "y": 31,
+        "w": 12,
+        "h": 8
+      },
+      "targets": [
+        {
+          "expr": "sum by (adapter, scope) (bot_core_stage6_stream_reconnect_attempt_rate)",
+          "legendFormat": "próby {{adapter}}/{{scope}}"
+        },
+        {
+          "expr": "sum by (adapter, scope) (bot_core_stage6_stream_reconnect_failure_rate)",
+          "legendFormat": "niepowodzenia {{adapter}}/{{scope}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "req/s"
+        }
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "PROMETHEUS_STAGE6"
+      }
+    },
+    {
+      "id": 10,
+      "type": "stat",
+      "title": "Reconnect duration p95",
+      "description": "95 centyl czasu odzyskiwania połączenia long-pollowych streamów Stage6.",
+      "gridPos": {
+        "x": 12,
+        "y": 31,
+        "w": 12,
+        "h": 8
+      },
+      "targets": [
+        {
+          "expr": "max_over_time(bot_core_stage6_stream_reconnect_duration_p95_seconds[15m])",
+          "legendFormat": "p95 reconnect"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": 0
+              },
+              {
+                "color": "orange",
+                "value": 10
+              },
+              {
+                "color": "red",
+                "value": 20
+              }
+            ]
+          }
+        }
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "PROMETHEUS_STAGE6"
+      }
     }
   ],
   "refresh": "30s",

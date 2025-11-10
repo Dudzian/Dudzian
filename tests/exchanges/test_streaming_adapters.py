@@ -293,6 +293,67 @@ def test_local_long_poll_stream_backpressure_metrics(monkeypatch: pytest.MonkeyP
     assert lag_state.sum == pytest.approx(2.2, rel=1e-6)
 
 
+def test_local_long_poll_stream_reconnect_metrics(monkeypatch: pytest.MonkeyPatch) -> None:
+    registry = MetricsRegistry()
+    payload = {"batches": [{"channel": "ticker", "events": [{"seq": 1}], "cursor": "abc"}]}
+
+    attempts = 0
+
+    def fake_urlopen(request, timeout=0.0):  # noqa: D401
+        nonlocal attempts
+        attempts += 1
+        if attempts == 1:
+            raise URLError("temporary-down")
+        return _FakeResponse(json.dumps(payload).encode("utf-8"))
+
+    fake_clock = _SequenceClock([0.0, 0.0, 0.4, 0.8, 1.2, 1.4, 1.6])
+
+    stream = LocalLongPollStream(
+        base_url="http://127.0.0.1",
+        path="/stream",
+        channels=["ticker"],
+        adapter="test",
+        scope="public",
+        environment="test",
+        poll_interval=0.0,
+        timeout=0.1,
+        max_retries=2,
+        backoff_base=0.0,
+        backoff_cap=0.0,
+        jitter=(0.0, 0.0),
+        clock=fake_clock,
+        sleep=lambda _: None,
+        metrics_registry=registry,
+    )
+
+    monkeypatch.setattr("bot_core.exchanges.streaming.urlopen", fake_urlopen)
+
+    batch = next(stream)
+    assert batch.events and batch.events[0]["seq"] == 1
+    stream.close()
+
+    base_labels = {"adapter": "test", "scope": "public", "environment": "test"}
+
+    reconnect_metric = registry.get("bot_exchange_stream_reconnects_total")
+    assert isinstance(reconnect_metric, CounterMetric)
+    attempt_value = reconnect_metric.value(
+        labels={**base_labels, "status": "attempt", "reason": "network"}
+    )
+    success_value = reconnect_metric.value(
+        labels={**base_labels, "status": "success", "reason": "network"}
+    )
+    assert attempt_value == pytest.approx(1.0)
+    assert success_value == pytest.approx(1.0)
+
+    latency_metric = registry.get("bot_exchange_stream_reconnect_duration_seconds")
+    assert isinstance(latency_metric, HistogramMetric)
+    latency_state = latency_metric.snapshot(
+        labels={**base_labels, "status": "success", "reason": "network"}
+    )
+    assert latency_state.count == 1
+    assert latency_state.sum > 0.0
+
+
 def test_local_long_poll_stream_prefetches_in_background(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

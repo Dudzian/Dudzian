@@ -74,20 +74,35 @@ def _load_portfolio_assets(config_path: Path, governor_name: str | None):
 def _resolve_signing_key_from_config_or_args(
     args: argparse.Namespace, config
 ) -> tuple[Optional[bytes], Optional[str]]:
+    """Zwraca parę (klucz_HMAC, identyfikator) lub zgłasza ValueError z jasnym komunikatem."""
+
     # prefer CLI overrides, fallback to config.stress_lab.{signing_key_path|signing_key_env|signing_key_id}
     stress_cfg = getattr(config, "stress_lab", None)
-    key_path = args.signing_key_path or (stress_cfg.signing_key_path if stress_cfg else None)
-    key_env = args.signing_key_env or (stress_cfg.signing_key_env if stress_cfg else None)
-    key_id = args.signing_key_id or (stress_cfg.signing_key_id if stress_cfg else None)
+    key_path_raw = args.signing_key_path or (stress_cfg.signing_key_path if stress_cfg else None)
+    key_env_raw = args.signing_key_env or (stress_cfg.signing_key_env if stress_cfg else None)
+    key_id_raw = args.signing_key_id or (stress_cfg.signing_key_id if stress_cfg else None)
 
     key_bytes: Optional[bytes] = None
-    if key_path:
-        key_bytes = Path(key_path).read_bytes()
-    elif key_env:
+    if key_path_raw:
+        key_path = Path(str(key_path_raw)).expanduser()
+        try:
+            key_bytes = key_path.read_bytes()
+        except FileNotFoundError as exc:
+            raise ValueError(f"Nie znaleziono pliku z kluczem HMAC: {key_path}") from exc
+        except OSError as exc:  # pragma: no cover - zależy od systemu plików
+            raise ValueError(f"Nie można odczytać klucza HMAC z {key_path}: {exc}") from exc
+    elif key_env_raw:
+        key_env = str(key_env_raw).strip()
+        if not key_env:
+            raise ValueError("Nazwa zmiennej środowiskowej z kluczem HMAC jest pusta")
         value = os.environ.get(key_env)
         if not value:
-            raise ValueError(f"Zmienna środowiskowa {key_env} jest pusta")
+            raise ValueError(f"Zmienna środowiskowa {key_env} jest pusta lub nieustawiona")
         key_bytes = value.encode("utf-8")
+
+    key_id = str(key_id_raw).strip() if key_id_raw else None
+    if key_id == "":
+        key_id = None
     return key_bytes, key_id
 
 
@@ -221,9 +236,18 @@ def _handle_run(args: argparse.Namespace) -> int:
         return 0
 
     stress_config = config.stress_lab
-    output_path = Path(
-        args.output if args.output else Path(stress_config.report_directory) / "stress_lab_report.json"
+    output_path = (
+        Path(args.output).expanduser()
+        if args.output
+        else Path(stress_config.report_directory).expanduser() / "stress_lab_report.json"
     )
+
+    try:
+        key_bytes, key_id = _resolve_signing_key_from_config_or_args(args, config)
+    except ValueError as exc:
+        _LOGGER.error("Nie udało się uzyskać klucza HMAC dla Stress Lab: %s", exc)
+        return 2
+
     output_path.parent.mkdir(parents=True, exist_ok=True)
 
     lab = StressLab(stress_config)
@@ -231,7 +255,6 @@ def _handle_run(args: argparse.Namespace) -> int:
     report.write_json(output_path)
     _LOGGER.info("Raport Stress Lab zapisany do %s", output_path)
 
-    key_bytes, key_id = _resolve_signing_key_from_config_or_args(args, config)
     if key_bytes:
         signature_path = output_path.with_suffix(output_path.suffix + ".sig")
         report.write_signature(signature_path, key=key_bytes, key_id=key_id)
