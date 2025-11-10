@@ -37,8 +37,8 @@ artefakty audytowe.
 - Klucze HMAC umieszczone w `secrets/hmac/` i przypisane do komponentów Stage6.
 - Ścieżki docelowe w `var/audit/...` z uprawnieniami zapisu.
 - Konfiguracja logowania wykorzystująca zmienne `BOT_CORE_LOG_DIR`, `BOT_CORE_LOG_FILE`, `BOT_CORE_LOGGER_NAME`,
-  `BOT_CORE_LOG_LEVEL`, `BOT_CORE_LOG_FORMAT` oraz `BOT_CORE_LOG_SHIP_VECTOR`; warianty `KRYPT_LOWCA_*` są blokowane
-  i sygnalizują błąd migracyjny.
+  `BOT_CORE_LOG_LEVEL`, `BOT_CORE_LOG_FORMAT` oraz `BOT_CORE_LOG_SHIP_VECTOR`; warianty `KRYPT_LOWCA_*` są
+  nieaktywne i nie wpływają na ustawienia.
 
 > **Uwaga:** Wszystkie skrypty Stage6 uruchamiamy poprzez `python <ścieżka_do_skryptu>` (alias `python3` w aktywnym venv). Bezpośrednie `./scripts/...` omija ustawienia środowiska i nie jest wspierane.
 

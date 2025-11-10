@@ -2,9 +2,9 @@
 
 ## 2025-10-30 – Logowanie Stage6 i migrator bez fallbacków legacy
 - **Zakres**: `bot_core/logging/app.py`, migrator Stage6 (`python -m bot_core.runtime.stage6_preset_cli`), dokumentacja runbooków.
-- **Zmiana**: usunięto obsługę zmiennych środowiskowych `KRYPT_LOWCA_*` na rzecz wyłącznych prefiksów `BOT_CORE_*`; próba użycia
-  legacy zmiennych kończy się błędem z komunikatem migracyjnym. Pomoc CLI migratora Stage6 ukrywa nieaktywne flagi
-  `--legacy-security-*`, dzięki czemu `--help` prezentuje wyłącznie wspierane opcje.
+- **Zmiana**: usunięto obsługę zmiennych środowiskowych `KRYPT_LOWCA_*` na rzecz wyłącznych prefiksów `BOT_CORE_*`; legacy
+  zmienne są ignorowane, więc konfiguracja wymaga jawnego ustawienia nowszych nazw. Pomoc CLI migratora Stage6 ukrywa
+  nieaktywne flagi `--legacy-security-*`, dzięki czemu `--help` prezentuje wyłącznie wspierane opcje.
 - **Działanie dla zespołów**: zaktualizujcie własne skrypty startowe i pipeline'y CI, aby eksportowały wyłącznie nowe zmienne
   `BOT_CORE_LOG_DIR`, `BOT_CORE_LOG_FILE`, `BOT_CORE_LOGGER_NAME`, `BOT_CORE_LOG_LEVEL`, `BOT_CORE_LOG_FORMAT` i
   `BOT_CORE_LOG_SHIP_VECTOR`. W dokumentacji operacyjnej korzystajcie z odświeżonych przykładów CLI (patrz niżej)

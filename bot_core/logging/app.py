@@ -20,23 +20,16 @@ except Exception:  # pragma: no cover - json logging is optional in tests/CI
     jsonlogger = None  # type: ignore
 
 
-def _env(name: str, *, legacy: str | None = None) -> str | None:
-    """Read an environment variable with optional legacy fallback."""
+def _env(name: str) -> str | None:
+    """Read an environment variable."""
 
-    value = os.getenv(name)
-    if value is not None:
-        return value
-    if legacy:
-        return os.getenv(legacy)
-    return None
+    return os.getenv(name)
 
 
 _PACKAGE_ROOT = Path(__file__).resolve().parents[1]
 LOGS_DIR = Path(_env("BOT_CORE_LOG_DIR") or (_PACKAGE_ROOT / "logs"))
 LOGS_DIR.mkdir(parents=True, exist_ok=True)
-DEFAULT_LOG_FILE = Path(
-    _env("BOT_CORE_LOG_FILE", legacy="KRYPT_LOWCA_LOG_FILE") or (LOGS_DIR / "trading.log")
-)
+DEFAULT_LOG_FILE = Path(_env("BOT_CORE_LOG_FILE") or (LOGS_DIR / "trading.log"))
 
 _QUEUE: Optional[queue.Queue[logging.LogRecord]] = None
 _LISTENER: Optional[QueueListener] = None
@@ -143,7 +136,7 @@ def setup_app_logging(
 ) -> logging.Logger:
     """Configure the primary ``bot_core`` logger with queue-based handlers."""
 
-    logger_name = _env("BOT_CORE_LOGGER_NAME", legacy="KRYPT_LOWCA_LOGGER_NAME") or "bot_core"
+    logger_name = _env("BOT_CORE_LOGGER_NAME") or "bot_core"
     root = logging.getLogger(logger_name)
     if getattr(root, "_bot_core_logging_configured", False):
         return root
@@ -191,7 +184,7 @@ def get_logger(name: Optional[str] = None) -> logging.Logger:
     setup_app_logging()
     target = (
         name
-        or _env("BOT_CORE_LOGGER_NAME", legacy="KRYPT_LOWCA_LOGGER_NAME")
+        or _env("BOT_CORE_LOGGER_NAME")
         or "bot_core"
     )
     return logging.getLogger(target if name is None else name)
