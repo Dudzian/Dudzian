@@ -2,6 +2,7 @@ import QtQuick
 import QtQuick.Controls
 import QtQuick.Layouts
 import "../styles" as Styles
+import "." as Dashboard
 
 Item {
     id: root
@@ -13,7 +14,7 @@ Item {
     property var complianceController: (typeof complianceController !== "undefined" ? complianceController : null)
     property var runtimeService: (typeof runtimeService !== "undefined" ? runtimeService : null)
     property int refreshIntervalMs: dashboardSettingsController ? dashboardSettingsController.refreshIntervalMs : 4000
-    readonly property var defaultCardOrder: ["io_queue", "guardrails", "retraining", "compliance", "ai_decisions"]
+    readonly property var defaultCardOrder: ["io_queue", "guardrails", "retraining", "compliance", "risk_journal", "ai_decisions"]
     property var aiDecisions: []
     property string aiDecisionError: ""
     property string retrainSchedulerNextRun: runtimeService && runtimeService.retrainNextRun
@@ -22,6 +23,9 @@ Item {
     property string adaptiveStrategySummary: runtimeService && runtimeService.adaptiveStrategySummary
                                               ? runtimeService.adaptiveStrategySummary
                                               : ""
+    property var riskMetrics: runtimeService && runtimeService.riskMetrics ? runtimeService.riskMetrics : ({})
+    property var riskTimeline: runtimeService && runtimeService.riskTimeline ? runtimeService.riskTimeline : []
+    property var lastOperatorAction: runtimeService && runtimeService.lastOperatorAction ? runtimeService.lastOperatorAction : ({})
 
     function componentForCard(cardId) {
         switch (cardId) {
@@ -33,6 +37,8 @@ Item {
             return retrainingCardComponent
         case "compliance":
             return complianceCardComponent
+        case "risk_journal":
+            return riskJournalCardComponent
         case "ai_decisions":
             return aiDecisionCardComponent
         default:
@@ -52,6 +58,9 @@ Item {
         const result = root.runtimeService.loadRecentDecisions(10)
         if (Array.isArray(result))
             root.aiDecisions = result
+        root.riskMetrics = root.runtimeService ? root.runtimeService.riskMetrics : ({})
+        root.riskTimeline = root.runtimeService ? root.runtimeService.riskTimeline : []
+        root.lastOperatorAction = root.runtimeService ? root.runtimeService.lastOperatorAction : ({})
     }
 
     function refreshAll() {
@@ -89,6 +98,24 @@ Item {
             if (!root.runtimeService)
                 return
             root.aiDecisionError = root.runtimeService.errorMessage
+        }
+
+        function onRiskMetricsChanged() {
+            if (!root.runtimeService)
+                return
+            root.riskMetrics = root.runtimeService.riskMetrics
+        }
+
+        function onRiskTimelineChanged() {
+            if (!root.runtimeService)
+                return
+            root.riskTimeline = root.runtimeService.riskTimeline
+        }
+
+        function onOperatorActionChanged() {
+            if (!root.runtimeService)
+                return
+            root.lastOperatorAction = root.runtimeService.lastOperatorAction
         }
     }
 
@@ -412,6 +439,38 @@ Item {
             objectName: "runtimeOverviewCompliancePanel"
             telemetryProvider: root.telemetryProvider
             complianceController: root.complianceController
+        }
+    }
+
+    Component {
+        id: riskJournalCardComponent
+        Rectangle {
+            objectName: "runtimeOverviewRiskJournalCard"
+            Layout.fillWidth: true
+            Layout.fillHeight: true
+            Layout.rowSpan: cardsGrid.columns === 1 ? 1 : 2
+            color: Styles.AppTheme.surfaceStrong
+            radius: 8
+            border.color: Styles.AppTheme.surfaceSubtle
+            border.width: 1
+
+            Dashboard.RiskJournalPanel {
+                anchors.fill: parent
+                anchors.margins: 16
+                runtimeService: root.runtimeService
+                metrics: root.riskMetrics
+                timeline: root.riskTimeline
+                lastOperatorAction: root.lastOperatorAction
+                onFreezeRequested: function(entry) {
+                    root.lastOperatorAction = root.runtimeService ? root.runtimeService.lastOperatorAction : ({})
+                }
+                onUnfreezeRequested: function(entry) {
+                    root.lastOperatorAction = root.runtimeService ? root.runtimeService.lastOperatorAction : ({})
+                }
+                onUnblockRequested: function(entry) {
+                    root.lastOperatorAction = root.runtimeService ? root.runtimeService.lastOperatorAction : ({})
+                }
+            }
         }
     }
 

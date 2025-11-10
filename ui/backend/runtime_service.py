@@ -4,6 +4,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+from collections import Counter
 from collections.abc import Iterable, Mapping, MutableMapping
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -222,6 +223,335 @@ def _parse_entry(record: DecisionRecord) -> _RuntimeDecisionEntry:
     )
 
 
+def _normalize_sequence(value: object) -> list[str]:
+    if value is None:
+        return []
+    if isinstance(value, str):
+        sanitized = [segment.strip() for segment in value.replace(";", ",").split(",")]
+        return [segment for segment in sanitized if segment]
+    if isinstance(value, Mapping):
+        reason = value.get("reason")
+        if isinstance(reason, str) and reason.strip():
+            return [reason.strip()]
+        # fallback: reprezentacja tekstowa całego obiektu
+        try:
+            return [json.dumps(dict(value), ensure_ascii=False)]
+        except TypeError:
+            return [str(dict(value))]
+    if isinstance(value, Iterable):
+        result: list[str] = []
+        for item in value:
+            result.extend(_normalize_sequence(item))
+        return result
+    return []
+
+
+def _to_mapping(value: object) -> Mapping[str, object]:
+    if isinstance(value, Mapping):
+        return value
+    return {}
+
+
+def _first_non_empty(*values: object) -> str:
+    for value in values:
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+    return ""
+
+
+def _extract_risk_action(
+    metadata: Mapping[str, object], decision: Mapping[str, object], status: str
+) -> str:
+    candidates = (
+        metadata.get("riskAction"),
+        metadata.get("risk_action"),
+        metadata.get("action"),
+        decision.get("riskAction"),
+        decision.get("risk_action"),
+        decision.get("action"),
+    )
+    action = _first_non_empty(*candidates)
+    if action:
+        return action
+    if status.lower() in {"blocked", "rejected", "risk_block"}:
+        return status
+    return ""
+
+
+def _compute_activity_score(is_block: bool, is_freeze: bool, is_override: bool) -> float:
+    if is_block:
+        return 1.0
+    if is_freeze:
+        return 0.85
+    if is_override:
+        return 0.7
+    return 0.45
+
+
+def _build_risk_context(
+    entries: Iterable[Mapping[str, object]]
+) -> tuple[dict[str, object], list[dict[str, object]]]:
+    block_keywords = {"block", "blocked", "risk_block", "reject", "rejected"}
+    freeze_keywords = {"freeze", "frozen", "lock"}
+    override_keys = {"stressOverride", "stress_override", "stressOverrides", "stress_overrides"}
+
+    blocks = 0
+    freezes = 0
+    overrides = 0
+    total_entries = 0
+    latest_stress_failures: list[str] = []
+    latest_failure_ts = ""
+    latest_risk_flags: list[str] = []
+    last_block_entry: dict[str, object] | None = None
+    last_freeze_entry: dict[str, object] | None = None
+    last_override_entry: dict[str, object] | None = None
+    stress_failure_set: set[str] = set()
+    risk_flag_set: set[str] = set()
+    strategy_set: set[str] = set()
+    strategy_counter: Counter[str] = Counter()
+    override_reason_set: set[str] = set()
+    stress_failure_counter: Counter[str] = Counter()
+    risk_flag_counter: Counter[str] = Counter()
+    strategy_summaries: dict[str, dict[str, object]] = {}
+
+    timeline: list[dict[str, object]] = []
+
+    for entry in entries:
+        total_entries += 1
+        metadata = _to_mapping(entry.get("metadata"))
+        decision = _to_mapping(entry.get("decision"))
+        timestamp = str(entry.get("timestamp") or "")
+        event = str(entry.get("event") or "")
+        strategy = str(entry.get("strategy") or "").strip()
+        risk_profile = str(entry.get("riskProfile") or "").strip()
+        status = str(entry.get("status") or "").strip()
+        risk_action = _extract_risk_action(metadata, decision, status)
+
+        risk_flags = _normalize_sequence(
+            metadata.get("riskFlags")
+            or metadata.get("risk_flags")
+            or decision.get("riskFlags")
+            or decision.get("risk_flags")
+        )
+        stress_failures = _normalize_sequence(
+            metadata.get("stressFailures")
+            or metadata.get("stress_failures")
+            or decision.get("stressFailures")
+            or decision.get("stress_failures")
+        )
+
+        stress_overrides_payload = metadata.get("stressOverrides") or metadata.get("stress_overrides")
+        if not stress_overrides_payload:
+            stress_overrides_payload = decision.get("stressOverrides") or decision.get("stress_overrides")
+        stress_overrides = _normalize_sequence(stress_overrides_payload)
+
+        is_block = any(keyword in risk_action.lower() for keyword in block_keywords) if risk_action else False
+        if not is_block and status:
+            is_block = any(keyword in status.lower() for keyword in block_keywords)
+
+        is_freeze = any(keyword in risk_action.lower() for keyword in freeze_keywords) if risk_action else False
+        if not is_freeze and status:
+            is_freeze = any(keyword in status.lower() for keyword in freeze_keywords)
+
+        override_indicator = False
+        if stress_overrides:
+            override_indicator = True
+        else:
+            for key in override_keys:
+                if metadata.get(key) or decision.get(key):
+                    override_indicator = True
+                    break
+        is_override = override_indicator
+
+        activity_score = _compute_activity_score(is_block, is_freeze, is_override)
+
+        summary_bucket: dict[str, object] | None = None
+        if strategy:
+            strategy_set.add(strategy)
+            strategy_counter.update([strategy])
+            summary_bucket = strategy_summaries.setdefault(
+                strategy,
+                {
+                    "strategy": strategy,
+                    "blockCount": 0,
+                    "freezeCount": 0,
+                    "stressOverrideCount": 0,
+                    "totalEvents": 0,
+                    "lastEvent": "",
+                    "lastTimestamp": "",
+                    "lastRiskFlags": [],
+                    "lastStressFailures": [],
+                    "lastRiskAction": "",
+                    "stressOverrideReasons": [],
+                },
+            )
+        if summary_bucket is not None:
+            summary_bucket["totalEvents"] = int(summary_bucket.get("totalEvents", 0)) + 1
+        if risk_flags:
+            risk_flag_set.update(risk_flags)
+            risk_flag_counter.update(risk_flags)
+            latest_risk_flags = risk_flags
+            if summary_bucket is not None and risk_flags:
+                summary_bucket["lastRiskFlags"] = list(risk_flags)
+        if stress_failures:
+            stress_failure_set.update(stress_failures)
+            stress_failure_counter.update(stress_failures)
+            latest_stress_failures = stress_failures
+            latest_failure_ts = timestamp
+            if summary_bucket is not None and stress_failures:
+                summary_bucket["lastStressFailures"] = list(stress_failures)
+        if stress_overrides:
+            override_reason_set.update(stress_overrides)
+            if summary_bucket is not None and stress_overrides:
+                summary_bucket["stressOverrideReasons"] = list(stress_overrides)
+
+        if is_block:
+            blocks += 1
+            if timestamp and (
+                not last_block_entry
+                or str(timestamp) >= str(last_block_entry.get("timestamp", ""))
+            ):
+                last_block_entry = {
+                    "timestamp": timestamp,
+                    "event": event,
+                    "strategy": strategy,
+                }
+            if summary_bucket is not None:
+                summary_bucket["blockCount"] = int(summary_bucket.get("blockCount", 0)) + 1
+        if is_freeze:
+            freezes += 1
+            if timestamp and (
+                not last_freeze_entry
+                or str(timestamp) >= str(last_freeze_entry.get("timestamp", ""))
+            ):
+                last_freeze_entry = {
+                    "timestamp": timestamp,
+                    "event": event,
+                    "strategy": strategy,
+                    "riskAction": risk_action,
+                }
+            if summary_bucket is not None:
+                summary_bucket["freezeCount"] = int(summary_bucket.get("freezeCount", 0)) + 1
+        if is_override:
+            overrides += 1
+            if timestamp and (
+                not last_override_entry
+                or str(timestamp) >= str(last_override_entry.get("timestamp", ""))
+            ):
+                last_override_entry = {
+                    "timestamp": timestamp,
+                    "event": event,
+                    "strategy": strategy,
+                }
+            if summary_bucket is not None:
+                summary_bucket["stressOverrideCount"] = int(
+                    summary_bucket.get("stressOverrideCount", 0)
+                ) + 1
+
+        if summary_bucket is not None:
+            if risk_action:
+                summary_bucket["lastRiskAction"] = risk_action
+            if timestamp:
+                last_timestamp = str(summary_bucket.get("lastTimestamp", ""))
+                if not last_timestamp or str(timestamp) >= last_timestamp:
+                    summary_bucket["lastTimestamp"] = timestamp
+                    summary_bucket["lastEvent"] = event
+                    summary_bucket["lastRiskFlags"] = list(risk_flags)
+                    summary_bucket["lastStressFailures"] = list(stress_failures)
+
+        timeline.append(
+            {
+                "timestamp": timestamp,
+                "event": event,
+                "strategy": strategy,
+                "riskProfile": risk_profile,
+                "status": status,
+                "riskAction": risk_action,
+                "riskFlags": risk_flags,
+                "stressFailures": stress_failures,
+                "stressOverrides": stress_overrides,
+                "isBlock": is_block,
+                "isFreeze": is_freeze,
+                "isStressOverride": is_override,
+                "activityScore": activity_score,
+                "record": dict(entry),
+            }
+        )
+
+    def _sort_key(item: Mapping[str, object]) -> tuple[int, str]:
+        timestamp = str(item.get("timestamp") or "")
+        return (0 if timestamp else 1, timestamp)
+
+    timeline.sort(key=_sort_key)
+
+    metrics: dict[str, object] = {"totalEntries": total_entries}
+
+    severity_order = {"block": 0, "freeze": 1, "override": 2, "neutral": 3}
+
+    def _classify(summary: Mapping[str, object]) -> str:
+        if int(summary.get("blockCount", 0)) > 0:
+            return "block"
+        if int(summary.get("freezeCount", 0)) > 0:
+            return "freeze"
+        if int(summary.get("stressOverrideCount", 0)) > 0:
+            return "override"
+        return "neutral"
+
+    def _timestamp_key(value: object) -> tuple[int, str]:
+        if isinstance(value, str) and value:
+            candidate = value.replace("Z", "+00:00")
+            try:
+                parsed = datetime.fromisoformat(candidate)
+            except ValueError:
+                return (0, candidate)
+            return (-int(parsed.timestamp()), candidate)
+        return (0, "")
+
+    summaries_payload: list[dict[str, object]] = []
+    for summary in strategy_summaries.values():
+        payload = dict(summary)
+        payload["severity"] = _classify(summary)
+        payload.setdefault("stressOverrideReasons", [])
+        summaries_payload.append(payload)
+
+    summaries_payload.sort(
+        key=lambda item: (
+            severity_order.get(str(item.get("severity", "neutral")), 99),
+            -int(item.get("blockCount", 0)),
+            -int(item.get("freezeCount", 0)),
+            -int(item.get("stressOverrideCount", 0)),
+            _timestamp_key(item.get("lastTimestamp", "")),
+            str(item.get("strategy", "")),
+        )
+    )
+
+    metrics.update(
+        {
+            "blockCount": blocks,
+            "freezeCount": freezes,
+            "stressOverrideCount": overrides,
+            "lastBlock": dict(last_block_entry or {}),
+            "lastFreeze": dict(last_freeze_entry or {}),
+            "lastStressOverride": dict(last_override_entry or {}),
+            "latestStressFailures": latest_stress_failures,
+            "latestStressFailureAt": latest_failure_ts,
+            "latestRiskFlags": latest_risk_flags,
+            "uniqueRiskFlags": sorted(risk_flag_set),
+            "uniqueStressFailures": sorted(stress_failure_set),
+            "strategies": sorted(strategy_set),
+            "strategyCounts": dict(strategy_counter),
+            "stressOverrideReasons": sorted(override_reason_set),
+            "riskFlagCounts": dict(risk_flag_counter),
+            "stressFailureCounts": dict(stress_failure_counter),
+            "timelineStart": timeline[0]["timestamp"] if timeline else "",
+            "timelineEnd": timeline[-1]["timestamp"] if timeline else "",
+            "strategySummaries": summaries_payload,
+        }
+    )
+
+    return metrics, timeline
+
+
 class RuntimeService(QObject):
     """Zapewnia QML dostęp do najnowszych decyzji autotradera."""
 
@@ -230,6 +560,9 @@ class RuntimeService(QObject):
     liveSourceChanged = Signal()
     retrainNextRunChanged = Signal()
     adaptiveStrategySummaryChanged = Signal()
+    riskMetricsChanged = Signal()
+    riskTimelineChanged = Signal()
+    operatorActionChanged = Signal()
 
     def __init__(
         self,
@@ -259,6 +592,9 @@ class RuntimeService(QObject):
         self._runtime_config_cache: "RuntimeAppConfig | None" = None
         self._retrain_next_run: str = ""
         self._adaptive_summary: str = ""
+        self._risk_metrics: dict[str, object] = {}
+        self._risk_timeline: list[dict[str, object]] = []
+        self._last_operator_action: dict[str, object] | None = None
         try:
             self._update_runtime_metadata(invalidate_cache=False)
         except Exception:  # pragma: no cover - defensywna inicjalizacja
@@ -281,6 +617,20 @@ class RuntimeService(QObject):
     def adaptiveStrategySummary(self) -> str:  # type: ignore[override]
         return self._adaptive_summary
 
+    @Property("QVariantMap", notify=riskMetricsChanged)
+    def riskMetrics(self) -> dict[str, object]:  # type: ignore[override]
+        return dict(self._risk_metrics)
+
+    @Property("QVariantList", notify=riskTimelineChanged)
+    def riskTimeline(self) -> list[dict[str, object]]:  # type: ignore[override]
+        return list(self._risk_timeline)
+
+    @Property("QVariantMap", notify=operatorActionChanged)
+    def lastOperatorAction(self) -> dict[str, object]:  # type: ignore[override]
+        if self._last_operator_action is None:
+            return {}
+        return dict(self._last_operator_action)
+
     # ------------------------------------------------------------------
     @Slot(int, result="QVariantList")
     def loadRecentDecisions(self, limit: int = 0) -> list[dict[str, object]]:  # type: ignore[override]
@@ -294,6 +644,10 @@ class RuntimeService(QObject):
         except Exception as exc:  # pragma: no cover - diagnostyka
             self._error_message = str(exc)
             self.errorMessageChanged.emit()
+            self._risk_metrics = {}
+            self._risk_timeline = []
+            self.riskMetricsChanged.emit()
+            self.riskTimelineChanged.emit()
             return []
 
         self._error_message = ""
@@ -306,6 +660,7 @@ class RuntimeService(QObject):
             parsed.append(payload)
         self._decisions = parsed
         self.decisionsChanged.emit()
+        self._apply_risk_context(parsed)
         self._update_runtime_metadata(invalidate_cache=False)
         return list(self._decisions)
 
@@ -342,6 +697,19 @@ class RuntimeService(QObject):
         self.liveSourceChanged.emit()
         self.loadRecentDecisions(self._default_limit)
         return True
+
+    # ------------------------------------------------------------------ operator actions --
+    @Slot("QVariantMap", result=bool)
+    def requestFreeze(self, entry: Mapping[str, object] | None = None) -> bool:  # type: ignore[override]
+        return self._record_operator_action("freeze", entry)
+
+    @Slot("QVariantMap", result=bool)
+    def requestUnfreeze(self, entry: Mapping[str, object] | None = None) -> bool:  # type: ignore[override]
+        return self._record_operator_action("unfreeze", entry)
+
+    @Slot("QVariantMap", result=bool)
+    def requestUnblock(self, entry: Mapping[str, object] | None = None) -> bool:  # type: ignore[override]
+        return self._record_operator_action("unblock", entry)
 
     # ------------------------------------------------------------------
     def _build_live_loader(
@@ -404,6 +772,35 @@ class RuntimeService(QObject):
             return entries
 
         return _loader
+
+    # ------------------------------------------------------------------ risk aggregation helpers --
+    def _apply_risk_context(self, entries: Iterable[Mapping[str, object]]) -> None:
+        metrics, timeline = _build_risk_context(entries)
+        self._risk_metrics = metrics
+        self._risk_timeline = timeline
+        self.riskMetricsChanged.emit()
+        self.riskTimelineChanged.emit()
+
+    def _record_operator_action(
+        self, action: str, entry: Mapping[str, object] | None
+    ) -> bool:
+        sanitized = dict(_to_mapping(entry)) if entry is not None else {}
+        timestamp = datetime.now(timezone.utc).astimezone().isoformat(timespec="seconds")
+        self._last_operator_action = {
+            "action": action,
+            "timestamp": timestamp,
+            "entry": sanitized,
+        }
+        self.operatorActionChanged.emit()
+        if sanitized:
+            reference = sanitized.get("event") or sanitized.get("timestamp") or sanitized.get("id")
+        else:
+            reference = None
+        if reference:
+            _LOGGER.info("Operator action '%s' triggered for %s", action, reference)
+        else:
+            _LOGGER.info("Operator action '%s' triggered", action)
+        return True
 
     def _load_core_config(self):
         if self._cached_core_config is not None:
