@@ -166,6 +166,14 @@ modułową (`bot_core`).
 3. **Stress Labs + dane rozszerzone:** symulator, pipeline danych i raporty gatingowe.
 4. **Resilience & failover:** narzędzia failover, rozszerzenie live_routera, bundling resilience, checklisty DR.
 5. **Observability++ & Enablement:** dashboardy Stage6, alerty, raporty miesięczne, playbooki operatorów.
+6. **Benchmark Stage6 vs CryptoHopper:** utrzymywanie porównania funkcji i luk (automatyzacja, marketplace, UI, compliance) w `docs/benchmark/cryptohopper_comparison.md`, z naciskiem na rozszerzenie pokrycia giełdowego, publikację presetów oraz finalizację integracji UI ↔ runtime.
+   - Strategia: parzystość funkcjonalna – pilnować roadmapy presetów i komunikacji Stress Labs; utrzymywać status 🟡 do czasu publikacji katalogu.
+   - Automatyzacja: przewaga Stage6 – utrzymać autonomiczny hypercare z podpisami HMAC (status 🟢 monitorowany miesięcznie w tablicy wyników).
+   - UI: luka – domknąć feed gRPC „Decyzje AI” i telemetrykę runtime (status 🔴 wymaga dem komponents UI/Runtime w Q3 2024).
+   - Compliance: przewaga – egzekwować offline-first journale i bundling artefaktów (status 🟢 potwierdzany audytem kwartalnym).
+   - **Cadence:** aktualizacje tablicy wyników i harmonogramu działań korygujących są elementem bramki release (checklista wsparcia + `docs/runtime/status_review.md`).
+   - **Kronika benchmarku:** sekcja „Historia aktualizacji benchmarku” musi zawierać wpis po każdej rewizji release’owej lub audycie, z linkiem do artefaktów i odnotowanym wpływem na roadmapę.
+   - **Procedura metryk:** proces zbierania metryk (hypercare, adaptery giełdowe, marketplace, UI, compliance) jest wykonywany według kroków opisanych w benchmarku; odstępstwa logujemy w `docs/runtime/status_review.md`.
 
 ## 6. Ryzyka i mitigacje
 - **Niedostępność danych L2/sentiment:** fallback do lokalnych kolejek i emulacji, walidacja jakości w pipeline’ach.

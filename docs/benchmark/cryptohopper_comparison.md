@@ -1,0 +1,104 @@
+# Benchmark Dudzian vs CryptoHopper
+
+## Źródła referencyjne
+- [docs/architecture/stage6_spec.md](../architecture/stage6_spec.md) – zakres autonomicznego portfela, hypercare i wymagania niefunkcjonalne, które definiują docelowy poziom automatyzacji i odporności.
+- [README.md](../../README.md) – skrót głównych funkcji produktowych, w tym wsparcie wielu giełd i pipeline AI.
+- [docs/runtime/status_review.md](../runtime/status_review.md) – aktualny status warstw runtime/UI oraz identyfikacja luk integracyjnych i automatyzacyjnych.
+
+## Obszary porównawcze
+- **Strategia** – adaptacyjne zarządzanie portfelem, marketplace presetów, symulacje stresowe i pipeline TCO/AI.
+- **Automatyzacja** – orkiestracja hypercare, cykle resilience/observability oraz poziomy autonomii decyzji tradingowych.
+- **UI** – integracja runtime z dashboardem, wizualizacja decyzji AI i wymagane integracje gRPC dla widoczności online.
+- **Compliance** – podpisy HMAC, dzienniki decyzji i workflow audytowy w trakcie cykli hypercare.
+
+## Skrót statusu obszarów
+- **Strategia:** funkcje core pokrywają scenariusze CryptoHopper, wymaga dopracowania publicznego marketplace’u presetów i komunikacji Stress Labs.
+- **Automatyzacja:** Stage6 utrzymuje przewagę dzięki Hypercare Orchestratorowi (podpisy HMAC, resilience/offline). Trzeba pilnować regresji autonomii przy nowych adapterach.
+- **UI:** wciąż luka – integracja feedu gRPC „Decyzje AI” oraz telemetrii live to priorytet przed release Stage6.
+- **Compliance:** przewaga dzięki offline-first journalingowi i podpisom HMAC. Konieczne regularne audyty bundli i aktualizacja materiałów produktowych.
+
+### Tablica wyników Stage6
+
+| Obszar | Status | Kluczowe metryki (cel) | Odpowiedzialny | Najbliższe działania |
+| --- | --- | --- | --- | --- |
+| Strategia | 🟡 Parzystość z luką marketplace | liczba presetów publicznych (≥15), SLA publikacji (≤48 h), pokrycie Stress Labs w marketingu (100% kampanii) | Zespół Strategii i AI | Udostępnić katalog presetów beta, zsynchronizować komunikację Stress Labs z marketingiem productowym |
+| Automatyzacja | 🟢 Przewaga Stage6 | liczba pełnych cykli hypercare/miesiąc (≥4), odsetek podpisanych raportów (100%), średni czas self-healingu (≤5 min) | Zespół Hypercare | Włączyć regresję adapterów do nightly, raportować czasy self-healingu w status_review |
+| UI | 🔴 Luka krytyczna | opóźnienie feedu gRPC p95 (≤3 s), pokrycie telemetrii decyzji (100%), testy UI gRPC w CI (zielone) | Zespół UI Runtime | Dostarczyć endpoint gRPC, dodać test PySide6 do pipeline’u, zorganizować demo L2 |
+| Compliance | 🟢 Przewaga | pokrycie podpisów HMAC (100%), audyty kwartalne bez zastrzeżeń (100%), kompletność TradingDecisionJournal (≥99%) | Zespół Compliance & Audyt | Zestawić wyniki audytu Q2, odświeżyć materiały produktowe i checklisty |
+
+## Tabela funkcji i różnic
+
+| Funkcja | Dudzian (Stage6) | CryptoHopper (publiczny plan) | Status różnicy |
+| --- | --- | --- | --- |
+| Portfolio adaptacyjne / rebalancing | PortfolioGovernor z integracją Stress Lab, override SLO i logiem HMAC. | Automatyczne rebalancingi strategii Pro, oparte o sygnały i copy trading. | Parzystość – kontrolować poziom konfiguracji limitów ryzyka. |
+| Poziomy automatyzacji | Stage6 Hypercare Orchestrator łączy cykle portfela, resilience i observability w jednym przebiegu podpisanym HMAC. | Tryby automatyczny/półautomatyczny (strategie, trailing stop, copy bots). | Przewaga Dudzian – utrzymać autonomiczny hypercare offline. |
+| Obsługa wielu giełd | Integracje Binance, Coinbase, Kraken, OKX, Bitget, Bybit w trybie live/paper. | Wsparcie >16 giełd, w tym Binance, Coinbase, Kraken, KuCoin, Huobi. | Luka – zaplanować rozszerzenie pokrycia do poziomu 15+ giełd. |
+| Marketplace strategii | Lokalny marketplace presetów i pipeline AI walk-forward. | Globalny marketplace z copy tradingiem, algorytmami społeczności. | Luka – przygotować publiczne listingi presetów i recenzje. |
+| Stress Lab i symulacje | Scenariusze multi-market, blackout infrastrukturalny i bundling raportów podpisanych HMAC. | Backtesting i paper trading, brak publicznych stres testów multi-market. | Przewaga Dudzian – komunikować stress labs w marketingu. |
+| Resilience / DR | ResilienceHypercareCycle, self-healing runtime, failover drill i bundler artefaktów podpisanych HMAC. | Failover podstawowy (API failover, monitoring uptime). | Przewaga Dudzian – utrzymać przewagę w audycie DR. |
+| UI decyzji | Dashboard QML z kartą „Decyzje AI”, wymagająca integracji gRPC dla pełnego feedu runtime. | Webowy UI z dostępem do sygnałów i alertów w czasie rzeczywistym. | Luka – zakończyć integrację gRPC, zapewnić widok live. |
+| Compliance i audyt | TradingDecisionJournal, podpisy HMAC dla raportów hypercare oraz logowanie decyzji AI. | Raporty działania bota, brak potwierdzonych podpisów HMAC offline. | Przewaga Dudzian – utrzymać offline-first compliance. |
+
+## Priorytety uzupełniania luk
+1. **Rozszerzenie pokrycia giełdowego**
+   - Cel: minimum 15 giełd obsługiwanych w trybie live i paper, wyrównanie z CryptoHopper Pro.
+   - Metryki: liczba aktywnych adapterów, czasy latencji failover, procent giełd z automatycznym provisioningiem API.
+   - Wymagane działania: roadmapa integracji, testy regresyjne adapterów, bundling certyfikatów w resilience cycle.
+2. **Marketplace presetów i społeczności**
+   - Cel: publiczny katalog presetów z recenzjami i kontrolą wersji offline.
+   - Metryki: liczba presetów, liczba aktywnych użytkowników marketplace, czas publikacji nowego presetu.
+   - Wymagane działania: rozszerzenie pipeline AI i packaging presetów do dystrybucji OEM.
+3. **Integracja UI ↔ runtime**
+   - Cel: pełna telemetria decyzji w UI w czasie rzeczywistym poprzez gRPC.
+   - Metryki: opóźnienie aktualizacji widoku (p95), liczba błędów feedu na cykl hypercare.
+   - Wymagane działania: implementacja endpointu gRPC i stabilizacja testów UI (PySide6 w CI).
+4. **Komunikacja przewag compliance**
+   - Cel: zachowanie przewagi offline-first (HMAC, journale) w materiałach produktowych.
+   - Metryki: pokrycie podpisów HMAC w raportach, liczba audytów zaliczonych bez zastrzeżeń.
+   - Wymagane działania: publikacja bundli audytowych w planie release’owym i checklistach wsparcia.
+
+## Harmonogram działań korygujących
+
+| Kwartał | Fokus | Kluczowe kroki | Artefakty kontroli |
+| --- | --- | --- | --- |
+| Q3 2024 | Integracja UI ↔ runtime | Implementacja kanału gRPC, testy PySide6 w CI, runbook demo dla operatorów L2 | Raport z `docs/runtime/status_review.md`, zaktualizowany benchmark (sekcja UI) |
+| Q4 2024 | Marketplace presetów | Publikacja katalogu presetów z recenzjami, rollout procesu wersjonowania offline | Release notes, listing w README, bundler presetów w `var/audit/marketplace/` |
+| Q1 2025 | Rozszerzenie giełd | Dodanie adapterów do poziomu 15+, testy failover, aktualizacja konfiguracji paper/live | Raport resilience, log failover w `var/audit/` |
+
+## Cadence utrzymania benchmarku
+- **Miesięcznie:** aktualizacja tablicy wyników Stage6 na podstawie raportu `docs/runtime/status_review.md` i logów hypercare.
+- **Kwartalnie:** porównanie metryk automatyzacji i compliance z danymi audytu; archiwizacja pakietu w `var/audit/benchmark/`.
+- **Przed releasem Stage6:** rewizja priorytetów luk i zatwierdzenie checklisty wsparcia.
+
+## Metryki benchmarkowe
+- **Poziomy automatyzacji:** ręczny → hypercare półautomatyczny → pełna autonomizacja Stage6 (orchestrator) z podpisami HMAC.
+- **Obsługa wielu giełd:** liczba giełd skonfigurowanych out-of-the-box, czasy failover oraz pokrycie trybu paper/live.
+- **Ciągłość operacyjna:** dostępność bundli resilience, liczba zamkniętych cykli hypercare z kompletem artefaktów.
+- **Compliance:** procent raportów z podpisem HMAC, kompletność TradingDecisionJournal, integracja dzienników z UI i eksportami offline.
+
+## Cykl utrzymania benchmarku
+1. **Przegląd release’owy:** przed podpisaniem releasu hypercare wykonaj checklistę z `docs/support/plan.md`, aktualizując statusy funkcji i priorytetów.
+2. **Synchronizacja produktowa:** streszcz wyniki benchmarku podczas przeglądu planów produktowych i zaktualizuj linki w `README.md` oraz roadmapach.
+3. **Audyt kwartalny:** zestaw wyniki metryk automatyzacji, pokrycia giełdowego i compliance z raportem `docs/runtime/status_review.md`, archiwizując pakiet w `var/audit/benchmark/`.
+
+## Historia aktualizacji benchmarku
+| Data | Obszar(y) | Najważniejsze zmiany | Artefakty referencyjne |
+| --- | --- | --- | --- |
+| 2024-06-30 | UI, Marketplace | Dodano status 🔴 dla feedu gRPC, otwarto działania korygujące Q3. | `docs/runtime/status_review.md`, `reports/ui/grpc_gap_demo.mp4` |
+| 2024-07-31 | Automatyzacja | Potwierdzono status 🟢 po regresjach nightly; rozszerzono checklistę wsparcia. | `var/audit/hypercare/2024-07/summary.json`, `docs/support/plan.md` |
+| 2024-08-31 | Strategia, Compliance | Publikacja roadmapy presetów i wyników audytu Q2. | `reports/strategy/presets_beta.md`, `var/audit/compliance/2024-Q2.pdf` |
+
+> Utrzymuj tabelę w formacie kroniki – każdy wpis powinien mieć link do źródłowych artefaktów oraz krótkie streszczenie wpływu na plan domykania luk.
+
+## Procedura zbierania metryk
+1. **Zrzut metryk automatyzacji:** uruchom `python scripts/run_stage6_hypercare_cycle.py --export var/audit/hypercare/<data>/summary.json` i zweryfikuj podpis HMAC (`python scripts/verify_stage6_hypercare_summary.py`).
+2. **Pokrycie giełd:** wywołaj `python scripts/list_exchange_adapters.py --output reports/exchanges/<data>.csv` i oznacz adaptery w trybie live/paper.
+3. **Marketplace presetów:** wygeneruj raport `python scripts/export_preset_catalog.py --format markdown --output reports/strategy/presets_<data>.md` zawierający liczbę presetów publicznych i status recenzji.
+4. **Telemetria UI:** z CI pobierz najnowszy log testów `reports/ui/tests/<build_id>/grpc_feed.json` i oblicz p95 opóźnienia feedu (`python scripts/calc_ui_feed_latency.py`).
+5. **Compliance:** zaktualizuj `var/audit/compliance/` o wyniki audytów (`python scripts/export_compliance_report.py`) i zweryfikuj kompletność wpisów `TradingDecisionJournal` (`python scripts/validate_decision_journal.py`).
+6. **Aktualizacja benchmarku:** nanieś wartości metryk w tabeli wyników, odśwież priorytety oraz dopisz wpis w sekcji „Historia aktualizacji benchmarku”.
+
+### Walidacja konsystencji
+- Zestaw metryki z raportem `docs/runtime/status_review.md` – różnice >5% wymagają otwarcia zadania w Jira/Linear.
+- Porównaj liczbę presetów w raporcie marketingowym oraz w katalogu – rozbieżności dokumentuj w kronice.
+- Dla statusu 🔴 wymagane jest przypisanie właściciela, terminu i linku do planu działań w harmonogramie korygującym.
