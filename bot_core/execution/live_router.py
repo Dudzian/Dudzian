@@ -15,8 +15,9 @@ import os
 import random
 import threading
 import time
+import uuid
 from datetime import datetime, timezone
-from collections import OrderedDict
+from collections import OrderedDict, deque
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -234,6 +235,7 @@ class QoSConfig:
     per_exchange_concurrency: Mapping[str, int] = field(default_factory=dict)
     priority_resolver: Callable[[OrderRequest, ExecutionContext], int] | None = None
     max_queue_wait_seconds: float | None = None
+    ack_queue_size: int = 512
 
 
 @dataclass(slots=True)
@@ -261,12 +263,29 @@ class _ExecutionPlan:
 
 
 @dataclass(slots=True)
+class AcknowledgementEvent:
+    """Sygnalizuje postęp realizacji zlecenia do warstwy decyzyjnej."""
+
+    ack_id: str
+    status: str
+    exchange: str | None
+    order_id: str | None
+    client_order_id: str | None
+    symbol: str
+    portfolio: str
+    timestamp: float
+    details: Mapping[str, object]
+
+
+@dataclass(slots=True)
 class _QueuedOrder:
     request: OrderRequest
     context: ExecutionContext
     future: asyncio.Future[OrderResult]
     enqueued_at: float
     plan: _ExecutionPlan
+    ack_id: str
+    final_status_sent: bool = field(default=False, init=False)
 
 
 # === LiveExecutionRouter =====================================================
@@ -430,6 +449,9 @@ class LiveExecutionRouter(ExecutionService):
         self._queue: asyncio.PriorityQueue[tuple[int, int, _QueuedOrder]] | None = None
         self._worker_tasks: list[asyncio.Task[None]] = []
         self._exchange_semaphores: dict[str, asyncio.Semaphore] = {}
+        self._ack_queue: asyncio.Queue[AcknowledgementEvent] | None = None
+        self._ack_backlog: deque[AcknowledgementEvent] = deque()
+
         self._loop = asyncio.new_event_loop()
         self._loop_ready = threading.Event()
         self._loop_thread = threading.Thread(
@@ -780,6 +802,8 @@ class LiveExecutionRouter(ExecutionService):
     def _run_loop(self) -> None:
         asyncio.set_event_loop(self._loop)
         self._queue = asyncio.PriorityQueue(self._qos.max_queue_size)
+        self._ack_queue = asyncio.Queue(self._qos.ack_queue_size)
+        self._flush_ack_backlog()
         for idx in range(self._qos.worker_concurrency):
             task = self._loop.create_task(
                 self._worker_loop(idx),
@@ -799,6 +823,7 @@ class LiveExecutionRouter(ExecutionService):
             self._loop.run_until_complete(self._fail_pending_orders())
             self._loop.close()
             self._queue = None
+            self._ack_queue = None
 
     async def _submit_order(self, request: OrderRequest, context: ExecutionContext) -> OrderResult:
         if self._queue is None:
@@ -807,12 +832,14 @@ class LiveExecutionRouter(ExecutionService):
         future: asyncio.Future[OrderResult] = loop.create_future()
         priority = self._resolve_priority(request, context)
         plan = self._prepare_execution_plan(request, context)
+        ack_id = self._resolve_ack_id(request, context)
         queued = _QueuedOrder(
             request=request,
             context=context,
             future=future,
             enqueued_at=self._time(),
             plan=plan,
+            ack_id=ack_id,
         )
         try:
             self._queue.put_nowait((priority, next(self._queue_counter), queued))
@@ -826,6 +853,13 @@ class LiveExecutionRouter(ExecutionService):
             raise error
 
         self._update_queue_depth()
+        self._publish_ack(
+            queued,
+            "ack",
+            exchange=None,
+            order_id=None,
+            details={"priority": priority},
+        )
 
         try:
             return await future
@@ -877,6 +911,8 @@ class LiveExecutionRouter(ExecutionService):
         started_at: float,
     ) -> OrderResult:
         plan = order.plan
+        request = order.request
+        context = order.context
         route_name = plan.route_name
         route_meta = plan.route_metadata
         latency_budget_ms = plan.latency_budget_ms
@@ -886,14 +922,15 @@ class LiveExecutionRouter(ExecutionService):
         allowed_fallback_categories = self._resolve_allowed_fallback_categories(context)
 
         attempts_rec: list[dict[str, str]] = []
-        attempts_counter = 0
         fallback_used = False
+        allowed_fallback_categories = self._resolve_allowed_fallback_categories(context)
+        queue_labels = self._queue_labels(queue_wait)
         # start nie obejmuje czasu kolejki – metryki dostają go osobno w etykietach
         start = started_at
         last_error: Exception | None = None
         route_label = route_name or "default"
 
-        for exchange_name, max_retries in exchanges_and_retries:
+        for index, (exchange_name, max_retries) in enumerate(exchanges_and_retries):
             breaker_now = self._time()
             breaker = self._breakers.get(exchange_name)
             if breaker and not breaker.allow(breaker_now):
@@ -917,21 +954,17 @@ class LiveExecutionRouter(ExecutionService):
                         last_error = last_error or TimeoutError("Przekroczono budżet opóźnień trasy")
                         break
 
-                labels = {
-                    "exchange": exchange_name,
-                    "symbol": request.symbol,
-                    "portfolio": context.portfolio_id,
-                    "route": route_label,
-                }
-                attempts_counter += 1
+                attempt_labels = {"exchange": exchange_name, **queue_labels}
+                attempt_labels_with_route = {**attempt_labels, "route": route_label}
                 try:
                     result = await self._perform_attempt(adapter, order.request, exchange_name)
                 except (ExchangeNetworkError, ExchangeThrottlingError) as exc:
                     current_time = self._time()
                     elapsed = max(0.0, current_time - start)
-                    self._m_latency.observe(elapsed, labels={**labels, "result": "error"})
-                    self._m_attempts.inc(labels={**labels, "result": "error"})
-                    self._m_errors.inc(labels=labels)
+                    error_labels = {**attempt_labels_with_route, "result": "error"}
+                    self._m_latency.observe(elapsed, labels=error_labels)
+                    self._m_attempts.inc(labels=error_labels)
+                    self._m_errors.inc(labels=attempt_labels_with_route)
                     attempts_rec.append(
                         {
                             "exchange": exchange_name,
@@ -947,17 +980,35 @@ class LiveExecutionRouter(ExecutionService):
                         await asyncio.sleep(_exp_backoff_with_jitter(attempt))
                         attempt += 1
                         continue
+                    category = "throttling" if isinstance(exc, ExchangeThrottlingError) else "network"
+                    if not self._is_fallback_allowed(category, allowed_fallback_categories):
+                        self._publish_ack(
+                            order,
+                            "nak",
+                            exchange=exchange_name,
+                            order_id=None,
+                            details={"error": repr(exc), "kind": category},
+                        )
+                        raise
                     break
                 except ExchangeAuthError as exc:
-                    self._m_attempts.inc(labels={**labels, "result": "auth_error"})
+                    self._m_attempts.inc(labels={**attempt_labels_with_route, "result": "auth_error"})
                     attempts_rec.append({"exchange": exchange_name, "attempt": str(attempt), "status": "auth_error"})
                     if breaker:
                         breaker.record_failure(self._time())
                     _LOGGER.error("Błąd uwierzytelnienia na %s – przerywam fallback.", exchange_name)
+                    self._publish_ack(
+                        order,
+                        "nak",
+                        exchange=exchange_name,
+                        order_id=None,
+                        details={"error": repr(exc), "kind": "auth"},
+                    )
                     raise
                 except ExchangeAPIError as exc:
-                    self._m_attempts.inc(labels={**labels, "result": "api_error"})
-                    self._m_errors.inc(labels=labels)
+                    error_labels = {**attempt_labels_with_route, "result": "api_error"}
+                    self._m_attempts.inc(labels=error_labels)
+                    self._m_errors.inc(labels=attempt_labels_with_route)
                     attempts_rec.append({"exchange": exchange_name, "attempt": str(attempt), "status": "api_error"})
                     last_error = exc
                     if breaker:
@@ -968,13 +1019,21 @@ class LiveExecutionRouter(ExecutionService):
                         getattr(exc, "status_code", "?"),
                         getattr(exc, "message", repr(exc)),
                     )
+                    self._publish_ack(
+                        order,
+                        "nak",
+                        exchange=exchange_name,
+                        order_id=None,
+                        details={"error": repr(exc), "kind": "api"},
+                    )
                     raise
                 except Exception as exc:  # noqa: BLE001
                     current_time = self._time()
                     elapsed = max(0.0, current_time - start)
-                    self._m_latency.observe(elapsed, labels={**labels, "result": "exception"})
-                    self._m_attempts.inc(labels={**labels, "result": "exception"})
-                    self._m_errors.inc(labels=labels)
+                    error_labels = {**attempt_labels_with_route, "result": "exception"}
+                    self._m_latency.observe(elapsed, labels=error_labels)
+                    self._m_attempts.inc(labels=error_labels)
+                    self._m_errors.inc(labels=attempt_labels_with_route)
                     attempts_rec.append(
                         {
                             "exchange": exchange_name,
@@ -987,6 +1046,13 @@ class LiveExecutionRouter(ExecutionService):
                     if breaker:
                         breaker.record_failure(current_time)
                     if not self._is_fallback_allowed("unknown", allowed_fallback_categories):
+                        self._publish_ack(
+                            order,
+                            "nak",
+                            exchange=exchange_name,
+                            order_id=None,
+                            details={"error": repr(exc), "kind": "exception"},
+                        )
                         raise
                     if attempt < max_retries:
                         await asyncio.sleep(_exp_backoff_with_jitter(attempt))
@@ -995,30 +1061,33 @@ class LiveExecutionRouter(ExecutionService):
                     break
 
                 # sukces
+                self._validate_adapter_result(result, exchange_name, request)
                 current_time = self._time()
                 elapsed = max(0.0, current_time - start)
-                self._m_latency.observe(elapsed, labels={**labels, "result": "success"})
-                self._m_attempts.inc(labels={**labels, "result": "success"})
-                common_labels = {
+                success_labels = {**attempt_labels_with_route, "result": "success"}
+                self._m_latency.observe(elapsed, labels=success_labels)
+                self._m_attempts.inc(labels=success_labels)
+                route_labels = {"exchange": exchange_name, "route": route_label}
+                route_only_labels = {"route": route_label}
+                router_labels = {
                     "exchange": exchange_name,
                     "symbol": request.symbol,
                     "portfolio": context.portfolio_id,
-                    "route": route_label,
                 }
-                self._m_success.inc(labels=common_labels)
-                self._m_orders_total.inc(labels=common_labels)
+                self._m_success.inc(labels=route_labels)
+                self._m_orders_total.inc(labels=route_labels)
                 filled_qty = float(result.filled_quantity or 0.0)
                 requested_qty = float(request.quantity or 0.0)
                 ratio = 0.0
                 if requested_qty > 0:
                     ratio = max(0.0, min(1.0, filled_qty / requested_qty))
-                self._m_fill_ratio.observe(ratio, labels=common_labels)
+                self._m_fill_ratio.observe(ratio, labels=route_labels)
                 if breaker:
                     breaker.record_success()
                     self._set_breaker_metric(exchange_name, open_=False)
-                if attempts_counter > 1:
-                    self._m_fallbacks.inc(labels=common_labels)
-                    self._m_router_fallbacks.inc(labels=common_labels)
+                if index > 0:
+                    self._m_fallbacks.inc(labels=route_only_labels)
+                    self._m_router_fallbacks.inc(labels=router_labels)
                     fallback_used = True
 
                 self._remember_binding(result.order_id, exchange_name)
@@ -1033,6 +1102,18 @@ class LiveExecutionRouter(ExecutionService):
                     latency_seconds=elapsed,
                     fallback_used=fallback_used,
                 )
+                self._publish_ack(
+                    order,
+                    "done",
+                    exchange=exchange_name,
+                    order_id=result.order_id,
+                    details={
+                        "status": result.status,
+                        "filled_quantity": result.filled_quantity,
+                        "avg_price": result.avg_price,
+                        "fallback_used": fallback_used,
+                    },
+                )
                 return result
 
         elapsed = max(0.0, self._time() - start)
@@ -1046,22 +1127,20 @@ class LiveExecutionRouter(ExecutionService):
         if failure_exchange is None and exchanges_and_retries:
             failure_exchange = str(exchanges_and_retries[0][0])
 
-        failure_labels = {
-            "route": route_label,
+        failure_route_labels = {"route": route_label}
+        failure_router_labels = {
             "symbol": request.symbol,
             "portfolio": context.portfolio_id,
         }
-        if failure_exchange is not None:
-            failure_labels["exchange"] = failure_exchange
 
-        self._m_failures.inc(labels=failure_labels)
-        self._m_router_failures.inc(labels=failure_labels)
+        self._m_failures.inc(labels=failure_route_labels)
+        self._m_router_failures.inc(labels=failure_router_labels)
+        error_exchange = failure_exchange or (exchanges_and_retries[0][0] if exchanges_and_retries else "unknown")
         self._m_errors.inc(
             labels={
-                "exchange": exchanges_and_retries[0][0] if exchanges_and_retries else "unknown",
-                "symbol": request.symbol,
-                "portfolio": context.portfolio_id,
+                "exchange": error_exchange,
                 "route": route_label,
+                **queue_labels,
             }
         )
         await asyncio.to_thread(
@@ -1077,6 +1156,13 @@ class LiveExecutionRouter(ExecutionService):
             error=repr(last_error) if last_error else None,
         )
         if last_error is not None:
+            self._publish_ack(
+                order,
+                "nak",
+                exchange=failure_exchange,
+                order_id=None,
+                details={"error": repr(last_error)},
+            )
             raise last_error
         raise RuntimeError("Nie udało się zrealizować zlecenia – brak dostępnych giełd")
 
@@ -1234,6 +1320,18 @@ class LiveExecutionRouter(ExecutionService):
             error_details = f"QueueOverflow(wait={queue_wait:.6f}, size={queue_size})"
             message = "Kolejka LiveExecutionRouter jest pełna"
 
+        self._publish_ack(
+            order,
+            "nak",
+            exchange=None,
+            order_id=None,
+            details={
+                "reason": reason,
+                "queue_wait_s": f"{queue_wait:.6f}",
+                **({"queue_timeout_s": f"{queue_timeout:.6f}"} if reason == "timeout" and queue_timeout is not None else {}),
+            },
+        )
+
         await asyncio.to_thread(
             self._maybe_write_decision_log,
             route_name=route_name,
@@ -1296,6 +1394,98 @@ class LiveExecutionRouter(ExecutionService):
             self._bindings.move_to_end(order_id)
             if len(self._bindings) > self._bindings_capacity:
                 self._bindings.popitem(last=False)
+
+    def _resolve_ack_id(self, request: OrderRequest, context: ExecutionContext) -> str:
+        metadata = request.metadata if isinstance(request.metadata, Mapping) else {}
+        for key in ("ack_id", "request_id", "decision_id", "correlation_id", "tracking_id"):
+            value = metadata.get(key)
+            if value not in (None, ""):
+                return str(value)
+        context_meta = context.metadata if isinstance(context.metadata, Mapping) else {}
+        for key in ("request_id", "decision_id", "correlation_id", "tracking_id"):
+            value = context_meta.get(key)
+            if value not in (None, ""):
+                return str(value)
+        if request.client_order_id not in (None, ""):
+            return str(request.client_order_id)
+        return uuid.uuid4().hex
+
+    def _flush_ack_backlog(self) -> None:
+        queue = self._ack_queue
+        if queue is None:
+            return
+        while self._ack_backlog:
+            event = self._ack_backlog[0]
+            try:
+                queue.put_nowait(event)
+            except asyncio.QueueFull:
+                break
+            else:
+                self._ack_backlog.popleft()
+
+    def _publish_ack(
+        self,
+        order: _QueuedOrder,
+        status: str,
+        *,
+        exchange: str | None,
+        order_id: str | None,
+        details: Mapping[str, object] | None,
+    ) -> None:
+        if status in {"done", "nak"} and order.final_status_sent:
+            return
+        event = AcknowledgementEvent(
+            ack_id=order.ack_id,
+            status=status,
+            exchange=exchange,
+            order_id=order_id,
+            client_order_id=order.request.client_order_id,
+            symbol=order.request.symbol,
+            portfolio=order.context.portfolio_id,
+            timestamp=self._time(),
+            details=dict(details or {}),
+        )
+        queue = self._ack_queue
+        if queue is None:
+            self._ack_backlog.append(event)
+        else:
+            try:
+                queue.put_nowait(event)
+            except asyncio.QueueFull:
+                try:
+                    queue.get_nowait()
+                except asyncio.QueueEmpty:
+                    pass
+                try:
+                    queue.put_nowait(event)
+                except asyncio.QueueFull:
+                    self._ack_backlog.append(event)
+        if status in {"done", "nak"}:
+            order.final_status_sent = True
+        self._flush_ack_backlog()
+
+    async def _wait_for_ack_event(self, timeout: float | None) -> AcknowledgementEvent:
+        queue = self._ack_queue
+        if queue is None:
+            raise RuntimeError("Kolejka ACK LiveExecutionRouter nie jest dostępna")
+        try:
+            if timeout is None:
+                event = await queue.get()
+            else:
+                event = await asyncio.wait_for(queue.get(), timeout)
+        except asyncio.TimeoutError as exc:
+            raise TimeoutError("Przekroczono limit oczekiwania na potwierdzenie zlecenia") from exc
+        finally:
+            self._flush_ack_backlog()
+        return event
+
+    def get_acknowledgement(self, timeout: float | None = None) -> AcknowledgementEvent:
+        future = asyncio.run_coroutine_threadsafe(self._wait_for_ack_event(timeout), self._loop)
+        return future.result()
+
+    async def get_acknowledgement_async(self, timeout: float | None = None) -> AcknowledgementEvent:
+        future = asyncio.run_coroutine_threadsafe(self._wait_for_ack_event(timeout), self._loop)
+        return await asyncio.wrap_future(future)
 
     def _set_breaker_metric(self, exchange: str, *, open_: bool) -> None:
         try:
@@ -1525,4 +1715,5 @@ __all__ = [
     "RouteDefinition",
     "QoSConfig",
     "RouterRuntimeStats",
+    "AcknowledgementEvent",
 ]

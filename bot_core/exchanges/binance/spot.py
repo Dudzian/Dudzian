@@ -256,6 +256,24 @@ class BinanceOpenOrder:
     update_time: float
 
 
+@dataclass(slots=True)
+class BinanceTradeFill:
+    """Znormalizowana reprezentacja transakcji (fill) Binance Spot."""
+
+    trade_id: str
+    order_id: str | None
+    symbol: str
+    side: str
+    price: float
+    quantity: float
+    quote_quantity: float
+    fee: float | None
+    fee_asset: str | None
+    is_maker: bool
+    is_best_match: bool
+    timestamp: float
+
+
 class BinanceSpotAdapter(ExchangeAdapter):
     """Adapter dla rynku spot Binance z obsługą danych publicznych i podpisanych."""
 
@@ -1270,6 +1288,81 @@ class BinanceSpotAdapter(ExchangeAdapter):
 
         return self._watchdog.execute("binance_spot_fetch_open_orders", _call)
 
+    def fetch_recent_fills(
+        self,
+        *,
+        symbol: str,
+        limit: int = 50,
+        from_id: int | None = None,
+    ) -> Sequence[BinanceTradeFill]:
+        """Zwraca ostatnie transakcje (fills) z rynku spot Binance dla danego symbolu."""
+
+        if not ({"read", "trade"} & self._permission_set):
+            raise PermissionError("Poświadczenia nie pozwalają na odczyt historii transakcji Binance Spot.")
+
+        exchange_symbol = to_exchange_symbol(symbol)
+        if exchange_symbol is None:
+            raise ValueError("Symbol transakcji Binance ma niepoprawny format.")
+
+        params: dict[str, object] = {
+            "symbol": exchange_symbol,
+            "limit": max(1, min(1000, int(limit))),
+        }
+        if from_id is not None:
+            params["fromId"] = int(from_id)
+
+        def _call() -> Sequence[BinanceTradeFill]:
+            payload = self._signed_request("/api/v3/myTrades", params=params)
+            if not isinstance(payload, list):
+                raise ExchangeAPIError(
+                    "Binance Spot zwrócił niepoprawną strukturę listy transakcji.",
+                    400,
+                    payload=payload,
+                )
+
+            fills: list[BinanceTradeFill] = []
+            for entry in payload:
+                if not isinstance(entry, Mapping):
+                    continue
+                raw_symbol = entry.get("symbol")
+                canonical_symbol = (
+                    normalize_symbol(str(raw_symbol)) if isinstance(raw_symbol, str) else None
+                )
+                price = _to_float(entry.get("price"))
+                quantity = _to_float(entry.get("qty"))
+                quote_quantity = _to_float(entry.get("quoteQty"))
+                fee = _to_float(entry.get("commission"))
+                timestamp = _timestamp_ms_to_seconds(entry.get("time"))
+                fills.append(
+                    BinanceTradeFill(
+                        trade_id=str(entry.get("id", "")),
+                        order_id=(
+                            str(entry.get("orderId"))
+                            if entry.get("orderId") not in (None, "")
+                            else None
+                        ),
+                        symbol=canonical_symbol or normalize_symbol(symbol) or symbol,
+                        side="buy" if bool(entry.get("isBuyer")) else "sell",
+                        price=price if price is not None else 0.0,
+                        quantity=quantity if quantity is not None else 0.0,
+                        quote_quantity=quote_quantity if quote_quantity is not None else 0.0,
+                        fee=fee,
+                        fee_asset=(
+                            str(entry.get("commissionAsset"))
+                            if entry.get("commissionAsset") not in (None, "")
+                            else None
+                        ),
+                        is_maker=bool(entry.get("isMaker")),
+                        is_best_match=bool(entry.get("isBestMatch")),
+                        timestamp=timestamp if timestamp is not None else time.time(),
+                    )
+                )
+
+            fills.sort(key=lambda item: item.timestamp)
+            return tuple(fills)
+
+        return self._watchdog.execute("binance_spot_fetch_recent_fills", _call)
+
     def place_order(self, request: OrderRequest) -> OrderResult:
         """Składa podpisane zlecenie typu limit/market na rynku spot."""
         if "trade" not in self._permission_set:
@@ -1352,4 +1445,5 @@ __all__ = [
     "BinanceOrderBookLevel",
     "BinanceOrderBook",
     "BinanceOpenOrder",
+    "BinanceTradeFill",
 ]

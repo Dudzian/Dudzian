@@ -14,6 +14,7 @@ from bot_core.exchanges.coinbase.spot import CoinbaseSpotAdapter
 from bot_core.exchanges.bybit.spot import BybitSpotAdapter
 from bot_core.exchanges.deribit.futures import DeribitFuturesAdapter
 from bot_core.exchanges.errors import ExchangeNetworkError
+from bot_core.exchanges.streaming import LocalLongPollStream
 from bot_core.exchanges.okx.spot import OKXSpotAdapter
 from bot_core.exchanges.kucoin.spot import KuCoinSpotAdapter
 from bot_core.exchanges.gateio.spot import GateIOSpotAdapter
@@ -78,6 +79,39 @@ class _FakeClient:
         self._cancelled.append((order_id, symbol))
         return {"status": "cancelled"}
 
+    def fetch_my_trades(self, symbol=None, since=None, limit=None, params=None):
+        self._hit("fetch_my_trades")
+        base_symbol = symbol or "BTC/USDT"
+        trades = [
+            {
+                "id": "trade-1",
+                "order": "order-1",
+                "symbol": base_symbol,
+                "side": "buy",
+                "price": 10.5,
+                "amount": 0.1,
+                "cost": 1.05,
+                "fee": {"cost": 0.0005, "currency": "USDT"},
+                "timestamp": 1_700_000_000_000,
+                "takerOrMaker": "maker",
+            },
+            {
+                "id": "trade-2",
+                "order": "order-2",
+                "symbol": base_symbol,
+                "side": "sell",
+                "price": 11.0,
+                "amount": 0.05,
+                "cost": 0.55,
+                "fee": {"cost": 0.0002, "currency": "USDT"},
+                "timestamp": 1_700_000_100_000,
+                "takerOrMaker": "taker",
+            },
+        ]
+        if limit is not None:
+            return trades[: int(limit)]
+        return trades
+
 
 class _OfflineClient(_FakeClient):
     def __init__(self, error: type[Exception]) -> None:
@@ -85,6 +119,9 @@ class _OfflineClient(_FakeClient):
         self._error = error
 
     def fetch_ohlcv(self, *args, **kwargs):  # noqa: D401 - dziedziczenie
+        raise self._error("network down")
+
+    def fetch_my_trades(self, *args, **kwargs):  # noqa: D401 - dziedziczenie
         raise self._error("network down")
 
 
@@ -143,7 +180,9 @@ def test_adapter_translates_network_errors():
 
 
 def test_okx_adapter_respects_offline_cancellation():
-    credentials = ExchangeCredentials(key_id="k", secret="s", passphrase="p")
+    credentials = ExchangeCredentials(
+        key_id="k", secret="s", passphrase="p", permissions=("read",)
+    )
     client = _FakeClient()
     adapter = OKXSpotAdapter(
         credentials,
@@ -158,8 +197,9 @@ def test_okx_adapter_respects_offline_cancellation():
     adapter.cancel_order(order.order_id, symbol="ETH/USDT")
     assert client._cancelled[-1] == (order.order_id, "ETH/USDT")
 
-    with pytest.raises(NotImplementedError):
-        adapter.stream_public_data(channels=["ticker"])
+    stream = adapter.stream_public_data(channels=["ticker"])
+    assert isinstance(stream, LocalLongPollStream)
+    stream.close()
 
 
 def test_kucoin_adapter_merges_nested_settings():
@@ -264,6 +304,43 @@ def test_gemini_adapter_configures_account_and_retry_policy():
     rate_rules = adapter._settings["rate_limit_rules"]
     assert rate_rules[0].rate == 15 and rate_rules[0].per == pytest.approx(1.0)
     assert rate_rules[1].rate == 1_200 and rate_rules[1].per == pytest.approx(60.0)
+
+
+def test_ccxt_adapter_fetch_recent_fills_normalizes_entries():
+    credentials = ExchangeCredentials(key_id="k", permissions=("read",))
+    client = _FakeClient()
+    adapter = CoinbaseSpotAdapter(
+        credentials,
+        environment=Environment.PAPER,
+        client=client,
+    )
+
+    adapter.configure_network(ip_allowlist=())
+
+    fills = adapter.fetch_recent_fills(symbol="BTC/USDT", limit=1)
+
+    assert len(fills) == 1
+    first = fills[0]
+    assert first["trade_id"] == "trade-1"
+    assert first["symbol"] == "BTC/USDT"
+    assert first["fee_asset"] == "USDT"
+    assert first["maker"] is True
+
+
+def test_ccxt_adapter_fetch_recent_fills_network_error():
+    credentials = ExchangeCredentials(key_id="k", permissions=("read",))
+    client = _OfflineClient(_CustomNetworkError)
+    adapter = BitstampSpotAdapter(
+        credentials,
+        environment=Environment.PAPER,
+        client=client,
+        settings={"network_error_types": (_CustomNetworkError,)},
+    )
+
+    adapter.configure_network(ip_allowlist=())
+
+    with pytest.raises(ExchangeNetworkError):
+        adapter.fetch_recent_fills(symbol="BTC/USDT")
 
 
 def test_bitstamp_adapter_uses_spot_defaults():

@@ -904,3 +904,60 @@ def test_router_validates_adapter_result(tmp_path: Path) -> None:
     with pytest.raises(ExchangeAPIError):
         router.execute(build_request(), build_context())
 
+
+def test_live_router_acknowledgements_success() -> None:
+    success = OrderResult(order_id="ex-1", status="filled", filled_quantity=1.0, avg_price=100.0, raw_response={})
+    adapters = {
+        "primary": StubExchangeAdapter.from_name("primary", environment=Environment.LIVE, responses=[success])
+    }
+    router = LiveExecutionRouter(
+        adapters=adapters,
+        routes=[RouteDefinition(name="default", exchanges=("primary",))],
+        default_route="default",
+        qos=QoSConfig(worker_concurrency=1, max_queue_size=4, ack_queue_size=8),
+    )
+
+    request = build_request()
+    request.client_order_id = "cid-ack-success"
+    context = build_context()
+
+    result = router.execute(request, context)
+
+    ack_submit = router.get_acknowledgement(timeout=1.0)
+    ack_done = router.get_acknowledgement(timeout=1.0)
+
+    assert ack_submit.status == "ack"
+    assert ack_submit.ack_id == "cid-ack-success"
+    assert ack_done.status == "done"
+    assert ack_done.order_id == result.order_id
+    router.close()
+
+
+def test_live_router_acknowledgements_failure() -> None:
+    failure = ExchangeAPIError(message="reject", status_code=400, payload=None)
+    adapters = {
+        "primary": StubExchangeAdapter.from_name("primary", environment=Environment.LIVE, responses=[failure])
+    }
+    router = LiveExecutionRouter(
+        adapters=adapters,
+        routes=[RouteDefinition(name="default", exchanges=("primary",))],
+        default_route="default",
+        qos=QoSConfig(worker_concurrency=1, max_queue_size=2, ack_queue_size=8),
+    )
+
+    request = build_request()
+    request.client_order_id = "cid-ack-failure"
+    context = build_context()
+
+    with pytest.raises(ExchangeAPIError):
+        router.execute(request, context)
+
+    ack_submit = router.get_acknowledgement(timeout=1.0)
+    ack_fail = router.get_acknowledgement(timeout=1.0)
+
+    assert ack_submit.status == "ack"
+    assert ack_submit.ack_id == "cid-ack-failure"
+    assert ack_fail.status == "nak"
+    assert ack_fail.details.get("kind") == "api"
+    router.close()
+

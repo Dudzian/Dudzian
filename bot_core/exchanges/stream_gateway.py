@@ -376,6 +376,43 @@ class StreamGateway:
                     events.append(self._to_mapping(entry))
             return events
 
+        if lowered in {"fills", "trades", "executions"}:
+            fetcher = getattr(adapter, "fetch_recent_fills", None)
+            if not callable(fetcher):
+                fetcher = getattr(adapter, "fetch_recent_trades", None)
+            if not callable(fetcher):
+                raise StreamGatewayError("Adapter nie obsługuje kanału fills")
+            symbols = self._maybe_extract_symbols(params)
+            limit = self._extract_limit(params, default=50)
+            from_id = self._extract_int_param(params, ("from_id", "fromId", "cursor"), minimum=0)
+
+            def _invoke(symbol_value: str | None) -> Sequence[Mapping[str, Any]]:
+                kwargs: dict[str, object] = {}
+                if symbol_value is not None:
+                    kwargs["symbol"] = symbol_value
+                if limit is not None:
+                    kwargs["limit"] = limit
+                if from_id is not None:
+                    kwargs["from_id"] = from_id
+                try:
+                    result = fetcher(**kwargs)  # type: ignore[call-arg]
+                except TypeError:
+                    kwargs.pop("from_id", None)
+                    result = fetcher(**kwargs)  # type: ignore[call-arg]
+                if isinstance(result, Sequence):
+                    return [self._to_mapping(item) for item in result]
+                if result is None:
+                    return []
+                return [self._to_mapping(result)]
+
+            aggregated: list[Mapping[str, Any]] = []
+            if symbols:
+                for symbol_value in symbols:
+                    aggregated.extend(_invoke(symbol_value))
+            else:
+                aggregated.extend(_invoke(None))
+            return aggregated
+
         if lowered in {"balances", "account"}:
             snapshot = adapter.fetch_account_snapshot()
             return [self._to_mapping(snapshot)]
@@ -420,6 +457,44 @@ class StreamGateway:
                 raise StreamGatewayError("Parametr depth musi być dodatni")
             return depth
         return self._default_depth
+
+    def _extract_limit(self, params: Mapping[str, Sequence[str]], *, default: int) -> int:
+        value = self._extract_int_param(params, ("limit",), minimum=1)
+        return value if value is not None else default
+
+    def _extract_int_param(
+        self,
+        params: Mapping[str, Sequence[str]],
+        keys: Sequence[str],
+        *,
+        minimum: int | None = None,
+    ) -> int | None:
+        for key in keys:
+            values = params.get(key)
+            if not values:
+                continue
+            candidate = values[-1]
+            try:
+                numeric = int(candidate)
+            except (TypeError, ValueError) as exc:
+                raise StreamGatewayError("Parametr musi być liczbą całkowitą") from exc
+            if minimum is not None and numeric < minimum:
+                raise StreamGatewayError("Parametr musi być nieujemny")
+            return numeric
+        return None
+
+    def _maybe_extract_symbols(self, params: Mapping[str, Sequence[str]]) -> list[str]:
+        symbols: list[str] = []
+        for key in ("symbols", "symbol", "pairs", "pair", "instrument"):
+            values = params.get(key)
+            if not values:
+                continue
+            for value in values:
+                for token in str(value).split(","):
+                    token = token.strip()
+                    if token and token not in symbols:
+                        symbols.append(token)
+        return symbols
 
     def _to_mapping(self, value: Any) -> Mapping[str, Any]:
         if value is None:
