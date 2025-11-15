@@ -26,6 +26,14 @@ Szczegółowe instrukcje znajdują się w dokumentacji:
 - [Monitorowanie offline](docs/monitoring_offline.md)
 - [Benchmark Stage6 vs CryptoHopper](docs/benchmark/cryptohopper_comparison.md)
 
+## Tryb cloud/serwerowy (behind flag)
+- Moduł `bot_core.cloud` udostępnia serwer gRPC, który można uruchomić osobnym procesem: `python scripts/run_cloud_service.py --config config/cloud/server.yaml --emit-stdout`.
+- Konfiguracja znajduje się w `config/cloud/server.yaml` i oprócz hosta/portu, entrypointu runtime i whitelisty usług zawiera sekcję `security.allowed_clients`. Każdy wpis określa parę `license_id`/`fingerprint` oraz źródło klucza HMAC (inline, plik lub zmienna ENV). Próby autoryzacji są logowane w `logs/security_admin.log`.
+- `CloudAuthService.AuthorizeClient` realizuje obowiązkowy handshake HWID/licencji. Klient podpisuje payload `{license_id, fingerprint, nonce}` przy pomocy `sign_license_payload` i wysyła go do RPC – w odpowiedzi otrzymuje token `CloudSession`, który należy przekazywać w nagłówku `Authorization: CloudSession <token>` do wszystkich wywołań (`RuntimeService`, `MarketplaceService`, `MarketDataService` itd.). Tokeny wygasają po czasie ustawionym w `session_ttl_seconds`.
+- Serwer inicjuje harmonogramy AI i synchronizację marketplace’u, a po starcie zapisuje payload `{ "event": "ready", "address": "host:port" }` (stdout lub plik wskazany flagą `--ready-file`).
+- Sekcja `cloud` w `config/runtime.yaml` wraz z `config/cloud/client.yaml` opisuje profile zdalne – włączenie procesu `scripts/run_local_bot.py --enable-cloud-runtime` publikuje payload `ready` z sekcją `cloud` i nie uruchamia lokalnego kontekstu.
+- Tryb cloud nie jest aktywowany automatycznie – dopiero ustawienie flagi (CLI/UI) przełącza dystrybucję desktopową z lokalnego `LocalRuntimeServer` na wskazany backend chmurowy.
+
 > **Szybki skrót benchmarku:** Stage6 jest na parytecie strategii z przewagą automatyzacji i compliance; największą luką pozostaje integracja UI (feed gRPC „Decyzje AI”) oraz skalowanie marketplace’u presetów.
 >
 > **Nowości:** tablica wyników i harmonogram działań korygujących w benchmarku są aktualizowane miesięcznie na podstawie `docs/runtime/status_review.md` i checklisty wsparcia. Dzięki temu zespoły produktowe widzą, kto odpowiada za domykanie luk i jakie są cele metryczne na kolejne kwartały.

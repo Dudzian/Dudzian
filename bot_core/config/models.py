@@ -208,6 +208,54 @@ class PortfolioDecisionLogConfig:
 
 
 @dataclass(slots=True)
+class CloudClientTlsConfig:
+    """Ustawienia TLS wykorzystywane przez klienta cloudowego."""
+
+    enabled: bool = False
+    ca_certificate: str | None = None
+    client_certificate: str | None = None
+    client_key: str | None = None
+    client_key_password_env: str | None = None
+    override_authority: str | None = None
+
+
+@dataclass(slots=True)
+class CloudClientConfig:
+    """Konfiguracja klienta gRPC wykorzystywana do połączeń cloudowych."""
+
+    address: str
+    use_tls: bool = False
+    metadata: Mapping[str, str] = field(default_factory=dict)
+    metadata_env: Mapping[str, str] = field(default_factory=dict)
+    metadata_files: Mapping[str, str] = field(default_factory=dict)
+    fallback_entrypoint: str | None = None
+    allow_local_fallback: bool = True
+    auto_connect: bool = True
+    tls: CloudClientTlsConfig | None = None
+
+
+@dataclass(slots=True)
+class RuntimeCloudProfileConfig:
+    """Opis pojedynczego profilu uruchomieniowego trybu cloud."""
+
+    mode: str = "local"
+    description: str | None = None
+    client_config_path: str | None = None
+    entrypoint: str | None = None
+    require_flag: bool = True
+    allow_local_fallback: bool = True
+
+
+@dataclass(slots=True)
+class RuntimeCloudSettings:
+    """Sekcja cloud w runtime.yaml."""
+
+    enabled: bool = False
+    default_profile: str | None = None
+    profiles: Mapping[str, RuntimeCloudProfileConfig] = field(default_factory=dict)
+
+
+@dataclass(slots=True)
 class SecurityBaselineSigningConfig:
     """Ustawienia podpisywania raportów audytu bezpieczeństwa."""
     signing_key_env: str | None = None
@@ -1768,6 +1816,7 @@ class RuntimeAppConfig:
     optimization: RuntimeOptimizationSettings | None = None
     marketplace: RuntimeMarketplaceSettings | None = None
     io_queue: RuntimeIOQueueSettings | None = None
+    cloud: "RuntimeCloudSettings | None" = None
 
 
 __all__ = [
@@ -1842,6 +1891,10 @@ __all__ = [
     "PrometheusAlertRuleConfig",
     "RiskDecisionLogConfig",
     "PortfolioDecisionLogConfig",
+    "CloudClientTlsConfig",
+    "CloudClientConfig",
+    "RuntimeCloudProfileConfig",
+    "RuntimeCloudSettings",
     "SecurityBaselineConfig",
     "SecurityBaselineSigningConfig",
     "SLOThresholdConfig",

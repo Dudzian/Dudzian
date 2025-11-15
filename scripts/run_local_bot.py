@@ -18,6 +18,10 @@ from bot_core.execution.live_router import LiveExecutionRouter
 from bot_core.exchanges.base import Environment as ExchangeEnvironment
 from bot_core.logging.config import install_metrics_logging_handler
 from bot_core.runtime.state_manager import RuntimeStateError, RuntimeStateManager
+from bot_core.runtime.cloud_profiles import (
+    RuntimeCloudClientSelection,
+    resolve_runtime_cloud_client,
+)
 from bot_core.security.base import SecretStorageError
 from bot_core.observability.metrics import CounterMetric, summarize_live_execution_metrics
 from core.reporting import DemoPaperReport, GuardrailReport
@@ -39,10 +43,13 @@ def _write_ready_payload(
     ready_file: Optional[str],
     emit_stdout: bool,
     metrics_url: str | None = None,
+    cloud_payload: Mapping[str, Any] | None = None,
 ) -> None:
-    payload = {"event": "ready", "address": address, "pid": os.getpid()}
+    payload: dict[str, Any] = {"event": "ready", "address": address, "pid": os.getpid()}
     if metrics_url:
         payload["metrics_url"] = metrics_url
+    if cloud_payload is not None:
+        payload["cloud"] = cloud_payload
     serialized = json.dumps(payload, ensure_ascii=False)
     if ready_file:
         Path(ready_file).expanduser().write_text(serialized, encoding="utf-8")
@@ -260,6 +267,80 @@ def _write_report(report_dir: str | Path, payload: Mapping[str, Any]) -> Path:
     return resolved_destination
 
 
+def _wait_for_shutdown(stop_event: threading.Event, deadline: float | None) -> None:
+    try:
+        while not stop_event.is_set():
+            if deadline is not None and time.monotonic() >= deadline:
+                stop_event.set()
+                break
+            time.sleep(0.5)
+    except KeyboardInterrupt:  # pragma: no cover - alternatywna obsługa sygnałów
+        stop_event.set()
+
+
+def _serialize_cloud_payload(selection: RuntimeCloudClientSelection) -> dict[str, Any]:
+    client_cfg = selection.client
+    profile_cfg = selection.profile
+    tls_cfg = client_cfg.tls
+    tls_enabled = bool(client_cfg.use_tls or (tls_cfg and tls_cfg.enabled))
+    payload: dict[str, Any] = {
+        "profile": selection.profile_name,
+        "mode": str(profile_cfg.mode or "remote"),
+        "target": client_cfg.address,
+        "client_config": profile_cfg.client_config_path,
+        "entrypoint": profile_cfg.entrypoint or client_cfg.fallback_entrypoint,
+        "allowLocalFallback": bool(client_cfg.allow_local_fallback),
+        "autoConnect": bool(client_cfg.auto_connect),
+        "useTls": tls_enabled,
+        "metadataKeys": sorted(client_cfg.metadata.keys()),
+        "metadataEnv": sorted(client_cfg.metadata_env.values()),
+        "metadataFiles": sorted(client_cfg.metadata_files.values()),
+    }
+    if tls_cfg is not None:
+        payload["tls"] = {
+            key: getattr(tls_cfg, key)
+            for key in (
+                "ca_certificate",
+                "client_certificate",
+                "client_key",
+                "client_key_password_env",
+                "override_authority",
+            )
+        }
+    return payload
+
+
+def _run_cloud_proxy(
+    args: argparse.Namespace,
+    report_payload: dict[str, Any],
+    selection: RuntimeCloudClientSelection,
+) -> int:
+    cloud_payload = _serialize_cloud_payload(selection)
+    report_payload["mode"] = "cloud"
+    report_payload["cloud"] = cloud_payload
+    if cloud_payload.get("entrypoint"):
+        report_payload["entrypoint"] = cloud_payload["entrypoint"]
+    emit_stdout = not args.no_ready_stdout
+    _write_ready_payload(
+        selection.client.address,
+        ready_file=args.ready_file,
+        emit_stdout=emit_stdout,
+        metrics_url=None,
+        cloud_payload=cloud_payload,
+    )
+    stop_event = threading.Event()
+    deadline = time.monotonic() + args.max_runtime if args.max_runtime > 0 else None
+
+    def _handle_signal(_signum, _frame) -> None:  # pragma: no cover - obsługa sygnałów
+        stop_event.set()
+
+    for sig in (signal.SIGINT, signal.SIGTERM):
+        signal.signal(sig, _handle_signal)
+
+    _wait_for_shutdown(stop_event, deadline)
+    return 0
+
+
 def _parse_args(argv: list[str] | None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--config", default="config/runtime.yaml", help="Ścieżka do pliku runtime.yaml")
@@ -305,6 +386,11 @@ def _parse_args(argv: list[str] | None) -> argparse.Namespace:
         default=0.0,
         help="Maksymalny czas działania runtime w sekundach (0 = bez limitu).",
     )
+    parser.add_argument(
+        "--enable-cloud-runtime",
+        action="store_true",
+        help="Wymusza wykorzystanie profilu cloudowego z config/runtime.yaml",
+    )
     return parser.parse_args(argv)
 
 
@@ -328,6 +414,19 @@ def main(argv: list[str] | None = None) -> int:
         "warnings": [],
     }
 
+    cloud_selection: RuntimeCloudClientSelection | None = None
+    if args.enable_cloud_runtime:
+        try:
+            cloud_selection = resolve_runtime_cloud_client(config_path)
+        except Exception as exc:
+            _LOGGER.error("Nie udało się wczytać konfiguracji cloud: %s", exc)
+            return 2
+        if cloud_selection is None:
+            _LOGGER.error(
+                "Aktywowano tryb cloud, ale config/runtime.yaml nie zawiera profilu remote"
+            )
+            return 3
+
     context = None
     server: LocalRuntimeServer | None = None
     exit_code = 0
@@ -338,82 +437,82 @@ def main(argv: list[str] | None = None) -> int:
     live_metrics_summary: dict[str, Any] | None = None
 
     try:
-        context = build_local_runtime_context(
-            config_path=str(config_path),
-            entrypoint=args.entrypoint,
-        )
-
-        entrypoint_name = _determine_entrypoint_name(context.config, context.entrypoint, args.entrypoint)
-        report_payload["entrypoint"] = entrypoint_name
-
-        validation = _validate_runtime_context(context, args.mode)
-        report_payload["validation"] = validation["details"]
-        report_payload["warnings"].extend(validation["warnings"])
-        if validation["errors"]:
-            report_payload["errors"].extend(validation["errors"])
-            report_payload["status"] = "validation_failed"
-            exit_code = 3
-
-        if exit_code == 0 and args.mode in {"paper", "live"}:
-            try:
-                checkpoint = state_manager.require_checkpoint(
-                    target_mode=args.mode,
-                    entrypoint=entrypoint_name,
-                )
-                report_payload["checkpoint"] = checkpoint.to_dict()
-            except RuntimeStateError as exc:
-                message = str(exc)
-                report_payload["errors"].append(message)
-                report_payload["status"] = "blocked"
-                exit_code = 3
-
-        if exit_code == 0 and args.mode == "live":
-            try:
-                execution_settings = getattr(context.config, "execution", None)
-                if execution_settings is not None:
-                    setattr(execution_settings, "default_mode", "live")
-            except Exception:  # pragma: no cover - defensywne
-                _LOGGER.debug("Nie udało się wymusić trybu live w konfiguracji runtime", exc_info=True)
-
-        if exit_code == 0:
-            observability_cfg = getattr(context.config, "observability", None)
-            enable_metrics_handler = True
-            if observability_cfg is not None:
-                enable_metrics_handler = getattr(observability_cfg, "enable_log_metrics", True)
-            if enable_metrics_handler:
-                install_metrics_logging_handler()
-
-            context.start(auto_confirm=not args.manual_confirm)
-            runtime_started = True
-            server = LocalRuntimeServer(context, host=args.host, port=args.port)
-            server.start()
-            metrics_url = context.metrics_endpoint
-            report_payload["metrics_endpoint"] = metrics_url
-            _write_ready_payload(
-                server.address,
-                ready_file=args.ready_file,
-                emit_stdout=not args.no_ready_stdout,
-                metrics_url=metrics_url,
+        if cloud_selection is not None:
+            exit_code = _run_cloud_proxy(args, report_payload, cloud_selection)
+        else:
+            context = build_local_runtime_context(
+                config_path=str(config_path),
+                entrypoint=args.entrypoint,
             )
 
-            stop_event = threading.Event()
-            deadline = time.monotonic() + args.max_runtime if args.max_runtime > 0 else None
+            entrypoint_name = _determine_entrypoint_name(context.config, context.entrypoint, args.entrypoint)
+            report_payload["entrypoint"] = entrypoint_name
 
-            def _handle_signal(signum, frame):  # noqa: D401, ANN001
-                del signum, frame
-                stop_event.set()
+            validation = _validate_runtime_context(context, args.mode)
+            report_payload["validation"] = validation["details"]
+            report_payload["warnings"].extend(validation["warnings"])
+            if validation["errors"]:
+                report_payload["errors"].extend(validation["errors"])
+                report_payload["status"] = "validation_failed"
+                exit_code = 3
 
-            for sig in (signal.SIGINT, signal.SIGTERM):
-                signal.signal(sig, _handle_signal)
+            if exit_code == 0 and args.mode in {"paper", "live"}:
+                try:
+                    checkpoint = state_manager.require_checkpoint(
+                        target_mode=args.mode,
+                        entrypoint=entrypoint_name,
+                    )
+                    report_payload["checkpoint"] = checkpoint.to_dict()
+                except RuntimeStateError as exc:
+                    message = str(exc)
+                    report_payload["errors"].append(message)
+                    report_payload["status"] = "blocked"
+                    exit_code = 3
 
-            try:
-                while not stop_event.is_set():
-                    if deadline is not None and time.monotonic() >= deadline:
-                        stop_event.set()
-                        break
-                    time.sleep(0.5)
-            except KeyboardInterrupt:  # pragma: no cover - alternatywna obsługa sygnałów
-                stop_event.set()
+            if exit_code == 0 and args.mode == "live":
+                try:
+                    execution_settings = getattr(context.config, "execution", None)
+                    if execution_settings is not None:
+                        setattr(execution_settings, "default_mode", "live")
+                except Exception:  # pragma: no cover - defensywne
+                    _LOGGER.debug(
+                        "Nie udało się wymusić trybu live w konfiguracji runtime", exc_info=True
+                    )
+
+            if exit_code == 0:
+                observability_cfg = getattr(context.config, "observability", None)
+                enable_metrics_handler = True
+                if observability_cfg is not None:
+                    enable_metrics_handler = getattr(
+                        observability_cfg, "enable_log_metrics", True
+                    )
+                if enable_metrics_handler:
+                    install_metrics_logging_handler()
+
+                context.start(auto_confirm=not args.manual_confirm)
+                runtime_started = True
+                server = LocalRuntimeServer(context, host=args.host, port=args.port)
+                server.start()
+                metrics_url = context.metrics_endpoint
+                report_payload["metrics_endpoint"] = metrics_url
+                _write_ready_payload(
+                    server.address,
+                    ready_file=args.ready_file,
+                    emit_stdout=not args.no_ready_stdout,
+                    metrics_url=metrics_url,
+                )
+
+                stop_event = threading.Event()
+                deadline = time.monotonic() + args.max_runtime if args.max_runtime > 0 else None
+
+                def _handle_signal(signum, frame):  # noqa: D401, ANN001
+                    del signum, frame
+                    stop_event.set()
+
+                for sig in (signal.SIGINT, signal.SIGTERM):
+                    signal.signal(sig, _handle_signal)
+
+                _wait_for_shutdown(stop_event, deadline)
 
     except Exception as exc:  # pragma: no cover - defensywne logowanie
         if exit_code == 0:

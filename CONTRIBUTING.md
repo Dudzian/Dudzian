@@ -29,6 +29,7 @@ proces kontrybucji obowiązujący w repozytorium.
 Przed otwarciem PR uruchom wszystkie poniższe polecenia:
 
 ```bash
+python scripts/lint_paths.py
 ruff check \
   bot_core/trading/engine.py \
   bot_core/strategies/base \
@@ -41,3 +42,8 @@ pytest tests/test_pipeline_paper.py
 Jeżeli dodajesz dodatkowe testy jednostkowe/integracyjne, dopisz je do sekcji
 "Test Plan" w opisie PR. Pamiętaj, aby **nie** przełączać środowiska na live
 bez pisemnego zatwierdzenia zespołu compliance po zakończeniu testów demo.
+
+Lint layoutu kończy się błędem za każdym razem, gdy w repozytorium pojawią się
+zakazane katalogi (`KryptoLowca/**`) albo pliki wykonywalne wewnątrz `archive/`.
+Pozostałości należy usunąć lub przenieść do dokumentacji historycznej przed
+wysłaniem zmian do review.

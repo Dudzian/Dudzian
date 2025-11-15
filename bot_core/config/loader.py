@@ -16,6 +16,8 @@ import yaml
 
 from bot_core.config.models import (
     AIModelManagementConfig,
+    CloudClientConfig,
+    CloudClientTlsConfig,
     AlertThrottleConfig,
     CoreConfig,
     CoverageMonitorTargetConfig,
@@ -44,6 +46,8 @@ from bot_core.config.models import (
     RuntimeAppConfig,
     RuntimeAISettings,
     RuntimeAIRetrainSettings,
+    RuntimeCloudProfileConfig,
+    RuntimeCloudSettings,
     RuntimeTradingSettings,
     RuntimeExecutionLiveSettings,
     RuntimeExecutionSettings,
@@ -4671,6 +4675,41 @@ def load_runtime_app_config(path: str | Path) -> RuntimeAppConfig:
                 normalized.append(text)
         return tuple(normalized)
 
+    def _load_cloud_settings(section: object) -> RuntimeCloudSettings | None:
+        if not isinstance(section, Mapping):
+            return None
+
+        default_profile = _as_optional_str(section.get("default_profile"))
+        profiles_section = section.get("profiles") or {}
+        if not isinstance(profiles_section, Mapping):
+            profiles_section = {}
+
+        profiles: dict[str, RuntimeCloudProfileConfig] = {}
+        for name, entry in profiles_section.items():
+            if not isinstance(entry, Mapping):
+                continue
+            client_path = entry.get("client_config_path", entry.get("client_config"))
+            normalized_path = _normalize_path(client_path)
+            profile = RuntimeCloudProfileConfig(
+                mode=str(entry.get("mode", "local")).strip() or "local",
+                description=_as_optional_str(entry.get("description")),
+                client_config_path=normalized_path,
+                entrypoint=_as_optional_str(entry.get("entrypoint")),
+                require_flag=bool(entry.get("require_flag", True)),
+                allow_local_fallback=bool(entry.get("allow_local_fallback", True)),
+            )
+            profiles[str(name)] = profile
+
+        enabled = bool(section.get("enabled", False))
+        if not profiles and not enabled and default_profile is None:
+            return None
+
+        return RuntimeCloudSettings(
+            enabled=enabled,
+            default_profile=default_profile,
+            profiles=profiles,
+        )
+
     core_section = raw.get("core") or {}
     core_path_value = core_section.get("path", "core.yaml")
     core_reference = RuntimeCoreReference(
@@ -5128,6 +5167,8 @@ def load_runtime_app_config(path: str | Path) -> RuntimeAppConfig:
         allow_unsigned=bool(marketplace_section.get("allow_unsigned", False)),
     )
 
+    cloud_settings = _load_cloud_settings(raw.get("cloud"))
+
     return RuntimeAppConfig(
         core=core_reference,
         ai=ai_settings,
@@ -5139,7 +5180,95 @@ def load_runtime_app_config(path: str | Path) -> RuntimeAppConfig:
         observability=observability_settings,
         optimization=optimization_settings,
         marketplace=marketplace_settings,
+        cloud=cloud_settings,
     )
 
 
-__all__ = ["load_core_config", "load_runtime_app_config"]
+def load_cloud_client_config(path: str | Path) -> CloudClientConfig:
+    """Wczytuje konfigurację klienta cloudowego (client.yaml)."""
+
+    config_path = Path(path).expanduser().resolve()
+    if not config_path.exists():
+        raise FileNotFoundError(f"Nie znaleziono pliku konfiguracji client.yaml: {config_path}")
+
+    payload = yaml.safe_load(config_path.read_text(encoding="utf-8")) or {}
+    if not isinstance(payload, Mapping):
+        raise ValueError("client.yaml musi zawierać mapę klucz→wartość")
+
+    address = str(payload.get("address") or "").strip()
+    if not address:
+        raise ValueError("client.yaml wymaga pola 'address'")
+
+    def _normalize_header(value: object | None) -> str | None:
+        if value in (None, "", False):
+            return None
+        text = str(value).strip().lower()
+        return text or None
+
+    metadata: dict[str, str] = {}
+    metadata_raw = payload.get("metadata") or {}
+    if isinstance(metadata_raw, Mapping):
+        for key, value in metadata_raw.items():
+            header = _normalize_header(key)
+            if not header:
+                continue
+            text = str(value).strip()
+            if text:
+                metadata[header] = text
+
+    metadata_env: dict[str, str] = {}
+    metadata_env_raw = payload.get("metadata_env") or {}
+    if isinstance(metadata_env_raw, Mapping):
+        for key, value in metadata_env_raw.items():
+            header = _normalize_header(key)
+            env_name = _normalize_env_var(value)
+            if header and env_name:
+                metadata_env[header] = env_name
+
+    metadata_files: dict[str, str] = {}
+    metadata_files_raw = payload.get("metadata_files") or {}
+    if isinstance(metadata_files_raw, Mapping):
+        for key, value in metadata_files_raw.items():
+            header = _normalize_header(key)
+            normalized = _normalize_runtime_path(value, base_dir=config_path.parent)
+            if header and normalized:
+                metadata_files[header] = normalized
+
+    tls_cfg: CloudClientTlsConfig | None = None
+    tls_raw = payload.get("tls") or {}
+    if isinstance(tls_raw, Mapping):
+        use_tls = bool(tls_raw.get("enabled", False))
+        if use_tls:
+            tls_cfg = CloudClientTlsConfig(
+                enabled=True,
+                ca_certificate=_normalize_runtime_path(
+                    tls_raw.get("ca_certificate"), base_dir=config_path.parent
+                ),
+                client_certificate=_normalize_runtime_path(
+                    tls_raw.get("client_certificate"), base_dir=config_path.parent
+                ),
+                client_key=_normalize_runtime_path(
+                    tls_raw.get("client_key"), base_dir=config_path.parent
+                ),
+                client_key_password_env=_normalize_env_var(
+                    tls_raw.get("client_key_password_env")
+                ),
+                override_authority=_format_optional_text(
+                    tls_raw.get("override_authority")
+                ),
+            )
+
+    return CloudClientConfig(
+        address=address,
+        use_tls=bool(payload.get("use_tls", False)),
+        metadata=metadata,
+        metadata_env=metadata_env,
+        metadata_files=metadata_files,
+        fallback_entrypoint=_format_optional_text(payload.get("fallback_entrypoint")),
+        allow_local_fallback=bool(payload.get("allow_local_fallback", True)),
+        auto_connect=bool(payload.get("auto_connect", True)),
+        tls=tls_cfg,
+    )
+
+
+__all__ = ["load_core_config", "load_runtime_app_config", "load_cloud_client_config"]

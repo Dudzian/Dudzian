@@ -1,5 +1,24 @@
 # Changelog runbooków operacyjnych
 
+## 2025-11-10 – Kontrola HWID/licencji dla modułu cloud
+- **Zakres**: `proto/trading.proto`, `bot_core/cloud/**`, `config/cloud/server*.yaml`, README oraz runbooki live/paper/security`.
+- **Zmiana**: serwer cloudowy wymaga teraz handshake'u `CloudAuthService.AuthorizeClient`. Poprawnie podpisany payload `{license_id, fingerprint, nonce}` (HMAC na sekrecie powiązanym z HWID) zwraca token `CloudSession`, który trzeba przesyłać w nagłówku `Authorization`. Nowa sekcja `security.allowed_clients` w `config/cloud/server.yaml` przechowuje allowlistę HWID/licencji wraz ze źródłami kluczy, a wszystkie próby autoryzacji trafiają do `logs/security_admin.log`.
+- **Działanie dla zespołów**: dodajcie własne wpisy allowlisty (najlepiej przez `shared_secret_env`), przygotujcie instrukcje podpisywania payloadu dla operatorów UI i dopiszcie do runbooków krok „cloud auth audit” – podczas startu backendu za flagą należy zweryfikować wpisy w `logs/security_admin.log` i potwierdzić, że tylko uprawnione HWID-y otrzymały token.
+
+## 2025-11-06 – Cloud runtime za flagą
+- **Zakres**: `bot_core/cloud/**`, `scripts/run_cloud_service.py`, runbooki live/paper oraz README.
+- **Zmiana**: dodano pakiet cloudowy udostępniający serwer gRPC startowany poleceniem `python scripts/run_cloud_service.py --config config/cloud/server.yaml`. Serwis ładuje runtime Stage6, oferuje marketplace i harmonogramy AI, a gotowość sygnalizuje payloadem `ready`. Runbooki otrzymały checklisty dla operatorów uruchamiających backend za flagą.
+- **Działanie dla zespołów**: przygotujcie `config/cloud/server.yaml`, aby ewentualne wdrożenie cloudowe było plug-and-play. W decision logach dokumentujcie zarówno start lokalny (`run_local_bot`), jak i aktywację modułu cloud – szczególnie jeśli wymaga dodatkowych licencji/HWID.
+
+## 2025-11-04 – Doprecyzowanie opisów interfejsów Stage6
+- **Zakres**: `bot_core/exchanges/interfaces.py`, `scripts/find_duplicates.py`, runbooki developerskie.
+- **Zmiana**: usunięto pozostałe wzmianki o kompatybilności z dawnym modułem `KryptoLowca` z docstringów i opisów narzędzi, aby
+  dokumentacja odnosiła się wyłącznie do aktualnej architektury Stage6.
+- **Działanie dla zespołów**: podczas przeglądów kodu odwołujcie się już tylko do bieżących modułów (`bot_core`, `core`, `ui`);
+  ewentualne pytania migracyjne trzeba kierować do dokumentów w `docs/migrations/`.
+- **Aktualizacja**: komunikaty błędów dotyczące magazynu sekretów i metryk AI odnoszą się teraz do „historycznych formatów Stage5”
+  zamiast „legacy”, aby utrzymać spójne słownictwo i przygotować repo do twardych testów QA zakazujących dawnej nomenklatury.
+
 ## 2025-10-30 – Logowanie Stage6 i migrator bez fallbacków archiwalnych
 - **Zakres**: `bot_core/logging/app.py`, migrator Stage6 (`python -m bot_core.runtime.stage6_preset_cli`), dokumentacja runbooków.
 - **Zmiana**: usunięto obsługę zmiennych środowiskowych `KRYPT_LOWCA_*` na rzecz wyłącznych prefiksów `BOT_CORE_*`; dawne

@@ -2199,9 +2199,14 @@ class LocalRuntimeServer:
         host: str = "127.0.0.1",
         port: int = 0,
         max_workers: int = 16,
+        interceptors: Sequence[grpc.ServerInterceptor] | None = None,
     ) -> None:
         self._context = context
-        self._server = grpc.server(ThreadPoolExecutor(max_workers=max_workers))
+        server_interceptors = tuple(interceptors or ())
+        self._server = grpc.server(
+            ThreadPoolExecutor(max_workers=max_workers),
+            interceptors=server_interceptors,
+        )
         trading_pb2_grpc.add_MarketDataServiceServicer_to_server(_MarketDataServicer(context), self._server)
         trading_pb2_grpc.add_OrderServiceServicer_to_server(_OrderServicer(context), self._server)
         if context.risk_store is not None:
@@ -2226,6 +2231,10 @@ class LocalRuntimeServer:
     @property
     def address(self) -> str:
         return self._address
+
+    @property
+    def grpc_server(self) -> grpc.Server:
+        return self._server
 
     def start(self) -> None:
         self._server.start()

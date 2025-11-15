@@ -236,7 +236,7 @@ class ModelMetrics(_MetricsView):
             joined = ", ".join(sorted(set(invalid_entries)))
             raise ValueError(
                 "ModelMetrics wymaga formatu Stage6 (summary/train/validation/test); "
-                f"wykryto legacy pola: {joined}"
+                f"wykryto nieobsługiwane pola spoza schematu Stage6: {joined}"
             )
 
         for key in required_keys:
