@@ -93,6 +93,14 @@ constexpr auto kRegimeThresholdsEnv = QByteArrayLiteral("BOT_CORE_UI_REGIME_THRE
 constexpr auto kRegimeTimelineLimitEnv = QByteArrayLiteral("BOT_CORE_UI_REGIME_TIMELINE_LIMIT");
 constexpr auto kTransportModeEnv = QByteArrayLiteral("BOT_CORE_UI_TRANSPORT_MODE");
 constexpr auto kTransportDatasetEnv = QByteArrayLiteral("BOT_CORE_UI_TRANSPORT_DATASET");
+constexpr auto kMarketplaceBridgeEnv = QByteArrayLiteral("BOT_CORE_UI_MARKETPLACE_BRIDGE");
+constexpr auto kMarketplacePresetsDirEnv = QByteArrayLiteral("BOT_CORE_UI_MARKETPLACE_PRESETS_DIR");
+constexpr auto kMarketplaceLicensesPathEnv = QByteArrayLiteral("BOT_CORE_UI_MARKETPLACE_LICENSES_PATH");
+constexpr auto kMarketplaceLicensesDirEnv = QByteArrayLiteral("BOT_CORE_UI_MARKETPLACE_LICENSES_DIR");
+constexpr auto kMarketplaceCatalogPathEnv = QByteArrayLiteral("BOT_CORE_UI_MARKETPLACE_CATALOG_PATH");
+constexpr auto kMarketplaceSigningKeysEnv = QByteArrayLiteral("BOT_CORE_UI_MARKETPLACE_SIGNING_KEYS");
+constexpr auto kMarketplaceSigningKeyFilesEnv = QByteArrayLiteral("BOT_CORE_UI_MARKETPLACE_SIGNING_KEY_FILES");
+constexpr auto kMarketplaceFingerprintEnv = QByteArrayLiteral("BOT_CORE_UI_MARKETPLACE_FINGERPRINT");
 
 class StrategyUiModule final : public UiModuleInterface {
 public:
@@ -526,6 +534,8 @@ Application::Application(QQmlApplicationEngine& engine, QObject* parent)
     m_marketplaceController->setBridgeScriptPath(QDir::current().absoluteFilePath(QStringLiteral("scripts/ui_marketplace_bridge.py")));
     m_marketplaceController->setPresetsDirectory(QDir::current().absoluteFilePath(QStringLiteral("data/strategies")));
     m_marketplaceController->setLicensesPath(QDir::current().absoluteFilePath(QStringLiteral("var/marketplace_licenses.json")));
+    m_marketplaceController->setLicensesDirectory(QDir::current().absoluteFilePath(QStringLiteral("var/licenses/presets")));
+    m_marketplaceController->setCatalogPath(QDir::current().absoluteFilePath(QStringLiteral("config/marketplace")));
 
     m_portfolioController = std::make_unique<PortfolioManagerController>(this);
     m_portfolioController->setBridgeScriptPath(QDir::current().absoluteFilePath(QStringLiteral("scripts/ui_portfolio_bridge.py")));
@@ -948,6 +958,8 @@ void Application::configureParser(QCommandLineParser& parser) const {
     parser.addOption({"marketplace-bridge", tr("Ścieżka mostka marketplace (ui_marketplace_bridge.py)"), tr("path"), QString()});
     parser.addOption({"marketplace-presets-dir", tr("Katalog presetów marketplace"), tr("path"), QString()});
     parser.addOption({"marketplace-licenses-path", tr("Plik stanu licencji marketplace"), tr("path"), QString()});
+    parser.addOption({"marketplace-licenses-dir", tr("Katalog indywidualnych licencji marketplace"), tr("path"), QString()});
+    parser.addOption({"marketplace-catalog-path", tr("Katalog manifestu marketplace"), tr("path"), QString()});
     parser.addOption({"marketplace-signing-key", tr("Klucz podpisu presetów marketplace (KEY_ID=SECRET)"), tr("key"), QString()});
     parser.addOption({"marketplace-signing-key-file", tr("Plik JSON z kluczami podpisów marketplace"), tr("path"), QString()});
     parser.addOption({"marketplace-fingerprint", tr("Nadpisanie fingerprintu dla licencji marketplace"), tr("fingerprint"), QString()});
@@ -1546,6 +1558,12 @@ bool Application::applyParser(const QCommandLineParser& parser) {
         const QString licensesPath = parser.value(QStringLiteral("marketplace-licenses-path")).trimmed();
         if (!licensesPath.isEmpty())
             m_marketplaceController->setLicensesPath(expandPath(licensesPath));
+        const QString licensesDir = parser.value(QStringLiteral("marketplace-licenses-dir")).trimmed();
+        if (!licensesDir.isEmpty())
+            m_marketplaceController->setLicensesDirectory(expandPath(licensesDir));
+        const QString catalogPath = parser.value(QStringLiteral("marketplace-catalog-path")).trimmed();
+        if (!catalogPath.isEmpty())
+            m_marketplaceController->setCatalogPath(expandPath(catalogPath));
         const QStringList cliSigningKeys = parser.values(QStringLiteral("marketplace-signing-key"));
         if (!cliSigningKeys.isEmpty())
             m_marketplaceController->setSigningKeys(cliSigningKeys);
@@ -5418,6 +5436,12 @@ void Application::applyMarketplaceEnvironmentOverrides(const QCommandLineParser&
     applyPathEnv(kMarketplaceLicensesPathEnv,
                  "marketplace-licenses-path",
                  [&](const QString& path) { m_marketplaceController->setLicensesPath(path); });
+    applyPathEnv(kMarketplaceLicensesDirEnv,
+                 "marketplace-licenses-dir",
+                 [&](const QString& path) { m_marketplaceController->setLicensesDirectory(path); });
+    applyPathEnv(kMarketplaceCatalogPathEnv,
+                 "marketplace-catalog-path",
+                 [&](const QString& path) { m_marketplaceController->setCatalogPath(path); });
 
     if (!parser.isSet("marketplace-signing-key")) {
         const auto value = envValue(kMarketplaceSigningKeysEnv);

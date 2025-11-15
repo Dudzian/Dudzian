@@ -40,11 +40,27 @@ Frame {
     property var modelEvents: []
     property var signalQuality: ({})
     property var failoverStatus: ({})
+    property var marketplaceController: null
+    property var openStrategyManagerTab: null
+    property var marketplacePresets: []
 
     signal snapshotRefreshed()
 
     Layout.fillWidth: true
     Layout.columnSpan: 2
+
+    onMarketplaceControllerChanged: {
+        if (marketplaceController && marketplaceController.presets)
+            marketplacePresets = marketplaceController.presets
+    }
+
+    Connections {
+        target: marketplaceController ? marketplaceController : null
+        ignoreUnknownSignals: true
+        function onPresetsChanged() {
+            marketplacePresets = marketplaceController && marketplaceController.presets ? marketplaceController.presets : []
+        }
+    }
 
     background: Rectangle {
         color: Qt.darker(palette.window, 1.05)
@@ -202,6 +218,18 @@ Frame {
         default:
             return "#34495e"
         }
+    }
+
+    function autoModePortfolioId() {
+        if (!portfolio)
+            return ""
+        if (portfolio.portfolio_id)
+            return portfolio.portfolio_id
+        if (portfolio.id)
+            return portfolio.id
+        if (portfolio.name)
+            return portfolio.name
+        return ""
     }
 
     function severityBackgroundColor(severity) {
@@ -519,6 +547,79 @@ Frame {
             Button {
                 text: qsTr("Odśwież")
                 onClicked: refreshSnapshot()
+            }
+        }
+
+        Frame {
+            Layout.fillWidth: true
+            visible: marketplacePresets && marketplacePresets.length > 0
+            padding: 12
+            background: Rectangle {
+                radius: 8
+                color: Qt.darker(palette.base, 1.05)
+                border.color: palette.mid
+                border.width: 1
+            }
+
+            ColumnLayout {
+                anchors.fill: parent
+                spacing: 6
+                RowLayout {
+                    Layout.fillWidth: true
+                    Label {
+                        text: qsTr("Marketplace – szybkie działania")
+                        font.bold: true
+                    }
+                    Item { Layout.fillWidth: true }
+                    Button {
+                        text: qsTr("Manager")
+                        onClicked: {
+                            if (openStrategyManagerTab)
+                                openStrategyManagerTab()
+                        }
+                    }
+                }
+                Repeater {
+                    model: marketplacePresets
+                    delegate: ColumnLayout {
+                        visible: index < 2
+                        spacing: 4
+                        Label {
+                            text: (modelData.name || modelData.presetId || "") + " • "
+                                  + (modelData.version || "-")
+                            font.bold: true
+                        }
+                        RowLayout {
+                            spacing: 6
+                            Button {
+                                text: qsTr("Zainstaluj w %1").arg(autoModePortfolioId() || qsTr("portfelu"))
+                                enabled: marketplaceController && autoModePortfolioId().length > 0
+                                onClicked: {
+                                    if (marketplaceController && marketplaceController.activateAndAssignPreset)
+                                        marketplaceController.activateAndAssignPreset(
+                                                    modelData.presetId || "",
+                                                    autoModePortfolioId())
+                                }
+                            }
+                            Button {
+                                text: qsTr("Przypisz")
+                                enabled: marketplaceController && autoModePortfolioId().length > 0
+                                onClicked: {
+                                    if (marketplaceController && marketplaceController.assignPresetToPortfolio)
+                                        marketplaceController.assignPresetToPortfolio(
+                                                    modelData.presetId || "",
+                                                    autoModePortfolioId())
+                                }
+                            }
+                        }
+                        Rectangle {
+                            Layout.fillWidth: true
+                            height: 1
+                            color: palette.mid
+                            opacity: 0.3
+                        }
+                    }
+                }
             }
         }
 

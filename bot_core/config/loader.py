@@ -54,6 +54,7 @@ from bot_core.config.models import (
     RuntimeObservabilityAlertSettings,
     RuntimeObservabilityMetricsSettings,
     RuntimeObservabilitySettings,
+    RuntimeAutoTraderSettings,
     RuntimeOptimizationSettings,
     RuntimeMarketplaceSettings,
     RuntimeRiskSettings,
@@ -4796,6 +4797,8 @@ def load_runtime_app_config(path: str | Path) -> RuntimeAppConfig:
         },
     )
 
+    auto_trader_settings = _load_auto_trader_settings(raw.get("auto_trader"))
+
     execution_section = raw.get("execution") or {}
     live_section = execution_section.get("live") or {}
     live_settings: RuntimeExecutionLiveSettings | None = None
@@ -5173,6 +5176,7 @@ def load_runtime_app_config(path: str | Path) -> RuntimeAppConfig:
         core=core_reference,
         ai=ai_settings,
         trading=trading_settings,
+        auto_trader=auto_trader_settings,
         execution=execution_settings,
         risk=risk_settings,
         licensing=licensing_settings,

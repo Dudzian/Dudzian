@@ -1,0 +1,492 @@
+import QtQuick
+import QtQuick.Controls
+import QtQuick.Layouts
+import QtQuick.Effects
+import "../components" as Components
+
+Item {
+    id: root
+    property var designSystem
+    property var modeWizardController
+    property var strategyManagementController
+    property var layoutController
+    property bool compact: false
+    signal launchWizardRequested()
+
+    property var modesModel: modeWizardController ? modeWizardController.modes : []
+    property string recommendedModeId: modeWizardController ? modeWizardController.recommendedModeId : ""
+    property var recommendationSummary: modeWizardController ? modeWizardController.recommendedModeSummary : ({})
+    property var aiProfiles: modeWizardController ? modeWizardController.aiProfiles() : ({})
+    property string marketplacePortfolioId: ""
+    property string internalSelected: ""
+    property string selectedModeId: internalSelected.length > 0 ? internalSelected : recommendedModeId
+    property int stepIndex: 0
+    property var answers: ({})
+
+    function refreshSelection() {
+        var initial = internalSelected
+        if (!initial && recommendedModeId && recommendedModeId.length > 0)
+            initial = recommendedModeId
+        if (!initial && modesModel && modesModel.length > 0)
+            initial = modesModel[0].id
+        if (initial)
+            selectMode(initial)
+    }
+
+    function modeById(modeId) {
+        if (!modesModel)
+            return null
+        for (var i = 0; i < modesModel.length; ++i) {
+            if (modesModel[i].id === modeId)
+                return modesModel[i]
+        }
+        return null
+    }
+
+    function ensureAnswers(modeId) {
+        if (!modeId)
+            return {}
+        if (!answers[modeId] && modeWizardController && modeWizardController.savedAnswers)
+            answers[modeId] = modeWizardController.savedAnswers(modeId) || {}
+        return answers[modeId] || {}
+    }
+
+    function answerValue(modeId, inputId) {
+        var store = ensureAnswers(modeId)
+        return store[inputId]
+    }
+
+    function setAnswerValue(modeId, inputId, value) {
+        if (!modeId || !inputId)
+            return
+        var store = ensureAnswers(modeId)
+        store[inputId] = value
+        answers[modeId] = store
+    }
+
+    function selectMode(modeId) {
+        if (!modeId)
+            return
+        internalSelected = modeId
+        if (modeWizardController && modeWizardController.setActiveMode)
+            modeWizardController.setActiveMode(modeId)
+        stepIndex = 0
+        ensureAnswers(modeId)
+    }
+
+    function bestPresetForMode() {
+        if (!strategyManagementController)
+            return null
+        var presets = strategyManagementController.presets || []
+        if (!presets.length)
+            return null
+        if (root.selectedModeId && root.selectedModeId.length > 0) {
+            for (var i = 0; i < presets.length; ++i) {
+                var preset = presets[i]
+                if (preset.tags && preset.tags.indexOf(root.selectedModeId) !== -1)
+                    return preset
+            }
+        }
+        return presets[0]
+    }
+
+    Component.onCompleted: refreshSelection()
+
+    Connections {
+        target: modeWizardController
+        function onRecommendationChanged() {
+            if (!root.internalSelected)
+                root.refreshSelection()
+        }
+        function onModesChanged() {
+            root.refreshSelection()
+        }
+        function onActiveModeChanged() {
+            if (!root.compact)
+                root.internalSelected = modeWizardController.activeModeId
+        }
+        function onResultsChanged() {
+            if (root.selectedModeId)
+                root.answers[root.selectedModeId] = modeWizardController.savedAnswers(root.selectedModeId) || {}
+        }
+    }
+
+    ColumnLayout {
+        anchors.fill: parent
+        spacing: 16
+
+        Item {
+            Layout.fillWidth: true
+            implicitHeight: summaryContent.implicitHeight + 32
+
+            Rectangle {
+                id: summaryBackground
+                anchors.fill: parent
+                radius: 24
+                gradient: Gradient {
+                    GradientStop { position: 0; color: designSystem ? designSystem.color("gradientHeroStart") : "#223" }
+                    GradientStop { position: 1; color: designSystem ? designSystem.color("gradientHeroEnd") : "#335" }
+                }
+                opacity: 0.75
+            }
+
+            MultiEffect {
+                anchors.fill: summaryBackground
+                source: summaryBackground
+                blurEnabled: true
+                blurRadius: 30
+                saturation: 0.9
+                brightness: 0.05
+            }
+
+            ColumnLayout {
+                id: summaryContent
+                anchors.fill: parent
+                anchors.margins: 24
+                spacing: 8
+
+                Label {
+                    text: recommendationSummary && recommendationSummary.title
+                          ? qsTr("Rekomendowany tryb: %1").arg(recommendationSummary.title)
+                          : qsTr("Wybierz tryb pracy")
+                    font.pixelSize: 20
+                    font.bold: true
+                    color: designSystem ? designSystem.color("textPrimary") : "#fff"
+                }
+
+                Label {
+                    text: recommendationSummary && recommendationSummary.recommendations
+                          && recommendationSummary.recommendations.summary
+                          ? recommendationSummary.recommendations.summary
+                          : qsTr("Aktywuj kreator, aby AI zaproponowało profil.")
+                    color: designSystem ? designSystem.color("textSecondary") : "#d0d4e0"
+                    wrapMode: Text.WordWrap
+                }
+
+                RowLayout {
+                    visible: recommendationSummary && recommendationSummary.badge
+                    spacing: 8
+                    Rectangle {
+                        radius: 12
+                        color: designSystem ? designSystem.color("surface") : "#fff"
+                        opacity: 0.85
+                        border.color: designSystem ? designSystem.color("border") : "#ccc"
+                        border.width: 1
+                        implicitHeight: 26
+                        implicitWidth: badgeLabel.implicitWidth + 16
+                        Label {
+                            id: badgeLabel
+                            anchors.centerIn: parent
+                            text: recommendationSummary.badge
+                            color: designSystem ? designSystem.color("textPrimary") : "#111"
+                            font.bold: true
+                        }
+                    }
+                    Label {
+                        text: recommendationSummary.ai_profile_hint && recommendationSummary.ai_profile_hint.length > 0
+                              ? qsTr("Profil AI: %1").arg(recommendationSummary.ai_profile_hint)
+                              : ""
+                        visible: text.length > 0
+                        color: designSystem ? designSystem.color("textSecondary") : "#d0d4e0"
+                    }
+                }
+
+                Label {
+                    text: aiProfiles && Object.keys(aiProfiles).length > 0
+                          ? qsTr("Dostępne profile cloud: %1").arg(Object.keys(aiProfiles).join(", "))
+                          : qsTr("Brak danych o profilach cloud")
+                    color: designSystem ? designSystem.color("textSecondary") : "#d0d4e0"
+                    wrapMode: Text.WordWrap
+                }
+
+                RowLayout {
+                    Layout.topMargin: 4
+                    spacing: 12
+                    Components.IconButton {
+                        designSystem: designSystem
+                        text: qsTr("Otwórz kreator")
+                        iconName: "mode_wizard"
+                        backgroundColor: designSystem ? designSystem.color("accent") : "#00aaff"
+                        foregroundColor: designSystem ? designSystem.color("surface") : "#111"
+                        onClicked: {
+                            if (root.compact)
+                                root.launchWizardRequested()
+                            else
+                                root.stepIndex = 0
+                        }
+                    }
+                    Components.IconButton {
+                        designSystem: designSystem
+                        text: qsTr("Zastosuj rekomendację")
+                        iconName: recommendationSummary && recommendationSummary.icon ? recommendationSummary.icon : "package"
+                        subtle: true
+                        onClicked: {
+                            if (root.recommendedModeId && root.recommendedModeId.length > 0)
+                                root.selectMode(root.recommendedModeId)
+                        }
+                    }
+                }
+
+                Rectangle {
+                    visible: strategyManagementController && root.bestPresetForMode()
+                    Layout.fillWidth: true
+                    radius: 18
+                    color: designSystem ? designSystem.color("surface") : "#1c2233"
+                    opacity: 0.95
+                    border.color: designSystem ? designSystem.color("border") : "#2f354a"
+                    border.width: 1
+                    ColumnLayout {
+                        anchors.fill: parent
+                        anchors.margins: 16
+                        spacing: 6
+                        property var presetCandidate: root.bestPresetForMode()
+                        Label {
+                            text: presetCandidate ? qsTr("Marketplace: %1").arg(presetCandidate.name) : ""
+                            font.bold: true
+                            color: designSystem ? designSystem.color("textPrimary") : "#fff"
+                            visible: presetCandidate !== null
+                        }
+                        Label {
+                            text: presetCandidate && presetCandidate.summary ? presetCandidate.summary : qsTr("Brak opisu presetu")
+                            color: designSystem ? designSystem.color("textSecondary") : "#c1c8df"
+                            wrapMode: Text.WordWrap
+                            visible: presetCandidate !== null
+                        }
+                        RowLayout {
+                            Layout.fillWidth: true
+                            spacing: 8
+                            TextField {
+                                id: wizardPortfolioInput
+                                Layout.fillWidth: true
+                                placeholderText: qsTr("ID portfela dla presetu")
+                                text: root.marketplacePortfolioId
+                                onTextChanged: root.marketplacePortfolioId = text
+                            }
+                            Components.IconButton {
+                                designSystem: designSystem
+                                text: qsTr("Zastosuj preset")
+                                iconName: "strategy_manager"
+                                enabled: strategyManagementController && presetCandidate && wizardPortfolioInput.text.length > 0
+                                onClicked: {
+                                    if (strategyManagementController && presetCandidate)
+                                        strategyManagementController.activateAndAssign(presetCandidate.presetId, wizardPortfolioInput.text)
+                                }
+                            }
+                            Components.IconButton {
+                                designSystem: designSystem
+                                text: qsTr("Otwórz manager")
+                                iconName: "package"
+                                subtle: true
+                                onClicked: {
+                                    if (layoutController)
+                                        layoutController.setPanelVisibility("strategyManagerPanel", true)
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        ColumnLayout {
+            Layout.fillWidth: true
+            Layout.fillHeight: true
+            spacing: 12
+            visible: !compact
+
+            Flickable {
+                Layout.fillWidth: true
+                Layout.preferredHeight: 150
+                contentWidth: cardsRow.implicitWidth
+                flickableDirection: Flickable.HorizontalFlick
+                clip: true
+
+                RowLayout {
+                    id: cardsRow
+                    spacing: 12
+                    Repeater {
+                        model: modesModel
+                        delegate: Rectangle {
+                            width: 220
+                            height: 120
+                            radius: 18
+                            color: modelData.id === selectedModeId
+                                    ? designSystem.color("surface")
+                                    : designSystem.color("surfaceMuted")
+                            border.color: modelData.id === selectedModeId
+                                          ? designSystem.color("accent")
+                                          : designSystem.color("border")
+                            border.width: 1
+                            opacity: 0.92
+
+                            ColumnLayout {
+                                anchors.fill: parent
+                                anchors.margins: 12
+                                spacing: 4
+                                RowLayout {
+                                    spacing: 6
+                                    Image {
+                                        source: designSystem.iconSource(modelData.icon || "mode_wizard")
+                                        width: 18
+                                        height: 18
+                                        fillMode: Image.PreserveAspectFit
+                                        color: designSystem.color("textPrimary")
+                                    }
+                                    Label {
+                                        text: modelData.title
+                                        color: designSystem.color("textPrimary")
+                                        font.bold: true
+                                        Layout.fillWidth: true
+                                    }
+                                }
+                                Label {
+                                    text: modelData.description
+                                    color: designSystem.color("textSecondary")
+                                    wrapMode: Text.WordWrap
+                                    Layout.fillWidth: true
+                                }
+                                Components.IconButton {
+                                    designSystem: designSystem
+                                    text: modelData.id === selectedModeId ? qsTr("Aktywny") : qsTr("Wybierz")
+                                    iconName: modelData.id === selectedModeId ? "shield" : "mode_wizard"
+                                    subtle: modelData.id !== selectedModeId
+                                    onClicked: root.selectMode(modelData.id)
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            Stepper {
+                id: wizardStepper
+                visible: currentMode && currentMode.steps && currentMode.steps.length > 0
+                from: 0
+                to: currentMode && currentMode.steps ? Math.max(0, currentMode.steps.length - 1) : 0
+                value: stepIndex
+                onValueChanged: stepIndex = value
+            }
+
+            Rectangle {
+                Layout.fillWidth: true
+                Layout.fillHeight: true
+                radius: 16
+                color: designSystem.color("surface")
+                border.color: designSystem.color("border")
+                border.width: 1
+                opacity: 0.95
+
+                ColumnLayout {
+                    anchors.fill: parent
+                    anchors.margins: 16
+                    spacing: 8
+                    property var currentMode: root.modeById(root.selectedModeId)
+                    property var currentStep: currentMode && currentMode.steps && currentMode.steps.length > 0
+                            ? currentMode.steps[Math.min(root.stepIndex, currentMode.steps.length - 1)]
+                            : null
+
+                    Label {
+                        text: currentStep ? currentStep.title : qsTr("Brak kroków do wyświetlenia")
+                        font.pixelSize: 18
+                        font.bold: true
+                        color: designSystem.color("textPrimary")
+                    }
+
+                    Label {
+                        text: currentStep ? currentStep.description : qsTr("Wybierz tryb, aby zobaczyć kroki kreatora.")
+                        color: designSystem.color("textSecondary")
+                        wrapMode: Text.WordWrap
+                    }
+
+                    Repeater {
+                        model: currentStep && currentStep.inputs ? currentStep.inputs : []
+                        delegate: ColumnLayout {
+                            property var inputSpec: modelData
+                            Layout.fillWidth: true
+                            spacing: 6
+                            Label {
+                                text: inputSpec.label
+                                color: designSystem.color("textPrimary")
+                                font.bold: true
+                            }
+                            Flow {
+                                width: parent.width
+                                Layout.fillWidth: true
+                                spacing: 8
+                                Repeater {
+                                    model: inputSpec.options
+                                    delegate: Components.IconButton {
+                                        designSystem: designSystem
+                                        property string optionId: modelData.id
+                                        property bool selected: answerValue(root.selectedModeId, inputSpec.id) === optionId
+                                        text: modelData.label
+                                        iconName: selected ? "shield" : "package"
+                                        subtle: !selected
+                                        onClicked: setAnswerValue(root.selectedModeId, inputSpec.id, optionId)
+                                        ToolTip.visible: hovered && modelData.helper && modelData.helper.length > 0
+                                        ToolTip.text: modelData.helper || ""
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    RowLayout {
+                        Layout.alignment: Qt.AlignRight
+                        spacing: 8
+                        Components.IconButton {
+                            designSystem: designSystem
+                            text: qsTr("Wstecz")
+                            iconName: "refresh"
+                            subtle: true
+                            enabled: stepIndex > 0
+                            onClicked: stepIndex = Math.max(0, stepIndex - 1)
+                        }
+                        Components.IconButton {
+                            designSystem: designSystem
+                            text: qsTr("Dalej")
+                            iconName: "refresh"
+                            subtle: true
+                            enabled: currentMode && currentMode.steps && stepIndex < currentMode.steps.length - 1
+                            onClicked: stepIndex = Math.min(currentMode.steps.length - 1, stepIndex + 1)
+                        }
+                        Components.IconButton {
+                            designSystem: designSystem
+                            text: qsTr("Zapisz tryb")
+                            iconName: "mode_wizard"
+                            backgroundColor: designSystem.color("accent")
+                            foregroundColor: designSystem.color("surface")
+                            onClicked: {
+                                if (modeWizardController && modeWizardController.saveResult)
+                                    modeWizardController.saveResult(root.selectedModeId, ensureAnswers(root.selectedModeId))
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        ColumnLayout {
+            Layout.fillWidth: true
+            visible: compact
+            spacing: 8
+            Label {
+                text: qsTr("Otwórz kreator, aby spersonalizować tryb pracy.")
+                color: designSystem.color("textSecondary")
+                wrapMode: Text.WordWrap
+            }
+            Components.IconButton {
+                designSystem: designSystem
+                text: qsTr("Konfiguruj tryby pracy")
+                iconName: "mode_wizard"
+                backgroundColor: designSystem.color("accent")
+                foregroundColor: designSystem.color("surface")
+                onClicked: root.launchWizardRequested()
+            }
+        }
+    }
+
+    function currentMode() {
+        return modeById(selectedModeId)
+    }
+}

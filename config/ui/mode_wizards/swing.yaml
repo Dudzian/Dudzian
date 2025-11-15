@@ -1,0 +1,61 @@
+id: swing
+title: "Tryb swingowy"
+icon: swing
+description: |
+  Tryb średnioterminowy oparty o wykrywanie trendów i korekt z użyciem kontekstu AI.
+badge: Trend
+ai_profile_hint: swing_ai
+telemetry_rules:
+  max_trades_per_hour: 6
+  max_volatility: 0.45
+  min_holding_minutes: 45
+steps:
+  - id: regime
+    title: "Dobór instrumentów"
+    description: "Określ pary i rynki, na których AI ma wyszukiwać trendy."
+    inputs:
+      - id: baskets
+        type: choice
+        label: "Koszyki"
+        options:
+          - id: majors
+            label: "BTC/ETH + główne alty"
+          - id: l2
+            label: "L2 + DeFi bluechips"
+  - id: drawdown
+    title: "Zabezpieczenie kapitału"
+    description: "Zdefiniuj progi stop-loss i rebalancingu."
+    inputs:
+      - id: trailing
+        type: choice
+        label: "Trailing stop"
+        options:
+          - id: conservative
+            label: "2.5 ATR"
+          - id: balanced
+            label: "3.5 ATR"
+      - id: rebalance
+        type: choice
+        label: "Harmonogram rebalancingu"
+        options:
+          - id: weekly
+            label: "Co tydzień"
+          - id: biweekly
+            label: "Co dwa tygodnie"
+  - id: automation
+    title: "Automatyzacja presetów"
+    description: "Ustal kiedy automatycznie przełączać strategie swingowe."
+    inputs:
+      - id: trigger
+        type: choice
+        label: "Warunek przełączenia"
+        options:
+          - id: ai_regime
+            label: "AI wykrywa zmianę reżimu"
+          - id: vol_spike
+            label: "Wzrost zmienności o 40%"
+recommendations:
+  summary: "Zastosuj koszyk majors + trailing 3.5 ATR i przełączanie AI-regime."
+  marketplace_tags:
+    - swing
+    - trend

@@ -2401,6 +2401,7 @@ def build_local_runtime_context(
         decision_journal_context={"environment": pipeline.bootstrap.environment.name},
         controller_runner=runner,
         trusted_auto_confirm=True,
+        mode_settings=getattr(runtime_config, "auto_trader", None),
     )
     adaptive_learner: AdaptiveStrategyLearner | None = None
     orchestrator_instance = getattr(pipeline.bootstrap, "decision_orchestrator", None)

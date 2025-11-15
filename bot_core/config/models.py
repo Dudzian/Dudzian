@@ -1691,6 +1691,50 @@ class RuntimeObservabilitySettings:
 
 
 @dataclass(slots=True)
+class AutoTraderModeParameterRange:
+    """Zakres parametru wykorzystywany przy definiowaniu trybów AutoTradera."""
+
+    min: float = 0.0
+    max: float = 1.0
+    default: float | None = None
+
+    def clamp(self, value: float) -> float:
+        """Zwraca wartość ograniczoną do zdefiniowanego zakresu."""
+
+        lower = float(self.min)
+        upper = float(self.max)
+        if lower > upper:
+            lower, upper = upper, lower
+        return float(max(lower, min(upper, value)))
+
+
+@dataclass(slots=True)
+class AutoTraderModeProfileConfig:
+    """Opis pojedynczego profilu trybu pracy AutoTradera."""
+
+    description: str | None = None
+    default_strategy: str = "capital_preservation"
+    allowed_strategies: Sequence[str] = field(default_factory=tuple)
+    preferred_regimes: Sequence[str] = field(default_factory=tuple)
+    required_inputs: Sequence[str] = field(default_factory=tuple)
+    guardrail_tags: Sequence[str] = field(default_factory=tuple)
+    base_weight: float = 1.0
+    leverage: AutoTraderModeParameterRange | None = None
+    position_size: AutoTraderModeParameterRange | None = None
+    risk_floor: float | None = None
+    risk_ceiling: float | None = None
+
+
+@dataclass(slots=True)
+class RuntimeAutoTraderSettings:
+    """Konfiguracja trybów pracy AutoTradera ładowana z runtime.yaml."""
+
+    enabled: bool = True
+    default_mode: str | None = None
+    modes: Mapping[str, AutoTraderModeProfileConfig] = field(default_factory=dict)
+
+
+@dataclass(slots=True)
 class RuntimeIOQueueLimit:
     """Limity kolejki I/O dla pojedynczego adaptera."""
 
@@ -1812,6 +1856,7 @@ class RuntimeAppConfig:
     risk: RuntimeRiskSettings
     licensing: RuntimeLicensingSettings
     ui: RuntimeUISettings
+    auto_trader: RuntimeAutoTraderSettings | None = None
     observability: RuntimeObservabilitySettings | None = None
     optimization: RuntimeOptimizationSettings | None = None
     marketplace: RuntimeMarketplaceSettings | None = None
@@ -1940,6 +1985,9 @@ __all__ = [
     "RuntimeObservabilityMetricsSettings",
     "RuntimeObservabilityAlertSettings",
     "RuntimeObservabilitySettings",
+    "AutoTraderModeParameterRange",
+    "AutoTraderModeProfileConfig",
+    "RuntimeAutoTraderSettings",
     "RuntimeIOQueueLimit",
     "RuntimeIOQueueSettings",
     "RuntimeOptimizationSettings",

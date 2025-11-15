@@ -1,7 +1,13 @@
-"""Uruchamia lokalny backend bota (AutoTrader + serwer gRPC) na potrzeby UI."""
+"""Uruchamia lokalny backend bota (AutoTrader + serwer gRPC) na potrzeby UI.
+
+Uzupełnienie: nowy klient PySide6 można wystartować poleceniem
+`python -m ui.pyside_app --config ui/config/example.yaml [--enable-cloud-runtime]`
+po otrzymaniu komunikatu `ready` z tego skryptu.
+"""
 from __future__ import annotations
 
 import argparse
+
 import json
 import logging
 import os

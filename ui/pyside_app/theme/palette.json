@@ -1,0 +1,48 @@
+{
+  "palettes": {
+    "dark": {
+      "background": "#0E1117",
+      "surface": "#141821",
+      "surfaceElevated": "#1F2430",
+      "surfaceMuted": "#2A303C",
+      "accent": "#35C2FF",
+      "accentStrong": "#0AA2FF",
+      "textPrimary": "#F8FBFF",
+      "textSecondary": "#9FB3CE",
+      "border": "#2E3747",
+      "positive": "#6BEFA3",
+      "warning": "#FFD479",
+      "critical": "#FF708D",
+      "gradientHeroStart": "#1B2332",
+      "gradientHeroEnd": "#0B0F17",
+      "glassTint": "#10131ACC"
+    },
+    "light": {
+      "background": "#F4F6FB",
+      "surface": "#FFFFFF",
+      "surfaceElevated": "#FFFFFF",
+      "surfaceMuted": "#E4E9F2",
+      "accent": "#0077FF",
+      "accentStrong": "#0053B8",
+      "textPrimary": "#0A0E17",
+      "textSecondary": "#4B5565",
+      "border": "#D0D7E7",
+      "positive": "#1EB980",
+      "warning": "#FFB454",
+      "critical": "#FF4D6A",
+      "gradientHeroStart": "#E1E9FF",
+      "gradientHeroEnd": "#F7FBFF",
+      "glassTint": "#FFFFFFCC"
+    }
+  },
+  "gradients": {
+    "dark": {
+      "hero": ["#1B2332", "#111623", "#0A0F18"],
+      "panel": ["#1A1F2B", "#111623"]
+    },
+    "light": {
+      "hero": ["#E1E9FF", "#FDFEFF"],
+      "panel": ["#FFFFFF", "#F3F6FB"]
+    }
+  }
+}

@@ -26,6 +26,8 @@ public:
     void setBridgeScriptPath(const QString& path);
     void setPresetsDirectory(const QString& path);
     void setLicensesPath(const QString& path);
+    void setLicensesDirectory(const QString& path);
+    void setCatalogPath(const QString& path);
     void setSigningKeys(const QStringList& keys);
     void setSigningKeyFiles(const QStringList& paths);
     void setFingerprintOverride(const QString& fingerprint);
@@ -34,6 +36,8 @@ public:
     QString bridgeScriptPath() const { return m_bridgeScriptPath; }
     QString presetsDirectory() const { return m_presetsDir; }
     QString licensesPath() const { return m_licensesPath; }
+    QString licensesDirectory() const { return m_licensesDir; }
+    QString catalogPath() const { return m_catalogPath; }
     QStringList signingKeys() const { return m_signingKeys; }
     QStringList signingKeyFiles() const { return m_signingKeyFiles; }
     QString fingerprintOverride() const { return m_fingerprintOverride; }
@@ -43,6 +47,7 @@ public:
     Q_INVOKABLE bool deactivatePreset(const QString& presetId);
     Q_INVOKABLE bool assignPresetToPortfolio(const QString& presetId, const QString& portfolioId);
     Q_INVOKABLE bool unassignPresetFromPortfolio(const QString& presetId, const QString& portfolioId);
+    Q_INVOKABLE QVariantMap activateAndAssignPreset(const QString& presetId, const QString& portfolioId);
     Q_INVOKABLE QVariantList presetsForCategory(const QString& category) const;
     Q_INVOKABLE QVariantMap presetDetails(const QString& presetId) const;
 
@@ -71,6 +76,8 @@ private:
     QString m_bridgeScriptPath;
     QString m_presetsDir;
     QString m_licensesPath;
+    QString m_licensesDir;
+    QString m_catalogPath;
     QStringList m_signingKeys;
     QStringList m_signingKeyFiles;
     QString m_fingerprintOverride;

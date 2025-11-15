@@ -1,0 +1,60 @@
+id: copy_trading
+title: "Tryb copy-trading"
+icon: copy
+description: |
+  Tryb dla operatorów chcących powielać strategie społecznościowe i marketplace.
+badge: Social
+ai_profile_hint: copy_hub
+telemetry_rules:
+  max_trades_per_hour: 10
+  prefer_copy_signals: true
+steps:
+  - id: sources
+    title: "Źródła sygnałów"
+    description: "Wybierz marketplace i listy liderów, które chcesz subskrybować."
+    inputs:
+      - id: marketplace
+        type: choice
+        label: "Marketplace"
+        options:
+          - id: stage6
+            label: "Stage6 Verified"
+          - id: custom
+            label: "Preset prywatny"
+  - id: allocation
+    title: "Alokacja kapitału"
+    description: "Określ limity na strategię oraz zasady podziału."
+    inputs:
+      - id: per_strategy
+        type: choice
+        label: "Limit per strategia"
+        options:
+          - id: five
+            label: "5% NAV"
+          - id: ten
+            label: "10% NAV"
+      - id: sync_mode
+        type: choice
+        label: "Synchronizacja"
+        options:
+          - id: proportional
+            label: "Proporcjonalna"
+          - id: fixed
+            label: "Stała"
+  - id: oversight
+    title: "Nadzór"
+    description: "Zdefiniuj automatyczne pauzowanie oraz raporty."
+    inputs:
+      - id: pause_rule
+        type: choice
+        label: "Warunek pauzy"
+        options:
+          - id: drawdown
+            label: "Drawdown >4%"
+          - id: streak
+            label: "3 straty z rzędu"
+recommendations:
+  summary: "Subskrybuj Stage6 Verified, limit 5% NAV i pauzę przy drawdown>4%."
+  marketplace_tags:
+    - copy
+    - social

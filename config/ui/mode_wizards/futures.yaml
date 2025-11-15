@@ -1,0 +1,71 @@
+id: futures
+title: "Tryb futures/derivatives"
+icon: futures
+description: |
+  Skupia się na kontraktach perpetual i datowanych, z obsługą basis tradingu oraz marginowania.
+badge: Futures
+ai_profile_hint: futures_alpha
+telemetry_rules:
+  requires_futures: true
+  min_basis_spread: 0.004
+  min_funding_apr: 0.08
+steps:
+  - id: margin
+    title: "Parametry margin"
+    description: "Ustal zasady wykorzystania dźwigni i bufora zabezpieczeń."
+    inputs:
+      - id: leverage
+        type: choice
+        label: "Dźwignia"
+        options:
+          - id: two_x
+            label: "2x"
+          - id: three_x
+            label: "3x"
+          - id: five_x
+            label: "5x"
+      - id: maintenance
+        type: choice
+        label: "Bufor maintenance"
+        options:
+          - id: ten
+            label: "10%"
+          - id: fifteen
+            label: "15%"
+  - id: basis
+    title: "Strategia basis"
+    description: "Skonfiguruj zasady arbitrażu basis między terminami."
+    inputs:
+      - id: entry
+        type: choice
+        label: "Warunek wejścia"
+        options:
+          - id: aggressive
+            label: "Spread > 0.8%"
+          - id: balanced
+            label: "Spread > 1.2%"
+      - id: exit
+        type: choice
+        label: "Warunek wyjścia"
+        options:
+          - id: funding
+            label: "Funding spada <0.05%"
+          - id: compression
+            label: "Spread <0.4%"
+  - id: monitoring
+    title: "Monitoring"
+    description: "Określ alarmy i eksporty raportów dla pozycji futures."
+    inputs:
+      - id: alerts
+        type: choice
+        label: "Alerty"
+        options:
+          - id: slack
+            label: "Slack + mail"
+          - id: pager
+            label: "Pager + SMS"
+recommendations:
+  summary: "Użyj 3x dźwigni, buffer 15% i basis entry >1.2% z wyjściem na funding."
+  marketplace_tags:
+    - futures
+    - derivatives

@@ -16,7 +16,7 @@ Repozytorium zawiera kompletny stack aplikacji desktopowej do automatycznego han
 2. Zainstaluj pakiety rdzeniowe (`bot_core`, `core`) w trybie deweloperskim, aby moduły były dostępne bez ręcznych modyfikacji `sys.path`: `python -m pip install -e .[compression]` (extras `compression` doinstaluje `brotli` lub `brotlicffi` oraz `zstandard`, zapewniając obsługę strumieni kompresowanych brotli i zstd).
 3. Przygotuj konfigurację runtime: `python scripts/migrate_runtime_config.py --output config/runtime.yaml`.
 4. Uruchom pipeline papierowy: `poetry run python scripts/run_local_bot.py --paper`.
-5. Z aplikacji desktopowej (Qt) przeprowadź konfigurację w kreatorze.
+5. Uruchom nowy klient PySide6 (`python -m ui.pyside_app --config ui/config/example.yaml`) i przeprowadź konfigurację w kreatorze.
 
 Szczegółowe instrukcje znajdują się w dokumentacji:
 - [Przewodnik użytkownika](docs/user_manual/index.md)

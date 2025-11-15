@@ -17,6 +17,7 @@ ApplicationWindow {
     property var extraWindows: []
     property int extraWindowCount: 0
     property bool wizardCompleted: licenseController ? licenseController.licenseActive : false
+    property Item strategyManagerTabItem: null
 
     title: qsTr("Bot Trading Shell")
     minimumWidth: 960
@@ -25,6 +26,14 @@ ApplicationWindow {
 
     color: Qt.darker(palette.window, 1.05)
     readonly property color accentColor: Qt.rgba(0.14, 0.58, 0.82, 1)
+
+    function openStrategyManagerTab() {
+        if (!strategyManagerTabItem || !mainTabView)
+            return
+        const index = mainTabView.contentChildren.indexOf(strategyManagerTabItem)
+        if (index >= 0)
+            mainTabView.currentIndex = index
+    }
 
     Component.onCompleted: {
         if (typeof appController !== "undefined" && appController && appController.userProfiles)
@@ -270,6 +279,8 @@ ApplicationWindow {
                         riskModel: riskModel
                         riskHistoryModel: riskHistoryModel
                         licenseController: licenseController
+                        marketplaceController: marketplaceController
+                        openStrategyManagerTab: window.openStrategyManagerTab
                     }
                 }
 
@@ -389,6 +400,18 @@ ApplicationWindow {
                     Views.StrategyBuilder {
                         anchors.fill: parent
                         runtimeService: runtimeService
+                    }
+                }
+
+                Tab {
+                    id: strategyManagerTab
+                    title: qsTr("Strategy Manager")
+                    enabled: licenseController.licenseActive
+                    Component.onCompleted: window.strategyManagerTabItem = strategyManagerTab
+
+                    Views.StrategyManager {
+                        anchors.fill: parent
+                        marketplaceController: marketplaceController
                     }
                 }
 

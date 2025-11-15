@@ -1,0 +1,17 @@
+{
+  "active_profile": "default",
+  "profiles": {
+    "default": {
+      "column_count": 2,
+      "panels": [
+        {"panelId": "sidePanel", "column": 0, "order": 0, "visible": true},
+        {"panelId": "chartView", "column": 1, "order": 0, "visible": true},
+        {"panelId": "strategyWorkbench", "column": 1, "order": 1, "visible": true},
+        {"panelId": "modeWizardPanel", "column": 1, "order": 2, "visible": true},
+        {"panelId": "strategyManagerPanel", "column": 1, "order": 3, "visible": true},
+        {"panelId": "telemetryPanel", "column": 0, "order": 1, "visible": true},
+        {"panelId": "diagnosticsPanel", "column": 0, "order": 2, "visible": true}
+      ]
+    }
+  }
+}

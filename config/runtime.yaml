@@ -91,6 +91,60 @@ trading:
         exposure_budget: 0.6
         latency_budget_ms: 120
 
+auto_trader:
+  enabled: true
+  default_mode: scalping
+  modes:
+    scalping:
+      description: Dynamiczny tryb intraday wykorzystujący agresywny risk-budget.
+      default_strategy: intraday_breakout
+      allowed_strategies: [intraday_breakout, trend_following]
+      preferred_regimes: [trend, daily]
+      required_inputs: [market_data, ai_context, regime_summary]
+      guardrail_tags: [drawdown, latency]
+      base_weight: 1.25
+      leverage:
+        min: 0.25
+        max: 2.5
+        default: 0.8
+      position_size:
+        min: 0.02
+        max: 0.18
+      risk_floor: 0.1
+      risk_ceiling: 0.65
+    hedge:
+      description: Tryb defensywny utrzymujący neutralną deltę na rynkach podwyższonego ryzyka.
+      default_strategy: capital_preservation
+      allowed_strategies: [capital_preservation, mean_reversion]
+      preferred_regimes: [mean_reversion, daily]
+      required_inputs: [market_data, regime_summary, decision_history]
+      guardrail_tags: [drawdown, liquidity]
+      base_weight: 0.9
+      leverage:
+        min: 0.0
+        max: 0.9
+      position_size:
+        min: 0.0
+        max: 0.35
+      risk_floor: 0.0
+      risk_ceiling: 0.45
+    grid:
+      description: Tryb grid/market-making wykorzystujący stabilny reżim i niskie koszty.
+      default_strategy: mean_reversion
+      allowed_strategies: [mean_reversion, trend_following]
+      preferred_regimes: [daily, trend]
+      required_inputs: [market_data, ai_context, workflow_summary]
+      guardrail_tags: [latency]
+      base_weight: 1.0
+      leverage:
+        min: 0.2
+        max: 1.4
+      position_size:
+        min: 0.01
+        max: 0.25
+      risk_floor: 0.05
+      risk_ceiling: 0.55
+
 execution:
   default_mode: paper
   force_paper_when_offline: true
