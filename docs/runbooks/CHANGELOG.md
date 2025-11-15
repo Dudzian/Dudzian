@@ -5,16 +5,6 @@
 - **Zmiana**: serwer cloudowy wymaga teraz handshake'u `CloudAuthService.AuthorizeClient`. Poprawnie podpisany payload `{license_id, fingerprint, nonce}` (HMAC na sekrecie powiązanym z HWID) zwraca token `CloudSession`, który trzeba przesyłać w nagłówku `Authorization`. Nowa sekcja `security.allowed_clients` w `config/cloud/server.yaml` przechowuje allowlistę HWID/licencji wraz ze źródłami kluczy, a wszystkie próby autoryzacji trafiają do `logs/security_admin.log`.
 - **Działanie dla zespołów**: dodajcie własne wpisy allowlisty (najlepiej przez `shared_secret_env`), przygotujcie instrukcje podpisywania payloadu dla operatorów UI i dopiszcie do runbooków krok „cloud auth audit” – podczas startu backendu za flagą należy zweryfikować wpisy w `logs/security_admin.log` i potwierdzić, że tylko uprawnione HWID-y otrzymały token.
 
-## 2025-11-11 – Kreatory trybów pracy w PySide6
-- **Zakres**: `config/ui/mode_wizards/*.yaml`, `ui/pyside_app/controllers/wizards.py`, `ui/pyside_app/qml/views/ModeWizard.qml`, główne okno PySide6 oraz testy `tests/ui_pyside/test_mode_wizard.py`/`test_theme_tokens.py`.
-- **Zmiana**: dodano kompletny moduł Mode Wizard z panelami dokowalnymi i modalnym dialogiem; YAML opisuje kroki scalping/swing/hedge/futures/copy-trading, a kontroler korzysta z profili cloud (`bot_core.runtime.cloud_profiles`) i telemetrii decyzji, aby rekomendować tryb pracy. Stan użytkownika zapisywany jest w `var/ui_mode_wizard_state.json`, a layout domyślny zawiera nowy panel.
-- **Działanie dla zespołów**: przy projektowaniu presetów/UI aktualizujcie odpowiednie pliki `config/ui/mode_wizards/` i uruchamiajcie `pytest tests/ui_pyside/test_mode_wizard.py`, aby upewnić się, że rekomendacje i zapis odpowiedzi działają przed wydaniem builda OEM.
-
-## 2025-11-08 – Strategy Manager i marketplace w PySide6
-- **Zakres**: `ui/pyside_app/controllers/strategy.py`, `ui/pyside_app/qml/MainWindow.qml`, `ui/pyside_app/qml/views/ModeWizard.qml`, `ui/pyside_app/qml/views/StrategyManager.qml`, testy PySide oraz README.
-- **Zmiana**: nowy kontroler `StrategyManagementController` ładuje lokalny marketplace z `config/runtime.yaml`, pilnuje podpisów/licencji i udostępnia API `activateAndAssign`. PySide6 otrzymał panel „Strategy Manager”, integrację marketplace w Workbenchu i kreatorze trybów pracy oraz test `test_strategy_marketplace_flow.py`.
-- **Działanie dla operatorów**: przed uruchomieniem UI wczytajcie aktualne presety (`config/marketplace/presets`) i licencje w `var/licenses/presets`. Po aktualizacji runbooków używajcie panelu Strategy Manager do kontroli licencji i przypisań portfeli – można nim zastąpić ręczne wywołania `scripts/ui_marketplace_bridge.py`.
-
 ## 2025-11-06 – Cloud runtime za flagą
 - **Zakres**: `bot_core/cloud/**`, `scripts/run_cloud_service.py`, runbooki live/paper oraz README.
 - **Zmiana**: dodano pakiet cloudowy udostępniający serwer gRPC startowany poleceniem `python scripts/run_cloud_service.py --config config/cloud/server.yaml`. Serwis ładuje runtime Stage6, oferuje marketplace i harmonogramy AI, a gotowość sygnalizuje payloadem `ready`. Runbooki otrzymały checklisty dla operatorów uruchamiających backend za flagą.

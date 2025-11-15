@@ -26,16 +26,6 @@ Szczegółowe instrukcje znajdują się w dokumentacji:
 - [Monitorowanie offline](docs/monitoring_offline.md)
 - [Benchmark Stage6 vs CryptoHopper](docs/benchmark/cryptohopper_comparison.md)
 
-## Klient PySide6 / Qt Quick 6
-
-- Aplikacja startuje komendą `python -m ui.pyside_app --config ui/config/example.yaml`.
-- Flaga `--enable-cloud-runtime` przełącza UI na profil wskazany w `config/runtime.yaml` + `config/cloud/client.yaml` (identycznie jak w `scripts/run_local_bot.py`).
-- Parametr `--qml` umożliwia załadowanie alternatywnego pliku QML, np. wariantu z rozszerzonym layoutem.
-- Aby użyć innego profilu wizualnego, dodaj w `ui/config/example.yaml` sekcję `profiles.*` i wskaż ją flagą `--profile`.
-- UI automatycznie ładuje kontrolery z `ui/backend/*` (licencje, diagnostyka, decision feed) i prezentuje status feedu + log decyzji na bazie danych demo.
-- Panel „Tryby pracy” oparty o PySide6/Qt Quick zawiera kreator z blurami i ikonami FontAwesome/SVG; definicje kroków znajdują się w `config/ui/mode_wizards/*.yaml`, a rekomendacje AI bazują na telemetrii `RuntimeService` i profilach `cloud`.
-- Panel „Strategy Manager” udostępnia marketplace presetów z jednym kliknięciem „Zainstaluj i przypisz” (HWID/licencja + przydział do portfela) oraz synchronizuje statusy z zakładkami Trybów pracy i Strategy Workbench.
-
 ## Tryb cloud/serwerowy (behind flag)
 - Moduł `bot_core.cloud` udostępnia serwer gRPC, który można uruchomić osobnym procesem: `python scripts/run_cloud_service.py --config config/cloud/server.yaml --emit-stdout`.
 - Konfiguracja znajduje się w `config/cloud/server.yaml` i oprócz hosta/portu, entrypointu runtime i whitelisty usług zawiera sekcję `security.allowed_clients`. Każdy wpis określa parę `license_id`/`fingerprint` oraz źródło klucza HMAC (inline, plik lub zmienna ENV). Próby autoryzacji są logowane w `logs/security_admin.log`.

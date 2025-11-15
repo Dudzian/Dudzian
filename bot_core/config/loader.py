@@ -16,8 +16,6 @@ import yaml
 
 from bot_core.config.models import (
     AIModelManagementConfig,
-    AutoTraderModeProfileConfig,
-    AutoTraderModeParameterRange,
     CloudClientConfig,
     CloudClientTlsConfig,
     AlertThrottleConfig,
@@ -4711,118 +4709,6 @@ def load_runtime_app_config(path: str | Path) -> RuntimeAppConfig:
             enabled=enabled,
             default_profile=default_profile,
             profiles=profiles,
-        )
-
-    def _parse_mode_range(payload: object) -> AutoTraderModeParameterRange | None:
-        if payload in (None, "", False):
-            return None
-        if isinstance(payload, AutoTraderModeParameterRange):
-            return payload
-        if isinstance(payload, Mapping):
-            min_value = payload.get("min", payload.get("lower", 0.0))
-            max_value = payload.get("max", payload.get("upper", 0.0))
-            default_value = payload.get("default")
-            try:
-                min_float = float(min_value)
-            except (TypeError, ValueError):
-                min_float = 0.0
-            try:
-                max_float = float(max_value)
-            except (TypeError, ValueError):
-                max_float = min_float
-            try:
-                default_float = None if default_value in (None, "") else float(default_value)
-            except (TypeError, ValueError):
-                default_float = None
-            return AutoTraderModeParameterRange(min=min_float, max=max_float, default=default_float)
-        if isinstance(payload, Sequence) and not isinstance(payload, (str, bytes, bytearray)):
-            items = list(payload)
-            if not items:
-                return None
-            try:
-                min_float = float(items[0])
-            except (TypeError, ValueError):
-                min_float = 0.0
-            max_float = min_float
-            if len(items) >= 2:
-                try:
-                    max_float = float(items[1])
-                except (TypeError, ValueError):
-                    max_float = min_float
-            default_float = None
-            if len(items) >= 3:
-                try:
-                    default_float = float(items[2])
-                except (TypeError, ValueError):
-                    default_float = None
-            return AutoTraderModeParameterRange(min=min_float, max=max_float, default=default_float)
-        try:
-            scalar = float(payload)
-        except (TypeError, ValueError):
-            return None
-        return AutoTraderModeParameterRange(min=scalar, max=scalar, default=scalar)
-
-    def _load_auto_trader_settings(section: object) -> RuntimeAutoTraderSettings | None:
-        if not isinstance(section, Mapping):
-            return None
-
-        def _normalize_profile(name: str, payload: Mapping[str, object]) -> AutoTraderModeProfileConfig:
-            description = _as_optional_str(payload.get("description"))
-            default_strategy = _as_optional_str(payload.get("default_strategy")) or "capital_preservation"
-            allowed = _as_tuple(payload.get("allowed_strategies"))
-            preferred = _as_tuple(payload.get("preferred_regimes"))
-            required_inputs = _as_tuple(payload.get("required_inputs"))
-            guardrail_tags = _as_tuple(payload.get("guardrail_tags"))
-            leverage = _parse_mode_range(payload.get("leverage"))
-            position_size = _parse_mode_range(payload.get("position_size"))
-            base_weight = payload.get("base_weight", 1.0)
-            try:
-                base_weight_float = float(base_weight)
-            except (TypeError, ValueError):
-                base_weight_float = 1.0
-            risk_floor_value = payload.get("risk_floor")
-            try:
-                risk_floor_float = None if risk_floor_value in (None, "") else float(risk_floor_value)
-            except (TypeError, ValueError):
-                risk_floor_float = None
-            risk_ceiling_value = payload.get("risk_ceiling")
-            try:
-                risk_ceiling_float = None if risk_ceiling_value in (None, "") else float(risk_ceiling_value)
-            except (TypeError, ValueError):
-                risk_ceiling_float = None
-            return AutoTraderModeProfileConfig(
-                description=description,
-                default_strategy=default_strategy,
-                allowed_strategies=allowed,
-                preferred_regimes=preferred,
-                required_inputs=required_inputs,
-                guardrail_tags=guardrail_tags,
-                base_weight=base_weight_float,
-                leverage=leverage,
-                position_size=position_size,
-                risk_floor=risk_floor_float,
-                risk_ceiling=risk_ceiling_float,
-            )
-
-        modes_raw = section.get("modes") or section.get("profiles") or {}
-        modes: dict[str, AutoTraderModeProfileConfig] = {}
-        if isinstance(modes_raw, Mapping):
-            for name, entry in modes_raw.items():
-                if not isinstance(entry, Mapping):
-                    continue
-                profile = _normalize_profile(str(name), entry)
-                modes[str(name)] = profile
-
-        default_mode = _as_optional_str(section.get("default_mode"))
-        enabled = bool(section.get("enabled", True))
-
-        if not modes and default_mode is None and not enabled:
-            return None
-
-        return RuntimeAutoTraderSettings(
-            enabled=enabled,
-            default_mode=default_mode,
-            modes=modes,
         )
 
     core_section = raw.get("core") or {}
