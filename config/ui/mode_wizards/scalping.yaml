@@ -1,0 +1,71 @@
+id: scalping
+title: "Tryb scalpingowy"
+icon: scalping
+description: |
+  Wysokoczęstotliwościowy tryb do szybkiego handlu spot/perp na minutowych interwałach.
+badge: HF AI
+ai_profile_hint: hf_scalp
+telemetry_rules:
+  min_trades_per_hour: 15
+  min_volatility: 0.55
+  max_holding_minutes: 12
+steps:
+  - id: feeds
+    title: "Kanały cenowe"
+    description: "Wybierz źródła danych o niskich opóźnieniach dla kluczowych rynków."
+    inputs:
+      - id: latency
+        type: choice
+        label: "Docelowa latencja"
+        options:
+          - id: ultra
+            label: "<40 ms"
+            helper: "Wymaga połączeń direct peering"
+          - id: standard
+            label: "40-120 ms"
+            helper: "Wystarczające dla większości brokerów"
+      - id: venues
+        type: choice
+        label: "Priorytetowe giełdy"
+        options:
+          - id: binance
+            label: "Binance + OKX"
+          - id: bybit
+            label: "Bybit + Huobi"
+  - id: risk
+    title: "Budżet ryzyka"
+    description: "Określ maksymalny dzienny drawdown i kwoty pojedynczej transakcji."
+    inputs:
+      - id: dd
+        type: choice
+        label: "Dzienne ograniczenie"
+        options:
+          - id: two
+            label: "2% kapitału"
+          - id: five
+            label: "5% kapitału"
+      - id: position
+        type: choice
+        label: "Maksymalna pozycja"
+        options:
+          - id: micro
+            label: "0.25% NAV"
+          - id: macro
+            label: "1% NAV"
+  - id: automation
+    title: "Automatyzacja"
+    description: "Zdefiniuj sposób przełączania presetów i harmonogramów AI."
+    inputs:
+      - id: switch
+        type: choice
+        label: "Tryb przełączania"
+        options:
+          - id: ai
+            label: "AI wybiera strategię"
+          - id: manual
+            label: "Operator zatwierdza"
+recommendations:
+  summary: "Skonfiguruj HF feed, włącz ograniczenie dd<=2% i tryb AI auto-switch."
+  marketplace_tags:
+    - scalping
+    - hf

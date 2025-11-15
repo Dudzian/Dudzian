@@ -77,7 +77,7 @@ def test_model_metrics_accepts_stage6_payload() -> None:
     assert set(metrics.splits().keys()) == {"summary", "train", "validation", "test"}
 
 
-def test_model_metrics_rejects_legacy_payload() -> None:
+def test_model_metrics_rejects_stage5_payload() -> None:
     payload = {
         "mae": 1.5,
         "validation": {"mae": 1.4},

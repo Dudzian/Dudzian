@@ -1,5 +1,19 @@
 # Powłoka desktopowa Qt/QML
 
+## Klient PySide6
+
+- Nowy klient uruchomisz poleceniem `python -m ui.pyside_app --config ui/config/example.yaml`.
+- Loader `ui/pyside_app/config.py` łączy `ui/config/example.yaml` z opcjonalnymi profilami (`profiles.*`) i wystawia je w QML jako `uiConfig`.
+- Kontekst rejestruje kontrolery z `ui/backend/*` (RuntimeService, LicensingController, DiagnosticsController), więc UI działa w 100% w Pythonie i respektuje flagę `--enable-cloud-runtime`.
+- Własny layout można wskazać flagą `--qml` lub poprzez `pyside.qml_entrypoint` w YAML.
+- Test `tests/ui_pyside/test_app_bootstrap.py` pilnuje, aby bootstrap poprawnie ładował QML w trybie offscreen.
+
+## Kreatory trybów pracy
+
+- Definicje kreatorów znajdują się w `config/ui/mode_wizards/*.yaml` i opisują kroki dla trybów scalping/swing/hedge/futures/copy trading.
+- Kontroler `ModeWizardController` wczytuje YAML, telemetrię `RuntimeService` oraz profile cloud (`bot_core.runtime.cloud_profiles`) i rekomenduje tryb na podstawie bieżących decyzji AI.
+- W PySide6 dostępny jest panel „Tryby pracy” (dokowalny) oraz modalny dialog z pełnym kreatorem – obie wersje korzystają z blurów, ikon SVG i zapisu stanu w `var/ui_mode_wizard_state.json`.
+
 ## Cel
 
 Powłoka Qt Quick 6 zapewnia lekkie UI do komunikacji z demonem tradingowym (lub stubem gRPC) bezpośrednio przez `botcore.trading.v1`. Interfejs renderuje strumień OHLCV w 60/120 Hz, respektuje parametry `performance_guard` oraz umożliwia szybkie iteracje nad wyglądem i animacjami.
@@ -12,7 +26,7 @@ Powłoka Qt Quick 6 zapewnia lekkie UI do komunikacji z demonem tradingowym (lub
 * Wygenerowane stuby C++ z `proto/trading.proto` (CMake generuje je automatycznie przy pierwszym buildzie).
 * Opcjonalnie Pythonowy stub serwera (`python scripts/run_trading_stub_server.py`).
 
-## Budowanie
+## Budowanie wariantu C++ (legacy)
 
 ```bash
 cmake -S ui -B ui/build -GNinja \
@@ -20,7 +34,7 @@ cmake -S ui -B ui/build -GNinja \
 cmake --build ui/build
 ```
 
-Artefakt `bot_trading_shell` znajduje się w `ui/build/bot_trading_shell`.
+Artefakt `bot_trading_shell` znajduje się w `ui/build/bot_trading_shell` i służy jako referencja dla OEM korzystających z natywnego builda.
 
 ## Moduły UI i pluginy
 

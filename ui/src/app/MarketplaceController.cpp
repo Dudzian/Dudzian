@@ -68,6 +68,22 @@ void MarketplaceController::setLicensesPath(const QString& path)
     m_licensesPath = normalized;
 }
 
+void MarketplaceController::setLicensesDirectory(const QString& path)
+{
+    const QString normalized = normalizePath(path);
+    if (normalized == m_licensesDir)
+        return;
+    m_licensesDir = normalized;
+}
+
+void MarketplaceController::setCatalogPath(const QString& path)
+{
+    const QString normalized = normalizePath(path);
+    if (normalized == m_catalogPath)
+        return;
+    m_catalogPath = normalized;
+}
+
 void MarketplaceController::setSigningKeys(const QStringList& keys)
 {
     QStringList sanitized;
@@ -530,4 +546,99 @@ bool MarketplaceController::unassignPresetFromPortfolio(const QString& presetId,
     }
 
     return true;
+}
+
+QVariantMap MarketplaceController::activateAndAssignPreset(const QString& presetId, const QString& portfolioId)
+{
+    QVariantMap response;
+    QString message;
+    if (!ensureReady(&message)) {
+        response.insert(QStringLiteral("success"), false);
+        response.insert(QStringLiteral("error"), message);
+        m_lastError = message;
+        Q_EMIT lastErrorChanged();
+        return response;
+    }
+
+    const QString trimmedPreset = presetId.trimmed();
+    const QString trimmedPortfolio = portfolioId.trimmed();
+    if (trimmedPreset.isEmpty() || trimmedPortfolio.isEmpty()) {
+        const QString error = tr("Wymagane są identyfikatory presetu i portfela.");
+        response.insert(QStringLiteral("success"), false);
+        response.insert(QStringLiteral("error"), error);
+        m_lastError = error;
+        Q_EMIT lastErrorChanged();
+        return response;
+    }
+
+    if (!m_busy) {
+        m_busy = true;
+        Q_EMIT busyChanged();
+    }
+
+    QStringList args = buildCommonArguments();
+    args << QStringLiteral("install");
+    args << QStringLiteral("--preset-id");
+    args << trimmedPreset;
+    args << QStringLiteral("--portfolio-id");
+    args << trimmedPortfolio;
+    if (!m_licensesDir.isEmpty()) {
+        args << QStringLiteral("--licenses-dir");
+        args << m_licensesDir;
+    }
+    if (!m_catalogPath.isEmpty()) {
+        args << QStringLiteral("--catalog-path");
+        args << m_catalogPath;
+    }
+
+    const BridgeResult result = runBridge(args);
+
+    m_busy = false;
+    Q_EMIT busyChanged();
+
+    if (!result.ok) {
+        response.insert(QStringLiteral("success"), false);
+        response.insert(QStringLiteral("error"), result.errorMessage);
+        m_lastError = result.errorMessage;
+        Q_EMIT lastErrorChanged();
+        return response;
+    }
+
+    const QJsonDocument document = QJsonDocument::fromJson(result.stdoutData);
+    if (!document.isObject()) {
+        const QString error = tr("Niepoprawna odpowiedź mostka marketplace (oczekiwano JSON).");
+        response.insert(QStringLiteral("success"), false);
+        response.insert(QStringLiteral("error"), error);
+        m_lastError = error;
+        Q_EMIT lastErrorChanged();
+        return response;
+    }
+
+    const QJsonObject root = document.object();
+    response = root.toVariantMap();
+    const QJsonObject install = root.value(QStringLiteral("install")).toObject();
+    const bool installOk = install.value(QStringLiteral("success")).toBool();
+    response.insert(QStringLiteral("success"), installOk);
+    if (!installOk) {
+        const QString error = install.value(QStringLiteral("message")).toString();
+        response.insert(QStringLiteral("error"), error.isEmpty() ? m_lastError : error);
+    }
+
+    if (!installOk) {
+        if (m_lastError != response.value(QStringLiteral("error")).toString()) {
+            m_lastError = response.value(QStringLiteral("error")).toString();
+            if (m_lastError.isEmpty())
+                m_lastError = tr("Instalacja presetu nie powiodła się.");
+            Q_EMIT lastErrorChanged();
+        }
+        return response;
+    }
+
+    if (!m_lastError.isEmpty()) {
+        m_lastError.clear();
+        Q_EMIT lastErrorChanged();
+    }
+
+    refreshPresets();
+    return response;
 }

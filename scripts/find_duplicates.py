@@ -1,15 +1,14 @@
 """Utility for detecting duplicated Python modules and definitions.
 
-The migration from the archival ``KryptoLowca`` package to the modernised
-"bot_core"/"core" layout left a substantial amount of code that may look
-identical even if it now lives in different directories.  This helper analyses
-the repository, normalises the Python AST (removing docstrings and comments)
-and reports groups of duplicated files as well as duplicated class/function
-definitions.
+Repozytorium Stage6 obejmuje kilka pakietów (``bot_core``, ``core``, ``ui``)
+rozwijanych równolegle, dlatego łatwo o przypadkowe skopiowanie modułu lub
+definicji między nimi. Narzędzie analizuje drzewa AST, normalizuje pliki
+(pomijając docstringi i komentarze) i raportuje grupy plików oraz klas/
+funkcji, które są identyczne mimo różnych lokalizacji.
 
-The script focuses on the directories that matter for the runtime
-implementation (``bot_core/``, ``core/``, ``scripts/``, ``tests/``) and marks
-preferred (canonical) locations using a deterministic priority order.
+Skrypt koncentruje się na katalogach wykorzystywanych w runtime (``bot_core/``,
+``core/``, ``ui/``, ``proto/``, ``scripts/``, ``tests/``) i zaznacza katalogi
+kanoniczne w deterministycznej kolejności priorytetów.
 
 The output is a JSON object containing two sections:
 

@@ -1,10 +1,9 @@
-"""Wspólne interfejsy warstwy wymiany używane przez testy integracyjne.
+"""Minimalne interfejsy warstwy wymiany używane przez testy Stage6.
 
-Moduł ten zapewnia lekki zestaw abstrakcji kompatybilny z poprzednią warstwą
-``KryptoLowca.exchanges``. Dzięki temu testy oraz narzędzia, które
-oczekują istnienia obiektów takich jak ``MarketSubscription`` czy
-``MarketStreamHandle``, mogą korzystać bezpośrednio z przestrzeni
-``bot_core`` bez sięgania po warstwę archiwalną.
+Moduł zapewnia lekki zestaw abstrakcji współdzielonych przez adaptery giełd
+oraz narzędzia developerskie. Dzięki temu testy i środowiska integracyjne
+mogą korzystać z obiektów takich jak ``MarketSubscription`` czy
+``MarketStreamHandle`` bez sięgania po dodatkowe moduły pomocnicze.
 """
 
 from __future__ import annotations

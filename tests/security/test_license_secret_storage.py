@@ -72,7 +72,7 @@ def test_license_secret_requires_migration_for_plaintext_file(monkeypatch: pytes
         fp.load_license_secret(secret_path)
 
     message = str(excinfo.value)
-    assert "format 'legacy'" in message
+    assert "format Stage5" in message
     assert "dudzian_migrate.license_secret" in message
 
 

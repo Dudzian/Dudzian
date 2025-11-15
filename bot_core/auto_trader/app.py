@@ -3,7 +3,7 @@
 Implementacja zapewnia deterministyczne uruchamianie/zatrzymywanie,
 manualny przepływ aktywacji oraz haki logujące bez konieczności ładowania
 pełnego runtime'u Stage6.  Warstwa nie przechowuje już aliasów ani
-konfiguracji trybu legacy – wszystkie wejścia/wyjścia wykorzystują formaty
+konfiguracji historycznego trybu Stage5 – wszystkie wejścia/wyjścia wykorzystują formaty
 Stage6 (np. ``RiskDecision`` przy serializacji decyzji).  Udostępniamy tylko
 publiczne API wymagane przez testy i narzędzia Stage6, zachowując spójność ze
 schematem decyzji używanym w środowiskach produkcyjnych.
@@ -27,7 +27,7 @@ from collections import Counter, OrderedDict, deque
 from pathlib import Path
 from collections.abc import Iterable
 from contextlib import contextmanager
-from dataclasses import asdict, dataclass, is_dataclass
+from dataclasses import asdict, dataclass, is_dataclass, replace
 from types import SimpleNamespace
 from typing import Any, Callable, Dict, Mapping, Optional, Protocol, Sequence, cast
 
@@ -56,7 +56,13 @@ from bot_core.ai.regime import (
     RiskLevel,
 )
 from bot_core.ai.config_loader import load_risk_thresholds
-from bot_core.config.models import DecisionEngineConfig, DecisionOrchestratorThresholds
+from bot_core.config.models import (
+    AutoTraderModeProfileConfig,
+    AutoTraderModeParameterRange,
+    DecisionEngineConfig,
+    DecisionOrchestratorThresholds,
+    RuntimeAutoTraderSettings,
+)
 from bot_core.decision import DecisionCandidate, DecisionEvaluation, DecisionOrchestrator
 from bot_core.execution import (
     ExecutionContext,
@@ -68,6 +74,7 @@ from bot_core.exchanges.base import OrderRequest
 from bot_core.risk.engine import ThresholdRiskEngine
 from bot_core.observability import MetricsRegistry, get_global_metrics_registry
 from bot_core.trading.strategies import StrategyCatalog
+from bot_core.strategies.regime_workflow import StrategyRegimeWorkflow
 from bot_core.trading.strategy_aliasing import (
     StrategyAliasResolver,
     canonical_alias_map,
@@ -180,6 +187,22 @@ _SCHEDULE_SYMBOL = "<schedule>"
 
 _GUARDRAIL_TRIGGER_FIELDS = ("name", "label", "comparator", "threshold", "unit", "value")
 _GUARDRAIL_TRIGGER_FIELD_SET = set(_GUARDRAIL_TRIGGER_FIELDS)
+
+
+@dataclass(slots=True)
+class _ModeProfile:
+    name: str
+    description: str | None
+    default_strategy: str
+    allowed_strategies: tuple[str, ...]
+    leverage: AutoTraderModeParameterRange
+    position_size: AutoTraderModeParameterRange
+    preferred_regimes: tuple[MarketRegime, ...]
+    required_inputs: tuple[str, ...]
+    guardrail_tags: tuple[str, ...]
+    base_weight: float
+    risk_floor: float | None
+    risk_ceiling: float | None
 
 
 def _as_iterable_guardrail_payload(raw_triggers: object) -> list[Any]:
@@ -392,6 +415,9 @@ def _serialize_schedule_state(state: ScheduleState) -> dict[str, Any]:
     if next_override_delay is not None:
         payload["time_until_next_override_s"] = next_override_delay
     payload["override_active"] = state.override_active
+    decision_mode = getattr(state, "decision_mode", None)
+    if decision_mode:
+        payload["decision_mode"] = decision_mode
     return payload
 
 
@@ -603,6 +629,7 @@ class AutoTrader:
         model_quality_dir: Path | str | None = None,
         champion_repository_root: Path | str | None = None,
         champion_model_map: Mapping[str, str] | None = None,
+        mode_settings: RuntimeAutoTraderSettings | Mapping[str, object] | None = None,
     ) -> None:
         self.emitter = emitter
         self.gui = gui
@@ -630,6 +657,20 @@ class AutoTrader:
         self._strategy_alias_suffix_override: tuple[str, ...] | None = (
             tuple(suffix_override) if suffix_override is not None else None
         )
+
+        self._mode_profiles, self._mode_default_key = self._normalize_mode_profiles(mode_settings)
+        self._active_mode_profile: _ModeProfile | None = None
+        self._active_decision_mode: str | None = None
+        if self._mode_default_key and self._mode_default_key in self._mode_profiles:
+            self._active_mode_profile = self._mode_profiles[self._mode_default_key]
+            self._active_decision_mode = self._mode_default_key
+        elif self._mode_profiles:
+            default_key = next(iter(self._mode_profiles))
+            self._active_mode_profile = self._mode_profiles[default_key]
+            self._active_decision_mode = default_key
+        self._mode_transition_history: deque[dict[str, Any]] = deque(maxlen=64)
+        self._recent_guardrail_events: deque[tuple[str, float]] = deque(maxlen=128)
+        self._strategy_regime_workflow = self._initialize_strategy_regime_workflow()
 
         self.enable_auto_trade = bool(enable_auto_trade)
         self.auto_trade_interval_s = float(auto_trade_interval_s)
@@ -2878,7 +2919,7 @@ class AutoTrader:
     def describe_work_schedule(self) -> dict[str, Any]:
         schedule = self._ensure_work_schedule()
         state = self._describe_schedule(schedule)
-        self._schedule_state = state
+        self._schedule_state = self._attach_decision_mode_to_state(state)
         self._schedule_mode = state.mode
         description = schedule.to_payload()
         description["state"] = _serialize_schedule_state(state)
@@ -3070,6 +3111,449 @@ class AutoTrader:
             return TradingSchedule.always_on(mode=self._initial_mode, timezone_name=str(tz_name))
         return TradingSchedule.always_on(mode=self._initial_mode)
 
+    def _attach_decision_mode_to_state(self, state: ScheduleState) -> ScheduleState:
+        decision_mode = self._active_decision_mode
+        current = getattr(state, "decision_mode", None)
+        if decision_mode == current:
+            return state
+        return replace(state, decision_mode=decision_mode)
+
+    def _normalize_mode_profiles(
+        self,
+        settings: RuntimeAutoTraderSettings | Mapping[str, object] | None,
+    ) -> tuple[dict[str, _ModeProfile], str | None]:
+        if settings is None:
+            return self._default_mode_profiles()
+        raw_modes: Mapping[str, AutoTraderModeProfileConfig | Mapping[str, object]] | None = None
+        default_key: str | None = None
+        if isinstance(settings, RuntimeAutoTraderSettings):
+            raw_modes = settings.modes or {}
+            default_key = settings.default_mode
+        elif isinstance(settings, Mapping):
+            candidate_modes = settings.get("modes") or settings.get("profiles")
+            if isinstance(candidate_modes, Mapping):
+                raw_modes = candidate_modes  # type: ignore[assignment]
+            mode_value = settings.get("default_mode")
+            if mode_value not in (None, ""):
+                default_key = str(mode_value)
+        normalized: dict[str, _ModeProfile] = {}
+        if isinstance(raw_modes, Mapping):
+            for name, entry in raw_modes.items():
+                try:
+                    config = self._coerce_mode_profile_config(entry)
+                except Exception:  # pragma: no cover - diagnostyka trybów
+                    continue
+                profile_name = str(name).strip() or config.default_strategy or "capital_preservation"
+                profile = self._build_mode_profile(profile_name.lower(), config)
+                normalized[profile.name] = profile
+        if not normalized:
+            return self._default_mode_profiles()
+        if default_key and default_key in normalized:
+            return normalized, default_key
+        return normalized, default_key or next(iter(normalized))
+
+    def _coerce_mode_profile_config(
+        self,
+        entry: AutoTraderModeProfileConfig | Mapping[str, object],
+    ) -> AutoTraderModeProfileConfig:
+        if isinstance(entry, AutoTraderModeProfileConfig):
+            return entry
+        if not isinstance(entry, Mapping):
+            raise TypeError("mode profile definitions must be mappings")
+        leverage_range = self._coerce_mode_range(entry.get("leverage"), 0.0, 1.0)
+        position_range = self._coerce_mode_range(entry.get("position_size"), 0.0, 1.0)
+        allowed = self._collect_mode_tokens(entry.get("allowed_strategies"))
+        preferred = self._collect_mode_tokens(entry.get("preferred_regimes"))
+        required_inputs = self._collect_mode_tokens(entry.get("required_inputs"))
+        guardrail_tags = self._collect_mode_tokens(entry.get("guardrail_tags"))
+        base_weight_raw = entry.get("base_weight", 1.0)
+        try:
+            base_weight = float(base_weight_raw)
+        except (TypeError, ValueError):
+            base_weight = 1.0
+        risk_floor_raw = entry.get("risk_floor")
+        try:
+            risk_floor = None if risk_floor_raw in (None, "") else float(risk_floor_raw)
+        except (TypeError, ValueError):
+            risk_floor = None
+        risk_ceiling_raw = entry.get("risk_ceiling")
+        try:
+            risk_ceiling = None if risk_ceiling_raw in (None, "") else float(risk_ceiling_raw)
+        except (TypeError, ValueError):
+            risk_ceiling = None
+        description = entry.get("description")
+        default_strategy = str(entry.get("default_strategy") or "capital_preservation")
+        return AutoTraderModeProfileConfig(
+            description=str(description) if description not in (None, "") else None,
+            default_strategy=default_strategy,
+            allowed_strategies=allowed,
+            preferred_regimes=preferred,
+            required_inputs=required_inputs,
+            guardrail_tags=guardrail_tags,
+            base_weight=base_weight,
+            leverage=leverage_range,
+            position_size=position_range,
+            risk_floor=risk_floor,
+            risk_ceiling=risk_ceiling,
+        )
+
+    @staticmethod
+    def _collect_mode_tokens(value: object | None) -> tuple[str, ...]:
+        if value in (None, "", False):
+            return ()
+        if isinstance(value, str):
+            tokens = [value]
+        elif isinstance(value, Sequence) and not isinstance(value, (bytes, bytearray)):
+            tokens = list(value)
+        else:
+            tokens = [value]
+        normalized: list[str] = []
+        for token in tokens:
+            candidate = str(token).strip()
+            if candidate:
+                normalized.append(candidate)
+        return tuple(normalized)
+
+    def _coerce_mode_range(
+        self,
+        payload: object | None,
+        default_min: float,
+        default_max: float,
+    ) -> AutoTraderModeParameterRange:
+        if isinstance(payload, AutoTraderModeParameterRange):
+            return payload
+        if isinstance(payload, Mapping):
+            min_value = payload.get("min", default_min)
+            max_value = payload.get("max", default_max)
+            default_value = payload.get("default")
+            try:
+                min_float = float(min_value)
+            except (TypeError, ValueError):
+                min_float = default_min
+            try:
+                max_float = float(max_value)
+            except (TypeError, ValueError):
+                max_float = default_max
+            try:
+                default_float = None if default_value in (None, "") else float(default_value)
+            except (TypeError, ValueError):
+                default_float = None
+            return AutoTraderModeParameterRange(min=min_float, max=max_float, default=default_float)
+        if isinstance(payload, Sequence) and not isinstance(payload, (bytes, bytearray)):
+            items = list(payload)
+            if not items:
+                return AutoTraderModeParameterRange(min=default_min, max=default_max)
+            try:
+                min_float = float(items[0])
+            except (TypeError, ValueError):
+                min_float = default_min
+            max_float = default_max
+            if len(items) >= 2:
+                try:
+                    max_float = float(items[1])
+                except (TypeError, ValueError):
+                    max_float = default_max
+            default_float = None
+            if len(items) >= 3:
+                try:
+                    default_float = float(items[2])
+                except (TypeError, ValueError):
+                    default_float = None
+            return AutoTraderModeParameterRange(min=min_float, max=max_float, default=default_float)
+        if payload not in (None, "", False):
+            try:
+                scalar = float(payload)
+            except (TypeError, ValueError):
+                scalar = default_min
+            return AutoTraderModeParameterRange(min=scalar, max=scalar, default=scalar)
+        return AutoTraderModeParameterRange(min=default_min, max=default_max)
+
+    def _build_mode_profile(self, name: str, config: AutoTraderModeProfileConfig) -> _ModeProfile:
+        leverage = config.leverage or AutoTraderModeParameterRange(min=0.0, max=1.0)
+        position = config.position_size or AutoTraderModeParameterRange(min=0.0, max=1.0)
+        allowed = tuple(
+            token for token in (str(item).strip() for item in config.allowed_strategies)
+            if token
+        )
+        if not allowed:
+            allowed = (config.default_strategy or "capital_preservation",)
+        required = tuple(
+            token.lower()
+            for token in (str(item).strip() for item in config.required_inputs)
+            if token
+        )
+        guardrails = tuple(
+            token.lower()
+            for token in (str(item).strip() for item in config.guardrail_tags)
+            if token
+        )
+        preferred: list[MarketRegime] = []
+        for entry in config.preferred_regimes:
+            regime = self._coerce_market_regime(entry)
+            if regime is not None and regime not in preferred:
+                preferred.append(regime)
+        description = config.description or None
+        default_strategy = config.default_strategy or "capital_preservation"
+        return _ModeProfile(
+            name=str(name).strip().lower() or default_strategy,
+            description=description,
+            default_strategy=default_strategy,
+            allowed_strategies=allowed,
+            leverage=leverage,
+            position_size=position,
+            preferred_regimes=tuple(preferred),
+            required_inputs=required,
+            guardrail_tags=guardrails,
+            base_weight=float(config.base_weight or 1.0),
+            risk_floor=config.risk_floor,
+            risk_ceiling=config.risk_ceiling,
+        )
+
+    def _default_mode_profiles(self) -> tuple[dict[str, _ModeProfile], str | None]:
+        scalping = _ModeProfile(
+            name="scalping",
+            description="Tryb intraday nastawiony na dynamiczne momentum.",
+            default_strategy="intraday_breakout",
+            allowed_strategies=("intraday_breakout", "trend_following"),
+            leverage=AutoTraderModeParameterRange(min=0.2, max=2.5, default=0.8),
+            position_size=AutoTraderModeParameterRange(min=0.02, max=0.18, default=0.05),
+            preferred_regimes=(MarketRegime.TREND, MarketRegime.DAILY),
+            required_inputs=("market_data", "ai_context"),
+            guardrail_tags=("drawdown",),
+            base_weight=1.0,
+            risk_floor=0.1,
+            risk_ceiling=0.65,
+        )
+        hedge = _ModeProfile(
+            name="hedge",
+            description="Tryb defensywny neutralizujący delta przy wyższym ryzyku.",
+            default_strategy="capital_preservation",
+            allowed_strategies=("capital_preservation", "mean_reversion"),
+            leverage=AutoTraderModeParameterRange(min=0.0, max=0.9, default=0.25),
+            position_size=AutoTraderModeParameterRange(min=0.0, max=0.35, default=0.1),
+            preferred_regimes=(MarketRegime.MEAN_REVERSION,),
+            required_inputs=("market_data", "regime_summary"),
+            guardrail_tags=("liquidity", "drawdown"),
+            base_weight=0.9,
+            risk_floor=0.0,
+            risk_ceiling=0.45,
+        )
+        grid = _ModeProfile(
+            name="grid",
+            description="Tryb market-making / grid dla stabilnych reżimów.",
+            default_strategy="mean_reversion",
+            allowed_strategies=("mean_reversion", "trend_following"),
+            leverage=AutoTraderModeParameterRange(min=0.2, max=1.5, default=0.5),
+            position_size=AutoTraderModeParameterRange(min=0.01, max=0.25, default=0.08),
+            preferred_regimes=(MarketRegime.DAILY,),
+            required_inputs=("market_data", "workflow_summary"),
+            guardrail_tags=("latency",),
+            base_weight=1.0,
+            risk_floor=0.05,
+            risk_ceiling=0.55,
+        )
+        profiles = {
+            scalping.name: scalping,
+            hedge.name: hedge,
+            grid.name: grid,
+        }
+        return profiles, scalping.name
+
+    @staticmethod
+    def _coerce_market_regime(value: object | None) -> MarketRegime | None:
+        if isinstance(value, MarketRegime):
+            return value
+        if value in (None, "", False):
+            return None
+        token = str(value).strip().lower()
+        for regime in MarketRegime:
+            if regime.value == token:
+                return regime
+        return None
+
+    def _initialize_strategy_regime_workflow(self) -> StrategyRegimeWorkflow | None:
+        try:
+            return StrategyRegimeWorkflow(activation_history_limit=64)
+        except Exception:  # pragma: no cover - środowiska light bez strategii
+            LOGGER.debug("StrategyRegimeWorkflow initialization failed", exc_info=True)
+            return None
+
+    def _update_strategy_regime_history(
+        self, assessment: MarketRegimeAssessment
+    ) -> RegimeSummary | None:
+        workflow = getattr(self, "_strategy_regime_workflow", None)
+        if workflow is None:
+            return None
+        history = getattr(workflow, "history", None)
+        if history is None:
+            return None
+        try:
+            history.update(assessment)
+            return history.summarise()
+        except Exception:  # pragma: no cover - defensywne logowanie
+            LOGGER.debug("StrategyRegimeWorkflow history update failed", exc_info=True)
+            return None
+
+    def _build_available_mode_inputs(
+        self,
+        summary: RegimeSummary | None,
+        workflow_summary: RegimeSummary | None,
+        ai_context: Mapping[str, Any] | None,
+    ) -> set[str]:
+        tokens: set[str] = {"market_data"}
+        if summary is not None:
+            tokens.add("regime_summary")
+        if workflow_summary is not None:
+            tokens.add("workflow_summary")
+        if ai_context:
+            tokens.add("ai_context")
+        if self._mode_transition_history:
+            tokens.add("decision_history")
+        if self._recent_guardrail_events:
+            tokens.add("guardrails")
+        return tokens
+
+    def _guardrail_penalty(self, profile: _ModeProfile) -> float:
+        if not profile.guardrail_tags or not self._recent_guardrail_events:
+            return 0.0
+        now = time.time()
+        window = 900.0
+        while self._recent_guardrail_events and now - self._recent_guardrail_events[0][1] > window:
+            self._recent_guardrail_events.popleft()
+        tokens = {tag.lower() for tag in profile.guardrail_tags}
+        penalty = 0.0
+        for name, timestamp in self._recent_guardrail_events:
+            if name in tokens:
+                decay = max(0.0, 1.0 - (now - timestamp) / window)
+                penalty += decay * 0.4
+        return min(penalty, 1.0)
+
+    def _record_guardrail_tokens(self, guardrail_names: Iterable[str]) -> None:
+        timestamp = time.time()
+        for name in guardrail_names:
+            token = self._normalize_guardrail_token(name)
+            if token:
+                self._recent_guardrail_events.append((token, timestamp))
+
+    @staticmethod
+    def _normalize_guardrail_token(value: object | None) -> str | None:
+        if value in (None, "", False):
+            return None
+        token = str(value).strip().lower()
+        return token or None
+
+    def _apply_active_mode_overrides(self) -> None:
+        profile = self._active_mode_profile
+        if profile is None:
+            return
+        strategy = self.current_strategy or profile.default_strategy
+        if profile.allowed_strategies and strategy not in profile.allowed_strategies:
+            strategy = profile.allowed_strategies[0]
+        self.current_strategy = strategy
+        try:
+            leverage_value = float(getattr(self, "current_leverage", 0.0))
+        except (TypeError, ValueError):
+            leverage_value = profile.leverage.default or profile.leverage.min
+        self.current_leverage = profile.leverage.clamp(leverage_value)
+        current_size = getattr(self, "current_position_size", None)
+        if current_size is None and profile.position_size.default is not None:
+            current_size = profile.position_size.default
+        if current_size is not None:
+            try:
+                normalized_size = float(current_size)
+            except (TypeError, ValueError):
+                normalized_size = profile.position_size.default or profile.position_size.min
+            setattr(self, "current_position_size", profile.position_size.clamp(normalized_size))
+
+    def _evaluate_dynamic_mode(
+        self,
+        *,
+        symbol: str | None,
+        assessment: MarketRegimeAssessment,
+        summary: RegimeSummary | None,
+        workflow_summary: RegimeSummary | None,
+        ai_context: Mapping[str, Any] | None,
+    ) -> None:
+        if not self._mode_profiles:
+            return
+        selected = self._select_mode_profile(
+            assessment,
+            summary,
+            workflow_summary,
+            ai_context=ai_context,
+        )
+        if selected is None:
+            return
+        previous_mode = self._active_decision_mode
+        self._active_mode_profile = selected
+        self._active_decision_mode = selected.name
+        self._mode_transition_history.append(
+            {
+                "mode": selected.name,
+                "timestamp": time.time(),
+                "regime": assessment.regime.value,
+                "risk": float(assessment.risk_score),
+            }
+        )
+        if previous_mode != selected.name:
+            self._log(
+                "Dynamic mode transition",
+                level=logging.INFO,
+                previous_mode=previous_mode,
+                mode=selected.name,
+                regime=assessment.regime.value,
+                risk=f"{assessment.risk_score:.4f}",
+            )
+            self._log_decision_event(
+                "mode_switch",
+                symbol=symbol,
+                status="switched",
+                metadata={"decision_mode": selected.name, "previous_mode": previous_mode},
+            )
+        self._apply_active_mode_overrides()
+
+    def _select_mode_profile(
+        self,
+        assessment: MarketRegimeAssessment,
+        summary: RegimeSummary | None,
+        workflow_summary: RegimeSummary | None,
+        *,
+        ai_context: Mapping[str, Any] | None,
+    ) -> _ModeProfile | None:
+        available_inputs = {
+            token.lower() for token in self._build_available_mode_inputs(summary, workflow_summary, ai_context)
+        }
+        best_profile: _ModeProfile | None = None
+        best_score = float("-inf")
+        for profile in self._mode_profiles.values():
+            if profile.required_inputs:
+                required = {token.lower() for token in profile.required_inputs}
+                if not required.issubset(available_inputs):
+                    continue
+            score = profile.base_weight
+            risk = float(assessment.risk_score)
+            if profile.risk_floor is not None and risk < profile.risk_floor:
+                score -= min(0.5, (profile.risk_floor - risk) * 1.1)
+            if profile.risk_ceiling is not None and risk > profile.risk_ceiling:
+                score -= min(0.7, (risk - profile.risk_ceiling) * 1.3)
+            if profile.preferred_regimes:
+                if assessment.regime in profile.preferred_regimes:
+                    score += 0.35
+                elif summary is not None and getattr(summary, "regime", None) in profile.preferred_regimes:
+                    score += 0.2
+                elif (
+                    workflow_summary is not None
+                    and getattr(workflow_summary, "regime", None) in profile.preferred_regimes
+                ):
+                    score += 0.15
+            score -= self._guardrail_penalty(profile)
+            if self._mode_transition_history and self._mode_transition_history[-1]["mode"] == profile.name:
+                score += 0.05
+            if score > best_score:
+                best_score = score
+                best_profile = profile
+        return best_profile
+
     @staticmethod
     def _coerce_schedule_overrides(
         overrides: ScheduleOverride
@@ -3151,7 +3635,7 @@ class AutoTrader:
             state = self._describe_schedule(schedule)
             with self._lock:
                 self._work_schedule = schedule
-                self._schedule_state = state
+                self._schedule_state = self._attach_decision_mode_to_state(state)
                 self._schedule_mode = state.mode
                 self._last_schedule_snapshot = (state.mode, state.is_open)
 
@@ -3429,6 +3913,7 @@ class AutoTrader:
         schedule = self.get_work_schedule()
         state = self._describe_schedule(schedule)
         with self._lock:
+            state = self._attach_decision_mode_to_state(state)
             self._schedule_state = state
             self._schedule_mode = state.mode
         return state
@@ -3520,7 +4005,7 @@ class AutoTrader:
         if schedule is None:
             return True
         state = self._describe_schedule(schedule)
-        self._schedule_state = state
+        self._schedule_state = self._attach_decision_mode_to_state(state)
         self._schedule_mode = state.mode
         snapshot = (state.mode, state.is_open)
         if snapshot != self._last_schedule_snapshot:
@@ -3610,6 +4095,14 @@ class AutoTrader:
             if normalized_decision_id is not None:
                 payload_dict.setdefault("decision_id", normalized_decision_id)
             augmented_metadata = self._augment_metadata_with_feature_columns(metadata)
+            if self._active_decision_mode:
+                metadata_payload: dict[str, object]
+                if isinstance(augmented_metadata, Mapping):
+                    metadata_payload = dict(augmented_metadata)
+                else:
+                    metadata_payload = {}
+                metadata_payload.setdefault("decision_mode", self._active_decision_mode)
+                augmented_metadata = metadata_payload
             record = log.record(
                 stage,
                 symbol,
@@ -3668,6 +4161,8 @@ class AutoTrader:
             if metadata:
                 for key, value in metadata.items():
                     merged_meta[str(key)] = value
+            if self._active_decision_mode:
+                merged_meta.setdefault("decision_mode", self._active_decision_mode)
             log_decision_event(
                 journal,
                 event=event,
@@ -3702,6 +4197,7 @@ class AutoTrader:
         emitter_emit = getattr(self.emitter, "emit", None)
         if not callable(emitter_emit):
             return
+        state = self._attach_decision_mode_to_state(state)
         payload = state.to_mapping()
         if reason is not None:
             payload["reason"] = reason
@@ -7399,6 +7895,7 @@ class AutoTrader:
             unique_guardrails.add(guardrail_name)
         if not unique_guardrails:
             unique_guardrails.add("unknown")
+        self._record_guardrail_tokens(unique_guardrails)
         for name in unique_guardrails:
             self._metric_guardrail_blocks_total.inc(
                 labels=self._metric_label_payload(guardrail=name)
@@ -7704,6 +8201,14 @@ class AutoTrader:
             decision_payload["ai"] = ai_payload
         if decision_payload is not None:
             details["decision_engine"] = decision_payload
+
+        self._evaluate_dynamic_mode(
+            symbol=str(symbol) if symbol else None,
+            assessment=assessment,
+            summary=summary,
+            workflow_summary=workflow_summary,
+            ai_context=ai_context,
+        )
         mode = self._schedule_mode
         gui_mode: str | None = None
         if hasattr(self.gui, "is_demo_mode_active"):
@@ -7919,6 +8424,8 @@ class AutoTrader:
                 summary = ai_manager.get_regime_summary(symbol)
             except Exception:
                 summary = None
+
+        workflow_summary = self._update_strategy_regime_history(assessment)
 
         returns = market_data.get("close")
         last_return = 0.0
@@ -8278,6 +8785,7 @@ class AutoTrader:
             effective_risk=effective_risk,
         )
         self._adjust_strategy_parameters(assessment, aggregated_risk=effective_risk, summary=summary)
+        self._apply_active_mode_overrides()
         self._apply_orchestrator_strategy_selection(assessment)
         signal = self._map_regime_to_signal(assessment, last_return, summary=summary)
         signal = self._apply_signal_guardrails(signal, effective_risk, summary)

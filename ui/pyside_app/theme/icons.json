@@ -1,0 +1,17 @@
+{
+  "icons": {
+    "refresh": { "file": "refresh.svg", "type": "svg" },
+    "fingerprint": { "file": "fingerprint.svg", "type": "svg" },
+    "shield": { "file": "shield.svg", "type": "svg" },
+    "cloud": { "file": "cloud.svg", "type": "svg" },
+    "package": { "file": "package.svg", "type": "svg" },
+    "diagnostics": { "file": "diagnostics.svg", "type": "svg" },
+    "mode_wizard": { "file": "mode_wizard.svg", "type": "svg" },
+    "scalping": { "file": "scalping.svg", "type": "svg" },
+    "swing": { "file": "swing.svg", "type": "svg" },
+    "hedge": { "file": "hedge.svg", "type": "svg" },
+    "futures": { "file": "futures.svg", "type": "svg" },
+    "copy": { "file": "copy.svg", "type": "svg" },
+    "strategy_manager": { "file": "strategy_manager.svg", "type": "svg" }
+  }
+}

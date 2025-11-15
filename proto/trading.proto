@@ -345,6 +345,26 @@ message ActivateMarketplacePresetResponse {
   MarketplacePresetSummary preset = 1;
 }
 
+message CloudAuthSignature {
+  string algorithm = 1;
+  string value = 2;
+  string key_id = 3;
+}
+
+message CloudAuthRequest {
+  string fingerprint = 1;
+  string license_id = 2;
+  string nonce = 3;
+  CloudAuthSignature signature = 4;
+}
+
+message CloudAuthResponse {
+  bool authorized = 1;
+  string session_token = 2;
+  google.protobuf.Timestamp expires_at = 3;
+  string message = 4;
+}
+
 service MarketDataService {
   rpc GetOhlcvHistory(GetOhlcvHistoryRequest) returns (GetOhlcvHistoryResponse);
   rpc StreamOhlcv(StreamOhlcvRequest) returns (stream StreamOhlcvUpdate);
@@ -388,4 +408,8 @@ service MarketplaceService {
       returns (RemoveMarketplacePresetResponse);
   rpc ActivatePreset(ActivateMarketplacePresetRequest)
       returns (ActivateMarketplacePresetResponse);
+}
+
+service CloudAuthService {
+  rpc AuthorizeClient(CloudAuthRequest) returns (CloudAuthResponse);
 }

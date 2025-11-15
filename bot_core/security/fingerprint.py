@@ -1271,9 +1271,9 @@ def _load_secret_from_disk(path: Path) -> tuple[bytes, str] | None:
     except json.JSONDecodeError as exc:
         raise FingerprintError(
             (
-                f"Plik sekretu licencji {path} ma nieobsługiwany format 'legacy'. "
+                f"Plik sekretu licencji {path} ma nieobsługiwany historyczny format Stage5. "
                 "Uruchom narzędzie migracyjne 'python -m dudzian_migrate.license_secret' opisane w "
-                "docs/migrations/2024-legacy-storage-removal.md i ponownie aktywuj licencję."
+                "docs/migrations/2024-stage5-storage-removal.md i ponownie aktywuj licencję."
             )
         ) from exc
 

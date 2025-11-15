@@ -1,0 +1,61 @@
+id: hedge
+title: "Tryb hedgingowy"
+icon: hedge
+description: |
+  Konfiguracja do równoczesnego grania long/short, ochrony inventory i arbitrażu bazowego.
+badge: Hedge
+ai_profile_hint: delta_guard
+telemetry_rules:
+  min_dual_exposure: 0.4
+  min_short_ratio: 0.25
+  max_latency_ms: 160
+steps:
+  - id: coverage
+    title: "Zakres ekspozycji"
+    description: "Określ jakie klastry instrumentów mają być zabezpieczane."
+    inputs:
+      - id: inventory
+        type: choice
+        label: "Inventory"
+        options:
+          - id: spot_plus_perp
+            label: "Spot + perpetual"
+          - id: options
+            label: "Opcje + futures"
+  - id: triggers
+    title: "Wyzwalacze hedgingu"
+    description: "Wskaż kiedy AI ma otwierać pozycję odwrotną."
+    inputs:
+      - id: latency_budget
+        type: choice
+        label: "Budżet latency"
+        options:
+          - id: strict
+            label: "<90 ms"
+          - id: relaxed
+            label: "<150 ms"
+      - id: hedge_ratio
+        type: choice
+        label: "Docelowy hedge ratio"
+        options:
+          - id: sixty
+            label: "0.6"
+          - id: eighty
+            label: "0.8"
+  - id: automation
+    title: "Automatyczne korygowanie"
+    description: "Zdefiniuj częstotliwość rebalancingu i alarmy."
+    inputs:
+      - id: rebalance
+        type: choice
+        label: "Korekta pozycji"
+        options:
+          - id: every_block
+            label: "Co blok"
+          - id: on_drift
+            label: "Przy drift > 0.15"
+recommendations:
+  summary: "Włącz cross_exchange_delta_guard z hedge ratio 0.8 i rebalance przy drift>0.15."
+  marketplace_tags:
+    - hedge
+    - delta

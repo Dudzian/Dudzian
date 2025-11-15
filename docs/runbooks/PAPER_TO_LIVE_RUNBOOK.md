@@ -10,6 +10,7 @@ Proces przejścia z trybu paper trading do środowiska live wymaga potwierdzenia
 | Limity ryzyka | Sprawdź `risk_profiles` (max_daily_loss_pct, hard_drawdown_pct, max_position_pct, max_open_positions). | `config/core.yaml`, raporty RiskEngine | Risk |
 | Alerty i audyt | Zweryfikuj kanały (`alert_channels`), throttling (`alert_throttle`) oraz backend audytu (FileAlertAuditLog). | Konfiguracja runtime, logi `alerts/` | SRE |
 | Licencje | Potwierdź ważność licencji OEM i modułów live. | `var/licenses/active/`, log weryfikacji | Security |
+| Tryb cloud (opcjonalny) | Przygotuj `config/cloud/server.yaml`, sprawdź whitelistę HWID/licencji, uruchom `python scripts/run_cloud_service.py --config config/cloud/server.yaml --ready-file var/runtime/cloud_ready.json` i wykonaj testowy handshake `CloudAuthService.AuthorizeClient` (token `CloudSession` + wpis `cloud_auth_granted`). | `config/cloud/`, `logs/security_admin.log`, `var/runtime/cloud_ready.json` | SRE + Security |
 | Dostęp do danych | Upewnij się, że źródła danych (OHLCV, risk snapshot) są kompletne dla rynku live. | Raporty data-quality, `var/data/<env>/` | Data |
 | Walidacja modeli AI | Sprawdź najnowsze raporty `audit/ai_decision/walk_forward/<timestamp>.json` (`job_name`, `walk_forward.average_mae`, `dataset.rows`, `walk_forward.windows[*].mae`). Upewnij się, że katalog audytu zawiera również sekcje `data_quality/` (pola: `issues[*]`, `summary.total_gaps`, `summary.status`, `source`, `tags`) i `drift/` (`metrics.feature_drift.{score,psi,ks,threshold}`, `metrics.distribution_summary.triggered_features`, `metrics.features[*]`, `baseline_window`, `production_window`, `detector`, `threshold`) na przyszłe kontrole. W razie potrzeby użyj helperów `load_latest_walk_forward_report`, `load_latest_data_quality_report`, `load_latest_drift_report`, aby szybko zweryfikować zawartość artefaktów. | Repozytorium `audit/ai_decision/{walk_forward,data_quality,drift}/` | AI + Compliance |
 
@@ -29,7 +30,7 @@ pytest tests/integration/test_execution_router_failover.py
 * `tests/test_paper_execution.py` – potwierdza kluczowe reguły symulatora paper trading.
 * `tests/integration/test_execution_router_failover.py` – integracyjnie sprawdza router live z mockami CCXT (failover + limity) oraz księgowanie w symulatorze paper.
 
-> **Uwaga:** jeżeli repozytorium zawiera jeszcze dziedziczone katalogi `KryptoLowca`/`archive`, uruchom `LINT_PATHS_ALLOW_LEGACY=1 python scripts/lint_paths.py`, aby potraktować ostrzeżenia jako informacyjne.
+> **Uwaga:** `python scripts/lint_paths.py` kończy się błędem, gdy wykryje zakazane katalogi (`KryptoLowca/**`, `archive/**` z kodem) lub importy. Usuń pozostałości zanim przejdziesz dalej – ostrzeżenia nie są już dopuszczane.
 
 ## 2. Procedura aktywacji
 
@@ -40,7 +41,8 @@ pytest tests/integration/test_execution_router_failover.py
 5. **Secret Manager** – odśwież klucze `trade` (rotacja ≤90 dni) i zaktualizuj allowlist IP. Zanotuj w `security/rotation_log.json`.
 6. **AutoTrader/GUI** – jeżeli `trusted_auto_confirm` ustawione na `true`, potwierdź w logach start bez manualnego kliknięcia. W trybie demo/paper pozostaw `false`.
 7. **Dry-run** – uruchom pipeline w trybie read-only (`enable_auto_trade=False`) i sprawdź, czy `live_readiness_checklist` zgłasza status `ok` dla wszystkich elementów.
-8. **Aktywacja** – odblokuj handel (ustaw `enable_auto_trade=True` lub usuń `require_demo_mode`). Monitoruj metryki w pierwszych 60 minutach.
+8. **Cloud runtime (opcjonalny)** – jeżeli planujesz centralny backend, wystartuj `scripts/run_cloud_service.py`, potwierdź payload `ready`, wykonaj handshake `CloudAuthService` z jednym z wpisów allowlisty oraz sprawdź w `logs/security_admin.log`, że pojawiły się rekordy `cloud_auth_granted`/`cloud_session_*` tylko dla oczekiwanych HWID.
+9. **Aktywacja** – odblokuj handel (ustaw `enable_auto_trade=True` lub usuń `require_demo_mode`). Monitoruj metryki w pierwszych 60 minutach.
 
 ## 3. Eskalacja i powrót do paper
 

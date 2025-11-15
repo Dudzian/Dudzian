@@ -20,6 +20,10 @@ from pathlib import Path
 from typing import Any, Dict, Iterable
 
 from bot_core.api.server import LocalRuntimeGateway, build_local_runtime_context
+from bot_core.runtime.cloud_profiles import (
+    RuntimeCloudClientSelection,
+    resolve_runtime_cloud_client,
+)
 
 
 _LOG = logging.getLogger(__name__)
@@ -49,6 +53,11 @@ def _parse_args(argv: Iterable[str] | None = None) -> argparse.Namespace:
         choices=["CRITICAL", "ERROR", "WARNING", "INFO", "DEBUG"],
         help="Poziom logowania",
     )
+    parser.add_argument(
+        "--enable-cloud-runtime",
+        action="store_true",
+        help="Przełącza UI na tryb cloudowy wskazany w runtime.yaml",
+    )
     return parser.parse_args(argv)
 
 
@@ -57,9 +66,36 @@ def _emit(payload: Dict[str, Any]) -> None:
     sys.stdout.flush()
 
 
+def _cloud_ready_event(selection: RuntimeCloudClientSelection) -> Dict[str, Any]:
+    entrypoint = selection.profile.entrypoint or selection.client.fallback_entrypoint
+    return {
+        "event": "ready",
+        "version": "cloud",
+        "cloud": {
+            "profile": selection.profile_name,
+            "mode": selection.profile.mode,
+            "target": selection.client.address,
+            "entrypoint": entrypoint,
+        },
+    }
+
+
 def main(argv: Iterable[str] | None = None) -> int:
     args = _parse_args(argv)
     _configure_logging(args.log_level)
+
+    cloud_selection: RuntimeCloudClientSelection | None = None
+    if getattr(args, "enable_cloud_runtime", False):
+        try:
+            cloud_selection = resolve_runtime_cloud_client(Path(args.config))
+        except Exception as exc:  # pragma: no cover - diagnostyka konfiguracji
+            _LOG.error("Nie udało się wczytać konfiguracji cloud: %s", exc)
+            return 2
+        if cloud_selection is None:
+            _LOG.error("Flaga cloud aktywna, ale runtime.yaml nie zawiera profilu remote")
+            return 3
+        _emit(_cloud_ready_event(cloud_selection))
+        return 0
 
     try:
         context = build_local_runtime_context(

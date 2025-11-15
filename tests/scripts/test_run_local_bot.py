@@ -20,7 +20,7 @@ import scripts.run_local_bot as run_local_bot
 
 
 class DummyServer:
-    def __init__(self, context, host: str, port: int) -> None:
+    def __init__(self, context, host: str, port: int, *, interceptors=None) -> None:  # pragma: no cover - prosty stub
         self.address = f"{host}:{port or 5000}"
 
     def start(self) -> None:  # pragma: no cover - prosty stub
@@ -204,6 +204,56 @@ def test_demo_mode_generates_checkpoint_and_report(
     assert "report_markdown" in report_payload
     markdown_files = list(markdown_dir.glob("demo_paper_demo_*.md"))
     assert markdown_files, "Markdown z raportem demo nie został utworzony"
+
+
+def test_cloud_flag_emits_ready_payload(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: "pytest.CaptureFixture[str]",
+) -> None:
+    selection = SimpleNamespace(
+        profile_name="staging-cloud",
+        profile=SimpleNamespace(
+            mode="remote",
+            entrypoint="cloud_entry",
+            client_config_path="config/cloud/client.yaml",
+        ),
+        client=SimpleNamespace(
+            address="cloud.example:50052",
+            metadata={},
+            metadata_env={},
+            metadata_files={},
+            fallback_entrypoint="cloud_entry",
+            allow_local_fallback=True,
+            auto_connect=True,
+            use_tls=False,
+            tls=None,
+        ),
+    )
+
+    monkeypatch.setattr(run_local_bot, "resolve_runtime_cloud_client", lambda path: selection)
+
+    def _fail_build_context(**_kwargs):  # pragma: no cover - nie powinno być wywołane
+        raise AssertionError("build_local_runtime_context nie powinno zostać wywołane w trybie cloud")
+
+    monkeypatch.setattr(run_local_bot, "build_local_runtime_context", _fail_build_context)
+
+    config_file = tmp_path / "runtime.yaml"
+    config_file.write_text("cloud: {}", encoding="utf-8")
+
+    exit_code = run_local_bot.main(
+        [
+            "--config",
+            str(config_file),
+            "--entrypoint",
+            "demo_desktop",
+            "--enable-cloud-runtime",
+        ]
+    )
+
+    assert exit_code == 0
+    captured = capsys.readouterr().out.strip().splitlines()
+    assert any("\"cloud\"" in line for line in captured), "Brak payloadu cloud w STDOUT"
 
 
 def test_paper_mode_requires_checkpoint(tmp_path: Path, _stub_dependencies: SimpleNamespace) -> None:

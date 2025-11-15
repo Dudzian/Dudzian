@@ -16,7 +16,7 @@ Repozytorium zawiera kompletny stack aplikacji desktopowej do automatycznego han
 2. Zainstaluj pakiety rdzeniowe (`bot_core`, `core`) w trybie deweloperskim, aby moduły były dostępne bez ręcznych modyfikacji `sys.path`: `python -m pip install -e .[compression]` (extras `compression` doinstaluje `brotli` lub `brotlicffi` oraz `zstandard`, zapewniając obsługę strumieni kompresowanych brotli i zstd).
 3. Przygotuj konfigurację runtime: `python scripts/migrate_runtime_config.py --output config/runtime.yaml`.
 4. Uruchom pipeline papierowy: `poetry run python scripts/run_local_bot.py --paper`.
-5. Z aplikacji desktopowej (Qt) przeprowadź konfigurację w kreatorze.
+5. Uruchom nowy klient PySide6 (`python -m ui.pyside_app --config ui/config/example.yaml`) i przeprowadź konfigurację w kreatorze.
 
 Szczegółowe instrukcje znajdują się w dokumentacji:
 - [Przewodnik użytkownika](docs/user_manual/index.md)
@@ -25,6 +25,24 @@ Szczegółowe instrukcje znajdują się w dokumentacji:
 - [Instalacja i budowa instalatorów](docs/deployment/installer_build.md)
 - [Monitorowanie offline](docs/monitoring_offline.md)
 - [Benchmark Stage6 vs CryptoHopper](docs/benchmark/cryptohopper_comparison.md)
+
+## Klient PySide6 / Qt Quick 6
+
+- Aplikacja startuje komendą `python -m ui.pyside_app --config ui/config/example.yaml`.
+- Flaga `--enable-cloud-runtime` przełącza UI na profil wskazany w `config/runtime.yaml` + `config/cloud/client.yaml` (identycznie jak w `scripts/run_local_bot.py`).
+- Parametr `--qml` umożliwia załadowanie alternatywnego pliku QML, np. wariantu z rozszerzonym layoutem.
+- Aby użyć innego profilu wizualnego, dodaj w `ui/config/example.yaml` sekcję `profiles.*` i wskaż ją flagą `--profile`.
+- UI automatycznie ładuje kontrolery z `ui/backend/*` (licencje, diagnostyka, decision feed) i prezentuje status feedu + log decyzji na bazie danych demo.
+- Panel „Tryby pracy” oparty o PySide6/Qt Quick zawiera kreator z blurami i ikonami FontAwesome/SVG; definicje kroków znajdują się w `config/ui/mode_wizards/*.yaml`, a rekomendacje AI bazują na telemetrii `RuntimeService` i profilach `cloud`.
+- Panel „Strategy Manager” udostępnia marketplace presetów z jednym kliknięciem „Zainstaluj i przypisz” (HWID/licencja + przydział do portfela) oraz synchronizuje statusy z zakładkami Trybów pracy i Strategy Workbench.
+
+## Tryb cloud/serwerowy (behind flag)
+- Moduł `bot_core.cloud` udostępnia serwer gRPC, który można uruchomić osobnym procesem: `python scripts/run_cloud_service.py --config config/cloud/server.yaml --emit-stdout`.
+- Konfiguracja znajduje się w `config/cloud/server.yaml` i oprócz hosta/portu, entrypointu runtime i whitelisty usług zawiera sekcję `security.allowed_clients`. Każdy wpis określa parę `license_id`/`fingerprint` oraz źródło klucza HMAC (inline, plik lub zmienna ENV). Próby autoryzacji są logowane w `logs/security_admin.log`.
+- `CloudAuthService.AuthorizeClient` realizuje obowiązkowy handshake HWID/licencji. Klient podpisuje payload `{license_id, fingerprint, nonce}` przy pomocy `sign_license_payload` i wysyła go do RPC – w odpowiedzi otrzymuje token `CloudSession`, który należy przekazywać w nagłówku `Authorization: CloudSession <token>` do wszystkich wywołań (`RuntimeService`, `MarketplaceService`, `MarketDataService` itd.). Tokeny wygasają po czasie ustawionym w `session_ttl_seconds`.
+- Serwer inicjuje harmonogramy AI i synchronizację marketplace’u, a po starcie zapisuje payload `{ "event": "ready", "address": "host:port" }` (stdout lub plik wskazany flagą `--ready-file`).
+- Sekcja `cloud` w `config/runtime.yaml` wraz z `config/cloud/client.yaml` opisuje profile zdalne – włączenie procesu `scripts/run_local_bot.py --enable-cloud-runtime` publikuje payload `ready` z sekcją `cloud` i nie uruchamia lokalnego kontekstu.
+- Tryb cloud nie jest aktywowany automatycznie – dopiero ustawienie flagi (CLI/UI) przełącza dystrybucję desktopową z lokalnego `LocalRuntimeServer` na wskazany backend chmurowy.
 
 > **Szybki skrót benchmarku:** Stage6 jest na parytecie strategii z przewagą automatyzacji i compliance; największą luką pozostaje integracja UI (feed gRPC „Decyzje AI”) oraz skalowanie marketplace’u presetów.
 >

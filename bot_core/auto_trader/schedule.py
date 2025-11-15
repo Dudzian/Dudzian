@@ -333,6 +333,7 @@ class ScheduleState:
     override: ScheduleOverride | None = None
     next_override: ScheduleOverride | None = None
     override_active: bool = False
+    decision_mode: str | None = None
 
     @property
     def time_until_transition(self) -> float | None:
@@ -369,6 +370,8 @@ class ScheduleState:
             next_delay = self.time_until_next_override
             if next_delay is not None:
                 payload["time_until_next_override_s"] = next_delay
+        if self.decision_mode is not None:
+            payload["decision_mode"] = self.decision_mode
         return payload
 
     @property

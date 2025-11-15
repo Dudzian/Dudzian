@@ -1,0 +1,15 @@
+address: 127.0.0.1:50052
+use_tls: false
+metadata: {}
+metadata_env: {}
+metadata_files: {}
+fallback_entrypoint: trading_gui
+allow_local_fallback: true
+auto_connect: true
+tls:
+  enabled: false
+  ca_certificate: null
+  client_certificate: null
+  client_key: null
+  client_key_password_env: null
+  override_authority: null

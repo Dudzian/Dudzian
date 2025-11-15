@@ -208,6 +208,54 @@ class PortfolioDecisionLogConfig:
 
 
 @dataclass(slots=True)
+class CloudClientTlsConfig:
+    """Ustawienia TLS wykorzystywane przez klienta cloudowego."""
+
+    enabled: bool = False
+    ca_certificate: str | None = None
+    client_certificate: str | None = None
+    client_key: str | None = None
+    client_key_password_env: str | None = None
+    override_authority: str | None = None
+
+
+@dataclass(slots=True)
+class CloudClientConfig:
+    """Konfiguracja klienta gRPC wykorzystywana do połączeń cloudowych."""
+
+    address: str
+    use_tls: bool = False
+    metadata: Mapping[str, str] = field(default_factory=dict)
+    metadata_env: Mapping[str, str] = field(default_factory=dict)
+    metadata_files: Mapping[str, str] = field(default_factory=dict)
+    fallback_entrypoint: str | None = None
+    allow_local_fallback: bool = True
+    auto_connect: bool = True
+    tls: CloudClientTlsConfig | None = None
+
+
+@dataclass(slots=True)
+class RuntimeCloudProfileConfig:
+    """Opis pojedynczego profilu uruchomieniowego trybu cloud."""
+
+    mode: str = "local"
+    description: str | None = None
+    client_config_path: str | None = None
+    entrypoint: str | None = None
+    require_flag: bool = True
+    allow_local_fallback: bool = True
+
+
+@dataclass(slots=True)
+class RuntimeCloudSettings:
+    """Sekcja cloud w runtime.yaml."""
+
+    enabled: bool = False
+    default_profile: str | None = None
+    profiles: Mapping[str, RuntimeCloudProfileConfig] = field(default_factory=dict)
+
+
+@dataclass(slots=True)
 class SecurityBaselineSigningConfig:
     """Ustawienia podpisywania raportów audytu bezpieczeństwa."""
     signing_key_env: str | None = None
@@ -1643,6 +1691,50 @@ class RuntimeObservabilitySettings:
 
 
 @dataclass(slots=True)
+class AutoTraderModeParameterRange:
+    """Zakres parametru wykorzystywany przy definiowaniu trybów AutoTradera."""
+
+    min: float = 0.0
+    max: float = 1.0
+    default: float | None = None
+
+    def clamp(self, value: float) -> float:
+        """Zwraca wartość ograniczoną do zdefiniowanego zakresu."""
+
+        lower = float(self.min)
+        upper = float(self.max)
+        if lower > upper:
+            lower, upper = upper, lower
+        return float(max(lower, min(upper, value)))
+
+
+@dataclass(slots=True)
+class AutoTraderModeProfileConfig:
+    """Opis pojedynczego profilu trybu pracy AutoTradera."""
+
+    description: str | None = None
+    default_strategy: str = "capital_preservation"
+    allowed_strategies: Sequence[str] = field(default_factory=tuple)
+    preferred_regimes: Sequence[str] = field(default_factory=tuple)
+    required_inputs: Sequence[str] = field(default_factory=tuple)
+    guardrail_tags: Sequence[str] = field(default_factory=tuple)
+    base_weight: float = 1.0
+    leverage: AutoTraderModeParameterRange | None = None
+    position_size: AutoTraderModeParameterRange | None = None
+    risk_floor: float | None = None
+    risk_ceiling: float | None = None
+
+
+@dataclass(slots=True)
+class RuntimeAutoTraderSettings:
+    """Konfiguracja trybów pracy AutoTradera ładowana z runtime.yaml."""
+
+    enabled: bool = True
+    default_mode: str | None = None
+    modes: Mapping[str, AutoTraderModeProfileConfig] = field(default_factory=dict)
+
+
+@dataclass(slots=True)
 class RuntimeIOQueueLimit:
     """Limity kolejki I/O dla pojedynczego adaptera."""
 
@@ -1764,10 +1856,12 @@ class RuntimeAppConfig:
     risk: RuntimeRiskSettings
     licensing: RuntimeLicensingSettings
     ui: RuntimeUISettings
+    auto_trader: RuntimeAutoTraderSettings | None = None
     observability: RuntimeObservabilitySettings | None = None
     optimization: RuntimeOptimizationSettings | None = None
     marketplace: RuntimeMarketplaceSettings | None = None
     io_queue: RuntimeIOQueueSettings | None = None
+    cloud: "RuntimeCloudSettings | None" = None
 
 
 __all__ = [
@@ -1842,6 +1936,10 @@ __all__ = [
     "PrometheusAlertRuleConfig",
     "RiskDecisionLogConfig",
     "PortfolioDecisionLogConfig",
+    "CloudClientTlsConfig",
+    "CloudClientConfig",
+    "RuntimeCloudProfileConfig",
+    "RuntimeCloudSettings",
     "SecurityBaselineConfig",
     "SecurityBaselineSigningConfig",
     "SLOThresholdConfig",
@@ -1887,6 +1985,9 @@ __all__ = [
     "RuntimeObservabilityMetricsSettings",
     "RuntimeObservabilityAlertSettings",
     "RuntimeObservabilitySettings",
+    "AutoTraderModeParameterRange",
+    "AutoTraderModeProfileConfig",
+    "RuntimeAutoTraderSettings",
     "RuntimeIOQueueLimit",
     "RuntimeIOQueueSettings",
     "RuntimeOptimizationSettings",

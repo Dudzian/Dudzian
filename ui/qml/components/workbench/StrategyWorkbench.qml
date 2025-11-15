@@ -15,6 +15,10 @@ Item {
     property var riskModel: null
     property var riskHistoryModel: null
     property var licenseController: null
+    property var marketplaceController: null
+    property var openStrategyManagerTab: null
+    property var marketplacePresets: []
+    property string quickMarketplacePortfolioId: ""
 
     implicitWidth: 960
     implicitHeight: 540
@@ -28,6 +32,21 @@ Item {
         riskModel: root.riskModel ? root.riskModel : (typeof riskModel !== "undefined" ? riskModel : null)
         riskHistoryModel: root.riskHistoryModel ? root.riskHistoryModel : (typeof riskHistoryModel !== "undefined" ? riskHistoryModel : null)
         licenseController: root.licenseController ? root.licenseController : (typeof licenseController !== "undefined" ? licenseController : null)
+    }
+
+    onMarketplaceControllerChanged: {
+        if (root.marketplaceController && root.marketplaceController.presets)
+            root.marketplacePresets = root.marketplaceController.presets
+    }
+
+    Connections {
+        target: root.marketplaceController ? root.marketplaceController : null
+        ignoreUnknownSignals: true
+        function onPresetsChanged() {
+            root.marketplacePresets = root.marketplaceController && root.marketplaceController.presets
+                    ? root.marketplaceController.presets
+                    : []
+        }
     }
 
     function formatNumber(value, digits) {
@@ -249,6 +268,108 @@ Item {
                 runtimeService: root.appController && root.appController.runtimeService
                                  ? root.appController.runtimeService()
                                  : (typeof runtimeService !== "undefined" ? runtimeService : null)
+                marketplaceController: root.marketplaceController
+                openStrategyManagerTab: root.openStrategyManagerTab
+            }
+
+            Frame {
+                Layout.fillWidth: true
+                background: Rectangle {
+                    color: Qt.darker(palette.window, 1.05)
+                    radius: 8
+                }
+
+                ColumnLayout {
+                    anchors.fill: parent
+                    anchors.margins: 16
+                    spacing: 8
+                    RowLayout {
+                        Layout.fillWidth: true
+                        spacing: 12
+                        Label {
+                            text: qsTr("Szybkie akcje Marketplace")
+                            font.bold: true
+                        }
+                        Item { Layout.fillWidth: true }
+                        Button {
+                            text: qsTr("Odśwież")
+                            onClicked: root.marketplaceController && root.marketplaceController.refreshPresets
+                                      ? root.marketplaceController.refreshPresets()
+                                      : undefined
+                        }
+                        Button {
+                            text: qsTr("Manager")
+                            onClicked: {
+                                if (root.openStrategyManagerTab)
+                                    root.openStrategyManagerTab()
+                            }
+                        }
+                    }
+
+                    RowLayout {
+                        Layout.fillWidth: true
+                        spacing: 8
+                        TextField {
+                            id: quickPortfolioField
+                            Layout.fillWidth: true
+                            placeholderText: qsTr("Docelowy portfel")
+                            text: root.quickMarketplacePortfolioId
+                            onEditingFinished: root.quickMarketplacePortfolioId = text
+                        }
+                        Button {
+                            text: qsTr("Zapisz")
+                            enabled: quickPortfolioField.text.length > 0
+                            onClicked: root.quickMarketplacePortfolioId = quickPortfolioField.text
+                        }
+                    }
+
+                    Repeater {
+                        model: root.marketplacePresets
+                        delegate: ColumnLayout {
+                            visible: index < 3
+                            spacing: 4
+                            Label {
+                                text: (modelData.name || modelData.presetId || "") + " • "
+                                      + (modelData.version || "-")
+                                font.bold: true
+                            }
+                            Label {
+                                text: modelData.summary || qsTr("Brak opisu")
+                                color: palette.mid
+                                wrapMode: Text.WordWrap
+                            }
+                            RowLayout {
+                                spacing: 6
+                                Button {
+                                    text: qsTr("Zastosuj")
+                                    enabled: root.marketplaceController && root.quickMarketplacePortfolioId.length > 0
+                                    onClicked: {
+                                        if (root.marketplaceController && root.marketplaceController.activateAndAssignPreset)
+                                            root.marketplaceController.activateAndAssignPreset(
+                                                        modelData.presetId || "",
+                                                        root.quickMarketplacePortfolioId)
+                                    }
+                                }
+                                Button {
+                                    text: qsTr("Przypisz")
+                                    enabled: root.marketplaceController && root.quickMarketplacePortfolioId.length > 0
+                                    onClicked: {
+                                        if (root.marketplaceController && root.marketplaceController.assignPresetToPortfolio)
+                                            root.marketplaceController.assignPresetToPortfolio(
+                                                        modelData.presetId || "",
+                                                        root.quickMarketplacePortfolioId)
+                                    }
+                                }
+                            }
+                            Rectangle {
+                                Layout.fillWidth: true
+                                height: 1
+                                color: palette.mid
+                                opacity: 0.3
+                            }
+                        }
+                    }
+                }
             }
 
             RowLayout {

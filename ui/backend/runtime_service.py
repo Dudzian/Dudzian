@@ -41,9 +41,10 @@ except Exception:  # pragma: no cover - fallback dla środowisk bez retrainingu
     CronSchedule = None  # type: ignore[assignment]
 
 try:  # pragma: no cover - funkcja ładowania runtime może nie być dostępna w starszych gałęziach
-    from bot_core.config.loader import load_runtime_app_config
+    from bot_core.config.loader import load_cloud_client_config, load_runtime_app_config
 except Exception:  # pragma: no cover - fallback gdy brak unified loadera
     load_runtime_app_config = None  # type: ignore[assignment]
+    load_cloud_client_config = None  # type: ignore[assignment]
 
 try:  # pragma: no cover - alerty feedu są opcjonalne w dystrybucjach light
     from bot_core.runtime.metrics_alerts import UiTelemetryAlertSink, get_feed_health_alert_sink
@@ -646,6 +647,9 @@ class RuntimeService(QObject):
         self._grpc_ready_timeout = max(1.0, float(os.environ.get("BOT_CORE_UI_GRPC_READY_TIMEOUT", "5.0")))
         self._grpc_idle_timeout = max(1.0, float(os.environ.get("BOT_CORE_UI_GRPC_IDLE_TIMEOUT", "3.0")))
         self._grpc_reconnect_timer: QTimer | None = None
+        self._active_grpc_metadata: list[tuple[str, str]] = list(self._grpc_metadata)
+        self._grpc_ssl_credentials = None
+        self._grpc_authority_override: str | None = None
         self._feed_reconnects = 0
         self._feed_downtime_started: float | None = None
         self._feed_downtime_total = 0.0
@@ -1268,7 +1272,7 @@ class RuntimeService(QObject):
         return _loader
 
     # ------------------------------------------------------------------ risk aggregation helpers --
-    def _resolve_grpc_target(self, profile: str | None) -> str | None:
+    def _resolve_env_grpc_target(self, profile: str | None) -> str | None:
         candidates = (
             os.environ.get("BOT_CORE_UI_GRPC_ENDPOINT"),
             os.environ.get("BOT_CORE_TRADING_GRPC_ADDRESS"),
@@ -1278,6 +1282,57 @@ class RuntimeService(QObject):
             if candidate and candidate.strip():
                 return candidate.strip()
         return None
+
+    def _prepare_grpc_connection(
+        self, profile: str | None
+    ) -> tuple[str, list[tuple[str, str]]] | None:
+        target = self._resolve_env_grpc_target(profile)
+        if target:
+            self._grpc_ssl_credentials = None
+            self._grpc_authority_override = None
+            return target, list(self._grpc_metadata)
+
+        if load_runtime_app_config is None or load_cloud_client_config is None:
+            return None
+
+        try:
+            runtime_config = self._load_runtime_config()
+        except Exception:  # pragma: no cover - diagnostyka
+            return None
+
+        cloud_cfg = getattr(runtime_config, "cloud", None)
+        if cloud_cfg is None or not getattr(cloud_cfg, "enabled", False):
+            return None
+
+        profiles = getattr(cloud_cfg, "profiles", {}) or {}
+        selected = profile or getattr(cloud_cfg, "default_profile", None)
+        profile_cfg = profiles.get(selected) if selected else None
+        if profile_cfg is None:
+            for candidate in profiles.values():
+                if str(getattr(candidate, "mode", "local")).lower() == "remote":
+                    profile_cfg = candidate
+                    break
+        if profile_cfg is None:
+            return None
+        if str(getattr(profile_cfg, "mode", "local")).lower() != "remote":
+            return None
+        client_manifest = getattr(profile_cfg, "client_config_path", None)
+        if not client_manifest:
+            return None
+        try:
+            client_cfg = load_cloud_client_config(client_manifest)
+        except Exception as exc:  # pragma: no cover - konfiguracja
+            _LOGGER.error("Nie udało się wczytać client.yaml %s: %s", client_manifest, exc)
+            return None
+        if not client_cfg.auto_connect:
+            return None
+        metadata = self._build_cloud_metadata(client_cfg)
+        try:
+            self._configure_cloud_tls(client_cfg)
+        except Exception as exc:  # pragma: no cover - TLS opcjonalny
+            _LOGGER.error("Nie udało się skonfigurować TLS dla cloud runtime: %s", exc)
+            return None
+        return client_cfg.address, metadata
 
     def _load_grpc_metadata(self) -> list[tuple[str, str]]:
         raw = os.environ.get("BOT_CORE_UI_GRPC_METADATA", "")
@@ -1296,10 +1351,66 @@ class RuntimeService(QObject):
                 metadata.append((key, value))
         return metadata
 
-    def _auto_connect_grpc(self) -> None:
-        target = self._resolve_grpc_target(self._active_profile)
-        if not target:
+    def _build_cloud_metadata(self, client_cfg) -> list[tuple[str, str]]:
+        metadata = list(self._grpc_metadata)
+        for key, value in (client_cfg.metadata or {}).items():
+            header = str(key).strip().lower()
+            if header and value:
+                metadata.append((header, value))
+        for key, env_name in (client_cfg.metadata_env or {}).items():
+            header = str(key).strip().lower()
+            if not header or not env_name:
+                continue
+            value = os.environ.get(env_name)
+            if value:
+                metadata.append((header, value))
+        for key, path in (client_cfg.metadata_files or {}).items():
+            header = str(key).strip().lower()
+            if not header or not path:
+                continue
+            try:
+                value = Path(path).expanduser().read_text(encoding="utf-8").strip()
+            except OSError as exc:  # pragma: no cover - opcjonalne
+                _LOGGER.warning("Nie udało się odczytać pliku metadanych %s: %s", path, exc)
+                continue
+            if value:
+                metadata.append((header, value))
+        return metadata
+
+    def _configure_cloud_tls(self, client_cfg) -> None:
+        tls_cfg = getattr(client_cfg, "tls", None)
+        use_tls = bool(getattr(client_cfg, "use_tls", False) or (tls_cfg and tls_cfg.enabled))
+        if not use_tls:
+            self._grpc_ssl_credentials = None
+            self._grpc_authority_override = None
             return
+        if grpc is None:
+            raise RuntimeError("Pakiet grpcio nie obsługuje TLS w tej dystrybucji")
+        root_cert = None
+        client_cert = None
+        client_key = None
+        if tls_cfg is not None:
+            if tls_cfg.ca_certificate:
+                root_cert = Path(tls_cfg.ca_certificate).expanduser().read_bytes()
+            if tls_cfg.client_certificate:
+                client_cert = Path(tls_cfg.client_certificate).expanduser().read_bytes()
+            if tls_cfg.client_key:
+                client_key = Path(tls_cfg.client_key).expanduser().read_bytes()
+            self._grpc_authority_override = tls_cfg.override_authority
+        else:
+            self._grpc_authority_override = None
+        self._grpc_ssl_credentials = grpc.ssl_channel_credentials(
+            root_certificates=root_cert,
+            private_key=client_key,
+            certificate_chain=client_cert,
+        )
+
+    def _auto_connect_grpc(self) -> None:
+        endpoint = self._prepare_grpc_connection(self._active_profile)
+        if not endpoint:
+            return
+        target, metadata = endpoint
+        self._active_grpc_metadata = metadata
         try:
             self._start_grpc_stream(target, self._default_limit)
         except Exception as exc:  # pragma: no cover - defensywne logowanie
@@ -1436,7 +1547,9 @@ class RuntimeService(QObject):
         if queue_obj is None:
             return
         stop_event = self._grpc_stop_event
-        metadata = tuple(self._grpc_metadata)
+        metadata = tuple(self._active_grpc_metadata)
+        ssl_credentials = self._grpc_ssl_credentials
+        authority_override = self._grpc_authority_override
         request = trading_pb2.StreamDecisionsRequest(
             limit=max(0, int(limit)),
             skip_snapshot=False,
@@ -1451,7 +1564,13 @@ class RuntimeService(QObject):
             attempt += 1
             channel = None
             try:
-                channel = grpc.insecure_channel(target)
+                if ssl_credentials is not None:
+                    options = []
+                    if authority_override:
+                        options.append(("grpc.ssl_target_name_override", authority_override))
+                    channel = grpc.secure_channel(target, ssl_credentials, options=options or None)
+                else:
+                    channel = grpc.insecure_channel(target)
                 ready_future = grpc.channel_ready_future(channel)
                 ready_future.result(timeout=max(1.0, float(ready_timeout)))
                 stub = trading_pb2_grpc.RuntimeServiceStub(channel)
