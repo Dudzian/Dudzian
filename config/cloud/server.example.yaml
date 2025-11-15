@@ -1,0 +1,37 @@
+# Minimalna konfiguracja serwera cloud Stage6.
+host: 0.0.0.0
+port: 50052
+max_workers: 32
+log_level: INFO
+runtime:
+  config_path: config/runtime.yaml
+  entrypoint: trading_gui
+license:
+  enabled: false
+  bundle_path: null
+  expected_hwid: null
+marketplace:
+  refresh_interval_seconds: 900
+  auto_reload: true
+security:
+  require_handshake: false
+  session_ttl_seconds: 900
+  audit_log_path: logs/security_admin.log
+  allowed_clients:
+    - license_id: SAMPLE-0001
+      fingerprint: DEMO-HWID
+      shared_secret: base64:c2FtcGxlLXNlY3JldA==
+      note: "Sample cloud entry"
+tls:
+  enabled: false
+  certificate_path: null
+  private_key_path: null
+  private_key_password_env: null
+  client_ca_path: null
+  require_client_auth: false
+allowed_entrypoints:
+  - trading_gui
+allowed_services:
+  - runtime
+  - market_data
+  - marketplace

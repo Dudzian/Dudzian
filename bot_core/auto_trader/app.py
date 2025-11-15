@@ -3,7 +3,7 @@
 Implementacja zapewnia deterministyczne uruchamianie/zatrzymywanie,
 manualny przepływ aktywacji oraz haki logujące bez konieczności ładowania
 pełnego runtime'u Stage6.  Warstwa nie przechowuje już aliasów ani
-konfiguracji trybu legacy – wszystkie wejścia/wyjścia wykorzystują formaty
+konfiguracji historycznego trybu Stage5 – wszystkie wejścia/wyjścia wykorzystują formaty
 Stage6 (np. ``RiskDecision`` przy serializacji decyzji).  Udostępniamy tylko
 publiczne API wymagane przez testy i narzędzia Stage6, zachowując spójność ze
 schematem decyzji używanym w środowiskach produkcyjnych.

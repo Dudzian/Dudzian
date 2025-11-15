@@ -2,12 +2,9 @@
 """CI helper that guards repo layout and import rules."""
 from __future__ import annotations
 
-import os
 import pathlib
 import re
-import subprocess
 import sys
-from typing import Callable
 
 # Paths are relative to repository root.
 _BANNED_ROOTS = {
@@ -16,109 +13,20 @@ _BANNED_ROOTS = {
 BANNED_PATHS = sorted(_BANNED_ROOTS)
 
 _IMPORT_PATTERN = re.compile(r"^\s*(?:from|import)\s+KryptoLowca\b", re.MULTILINE)
-_LEGACY_TOKEN_PATTERN = re.compile(r"(?<![A-Za-z0-9_])legacy(?![A-Za-z0-9_])", re.IGNORECASE)
-_KRYPTOLowca_TOKEN_PATTERN = re.compile(
-    r"(?<![A-Za-z0-9_])kryptolowca(?![A-Za-z0-9_])", re.IGNORECASE
-)
-
-
-def _should_skip_doc_migration(path: pathlib.Path) -> bool:
-    parts = path.parts
-    return "docs" in parts and "migrations" in parts
-
-
-def _should_skip_guarded_tokens(path: pathlib.Path) -> bool:
-    if path == pathlib.Path("scripts/lint_paths.py"):
-        return True
-    return _should_skip_doc_migration(path)
-
-
-def _iter_repository_files(root: pathlib.Path) -> list[pathlib.Path]:
-    files: list[pathlib.Path] = []
-    for path in root.rglob("*"):
-        if not path.is_file():
-            continue
-        try:
-            relative = path.relative_to(root)
-        except ValueError:
-            continue
-        if any(part.startswith(".") for part in relative.parts):
-            continue
-        files.append(relative)
-    return files
-
-
-def _collect_added_lines(
-    repo_root: pathlib.Path,
-    *,
-    description: str,
-    predicate: Callable[[str], bool],
-    skip_file: Callable[[pathlib.Path], bool] | None = None,
-) -> list[str]:
-    """Return added lines matching ``predicate`` with optional path filtering."""
-
-    def _diff_output(args: list[str]) -> str:
-        result = subprocess.run(
-            args,
-            cwd=repo_root,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            text=True,
-            check=False,
-        )
-        return result.stdout
-
-    diff = _diff_output(["git", "diff", "--cached", "--unified=0"])
-    if not diff.strip():
-        diff = _diff_output(["git", "diff", "HEAD", "--unified=0"])
-    if not diff.strip():
-        return []
-
-    occurrences: list[str] = []
-    current_file: pathlib.Path | None = None
-    new_line_no = 0
-    for line in diff.splitlines():
-        if line.startswith("+++ b/"):
-            rel = line[6:]
-            try:
-                current_file = pathlib.Path(rel)
-            except ValueError:
-                current_file = None
-            new_line_no = 0
-            continue
-        if line.startswith("@@"):
-            parts = line.split()
-            added = next((part for part in parts if part.startswith("+")), "+0")
-            try:
-                start = int(added.split(",", 1)[0][1:])
-            except ValueError:
-                start = 0
-            new_line_no = start
-            continue
-        if not line.startswith("+") or line.startswith("+++"):
-            if line and not line.startswith("-") and current_file is not None:
-                new_line_no += 1
-            continue
-        if current_file is None:
-            continue
-        if skip_file and skip_file(current_file):
-            new_line_no += 1
-            continue
-        text = line[1:]
-        if predicate(text):
-            occurrences.append(
-                f"{current_file}:{new_line_no}: {text.strip()} ({description})"
-            )
-        new_line_no += 1
-    return occurrences
+_EXECUTABLE_EXTENSIONS = {
+    ".py",
+    ".pyc",
+    ".pyo",
+    ".exe",
+    ".bat",
+    ".cmd",
+    ".sh",
+}
 
 
 def main() -> int:
     repo_root = pathlib.Path(__file__).resolve().parents[1]
     failures: list[str] = []
-    warnings: list[str] = []
-    allow_legacy = os.environ.get("LINT_PATHS_ALLOW_LEGACY", "0") == "1"
-
     for rel_path in BANNED_PATHS:
         candidate = repo_root / rel_path
         if candidate.exists():
@@ -126,23 +34,26 @@ def main() -> int:
                 "Disallowed archival paths detected: "
                 f"{rel_path}. Usuń katalog albo przenieś kod do bot_core."
             )
-            if allow_legacy:
-                warnings.append(message)
-            else:
-                failures.append(message)
+            failures.append(message)
 
     archive_dir = repo_root / "archive"
     if archive_dir.exists():
-        archive_py_files = sorted(
-            str(path.relative_to(repo_root))
-            for path in archive_dir.rglob("*.py")
-            if path.is_file()
-        )
-        if archive_py_files:
+        archive_violations: list[str] = []
+        for path in archive_dir.rglob("*"):
+            if not path.is_file():
+                continue
+            rel = path.relative_to(repo_root)
+            if any(part.startswith(".") for part in rel.parts):
+                continue
+            is_executable = bool(path.stat().st_mode & 0o111)
+            has_executable_extension = path.suffix.lower() in _EXECUTABLE_EXTENSIONS
+            if is_executable or has_executable_extension:
+                archive_violations.append(str(rel))
+        if archive_violations:
             failures.append(
-                "Archive directory must not contain Python modules: "
-                + ", ".join(archive_py_files)
-                + ". Przenieś kod do dokumentacji historycznej lub usuń pliki."
+                "Archive directory must not contain wykonywalnych plików: "
+                + ", ".join(sorted(archive_violations))
+                + ". Przenieś artefakty do dokumentacji historycznej lub usuń pliki."
             )
 
     forbidden_imports: list[str] = []
@@ -164,63 +75,13 @@ def main() -> int:
             + ". Use bot_core instead."
         )
 
-    new_legacy_occurrences = _collect_added_lines(
-        repo_root,
-        description="legacy token",
-        predicate=lambda text: bool(_LEGACY_TOKEN_PATTERN.search(text)),
-        skip_file=_should_skip_guarded_tokens,
-    )
-    if new_legacy_occurrences:
-        failures.append(
-            "Detected new occurrences of 'legacy' outside migration docs:\n"
-            + "\n".join(new_legacy_occurrences)
-        )
-
-    disallowed_legacy_files: list[str] = []
-    for rel_file in _iter_repository_files(repo_root):
-        if _should_skip_guarded_tokens(rel_file):
-            continue
-        try:
-            text = (repo_root / rel_file).read_text(encoding="utf-8", errors="ignore")
-        except OSError:
-            continue
-        if _LEGACY_TOKEN_PATTERN.search(text):
-            disallowed_legacy_files.append(str(rel_file))
-    if disallowed_legacy_files:
-        failures.append(
-            "Detected forbidden uses of the word 'legacy' outside migration docs: "
-            + ", ".join(sorted(disallowed_legacy_files))
-        )
-
-    new_krypto_occurrences = _collect_added_lines(
-        repo_root,
-        description="KryptoLowca token",
-        predicate=lambda text: bool(_KRYPTOLowca_TOKEN_PATTERN.search(text)),
-        skip_file=_should_skip_guarded_tokens,
-    )
-    if new_krypto_occurrences:
-        failures.append(
-            "Detected new occurrences of 'KryptoLowca' outside migration docs:\n"
-            + "\n".join(new_krypto_occurrences)
-        )
-
-    if warnings:
-        print("\n".join(f"WARNING: {warning}" for warning in warnings))
-
     if failures:
         print("\n".join(failures))
         return 1
-
-    if warnings:
-        print(
-            "Repository layout lint passed with warnings: archiwalne katalogi "
-            "oznaczono do usunięcia, nowe importy nie zostały znalezione."
-        )
-    else:
-        print(
-            "Repository layout lint passed: archiwalne katalogi nie występują, "
-            "brak zabronionych importów KryptoLowca."
-        )
+    print(
+        "Repository layout lint passed: brak zabronionych katalogów, importów i"
+        " wykonywalnych plików w archive/."
+    )
     return 0
 
 

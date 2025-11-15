@@ -149,9 +149,10 @@ class SecretStore:
             return
         self._migration_checked = True
 
-        # Walidacja plików w formacie legacy została przeniesiona do narzędzia migracyjnego
-        # `dudzian_migrate.secret_store`. Runtime zakłada, że środowisko zostało już
-        # przygotowane zgodnie z dokumentacją migracyjną.
+        # Walidacja historycznych plików Stage5 została przeniesiona do narzędzia
+        # migracyjnego `dudzian_migrate.secret_store`. Runtime zakłada, że
+        # środowisko zostało już przygotowane zgodnie z dokumentacją
+        # migracyjną.
 
     def _storage_key(self, exchange_id: str) -> str:
         return f"{self._STORAGE_NAMESPACE}:{exchange_id}"

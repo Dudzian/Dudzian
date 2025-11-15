@@ -205,6 +205,21 @@ ui:
   restore_layout_on_start: true
   telemetry_sink: logs/ui_metrics.jsonl
 
+cloud:
+  enabled: false
+  default_profile: local-desktop
+  profiles:
+    local-desktop:
+      mode: local
+      description: W pełni lokalny backend desktopowy
+      entrypoint: trading_gui
+    staging-cloud:
+      mode: remote
+      description: Eksperymentalny backend cloudowy Stage6
+      client_config: config/cloud/client.yaml
+      require_flag: true
+      allow_local_fallback: true
+
 marketplace:
   enabled: true
   presets_path: config/marketplace/presets

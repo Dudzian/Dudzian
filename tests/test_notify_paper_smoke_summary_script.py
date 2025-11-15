@@ -164,7 +164,7 @@ def _write_summary(tmp_path: Path, **overrides: object) -> Path:
             "report_path": str(tmp_path / "rbac" / "audit.json"),
             "status": "ok",
             "exit_code": 0,
-            "warnings": ["Legacy auth token"],
+            "warnings": ["Historyczny token Stage5"],
             "errors": [],
         },
         "security_baseline": {

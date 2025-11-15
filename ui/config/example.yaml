@@ -22,7 +22,7 @@ tls:
   client_certificate: secrets/mtls/core-oem-client.pem
   client_key: secrets/mtls/core-oem-client-key.pem
 
-# Legacy override dla SNI / SAN serwera (nowe buildy używają grpc.tls.server_name)
+# Historyczny override Stage5 dla SNI / SAN serwera (nowe buildy używają grpc.tls.server_name)
 target_name_override: core-daemon.internal
 
 instrument:
