@@ -1,0 +1,46 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 960 540" role="img" aria-label="PySide6 dashboard z panelem blur">
+  <defs>
+    <linearGradient id="bg" x1="0" x2="0" y1="0" y2="1">
+      <stop offset="0%" stop-color="#0c1220" />
+      <stop offset="100%" stop-color="#04070f" />
+    </linearGradient>
+    <linearGradient id="card" x1="0" x2="1" y1="0" y2="1">
+      <stop offset="0%" stop-color="#1e2a44" stop-opacity="0.75" />
+      <stop offset="100%" stop-color="#121a2f" stop-opacity="0.85" />
+    </linearGradient>
+    <filter id="blurOverlay" x="-0.1" y="-0.1" width="1.2" height="1.2">
+      <feGaussianBlur in="SourceGraphic" stdDeviation="12" />
+    </filter>
+  </defs>
+  <rect width="960" height="540" fill="url(#bg)" />
+  <text x="40" y="60" fill="#8fd4ff" font-family="Inter, 'Segoe UI', sans-serif" font-size="32" font-weight="600">PySide6 / Qt Quick Dashboard</text>
+  <text x="40" y="96" fill="#9fb4d8" font-family="Inter, 'Segoe UI', sans-serif" font-size="18">Explainability · Blur overlay · FontAwesome glyphs</text>
+
+  <g transform="translate(40 130)">
+    <rect width="580" height="240" rx="18" fill="url(#card)" stroke="#2f3f67" stroke-width="1" />
+    <text x="24" y="40" fill="#f4f7ff" font-size="20" font-family="Inter, 'Segoe UI', sans-serif">History P&amp;L</text>
+    <polyline points="24,190 80,140 140,170 200,120 260,150 320,90 380,110 440,60 500,130 556,80" fill="none" stroke="#58fca8" stroke-width="4" stroke-linecap="round" />
+    <polyline points="24,210 80,200 140,215 200,205 260,215 320,210 380,220 440,210 500,215 556,208" fill="none" stroke="#ff738a" stroke-width="2" stroke-dasharray="6 8" />
+  </g>
+
+  <g transform="translate(650 130)">
+    <rect width="270" height="240" rx="18" fill="#11192c" opacity="0.82" />
+    <rect width="270" height="240" rx="18" fill="#0c1220" opacity="0.45" filter="url(#blurOverlay)" />
+    <rect width="270" height="240" rx="18" fill="none" stroke="#7fb7ff" stroke-dasharray="10 8" stroke-width="2" />
+    <text x="22" y="42" fill="#dbe8ff" font-size="20" font-family="Inter, 'Segoe UI', sans-serif">Explainability</text>
+    <text x="22" y="78" fill="#8fd4ff" font-size="14" font-family="Inter, 'Segoe UI', sans-serif">Model ARB-Q-24</text>
+    <text x="22" y="102" fill="#a5b6d7" font-size="13" font-family="Inter, 'Segoe UI', sans-serif">Top + : momentum_12h, funding_score</text>
+    <text x="22" y="124" fill="#a5b6d7" font-size="13" font-family="Inter, 'Segoe UI', sans-serif">Top - : liquidation_heatmap, depth_ratio</text>
+    <text x="22" y="152" fill="#f4f7ff" font-size="32" font-family="'Font Awesome 6 Free', 'Font Awesome 5 Free', sans-serif"></text>
+    <text x="62" y="152" fill="#9fb4d8" font-size="14" font-family="Inter, 'Segoe UI', sans-serif">Blur overlay active</text>
+    <text x="22" y="190" fill="#f4f7ff" font-size="13" font-family="Inter, 'Segoe UI', sans-serif">Risk journal synced</text>
+  </g>
+
+  <g transform="translate(40 400)">
+    <rect width="880" height="110" rx="18" fill="#11192c" opacity="0.9" />
+    <text x="24" y="45" fill="#8fd4ff" font-size="18" font-family="Inter, 'Segoe UI', sans-serif">Runtime Overview</text>
+    <text x="24" y="72" fill="#f4f7ff" font-size="14" font-family="Inter, 'Segoe UI', sans-serif">Risk journal · Stress overrides · Alert toast queue</text>
+    <text x="24" y="96" fill="#9fb4d8" font-size="12" font-family="Inter, 'Segoe UI', sans-serif">PySide6 backend: runtime_service.py · explainability_feed.py</text>
+    <text x="780" y="72" fill="#f4f7ff" font-size="26" font-family="'Font Awesome 6 Free', 'Font Awesome 5 Free', sans-serif"></text>
+  </g>
+</svg>

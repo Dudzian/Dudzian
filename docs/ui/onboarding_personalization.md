@@ -38,9 +38,8 @@ Nowy moduł **Strategie 360°** w powłoce Qt zapewnia gotowe ekrany startowe or
 
 ## Testy i jakość
 
-- Nowe scenariusze QML w `ui/tests/qml/tst_strategy_personalization.qml` pokrywają dashboard, kreator, personalizację motywów oraz
-  edycję niestandardowych kolorów.
-- Jednostkowy test C++ `ui/tests/UserProfileControllerTest.cpp` weryfikuje obsługę profili, ulubionych strategii, zmian motywu oraz
-  zapisywanie i czyszczenie nadpisanych kolorów.
+- `tests/ui_pyside/test_mode_wizard.py` pokrywa dashboard kreatora, rekomendacje trybów, personalizację motywów oraz sygnały blur/FontAwesome.
+- `tests/ui_pyside/test_layout_profiles.py` i `tests/ui_pyside/test_theme_tokens.py` weryfikują obsługę profili, ulubionych strategii,
+  zmian motywu oraz zapisywanie i czyszczenie nadpisanych kolorów.
 
 Te elementy zapewniają spójny onboarding użytkownika oraz szybsze wdrożenie strategów do pracy z katalogiem.

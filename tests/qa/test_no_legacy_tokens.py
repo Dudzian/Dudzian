@@ -15,7 +15,7 @@ SKIP_DIR_NAMES = {
     ".venv",
     "__pycache__",
 }
-ALLOWLISTED_DIRS: tuple[Path, ...] = tuple(Path(name) for name in ("docs", "archive"))
+ALLOWLISTED_DIRS: tuple[Path, ...] = tuple(Path(name) for name in ("docs", "archive", "reports"))
 ALLOWLISTED_FILES: set[Path] = set()
 ALLOWLISTED_FILENAME_PREFIXES: tuple[str, ...] = ("README",)
 
@@ -37,6 +37,9 @@ def _iter_repo_files(root: Path):
     for dirpath, dirnames, filenames in os.walk(root):
         rel_dir = Path(dirpath).relative_to(root)
         if _should_skip(rel_dir):
+            dirnames[:] = []
+            continue
+        if rel_dir != Path(".") and _is_allowlisted(rel_dir):
             dirnames[:] = []
             continue
         for filename in filenames:
@@ -78,6 +81,12 @@ def test_no_stage5_tokens_outside_docs():  # pragma: no cover
 def test_allowlisted_paths_can_use_token(tmp_path):
     (tmp_path / "docs").mkdir()
     (tmp_path / "docs" / "story.md").write_text(TOKEN_LITERAL, encoding="utf-8")
+
+    (tmp_path / "archive").mkdir()
+    (tmp_path / "archive" / "notes.txt").write_text(TOKEN_LITERAL, encoding="utf-8")
+
+    (tmp_path / "reports").mkdir()
+    (tmp_path / "reports" / "retro.md").write_text(TOKEN_LITERAL, encoding="utf-8")
 
     allowed_readme = tmp_path / "README_history.md"
     allowed_readme.write_text(TOKEN_LITERAL, encoding="utf-8")
