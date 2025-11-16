@@ -12,7 +12,7 @@
 - **Compliance** – podpisy HMAC, dzienniki decyzji i workflow audytowy w trakcie cykli hypercare.
 
 ## Skrót statusu obszarów
-- **Strategia:** funkcje core pokrywają scenariusze CryptoHopper, wymaga dopracowania publicznego marketplace’u presetów i komunikacji Stress Labs.
+- **Strategia:** funkcje core pokrywają scenariusze CryptoHopper, a `PresetPublicationWorkflow` + testy `tests/test_marketplace_workflow.py` zapewniają podpisane marketplace’y i payload do kreatora PySide6; kontynuować komunikację Stress Labs.
 - **Automatyzacja:** Stage6 utrzymuje przewagę dzięki Hypercare Orchestratorowi (podpisy HMAC, resilience/offline) i nowym fallbackom CCXT dla KuCoin/Huobi/Gemini.
 - **UI:** feed gRPC spełnia SLO (p95 ≤3 s), telemetria decyzji jest kompletna, a testy PySide6 w CI pilnują regresji; kolejnym krokiem jest utrzymanie monitoringu SLA i alertów HyperCare.
 - **Compliance:** przewaga dzięki offline-first journalingowi i podpisom HMAC. Konieczne regularne audyty bundli i aktualizacja materiałów produktowych.
@@ -40,7 +40,8 @@
 | Portfolio adaptacyjne / rebalancing | PortfolioGovernor z integracją Stress Lab, override SLO i logiem HMAC. | Automatyczne rebalancingi strategii Pro, oparte o sygnały i copy trading. | Parzystość – kontrolować poziom konfiguracji limitów ryzyka. |
 | Poziomy automatyzacji | Stage6 Hypercare Orchestrator łączy cykle portfela, resilience i observability w jednym przebiegu podpisanym HMAC. | Tryby automatyczny/półautomatyczny (strategie, trailing stop, copy bots). | Przewaga Dudzian – utrzymać autonomiczny hypercare offline. |
 | Obsługa wielu giełd | Integracje Binance, Coinbase, Kraken, OKX, Bitget, Bybit, KuCoin, Huobi, Gemini **oraz Deribit/BitMEX futures** (paper/testnet/live z podpisanymi checklistami). | Wsparcie >16 giełd, w tym Binance, Coinbase, Kraken, KuCoin, Huobi. | Luka domknięta w segmencie futures – utrzymać regresje adapterów i monitoring HyperCare. |
-| Marketplace strategii | Lokalny marketplace presetów i pipeline AI walk-forward. | Globalny marketplace z copy tradingiem, algorytmami społeczności. | Luka – przygotować publiczne listingi presetów i recenzje. |
+| Marketplace strategii | Lokalny marketplace presetów (`PresetPublicationWorkflow`, wizard PySide6) z podpisami HMAC i recenzjami QA. | Globalny marketplace z copy tradingiem, algorytmami społeczności. | Przewaga w audytowalności – utrzymać publiczne listingi i publikacje QA. |
+| Tryby AI Governor | AutoTrader AI Governor (scalping/hedge/grid) z telemetrią `riskMetrics`/`cycleMetrics`, test `tests/e2e/test_autotrader_autonomy.py::test_autotrader_ai_governor_snapshot_reports_mode`. | Tryby automatyczne/półautomatyczne wymagające ręcznej konfiguracji kosztów. | Przewaga Dudzian – eksponować adaptacyjne tryby w marketingu. |
 | Stress Lab i symulacje | Scenariusze multi-market, blackout infrastrukturalny i bundling raportów podpisanych HMAC. | Backtesting i paper trading, brak publicznych stres testów multi-market. | Przewaga Dudzian – komunikować stress labs w marketingu. |
 | Resilience / DR | ResilienceHypercareCycle, self-healing runtime, failover drill i bundler artefaktów podpisanych HMAC. | Failover podstawowy (API failover, monitoring uptime). | Przewaga Dudzian – utrzymać przewagę w audycie DR. |
 | UI decyzji | Dashboard QML z kartą „Decyzje AI”, wymagająca integracji gRPC dla pełnego feedu runtime. | Webowy UI z dostępem do sygnałów i alertów w czasie rzeczywistym. | Luka – zakończyć integrację gRPC, zapewnić widok live. |
@@ -95,6 +96,7 @@
 | 2024-07-31 | Automatyzacja | Potwierdzono status 🟢 po regresjach nightly; rozszerzono checklistę wsparcia. | `var/audit/hypercare/2024-07/summary.json`, `docs/support/plan.md` |
 | 2024-08-31 | Strategia, Compliance | Publikacja roadmapy presetów i wyników audytu Q2. | `reports/strategy/presets_beta.md`, `var/audit/compliance/2024-Q2.pdf` |
 | 2024-09-30 | Integracje giełdowe | Dodano adaptery KuCoin/Huobi/Gemini (paper/testnet/failover) oraz zaktualizowano marketplace i benchmark. | `docs/roadmap/exchange_adapter_rollout.md`, `config/marketplace/presets/exchanges/` |
+| 2025-01-15 | Strategia, UI | Udokumentowano AI Governor, payload importu presetów do kreatora PySide6 oraz przewagę vs CryptoHopper (testy e2e). | `tests/e2e/test_autotrader_autonomy.py`, `tests/test_marketplace_workflow.py`, `reports/strategy/presets_2025-01-15.md` |
 
 > Utrzymuj tabelę w formacie kroniki – każdy wpis powinien mieć link do źródłowych artefaktów oraz krótkie streszczenie wpływu na plan domykania luk.
 

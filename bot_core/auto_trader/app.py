@@ -38,6 +38,7 @@ import pandas as pd
 from core.perf import ProfileReport, profile_block
 
 from bot_core.alerts.base import AlertMessage, AlertRouter
+from bot_core.auto_trader.ai_governor import AutoTraderAIGovernor
 from bot_core.auto_trader.audit import DecisionAuditLog
 from bot_core.auto_trader.decision_scheduler import AutoTraderDecisionScheduler
 from bot_core.auto_trader.performance import build_cycle_equity_summary
@@ -672,6 +673,12 @@ class AutoTrader:
             self._active_mode_profile = self._mode_profiles[default_key]
             self._active_decision_mode = default_key
         self._mode_transition_history: deque[dict[str, Any]] = deque(maxlen=64)
+        self._ai_governor = AutoTraderAIGovernor()
+        self._ai_governor_hint_mode: str | None = None
+        self._ai_governor_hint_confidence: float = 0.0
+        self._ai_governor_last_cost_bps: float | None = None
+        self._ai_governor_cycle_metrics: dict[str, float] = {}
+        self._ai_governor_risk_metrics: dict[str, float] = {}
         self._recent_guardrail_events: deque[tuple[str, float]] = deque(maxlen=128)
         self._strategy_regime_workflow = self._initialize_strategy_regime_workflow()
         self._active_preset_state: dict[str, Any] | None = None
@@ -2495,6 +2502,7 @@ class AutoTrader:
         *,
         assessment: MarketRegimeAssessment | None = None,
         summary: RegimeSummary | None = None,
+        workflow_summary: RegimeSummary | None = None,
         silent: bool = False,
     ) -> bool:
         target = str(profile or "").strip()
@@ -3663,6 +3671,30 @@ class AutoTrader:
                 normalized_size = profile.position_size.default or profile.position_size.min
             setattr(self, "current_position_size", profile.position_size.clamp(normalized_size))
 
+    def _ai_governor_risk_snapshot(
+        self, assessment: MarketRegimeAssessment | None
+    ) -> dict[str, float]:
+        now = time.time()
+        cooldown_until = getattr(self, "_cooldown_until", 0.0)
+        metrics = {
+            "risk_score": float(assessment.risk_score) if assessment else 0.0,
+            "guardrail_active": 1.0 if self._exchange_degradation_guardrail_active else 0.0,
+            "kill_switch": 1.0 if self._exchange_degradation_kill_switch else 0.0,
+            "cooldown_active": 1.0 if cooldown_until > now else 0.0,
+            "guardrail_reasons": float(len(self._last_guardrail_reasons)),
+        }
+        return metrics
+
+    def _ai_governor_cycle_snapshot(self) -> dict[str, float]:
+        try:
+            labels = dict(self._base_metric_labels)
+        except Exception:  # pragma: no cover - defensywne kopiowanie
+            labels = {}
+        try:
+            return self._snapshot_decision_metrics(labels)
+        except Exception:  # pragma: no cover - diagnostyka metryk
+            return {}
+
     def _evaluate_dynamic_mode(
         self,
         *,
@@ -3674,6 +3706,21 @@ class AutoTrader:
     ) -> None:
         if not self._mode_profiles:
             return
+        governor = getattr(self, "_ai_governor", None)
+        if governor is not None:
+            self._ai_governor_cycle_metrics = self._ai_governor_cycle_snapshot()
+            self._ai_governor_risk_metrics = self._ai_governor_risk_snapshot(assessment)
+            decision = governor.update_context(
+                assessment=assessment,
+                risk_metrics=self._ai_governor_risk_metrics,
+                cycle_metrics=self._ai_governor_cycle_metrics,
+                transaction_cost_bps=self._ai_governor_last_cost_bps,
+            )
+            self._ai_governor_hint_mode = decision.mode
+            self._ai_governor_hint_confidence = decision.confidence
+        else:
+            self._ai_governor_hint_mode = None
+            self._ai_governor_hint_confidence = 0.0
         selected = self._select_mode_profile(
             assessment,
             summary,
@@ -3723,6 +3770,8 @@ class AutoTrader:
         }
         best_profile: _ModeProfile | None = None
         best_score = float("-inf")
+        hint_mode = getattr(self, "_ai_governor_hint_mode", None)
+        governor = getattr(self, "_ai_governor", None)
         for profile in self._mode_profiles.values():
             if profile.required_inputs:
                 required = {token.lower() for token in profile.required_inputs}
@@ -3747,6 +3796,8 @@ class AutoTrader:
             score -= self._guardrail_penalty(profile)
             if self._mode_transition_history and self._mode_transition_history[-1]["mode"] == profile.name:
                 score += 0.05
+            if hint_mode and governor is not None:
+                score += governor.mode_adjustment(profile.name)
             if score > best_score:
                 best_score = score
                 best_profile = profile
@@ -8339,6 +8390,7 @@ class AutoTrader:
         *,
         effective_risk: float,
         summary: RegimeSummary | None = None,
+        workflow_summary: RegimeSummary | None = None,
         cooldown_active: bool = False,
         cooldown_remaining: float = 0.0,
         cooldown_reason: str | None = None,
@@ -9119,6 +9171,7 @@ class AutoTrader:
             assessment,
             effective_risk=effective_risk,
             summary=summary,
+            workflow_summary=workflow_summary,
             cooldown_active=cooldown_active,
             cooldown_remaining=cooldown_remaining,
             cooldown_reason=self._cooldown_reason,
@@ -15576,6 +15629,17 @@ class AutoTrader:
         result["risk_alerts"] = risk_alerts
         result["signal_quality"] = signal_quality_snapshot
         result["failover"] = failover_snapshot
+        governor = getattr(self, "_ai_governor", None)
+        if governor is not None:
+            result["ai_governor"] = {
+                **governor.snapshot(),
+                "telemetry": {
+                    "riskMetrics": dict(self._ai_governor_risk_metrics),
+                    "cycleMetrics": dict(self._ai_governor_cycle_metrics),
+                },
+            }
+        else:
+            result["ai_governor"] = {"last_decision": {}, "history": [], "telemetry": {}}
 
         allocation_snapshot = self._resolve_exchange_allocations()
         if allocation_snapshot:
