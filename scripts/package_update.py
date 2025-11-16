@@ -1,4 +1,4 @@
-"""Tworzenie podpisanych pakietów aktualizacji `.kbot`."""
+"""Tworzenie podpisanych pakietów aktualizacji `.dudzianpkg`."""
 from __future__ import annotations
 
 import argparse
@@ -11,6 +11,7 @@ from pathlib import Path
 from typing import Mapping
 
 from bot_core.security.signing import build_hmac_signature
+from core.update.offline_updater import OFFLINE_PACKAGE_EXTENSION
 
 
 def _hash_sha256(path: Path) -> str:
@@ -42,7 +43,7 @@ def _parse_metadata(values: list[str]) -> Mapping[str, object]:
     return metadata
 
 
-def build_kbot_package(
+def build_offline_package(
     *,
     package_id: str,
     version: str,
@@ -53,7 +54,7 @@ def build_kbot_package(
     signing_key: bytes | None = None,
     signing_key_id: str | None = None,
 ) -> Path:
-    """Tworzy podpisaną paczkę `.kbot` z katalogu źródłowego."""
+    """Tworzy podpisaną paczkę `.dudzianpkg` z katalogu źródłowego."""
 
     payload_dir = payload_dir.expanduser().resolve()
     if not payload_dir.exists() or not payload_dir.is_dir():
@@ -62,7 +63,7 @@ def build_kbot_package(
     output_path = output_path.expanduser()
     output_path.parent.mkdir(parents=True, exist_ok=True)
 
-    staging_dir = Path(tempfile.mkdtemp(prefix="kbot_build_"))
+    staging_dir = Path(tempfile.mkdtemp(prefix="offline_pkg_build_"))
     try:
         payload_archive = staging_dir / "payload.tar"
         _build_payload_archive(payload_dir, payload_archive)
@@ -123,7 +124,11 @@ def _load_signing_key(args: argparse.Namespace) -> tuple[bytes | None, str | Non
 def parse_arguments(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("payload", type=Path, help="Katalog z plikami aktualizacji")
-    parser.add_argument("output", type=Path, help="Ścieżka do wynikowej paczki .kbot")
+    parser.add_argument(
+        "output",
+        type=Path,
+        help=f"Ścieżka do wynikowej paczki {OFFLINE_PACKAGE_EXTENSION}",
+    )
     parser.add_argument("--package-id", required=True, help="Identyfikator pakietu")
     parser.add_argument("--version", required=True, help="Wersja pakietu")
     parser.add_argument("--fingerprint", help="Opcjonalny fingerprint urządzenia")
@@ -139,7 +144,7 @@ def main(argv: list[str] | None = None) -> int:
     metadata = _parse_metadata(args.metadata) if args.metadata else {}
     signing_key, signing_key_id = _load_signing_key(args)
     try:
-        build_kbot_package(
+        build_offline_package(
             package_id=args.package_id,
             version=args.version,
             payload_dir=args.payload,
@@ -158,4 +163,4 @@ if __name__ == "__main__":  # pragma: no cover - punkt wejścia CLI
     raise SystemExit(main())
 
 
-__all__ = ["build_kbot_package", "main", "parse_arguments"]
+__all__ = ["build_offline_package", "main", "parse_arguments"]

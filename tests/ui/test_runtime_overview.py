@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import os
 from datetime import datetime, timezone
+import base64
 from pathlib import Path
 from typing import Any
 
@@ -24,8 +25,10 @@ from PySide6.QtCore import (  # type: ignore[attr-defined]
     QMetaObject,
     Q_ARG,
     Signal,
+    QByteArray,
 )
 from PySide6.QtQml import QQmlApplicationEngine  # type: ignore[attr-defined]
+from PySide6.QtGui import QImage  # type: ignore[attr-defined]
 
 try:  # pragma: no cover - zależne od środowiska CI
     from PySide6.QtWidgets import QApplication  # type: ignore[attr-defined]
@@ -93,6 +96,10 @@ class _StubRuntimeService(QObject):
     operatorActionChanged = Signal()
     longPollMetricsChanged = Signal()
     cycleMetricsChanged = Signal()
+    feedTransportSnapshotChanged = Signal()
+    aiRegimeBreakdownChanged = Signal()
+    adaptiveStrategySummaryChanged = Signal()
+    regimeActivationSummaryChanged = Signal()
 
     def __init__(self) -> None:
         super().__init__()
@@ -103,6 +110,15 @@ class _StubRuntimeService(QObject):
         self._last_operator_action: dict[str, Any] = {}
         self._longpoll_metrics: list[dict[str, Any]] = []
         self._cycle_metrics: dict[str, float] = {}
+        self._feed_transport_snapshot: dict[str, Any] = {
+            "status": "initializing",
+            "mode": "demo",
+            "label": "",
+            "reconnects": 0,
+        }
+        self._ai_regime_breakdown: list[dict[str, Any]] = []
+        self._adaptive_summary = ""
+        self._regime_summary = ""
 
     @Property("QVariantList", notify=decisionsChanged)
     def decisions(self) -> list[dict[str, Any]]:  # type: ignore[override]
@@ -131,6 +147,22 @@ class _StubRuntimeService(QObject):
     @Property("QVariantMap", notify=cycleMetricsChanged)
     def cycleMetrics(self) -> dict[str, Any]:  # type: ignore[override]
         return {key: float(value) for key, value in self._cycle_metrics.items()}
+
+    @Property("QVariantMap", notify=feedTransportSnapshotChanged)
+    def feedTransportSnapshot(self) -> dict[str, Any]:  # type: ignore[override]
+        return dict(self._feed_transport_snapshot)
+
+    @Property("QVariantList", notify=aiRegimeBreakdownChanged)
+    def aiRegimeBreakdown(self) -> list[dict[str, Any]]:  # type: ignore[override]
+        return [dict(entry) for entry in self._ai_regime_breakdown]
+
+    @Property(str, notify=adaptiveStrategySummaryChanged)
+    def adaptiveStrategySummary(self) -> str:  # type: ignore[override]
+        return self._adaptive_summary
+
+    @Property(str, notify=regimeActivationSummaryChanged)
+    def regimeActivationSummary(self) -> str:  # type: ignore[override]
+        return self._regime_summary
 
     def loadRecentDecisions(self, limit: int = 0) -> list[dict[str, Any]]:
         if limit > 0:
@@ -166,6 +198,22 @@ class _StubRuntimeService(QObject):
     def push_cycle_metrics(self, payload: dict[str, float]) -> None:
         self._cycle_metrics = {str(key): float(value) for key, value in payload.items()}
         self.cycleMetricsChanged.emit()
+
+    def push_feed_transport(self, payload: dict[str, Any]) -> None:
+        self._feed_transport_snapshot = dict(payload)
+        self.feedTransportSnapshotChanged.emit()
+
+    def push_ai_regimes(self, payload: list[dict[str, Any]]) -> None:
+        self._ai_regime_breakdown = [dict(entry) for entry in payload]
+        self.aiRegimeBreakdownChanged.emit()
+
+    def set_adaptive_summary(self, summary: str, activation: str) -> None:
+        if self._adaptive_summary != summary:
+            self._adaptive_summary = summary
+            self.adaptiveStrategySummaryChanged.emit()
+        if self._regime_summary != activation:
+            self._regime_summary = activation
+            self.regimeActivationSummaryChanged.emit()
 
 
 def _sample_snapshot() -> RuntimeTelemetrySnapshot:
@@ -777,3 +825,74 @@ def test_runtime_service_feed_health_exports_alerts(monkeypatch: pytest.MonkeyPa
     demo_entry = next(entry for entry in dashboard if entry["adapter"] == "demo")
     assert demo_entry["latency_p95_ms"] is not None
     assert demo_entry["status"] == "connected"
+
+
+@pytest.mark.timeout(30)
+def test_runtime_overview_strategy_ai_panel_tracks_transport() -> None:
+    provider = _StubTelemetryProvider()
+    runtime_service = _StubRuntimeService()
+
+    app = QApplication.instance() or QApplication([])
+    engine = QQmlApplicationEngine()
+    engine.rootContext().setContextProperty("telemetryProvider", provider)
+    engine.rootContext().setContextProperty("runtimeService", runtime_service)
+    qml_path = Path(__file__).resolve().parents[2] / "ui" / "qml" / "dashboard" / "RuntimeOverview.qml"
+    engine.load(QUrl.fromLocalFile(str(qml_path)))
+    assert engine.rootObjects(), "Nie udało się załadować RuntimeOverview.qml"
+    root = engine.rootObjects()[0]
+
+    runtime_service.push_ai_regimes(
+        [
+            {
+                "regime": "trend",
+                "bestStrategy": "trend_following",
+                "meanReward": 1.2,
+                "plays": 5,
+            }
+        ]
+    )
+    runtime_service.push_feed_transport(
+        {
+            "status": "connected",
+            "mode": "grpc",
+            "label": "grpc://localhost:50051",
+            "reconnects": 1,
+            "latencyP95": 245.0,
+            "lastError": "",
+        }
+    )
+    runtime_service.set_adaptive_summary("trend: trend_following", "trend -> trend_following")
+    app.processEvents()
+
+    panel = root.findChild(QObject, "runtimeOverviewStrategyAiPanel")
+    assert panel is not None
+    transport_label = root.findChild(QObject, "strategyAiTransportLabel")
+    assert transport_label is not None
+    assert "connected" in transport_label.property("text").lower()
+
+    activation_label = root.findChild(QObject, "strategyAiActivationSummary")
+    assert activation_label is not None
+    assert activation_label.property("visible") is True
+
+    regime_model = root.property("aiRegimeBreakdown")
+    assert isinstance(regime_model, list)
+    assert regime_model[0]["bestStrategy"] == "trend_following"
+
+    engine.deleteLater()
+    app.quit()
+
+
+def test_runtime_overview_reference_screenshot_exists() -> None:
+    reference_path = Path(__file__).resolve().parent / "screenshots" / "runtime_overview_reference.json"
+    assert reference_path.exists(), "Brak referencyjnego zrzutu RuntimeOverview"
+
+    payload = json.loads(reference_path.read_text(encoding="utf-8"))
+    encoded_chunks = payload.get("data", [])
+    assert encoded_chunks, "Brak danych bazowych zrzutu"
+    raw_bytes = base64.b64decode("".join(encoded_chunks))
+
+    image = QImage()
+    assert image.loadFromData(QByteArray(raw_bytes), payload.get("format", "png")), "Nie udało się odczytać zrzutu"
+    assert not image.isNull(), "Referencyjny zrzut ekranu jest uszkodzony"
+    assert image.width() >= payload.get("width", 32)
+    assert image.height() >= payload.get("height", 32)

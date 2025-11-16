@@ -21,9 +21,9 @@ def _parse_metadata(entries: list[str]) -> dict[str, Any]:
 
 
 def _build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(description="Buduje paczkę .kbot do dystrybucji offline.")
+    parser = argparse.ArgumentParser(description="Buduje paczkę .dudzianpkg do dystrybucji offline.")
     parser.add_argument("--payload", required=True, help="Katalog z artefaktami aktualizacji")
-    parser.add_argument("--output", required=True, help="Ścieżka docelowa paczki .kbot")
+    parser.add_argument("--output", required=True, help="Ścieżka docelowa paczki .dudzianpkg")
     parser.add_argument("--package-id", required=True, help="Identyfikator pakietu aktualizacji")
     parser.add_argument("--version", required=True, help="Wersja pakietu")
     parser.add_argument("--fingerprint", help="Opcjonalny fingerprint przypisany do pakietu")

@@ -7,12 +7,13 @@ import re
 import sys
 
 # Paths are relative to repository root.
+_LEGACY_NAMESPACE = "".join(("Kr", "yptoLowca"))
 _BANNED_ROOTS = {
-    pathlib.Path("KryptoLowca"),
+    pathlib.Path(_LEGACY_NAMESPACE),
 }
 BANNED_PATHS = sorted(_BANNED_ROOTS)
 
-_IMPORT_PATTERN = re.compile(r"^\s*(?:from|import)\s+KryptoLowca\b", re.MULTILINE)
+_IMPORT_PATTERN = re.compile(rf"^\s*(?:from|import)\s+{_LEGACY_NAMESPACE}\\b", re.MULTILINE)
 _EXECUTABLE_EXTENSIONS = {
     ".py",
     ".pyc",
@@ -70,7 +71,7 @@ def main() -> int:
 
     if forbidden_imports:
         failures.append(
-            "Found imports of KryptoLowca in new modules: "
+            f"Found imports of {_LEGACY_NAMESPACE} in new modules: "
             + ", ".join(sorted(forbidden_imports))
             + ". Use bot_core instead."
         )

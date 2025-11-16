@@ -8,7 +8,7 @@ import logging
 import signal
 import sys
 from pathlib import Path
-from typing import Iterable
+from typing import Iterable, Mapping
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 SCRIPT_DIR = Path(__file__).resolve().parent
@@ -55,11 +55,14 @@ def _parse_args(argv: Iterable[str] | None = None) -> argparse.Namespace:
         action="store_true",
         help="Wyemituj komunikat ready na stdout",
     )
+    parser.add_argument(
+        "--health-file",
+        help="Ścieżka do pliku health probe (aktualizowana cyklicznie)",
+    )
     return parser.parse_args(argv)
 
 
-def _emit_ready(address: str, *, ready_file: str | None, emit_stdout: bool) -> None:
-    payload = {"event": "ready", "address": address}
+def _emit_ready(payload: Mapping[str, object], *, ready_file: str | None, emit_stdout: bool) -> None:
     serialized = json.dumps(payload, ensure_ascii=False)
     if ready_file:
         Path(ready_file).expanduser().write_text(serialized, encoding="utf-8")
@@ -76,7 +79,15 @@ def main(argv: Iterable[str] | None = None) -> int:
         logging.getLogger(__name__).error("Nie udało się załadować konfiguracji cloud: %s", exc)
         return 2
 
-    service = CloudRuntimeService(config)
+    service = CloudRuntimeService(
+        config,
+        ready_hook=lambda payload: _emit_ready(
+            payload,
+            ready_file=args.ready_file,
+            emit_stdout=args.emit_stdout,
+        ),
+        health_probe_path=args.health_file,
+    )
 
     stop_requested = False
 
@@ -93,9 +104,6 @@ def main(argv: Iterable[str] | None = None) -> int:
     except Exception as exc:  # pragma: no cover - bootstrap
         logging.getLogger(__name__).exception("Nie udało się uruchomić CloudRuntimeService: %s", exc)
         return 3
-
-    if service.address:
-        _emit_ready(service.address, ready_file=args.ready_file, emit_stdout=args.emit_stdout)
 
     try:
         service.wait()

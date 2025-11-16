@@ -2,6 +2,7 @@ import QtQuick
 import QtQuick.Controls
 import QtQuick.Layouts
 import "../styles" as Styles
+import "../design-system" as Design
 import "." as Dashboard
 
 Item {
@@ -23,11 +24,20 @@ Item {
     property string adaptiveStrategySummary: runtimeService && runtimeService.adaptiveStrategySummary
                                               ? runtimeService.adaptiveStrategySummary
                                               : ""
+    property string regimeActivationSummary: runtimeService && runtimeService.regimeActivationSummary
+                                             ? runtimeService.regimeActivationSummary
+                                             : ""
     property var riskMetrics: runtimeService && runtimeService.riskMetrics ? runtimeService.riskMetrics : ({})
     property var riskTimeline: runtimeService && runtimeService.riskTimeline ? runtimeService.riskTimeline : []
     property var lastOperatorAction: runtimeService && runtimeService.lastOperatorAction ? runtimeService.lastOperatorAction : ({})
     property var longPollMetrics: runtimeService && runtimeService.longPollMetrics ? runtimeService.longPollMetrics : []
     property var cycleMetrics: runtimeService && runtimeService.cycleMetrics ? runtimeService.cycleMetrics : ({})
+    property var feedTransportSnapshot: runtimeService && runtimeService.feedTransportSnapshot
+                                        ? runtimeService.feedTransportSnapshot
+                                        : ({})
+    property var aiRegimeBreakdown: runtimeService && runtimeService.aiRegimeBreakdown
+                                    ? runtimeService.aiRegimeBreakdown
+                                    : []
 
     function componentForCard(cardId) {
         switch (cardId) {
@@ -65,6 +75,10 @@ Item {
         root.lastOperatorAction = root.runtimeService ? root.runtimeService.lastOperatorAction : ({})
         root.longPollMetrics = root.runtimeService ? root.runtimeService.longPollMetrics : []
         root.cycleMetrics = root.runtimeService ? root.runtimeService.cycleMetrics : ({})
+        root.feedTransportSnapshot = root.runtimeService ? root.runtimeService.feedTransportSnapshot : ({})
+        root.aiRegimeBreakdown = root.runtimeService ? root.runtimeService.aiRegimeBreakdown : []
+        root.adaptiveStrategySummary = root.runtimeService ? root.runtimeService.adaptiveStrategySummary : ""
+        root.regimeActivationSummary = root.runtimeService ? root.runtimeService.regimeActivationSummary : ""
     }
 
     function refreshAll() {
@@ -133,6 +147,30 @@ Item {
                 return
             root.cycleMetrics = root.runtimeService.cycleMetrics
         }
+
+        function onFeedTransportSnapshotChanged() {
+            if (!root.runtimeService)
+                return
+            root.feedTransportSnapshot = root.runtimeService.feedTransportSnapshot
+        }
+
+        function onAiRegimeBreakdownChanged() {
+            if (!root.runtimeService)
+                return
+            root.aiRegimeBreakdown = root.runtimeService.aiRegimeBreakdown
+        }
+
+        function onAdaptiveStrategySummaryChanged() {
+            if (!root.runtimeService)
+                return
+            root.adaptiveStrategySummary = root.runtimeService.adaptiveStrategySummary
+        }
+
+        function onRegimeActivationSummaryChanged() {
+            if (!root.runtimeService)
+                return
+            root.regimeActivationSummary = root.runtimeService.regimeActivationSummary
+        }
     }
 
     ColumnLayout {
@@ -181,13 +219,23 @@ Item {
             }
         }
 
-        GridLayout {
+        Design.StrategyAiPanel {
+            id: strategyAiPanel
+            objectName: "runtimeOverviewStrategyAiPanel"
+            Layout.fillWidth: true
+            runtimeService: root.runtimeService
+            feedTransportSnapshot: root.feedTransportSnapshot
+            aiRegimes: root.aiRegimeBreakdown
+            adaptiveSummary: root.adaptiveStrategySummary
+            activationSummary: root.regimeActivationSummary
+        }
+
+        Design.ResponsiveGrid {
             id: cardsGrid
             Layout.fillWidth: true
             Layout.fillHeight: true
-            columns: width > 980 ? 3 : 1
-            rowSpacing: 16
-            columnSpacing: 16
+            minColumnWidth: 360
+            maxColumns: 3
 
             Repeater {
                 id: cardRepeater

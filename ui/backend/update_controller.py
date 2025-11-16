@@ -1,4 +1,4 @@
-"""Kontroler importu pakietów `.kbot` na potrzeby dialogu aktualizacji."""
+"""Kontroler importu pakietów `.dudzianpkg` na potrzeby dialogu aktualizacji."""
 from __future__ import annotations
 
 import logging
@@ -6,7 +6,11 @@ from pathlib import Path
 
 from PySide6.QtCore import QObject, Property, Signal, Slot
 
-from core.update.offline_updater import ImportedOfflinePackage, OfflinePackageError, import_kbot_package
+from core.update.offline_updater import (
+    ImportedOfflinePackage,
+    OfflinePackageError,
+    import_offline_package,
+)
 from .logging import get_update_logger
 
 LOGGER = get_update_logger()
@@ -108,7 +112,7 @@ class OfflineUpdateController(QObject):
 
     @Slot(str, result=bool)
     def importPackage(self, package_path: str) -> bool:
-        """Importuje wskazany pakiet `.kbot` do katalogu aktualizacji."""
+        """Importuje wskazany pakiet `.dudzianpkg` do katalogu aktualizacji."""
 
         if self._busy:
             return False
@@ -121,7 +125,7 @@ class OfflineUpdateController(QObject):
 
         self._set_busy(True)
         try:
-            result = import_kbot_package(
+            result = import_offline_package(
                 candidate,
                 self._packages_directory,
                 expected_fingerprint=self._fingerprint,

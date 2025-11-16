@@ -1,4 +1,4 @@
-"""Weryfikacja i import podpisanych pakietów aktualizacji `.kbot`."""
+"""Weryfikacja i import podpisanych pakietów aktualizacji `.dudzianpkg`."""
 from __future__ import annotations
 
 import json
@@ -28,7 +28,7 @@ class OfflinePackageArtifact:
 
 @dataclass(slots=True)
 class OfflinePackageManifest:
-    """Znormalizowany manifest pakietu `.kbot`."""
+    """Znormalizowany manifest pakietu aktualizacji."""
 
     package_id: str
     version: str
@@ -55,12 +55,15 @@ def _ensure_exists(path: Path) -> Path:
     return path
 
 
+OFFLINE_PACKAGE_EXTENSION = ".dudzianpkg"
+
+
 def _extract_package(package_path: Path) -> Path:
     package_path = package_path.expanduser()
     if not package_path.exists():
         raise OfflinePackageError(f"Pakiet {package_path} nie istnieje")
 
-    staging_dir = Path(tempfile.mkdtemp(prefix="kbot_package_"))
+    staging_dir = Path(tempfile.mkdtemp(prefix="offline_package_"))
     try:
         with tarfile.open(package_path, mode="r:gz") as archive:
             archive.extractall(staging_dir)
@@ -186,13 +189,13 @@ def _verify_artifacts(manifest: OfflinePackageManifest, staging_dir: Path) -> di
     return resolved
 
 
-def verify_kbot_package(
+def verify_offline_package(
     package_path: Path,
     *,
     expected_fingerprint: str | None = None,
     hmac_key: bytes | None = None,
 ) -> tuple[OfflinePackageManifest, Mapping[str, object] | None, Path, dict[str, Path]]:
-    """Weryfikuje podpis i integralność pakietu `.kbot`.
+    """Weryfikuje podpis i integralność pakietu aktualizacji.
 
     Funkcja zwraca manifest, podpis, katalog roboczy oraz mapę zweryfikowanych
     artefaktów. Katalog roboczy powinien zostać usunięty przez wywołującego po
@@ -246,16 +249,16 @@ def _signature_string(
     return suffix
 
 
-def import_kbot_package(
+def import_offline_package(
     package_path: Path,
     destination_dir: Path,
     *,
     expected_fingerprint: str | None = None,
     hmac_key: bytes | None = None,
 ) -> ImportedOfflinePackage:
-    """Weryfikuje pakiet `.kbot` i kopiuje jego zawartość do katalogu aktualizacji."""
+    """Weryfikuje pakiet aktualizacji i kopiuje jego zawartość do katalogu docelowego."""
 
-    manifest, signature_payload, staging_dir, artifacts = verify_kbot_package(
+    manifest, signature_payload, staging_dir, artifacts = verify_offline_package(
         package_path,
         expected_fingerprint=expected_fingerprint,
         hmac_key=hmac_key,
@@ -310,6 +313,7 @@ __all__ = [
     "OfflinePackageError",
     "OfflinePackageManifest",
     "ImportedOfflinePackage",
-    "import_kbot_package",
-    "verify_kbot_package",
+    "OFFLINE_PACKAGE_EXTENSION",
+    "import_offline_package",
+    "verify_offline_package",
 ]

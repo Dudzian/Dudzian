@@ -53,6 +53,15 @@ class ThemeRegistry:
             raise FileNotFoundError(path)
         return path.as_uri()
 
+    def icon_glyph(self, token: str) -> str:
+        icon = self.icons.get(token)
+        if not icon:
+            return ""
+        glyph = icon.get("glyph")
+        if isinstance(glyph, str) and glyph:
+            return glyph
+        return ""
+
 
 def _load_json(path: Path) -> MutableMapping[str, object]:
     with path.open("r", encoding="utf-8") as handle:

@@ -1,11 +1,11 @@
-[sources.kryptolowca_files]
+[sources.dudzian_files]
 type = "file"
-include = ["/var/log/kryptolowca/*.log"]
+include = ["/var/log/dudzian/*.log"]
 ignore_older = 86400
 
 [transforms.parse_json]
 type = "remap"
-inputs = ["kryptolowca_files"]
+inputs = ["dudzian_files"]
 source = '''
 structured = false
 if .message != null {
@@ -18,7 +18,7 @@ if !structured {
   . = {"message": to_string!(.)}
 }
 . |= merge!(., {
-  "service": "kryptolowca-bot",
+  "service": "dudzian-bot",
   "environment": get_env!("BOT_ENV", default: "demo"),
 })
 '''
@@ -28,7 +28,7 @@ type = "loki"
 inputs = ["parse_json"]
 endpoint = "http://loki:3100"
 encoding.codec = "json"
-labels.service = "kryptolowca-bot"
+labels.service = "dudzian-bot"
 labels.environment = "${BOT_ENV:-demo}"
 healthcheck.enabled = true
 

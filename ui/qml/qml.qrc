@@ -28,10 +28,15 @@
         <file>components/UserProfileManagementPanel.qml</file>
         <file>design-system/Palette.qml</file>
         <file>design-system/Typography.qml</file>
+        <file>design-system/FrostedGlass.qml</file>
+        <file>design-system/Icon.qml</file>
+        <file>design-system/ResponsiveGrid.qml</file>
+        <file>design-system/StrategyAiPanel.qml</file>
         <file>design-system/components/Card.qml</file>
         <file>design-system/components/MetricTile.qml</file>
         <file>design-system/charts/PnlChart.qml</file>
         <file>design-system/charts/HeatmapChart.qml</file>
+        <file>design-system/fonts/FontAwesomeData.js</file>
         <file>components/workbench/StrategyWorkbench.qml</file>
         <file>components/workbench/StrategyWorkbenchViewModel.qml</file>
         <file>dashboard/RuntimeOverview.qml</file>

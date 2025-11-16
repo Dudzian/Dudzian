@@ -2,10 +2,12 @@
 
 from __future__ import annotations
 
+import json
 import logging
 import threading
+from datetime import datetime, timezone
 from pathlib import Path
-from typing import Callable
+from typing import Callable, Mapping
 
 import grpc
 
@@ -36,6 +38,8 @@ class CloudRuntimeService:
         *,
         context_builder: Callable[[str | Path, str | None], LocalRuntimeContext] = build_local_runtime_context,
         license_service: LicenseService | None = None,
+        ready_hook: Callable[[Mapping[str, object]], None] | None = None,
+        health_probe_path: str | Path | None = None,
     ) -> None:
         self._config = config
         self._context_builder = context_builder
@@ -48,6 +52,9 @@ class CloudRuntimeService:
         self._lock = threading.Lock()
         self._license_snapshot: object | None = None
         self._security_manager: CloudSecurityManager | None = None
+        self._ready_hook = ready_hook
+        self._health_path = Path(health_probe_path).expanduser() if health_probe_path else None
+        self._health_snapshot: dict[str, object] = {"status": "stopped"}
 
     @property
     def address(self) -> str | None:
@@ -67,10 +74,15 @@ class CloudRuntimeService:
     def security_manager(self) -> CloudSecurityManager | None:
         return self._security_manager
 
+    @property
+    def health_snapshot(self) -> Mapping[str, object]:
+        return dict(self._health_snapshot)
+
     def start(self) -> None:
         with self._lock:
             if self._server is not None:
                 return
+            self._update_health(status="starting", address=None)
             runtime_cfg = self._config.runtime
             context = self._context_builder(
                 config_path=runtime_cfg.config_path,
@@ -116,6 +128,13 @@ class CloudRuntimeService:
             self._server = server
             self._orchestrator = orchestrator
             self._address = server.address
+            self._emit_ready_event()
+            orchestrator_health = orchestrator.health_snapshot() if orchestrator else {}
+            self._update_health(
+                status="ready",
+                address=self._address,
+                orchestrator=orchestrator_health,
+            )
 
     def stop(self) -> None:
         with self._lock:
@@ -133,6 +152,7 @@ class CloudRuntimeService:
             self._orchestrator = None
             self._context = None
             self._address = None
+            self._update_health(status="stopped", address=None)
 
     def wait(self) -> None:
         server = self._server
@@ -177,6 +197,50 @@ class CloudRuntimeService:
         else:
             self._security_manager.refresh_allowed_clients(security_cfg.allowed_clients)
         return self._security_manager
+
+    def _emit_ready_event(self) -> None:
+        if self._ready_hook is None or self._address is None:
+            return
+        payload = self._build_ready_payload()
+        try:
+            self._ready_hook(payload)
+        except Exception:  # pragma: no cover - handler zewnętrzny
+            LOGGER.debug("Ready hook zgłosił wyjątek", exc_info=True)
+
+    def _build_ready_payload(self) -> dict[str, object]:
+        security_cfg = self._config.security
+        return {
+            "event": "ready",
+            "address": self._address,
+            "runtime": {
+                "config": str(self._config.runtime.config_path),
+                "entrypoint": self._config.runtime.entrypoint,
+            },
+            "security": {
+                "handshakeRequired": bool(security_cfg.require_handshake),
+                "allowedClients": len(security_cfg.allowed_clients),
+            },
+            "marketplace": {
+                "autoReload": bool(self._config.marketplace.auto_reload),
+                "refreshInterval": int(self._config.marketplace.refresh_interval_seconds),
+            },
+        }
+
+    def _update_health(self, **updates: object) -> None:
+        snapshot = dict(self._health_snapshot)
+        snapshot.update(updates)
+        snapshot["updatedAt"] = datetime.now(timezone.utc).isoformat()
+        self._health_snapshot = snapshot
+        if self._health_path is None:
+            return
+        try:
+            self._health_path.parent.mkdir(parents=True, exist_ok=True)
+            self._health_path.write_text(
+                json.dumps(snapshot, ensure_ascii=False, indent=2),
+                encoding="utf-8",
+            )
+        except OSError:  # pragma: no cover - diagnostyka środowiska
+            LOGGER.debug("Nie udało się zapisać pliku health probe", exc_info=True)
 
 
 __all__ = ["CloudRuntimeService", "GrpcRegistrar"]

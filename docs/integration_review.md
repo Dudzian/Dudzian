@@ -1,14 +1,14 @@
 # Exchange Integration Review
 
-> **Migration history notice:** Pakiet `KryptoLowca` funkcjonuje już tylko jako
+> **Migration history notice:** Legacy monolit Stage5 funkcjonuje wyłącznie jako
 > punkt odniesienia w dokumentacji migracyjnej – dawne moduły kompatybilności
 > zostały usunięte z repozytorium. Wszelkie prace integracyjne muszą
-> koncentrować się na
-> aktywnie wspieranych pakietach `bot_core.*` oraz ich oficjalnych helperach CLI.
-> Warstwa zgodności została zredukowana do cienkich wrapperów – nowy kod powinien
-> korzystać z `bot_core.execution.live_router.LiveExecutionRouter` oraz
-> `bot_core.exchanges.ccxt_adapter.CCXTSpotAdapter` (lub wyższych helperów w
-> przestrzeni `bot_core`).
+> koncentrować się na aktywnie wspieranych pakietach `bot_core.*` oraz
+> ich oficjalnych helperach CLI. Warstwa zgodności została zredukowana
+> do cienkich wrapperów – nowy kod powinien korzystać z
+> `bot_core.execution.live_router.LiveExecutionRouter` oraz
+> `bot_core.exchanges.ccxt_adapter.CCXTSpotAdapter` (lub wyższych helperów
+> w przestrzeni `bot_core`).
 >
 > **2025-02 sanity sweep:** Warstwa zgodności re-eksportuje kanoniczne
 > implementacje z `bot_core`.  Moduły takie jak `bot_core.ai.manager`

@@ -1,17 +1,17 @@
 {
   "icons": {
-    "refresh": { "file": "refresh.svg", "type": "svg" },
-    "fingerprint": { "file": "fingerprint.svg", "type": "svg" },
-    "shield": { "file": "shield.svg", "type": "svg" },
-    "cloud": { "file": "cloud.svg", "type": "svg" },
-    "package": { "file": "package.svg", "type": "svg" },
-    "diagnostics": { "file": "diagnostics.svg", "type": "svg" },
-    "mode_wizard": { "file": "mode_wizard.svg", "type": "svg" },
-    "scalping": { "file": "scalping.svg", "type": "svg" },
-    "swing": { "file": "swing.svg", "type": "svg" },
-    "hedge": { "file": "hedge.svg", "type": "svg" },
-    "futures": { "file": "futures.svg", "type": "svg" },
-    "copy": { "file": "copy.svg", "type": "svg" },
-    "strategy_manager": { "file": "strategy_manager.svg", "type": "svg" }
+    "refresh": { "file": "refresh.svg", "type": "svg", "glyph": "\uf021" },
+    "fingerprint": { "file": "fingerprint.svg", "type": "svg", "glyph": "\uf577" },
+    "shield": { "file": "shield.svg", "type": "svg", "glyph": "\uf3ed" },
+    "cloud": { "file": "cloud.svg", "type": "svg", "glyph": "\uf0c2" },
+    "package": { "file": "package.svg", "type": "svg", "glyph": "\uf49e" },
+    "diagnostics": { "file": "diagnostics.svg", "type": "svg", "glyph": "\uf0f1" },
+    "mode_wizard": { "file": "mode_wizard.svg", "type": "svg", "glyph": "\uf6e8" },
+    "scalping": { "file": "scalping.svg", "type": "svg", "glyph": "\uf201" },
+    "swing": { "file": "swing.svg", "type": "svg", "glyph": "\uf83e" },
+    "hedge": { "file": "hedge.svg", "type": "svg", "glyph": "\uf24e" },
+    "futures": { "file": "futures.svg", "type": "svg", "glyph": "\uf1fe" },
+    "copy": { "file": "copy.svg", "type": "svg", "glyph": "\uf0c5" },
+    "strategy_manager": { "file": "strategy_manager.svg", "type": "svg", "glyph": "\uf542" }
   }
 }

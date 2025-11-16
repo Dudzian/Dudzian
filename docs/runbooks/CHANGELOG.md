@@ -1,5 +1,21 @@
 # Changelog runbooków operacyjnych
 
+## 2025-11-18 – Frosted UI PySide6 i statusy feedu gRPC
+- **Zakres**: PySide6 UI (`ui/pyside_app/**`), design system Qt Quick (`ui/qml/design-system/**`), `ui/backend/runtime_service.py`,
+  testy QML/UI.
+- **Zmiana**: podnieśliśmy wymagania do Qt 6.7, dodaliśmy wsparcie dla FontAwesome oraz nowych efektów `MultiEffect`/`DropShadow`,
+  dzięki czemu panel RuntimeOverview otrzymał karty z efektem „frosted glass” i nowy moduł Strategy AI. RuntimeService udostępnia
+  teraz szczegółowy snapshot transportu (status gRPC/long-poll, p95, retry) oraz strukturę `aiRegimeBreakdown`, co pozwala QML-owi
+  renderować listy polityk adaptacyjnych w czasie rzeczywistym. Testy QML rejestrują referencyjne zrzuty ekranu i weryfikują nowy panel.
+- **Działanie dla zespołów**: uaktualnijcie lokalne środowiska Qt/PySide do 6.7.x zanim uruchomicie UI lub build desktopowy.
+  W runbookach/live ops monitorujcie teraz panel „AI Governor” – raportuje on SLA feedu gRPC i pozwala szybko ocenić, która strategia
+  została ostatnio aktywowana przez AI Governor.
+
+## 2025-11-12 – Koniec nomenklatury legacy i nowe paczki offline
+- **Zakres**: README, runbooki live/paper, `scripts/package_update.py`, `core/update/**`, UI PySide6/QML oraz dokumentacja deploy.
+- **Zmiana**: całkowicie usunięto odwołania do dawnej warstwy legacy i zastąpiono format paczek legacy podpisanymi archiwami `.dudzianpkg`. Kontroler UI, testy QA i dokumentacja offline używają nowej nazwy, a CI zawiera regresję blokującą powrót historycznych tokenów.
+- **Działanie dla zespołów**: aktualizujcie własne checklisty i skrypty automatyzujące dystrybucję offline tak, aby generowały nową paczkę `.dudzianpkg`. Podczas code review odrzucajcie PR-y z nomenklaturą Stage5 – linter QA (`tests/qa/test_no_legacy_tokens.py`) będzie traktował takie wstawki jako błąd blokujący.
+
 ## 2025-11-10 – Kontrola HWID/licencji dla modułu cloud
 - **Zakres**: `proto/trading.proto`, `bot_core/cloud/**`, `config/cloud/server*.yaml`, README oraz runbooki live/paper/security`.
 - **Zmiana**: serwer cloudowy wymaga teraz handshake'u `CloudAuthService.AuthorizeClient`. Poprawnie podpisany payload `{license_id, fingerprint, nonce}` (HMAC na sekrecie powiązanym z HWID) zwraca token `CloudSession`, który trzeba przesyłać w nagłówku `Authorization`. Nowa sekcja `security.allowed_clients` w `config/cloud/server.yaml` przechowuje allowlistę HWID/licencji wraz ze źródłami kluczy, a wszystkie próby autoryzacji trafiają do `logs/security_admin.log`.
@@ -12,7 +28,7 @@
 
 ## 2025-11-04 – Doprecyzowanie opisów interfejsów Stage6
 - **Zakres**: `bot_core/exchanges/interfaces.py`, `scripts/find_duplicates.py`, runbooki developerskie.
-- **Zmiana**: usunięto pozostałe wzmianki o kompatybilności z dawnym modułem `KryptoLowca` z docstringów i opisów narzędzi, aby
+- **Zmiana**: usunięto pozostałe wzmianki o kompatybilności z dawnym modułem warstwy legacy z docstringów i opisów narzędzi, aby
   dokumentacja odnosiła się wyłącznie do aktualnej architektury Stage6.
 - **Działanie dla zespołów**: podczas przeglądów kodu odwołujcie się już tylko do bieżących modułów (`bot_core`, `core`, `ui`);
   ewentualne pytania migracyjne trzeba kierować do dokumentów w `docs/migrations/`.
@@ -33,7 +49,7 @@
 - **Zakres**: `archive/` (czyszczenie), dokumentacja migracyjna oraz README.
 - **Zmiana**: skasowano katalog z dawnym botem i zaktualizowano materiały, aby jasno wskazywały brak shimów poprzedniej warstwy.
 - **Działanie dla zespołów**: wszystkie odwołania do dawnych namespace'ów muszą korzystać z `bot_core.*`; repozytorium nie
-  zawiera już kopii modułów `KryptoLowca` nawet w trybie archiwalnym.
+  zawiera już kopii modułów warstwy legacy nawet w trybie archiwalnym.
 
 ## 2025-10-23 – Aktualizacja komendy Paper Labs
 - **Zakres**: `docs/runbooks/PAPER_LABS_CHECKLIST.md`

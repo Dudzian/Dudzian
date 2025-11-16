@@ -15,9 +15,11 @@ import time
 from collections import Counter, deque
 from collections.abc import Iterable, Mapping, MutableMapping
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import TYPE_CHECKING, Callable
+
+import yaml
 
 from PySide6.QtCore import QObject, Property, QTimer, Signal, Slot
 
@@ -28,6 +30,14 @@ from bot_core.observability.ui_metrics import (
     get_long_poll_metrics_cache,
 )
 from bot_core.portfolio import resolve_decision_log_config
+from bot_core.runtime.cloud_client import (
+    CloudClientOptions,
+    CloudHandshakeResult,
+    LicenseIdentity,
+    load_cloud_client_options,
+    load_license_identity,
+    perform_cloud_handshake,
+)
 from bot_core.runtime.journal import TradingDecisionJournal
 from .demo_data import load_demo_decisions
 
@@ -42,10 +52,9 @@ except Exception:  # pragma: no cover - fallback dla środowisk bez retrainingu
     CronSchedule = None  # type: ignore[assignment]
 
 try:  # pragma: no cover - funkcja ładowania runtime może nie być dostępna w starszych gałęziach
-    from bot_core.config.loader import load_cloud_client_config, load_runtime_app_config
+    from bot_core.config.loader import load_runtime_app_config
 except Exception:  # pragma: no cover - fallback gdy brak unified loadera
     load_runtime_app_config = None  # type: ignore[assignment]
-    load_cloud_client_config = None  # type: ignore[assignment]
 
 try:  # pragma: no cover - alerty feedu są opcjonalne w dystrybucjach light
     from bot_core.runtime.metrics_alerts import UiTelemetryAlertSink, get_feed_health_alert_sink
@@ -589,11 +598,14 @@ class RuntimeService(QObject):
     longPollMetricsChanged = Signal()
     retrainNextRunChanged = Signal()
     adaptiveStrategySummaryChanged = Signal()
+    aiRegimeBreakdownChanged = Signal()
     regimeActivationSummaryChanged = Signal()
     riskMetricsChanged = Signal()
     riskTimelineChanged = Signal()
     operatorActionChanged = Signal()
     cycleMetricsChanged = Signal()
+    feedTransportSnapshotChanged = Signal()
+    cloudRuntimeStatusChanged = Signal()
 
     def __init__(
         self,
@@ -606,6 +618,8 @@ class RuntimeService(QObject):
         runtime_config_path: str | os.PathLike[str] | None = None,
         feed_alert_sink: UiTelemetryAlertSink | None = None,
         feed_metrics_exporter: FeedHealthMetricsExporter | None = None,
+        cloud_runtime_enabled: bool = False,
+        cloud_client_config_path: str | os.PathLike[str] | None = None,
     ) -> None:
         super().__init__(parent)
         if decision_loader is not None:
@@ -624,9 +638,26 @@ class RuntimeService(QObject):
         self._active_stream_label: str | None = None
         self._runtime_config_path = Path(runtime_config_path).expanduser() if runtime_config_path else None
         self._runtime_config_cache: "RuntimeAppConfig | None" = None
+        self._cloud_runtime_enabled = bool(cloud_runtime_enabled)
+        cloud_config_env = os.environ.get("BOT_CORE_UI_CLOUD_CLIENT_CONFIG")
+        config_candidate = cloud_client_config_path or cloud_config_env or "config/cloud/client.yaml"
+        self._cloud_client_config_path = Path(config_candidate).expanduser()
+        self._cloud_client_options: CloudClientOptions | None = None
+        self._cloud_client_mtime: float | None = None
+        self._cloud_identity: LicenseIdentity | None = None
+        self._cloud_handshake: CloudHandshakeResult | None = None
+        self._cloud_session_token: str | None = None
+        self._cloud_runtime_status: dict[str, object] = {
+            "enabled": self._cloud_runtime_enabled,
+            "status": "disabled" if not self._cloud_runtime_enabled else "initializing",
+            "configPath": str(self._cloud_client_config_path),
+            "target": None,
+            "handshake": {},
+        }
         self._retrain_next_run: str = ""
         self._adaptive_summary: str = ""
         self._regime_activation_summary: str = ""
+        self._ai_regime_breakdown: list[dict[str, object]] = []
         self._risk_metrics: dict[str, object] = {}
         self._risk_timeline: list[dict[str, object]] = []
         self._cycle_metrics: dict[str, float] = {}
@@ -653,6 +684,8 @@ class RuntimeService(QObject):
         self._active_grpc_metadata: list[tuple[str, str]] = list(self._grpc_metadata)
         self._grpc_ssl_credentials = None
         self._grpc_authority_override: str | None = None
+        self._grpc_idle_flag = False
+        self._last_grpc_update = time.monotonic()
         self._feed_reconnects = 0
         self._feed_downtime_started: float | None = None
         self._feed_downtime_total = 0.0
@@ -667,6 +700,13 @@ class RuntimeService(QObject):
             "status": "initializing",
             "reconnects": 0,
             "downtimeMs": 0.0,
+            "lastError": "",
+        }
+        self._feed_transport_snapshot: dict[str, object] = {
+            "status": "initializing",
+            "mode": "demo",
+            "label": "",
+            "reconnects": 0,
             "lastError": "",
         }
         self._feed_metrics_exporter = feed_metrics_exporter or get_feed_health_metrics_exporter()
@@ -689,6 +729,12 @@ class RuntimeService(QObject):
             self._update_runtime_metadata(invalidate_cache=False)
         except Exception:  # pragma: no cover - defensywna inicjalizacja
             _LOGGER.debug("Nie udało się zainicjalizować metadanych runtime", exc_info=True)
+        self._refresh_feed_transport_snapshot(self._feed_health, None)
+        if self._cloud_runtime_enabled:
+            try:
+                self._refresh_cloud_handshake(force=False)
+            except Exception:  # pragma: no cover - diagnostyka
+                _LOGGER.debug("Nie udało się przeprowadzić początkowego handshake'u cloud", exc_info=True)
         self._auto_connect_grpc()
         self._refresh_long_poll_metrics()
 
@@ -708,6 +754,10 @@ class RuntimeService(QObject):
     @Property(str, notify=adaptiveStrategySummaryChanged)
     def adaptiveStrategySummary(self) -> str:  # type: ignore[override]
         return self._adaptive_summary
+
+    @Property("QVariantList", notify=aiRegimeBreakdownChanged)
+    def aiRegimeBreakdown(self) -> list[dict[str, object]]:  # type: ignore[override]
+        return [dict(entry) for entry in self._ai_regime_breakdown]
 
     @Property(str, notify=regimeActivationSummaryChanged)
     def regimeActivationSummary(self) -> str:  # type: ignore[override]
@@ -735,9 +785,23 @@ class RuntimeService(QObject):
     def feedHealth(self) -> dict[str, object]:  # type: ignore[override]
         return dict(self._feed_health)
 
+    @Property("QVariantMap", notify=feedTransportSnapshotChanged)
+    def feedTransportSnapshot(self) -> dict[str, object]:  # type: ignore[override]
+        return dict(self._feed_transport_snapshot)
+
     @Property("QVariantList", notify=longPollMetricsChanged)
     def longPollMetrics(self) -> list[dict[str, object]]:  # type: ignore[override]
         return [dict(entry) for entry in self._longpoll_metrics]
+
+    @Property("QVariantMap", notify=cloudRuntimeStatusChanged)
+    def cloudRuntimeStatus(self) -> dict[str, object]:  # type: ignore[override]
+        return dict(self._cloud_runtime_status)
+
+    @Slot(result=bool)
+    def refreshCloudHandshake(self) -> bool:
+        """Pozwala QML-owi ręcznie odświeżyć handshake."""
+
+        return self._refresh_cloud_handshake(force=True)
 
     def _update_feed_health(
         self,
@@ -776,8 +840,49 @@ class RuntimeService(QObject):
             payload.pop("p95LatencyMs", None)
         self._feed_health = payload
         self.feedHealthChanged.emit()
+        self._refresh_feed_transport_snapshot(payload, latency_p95)
         self._publish_feed_metrics(payload, latency_p95)
         self._evaluate_feed_health_alerts(payload, latency_p95)
+
+    def _refresh_feed_transport_snapshot(
+        self, payload: Mapping[str, object], latency_p95: float | None
+    ) -> None:
+        label = self._active_stream_label or ""
+        if not label and self._active_log_path is not None:
+            label = str(self._active_log_path)
+        mode = "grpc" if label.startswith("grpc://") else ("file" if label else "demo")
+        latency_value = latency_p95
+        if latency_value is None:
+            candidate = payload.get("p95_ms")
+            try:
+                latency_value = float(candidate) if candidate is not None else None
+            except (TypeError, ValueError):
+                latency_value = None
+        snapshot: dict[str, object] = {
+            "status": str(payload.get("status", self._feed_health.get("status", "unknown"))),
+            "mode": mode,
+            "label": label,
+            "reconnects": int(payload.get("reconnects", self._feed_reconnects)),
+            "nextRetrySeconds": payload.get("nextRetrySeconds"),
+            "lastError": str(payload.get("lastError", self._feed_last_error)),
+            "latencyP95": latency_value,
+            "idle": bool(self._grpc_idle_flag),
+            "retryAttempts": self._grpc_retry_attempts,
+            "queueDepth": self._grpc_queue.qsize() if self._grpc_queue is not None else 0,
+        }
+        if self._grpc_stream_active:
+            snapshot["secondsSinceLastMessage"] = max(0.0, time.monotonic() - self._last_grpc_update)
+        else:
+            snapshot["secondsSinceLastMessage"] = None
+        if self._cloud_runtime_enabled:
+            snapshot["cloud"] = {
+                "target": self._cloud_runtime_status.get("target"),
+                "status": self._cloud_runtime_status.get("status"),
+                "handshake": dict(self._cloud_runtime_status.get("handshake") or {}),
+            }
+        if snapshot != self._feed_transport_snapshot:
+            self._feed_transport_snapshot = snapshot
+            self.feedTransportSnapshotChanged.emit()
 
     def _publish_feed_metrics(self, payload: Mapping[str, object], latency_p95: float | None) -> None:
         exporter = self._feed_metrics_exporter
@@ -1429,49 +1534,20 @@ class RuntimeService(QObject):
         if target:
             self._grpc_ssl_credentials = None
             self._grpc_authority_override = None
+            self._update_cloud_status(status="env_override", target=target)
             return target, list(self._grpc_metadata)
 
-        if load_runtime_app_config is None or load_cloud_client_config is None:
+        options = self._load_cloud_client_options()
+        if options is None:
             return None
-
-        try:
-            runtime_config = self._load_runtime_config()
-        except Exception:  # pragma: no cover - diagnostyka
+        self._grpc_ssl_credentials = options.tls_credentials
+        self._grpc_authority_override = options.authority_override
+        if not options.client.auto_connect:
+            self._update_cloud_status(status="auto_connect_disabled")
             return None
-
-        cloud_cfg = getattr(runtime_config, "cloud", None)
-        if cloud_cfg is None or not getattr(cloud_cfg, "enabled", False):
-            return None
-
-        profiles = getattr(cloud_cfg, "profiles", {}) or {}
-        selected = profile or getattr(cloud_cfg, "default_profile", None)
-        profile_cfg = profiles.get(selected) if selected else None
-        if profile_cfg is None:
-            for candidate in profiles.values():
-                if str(getattr(candidate, "mode", "local")).lower() == "remote":
-                    profile_cfg = candidate
-                    break
-        if profile_cfg is None:
-            return None
-        if str(getattr(profile_cfg, "mode", "local")).lower() != "remote":
-            return None
-        client_manifest = getattr(profile_cfg, "client_config_path", None)
-        if not client_manifest:
-            return None
-        try:
-            client_cfg = load_cloud_client_config(client_manifest)
-        except Exception as exc:  # pragma: no cover - konfiguracja
-            _LOGGER.error("Nie udało się wczytać client.yaml %s: %s", client_manifest, exc)
-            return None
-        if not client_cfg.auto_connect:
-            return None
-        metadata = self._build_cloud_metadata(client_cfg)
-        try:
-            self._configure_cloud_tls(client_cfg)
-        except Exception as exc:  # pragma: no cover - TLS opcjonalny
-            _LOGGER.error("Nie udało się skonfigurować TLS dla cloud runtime: %s", exc)
-            return None
-        return client_cfg.address, metadata
+        self._refresh_cloud_handshake(force=False)
+        metadata = self._cloud_metadata_with_session(options)
+        return options.client.address, metadata
 
     def _load_grpc_metadata(self) -> list[tuple[str, str]]:
         raw = os.environ.get("BOT_CORE_UI_GRPC_METADATA", "")
@@ -1490,59 +1566,114 @@ class RuntimeService(QObject):
                 metadata.append((key, value))
         return metadata
 
-    def _build_cloud_metadata(self, client_cfg) -> list[tuple[str, str]]:
-        metadata = list(self._grpc_metadata)
-        for key, value in (client_cfg.metadata or {}).items():
-            header = str(key).strip().lower()
-            if header and value:
-                metadata.append((header, value))
-        for key, env_name in (client_cfg.metadata_env or {}).items():
-            header = str(key).strip().lower()
-            if not header or not env_name:
-                continue
-            value = os.environ.get(env_name)
-            if value:
-                metadata.append((header, value))
-        for key, path in (client_cfg.metadata_files or {}).items():
-            header = str(key).strip().lower()
-            if not header or not path:
-                continue
-            try:
-                value = Path(path).expanduser().read_text(encoding="utf-8").strip()
-            except OSError as exc:  # pragma: no cover - opcjonalne
-                _LOGGER.warning("Nie udało się odczytać pliku metadanych %s: %s", path, exc)
-                continue
-            if value:
-                metadata.append((header, value))
-        return metadata
-
-    def _configure_cloud_tls(self, client_cfg) -> None:
-        tls_cfg = getattr(client_cfg, "tls", None)
-        use_tls = bool(getattr(client_cfg, "use_tls", False) or (tls_cfg and tls_cfg.enabled))
-        if not use_tls:
-            self._grpc_ssl_credentials = None
-            self._grpc_authority_override = None
+    def _update_cloud_status(self, **updates: object) -> None:
+        if not self._cloud_runtime_enabled:
             return
-        if grpc is None:
-            raise RuntimeError("Pakiet grpcio nie obsługuje TLS w tej dystrybucji")
-        root_cert = None
-        client_cert = None
-        client_key = None
-        if tls_cfg is not None:
-            if tls_cfg.ca_certificate:
-                root_cert = Path(tls_cfg.ca_certificate).expanduser().read_bytes()
-            if tls_cfg.client_certificate:
-                client_cert = Path(tls_cfg.client_certificate).expanduser().read_bytes()
-            if tls_cfg.client_key:
-                client_key = Path(tls_cfg.client_key).expanduser().read_bytes()
-            self._grpc_authority_override = tls_cfg.override_authority
-        else:
-            self._grpc_authority_override = None
-        self._grpc_ssl_credentials = grpc.ssl_channel_credentials(
-            root_certificates=root_cert,
-            private_key=client_key,
-            certificate_chain=client_cert,
+        payload = dict(self._cloud_runtime_status)
+        handshake_payload = dict(payload.get("handshake") or {})
+        handshake_update = updates.pop("handshake", None)
+        if isinstance(handshake_update, Mapping):
+            handshake_payload.update(
+                {key: value for key, value in handshake_update.items() if value is not None}
+            )
+            payload["handshake"] = handshake_payload
+        payload.update({key: value for key, value in updates.items() if value is not None})
+        if payload != self._cloud_runtime_status:
+            self._cloud_runtime_status = payload
+            self.cloudRuntimeStatusChanged.emit()
+
+    def _load_cloud_client_options(self, *, invalidate: bool = False) -> CloudClientOptions | None:
+        if not self._cloud_runtime_enabled:
+            return None
+        path = self._cloud_client_config_path
+        try:
+            mtime = path.stat().st_mtime
+        except OSError as exc:
+            self._cloud_client_options = None
+            self._cloud_client_mtime = None
+            self._update_cloud_status(status="config_missing", target=None, error=str(exc))
+            return None
+        if (
+            not invalidate
+            and self._cloud_client_options is not None
+            and self._cloud_client_mtime == mtime
+        ):
+            return self._cloud_client_options
+        try:
+            options = load_cloud_client_options(path, base_metadata=self._grpc_metadata)
+        except Exception as exc:  # pragma: no cover - diagnostyka
+            self._cloud_client_options = None
+            self._cloud_client_mtime = None
+            self._update_cloud_status(status="config_error", target=None, error=str(exc))
+            return None
+        self._cloud_client_options = options
+        self._cloud_client_mtime = mtime
+        self._update_cloud_status(
+            status="configured",
+            target=options.client.address,
+            allowLocalFallback=bool(options.client.allow_local_fallback),
+            autoConnect=bool(options.client.auto_connect),
+            tlsEnabled=bool(options.tls_credentials is not None),
         )
+        return options
+
+    def _handshake_valid(self, result: CloudHandshakeResult | None) -> bool:
+        if result is None or result.status != "ok" or not result.session_token:
+            return False
+        if result.expires_at is None:
+            return True
+        return result.expires_at - datetime.now(timezone.utc) > timedelta(seconds=30)
+
+    def _refresh_cloud_handshake(self, *, force: bool) -> bool:
+        if not self._cloud_runtime_enabled:
+            return False
+        options = self._load_cloud_client_options()
+        if options is None:
+            return False
+        if self._cloud_identity is None or force:
+            self._cloud_identity = load_license_identity()
+        identity = self._cloud_identity
+        if identity is None:
+            self._cloud_handshake = None
+            self._cloud_session_token = None
+            self._update_cloud_status(
+                status="identity_missing",
+                handshake={
+                    "status": "license_missing",
+                    "message": "Brak aktywnej licencji lub fingerprintu",
+                },
+            )
+            return False
+        if not force and self._handshake_valid(self._cloud_handshake):
+            return True
+        try:
+            result = perform_cloud_handshake(options, identity)
+        except Exception as exc:  # pragma: no cover - diagnostyka
+            self._cloud_handshake = None
+            self._cloud_session_token = None
+            self._update_cloud_status(handshake={"status": "error", "message": str(exc)})
+            return False
+        self._cloud_handshake = result
+        if result.status == "ok" and result.session_token:
+            self._cloud_session_token = result.session_token
+        else:
+            self._cloud_session_token = None
+        handshake_payload = {
+            "status": result.status,
+            "message": result.message,
+            "licenseId": result.license_id,
+            "fingerprint": result.fingerprint,
+            "expiresAt": result.expires_at.isoformat() if result.expires_at else None,
+            "lastCheckedAt": datetime.now(timezone.utc).isoformat(),
+        }
+        self._update_cloud_status(handshake=handshake_payload)
+        return result.status == "ok"
+
+    def _cloud_metadata_with_session(self, options: CloudClientOptions) -> list[tuple[str, str]]:
+        metadata = list(options.metadata)
+        if self._cloud_session_token:
+            metadata.append(("authorization", f"CloudSession {self._cloud_session_token}"))
+        return metadata
 
     def _auto_connect_grpc(self) -> None:
         endpoint = self._prepare_grpc_connection(self._active_profile)
@@ -2243,10 +2374,13 @@ class RuntimeService(QObject):
         if next_run != self._retrain_next_run:
             self._retrain_next_run = next_run
             self.retrainNextRunChanged.emit()
-        summary = self._build_adaptive_summary()
+        summary, breakdown = self._build_adaptive_snapshot()
         if summary != self._adaptive_summary:
             self._adaptive_summary = summary
             self.adaptiveStrategySummaryChanged.emit()
+        if breakdown != self._ai_regime_breakdown:
+            self._ai_regime_breakdown = breakdown
+            self.aiRegimeBreakdownChanged.emit()
 
     def _load_runtime_config(self) -> "RuntimeAppConfig":
         if load_runtime_app_config is None:
@@ -2281,16 +2415,46 @@ class RuntimeService(QObject):
         self._runtime_config_path = default
         return default
 
+    def _load_registry_path_from_yaml(self) -> Path | None:
+        config_path = self._resolve_runtime_config_path()
+        if config_path is None or not config_path.exists():
+            return None
+        try:
+            with config_path.open("r", encoding="utf-8") as handle:
+                data = yaml.safe_load(handle) or {}
+        except Exception:  # pragma: no cover - diagnostyka środowiska
+            _LOGGER.debug(
+                "Nie udało się sparsować runtime.yaml podczas wyszukiwania model_registry_path",
+                exc_info=True,
+            )
+            return None
+        ai_block = data.get("ai") if isinstance(data, Mapping) else None
+        if not isinstance(ai_block, Mapping):
+            return None
+        registry_value = ai_block.get("model_registry_path")
+        if not registry_value:
+            return None
+        return Path(str(registry_value)).expanduser()
+
+    def _resolve_model_registry_path(self) -> Path | None:
+        try:
+            runtime_config = self._load_runtime_config()
+        except Exception:
+            return self._load_registry_path_from_yaml()
+        registry_path = getattr(runtime_config.ai, "model_registry_path", None)
+        if not registry_path:
+            return self._load_registry_path_from_yaml()
+        return Path(registry_path).expanduser()
+
     def _compute_next_retrain(self) -> str:
-        if CronSchedule is None:
-            return ""
+        fallback_schedule = os.environ.get("BOT_CORE_UI_RETRAIN_FALLBACK_CRON", "0 3 * * *")
         try:
             runtime_config = self._load_runtime_config()
         except FileNotFoundError:
-            return ""
+            return fallback_schedule
         except Exception:  # pragma: no cover - diagnostyka środowiska
             _LOGGER.debug("Nie udało się wczytać konfiguracji runtime", exc_info=True)
-            return ""
+            return fallback_schedule
 
         schedule: str | None = None
         retrain_cfg = getattr(runtime_config.ai, "retrain", None)
@@ -2299,48 +2463,43 @@ class RuntimeService(QObject):
         else:
             schedule = getattr(runtime_config.ai, "retrain_schedule", None)
         if not schedule:
-            return ""
+            schedule = fallback_schedule
+        if CronSchedule is None:
+            return schedule or fallback_schedule
         try:
             cron = CronSchedule(schedule)
             next_run = cron.next_after(datetime.now(timezone.utc))
         except Exception:  # pragma: no cover - niepoprawna składnia lub błąd obliczeń
             _LOGGER.debug("Nie udało się obliczyć najbliższego retrainingu", exc_info=True)
-            return ""
+            return schedule or fallback_schedule
         return next_run.astimezone().isoformat(timespec="minutes")
 
-    def _build_adaptive_summary(self) -> str:
+    def _build_adaptive_snapshot(self) -> tuple[str, list[dict[str, object]]]:
         if ModelRepository is None:
-            return ""
+            return "", []
+        registry_path = self._resolve_model_registry_path()
+        if registry_path is None:
+            return "", []
         try:
-            runtime_config = self._load_runtime_config()
-        except FileNotFoundError:
-            return ""
-        except Exception:  # pragma: no cover - diagnostyka środowiska
-            _LOGGER.debug("Nie udało się wczytać konfiguracji runtime dla presetów adaptacyjnych", exc_info=True)
-            return ""
-
-        registry_path = getattr(runtime_config.ai, "model_registry_path", None)
-        if not registry_path:
-            return ""
-        try:
-            repository = ModelRepository(Path(registry_path))  # type: ignore[abstract]
+            repository = ModelRepository(registry_path)  # type: ignore[abstract]
         except Exception:  # pragma: no cover - repozytorium może być nieosiągalne
             _LOGGER.debug("Nie udało się zainicjalizować ModelRepository", exc_info=True)
-            return ""
+            return "", []
         try:
             artifact = repository.load("adaptive_strategy_policy.json")
         except FileNotFoundError:
-            return ""
+            return "", []
         except Exception:  # pragma: no cover - uszkodzony plik lub brak dostępu
             _LOGGER.debug("Nie udało się wczytać stanu adaptive learnera", exc_info=True)
-            return ""
+            return "", []
 
         state = getattr(artifact, "model_state", None)
         policies = state.get("policies") if isinstance(state, Mapping) else None
         if not isinstance(policies, Mapping) or not policies:
-            return ""
+            return "", []
 
         fragments: list[str] = []
+        breakdown: list[dict[str, object]] = []
         for regime_key, payload in policies.items():
             if not isinstance(payload, Mapping):
                 continue
@@ -2350,6 +2509,7 @@ class RuntimeService(QObject):
             best_name: str | None = None
             best_score: float | None = None
             best_plays = 0
+            normalized_strategies: list[dict[str, object]] = []
             for entry in strategies:
                 if not isinstance(entry, Mapping):
                     continue
@@ -2358,7 +2518,16 @@ class RuntimeService(QObject):
                     continue
                 plays = int(entry.get("plays", 0) or 0)
                 total_reward = float(entry.get("total_reward", 0.0) or 0.0)
-                mean_reward = total_reward / plays if plays > 0 else float(entry.get("last_reward", 0.0) or 0.0)
+                last_reward = float(entry.get("last_reward", 0.0) or 0.0)
+                mean_reward = total_reward / plays if plays > 0 else last_reward
+                normalized_strategies.append(
+                    {
+                        "name": name,
+                        "plays": plays,
+                        "meanReward": mean_reward,
+                        "totalReward": total_reward,
+                    }
+                )
                 if best_score is None or mean_reward > best_score:
                     best_name = name
                     best_score = mean_reward
@@ -2367,9 +2536,18 @@ class RuntimeService(QObject):
                 continue
             regime_label = str(regime_key).replace("_", " ")
             fragments.append(f"{regime_label}: {best_name} (μ={best_score:.2f}, n={best_plays})")
+            breakdown.append(
+                {
+                    "regime": regime_label,
+                    "bestStrategy": best_name,
+                    "meanReward": best_score,
+                    "plays": best_plays,
+                    "strategies": normalized_strategies,
+                }
+            )
 
         if not fragments:
-            return ""
+            return "", []
 
         updated_at = ""
         try:
@@ -2379,7 +2557,7 @@ class RuntimeService(QObject):
         summary = "; ".join(fragments)
         if updated_at:
             summary = f"{summary} — aktualizacja {updated_at}"
-        return summary
+        return summary, breakdown
 
 
 __all__ = ["RuntimeService"]

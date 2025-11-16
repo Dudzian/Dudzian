@@ -9,7 +9,7 @@ Dialog {
     property string selectedFile: ""
     property string signingKey: ""
 
-    title: qsTr("Aktualizacja offline (.kbot)")
+    title: qsTr("Aktualizacja offline (.dudzianpkg)")
     modal: true
     standardButtons: Dialog.Close
     width: 640
@@ -25,8 +25,8 @@ Dialog {
 
     FileDialog {
         id: packageDialog
-        title: qsTr("Wybierz pakiet .kbot")
-        nameFilters: [qsTr("Pakiety Kryptołowca (*.kbot)"), qsTr("Wszystkie pliki (*)")]
+        title: qsTr("Wybierz pakiet .dudzianpkg")
+        nameFilters: [qsTr("Pakiety Dudzian (*.dudzianpkg)"), qsTr("Wszystkie pliki (*)")]
         onAccepted: {
             if (packageDialog.selectedFile && packageDialog.selectedFile.length > 0)
                 selectedFile = packageDialog.selectedFile
@@ -41,7 +41,7 @@ Dialog {
         Label {
             Layout.fillWidth: true
             wrapMode: Text.WordWrap
-            text: qsTr("Wybierz podpisany pakiet aktualizacji w formacie .kbot i zaimportuj go do katalogu aktualizacji desktopowych.")
+            text: qsTr("Wybierz podpisany pakiet aktualizacji w formacie .dudzianpkg i zaimportuj go do katalogu aktualizacji desktopowych.")
         }
 
         GroupBox {
@@ -58,7 +58,7 @@ Dialog {
                     spacing: 8
                     TextField {
                         Layout.fillWidth: true
-                        placeholderText: qsTr("Ścieżka do pakietu .kbot")
+                        placeholderText: qsTr("Ścieżka do pakietu .dudzianpkg")
                         text: root.selectedFile
                         readOnly: true
                     }

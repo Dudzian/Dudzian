@@ -1,6 +1,6 @@
 # Dokumentacja wdrożeniowa
 
-Ten katalog zawiera procedury budowy i dystrybucji KryptoŁowcy w różnych
+Ten katalog zawiera procedury budowy i dystrybucji pakietów Dudzian w różnych
 modelach wdrożeniowych. Najważniejsze dokumenty:
 
 - `desktop_installer.md` – proces budowy instalatora desktopowego.
@@ -10,7 +10,7 @@ modelach wdrożeniowych. Najważniejsze dokumenty:
 
 ## OEM release
 
-Wydanie OEM łączy przygotowanie artefaktów (instalator, paczki `.kbot`), raportów
+Wydanie OEM łączy przygotowanie artefaktów (instalator, paczki `.dudzianpkg`), raportów
 kontrolnych oraz dokumentacji dla partnera. Do planowania prac używaj
 `docs/deploy/oem_release_checklist.md`, a generację dokumentów zautomatyzuj
 skryptem:

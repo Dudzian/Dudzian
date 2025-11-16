@@ -43,3 +43,7 @@ class ThemeBridge(QObject):
     @Slot(str, result=list)
     def gradient(self, token: str) -> List[str]:  # noqa: N802
         return self._registry.gradient(self._palette, token)
+
+    @Slot(str, result=str)
+    def iconGlyph(self, token: str) -> str:  # noqa: N802
+        return self._registry.icon_glyph(token)

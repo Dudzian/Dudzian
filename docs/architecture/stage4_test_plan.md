@@ -33,7 +33,7 @@ Zapewnienie, że rozszerzona biblioteka strategii oraz scheduler przechodzą pip
 
 ## Obserwowalność i alerty
 1. Rozszerz `telemetry_risk_profiles.py render --section scheduler_metrics --section strategy_metrics` i potwierdź obecność metryk `avg_abs_zscore`, `avg_realized_volatility`, `allocation_error_pct`, `realized_vs_target_vol_pct`, `secondary_delay_ms`, `spread_capture_bps` oraz `decision_log_requirements`.
-2. Zaktualizuj dashboard Grafany (`deploy/grafana/provisioning/dashboards/kryptolowca_overview.json`) i OTEL (`deploy/otel/strategies_dashboard.yaml`) – weryfikacja poprzez `python scripts/watch_metrics_stream.py --dashboard-check`.
+2. Zaktualizuj dashboard Grafany (`deploy/grafana/provisioning/dashboards/dudzian_overview.json`) i OTEL (`deploy/otel/strategies_dashboard.yaml`) – weryfikacja poprzez `python scripts/watch_metrics_stream.py --dashboard-check`.
 3. Skonfiguruj alerty w `deploy/prometheus/rules/multi_strategy_rules.yml` z progami dla PnL, odchyleń ryzyka i opóźnień scheduler-a; zautomatyzuj eskalację `ops/oncall_rotation.yaml`.
 4. Upewnij się, że logowanie decyzji zapisuje pola `schedule`, `strategy`, `confidence`, `latency_ms`, `telemetry_namespace`, podpisywane HMAC i agregowane w `audit/decision_log/`.
 5. Zweryfikuj raport nagłówków gRPC: `python scripts/watch_metrics_stream.py --headers-report-only --header x-trace=demo --header auth-token=sekret` – wynik powinien maskować wartości wrażliwe oraz wskazywać źródła CLI/ENV/konfiguracji i listę kluczy usuniętych.
