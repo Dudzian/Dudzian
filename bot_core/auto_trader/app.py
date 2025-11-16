@@ -74,7 +74,10 @@ from bot_core.exchanges.base import OrderRequest
 from bot_core.risk.engine import ThresholdRiskEngine
 from bot_core.observability import MetricsRegistry, get_global_metrics_registry
 from bot_core.trading.strategies import StrategyCatalog
-from bot_core.strategies.regime_workflow import StrategyRegimeWorkflow
+from bot_core.strategies.regime_workflow import (
+    RegimePresetActivation,
+    StrategyRegimeWorkflow,
+)
 from bot_core.trading.strategy_aliasing import (
     StrategyAliasResolver,
     canonical_alias_map,
@@ -671,6 +674,8 @@ class AutoTrader:
         self._mode_transition_history: deque[dict[str, Any]] = deque(maxlen=64)
         self._recent_guardrail_events: deque[tuple[str, float]] = deque(maxlen=128)
         self._strategy_regime_workflow = self._initialize_strategy_regime_workflow()
+        self._active_preset_state: dict[str, Any] | None = None
+        self._last_guardrail_state_snapshot: Mapping[str, Any] | None = None
 
         self.enable_auto_trade = bool(enable_auto_trade)
         self.auto_trade_interval_s = float(auto_trade_interval_s)
@@ -2692,6 +2697,11 @@ class AutoTrader:
             "strategy": self.current_strategy,
             "ai_degraded": "true" if self._ai_degraded else "false",
         }
+        guardrail_transition = self._update_guardrail_transition_state()
+        if guardrail_transition:
+            cycle_metadata["guardrail_transition"] = self._encode_metadata_block(
+                guardrail_transition
+            )
         if summary is not None:
             level = getattr(summary, "risk_level", None)
             if isinstance(level, RiskLevel):
@@ -3393,6 +3403,194 @@ class AutoTrader:
         except Exception:  # pragma: no cover - defensywne logowanie
             LOGGER.debug("StrategyRegimeWorkflow history update failed", exc_info=True)
             return None
+
+    def _workflow_available_inputs(
+        self,
+        *,
+        market_data: pd.DataFrame | None,
+        summary: RegimeSummary | None,
+        workflow_summary: RegimeSummary | None,
+        ai_context: Mapping[str, Any] | None,
+    ) -> tuple[str, ...]:
+        available: set[str] = {"ohlcv"}
+        if market_data is not None and not market_data.empty:
+            available.update({"technical_indicators", "order_book", "spread_history"})
+        if summary is not None:
+            available.add("regime_summary")
+        if workflow_summary is not None:
+            available.add("workflow_summary")
+        if ai_context:
+            available.add("ai_context")
+        if self._recent_guardrail_events:
+            available.add("guardrails")
+        if self._mode_transition_history:
+            available.add("decision_history")
+        return tuple(sorted(available))
+
+    def _maybe_run_strategy_regime_workflow(
+        self,
+        *,
+        symbol: str | None,
+        market_data: pd.DataFrame,
+        summary: RegimeSummary | None,
+        workflow_summary: RegimeSummary | None,
+        ai_context: Mapping[str, Any] | None,
+    ) -> RegimePresetActivation | None:
+        workflow = getattr(self, "_strategy_regime_workflow", None)
+        if workflow is None:
+            return None
+        activate = getattr(workflow, "activate", None)
+        if not callable(activate):
+            return None
+        available_inputs = self._workflow_available_inputs(
+            market_data=market_data,
+            summary=summary,
+            workflow_summary=workflow_summary,
+            ai_context=ai_context,
+        )
+        try:
+            return activate(
+                market_data,
+                available_data=available_inputs,
+                symbol=symbol,
+            )
+        except Exception:  # pragma: no cover - diagnostyka workflow
+            LOGGER.debug("StrategyRegimeWorkflow activation failed", exc_info=True)
+            return None
+
+    def _sanitize_metadata_value(self, value: Any) -> Any:
+        if isinstance(value, Mapping):
+            return {str(key): self._sanitize_metadata_value(val) for key, val in value.items()}
+        if isinstance(value, (list, tuple)) and not isinstance(value, (bytes, bytearray)):
+            return [self._sanitize_metadata_value(item) for item in value]
+        if isinstance(value, datetime):
+            return value.astimezone(timezone.utc).isoformat()
+        if isinstance(value, (str, int, float, bool)) or value is None:
+            return value
+        return str(value)
+
+    def _encode_metadata_block(self, payload: Mapping[str, Any]) -> str:
+        sanitized = self._sanitize_metadata_value(payload)
+        try:
+            return json.dumps(sanitized, ensure_ascii=False, sort_keys=True)
+        except TypeError:
+            safe_payload = self._sanitize_metadata_value(sanitized)
+            return json.dumps(safe_payload, ensure_ascii=False, sort_keys=True)
+
+    def _build_regime_activation_metadata(
+        self, activation: RegimePresetActivation
+    ) -> dict[str, Any]:
+        version_meta: dict[str, Any] = {}
+        raw_meta = getattr(activation.version, "metadata", None)
+        if isinstance(raw_meta, Mapping):
+            for key, value in raw_meta.items():
+                version_meta[str(key)] = self._sanitize_metadata_value(value)
+        preset_payload = activation.preset if isinstance(activation.preset, Mapping) else {}
+        preset_name = str(preset_payload.get("name")) if preset_payload.get("name") else None
+        preset_meta = preset_payload.get("metadata") if isinstance(preset_payload, Mapping) else None
+        if isinstance(preset_meta, Mapping):
+            version_meta.setdefault("preset_metadata", {})
+            preset_metadata = version_meta.get("preset_metadata")
+            if isinstance(preset_metadata, Mapping):
+                combined = dict(preset_metadata)
+            else:
+                combined = {}
+            for key, value in preset_meta.items():
+                combined[str(key)] = self._sanitize_metadata_value(value)
+            version_meta["preset_metadata"] = combined
+        preset_id = (
+            str(version_meta.get("name"))
+            or preset_name
+            or activation.version.hash
+        )
+        payload: dict[str, Any] = {
+            "regime": activation.regime.value,
+            "preset_regime": activation.preset_regime.value
+            if isinstance(activation.preset_regime, MarketRegime)
+            else activation.preset_regime,
+            "preset_name": preset_name,
+            "preset_id": preset_id,
+            "preset_hash": activation.version.hash,
+            "issued_at": activation.activated_at.astimezone(timezone.utc).isoformat(),
+            "used_fallback": bool(activation.used_fallback),
+            "blocked_reason": activation.blocked_reason,
+            "missing_data": [str(item) for item in activation.missing_data],
+            "license_issues": [str(item) for item in activation.license_issues],
+            "recommendation": activation.recommendation,
+            "decision_candidates": len(activation.decision_candidates),
+            "version": {
+                "signature": {str(k): str(v) for k, v in activation.version.signature.items()},
+                "metadata": version_meta,
+            },
+        }
+        return payload
+
+    def _build_guardrail_transition_payload(self) -> dict[str, Any]:
+        current = {
+            "active": bool(self._exchange_degradation_guardrail_active),
+            "kill_switch": bool(self._exchange_degradation_kill_switch),
+            "reasons": [str(reason) for reason in self._last_guardrail_reasons],
+            "triggers": [trigger.to_dict() for trigger in self._last_guardrail_triggers],
+        }
+        previous = self._last_guardrail_state_snapshot or {}
+        transition = {
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "active": current["active"],
+            "previous_active": previous.get("active"),
+            "kill_switch": current["kill_switch"],
+            "previous_kill_switch": previous.get("kill_switch"),
+            "reasons": current["reasons"],
+            "triggers": current["triggers"],
+            "changed": (
+                current["active"] != previous.get("active")
+                or current["kill_switch"] != previous.get("kill_switch")
+                or current["reasons"] != previous.get("reasons")
+            ),
+        }
+        self._last_guardrail_state_snapshot = current
+        return transition
+
+    def _update_guardrail_transition_state(self) -> dict[str, Any]:
+        transition = self._build_guardrail_transition_payload()
+        if self._active_preset_state is None:
+            self._active_preset_state = {}
+        self._active_preset_state["guardrail_transition"] = transition
+        return transition
+
+    def _apply_strategy_regime_activation(
+        self,
+        activation: RegimePresetActivation | None,
+    ) -> None:
+        if activation is None:
+            return
+        activation_payload = self._build_regime_activation_metadata(activation)
+        transition_payload = self._update_guardrail_transition_state()
+        self._active_preset_state = {
+            "activation": activation_payload,
+            "guardrail_transition": transition_payload,
+        }
+        self._execution_metadata["preset_hash"] = activation_payload.get("preset_hash", "")
+        preset_name = activation_payload.get("preset_name") or activation_payload.get("preset_id")
+        if preset_name:
+            self._execution_metadata["preset_name"] = str(preset_name)
+        else:
+            self._execution_metadata.pop("preset_name", None)
+        self._execution_metadata["preset_regime"] = activation_payload.get("regime")
+
+    def _attach_activation_metadata(
+        self, metadata: Mapping[str, object] | None
+    ) -> Mapping[str, object] | None:
+        state = self._active_preset_state or {}
+        activation_payload = state.get("activation")
+        guardrail_payload = state.get("guardrail_transition")
+        if not activation_payload and not guardrail_payload:
+            return metadata
+        merged: dict[str, object] = dict(metadata or {})
+        if activation_payload:
+            merged["activation"] = self._encode_metadata_block(activation_payload)
+        if guardrail_payload:
+            merged["guardrail_transition"] = self._encode_metadata_block(guardrail_payload)
+        return merged
 
     def _build_available_mode_inputs(
         self,
@@ -4103,6 +4301,7 @@ class AutoTrader:
                     metadata_payload = {}
                 metadata_payload.setdefault("decision_mode", self._active_decision_mode)
                 augmented_metadata = metadata_payload
+            augmented_metadata = self._attach_activation_metadata(augmented_metadata)
             record = log.record(
                 stage,
                 symbol,
@@ -4163,6 +4362,7 @@ class AutoTrader:
                     merged_meta[str(key)] = value
             if self._active_decision_mode:
                 merged_meta.setdefault("decision_mode", self._active_decision_mode)
+            merged_meta = self._attach_activation_metadata(merged_meta) or merged_meta
             log_decision_event(
                 journal,
                 event=event,
@@ -8449,6 +8649,15 @@ class AutoTrader:
                 ai_threshold_bps = float(ai_context.get("threshold_bps", 0.0))
             except (TypeError, ValueError):
                 ai_threshold_bps = 0.0
+
+        activation = self._maybe_run_strategy_regime_workflow(
+            symbol=symbol,
+            market_data=market_data,
+            summary=summary,
+            workflow_summary=workflow_summary,
+            ai_context=ai_context,
+        )
+        self._apply_strategy_regime_activation(activation)
 
         effective_risk = assessment.risk_score
         confidence_penalty = 0.0

@@ -36,6 +36,8 @@ Frame {
     property int historyPreviewLimit: 6
     property var guardrailState: ({})
     property var guardrailTrace: []
+    property var activePreset: ({})
+    property var presetActivations: []
     property var decisionHistory: []
     property var modelEvents: []
     property var signalQuality: ({})
@@ -430,6 +432,27 @@ Frame {
             return
         var payload = root.runtimeService.autoModeSnapshot()
         applySnapshot(payload)
+        refreshActivationSummary()
+    }
+
+    function refreshActivationSummary() {
+        if (!root.runtimeService || root.runtimeService.regimeActivationSummary === undefined)
+            return
+        var raw = root.runtimeService.regimeActivationSummary
+        if (!raw || raw.length === 0) {
+            activePreset = {}
+            presetActivations = []
+            guardrailTrace = []
+            return
+        }
+        try {
+            var summary = JSON.parse(raw)
+            activePreset = summary.activePreset || {}
+            presetActivations = summary.activations || []
+            guardrailTrace = summary.guardrailTrace || []
+        } catch (err) {
+            console.warn("AutoModePanel activation summary parse failed", err)
+        }
     }
 
     function toggleAutomation(enabled) {
@@ -488,8 +511,14 @@ Frame {
         onTriggered: trimExpiredBanners()
     }
 
-    Component.onCompleted: refreshSnapshot()
-    onRuntimeServiceChanged: refreshSnapshot()
+    Component.onCompleted: {
+        refreshSnapshot()
+        refreshActivationSummary()
+    }
+    onRuntimeServiceChanged: {
+        refreshSnapshot()
+        refreshActivationSummary()
+    }
 
     Connections {
         target: root.runtimeService
@@ -503,6 +532,9 @@ Frame {
             if (!preferences)
                 return
             alertDraft = cloneObject(preferences)
+        }
+        function onRegimeActivationSummaryChanged() {
+            refreshActivationSummary()
         }
     }
 
@@ -846,6 +878,129 @@ Frame {
                         text: guardValue("disableSecondaryWhenBelow") !== undefined ? guardValue("disableSecondaryWhenBelow") : qsTr("—")
                         color: palette.mid
                     }
+                }
+            }
+        }
+
+        Frame {
+            Layout.fillWidth: true
+            padding: 12
+            background: Rectangle {
+                color: Qt.darker(palette.base, 1.05)
+                radius: 8
+            }
+            ColumnLayout {
+                anchors.fill: parent
+                spacing: 6
+                Label {
+                    text: qsTr("Aktywny preset strategii")
+                    font.bold: true
+                }
+                RowLayout {
+                    Layout.fillWidth: true
+                    Label {
+                        text: activePreset && activePreset.preset_name
+                              ? activePreset.preset_name
+                              : qsTr("brak presetu")
+                        font.pointSize: 14
+                        font.bold: true
+                    }
+                    Item { Layout.fillWidth: true }
+                    Label {
+                        text: activePreset && activePreset.regime
+                              ? qsTr("Reżim: %1").arg(activePreset.regime)
+                              : qsTr("Reżim: brak")
+                        color: palette.mid
+                    }
+                }
+                Label {
+                    text: activePreset && activePreset.preset_hash
+                          ? qsTr("Hash: %1").arg(activePreset.preset_hash)
+                          : qsTr("Hash: —")
+                    color: palette.mid
+                }
+                Label {
+                    text: activePreset && activePreset.issued_at
+                          ? qsTr("Aktywacja: %1").arg(formatTimestamp(activePreset.issued_at))
+                          : qsTr("Aktywacja: —")
+                    color: palette.mid
+                }
+                Label {
+                    text: activePreset && activePreset.used_fallback
+                          ? qsTr("Tryb awaryjny – brak danych lub blokada")
+                          : qsTr("Tryb standardowy")
+                    color: activePreset && activePreset.used_fallback ? "#f39c12" : palette.mid
+                }
+                Label {
+                    visible: activePreset && activePreset.license_issues && activePreset.license_issues.length > 0
+                    text: activePreset && activePreset.license_issues
+                          ? qsTr("Licencja: %1").arg(activePreset.license_issues.join(", "))
+                          : ""
+                    color: "#e67e22"
+                }
+            }
+        }
+
+        Frame {
+            Layout.fillWidth: true
+            padding: 12
+            background: Rectangle {
+                color: Qt.darker(palette.base, 1.03)
+                radius: 8
+            }
+            ColumnLayout {
+                anchors.fill: parent
+                spacing: 8
+                Label {
+                    text: qsTr("Ostatnie aktywacje presetów")
+                    font.bold: true
+                }
+                Repeater {
+                    model: presetActivations
+                    delegate: Rectangle {
+                        Layout.fillWidth: true
+                        radius: 6
+                        color: Qt.darker(palette.window, 1.05)
+                        border.color: Qt.darker(palette.window, 1.2)
+                        border.width: 1
+                        ColumnLayout {
+                            anchors.fill: parent
+                            anchors.margins: 10
+                            spacing: 4
+                            Label {
+                                text: {
+                                    var presetName = modelData.activation && modelData.activation.preset_name
+                                            ? modelData.activation.preset_name
+                                            : qsTr("preset")
+                                    return qsTr("%1 • %2").arg(presetName).arg(formatTimestamp(modelData.timestamp))
+                                }
+                                font.bold: true
+                            }
+                            Label {
+                                text: modelData.activation && modelData.activation.preset_hash
+                                      ? qsTr("Hash: %1").arg(modelData.activation.preset_hash)
+                                      : ""
+                                color: palette.mid
+                            }
+                            Label {
+                                visible: modelData.guardrails && modelData.guardrails.reasons && modelData.guardrails.reasons.length > 0
+                                text: modelData.guardrails && modelData.guardrails.reasons
+                                      ? qsTr("Guardrail: %1").arg(modelData.guardrails.reasons.join(", "))
+                                      : ""
+                                color: "#f1c40f"
+                            }
+                            Label {
+                                visible: modelData.activation && modelData.activation.used_fallback
+                                text: qsTr("Wymuszony fallback")
+                                color: "#e67e22"
+                            }
+                        }
+                    }
+                }
+                Label {
+                    visible: presetActivations.length === 0
+                    text: qsTr("Brak aktywacji w historii.")
+                    color: palette.mid
                 }
             }
         }
