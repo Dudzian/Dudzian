@@ -18,23 +18,21 @@
 
 Powłoka Qt Quick 6 zapewnia lekkie UI do komunikacji z demonem tradingowym (lub stubem gRPC) bezpośrednio przez `botcore.trading.v1`. Interfejs renderuje strumień OHLCV w 60/120 Hz, respektuje parametry `performance_guard` oraz umożliwia szybkie iteracje nad wyglądem i animacjami.
 
+## Obsługiwany interfejs
+
+Jedynym wspieranym interfejsem graficznym jest PySide6/PyQt6 bazujący na Qt Quick 6,
+blurach i zestawie ikon FontAwesome. Wariant C++ został zamrożony i nie posiada
+utrzymywanych shimów – jeśli potrzebujesz historycznych instrukcji builda,
+zajrzyj do [`archive/ui_cpp_legacy.md`](../archive/ui_cpp_legacy.md).
+
 ## Wymagania
 
-* Qt 6.7+ (`qtbase`, `qtdeclarative`, `qtquickcontrols2`, `qtcharts`).
-* Kompilator C++20, CMake ≥ 3.21.
-* gRPC + Protobuf (`libgrpc++`, `libprotobuf`).
-* Wygenerowane stuby C++ z `proto/trading.proto` (CMake generuje je automatycznie przy pierwszym buildzie).
-* Opcjonalnie Pythonowy stub serwera (`python scripts/run_trading_stub_server.py`).
-
-## Budowanie wariantu C++ (legacy)
-
-```bash
-cmake -S ui -B ui/build -GNinja \
-  -DCMAKE_PREFIX_PATH="/ścieżka/do/Qt/6.7.0/gcc_64"
-cmake --build ui/build
-```
-
-Artefakt `bot_trading_shell` znajduje się w `ui/build/bot_trading_shell` i służy jako referencja dla OEM korzystających z natywnego builda.
+* Python 3.11+ oraz aktywowane środowisko wirtualne.
+* PySide6 6.7+ (lub PyQt6) z komponentami Qt Quick Controls 2, efektami rozmycia
+  (`QtGraphicalEffects`) i obsługą ikon SVG FontAwesome.
+* `shiboken6`/`QtQuick` zainstalowane razem z PySide6.
+* Opcjonalnie stub serwera gRPC uruchamiany poleceniem
+  `python scripts/run_trading_stub_server.py`.
 
 ## Moduły UI i pluginy
 
@@ -62,8 +60,10 @@ kontrolera `PortfolioManagerController`, który deleguje operacje na lokalny mos
 `var/portfolio_links.json`, ale ścieżkę można nadpisać opcją CLI:
 
 ```
-bot_trading_shell --portfolio-bridge /ścieżka/do/ui_portfolio_bridge.py \
-                  --portfolio-store /ścieżka/do/portfeli.json
+python -m ui.pyside_app \
+  --config ui/config/example.yaml \
+  --portfolio-bridge /ścieżka/do/ui_portfolio_bridge.py \
+  --portfolio-store /ścieżka/do/portfeli.json
 ```
 
 Plik JSON przechowuje strukturę:
@@ -99,7 +99,8 @@ python scripts/run_trading_stub_server.py \
 W drugim terminalu wystartuj powłokę:
 
 ```bash
-ui/build/bot_trading_shell \
+python -m ui.pyside_app \
+  --config ui/config/example.yaml \
   --endpoint 127.0.0.1:50061 \
   --symbol BTC/USDT \
   --venue-symbol BTCUSDT \
@@ -141,7 +142,8 @@ UI wymusza także przełączenie telemetrii i modułu Health na transport `in-pr
 ignorując ręcznie ustawione endpointy:
 
 ```bash
-ui/build/bot_trading_shell \
+python -m ui.pyside_app \
+  --config ui/config/example.yaml \
   --transport-mode in-process \
   --transport-dataset data/sample_ohlcv/trend.csv \
   --disable-metrics
@@ -242,7 +244,8 @@ może je odczytywać bezpośrednio, aby zasilić widok mapowania strategii na re
 Ścieżki i interpreter mostka można dostosować flagami CLI:
 
 ```bash
-ui/build/bot_trading_shell \
+python -m ui.pyside_app \
+  --config ui/config/example.yaml \
   --core-config /etc/bot_core/core.yaml \
   --strategy-config-python /usr/bin/python3 \
   --strategy-config-bridge /opt/oem/ui_config_bridge.py
@@ -281,7 +284,8 @@ instrument, status połączenia).
 Najważniejsze flagi CLI sterujące pakietem wsparcia:
 
 ```bash
-ui/build/bot_trading_shell \
+python -m ui.pyside_app \
+  --config ui/config/example.yaml \
   --support-bundle-python /usr/bin/python3 \
   --support-bundle-script /opt/oem/export_support_bundle.py \
   --support-bundle-output-dir /var/support \
