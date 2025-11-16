@@ -47,3 +47,13 @@ Lint layoutu kończy się błędem za każdym razem, gdy w repozytorium pojawią
 zakazane katalogi (prefiksy legacy Stage5) albo pliki wykonywalne wewnątrz `archive/`.
 Pozostałości należy usunąć lub przenieść do dokumentacji historycznej przed
 wysłaniem zmian do review.
+
+### Użycie słowa „legacy”
+
+- W kodzie wykonywalnym (np. `bot_core`, `core`, `scripts/`, `ui/src/`, `proto/`) słowo
+  „legacy” jest zakazane i test `tests/qa/test_no_legacy_tokens.py` zablokuje merge.
+- Wyjątkiem są katalogi i pliki opisowe: cała zawartość `docs/`, `archive/` oraz
+  pliki zaczynające się od `README`. Tam można wprost dokumentować historyczne
+  funkcje, migracje i tokeny.
+- W przypadku potrzeby użycia tego słowa poza powyższą listą należy dodać nowy wpis
+  do allowlisty w teście QA wraz z uzasadnieniem w opisie PR.
