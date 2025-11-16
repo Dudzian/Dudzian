@@ -213,6 +213,28 @@ def test_autotrader_live_execution_failure_records_audit() -> None:
     )
 
 
+def test_autotrader_ai_governor_snapshot_reports_mode() -> None:
+    assessment = MarketRegimeAssessment(
+        regime=MarketRegime.TREND,
+        confidence=0.9,
+        risk_score=0.4,
+        metrics={"trend_strength": 0.95},
+        symbol="BTCUSDT",
+    )
+    ai_manager = _StaticAIManager(assessment=assessment, prediction=0.02, probability=0.82)
+    trader, _, _, _ = _build_trader(ai_manager)
+
+    trader.run_decision_cycle()
+    snapshot = trader.build_auto_mode_snapshot(include_history=False)
+    governor = snapshot.get("ai_governor", {})
+
+    assert governor.get("last_decision", {}).get("mode") in {"scalping", "grid", "hedge"}
+    telemetry = governor.get("telemetry", {})
+    cycle_metrics = telemetry.get("cycleMetrics", {})
+    assert cycle_metrics, "powinny istnieć metryki cyklu"
+    assert "strategy_switch_total" in cycle_metrics
+
+
 def test_autotrader_cycle_report_without_new_decision() -> None:
     assessment = MarketRegimeAssessment(
         regime=MarketRegime.TREND,

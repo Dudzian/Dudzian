@@ -16,6 +16,7 @@ from .schema import (
     load_catalog,
     load_repository_config,
 )
+from .workflow import PresetPublicationWorkflow, PresetReviewSummary
 
 __all__ = [
     "ArtifactIntegrity",
@@ -32,4 +33,6 @@ __all__ = [
     "VersionCompatibility",
     "load_catalog",
     "load_repository_config",
+    "PresetPublicationWorkflow",
+    "PresetReviewSummary",
 ]

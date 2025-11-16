@@ -1,6 +1,7 @@
 """Auto-trading helpers exposed by the bot_core namespace."""
 from __future__ import annotations
 
+from .ai_governor import AIGovernorDecision, AutoTraderAIGovernor
 from .app import AutoTrader, DecisionCycleReport, EmitterLike
 from .paper_app import PaperAutoTradeApp
 from .audit import DecisionAuditLog, DecisionAuditRecord
@@ -25,4 +26,6 @@ __all__ = [
     "ScheduleWindow",
     "ScheduleState",
     "PaperAutoTradeApp",
+    "AutoTraderAIGovernor",
+    "AIGovernorDecision",
 ]

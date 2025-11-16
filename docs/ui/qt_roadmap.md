@@ -13,6 +13,8 @@
 * Uruchamianie kreatora presetów (`python scripts/ui_config_bridge.py --preset-wizard --wizard-mode build --input preset_payload.json`) z przekazaniem parametrów kontekstowych wybranych w UI i obsługą zwrotów dotyczących zgodności podpisów.
 * Prezentowanie operatorowi w UI: raportów dostępności strategii, wyników walidacji podpisów, historii wersji presetów oraz sugerowanych działań naprawczych przekazanych przez mostek.
 * Propagowanie do backendu zmian zatwierdzonych w UI (aktualizacje wag reżimów, aktywacje presetów) wraz z metadanymi audytowymi wymaganymi przez `StrategyRegimeWorkflow`.
+* Workflow importu presetów w kreatorze PySide6 korzysta z `bot_core.config_marketplace.workflow.PresetPublicationWorkflow.build_ui_payload()` – payload zawiera podpisy HMAC, recenzje i meta `wizard.importable` zweryfikowane w `tests/test_marketplace_workflow.py`.
+* Sekcja trybów pracy UI wykorzystuje telemetrię `ai_governor` z `AutoTrader.build_auto_mode_snapshot()` (`tests/e2e/test_autotrader_autonomy.py::test_autotrader_ai_governor_snapshot_reports_mode`) do rekomendacji scalping/hedge/grid.
 
 ### Wymagania mostka konfiguracyjnego
 
