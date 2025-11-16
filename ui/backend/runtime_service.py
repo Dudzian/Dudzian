@@ -77,6 +77,8 @@ except Exception:  # pragma: no cover - fallback gdy brak gRPC
 
 DecisionRecord = Mapping[str, str]
 DecisionLoader = Callable[[int], Iterable[DecisionRecord]]
+_AI_FEED_CHANNEL = "ai_governor"
+_AI_HISTORY_LIMIT = 32
 
 
 @dataclass(slots=True)
@@ -655,6 +657,98 @@ def _normalize_ai_snapshot(snapshot: Mapping[str, object] | None) -> dict[str, o
     }
 
 
+def _coerce_float(value: object) -> float | None:
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _coerce_mode_sequence(value: object) -> list[str]:
+    if value is None:
+        return []
+    if isinstance(value, str):
+        sanitized = [segment.strip() for segment in value.replace(";", ",").split(",")]
+        return [segment for segment in sanitized if segment]
+    if isinstance(value, Iterable):
+        collected: list[str] = []
+        for item in value:
+            if isinstance(item, str):
+                token = item.strip()
+                if token:
+                    collected.append(token)
+        return collected
+    return []
+
+
+def _normalize_ai_governor_record(payload: Mapping[str, object] | None) -> dict[str, object] | None:
+    if not isinstance(payload, Mapping):
+        return None
+    record = {str(key): payload[key] for key in payload.keys()}
+    mode = str(record.get("mode") or record.get("Mode") or "").strip()
+    reason = str(record.get("reason") or record.get("Reason") or "").strip()
+    timestamp = str(
+        record.get("timestamp")
+        or record.get("generated_at")
+        or record.get("ts")
+        or ""
+    ).strip()
+    if not mode and not reason:
+        return None
+    confidence_value = record.get("confidence") or record.get("Confidence")
+    confidence = _coerce_float(confidence_value)
+    regime_value = record.get("regime") or record.get("Regime") or ""
+    if isinstance(regime_value, Mapping):
+        regime = str(
+            regime_value.get("label")
+            or regime_value.get("value")
+            or regime_value.get("name")
+            or ""
+        ).strip()
+    else:
+        regime = str(regime_value).strip()
+    risk_score = _coerce_float(record.get("risk_score") or record.get("riskScore"))
+    transaction_cost = _coerce_float(
+        record.get("transaction_cost_bps")
+        or record.get("transactionCostBps")
+        or record.get("cost_bps")
+    )
+    recommended_modes = _coerce_mode_sequence(
+        record.get("recommendedModes")
+        or record.get("recommended_modes")
+        or record.get("modes")
+    )
+
+    telemetry_payload = record.get("telemetry")
+    risk_metrics: Mapping[str, object] | None = None
+    cycle_metrics: Mapping[str, object] | None = None
+    if isinstance(telemetry_payload, Mapping):
+        risk_metrics = _camelize_mapping(telemetry_payload.get("riskMetrics"))
+        cycle_metrics = _camelize_mapping(telemetry_payload.get("cycleMetrics"))
+    else:
+        risk_metrics = _camelize_mapping(record.get("riskMetrics"))
+        cycle_metrics = _camelize_mapping(record.get("cycleMetrics"))
+
+    normalized: dict[str, object] = {
+        "timestamp": timestamp,
+        "mode": mode,
+        "reason": reason,
+        "confidence": confidence if confidence is not None else 0.0,
+        "regime": regime,
+        "riskScore": risk_score if risk_score is not None else 0.0,
+        "transactionCostBps": transaction_cost,
+        "recommendedModes": recommended_modes,
+    }
+    telemetry: dict[str, object] = {}
+    if risk_metrics:
+        telemetry["riskMetrics"] = dict(risk_metrics)
+    if cycle_metrics:
+        telemetry["cycleMetrics"] = dict(cycle_metrics)
+    if telemetry:
+        normalized["telemetry"] = telemetry
+    return normalized
+
+
 class RuntimeService(QObject):
     """Zapewnia QML dostęp do najnowszych decyzji autotradera."""
 
@@ -758,6 +852,21 @@ class RuntimeService(QObject):
         self._grpc_authority_override: str | None = None
         self._grpc_idle_flag = False
         self._last_grpc_update = time.monotonic()
+        self._ai_feed_channel = _AI_FEED_CHANNEL
+        self._ai_feed_queue: "queue.Queue[tuple[str, object]] | None" = None
+        self._ai_feed_thread: threading.Thread | None = None
+        self._ai_feed_stop_event: threading.Event | None = None
+        self._ai_feed_timer: QTimer | None = None
+        self._ai_feed_retry_timer: QTimer | None = None
+        self._ai_feed_stream_active = False
+        self._ai_feed_last_error = ""
+        self._ai_feed_last_update = 0.0
+        ai_history_limit_env = os.environ.get("BOT_CORE_UI_AI_HISTORY_LIMIT")
+        try:
+            configured_limit = int(ai_history_limit_env) if ai_history_limit_env else _AI_HISTORY_LIMIT
+        except (TypeError, ValueError):
+            configured_limit = _AI_HISTORY_LIMIT
+        self._ai_history_limit = max(_AI_HISTORY_LIMIT, configured_limit)
         self._feed_reconnects = 0
         self._feed_downtime_started: float | None = None
         self._feed_downtime_total = 0.0
@@ -768,6 +877,9 @@ class RuntimeService(QObject):
         else:
             self._feed_metrics_path = Path("reports/ci/decision_feed_metrics.json")
         self._feed_channels: tuple[str, ...] = ("decision_journal", "ai_governor")
+        self._feed_channel_status: dict[str, dict[str, object]] = {
+            channel: {"status": "initializing", "lastError": ""} for channel in self._feed_channels
+        }
         self._feed_latencies: deque[float] = deque(maxlen=1024)
         self._feed_health: dict[str, object] = {
             "status": "initializing",
@@ -775,6 +887,7 @@ class RuntimeService(QObject):
             "downtimeMs": 0.0,
             "lastError": "",
             "channels": list(self._feed_channels),
+            "channelStates": {channel: dict(state) for channel, state in self._feed_channel_status.items()},
         }
         self._feed_sla_report: dict[str, object] = {}
         self._feed_transport_snapshot: dict[str, object] = {
@@ -784,6 +897,7 @@ class RuntimeService(QObject):
             "reconnects": 0,
             "lastError": "",
             "channels": list(self._feed_channels),
+            "channelStates": {channel: dict(state) for channel, state in self._feed_channel_status.items()},
         }
         self._feed_metrics_exporter = feed_metrics_exporter or get_feed_health_metrics_exporter()
         self._feed_alert_sink = feed_alert_sink or get_feed_health_alert_sink()
@@ -932,6 +1046,9 @@ class RuntimeService(QObject):
         else:
             payload.pop("p95LatencyMs", None)
         self._feed_health = payload
+        payload["channelStates"] = {
+            channel: dict(state) for channel, state in self._feed_channel_status.items()
+        }
         self.feedHealthChanged.emit()
         self._refresh_feed_transport_snapshot(payload, latency_p95)
         self._publish_feed_metrics(payload, latency_p95)
@@ -963,6 +1080,7 @@ class RuntimeService(QObject):
             "retryAttempts": self._grpc_retry_attempts,
             "queueDepth": self._grpc_queue.qsize() if self._grpc_queue is not None else 0,
             "channels": list(self._feed_channels),
+            "channelStates": {channel: dict(state) for channel, state in self._feed_channel_status.items()},
         }
         if self._grpc_stream_active:
             snapshot["secondsSinceLastMessage"] = max(0.0, time.monotonic() - self._last_grpc_update)
@@ -977,6 +1095,24 @@ class RuntimeService(QObject):
         if snapshot != self._feed_transport_snapshot:
             self._feed_transport_snapshot = snapshot
             self.feedTransportSnapshotChanged.emit()
+
+    def _set_channel_status(
+        self,
+        channel: str,
+        status: str,
+        *,
+        last_error: str | None = None,
+        metadata: Mapping[str, object] | None = None,
+    ) -> None:
+        payload = dict(self._feed_channel_status.get(channel, {}))
+        payload["status"] = status
+        if last_error is not None:
+            payload["lastError"] = last_error
+        if metadata:
+            for key, value in metadata.items():
+                payload[str(key)] = value
+        self._feed_channel_status[channel] = payload
+        self._update_feed_health()
 
     def _publish_feed_metrics(self, payload: Mapping[str, object], latency_p95: float | None) -> None:
         exporter = self._feed_metrics_exporter
@@ -1136,6 +1272,7 @@ class RuntimeService(QObject):
         key: str,
         severity: str,
         *,
+        channel: str = "decision_journal",
         metric_label: str,
         unit: str,
         value: float | None,
@@ -1203,6 +1340,7 @@ class RuntimeService(QObject):
             "state": state,
             "reconnects": str(reconnects),
             "downtime_seconds": f"{downtime_seconds:.3f}",
+            "channel": channel,
         }
         if value is not None:
             context["metric_value"] = (
@@ -1234,6 +1372,7 @@ class RuntimeService(QObject):
             "downtime_seconds": downtime_seconds,
             "latency_p95_ms": latency_p95,
             "state": state,
+            "channel": channel,
         }
         if last_error:
             payload["last_error"] = last_error
@@ -1365,6 +1504,7 @@ class RuntimeService(QObject):
     def _mark_feed_disconnected(self) -> None:
         if self._feed_downtime_started is None:
             self._feed_downtime_started = time.monotonic()
+        self._set_channel_status("decision_journal", "degraded", last_error=self._feed_last_error)
         self._update_feed_health(status="degraded", reconnects=self._feed_reconnects)
 
     def _mark_feed_connected(self) -> None:
@@ -1373,6 +1513,7 @@ class RuntimeService(QObject):
             self._feed_downtime_started = None
         self._grpc_retry_attempts = 0
         self._cancel_grpc_reconnect()
+        self._set_channel_status("decision_journal", "connected", last_error="")
         self._update_feed_health(status="connected", reconnects=self._feed_reconnects, last_error="")
 
     # ------------------------------------------------------------------
@@ -1414,6 +1555,13 @@ class RuntimeService(QObject):
 
     def _set_ai_governor_snapshot(self, snapshot: Mapping[str, object]) -> None:
         normalized = _normalize_ai_snapshot(snapshot)
+        history = normalized.get("history")
+        if isinstance(history, list) and history:
+            trimmed = history[: self._ai_history_limit]
+            normalized["history"] = trimmed
+            normalized["lastDecision"] = trimmed[0]
+        elif "history" in normalized and not history:
+            normalized["history"] = []
         if normalized != self._ai_governor_snapshot:
             self._ai_governor_snapshot = normalized
             self.aiGovernorSnapshotChanged.emit()
@@ -1851,6 +1999,7 @@ class RuntimeService(QObject):
             self._update_feed_health(status="connecting", reconnects=0, last_error="")
 
     def _activate_jsonl_loader(self, profile: str | None, *, silent: bool) -> bool:
+        self._stop_ai_governor_stream()
         try:
             loader, log_path = self._build_live_loader(profile)
         except Exception as exc:
@@ -1873,6 +2022,7 @@ class RuntimeService(QObject):
         return True
 
     def _use_demo_loader(self, message: str | None, *, profile: str | None, silent: bool) -> None:
+        self._stop_ai_governor_stream()
         self._loader = _default_loader
         self._active_profile = profile
         self._active_log_path = None
@@ -1954,6 +2104,7 @@ class RuntimeService(QObject):
         )
         self._grpc_thread = worker
         worker.start()
+        self._start_ai_governor_stream()
 
     def _grpc_worker(
         self,
@@ -2048,6 +2199,245 @@ class RuntimeService(QObject):
                 time.sleep(0.1)
             backoff = min(max_backoff, backoff * multiplier)
         queue_obj.put(("done", None))
+
+    def _start_ai_governor_stream(self) -> None:
+        if self._ai_feed_stream_active:
+            return
+        target = self._grpc_target
+        if not target:
+            return
+        if grpc is None:
+            self._set_channel_status(
+                self._ai_feed_channel, "unavailable", last_error="grpc unavailable"
+            )
+            return
+        try:
+            from bot_core.generated import trading_pb2, trading_pb2_grpc
+        except ImportError:
+            self._set_channel_status(
+                self._ai_feed_channel,
+                "unavailable",
+                last_error="trading stubs unavailable",
+            )
+            return
+        self._ai_feed_stop_event = threading.Event()
+        self._ai_feed_queue = queue.Queue(maxsize=64)
+        metadata = list(self._active_grpc_metadata)
+        metadata.append(("x-feed-channel", self._ai_feed_channel))
+        metadata.append(("x-ai-governor", "1"))
+        worker = threading.Thread(
+            target=self._ai_feed_worker,
+            args=(
+                target,
+                trading_pb2,
+                trading_pb2_grpc,
+                tuple(metadata),
+                max(1, self._ai_history_limit),
+            ),
+            name="RuntimeServiceAiFeed",
+            daemon=True,
+        )
+        worker.start()
+        self._ai_feed_thread = worker
+        self._ai_feed_stream_active = True
+        self._set_channel_status(self._ai_feed_channel, "connecting", last_error="")
+        self._ensure_ai_feed_timer()
+
+    def _stop_ai_governor_stream(self) -> None:
+        if self._ai_feed_stop_event is not None:
+            self._ai_feed_stop_event.set()
+        if self._ai_feed_thread is not None and self._ai_feed_thread.is_alive():
+            self._ai_feed_thread.join(timeout=1.0)
+        self._ai_feed_thread = None
+        self._ai_feed_stop_event = None
+        self._ai_feed_queue = None
+        if self._ai_feed_timer is not None:
+            self._ai_feed_timer.stop()
+            self._ai_feed_timer.deleteLater()
+            self._ai_feed_timer = None
+        if self._ai_feed_retry_timer is not None:
+            self._ai_feed_retry_timer.stop()
+            self._ai_feed_retry_timer.deleteLater()
+            self._ai_feed_retry_timer = None
+        self._ai_feed_stream_active = False
+        self._set_channel_status(
+            self._ai_feed_channel, "offline", last_error=self._ai_feed_last_error
+        )
+
+    def _ensure_ai_feed_timer(self) -> None:
+        if self._ai_feed_timer is not None:
+            return
+        timer = QTimer(self)
+        timer.setInterval(200)
+        timer.setSingleShot(False)
+        timer.timeout.connect(self._drain_ai_feed_queue)
+        timer.start()
+        self._ai_feed_timer = timer
+
+    def _schedule_ai_feed_retry(self, delay_seconds: float = 5.0) -> None:
+        if self._ai_feed_retry_timer is None:
+            timer = QTimer(self)
+            timer.setSingleShot(True)
+            timer.timeout.connect(self._start_ai_governor_stream)
+            self._ai_feed_retry_timer = timer
+        self._ai_feed_retry_timer.start(max(1000, int(delay_seconds * 1000)))
+
+    def _emit_ai_feed_event(self, severity: str, message: str) -> None:
+        sink = self._feed_alert_sink
+        if sink is None:
+            return
+        context = {"adapter": "grpc", "channel": self._ai_feed_channel}
+        payload = {
+            "adapter": "grpc",
+            "channel": self._ai_feed_channel,
+            "state": severity,
+            "last_error": message,
+        }
+        sink.emit_feed_health_event(
+            severity=severity,
+            title="AI Governor feed status",
+            body=message,
+            context=context,
+            payload=payload,
+        )
+
+    def _ai_feed_worker(
+        self,
+        target: str,
+        trading_pb2,
+        trading_pb2_grpc,
+        metadata: tuple[tuple[str, str], ...],
+        limit: int,
+    ) -> None:
+        queue_obj = self._ai_feed_queue
+        if queue_obj is None:
+            return
+        stop_event = self._ai_feed_stop_event
+        request = trading_pb2.StreamDecisionsRequest(
+            limit=max(1, int(limit)),
+            skip_snapshot=False,
+            poll_interval_seconds=5.0,
+        )
+        channel = None
+        try:
+            if self._grpc_ssl_credentials is not None:
+                options = []
+                if self._grpc_authority_override:
+                    options.append(("grpc.ssl_target_name_override", self._grpc_authority_override))
+                channel = grpc.secure_channel(target, self._grpc_ssl_credentials, options=options or None)
+            else:
+                channel = grpc.insecure_channel(target)
+            ready_future = grpc.channel_ready_future(channel)
+            ready_future.result(timeout=max(1.0, float(self._grpc_ready_timeout)))
+            stub = trading_pb2_grpc.RuntimeServiceStub(channel)
+            stream = stub.StreamDecisions(request, metadata=metadata)
+            queue_obj.put(("connected", None))
+            for update in stream:
+                if stop_event is not None and stop_event.is_set():
+                    break
+                if update.HasField("snapshot"):
+                    records = [dict(entry.fields) for entry in update.snapshot.records]
+                    queue_obj.put(("snapshot", records))
+                elif update.HasField("increment"):
+                    queue_obj.put(("increment", dict(update.increment.record.fields)))
+        except Exception as exc:  # pragma: no cover - diagnostyka
+            queue_obj.put(("connection-error", {"message": str(exc)}))
+        finally:
+            if channel is not None:
+                try:
+                    channel.close()
+                except Exception:
+                    pass
+        queue_obj.put(("done", None))
+
+    def _drain_ai_feed_queue(self) -> None:
+        queue_obj = self._ai_feed_queue
+        if queue_obj is None:
+            return
+        updated = False
+        while True:
+            try:
+                kind, payload = queue_obj.get_nowait()
+            except queue.Empty:
+                break
+            if kind == "snapshot":
+                records = payload if isinstance(payload, list) else None
+                if records:
+                    self._apply_ai_governor_records(records)
+                    updated = True
+                queue_obj.task_done()
+                continue
+            if kind == "increment":
+                record_payload = payload if isinstance(payload, Mapping) else None
+                if record_payload:
+                    self._append_ai_governor_record(record_payload)
+                    updated = True
+                queue_obj.task_done()
+                continue
+            if kind == "connected":
+                self._ai_feed_last_error = ""
+                self._set_channel_status(self._ai_feed_channel, "connected", last_error="")
+                self._ai_feed_last_update = time.monotonic()
+                queue_obj.task_done()
+                continue
+            if kind == "connection-error":
+                message = "AI Governor feed error"
+                if isinstance(payload, Mapping):
+                    message = str(payload.get("message", message))
+                self._ai_feed_last_error = message
+                self._set_channel_status(self._ai_feed_channel, "fallback", last_error=message)
+                self._emit_ai_feed_event("warning", message)
+                self._schedule_ai_feed_retry()
+                queue_obj.task_done()
+                continue
+            if kind == "done":
+                self._ai_feed_stream_active = False
+                queue_obj.task_done()
+                continue
+            queue_obj.task_done()
+        if updated:
+            self._ai_feed_last_update = time.monotonic()
+
+    def _apply_ai_governor_records(self, records: Iterable[Mapping[str, object]]) -> None:
+        normalized: list[dict[str, object]] = []
+        for record in records:
+            entry = _normalize_ai_governor_record(record)
+            if entry:
+                normalized.append(entry)
+        if not normalized:
+            return
+        existing_history = []
+        history_payload = self._ai_governor_snapshot.get("history")
+        if isinstance(history_payload, list):
+            existing_history = list(history_payload)
+        merged = normalized + existing_history
+        snapshot = {
+            "last_decision": normalized[0],
+            "history": merged,
+            "telemetry": self._ai_governor_snapshot.get("telemetry", {}),
+        }
+        telemetry_payload = normalized[0].get("telemetry")
+        if isinstance(telemetry_payload, Mapping):
+            snapshot["telemetry"] = telemetry_payload
+        self._set_ai_governor_snapshot(snapshot)
+
+    def _append_ai_governor_record(self, record: Mapping[str, object]) -> None:
+        entry = _normalize_ai_governor_record(record)
+        if not entry:
+            return
+        history_payload = self._ai_governor_snapshot.get("history")
+        history = [entry]
+        if isinstance(history_payload, list):
+            history.extend(history_payload)
+        snapshot = {
+            "last_decision": entry,
+            "history": history,
+            "telemetry": self._ai_governor_snapshot.get("telemetry", {}),
+        }
+        telemetry_payload = entry.get("telemetry")
+        if isinstance(telemetry_payload, Mapping):
+            snapshot["telemetry"] = telemetry_payload
+        self._set_ai_governor_snapshot(snapshot)
 
     def _drain_grpc_queue(self) -> None:
         queue_obj = self._grpc_queue
@@ -2475,6 +2865,7 @@ class RuntimeService(QObject):
         return data[low] + (data[high] - data[low]) * fraction
 
     def _stop_grpc_stream(self) -> None:
+        self._stop_ai_governor_stream()
         if self._grpc_stop_event is not None:
             self._grpc_stop_event.set()
         if self._grpc_thread is not None and self._grpc_thread.is_alive():

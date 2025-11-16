@@ -44,7 +44,7 @@
 | Tryby AI Governor | AutoTrader AI Governor (scalping/hedge/grid) z telemetrią `riskMetrics`/`cycleMetrics`, test `tests/e2e/test_autotrader_autonomy.py::test_autotrader_ai_governor_snapshot_reports_mode`. | Tryby automatyczne/półautomatyczne wymagające ręcznej konfiguracji kosztów. | Przewaga Dudzian – eksponować adaptacyjne tryby w marketingu. |
 | Stress Lab i symulacje | Scenariusze multi-market, blackout infrastrukturalny i bundling raportów podpisanych HMAC. | Backtesting i paper trading, brak publicznych stres testów multi-market. | Przewaga Dudzian – komunikować stress labs w marketingu. |
 | Resilience / DR | ResilienceHypercareCycle, self-healing runtime, failover drill i bundler artefaktów podpisanych HMAC. | Failover podstawowy (API failover, monitoring uptime). | Przewaga Dudzian – utrzymać przewagę w audycie DR. |
-| UI decyzji | Dashboard QML z kartą „Decyzje AI”, wymagająca integracji gRPC dla pełnego feedu runtime. | Webowy UI z dostępem do sygnałów i alertów w czasie rzeczywistym. | Luka – zakończyć integrację gRPC, zapewnić widok live. |
+| UI decyzji | Dashboard QML z kartą „Decyzje AI” korzystającą z feedu gRPC `AutoTraderAIGovernor` (timeline, confidence, rekomendowane tryby i telemetry z blurami PySide6). | Webowy UI z dostępem do sygnałów i alertów w czasie rzeczywistym. | Przewaga Dudzian – live timeline + SLA HyperCare w PySide6. |
 | Compliance i audyt | TradingDecisionJournal, podpisy HMAC dla raportów hypercare oraz logowanie decyzji AI. | Raporty działania bota, brak potwierdzonych podpisów HMAC offline. | Przewaga Dudzian – utrzymać offline-first compliance. |
 
 ## Priorytety uzupełniania luk

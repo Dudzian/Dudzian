@@ -64,10 +64,27 @@ class _DesignSystemStub(QObject):
 def test_ai_decisions_view_renders_without_live_runtime() -> None:
     _ensure_app()
     snapshot = {
-        "lastDecision": {"mode": "scalping", "reason": "Niskie koszty", "confidence": 0.82},
+        "lastDecision": {
+            "mode": "scalping",
+            "reason": "Niskie koszty",
+            "confidence": 0.82,
+            "riskScore": 0.42,
+            "transactionCostBps": 8.5,
+            "recommendedModes": ["scalping", "hedge"],
+        },
         "history": [
-            {"mode": "grid", "reason": "Wysokie koszty", "confidence": 0.61},
-            {"mode": "hedge", "reason": "Guardrail", "confidence": 0.73},
+            {
+                "mode": "grid",
+                "reason": "Wysokie koszty",
+                "confidence": 0.61,
+                "timestamp": "2025-01-01T12:00:00Z",
+            },
+            {
+                "mode": "hedge",
+                "reason": "Guardrail",
+                "confidence": 0.73,
+                "timestamp": "2025-01-01T12:01:00Z",
+            },
         ],
         "telemetry": {
             "riskMetrics": {"risk_score": 0.42},
@@ -88,5 +105,6 @@ def test_ai_decisions_view_renders_without_live_runtime() -> None:
     app = _ensure_app()
     app.processEvents()
 
-    assert int(view.property("historyCount")) == len(snapshot["history"])
+    assert int(view.property("timelineCount")) == len(snapshot["history"])
+    assert int(view.property("recommendationCount")) == len(snapshot["lastDecision"]["recommendedModes"])
     assert view.property("currentMode").lower() == snapshot["lastDecision"]["mode"]
