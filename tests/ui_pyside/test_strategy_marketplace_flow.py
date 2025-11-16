@@ -2,7 +2,10 @@ from __future__ import annotations
 
 from typing import Any
 
+import json
+
 from bot_core.strategies.installer import MarketplaceInstallResult
+from ui.backend.runtime_service import RuntimeService
 from ui.pyside_app.controllers.strategy import StrategyManagementController
 
 
@@ -67,3 +70,35 @@ def test_strategy_management_controller_applies_and_refreshes() -> None:
     updated_presets = controller.presets
     assert updated_presets[0]["assignedPortfolios"] == ["portfolio-alpha"]
     assert "Zainstalowano" in controller.statusMessage
+
+
+def test_runtime_service_exposes_activation_summary() -> None:
+    service = RuntimeService(decision_loader=lambda limit: [])
+    service._decisions = [  # noqa: SLF001 - ustawienie stanu testowego
+        {
+            "event": "decision_ready",
+            "timestamp": "2024-01-01T00:00:00+00:00",
+            "status": "approved",
+            "metadata": {
+                "activation": json.dumps({
+                    "preset_name": "grid_classic",
+                    "preset_hash": "hash-grid",
+                    "regime": "trend",
+                    "used_fallback": False,
+                }),
+                "guardrail_transition": json.dumps({
+                    "timestamp": "2024-01-01T00:00:00+00:00",
+                    "active": True,
+                    "previous_active": False,
+                    "reasons": ["latency"],
+                }),
+            },
+        }
+    ]
+    service._refresh_activation_summary()  # noqa: SLF001
+
+    summary = service.regimeActivationSummary
+    assert summary, "Oczekiwano podsumowania aktywacji"
+    payload = json.loads(summary)
+    assert payload["activePreset"]["preset_name"] == "grid_classic"
+    assert payload["guardrailTrace"][0]["active"] is True

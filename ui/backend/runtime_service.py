@@ -4,6 +4,7 @@ from __future__ import annotations
 import contextlib
 import json
 import logging
+import json
 import math
 import os
 import queue
@@ -588,6 +589,7 @@ class RuntimeService(QObject):
     longPollMetricsChanged = Signal()
     retrainNextRunChanged = Signal()
     adaptiveStrategySummaryChanged = Signal()
+    regimeActivationSummaryChanged = Signal()
     riskMetricsChanged = Signal()
     riskTimelineChanged = Signal()
     operatorActionChanged = Signal()
@@ -624,6 +626,7 @@ class RuntimeService(QObject):
         self._runtime_config_cache: "RuntimeAppConfig | None" = None
         self._retrain_next_run: str = ""
         self._adaptive_summary: str = ""
+        self._regime_activation_summary: str = ""
         self._risk_metrics: dict[str, object] = {}
         self._risk_timeline: list[dict[str, object]] = []
         self._cycle_metrics: dict[str, float] = {}
@@ -705,6 +708,10 @@ class RuntimeService(QObject):
     @Property(str, notify=adaptiveStrategySummaryChanged)
     def adaptiveStrategySummary(self) -> str:  # type: ignore[override]
         return self._adaptive_summary
+
+    @Property(str, notify=regimeActivationSummaryChanged)
+    def regimeActivationSummary(self) -> str:  # type: ignore[override]
+        return self._regime_activation_summary
 
     @Property("QVariantMap", notify=riskMetricsChanged)
     def riskMetrics(self) -> dict[str, object]:  # type: ignore[override]
@@ -1110,6 +1117,66 @@ class RuntimeService(QObject):
         if normalized != self._cycle_metrics:
             self._cycle_metrics = normalized
             self.cycleMetricsChanged.emit()
+        self._refresh_activation_summary()
+
+    def _coerce_metadata_mapping(self, value: object) -> dict[str, object] | None:
+        if isinstance(value, Mapping):
+            return {str(key): value[key] for key in value.keys()}
+        if isinstance(value, str):
+            text = value.strip()
+            if not text:
+                return None
+            try:
+                parsed = json.loads(text)
+            except json.JSONDecodeError:
+                return None
+            if isinstance(parsed, Mapping):
+                return {str(key): parsed[key] for key in parsed.keys()}
+        return None
+
+    def _refresh_activation_summary(self) -> None:
+        summary = self._build_activation_summary()
+        if summary == self._regime_activation_summary:
+            return
+        self._regime_activation_summary = summary
+        self.regimeActivationSummaryChanged.emit()
+
+    def _build_activation_summary(self) -> str:
+        timeline: list[dict[str, object]] = []
+        guardrail_trace: list[dict[str, object]] = []
+        active_preset: Mapping[str, object] | None = None
+        for entry in self._decisions:
+            metadata = entry.get("metadata") if isinstance(entry, Mapping) else None
+            if not isinstance(metadata, Mapping):
+                continue
+            activation_block = self._coerce_metadata_mapping(metadata.get("activation"))
+            if not activation_block:
+                continue
+            record: dict[str, object] = {
+                "timestamp": entry.get("timestamp"),
+                "event": entry.get("event"),
+                "status": entry.get("status"),
+                "activation": activation_block,
+            }
+            guardrail_block = self._coerce_metadata_mapping(
+                metadata.get("guardrail_transition")
+            )
+            if guardrail_block:
+                record["guardrails"] = guardrail_block
+                guardrail_trace.append(guardrail_block)
+            timeline.append(record)
+            if active_preset is None:
+                active_preset = activation_block
+            if len(timeline) >= 15:
+                break
+        if not timeline and not guardrail_trace and not active_preset:
+            return ""
+        payload = {
+            "activations": timeline,
+            "activePreset": active_preset or {},
+            "guardrailTrace": guardrail_trace,
+        }
+        return json.dumps(payload, ensure_ascii=False)
 
     # ------------------------------------------------------------------
     @Slot(int, result="QVariantList")
