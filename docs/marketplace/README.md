@@ -8,6 +8,7 @@ Ten dokument opisuje kompletny przepływ dodawania nowych presetów do katalogu 
 - **`config/marketplace/packages/`** – podpisane artefakty generowane z presetów (nie modyfikujemy ręcznie).
 - **`config/marketplace/catalog.json`** – indeks publicznych paczek generowany automatycznie na podstawie specyfikacji.
 - **`config/marketplace/keys/`** – klucze testowe do podpisów Ed25519 (presety) oraz HMAC (artefakty katalogu).
+- **`config/marketplace/reviews/`** – podpisane recenzje community synchronizowane do klientów UI/HyperCare.
 
 ## 2. Przygotowanie zgłoszenia
 
@@ -34,19 +35,25 @@ Ten dokument opisuje kompletny przepływ dodawania nowych presetów do katalogu 
    - Zbuduje znormalizowany `config/marketplace/catalog.json` (schemat `1.1`).
 3. Po uruchomieniu sprawdź `git status` – brak zmian oznacza, że artefakty są aktualne.
 
-## 4. Walidacja QA
+## 4. Recenzje community
+
+1. Każdy preset może mieć dowolną liczbę recenzji w plikach `config/marketplace/reviews/<preset_id>.json`. Recenzje muszą być podpisane HMAC kluczem `dev-hmac` (lub produkcyjnym) – podpisujemy je poleceniem `python scripts/ui_marketplace_bridge.py submit-review --preset-id <id> --rating <1-5> --comment "..." --review-key-id dev-hmac` (CLI sam dopisze wpis w repozytorium i odświeży `.meta/reviews.json`).
+2. Po zmianach w katalogu recenzji należy zsynchronizować je lokalnie i w UI: `python scripts/ui_marketplace_bridge.py --presets-dir config/marketplace/presets --signing-key dev-hmac=$(cat config/marketplace/keys/dev-hmac.key) sync-reviews --source-dir config/marketplace/reviews`.
+3. Pipeline `marketplace-catalog` oraz ręczne wydania kończą się krokiem `python scripts/marketplace_cli.py sync --source config/marketplace/catalog.json --force`, aby klienci OEM pobrali świeży katalog + recenzje.
+
+## 5. Walidacja QA
 
 - **Walidator CLI**: `python scripts/marketplace_cli.py validate --key dev-hmac:config/marketplace/keys/dev-hmac.key` – weryfikuje podpisy, fingerprinty i metadane release.
 - **Test regresyjny**: `pytest tests/test_marketplace_catalog.py` – kontroluje skróty, podpisy oraz obecność źródeł `versioning.source`.
 - **Workflow CI**: zadanie `marketplace-catalog` w `.github/workflows/ci.yml` powtarza powyższe kroki i publikuje artefakt `marketplace-packages`.
 
-## 5. Publikacja i marketing
+## 6. Publikacja i marketing
 
 1. Po merge'u pipeline CI wygeneruje podpisane paczki i zaktualizowany katalog.
 2. Runbook marketingowy (`docs/runbooks/marketplace_marketing.md`) opisuje wymagane materiały (komunikat release, listing w newsletterze, aktualizacja porównania CryptoHopper).
 3. Po wydaniu zsynchronizuj katalog u klientów: `python scripts/marketplace_cli.py sync`.
 
-## 6. Najczęstsze problemy
+## 7. Najczęstsze problemy
 
 | Problem | Diagnoza | Rozwiązanie |
 | --- | --- | --- |

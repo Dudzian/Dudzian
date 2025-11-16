@@ -1,0 +1,182 @@
+{
+  "preset": {
+    "name": "BitMEX Connectivity",
+    "strategies": [
+      {
+        "engine": "grid_trading",
+        "license_tier": "community",
+        "metadata": {
+          "description": "Automatycznie wygenerowany preset środowisk dla giełdy BitMEX.",
+          "environments": [
+            {
+              "config": {
+                "credentials": {
+                  "key_id": null,
+                  "secret": null
+                },
+                "description": "Papierowy symulator BitMEX futures.",
+                "exchange_manager": {
+                  "mode": "paper",
+                  "paper_cash_asset": "USDT",
+                  "paper_initial_cash": 100000,
+                  "paper_variant": "futures",
+                  "rate_limit_rules": [
+                    {
+                      "per": 1,
+                      "rate": 30
+                    },
+                    {
+                      "per": 60,
+                      "rate": 600
+                    }
+                  ],
+                  "simulator": {
+                    "funding_interval_seconds": 28800,
+                    "funding_rate": 0.0001,
+                    "leverage_limit": 10.0,
+                    "maintenance_margin_ratio": 0.04
+                  }
+                }
+              },
+              "description": "Papierowy symulator BitMEX futures.",
+              "name": "paper"
+            },
+            {
+              "config": {
+                "credentials": {
+                  "key_id": "${BITMEX_TESTNET_KEY}",
+                  "secret": "${BITMEX_TESTNET_SECRET}"
+                },
+                "decision_journal": {
+                  "filename": "bitmex-futures-testnet-%Y%m%d.jsonl",
+                  "signed": true
+                },
+                "description": "BitMEX testnet futures API.",
+                "exchange_manager": {
+                  "failover": {
+                    "cooldown_seconds": 40,
+                    "enabled": true,
+                    "failure_threshold": 2
+                  },
+                  "mode": "futures",
+                  "native_adapter": {
+                    "settings": {
+                      "stream": {
+                        "base_url": "https://stream.sandbox.dudzian.ai/exchanges",
+                        "private_path": "/bitmex/futures/private",
+                        "public_path": "/bitmex/futures/public"
+                      }
+                    }
+                  },
+                  "rate_limit_rules": [
+                    {
+                      "per": 1,
+                      "rate": 30
+                    },
+                    {
+                      "per": 60,
+                      "rate": 600
+                    }
+                  ],
+                  "testnet": true,
+                  "watchdog": {
+                    "retry_policy": {
+                      "base_delay": 0.3,
+                      "jitter": 0.3,
+                      "max_attempts": 5,
+                      "max_delay": 2.5
+                    }
+                  }
+                }
+              },
+              "description": "BitMEX testnet futures API.",
+              "name": "testnet"
+            },
+            {
+              "config": {
+                "credentials": {
+                  "key_id": "${BITMEX_LIVE_KEY}",
+                  "secret": "${BITMEX_LIVE_SECRET}"
+                },
+                "decision_journal": {
+                  "filename": "bitmex-futures-live-%Y%m%d.jsonl",
+                  "signed": true
+                },
+                "description": "Produkcyjne środowisko BitMEX futures.",
+                "exchange_manager": {
+                  "failover": {
+                    "cooldown_seconds": 60,
+                    "enabled": true,
+                    "failure_threshold": 3
+                  },
+                  "mode": "futures",
+                  "native_adapter": {
+                    "settings": {
+                      "stream": {
+                        "base_url": "https://stream.hyperion.dudzian.ai/exchanges",
+                        "private_path": "/bitmex/futures/private",
+                        "public_path": "/bitmex/futures/public"
+                      }
+                    }
+                  },
+                  "rate_limit_rules": [
+                    {
+                      "per": 1,
+                      "rate": 30
+                    },
+                    {
+                      "per": 60,
+                      "rate": 600
+                    }
+                  ],
+                  "testnet": false,
+                  "watchdog": {
+                    "circuit_breaker": {
+                      "failure_threshold": 4,
+                      "recovery_time_seconds": 90
+                    },
+                    "retry_policy": {
+                      "base_delay": 0.5,
+                      "jitter": 0.35,
+                      "max_attempts": 3,
+                      "max_delay": 3.0
+                    }
+                  }
+                }
+              },
+              "description": "Produkcyjne środowisko BitMEX futures.",
+              "name": "live"
+            }
+          ]
+        },
+        "name": "bitmex_connectivity",
+        "parameters": {
+          "available_environments": [
+            "paper",
+            "testnet",
+            "live"
+          ],
+          "default_environment": "paper",
+          "exchange": "BITMEX"
+        },
+        "required_data": [
+          "ohlcv"
+        ],
+        "risk_classes": [
+          "infrastructure"
+        ],
+        "tags": [
+          "exchange",
+          "bitmex"
+        ]
+      }
+    ]
+  },
+  "signature": {
+    "algorithm": "ed25519",
+    "key_id": "dev-presets",
+    "public_key": "wnD5eTEGDB3CPb6r3oMOmRjFtjCxHISZXHlHX0TIKhY=",
+    "signed_at": "2025-11-16T00:23:19Z",
+    "value": "T8ivrhn0c3BAlPq/U6QLSQAFCtyF8n+QBTrvMc7yLZCUUabXYHw/hxGLpFP04RvdeT/AddRFQ59SgTRROBlxAg=="
+  }
+}

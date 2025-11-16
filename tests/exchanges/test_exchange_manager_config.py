@@ -8,6 +8,7 @@ from typing import Any, Mapping
 import pytest
 import yaml
 
+from bot_core.config.loader import load_core_config
 from bot_core.exchanges.base import AccountSnapshot, Environment
 from bot_core.exchanges.core import MarketRules
 from bot_core.exchanges import manager as manager_module
@@ -200,6 +201,31 @@ def test_public_feed_uses_margin_default_type(monkeypatch):
     assert created[0]["options"]["defaultType"] == "margin"
     assert feed.futures is False
     assert feed.market_type == "margin"
+
+
+def test_list_exchange_adapters_reports_futures_columns():
+    from scripts import list_exchange_adapters as lea
+
+    config = load_core_config(Path("config/core.yaml"))
+    rows = lea.build_rows(config)
+
+    def _pick(exchange: str, profile: str) -> dict[str, Any]:
+        for row in rows:
+            if row["exchange"] == exchange and row["profile"] == profile:
+                return row
+        raise AssertionError(f"Nie znaleziono wiersza dla {exchange}:{profile}")
+
+    deribit_live = _pick("deribit", "live")
+    assert "futures_margin_mode" in deribit_live
+    assert "liquidation_feed" in deribit_live and "deribit" in (deribit_live["liquidation_feed"] or "")
+    assert deribit_live["hypercare_checklist_signed"] is True
+    assert deribit_live["hypercare_checklist_status"] == "signed"
+    assert deribit_live["missing_required_documents"] == ""
+
+    bitmex_live = _pick("bitmex", "live")
+    assert bitmex_live["hypercare_checklist_signed"] is True
+    assert bitmex_live["hypercare_checklist_status"] == "signed"
+    assert bitmex_live["missing_required_documents"] == ""
 
 
 def test_private_backend_receives_passphrase(monkeypatch: pytest.MonkeyPatch) -> None:

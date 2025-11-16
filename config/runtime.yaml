@@ -289,6 +289,13 @@ observability:
     path: /metrics
   alerts:
     min_severity: warning
+  feed_sla:
+    latency_warning_ms: 2500
+    latency_critical_ms: 5000
+    reconnects_warning: 3
+    reconnects_critical: 6
+    downtime_warning_seconds: 30
+    downtime_critical_seconds: 120
 
 optimization:
   enabled: true

@@ -1,0 +1,41 @@
+{
+  "preset_id": "exchange_binance",
+  "reviews": [
+    {
+      "author": "QA Ops",
+      "comment": "Bezproblemowa synchronizacja spot i futures, testowane na 3 kontach.",
+      "preset_id": "exchange_binance",
+      "rating": 5,
+      "reports": [
+        {
+          "count": 1,
+          "type": "connectivity"
+        }
+      ],
+      "review_id": "rvw-binance-ops",
+      "signature": {
+        "algorithm": "HMAC-SHA256",
+        "key_id": "dev-hmac",
+        "value": "nUukzRKFz5ocBslFBE01Qa+obpS0WMJ5VL6AOtgPm10="
+      },
+      "submitted_at": "2025-01-10T09:15:00Z",
+      "warnings": [
+        "Wymaga listy allow dla IP"
+      ]
+    },
+    {
+      "author": "Risk Guild",
+      "comment": "Trzeba ręcznie ustawić filtry dźwigni dla subkont.",
+      "preset_id": "exchange_binance",
+      "rating": 4,
+      "review_id": "rvw-binance-risk",
+      "signature": {
+        "algorithm": "HMAC-SHA256",
+        "key_id": "dev-hmac",
+        "value": "bK6NJT9mI7ShZMco74mjUdQWHpehaDVzgGTrohp2ZNc="
+      },
+      "submitted_at": "2025-01-12T16:45:00Z"
+    }
+  ],
+  "updated_at": "2025-11-16T00:31:48Z"
+}

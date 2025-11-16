@@ -1,0 +1,47 @@
+{
+  "presets": {
+    "exchange_binance": {
+      "averageRating": 4.5,
+      "lastSyncedAt": "2025-11-16T00:31:48Z",
+      "reviewCount": 2,
+      "reviews": [
+        {
+          "author": "QA Ops",
+          "comment": "Bezproblemowa synchronizacja spot i futures, testowane na 3 kontach.",
+          "rating": 5,
+          "reviewId": "rvw-binance-ops",
+          "submittedAt": "2025-01-10T09:15:00Z"
+        },
+        {
+          "author": "Risk Guild",
+          "comment": "Trzeba ręcznie ustawić filtry dźwigni dla subkont.",
+          "rating": 4,
+          "reviewId": "rvw-binance-risk",
+          "submittedAt": "2025-01-12T16:45:00Z"
+        }
+      ],
+      "userReports": 1,
+      "warnings": [
+        "exchange_binance: rvw-binance-ops: Wymaga listy allow dla IP"
+      ]
+    },
+    "exchange_kucoin": {
+      "averageRating": 3.0,
+      "lastSyncedAt": "2025-11-16T00:31:48Z",
+      "reviewCount": 1,
+      "reviews": [
+        {
+          "author": "HyperCare",
+          "comment": "API do futures ma wyższe opóźnienia podczas weekendu.",
+          "rating": 3,
+          "reviewId": "rvw-kucoin-latency",
+          "submittedAt": "2025-01-14T08:05:00Z"
+        }
+      ],
+      "userReports": 2,
+      "warnings": []
+    }
+  },
+  "source": "config/marketplace/reviews",
+  "updated_at": "2025-11-16T00:34:16Z"
+}

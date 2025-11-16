@@ -5,8 +5,16 @@ from __future__ import annotations
 import argparse
 import json
 import sys
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Mapping, Sequence
+from uuid import uuid4
+
+REPO_ROOT = Path(__file__).resolve().parents[1]
+if str(REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(REPO_ROOT))
+
+import sitecustomize  # noqa: F401  # zapewnia stabilne importy packaging/numpy
 
 from packaging.version import InvalidVersion, Version
 
@@ -29,6 +37,7 @@ from bot_core.strategies.personalization.preferences import (
 )
 from bot_core.security.hwid import HwIdProvider
 from bot_core.security.license import summarize_license_payload
+from bot_core.security.signing import build_hmac_signature, verify_hmac_signature
 
 
 def _load_json(path: Path | None, *, stdin_fallback: bool = False) -> Any:
@@ -101,6 +110,179 @@ def _normalize_portfolio_ids(values: Any) -> list[str]:
     return normalized
 
 
+def _utcnow_iso() -> str:
+    return datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+
+
+def _reviews_meta_path(presets_dir: Path) -> Path:
+    repository = PresetRepository(presets_dir)
+    return repository.root / ".meta" / "reviews.json"
+
+
+def _read_reviews_state(path: Path) -> dict[str, Any]:
+    if not path.exists():
+        return {"presets": {}}
+    payload = _load_json(path)
+    if not isinstance(payload, Mapping):
+        return {"presets": {}}
+    presets_payload = payload.get("presets")
+    presets: dict[str, Any] = {}
+    if isinstance(presets_payload, Mapping):
+        for preset_id, entry in presets_payload.items():
+            if isinstance(entry, Mapping):
+                presets[str(preset_id)] = dict(entry)
+    state: dict[str, Any] = {"presets": presets}
+    source = payload.get("source")
+    if isinstance(source, str) and source.strip():
+        state["source"] = source
+    updated = payload.get("updated_at") or payload.get("updatedAt")
+    if isinstance(updated, str) and updated.strip():
+        state["updated_at"] = updated
+    return state
+
+
+def _write_reviews_state(path: Path, state: Mapping[str, Any]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    serialized = json.dumps(state, ensure_ascii=False, indent=2, sort_keys=True) + "\n"
+    path.write_text(serialized, encoding="utf-8")
+
+
+def _extract_review_id(entry: Mapping[str, Any]) -> str:
+    for key in ("review_id", "reviewId", "id"):
+        value = entry.get(key)
+        if isinstance(value, str) and value.strip():
+            return value
+    return f"review-{uuid4().hex}"
+
+
+def _normalize_reports(value: Any) -> int:
+    if isinstance(value, Mapping):
+        return max(_coerce_int(value.get("count")) or 0, 0)
+    if isinstance(value, Sequence) and not isinstance(value, (str, bytes)):
+        total = 0
+        for item in value:
+            total += _normalize_reports(item)
+        return total
+    numeric = _coerce_int(value)
+    return max(numeric or 0, 0)
+
+
+def _collect_review_documents(source_dir: Path) -> dict[str, Mapping[str, Any]]:
+    documents: dict[str, Mapping[str, Any]] = {}
+    if not source_dir.exists():
+        return documents
+    for path in sorted(source_dir.glob("*.json")):
+        payload = _load_json(path)
+        if not isinstance(payload, Mapping):
+            continue
+        preset_id = payload.get("preset_id") or payload.get("presetId") or path.stem
+        if not isinstance(preset_id, str):
+            preset_id = path.stem
+        normalized = dict(payload)
+        normalized.setdefault("preset_id", preset_id)
+        documents[preset_id] = normalized
+    return documents
+
+
+def _verify_review_signature(entry: Mapping[str, Any], signing_keys: Mapping[str, bytes]) -> tuple[bool, str | None]:
+    signature = entry.get("signature")
+    if not isinstance(signature, Mapping):
+        return False, "Brak podpisu recenzji"
+    key_id = signature.get("key_id") or signature.get("keyId")
+    if not isinstance(key_id, str) or not key_id.strip():
+        return False, "Recenzja nie zawiera identyfikatora klucza"
+    key = signing_keys.get(key_id)
+    if key is None:
+        return False, f"Brak klucza '{key_id}' do weryfikacji recenzji"
+    payload = {k: v for k, v in entry.items() if k != "signature"}
+    if verify_hmac_signature(payload, signature, key=key):
+        return True, None
+    return False, "Niepoprawny podpis recenzji"
+
+
+def _aggregate_review_documents(
+    documents: Mapping[str, Mapping[str, Any]],
+    signing_keys: Mapping[str, bytes],
+) -> dict[str, Any]:
+    aggregates: dict[str, Any] = {}
+    for preset_id, document in documents.items():
+        reviews_payload = document.get("reviews")
+        if not isinstance(reviews_payload, Sequence) or isinstance(reviews_payload, (str, bytes)):
+            continue
+        normalized_reviews: list[Mapping[str, Any]] = []
+        warnings: list[str] = []
+        rating_total = 0
+        review_count = 0
+        report_count = _normalize_reports(document.get("reports"))
+        for raw_review in reviews_payload:
+            if not isinstance(raw_review, Mapping):
+                continue
+            review_id = _extract_review_id(raw_review)
+            ok, error = _verify_review_signature(raw_review, signing_keys)
+            if not ok:
+                warnings.append(f"{preset_id}: {review_id}: {error}")
+                continue
+            payload = {k: v for k, v in raw_review.items() if k != "signature"}
+            rating = _coerce_int(payload.get("rating"))
+            if rating is None or rating <= 0:
+                warnings.append(f"{preset_id}: {review_id}: brak oceny")
+                continue
+            rating_total += rating
+            review_count += 1
+            comments = str(payload.get("comment") or "").strip()
+            author = str(payload.get("author") or "community").strip() or "community"
+            submitted_at = payload.get("submitted_at") or payload.get("submittedAt")
+            review_warnings = _normalize_sequence_of_messages(payload.get("warnings"))
+            warnings.extend(f"{preset_id}: {review_id}: {msg}" for msg in review_warnings)
+            report_count += _normalize_reports(payload.get("reports"))
+            normalized_reviews.append(
+                {
+                    "reviewId": review_id,
+                    "rating": rating,
+                    "comment": comments,
+                    "author": author,
+                    "submittedAt": submitted_at,
+                }
+            )
+        warnings.extend(
+            f"{preset_id}: {msg}" for msg in _normalize_sequence_of_messages(document.get("warnings"))
+        )
+        deduped_warnings = []
+        for msg in warnings:
+            if msg and msg not in deduped_warnings:
+                deduped_warnings.append(msg)
+        average_rating: float | None = None
+        if review_count:
+            average_rating = round(rating_total / review_count, 2)
+        aggregates[preset_id] = {
+            "averageRating": average_rating,
+            "reviewCount": review_count,
+            "userReports": report_count,
+            "warnings": deduped_warnings,
+            "reviews": normalized_reviews,
+            "lastSyncedAt": document.get("updated_at")
+            or document.get("updatedAt")
+            or _utcnow_iso(),
+        }
+    return aggregates
+
+
+def _sync_reviews_state(
+    presets_dir: Path,
+    source_dir: Path,
+    signing_keys: Mapping[str, bytes],
+) -> dict[str, Any]:
+    documents = _collect_review_documents(source_dir)
+    aggregates = _aggregate_review_documents(documents, signing_keys)
+    state = {
+        "presets": aggregates,
+        "source": str(source_dir),
+        "updated_at": _utcnow_iso(),
+    }
+    _write_reviews_state(_reviews_meta_path(presets_dir), state)
+    return state
+
+
 def _coerce_int(value: Any) -> int | None:
     if isinstance(value, bool):
         return int(value)
@@ -125,6 +307,48 @@ def _merge_unique(base: Sequence[str], extra: Sequence[str]) -> list[str]:
         if item not in merged:
             merged.append(item)
     return merged
+
+
+def _community_payload(entry: Mapping[str, Any] | None) -> dict[str, Any]:
+    payload: dict[str, Any] = {
+        "averageRating": None,
+        "reviewCount": 0,
+        "userReports": 0,
+        "warnings": [],
+        "reviews": [],
+    }
+    if not isinstance(entry, Mapping):
+        return payload
+    average = entry.get("averageRating")
+    if isinstance(average, (int, float)):
+        payload["averageRating"] = round(float(average), 2)
+    review_count = _coerce_int(entry.get("reviewCount"))
+    if review_count is not None:
+        payload["reviewCount"] = review_count
+    user_reports = _coerce_int(entry.get("userReports"))
+    if user_reports is not None:
+        payload["userReports"] = user_reports
+    payload["warnings"] = _normalize_sequence_of_messages(entry.get("warnings"))
+    reviews_payload = entry.get("reviews")
+    if isinstance(reviews_payload, Sequence) and not isinstance(reviews_payload, (str, bytes)):
+        normalized: list[dict[str, Any]] = []
+        for review in reviews_payload:
+            if not isinstance(review, Mapping):
+                continue
+            normalized.append(
+                {
+                    "reviewId": review.get("reviewId") or review.get("review_id"),
+                    "rating": review.get("rating"),
+                    "comment": review.get("comment"),
+                    "author": review.get("author"),
+                    "submittedAt": review.get("submittedAt") or review.get("submitted_at"),
+                }
+            )
+        payload["reviews"] = normalized
+    synced_at = entry.get("lastSyncedAt") or entry.get("last_synced_at")
+    if isinstance(synced_at, str) and synced_at.strip():
+        payload["lastSyncedAt"] = synced_at
+    return payload
 
 
 def _build_assignment_summary(
@@ -448,6 +672,8 @@ def _command_list(args: argparse.Namespace) -> None:
     documents = repository.load_all(signing_keys=signing_keys)
     index = MarketplaceIndex.from_documents(documents)
     assignments_store = PresetAssignmentStore(repository.root / ".meta" / "assignments.json")
+    reviews_state = _read_reviews_state(_reviews_meta_path(presets_dir))
+    community_entries = reviews_state.get("presets", {}) if isinstance(reviews_state, Mapping) else {}
 
     for summary in summaries:
         preset_id = summary.get("preset_id") or summary.get("presetId")
@@ -515,6 +741,15 @@ def _command_list(args: argparse.Namespace) -> None:
         summary.setdefault("warnings", [])
         summary.setdefault("warning_messages", [])
         summary["warningMessages"] = list(summary["warning_messages"])
+        entry = None
+        if isinstance(community_entries, Mapping):
+            entry = community_entries.get(preset_id)
+        community_payload = _community_payload(entry if isinstance(entry, Mapping) else None)
+        summary["community"] = community_payload
+        summary["community_rating"] = community_payload["averageRating"]
+        summary["community_review_count"] = community_payload["reviewCount"]
+        summary["community_user_reports"] = community_payload["userReports"]
+        summary["communityWarnings"] = list(community_payload["warnings"])
 
     document = {
         "presets": summaries,
@@ -798,6 +1033,92 @@ def _command_unassign(args: argparse.Namespace) -> None:
     sys.stdout.write("\n")
 
 
+def _command_sync_reviews(args: argparse.Namespace) -> None:
+    signing_keys = _load_signing_keys(args.signing_key or [], args.signing_key_file or [])
+    if not signing_keys:
+        raise SystemExit("sync-reviews wymaga przekazania klucza HMAC (--signing-key lub --signing-key-file)")
+    presets_dir = Path(args.presets_dir)
+    source_dir = Path(args.source_dir)
+    state = _sync_reviews_state(presets_dir, source_dir, signing_keys)
+    result = {
+        "updated_at": state.get("updated_at"),
+        "source": state.get("source"),
+        "preset_count": len(state.get("presets", {})),
+    }
+    json.dump(result, sys.stdout, ensure_ascii=False, indent=2, sort_keys=True)
+    sys.stdout.write("\n")
+
+
+def _command_submit_review(args: argparse.Namespace) -> None:
+    presets_dir = Path(args.presets_dir)
+    licenses_path = Path(args.licenses_path)
+    reviews_dir = Path(args.reviews_dir)
+    signing_keys = _load_signing_keys(args.signing_key or [], args.signing_key_file or [])
+    if not signing_keys:
+        raise SystemExit("submit-review wymaga przekazania kluczy podpisów (--signing-key/--signing-key-file)")
+    review_key_id = args.review_key_id
+    if not review_key_id:
+        raise SystemExit("submit-review wymaga parametru --review-key-id wskazującego klucz podpisu")
+    review_key = signing_keys.get(review_key_id)
+    if review_key is None:
+        raise SystemExit(f"Brak klucza '{review_key_id}' w mapie --signing-key; nie można podpisać recenzji")
+    rating = args.rating
+    if rating < 1 or rating > 5:
+        raise SystemExit("Ocena musi być w zakresie 1-5 gwiazdek")
+    comment = args.comment.strip()
+    if not comment:
+        raise SystemExit("Komentarz recenzji nie może być pusty")
+    store = _read_license_store(licenses_path)
+    licenses = store.get("licenses") if isinstance(store, Mapping) else None
+    license_entry = None
+    if isinstance(licenses, Mapping):
+        license_entry = licenses.get(args.preset_id)
+    if not isinstance(license_entry, Mapping):
+        raise SystemExit("Brak aktywnej licencji na preset – recenzja wymaga posiadania ważnej licencji")
+    review_id = args.review_id or f"rvw-{uuid4().hex[:12]}"
+    payload: dict[str, Any] = {
+        "review_id": review_id,
+        "preset_id": args.preset_id,
+        "rating": rating,
+        "comment": comment,
+        "author": (args.author or "community").strip() or "community",
+        "submitted_at": _utcnow_iso(),
+    }
+    warnings_payload = _normalize_sequence_of_messages(args.warning or [])
+    if warnings_payload:
+        payload["warnings"] = warnings_payload
+    signature = build_hmac_signature(payload, key=review_key, key_id=review_key_id)
+    document_path = reviews_dir / f"{_sanitize_identifier(args.preset_id)}.json"
+    existing = _load_json(document_path) if document_path.exists() else None
+    if isinstance(existing, Mapping):
+        reviews = existing.get("reviews")
+        if isinstance(reviews, list):
+            reviews.append({**payload, "signature": signature})
+        else:
+            existing["reviews"] = [{**payload, "signature": signature}]
+        existing["preset_id"] = args.preset_id
+        existing["updated_at"] = _utcnow_iso()
+        document = existing
+    else:
+        document = {
+            "preset_id": args.preset_id,
+            "updated_at": _utcnow_iso(),
+            "reviews": [{**payload, "signature": signature}],
+        }
+    document_path.parent.mkdir(parents=True, exist_ok=True)
+    serialized = json.dumps(document, ensure_ascii=False, indent=2, sort_keys=True) + "\n"
+    document_path.write_text(serialized, encoding="utf-8")
+    state = _sync_reviews_state(presets_dir, reviews_dir, signing_keys)
+    result = {
+        "preset_id": args.preset_id,
+        "review_id": review_id,
+        "reviews_path": str(document_path),
+        "community": state.get("presets", {}).get(args.preset_id),
+    }
+    json.dump(result, sys.stdout, ensure_ascii=False, indent=2, sort_keys=True)
+    sys.stdout.write("\n")
+
+
 def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--presets-dir", default="data/strategies", help="Katalog z plikami presetów JSON")
@@ -868,6 +1189,41 @@ def _build_parser() -> argparse.ArgumentParser:
     unassign_parser.add_argument("--preset-id", required=True, help="Identyfikator presetu")
     unassign_parser.add_argument("--portfolio-id", required=True, help="Identyfikator portfela")
 
+    sync_reviews_parser = subparsers.add_parser(
+        "sync-reviews",
+        help="Synchronizuje recenzje community z repozytorium centralnym",
+    )
+    sync_reviews_parser.add_argument(
+        "--source-dir",
+        default="config/marketplace/reviews",
+        help="Źródłowy katalog recenzji (domyślnie config/marketplace/reviews)",
+    )
+
+    submit_review_parser = subparsers.add_parser(
+        "submit-review",
+        help="Publikuje recenzję presetu i aktualizuje lokalne metryki community",
+    )
+    submit_review_parser.add_argument("--preset-id", required=True, help="Identyfikator presetu")
+    submit_review_parser.add_argument("--rating", type=int, required=True, help="Ocena 1-5 gwiazdek")
+    submit_review_parser.add_argument("--comment", required=True, help="Treść recenzji")
+    submit_review_parser.add_argument("--author", help="Opcjonalny podpis recenzji")
+    submit_review_parser.add_argument(
+        "--reviews-dir",
+        default="config/marketplace/reviews",
+        help="Repozytorium recenzji community (domyślnie config/marketplace/reviews)",
+    )
+    submit_review_parser.add_argument(
+        "--review-key-id",
+        required=True,
+        help="Identyfikator klucza HMAC używanego do podpisu recenzji",
+    )
+    submit_review_parser.add_argument("--review-id", help="Opcjonalne ręczne ID recenzji")
+    submit_review_parser.add_argument(
+        "--warning",
+        action="append",
+        help="Dodatkowe ostrzeżenia dołączane do recenzji (można podać wielokrotnie)",
+    )
+
     plan_parser = subparsers.add_parser(
         "plan",
         help="Oblicza plan instalacji presetów wraz z zależnościami i aktualizacjami",
@@ -897,6 +1253,10 @@ def main(argv: list[str] | None = None) -> None:
         _command_assign(args)
     elif args.command == "unassign":
         _command_unassign(args)
+    elif args.command == "sync-reviews":
+        _command_sync_reviews(args)
+    elif args.command == "submit-review":
+        _command_submit_review(args)
     elif args.command == "plan":
         _command_plan(args)
     else:  # pragma: no cover - argparse zapewnia poprawność

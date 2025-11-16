@@ -58,12 +58,12 @@
           "size_bytes": 3951,
           "integrity": {
             "algorithm": "sha256",
-            "digest": "67cafa5efac33bfdd4c1d35b2b968b8b71cc66b995e1c6e699cb56a978e77412"
+            "digest": "2e276a236f43d5d34841747905ad7fd369277bda040c28ec64e2d630938794d1"
           },
           "signature": {
             "algorithm": "HMAC-SHA256",
             "key_id": "dev-hmac",
-            "value": "Fno+PBYUPqaToGMJq9oEDCfsFurKEFC8FYCRZwEs714=",
+            "value": "oQeJ6D2ui98OMowRAV+aY0z4GFqMOcJUtCxVsvLbHes=",
             "signed_fields": [
               "package_id",
               "version",
@@ -137,6 +137,1979 @@
     },
     {
       "schema_version": "1.1",
+      "package_id": "exchange_bitfinex.v1",
+      "display_name": "Bitfinex Exchange Environments",
+      "summary": "Preset środowisk paper/testnet/live dla giełdy Bitfinex.",
+      "description": "Pakiet udostępnia kompletny zestaw środowisk i guardraili dla integracji Bitfinex.",
+      "version": "1.0.0+community",
+      "revision": "2025.01",
+      "release_date": "2025-01-15T09:30:00Z",
+      "maintainers": [
+        {
+          "name": "Marketplace Labs",
+          "email": "marketplace@example.com",
+          "organization": "Marketplace Guild",
+          "role": "maintainer",
+          "url": null
+        }
+      ],
+      "license": {
+        "name": "Marketplace Evaluation License",
+        "spdx_id": "Proprietary",
+        "url": "https://configs.example.com/licenses/marketplace-eval",
+        "terms_summary": "Do użytku ewaluacyjnego.",
+        "redistributable": false,
+        "commercial_use": false
+      },
+      "tags": [
+        "exchange",
+        "bitfinex"
+      ],
+      "data_requirements": {
+        "inputs": [
+          {
+            "asset_type": "market",
+            "provider": "ccxt.bitfinex",
+            "access_level": "restricted",
+            "retention_days": 7,
+            "min_history_days": 2,
+            "sampling": "1m",
+            "notes": null
+          }
+        ],
+        "requires_personal_data": false,
+        "requires_realtime_access": true,
+        "pii_handling_notes": "Preset wymaga jedynie kluczy API Bitfinex."
+      },
+      "distribution": [
+        {
+          "name": "preset-document",
+          "uri": "packages/exchanges/exchange_bitfinex_v1.json",
+          "kind": "preset",
+          "description": "Podpisany preset środowisk Bitfinex.",
+          "size_bytes": 3422,
+          "integrity": {
+            "algorithm": "sha256",
+            "digest": "2f8f4357def8dc8c881daef248ea1afb1e380cd795d11b1dd3cfb36aab4c6d14"
+          },
+          "signature": {
+            "algorithm": "HMAC-SHA256",
+            "key_id": "dev-hmac",
+            "value": "VrYtpGl2SVWEtmjNxD1+O47hx0Yzss2DMjAJNBMjobw=",
+            "signed_fields": [
+              "package_id",
+              "version",
+              "artifact",
+              "uri",
+              "sha256"
+            ]
+          }
+        }
+      ],
+      "compatibility": [
+        {
+          "component": "bot_core",
+          "minimum": "5.2.0",
+          "maximum": null,
+          "recommended": "5.3.1",
+          "channel": null,
+          "notes": "Zweryfikowano z adapterem Stage6 Bitfinex"
+        }
+      ],
+      "documentation_url": "https://configs.example.com/marketplace/exchanges/bitfinex",
+      "release_notes": [
+        "Pierwsze publiczne wydanie presetów środowisk Bitfinex.",
+        "Dodano guardraile watchdog i monitoring API."
+      ],
+      "security": {
+        "mode": "none",
+        "allowed_fingerprints": [],
+        "require_strict_match": false,
+        "audit_message": "Brak ograniczeń fingerprint dla presetów exchange."
+      },
+      "release": {
+        "channel": "beta",
+        "review_status": "approved",
+        "reviewers": [
+          {
+            "name": "Integration QA",
+            "email": "integration.qa@example.com",
+            "role": "qa"
+          }
+        ],
+        "ticket": "https://jira.example.com/browse/MKT-1450",
+        "approved_at": "2025-01-15T09:30:00Z",
+        "notes": "Publiczna certyfikacja presetów środowiskowych."
+      },
+      "exchange_compatibility": [
+        {
+          "exchange": "BITFINEX",
+          "environments": [
+            "paper",
+            "testnet",
+            "live"
+          ],
+          "trading_modes": [
+            "spot"
+          ],
+          "status": "beta",
+          "last_verified_at": "2025-01-14T09:00:00Z",
+          "notes": "Preset zweryfikowany w Stage6 sandbox dla Bitfinex."
+        }
+      ],
+      "versioning": {
+        "channel": "beta",
+        "iteration": "minor",
+        "supersedes": [],
+        "superseded_by": [],
+        "migration_required": false,
+        "source": "exchanges/exchange_bitfinex.json"
+      }
+    },
+    {
+      "schema_version": "1.1",
+      "package_id": "exchange_bitget.v1",
+      "display_name": "Bitget Exchange Environments",
+      "summary": "Preset środowisk paper/testnet/live dla giełdy Bitget.",
+      "description": "Pakiet udostępnia kompletny zestaw środowisk i guardraili dla integracji Bitget.",
+      "version": "1.0.0+community",
+      "revision": "2025.01",
+      "release_date": "2025-01-15T09:30:00Z",
+      "maintainers": [
+        {
+          "name": "Marketplace Labs",
+          "email": "marketplace@example.com",
+          "organization": "Marketplace Guild",
+          "role": "maintainer",
+          "url": null
+        }
+      ],
+      "license": {
+        "name": "Marketplace Evaluation License",
+        "spdx_id": "Proprietary",
+        "url": "https://configs.example.com/licenses/marketplace-eval",
+        "terms_summary": "Do użytku ewaluacyjnego.",
+        "redistributable": false,
+        "commercial_use": false
+      },
+      "tags": [
+        "exchange",
+        "bitget"
+      ],
+      "data_requirements": {
+        "inputs": [
+          {
+            "asset_type": "market",
+            "provider": "ccxt.bitget",
+            "access_level": "restricted",
+            "retention_days": 7,
+            "min_history_days": 2,
+            "sampling": "1m",
+            "notes": null
+          }
+        ],
+        "requires_personal_data": false,
+        "requires_realtime_access": true,
+        "pii_handling_notes": "Preset wymaga jedynie kluczy API Bitget."
+      },
+      "distribution": [
+        {
+          "name": "preset-document",
+          "uri": "packages/exchanges/exchange_bitget_v1.json",
+          "kind": "preset",
+          "description": "Podpisany preset środowisk Bitget.",
+          "size_bytes": 3841,
+          "integrity": {
+            "algorithm": "sha256",
+            "digest": "f83f8198a1108b9643b5b0d233d50a3706824c86602422913f9b97922f79c14d"
+          },
+          "signature": {
+            "algorithm": "HMAC-SHA256",
+            "key_id": "dev-hmac",
+            "value": "LHNOF9opuc+2CFB1EVD6RCgeldCFkooLSKkmWCHWNgs=",
+            "signed_fields": [
+              "package_id",
+              "version",
+              "artifact",
+              "uri",
+              "sha256"
+            ]
+          }
+        }
+      ],
+      "compatibility": [
+        {
+          "component": "bot_core",
+          "minimum": "5.2.0",
+          "maximum": null,
+          "recommended": "5.3.1",
+          "channel": null,
+          "notes": "Zweryfikowano z adapterem Stage6 Bitget"
+        }
+      ],
+      "documentation_url": "https://configs.example.com/marketplace/exchanges/bitget",
+      "release_notes": [
+        "Pierwsze publiczne wydanie presetów środowisk Bitget.",
+        "Dodano guardraile watchdog i monitoring API."
+      ],
+      "security": {
+        "mode": "none",
+        "allowed_fingerprints": [],
+        "require_strict_match": false,
+        "audit_message": "Brak ograniczeń fingerprint dla presetów exchange."
+      },
+      "release": {
+        "channel": "beta",
+        "review_status": "approved",
+        "reviewers": [
+          {
+            "name": "Integration QA",
+            "email": "integration.qa@example.com",
+            "role": "qa"
+          }
+        ],
+        "ticket": "https://jira.example.com/browse/MKT-1450",
+        "approved_at": "2025-01-15T09:30:00Z",
+        "notes": "Publiczna certyfikacja presetów środowiskowych."
+      },
+      "exchange_compatibility": [
+        {
+          "exchange": "BITGET",
+          "environments": [
+            "paper",
+            "testnet",
+            "live"
+          ],
+          "trading_modes": [
+            "spot",
+            "futures"
+          ],
+          "status": "beta",
+          "last_verified_at": "2025-01-14T09:00:00Z",
+          "notes": "Preset zweryfikowany w Stage6 sandbox dla Bitget."
+        }
+      ],
+      "versioning": {
+        "channel": "beta",
+        "iteration": "minor",
+        "supersedes": [],
+        "superseded_by": [],
+        "migration_required": false,
+        "source": "exchanges/exchange_bitget.json"
+      }
+    },
+    {
+      "schema_version": "1.1",
+      "package_id": "exchange_bitmex.v1",
+      "display_name": "BitMEX Exchange Environments",
+      "summary": "Preset środowisk paper/testnet/live dla giełdy BitMEX.",
+      "description": "Pakiet udostępnia kompletny zestaw środowisk i guardraili dla integracji BitMEX.",
+      "version": "1.0.0+community",
+      "revision": "2025.01",
+      "release_date": "2025-01-15T09:30:00Z",
+      "maintainers": [
+        {
+          "name": "Marketplace Labs",
+          "email": "marketplace@example.com",
+          "organization": "Marketplace Guild",
+          "role": "maintainer",
+          "url": null
+        }
+      ],
+      "license": {
+        "name": "Marketplace Evaluation License",
+        "spdx_id": "Proprietary",
+        "url": "https://configs.example.com/licenses/marketplace-eval",
+        "terms_summary": "Do użytku ewaluacyjnego.",
+        "redistributable": false,
+        "commercial_use": false
+      },
+      "tags": [
+        "exchange",
+        "bitmex"
+      ],
+      "data_requirements": {
+        "inputs": [
+          {
+            "asset_type": "market",
+            "provider": "ccxt.bitmex",
+            "access_level": "restricted",
+            "retention_days": 7,
+            "min_history_days": 2,
+            "sampling": "1m",
+            "notes": null
+          }
+        ],
+        "requires_personal_data": false,
+        "requires_realtime_access": true,
+        "pii_handling_notes": "Preset wymaga jedynie kluczy API BitMEX."
+      },
+      "distribution": [
+        {
+          "name": "preset-document",
+          "uri": "packages/exchanges/exchange_bitmex_v1.json",
+          "kind": "preset",
+          "description": "Podpisany preset środowisk BitMEX.",
+          "size_bytes": 5949,
+          "integrity": {
+            "algorithm": "sha256",
+            "digest": "2bf50118a61e1959bf568bdc259921cd65ec1d7aed609035eec71ed37916e1bf"
+          },
+          "signature": {
+            "algorithm": "HMAC-SHA256",
+            "key_id": "dev-hmac",
+            "value": "/R3K5n7e/g+Frz9+BKMTGXqPLe4EWAq+PK/C0wR3aNQ=",
+            "signed_fields": [
+              "package_id",
+              "version",
+              "artifact",
+              "uri",
+              "sha256"
+            ]
+          }
+        }
+      ],
+      "compatibility": [
+        {
+          "component": "bot_core",
+          "minimum": "5.2.0",
+          "maximum": null,
+          "recommended": "5.3.1",
+          "channel": null,
+          "notes": "Zweryfikowano z adapterem Stage6 BitMEX"
+        }
+      ],
+      "documentation_url": "https://configs.example.com/marketplace/exchanges/bitmex",
+      "release_notes": [
+        "Pierwsze publiczne wydanie presetów środowisk BitMEX.",
+        "Dodano guardraile watchdog i monitoring API."
+      ],
+      "security": {
+        "mode": "none",
+        "allowed_fingerprints": [],
+        "require_strict_match": false,
+        "audit_message": "Brak ograniczeń fingerprint dla presetów exchange."
+      },
+      "release": {
+        "channel": "beta",
+        "review_status": "approved",
+        "reviewers": [
+          {
+            "name": "Integration QA",
+            "email": "integration.qa@example.com",
+            "role": "qa"
+          }
+        ],
+        "ticket": "https://jira.example.com/browse/MKT-1450",
+        "approved_at": "2025-01-15T09:30:00Z",
+        "notes": "Publiczna certyfikacja presetów środowiskowych."
+      },
+      "exchange_compatibility": [
+        {
+          "exchange": "BITMEX",
+          "environments": [
+            "paper",
+            "testnet",
+            "live"
+          ],
+          "trading_modes": [
+            "futures"
+          ],
+          "status": "beta",
+          "last_verified_at": "2025-01-14T09:00:00Z",
+          "notes": "Preset zweryfikowany w Stage6 sandbox dla BitMEX."
+        }
+      ],
+      "versioning": {
+        "channel": "beta",
+        "iteration": "minor",
+        "supersedes": [],
+        "superseded_by": [],
+        "migration_required": false,
+        "source": "exchanges/exchange_bitmex.json"
+      }
+    },
+    {
+      "schema_version": "1.1",
+      "package_id": "exchange_bitstamp.v1",
+      "display_name": "Bitstamp Exchange Environments",
+      "summary": "Preset środowisk paper/testnet/live dla giełdy Bitstamp.",
+      "description": "Pakiet udostępnia kompletny zestaw środowisk i guardraili dla integracji Bitstamp.",
+      "version": "1.0.0+community",
+      "revision": "2025.01",
+      "release_date": "2025-01-15T09:30:00Z",
+      "maintainers": [
+        {
+          "name": "Marketplace Labs",
+          "email": "marketplace@example.com",
+          "organization": "Marketplace Guild",
+          "role": "maintainer",
+          "url": null
+        }
+      ],
+      "license": {
+        "name": "Marketplace Evaluation License",
+        "spdx_id": "Proprietary",
+        "url": "https://configs.example.com/licenses/marketplace-eval",
+        "terms_summary": "Do użytku ewaluacyjnego.",
+        "redistributable": false,
+        "commercial_use": false
+      },
+      "tags": [
+        "exchange",
+        "bitstamp"
+      ],
+      "data_requirements": {
+        "inputs": [
+          {
+            "asset_type": "market",
+            "provider": "ccxt.bitstamp",
+            "access_level": "restricted",
+            "retention_days": 7,
+            "min_history_days": 2,
+            "sampling": "1m",
+            "notes": null
+          }
+        ],
+        "requires_personal_data": false,
+        "requires_realtime_access": true,
+        "pii_handling_notes": "Preset wymaga jedynie kluczy API Bitstamp."
+      },
+      "distribution": [
+        {
+          "name": "preset-document",
+          "uri": "packages/exchanges/exchange_bitstamp_v1.json",
+          "kind": "preset",
+          "description": "Podpisany preset środowisk Bitstamp.",
+          "size_bytes": 3345,
+          "integrity": {
+            "algorithm": "sha256",
+            "digest": "59e23ed6b940a6b697975b8df130f9e4c8fbbecf6613f645fbc6d8a44d613815"
+          },
+          "signature": {
+            "algorithm": "HMAC-SHA256",
+            "key_id": "dev-hmac",
+            "value": "o7ZW2IgawevEcodOcL3f8KDRJUj9en+Zrz/ttqFNVMI=",
+            "signed_fields": [
+              "package_id",
+              "version",
+              "artifact",
+              "uri",
+              "sha256"
+            ]
+          }
+        }
+      ],
+      "compatibility": [
+        {
+          "component": "bot_core",
+          "minimum": "5.2.0",
+          "maximum": null,
+          "recommended": "5.3.1",
+          "channel": null,
+          "notes": "Zweryfikowano z adapterem Stage6 Bitstamp"
+        }
+      ],
+      "documentation_url": "https://configs.example.com/marketplace/exchanges/bitstamp",
+      "release_notes": [
+        "Pierwsze publiczne wydanie presetów środowisk Bitstamp.",
+        "Dodano guardraile watchdog i monitoring API."
+      ],
+      "security": {
+        "mode": "none",
+        "allowed_fingerprints": [],
+        "require_strict_match": false,
+        "audit_message": "Brak ograniczeń fingerprint dla presetów exchange."
+      },
+      "release": {
+        "channel": "beta",
+        "review_status": "approved",
+        "reviewers": [
+          {
+            "name": "Integration QA",
+            "email": "integration.qa@example.com",
+            "role": "qa"
+          }
+        ],
+        "ticket": "https://jira.example.com/browse/MKT-1450",
+        "approved_at": "2025-01-15T09:30:00Z",
+        "notes": "Publiczna certyfikacja presetów środowiskowych."
+      },
+      "exchange_compatibility": [
+        {
+          "exchange": "BITSTAMP",
+          "environments": [
+            "paper",
+            "testnet",
+            "live"
+          ],
+          "trading_modes": [
+            "spot"
+          ],
+          "status": "beta",
+          "last_verified_at": "2025-01-14T09:00:00Z",
+          "notes": "Preset zweryfikowany w Stage6 sandbox dla Bitstamp."
+        }
+      ],
+      "versioning": {
+        "channel": "beta",
+        "iteration": "minor",
+        "supersedes": [],
+        "superseded_by": [],
+        "migration_required": false,
+        "source": "exchanges/exchange_bitstamp.json"
+      }
+    },
+    {
+      "schema_version": "1.1",
+      "package_id": "exchange_bybit.v1",
+      "display_name": "Bybit Exchange Environments",
+      "summary": "Preset środowisk paper/testnet/live dla giełdy Bybit.",
+      "description": "Pakiet udostępnia kompletny zestaw środowisk i guardraili dla integracji Bybit.",
+      "version": "1.0.0+community",
+      "revision": "2025.01",
+      "release_date": "2025-01-15T09:30:00Z",
+      "maintainers": [
+        {
+          "name": "Marketplace Labs",
+          "email": "marketplace@example.com",
+          "organization": "Marketplace Guild",
+          "role": "maintainer",
+          "url": null
+        }
+      ],
+      "license": {
+        "name": "Marketplace Evaluation License",
+        "spdx_id": "Proprietary",
+        "url": "https://configs.example.com/licenses/marketplace-eval",
+        "terms_summary": "Do użytku ewaluacyjnego.",
+        "redistributable": false,
+        "commercial_use": false
+      },
+      "tags": [
+        "exchange",
+        "bybit"
+      ],
+      "data_requirements": {
+        "inputs": [
+          {
+            "asset_type": "market",
+            "provider": "ccxt.bybit",
+            "access_level": "restricted",
+            "retention_days": 7,
+            "min_history_days": 2,
+            "sampling": "1m",
+            "notes": null
+          }
+        ],
+        "requires_personal_data": false,
+        "requires_realtime_access": true,
+        "pii_handling_notes": "Preset wymaga jedynie kluczy API Bybit."
+      },
+      "distribution": [
+        {
+          "name": "preset-document",
+          "uri": "packages/exchanges/exchange_bybit_v1.json",
+          "kind": "preset",
+          "description": "Podpisany preset środowisk Bybit.",
+          "size_bytes": 3828,
+          "integrity": {
+            "algorithm": "sha256",
+            "digest": "eb47d8db9d4ad9a138cff9598c34aa146ff3ed23ddfede86a20485e5fe0fe9e6"
+          },
+          "signature": {
+            "algorithm": "HMAC-SHA256",
+            "key_id": "dev-hmac",
+            "value": "Yejm0qmzTW0iJwNh4c5GMm/yQy5t4JIQ2cTICUmEb3c=",
+            "signed_fields": [
+              "package_id",
+              "version",
+              "artifact",
+              "uri",
+              "sha256"
+            ]
+          }
+        }
+      ],
+      "compatibility": [
+        {
+          "component": "bot_core",
+          "minimum": "5.2.0",
+          "maximum": null,
+          "recommended": "5.3.1",
+          "channel": null,
+          "notes": "Zweryfikowano z adapterem Stage6 Bybit"
+        }
+      ],
+      "documentation_url": "https://configs.example.com/marketplace/exchanges/bybit",
+      "release_notes": [
+        "Pierwsze publiczne wydanie presetów środowisk Bybit.",
+        "Dodano guardraile watchdog i monitoring API."
+      ],
+      "security": {
+        "mode": "none",
+        "allowed_fingerprints": [],
+        "require_strict_match": false,
+        "audit_message": "Brak ograniczeń fingerprint dla presetów exchange."
+      },
+      "release": {
+        "channel": "beta",
+        "review_status": "approved",
+        "reviewers": [
+          {
+            "name": "Integration QA",
+            "email": "integration.qa@example.com",
+            "role": "qa"
+          }
+        ],
+        "ticket": "https://jira.example.com/browse/MKT-1450",
+        "approved_at": "2025-01-15T09:30:00Z",
+        "notes": "Publiczna certyfikacja presetów środowiskowych."
+      },
+      "exchange_compatibility": [
+        {
+          "exchange": "BYBIT",
+          "environments": [
+            "paper",
+            "testnet",
+            "live"
+          ],
+          "trading_modes": [
+            "spot",
+            "futures"
+          ],
+          "status": "beta",
+          "last_verified_at": "2025-01-14T09:00:00Z",
+          "notes": "Preset zweryfikowany w Stage6 sandbox dla Bybit."
+        }
+      ],
+      "versioning": {
+        "channel": "beta",
+        "iteration": "minor",
+        "supersedes": [],
+        "superseded_by": [],
+        "migration_required": false,
+        "source": "exchanges/exchange_bybit.json"
+      }
+    },
+    {
+      "schema_version": "1.1",
+      "package_id": "exchange_coinbase.v1",
+      "display_name": "Coinbase Exchange Environments",
+      "summary": "Preset środowisk paper/testnet/live dla giełdy Coinbase.",
+      "description": "Pakiet udostępnia kompletny zestaw środowisk i guardraili dla integracji Coinbase.",
+      "version": "1.0.0+community",
+      "revision": "2025.01",
+      "release_date": "2025-01-15T09:30:00Z",
+      "maintainers": [
+        {
+          "name": "Marketplace Labs",
+          "email": "marketplace@example.com",
+          "organization": "Marketplace Guild",
+          "role": "maintainer",
+          "url": null
+        }
+      ],
+      "license": {
+        "name": "Marketplace Evaluation License",
+        "spdx_id": "Proprietary",
+        "url": "https://configs.example.com/licenses/marketplace-eval",
+        "terms_summary": "Do użytku ewaluacyjnego.",
+        "redistributable": false,
+        "commercial_use": false
+      },
+      "tags": [
+        "exchange",
+        "coinbase"
+      ],
+      "data_requirements": {
+        "inputs": [
+          {
+            "asset_type": "market",
+            "provider": "ccxt.coinbase",
+            "access_level": "restricted",
+            "retention_days": 7,
+            "min_history_days": 2,
+            "sampling": "1m",
+            "notes": null
+          }
+        ],
+        "requires_personal_data": false,
+        "requires_realtime_access": true,
+        "pii_handling_notes": "Preset wymaga jedynie kluczy API Coinbase."
+      },
+      "distribution": [
+        {
+          "name": "preset-document",
+          "uri": "packages/exchanges/exchange_coinbase_v1.json",
+          "kind": "preset",
+          "description": "Podpisany preset środowisk Coinbase.",
+          "size_bytes": 4040,
+          "integrity": {
+            "algorithm": "sha256",
+            "digest": "74fd43fa442fd2da0c9d871fb8f494b62ec632daf82c853399df860f96387c69"
+          },
+          "signature": {
+            "algorithm": "HMAC-SHA256",
+            "key_id": "dev-hmac",
+            "value": "Kptkvhnt7//3wkJJLkbZo3ENPPViJd45z5MkS47WqjI=",
+            "signed_fields": [
+              "package_id",
+              "version",
+              "artifact",
+              "uri",
+              "sha256"
+            ]
+          }
+        }
+      ],
+      "compatibility": [
+        {
+          "component": "bot_core",
+          "minimum": "5.2.0",
+          "maximum": null,
+          "recommended": "5.3.1",
+          "channel": null,
+          "notes": "Zweryfikowano z adapterem Stage6 Coinbase"
+        }
+      ],
+      "documentation_url": "https://configs.example.com/marketplace/exchanges/coinbase",
+      "release_notes": [
+        "Pierwsze publiczne wydanie presetów środowisk Coinbase.",
+        "Dodano guardraile watchdog i monitoring API."
+      ],
+      "security": {
+        "mode": "none",
+        "allowed_fingerprints": [],
+        "require_strict_match": false,
+        "audit_message": "Brak ograniczeń fingerprint dla presetów exchange."
+      },
+      "release": {
+        "channel": "beta",
+        "review_status": "approved",
+        "reviewers": [
+          {
+            "name": "Integration QA",
+            "email": "integration.qa@example.com",
+            "role": "qa"
+          }
+        ],
+        "ticket": "https://jira.example.com/browse/MKT-1450",
+        "approved_at": "2025-01-15T09:30:00Z",
+        "notes": "Publiczna certyfikacja presetów środowiskowych."
+      },
+      "exchange_compatibility": [
+        {
+          "exchange": "COINBASE",
+          "environments": [
+            "paper",
+            "testnet",
+            "live"
+          ],
+          "trading_modes": [
+            "spot"
+          ],
+          "status": "beta",
+          "last_verified_at": "2025-01-14T09:00:00Z",
+          "notes": "Preset zweryfikowany w Stage6 sandbox dla Coinbase."
+        }
+      ],
+      "versioning": {
+        "channel": "beta",
+        "iteration": "minor",
+        "supersedes": [],
+        "superseded_by": [],
+        "migration_required": false,
+        "source": "exchanges/exchange_coinbase.json"
+      }
+    },
+    {
+      "schema_version": "1.1",
+      "package_id": "exchange_deribit.v1",
+      "display_name": "Deribit Exchange Environments",
+      "summary": "Preset środowisk paper/testnet/live dla giełdy Deribit.",
+      "description": "Pakiet udostępnia kompletny zestaw środowisk i guardraili dla integracji Deribit.",
+      "version": "1.0.0+community",
+      "revision": "2025.01",
+      "release_date": "2025-01-15T09:30:00Z",
+      "maintainers": [
+        {
+          "name": "Marketplace Labs",
+          "email": "marketplace@example.com",
+          "organization": "Marketplace Guild",
+          "role": "maintainer",
+          "url": null
+        }
+      ],
+      "license": {
+        "name": "Marketplace Evaluation License",
+        "spdx_id": "Proprietary",
+        "url": "https://configs.example.com/licenses/marketplace-eval",
+        "terms_summary": "Do użytku ewaluacyjnego.",
+        "redistributable": false,
+        "commercial_use": false
+      },
+      "tags": [
+        "exchange",
+        "deribit"
+      ],
+      "data_requirements": {
+        "inputs": [
+          {
+            "asset_type": "market",
+            "provider": "ccxt.deribit",
+            "access_level": "restricted",
+            "retention_days": 7,
+            "min_history_days": 2,
+            "sampling": "1m",
+            "notes": null
+          }
+        ],
+        "requires_personal_data": false,
+        "requires_realtime_access": true,
+        "pii_handling_notes": "Preset wymaga jedynie kluczy API Deribit."
+      },
+      "distribution": [
+        {
+          "name": "preset-document",
+          "uri": "packages/exchanges/exchange_deribit_v1.json",
+          "kind": "preset",
+          "description": "Podpisany preset środowisk Deribit.",
+          "size_bytes": 6001,
+          "integrity": {
+            "algorithm": "sha256",
+            "digest": "8c511ab2384b61d29ebec0f7eab79ec3b743a02938f8bdf6997e4ce15e4e55c2"
+          },
+          "signature": {
+            "algorithm": "HMAC-SHA256",
+            "key_id": "dev-hmac",
+            "value": "auePyZsLfEaHJNraVbZVweWSue9UTriJJRjemF0Kmpc=",
+            "signed_fields": [
+              "package_id",
+              "version",
+              "artifact",
+              "uri",
+              "sha256"
+            ]
+          }
+        }
+      ],
+      "compatibility": [
+        {
+          "component": "bot_core",
+          "minimum": "5.2.0",
+          "maximum": null,
+          "recommended": "5.3.1",
+          "channel": null,
+          "notes": "Zweryfikowano z adapterem Stage6 Deribit"
+        }
+      ],
+      "documentation_url": "https://configs.example.com/marketplace/exchanges/deribit",
+      "release_notes": [
+        "Pierwsze publiczne wydanie presetów środowisk Deribit.",
+        "Dodano guardraile watchdog i monitoring API."
+      ],
+      "security": {
+        "mode": "none",
+        "allowed_fingerprints": [],
+        "require_strict_match": false,
+        "audit_message": "Brak ograniczeń fingerprint dla presetów exchange."
+      },
+      "release": {
+        "channel": "beta",
+        "review_status": "approved",
+        "reviewers": [
+          {
+            "name": "Integration QA",
+            "email": "integration.qa@example.com",
+            "role": "qa"
+          }
+        ],
+        "ticket": "https://jira.example.com/browse/MKT-1450",
+        "approved_at": "2025-01-15T09:30:00Z",
+        "notes": "Publiczna certyfikacja presetów środowiskowych."
+      },
+      "exchange_compatibility": [
+        {
+          "exchange": "DERIBIT",
+          "environments": [
+            "paper",
+            "testnet",
+            "live"
+          ],
+          "trading_modes": [
+            "futures",
+            "options"
+          ],
+          "status": "beta",
+          "last_verified_at": "2025-01-14T09:00:00Z",
+          "notes": "Preset zweryfikowany w Stage6 sandbox dla Deribit."
+        }
+      ],
+      "versioning": {
+        "channel": "beta",
+        "iteration": "minor",
+        "supersedes": [],
+        "superseded_by": [],
+        "migration_required": false,
+        "source": "exchanges/exchange_deribit.json"
+      }
+    },
+    {
+      "schema_version": "1.1",
+      "package_id": "exchange_gateio.v1",
+      "display_name": "Gate.io Exchange Environments",
+      "summary": "Preset środowisk paper/testnet/live dla giełdy Gate.io.",
+      "description": "Pakiet udostępnia kompletny zestaw środowisk i guardraili dla integracji Gate.io.",
+      "version": "1.0.0+community",
+      "revision": "2025.01",
+      "release_date": "2025-01-15T09:30:00Z",
+      "maintainers": [
+        {
+          "name": "Marketplace Labs",
+          "email": "marketplace@example.com",
+          "organization": "Marketplace Guild",
+          "role": "maintainer",
+          "url": null
+        }
+      ],
+      "license": {
+        "name": "Marketplace Evaluation License",
+        "spdx_id": "Proprietary",
+        "url": "https://configs.example.com/licenses/marketplace-eval",
+        "terms_summary": "Do użytku ewaluacyjnego.",
+        "redistributable": false,
+        "commercial_use": false
+      },
+      "tags": [
+        "exchange",
+        "gateio",
+        "gate.io"
+      ],
+      "data_requirements": {
+        "inputs": [
+          {
+            "asset_type": "market",
+            "provider": "ccxt.gateio",
+            "access_level": "restricted",
+            "retention_days": 7,
+            "min_history_days": 2,
+            "sampling": "1m",
+            "notes": null
+          }
+        ],
+        "requires_personal_data": false,
+        "requires_realtime_access": true,
+        "pii_handling_notes": "Preset wymaga jedynie kluczy API Gate.io."
+      },
+      "distribution": [
+        {
+          "name": "preset-document",
+          "uri": "packages/exchanges/exchange_gateio_v1.json",
+          "kind": "preset",
+          "description": "Podpisany preset środowisk Gate.io.",
+          "size_bytes": 3728,
+          "integrity": {
+            "algorithm": "sha256",
+            "digest": "be3eeded4b486dcbc9202b2016f36f1814702df25749bc2c1e4ed86f2ff75a52"
+          },
+          "signature": {
+            "algorithm": "HMAC-SHA256",
+            "key_id": "dev-hmac",
+            "value": "xL1Or+H4/We1aXzfgrcfgDCtwIu/95dgSdsw4pygCZc=",
+            "signed_fields": [
+              "package_id",
+              "version",
+              "artifact",
+              "uri",
+              "sha256"
+            ]
+          }
+        }
+      ],
+      "compatibility": [
+        {
+          "component": "bot_core",
+          "minimum": "5.2.0",
+          "maximum": null,
+          "recommended": "5.3.1",
+          "channel": null,
+          "notes": "Zweryfikowano z adapterem Stage6 Gate.io"
+        }
+      ],
+      "documentation_url": "https://configs.example.com/marketplace/exchanges/gateio",
+      "release_notes": [
+        "Pierwsze publiczne wydanie presetów środowisk Gate.io.",
+        "Dodano guardraile watchdog i monitoring API."
+      ],
+      "security": {
+        "mode": "none",
+        "allowed_fingerprints": [],
+        "require_strict_match": false,
+        "audit_message": "Brak ograniczeń fingerprint dla presetów exchange."
+      },
+      "release": {
+        "channel": "beta",
+        "review_status": "approved",
+        "reviewers": [
+          {
+            "name": "Integration QA",
+            "email": "integration.qa@example.com",
+            "role": "qa"
+          }
+        ],
+        "ticket": "https://jira.example.com/browse/MKT-1450",
+        "approved_at": "2025-01-15T09:30:00Z",
+        "notes": "Publiczna certyfikacja presetów środowiskowych."
+      },
+      "exchange_compatibility": [
+        {
+          "exchange": "GATEIO",
+          "environments": [
+            "paper",
+            "testnet",
+            "live"
+          ],
+          "trading_modes": [
+            "spot",
+            "margin"
+          ],
+          "status": "beta",
+          "last_verified_at": "2025-01-14T09:00:00Z",
+          "notes": "Preset zweryfikowany w Stage6 sandbox dla Gate.io."
+        }
+      ],
+      "versioning": {
+        "channel": "beta",
+        "iteration": "minor",
+        "supersedes": [],
+        "superseded_by": [],
+        "migration_required": false,
+        "source": "exchanges/exchange_gateio.json"
+      }
+    },
+    {
+      "schema_version": "1.1",
+      "package_id": "exchange_gemini.v1",
+      "display_name": "Gemini Exchange Environments",
+      "summary": "Preset środowisk paper/testnet/live dla giełdy Gemini.",
+      "description": "Pakiet udostępnia kompletny zestaw środowisk i guardraili dla integracji Gemini.",
+      "version": "1.0.0+community",
+      "revision": "2025.01",
+      "release_date": "2025-01-15T09:30:00Z",
+      "maintainers": [
+        {
+          "name": "Marketplace Labs",
+          "email": "marketplace@example.com",
+          "organization": "Marketplace Guild",
+          "role": "maintainer",
+          "url": null
+        }
+      ],
+      "license": {
+        "name": "Marketplace Evaluation License",
+        "spdx_id": "Proprietary",
+        "url": "https://configs.example.com/licenses/marketplace-eval",
+        "terms_summary": "Do użytku ewaluacyjnego.",
+        "redistributable": false,
+        "commercial_use": false
+      },
+      "tags": [
+        "exchange",
+        "gemini"
+      ],
+      "data_requirements": {
+        "inputs": [
+          {
+            "asset_type": "market",
+            "provider": "ccxt.gemini",
+            "access_level": "restricted",
+            "retention_days": 7,
+            "min_history_days": 2,
+            "sampling": "1m",
+            "notes": null
+          }
+        ],
+        "requires_personal_data": false,
+        "requires_realtime_access": true,
+        "pii_handling_notes": "Preset wymaga jedynie kluczy API Gemini."
+      },
+      "distribution": [
+        {
+          "name": "preset-document",
+          "uri": "packages/exchanges/exchange_gemini_v1.json",
+          "kind": "preset",
+          "description": "Podpisany preset środowisk Gemini.",
+          "size_bytes": 4310,
+          "integrity": {
+            "algorithm": "sha256",
+            "digest": "c289eb4be99b4763ffe856d0f1d722feeca615121bf59fc5698e6905e1b8ce42"
+          },
+          "signature": {
+            "algorithm": "HMAC-SHA256",
+            "key_id": "dev-hmac",
+            "value": "cIQJnj6nXtp26GYJCu8eY6UFnz8EQOzTwppniRqWCMg=",
+            "signed_fields": [
+              "package_id",
+              "version",
+              "artifact",
+              "uri",
+              "sha256"
+            ]
+          }
+        }
+      ],
+      "compatibility": [
+        {
+          "component": "bot_core",
+          "minimum": "5.2.0",
+          "maximum": null,
+          "recommended": "5.3.1",
+          "channel": null,
+          "notes": "Zweryfikowano z adapterem Stage6 Gemini"
+        }
+      ],
+      "documentation_url": "https://configs.example.com/marketplace/exchanges/gemini",
+      "release_notes": [
+        "Pierwsze publiczne wydanie presetów środowisk Gemini.",
+        "Dodano guardraile watchdog i monitoring API."
+      ],
+      "security": {
+        "mode": "none",
+        "allowed_fingerprints": [],
+        "require_strict_match": false,
+        "audit_message": "Brak ograniczeń fingerprint dla presetów exchange."
+      },
+      "release": {
+        "channel": "beta",
+        "review_status": "approved",
+        "reviewers": [
+          {
+            "name": "Integration QA",
+            "email": "integration.qa@example.com",
+            "role": "qa"
+          }
+        ],
+        "ticket": "https://jira.example.com/browse/MKT-1450",
+        "approved_at": "2025-01-15T09:30:00Z",
+        "notes": "Publiczna certyfikacja presetów środowiskowych."
+      },
+      "exchange_compatibility": [
+        {
+          "exchange": "GEMINI",
+          "environments": [
+            "paper",
+            "testnet",
+            "live"
+          ],
+          "trading_modes": [
+            "spot"
+          ],
+          "status": "beta",
+          "last_verified_at": "2025-01-14T09:00:00Z",
+          "notes": "Preset zweryfikowany w Stage6 sandbox dla Gemini."
+        }
+      ],
+      "versioning": {
+        "channel": "beta",
+        "iteration": "minor",
+        "supersedes": [],
+        "superseded_by": [],
+        "migration_required": false,
+        "source": "exchanges/exchange_gemini.json"
+      }
+    },
+    {
+      "schema_version": "1.1",
+      "package_id": "exchange_huobi.v1",
+      "display_name": "Huobi Exchange Environments",
+      "summary": "Preset środowisk paper/testnet/live dla giełdy Huobi.",
+      "description": "Pakiet udostępnia kompletny zestaw środowisk i guardraili dla integracji Huobi.",
+      "version": "1.0.0+community",
+      "revision": "2025.01",
+      "release_date": "2025-01-15T09:30:00Z",
+      "maintainers": [
+        {
+          "name": "Marketplace Labs",
+          "email": "marketplace@example.com",
+          "organization": "Marketplace Guild",
+          "role": "maintainer",
+          "url": null
+        }
+      ],
+      "license": {
+        "name": "Marketplace Evaluation License",
+        "spdx_id": "Proprietary",
+        "url": "https://configs.example.com/licenses/marketplace-eval",
+        "terms_summary": "Do użytku ewaluacyjnego.",
+        "redistributable": false,
+        "commercial_use": false
+      },
+      "tags": [
+        "exchange",
+        "huobi"
+      ],
+      "data_requirements": {
+        "inputs": [
+          {
+            "asset_type": "market",
+            "provider": "ccxt.huobi",
+            "access_level": "restricted",
+            "retention_days": 7,
+            "min_history_days": 2,
+            "sampling": "1m",
+            "notes": null
+          }
+        ],
+        "requires_personal_data": false,
+        "requires_realtime_access": true,
+        "pii_handling_notes": "Preset wymaga jedynie kluczy API Huobi."
+      },
+      "distribution": [
+        {
+          "name": "preset-document",
+          "uri": "packages/exchanges/exchange_huobi_v1.json",
+          "kind": "preset",
+          "description": "Podpisany preset środowisk Huobi.",
+          "size_bytes": 4239,
+          "integrity": {
+            "algorithm": "sha256",
+            "digest": "033ca2b66600aeceff05e4e76e10101026709dfc82116f2a7e038e42ededd98e"
+          },
+          "signature": {
+            "algorithm": "HMAC-SHA256",
+            "key_id": "dev-hmac",
+            "value": "uE1q9qdQvvXm6LkoSI9e/BrjQmIUZHU0aeUPUCQndus=",
+            "signed_fields": [
+              "package_id",
+              "version",
+              "artifact",
+              "uri",
+              "sha256"
+            ]
+          }
+        }
+      ],
+      "compatibility": [
+        {
+          "component": "bot_core",
+          "minimum": "5.2.0",
+          "maximum": null,
+          "recommended": "5.3.1",
+          "channel": null,
+          "notes": "Zweryfikowano z adapterem Stage6 Huobi"
+        }
+      ],
+      "documentation_url": "https://configs.example.com/marketplace/exchanges/huobi",
+      "release_notes": [
+        "Pierwsze publiczne wydanie presetów środowisk Huobi.",
+        "Dodano guardraile watchdog i monitoring API."
+      ],
+      "security": {
+        "mode": "none",
+        "allowed_fingerprints": [],
+        "require_strict_match": false,
+        "audit_message": "Brak ograniczeń fingerprint dla presetów exchange."
+      },
+      "release": {
+        "channel": "beta",
+        "review_status": "approved",
+        "reviewers": [
+          {
+            "name": "Integration QA",
+            "email": "integration.qa@example.com",
+            "role": "qa"
+          }
+        ],
+        "ticket": "https://jira.example.com/browse/MKT-1450",
+        "approved_at": "2025-01-15T09:30:00Z",
+        "notes": "Publiczna certyfikacja presetów środowiskowych."
+      },
+      "exchange_compatibility": [
+        {
+          "exchange": "HUOBI",
+          "environments": [
+            "paper",
+            "testnet",
+            "live"
+          ],
+          "trading_modes": [
+            "spot"
+          ],
+          "status": "beta",
+          "last_verified_at": "2025-01-14T09:00:00Z",
+          "notes": "Preset zweryfikowany w Stage6 sandbox dla Huobi."
+        }
+      ],
+      "versioning": {
+        "channel": "beta",
+        "iteration": "minor",
+        "supersedes": [],
+        "superseded_by": [],
+        "migration_required": false,
+        "source": "exchanges/exchange_huobi.json"
+      }
+    },
+    {
+      "schema_version": "1.1",
+      "package_id": "exchange_kraken.v1",
+      "display_name": "Kraken Exchange Environments",
+      "summary": "Preset środowisk paper/testnet/live dla giełdy Kraken.",
+      "description": "Pakiet udostępnia kompletny zestaw środowisk i guardraili dla integracji Kraken.",
+      "version": "1.0.0+community",
+      "revision": "2025.01",
+      "release_date": "2025-01-15T09:30:00Z",
+      "maintainers": [
+        {
+          "name": "Marketplace Labs",
+          "email": "marketplace@example.com",
+          "organization": "Marketplace Guild",
+          "role": "maintainer",
+          "url": null
+        }
+      ],
+      "license": {
+        "name": "Marketplace Evaluation License",
+        "spdx_id": "Proprietary",
+        "url": "https://configs.example.com/licenses/marketplace-eval",
+        "terms_summary": "Do użytku ewaluacyjnego.",
+        "redistributable": false,
+        "commercial_use": false
+      },
+      "tags": [
+        "exchange",
+        "kraken"
+      ],
+      "data_requirements": {
+        "inputs": [
+          {
+            "asset_type": "market",
+            "provider": "ccxt.kraken",
+            "access_level": "restricted",
+            "retention_days": 7,
+            "min_history_days": 2,
+            "sampling": "1m",
+            "notes": null
+          }
+        ],
+        "requires_personal_data": false,
+        "requires_realtime_access": true,
+        "pii_handling_notes": "Preset wymaga jedynie kluczy API Kraken."
+      },
+      "distribution": [
+        {
+          "name": "preset-document",
+          "uri": "packages/exchanges/exchange_kraken_v1.json",
+          "kind": "preset",
+          "description": "Podpisany preset środowisk Kraken.",
+          "size_bytes": 3803,
+          "integrity": {
+            "algorithm": "sha256",
+            "digest": "8bac5e67ac87bd0f89971dc9d259353353da11a6fd49c1e1b761e76b9df93a4b"
+          },
+          "signature": {
+            "algorithm": "HMAC-SHA256",
+            "key_id": "dev-hmac",
+            "value": "WP9EYYxJh/zMesSsvuM5soxsAgfdL3pRg1Xk7qvBPEo=",
+            "signed_fields": [
+              "package_id",
+              "version",
+              "artifact",
+              "uri",
+              "sha256"
+            ]
+          }
+        }
+      ],
+      "compatibility": [
+        {
+          "component": "bot_core",
+          "minimum": "5.2.0",
+          "maximum": null,
+          "recommended": "5.3.1",
+          "channel": null,
+          "notes": "Zweryfikowano z adapterem Stage6 Kraken"
+        }
+      ],
+      "documentation_url": "https://configs.example.com/marketplace/exchanges/kraken",
+      "release_notes": [
+        "Pierwsze publiczne wydanie presetów środowisk Kraken.",
+        "Dodano guardraile watchdog i monitoring API."
+      ],
+      "security": {
+        "mode": "none",
+        "allowed_fingerprints": [],
+        "require_strict_match": false,
+        "audit_message": "Brak ograniczeń fingerprint dla presetów exchange."
+      },
+      "release": {
+        "channel": "beta",
+        "review_status": "approved",
+        "reviewers": [
+          {
+            "name": "Integration QA",
+            "email": "integration.qa@example.com",
+            "role": "qa"
+          }
+        ],
+        "ticket": "https://jira.example.com/browse/MKT-1450",
+        "approved_at": "2025-01-15T09:30:00Z",
+        "notes": "Publiczna certyfikacja presetów środowiskowych."
+      },
+      "exchange_compatibility": [
+        {
+          "exchange": "KRAKEN",
+          "environments": [
+            "paper",
+            "testnet",
+            "live"
+          ],
+          "trading_modes": [
+            "spot",
+            "margin"
+          ],
+          "status": "beta",
+          "last_verified_at": "2025-01-14T09:00:00Z",
+          "notes": "Preset zweryfikowany w Stage6 sandbox dla Kraken."
+        }
+      ],
+      "versioning": {
+        "channel": "beta",
+        "iteration": "minor",
+        "supersedes": [],
+        "superseded_by": [],
+        "migration_required": false,
+        "source": "exchanges/exchange_kraken.json"
+      }
+    },
+    {
+      "schema_version": "1.1",
+      "package_id": "exchange_kucoin.v1",
+      "display_name": "KuCoin Exchange Environments",
+      "summary": "Preset środowisk paper/testnet/live dla giełdy KuCoin.",
+      "description": "Pakiet udostępnia kompletny zestaw środowisk i guardraili dla integracji KuCoin.",
+      "version": "1.0.0+community",
+      "revision": "2025.01",
+      "release_date": "2025-01-15T09:30:00Z",
+      "maintainers": [
+        {
+          "name": "Marketplace Labs",
+          "email": "marketplace@example.com",
+          "organization": "Marketplace Guild",
+          "role": "maintainer",
+          "url": null
+        }
+      ],
+      "license": {
+        "name": "Marketplace Evaluation License",
+        "spdx_id": "Proprietary",
+        "url": "https://configs.example.com/licenses/marketplace-eval",
+        "terms_summary": "Do użytku ewaluacyjnego.",
+        "redistributable": false,
+        "commercial_use": false
+      },
+      "tags": [
+        "exchange",
+        "kucoin"
+      ],
+      "data_requirements": {
+        "inputs": [
+          {
+            "asset_type": "market",
+            "provider": "ccxt.kucoin",
+            "access_level": "restricted",
+            "retention_days": 7,
+            "min_history_days": 2,
+            "sampling": "1m",
+            "notes": null
+          }
+        ],
+        "requires_personal_data": false,
+        "requires_realtime_access": true,
+        "pii_handling_notes": "Preset wymaga jedynie kluczy API KuCoin."
+      },
+      "distribution": [
+        {
+          "name": "preset-document",
+          "uri": "packages/exchanges/exchange_kucoin_v1.json",
+          "kind": "preset",
+          "description": "Podpisany preset środowisk KuCoin.",
+          "size_bytes": 5087,
+          "integrity": {
+            "algorithm": "sha256",
+            "digest": "b9acc9e3663fee102d0b4227152ae6d91995d319cf7f11c840e0723f992dc259"
+          },
+          "signature": {
+            "algorithm": "HMAC-SHA256",
+            "key_id": "dev-hmac",
+            "value": "48duzKH7YQtth+CHgyeHLj7R4Z6B+uFTprMbzll+5sU=",
+            "signed_fields": [
+              "package_id",
+              "version",
+              "artifact",
+              "uri",
+              "sha256"
+            ]
+          }
+        }
+      ],
+      "compatibility": [
+        {
+          "component": "bot_core",
+          "minimum": "5.2.0",
+          "maximum": null,
+          "recommended": "5.3.1",
+          "channel": null,
+          "notes": "Zweryfikowano z adapterem Stage6 KuCoin"
+        }
+      ],
+      "documentation_url": "https://configs.example.com/marketplace/exchanges/kucoin",
+      "release_notes": [
+        "Pierwsze publiczne wydanie presetów środowisk KuCoin.",
+        "Dodano guardraile watchdog i monitoring API."
+      ],
+      "security": {
+        "mode": "none",
+        "allowed_fingerprints": [],
+        "require_strict_match": false,
+        "audit_message": "Brak ograniczeń fingerprint dla presetów exchange."
+      },
+      "release": {
+        "channel": "beta",
+        "review_status": "approved",
+        "reviewers": [
+          {
+            "name": "Integration QA",
+            "email": "integration.qa@example.com",
+            "role": "qa"
+          }
+        ],
+        "ticket": "https://jira.example.com/browse/MKT-1450",
+        "approved_at": "2025-01-15T09:30:00Z",
+        "notes": "Publiczna certyfikacja presetów środowiskowych."
+      },
+      "exchange_compatibility": [
+        {
+          "exchange": "KUCOIN",
+          "environments": [
+            "paper",
+            "testnet",
+            "live"
+          ],
+          "trading_modes": [
+            "spot",
+            "futures"
+          ],
+          "status": "beta",
+          "last_verified_at": "2025-01-14T09:00:00Z",
+          "notes": "Preset zweryfikowany w Stage6 sandbox dla KuCoin."
+        }
+      ],
+      "versioning": {
+        "channel": "beta",
+        "iteration": "minor",
+        "supersedes": [],
+        "superseded_by": [],
+        "migration_required": false,
+        "source": "exchanges/exchange_kucoin.json"
+      }
+    },
+    {
+      "schema_version": "1.1",
+      "package_id": "exchange_mexc.v1",
+      "display_name": "MEXC Exchange Environments",
+      "summary": "Preset środowisk paper/testnet/live dla giełdy MEXC.",
+      "description": "Pakiet udostępnia kompletny zestaw środowisk i guardraili dla integracji MEXC.",
+      "version": "1.0.0+community",
+      "revision": "2025.01",
+      "release_date": "2025-01-15T09:30:00Z",
+      "maintainers": [
+        {
+          "name": "Marketplace Labs",
+          "email": "marketplace@example.com",
+          "organization": "Marketplace Guild",
+          "role": "maintainer",
+          "url": null
+        }
+      ],
+      "license": {
+        "name": "Marketplace Evaluation License",
+        "spdx_id": "Proprietary",
+        "url": "https://configs.example.com/licenses/marketplace-eval",
+        "terms_summary": "Do użytku ewaluacyjnego.",
+        "redistributable": false,
+        "commercial_use": false
+      },
+      "tags": [
+        "exchange",
+        "mexc"
+      ],
+      "data_requirements": {
+        "inputs": [
+          {
+            "asset_type": "market",
+            "provider": "ccxt.mexc",
+            "access_level": "restricted",
+            "retention_days": 7,
+            "min_history_days": 2,
+            "sampling": "1m",
+            "notes": null
+          }
+        ],
+        "requires_personal_data": false,
+        "requires_realtime_access": true,
+        "pii_handling_notes": "Preset wymaga jedynie kluczy API MEXC."
+      },
+      "distribution": [
+        {
+          "name": "preset-document",
+          "uri": "packages/exchanges/exchange_mexc_v1.json",
+          "kind": "preset",
+          "description": "Podpisany preset środowisk MEXC.",
+          "size_bytes": 3682,
+          "integrity": {
+            "algorithm": "sha256",
+            "digest": "8342dd4fa13bedd37322245f4c25edaea89ac2c20f86dc3585cbbaddf3c7f66c"
+          },
+          "signature": {
+            "algorithm": "HMAC-SHA256",
+            "key_id": "dev-hmac",
+            "value": "Yi5HoDdY6nFvGMuzQGVuerUenVQopz+hZ9tB1TIIB+s=",
+            "signed_fields": [
+              "package_id",
+              "version",
+              "artifact",
+              "uri",
+              "sha256"
+            ]
+          }
+        }
+      ],
+      "compatibility": [
+        {
+          "component": "bot_core",
+          "minimum": "5.2.0",
+          "maximum": null,
+          "recommended": "5.3.1",
+          "channel": null,
+          "notes": "Zweryfikowano z adapterem Stage6 MEXC"
+        }
+      ],
+      "documentation_url": "https://configs.example.com/marketplace/exchanges/mexc",
+      "release_notes": [
+        "Pierwsze publiczne wydanie presetów środowisk MEXC.",
+        "Dodano guardraile watchdog i monitoring API."
+      ],
+      "security": {
+        "mode": "none",
+        "allowed_fingerprints": [],
+        "require_strict_match": false,
+        "audit_message": "Brak ograniczeń fingerprint dla presetów exchange."
+      },
+      "release": {
+        "channel": "beta",
+        "review_status": "approved",
+        "reviewers": [
+          {
+            "name": "Integration QA",
+            "email": "integration.qa@example.com",
+            "role": "qa"
+          }
+        ],
+        "ticket": "https://jira.example.com/browse/MKT-1450",
+        "approved_at": "2025-01-15T09:30:00Z",
+        "notes": "Publiczna certyfikacja presetów środowiskowych."
+      },
+      "exchange_compatibility": [
+        {
+          "exchange": "MEXC",
+          "environments": [
+            "paper",
+            "testnet",
+            "live"
+          ],
+          "trading_modes": [
+            "spot"
+          ],
+          "status": "beta",
+          "last_verified_at": "2025-01-14T09:00:00Z",
+          "notes": "Preset zweryfikowany w Stage6 sandbox dla MEXC."
+        }
+      ],
+      "versioning": {
+        "channel": "beta",
+        "iteration": "minor",
+        "supersedes": [],
+        "superseded_by": [],
+        "migration_required": false,
+        "source": "exchanges/exchange_mexc.json"
+      }
+    },
+    {
+      "schema_version": "1.1",
+      "package_id": "exchange_okx.v1",
+      "display_name": "OKX Exchange Environments",
+      "summary": "Preset środowisk paper/testnet/live dla giełdy OKX.",
+      "description": "Pakiet udostępnia kompletny zestaw środowisk i guardraili dla integracji OKX.",
+      "version": "1.0.0+community",
+      "revision": "2025.01",
+      "release_date": "2025-01-15T09:30:00Z",
+      "maintainers": [
+        {
+          "name": "Marketplace Labs",
+          "email": "marketplace@example.com",
+          "organization": "Marketplace Guild",
+          "role": "maintainer",
+          "url": null
+        }
+      ],
+      "license": {
+        "name": "Marketplace Evaluation License",
+        "spdx_id": "Proprietary",
+        "url": "https://configs.example.com/licenses/marketplace-eval",
+        "terms_summary": "Do użytku ewaluacyjnego.",
+        "redistributable": false,
+        "commercial_use": false
+      },
+      "tags": [
+        "exchange",
+        "okx"
+      ],
+      "data_requirements": {
+        "inputs": [
+          {
+            "asset_type": "market",
+            "provider": "ccxt.okx",
+            "access_level": "restricted",
+            "retention_days": 7,
+            "min_history_days": 2,
+            "sampling": "1m",
+            "notes": null
+          }
+        ],
+        "requires_personal_data": false,
+        "requires_realtime_access": true,
+        "pii_handling_notes": "Preset wymaga jedynie kluczy API OKX."
+      },
+      "distribution": [
+        {
+          "name": "preset-document",
+          "uri": "packages/exchanges/exchange_okx_v1.json",
+          "kind": "preset",
+          "description": "Podpisany preset środowisk OKX.",
+          "size_bytes": 4155,
+          "integrity": {
+            "algorithm": "sha256",
+            "digest": "3b07dcc7eae2d8c3ecfae946a55b9b1eb0141687678f50532508099135fda3f1"
+          },
+          "signature": {
+            "algorithm": "HMAC-SHA256",
+            "key_id": "dev-hmac",
+            "value": "USHoPIeR0Tiw9XeTahh9zI9t77uPGe3jl8twkSW1fvc=",
+            "signed_fields": [
+              "package_id",
+              "version",
+              "artifact",
+              "uri",
+              "sha256"
+            ]
+          }
+        }
+      ],
+      "compatibility": [
+        {
+          "component": "bot_core",
+          "minimum": "5.2.0",
+          "maximum": null,
+          "recommended": "5.3.1",
+          "channel": null,
+          "notes": "Zweryfikowano z adapterem Stage6 OKX"
+        }
+      ],
+      "documentation_url": "https://configs.example.com/marketplace/exchanges/okx",
+      "release_notes": [
+        "Pierwsze publiczne wydanie presetów środowisk OKX.",
+        "Dodano guardraile watchdog i monitoring API."
+      ],
+      "security": {
+        "mode": "none",
+        "allowed_fingerprints": [],
+        "require_strict_match": false,
+        "audit_message": "Brak ograniczeń fingerprint dla presetów exchange."
+      },
+      "release": {
+        "channel": "beta",
+        "review_status": "approved",
+        "reviewers": [
+          {
+            "name": "Integration QA",
+            "email": "integration.qa@example.com",
+            "role": "qa"
+          }
+        ],
+        "ticket": "https://jira.example.com/browse/MKT-1450",
+        "approved_at": "2025-01-15T09:30:00Z",
+        "notes": "Publiczna certyfikacja presetów środowiskowych."
+      },
+      "exchange_compatibility": [
+        {
+          "exchange": "OKX",
+          "environments": [
+            "paper",
+            "testnet",
+            "live"
+          ],
+          "trading_modes": [
+            "spot",
+            "futures"
+          ],
+          "status": "beta",
+          "last_verified_at": "2025-01-14T09:00:00Z",
+          "notes": "Preset zweryfikowany w Stage6 sandbox dla OKX."
+        }
+      ],
+      "versioning": {
+        "channel": "beta",
+        "iteration": "minor",
+        "supersedes": [],
+        "superseded_by": [],
+        "migration_required": false,
+        "source": "exchanges/exchange_okx.json"
+      }
+    },
+    {
+      "schema_version": "1.1",
+      "package_id": "exchange_zonda.v1",
+      "display_name": "Zonda Exchange Environments",
+      "summary": "Preset środowisk paper/testnet/live dla giełdy Zonda.",
+      "description": "Pakiet udostępnia kompletny zestaw środowisk i guardraili dla integracji Zonda.",
+      "version": "1.0.0+community",
+      "revision": "2025.01",
+      "release_date": "2025-01-15T09:30:00Z",
+      "maintainers": [
+        {
+          "name": "Marketplace Labs",
+          "email": "marketplace@example.com",
+          "organization": "Marketplace Guild",
+          "role": "maintainer",
+          "url": null
+        }
+      ],
+      "license": {
+        "name": "Marketplace Evaluation License",
+        "spdx_id": "Proprietary",
+        "url": "https://configs.example.com/licenses/marketplace-eval",
+        "terms_summary": "Do użytku ewaluacyjnego.",
+        "redistributable": false,
+        "commercial_use": false
+      },
+      "tags": [
+        "exchange",
+        "zonda"
+      ],
+      "data_requirements": {
+        "inputs": [
+          {
+            "asset_type": "market",
+            "provider": "ccxt.zonda",
+            "access_level": "restricted",
+            "retention_days": 7,
+            "min_history_days": 2,
+            "sampling": "1m",
+            "notes": null
+          }
+        ],
+        "requires_personal_data": false,
+        "requires_realtime_access": true,
+        "pii_handling_notes": "Preset wymaga jedynie kluczy API Zonda."
+      },
+      "distribution": [
+        {
+          "name": "preset-document",
+          "uri": "packages/exchanges/exchange_zonda_v1.json",
+          "kind": "preset",
+          "description": "Podpisany preset środowisk Zonda.",
+          "size_bytes": 3289,
+          "integrity": {
+            "algorithm": "sha256",
+            "digest": "2301f19e946438ba5e3f9032fa19ca4cf266133749b3ceffa40a798068fe8c8e"
+          },
+          "signature": {
+            "algorithm": "HMAC-SHA256",
+            "key_id": "dev-hmac",
+            "value": "jjbGH1zzrBrYllFbtsaZ4prMPVKkbbr1gf12MQdlutk=",
+            "signed_fields": [
+              "package_id",
+              "version",
+              "artifact",
+              "uri",
+              "sha256"
+            ]
+          }
+        }
+      ],
+      "compatibility": [
+        {
+          "component": "bot_core",
+          "minimum": "5.2.0",
+          "maximum": null,
+          "recommended": "5.3.1",
+          "channel": null,
+          "notes": "Zweryfikowano z adapterem Stage6 Zonda"
+        }
+      ],
+      "documentation_url": "https://configs.example.com/marketplace/exchanges/zonda",
+      "release_notes": [
+        "Pierwsze publiczne wydanie presetów środowisk Zonda.",
+        "Dodano guardraile watchdog i monitoring API."
+      ],
+      "security": {
+        "mode": "none",
+        "allowed_fingerprints": [],
+        "require_strict_match": false,
+        "audit_message": "Brak ograniczeń fingerprint dla presetów exchange."
+      },
+      "release": {
+        "channel": "beta",
+        "review_status": "approved",
+        "reviewers": [
+          {
+            "name": "Integration QA",
+            "email": "integration.qa@example.com",
+            "role": "qa"
+          }
+        ],
+        "ticket": "https://jira.example.com/browse/MKT-1450",
+        "approved_at": "2025-01-15T09:30:00Z",
+        "notes": "Publiczna certyfikacja presetów środowiskowych."
+      },
+      "exchange_compatibility": [
+        {
+          "exchange": "ZONDA",
+          "environments": [
+            "paper",
+            "testnet",
+            "live"
+          ],
+          "trading_modes": [
+            "spot"
+          ],
+          "status": "beta",
+          "last_verified_at": "2025-01-14T09:00:00Z",
+          "notes": "Preset zweryfikowany w Stage6 sandbox dla Zonda."
+        }
+      ],
+      "versioning": {
+        "channel": "beta",
+        "iteration": "minor",
+        "supersedes": [],
+        "superseded_by": [],
+        "migration_required": false,
+        "source": "exchanges/exchange_zonda.json"
+      }
+    },
+    {
+      "schema_version": "1.1",
       "package_id": "mean_reversion.v1",
       "display_name": "Mean Reversion Starter",
       "summary": "Konfiguracja mean-reversion z guardrailami Stage6 do szybkiego wdrożenia.",
@@ -191,12 +2164,12 @@
           "size_bytes": 1538,
           "integrity": {
             "algorithm": "sha256",
-            "digest": "b6efa2291f9cbb06d609190c007eacf873f69b139abc19a624ed8038bba1b6b3"
+            "digest": "59ca157884c69772d249b99612afbb60990520fcc349a6bc14c57f998d97ae8d"
           },
           "signature": {
             "algorithm": "HMAC-SHA256",
             "key_id": "dev-hmac",
-            "value": "VRTsfdv2MzP+B0YGyC3ZEwozMYa2tbd8sYKijb+OgMM=",
+            "value": "lkJY1P59hdGc6akPq7sZ9DeqxUQd02uVPpY8/c1ukS0=",
             "signed_fields": [
               "package_id",
               "version",

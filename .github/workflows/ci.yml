@@ -464,6 +464,17 @@ jobs:
       - name: Run marketplace catalog tests
         run: pytest tests/test_marketplace_catalog.py --maxfail=1 --disable-warnings
 
+      - name: Sync community reviews and client catalog
+        run: |
+          SIGNING_KEY=$(cat config/marketplace/keys/dev-hmac.key)
+          python scripts/ui_marketplace_bridge.py \
+            --presets-dir config/marketplace/presets \
+            --licenses-path var/marketplace_licenses.json \
+            --signing-key dev-hmac=$SIGNING_KEY \
+            sync-reviews \
+            --source-dir config/marketplace/reviews
+          python scripts/marketplace_cli.py sync --source config/marketplace/catalog.json --force
+
       - name: Ensure repository is clean
         run: |
           git status --porcelain

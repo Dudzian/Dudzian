@@ -1,0 +1,25 @@
+{
+  "preset_id": "exchange_kucoin",
+  "reviews": [
+    {
+      "author": "HyperCare",
+      "comment": "API do futures ma wyższe opóźnienia podczas weekendu.",
+      "preset_id": "exchange_kucoin",
+      "rating": 3,
+      "reports": [
+        {
+          "count": 2,
+          "type": "latency"
+        }
+      ],
+      "review_id": "rvw-kucoin-latency",
+      "signature": {
+        "algorithm": "HMAC-SHA256",
+        "key_id": "dev-hmac",
+        "value": "GX3DdO9+Wc7R1m1XM9Pt++hVnMdMBz/HfjWbVpQhSTk="
+      },
+      "submitted_at": "2025-01-14T08:05:00Z"
+    }
+  ],
+  "updated_at": "2025-11-16T00:31:48Z"
+}

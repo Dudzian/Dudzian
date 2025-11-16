@@ -1,0 +1,146 @@
+{
+  "preset": {
+    "metadata": {
+      "environments": [
+        "paper",
+        "testnet",
+        "live"
+      ],
+      "id": "exchange_huobi",
+      "profile": "grid",
+      "required_exchanges": [
+        "HUOBI"
+      ],
+      "source_file": "config/exchanges/huobi.yaml",
+      "summary": "Preset Huobi spot z failoverem i zaktualizowanym symulatorem paper",
+      "tags": [
+        "exchange",
+        "huobi"
+      ],
+      "version": "1.1.0+adapter-rollout"
+    },
+    "name": "Huobi Connectivity",
+    "strategies": [
+      {
+        "engine": "grid_trading",
+        "license_tier": "community",
+        "metadata": {
+          "description": "Automatycznie wygenerowany preset środowisk dla giełdy Huobi.",
+          "environments": [
+            {
+              "config": {
+                "credentials": {
+                  "key_id": null,
+                  "secret": null
+                },
+                "description": "Symulator paper Huobi (spot).",
+                "exchange_manager": {
+                  "mode": "paper",
+                  "paper_cash_asset": "USDT",
+                  "paper_fee_rate": 0.0015,
+                  "paper_initial_cash": 20000,
+                  "paper_variant": "spot"
+                }
+              },
+              "description": "Symulator paper Huobi (spot).",
+              "name": "paper"
+            },
+            {
+              "config": {
+                "credentials": {
+                  "key_id": "${HUOBI_TESTNET_KEY}",
+                  "secret": "${HUOBI_TESTNET_SECRET}"
+                },
+                "description": "Huobi testnet API.",
+                "exchange_manager": {
+                  "failover": {
+                    "cooldown_seconds": 45,
+                    "enabled": true,
+                    "failure_threshold": 2
+                  },
+                  "mode": "spot",
+                  "rate_limit_rules": [
+                    {
+                      "per": 3.0,
+                      "rate": 90
+                    },
+                    {
+                      "per": 60.0,
+                      "rate": 900
+                    }
+                  ],
+                  "testnet": true
+                }
+              },
+              "description": "Huobi testnet API.",
+              "name": "testnet"
+            },
+            {
+              "config": {
+                "credentials": {
+                  "key_id": "${HUOBI_LIVE_KEY}",
+                  "secret": "${HUOBI_LIVE_SECRET}"
+                },
+                "description": "Handel spot Huobi.",
+                "exchange_manager": {
+                  "failover": {
+                    "cooldown_seconds": 60,
+                    "enabled": true,
+                    "failure_threshold": 2
+                  },
+                  "mode": "spot",
+                  "rate_limit_rules": [
+                    {
+                      "per": 3.0,
+                      "rate": 90
+                    },
+                    {
+                      "per": 60.0,
+                      "rate": 900
+                    }
+                  ],
+                  "testnet": false,
+                  "watchdog": {
+                    "retry_policy": {
+                      "base_delay": 1.0,
+                      "max_attempts": 4
+                    }
+                  }
+                }
+              },
+              "description": "Handel spot Huobi.",
+              "name": "live"
+            }
+          ]
+        },
+        "name": "huobi_connectivity",
+        "parameters": {
+          "available_environments": [
+            "paper",
+            "testnet",
+            "live"
+          ],
+          "default_environment": "paper",
+          "exchange": "HUOBI"
+        },
+        "required_data": [
+          "ohlcv"
+        ],
+        "risk_classes": [
+          "infrastructure"
+        ],
+        "tags": [
+          "exchange",
+          "huobi"
+        ]
+      }
+    ]
+  },
+  "signature": {
+    "algorithm": "ed25519",
+    "key_id": "dev-presets",
+    "public_key": "wnD5eTEGDB3CPb6r3oMOmRjFtjCxHISZXHlHX0TIKhY=",
+    "signed_at": "2025-11-16T00:23:43Z",
+    "value": "6hOVVs+alsqHtit1VN2+trktCOf5eMHE6gpt2dHcmYVZIuF+jkZJcEiDzK1wP+RiFrpLqUruLSXKlqBTvpUPAw=="
+  }
+}
