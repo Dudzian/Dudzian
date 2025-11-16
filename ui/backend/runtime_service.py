@@ -39,6 +39,7 @@ from bot_core.runtime.cloud_client import (
     perform_cloud_handshake,
 )
 from bot_core.runtime.journal import TradingDecisionJournal
+from .ai_governor_demo import build_demo_ai_governor_snapshot
 from .demo_data import load_demo_decisions
 
 try:  # pragma: no cover - moduł może nie być dostępny w wersjach light
@@ -588,6 +589,72 @@ def _build_risk_context(
     return metrics, timeline
 
 
+def _camelize_key_name(key: str) -> str:
+    if not key:
+        return ""
+    if "_" not in key:
+        return key
+    parts = [segment for segment in key.split("_") if segment]
+    if not parts:
+        return key
+    head, *tail = parts
+    return head + "".join(segment.capitalize() for segment in tail)
+
+
+def _camelize_mapping(payload: Mapping[str, object] | None) -> dict[str, object]:
+    if not isinstance(payload, Mapping):
+        return {}
+    normalized: dict[str, object] = {}
+    for key, value in payload.items():
+        key_name = _camelize_key_name(str(key)) or str(key)
+        if isinstance(value, Mapping):
+            normalized[key_name] = _camelize_mapping(value)
+            continue
+        if isinstance(value, list):
+            normalized[key_name] = [
+                _camelize_mapping(item) if isinstance(item, Mapping) else item for item in value
+            ]
+            continue
+        normalized[key_name] = value
+    return normalized
+
+
+def _clone_variant(value: object) -> object:
+    if isinstance(value, Mapping):
+        return {str(key): _clone_variant(item) for key, item in value.items()}
+    if isinstance(value, list):
+        return [_clone_variant(item) for item in value]
+    return value
+
+
+def _normalize_ai_snapshot(snapshot: Mapping[str, object] | None) -> dict[str, object]:
+    if not isinstance(snapshot, Mapping):
+        snapshot = {}
+    last = _camelize_mapping(snapshot.get("last_decision"))
+    history_payload = snapshot.get("history")
+    history: list[dict[str, object]] = []
+    if isinstance(history_payload, Iterable):
+        for entry in history_payload:
+            if isinstance(entry, Mapping):
+                history.append(_camelize_mapping(entry))
+    telemetry_payload = snapshot.get("telemetry")
+    telemetry: dict[str, object] = {}
+    if isinstance(telemetry_payload, Mapping):
+        telemetry = {
+            "riskMetrics": dict(telemetry_payload.get("riskMetrics", {}))
+            if isinstance(telemetry_payload.get("riskMetrics"), Mapping)
+            else {},
+            "cycleMetrics": dict(telemetry_payload.get("cycleMetrics", {}))
+            if isinstance(telemetry_payload.get("cycleMetrics"), Mapping)
+            else {},
+        }
+    return {
+        "lastDecision": last,
+        "history": history,
+        "telemetry": telemetry,
+    }
+
+
 class RuntimeService(QObject):
     """Zapewnia QML dostęp do najnowszych decyzji autotradera."""
 
@@ -606,6 +673,7 @@ class RuntimeService(QObject):
     operatorActionChanged = Signal()
     cycleMetricsChanged = Signal()
     feedTransportSnapshotChanged = Signal()
+    aiGovernorSnapshotChanged = Signal()
     cloudRuntimeStatusChanged = Signal()
 
     def __init__(
@@ -613,6 +681,7 @@ class RuntimeService(QObject):
         *,
         journal: TradingDecisionJournal | None = None,
         decision_loader: DecisionLoader | None = None,
+        ai_governor_loader: Callable[[], Mapping[str, object]] | None = None,
         parent: QObject | None = None,
         default_limit: int = 20,
         core_config_path: str | os.PathLike[str] | None = None,
@@ -655,6 +724,8 @@ class RuntimeService(QObject):
             "target": None,
             "handshake": {},
         }
+        self._ai_governor_loader = ai_governor_loader or build_demo_ai_governor_snapshot
+        self._ai_governor_snapshot: dict[str, object] = {}
         self._retrain_next_run: str = ""
         self._adaptive_summary: str = ""
         self._regime_activation_summary: str = ""
@@ -696,12 +767,14 @@ class RuntimeService(QObject):
             self._feed_metrics_path = Path(metrics_path_env).expanduser()
         else:
             self._feed_metrics_path = Path("reports/ci/decision_feed_metrics.json")
+        self._feed_channels: tuple[str, ...] = ("decision_journal", "ai_governor")
         self._feed_latencies: deque[float] = deque(maxlen=1024)
         self._feed_health: dict[str, object] = {
             "status": "initializing",
             "reconnects": 0,
             "downtimeMs": 0.0,
             "lastError": "",
+            "channels": list(self._feed_channels),
         }
         self._feed_sla_report: dict[str, object] = {}
         self._feed_transport_snapshot: dict[str, object] = {
@@ -710,6 +783,7 @@ class RuntimeService(QObject):
             "label": "",
             "reconnects": 0,
             "lastError": "",
+            "channels": list(self._feed_channels),
         }
         self._feed_metrics_exporter = feed_metrics_exporter or get_feed_health_metrics_exporter()
         self._feed_alert_sink = feed_alert_sink or get_feed_health_alert_sink()
@@ -735,6 +809,7 @@ class RuntimeService(QObject):
             self._update_runtime_metadata(invalidate_cache=False)
         except Exception:  # pragma: no cover - defensywna inicjalizacja
             _LOGGER.debug("Nie udało się zainicjalizować metadanych runtime", exc_info=True)
+        self._set_ai_governor_snapshot(self._load_ai_governor_snapshot())
         self._refresh_feed_transport_snapshot(self._feed_health, None)
         if self._cloud_runtime_enabled:
             try:
@@ -799,6 +874,13 @@ class RuntimeService(QObject):
     def feedTransportSnapshot(self) -> dict[str, object]:  # type: ignore[override]
         return dict(self._feed_transport_snapshot)
 
+    @Property("QVariantMap", notify=aiGovernorSnapshotChanged)
+    def aiGovernorSnapshot(self) -> dict[str, object]:  # type: ignore[override]
+        snapshot = _clone_variant(self._ai_governor_snapshot)
+        if isinstance(snapshot, Mapping):
+            return dict(snapshot)
+        return {}
+
     @Property("QVariantList", notify=longPollMetricsChanged)
     def longPollMetrics(self) -> list[dict[str, object]]:  # type: ignore[override]
         return [dict(entry) for entry in self._longpoll_metrics]
@@ -837,6 +919,7 @@ class RuntimeService(QObject):
         if self._feed_downtime_started is not None:
             downtime_ms += max(0.0, (time.monotonic() - self._feed_downtime_started) * 1000.0)
         payload["downtimeMs"] = max(0.0, float(downtime_ms))
+        payload["channels"] = list(self._feed_channels)
         if next_retry is not None:
             payload["nextRetrySeconds"] = max(0.0, float(next_retry))
         else:
@@ -879,6 +962,7 @@ class RuntimeService(QObject):
             "idle": bool(self._grpc_idle_flag),
             "retryAttempts": self._grpc_retry_attempts,
             "queueDepth": self._grpc_queue.qsize() if self._grpc_queue is not None else 0,
+            "channels": list(self._feed_channels),
         }
         if self._grpc_stream_active:
             snapshot["secondsSinceLastMessage"] = max(0.0, time.monotonic() - self._last_grpc_update)
@@ -1313,7 +1397,49 @@ class RuntimeService(QObject):
         if normalized != self._cycle_metrics:
             self._cycle_metrics = normalized
             self.cycleMetricsChanged.emit()
+            if normalized:
+                self._update_ai_governor_telemetry(cycle_metrics=normalized)
         self._refresh_activation_summary()
+
+    def _load_ai_governor_snapshot(self) -> dict[str, object]:
+        loader = self._ai_governor_loader
+        if not callable(loader):
+            return _normalize_ai_snapshot({})
+        try:
+            raw_snapshot = loader()
+        except Exception:  # pragma: no cover - loader diagnostyczny
+            _LOGGER.debug("Nie udało się pobrać snapshotu AI Governora", exc_info=True)
+            raw_snapshot = {}
+        return _normalize_ai_snapshot(raw_snapshot if isinstance(raw_snapshot, Mapping) else {})
+
+    def _set_ai_governor_snapshot(self, snapshot: Mapping[str, object]) -> None:
+        normalized = _normalize_ai_snapshot(snapshot)
+        if normalized != self._ai_governor_snapshot:
+            self._ai_governor_snapshot = normalized
+            self.aiGovernorSnapshotChanged.emit()
+
+    def _update_ai_governor_telemetry(
+        self,
+        *,
+        cycle_metrics: Mapping[str, float] | None = None,
+        risk_metrics: Mapping[str, float] | None = None,
+    ) -> None:
+        if not cycle_metrics and not risk_metrics:
+            return
+        telemetry = dict(self._ai_governor_snapshot.get("telemetry", {}))
+        updated = False
+        if cycle_metrics:
+            telemetry["cycleMetrics"] = {str(key): float(value) for key, value in cycle_metrics.items()}
+            updated = True
+        if risk_metrics:
+            telemetry["riskMetrics"] = {str(key): float(value) for key, value in risk_metrics.items()}
+            updated = True
+        if not updated:
+            return
+        snapshot = dict(self._ai_governor_snapshot)
+        snapshot["telemetry"] = telemetry
+        self._ai_governor_snapshot = snapshot
+        self.aiGovernorSnapshotChanged.emit()
 
     def _coerce_metadata_mapping(self, value: object) -> dict[str, object] | None:
         if isinstance(value, Mapping):
@@ -1410,6 +1536,14 @@ class RuntimeService(QObject):
         self._update_runtime_metadata(invalidate_cache=False)
         self._update_cycle_metrics({})
         return list(self._decisions)
+
+    @Slot(result="QVariantMap")
+    def reloadAiGovernorSnapshot(self) -> dict[str, object]:
+        """Odświeża snapshot rekomendacji AI Governora."""
+
+        snapshot = self._load_ai_governor_snapshot()
+        self._set_ai_governor_snapshot(snapshot)
+        return self.aiGovernorSnapshot
 
     @Slot()
     def refreshRuntimeMetadata(self) -> None:  # type: ignore[override]
@@ -2153,6 +2287,7 @@ class RuntimeService(QObject):
             "lastError": last_error_value,
             "next_retry_seconds": float(next_retry_value) if next_retry_value is not None else None,
             "nextRetrySeconds": float(next_retry_value) if next_retry_value is not None else None,
+            "channels": list(self._feed_channels),
         }
         if latencies:
             stats_payload.update(

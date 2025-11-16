@@ -18,11 +18,12 @@ ApplicationWindow {
     property var panelMetadata: [
         ({ panelId: "sidePanel", title: qsTr("Panel statusu"), icon: "fingerprint", defaultColumn: 0, defaultOrder: 0 }),
         ({ panelId: "telemetryPanel", title: qsTr("Telemetria feedu"), icon: "diagnostics", defaultColumn: 0, defaultOrder: 1 }),
+        ({ panelId: "aiDecisionsPanel", title: qsTr("Decyzje AI"), icon: "mode_wizard", defaultColumn: 0, defaultOrder: 2 }),
+        ({ panelId: "diagnosticsPanel", title: qsTr("Diagnostyka"), icon: "diagnostics", defaultColumn: 0, defaultOrder: 3 }),
         ({ panelId: "chartView", title: qsTr("Chart & Decision Stream"), icon: "cloud", defaultColumn: 1, defaultOrder: 0 }),
         ({ panelId: "strategyWorkbench", title: qsTr("Strategy Workbench"), icon: "package", defaultColumn: 1, defaultOrder: 1 }),
         ({ panelId: "modeWizardPanel", title: qsTr("Tryby pracy"), icon: "mode_wizard", defaultColumn: 1, defaultOrder: 2 }),
-        ({ panelId: "strategyManagerPanel", title: qsTr("Strategy Manager"), icon: "strategy_manager", defaultColumn: 1, defaultOrder: 3 }),
-        ({ panelId: "diagnosticsPanel", title: qsTr("Diagnostyka"), icon: "diagnostics", defaultColumn: 0, defaultOrder: 2 })
+        ({ panelId: "strategyManagerPanel", title: qsTr("Strategy Manager"), icon: "strategy_manager", defaultColumn: 1, defaultOrder: 3 })
     ]
 
     property var panelRegistry: ({
@@ -32,7 +33,8 @@ ApplicationWindow {
         "strategyWorkbench": { title: qsTr("Strategy Workbench"), icon: "package", component: strategyWorkbenchComponent },
         "modeWizardPanel": { title: qsTr("Tryby pracy"), icon: "mode_wizard", component: modeWizardPanelComponent },
         "strategyManagerPanel": { title: qsTr("Strategy Manager"), icon: "strategy_manager", component: strategyManagerPanelComponent },
-        "diagnosticsPanel": { title: qsTr("Diagnostyka"), icon: "diagnostics", component: diagnosticsPanelComponent }
+        "diagnosticsPanel": { title: qsTr("Diagnostyka"), icon: "diagnostics", component: diagnosticsPanelComponent },
+        "aiDecisionsPanel": { title: qsTr("Decyzje AI"), icon: "mode_wizard", component: aiDecisionsPanelComponent }
     })
 
     Styles.DesignSystem {
@@ -269,6 +271,16 @@ ApplicationWindow {
                 subtle: true
                 onClicked: runtimeService.loadRecentDecisions(0)
             }
+        }
+    }
+
+    Component {
+        id: aiDecisionsPanelComponent
+        Views.AiDecisionsView {
+            Layout.fillWidth: true
+            Layout.fillHeight: true
+            runtimeService: runtimeService
+            designSystem: designSystem
         }
     }
 
