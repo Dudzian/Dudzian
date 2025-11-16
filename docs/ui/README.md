@@ -2,15 +2,15 @@
 
 ## Kreator konfiguracji (Setup Wizard)
 
-* Lokalizacja: `ui/qml/views/SetupWizard.qml`, dostępny z zakładki **Kreator** w głównym oknie (`BotAppWindow.qml`).
+* Lokalizacja: `ui/qml/views/SetupWizard.qml`, dostępny z zakładki **Kreator** w głównym oknie (`BotAppWindow.qml`) ładowanym przez `python -m ui.pyside_app`.
 * Kroki kreatora prowadzą przez aktywację licencji, wybór giełdy i instrumentu startowego, przegląd strategii oraz preferencje UI.
-* Kreator korzysta z nowych metod `Application` (`supportedExchanges()`, `personalizationSnapshot()` oraz setterów `setUiTheme`, `setUiLayoutMode`, `setAlertToastsEnabled`).
+* Widok korzysta z `ui/backend/onboarding_service.py` (lista strategii, zapis danych API) oraz `ui/backend/licensing_controller.py` (obsługa licencji OEM), a także z `ModeWizardController` (rekomendacje trybów PySide6/QML).
 * Ukończenie kreatora odblokowuje kolejne zakładki – po aktywnej licencji użytkownik trafia automatycznie na zakładkę **Wykres**.
 
 ## Dashboard portfela
 
 * Lokalizacja: `ui/qml/views/PortfolioDashboard.qml`, dostępny w zakładce **Dashboard**.
-* Wykorzystuje modele `riskModel`, `riskHistoryModel` i `alertsModel`, aby prezentować:
+* Wykorzystuje modele `riskModel`, `riskHistoryModel` i `alertsModel` udostępniane przez `ui/backend/runtime_service.py`, aby prezentować:
   - historię wartości portfela (wykres P&L),
   - ekspozycję per giełda i per strategia (na podstawie kodów `exchange:*` i `strategy:*`),
   - listę aktywnych alertów wraz z akcjami potwierdzenia.
@@ -23,6 +23,7 @@
 * Backend udostępnia funkcję `bot_core.ui.api.build_runtime_snapshot`, która zbiera migawkę portfela, statusy giełd, katalog strategii oraz najnowsze wpisy explainability/alertów. Snapshot jest zgodny z wymaganiami panelu dashboardu i konfiguratora strategii.
 * `bot_core.ui.api.describe_strategy_catalog` serializuje wpisy katalogu strategii (`StrategyCatalog` + `StrategyDefinition`) do formatu wykorzystywanego w QML (nazwa, engine, licencja, klasy ryzyka, tagi i metadane).
 * `bot_core.ui.api.RuntimeStateSync` realizuje lokalny polling (bez WebSocketów) i przekazuje kolejne snapshoty do zarejestrowanych słuchaczy w UI. Polling domyślnie odbywa się co 2 sekundy, można go spersonalizować przy inicjalizacji mostka.
+* PySide6 `RuntimeService` wykorzystuje powyższe API i automatycznie emituje sygnały `riskStateChanged`, `alertsChanged` oraz `decisionsChanged`, dzięki czemu dashboard reaguje bez restartu aplikacji.
 * W trybie testowym wystarczy utworzyć `RuntimeStateSync`, dodać listener i wywołać `start()` – komponent zadba o regularne odświeżanie stanu i można go zatrzymać poprzez `stop()` (np. w `Component.onDestruction`).
 
 ## Alerty – powiadomienia toast
@@ -32,8 +33,8 @@
 
 ## Personalizacja interfejsu
 
-* Preferencje motywu (`dark`, `light`, `midnight`), układu (`classic`, `compact`, `advanced`) i powiadomień są budowane przez `Application::buildPersonalizationPayload()` i zapisywane w `~/.dudzian/ui_settings.json` (lub w ścieżce nadpisanej zmienną `BOT_CORE_UI_SETTINGS_PATH`).
-* `Application::loadUiSettings()` wymaga, aby ustawienia były dostępne w aktualnym magazynie (domyślnie `~/.dudzian/ui_settings.json` lub ścieżka z `BOT_CORE_UI_SETTINGS_PATH`). Pliki `var/state/ui_settings.json` nie są już ładowane – aplikacja loguje komunikat o koniecznej migracji opisanej w [docs/migrations/2024-stage5-storage-removal.md](../migrations/2024-stage5-storage-removal.md).
+* Preferencje motywu (`dark`, `light`, `midnight`), układu (`classic`, `compact`, `advanced`) i powiadomień są budowane przez `DashboardSettingsController`/`LayoutProfileController` i zapisywane w `~/.dudzian/ui_settings.json` (lub w ścieżce nadpisanej zmienną `BOT_CORE_UI_SETTINGS_PATH`).
+* Kontrolery korzystają z `UISettingsStore` (`core/config/ui_settings.py`). Pliki `var/state/ui_settings.json` nie są już ładowane – aplikacja loguje komunikat o koniecznej migracji opisanej w [docs/migrations/2024-stage5-storage-removal.md](../migrations/2024-stage5-storage-removal.md).
 
 ## Panel Strategy Management
 

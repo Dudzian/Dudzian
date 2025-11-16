@@ -1,10 +1,9 @@
 """Small CLI bridge exposing security artefacts for the Qt UI layer.
 
-The desktop shell is written in C++/Qt.  Rather than embedding a Python
-interpreter inside the client we expose a thin command line interface that
-returns JSON payloads.  The bridge reuses the security helpers implemented in
-``bot_core.security`` so that UI actions stay aligned with the runtime
-configuration and RBAC expectations.
+The desktop shell is written in PySide6/Qt Quick.  Rather than kopiować logikę
+bezpośrednio w QML, udostępniamy cienki interfejs CLI, który zwraca payloady
+JSON i współdzieli helpery z ``bot_core.security``.  Dzięki temu akcje UI
+pozostają zgodne z konfiguracją runtime i oczekiwaniami RBAC.
 """
 
 from __future__ import annotations

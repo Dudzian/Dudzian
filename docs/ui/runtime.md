@@ -1,36 +1,38 @@
 # Runtime UI
 
-## Blokada pojedynczej instancji
+PySide6 klient korzysta z `ui/backend/runtime_service.py`, aby udostępnić QML
+aktualny stan decyzji AI, blokad ryzyka, alertów i kanałów gRPC. Serwis
+kapsułkuje komunikację z `bot_core.runtime` oraz zapewnia sygnały Qt, które można
+podpinać w widokach blur/FontAwesome.
 
-Bot Trading Shell wymusza pojedynczą aktywną instancję procesu. Podczas startu
-aplikacja tworzy blokadę `QLockFile` w lokalizacji
-`var/runtime/bot_trading_shell.lock` (lub w ścieżce wskazanej przez
-`BOT_CORE_UI_LOCK_FILE`). Jeżeli katalog `var/runtime` nie istnieje, jest
-automatycznie tworzony (można go nadpisać zmienną `BOT_CORE_UI_RUNTIME_DIR`).
+## RuntimeService – najważniejsze funkcje
 
-Gdy zostanie wykryta działająca instancja:
+* `refreshDecisions()` i `decisionsChanged` pobierają najnowsze decyzje AI z
+  backendu i udostępniają je panelowi Explainability oraz kreatorom trybów.
+* `requestUnblock()` i `requestFreeze()` umożliwiają operatorowi zarządzanie
+  blokadami/override’ami bezpośrednio z UI – kontroler samodzielnie loguje
+  akcje oraz odświeża stan modeli.【F:ui/backend/runtime_service.py†L1458-L1625】
+* `activitySummary()` normalizuje liczbę blokad, zamrożeń i override’ów dla
+  poszczególnych profili i udostępnia dane w strukturze przyjaznej QML. Widok
+  ryzyka może dzięki temu kolorować karty zgodnie z aktywnością profilu.【F:ui/backend/runtime_service.py†L385-L570】
+* `RuntimeService` emituje sygnały `alertsChanged`, `riskStateChanged`,
+  `licensingChanged` i `cloudRuntimeStatusChanged`, co upraszcza spójne
+  aktualizacje paneli statusu i powiadomień.
 
-- użytkownik otrzymuje komunikat w oknie dialogowym oraz w standardowym
-  wyjściu błędów z informacją o PID/hoscie aktywnego procesu,
-- uruchomienie kończy się kodem wyjścia różnym od zera,
-- incydent jest raportowany do backendu licencjonowania poprzez wywołanie
-  `python3 -m bot_core.security.fingerprint report-single-instance`.
-  Zdarzenie `ui_single_instance_conflict` trafia do `logs/security_admin.log`
-  razem z PID-em, hostem i kanoniczną (absolutną) ścieżką pliku blokady.
+## Telemetria i pojedyncza instancja
 
-Jeżeli blokada nie może zostać założona z innych powodów (np. brak uprawnień
-do katalogu), aplikacja kończy działanie z komunikatem o błędzie, ale nie
-raportuje incydentu do backendu.
-
-Interpreter Pythona używany do raportowania może zostać zmieniony przez
-argument CLI `--security-python` lub zmienną środowiskową
-`BOT_CORE_UI_PYTHON`. Gdy fingerprint nie zostanie przekazany z poziomu UI,
-backend samodzielnie pobiera aktualny odcisk urządzenia, a w przypadku
-problemu loguje ostrzeżenie i kontynuuje raportowanie.
+UI przekazuje naruszenia polityki single-instance do backendu poprzez
+`bot_core.security.fingerprint.report_single_instance_event`. Helper dostępny w
+CLI (`python -m bot_core.security.fingerprint report-single-instance ...`)
+wysyła zdarzenie `ui_single_instance_conflict`, które trafia do
+`logs/security_admin.log`. Dzięki temu operatorzy wiedzą, kiedy druga kopia UI
+próbuje wystartować na tym samym hostcie.【F:bot_core/security/fingerprint.py†L1439-L1497】
 
 ## Integracja z testami
 
-Moduł testowy `tests/ui/test_single_instance.py` weryfikuje, że funkcja
-`bot_core.security.fingerprint.report_single_instance_event` zapisuje
-odpowiednie wpisy auditowe. Test korzysta z trybu `QT_QPA_PLATFORM=offscreen`
-pozostając kompatybilnym z uruchomieniami CI bez środowiska graficznego.
+* `tests/ui/test_single_instance.py` sprawdza, że funkcja
+  `report_single_instance_event` zapisuje poprawny payload i jest wywoływana z
+  CLI.
+* `tests/ui_pyside/test_app_bootstrap.py` startuje PySide6 w trybie offscreen i
+  potwierdza, że `RuntimeService` oraz pozostałe kontrolery zostały poprawnie
+  zarejestrowane w QML.

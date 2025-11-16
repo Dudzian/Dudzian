@@ -50,10 +50,10 @@ wysłaniem zmian do review.
 
 ### Użycie słowa „legacy”
 
-- W kodzie wykonywalnym (np. `bot_core`, `core`, `scripts/`, `ui/src/`, `proto/`) słowo
-  „legacy” jest zakazane i test `tests/qa/test_no_legacy_tokens.py` zablokuje merge.
-- Wyjątkiem są katalogi i pliki opisowe: cała zawartość `docs/`, `archive/` oraz
-  pliki zaczynające się od `README`. Tam można wprost dokumentować historyczne
-  funkcje, migracje i tokeny.
-- W przypadku potrzeby użycia tego słowa poza powyższą listą należy dodać nowy wpis
-  do allowlisty w teście QA wraz z uzasadnieniem w opisie PR.
+- W kodzie wykonywalnym (np. `bot_core`, `core`, `scripts/`, `ui/pyside_app`, `proto/`,
+  testy) słowo „legacy” jest zakazane i test `tests/qa/test_no_legacy_tokens.py` zablokuje merge.
+- Dopuszczalne konteksty to wyłącznie dokumentacja (`docs/**`), archiwum (`archive/**`)
+  oraz pliki zaczynające się od `README`. Każda taka wzmianka musi wskazywać konkretną
+  lokalizację w `archive/` (np. `archive/ui_cpp_legacy.md`) albo sekcję migracji.
+- Poza powyższą listą nie dodajemy nowych odwołań – w razie potrzeby rozszerzenia
+  allowlisty należy dołączyć zmianę w teście QA i uzasadnienie w opisie PR.

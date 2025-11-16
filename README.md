@@ -52,6 +52,7 @@ Szczegółowe instrukcje znajdują się w dokumentacji:
 - Zanim zainstalujesz aktualizację, wykonaj kopię `config/`, `secrets/` oraz katalogu danych użytkownika (`~/.dudzian/`).
 - Komponenty runtime, dokumentacja i runbooki korzystają wyłącznie z przestrzeni `bot_core.*`; historyczna warstwa legacy została w całości usunięta i nie posiada już utrzymywanych aliasów ani mapowań.
 - Desktopowe UI dostarczamy tylko w wariancie PySide6/PyQt6 + Qt Quick (blur + FontAwesome). Wszelkie instrukcje dotyczące legacy C++ shelli przenieśliśmy do `archive/ui_cpp_legacy.md` i nie utrzymujemy dla nich shimów.
+- Wszystkie checklisty i przewodniki w `docs/ui/**` opisują wyłącznie aktualny klient PySide6/QML. Jeśli potrzebujesz historycznych materiałów C++ lub screenshotów poprzedniego UI, znajdziesz je w `archive/`.
 - Dawny katalog z archiwalnym botem został zlikwidowany – w repozytorium nie ma już shimów ani kodu wykonywalnego z poprzedniej warstwy.
 - W `archive/` pozostawiamy wyłącznie materiały historyczne (np. [docs/archive/trading_model_pipeline.md](docs/archive/trading_model_pipeline.md)),
   aby nie rozpraszać zespołu nieużywaną implementacją. Aktywny kod żyje w `bot_core/**`.
