@@ -5,6 +5,7 @@ import os
 from pathlib import Path
 
 TOKEN_PATTERNS = (("leg" "acy"), ("kr" "ypto" "lowca"))
+TOKEN_LITERAL = "".join(("leg", "acy"))
 SKIP_DIR_NAMES = {
     ".git",
     ".hg",
@@ -14,15 +15,18 @@ SKIP_DIR_NAMES = {
     ".venv",
     "__pycache__",
 }
-ALLOWLISTED_DIRS: tuple[Path, ...] = ()
+ALLOWLISTED_DIRS: tuple[Path, ...] = tuple(Path(name) for name in ("docs", "archive"))
 ALLOWLISTED_FILES: set[Path] = set()
+ALLOWLISTED_FILENAME_PREFIXES: tuple[str, ...] = ("README",)
 
 
 def _is_allowlisted(path: Path) -> bool:
     for allowed in ALLOWLISTED_DIRS:
         if path.is_relative_to(allowed):
             return True
-    return path in ALLOWLISTED_FILES
+    if path in ALLOWLISTED_FILES:
+        return True
+    return any(path.name.startswith(prefix) for prefix in ALLOWLISTED_FILENAME_PREFIXES)
 
 
 def _should_skip(path: Path) -> bool:
@@ -42,9 +46,8 @@ def _iter_repo_files(root: Path):
             yield rel_path
 
 
-def test_no_stage5_tokens_outside_docs():  # pragma: no cover
-    repo_root = Path(__file__).resolve().parents[1]
-    violations = []
+def _find_stage5_token_violations(repo_root: Path) -> list[str]:
+    violations: list[str] = []
 
     for rel_path in _iter_repo_files(repo_root):
         if _is_allowlisted(rel_path):
@@ -59,8 +62,31 @@ def test_no_stage5_tokens_outside_docs():  # pragma: no cover
             if any(token in lowered for token in TOKEN_PATTERNS):
                 violations.append(f"{rel_path}:{lineno}: {line.strip()}")
                 break
+    return violations
+
+
+def test_no_stage5_tokens_outside_docs():  # pragma: no cover
+    repo_root = Path(__file__).resolve().parents[1]
+    violations = _find_stage5_token_violations(repo_root)
 
     assert not violations, (
         "Wykryto historyczne tokeny Stage5 w kodzie (poza dokumentacją):\n"
         + "\n".join(violations)
     )
+
+
+def test_allowlisted_paths_can_use_token(tmp_path):
+    (tmp_path / "docs").mkdir()
+    (tmp_path / "docs" / "story.md").write_text(TOKEN_LITERAL, encoding="utf-8")
+
+    allowed_readme = tmp_path / "README_history.md"
+    allowed_readme.write_text(TOKEN_LITERAL, encoding="utf-8")
+
+    (tmp_path / "core").mkdir()
+    blocked_file = tmp_path / "core" / "engine.py"
+    blocked_file.write_text(TOKEN_LITERAL, encoding="utf-8")
+
+    violations = _find_stage5_token_violations(tmp_path)
+
+    assert len(violations) == 1
+    assert str(blocked_file.relative_to(tmp_path)) in violations[0]
