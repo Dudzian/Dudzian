@@ -15,7 +15,7 @@ Item {
     property var complianceController: (typeof complianceController !== "undefined" ? complianceController : null)
     property var runtimeService: (typeof runtimeService !== "undefined" ? runtimeService : null)
     property int refreshIntervalMs: dashboardSettingsController ? dashboardSettingsController.refreshIntervalMs : 4000
-    readonly property var defaultCardOrder: ["io_queue", "guardrails", "retraining", "compliance", "risk_journal", "ai_decisions"]
+    readonly property var defaultCardOrder: ["feed_sla", "io_queue", "guardrails", "retraining", "compliance", "risk_journal", "ai_decisions"]
     property var aiDecisions: []
     property string aiDecisionError: ""
     property string retrainSchedulerNextRun: runtimeService && runtimeService.retrainNextRun
@@ -35,12 +35,16 @@ Item {
     property var feedTransportSnapshot: runtimeService && runtimeService.feedTransportSnapshot
                                         ? runtimeService.feedTransportSnapshot
                                         : ({})
+    property var feedHealth: runtimeService && runtimeService.feedHealth ? runtimeService.feedHealth : ({})
+    property var feedSlaReport: runtimeService && runtimeService.feedSlaReport ? runtimeService.feedSlaReport : ({})
     property var aiRegimeBreakdown: runtimeService && runtimeService.aiRegimeBreakdown
                                     ? runtimeService.aiRegimeBreakdown
                                     : []
 
     function componentForCard(cardId) {
         switch (cardId) {
+        case "feed_sla":
+            return feedSlaCardComponent
         case "io_queue":
             return ioCardComponent
         case "guardrails":
@@ -76,6 +80,8 @@ Item {
         root.longPollMetrics = root.runtimeService ? root.runtimeService.longPollMetrics : []
         root.cycleMetrics = root.runtimeService ? root.runtimeService.cycleMetrics : ({})
         root.feedTransportSnapshot = root.runtimeService ? root.runtimeService.feedTransportSnapshot : ({})
+        root.feedHealth = root.runtimeService ? root.runtimeService.feedHealth : ({})
+        root.feedSlaReport = root.runtimeService ? root.runtimeService.feedSlaReport : ({})
         root.aiRegimeBreakdown = root.runtimeService ? root.runtimeService.aiRegimeBreakdown : []
         root.adaptiveStrategySummary = root.runtimeService ? root.runtimeService.adaptiveStrategySummary : ""
         root.regimeActivationSummary = root.runtimeService ? root.runtimeService.regimeActivationSummary : ""
@@ -84,6 +90,14 @@ Item {
     function refreshAll() {
         root.refreshTelemetry()
         root.refreshDecisions()
+    }
+
+    function slaSeverityColor(state) {
+        if (state === "critical")
+            return Qt.rgba(0.9, 0.2, 0.25, 1)
+        if (state === "warning")
+            return Qt.rgba(0.95, 0.65, 0.2, 1)
+        return Styles.AppTheme.textPrimary
     }
 
     Timer {
@@ -152,6 +166,18 @@ Item {
             if (!root.runtimeService)
                 return
             root.feedTransportSnapshot = root.runtimeService.feedTransportSnapshot
+        }
+
+        function onFeedHealthChanged() {
+            if (!root.runtimeService)
+                return
+            root.feedHealth = root.runtimeService.feedHealth
+        }
+
+        function onFeedSlaReportChanged() {
+            if (!root.runtimeService)
+                return
+            root.feedSlaReport = root.runtimeService.feedSlaReport
         }
 
         function onAiRegimeBreakdownChanged() {
@@ -256,6 +282,123 @@ Item {
             color: Styles.AppTheme.textSecondary
             horizontalAlignment: Text.AlignHCenter
             Layout.fillWidth: true
+        }
+    }
+
+    Component {
+        id: feedSlaCardComponent
+        Rectangle {
+            id: feedSlaCard
+            objectName: "runtimeOverviewFeedSlaCard"
+            Layout.fillWidth: true
+            Layout.fillHeight: true
+            color: Styles.AppTheme.surfaceStrong
+            radius: 8
+            border.color: Styles.AppTheme.surfaceSubtle
+            border.width: 1
+
+            property var report: root.feedSlaReport || ({})
+            property string severity: report && report.sla_state ? report.sla_state : "ok"
+
+            ColumnLayout {
+                anchors.fill: parent
+                anchors.margins: 16
+                spacing: 10
+
+                Text {
+                    text: qsTr("SLA decision feed")
+                    font.bold: true
+                    font.pointSize: 15
+                    color: Styles.AppTheme.textPrimary
+                }
+
+                Label {
+                    id: slaStateLabel
+                    objectName: "runtimeOverviewSlaStateLabel"
+                    text: root.feedTransportSnapshot && root.feedTransportSnapshot.status
+                          ? qsTr("%1 • %2")
+                                .arg(root.feedTransportSnapshot.status)
+                                .arg(root.feedTransportSnapshot.mode || "demo")
+                          : qsTr("Status transportu nieznany")
+                    color: slaSeverityColor(feedSlaCard.severity)
+                    font.pointSize: 13
+                    font.bold: true
+                }
+
+                RowLayout {
+                    Layout.fillWidth: true
+                    spacing: 16
+
+                    ColumnLayout {
+                        Layout.fillWidth: true
+                        spacing: 4
+
+                        Label {
+                            objectName: "runtimeOverviewSlaLatency"
+                            text: report && report.p95_ms !== undefined
+                                  ? qsTr("Latencja p95: %1 ms (limit %2 ms)")
+                                        .arg(Number(report.p95_ms).toFixed(0))
+                                        .arg(report.latency_warning_ms || 0)
+                                  : qsTr("Brak pomiarów latencji")
+                            color: slaSeverityColor(report ? report.latency_state : "ok")
+                            wrapMode: Text.WordWrap
+                        }
+
+                        Label {
+                            objectName: "runtimeOverviewSlaP50"
+                            text: report && report.p50_ms !== undefined
+                                  ? qsTr("Latencja p50: %1 ms").arg(Number(report.p50_ms).toFixed(0))
+                                  : qsTr("Latencja p50: n/d")
+                            color: Styles.AppTheme.textSecondary
+                        }
+                    }
+
+                    ColumnLayout {
+                        Layout.fillWidth: true
+                        spacing: 4
+
+                        Label {
+                            objectName: "runtimeOverviewSlaReconnects"
+                            text: report && report.reconnects !== undefined
+                                  ? qsTr("Reconnecty: %1 / próg %2")
+                                        .arg(report.reconnects)
+                                        .arg(report.reconnects_warning || 0)
+                                  : qsTr("Reconnecty: n/d")
+                            color: slaSeverityColor(report ? report.reconnects_state : "ok")
+                            wrapMode: Text.WordWrap
+                        }
+
+                        Label {
+                            objectName: "runtimeOverviewSlaDowntime"
+                            text: report && report.downtime_seconds !== undefined
+                                  ? qsTr("Downtime: %1 s / próg %2 s")
+                                        .arg(Number(report.downtime_seconds || 0).toFixed(1))
+                                        .arg(report.downtime_warning_seconds || 0)
+                                  : qsTr("Downtime: n/d")
+                            color: slaSeverityColor(report ? report.downtime_state : "ok")
+                            wrapMode: Text.WordWrap
+                        }
+                    }
+                }
+
+                Label {
+                    objectName: "runtimeOverviewSlaLastError"
+                    visible: root.feedHealth && root.feedHealth.lastError && root.feedHealth.lastError.length > 0
+                    text: qsTr("Ostatni błąd: %1").arg(root.feedHealth.lastError)
+                    color: Styles.AppTheme.warning
+                    wrapMode: Text.WordWrap
+                }
+
+                Label {
+                    objectName: "runtimeOverviewSlaRetry"
+                    visible: report && report.nextRetrySeconds !== undefined && report.nextRetrySeconds !== null
+                    text: qsTr("Następny reconnect za %1 s")
+                          .arg(report && report.nextRetrySeconds !== undefined && report.nextRetrySeconds !== null
+                               ? Number(report.nextRetrySeconds).toFixed(1)
+                               : "n/d")
+                    color: Styles.AppTheme.textSecondary
+                }
+            }
         }
     }
 

@@ -400,20 +400,35 @@ jobs:
           python - <<'PY'
           import json
           import pathlib
+          import yaml
+
           metrics_path = pathlib.Path("reports/ci/decision_feed_metrics.json")
           if not metrics_path.exists():
               raise SystemExit("Brak pliku decision_feed_metrics.json")
           payload = json.loads(metrics_path.read_text(encoding="utf-8"))
           p95_ms = float(payload.get("p95_ms", 0.0))
+          config_path = pathlib.Path("config/runtime.yaml")
+          reconnect_threshold = 3.0
+          if config_path.exists():
+              config = yaml.safe_load(config_path.read_text(encoding="utf-8")) or {}
+              feed_sla = ((config.get("observability") or {}).get("feed_sla")) or {}
+              reconnect_threshold = float(feed_sla.get("reconnects_warning", reconnect_threshold) or reconnect_threshold)
           if p95_ms > 3000.0:
               raise SystemExit(f"p95_ms przekracza limit 3 s: {p95_ms} ms")
+          reconnects = float(payload.get("reconnects", 0.0))
+          if reconnects > reconnect_threshold:
+              raise SystemExit(
+                  f"Liczba reconnectów {reconnects} przekracza próg {reconnect_threshold}"
+              )
           downtime_ms = float(payload.get("downtimeMs", payload.get("downtime_ms", 0.0)))
           if downtime_ms < 0.0:
               raise SystemExit(f"downtimeMs ujemne: {downtime_ms}")
           next_retry = payload.get("nextRetrySeconds", payload.get("next_retry_seconds"))
           if next_retry is not None and float(next_retry) < 0.0:
               raise SystemExit(f"nextRetrySeconds ujemne: {next_retry}")
-          print(f"decision-feed-metrics OK: p95_ms={p95_ms} <= 3000 ms")
+          print(
+              f"decision-feed-metrics OK: p95_ms={p95_ms} <= 3000 ms, reconnects={reconnects} <= {reconnect_threshold}"
+          )
           PY
 
       - name: Upload pytest results
