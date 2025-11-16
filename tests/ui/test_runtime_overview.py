@@ -97,6 +97,8 @@ class _StubRuntimeService(QObject):
     longPollMetricsChanged = Signal()
     cycleMetricsChanged = Signal()
     feedTransportSnapshotChanged = Signal()
+    feedHealthChanged = Signal()
+    feedSlaReportChanged = Signal()
     aiRegimeBreakdownChanged = Signal()
     adaptiveStrategySummaryChanged = Signal()
     regimeActivationSummaryChanged = Signal()
@@ -116,6 +118,13 @@ class _StubRuntimeService(QObject):
             "label": "",
             "reconnects": 0,
         }
+        self._feed_health: dict[str, Any] = {
+            "status": "initializing",
+            "reconnects": 0,
+            "downtimeMs": 0.0,
+            "lastError": "",
+        }
+        self._feed_sla_report: dict[str, Any] = {}
         self._ai_regime_breakdown: list[dict[str, Any]] = []
         self._adaptive_summary = ""
         self._regime_summary = ""
@@ -151,6 +160,14 @@ class _StubRuntimeService(QObject):
     @Property("QVariantMap", notify=feedTransportSnapshotChanged)
     def feedTransportSnapshot(self) -> dict[str, Any]:  # type: ignore[override]
         return dict(self._feed_transport_snapshot)
+
+    @Property("QVariantMap", notify=feedHealthChanged)
+    def feedHealth(self) -> dict[str, Any]:  # type: ignore[override]
+        return dict(self._feed_health)
+
+    @Property("QVariantMap", notify=feedSlaReportChanged)
+    def feedSlaReport(self) -> dict[str, Any]:  # type: ignore[override]
+        return dict(self._feed_sla_report)
 
     @Property("QVariantList", notify=aiRegimeBreakdownChanged)
     def aiRegimeBreakdown(self) -> list[dict[str, Any]]:  # type: ignore[override]
@@ -202,6 +219,14 @@ class _StubRuntimeService(QObject):
     def push_feed_transport(self, payload: dict[str, Any]) -> None:
         self._feed_transport_snapshot = dict(payload)
         self.feedTransportSnapshotChanged.emit()
+
+    def push_feed_health(self, payload: dict[str, Any]) -> None:
+        self._feed_health = dict(payload)
+        self.feedHealthChanged.emit()
+
+    def push_feed_sla_report(self, payload: dict[str, Any]) -> None:
+        self._feed_sla_report = dict(payload)
+        self.feedSlaReportChanged.emit()
 
     def push_ai_regimes(self, payload: list[dict[str, Any]]) -> None:
         self._ai_regime_breakdown = [dict(entry) for entry in payload]
@@ -631,6 +656,54 @@ def test_runtime_overview_cards_react_to_live_signals() -> None:
     ai_error_banner = root.findChild(QObject, "runtimeOverviewAiErrorBanner")
     assert ai_error_banner is not None and ai_error_banner.property("visible") is True
 
+    runtime_service.push_feed_transport(
+        {
+            "status": "connected",
+            "mode": "grpc",
+            "label": "grpc://localhost:5100",
+            "reconnects": 2,
+            "latencyP95": 2800.0,
+            "lastError": "timeout spike",
+        }
+    )
+    runtime_service.push_feed_health(
+        {
+            "status": "connected",
+            "reconnects": 2,
+            "downtimeMs": 500.0,
+            "lastError": "timeout spike",
+        }
+    )
+    runtime_service.push_feed_sla_report(
+        {
+            "p95_ms": 2800.0,
+            "p50_ms": 1200.0,
+            "latency_state": "warning",
+            "latency_warning_ms": 2500.0,
+            "reconnects": 2,
+            "reconnects_warning": 3,
+            "reconnects_state": "ok",
+            "downtime_seconds": 0.5,
+            "downtime_state": "ok",
+            "downtime_warning_seconds": 30.0,
+            "sla_state": "warning",
+            "nextRetrySeconds": 1.5,
+        }
+    )
+    app.processEvents()
+
+    sla_card = root.findChild(QObject, "runtimeOverviewFeedSlaCard")
+    assert sla_card is not None
+    sla_state_label = root.findChild(QObject, "runtimeOverviewSlaStateLabel")
+    assert sla_state_label is not None
+    assert "connected" in sla_state_label.property("text").lower()
+    sla_latency_label = root.findChild(QObject, "runtimeOverviewSlaLatency")
+    assert sla_latency_label is not None and "2800" in sla_latency_label.property("text")
+    sla_last_error = root.findChild(QObject, "runtimeOverviewSlaLastError")
+    assert sla_last_error is not None and sla_last_error.property("visible") is True
+    sla_retry = root.findChild(QObject, "runtimeOverviewSlaRetry")
+    assert sla_retry is not None and "1.5" in sla_retry.property("text")
+
     metrics = {
         "blockCount": 1,
         "uniqueRiskFlags": ["latency_spike"],
@@ -809,12 +882,18 @@ def test_runtime_service_feed_health_exports_alerts(monkeypatch: pytest.MonkeyPa
     service._feed_latencies.clear()
     service._feed_latencies.append(5.0)
     service._update_feed_health(status="connected", reconnects=0, last_error="")
+    critical_report = service.feedSlaReport
+    assert critical_report["latency_state"] == "critical"
+    assert critical_report["sla_state"] == "critical"
 
     service._feed_latencies.clear()
     service._feed_latencies.append(0.2)
     service._update_feed_health(status="connected", reconnects=0, last_error="")
 
     assert events[:2] == ["critical", "info"]
+    recovery_report = service.feedSlaReport
+    assert recovery_report["latency_state"] == "ok"
+    assert recovery_report["sla_state"] == "ok"
 
     feed_snapshot = service.feedHealth
     assert "p95LatencyMs" in feed_snapshot

@@ -295,6 +295,9 @@ def test_runtime_service_consumes_grpc_stream(
             health = service.feedHealth
             assert health["status"] == "connected"
             assert health["reconnects"] == payload["reconnects"]
+            sla_report = service.feedSlaReport
+            assert sla_report["p95_ms"] == pytest.approx(payload["p95_ms"])
+            assert sla_report["sla_state"] in {"ok", "warning"}
             assert _wait_for(lambda: service.cycleMetrics.get("cycles_total", 0.0) >= 1.0, app)
             metrics = service.cycleMetrics
             assert metrics["cycles_total"] >= 1.0

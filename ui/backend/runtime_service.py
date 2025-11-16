@@ -595,6 +595,7 @@ class RuntimeService(QObject):
     errorMessageChanged = Signal()
     liveSourceChanged = Signal()
     feedHealthChanged = Signal()
+    feedSlaReportChanged = Signal()
     longPollMetricsChanged = Signal()
     retrainNextRunChanged = Signal()
     adaptiveStrategySummaryChanged = Signal()
@@ -702,6 +703,7 @@ class RuntimeService(QObject):
             "downtimeMs": 0.0,
             "lastError": "",
         }
+        self._feed_sla_report: dict[str, object] = {}
         self._feed_transport_snapshot: dict[str, object] = {
             "status": "initializing",
             "mode": "demo",
@@ -717,6 +719,10 @@ class RuntimeService(QObject):
             "reconnects": "ok",
             "downtime": "ok",
         }
+        self._metrics_last_write = 0.0
+        self._metrics_next_write = 0.0
+        self._metrics_last_status = ""
+        self._metrics_last_reconnects = -1
         self._longpoll_metrics_cache = get_long_poll_metrics_cache()
         self._longpoll_metrics: list[dict[str, object]] = []
         self._longpoll_timer = QTimer(self)
@@ -784,6 +790,10 @@ class RuntimeService(QObject):
     @Property("QVariantMap", notify=feedHealthChanged)
     def feedHealth(self) -> dict[str, object]:  # type: ignore[override]
         return dict(self._feed_health)
+
+    @Property("QVariantMap", notify=feedSlaReportChanged)
+    def feedSlaReport(self) -> dict[str, object]:  # type: ignore[override]
+        return dict(self._feed_sla_report)
 
     @Property("QVariantMap", notify=feedTransportSnapshotChanged)
     def feedTransportSnapshot(self) -> dict[str, object]:  # type: ignore[override]
@@ -1025,6 +1035,15 @@ class RuntimeService(QObject):
         if critical is not None and value >= critical:
             return "critical"
         if warning is not None and value >= warning:
+            return "warning"
+        return "ok"
+
+    @staticmethod
+    def _aggregate_sla_state(states: Iterable[str]) -> str:
+        bucket = {state for state in states if state}
+        if "critical" in bucket:
+            return "critical"
+        if "warning" in bucket:
             return "warning"
         return "ok"
 
@@ -2018,7 +2037,6 @@ class RuntimeService(QObject):
             self._update_runtime_metadata(invalidate_cache=False)
             self._error_message = ""
             self.errorMessageChanged.emit()
-            self._write_feed_metrics()
 
     def _maybe_handle_grpc_idle(self) -> None:
         if not self._grpc_stream_active:
@@ -2163,6 +2181,42 @@ class RuntimeService(QObject):
         stats_payload["latency_p95_ms"] = latency_p95
         stats_payload["p95_seconds"] = float(latency_p95) / 1000.0
         stats_payload["p95"] = float(latency_p95) / 1000.0
+        thresholds = self._feed_thresholds
+        reconnects_state = self._classify_threshold(
+            float(self._feed_reconnects),
+            warning=thresholds["reconnects_warning"],
+            critical=thresholds["reconnects_critical"],
+        )
+        latency_state = self._classify_threshold(
+            latency_p95,
+            warning=thresholds["latency_warning_ms"],
+            critical=thresholds["latency_critical_ms"],
+        )
+        downtime_seconds = max(0.0, float(downtime_value) / 1000.0)
+        downtime_state = self._classify_threshold(
+            downtime_seconds,
+            warning=thresholds["downtime_warning_seconds"],
+            critical=thresholds["downtime_critical_seconds"],
+        )
+        stats_payload.update(
+            {
+                "latency_state": latency_state,
+                "reconnects_state": reconnects_state,
+                "downtime_state": downtime_state,
+                "latency_warning_ms": thresholds["latency_warning_ms"],
+                "latency_critical_ms": thresholds["latency_critical_ms"],
+                "reconnects_warning": thresholds["reconnects_warning"],
+                "reconnects_critical": thresholds["reconnects_critical"],
+                "downtime_warning_seconds": thresholds["downtime_warning_seconds"],
+                "downtime_critical_seconds": thresholds["downtime_critical_seconds"],
+                "downtime_seconds": downtime_seconds,
+                "sla_state": self._aggregate_sla_state(
+                    (latency_state, reconnects_state, downtime_state)
+                ),
+            }
+        )
+        self._feed_sla_report = stats_payload
+        self.feedSlaReportChanged.emit()
         now = time.monotonic()
         reconnects_value = self._feed_reconnects
         status_changed = status_value != self._metrics_last_status
