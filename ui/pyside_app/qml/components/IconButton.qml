@@ -11,6 +11,9 @@ Button {
     property bool subtle: false
     implicitHeight: 40
     implicitWidth: Math.max(40, contentItem.implicitWidth + 16)
+    readonly property string glyphText: designSystem && iconName.length > 0 && designSystem.iconGlyph
+                                        ? designSystem.iconGlyph(iconName)
+                                        : ""
 
     background: Rectangle {
         radius: 10
@@ -25,8 +28,15 @@ Button {
     contentItem: RowLayout {
         spacing: 8
         anchors.centerIn: parent
+        Text {
+            visible: control.glyphText.length > 0
+            text: control.glyphText
+            font.family: control.designSystem ? control.designSystem.fontAwesomeFamily() : "Font Awesome 6 Free"
+            font.pixelSize: 18
+            color: control.foregroundColor
+        }
         Image {
-            visible: control.iconName.length > 0
+            visible: control.glyphText.length === 0 && control.iconName.length > 0
             source: control.iconName.length > 0 && designSystem
                     ? designSystem.iconSource(control.iconName)
                     : ""

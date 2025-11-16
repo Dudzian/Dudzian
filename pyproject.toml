@@ -89,7 +89,7 @@ dependencies = [
   "respx>=0.20",
   "jsonschema>=4.21",
   "sqlalchemy>=2.0",
-  "PySide6>=6.6",
+  "PySide6>=6.7",
   "packaging>=23.2",
 ]
 
@@ -120,7 +120,7 @@ dev = [
 desktop = [
   "pyinstaller>=6.5",
   "briefcase>=0.3.18",
-  "PySide6>=6.6",
+  "PySide6>=6.7",
 ]
 compression = [
   "brotli>=1.1; platform_python_implementation != 'PyPy'",

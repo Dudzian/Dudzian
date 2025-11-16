@@ -28,9 +28,9 @@ COPY . /app
 
 RUN python -m pip install --upgrade pip setuptools wheel \
     && pip install --no-cache-dir -e . \
-    && useradd -ms /bin/bash kryptobot
+    && useradd -ms /bin/bash dudzianbot
 
-USER kryptobot
+USER dudzianbot
 
 VOLUME ["/data", "/app/logs"]
 

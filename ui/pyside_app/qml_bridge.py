@@ -27,7 +27,10 @@ class QmlContextBridge:
         self._engine = engine
         self._config = config
         self._enable_cloud_runtime = enable_cloud_runtime
-        self.runtime_service = RuntimeService(default_limit=max(5, config.decision_limit))
+        self.runtime_service = RuntimeService(
+            default_limit=max(5, config.decision_limit),
+            cloud_runtime_enabled=enable_cloud_runtime,
+        )
         self.licensing_controller = LicensingController()
         self.diagnostics_controller = DiagnosticsController()
         self.layout_controller = LayoutProfileController()

@@ -4,7 +4,7 @@ from __future__ import annotations
 import os
 from pathlib import Path
 
-TOKEN_PATTERNS = (("leg" "acy"), ("krypto" "lowca"))
+TOKEN_PATTERNS = (("leg" "acy"), ("kr" "ypto" "lowca"))
 SKIP_DIR_NAMES = {
     ".git",
     ".hg",
@@ -14,11 +14,8 @@ SKIP_DIR_NAMES = {
     ".venv",
     "__pycache__",
 }
-ALLOWLISTED_DIRS = (Path("docs"), Path("archive"))
-ALLOWLISTED_FILES = {
-    Path("README.md"),
-    Path("scripts/lint_paths.py"),
-}
+ALLOWLISTED_DIRS: tuple[Path, ...] = ()
+ALLOWLISTED_FILES: set[Path] = set()
 
 
 def _is_allowlisted(path: Path) -> bool:

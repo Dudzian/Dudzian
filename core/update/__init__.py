@@ -10,16 +10,18 @@ from .offline_updater import (
     OfflinePackageArtifact,
     OfflinePackageError,
     OfflinePackageManifest,
-    import_kbot_package,
-    verify_kbot_package,
+    OFFLINE_PACKAGE_EXTENSION,
+    import_offline_package,
+    verify_offline_package,
 )
 
 __all__ = [
     "create_release_archive",
     "install_release_archive",
     "verify_release_archive",
-    "import_kbot_package",
-    "verify_kbot_package",
+    "OFFLINE_PACKAGE_EXTENSION",
+    "import_offline_package",
+    "verify_offline_package",
     "ImportedOfflinePackage",
     "OfflinePackageArtifact",
     "OfflinePackageError",

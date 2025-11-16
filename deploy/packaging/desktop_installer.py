@@ -1,4 +1,4 @@
-"""Budowanie wieloplatformowych instalatorów desktopowych dla KryptoŁowcy."""
+"""Budowanie wieloplatformowych instalatorów desktopowych dla botów Dudzian."""
 
 from __future__ import annotations
 

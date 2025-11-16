@@ -5,7 +5,7 @@ import shutil
 from pathlib import Path
 
 from deploy.packaging.offline_distribution import build_offline_distribution
-from core.update.offline_updater import verify_kbot_package
+from core.update.offline_updater import verify_offline_package
 
 
 def test_build_offline_distribution_creates_package(tmp_path: Path) -> None:
@@ -14,7 +14,7 @@ def test_build_offline_distribution_creates_package(tmp_path: Path) -> None:
     source_file = payload_dir / "example.txt"
     source_file.write_text("demo", encoding="utf-8")
 
-    output_path = tmp_path / "bundle.kbot"
+    output_path = tmp_path / "bundle.dudzianpkg"
     manifest_output = tmp_path / "manifest.json"
     rotation_registry = tmp_path / "rotation.json"
 
@@ -39,7 +39,7 @@ def test_build_offline_distribution_creates_package(tmp_path: Path) -> None:
     assert summary["rotation"]["status"]["key"] == "HW-123"
     assert rotation_registry.exists()
 
-    manifest, signature, staging_dir, _ = verify_kbot_package(
+    manifest, signature, staging_dir, _ = verify_offline_package(
         output_path,
         expected_fingerprint="HW-123",
         hmac_key=b"super-secret",

@@ -1,4 +1,4 @@
-# Instalator desktopowy KryptoŁowcy
+# Instalator desktopowy Dudzian
 
 Ten dokument opisuje proces budowania i walidacji pakietu instalatora desktopowego
 z wykorzystaniem narzędzia `deploy/packaging/desktop_installer.py`.

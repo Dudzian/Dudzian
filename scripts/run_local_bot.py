@@ -24,9 +24,13 @@ from bot_core.execution.live_router import LiveExecutionRouter
 from bot_core.exchanges.base import Environment as ExchangeEnvironment
 from bot_core.logging.config import install_metrics_logging_handler
 from bot_core.runtime.state_manager import RuntimeStateError, RuntimeStateManager
-from bot_core.runtime.cloud_profiles import (
-    RuntimeCloudClientSelection,
-    resolve_runtime_cloud_client,
+from bot_core.runtime.cloud_client import (
+    CloudClientOptions,
+    CloudHandshakeResult,
+    LicenseIdentity,
+    load_cloud_client_options,
+    load_license_identity,
+    perform_cloud_handshake,
 )
 from bot_core.security.base import SecretStorageError
 from bot_core.observability.metrics import CounterMetric, summarize_live_execution_metrics
@@ -284,34 +288,37 @@ def _wait_for_shutdown(stop_event: threading.Event, deadline: float | None) -> N
         stop_event.set()
 
 
-def _serialize_cloud_payload(selection: RuntimeCloudClientSelection) -> dict[str, Any]:
-    client_cfg = selection.client
-    profile_cfg = selection.profile
-    tls_cfg = client_cfg.tls
-    tls_enabled = bool(client_cfg.use_tls or (tls_cfg and tls_cfg.enabled))
+def _serialize_cloud_payload(
+    options: CloudClientOptions,
+    identity: LicenseIdentity | None,
+    handshake: CloudHandshakeResult | None,
+) -> dict[str, Any]:
+    client_cfg = options.client
     payload: dict[str, Any] = {
-        "profile": selection.profile_name,
-        "mode": str(profile_cfg.mode or "remote"),
+        "mode": "cloud",
         "target": client_cfg.address,
-        "client_config": profile_cfg.client_config_path,
-        "entrypoint": profile_cfg.entrypoint or client_cfg.fallback_entrypoint,
+        "configPath": str(options.config_path),
+        "entrypoint": client_cfg.fallback_entrypoint,
         "allowLocalFallback": bool(client_cfg.allow_local_fallback),
         "autoConnect": bool(client_cfg.auto_connect),
-        "useTls": tls_enabled,
-        "metadataKeys": sorted(client_cfg.metadata.keys()),
-        "metadataEnv": sorted(client_cfg.metadata_env.values()),
-        "metadataFiles": sorted(client_cfg.metadata_files.values()),
+        "useTls": bool(options.tls_credentials is not None),
+        "metadataKeys": sorted((client_cfg.metadata or {}).keys()),
+        "metadataEnv": sorted((client_cfg.metadata_env or {}).values()),
+        "metadataFiles": sorted((client_cfg.metadata_files or {}).values()),
     }
-    if tls_cfg is not None:
-        payload["tls"] = {
-            key: getattr(tls_cfg, key)
-            for key in (
-                "ca_certificate",
-                "client_certificate",
-                "client_key",
-                "client_key_password_env",
-                "override_authority",
-            )
+    if identity is not None:
+        payload["identity"] = {
+            "licenseId": identity.license_id,
+            "fingerprint": identity.fingerprint,
+            "source": identity.source,
+        }
+    if handshake is not None:
+        payload["handshake"] = {
+            "status": handshake.status,
+            "message": handshake.message,
+            "licenseId": handshake.license_id,
+            "fingerprint": handshake.fingerprint,
+            "expiresAt": handshake.expires_at.isoformat() if handshake.expires_at else None,
         }
     return payload
 
@@ -319,16 +326,18 @@ def _serialize_cloud_payload(selection: RuntimeCloudClientSelection) -> dict[str
 def _run_cloud_proxy(
     args: argparse.Namespace,
     report_payload: dict[str, Any],
-    selection: RuntimeCloudClientSelection,
+    options: CloudClientOptions,
+    identity: LicenseIdentity | None,
+    handshake: CloudHandshakeResult | None,
 ) -> int:
-    cloud_payload = _serialize_cloud_payload(selection)
+    cloud_payload = _serialize_cloud_payload(options, identity, handshake)
     report_payload["mode"] = "cloud"
     report_payload["cloud"] = cloud_payload
     if cloud_payload.get("entrypoint"):
         report_payload["entrypoint"] = cloud_payload["entrypoint"]
     emit_stdout = not args.no_ready_stdout
     _write_ready_payload(
-        selection.client.address,
+        options.client.address,
         ready_file=args.ready_file,
         emit_stdout=emit_stdout,
         metrics_url=None,
@@ -397,6 +406,11 @@ def _parse_args(argv: list[str] | None) -> argparse.Namespace:
         action="store_true",
         help="Wymusza wykorzystanie profilu cloudowego z config/runtime.yaml",
     )
+    parser.add_argument(
+        "--cloud-client-config",
+        default="config/cloud/client.yaml",
+        help="Ścieżka do config/cloud/client.yaml dla trybu cloud",
+    )
     return parser.parse_args(argv)
 
 
@@ -420,18 +434,29 @@ def main(argv: list[str] | None = None) -> int:
         "warnings": [],
     }
 
-    cloud_selection: RuntimeCloudClientSelection | None = None
+    cloud_options: CloudClientOptions | None = None
+    cloud_identity: LicenseIdentity | None = None
+    cloud_handshake: CloudHandshakeResult | None = None
     if args.enable_cloud_runtime:
         try:
-            cloud_selection = resolve_runtime_cloud_client(config_path)
+            cloud_options = load_cloud_client_options(args.cloud_client_config)
         except Exception as exc:
-            _LOGGER.error("Nie udało się wczytać konfiguracji cloud: %s", exc)
+            _LOGGER.error("Nie udało się wczytać config/cloud/client.yaml: %s", exc)
             return 2
-        if cloud_selection is None:
-            _LOGGER.error(
-                "Aktywowano tryb cloud, ale config/runtime.yaml nie zawiera profilu remote"
+        cloud_identity = load_license_identity()
+        if cloud_identity is None:
+            _LOGGER.warning(
+                "Tryb cloud aktywny, ale brak aktywnej licencji lub fingerprintu (var/security/license_status.json)"
             )
-            return 3
+        try:
+            cloud_handshake = (
+                perform_cloud_handshake(cloud_options, cloud_identity)
+                if cloud_identity is not None
+                else None
+            )
+        except Exception as exc:
+            _LOGGER.warning("Handshake cloudowy nie powiódł się: %s", exc)
+            cloud_handshake = CloudHandshakeResult(status="error", message=str(exc))
 
     context = None
     server: LocalRuntimeServer | None = None
@@ -443,8 +468,8 @@ def main(argv: list[str] | None = None) -> int:
     live_metrics_summary: dict[str, Any] | None = None
 
     try:
-        if cloud_selection is not None:
-            exit_code = _run_cloud_proxy(args, report_payload, cloud_selection)
+        if cloud_options is not None:
+            exit_code = _run_cloud_proxy(args, report_payload, cloud_options, cloud_identity, cloud_handshake)
         else:
             context = build_local_runtime_context(
                 config_path=str(config_path),

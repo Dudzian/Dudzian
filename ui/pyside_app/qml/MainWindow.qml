@@ -105,7 +105,13 @@ ApplicationWindow {
             Rectangle { width: 1; height: parent.height * 0.6; color: designSystem.color("border"); opacity: 0.4 }
 
             Label {
-                text: qsTr("Cloud runtime: %1").arg(cloudRuntimeEnabled ? qsTr("aktywny") : qsTr("wyłączony"))
+                readonly property var cloudStatus: runtimeService ? runtimeService.cloudRuntimeStatus : ({})
+                readonly property var handshake: cloudStatus.handshake || ({})
+                text: cloudRuntimeEnabled
+                      ? qsTr("Cloud: %1 • handshake: %2")
+                            .arg(cloudStatus.target || "client.yaml")
+                            .arg(handshake.status || qsTr("oczekuje"))
+                      : qsTr("Cloud runtime: wyłączony")
                 color: designSystem.color("textSecondary")
                 Layout.alignment: Qt.AlignVCenter
             }
@@ -197,6 +203,36 @@ ApplicationWindow {
                     text: qsTr("Reset")
                     subtle: true
                     onClicked: licensingController.resetStatus()
+                }
+            }
+            Rectangle { height: 1; width: parent.width; color: designSystem.color("border"); opacity: 0.3 }
+            ColumnLayout {
+                visible: cloudRuntimeEnabled
+                spacing: 4
+                readonly property var cloudStatus: runtimeService ? runtimeService.cloudRuntimeStatus : ({})
+                readonly property var handshake: cloudStatus.handshake || ({})
+                Label {
+                    text: qsTr("Cloud endpoint: %1").arg(cloudStatus.target || "client.yaml")
+                    color: designSystem.color("textSecondary")
+                    wrapMode: Text.WordWrap
+                }
+                Label {
+                    text: qsTr("Licencja: %1 • HWID: %2")
+                          .arg(handshake.licenseId || "?")
+                          .arg(handshake.fingerprint || "?")
+                    color: designSystem.color("textSecondary")
+                    wrapMode: Text.WordWrap
+                }
+                Label {
+                    text: qsTr("Status handshake: %1").arg(handshake.status || qsTr("oczekuje"))
+                    color: designSystem.color(handshake.status === "ok" ? "success" : "warning")
+                }
+                Components.IconButton {
+                    designSystem: designSystem
+                    iconName: "refresh"
+                    text: qsTr("Odnów handshake")
+                    subtle: true
+                    onClicked: runtimeService && runtimeService.refreshCloudHandshake()
                 }
             }
             Label {

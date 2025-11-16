@@ -11,7 +11,7 @@ Tag wydania: {release_tag}
 
 ## Aktualizacje i dystrybucja
 - [ ] Zbuduj instalator desktopowy i potwierdź hooki HWID.
-- [ ] Wygeneruj paczkę aktualizacji offline `.kbot` oraz zweryfikuj podpis.
+- [ ] Wygeneruj paczkę aktualizacji offline `.dudzianpkg` oraz zweryfikuj podpis.
 - [ ] Przetestuj scenariusz aktualizacji offline oraz powrót do poprzedniej wersji.
 
 ## Zgodność i testy

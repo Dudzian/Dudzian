@@ -1,5 +1,6 @@
 from datetime import datetime, timezone
 from pathlib import Path
+from types import SimpleNamespace
 
 from bot_core.ai import ModelRepository
 from bot_core.ai.models import ModelArtifact
@@ -13,6 +14,10 @@ def test_runtime_service_uses_demo_loader_when_no_journal() -> None:
 
     assert result, "Oczekiwano wpisów demonstracyjnych przy pustej konfiguracji"
     assert service.errorMessage == ""
+    snapshot = service.feedTransportSnapshot
+    assert snapshot["status"] == "initializing"
+    assert snapshot["mode"] in {"demo", "file"}
+    assert service.aiRegimeBreakdown == []
 
 
 def test_runtime_service_refreshes_runtime_metadata(tmp_path: Path) -> None:
@@ -75,3 +80,49 @@ def test_runtime_service_refreshes_runtime_metadata(tmp_path: Path) -> None:
     summary = service.adaptiveStrategySummary
     assert "trend" in summary
     assert "trend_following" in summary
+    breakdown = service.aiRegimeBreakdown
+    assert breakdown
+    assert breakdown[0]["bestStrategy"] == "trend_following"
+
+
+def test_runtime_service_exposes_cloud_status(monkeypatch) -> None:
+    dummy_options = SimpleNamespace(
+        client=SimpleNamespace(
+            address="127.0.0.1:50052",
+            fallback_entrypoint="cloud-demo",
+            allow_local_fallback=True,
+            auto_connect=True,
+            metadata={},
+            metadata_env={},
+            metadata_files={},
+        ),
+        metadata=[],
+        tls_credentials=None,
+        authority_override=None,
+        config_path=Path("config/cloud/client.yaml"),
+    )
+
+    def _fake_load(self, invalidate=False):
+        self._cloud_client_options = dummy_options
+        self._update_cloud_status(status="configured", target=dummy_options.client.address)
+        return dummy_options
+
+    def _fake_handshake(self, force=False):
+        self._cloud_session_token = "token"
+        self._update_cloud_status(
+            status="configured",
+            target=dummy_options.client.address,
+            handshake={"status": "ok", "licenseId": "LIC", "fingerprint": "HW"},
+        )
+        return True
+
+    monkeypatch.setattr(RuntimeService, "_auto_connect_grpc", lambda self: None)
+    monkeypatch.setattr(RuntimeService, "_refresh_long_poll_metrics", lambda self: None)
+    monkeypatch.setattr(RuntimeService, "_load_cloud_client_options", _fake_load)
+    monkeypatch.setattr(RuntimeService, "_refresh_cloud_handshake", _fake_handshake)
+
+    service = RuntimeService(decision_loader=lambda limit: [], cloud_runtime_enabled=True)
+    status = service.cloudRuntimeStatus
+    assert status["status"] in {"configured", "ready", "initializing"}
+    assert status["target"] == "127.0.0.1:50052"
+    assert status["handshake"]["status"] == "ok"

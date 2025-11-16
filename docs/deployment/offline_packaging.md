@@ -22,7 +22,7 @@ artefaktów).
    ```bash
    cmake -S ui -B ui/build -GNinja \
      -DCMAKE_BUILD_TYPE=Release \
-     -DCMAKE_PREFIX_PATH="/ścieżka/do/Qt/6.5.0/gcc_64"
+     -DCMAKE_PREFIX_PATH="/ścieżka/do/Qt/6.7.0/gcc_64"
    cmake --build ui/build --target bot_trading_shell
    ```
 

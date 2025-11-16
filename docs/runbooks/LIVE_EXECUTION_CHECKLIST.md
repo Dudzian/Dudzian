@@ -30,7 +30,7 @@ pytest tests/integration/test_execution_router_failover.py
 
 Zwróć uwagę na metryki `live_orders_fallback_total` oraz limitowanie per giełda – test integracyjny routera potwierdza, że fallback CCXT działa, a rate limit wymusza sekwencyjność.
 
-> **Uwaga:** lint layoutu kończy się błędem przy każdej pozostałości `KryptoLowca/**` lub pliku wykonywalnym w `archive/**`. Usuń takie pliki przed kontynuowaniem procedury.
+> **Uwaga:** lint layoutu kończy się błędem przy każdej pozostałości legacy directories lub pliku wykonywalnym w `archive/**`. Usuń takie pliki przed kontynuowaniem procedury.
 
 ## Artefakty / Akceptacja
 - Podpisany decision log (`audit/decision_logs/live_execution.jsonl`) z wpisami: przygotowanie mTLS, wyniki Paper Labs, start demona, start UI.

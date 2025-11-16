@@ -31,15 +31,15 @@ Szczegółowe instrukcje znajdują się w dokumentacji:
 ## Alerty SLA feedu i HyperCare
 - Progi SLA (`latencja p95`, reconnecty, downtime) konfigurujesz w `observability.feed_sla` w `config/runtime.yaml`. Domyślne wartości (2.5/5 s, 3/6 reconnectów, 30/120 s downtime) są zgodne z runbookiem HyperCare i mogą być nadpisane zmiennymi środowiskowymi `BOT_CORE_UI_FEED_*`.
 - Desktopowy `RuntimeService` korzysta z `UiTelemetryAlertSink`, aby każdą zmianę stanu (`warning`, `critical`, `recovered`) wysłać do kanałów HyperCare (Telegram/Signal/e-mail) oraz zapisać w `logs/ui_telemetry_alerts.jsonl`.
-- Jeśli w `config/runtime.yaml` włączysz sekcję `cloud.enabled: true` i wskażesz profil zdalny (np. `staging-cloud` → `config/cloud/client.yaml`), to kanał `cloud:<profil>` zostanie zarejestrowany automatycznie i wszystkie alerty feedu będą przekazywane do serwera `bot_core.cloud` (RPC `CloudAlertService`). Włączenie trybu odbywa się przez `python scripts/run_local_bot.py --enable-cloud-runtime` albo flagę UI.
+- Jeśli włączysz flagę `--enable-cloud-runtime` w `scripts/run_local_bot.py` (lub odpowiednik w UI), proces nie startuje lokalnego runtime, tylko publikuje payload `ready` opisujący klienta z `config/cloud/client.yaml`. Ten sam plik jest używany w UI (`runtimeService.cloudRuntimeStatus`) – można więc jednym kliknięciem przełączać się lokalnie ↔ cloud oraz widzieć status handshake’u HWID/licencji.
 
 ## Tryb cloud/serwerowy (behind flag)
 - Moduł `bot_core.cloud` udostępnia serwer gRPC, który można uruchomić osobnym procesem: `python scripts/run_cloud_service.py --config config/cloud/server.yaml --emit-stdout`.
 - Konfiguracja znajduje się w `config/cloud/server.yaml` i oprócz hosta/portu, entrypointu runtime i whitelisty usług zawiera sekcję `security.allowed_clients`. Każdy wpis określa parę `license_id`/`fingerprint` oraz źródło klucza HMAC (inline, plik lub zmienna ENV). Próby autoryzacji są logowane w `logs/security_admin.log`.
 - `CloudAuthService.AuthorizeClient` realizuje obowiązkowy handshake HWID/licencji. Klient podpisuje payload `{license_id, fingerprint, nonce}` przy pomocy `sign_license_payload` i wysyła go do RPC – w odpowiedzi otrzymuje token `CloudSession`, który należy przekazywać w nagłówku `Authorization: CloudSession <token>` do wszystkich wywołań (`RuntimeService`, `MarketplaceService`, `MarketDataService` itd.). Tokeny wygasają po czasie ustawionym w `session_ttl_seconds`.
 - Serwer inicjuje harmonogramy AI i synchronizację marketplace’u, a po starcie zapisuje payload `{ "event": "ready", "address": "host:port" }` (stdout lub plik wskazany flagą `--ready-file`).
-- Sekcja `cloud` w `config/runtime.yaml` wraz z `config/cloud/client.yaml` opisuje profile zdalne – włączenie procesu `scripts/run_local_bot.py --enable-cloud-runtime` publikuje payload `ready` z sekcją `cloud` i nie uruchamia lokalnego kontekstu.
-- Tryb cloud nie jest aktywowany automatycznie – dopiero ustawienie flagi (CLI/UI) przełącza dystrybucję desktopową z lokalnego `LocalRuntimeServer` na wskazany backend chmurowy.
+- Tryb cloud korzysta z `config/cloud/client.yaml` – flagi CLI (`--enable-cloud-runtime --cloud-client-config ...`) oraz UI ładują ten sam manifest i wykonują handshake `CloudAuthService`. Panel statusu pokazuje fingerprint, licencję i stan tokenu, a wszystkie wywołania gRPC otrzymują nagłówek `Authorization: CloudSession <token>`.
+- Serwer można wystartować poleceniem `python scripts/run_cloud_service.py --config config/cloud/server.yaml --health-file var/runtime/cloud_health.json --emit-stdout`. `CloudRuntimeService` publikuje event `ready` (stdout/pliki), a dodatkowo aktualizuje JSON z health-checkiem – idealny jako `healthcheck` w docker-compose lub `ConditionPathExists` w unitach systemd.
 
 > **Szybki skrót benchmarku:** Stage6 jest na parytecie strategii z przewagą automatyzacji i compliance; największą luką pozostaje integracja UI (feed gRPC „Decyzje AI”) oraz skalowanie marketplace’u presetów.
 >
@@ -50,7 +50,7 @@ Szczegółowe instrukcje znajdują się w dokumentacji:
 ## Aktualizacje
 - Nowe wersje dystrybuujemy w formie podpisanych instalatorów. Procedura: [docs/deployment/oem_installation.md](docs/deployment/oem_installation.md).
 - Zanim zainstalujesz aktualizację, wykonaj kopię `config/`, `secrets/` oraz katalogu danych użytkownika (`~/.dudzian/`).
-- Komponenty runtime, dokumentacja i runbooki korzystają wyłącznie z przestrzeni `bot_core.*`; archiwalny pakiet `KryptoLowca` został usunięty. Mapowanie najczęściej używanych modułów znajdziesz w [docs/migrations/kryptolowca_namespace_mapping.md](docs/migrations/kryptolowca_namespace_mapping.md).
+- Komponenty runtime, dokumentacja i runbooki korzystają wyłącznie z przestrzeni `bot_core.*`; historyczna warstwa legacy została w całości usunięta i nie posiada już utrzymywanych aliasów ani mapowań.
 - Dawny katalog z archiwalnym botem został zlikwidowany – w repozytorium nie ma już shimów ani kodu wykonywalnego z poprzedniej warstwy.
 - W `archive/` pozostawiamy wyłącznie materiały historyczne (np. [docs/archive/trading_model_pipeline.md](docs/archive/trading_model_pipeline.md)),
   aby nie rozpraszać zespołu nieużywaną implementacją. Aktywny kod żyje w `bot_core/**`.

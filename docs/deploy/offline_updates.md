@@ -1,11 +1,11 @@
-# Aktualizacje offline (.kbot)
+# Aktualizacje offline (.dudzianpkg)
 
 Poniższa instrukcja opisuje proces przygotowania i instalacji podpisanych pakietów
-aktualizacji przeznaczonych do dystrybucji offline. Pakiety w formacie `.kbot`
+aktualizacji przeznaczonych do dystrybucji offline. Pakiety w formacie `.dudzianpkg`
 umożliwiają dostarczenie aktualizacji modeli, strategii lub zasobów aplikacji bez
 konieczności łączenia się z serwerami zewnętrznymi.
 
-## Tworzenie pakietu `.kbot`
+## Tworzenie pakietu `.dudzianpkg`
 
 1. Przygotuj katalog z zasobami, które mają zostać zaktualizowane, np.:
 
@@ -22,7 +22,7 @@ konieczności łączenia się z serwerami zewnętrznymi.
 
    ```bash
    python scripts/package_update.py \
-       payload/ build/releases/regime_update.kbot \
+       payload/ build/releases/regime_update.dudzianpkg \
        --package-id regime-update \
        --version 1.0.0 \
        --fingerprint HWID-123456 \
@@ -39,13 +39,13 @@ konieczności łączenia się z serwerami zewnętrznymi.
      podpisania manifestu (`bot_core.security.signing`).
    * `--signing-key-id` – identyfikator klucza zapisywany w podpisie.
 
-   Skrypt tworzy archiwum `.kbot` zawierające manifest (`manifest.json`),
+   Skrypt tworzy archiwum `.dudzianpkg` zawierające manifest (`manifest.json`),
    podpis (`manifest.sig`) oraz spakowaną zawartość (`payload.tar`).
 
 ## Import pakietu na stanowisku operatorskim
 
-1. Przenieś plik `.kbot` na komputer docelowy i uruchom aplikację desktopową.
-2. W menu ustawień otwórz dialog **Aktualizacja offline (.kbot)**.
+1. Przenieś plik `.dudzianpkg` na komputer docelowy i uruchom aplikację desktopową.
+2. W menu ustawień otwórz dialog **Aktualizacja offline (.dudzianpkg)**.
 3. Wskaż plik pakietu oraz – jeżeli to wymagane – wprowadź klucz podpisu HMAC.
 4. Kliknij **Importuj**. Kontroler `OfflineUpdateController` zweryfikuje podpis,
    fingerprint oraz sumy kontrolne, a następnie rozpakowuje pakiet do katalogu
@@ -59,7 +59,7 @@ konieczności łączenia się z serwerami zewnętrznymi.
 * Testy jednostkowe `tests/update/test_offline_updater.py` weryfikują integralność
   procesu budowania i importu pakietów.
 * Do automatycznego publikowania paczek offline można wykorzystać powyższy
-  skrypt w ramach kroku `release` w pipeline (np. tworząc artefakt `.kbot`).
+  skrypt w ramach kroku `release` w pipeline (np. tworząc artefakt `.dudzianpkg`).
 * Zaleca się przechowywanie kluczy HMAC w `secrets/` lub bezpiecznym magazynie,
   aby nie trafiły do repozytorium.
 

@@ -20,7 +20,7 @@ Powłoka Qt Quick 6 zapewnia lekkie UI do komunikacji z demonem tradingowym (lub
 
 ## Wymagania
 
-* Qt 6.5+ (`qtbase`, `qtdeclarative`, `qtquickcontrols2`, `qtcharts`).
+* Qt 6.7+ (`qtbase`, `qtdeclarative`, `qtquickcontrols2`, `qtcharts`).
 * Kompilator C++20, CMake ≥ 3.21.
 * gRPC + Protobuf (`libgrpc++`, `libprotobuf`).
 * Wygenerowane stuby C++ z `proto/trading.proto` (CMake generuje je automatycznie przy pierwszym buildzie).
@@ -30,7 +30,7 @@ Powłoka Qt Quick 6 zapewnia lekkie UI do komunikacji z demonem tradingowym (lub
 
 ```bash
 cmake -S ui -B ui/build -GNinja \
-  -DCMAKE_PREFIX_PATH="/ścieżka/do/Qt/6.5.0/gcc_64"
+  -DCMAKE_PREFIX_PATH="/ścieżka/do/Qt/6.7.0/gcc_64"
 cmake --build ui/build
 ```
 

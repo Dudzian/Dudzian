@@ -16,7 +16,7 @@ pakietu przekazywanego partnerowi.
 ## Aktualizacje i dystrybucja
 - [ ] Zbudowano instalator przy użyciu `deploy/packaging/desktop_installer.py`
       z opcją `--verify-hook` i potwierdzono log walidacji HWID/keyring.
-- [ ] Przygotowano paczkę aktualizacji offline `.kbot` i zweryfikowano podpisy
+- [ ] Przygotowano paczkę aktualizacji offline `.dudzianpkg` i zweryfikowano podpisy
       (`scripts/package_update.py verify`).
 - [ ] Zweryfikowano proces aktualizacji offline w UI (`UpdateDialog`).
 - [ ] Oznaczono instalator oraz paczki aktualizacji numerem wersji i sumami

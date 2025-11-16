@@ -329,32 +329,32 @@
   <context>
     <name>UpdateDialog</name>
     <message>
-      <source>Aktualizacja offline (.kbot)</source>
-      <translation>Aktualizacja offline (.kbot)</translation>
+      <source>Aktualizacja offline (.dudzianpkg)</source>
+      <translation>Aktualizacja offline (.dudzianpkg)</translation>
     </message>
     <message>
-      <source>Wybierz pakiet .kbot</source>
-      <translation>Wybierz pakiet .kbot</translation>
+      <source>Wybierz pakiet .dudzianpkg</source>
+      <translation>Wybierz pakiet .dudzianpkg</translation>
     </message>
     <message>
-      <source>Pakiety Kryptołowca (*.kbot)</source>
-      <translation>Pakiety Kryptołowca (*.kbot)</translation>
+      <source>Pakiety Dudzian (*.dudzianpkg)</source>
+      <translation>Pakiety Dudzian (*.dudzianpkg)</translation>
     </message>
     <message>
       <source>Wszystkie pliki (*)</source>
       <translation>Wszystkie pliki (*)</translation>
     </message>
     <message>
-      <source>Wybierz podpisany pakiet aktualizacji w formacie .kbot i zaimportuj go do katalogu aktualizacji desktopowych. </source>
-      <translation>Wybierz podpisany pakiet aktualizacji w formacie .kbot i zaimportuj go do katalogu aktualizacji desktopowych.</translation>
+      <source>Wybierz podpisany pakiet aktualizacji w formacie .dudzianpkg i zaimportuj go do katalogu aktualizacji desktopowych.</source>
+      <translation>Wybierz podpisany pakiet aktualizacji w formacie .dudzianpkg i zaimportuj go do katalogu aktualizacji desktopowych.</translation>
     </message>
     <message>
       <source>Pakiet aktualizacji</source>
       <translation>Pakiet aktualizacji</translation>
     </message>
     <message>
-      <source>Ścieżka do pakietu .kbot</source>
-      <translation>Ścieżka do pakietu .kbot</translation>
+      <source>Ścieżka do pakietu .dudzianpkg</source>
+      <translation>Ścieżka do pakietu .dudzianpkg</translation>
     </message>
     <message>
       <source>Wybierz plik</source>

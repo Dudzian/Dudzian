@@ -1,12 +1,12 @@
 # Migracja po usunięciu archiwalnego magazynu danych
 
-Od wersji 2024.09 runtime usuwa wsparcie dla automatycznego wczytywania zasobów z dawnych ścieżek (`var/state/ui_settings.json`, `~/.kryptolowca/api_credentials.json`, zaszyfrowane pliki `SecurityManager`). Poniższe kroki pozwalają istniejącym instalacjom przeprowadzić migrację przed aktualizacją.
+Od wersji 2024.09 runtime usuwa wsparcie dla automatycznego wczytywania zasobów z dawnych ścieżek (`var/state/ui_settings.json`, `~/.legacy_bot/api_credentials.json`, zaszyfrowane pliki `SecurityManager`). Poniższe kroki pozwalają istniejącym instalacjom przeprowadzić migrację przed aktualizacją.
 
 ## 1. Magazyn sekretów (`api_credentials.json`)
 
-1. Zainstaluj pomocniczy pakiet narzędziowy `dudzian-migrate` (dostarczany razem z aktualizacją) i uruchom skrypt `python -m dudzian_migrate.secret_store --input ~/.kryptolowca/api_credentials.json --output ~/.dudzian/secret_index.json`.
+1. Zainstaluj pomocniczy pakiet narzędziowy `dudzian-migrate` (dostarczany razem z aktualizacją) i uruchom skrypt `python -m dudzian_migrate.secret_store --input ~/.legacy_bot/api_credentials.json --output ~/.dudzian/secret_index.json`.
 2. Skrypt zapisze klucze API w natywnym magazynie (`KeyringSecretStorage`) oraz zarchiwizuje stary plik jako `api_credentials.json.backup`.
-3. Po pomyślnym zakończeniu usuń oryginalny plik `~/.kryptolowca/api_credentials.json`. Narzędzie raportuje kopię zapasową, a runtime akceptuje wyłącznie zaszyfrowany indeks w `~/.dudzian/`.
+3. Po pomyślnym zakończeniu usuń oryginalny plik `~/.legacy_bot/api_credentials.json`. Narzędzie raportuje kopię zapasową, a runtime akceptuje wyłącznie zaszyfrowany indeks w `~/.dudzian/`.
 4. Nowa lokalizacja danych konfiguracyjnych to katalog `~/.dudzian/`. Możesz nadpisać go przez zmienną `DUDZIAN_HOME`.
 5. Środowiska headless zapisują zaszyfrowany magazyn (`secrets.age`) w `~/.dudzian/` (również respektując `DUDZIAN_HOME`).
 6. Nowy format magazynu wymaga pól `key_id` oraz `secret`; dotychczasowe klucze `api_key` / `api_secret` są odrzucane przez Stage6 i muszą zostać przemapowane podczas migracji.

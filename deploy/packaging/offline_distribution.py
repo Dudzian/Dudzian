@@ -1,4 +1,4 @@
-"""Budowanie paczek offline `.kbot` wraz z rotacją fingerprintów OEM."""
+"""Budowanie paczek offline `.dudzianpkg` wraz z rotacją fingerprintów OEM."""
 
 from __future__ import annotations
 
@@ -10,8 +10,8 @@ from pathlib import Path
 from typing import Any, Mapping
 
 from bot_core.security.rotation import RotationRegistry
-from core.update.offline_updater import OfflinePackageManifest, verify_kbot_package
-from scripts.package_update import build_kbot_package
+from core.update.offline_updater import OfflinePackageManifest, verify_offline_package
+from scripts.package_update import build_offline_package
 
 
 def _manifest_to_dict(manifest: OfflinePackageManifest) -> dict[str, Any]:
@@ -63,9 +63,9 @@ def build_offline_distribution(
     rotation_purpose: str = "offline_distribution",
     manifest_output: Path | None = None,
 ) -> OfflineDistributionResult:
-    """Buduje paczkę `.kbot`, weryfikuje manifest i aktualizuje rejestr rotacji."""
+    """Buduje paczkę `.dudzianpkg`, weryfikuje manifest i aktualizuje rejestr rotacji."""
 
-    package_path = build_kbot_package(
+    package_path = build_offline_package(
         package_id=package_id,
         version=version,
         payload_dir=payload_dir,
@@ -76,7 +76,7 @@ def build_offline_distribution(
         signing_key_id=signing_key_id,
     )
 
-    manifest, signature, staging_dir, _artifacts = verify_kbot_package(
+    manifest, signature, staging_dir, _artifacts = verify_offline_package(
         package_path,
         expected_fingerprint=fingerprint,
         hmac_key=signing_key,
