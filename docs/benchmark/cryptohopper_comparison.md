@@ -31,6 +31,7 @@
 - **Case studies:** [`docs/marketing/stage6_stress_lab_case_studies.md`](../marketing/stage6_stress_lab_case_studies.md) – scenariusze wykorzystania Stress Lab u klientów OEM (desk prop, OEM on-prem, rollout marketplace).
 - **Artefakty audytowe:** `var/audit/stage6/` – podpisane raporty i manifesty (JSON/CSV/HMAC) stanowią źródło danych dla materiałów marketingowych.
 - **Workflow eksportu:** patrz sekcja „Automatyzacja eksportu Stress Lab” w niniejszym dokumencie (poniżej) – pipeline CI publikuje artefakt `stress-lab-report` dla każdego releasu.
+- **Katalog presetów:** [`reports/strategy/presets_2025-01-15.md`](../../reports/strategy/presets_2025-01-15.md) – lista podpisanych presetów (≥15) wraz z metadanymi review i linkami do artefaktów QA.
 
 ## Tabela funkcji i różnic
 
@@ -99,7 +100,7 @@
 
 ## Procedura zbierania metryk
 1. **Zrzut metryk automatyzacji:** uruchom `python scripts/run_stage6_hypercare_cycle.py --export var/audit/hypercare/<data>/summary.json` i zweryfikuj podpis HMAC (`python scripts/verify_stage6_hypercare_summary.py`).
-2. **Pokrycie giełd:** wywołaj `python scripts/list_exchange_adapters.py --output reports/exchanges/<data>.csv` i oznacz adaptery w trybie live/paper.
+2. **Pokrycie giełd:** uruchom `python scripts/list_exchange_adapters.py --report-date <data> --push-dashboard --dashboard-dir reports/exchanges/signal_quality` – powstanie `reports/exchanges/<data>.csv` oraz snapshot do dashboardu. Zweryfikuj, że kolumny `futures_margin_mode`, `liquidation_feed` i `hypercare_checklist_signed` są uzupełnione dla Deribit/BitMEX (brak podpisu checklisty powinien zatrzymać publikację benchmarku).
 3. **Marketplace presetów:** wygeneruj raport `python scripts/export_preset_catalog.py --format markdown --output reports/strategy/presets_<data>.md` zawierający liczbę presetów publicznych i status recenzji.
 4. **Telemetria UI:** z CI pobierz artefakt `decision-feed-metrics` (plik `reports/ci/decision_feed_metrics.json`) generowany przez job „gRPC Decision Feed Integration” i oblicz p50/p95 opóźnienia feedu (`python scripts/calc_ui_feed_latency.py` lub szybka analiza w arkuszu).
 5. **Compliance:** zaktualizuj `var/audit/compliance/` o wyniki audytów (`python scripts/export_compliance_report.py`) i zweryfikuj kompletność wpisów `TradingDecisionJournal` (`python scripts/validate_decision_journal.py`).

@@ -24,7 +24,7 @@ from bot_core.config_marketplace.schema import (  # noqa: E402
     MarketplacePackageMetadata,
 )
 
-MARKETPLACE_CLI = REPO_ROOT / "scripts" / "marketplace_cli.py"
+MARKETPLACE_CLI_MODULE = "scripts.marketplace_cli"
 DEFAULT_PRESETS_DIR = REPO_ROOT / "config" / "marketplace" / "presets"
 DEFAULT_PACKAGES_DIR = REPO_ROOT / "config" / "marketplace" / "packages"
 DEFAULT_CATALOG = REPO_ROOT / "config" / "marketplace" / "catalog.json"
@@ -92,7 +92,8 @@ def _package_spec(
     if format_arg not in {"json", "yaml", "yml"}:
         format_arg = "json"
     cli_args = [
-        str(MARKETPLACE_CLI),
+        "-m",
+        MARKETPLACE_CLI_MODULE,
         "package",
         str(spec_path),
         "--output",

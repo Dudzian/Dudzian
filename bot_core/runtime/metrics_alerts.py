@@ -12,9 +12,10 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from threading import Lock
-from typing import Any
+from typing import Any, Callable
 
 from bot_core.alerts import AlertMessage, DefaultAlertRouter, InMemoryAlertAuditLog
+from bot_core.alerts.base import AlertChannel, AlertDeliveryError
 from bot_core.observability._tag_utils import extract_tag
 from bot_core.security.guards import get_capability_guard
 
@@ -40,6 +41,11 @@ try:  # pragma: no cover - bootstrap alertów może być nieosiągalny
 except Exception:  # pragma: no cover
     build_alert_channels = None  # type: ignore
 
+try:  # pragma: no cover - profile cloud mogą być niedostępne
+    from bot_core.runtime.cloud_profiles import resolve_runtime_cloud_client  # type: ignore
+except Exception:  # pragma: no cover
+    resolve_runtime_cloud_client = None  # type: ignore
+
 try:  # pragma: no cover - magazyn sekretów nie jest wymagany w trybie demo
     from bot_core.security import SecretManager, create_default_secret_storage, SecretStorageError  # type: ignore
 except Exception:  # pragma: no cover
@@ -50,6 +56,17 @@ except Exception:  # pragma: no cover
 
     class SecretStorageError(Exception):  # type: ignore[override]
         """Fallback gdy biblioteka bezpieczeństwa nie jest dostępna."""
+
+try:  # pragma: no cover - gRPC jest opcjonalny
+    import grpc
+except Exception:  # pragma: no cover - brak gRPC w dystrybucji light
+    grpc = None  # type: ignore[assignment]
+
+try:  # pragma: no cover - protobuf może nie być dostępny
+    from google.protobuf import struct_pb2, timestamp_pb2
+except Exception:  # pragma: no cover - fallback gdy brak protobuf
+    struct_pb2 = None  # type: ignore[assignment]
+    timestamp_pb2 = None  # type: ignore[assignment]
 
 
 def _resolve_runtime_config_path() -> Path | None:
@@ -139,6 +156,158 @@ def _build_secret_manager() -> SecretManager | None:
         return None
 
 
+def _load_cloud_client_metadata(client_config: Any) -> list[tuple[str, str]]:
+    metadata: list[tuple[str, str]] = []
+    base = getattr(client_config, "metadata", {}) or {}
+    if isinstance(base, Mapping):
+        for key, value in base.items():
+            if key and value not in (None, ""):
+                metadata.append((str(key), str(value)))
+
+    env_mapping = getattr(client_config, "metadata_env", {}) or {}
+    if isinstance(env_mapping, Mapping):
+        for key, env_name in env_mapping.items():
+            if not key or not env_name:
+                continue
+            env_value = os.environ.get(str(env_name))
+            if env_value:
+                metadata.append((str(key), env_value))
+
+    file_mapping = getattr(client_config, "metadata_files", {}) or {}
+    if isinstance(file_mapping, Mapping):
+        for key, path in file_mapping.items():
+            if not key or not path:
+                continue
+            try:
+                content = Path(str(path)).expanduser().read_text(encoding="utf-8").strip()
+            except FileNotFoundError:
+                _LOGGER.warning(
+                    "CloudAlertChannel: plik z metadanymi %s nie istnieje – wpis zostanie pominięty",
+                    path,
+                )
+                continue
+            except Exception:  # pragma: no cover - diagnostyka ścieżek
+                _LOGGER.exception(
+                    "CloudAlertChannel: błąd podczas odczytu metadanych z pliku %s",
+                    path,
+                )
+                continue
+            if content:
+                metadata.append((str(key), content))
+
+    return metadata
+
+
+class _CloudAlertStub:
+    """Minimalny klient RPC CloudAlertService oparty o Struct."""
+
+    def __init__(self, channel) -> None:  # pragma: no cover - zależne od gRPC
+        self._publish = channel.unary_unary(
+            "/botcore.trading.v1.CloudAlertService/PublishAlert",
+            request_serializer=lambda payload: payload.SerializeToString(),
+            response_deserializer=lambda body: struct_pb2.Struct.FromString(body),
+        )
+
+    def PublishAlert(self, request, *, metadata=None, timeout: float | None = None):  # pragma: no cover
+        return self._publish(request, metadata=metadata, timeout=timeout)
+
+
+class _CloudAlertChannel(AlertChannel):
+    """Kanał przekazujący alerty feedu do serwera cloudowego."""
+
+    def __init__(
+        self,
+        selection: Any,
+        *,
+        environment: str,
+        channel_factory: Callable[..., Any] | None = None,
+        stub_factory: Callable[[Any], Any] | None = None,
+    ) -> None:
+        self.name = f"cloud:{getattr(selection, 'profile_name', 'remote')}"
+        self._selection = selection
+        self._environment = environment
+        if channel_factory is None:
+            if grpc is None:
+                channel_factory = None
+            elif getattr(selection.client, "use_tls", False):
+                def _secure(address: str) -> Any:
+                    credentials = grpc.ssl_channel_credentials()  # pragma: no cover - zależne od środowiska
+                    return grpc.secure_channel(address, credentials)
+
+                channel_factory = _secure
+            else:
+                channel_factory = grpc.insecure_channel
+        self._channel_factory = channel_factory
+        self._stub_factory = stub_factory or _CloudAlertStub
+        self._metadata = _load_cloud_client_metadata(selection.client)
+        self._lock = Lock()
+        self._stub: Any | None = None
+        self._channel: Any | None = None
+        self._last_error: str | None = None
+        self._last_publish_monotonic: float | None = None
+        self._timeout = 5.0
+
+    def _ensure_stub(self) -> Any | None:
+        if grpc is None or struct_pb2 is None:
+            return None
+        with self._lock:
+            if self._stub is not None:
+                return self._stub
+            address = str(getattr(self._selection.client, "address", "")).strip()
+            if not address:
+                return None
+            if self._channel_factory is None:
+                return None
+            try:
+                self._channel = self._channel_factory(address)
+                self._stub = self._stub_factory(self._channel)
+            except Exception:  # pragma: no cover - diagnostyka RPC
+                _LOGGER.exception("CloudAlertChannel: nie udało się zainicjalizować kanału gRPC")
+                self._stub = None
+            return self._stub
+
+    def _build_request(self, message: AlertMessage):
+        payload = struct_pb2.Struct()
+        timestamp = timestamp_pb2.Timestamp()
+        timestamp.FromDatetime(message.timestamp)
+        context = {str(key): str(value) for key, value in (message.context or {}).items()}
+        payload.update(
+            {
+                "category": message.category,
+                "severity": message.severity,
+                "title": message.title,
+                "body": message.body,
+                "environment": self._environment,
+                "profile": getattr(self._selection, "profile_name", "remote"),
+                "context": context,
+                "timestamp": message.timestamp.isoformat(),
+            }
+        )
+        payload["generated_at"] = timestamp.ToJsonString()
+        return payload
+
+    def send(self, message: AlertMessage) -> None:
+        stub = self._ensure_stub()
+        if stub is None:
+            raise AlertDeliveryError("CloudAlertChannel nie jest dostępny")
+        request = self._build_request(message)
+        try:
+            stub.PublishAlert(request, metadata=self._metadata or None, timeout=self._timeout)
+        except Exception as exc:  # pragma: no cover - błąd RPC zależy od środowiska
+            self._last_error = str(exc)
+            raise AlertDeliveryError(f"CloudAlertChannel: błąd RPC: {exc}") from exc
+        else:
+            self._last_error = None
+            self._last_publish_monotonic = time.monotonic()
+
+    def health_check(self) -> Mapping[str, str]:
+        status = "ok" if self._last_error is None else "degraded"
+        return {
+            "status": status,
+            "endpoint": str(getattr(self._selection.client, "address", "")),
+            "profile": getattr(self._selection, "profile_name", "remote"),
+        }
+
 def _build_feed_alert_router() -> DefaultAlertRouter | None:
     if build_alert_channels is None or load_core_config is None:
         return None
@@ -198,7 +367,58 @@ def _build_feed_alert_router() -> DefaultAlertRouter | None:
         _LOGGER.exception("Nie udało się zbudować kanałów HyperCare dla alertów feedu")
         return None
 
+    cloud_channel = _build_cloud_alert_channel(runtime_path, runtime_config, environment_name)
+    if cloud_channel is not None:
+        try:
+            router.register(cloud_channel)
+        except Exception:  # pragma: no cover - defensywne
+            _LOGGER.exception("Nie udało się zarejestrować kanału cloudowego dla alertów feedu")
+
     return router
+
+
+def _build_cloud_alert_channel(
+    runtime_path: Path | None,
+    runtime_config: Any | None,
+    environment_name: str | None,
+) -> AlertChannel | None:
+    if resolve_runtime_cloud_client is None or runtime_config is None:
+        return None
+
+    cloud_section = getattr(runtime_config, "cloud", None)
+    if cloud_section is None or not getattr(cloud_section, "enabled", False):
+        return None
+
+    config_path = runtime_path or _resolve_runtime_config_path()
+    if config_path is None:
+        return None
+
+    profile_name = getattr(cloud_section, "default_profile", None)
+    try:
+        selection = resolve_runtime_cloud_client(config_path, profile_name=profile_name)
+    except Exception:  # pragma: no cover - diagnostyka konfiguracji
+        _LOGGER.debug("CloudAlertChannel: nie udało się rozwiązać profilu cloud", exc_info=True)
+        return None
+
+    if selection is None:
+        return None
+
+    profile = getattr(selection, "profile", None)
+    if profile is None or str(getattr(profile, "mode", "local")).lower() != "remote":
+        return None
+
+    client = getattr(selection, "client", None)
+    if client is None or not getattr(client, "address", ""):
+        return None
+
+    if grpc is None or struct_pb2 is None or timestamp_pb2 is None:
+        _LOGGER.debug(
+            "CloudAlertChannel: brak gRPC/protobuf – integracja cloudowa alertów feedu jest wyłączona."
+        )
+        return None
+
+    environment_label = environment_name or "cloud"
+    return _CloudAlertChannel(selection, environment=environment_label)
 
 
 def _require_observability_module(message: str) -> None:

@@ -632,3 +632,72 @@ def test_feed_health_threshold_alerts_and_metrics(monkeypatch: pytest.MonkeyPatc
     finally:
         service._stop_grpc_stream()
         app.quit()
+
+def test_runtime_service_emits_feed_alerts_when_threshold_crossed(monkeypatch: pytest.MonkeyPatch) -> None:
+    pytest.importorskip("PySide6")
+    os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+    from PySide6.QtCore import QCoreApplication  # type: ignore[attr-defined]
+
+    events: list[dict[str, object]] = []
+
+    class _RecordingSink:
+        def emit_feed_health_event(self, *, severity: str, title: str, body: str, context=None, payload=None) -> None:  # pragma: no cover - pomocnicza struktura
+            events.append(
+                {
+                    "severity": severity,
+                    "title": title,
+                    "body": body,
+                    "context": dict(context or {}),
+                }
+            )
+
+    monkeypatch.setattr(RuntimeService, "_auto_connect_grpc", lambda self: None)
+    monkeypatch.setattr(RuntimeService, "_refresh_long_poll_metrics", lambda self: None)
+
+    app = QCoreApplication.instance() or QCoreApplication([])
+    service = RuntimeService(
+        default_limit=1,
+        decision_loader=lambda *_args, **_kwargs: [],
+        feed_alert_sink=_RecordingSink(),
+    )
+    try:
+        service._feed_alert_state["latency"] = "ok"
+        service._maybe_emit_feed_alert(
+            "latency",
+            "warning",
+            metric_label="Latencja p95",
+            unit="ms",
+            value=4200.0,
+            warning=3000.0,
+            critical=6000.0,
+            status="connected",
+            adapter="grpc",
+            reconnects=1,
+            downtime_seconds=0.0,
+            latency_p95=4200.0,
+            last_error="",
+        )
+        assert events[-1]["severity"] == "warning"
+        assert events[-1]["context"]["metric"] == "latency"
+
+        service._maybe_emit_feed_alert(
+            "latency",
+            "ok",
+            metric_label="Latencja p95",
+            unit="ms",
+            value=1800.0,
+            warning=3000.0,
+            critical=6000.0,
+            status="connected",
+            adapter="grpc",
+            reconnects=1,
+            downtime_seconds=0.0,
+            latency_p95=1800.0,
+            last_error="",
+        )
+        assert events[-1]["severity"] == "info"
+        assert events[-1]["context"].get("state") == "recovered"
+    finally:
+        service._longpoll_timer.stop()
+        service._stop_grpc_stream()
+        app.quit()

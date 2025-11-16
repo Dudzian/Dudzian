@@ -1,11 +1,13 @@
 import json
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
 from bot_core.alerts import AlertChannel, AlertMessage, DefaultAlertRouter, InMemoryAlertAuditLog
 from bot_core.runtime import metrics_alerts
 from bot_core.runtime.metrics_alerts import UiTelemetryAlertSink
+from google.protobuf import json_format
 
 
 class _DummyChannel(AlertChannel):
@@ -99,3 +101,91 @@ def test_get_feed_health_alert_sink_falls_back_to_memory_router(monkeypatch: pyt
     assert isinstance(sink._router, DefaultAlertRouter)  # type: ignore[attr-defined]
     assert isinstance(sink._router.audit_log, InMemoryAlertAuditLog)  # type: ignore[attr-defined]
     assert called, "Powinien zostać wykonany bootstrap kanałów HyperCare"
+
+
+def test_cloud_alert_channel_sends_payload(monkeypatch: pytest.MonkeyPatch) -> None:
+    if metrics_alerts.struct_pb2 is None or metrics_alerts.timestamp_pb2 is None:
+        pytest.skip("protobuf structs not available")
+
+    selection = SimpleNamespace(
+        profile_name="remote",
+        client=SimpleNamespace(
+            address="127.0.0.1:5000",
+            use_tls=False,
+            metadata={},
+            metadata_env={},
+            metadata_files={},
+        ),
+    )
+
+    published: list[dict[str, object]] = []
+
+    class _Stub:
+        def PublishAlert(self, request, metadata=None, timeout=None) -> None:  # pragma: no cover - simple capture
+            payload = json_format.MessageToDict(request)
+            payload["metadata"] = metadata or []
+            payload["timeout"] = timeout
+            published.append(payload)
+
+    channel = metrics_alerts._CloudAlertChannel(
+        selection,
+        environment="prod",
+        channel_factory=lambda _addr: object(),
+        stub_factory=lambda _channel: _Stub(),
+    )
+
+    message = AlertMessage(
+        category="ui.feed.health",
+        title="Latency threshold exceeded",
+        body="p95 4.2s",
+        severity="critical",
+        context={"metric": "latency", "adapter": "grpc"},
+    )
+    channel.send(message)
+
+    assert published, "Kanał cloudowy powinien wysłać payload do CloudAlertService"
+    payload = published[-1]
+    assert payload["category"] == message.category
+    assert payload["severity"] == "critical"
+    assert payload["context"]["metric"] == "latency"
+    assert payload["environment"] == "prod"
+
+
+def test_build_cloud_alert_channel_registers_remote_profile(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    runtime_path = tmp_path / "runtime.yaml"
+    runtime_path.write_text("cloud: {}\n", encoding="utf-8")
+
+    runtime_config = SimpleNamespace(
+        cloud=SimpleNamespace(enabled=True, default_profile="remote"),
+    )
+
+    selection = SimpleNamespace(
+        profile_name="remote",
+        profile=SimpleNamespace(mode="remote"),
+        client=SimpleNamespace(
+            address="127.0.0.1:5000",
+            use_tls=False,
+            metadata={},
+            metadata_env={},
+            metadata_files={},
+        ),
+    )
+
+    monkeypatch.setattr(
+        metrics_alerts,
+        "resolve_runtime_cloud_client",
+        lambda *_args, **_kwargs: selection,
+    )
+    monkeypatch.setattr(metrics_alerts, "grpc", SimpleNamespace(insecure_channel=lambda addr: object()), raising=False)
+    monkeypatch.setattr(metrics_alerts, "struct_pb2", metrics_alerts.struct_pb2 or SimpleNamespace(), raising=False)
+    monkeypatch.setattr(metrics_alerts, "timestamp_pb2", metrics_alerts.timestamp_pb2 or SimpleNamespace(), raising=False)
+
+    sentinel = object()
+
+    def _dummy_channel(*_args, **_kwargs):
+        return sentinel
+
+    monkeypatch.setattr(metrics_alerts, "_CloudAlertChannel", _dummy_channel)
+
+    channel = metrics_alerts._build_cloud_alert_channel(runtime_path, runtime_config, "prod")
+    assert channel is sentinel

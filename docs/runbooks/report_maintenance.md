@@ -113,6 +113,22 @@ Raporty podlegają tym samym zasadom retencji co inne katalogi w `var/reports`. 
 
 Komenda `python -m bot_core.reporting.ui_bridge purge` automatycznie czyści katalog jakości sygnałów na podstawie progu retencji (domyślnie 30 dni). W razie potrzeby możesz wskazać alternatywną lokalizację (`--signal-quality-dir`) lub zmodyfikować okres przechowywania (`--signal-quality-retention-days`). Wynik polecenia zawiera sekcję `signal_quality_cleanup` z liczbą usuniętych plików oraz ewentualnymi błędami, co ułatwia logowanie operacji w runbooku.
 
+### 8.1. Raport adapterów futures i eksport do dashboardu
+
+Benchmark CryptoHoppera wymaga comiesięcznego CSV z listą adapterów giełdowych, w którym uwzględnione są kolumny `futures_margin_mode`, `liquidation_feed`, `hypercare_checklist_signed` oraz `missing_required_documents`. Raport generujemy poleceniem:
+
+```
+python scripts/list_exchange_adapters.py \
+  --report-date $(date +%Y-%m-%d) \
+  --report-dir reports/exchanges \
+  --push-dashboard \
+  --dashboard-dir reports/exchanges/signal_quality
+```
+
+Polecenie utworzy plik `reports/exchanges/<data>.csv` oraz skopiuje go do `reports/exchanges/signal_quality/`, tak aby dashboard Prometheusa/Grafany mógł pobierać najnowszy snapshot. Jeśli CI/HyperCare musi wypchnąć dane do zewnętrznego datasource, dodaj `--dashboard-endpoint https://grafana.example/api/ds/push` – w przypadku błędu publikacji skrypt zakończy się statusem !=0.
+
+**Weryfikacja futures:** po wygenerowaniu CSV sprawdź, że wiersze `deribit,live` i `bitmex,live` mają `hypercare_checklist_signed == True` oraz pustą kolumnę `missing_required_documents`. Jeśli wartości są puste lub `False`, oznacza to brak podpisu checklisty HyperCare i należy otworzyć zadanie w HyperCare/Compliance. Kolumna `liquidation_feed` powinna wskazywać pełny URL kanału long-pollowego (np. `https://stream.hyperion.dudzian.ai/exchanges/deribit/futures/private`) – użyj jej w dashboardzie do szybkiego porównania konfiguracji feedów.
+
 ## 9. Eksport champion/challenger i reakcja na degradację modeli
 
 ### 9.1. Generowanie raportu porównawczego championów

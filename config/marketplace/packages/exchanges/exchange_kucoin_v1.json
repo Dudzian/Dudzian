@@ -1,0 +1,164 @@
+{
+  "preset": {
+    "metadata": {
+      "environments": [
+        "paper",
+        "testnet",
+        "live"
+      ],
+      "id": "exchange_kucoin",
+      "profile": "grid",
+      "required_exchanges": [
+        "KUCOIN"
+      ],
+      "source_file": "config/exchanges/kucoin.yaml",
+      "summary": "Preset KuCoin margin z testnetowym failoverem i symulatorem paper",
+      "tags": [
+        "exchange",
+        "kucoin"
+      ],
+      "version": "1.1.0+adapter-rollout"
+    },
+    "name": "Kucoin Connectivity",
+    "strategies": [
+      {
+        "engine": "grid_trading",
+        "license_tier": "community",
+        "metadata": {
+          "description": "Automatycznie wygenerowany preset środowisk dla giełdy Kucoin.",
+          "environments": [
+            {
+              "config": {
+                "credentials": {
+                  "key_id": null,
+                  "secret": null
+                },
+                "description": "Paper trading dla KuCoin margin z symulatorem.",
+                "exchange_manager": {
+                  "mode": "paper",
+                  "paper_cash_asset": "USDT",
+                  "paper_initial_cash": 25000,
+                  "paper_variant": "margin",
+                  "simulator": {
+                    "funding_interval_seconds": 14400,
+                    "funding_rate": 0.0002,
+                    "leverage_limit": 3.0,
+                    "maintenance_margin_ratio": 0.12
+                  }
+                }
+              },
+              "description": "Paper trading dla KuCoin margin z symulatorem.",
+              "name": "paper"
+            },
+            {
+              "config": {
+                "credentials": {
+                  "key_id": "${KUCOIN_TESTNET_KEY}",
+                  "passphrase": "${KUCOIN_TESTNET_PASSPHRASE}",
+                  "secret": "${KUCOIN_TESTNET_SECRET}"
+                },
+                "description": "KuCoin sandbox (futures API wspiera margin/testnet).",
+                "exchange_manager": {
+                  "failover": {
+                    "cooldown_seconds": 30,
+                    "enabled": true,
+                    "failure_threshold": 1
+                  },
+                  "mode": "margin",
+                  "rate_limit_rules": [
+                    {
+                      "per": 3.0,
+                      "rate": 30
+                    },
+                    {
+                      "per": 60.0,
+                      "rate": 1800
+                    }
+                  ],
+                  "testnet": true,
+                  "watchdog": {
+                    "retry_policy": {
+                      "base_delay": 0.5,
+                      "max_attempts": 5
+                    }
+                  }
+                }
+              },
+              "description": "KuCoin sandbox (futures API wspiera margin/testnet).",
+              "name": "testnet"
+            },
+            {
+              "config": {
+                "credentials": {
+                  "key_id": "${KUCOIN_LIVE_KEY}",
+                  "passphrase": "${KUCOIN_LIVE_PASSPHRASE}",
+                  "secret": "${KUCOIN_LIVE_SECRET}"
+                },
+                "description": "Produkcyjna konfiguracja KuCoin margin.",
+                "exchange_manager": {
+                  "failover": {
+                    "cooldown_seconds": 45,
+                    "enabled": true,
+                    "failure_threshold": 2
+                  },
+                  "mode": "margin",
+                  "native_adapter": {
+                    "settings": {
+                      "margin_mode": "cross"
+                    }
+                  },
+                  "rate_limit_rules": [
+                    {
+                      "per": 3.0,
+                      "rate": 30
+                    },
+                    {
+                      "per": 60.0,
+                      "rate": 1800
+                    }
+                  ],
+                  "testnet": false,
+                  "watchdog": {
+                    "retry_policy": {
+                      "base_delay": 1.0,
+                      "max_attempts": 3
+                    }
+                  }
+                }
+              },
+              "description": "Produkcyjna konfiguracja KuCoin margin.",
+              "name": "live"
+            }
+          ]
+        },
+        "name": "kucoin_connectivity",
+        "parameters": {
+          "available_environments": [
+            "paper",
+            "testnet",
+            "live"
+          ],
+          "default_environment": "paper",
+          "exchange": "KUCOIN"
+        },
+        "required_data": [
+          "ohlcv"
+        ],
+        "risk_classes": [
+          "infrastructure"
+        ],
+        "tags": [
+          "exchange",
+          "kucoin"
+        ]
+      }
+    ]
+  },
+  "signature": {
+    "algorithm": "ed25519",
+    "key_id": "dev-presets",
+    "public_key": "wnD5eTEGDB3CPb6r3oMOmRjFtjCxHISZXHlHX0TIKhY=",
+    "signed_at": "2025-11-16T00:23:50Z",
+    "value": "q3g0+Qs+GmwJ35KbI3h8Fk+204lqs9f8gMuiU9zwCz2As2Q8vjNdsi94KSNq4EgYCUzKP+VsWw0MbeNQ/PpbDw=="
+  }
+}

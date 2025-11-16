@@ -52,6 +52,7 @@ from bot_core.config.models import (
     RuntimeExecutionLiveSettings,
     RuntimeExecutionSettings,
     RuntimeObservabilityAlertSettings,
+    RuntimeFeedSLASettings,
     RuntimeObservabilityMetricsSettings,
     RuntimeObservabilitySettings,
     RuntimeAutoTraderSettings,
@@ -4991,11 +4992,42 @@ def load_runtime_app_config(path: str | Path) -> RuntimeAppConfig:
                 severity_raw = "warning"
             alerts_config = RuntimeObservabilityAlertSettings(min_severity=severity_raw)
 
+        feed_sla_raw = observability_section.get("feed_sla") or {}
+        feed_sla_config: RuntimeFeedSLASettings | None = None
+        if isinstance(feed_sla_raw, Mapping) and feed_sla_raw:
+
+            def _threshold(value: object) -> float | None:
+                try:
+                    number = float(value)
+                except (TypeError, ValueError):
+                    return None
+                if number <= 0:
+                    return None
+                return number
+
+            feed_sla_config = RuntimeFeedSLASettings(
+                latency_warning_ms=_threshold(
+                    feed_sla_raw.get("latency_warning_ms")
+                    or feed_sla_raw.get("latency_p95_warning_ms")
+                ),
+                latency_critical_ms=_threshold(
+                    feed_sla_raw.get("latency_critical_ms")
+                    or feed_sla_raw.get("latency_p95_critical_ms")
+                ),
+                reconnects_warning=_threshold(feed_sla_raw.get("reconnects_warning")),
+                reconnects_critical=_threshold(feed_sla_raw.get("reconnects_critical")),
+                downtime_warning_seconds=_threshold(feed_sla_raw.get("downtime_warning_seconds")),
+                downtime_critical_seconds=_threshold(
+                    feed_sla_raw.get("downtime_critical_seconds")
+                ),
+            )
+
         enable_log_metrics = bool(observability_section.get("enable_log_metrics", True))
         observability_settings = RuntimeObservabilitySettings(
             prometheus=metrics_config,
             alerts=alerts_config,
             enable_log_metrics=enable_log_metrics,
+            feed_sla=feed_sla_config,
         )
 
     optimization_section = raw.get("optimization") or {}

@@ -127,5 +127,127 @@
     "public_key": "wnD5eTEGDB3CPb6r3oMOmRjFtjCxHISZXHlHX0TIKhY=",
     "signed_at": "2025-11-01T22:38:01Z",
     "issuer": "Dudzian"
+  },
+  "catalog": {
+    "schema_version": "1.1",
+    "package_id": "exchange_bybit.v1",
+    "display_name": "Bybit Exchange Environments",
+    "summary": "Preset środowisk paper/testnet/live dla giełdy Bybit.",
+    "description": "Pakiet udostępnia kompletny zestaw środowisk i guardraili dla integracji Bybit.",
+    "version": "1.0.0+community",
+    "revision": "2025.01",
+    "release_date": "2025-01-15T09:30:00Z",
+    "maintainers": [
+      {
+        "name": "Marketplace Labs",
+        "email": "marketplace@example.com",
+        "organization": "Marketplace Guild",
+        "role": "maintainer"
+      }
+    ],
+    "license": {
+      "name": "Marketplace Evaluation License",
+      "spdx_id": "Proprietary",
+      "url": "https://configs.example.com/licenses/marketplace-eval",
+      "terms_summary": "Do użytku ewaluacyjnego.",
+      "redistributable": false,
+      "commercial_use": false
+    },
+    "tags": [
+      "exchange",
+      "bybit"
+    ],
+    "data_requirements": {
+      "inputs": [
+        {
+          "asset_type": "market",
+          "provider": "ccxt.bybit",
+          "access_level": "restricted",
+          "retention_days": 7,
+          "min_history_days": 2,
+          "sampling": "1m"
+        }
+      ],
+      "requires_personal_data": false,
+      "requires_realtime_access": true,
+      "pii_handling_notes": "Preset wymaga jedynie kluczy API Bybit."
+    },
+    "distribution": [
+      {
+        "name": "preset-document",
+        "uri": "packages/exchanges/exchange_bybit_v1.json",
+        "kind": "preset",
+        "description": "Podpisany preset środowisk Bybit.",
+        "signature": {
+          "algorithm": "HMAC-SHA256",
+          "key_id": "dev-hmac",
+          "signed_fields": [
+            "package_id",
+            "version",
+            "artifact",
+            "uri",
+            "sha256"
+          ]
+        }
+      }
+    ],
+    "compatibility": [
+      {
+        "component": "bot_core",
+        "minimum": "5.2.0",
+        "recommended": "5.3.1",
+        "notes": "Zweryfikowano z adapterem Stage6 Bybit"
+      }
+    ],
+    "documentation_url": "https://configs.example.com/marketplace/exchanges/bybit",
+    "release_notes": [
+      "Pierwsze publiczne wydanie presetów środowisk Bybit.",
+      "Dodano guardraile watchdog i monitoring API."
+    ],
+    "security": {
+      "mode": "none",
+      "allowed_fingerprints": [],
+      "require_strict_match": false,
+      "audit_message": "Brak ograniczeń fingerprint dla presetów exchange."
+    },
+    "release": {
+      "channel": "beta",
+      "review_status": "approved",
+      "reviewers": [
+        {
+          "name": "Integration QA",
+          "email": "integration.qa@example.com",
+          "role": "qa"
+        }
+      ],
+      "ticket": "https://jira.example.com/browse/MKT-1450",
+      "approved_at": "2025-01-15T09:30:00Z",
+      "notes": "Publiczna certyfikacja presetów środowiskowych."
+    },
+    "exchange_compatibility": [
+      {
+        "exchange": "BYBIT",
+        "environments": [
+          "paper",
+          "testnet",
+          "live"
+        ],
+        "trading_modes": [
+          "spot",
+          "futures"
+        ],
+        "status": "beta",
+        "last_verified_at": "2025-01-14T09:00:00Z",
+        "notes": "Preset zweryfikowany w Stage6 sandbox dla Bybit."
+      }
+    ],
+    "versioning": {
+      "channel": "beta",
+      "iteration": "minor",
+      "supersedes": [],
+      "superseded_by": [],
+      "migration_required": false,
+      "source": "exchanges/exchange_bybit.json"
+    }
   }
 }

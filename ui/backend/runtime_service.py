@@ -1049,38 +1049,110 @@ class RuntimeService(QObject):
         return f"{int(round(value))}"
 
     def _load_feed_thresholds(self) -> dict[str, float | None]:
-        def _env_float(name: str, default: float | None) -> float | None:
+        defaults: dict[str, float | None] = {
+            "latency_warning_ms": 2500.0,
+            "latency_critical_ms": 5000.0,
+            "reconnects_warning": 3.0,
+            "reconnects_critical": 6.0,
+            "downtime_warning_seconds": 30.0,
+            "downtime_critical_seconds": 120.0,
+        }
+
+        def _normalize(value: float | int | None) -> float | None:
+            if value is None:
+                return None
+            number = float(value)
+            if number <= 0:
+                return None
+            return number
+
+        if load_runtime_app_config is not None:
+            try:
+                runtime_config = self._load_runtime_config()
+            except Exception:
+                runtime_config = None
+            if runtime_config is not None:
+                observability = getattr(runtime_config, "observability", None)
+                feed_sla = getattr(observability, "feed_sla", None) if observability else None
+                if feed_sla is not None:
+                    defaults.update(
+                        {
+                            "latency_warning_ms": _normalize(
+                                getattr(feed_sla, "latency_warning_ms", None)
+                            )
+                            or defaults["latency_warning_ms"],
+                            "latency_critical_ms": _normalize(
+                                getattr(feed_sla, "latency_critical_ms", None)
+                            )
+                            or defaults["latency_critical_ms"],
+                            "reconnects_warning": _normalize(
+                                getattr(feed_sla, "reconnects_warning", None)
+                            )
+                            or defaults["reconnects_warning"],
+                            "reconnects_critical": _normalize(
+                                getattr(feed_sla, "reconnects_critical", None)
+                            )
+                            or defaults["reconnects_critical"],
+                            "downtime_warning_seconds": _normalize(
+                                getattr(feed_sla, "downtime_warning_seconds", None)
+                            )
+                            or defaults["downtime_warning_seconds"],
+                            "downtime_critical_seconds": _normalize(
+                                getattr(feed_sla, "downtime_critical_seconds", None)
+                            )
+                            or defaults["downtime_critical_seconds"],
+                        }
+                    )
+
+        def _env_float(name: str, current: float | None) -> float | None:
             raw = os.environ.get(name)
             if raw is None or str(raw).strip() == "":
-                return default
+                return current
             try:
                 value = float(raw)
             except (TypeError, ValueError):
-                return default
+                return current
             if value <= 0:
                 return None
             return value
 
-        def _env_int(name: str, default: int | None) -> float | None:
+        def _env_int(name: str, current: float | None) -> float | None:
             raw = os.environ.get(name)
             if raw is None or str(raw).strip() == "":
-                return default
+                return current
             try:
                 value = int(float(raw))
             except (TypeError, ValueError):
-                return default
+                return current
             if value <= 0:
                 return None
             return float(value)
 
-        return {
-            "latency_warning_ms": _env_float("BOT_CORE_UI_FEED_LATENCY_P95_WARNING_MS", 2500.0),
-            "latency_critical_ms": _env_float("BOT_CORE_UI_FEED_LATENCY_P95_CRITICAL_MS", 5000.0),
-            "reconnects_warning": _env_int("BOT_CORE_UI_FEED_RECONNECT_WARNING", 3),
-            "reconnects_critical": _env_int("BOT_CORE_UI_FEED_RECONNECT_CRITICAL", 6),
-            "downtime_warning_seconds": _env_float("BOT_CORE_UI_FEED_DOWNTIME_WARNING_SECONDS", 30.0),
-            "downtime_critical_seconds": _env_float("BOT_CORE_UI_FEED_DOWNTIME_CRITICAL_SECONDS", 120.0),
-        }
+        defaults["latency_warning_ms"] = _env_float(
+            "BOT_CORE_UI_FEED_LATENCY_P95_WARNING_MS",
+            defaults["latency_warning_ms"],
+        )
+        defaults["latency_critical_ms"] = _env_float(
+            "BOT_CORE_UI_FEED_LATENCY_P95_CRITICAL_MS",
+            defaults["latency_critical_ms"],
+        )
+        defaults["reconnects_warning"] = _env_int(
+            "BOT_CORE_UI_FEED_RECONNECT_WARNING",
+            defaults["reconnects_warning"],
+        )
+        defaults["reconnects_critical"] = _env_int(
+            "BOT_CORE_UI_FEED_RECONNECT_CRITICAL",
+            defaults["reconnects_critical"],
+        )
+        defaults["downtime_warning_seconds"] = _env_float(
+            "BOT_CORE_UI_FEED_DOWNTIME_WARNING_SECONDS",
+            defaults["downtime_warning_seconds"],
+        )
+        defaults["downtime_critical_seconds"] = _env_float(
+            "BOT_CORE_UI_FEED_DOWNTIME_CRITICAL_SECONDS",
+            defaults["downtime_critical_seconds"],
+        )
+        return defaults
 
     def _mark_feed_disconnected(self) -> None:
         if self._feed_downtime_started is None:

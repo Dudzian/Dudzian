@@ -278,3 +278,86 @@ presets:
     license_index = json.loads(licenses_path.read_text(encoding="utf-8"))
     stored_entry = license_index["licenses"]["automation-ai"]
     assert stored_entry["allowed_fingerprints"] == ["device-001"]
+
+
+def test_sync_and_submit_reviews(capsys, preset_dir, signing_key):
+    preset_file = preset_dir / "automation.json"
+    _write_preset(preset_file, preset_id="automation-ai", fingerprint="community", signing_key=signing_key)
+
+    licenses_path = preset_dir.parent / "licenses_index.json"
+    licenses_path.write_text(
+        json.dumps({"licenses": {"automation-ai": {"seatSummary": {"total": 1}}}}, ensure_ascii=False, indent=2),
+        encoding="utf-8",
+    )
+
+    reviews_dir = preset_dir.parent / "reviews"
+    reviews_dir.mkdir()
+    review_payload = {
+        "review_id": "rvw-automation-qa",
+        "preset_id": "automation-ai",
+        "rating": 5,
+        "comment": "Stabilny preset QA.",
+        "author": "QA",
+        "submitted_at": "2025-01-01T00:00:00Z",
+    }
+    signature = build_hmac_signature(review_payload, key=signing_key, key_id="catalog")
+    review_doc = {
+        "preset_id": "automation-ai",
+        "updated_at": "2025-01-02T00:00:00Z",
+        "reviews": [{**review_payload, "signature": signature}],
+    }
+    review_path = reviews_dir / "automation-ai.json"
+    review_path.write_text(json.dumps(review_doc, ensure_ascii=False, indent=2), encoding="utf-8")
+
+    bridge.main(
+        [
+            f"--presets-dir={preset_dir}",
+            f"--licenses-path={licenses_path}",
+            f"--signing-key=catalog={signing_key.hex()}",
+            "sync-reviews",
+            f"--source-dir={reviews_dir}",
+        ]
+    )
+    sync_output = json.loads(capsys.readouterr().out)
+    assert sync_output["preset_count"] == 1
+
+    meta_path = preset_dir / ".meta" / "reviews.json"
+    assert meta_path.exists()
+    meta = json.loads(meta_path.read_text(encoding="utf-8"))
+    assert meta["presets"]["automation-ai"]["reviewCount"] == 1
+
+    list_args = [
+        f"--presets-dir={preset_dir}",
+        f"--licenses-path={licenses_path}",
+        f"--signing-key=catalog={signing_key.hex()}",
+        "list",
+    ]
+    bridge.main(list_args)
+    listing = json.loads(capsys.readouterr().out)
+    community = listing["presets"][0]["community"]
+    assert community["reviewCount"] == 1
+    assert community["averageRating"] == 5
+
+    bridge.main(
+        [
+            f"--presets-dir={preset_dir}",
+            f"--licenses-path={licenses_path}",
+            f"--signing-key=catalog={signing_key.hex()}",
+            "submit-review",
+            "--preset-id",
+            "automation-ai",
+            "--rating",
+            "4",
+            "--comment",
+            "Manualny wpis community",
+            f"--reviews-dir={reviews_dir}",
+            "--review-key-id",
+            "catalog",
+        ]
+    )
+    submit_output = json.loads(capsys.readouterr().out)
+    assert submit_output["community"]["reviewCount"] == 2
+
+    bridge.main(list_args)
+    updated = json.loads(capsys.readouterr().out)
+    assert updated["presets"][0]["community_review_count"] == 2

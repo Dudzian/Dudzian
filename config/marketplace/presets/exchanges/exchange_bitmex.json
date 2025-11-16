@@ -171,6 +171,126 @@
         }
       }
     ]
+  },
+  "catalog": {
+    "schema_version": "1.1",
+    "package_id": "exchange_bitmex.v1",
+    "display_name": "BitMEX Exchange Environments",
+    "summary": "Preset środowisk paper/testnet/live dla giełdy BitMEX.",
+    "description": "Pakiet udostępnia kompletny zestaw środowisk i guardraili dla integracji BitMEX.",
+    "version": "1.0.0+community",
+    "revision": "2025.01",
+    "release_date": "2025-01-15T09:30:00Z",
+    "maintainers": [
+      {
+        "name": "Marketplace Labs",
+        "email": "marketplace@example.com",
+        "organization": "Marketplace Guild",
+        "role": "maintainer"
+      }
+    ],
+    "license": {
+      "name": "Marketplace Evaluation License",
+      "spdx_id": "Proprietary",
+      "url": "https://configs.example.com/licenses/marketplace-eval",
+      "terms_summary": "Do użytku ewaluacyjnego.",
+      "redistributable": false,
+      "commercial_use": false
+    },
+    "tags": [
+      "exchange",
+      "bitmex"
+    ],
+    "data_requirements": {
+      "inputs": [
+        {
+          "asset_type": "market",
+          "provider": "ccxt.bitmex",
+          "access_level": "restricted",
+          "retention_days": 7,
+          "min_history_days": 2,
+          "sampling": "1m"
+        }
+      ],
+      "requires_personal_data": false,
+      "requires_realtime_access": true,
+      "pii_handling_notes": "Preset wymaga jedynie kluczy API BitMEX."
+    },
+    "distribution": [
+      {
+        "name": "preset-document",
+        "uri": "packages/exchanges/exchange_bitmex_v1.json",
+        "kind": "preset",
+        "description": "Podpisany preset środowisk BitMEX.",
+        "signature": {
+          "algorithm": "HMAC-SHA256",
+          "key_id": "dev-hmac",
+          "signed_fields": [
+            "package_id",
+            "version",
+            "artifact",
+            "uri",
+            "sha256"
+          ]
+        }
+      }
+    ],
+    "compatibility": [
+      {
+        "component": "bot_core",
+        "minimum": "5.2.0",
+        "recommended": "5.3.1",
+        "notes": "Zweryfikowano z adapterem Stage6 BitMEX"
+      }
+    ],
+    "documentation_url": "https://configs.example.com/marketplace/exchanges/bitmex",
+    "release_notes": [
+      "Pierwsze publiczne wydanie presetów środowisk BitMEX.",
+      "Dodano guardraile watchdog i monitoring API."
+    ],
+    "security": {
+      "mode": "none",
+      "allowed_fingerprints": [],
+      "require_strict_match": false,
+      "audit_message": "Brak ograniczeń fingerprint dla presetów exchange."
+    },
+    "release": {
+      "channel": "beta",
+      "review_status": "approved",
+      "reviewers": [
+        {
+          "name": "Integration QA",
+          "email": "integration.qa@example.com",
+          "role": "qa"
+        }
+      ],
+      "ticket": "https://jira.example.com/browse/MKT-1450",
+      "approved_at": "2025-01-15T09:30:00Z",
+      "notes": "Publiczna certyfikacja presetów środowiskowych."
+    },
+    "exchange_compatibility": [
+      {
+        "exchange": "BITMEX",
+        "environments": [
+          "paper",
+          "testnet",
+          "live"
+        ],
+        "trading_modes": [
+          "futures"
+        ],
+        "status": "beta",
+        "last_verified_at": "2025-01-14T09:00:00Z",
+        "notes": "Preset zweryfikowany w Stage6 sandbox dla BitMEX."
+      }
+    ],
+    "versioning": {
+      "channel": "beta",
+      "iteration": "minor",
+      "supersedes": [],
+      "superseded_by": [],
+      "migration_required": false,
+      "source": "exchanges/exchange_bitmex.json"
+    }
   }
 }
-

@@ -1682,12 +1682,25 @@ class RuntimeObservabilityAlertSettings:
 
 
 @dataclass(slots=True)
+class RuntimeFeedSLASettings:
+    """Progi SLA dla decision feedu wykorzystywane w alertach UI/HyperCare."""
+
+    latency_warning_ms: float | None = None
+    latency_critical_ms: float | None = None
+    reconnects_warning: float | None = None
+    reconnects_critical: float | None = None
+    downtime_warning_seconds: float | None = None
+    downtime_critical_seconds: float | None = None
+
+
+@dataclass(slots=True)
 class RuntimeObservabilitySettings:
     """Zunifikowana konfiguracja obserwowalności runtime."""
 
     prometheus: RuntimeObservabilityMetricsSettings | None = None
     alerts: RuntimeObservabilityAlertSettings | None = None
     enable_log_metrics: bool = True
+    feed_sla: RuntimeFeedSLASettings | None = None
 
 
 @dataclass(slots=True)
@@ -1984,6 +1997,7 @@ __all__ = [
     "RuntimeExecutionSettings",
     "RuntimeObservabilityMetricsSettings",
     "RuntimeObservabilityAlertSettings",
+    "RuntimeFeedSLASettings",
     "RuntimeObservabilitySettings",
     "AutoTraderModeParameterRange",
     "AutoTraderModeProfileConfig",

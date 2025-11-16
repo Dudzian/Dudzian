@@ -24,7 +24,14 @@ Szczegółowe instrukcje znajdują się w dokumentacji:
 - [Plan wsparcia](docs/support/plan.md)
 - [Instalacja i budowa instalatorów](docs/deployment/installer_build.md)
 - [Monitorowanie offline](docs/monitoring_offline.md)
+- [Raport katalogu presetów (2025-01-15)](reports/strategy/presets_2025-01-15.md)
+- Walidacja katalogu: `python scripts/validate_marketplace_presets.py --presets config/marketplace/presets --min-count 15`
 - [Benchmark Stage6 vs CryptoHopper](docs/benchmark/cryptohopper_comparison.md)
+
+## Alerty SLA feedu i HyperCare
+- Progi SLA (`latencja p95`, reconnecty, downtime) konfigurujesz w `observability.feed_sla` w `config/runtime.yaml`. Domyślne wartości (2.5/5 s, 3/6 reconnectów, 30/120 s downtime) są zgodne z runbookiem HyperCare i mogą być nadpisane zmiennymi środowiskowymi `BOT_CORE_UI_FEED_*`.
+- Desktopowy `RuntimeService` korzysta z `UiTelemetryAlertSink`, aby każdą zmianę stanu (`warning`, `critical`, `recovered`) wysłać do kanałów HyperCare (Telegram/Signal/e-mail) oraz zapisać w `logs/ui_telemetry_alerts.jsonl`.
+- Jeśli w `config/runtime.yaml` włączysz sekcję `cloud.enabled: true` i wskażesz profil zdalny (np. `staging-cloud` → `config/cloud/client.yaml`), to kanał `cloud:<profil>` zostanie zarejestrowany automatycznie i wszystkie alerty feedu będą przekazywane do serwera `bot_core.cloud` (RPC `CloudAlertService`). Włączenie trybu odbywa się przez `python scripts/run_local_bot.py --enable-cloud-runtime` albo flagę UI.
 
 ## Tryb cloud/serwerowy (behind flag)
 - Moduł `bot_core.cloud` udostępnia serwer gRPC, który można uruchomić osobnym procesem: `python scripts/run_cloud_service.py --config config/cloud/server.yaml --emit-stdout`.
