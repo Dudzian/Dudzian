@@ -24,6 +24,10 @@ if repo_entry not in sys.path:
     sys.path.insert(0, repo_entry)
 
 from bot_core.cloud import CloudRuntimeService, load_cloud_server_config
+from bot_core.security.cloud_flag import (
+    CloudFlagValidationError,
+    validate_runtime_cloud_flag,
+)
 
 
 def _configure_logging(level: str) -> None:
@@ -78,6 +82,15 @@ def main(argv: Iterable[str] | None = None) -> int:
     except Exception as exc:
         logging.getLogger(__name__).error("Nie udało się załadować konfiguracji cloud: %s", exc)
         return 2
+
+    try:
+        validate_runtime_cloud_flag(config.runtime.config_path)
+    except CloudFlagValidationError as exc:
+        logging.getLogger(__name__).error(
+            "Walidacja podpisanej flagi cloudowej nie powiodła się: %s",
+            exc,
+        )
+        return 4
 
     service = CloudRuntimeService(
         config,

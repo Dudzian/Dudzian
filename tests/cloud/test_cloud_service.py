@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import base64
 import json
+import os
 import signal
 import subprocess
 import sys
@@ -15,6 +17,15 @@ from google.protobuf import empty_pb2
 
 from bot_core.cloud import CloudRuntimeService, CloudServerConfig, CloudRuntimeConfig
 from bot_core.generated import trading_pb2, trading_pb2_grpc
+from bot_core.security.signing import build_hmac_signature
+
+
+def _write_signed_flag(flag_path: Path, signature_path: Path, secret: bytes, payload: dict[str, Any] | None = None) -> dict[str, Any]:
+    document = payload or {"enabled": True, "issued_by": "pytest", "nonce": "cloud"}
+    flag_path.write_text(json.dumps(document, ensure_ascii=False), encoding="utf-8")
+    signature = build_hmac_signature(document, key=secret)
+    signature_path.write_text(json.dumps(signature, ensure_ascii=False), encoding="utf-8")
+    return document
 
 
 class _DummyServer:
@@ -74,6 +85,15 @@ def test_cloud_runtime_service_registers_extra_servicer(monkeypatch):
 @pytest.mark.integration
 @pytest.mark.requires_trading_stubs
 def test_cloud_cli_serves_core_services(tmp_path: Path):
+    flag_path = Path("var/runtime/cloud_flag.json")
+    signature_path = Path("var/runtime/cloud_flag.sig")
+    flag_path.parent.mkdir(parents=True, exist_ok=True)
+    secret = b"cloud-runtime-flag"
+    _write_signed_flag(flag_path, signature_path, secret)
+
+    env = os.environ.copy()
+    env["CLOUD_RUNTIME_FLAG_SECRET"] = f"base64:{base64.b64encode(secret).decode('ascii')}"
+
     config_path = tmp_path / "cloud.yaml"
     config_path.write_text(
         """
@@ -94,6 +114,7 @@ marketplace:
         stdout=subprocess.PIPE,
         stderr=subprocess.STDOUT,
         text=True,
+        env=env,
     )
     try:
         for _ in range(120):
@@ -150,3 +171,44 @@ marketplace:
     finally:
         proc.send_signal(signal.SIGINT)
         proc.wait(timeout=20)
+
+
+@pytest.mark.integration
+def test_cloud_cli_rejects_invalid_flag(tmp_path: Path):
+    flag_path = Path("var/runtime/cloud_flag.json")
+    signature_path = Path("var/runtime/cloud_flag.sig")
+    flag_path.parent.mkdir(parents=True, exist_ok=True)
+
+    secret = b"cloud-runtime-flag"
+    env = os.environ.copy()
+    env["CLOUD_RUNTIME_FLAG_SECRET"] = f"base64:{base64.b64encode(secret).decode('ascii')}"
+
+    # zapisujemy podpis wygenerowany na innym sekrecie, aby walidacja się nie powiodła
+    _write_signed_flag(flag_path, signature_path, b"invalid-secret")
+
+    config_path = tmp_path / "cloud.yaml"
+    config_path.write_text(
+        """
+host: 127.0.0.1
+port: 0
+runtime:
+  config_path: config/runtime.yaml
+  entrypoint: trading_gui
+license:
+  enabled: false
+marketplace:
+  refresh_interval_seconds: 1
+""".strip()
+    )
+
+    result = subprocess.run(
+        [sys.executable, "scripts/run_cloud_service.py", "--config", str(config_path)],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        text=True,
+        env=env,
+        check=False,
+    )
+
+    assert result.returncode == 4
+    assert "Walidacja podpisanej flagi cloudowej" in (result.stdout or "")

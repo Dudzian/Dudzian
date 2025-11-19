@@ -38,6 +38,38 @@ Szczegółowe instrukcje znajdują się w dokumentacji:
 - Progi SLA (`latencja p95`, reconnecty, downtime) konfigurujesz w `observability.feed_sla` w `config/runtime.yaml`. Domyślne wartości (2.5/5 s, 3/6 reconnectów, 30/120 s downtime) są zgodne z runbookiem HyperCare i mogą być nadpisane zmiennymi środowiskowymi `BOT_CORE_UI_FEED_*`.
 - Desktopowy `RuntimeService` korzysta z `UiTelemetryAlertSink`, aby każdą zmianę stanu (`warning`, `critical`, `recovered`) wysłać do kanałów HyperCare (Telegram/Signal/e-mail) oraz zapisać w `logs/ui_telemetry_alerts.jsonl`.
 - Jeśli włączysz flagę `--enable-cloud-runtime` w `scripts/run_local_bot.py` (lub odpowiednik w UI), proces nie startuje lokalnego runtime, tylko publikuje payload `ready` opisujący klienta z `config/cloud/client.yaml`. Ten sam plik jest używany w UI (`runtimeService.cloudRuntimeStatus`) – można więc jednym kliknięciem przełączać się lokalnie ↔ cloud oraz widzieć status handshake’u HWID/licencji.
+- Aktywacja flagi cloudowej wymaga podpisanej deklaracji `cloud.enabled_signed` w `config/runtime.yaml`. Domyślny wpis wskazuje na `var/runtime/cloud_flag.json` i podpis `var/runtime/cloud_flag.sig`, które muszą zostać potwierdzone HMAC (`CLOUD_RUNTIME_FLAG_SECRET`) albo Ed25519 zanim `bot_core/runtime/local_gateway.py` przyjmie `--enable-cloud-runtime` lub `scripts/run_cloud_service.py` wystartuje backend.
+- Przykładowy workflow HMAC: właściciel eksportuje sekret (`export CLOUD_RUNTIME_FLAG_SECRET=base64:...`), tworzy payload `{"enabled": true, "issued_by": "SecOps", "expires_at": "2025-01-31T23:59:59Z"}` i podpisuje go helperem `bot_core.security.signing.build_hmac_signature`:
+
+```bash
+python - <<'PY'
+import json, os, base64
+from pathlib import Path
+from bot_core.security.signing import build_hmac_signature
+
+payload = {
+    "enabled": True,
+    "issued_by": "SecOps",
+    "expires_at": "2025-01-31T23:59:59Z",
+    "reason": "Go-live window"
+}
+flag_path = Path("var/runtime/cloud_flag.json")
+sig_path = Path("var/runtime/cloud_flag.sig")
+secret_value = os.environ["CLOUD_RUNTIME_FLAG_SECRET"]
+if secret_value.startswith("base64:"):
+    key = base64.b64decode(secret_value[7:])
+elif secret_value.startswith("hex:"):
+    key = bytes.fromhex(secret_value[4:])
+else:
+    key = secret_value.encode("utf-8")
+flag_path.parent.mkdir(parents=True, exist_ok=True)
+flag_path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+signature = build_hmac_signature(payload, key=key)
+sig_path.write_text(json.dumps(signature, ensure_ascii=False, indent=2), encoding="utf-8")
+PY
+```
+
+Wariant Ed25519 polega na podpisaniu `bot_core.security.signing.canonical_json_bytes(payload)` prywatnym kluczem i zapisaniu wartości base64 w `cloud_flag.sig`. Dzięki temu zarówno klient UI, jak i serwer wymuszą, by tylko właściciel mógł aktywować tryb cloud.
 
 ## Tryb cloud/serwerowy (behind flag)
 - Moduł `bot_core.cloud` udostępnia serwer gRPC, który można uruchomić osobnym procesem: `python scripts/run_cloud_service.py --config config/cloud/server.yaml --emit-stdout`.
