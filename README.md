@@ -18,6 +18,12 @@ Repozytorium zawiera kompletny stack aplikacji desktopowej do automatycznego han
 4. Uruchom pipeline papierowy: `poetry run python scripts/run_local_bot.py --paper`.
 5. Uruchom nowy klient PySide6 (`python -m ui.pyside_app --config ui/config/example.yaml`) i przeprowadź konfigurację w kreatorze.
 
+`AutoTraderAIGovernorRunner` udostępnia oficjalne metody `run_cycle()` (manualny krok decyzji)
+i `run_until()` (tryb launch-and-forget). `scripts/run_local_bot.py` po zbudowaniu pipeline
+wykonuje kilka cykli runnera na rzeczywistym `DecisionOrchestratorze` i publikuje snapshot
+AI Governora w komunikacie `ready`, więc UI natychmiast otrzymuje historię trybów
+scalping/hedge/grid nawet przed nawiązaniem feedu gRPC.
+
 Szczegółowe instrukcje znajdują się w dokumentacji:
 - [Przewodnik użytkownika](docs/user_manual/index.md)
 - [Troubleshooting](docs/user_manual/troubleshooting.md)

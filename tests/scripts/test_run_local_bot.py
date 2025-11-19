@@ -5,6 +5,7 @@ import sys
 import types
 from types import SimpleNamespace
 from pathlib import Path
+from typing import Any
 
 import pytest
 
@@ -337,3 +338,78 @@ def test_collects_paper_exchange_metrics(
     assert metrics_summary["kraken_desktop_paper"]["network_errors"] == 1.0
     assert metrics_summary["kraken_desktop_paper"]["health_status"] == 1.0
     assert metrics_summary["okx_desktop_paper"]["network_errors"] == 3.0
+
+
+def test_build_runtime_ai_governor_snapshot_uses_runner(monkeypatch: pytest.MonkeyPatch) -> None:
+    bootstrap = SimpleNamespace(decision_orchestrator=object())
+    context = SimpleNamespace(pipeline=SimpleNamespace(bootstrap=bootstrap))
+    recorded: dict[str, Any] = {"modes": []}
+
+    class _RunnerStub:
+        def __init__(self, orchestrator):
+            recorded["orchestrator"] = orchestrator
+
+        def run_until(self, *, mode=None, limit=None):  # pragma: no cover - prosty stub
+            recorded.setdefault("modes", []).append(mode)
+            return ()
+
+        def snapshot(self):  # pragma: no cover - prosty stub
+            return {"last_decision": {"mode": "hedge"}, "history": []}
+
+    monkeypatch.setattr(run_local_bot, "AutoTraderAIGovernorRunner", _RunnerStub)
+
+    snapshot = run_local_bot._build_runtime_ai_governor_snapshot(context, history_limit=6)
+
+    assert snapshot == {"last_decision": {"mode": "hedge"}, "history": []}
+    assert recorded["orchestrator"] is bootstrap.decision_orchestrator
+    assert recorded["modes"] == ["scalping", "hedge", "grid"]
+
+
+def test_build_runtime_ai_governor_snapshot_handles_missing_orchestrator() -> None:
+    context = SimpleNamespace(pipeline=SimpleNamespace(bootstrap=SimpleNamespace(decision_orchestrator=None)))
+
+    snapshot = run_local_bot._build_runtime_ai_governor_snapshot(context)
+
+    assert snapshot is None
+
+
+def test_local_mode_prefers_runtime_snapshot(
+    tmp_path: Path,
+    _stub_dependencies: SimpleNamespace,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    sentinel = {"last_decision": {"mode": "grid"}, "history": []}
+
+    def _fake_runtime_snapshot(context, history_limit=12):  # pragma: no cover - prosty stub
+        del context, history_limit
+        return sentinel
+
+    monkeypatch.setattr(run_local_bot, "_build_runtime_ai_governor_snapshot", _fake_runtime_snapshot)
+
+    config_file = _create_runtime_file(tmp_path)
+    state_dir = tmp_path / "state"
+    report_dir = tmp_path / "reports"
+    markdown_dir = tmp_path / "markdown"
+
+    exit_code = run_local_bot.main(
+        [
+            "--config",
+            str(config_file),
+            "--entrypoint",
+            "demo_desktop",
+            "--mode",
+            "demo",
+            "--state-dir",
+            str(state_dir),
+            "--report-dir",
+            str(report_dir),
+            "--report-markdown-dir",
+            str(markdown_dir),
+        ]
+    )
+
+    assert exit_code == 0
+    report_files = list(report_dir.glob("run_local_bot_demo_*.json"))
+    assert report_files
+    payload = json.loads(report_files[0].read_text(encoding="utf-8"))
+    assert payload["ai_governor"] == sentinel

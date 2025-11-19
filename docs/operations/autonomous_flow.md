@@ -70,3 +70,26 @@ dysk) oraz `DecisionAuditLog` uzyskujemy pełną ścieżkę audytu:
 Wdrożenie wymaga jedynie skonfigurowania scheduler-a i menedżera cyklu życia —
 pozostałe elementy AutoTradera (journal, audit, alerty) podłączają się
 automatycznie poprzez bootstrap.
+
+## AI Governor – entrypoint manualny i launch-and-forget
+
+`AutoTraderAIGovernorRunner` kapsułkuje `DecisionOrchestrator`, dzięki czemu
+możemy zasilać UI oraz raporty demo bez grzebania w polach prywatnych
+orkiestratora. Runner udostępnia dwa scenariusze pracy:
+
+1. `run_cycle()` – pojedynczy krok wykonywany ręcznie (np. w trakcie testów,
+   warsztatów lub budowania materiałów marketingowych). Metoda sama pobiera
+   `MarketRegimeAssessment`, telemetry ryzyka/cyklu i szacowany koszt decyzji,
+   po czym aktualizuje historię AI Governora.
+2. `run_until(mode=..., limit=...)` – tryb launch-and-forget, który pętli cykle
+   aż do osiągnięcia wskazanego trybu (scalping/hedge/grid) lub spełnienia
+   predykatu. Z tego trybu korzysta m.in. `scripts/run_local_bot.py`, dzięki
+   czemu snapshot `ai_governor` trafia do komunikatu `ready` oraz raportu E2E.
+
+`RuntimeService.reloadAiGovernorSnapshot` używa tego samego runnera w trybie
+demo, więc fallback QML nie musi już ręcznie manipulować schedulerem ani
+bezpośrednio dotykać instancji AutoTradera. `scripts/run_local_bot.py` po
+zbudowaniu pipeline papierowego wykonuje sekwencję `run_until()` dla
+scalping/hedge/grid na tym samym orchestratorze, a snapshot trafia do eventu
+`ready`, dzięki czemu operator widzi w UI faktyczny stan rekomendacji jeszcze
+przed uruchomieniem pierwszych cykli decyzyjnych.
