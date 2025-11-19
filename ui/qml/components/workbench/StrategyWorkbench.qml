@@ -269,6 +269,7 @@ Item {
                                  ? root.appController.runtimeService()
                                  : (typeof runtimeService !== "undefined" ? runtimeService : null)
                 marketplaceController: root.marketplaceController
+                strategyController: root.strategyController ? root.strategyController : (typeof strategyController !== "undefined" ? strategyController : null)
                 openStrategyManagerTab: root.openStrategyManagerTab
             }
 

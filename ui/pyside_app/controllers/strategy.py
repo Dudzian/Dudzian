@@ -1,8 +1,10 @@
 """Kontroler zarządzania strategiami i marketplace dla PySide6."""
 from __future__ import annotations
 
+import re
+from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Mapping
+from typing import Any, Iterable, Mapping
 
 from PySide6.QtCore import QObject, Property, Signal, Slot
 
@@ -13,6 +15,8 @@ from bot_core.strategies.installer import MarketplaceInstallResult, MarketplaceP
 from bot_core.ui.api import MarketplaceService
 
 import logging
+
+import yaml
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -112,6 +116,8 @@ class StrategyManagementController(QObject):
     presetsChanged = Signal()
     statusMessageChanged = Signal()
     busyChanged = Signal()
+    bundlePathChanged = Signal()
+    cloudRuntimeEnabledChanged = Signal()
 
     def __init__(
         self,
@@ -125,6 +131,13 @@ class StrategyManagementController(QObject):
         self._presets: list[dict[str, Any]] = []
         self._status_message = ""
         self._busy = False
+        config_dir = self._runtime_path.resolve().parent
+        project_root = config_dir.parent if config_dir.parent != config_dir else config_dir
+        self._project_root = project_root
+        self._bundle_root = (self._project_root / "var" / "runtime" / "bundles").resolve()
+        self._bundle_root.mkdir(parents=True, exist_ok=True)
+        self._last_bundle_path = ""
+        self._cloud_runtime_enabled = self._read_cloud_runtime_flag()
         if self._service is None:
             self._status_message = "Marketplace nie jest skonfigurowany"
         else:
@@ -144,6 +157,16 @@ class StrategyManagementController(QObject):
     @Property(bool, notify=busyChanged)
     def busy(self) -> bool:  # type: ignore[override]
         return self._busy
+
+    # ------------------------------------------------------------------
+    @Property(str, notify=bundlePathChanged)
+    def lastBundlePath(self) -> str:  # type: ignore[override]
+        return self._last_bundle_path
+
+    # ------------------------------------------------------------------
+    @Property(bool, notify=cloudRuntimeEnabledChanged)
+    def cloudRuntimeEnabled(self) -> bool:  # type: ignore[override]
+        return self._cloud_runtime_enabled
 
     # ------------------------------------------------------------------
     @Slot(result=bool)
@@ -166,6 +189,18 @@ class StrategyManagementController(QObject):
     def _set_presets(self, payload: list[dict[str, Any]]) -> None:
         self._presets = payload
         self.presetsChanged.emit()
+
+    # ------------------------------------------------------------------
+    def _set_last_bundle_path(self, path: str) -> None:
+        if self._last_bundle_path != path:
+            self._last_bundle_path = path
+            self.bundlePathChanged.emit()
+
+    # ------------------------------------------------------------------
+    def _set_cloud_runtime_enabled(self, value: bool) -> None:
+        if self._cloud_runtime_enabled != value:
+            self._cloud_runtime_enabled = value
+            self.cloudRuntimeEnabledChanged.emit()
 
     # ------------------------------------------------------------------
     @Slot()
@@ -255,6 +290,87 @@ class StrategyManagementController(QObject):
             self._set_status("Instalacja presetu nie powiodła się")
         return payload
 
+    # ------------------------------------------------------------------
+    @Slot(str, "QVariantList", "QVariantMap", result="QVariantMap")
+    def createPresetBundle(
+        self,
+        bundle_name: str,
+        entries: Iterable[Mapping[str, Any]],
+        options: Mapping[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        bundle_name = (bundle_name or "").strip()
+        normalized_name = bundle_name or f"bundle-{datetime.now(timezone.utc).strftime('%Y%m%d%H%M%S')}"
+        safe_name = _slugify(normalized_name)
+        if not safe_name:
+            return {"success": False, "message": "Nazwa bundla jest wymagana"}
+        selection = _normalize_bundle_entries(entries)
+        if not selection:
+            return {"success": False, "message": "Wybierz co najmniej jeden preset"}
+        opts = dict(options or {})
+        bundle_mode = str(opts.get("bundleMode") or "sequential")
+        cloud_enabled = opts.get("cloudEnabled")
+        payload: dict[str, Any] = {
+            "name": normalized_name,
+            "identifier": safe_name,
+            "created_at": datetime.now(timezone.utc).isoformat(),
+            "bundle_mode": bundle_mode,
+            "cloudEnabled": bool(cloud_enabled) if cloud_enabled is not None else None,
+            "presets": selection,
+        }
+        try:
+            destination = self._bundle_root / f"{safe_name}.yaml"
+            with destination.open("w", encoding="utf-8") as handle:
+                yaml.safe_dump(payload, handle, sort_keys=False, allow_unicode=True)
+        except OSError as exc:
+            _LOGGER.error("Nie udało się zapisać bundla presetów: %s", exc)
+            return {"success": False, "message": str(exc)}
+        self._set_last_bundle_path(str(destination))
+        return {"success": True, "path": str(destination), "bundle": payload}
+
+    # ------------------------------------------------------------------
+    @Slot(bool, result="QVariantMap")
+    def setCloudRuntimeEnabled(self, enabled: bool) -> dict[str, Any]:
+        config = self._load_runtime_config()
+        cloud_section = dict(config.get("cloud") or {})
+        cloud_section["enabled_signed"] = bool(enabled)
+        config["cloud"] = cloud_section
+        try:
+            self._save_runtime_config(config)
+        except OSError as exc:
+            _LOGGER.error("Nie udało się zapisać config/runtime.yaml: %s", exc)
+            return {"success": False, "message": str(exc)}
+        self._set_cloud_runtime_enabled(bool(enabled))
+        return {"success": True, "enabled": self._cloud_runtime_enabled}
+
+    # ------------------------------------------------------------------
+    def _read_cloud_runtime_flag(self) -> bool:
+        config = self._load_runtime_config()
+        cloud_section = config.get("cloud") if isinstance(config, Mapping) else None
+        if isinstance(cloud_section, Mapping):
+            if "enabled_signed" in cloud_section:
+                return bool(cloud_section.get("enabled_signed"))
+            if "enabled" in cloud_section:
+                return bool(cloud_section.get("enabled"))
+        return False
+
+    # ------------------------------------------------------------------
+    def _load_runtime_config(self) -> dict[str, Any]:
+        try:
+            if self._runtime_path.exists():
+                with self._runtime_path.open("r", encoding="utf-8") as handle:
+                    data = yaml.safe_load(handle) or {}
+                    if isinstance(data, Mapping):
+                        return dict(data)
+        except Exception:
+            _LOGGER.debug("Nie udało się wczytać runtime.yaml", exc_info=True)
+        return {}
+
+    # ------------------------------------------------------------------
+    def _save_runtime_config(self, payload: Mapping[str, Any]) -> None:
+        self._runtime_path.parent.mkdir(parents=True, exist_ok=True)
+        with self._runtime_path.open("w", encoding="utf-8") as handle:
+            yaml.safe_dump(dict(payload), handle, sort_keys=False, allow_unicode=True)
+
 
 def _install_result_payload(result: MarketplaceInstallResult) -> dict[str, Any]:
     return {
@@ -267,3 +383,35 @@ def _install_result_payload(result: MarketplaceInstallResult) -> dict[str, Any]:
         "fingerprintVerified": result.fingerprint_verified,
         "licensePayload": result.license_payload,
     }
+
+
+def _slugify(value: str) -> str:
+    normalized = re.sub(r"[^a-zA-Z0-9\-_.]+", "-", value.strip().lower()).strip("-._")
+    return normalized
+
+
+def _normalize_bundle_entries(entries: Iterable[Mapping[str, Any]]) -> list[dict[str, Any]]:
+    sanitized: list[dict[str, Any]] = []
+    for entry in entries or []:
+        if not isinstance(entry, Mapping):
+            continue
+        preset_id = str(entry.get("presetId") or "").strip()
+        if not preset_id:
+            continue
+        label = str(entry.get("label") or preset_id)
+        mode = str(entry.get("mode") or "auto")
+        order_value = entry.get("order")
+        try:
+            order = int(order_value)
+        except (TypeError, ValueError):
+            order = len(sanitized) + 1
+        sanitized.append({
+            "presetId": preset_id,
+            "label": label,
+            "mode": mode,
+            "order": order,
+        })
+    sanitized.sort(key=lambda item: item.get("order", 0))
+    for index, entry in enumerate(sanitized, start=1):
+        entry["order"] = index
+    return sanitized

@@ -2,8 +2,10 @@ import os
 from pathlib import Path
 
 import pytest
+import yaml
 
 from tests.ui._qt import require_pyside6
+from ui.pyside_app.controllers.strategy import StrategyManagementController
 
 pytestmark = pytest.mark.qml
 
@@ -145,6 +147,11 @@ class ReportControllerStub(QObject):
         self.lastNotificationChanged.emit()
 
 
+class MarketplaceStub:
+    def list_presets_payload(self):
+        return []
+
+
 @pytest.mark.timeout(20)
 def test_strategy_management_clone_refreshes_presets(tmp_path: Path) -> None:
     app = QApplication.instance() or QApplication([])
@@ -152,10 +159,17 @@ def test_strategy_management_clone_refreshes_presets(tmp_path: Path) -> None:
     engine = QQmlApplicationEngine()
     runtime_service = RuntimeServiceStub()
     report_controller = ReportControllerStub()
+    runtime_config = tmp_path / "config" / "runtime.yaml"
+    runtime_config.parent.mkdir(parents=True, exist_ok=True)
+    runtime_config.write_text("cloud:\n  enabled_signed: false\n", encoding="utf-8")
+    strategy_controller = StrategyManagementController(
+        marketplace_service=MarketplaceStub(), runtime_config_path=runtime_config
+    )
 
     context = engine.rootContext()
     context.setContextProperty("runtimeService", runtime_service)
     context.setContextProperty("reportController", report_controller)
+    context.setContextProperty("strategyManagementController", strategy_controller)
 
     view_path = Path(__file__).resolve().parents[2] / "ui" / "qml" / "views" / "StrategyManagement.qml"
     engine.load(QUrl.fromLocalFile(str(view_path)))
@@ -194,6 +208,29 @@ def test_strategy_management_clone_refreshes_presets(tmp_path: Path) -> None:
     assert len(saved_presets) == 3
     assert runtime_service.list_calls >= 2
     assert runtime_service.clone_count == 1
+
+    cloud_switch = root.findChild(QObject, "cloudToggle")
+    assert cloud_switch is not None
+    cloud_switch.setProperty("checked", True)
+    app.processEvents()
+    config_data = yaml.safe_load(runtime_config.read_text(encoding="utf-8"))
+    assert config_data["cloud"]["enabled_signed"] is True
+
+    alpha_selector = root.findChild(QObject, "bundleSelector_alpha-momentum")
+    beta_selector = root.findChild(QObject, "bundleSelector_beta-mean")
+    assert alpha_selector is not None and beta_selector is not None
+    alpha_selector.setProperty("checked", True)
+    beta_selector.setProperty("checked", True)
+    bundle_name = root.findChild(QObject, "bundleNameField")
+    assert bundle_name is not None
+    bundle_name.setProperty("text", "AlphaBetaCombo")
+    assert QMetaObject.invokeMethod(root, "triggerBundleExport", Qt.DirectConnection)
+    app.processEvents()
+    assert strategy_controller.lastBundlePath
+    bundle_path = Path(strategy_controller.lastBundlePath)
+    assert bundle_path.exists()
+    payload = yaml.safe_load(bundle_path.read_text(encoding="utf-8"))
+    assert len(payload["presets"]) == 2
 
     for obj in engine.rootObjects():
         obj.deleteLater()

@@ -45,6 +45,11 @@ Frame {
     property var marketplaceController: null
     property var openStrategyManagerTab: null
     property var marketplacePresets: []
+    property var strategyController: null
+    property var bundleSelection: []
+    property bool bundleCloudEnabled: strategyController && strategyController.cloudRuntimeEnabled
+    property bool suppressCloudToggle: false
+    property string bundleStatusMessage: ""
 
     signal snapshotRefreshed()
 
@@ -61,6 +66,25 @@ Frame {
         ignoreUnknownSignals: true
         function onPresetsChanged() {
             marketplacePresets = marketplaceController && marketplaceController.presets ? marketplaceController.presets : []
+        }
+    }
+
+    Connections {
+        target: strategyController
+        ignoreUnknownSignals: true
+        function onCloudRuntimeEnabledChanged() {
+            if (!strategyController)
+                return
+            bundleCloudEnabled = !!strategyController.cloudRuntimeEnabled
+            if (typeof bundleCloudSwitch !== "undefined") {
+                suppressCloudToggle = true
+                bundleCloudSwitch.checked = bundleCloudEnabled
+                suppressCloudToggle = false
+            }
+        }
+        function onBundlePathChanged() {
+            if (strategyController && strategyController.lastBundlePath)
+                bundleStatusMessage = qsTr("Ostatni eksport: %1").arg(strategyController.lastBundlePath)
         }
     }
 
@@ -82,6 +106,127 @@ Frame {
             console.warn("AutoModePanel clone fallback", err)
             return value
         }
+    }
+
+    function bundleController() {
+        if (strategyController)
+            return strategyController
+        if (typeof strategyManagementController !== "undefined")
+            return strategyManagementController
+        return null
+    }
+
+    function bundleSlug(entry) {
+        if (!entry)
+            return ""
+        if (entry.presetId)
+            return entry.presetId
+        if (entry.slug)
+            return entry.slug
+        return entry.name || ""
+    }
+
+    function bundleSelectionIndexForSlug(slug) {
+        if (!slug)
+            return -1
+        for (var i = 0; i < bundleSelection.length; ++i) {
+            if (bundleSelection[i].presetId === slug)
+                return i
+        }
+        return -1
+    }
+
+    function normalizeBundleSelection(source) {
+        if (!source)
+            return []
+        var sorted = source.slice()
+        sorted.sort(function(a, b) { return (a.order || 0) - (b.order || 0) })
+        for (var i = 0; i < sorted.length; ++i)
+            sorted[i].order = i + 1
+        return JSON.parse(JSON.stringify(sorted))
+    }
+
+    function updateBundleSelection(entry, enabled) {
+        var slug = bundleSlug(entry)
+        if (!slug)
+            return
+        var updated = bundleSelection.slice()
+        var index = bundleSelectionIndexForSlug(slug)
+        if (enabled) {
+            if (index === -1)
+                updated.push({ presetId: slug, label: entry.name || slug, mode: "auto", order: updated.length + 1 })
+        } else if (index >= 0) {
+            updated.splice(index, 1)
+        }
+        bundleSelection = normalizeBundleSelection(updated)
+    }
+
+    function setBundleEntryOrder(slug, order) {
+        var updated = bundleSelection.slice()
+        var index = bundleSelectionIndexForSlug(slug)
+        if (index === -1)
+            return
+        updated[index].order = Math.max(1, Math.min(order, updated.length))
+        bundleSelection = normalizeBundleSelection(updated)
+    }
+
+    function setBundleEntryMode(slug, mode) {
+        var updated = bundleSelection.slice()
+        var index = bundleSelectionIndexForSlug(slug)
+        if (index === -1)
+            return
+        updated[index].mode = mode
+        bundleSelection = normalizeBundleSelection(updated)
+    }
+
+    function bundleSelectionPayload() {
+        var payload = []
+        for (var i = 0; i < bundleSelection.length; ++i)
+            payload.push({
+                             presetId: bundleSelection[i].presetId,
+                             label: bundleSelection[i].label,
+                             order: bundleSelection[i].order,
+                             mode: bundleSelection[i].mode
+                         })
+        return payload
+    }
+
+    function triggerBundleExport() {
+        var ctrl = bundleController()
+        if (!ctrl || !ctrl.createPresetBundle) {
+            bundleStatusMessage = qsTr("Bundler niedostępny")
+            return
+        }
+        var selection = bundleSelectionPayload()
+        if (selection.length === 0) {
+            bundleStatusMessage = qsTr("Wybierz presety do eksportu")
+            return
+        }
+        var options = { bundleMode: "sequential", cloudEnabled: bundleCloudSwitch.checked }
+        var result = ctrl.createPresetBundle(autoModePortfolioId() || qsTr("tryb-auto"), selection, options)
+        if (!result || result.success === false) {
+            bundleStatusMessage = result && result.message ? result.message : qsTr("Eksport nie powiódł się")
+            return
+        }
+        bundleStatusMessage = qsTr("Zapisano bundel: %1").arg(result.path)
+    }
+
+    function toggleCloudRuntime(enabled) {
+        var ctrl = bundleController()
+        if (!ctrl || !ctrl.setCloudRuntimeEnabled) {
+            bundleStatusMessage = qsTr("Brak mostka cloud")
+            return
+        }
+        var response = ctrl.setCloudRuntimeEnabled(enabled)
+        if (!response || response.success === false) {
+            bundleStatusMessage = response && response.message ? response.message : qsTr("Aktualizacja cloud nie powiodła się")
+            suppressCloudToggle = true
+            bundleCloudSwitch.checked = !enabled
+            suppressCloudToggle = false
+            return
+        }
+        bundleCloudEnabled = enabled
+        bundleStatusMessage = enabled ? qsTr("Cloud aktywny") : qsTr("Cloud wyłączony")
     }
 
     function applySnapshot(payload) {
@@ -643,6 +788,11 @@ Frame {
                                                     autoModePortfolioId())
                                 }
                             }
+                            CheckBox {
+                                text: qsTr("Eksport")
+                                checked: bundleSelectionIndexForSlug(modelData.presetId || "") >= 0
+                                onToggled: updateBundleSelection(modelData, checked)
+                            }
                         }
                         Rectangle {
                             Layout.fillWidth: true
@@ -650,6 +800,77 @@ Frame {
                             color: palette.mid
                             opacity: 0.3
                         }
+                    }
+                }
+
+                ColumnLayout {
+                    Layout.fillWidth: true
+                    spacing: 6
+                    visible: bundleSelection.length > 0
+                    Label {
+                        text: qsTr("Eksport kombinacji w AutoMode")
+                        font.bold: true
+                    }
+                    RowLayout {
+                        Layout.fillWidth: true
+                        spacing: 8
+                        Switch {
+                            id: bundleCloudSwitch
+                            text: checked ? qsTr("Cloud") : qsTr("Offline")
+                            checked: bundleCloudEnabled
+                            onToggled: {
+                                if (suppressCloudToggle)
+                                    return
+                                toggleCloudRuntime(checked)
+                            }
+                        }
+                        Item { Layout.fillWidth: true }
+                        Button {
+                            text: qsTr("Eksportuj")
+                            icon.name: "document-save"
+                            onClicked: triggerBundleExport()
+                        }
+                    }
+                    Repeater {
+                        model: bundleSelection
+                        delegate: RowLayout {
+                            Layout.fillWidth: true
+                            spacing: 6
+                            Label {
+                                Layout.fillWidth: true
+                                text: modelData.label
+                            }
+                            SpinBox {
+                                from: 1
+                                to: Math.max(1, bundleSelection.length)
+                                value: modelData.order
+                                onValueChanged: setBundleEntryOrder(modelData.presetId, value)
+                            }
+                            ComboBox {
+                                model: [
+                                    { display: qsTr("Auto"), value: "auto" },
+                                    { display: qsTr("Live"), value: "live" },
+                                    { display: qsTr("Paper"), value: "paper" }
+                                ]
+                                textRole: "display"
+                                valueRole: "value"
+                                currentIndex: {
+                                    for (var i = 0; i < model.length; ++i) {
+                                        if (model[i].value === modelData.mode)
+                                            return i
+                                    }
+                                    return 0
+                                }
+                                onActivated: setBundleEntryMode(modelData.presetId, currentValue)
+                            }
+                        }
+                    }
+                    Label {
+                        Layout.fillWidth: true
+                        wrapMode: Text.WordWrap
+                        visible: bundleStatusMessage.length > 0
+                        text: bundleStatusMessage
+                        color: bundleStatusMessage.indexOf("nie") >= 0 ? "firebrick" : palette.highlight
                     }
                 }
             }

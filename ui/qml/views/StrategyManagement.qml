@@ -42,6 +42,12 @@ Item {
     property string pendingPromotionModel: ""
     property string pendingPromotionVersion: ""
     property string pendingPromotionReason: ""
+    property var strategyController: (typeof strategyManagementController !== "undefined" ? strategyManagementController : null)
+    property var bundleSelection: []
+    property string bundleMode: "sequential"
+    property bool bundleCloudEnabled: strategyController && strategyController.cloudRuntimeEnabled
+    property bool suppressCloudToggle: false
+    property string bundleStatusMessage: ""
 
     function resetPresetPreview() {
         presetPreview = null
@@ -52,6 +58,143 @@ Item {
 
     function resetArchivePreview() {
         archivePreviewInfo = null
+    }
+
+    function bundleController() {
+        if (root.strategyController)
+            return root.strategyController
+        if (typeof strategyManagementController !== "undefined")
+            return strategyManagementController
+        return null
+    }
+
+    function bundleSlug(entry) {
+        if (!entry)
+            return ""
+        if (entry.slug)
+            return entry.slug
+        if (entry.path)
+            return entry.path
+        if (entry.name)
+            return entry.name
+        if (entry.presetId)
+            return entry.presetId
+        return ""
+    }
+
+    function bundleSelectionIndexForSlug(slug) {
+        if (!slug)
+            return -1
+        for (var i = 0; i < bundleSelection.length; ++i) {
+            if (bundleSelection[i].presetId === slug)
+                return i
+        }
+        return -1
+    }
+
+    function normalizeBundleSelection(source) {
+        if (!source)
+            return []
+        var sorted = source.slice()
+        sorted.sort(function(a, b) { return (a.order || 0) - (b.order || 0) })
+        for (var i = 0; i < sorted.length; ++i)
+            sorted[i].order = i + 1
+        return JSON.parse(JSON.stringify(sorted))
+    }
+
+    function updateBundleSelection(entry, enabled) {
+        var slug = bundleSlug(entry)
+        if (!slug)
+            return
+        var updated = bundleSelection.slice()
+        var index = bundleSelectionIndexForSlug(slug)
+        if (enabled) {
+            if (index === -1) {
+                updated.push({
+                                 presetId: slug,
+                                 label: entry.label || entry.name || slug,
+                                 mode: "auto",
+                                 order: updated.length + 1
+                             })
+            }
+        } else if (index >= 0) {
+            updated.splice(index, 1)
+        }
+        bundleSelection = normalizeBundleSelection(updated)
+    }
+
+    function setBundleEntryOrder(slug, order) {
+        var updated = bundleSelection.slice()
+        var index = bundleSelectionIndexForSlug(slug)
+        if (index === -1)
+            return
+        updated[index].order = Math.max(1, Math.min(order, updated.length))
+        bundleSelection = normalizeBundleSelection(updated)
+    }
+
+    function setBundleEntryMode(slug, mode) {
+        var updated = bundleSelection.slice()
+        var index = bundleSelectionIndexForSlug(slug)
+        if (index === -1)
+            return
+        updated[index].mode = mode
+        bundleSelection = normalizeBundleSelection(updated)
+    }
+
+    function bundleSelectionPayload() {
+        var payload = []
+        for (var i = 0; i < bundleSelection.length; ++i)
+            payload.push({
+                             presetId: bundleSelection[i].presetId,
+                             label: bundleSelection[i].label,
+                             order: bundleSelection[i].order,
+                             mode: bundleSelection[i].mode
+                         })
+        return payload
+    }
+
+    function triggerBundleExport() {
+        var ctrl = bundleController()
+        if (!ctrl || !ctrl.createPresetBundle) {
+            bundleStatusMessage = qsTr("Mostek bundlera nie jest dostępny")
+            return
+        }
+        var selection = bundleSelectionPayload()
+        if (selection.length === 0) {
+            bundleStatusMessage = qsTr("Wybierz presety do eksportu")
+            return
+        }
+        var bundleName = bundleNameField.text && bundleNameField.text.length > 0
+                ? bundleNameField.text
+                : qsTr("pakiet presetów")
+        var options = {
+            bundleMode: bundleModeSelector.currentValue,
+            cloudEnabled: bundleCloudSwitch.checked
+        }
+        var result = ctrl.createPresetBundle(bundleName, selection, options)
+        if (!result || result.success === false) {
+            bundleStatusMessage = result && result.message ? result.message : qsTr("Eksport nie powiódł się")
+            return
+        }
+        bundleStatusMessage = qsTr("Zapisano konfigurację w %1").arg(result.path)
+    }
+
+    function toggleCloudRuntime(enabled) {
+        var ctrl = bundleController()
+        if (!ctrl || !ctrl.setCloudRuntimeEnabled) {
+            bundleStatusMessage = qsTr("Mostek cloud nie jest dostępny")
+            return
+        }
+        var response = ctrl.setCloudRuntimeEnabled(enabled)
+        if (!response || response.success === false) {
+            bundleStatusMessage = response && response.message ? response.message : qsTr("Nie udało się zaktualizować trybu cloud")
+            suppressCloudToggle = true
+            bundleCloudSwitch.checked = !enabled
+            suppressCloudToggle = false
+            return
+        }
+        bundleCloudEnabled = enabled
+        bundleStatusMessage = enabled ? qsTr("Aktywowano runtime cloud") : qsTr("Przełączono na tryb offline")
     }
 
     function refreshPresets() {
@@ -439,6 +582,27 @@ Item {
         }
     }
 
+    Connections {
+        target: strategyController
+        ignoreUnknownSignals: true
+
+        function onCloudRuntimeEnabledChanged() {
+            if (!strategyController)
+                return
+            bundleCloudEnabled = !!strategyController.cloudRuntimeEnabled
+            if (typeof bundleCloudSwitch !== "undefined") {
+                suppressCloudToggle = true
+                bundleCloudSwitch.checked = bundleCloudEnabled
+                suppressCloudToggle = false
+            }
+        }
+
+        function onBundlePathChanged() {
+            if (strategyController && strategyController.lastBundlePath)
+                bundleStatusMessage = qsTr("Ostatni eksport: %1").arg(strategyController.lastBundlePath)
+        }
+    }
+
     Component.onCompleted: {
         refreshPresets()
         refreshChampion()
@@ -722,65 +886,184 @@ Item {
                         Layout.fillHeight: true
                         clip: true
 
-                        ListView {
-                            id: presetList
-                            objectName: "presetList"
-                            anchors.fill: parent
-                            spacing: 8
-                            model: savedPresets
-                            onCurrentIndexChanged: {
-                                selectedPresetIndex = currentIndex
-                                if (currentIndex >= 0 && currentIndex < savedPresets.length)
-                                    previewPresetEntry(savedPresets[currentIndex])
-                            }
-                            delegate: Frame {
-                                Layout.fillWidth: true
-                                property var presetData: modelData || ({})
-                                background: Rectangle {
-                                    color: Qt.darker(palette.window, 1.08)
-                                    radius: 6
-                                }
-                                ColumnLayout {
-                                    anchors.fill: parent
-                                    anchors.margins: 10
-                                    spacing: 6
+                        ColumnLayout {
+                            width: parent.width
+                            spacing: 12
 
-                                    Label {
-                                        text: presetData.label || presetData.name || presetData.slug || qsTr("Preset bez nazwy")
-                                        font.bold: true
+                            ListView {
+                                id: presetList
+                                objectName: "presetList"
+                                Layout.fillWidth: true
+                                Layout.fillHeight: true
+                                spacing: 8
+                                model: savedPresets
+                                onCurrentIndexChanged: {
+                                    selectedPresetIndex = currentIndex
+                                    if (currentIndex >= 0 && currentIndex < savedPresets.length)
+                                        previewPresetEntry(savedPresets[currentIndex])
+                                }
+                                delegate: Frame {
+                                    Layout.fillWidth: true
+                                    property var presetData: modelData || ({})
+                                    background: Rectangle {
+                                        color: Qt.darker(palette.window, 1.08)
+                                        radius: 6
                                     }
-                                    Label {
-                                        text: presetData.description || presetData.source || presetData.path || qsTr("Lokalny preset")
-                                        color: palette.mid
-                                        wrapMode: Text.Wrap
-                                    }
-                                    RowLayout {
-                                        Layout.fillWidth: true
-                                        spacing: 8
-                                        Button {
-                                            text: qsTr("Wczytaj")
-                                            icon.name: "document-open"
-                                            onClicked: loadPreset(presetData)
+                                    ColumnLayout {
+                                        anchors.fill: parent
+                                        anchors.margins: 10
+                                        spacing: 6
+
+                                        Label {
+                                            text: presetData.label || presetData.name || presetData.slug || qsTr("Preset bez nazwy")
+                                            font.bold: true
                                         }
-                                        Button {
-                                            text: qsTr("Porównaj")
-                                            icon.name: "view-list-details"
-                                            onClicked: {
-                                                presetList.currentIndex = index
-                                                previewPresetEntry(presetData)
+                                        Label {
+                                            text: presetData.description || presetData.source || presetData.path || qsTr("Lokalny preset")
+                                            color: palette.mid
+                                            wrapMode: Text.Wrap
+                                        }
+                                        RowLayout {
+                                            Layout.fillWidth: true
+                                            spacing: 8
+                                            Button {
+                                                text: qsTr("Wczytaj")
+                                                icon.name: "document-open"
+                                                onClicked: loadPreset(presetData)
+                                            }
+                                            Button {
+                                                text: qsTr("Porównaj")
+                                                icon.name: "view-list-details"
+                                                onClicked: {
+                                                    presetList.currentIndex = index
+                                                    previewPresetEntry(presetData)
+                                                }
+                                            }
+                                            Button {
+                                                text: qsTr("Usuń")
+                                                icon.name: "edit-delete"
+                                                onClicked: deletePreset(presetData)
+                                            }
+                                            Item { Layout.fillWidth: true }
+                                            Label {
+                                                text: presetData.updated_at ? Qt.formatDateTime(new Date(presetData.updated_at), Qt.DefaultLocaleShortDate) : ""
+                                                color: palette.mid
+                                                visible: !!presetData.updated_at
                                             }
                                         }
-                                        Button {
-                                            text: qsTr("Usuń")
-                                            icon.name: "edit-delete"
-                                            onClicked: deletePreset(presetData)
+                                        CheckBox {
+                                            objectName: "bundleSelector_" + bundleSlug(presetData)
+                                            text: qsTr("Dodaj do eksportu")
+                                            checked: bundleSelectionIndexForSlug(bundleSlug(presetData)) >= 0
+                                            onToggled: updateBundleSelection(presetData, checked)
                                         }
-                                        Item { Layout.fillWidth: true }
-                                        Label {
-                                            text: presetData.updated_at ? Qt.formatDateTime(new Date(presetData.updated_at), Qt.DefaultLocaleShortDate) : ""
-                                            color: palette.mid
-                                            visible: !!presetData.updated_at
+                                    }
+                                }
+                            }
+
+                            Frame {
+                                Layout.fillWidth: true
+                                background: Rectangle {
+                                    color: Qt.darker(palette.base, 1.04)
+                                    radius: 8
+                                }
+
+                                ColumnLayout {
+                                    anchors.fill: parent
+                                    anchors.margins: 12
+                                    spacing: 8
+
+                                    Label {
+                                        text: qsTr("Eksport kombinacji presetów")
+                                        font.bold: true
+                                    }
+
+                                    Label {
+                                        text: bundleStatusMessage
+                                        color: bundleStatusMessage && bundleStatusMessage.indexOf("nie") >= 0 ? "firebrick" : palette.highlight
+                                        wrapMode: Text.WordWrap
+                                        visible: bundleStatusMessage.length > 0
+                                    }
+
+                                    TextField {
+                                        id: bundleNameField
+                                        objectName: "bundleNameField"
+                                        Layout.fillWidth: true
+                                        placeholderText: qsTr("Nazwa kombinacji")
+                                    }
+
+                                    ComboBox {
+                                        id: bundleModeSelector
+                                        objectName: "bundleModeSelector"
+                                        Layout.preferredWidth: 220
+                                        model: [
+                                            { display: qsTr("Sekwencyjnie"), value: "sequential" },
+                                            { display: qsTr("Równolegle"), value: "parallel" }
+                                        ]
+                                        textRole: "display"
+                                        valueRole: "value"
+                                        onCurrentIndexChanged: bundleMode = currentValue
+                                        Component.onCompleted: currentIndex = 0
+                                    }
+
+                                    Switch {
+                                        id: bundleCloudSwitch
+                                        objectName: "cloudToggle"
+                                        text: checked ? qsTr("Tryb cloud włączony") : qsTr("Tryb offline")
+                                        checked: bundleCloudEnabled
+                                        onToggled: {
+                                            if (suppressCloudToggle)
+                                                return
+                                            toggleCloudRuntime(checked)
                                         }
+                                    }
+
+                                    Repeater {
+                                        model: bundleSelection
+                                        delegate: RowLayout {
+                                            Layout.fillWidth: true
+                                            spacing: 8
+                                            Label {
+                                                Layout.fillWidth: true
+                                                text: modelData.label
+                                            }
+                                            SpinBox {
+                                                id: orderBox
+                                                objectName: "bundleOrder_" + modelData.presetId
+                                                from: 1
+                                                to: Math.max(1, bundleSelection.length)
+                                                value: modelData.order
+                                                onValueChanged: setBundleEntryOrder(modelData.presetId, value)
+                                            }
+                                            ComboBox {
+                                                id: modeSelector
+                                                objectName: "bundlePresetMode_" + modelData.presetId
+                                                model: [
+                                                    { display: qsTr("Auto"), value: "auto" },
+                                                    { display: qsTr("Live"), value: "live" },
+                                                    { display: qsTr("Paper"), value: "paper" }
+                                                ]
+                                                textRole: "display"
+                                                valueRole: "value"
+                                                currentIndex: {
+                                                    for (var i = 0; i < model.length; ++i) {
+                                                        if (model[i].value === modelData.mode)
+                                                            return i
+                                                    }
+                                                    return 0
+                                                }
+                                                onActivated: setBundleEntryMode(modelData.presetId, currentValue)
+                                            }
+                                        }
+                                    }
+
+                                    Button {
+                                        id: bundleExportButton
+                                        objectName: "bundleExportButton"
+                                        text: qsTr("Eksportuj kombinację")
+                                        icon.name: "document-save"
+                                        enabled: bundleSelection.length > 0
+                                        onClicked: triggerBundleExport()
                                     }
                                 }
                             }
