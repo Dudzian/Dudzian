@@ -1,0 +1,72 @@
+{
+  "preset": {
+    "metadata": {
+      "environments": [
+        "paper",
+        "live"
+      ],
+      "id": "multi_strategy_scheduler_v2",
+      "profile": "multi_strategy",
+      "required_exchanges": [
+        "BINANCE",
+        "OKX",
+        "BYBIT"
+      ],
+      "summary": "Harmonogram multi-strategy Stage6",
+      "tags": [
+        "multi-strategy",
+        "governor"
+      ],
+      "user_preferences": [
+        {
+          "automation": "pełna",
+          "holding_period": "swing",
+          "max_positions": 5,
+          "notes": "Preset Multi Strategy Scheduler v2 preferuje multi-strategy scenariusze.",
+          "persona": "Multi Strategy Scheduler v2 persona",
+          "recommended_budget": 60000,
+          "risk_target": "balanced"
+        }
+      ],
+      "version": "1.0.0"
+    },
+    "name": "Multi Strategy Scheduler v2",
+    "risk": {
+      "guardrails": {
+        "max_daily_trades": 10,
+        "max_loss_pct": 6.5
+      },
+      "max_drawdown_pct": 11.0,
+      "max_notional": 120000,
+      "max_positions": 5
+    },
+    "strategies": [
+      {
+        "engine": "multi_strategy",
+        "metadata": {
+          "description": "Harmonogram multi-strategy Stage6",
+          "owners": [
+            "stage6-core"
+          ],
+          "tags": [
+            "multi-strategy",
+            "governor"
+          ]
+        },
+        "name": "multi_strategy_scheduler_v2-engine",
+        "parameters": {
+          "alpha": 0.5,
+          "beta": 0.3,
+          "max_positions": 5
+        }
+      }
+    ]
+  },
+  "signature": {
+    "algorithm": "ed25519",
+    "key_id": "dev-presets",
+    "public_key": "wnD5eTEGDB3CPb6r3oMOmRjFtjCxHISZXHlHX0TIKhY=",
+    "signed_at": "2025-11-19T09:08:34Z",
+    "value": "zKCOVwA58XMDLA/c6tB3Gm/QJBicc6RNteWshuNOgKPUtZAFwqqkogRbVCXGA39a+oOOD0xW7ecpbmqfGoGrBQ=="
+  }
+}

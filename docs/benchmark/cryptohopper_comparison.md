@@ -1,18 +1,19 @@
-# Benchmark Dudzian vs CryptoHopper
+# Benchmark Dudzian vs CryptoHopper & Gunbot
 
 ## Źródła referencyjne
 - [docs/architecture/stage6_spec.md](../architecture/stage6_spec.md) – zakres autonomicznego portfela, hypercare i wymagania niefunkcjonalne, które definiują docelowy poziom automatyzacji i odporności.
 - [README.md](../../README.md) – skrót głównych funkcji produktowych, w tym wsparcie wielu giełd i pipeline AI.
 - [docs/runtime/status_review.md](../runtime/status_review.md) – aktualny status warstw runtime/UI oraz identyfikacja luk integracyjnych i automatyzacyjnych.
+- [config/marketplace/catalog.md](../../config/marketplace/catalog.md) – podpisany katalog (JSON/Markdown) z ≥15 strategiami i personami wykorzystywany w porównaniach rynkowych.
 
 ## Obszary porównawcze
-- **Strategia** – adaptacyjne zarządzanie portfelem, marketplace presetów, symulacje stresowe i pipeline TCO/AI.
+- **Strategia** – adaptacyjne zarządzanie portfelem, marketplace presetów, symulacje stresowe i pipeline TCO/AI (kontrastowane z CryptoHopperem i Gunbotem).
 - **Automatyzacja** – orkiestracja hypercare, cykle resilience/observability oraz poziomy autonomii decyzji tradingowych.
 - **UI** – integracja runtime z dashboardem, wizualizacja decyzji AI i wymagane integracje gRPC dla widoczności online.
 - **Compliance** – podpisy HMAC, dzienniki decyzji i workflow audytowy w trakcie cykli hypercare.
 
 ## Skrót statusu obszarów
-- **Strategia:** funkcje core pokrywają scenariusze CryptoHopper, a `PresetPublicationWorkflow` + testy `tests/test_marketplace_workflow.py` zapewniają podpisane marketplace’y i payload do kreatora PySide6; kontynuować komunikację Stress Labs.
+- **Strategia:** funkcje core pokrywają scenariusze CryptoHoppera i Gunbota, a `PresetPublicationWorkflow` + testy `tests/test_marketplace_workflow.py` zapewniają podpisane marketplace’y i payload do kreatora PySide6; kontynuować komunikację Stress Labs oraz publikację `config/marketplace/catalog.md`.
 - **Automatyzacja:** Stage6 utrzymuje przewagę dzięki Hypercare Orchestratorowi (podpisy HMAC, resilience/offline) i nowym fallbackom CCXT dla KuCoin/Huobi/Gemini.
 - **UI:** feed gRPC spełnia SLO (p95 ≤3 s), telemetria decyzji jest kompletna, a testy PySide6 w CI pilnują regresji; kolejnym krokiem jest utrzymanie monitoringu SLA i alertów HyperCare.
 - **Compliance:** przewaga dzięki offline-first journalingowi i podpisom HMAC. Konieczne regularne audyty bundli i aktualizacja materiałów produktowych.
@@ -32,28 +33,29 @@
 - **Artefakty audytowe:** `var/audit/stage6/` – podpisane raporty i manifesty (JSON/CSV/HMAC) stanowią źródło danych dla materiałów marketingowych.
 - **Workflow eksportu:** patrz sekcja „Automatyzacja eksportu Stress Lab” w niniejszym dokumencie (poniżej) – pipeline CI publikuje artefakt `stress-lab-report` dla każdego releasu.
 - **Katalog presetów:** [`reports/strategy/presets_2025-01-15.md`](../../reports/strategy/presets_2025-01-15.md) – lista podpisanych presetów (≥15) wraz z metadanymi review i linkami do artefaktów QA.
+- **Katalog Marketplace (Markdown):** [`config/marketplace/catalog.md`](../../config/marketplace/catalog.md) – podpisany listing z personami wykorzystywany w komunikacji marketingowej oraz porównaniach z CryptoHopperem i Gunbotem.
 
 ## Tabela funkcji i różnic
 
-| Funkcja | Dudzian (Stage6) | CryptoHopper (publiczny plan) | Status różnicy |
-| --- | --- | --- | --- |
-| Portfolio adaptacyjne / rebalancing | PortfolioGovernor z integracją Stress Lab, override SLO i logiem HMAC. | Automatyczne rebalancingi strategii Pro, oparte o sygnały i copy trading. | Parzystość – kontrolować poziom konfiguracji limitów ryzyka. |
-| Poziomy automatyzacji | Stage6 Hypercare Orchestrator łączy cykle portfela, resilience i observability w jednym przebiegu podpisanym HMAC. | Tryby automatyczny/półautomatyczny (strategie, trailing stop, copy bots). | Przewaga Dudzian – utrzymać autonomiczny hypercare offline. |
-| Obsługa wielu giełd | Integracje Binance, Coinbase, Kraken, OKX, Bitget, Bybit, KuCoin, Huobi, Gemini **oraz Deribit/BitMEX futures** (paper/testnet/live z podpisanymi checklistami). | Wsparcie >16 giełd, w tym Binance, Coinbase, Kraken, KuCoin, Huobi. | Luka domknięta w segmencie futures – utrzymać regresje adapterów i monitoring HyperCare. |
-| Marketplace strategii | Lokalny marketplace presetów (`PresetPublicationWorkflow`, wizard PySide6) z podpisami HMAC i recenzjami QA. | Globalny marketplace z copy tradingiem, algorytmami społeczności. | Przewaga w audytowalności – utrzymać publiczne listingi i publikacje QA. |
-| Tryby AI Governor | AutoTrader AI Governor (scalping/hedge/grid) z telemetrią `riskMetrics`/`cycleMetrics`, test `tests/e2e/test_autotrader_autonomy.py::test_autotrader_ai_governor_snapshot_reports_mode`. | Tryby automatyczne/półautomatyczne wymagające ręcznej konfiguracji kosztów. | Przewaga Dudzian – eksponować adaptacyjne tryby w marketingu. |
-| Stress Lab i symulacje | Scenariusze multi-market, blackout infrastrukturalny i bundling raportów podpisanych HMAC. | Backtesting i paper trading, brak publicznych stres testów multi-market. | Przewaga Dudzian – komunikować stress labs w marketingu. |
-| Resilience / DR | ResilienceHypercareCycle, self-healing runtime, failover drill i bundler artefaktów podpisanych HMAC. | Failover podstawowy (API failover, monitoring uptime). | Przewaga Dudzian – utrzymać przewagę w audycie DR. |
-| UI decyzji | Dashboard QML z kartą „Decyzje AI” korzystającą z feedu gRPC `AutoTraderAIGovernor` (timeline, confidence, rekomendowane tryby i telemetry z blurami PySide6). | Webowy UI z dostępem do sygnałów i alertów w czasie rzeczywistym. | Przewaga Dudzian – live timeline + SLA HyperCare w PySide6. |
-| Compliance i audyt | TradingDecisionJournal, podpisy HMAC dla raportów hypercare oraz logowanie decyzji AI. | Raporty działania bota, brak potwierdzonych podpisów HMAC offline. | Przewaga Dudzian – utrzymać offline-first compliance. |
+| Funkcja | Dudzian (Stage6) | CryptoHopper (publiczny plan) | Gunbot Ultimate | Status różnicy |
+| --- | --- | --- | --- | --- |
+| Portfolio adaptacyjne / rebalancing | PortfolioGovernor z integracją Stress Lab, override SLO i logiem HMAC dla każdej zmiany portfela. | Automatyczne rebalancingi strategii Pro, oparte o sygnały i copy trading. | Regułowe profile per para (DCA, grid, step gain), brak centralnego rebalancera ani guardraili. | Przewaga Dudzian – jedyny produkt z audytowalnym rebalancingiem i override’ami SLO. |
+| Poziomy automatyzacji | Stage6 Hypercare Orchestrator łączy cykle portfela, resilience i observability w jednym przebiegu podpisanym HMAC. | Tryby automatyczny/półautomatyczny (strategie, trailing stop, copy bots). | Automation przez scheduler + TradingView alerts, brak orkiestratora HyperCare lub podpisanych cykli. | Przewaga Dudzian – utrzymać autonomiczny hypercare offline. |
+| Obsługa wielu giełd | Integracje Binance, Coinbase, Kraken, OKX, Bitget, Bybit, KuCoin, Huobi, Gemini **oraz Deribit/BitMEX futures** z checklistami opisanymi w `reports/exchanges/2025-01-15.csv`. | Wsparcie >16 giełd, w tym Binance, Coinbase, Kraken, KuCoin, Huobi. | >100 integracji, lecz konfiguracja futures/HyperCare odbywa się ręcznie bez checklist ani podpisów. | Luka futures domknięta – utrzymać regresje adapterów i publikować raporty CSV jako dowód przewagi. |
+| Marketplace strategii | Lokalny marketplace presetów (`PresetPublicationWorkflow`, wizard PySide6) z podpisami HMAC, recenzjami QA i katalogiem Markdown (`config/marketplace/catalog.md`). | Globalny marketplace z copy tradingiem, algorytmami społeczności. | Gunbot Marketplace/Gunthy Marketplace – brak person, brak podpisów HMAC i wymogu ≥15 strategii. | Przewaga Dudzian – audytowalny pipeline i persony. |
+| Tryby AI Governor | AutoTrader AI Governor (scalping/hedge/grid) z telemetrią `riskMetrics`/`cycleMetrics`, test `tests/e2e/test_autotrader_autonomy.py::test_autotrader_ai_governor_snapshot_reports_mode`. | Tryby automatyczne/półautomatyczne wymagające ręcznej konfiguracji kosztów. | Brak natywnego AI – strategie oparte na wskaźnikach technicznych lub sygnałach TradingView. | Przewaga Dudzian – eksponować adaptacyjne tryby w marketingu. |
+| Stress Lab i symulacje | Scenariusze multi-market, blackout infrastrukturalny i bundling raportów podpisanych HMAC. | Backtesting i paper trading, brak publicznych stres testów multi-market. | Backtesty i symulatory per para, brak orkiestracji DR ani podpisanych raportów Stress Lab. | Przewaga Dudzian – komunikować Stress Lab jako element wyróżniający. |
+| Resilience / DR | ResilienceHypercareCycle, self-healing runtime, failover drill i bundler artefaktów podpisanych HMAC. | Failover podstawowy (API failover, monitoring uptime). | Self-hosted wdrożenia, odtwarzanie po awarii zależne od operatora (brak audytu). | Przewaga Dudzian – utrzymać przewagę w audycie DR. |
+| UI decyzji | Dashboard QML z kartą „Decyzje AI” korzystającą z feedu gRPC `AutoTraderAIGovernor` (timeline, confidence, rekomendowane tryby i telemetry z blurami PySide6). | Webowy UI z dostępem do sygnałów i alertów w czasie rzeczywistym. | Konsola web/desktop z wykresami TradingView i panelami konfiguracji strategii – brak timeline decyzji AI. | Przewaga Dudzian – live timeline + SLA HyperCare w PySide6. |
+| Compliance i audyt | TradingDecisionJournal, podpisy HMAC dla raportów hypercare oraz logowanie decyzji AI. | Raporty działania bota, brak potwierdzonych podpisów HMAC offline. | Brak podpisów HMAC; audyt ograniczony do logów runtime i powiadomień Telegram. | Przewaga Dudzian – utrzymać offline-first compliance. |
 
 ## Priorytety uzupełniania luk
 1. **Utrzymanie pokrycia giełdowego**
-   - Cel: utrzymać ≥12 giełd (w tym Deribit/BitMEX futures) z podpisanymi checklistami HyperCare oraz raportem `scripts/list_exchange_adapters.py` w pakiecie benchmarkowym.
+   - Cel: utrzymać ≥12 giełd (w tym Deribit/BitMEX futures) z podpisanymi checklistami HyperCare oraz raportem `scripts/list_exchange_adapters.py` w pakiecie benchmarkowym, aby zachować przewagę nad CryptoHopperem i Gunbotem.
    - Metryki: liczba aktywnych adapterów, czas failover (p95), potwierdzenie `live_readiness_signed` w raporcie CSV.
    - Wymagane działania: regresje adapterów nightly, publikacja raportu `reports/exchanges/<data>.csv`, aktualizacja checklist HyperCare.
 2. **Marketplace presetów i społeczności**
-   - Cel: publiczny katalog presetów z recenzjami i kontrolą wersji offline.
+   - Cel: publiczny katalog presetów z recenzjami i kontrolą wersji offline – prezentowany w `config/marketplace/catalog.md` jako przewaga nad listingami CryptoHoppera/Gunbota.
    - Metryki: liczba presetów, liczba aktywnych użytkowników marketplace, czas publikacji nowego presetu.
    - Wymagane działania: rozszerzenie pipeline AI i packaging presetów do dystrybucji OEM.
 3. **Alerty SLA feedu UI**

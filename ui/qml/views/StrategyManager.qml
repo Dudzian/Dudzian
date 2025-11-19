@@ -2,6 +2,7 @@ import QtQuick
 import QtQuick.Controls
 import QtQuick.Layouts
 import "../components" as Components
+import "../design-system" as DesignSystem
 
 Item {
     id: root
@@ -221,22 +222,97 @@ Item {
                 color: Qt.darker(palette.base, 1.05)
                 border.width: 1
                 border.color: Qt.darker(palette.base, 1.2)
+                property var presetEntry: modelData || ({})
                 ColumnLayout {
                     anchors.fill: parent
                     anchors.margins: 12
                     spacing: 4
                     Label {
-                        text: (modelData.name || modelData.presetId || "") + " • v" + (modelData.version || "-")
+                        text: (presetEntry.name || presetEntry.presetId || "") + " • v" + (presetEntry.version || "-")
                         font.bold: true
                     }
                     Label {
-                        text: modelData.summary || qsTr("Brak opisu")
+                        text: presetEntry.summary || qsTr("Brak opisu")
                         color: palette.mid
                         wrapMode: Text.WordWrap
                     }
+                    DesignSystem.FrostedGlass {
+                        Layout.fillWidth: true
+                        visible: presetEntry.userPreferences && presetEntry.userPreferences.length > 0
+                        sourceItem: root
+                        radius: 14
+                        blurRadius: 36
+                        ColumnLayout {
+                            anchors.fill: parent
+                            anchors.margins: 10
+                            spacing: 4
+                            Repeater {
+                                model: presetEntry.userPreferences || []
+                                delegate: ColumnLayout {
+                                    spacing: 2
+                                    Label {
+                                        text: qsTr("Persona: %1").arg(modelData.persona || qsTr("profil"))
+                                        font.bold: true
+                                    }
+                                    RowLayout {
+                                        spacing: 6
+                                        DesignSystem.Icon {
+                                            glyph: "\uf3ed"
+                                            size: 14
+                                            color: DesignSystem.Palette.accent
+                                        }
+                                        Label {
+                                            text: qsTr("Ryzyko: %1").arg(modelData.risk_target || qsTr("brak"))
+                                            color: DesignSystem.Palette.textSecondary
+                                        }
+                                        DesignSystem.Icon {
+                                            glyph: "\uf49e"
+                                            size: 14
+                                            color: DesignSystem.Palette.accent
+                                        }
+                                        Label {
+                                            text: modelData.recommended_budget
+                                                  ? qsTr("Budżet: %1 USD").arg(Number(modelData.recommended_budget).toLocaleString(Qt.locale(), 'f', 0))
+                                                  : qsTr("Budżet: brak")
+                                            color: DesignSystem.Palette.textSecondary
+                                        }
+                                    }
+                                    RowLayout {
+                                        spacing: 6
+                                        DesignSystem.Icon {
+                                            glyph: "\uf017"
+                                            size: 14
+                                            color: DesignSystem.Palette.accent
+                                        }
+                                        Label {
+                                            text: qsTr("Horyzont: %1").arg(modelData.holding_period || qsTr("brak"))
+                                            color: DesignSystem.Palette.textSecondary
+                                        }
+                                        DesignSystem.Icon {
+                                            glyph: "\uf544"
+                                            size: 14
+                                            color: DesignSystem.Palette.accent
+                                        }
+                                        Label {
+                                            text: modelData.automation
+                                                  ? qsTr("Automatyzacja: %1").arg(modelData.automation)
+                                                  : qsTr("Automatyzacja: brak")
+                                            color: DesignSystem.Palette.textSecondary
+                                        }
+                                    }
+                                    Label {
+                                        text: modelData.notes || ""
+                                        visible: text.length > 0
+                                        wrapMode: Text.WordWrap
+                                        color: DesignSystem.Palette.textSecondary
+                                    }
+                                }
+                            }
+                        }
+                    }
                     Label {
-                        text: modelData.assignedPortfolios && modelData.assignedPortfolios.length > 0
-                              ? qsTr("Portfele: %1").arg(modelData.assignedPortfolios.join(", "))
+                        text: presetEntry.assignedPortfolios && presetEntry.assignedPortfolios.length > 0
+                              ? qsTr("Portfele: %1").arg(presetEntry.assignedPortfolios.join(", "))
                               : qsTr("Brak przypisań")
                         color: palette.mid
                     }
@@ -245,14 +321,14 @@ Item {
                         Components.IconButton {
                             text: qsTr("Zainstaluj i przypisz")
                             icon.name: "download"
-                            onClicked: root.quickInstall(modelData.presetId)
+                            onClicked: root.quickInstall(presetEntry.presetId)
                         }
                         Components.IconButton {
                             text: qsTr("Tylko przypisz")
                             icon.name: "task"
                             subtle: true
                             enabled: root.targetPortfolioId.length > 0
-                            onClicked: root.assignPreset(modelData.presetId, root.targetPortfolioId)
+                            onClicked: root.assignPreset(presetEntry.presetId, root.targetPortfolioId)
                         }
                     }
                 }

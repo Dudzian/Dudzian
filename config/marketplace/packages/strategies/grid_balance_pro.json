@@ -1,0 +1,70 @@
+{
+  "preset": {
+    "metadata": {
+      "environments": [
+        "paper",
+        "live"
+      ],
+      "id": "grid_balance_pro",
+      "profile": "grid_trading",
+      "required_exchanges": [
+        "BINANCE"
+      ],
+      "summary": "Dynamiczny grid z kontrolą kosztów",
+      "tags": [
+        "grid",
+        "automation"
+      ],
+      "user_preferences": [
+        {
+          "automation": "pełna",
+          "holding_period": "swing",
+          "max_positions": 5,
+          "notes": "Preset Grid Balance Pro preferuje grid scenariusze.",
+          "persona": "Grid Balance Pro persona",
+          "recommended_budget": 8000,
+          "risk_target": "balanced"
+        }
+      ],
+      "version": "1.0.0"
+    },
+    "name": "Grid Balance Pro",
+    "risk": {
+      "guardrails": {
+        "max_daily_trades": 10,
+        "max_loss_pct": 6.5
+      },
+      "max_drawdown_pct": 11.0,
+      "max_notional": 16000,
+      "max_positions": 5
+    },
+    "strategies": [
+      {
+        "engine": "grid_trading",
+        "metadata": {
+          "description": "Dynamiczny grid z kontrolą kosztów",
+          "owners": [
+            "stage6-core"
+          ],
+          "tags": [
+            "grid",
+            "automation"
+          ]
+        },
+        "name": "grid_balance_pro-engine",
+        "parameters": {
+          "alpha": 0.5,
+          "beta": 0.3,
+          "max_positions": 5
+        }
+      }
+    ]
+  },
+  "signature": {
+    "algorithm": "ed25519",
+    "key_id": "dev-presets",
+    "public_key": "wnD5eTEGDB3CPb6r3oMOmRjFtjCxHISZXHlHX0TIKhY=",
+    "signed_at": "2025-11-19T09:08:15Z",
+    "value": "paFpwrKTx7yEPVvuti19/H+YB1piAFueum8h7NOkjIvitmnEbYPgo5puEeR9gyiYs7tQJ0RSXzh3DwZmRZd2CA=="
+  }
+}

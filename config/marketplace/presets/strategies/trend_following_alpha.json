@@ -1,0 +1,235 @@
+{
+  "preset": {
+    "name": "Trend Alpha Pursuit",
+    "strategies": [
+      {
+        "name": "trend-alpha-governor",
+        "engine": "daily_trend_momentum",
+        "parameters": {
+          "fast_ma": 21,
+          "slow_ma": 89,
+          "atr_window": 14,
+          "momentum_window": 8,
+          "max_positions": 6
+        },
+        "metadata": {
+          "description": "Trend following multi-asset preset z monitorowaniem momentum i ATR.",
+          "owners": [
+            "stage6-core"
+          ],
+          "tags": [
+            "trend",
+            "swing",
+            "automation"
+          ]
+        }
+      }
+    ],
+    "risk": {
+      "max_notional": 75000,
+      "max_positions": 6,
+      "max_drawdown_pct": 10.0,
+      "guardrails": {
+        "max_loss_pct": 6.0,
+        "max_daily_trades": 8
+      }
+    },
+    "metadata": {
+      "id": "trend_following_alpha",
+      "version": "1.0.0",
+      "summary": "Preset trend-following dla portfeli swingowych.",
+      "tags": [
+        "trend",
+        "swing",
+        "automation"
+      ],
+      "required_exchanges": [
+        "BINANCE",
+        "OKX",
+        "KRAKEN"
+      ],
+      "profile": "trend_following",
+      "environments": [
+        "paper",
+        "live"
+      ],
+      "user_preferences": [
+        {
+          "persona": "Trend desk",
+          "risk_target": "balanced",
+          "recommended_budget": 25000,
+          "max_positions": 6,
+          "holding_period": "1-5 dni",
+          "automation": "pe\u0142na",
+          "notes": "Preferuje instrumenty z wysokim wolumenem i wska\u017anikami momentum."
+        }
+      ]
+    }
+  },
+  "catalog": {
+    "schema_version": "1.1",
+    "package_id": "trend_following_alpha.v1",
+    "display_name": "Trend Alpha Pursuit",
+    "summary": "Preset trend-following dla portfeli swingowych.",
+    "description": "Trend Alpha Pursuit \u0142\u0105czy breakout i momentum, aby utrzymywa\u0107 pozycje swingowe zgodnie z guardrailami Stage6.",
+    "version": "1.0.0",
+    "revision": "2025.01",
+    "release_date": "2025-01-15T12:00:00Z",
+    "maintainers": [
+      {
+        "name": "Marketplace Labs",
+        "email": "marketplace@example.com",
+        "organization": "Marketplace Guild",
+        "role": "maintainer"
+      }
+    ],
+    "license": {
+      "name": "Marketplace Evaluation License",
+      "spdx_id": "Proprietary",
+      "url": "https://configs.example.com/licenses/marketplace-eval",
+      "terms_summary": "Do u\u017cytku ewaluacyjnego w \u015brodowiskach demo.",
+      "redistributable": false,
+      "commercial_use": false
+    },
+    "tags": [
+      "trend",
+      "swing",
+      "automation"
+    ],
+    "data_requirements": {
+      "inputs": [
+        {
+          "asset_type": "market",
+          "provider": "ccxt.binance",
+          "access_level": "restricted",
+          "retention_days": 90,
+          "min_history_days": 30,
+          "sampling": "1h"
+        }
+      ],
+      "requires_personal_data": false,
+      "requires_realtime_access": true,
+      "pii_handling_notes": "Preset nie gromadzi danych osobowych."
+    },
+    "distribution": [
+      {
+        "name": "preset-document",
+        "uri": "packages/strategies/trend_following_alpha.json",
+        "kind": "preset",
+        "description": "Podpisany preset mean-reversion z guardrailami Stage6.",
+        "signature": {
+          "algorithm": "HMAC-SHA256",
+          "key_id": "dev-hmac",
+          "signed_fields": [
+            "package_id",
+            "version",
+            "artifact",
+            "uri",
+            "sha256"
+          ]
+        }
+      }
+    ],
+    "compatibility": [
+      {
+        "exchange": "BINANCE",
+        "environments": [
+          "paper",
+          "live"
+        ],
+        "trading_modes": [
+          "spot",
+          "margin"
+        ],
+        "status": "certified",
+        "last_verified_at": "2025-01-11T08:00:00Z"
+      },
+      {
+        "exchange": "OKX",
+        "environments": [
+          "paper"
+        ],
+        "trading_modes": [
+          "spot"
+        ],
+        "status": "beta"
+      }
+    ],
+    "documentation_url": "https://configs.example.com/marketplace/trend_following_alpha",
+    "release_notes": [
+      "Wersja 1.0 \u2013 pipeline swingowy",
+      "Dodano guardraile momentum i ATR."
+    ],
+    "security": {
+      "mode": "allowlist",
+      "allowed_fingerprints": [
+        "OEM-1234567890ABCDEF"
+      ],
+      "require_strict_match": false,
+      "audit_message": "Preset dost\u0119pny tylko dla licencjonowanych instalacji OEM."
+    },
+    "release": {
+      "channel": "public",
+      "review_status": "approved",
+      "reviewers": [
+        {
+          "name": "QA Guild",
+          "email": "qa@example.com",
+          "role": "quality"
+        },
+        {
+          "name": "Compliance Board",
+          "email": "compliance@example.com",
+          "role": "compliance"
+        }
+      ],
+      "ticket": "https://jira.example.com/browse/MKT-1201",
+      "approved_at": "2025-01-14T09:30:00Z",
+      "notes": "Wymagane monitorowanie drawdownu podczas pierwszego tygodnia rollout'u."
+    },
+    "exchange_compatibility": [
+      {
+        "exchange": "BINANCE",
+        "environments": [
+          "paper",
+          "live"
+        ],
+        "trading_modes": [
+          "spot",
+          "margin"
+        ],
+        "status": "certified",
+        "last_verified_at": "2025-01-11T08:00:00Z"
+      },
+      {
+        "exchange": "OKX",
+        "environments": [
+          "paper"
+        ],
+        "trading_modes": [
+          "spot"
+        ],
+        "status": "beta"
+      }
+    ],
+    "versioning": {
+      "channel": "public",
+      "iteration": "minor",
+      "supersedes": [],
+      "superseded_by": [],
+      "migration_required": false,
+      "source": "strategies/trend_following_alpha.json"
+    },
+    "user_preferences": [
+      {
+        "persona": "Trend desk",
+        "risk_target": "balanced",
+        "recommended_budget": 25000,
+        "max_positions": 6,
+        "holding_period": "1-5 dni",
+        "automation": "pe\u0142na",
+        "notes": "Preferuje instrumenty z wysokim wolumenem i wska\u017anikami momentum."
+      }
+    ]
+  }
+}

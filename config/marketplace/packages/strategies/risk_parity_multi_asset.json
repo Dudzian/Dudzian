@@ -1,0 +1,71 @@
+{
+  "preset": {
+    "metadata": {
+      "environments": [
+        "paper",
+        "live"
+      ],
+      "id": "risk_parity_multi_asset",
+      "profile": "risk_parity",
+      "required_exchanges": [
+        "BINANCE",
+        "OKX"
+      ],
+      "summary": "Preset risk-parity na multi-asset",
+      "tags": [
+        "risk-parity",
+        "portfolio"
+      ],
+      "user_preferences": [
+        {
+          "automation": "pełna",
+          "holding_period": "swing",
+          "max_positions": 5,
+          "notes": "Preset Risk Parity Multi-Asset preferuje risk-parity scenariusze.",
+          "persona": "Risk Parity Multi-Asset persona",
+          "recommended_budget": 50000,
+          "risk_target": "balanced"
+        }
+      ],
+      "version": "1.0.0"
+    },
+    "name": "Risk Parity Multi-Asset",
+    "risk": {
+      "guardrails": {
+        "max_daily_trades": 10,
+        "max_loss_pct": 6.5
+      },
+      "max_drawdown_pct": 11.0,
+      "max_notional": 100000,
+      "max_positions": 5
+    },
+    "strategies": [
+      {
+        "engine": "risk_parity",
+        "metadata": {
+          "description": "Preset risk-parity na multi-asset",
+          "owners": [
+            "stage6-core"
+          ],
+          "tags": [
+            "risk-parity",
+            "portfolio"
+          ]
+        },
+        "name": "risk_parity_multi_asset-engine",
+        "parameters": {
+          "alpha": 0.5,
+          "beta": 0.3,
+          "max_positions": 5
+        }
+      }
+    ]
+  },
+  "signature": {
+    "algorithm": "ed25519",
+    "key_id": "dev-presets",
+    "public_key": "wnD5eTEGDB3CPb6r3oMOmRjFtjCxHISZXHlHX0TIKhY=",
+    "signed_at": "2025-11-19T09:08:47Z",
+    "value": "bHIBXg2dkfDe7herwgi0aphm27VpfXP8A53Bf41kK8bUNJp5R+AFmvM1sD3fS1eiUWlfUzxQW2pK9CrS9TPaBQ=="
+  }
+}

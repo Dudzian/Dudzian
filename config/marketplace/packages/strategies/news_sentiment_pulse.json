@@ -1,0 +1,70 @@
+{
+  "preset": {
+    "metadata": {
+      "environments": [
+        "paper",
+        "live"
+      ],
+      "id": "news_sentiment_pulse",
+      "profile": "sentiment",
+      "required_exchanges": [
+        "BINANCE"
+      ],
+      "summary": "Preset news-sentiment intraday",
+      "tags": [
+        "sentiment",
+        "news"
+      ],
+      "user_preferences": [
+        {
+          "automation": "pełna",
+          "holding_period": "intraday",
+          "max_positions": 5,
+          "notes": "Preset News Sentiment Pulse preferuje sentiment scenariusze.",
+          "persona": "News Sentiment Pulse persona",
+          "recommended_budget": 15000,
+          "risk_target": "balanced"
+        }
+      ],
+      "version": "1.0.0"
+    },
+    "name": "News Sentiment Pulse",
+    "risk": {
+      "guardrails": {
+        "max_daily_trades": 10,
+        "max_loss_pct": 6.5
+      },
+      "max_drawdown_pct": 11.0,
+      "max_notional": 30000,
+      "max_positions": 5
+    },
+    "strategies": [
+      {
+        "engine": "sentiment",
+        "metadata": {
+          "description": "Preset news-sentiment intraday",
+          "owners": [
+            "stage6-core"
+          ],
+          "tags": [
+            "sentiment",
+            "news"
+          ]
+        },
+        "name": "news_sentiment_pulse-engine",
+        "parameters": {
+          "alpha": 0.5,
+          "beta": 0.3,
+          "max_positions": 5
+        }
+      }
+    ]
+  },
+  "signature": {
+    "algorithm": "ed25519",
+    "key_id": "dev-presets",
+    "public_key": "wnD5eTEGDB3CPb6r3oMOmRjFtjCxHISZXHlHX0TIKhY=",
+    "signed_at": "2025-11-19T09:08:38Z",
+    "value": "klKVsLty+FLOGDMr9Dfwyox8Gg3+Vd/hXiE8hTV6CG0g7sd8FK4kh0eX2mXrkgC6lRg920Xy4TT0dgsJZlyICA=="
+  }
+}

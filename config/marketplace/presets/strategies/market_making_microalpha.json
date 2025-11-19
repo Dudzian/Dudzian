@@ -1,0 +1,229 @@
+{
+  "preset": {
+    "name": "Market Making MicroAlpha",
+    "strategies": [
+      {
+        "name": "market_making_microalpha-engine",
+        "engine": "market_making",
+        "parameters": {
+          "alpha": 0.5,
+          "beta": 0.3,
+          "max_positions": 5
+        },
+        "metadata": {
+          "description": "Market making na parze USD",
+          "owners": [
+            "stage6-core"
+          ],
+          "tags": [
+            "market-making",
+            "liquidity"
+          ]
+        }
+      }
+    ],
+    "risk": {
+      "max_notional": 50000,
+      "max_positions": 5,
+      "max_drawdown_pct": 11.0,
+      "guardrails": {
+        "max_loss_pct": 6.5,
+        "max_daily_trades": 10
+      }
+    },
+    "metadata": {
+      "id": "market_making_microalpha",
+      "version": "1.0.0",
+      "summary": "Market making na parze USD",
+      "tags": [
+        "market-making",
+        "liquidity"
+      ],
+      "required_exchanges": [
+        "BINANCE",
+        "KRAKEN"
+      ],
+      "profile": "market_making",
+      "environments": [
+        "paper",
+        "live"
+      ],
+      "user_preferences": [
+        {
+          "persona": "Market Making MicroAlpha persona",
+          "risk_target": "balanced",
+          "recommended_budget": 25000,
+          "max_positions": 5,
+          "holding_period": "swing",
+          "automation": "pe\u0142na",
+          "notes": "Preset Market Making MicroAlpha preferuje market-making scenariusze."
+        }
+      ]
+    }
+  },
+  "catalog": {
+    "schema_version": "1.1",
+    "package_id": "market_making_microalpha.v1",
+    "display_name": "Market Making MicroAlpha",
+    "summary": "Market making na parze USD",
+    "description": "Market making na parze USD zgodny z guardrailami Stage6.",
+    "version": "1.0.0",
+    "revision": "2025.01",
+    "release_date": "2025-01-15T12:00:00Z",
+    "maintainers": [
+      {
+        "name": "Marketplace Labs",
+        "email": "marketplace@example.com",
+        "organization": "Marketplace Guild",
+        "role": "maintainer"
+      }
+    ],
+    "license": {
+      "name": "Marketplace Evaluation License",
+      "spdx_id": "Proprietary",
+      "url": "https://configs.example.com/licenses/marketplace-eval",
+      "terms_summary": "Do u\u017cytku ewaluacyjnego w \u015brodowiskach demo.",
+      "redistributable": false,
+      "commercial_use": false
+    },
+    "tags": [
+      "market-making",
+      "liquidity"
+    ],
+    "data_requirements": {
+      "inputs": [
+        {
+          "asset_type": "market",
+          "provider": "ccxt.binance",
+          "access_level": "restricted",
+          "retention_days": 45,
+          "min_history_days": 14,
+          "sampling": "15m"
+        }
+      ],
+      "requires_personal_data": false,
+      "requires_realtime_access": true,
+      "pii_handling_notes": "Preset nie przetwarza PII."
+    },
+    "distribution": [
+      {
+        "name": "preset-document",
+        "uri": "packages/strategies/market_making_microalpha.json",
+        "kind": "preset",
+        "description": "Podpisany preset mean-reversion z guardrailami Stage6.",
+        "signature": {
+          "algorithm": "HMAC-SHA256",
+          "key_id": "dev-hmac",
+          "signed_fields": [
+            "package_id",
+            "version",
+            "artifact",
+            "uri",
+            "sha256"
+          ]
+        }
+      }
+    ],
+    "compatibility": [
+      {
+        "exchange": "BINANCE",
+        "environments": [
+          "paper",
+          "live"
+        ],
+        "trading_modes": [
+          "spot",
+          "margin"
+        ],
+        "status": "certified"
+      },
+      {
+        "exchange": "KRAKEN",
+        "environments": [
+          "paper"
+        ],
+        "trading_modes": [
+          "spot",
+          "margin"
+        ],
+        "status": "beta"
+      }
+    ],
+    "documentation_url": "https://configs.example.com/marketplace/market_making_microalpha",
+    "release_notes": [
+      "Pierwsza publikacja Market Making MicroAlpha",
+      "Dodano checklist\u0119 HyperCare."
+    ],
+    "security": {
+      "mode": "allowlist",
+      "allowed_fingerprints": [
+        "OEM-1234567890ABCDEF"
+      ],
+      "require_strict_match": false,
+      "audit_message": "Preset dost\u0119pny tylko dla licencjonowanych instalacji OEM."
+    },
+    "release": {
+      "channel": "public",
+      "review_status": "approved",
+      "reviewers": [
+        {
+          "name": "QA Guild",
+          "email": "qa@example.com",
+          "role": "quality"
+        },
+        {
+          "name": "Compliance Board",
+          "email": "compliance@example.com",
+          "role": "compliance"
+        }
+      ],
+      "ticket": "https://jira.example.com/browse/MKT-1310",
+      "approved_at": "2025-01-14T09:30:00Z",
+      "notes": "Wymagane monitorowanie drawdownu podczas pierwszego tygodnia rollout'u."
+    },
+    "exchange_compatibility": [
+      {
+        "exchange": "BINANCE",
+        "environments": [
+          "paper",
+          "live"
+        ],
+        "trading_modes": [
+          "spot",
+          "margin"
+        ],
+        "status": "certified"
+      },
+      {
+        "exchange": "KRAKEN",
+        "environments": [
+          "paper"
+        ],
+        "trading_modes": [
+          "spot",
+          "margin"
+        ],
+        "status": "beta"
+      }
+    ],
+    "versioning": {
+      "channel": "public",
+      "iteration": "minor",
+      "supersedes": [],
+      "superseded_by": [],
+      "migration_required": false,
+      "source": "strategies/market_making_microalpha.json"
+    },
+    "user_preferences": [
+      {
+        "persona": "Market Making MicroAlpha persona",
+        "risk_target": "balanced",
+        "recommended_budget": 25000,
+        "max_positions": 5,
+        "holding_period": "swing",
+        "automation": "pe\u0142na",
+        "notes": "Preset Market Making MicroAlpha preferuje market-making scenariusze."
+      }
+    ]
+  }
+}

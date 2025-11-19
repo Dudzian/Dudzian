@@ -63,6 +63,7 @@ Dodatkowe informacje (zrzuty ekranu, preset strategii):
 5. Dodaj wpis do sekcji „Historia aktualizacji benchmarku” z datą releasu, opisem zmian i linkami do artefaktów (hypercare, marketplace, audyt compliance, testy UI).
 6. Przekaż aktualizację zespołowi produktowemu podczas przeglądu wsparcia, linkując do zaktualizowanego benchmarku i status_review.
 7. Potwierdź synchronizację z `docs/runtime/status_review.md` – rozbieżności otwierają zadania follow-up.
+8. Przygotuj krótkie porównanie dla klientów pytających o alternatywy (CryptoHopper/Gunbot) – odwołuj się do `config/marketplace/catalog.md` (persony strategii) oraz najnowszego `reports/exchanges/<data>.csv` z checklistami HyperCare.
 
 ### Raportowanie benchmarku
 - **Odpowiedzialny operacyjny:** Owner Stage6 Support (koordynuje aktualizację checklisty i benchmarku).
@@ -73,6 +74,11 @@ Dodatkowe informacje (zrzuty ekranu, preset strategii):
   - `reports/ui/tests/<build_id>/grpc_feed.json` z p95 opóźnień feedu i odniesieniem do wyników testów UI w CI.
   - `var/audit/compliance/<okres>.pdf` lub JSON z wynikami audytu decyzji.
 - **Dystrybucja:** pakiet benchmarku (tabela wyników + historia) archiwizujemy w `var/audit/benchmark/<data>/` i wysyłamy do zespołów produktowych w ramach notatki release’owej.
+
+### Referencje rynkowe i porównania konkurencji
+- **Katalog strategii:** `config/marketplace/catalog.md` (oraz podpis `.sig`) zawiera ≥15 strategii z personami – wykorzystuj go w odpowiedziach do klientów pytających o pokrycie scenariuszy CryptoHopper/Gunbota.
+- **Raport giełdowy:** `reports/exchanges/2025-01-15.csv` (oraz nowsze snapshoty) dostarcza checklisty futures Deribit/BitMEX oraz statusy HyperCare (failover, latencja, koszty); dołączaj je do zgłoszeń o niezawodność infrastruktury.
+- **Benchmark konkurencji:** `docs/benchmark/cryptohopper_comparison.md` opisuje różnice wobec CryptoHoppera i Gunbota – wsparcie powinno cytować ten dokument przy eskalacjach produktowych i aktualizować wnioski w bazie wiedzy.
 
 ## Materiały dodatkowe
 - Troubleshooting: `docs/user_manual/troubleshooting.md`.

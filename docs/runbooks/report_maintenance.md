@@ -115,19 +115,20 @@ Komenda `python -m bot_core.reporting.ui_bridge purge` automatycznie czyści kat
 
 ### 8.1. Raport adapterów futures i eksport do dashboardu
 
-Benchmark CryptoHoppera wymaga comiesięcznego CSV z listą adapterów giełdowych, w którym uwzględnione są kolumny `futures_margin_mode`, `liquidation_feed`, `hypercare_checklist_signed` oraz `missing_required_documents`. Raport generujemy poleceniem:
+Benchmark CryptoHoppera/Gunbota wymaga comiesięcznego CSV z listą adapterów giełdowych, w którym uwzględnione są kolumny `futures_margin_mode`, `liquidation_feed`, `hypercare_checklist_signed`, `missing_required_documents`, `futures_checklist_id`, `futures_checklist_ready` oraz statusy `hypercare_failover_status`/`hypercare_latency_status`/`hypercare_cost_status`. Raport generujemy poleceniem:
 
 ```
 python scripts/list_exchange_adapters.py \
   --report-date $(date +%Y-%m-%d) \
   --report-dir reports/exchanges \
   --push-dashboard \
-  --dashboard-dir reports/exchanges/signal_quality
+  --dashboard-dir reports/exchanges/signal_quality \
+  --hypercare-config config/stage6/hypercare.yaml
 ```
 
 Polecenie utworzy plik `reports/exchanges/<data>.csv` oraz skopiuje go do `reports/exchanges/signal_quality/`, tak aby dashboard Prometheusa/Grafany mógł pobierać najnowszy snapshot. Jeśli CI/HyperCare musi wypchnąć dane do zewnętrznego datasource, dodaj `--dashboard-endpoint https://grafana.example/api/ds/push` – w przypadku błędu publikacji skrypt zakończy się statusem !=0.
 
-**Weryfikacja futures:** po wygenerowaniu CSV sprawdź, że wiersze `deribit,live` i `bitmex,live` mają `hypercare_checklist_signed == True` oraz pustą kolumnę `missing_required_documents`. Jeśli wartości są puste lub `False`, oznacza to brak podpisu checklisty HyperCare i należy otworzyć zadanie w HyperCare/Compliance. Kolumna `liquidation_feed` powinna wskazywać pełny URL kanału long-pollowego (np. `https://stream.hyperion.dudzian.ai/exchanges/deribit/futures/private`) – użyj jej w dashboardzie do szybkiego porównania konfiguracji feedów.
+**Weryfikacja futures i HyperCare:** po wygenerowaniu CSV sprawdź, że wiersze `deribit,live` i `bitmex,live` mają `hypercare_checklist_signed == True`, `futures_checklist_ready == True` oraz pustą kolumnę `missing_required_documents`. Jeśli wartości są puste lub `False`, oznacza to brak podpisu checklisty HyperCare i należy otworzyć zadanie w HyperCare/Compliance. Kolumna `liquidation_feed` powinna wskazywać pełny URL kanału long-pollowego (np. `https://stream.hyperion.dudzian.ai/exchanges/deribit/futures/private`) – użyj jej w dashboardzie do szybkiego porównania konfiguracji feedów. Statusy `hypercare_failover_status`/`hypercare_latency_status`/`hypercare_cost_status` muszą raportować `ready` (źródłem prawdy jest `config/stage6/hypercare.yaml`); odchylenia blokują publikację benchmarku CryptoHopper/Gunbot.
 
 ## 9. Eksport champion/challenger i reakcja na degradację modeli
 

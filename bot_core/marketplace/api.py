@@ -209,6 +209,7 @@ class MarketplacePreset:
     update_channels: tuple[PresetUpdateChannel, ...]
     update_directive: PresetUpdateDirective
     preferred_channel: str | None = None
+    preference_profiles: tuple[Mapping[str, object], ...] = field(default_factory=tuple)
 
     @property
     def preset_id(self) -> str:
@@ -357,6 +358,20 @@ def _parse_update_directive(metadata: Mapping[str, object]) -> PresetUpdateDirec
     )
 
 
+def _parse_preference_profiles(metadata: Mapping[str, object]) -> tuple[Mapping[str, object], ...]:
+    payload = metadata.get("user_preferences")
+    if not isinstance(payload, Sequence) or isinstance(payload, (str, bytes)):
+        return tuple()
+    profiles: list[Mapping[str, object]] = []
+    for entry in payload:
+        if not isinstance(entry, Mapping):
+            continue
+        persona = entry.get("persona")
+        if isinstance(persona, str) and persona.strip():
+            profiles.append({str(key): value for key, value in entry.items()})
+    return tuple(profiles)
+
+
 def build_marketplace_preset(document: PresetDocument) -> MarketplacePreset:
     metadata_raw = document.metadata
     if not isinstance(metadata_raw, Mapping):
@@ -372,12 +387,15 @@ def build_marketplace_preset(document: PresetDocument) -> MarketplacePreset:
     if preferred_channel is None and channels:
         preferred_channel = channels[0].name
 
+    preference_profiles = _parse_preference_profiles(metadata)
+
     return MarketplacePreset(
         document=document,
         dependencies=dependencies,
         update_channels=channels,
         update_directive=directive,
         preferred_channel=preferred_channel,
+        preference_profiles=preference_profiles,
     )
 
 

@@ -207,7 +207,10 @@ def test_list_exchange_adapters_reports_futures_columns():
     from scripts import list_exchange_adapters as lea
 
     config = load_core_config(Path("config/core.yaml"))
-    rows = lea.build_rows(config)
+    rows = lea.build_rows(
+        config,
+        hypercare_summary={"failover": "ready", "latency": "ready", "cost": "ready"},
+    )
 
     def _pick(exchange: str, profile: str) -> dict[str, Any]:
         for row in rows:
@@ -221,11 +224,18 @@ def test_list_exchange_adapters_reports_futures_columns():
     assert deribit_live["hypercare_checklist_signed"] is True
     assert deribit_live["hypercare_checklist_status"] == "signed"
     assert deribit_live["missing_required_documents"] == ""
+    assert deribit_live["futures_checklist_id"]
+    assert deribit_live["futures_checklist_ready"] is True
+    assert deribit_live["hypercare_failover_status"] == "ready"
+    assert deribit_live["hypercare_latency_status"] == "ready"
+    assert deribit_live["hypercare_cost_status"] == "ready"
 
     bitmex_live = _pick("bitmex", "live")
     assert bitmex_live["hypercare_checklist_signed"] is True
     assert bitmex_live["hypercare_checklist_status"] == "signed"
     assert bitmex_live["missing_required_documents"] == ""
+    assert bitmex_live["futures_checklist_id"]
+    assert bitmex_live["futures_checklist_ready"] is True
 
 
 def test_private_backend_receives_passphrase(monkeypatch: pytest.MonkeyPatch) -> None:

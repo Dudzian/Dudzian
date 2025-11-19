@@ -323,6 +323,36 @@ class VersioningMetadata(BaseModel):
         return values
 
 
+class UserPreferenceMetadata(BaseModel):
+    """Opisuje rekomendowany profil użytkownika dla presetu."""
+
+    persona: str = Field(..., description="Przyjazna nazwa profilu użytkownika.")
+    risk_target: str | None = Field(
+        None,
+        description="Preferowany poziom ryzyka (np. conservative/balanced/aggressive).",
+    )
+    recommended_budget: float | None = Field(
+        None,
+        description="Sugestia minimalnego kapitału w USD dla presetu.",
+    )
+    max_positions: int | None = Field(
+        None,
+        description="Limit otwartych pozycji preferowany przez persona.",
+    )
+    holding_period: str | None = Field(
+        None,
+        description="Zakres horyzontu czasowego (np. intraday, swing, multi-week).",
+    )
+    automation: str | None = Field(
+        None,
+        description="Poziom automatyzacji wymagany przez użytkownika.",
+    )
+    notes: str | None = Field(
+        None,
+        description="Dodatkowe wskazówki (np. wymagania dotyczące danych lub guardraili).",
+    )
+
+
 class MarketplacePackageMetadata(BaseModel):
     """Metadane pojedynczej paczki Marketplace."""
 
@@ -382,6 +412,10 @@ class MarketplacePackageMetadata(BaseModel):
     versioning: VersioningMetadata = Field(
         default_factory=VersioningMetadata,
         description="Informacje o wersjonowaniu i następstwie paczki.",
+    )
+    user_preferences: list[UserPreferenceMetadata] = Field(
+        default_factory=list,
+        description="Profile użytkowników opisujące docelowe preferencje dla presetu.",
     )
 
     def signed_payload(self, artifact: DistributionArtifact) -> Mapping[str, object]:
@@ -472,6 +506,7 @@ __all__ = [
     "MarketplaceRepositoryConfig",
     "ReleaseMetadata",
     "ReleaseReviewer",
+    "UserPreferenceMetadata",
     "ExchangeCompatibilityEntry",
     "VersioningMetadata",
     "VersionCompatibility",

@@ -252,6 +252,89 @@ Item {
                             wrapMode: Text.WordWrap
                             visible: presetCandidate !== null
                         }
+                        Item {
+                            Layout.fillWidth: true
+                            visible: presetCandidate && presetCandidate.userPreferences && presetCandidate.userPreferences.length > 0
+                            implicitHeight: personaLayout.implicitHeight + 12
+                            Rectangle {
+                                id: personaBackdrop
+                                anchors.fill: parent
+                                radius: 16
+                                color: designSystem ? designSystem.color("surfaceMuted") : "#2a3145"
+                                opacity: 0.9
+                                border.color: designSystem ? designSystem.color("border") : "#3d4560"
+                                border.width: 1
+                            }
+                            MultiEffect {
+                                anchors.fill: personaBackdrop
+                                source: personaBackdrop
+                                blurEnabled: true
+                                blurRadius: 16
+                                saturation: 0.95
+                                brightness: 0.03
+                            }
+                            ColumnLayout {
+                                id: personaLayout
+                                anchors.fill: parent
+                                anchors.margins: 12
+                                spacing: 6
+                                Repeater {
+                                    model: presetCandidate ? presetCandidate.userPreferences : []
+                                    delegate: ColumnLayout {
+                                        spacing: 2
+                                        Label {
+                                            text: qsTr("Persona: %1").arg(modelData.persona || qsTr("profil"))
+                                            font.bold: true
+                                            color: designSystem ? designSystem.color("textPrimary") : "#fff"
+                                        }
+                                        RowLayout {
+                                            spacing: 8
+                                            Text {
+                                                text: designSystem ? designSystem.iconGlyph("shield") : ""
+                                                visible: text.length > 0
+                                                font.family: designSystem ? designSystem.fontAwesomeFamily() : ""
+                                                font.pixelSize: 14
+                                                color: designSystem ? designSystem.color("accent") : "#00aaff"
+                                            }
+                                            Label {
+                                                text: qsTr("Ryzyko: %1").arg(modelData.risk_target || qsTr("brak"))
+                                                color: designSystem ? designSystem.color("textSecondary") : "#d0d4e0"
+                                            }
+                                            Text {
+                                                text: designSystem ? designSystem.iconGlyph("package") : ""
+                                                visible: text.length > 0
+                                                font.family: designSystem ? designSystem.fontAwesomeFamily() : ""
+                                                font.pixelSize: 14
+                                                color: designSystem ? designSystem.color("accent") : "#00aaff"
+                                            }
+                                            Label {
+                                                text: modelData.recommended_budget
+                                                      ? qsTr("Budżet: %1 USD").arg(Number(modelData.recommended_budget).toLocaleString(Qt.locale(), 'f', 0))
+                                                      : qsTr("Budżet: brak")
+                                                color: designSystem ? designSystem.color("textSecondary") : "#d0d4e0"
+                                            }
+                                        }
+                                        RowLayout {
+                                            spacing: 8
+                                            Text {
+                                                property string fallbackGlyph: "\uf017"
+                                                text: designSystem && designSystem.iconGlyph("clock") && designSystem.iconGlyph("clock").length > 0
+                                                      ? designSystem.iconGlyph("clock")
+                                                      : fallbackGlyph
+                                                visible: text.length > 0
+                                                font.family: designSystem ? designSystem.fontAwesomeFamily() : "Font Awesome 6 Free"
+                                                font.pixelSize: 14
+                                                color: designSystem ? designSystem.color("accent") : "#00aaff"
+                                            }
+                                            Label {
+                                                text: qsTr("Horyzont: %1").arg(modelData.holding_period || qsTr("brak"))
+                                                color: designSystem ? designSystem.color("textSecondary") : "#d0d4e0"
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
                         RowLayout {
                             Layout.fillWidth: true
                             spacing: 8

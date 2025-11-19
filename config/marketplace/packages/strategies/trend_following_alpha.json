@@ -1,0 +1,76 @@
+{
+  "preset": {
+    "metadata": {
+      "environments": [
+        "paper",
+        "live"
+      ],
+      "id": "trend_following_alpha",
+      "profile": "trend_following",
+      "required_exchanges": [
+        "BINANCE",
+        "OKX",
+        "KRAKEN"
+      ],
+      "summary": "Preset trend-following dla portfeli swingowych.",
+      "tags": [
+        "trend",
+        "swing",
+        "automation"
+      ],
+      "user_preferences": [
+        {
+          "automation": "pełna",
+          "holding_period": "1-5 dni",
+          "max_positions": 6,
+          "notes": "Preferuje instrumenty z wysokim wolumenem i wskaźnikami momentum.",
+          "persona": "Trend desk",
+          "recommended_budget": 25000,
+          "risk_target": "balanced"
+        }
+      ],
+      "version": "1.0.0"
+    },
+    "name": "Trend Alpha Pursuit",
+    "risk": {
+      "guardrails": {
+        "max_daily_trades": 8,
+        "max_loss_pct": 6.0
+      },
+      "max_drawdown_pct": 10.0,
+      "max_notional": 75000,
+      "max_positions": 6
+    },
+    "strategies": [
+      {
+        "engine": "daily_trend_momentum",
+        "metadata": {
+          "description": "Trend following multi-asset preset z monitorowaniem momentum i ATR.",
+          "owners": [
+            "stage6-core"
+          ],
+          "tags": [
+            "trend",
+            "swing",
+            "automation"
+          ]
+        },
+        "name": "trend-alpha-governor",
+        "parameters": {
+          "atr_window": 14,
+          "fast_ma": 21,
+          "max_positions": 6,
+          "momentum_window": 8,
+          "slow_ma": 89
+        }
+      }
+    ]
+  },
+  "signature": {
+    "algorithm": "ed25519",
+    "key_id": "dev-presets",
+    "public_key": "wnD5eTEGDB3CPb6r3oMOmRjFtjCxHISZXHlHX0TIKhY=",
+    "signed_at": "2025-11-19T09:08:59Z",
+    "value": "DhAFDicqfqwVYYFk10LMtW2/972yoVz2otIOpXOlh24uFEraqW42MIOaxZU7fc0jpCqhk8CUf4MCLPExtJuiCQ=="
+  }
+}

@@ -1,0 +1,71 @@
+{
+  "preset": {
+    "metadata": {
+      "environments": [
+        "paper",
+        "live"
+      ],
+      "id": "swing_hedge_blend",
+      "profile": "swing_hedge",
+      "required_exchanges": [
+        "DERIBIT",
+        "BINANCE"
+      ],
+      "summary": "Swing trading z hedgingiem futures",
+      "tags": [
+        "swing",
+        "hedge"
+      ],
+      "user_preferences": [
+        {
+          "automation": "pełna",
+          "holding_period": "swing",
+          "max_positions": 5,
+          "notes": "Preset Swing Hedge Blend preferuje swing scenariusze.",
+          "persona": "Swing Hedge Blend persona",
+          "recommended_budget": 30000,
+          "risk_target": "balanced"
+        }
+      ],
+      "version": "1.0.0"
+    },
+    "name": "Swing Hedge Blend",
+    "risk": {
+      "guardrails": {
+        "max_daily_trades": 10,
+        "max_loss_pct": 6.5
+      },
+      "max_drawdown_pct": 11.0,
+      "max_notional": 60000,
+      "max_positions": 5
+    },
+    "strategies": [
+      {
+        "engine": "swing_hedge",
+        "metadata": {
+          "description": "Swing trading z hedgingiem futures",
+          "owners": [
+            "stage6-core"
+          ],
+          "tags": [
+            "swing",
+            "hedge"
+          ]
+        },
+        "name": "swing_hedge_blend-engine",
+        "parameters": {
+          "alpha": 0.5,
+          "beta": 0.3,
+          "max_positions": 5
+        }
+      }
+    ]
+  },
+  "signature": {
+    "algorithm": "ed25519",
+    "key_id": "dev-presets",
+    "public_key": "wnD5eTEGDB3CPb6r3oMOmRjFtjCxHISZXHlHX0TIKhY=",
+    "signed_at": "2025-11-19T09:08:55Z",
+    "value": "PwnV5J3XhG/qfYjtfbv57PxYAZQ6XeQ5/VdIZ9t+1lTzMS7DAfeLI2OjYADWU89WBAeJlPkOkU/PU9D2DNW2Bg=="
+  }
+}

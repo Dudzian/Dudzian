@@ -17,6 +17,17 @@
         "spot",
         "automation"
       ],
+      "user_preferences": [
+        {
+          "automation": "pełna",
+          "holding_period": "intra-day",
+          "max_positions": 4,
+          "notes": "Preferuje rynek spot z ograniczoną ekspozycją overnight.",
+          "persona": "Mean Reversion Desk",
+          "recommended_budget": 15000,
+          "risk_target": "conservative"
+        }
+      ],
       "version": "1.0.0"
     },
     "name": "Mean Reversion Starter",
@@ -58,7 +69,7 @@
     "algorithm": "ed25519",
     "key_id": "dev-presets",
     "public_key": "wnD5eTEGDB3CPb6r3oMOmRjFtjCxHISZXHlHX0TIKhY=",
-    "signed_at": "2025-11-16T00:24:04Z",
-    "value": "LtT+x6rBSDCkAFYzEPCHwNooM3dmRWokDuXIwifHVj9YIIfnJ35UHkrCTJ39yiN/lZfpmODuQYdfYdVwx0X3Bg=="
+    "signed_at": "2025-11-19T09:08:26Z",
+    "value": "Qwnbav7hLZuDCqwIFWiwN+GXW+tGdSkR7oSRy8TljNsDqfBeZBNmnaSkNcrbyolk/Cbrwwj4Wx6jV7tF2BJDCA=="
   }
 }
