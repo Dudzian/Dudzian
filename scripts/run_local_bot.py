@@ -32,6 +32,12 @@ from bot_core.runtime.cloud_client import (
     load_license_identity,
     perform_cloud_handshake,
 )
+try:  # pragma: no cover - opcjonalny manifest cloudowy
+    from bot_core.runtime.cloud_profiles import resolve_runtime_cloud_client
+except Exception:  # pragma: no cover - fallback gdy moduł nie jest dostępny
+    resolve_runtime_cloud_client = None  # type: ignore[assignment]
+from bot_core.auto_trader.ai_governor import AutoTraderAIGovernorRunner
+from bot_core.auto_trader.demo import build_demo_ai_governor_snapshot
 from bot_core.security.base import SecretStorageError
 from bot_core.observability.metrics import CounterMetric, summarize_live_execution_metrics
 from core.reporting import DemoPaperReport, GuardrailReport
@@ -47,6 +53,38 @@ def _configure_logging(level: str) -> None:
     )
 
 
+def _build_demo_ai_snapshot() -> Mapping[str, Any] | None:
+    try:
+        return build_demo_ai_governor_snapshot()
+    except Exception:  # pragma: no cover - diagnostyka pomocnicza
+        _LOGGER.debug("Nie udało się zbudować snapshotu demo AI Governora", exc_info=True)
+        return None
+
+
+def _build_runtime_ai_governor_snapshot(
+    context: Any, history_limit: int = 12
+) -> Mapping[str, Any] | None:
+    """Wykorzystuje rzeczywisty orchestrator do zbudowania snapshotu AI Governora."""
+
+    pipeline = getattr(context, "pipeline", None)
+    bootstrap = getattr(pipeline, "bootstrap", None)
+    orchestrator = getattr(bootstrap, "decision_orchestrator", None)
+    if orchestrator is None:
+        return None
+
+    try:
+        runner = AutoTraderAIGovernorRunner(orchestrator)
+        limit = max(1, history_limit // 3)
+        for mode in ("scalping", "hedge", "grid"):
+            runner.run_until(mode=mode, limit=limit)
+        return runner.snapshot()
+    except Exception:  # pragma: no cover - diagnostyka runtime
+        _LOGGER.debug(
+            "Nie udało się zbudować snapshotu AI Governora z kontekstu runtime", exc_info=True
+        )
+        return None
+
+
 def _write_ready_payload(
     address: str,
     *,
@@ -54,12 +92,15 @@ def _write_ready_payload(
     emit_stdout: bool,
     metrics_url: str | None = None,
     cloud_payload: Mapping[str, Any] | None = None,
+    ai_governor_snapshot: Mapping[str, Any] | None = None,
 ) -> None:
     payload: dict[str, Any] = {"event": "ready", "address": address, "pid": os.getpid()}
     if metrics_url:
         payload["metrics_url"] = metrics_url
     if cloud_payload is not None:
         payload["cloud"] = cloud_payload
+    if ai_governor_snapshot is not None:
+        payload["ai_governor"] = ai_governor_snapshot
     serialized = json.dumps(payload, ensure_ascii=False)
     if ready_file:
         Path(ready_file).expanduser().write_text(serialized, encoding="utf-8")
@@ -329,6 +370,8 @@ def _run_cloud_proxy(
     options: CloudClientOptions,
     identity: LicenseIdentity | None,
     handshake: CloudHandshakeResult | None,
+    *,
+    ai_governor_snapshot: Mapping[str, Any] | None,
 ) -> int:
     cloud_payload = _serialize_cloud_payload(options, identity, handshake)
     report_payload["mode"] = "cloud"
@@ -342,6 +385,7 @@ def _run_cloud_proxy(
         emit_stdout=emit_stdout,
         metrics_url=None,
         cloud_payload=cloud_payload,
+        ai_governor_snapshot=ai_governor_snapshot,
     )
     stop_event = threading.Event()
     deadline = time.monotonic() + args.max_runtime if args.max_runtime > 0 else None
@@ -433,6 +477,9 @@ def main(argv: list[str] | None = None) -> int:
         "errors": [],
         "warnings": [],
     }
+    ai_governor_snapshot: Mapping[str, Any] | None = _build_demo_ai_snapshot()
+    if ai_governor_snapshot is not None:
+        report_payload["ai_governor"] = ai_governor_snapshot
 
     cloud_options: CloudClientOptions | None = None
     cloud_identity: LicenseIdentity | None = None
@@ -469,7 +516,14 @@ def main(argv: list[str] | None = None) -> int:
 
     try:
         if cloud_options is not None:
-            exit_code = _run_cloud_proxy(args, report_payload, cloud_options, cloud_identity, cloud_handshake)
+            exit_code = _run_cloud_proxy(
+                args,
+                report_payload,
+                cloud_options,
+                cloud_identity,
+                cloud_handshake,
+                ai_governor_snapshot=ai_governor_snapshot,
+            )
         else:
             context = build_local_runtime_context(
                 config_path=str(config_path),
@@ -511,6 +565,17 @@ def main(argv: list[str] | None = None) -> int:
                     )
 
             if exit_code == 0:
+                runtime_snapshot = _build_runtime_ai_governor_snapshot(
+                    context, history_limit=12
+                )
+                if runtime_snapshot is not None:
+                    ai_governor_snapshot = runtime_snapshot
+                    report_payload["ai_governor"] = ai_governor_snapshot
+                elif ai_governor_snapshot is None:
+                    ai_governor_snapshot = _build_demo_ai_snapshot()
+                    if ai_governor_snapshot is not None:
+                        report_payload["ai_governor"] = ai_governor_snapshot
+
                 observability_cfg = getattr(context.config, "observability", None)
                 enable_metrics_handler = True
                 if observability_cfg is not None:
@@ -531,6 +596,7 @@ def main(argv: list[str] | None = None) -> int:
                     ready_file=args.ready_file,
                     emit_stdout=not args.no_ready_stdout,
                     metrics_url=metrics_url,
+                    ai_governor_snapshot=ai_governor_snapshot,
                 )
 
                 stop_event = threading.Event()

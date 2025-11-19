@@ -5,10 +5,12 @@ from dataclasses import dataclass
 import pandas as pd
 
 from bot_core.ai.regime import MarketRegime, MarketRegimeAssessment
-from bot_core.auto_trader import AutoTrader
+from bot_core.auto_trader import AutoTrader, AutoTraderAIGovernorRunner
 from bot_core.auto_trader.audit import DecisionAuditLog
 from bot_core.execution import ExecutionContext, ExecutionService
 from bot_core.runtime.journal import InMemoryTradingDecisionJournal
+from bot_core.config.models import DecisionEngineConfig, DecisionOrchestratorThresholds
+from bot_core.decision.orchestrator import DecisionOrchestrator
 
 from tests.e2e.fixtures import FakeExecutionService
 
@@ -56,6 +58,49 @@ def _market_data(rows: int = 120) -> pd.DataFrame:
     })
 
 
+def _build_runner() -> AutoTraderAIGovernorRunner:
+    thresholds = DecisionOrchestratorThresholds(
+        max_cost_bps=15.0,
+        min_net_edge_bps=4.0,
+        max_daily_loss_pct=0.02,
+        max_drawdown_pct=0.08,
+        max_position_ratio=0.35,
+        max_open_positions=5,
+        max_latency_ms=250.0,
+    )
+    config = DecisionEngineConfig(
+        orchestrator=thresholds,
+        profile_overrides={},
+        stress_tests=None,
+        min_probability=0.55,
+        require_cost_data=False,
+        penalty_cost_bps=0.0,
+    )
+    orchestrator = DecisionOrchestrator(config)
+    orchestrator.record_strategy_performance(
+        "scalping_alpha",
+        MarketRegime.TREND,
+        hit_rate=0.78,
+        pnl=15.0,
+        sharpe=1.2,
+    )
+    orchestrator.record_strategy_performance(
+        "hedge_guardian",
+        MarketRegime.MEAN_REVERSION,
+        hit_rate=0.6,
+        pnl=6.0,
+        sharpe=0.55,
+    )
+    orchestrator.record_strategy_performance(
+        "grid_balanced",
+        MarketRegime.DAILY,
+        hit_rate=0.64,
+        pnl=8.5,
+        sharpe=0.7,
+    )
+    return AutoTraderAIGovernorRunner(orchestrator)
+
+
 def _build_trader(
     ai_manager: _StaticAIManager,
     *,
@@ -96,6 +141,7 @@ def _build_trader(
         **trader._base_metric_labels,
         "environment": environment,
     }
+    trader._apply_active_mode_overrides = lambda: None  # type: ignore[assignment]
     return trader, journal, emitter, audit_log
 
 
@@ -233,6 +279,24 @@ def test_autotrader_ai_governor_snapshot_reports_mode() -> None:
     cycle_metrics = telemetry.get("cycleMetrics", {})
     assert cycle_metrics, "powinny istnieć metryki cyklu"
     assert "strategy_switch_total" in cycle_metrics
+
+
+def test_ai_governor_runner_handles_all_modes() -> None:
+    runner = _build_runner()
+
+    scalping_history = runner.run_until(mode="scalping")
+    assert scalping_history[-1].mode == "scalping"
+
+    hedge_history = runner.run_until(mode="hedge")
+    assert hedge_history[-1].mode == "hedge"
+
+    grid_history = runner.run_until(mode="grid")
+    assert grid_history[-1].mode == "grid"
+
+    snapshot = runner.snapshot()
+    telemetry = snapshot.get("telemetry", {})
+    assert telemetry.get("cycleMetrics", {}).get("cycles_total", 0.0) >= 3
+    assert telemetry.get("riskMetrics", {}).get("risk_score") is not None
 
 
 def test_autotrader_cycle_report_without_new_decision() -> None:
