@@ -1,5 +1,18 @@
 # Changelog runbooków operacyjnych
 
+## 2025-11-19 – Strażnik nomenklatury Stage6 i repozytorium archiwalne
+- **Zakres**: README, runbooki Stage6, `bot_core/compliance`, `bot_core/config/models.py`,
+  `scripts/disable_multi_strategy.py`, `config/stage6/resilience_self_heal.json`,
+  test QA `tests/qa/test_no_legacy_tokens.py` oraz archiwum `archive/`.
+- **Zmiana**: ujednoliciliśmy docstringi, komunikaty i konfigurację Stage6 tak, aby nie odwoływały
+  się do historycznych nazw z poprzednich etapów („Stage4/Stage5”). Materiały hypercare przenieśliśmy do
+  `archive/hypercare_stage5`, README oraz runbooki jasno komunikują trwającą migrację, a test QA
+  otrzymał nowy zestaw tokenów blokujących powrót starych określeń w kodzie produkcyjnym.
+- **Działanie dla zespołów**: podczas code review zwracajcie uwagę na nowe słownictwo i dodajcie
+  własne narzędzia/README do `archive/`, jeśli muszą referować historyczne procesy. Przed merge'em
+  uruchamiajcie `pytest tests/qa/test_no_legacy_tokens.py`, aby upewnić się, że produkcyjny kod nie
+  zawiera zakazanych tokenów.
+
 ## 2025-11-18 – Frosted UI PySide6 i statusy feedu gRPC
 - **Zakres**: PySide6 UI (`ui/pyside_app/**`), design system Qt Quick (`ui/qml/design-system/**`), `ui/backend/runtime_service.py`,
   testy QML/UI.
@@ -11,10 +24,10 @@
   W runbookach/live ops monitorujcie teraz panel „AI Governor” – raportuje on SLA feedu gRPC i pozwala szybko ocenić, która strategia
   została ostatnio aktywowana przez AI Governor.
 
-## 2025-11-12 – Koniec nomenklatury legacy i nowe paczki offline
+## 2025-11-12 – Konsolidacja nomenklatury Stage6 i nowe paczki offline
 - **Zakres**: README, runbooki live/paper, `scripts/package_update.py`, `core/update/**`, UI PySide6/QML oraz dokumentacja deploy.
-- **Zmiana**: całkowicie usunięto odwołania do dawnej warstwy legacy i zastąpiono format paczek legacy podpisanymi archiwami `.dudzianpkg`. Kontroler UI, testy QA i dokumentacja offline używają nowej nazwy, a CI zawiera regresję blokującą powrót historycznych tokenów.
-- **Działanie dla zespołów**: aktualizujcie własne checklisty i skrypty automatyzujące dystrybucję offline tak, aby generowały nową paczkę `.dudzianpkg`. Podczas code review odrzucajcie PR-y z nomenklaturą piątego etapu – linter QA (`tests/qa/test_no_legacy_tokens.py`) będzie traktował takie wstawki jako błąd blokujący.
+- **Zmiana**: rozpoczęto wygaszanie odniesień do dawnej warstwy, a format paczek offline zastąpiono podpisanymi archiwami `.dudzianpkg`. Kontroler UI i dokumentacja offline używają nowej nazwy, a CI otrzymał pierwszą wersję regresji sprawdzającej słownictwo.
+- **Działanie dla zespołów**: aktualizujcie checklisty i skrypty automatyzujące dystrybucję offline tak, aby generowały paczkę `.dudzianpkg`. Od tego wydania podczas code review odrzucajcie PR-y z dawną nomenklaturą – linter QA (`tests/qa/test_no_legacy_tokens.py`) raportuje takie wstawki jako błąd.
 
 ## 2025-11-10 – Kontrola HWID/licencji dla modułu cloud
 - **Zakres**: `proto/trading.proto`, `bot_core/cloud/**`, `config/cloud/server*.yaml`, README oraz runbooki live/paper/security`.
@@ -28,7 +41,7 @@
 
 ## 2025-11-04 – Doprecyzowanie opisów interfejsów Stage6
 - **Zakres**: `bot_core/exchanges/interfaces.py`, `scripts/find_duplicates.py`, runbooki developerskie.
-- **Zmiana**: usunięto pozostałe wzmianki o kompatybilności z dawnym modułem warstwy legacy z docstringów i opisów narzędzi, aby
+- **Zmiana**: usunięto pozostałe wzmianki o kompatybilności z dawnym modułem poprzedniej warstwy z docstringów i opisów narzędzi, aby
   dokumentacja odnosiła się wyłącznie do aktualnej architektury Stage6.
 - **Działanie dla zespołów**: podczas przeglądów kodu odwołujcie się już tylko do bieżących modułów (`bot_core`, `core`, `ui`);
   ewentualne pytania migracyjne trzeba kierować do dokumentów w `docs/migrations/`.
@@ -49,7 +62,7 @@
 - **Zakres**: `archive/` (czyszczenie), dokumentacja migracyjna oraz README.
 - **Zmiana**: skasowano katalog z dawnym botem i zaktualizowano materiały, aby jasno wskazywały brak shimów poprzedniej warstwy.
 - **Działanie dla zespołów**: wszystkie odwołania do dawnych namespace'ów muszą korzystać z `bot_core.*`; repozytorium nie
-  zawiera już kopii modułów warstwy legacy nawet w trybie archiwalnym.
+  zawiera już kopii modułów poprzedniej warstwy nawet w trybie archiwalnym.
 
 ## 2025-10-23 – Aktualizacja komendy Paper Labs
 - **Zakres**: `docs/runbooks/PAPER_LABS_CHECKLIST.md`

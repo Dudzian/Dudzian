@@ -56,11 +56,11 @@ Szczegółowe instrukcje znajdują się w dokumentacji:
 ## Aktualizacje
 - Nowe wersje dystrybuujemy w formie podpisanych instalatorów. Procedura: [docs/deployment/oem_installation.md](docs/deployment/oem_installation.md).
 - Zanim zainstalujesz aktualizację, wykonaj kopię `config/`, `secrets/` oraz katalogu danych użytkownika (`~/.dudzian/`).
-- Komponenty runtime, dokumentacja i runbooki korzystają wyłącznie z przestrzeni `bot_core.*`; historyczna warstwa legacy została odłączona od aktywnego kodu i znajduje się w archiwum (`archive/hypercare_legacy`).
-- Zachowane artefakty hypercare z poprzedniego etapu (raporty, checklisty, skrypty CLI) opisujemy jako materiał historyczny – nie są ładowane przez runtime, ale pozostają dostępne w `archive/hypercare_legacy` do celów audytowych.
-- Desktopowe UI dostarczamy tylko w wariancie PySide6/PyQt6 + Qt Quick (blur + FontAwesome). Wszelkie instrukcje dotyczące legacy C++ shelli przenieśliśmy do `archive/ui_cpp_legacy.md` i nie utrzymujemy dla nich shimów.
+- Komponenty runtime, dokumentacja i runbooki korzystają z przestrzeni `bot_core.*`; pozostałe odniesienia do historycznych artefaktów są sukcesywnie izolowane w `archive/hypercare_stage5` i nie są ładowane przez aktywny kod Stage6.
+- Zachowane artefakty hypercare z poprzedniego etapu (raporty, checklisty, skrypty CLI) opisujemy jako materiał historyczny – nie są ładowane przez runtime, ale pozostają dostępne w `archive/hypercare_stage5` do celów audytowych.
+- Desktopowe UI dostarczamy tylko w wariancie PySide6/PyQt6 + Qt Quick (blur + FontAwesome). Wszelkie instrukcje dotyczące dawnych C++ shelli przenieśliśmy do `archive/ui_cpp_preserved.md` i nie utrzymujemy dla nich shimów.
 - Wszystkie checklisty i przewodniki w `docs/ui/**` opisują wyłącznie aktualny klient PySide6/QML. Jeśli potrzebujesz historycznych materiałów C++ lub screenshotów poprzedniego UI, znajdziesz je w `archive/`.
-- Dawny katalog z archiwalnym botem został zlikwidowany – w repozytorium nie ma już shimów ani kodu wykonywalnego z poprzedniej warstwy.
+- Dawny katalog z archiwalnym botem jest utrzymywany wyłącznie jako materiał referencyjny w `archive/`; aktywne repozytorium nie zawiera shimów ani kodu wykonywalnego poprzedniej warstwy.
 - W `archive/` pozostawiamy wyłącznie materiały historyczne (np. [docs/archive/trading_model_pipeline.md](docs/archive/trading_model_pipeline.md)),
   aby nie rozpraszać zespołu nieużywaną implementacją. Aktywny kod żyje w `bot_core/**`.
 

@@ -149,7 +149,7 @@ class SecretStore:
             return
         self._migration_checked = True
 
-        # Walidacja historycznych plików legacy Stage 5 została przeniesiona do narzędzia
+        # Walidacja historycznych plików poprzedniego etapu została przeniesiona do narzędzia
         # migracyjnego `dudzian_migrate.secret_store`. Runtime zakłada, że
         # środowisko zostało już przygotowane zgodnie z dokumentacją
         # migracyjną.

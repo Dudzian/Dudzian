@@ -6,7 +6,7 @@ shimów ani modułów wykonywalnych – aktywny rozwój i wszystkie biblioteki r
 znajdują się w `bot_core`. Zawartość katalogu służy jedynie celom historycznym i
 migracyjnym. W szczególności:
 
-* `ui_cpp_legacy.md` – instrukcje budowania dawnego wariantu C++ (`bot_trading_shell`).
+* `ui_cpp_preserved.md` – instrukcje budowania dawnego wariantu C++ (`bot_trading_shell`).
 
 Pozostałe pliki opisują procedury migracyjne i audyty, ale żaden z nich nie jest
 podpięty do aktywnego pipeline’u.

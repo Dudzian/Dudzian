@@ -13,14 +13,14 @@ def _create_report(path: Path, payload: dict[str, object] | None = None) -> None
 
 
 def test_archive_hypercare_reports_copies_all_files(tmp_path: Path) -> None:
-    legacy_summary = tmp_path / "legacy_hypercare.json"
+    historical_summary = tmp_path / "historical_hypercare.json"
     stage6 = tmp_path / "stage6.json"
     full = tmp_path / "full.json"
     extra = tmp_path / "notes.txt"
-    legacy_sig = legacy_summary.with_suffix(".sig")
+    historical_sig = historical_summary.with_suffix(".sig")
     stage6_sig = stage6.with_suffix(".sig")
 
-    for path in (legacy_summary, stage6, full, extra, legacy_sig, stage6_sig):
+    for path in (historical_summary, stage6, full, extra, historical_sig, stage6_sig):
         _create_report(path, {"source": path.name})
 
     archive_dir = tmp_path / "archive"
@@ -28,9 +28,9 @@ def test_archive_hypercare_reports_copies_all_files(tmp_path: Path) -> None:
 
     target_dir = archive_hypercare_reports(
         archive_dir=archive_dir,
-        legacy_summary=legacy_summary,
+        historical_summary=historical_summary,
         stage6_summary=stage6,
-        legacy_signature=legacy_sig,
+        historical_signature=historical_sig,
         stage6_signature=stage6_sig,
         full_summary=full,
         extra_files=[extra],
@@ -39,9 +39,9 @@ def test_archive_hypercare_reports_copies_all_files(tmp_path: Path) -> None:
 
     assert target_dir.exists()
     expected_files = {
-        "legacy_hypercare.json",
+        "historical_hypercare.json",
         "stage6.json",
-        "legacy_hypercare.sig",
+        "historical_hypercare.sig",
         "stage6.sig",
         "full.json",
         "notes.txt",
@@ -51,7 +51,7 @@ def test_archive_hypercare_reports_copies_all_files(tmp_path: Path) -> None:
 
 
 def test_archive_hypercare_reports_raises_for_missing_required(tmp_path: Path) -> None:
-    legacy_summary = tmp_path / "legacy.json"
+    historical_summary = tmp_path / "historical.json"
     stage6 = tmp_path / "stage6.json"
     _create_report(stage6)
 
@@ -60,34 +60,34 @@ def test_archive_hypercare_reports_raises_for_missing_required(tmp_path: Path) -
     try:
         archive_hypercare_reports(
             archive_dir=archive_dir,
-            legacy_summary=legacy_summary,
+            historical_summary=historical_summary,
             stage6_summary=stage6,
         )
     except FileNotFoundError as exc:
-        assert "legacy.json" in str(exc)
+        assert "historical.json" in str(exc)
     else:  # pragma: no cover - sanity guard
         assert False, "expected FileNotFoundError"
 
 
 def test_archive_hypercare_reports_ignores_missing_optionals(tmp_path: Path) -> None:
-    legacy_summary = tmp_path / "legacy.json"
+    historical_summary = tmp_path / "historical.json"
     stage6 = tmp_path / "stage6.json"
-    _create_report(legacy_summary)
+    _create_report(historical_summary)
     _create_report(stage6)
 
     archive_dir = tmp_path / "archive"
 
     target_dir = archive_hypercare_reports(
         archive_dir=archive_dir,
-        legacy_summary=legacy_summary,
+        historical_summary=historical_summary,
         stage6_summary=stage6,
-        legacy_signature=legacy_summary.with_suffix(".sig"),  # does not exist
+        historical_signature=historical_summary.with_suffix(".sig"),  # does not exist
         stage6_signature=stage6.with_suffix(".sig"),  # does not exist
         full_summary=tmp_path / "full.json",  # does not exist
         extra_files=[tmp_path / "missing.json"],
     )
 
     assert target_dir.exists()
-    assert (target_dir / "legacy.json").exists()
+    assert (target_dir / "historical.json").exists()
     assert (target_dir / "stage6.json").exists()
     assert not (target_dir / "full.json").exists()

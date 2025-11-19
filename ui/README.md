@@ -3,7 +3,7 @@
 Aktualny klient desktopowy powstaje w Pythonie (PySide6/PyQt6) i ładuje QML z
 `ui/qml/**`. Cała logika biznesowa żyje w modułach `bot_core.*`, natomiast UI
 skupia się na prezentacji danych i konfiguracji runtime. Historia wariantu
-C++ jest utrzymywana wyłącznie w `archive/ui_cpp_legacy.md`.
+C++ jest utrzymywana wyłącznie w `archive/ui_cpp_preserved.md`.
 
 ## Podgląd blur + FontAwesome
 
@@ -148,5 +148,5 @@ przełącza telemetrię na stuby Pythona – przydaje się do w pełni odciętyc
 ## Materiały historyczne
 
 Starszy klient C++ (`bot_trading_shell`) pozostaje w katalogu `archive/` wraz z
-instrukcją budowy i checklistami (`archive/ui_cpp_legacy.md`). Aktywny rozwój,
+instrukcją budowy i checklistami (`archive/ui_cpp_preserved.md`). Aktywny rozwój,
 testowanie i release’y odnoszą się wyłącznie do klienta PySide6/QML.

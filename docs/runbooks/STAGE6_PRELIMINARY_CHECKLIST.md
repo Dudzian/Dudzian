@@ -116,7 +116,7 @@ oraz punkty kontrolne dla skryptów `scripts/run_stage6_*.py` i szablonów w `co
 ## 6. Operacje i compliance
 - [ ] Ustalono skład zespołu warsztatowego Stage6 (trading, risk, compliance, operations L1/L2)
       i przypisano odpowiedzialności za sekcje runbooków Stage6.
-- [ ] Zarejestrowano warsztaty discovery w decision logu (w razie potrzeby użyj archiwalnego narzędzia z `archive/hypercare_legacy`)
+- [ ] Zarejestrowano warsztaty discovery w decision logu (w razie potrzeby użyj archiwalnego narzędzia z `archive/hypercare_stage5`)
       z podpisem HMAC.
 - [ ] Przygotowano repozytorium artefaktów `var/audit/stage6_discovery/` (podpisy HMAC, struktura
       katalogów, retencja 24+ m-cy).

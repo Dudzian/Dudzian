@@ -23,7 +23,7 @@ Dokument zbiera rozszerzone checklisty wejścia i wyjścia dla iteracji rozwojow
 | 5 | Review operacyjny i bezpieczeństwa potwierdzony w `docs/audit/paper_trading_log.md` wraz z podpisem operatora | Nowy wpis z datą i identyfikatorem operatora |
 | 6 | Zatwierdzona aktualizacja `docs/architecture/stage4_progress.md` oraz `iteration_gate_checklists.md` z procentami postępu | Merge request + notatka w decision logu |
 
-> **Uwaga:** Każdy punkt checklisty wymaga dokumentacji w decision logu podpisanym kluczem HMAC oraz oznaczenia statusu w `stage4_progress.md`. W przypadku regresu (np. nieudany smoke test) pozycje należy przywrócić do `[ ]`, a metryki postępu zaktualizować przed kolejnym podejściem. Na potrzeby kolejnego etapu należy dodatkowo odnotować spełnienie wymagań TCO/DecisionOrchestrator opisanych w archiwalnych materiałach (zob. `archive/hypercare_legacy`).
+> **Uwaga:** Każdy punkt checklisty wymaga dokumentacji w decision logu podpisanym kluczem HMAC oraz oznaczenia statusu w `stage4_progress.md`. W przypadku regresu (np. nieudany smoke test) pozycje należy przywrócić do `[ ]`, a metryki postępu zaktualizować przed kolejnym podejściem. Na potrzeby kolejnego etapu należy dodatkowo odnotować spełnienie wymagań TCO/DecisionOrchestrator opisanych w archiwalnych materiałach (zob. `archive/hypercare_stage5`).
 
 ## 3. Checklista AI Decision Pipeline
 

@@ -273,7 +273,7 @@ class SecurityBaselineConfig:
 
 @dataclass(slots=True)
 class SLOThresholdConfig:
-    """Definicja pojedynczego SLO monitorowanego w legacy Stage 5."""
+    """Definicja pojedynczego SLO monitorowanego przez Observability Stage6."""
     name: str
     metric: str
     objective: float
@@ -330,7 +330,7 @@ class PortfolioGovernorStrategyConfig:
 
 @dataclass(slots=True)
 class PortfolioGovernorConfig:
-    """Ustawienia PortfolioGovernora sterującego alokacją między strategiami (legacy Stage 5)."""
+    """Ustawienia PortfolioGovernora sterującego alokacją między strategiami w starszych presetach Stage6."""
     enabled: bool = False
     rebalance_interval_minutes: float = 20.0
     smoothing: float = 0.55
@@ -524,7 +524,7 @@ class ResilienceConfig:
 
 @dataclass(slots=True)
 class ObservabilityConfig:
-    """Konfiguracja rozszerzonej obserwowalności legacy Stage 5."""
+    """Konfiguracja rozszerzonej obserwowalności kompatybilnej z wcześniejszymi presetami Stage6."""
     slo: Mapping[str, SLOThresholdConfig] = field(default_factory=dict)
     key_rotation: KeyRotationConfig | None = None
 
@@ -1494,7 +1494,7 @@ class CoreConfig:
     multi_strategy_schedulers: Mapping[str, MultiStrategySchedulerConfig] = field(default_factory=dict)
     runtime_entrypoints: Mapping[str, RuntimeEntrypointConfig] = field(default_factory=dict)
 
-    # Legacy Stage 5
+    # Kompatybilność ze starszymi presetami Stage6
     portfolio_governors: Mapping[str, PortfolioGovernorConfig] = field(default_factory=dict)
     decision_engine: DecisionEngineConfig | None = None
     ai_model_management: AIModelManagementConfig | None = None

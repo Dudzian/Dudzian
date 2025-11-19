@@ -30,7 +30,7 @@ pytest tests/integration/test_execution_router_failover.py
 * `tests/test_paper_execution.py` – potwierdza kluczowe reguły symulatora paper trading.
 * `tests/integration/test_execution_router_failover.py` – integracyjnie sprawdza router live z mockami CCXT (failover + limity) oraz księgowanie w symulatorze paper.
 
-> **Uwaga:** `python scripts/lint_paths.py` kończy się błędem, gdy wykryje zakazane katalogi legacy (prefiksy poprzedniego etapu) lub pliki wykonywalne w `archive/**`. Usuń pozostałości zanim przejdziesz dalej – ostrzeżenia nie są już dopuszczane.
+> **Uwaga:** `python scripts/lint_paths.py` kończy się błędem, gdy wykryje zakazane katalogi historyczne (prefiksy poprzedniego etapu) lub pliki wykonywalne w `archive/**`. Usuń pozostałości zanim przejdziesz dalej – ostrzeżenia nie są już dopuszczane.
 
 ## 2. Procedura aktywacji
 
