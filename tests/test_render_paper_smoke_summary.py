@@ -113,16 +113,16 @@ def _sample_summary() -> dict:
             "report_path": "/tmp/security/token_report.json",
             "status": "ok",
             "exit_code": 0,
-            "warnings": ["Historyczny token Stage5"],
+            "warnings": ["Historyczny token Stage 5"],
             "errors": [],
             "report": {
-                "warnings": ["Historyczny token Stage5"],
+                "warnings": ["Historyczny token Stage 5"],
                 "errors": [],
                 "services": [
                     {
                         "service": "metrics_service",
                         "findings": [
-                            {"level": "warning", "message": "Historyczny token Stage5"},
+                            {"level": "warning", "message": "Historyczny token Stage 5"},
                         ],
                     }
                 ],

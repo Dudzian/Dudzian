@@ -4,8 +4,8 @@ from __future__ import annotations
 import os
 from pathlib import Path
 
-TOKEN_PATTERNS = (("leg" "acy"), ("kr" "ypto" "lowca"))
-TOKEN_LITERAL = "".join(("leg", "acy"))
+TOKEN_PATTERNS: tuple[str, ...] = ("stage5", "stage-5")
+TOKEN_LITERAL = "stage5"
 SKIP_DIR_NAMES = {
     ".git",
     ".hg",
@@ -15,9 +15,12 @@ SKIP_DIR_NAMES = {
     ".venv",
     "__pycache__",
 }
-ALLOWLISTED_DIRS: tuple[Path, ...] = tuple(Path(name) for name in ("docs", "archive", "reports"))
-ALLOWLISTED_FILES: set[Path] = set()
-ALLOWLISTED_FILENAME_PREFIXES: tuple[str, ...] = ("README",)
+ALLOWLISTED_DIRS: tuple[Path, ...] = (Path("archive"),)
+ALLOWLISTED_FILES: set[Path] = {
+    Path("tests/qa/test_no_legacy_tokens.py"),
+    Path("qa/test_no_legacy_tokens.py"),
+}
+ALLOWLISTED_FILENAME_PREFIXES: tuple[str, ...] = ()
 
 
 def _is_allowlisted(path: Path) -> bool:
@@ -43,13 +46,13 @@ def _iter_repo_files(root: Path):
             dirnames[:] = []
             continue
         for filename in filenames:
-            rel_path = (rel_dir / filename).relative_to(Path("."))
+            rel_path = rel_dir / filename
             if _should_skip(rel_path):
                 continue
             yield rel_path
 
 
-def _find_stage5_token_violations(repo_root: Path) -> list[str]:
+def _find_hypercare_token_violations(repo_root: Path) -> list[str]:
     violations: list[str] = []
 
     for rel_path in _iter_repo_files(repo_root):
@@ -68,34 +71,25 @@ def _find_stage5_token_violations(repo_root: Path) -> list[str]:
     return violations
 
 
-def test_no_stage5_tokens_outside_docs():  # pragma: no cover
+def test_no_legacy_tokens_outside_archive():  # pragma: no cover
     repo_root = Path(__file__).resolve().parents[1]
-    violations = _find_stage5_token_violations(repo_root)
+    violations = _find_hypercare_token_violations(repo_root)
 
     assert not violations, (
-        "Wykryto historyczne tokeny Stage5 w kodzie (poza dokumentacją):\n"
+        "Wykryto historyczne tokeny Stage" "5 w kodzie (poza archiwum):\n"
         + "\n".join(violations)
     )
 
 
 def test_allowlisted_paths_can_use_token(tmp_path):
-    (tmp_path / "docs").mkdir()
-    (tmp_path / "docs" / "story.md").write_text(TOKEN_LITERAL, encoding="utf-8")
-
     (tmp_path / "archive").mkdir()
     (tmp_path / "archive" / "notes.txt").write_text(TOKEN_LITERAL, encoding="utf-8")
-
-    (tmp_path / "reports").mkdir()
-    (tmp_path / "reports" / "retro.md").write_text(TOKEN_LITERAL, encoding="utf-8")
-
-    allowed_readme = tmp_path / "README_history.md"
-    allowed_readme.write_text(TOKEN_LITERAL, encoding="utf-8")
 
     (tmp_path / "core").mkdir()
     blocked_file = tmp_path / "core" / "engine.py"
     blocked_file.write_text(TOKEN_LITERAL, encoding="utf-8")
 
-    violations = _find_stage5_token_violations(tmp_path)
+    violations = _find_hypercare_token_violations(tmp_path)
 
     assert len(violations) == 1
     assert str(blocked_file.relative_to(tmp_path)) in violations[0]

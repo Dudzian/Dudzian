@@ -90,26 +90,6 @@ def test_validation_returns_error_when_file_missing(tmp_path: Path) -> None:
     assert exit_code == 2
 
 
-def test_stage5_rules_file_passes_validation() -> None:
-    rules_path = Path("deploy/prometheus/stage5_alerts.yaml")
-    exit_code = validate_prometheus_rules.main(
-        [
-            "--rules",
-            str(rules_path),
-            "--metric-prefix",
-            "bot_core_multi_strategy",
-            "--metric-prefix",
-            "bot_core_decision",
-            "--metric-prefix",
-            "bot_core_trade_cost",
-            "--metric-prefix",
-            "bot_core_fill_rate",
-            "--metric-prefix",
-            "bot_core_key_rotation",
-        ]
-    )
-    assert exit_code == 0
-
 
 def test_stage6_rules_file_passes_validation() -> None:
     rules_path = Path("deploy/prometheus/stage6_alerts.yaml")

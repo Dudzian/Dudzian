@@ -1,4 +1,4 @@
-"""Raportowanie rotacji kluczy API dla hypercare Stage5."""
+"""Raportowanie rotacji kluczy API dla hypercare."""
 
 from __future__ import annotations
 
@@ -89,7 +89,7 @@ class RotationSummary:
         due_before = sum(1 for record in self.records if record.status_before.is_due)
 
         payload: MutableMapping[str, object] = {
-            "type": "stage5_key_rotation",
+            "type": "key_rotation_report",
             "operator": str(self.operator),
             "executed_at": _format_timestamp(executed_at),
             "records": records_payload,

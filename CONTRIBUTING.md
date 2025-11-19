@@ -44,7 +44,7 @@ Jeżeli dodajesz dodatkowe testy jednostkowe/integracyjne, dopisz je do sekcji
 bez pisemnego zatwierdzenia zespołu compliance po zakończeniu testów demo.
 
 Lint layoutu kończy się błędem za każdym razem, gdy w repozytorium pojawią się
-zakazane katalogi (prefiksy legacy Stage5) albo pliki wykonywalne wewnątrz `archive/`.
+zakazane katalogi (prefiksy legacy z poprzedniego etapu) albo pliki wykonywalne wewnątrz `archive/`.
 Pozostałości należy usunąć lub przenieść do dokumentacji historycznej przed
 wysłaniem zmian do review.
 

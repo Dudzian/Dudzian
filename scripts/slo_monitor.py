@@ -5,7 +5,7 @@ SLO Monitor – merged CLI (HEAD + main)
 
 Subcommands:
   - evaluate : Stage6-style — definicje SLO (YAML/JSON) + pomiary (JSON) → raport + (opcjonalnie) CSV i podpis HMAC
-  - scan     : Stage5-style — JSONL z metrykami + progi z core.yaml → raport + (opcjonalnie) podpis HMAC
+  - scan     : legacy Stage 5-style — JSONL z metrykami + progi z core.yaml → raport + (opcjonalnie) podpis HMAC
 """
 from __future__ import annotations
 
@@ -330,7 +330,7 @@ def _handle_scan(args: argparse.Namespace) -> int:
 def _build_scan_parser(sub: argparse._SubParsersAction) -> argparse.ArgumentParser:
     p = sub.add_parser(
         "scan",
-        help="Skanuj JSONL z metrykami i oceń SLO z core.yaml (Stage5-style).",
+        help="Skanuj JSONL z metrykami i oceń SLO z core.yaml (tryb legacy).",
         description="Wczytuje JSONL z metrykami, bierze progi SLO z config/core.yaml i generuje raport JSON + (opcjonalny) podpis."
     )
     p.add_argument("--metrics", action="append", required=True, help="Plik JSONL z metrykami (można podać wiele razy)")
@@ -349,7 +349,7 @@ def _build_scan_parser(sub: argparse._SubParsersAction) -> argparse.ArgumentPars
 # ==============================================================================
 def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
-        description="SLO Monitor – łączy tryby evaluate (Stage6) i scan (Stage5)."
+        description="SLO Monitor – łączy tryby evaluate (Stage6) i scan (legacy)."
     )
     sub = parser.add_subparsers(dest="_cmd", metavar="{evaluate|scan}", required=True)
     _build_evaluate_parser(sub)

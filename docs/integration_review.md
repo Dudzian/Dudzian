@@ -1,6 +1,6 @@
 # Exchange Integration Review
 
-> **Migration history notice:** Legacy monolit Stage5 funkcjonuje wyłącznie jako
+> **Migration history notice:** Legacy monolit Stage 5 funkcjonuje wyłącznie jako
 > punkt odniesienia w dokumentacji migracyjnej – dawne moduły kompatybilności
 > zostały usunięte z repozytorium. Wszelkie prace integracyjne muszą
 > koncentrować się na aktywnie wspieranych pakietach `bot_core.*` oraz

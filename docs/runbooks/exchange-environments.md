@@ -203,11 +203,11 @@ telemetry bus so that dashboards can compare paper vs. live runs.
   environment variables referenced in the YAML file.
 * Watchdog policies should be more relaxed than in production to account
   for rate limiting on sandboxes.
-* Stage5 adapters provide explicit environment overrides via
+* Legacy Stage 5 adapters provide explicit environment overrides via
   `BYBIT_ENVIRONMENT`, `OKX_ENVIRONMENT`, `COINBASE_ENVIRONMENT`.  Use
   `testnet` as the value to run health-checks against CCXT sandbox APIs.
 
-### Stage5 quick-reference environments
+### Legacy Stage 5 quick-reference environments
 
 | Nazwa profilu | Typ | Klucz adaptera | Tryb testowy |
 | --- | --- | --- | --- |

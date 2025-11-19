@@ -34,7 +34,7 @@
 ## Personalizacja interfejsu
 
 * Preferencje motywu (`dark`, `light`, `midnight`), układu (`classic`, `compact`, `advanced`) i powiadomień są budowane przez `DashboardSettingsController`/`LayoutProfileController` i zapisywane w `~/.dudzian/ui_settings.json` (lub w ścieżce nadpisanej zmienną `BOT_CORE_UI_SETTINGS_PATH`).
-* Kontrolery korzystają z `UISettingsStore` (`core/config/ui_settings.py`). Pliki `var/state/ui_settings.json` nie są już ładowane – aplikacja loguje komunikat o koniecznej migracji opisanej w [docs/migrations/2024-stage5-storage-removal.md](../migrations/2024-stage5-storage-removal.md).
+* Kontrolery korzystają z `UISettingsStore` (`core/config/ui_settings.py`). Pliki `var/state/ui_settings.json` nie są już ładowane – aplikacja loguje komunikat o koniecznej migracji opisanej w [docs/migrations/2024-legacy-storage-removal.md](../migrations/2024-legacy-storage-removal.md).
 
 ## Panel Strategy Management
 

@@ -1,4 +1,4 @@
-"""Generuje override wyłączający wskazany komponent runtime (Stage4/Stage5)."""
+"""Generuje override wyłączający wskazany komponent runtime (Stage4/legacy hypercare)."""
 
 from __future__ import annotations
 
@@ -40,7 +40,7 @@ COMPONENTS: dict[str, ComponentOverrideConfig] = {
     ),
     "decision_orchestrator": ComponentOverrideConfig(
         action="disable_decision_orchestrator",
-        schema="stage5.decision_orchestrator.override",
+        schema="runtime.decision_orchestrator.override",
         filename="decision_orchestrator_disable.json",
     ),
 }
@@ -104,7 +104,7 @@ def _parse_args(argv: Optional[Sequence[str]]) -> argparse.Namespace:
         default=DEFAULT_COMPONENT,
         help=(
             "Komponent do wyłączenia (domyślnie multi_strategy – scheduler Stage4). "
-            "Użyj decision_orchestrator, aby zatrzymać orchestrator Stage5."
+            "Użyj decision_orchestrator, aby zatrzymać orchestrator runtime."
         ),
     )
     parser.add_argument("--reason", required=True)

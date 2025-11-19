@@ -2445,7 +2445,7 @@ void Application::loadUiSettings()
                 << "Wykryto przestarzały plik ustawień UI w" << deprecatedPath
                 << "– automatyczna migracja została usunięta. Przenieś plik ręcznie do"
                 << desiredPath
-                << "zgodnie z instrukcją w docs/migrations/2024-stage5-storage-removal.md.";
+                << "zgodnie z instrukcją w docs/migrations/2024-legacy-storage-removal.md.";
         }
         return;
     }

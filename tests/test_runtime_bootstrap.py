@@ -132,7 +132,7 @@ _BASE_CONFIG = dedent(
         compliance:
           live_allowed: true
           risk_profiles: [balanced, aggressive]
-          signoffs: [stage5_audit]
+          signoffs: [legacy_audit]
           signed: true
           require_signoff: true
       trading_gui:
@@ -2520,7 +2520,7 @@ def test_bootstrap_loads_tco_report_for_decision_engine(tmp_path: Path) -> None:
 
     reports_dir = tmp_path / "reports"
     reports_dir.mkdir(parents=True, exist_ok=True)
-    tco_report_path = reports_dir / "stage5_tco.json"
+    tco_report_path = reports_dir / "legacy_tco.json"
     tco_report_payload = {
         "total": {"cost_bps": 9.5},
         "strategies": {
@@ -2546,7 +2546,7 @@ def test_bootstrap_loads_tco_report_for_decision_engine(tmp_path: Path) -> None:
         "min_probability": 0.4,
         "require_cost_data": True,
         "tco": {
-            "reports": ["reports/stage5_tco.json"],
+            "reports": ["reports/legacy_tco.json"],
             "require_at_startup": True,
         },
     }
@@ -2596,7 +2596,7 @@ def test_bootstrap_runtime_tco_reporter_clears_after_export(tmp_path: Path) -> N
 
     reports_dir = tmp_path / "reports"
     reports_dir.mkdir(parents=True, exist_ok=True)
-    tco_report_path = reports_dir / "stage5_tco.json"
+    tco_report_path = reports_dir / "legacy_tco.json"
     tco_report_path.write_text(
         json.dumps(
             {

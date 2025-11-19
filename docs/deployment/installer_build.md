@@ -96,10 +96,10 @@ wykonać powyższą weryfikację bez dodatkowych kroków shellowych.
      --environment paper \
      --bundle core-oem \
      --interval-days 90 \
-     --output var/audit/stage5/key_rotation/plan.json
+     --output var/audit/key_rotation/plan.json
    ```
 
-   Raport Stage5 wskaże klucze wymagające odnowienia.
+   Raport rotacji wskaże klucze wymagające odnowienia.
 
 2. Wygeneruj nowy fingerprint sprzętowy (`scripts/oem_provision_license.py` z
    flagą `--verify` pozwala potwierdzić podpis) i zaktualizuj pliki

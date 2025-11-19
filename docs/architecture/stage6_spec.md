@@ -49,12 +49,12 @@ złożoność infrastrukturalną.
    artefaktów. CLI `python scripts/run_stage6_hypercare_cycle.py` pobiera definicję w
    YAML/JSON i uruchamia wszystkie moduły w jednej komendzie, wymuszając HMAC
    raportu końcowego, a `python scripts/verify_stage6_hypercare_summary.py` pozwala
-   zweryfikować podpis i integralność zbiorczego raportu. Raporty Stage5 i
+   zweryfikować podpis i integralność zbiorczego raportu. Raporty legacy Stage 5 i
   Stage6 można scalić w finalny przegląd hypercare dzięki
   `bot_core.runtime.full_hypercare.FullHypercareSummaryBuilder` oraz CLI
   `python scripts/run_full_hypercare_summary.py`, a poprawność i podpis raportu
   potwierdza `python scripts/verify_full_hypercare_summary.py` z opcjonalną ponowną
-  weryfikacją Stage5/Stage6.
+  weryfikacją Stage 5 / Stage6.
 
 ## Wymagania niefunkcjonalne
 - Wszystkie artefakty operacyjne trafiają do `var/audit/...` i są podpisywane

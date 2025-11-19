@@ -20,7 +20,7 @@ operacyjną oraz roadmapą implementacji.
 - **Mapowanie modułów**: macierz wpływu na istniejące komponenty (`bot_core/strategies`, `bot_core/risk`, `bot_core/execution`,
   `bot_core/tco`, `bot_core/decision`, `bot_core/runtime`).
 - **Warsztaty**: zespół tradingowy, risk, compliance, operatorzy L1/L2 — protokoły spotkań podpisane HMAC i zarejestrowane w
-  decision logu (wymagane użycie `python scripts/log_stage5_training.py`).
+  decision logu (w razie potrzeby skorzystaj z archiwalnego narzędzia opisującego rejestrację warsztatów w `archive/hypercare_legacy`).
 - **Draft spec**: szkic specyfikacji Etapu 6 obejmujący zakres, kamienie milowe, definicje ukończenia, ryzyka i harmonogram.
 - **Plan danych**: wymagane rozszerzenia manifestów Parquet/SQLite, źródeł offchain i pipeline'ów walidacyjnych.
 
