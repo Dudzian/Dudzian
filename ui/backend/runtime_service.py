@@ -650,18 +650,25 @@ def _normalize_ai_snapshot(snapshot: Mapping[str, object] | None) -> dict[str, o
             if isinstance(telemetry_payload.get("cycleMetrics"), Mapping)
             else {},
         }
+        cycle_latency = _normalize_cycle_latency(
+            telemetry_payload.get("cycleLatency") or telemetry_payload.get("cycle_latency")
+        )
+        if cycle_latency:
+            telemetry["cycleLatency"] = cycle_latency
+        mode_transitions = _normalize_mode_transitions(
+            telemetry_payload.get("modeTransitions")
+            or telemetry_payload.get("mode_transitions")
+        )
+        if mode_transitions:
+            telemetry["modeTransitions"] = mode_transitions
+        guardrails = _normalize_guardrail_snapshot(telemetry_payload.get("guardrails"))
+        if guardrails:
+            telemetry["guardrails"] = guardrails
     return {
         "lastDecision": last,
         "history": history,
         "telemetry": telemetry,
     }
-
-
-def _coerce_float(value: object) -> float | None:
-    try:
-        return float(value)
-    except (TypeError, ValueError):
-        return None
 
 
 def _coerce_mode_sequence(value: object) -> list[str]:
@@ -679,6 +686,101 @@ def _coerce_mode_sequence(value: object) -> list[str]:
                     collected.append(token)
         return collected
     return []
+
+
+def _coerce_float(value: object) -> float | None:
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _normalize_cycle_latency(payload: Mapping[str, object] | None) -> dict[str, float]:
+    if not isinstance(payload, Mapping):
+        return {}
+    normalized: dict[str, float] = {}
+    key_variants = {
+        "lastMs": ("lastMs", "last_ms"),
+        "p50Ms": ("p50Ms", "p50_ms"),
+        "p95Ms": ("p95Ms", "p95_ms"),
+        "sampleCount": ("sampleCount", "sample_count"),
+    }
+    for target, candidates in key_variants.items():
+        value: object | None = None
+        for candidate in candidates:
+            if candidate in payload:
+                value = payload[candidate]
+                break
+        numeric = _coerce_float(value)
+        if numeric is not None:
+            normalized[target] = numeric
+    return normalized
+
+
+def _normalize_mode_transitions(value: object) -> list[dict[str, object]]:
+    entries: Iterable[object] | None = None
+    if isinstance(value, Mapping):
+        sequence = value.get("entries")
+        if isinstance(sequence, Iterable) and not isinstance(sequence, (str, bytes)):
+            entries = sequence
+    elif isinstance(value, Iterable) and not isinstance(value, (str, bytes)):
+        entries = value
+    if entries is None:
+        return []
+    normalized: list[dict[str, object]] = []
+    for entry in entries:
+        if not isinstance(entry, Mapping):
+            continue
+        mode_value = entry.get("mode")
+        mode = str(mode_value).strip() if mode_value is not None else ""
+        timestamp = entry.get("timestamp")
+        timestamp_value = str(timestamp).strip() if timestamp is not None else ""
+        regime_value = entry.get("regime")
+        regime = str(regime_value).strip() if regime_value is not None else ""
+        risk = _coerce_float(entry.get("risk")) or 0.0
+        normalized.append(
+            {
+                "mode": mode,
+                "timestamp": timestamp_value,
+                "regime": regime,
+                "risk": risk,
+            }
+        )
+    return normalized
+
+
+def _normalize_guardrail_snapshot(payload: Mapping[str, object] | None) -> dict[str, object]:
+    if not isinstance(payload, Mapping):
+        return {}
+    active = bool(_normalize_bool(payload.get("active")))
+    kill_switch = bool(
+        _normalize_bool(payload.get("killSwitch") or payload.get("kill_switch"))
+    )
+    snapshot: dict[str, object] = {
+        "active": active,
+        "killSwitch": kill_switch,
+    }
+    reasons = payload.get("reasons")
+    if isinstance(reasons, Iterable) and not isinstance(reasons, (str, bytes)):
+        snapshot["reasons"] = [str(reason) for reason in reasons if reason]
+    recent_entries = payload.get("recent")
+    recent_payload: list[dict[str, object]] = []
+    if isinstance(recent_entries, Iterable) and not isinstance(recent_entries, (str, bytes)):
+        for entry in recent_entries:
+            if not isinstance(entry, Mapping):
+                continue
+            record: dict[str, object] = {}
+            if "name" in entry:
+                record["name"] = str(entry["name"])
+            if "timestamp" in entry:
+                record["timestamp"] = str(entry["timestamp"])
+            age = _coerce_float(entry.get("ageSeconds") or entry.get("age_seconds"))
+            if age is not None:
+                record["ageSeconds"] = age
+            if record:
+                recent_payload.append(record)
+    snapshot["recent"] = recent_payload
+    return snapshot
 
 
 def _normalize_ai_governor_record(payload: Mapping[str, object] | None) -> dict[str, object] | None:
@@ -722,12 +824,25 @@ def _normalize_ai_governor_record(payload: Mapping[str, object] | None) -> dict[
     telemetry_payload = record.get("telemetry")
     risk_metrics: Mapping[str, object] | None = None
     cycle_metrics: Mapping[str, object] | None = None
+    cycle_latency_payload: Mapping[str, object] | None = None
+    transitions_payload: object | None = None
+    guardrail_payload: Mapping[str, object] | None = None
     if isinstance(telemetry_payload, Mapping):
         risk_metrics = _camelize_mapping(telemetry_payload.get("riskMetrics"))
         cycle_metrics = _camelize_mapping(telemetry_payload.get("cycleMetrics"))
+        cycle_latency_payload = telemetry_payload.get("cycleLatency") or telemetry_payload.get(
+            "cycle_latency"
+        )
+        transitions_payload = telemetry_payload.get("modeTransitions") or telemetry_payload.get(
+            "mode_transitions"
+        )
+        guardrail_payload = telemetry_payload.get("guardrails")
     else:
         risk_metrics = _camelize_mapping(record.get("riskMetrics"))
         cycle_metrics = _camelize_mapping(record.get("cycleMetrics"))
+        cycle_latency_payload = record.get("cycleLatency") or record.get("cycle_latency")
+        transitions_payload = record.get("modeTransitions") or record.get("mode_transitions")
+        guardrail_payload = record.get("guardrails")
 
     normalized: dict[str, object] = {
         "timestamp": timestamp,
@@ -744,6 +859,15 @@ def _normalize_ai_governor_record(payload: Mapping[str, object] | None) -> dict[
         telemetry["riskMetrics"] = dict(risk_metrics)
     if cycle_metrics:
         telemetry["cycleMetrics"] = dict(cycle_metrics)
+    cycle_latency = _normalize_cycle_latency(cycle_latency_payload)
+    if cycle_latency:
+        telemetry["cycleLatency"] = cycle_latency
+    mode_transitions = _normalize_mode_transitions(transitions_payload)
+    if mode_transitions:
+        telemetry["modeTransitions"] = mode_transitions
+    guardrails = _normalize_guardrail_snapshot(guardrail_payload)
+    if guardrails:
+        telemetry["guardrails"] = guardrails
     if telemetry:
         normalized["telemetry"] = telemetry
     return normalized
@@ -1671,6 +1795,7 @@ class RuntimeService(QObject):
         *,
         cycle_metrics: Mapping[str, float] | None = None,
         risk_metrics: Mapping[str, float] | None = None,
+        extra: Mapping[str, object] | None = None,
     ) -> None:
         if not cycle_metrics and not risk_metrics:
             return
@@ -1681,6 +1806,9 @@ class RuntimeService(QObject):
             updated = True
         if risk_metrics:
             telemetry["riskMetrics"] = {str(key): float(value) for key, value in risk_metrics.items()}
+            updated = True
+        if extra:
+            telemetry.update(_clone_variant(extra))
             updated = True
         if not updated:
             return

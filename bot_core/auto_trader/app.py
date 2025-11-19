@@ -459,6 +459,7 @@ class DecisionCycleReport:
     decision: RiskDecision | None
     metadata: Mapping[str, str]
     metrics: Mapping[str, float]
+    telemetry: Mapping[str, object] | None = None
 
 
 class AutoTrader:
@@ -505,6 +506,19 @@ class AutoTrader:
         """Inject or clear the risk service dependency."""
 
         self._risk_service = service
+
+    @property
+    def schedule_mode(self) -> str:
+        """Public accessor exposing the active trading schedule mode."""
+
+        with self._lock:
+            return self._schedule_mode
+
+    @property
+    def execution_context(self) -> ExecutionContext:
+        """Expose the execution context without touching private fields."""
+
+        return self._resolve_execution_context()
 
     def _profile_section(self, name: str):
         return profile_block(
@@ -679,6 +693,7 @@ class AutoTrader:
         self._ai_governor_last_cost_bps: float | None = None
         self._ai_governor_cycle_metrics: dict[str, float] = {}
         self._ai_governor_risk_metrics: dict[str, float] = {}
+        self._ai_governor_extra_telemetry: dict[str, object] = {}
         self._recent_guardrail_events: deque[tuple[str, float]] = deque(maxlen=128)
         self._strategy_regime_workflow = self._initialize_strategy_regime_workflow()
         self._active_preset_state: dict[str, Any] | None = None
@@ -9395,6 +9410,111 @@ class AutoTrader:
             "guardrail_blocks_total": guardrail_total,
         }
 
+    @staticmethod
+    def _percentile(values: Sequence[float], quantile: float) -> float:
+        if not values:
+            return 0.0
+        quantile = max(0.0, min(1.0, float(quantile)))
+        ordered = sorted(values)
+        if len(ordered) == 1:
+            return ordered[0]
+        position = (len(ordered) - 1) * quantile
+        lower = math.floor(position)
+        upper = math.ceil(position)
+        if lower == upper:
+            return ordered[int(position)]
+        lower_value = ordered[lower]
+        upper_value = ordered[upper]
+        return lower_value + (upper_value - lower_value) * (position - lower)
+
+    def _cycle_latency_snapshot(self) -> dict[str, float]:
+        with self._lock:
+            durations = [
+                float(entry.get("duration_s", 0.0))
+                for entry in self._controller_cycle_history
+                if isinstance(entry, Mapping)
+            ]
+            last_duration = float(self._controller_cycle_last_duration or 0.0)
+        latencies_ms = [max(0.0, duration) * 1000.0 for duration in durations]
+        last_ms = max(0.0, last_duration) * 1000.0
+        if not latencies_ms:
+            return {
+                "lastMs": last_ms,
+                "p50Ms": last_ms,
+                "p95Ms": last_ms,
+                "sampleCount": 0.0,
+            }
+        return {
+            "lastMs": last_ms,
+            "p50Ms": self._percentile(latencies_ms, 0.5),
+            "p95Ms": self._percentile(latencies_ms, 0.95),
+            "sampleCount": float(len(latencies_ms)),
+        }
+
+    def _mode_transition_snapshot(self, limit: int = 16) -> list[dict[str, object]]:
+        with self._lock:
+            history = list(self._mode_transition_history)
+        if not history:
+            return []
+        transitions: list[dict[str, object]] = []
+        for entry in reversed(history[-limit:]):
+            if not isinstance(entry, Mapping):
+                continue
+            timestamp_value = entry.get("timestamp")
+            iso_timestamp: str | None = None
+            if isinstance(timestamp_value, datetime):
+                iso_timestamp = timestamp_value.astimezone(timezone.utc).isoformat()
+            elif isinstance(timestamp_value, (float, int)):
+                try:
+                    iso_timestamp = datetime.fromtimestamp(
+                        float(timestamp_value), tz=timezone.utc
+                    ).isoformat()
+                except Exception:  # pragma: no cover - defensive formatting
+                    iso_timestamp = None
+            elif isinstance(timestamp_value, str):
+                iso_timestamp = timestamp_value
+            transition = {
+                "mode": entry.get("mode"),
+                "timestamp": iso_timestamp,
+                "regime": entry.get("regime"),
+                "risk": float(entry.get("risk", 0.0) or 0.0),
+            }
+            transitions.append(transition)
+        return transitions
+
+    def _guardrail_telemetry_snapshot(self) -> dict[str, object]:
+        now = time.time()
+        with self._lock:
+            recent = list(self._recent_guardrail_events)
+            active = bool(self._exchange_degradation_guardrail_active)
+            kill_switch = bool(self._exchange_degradation_kill_switch)
+            reasons = list(self._last_guardrail_reasons)
+        recent_payload: list[dict[str, object]] = []
+        for name, timestamp in reversed(recent):
+            if not name:
+                continue
+            age = max(0.0, now - float(timestamp))
+            recent_payload.append({"name": name, "ageSeconds": age})
+        payload: dict[str, object] = {
+            "active": active,
+            "killSwitch": kill_switch,
+            "recent": recent_payload,
+        }
+        if reasons:
+            payload["reasons"] = [str(reason) for reason in reasons if reason]
+        return payload
+
+    def _build_ai_governor_extra_telemetry(self) -> dict[str, object]:
+        payload: dict[str, object] = {}
+        latency = self._cycle_latency_snapshot()
+        if latency:
+            payload["cycleLatency"] = latency
+        transitions = self._mode_transition_snapshot()
+        if transitions:
+            payload["modeTransitions"] = transitions
+        payload["guardrails"] = self._guardrail_telemetry_snapshot()
+        return payload
+
     def run_decision_cycle(self) -> DecisionCycleReport:
         """Execute a single decision cycle and return a structured report."""
 
@@ -9423,16 +9543,53 @@ class AutoTrader:
             != decision_revision_before
             else None
         )
+        telemetry = self._build_ai_governor_extra_telemetry()
+        self._ai_governor_extra_telemetry = telemetry
         return DecisionCycleReport(
             decision=decision,
             metadata=metadata,
             metrics=metrics,
+            telemetry=telemetry,
         )
 
-    def run_cycle_once(self) -> DecisionCycleReport:
-        """Backward compatible wrapper around :meth:`run_decision_cycle`."""
+    def run_single_cycle(self) -> DecisionCycleReport:
+        """Execute one decision cycle using the public automation API."""
 
         return self.run_decision_cycle()
+
+    def run_cycle_once(self) -> DecisionCycleReport:
+        """Backward compatible wrapper around :meth:`run_single_cycle`."""
+
+        return self.run_single_cycle()
+
+    def run_forever(
+        self,
+        *,
+        interval_s: float | None = None,
+        stop_event: threading.Event | None = None,
+        limit: int | None = None,
+    ) -> Iterable[DecisionCycleReport]:
+        """Yield successive decision cycle reports until cancelled.
+
+        The helper is intentionally lightweight so that schedulers and tests
+        can run deterministic loops without reaching into private state.
+        ``interval_s`` controls the pause between cycles, ``limit`` caps the
+        number of iterations and ``stop_event`` can be toggled from another
+        thread to terminate the generator early.
+        """
+
+        interval = max(0.0, float(interval_s or 0.0))
+        cycles = 0
+        while True:
+            if stop_event is not None and stop_event.is_set():
+                break
+            if limit is not None and cycles >= max(0, int(limit)):
+                break
+            report = self.run_single_cycle()
+            cycles += 1
+            yield report
+            if interval > 0:
+                time.sleep(interval)
 
     def _resolve_risk_service(self) -> Any | None:
         risk_service = self.risk_service
@@ -15631,12 +15788,22 @@ class AutoTrader:
         result["failover"] = failover_snapshot
         governor = getattr(self, "_ai_governor", None)
         if governor is not None:
+            governor_snapshot = governor.snapshot()
+            telemetry_payload: dict[str, object] = {}
+            existing_telemetry = governor_snapshot.get("telemetry")
+            if isinstance(existing_telemetry, Mapping):
+                telemetry_payload.update({
+                    str(key): copy.deepcopy(value)
+                    for key, value in existing_telemetry.items()
+                })
+            telemetry_payload["riskMetrics"] = dict(self._ai_governor_risk_metrics)
+            telemetry_payload["cycleMetrics"] = dict(self._ai_governor_cycle_metrics)
+            if self._ai_governor_extra_telemetry:
+                for key, value in self._ai_governor_extra_telemetry.items():
+                    telemetry_payload[str(key)] = copy.deepcopy(value)
             result["ai_governor"] = {
-                **governor.snapshot(),
-                "telemetry": {
-                    "riskMetrics": dict(self._ai_governor_risk_metrics),
-                    "cycleMetrics": dict(self._ai_governor_cycle_metrics),
-                },
+                **governor_snapshot,
+                "telemetry": telemetry_payload,
             }
         else:
             result["ai_governor"] = {"last_decision": {}, "history": [], "telemetry": {}}
