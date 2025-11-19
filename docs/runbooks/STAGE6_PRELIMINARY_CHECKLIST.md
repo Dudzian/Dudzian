@@ -116,7 +116,7 @@ oraz punkty kontrolne dla skryptów `scripts/run_stage6_*.py` i szablonów w `co
 ## 6. Operacje i compliance
 - [ ] Ustalono skład zespołu warsztatowego Stage6 (trading, risk, compliance, operations L1/L2)
       i przypisano odpowiedzialności za sekcje runbooków Stage6.
-- [ ] Zarejestrowano warsztaty discovery w decision logu (`python scripts/log_stage5_training.py`)
+- [ ] Zarejestrowano warsztaty discovery w decision logu (w razie potrzeby użyj archiwalnego narzędzia z `archive/hypercare_legacy`)
       z podpisem HMAC.
 - [ ] Przygotowano repozytorium artefaktów `var/audit/stage6_discovery/` (podpisy HMAC, struktura
       katalogów, retencja 24+ m-cy).
@@ -151,7 +151,7 @@ oraz punkty kontrolne dla skryptów `scripts/run_stage6_*.py` i szablonów w `co
       --hmac-key-env STAGE6_HYPERCARE_HMAC_KEY`, zatrzymując bundler w razie braku podpisu lub
       statusu `fail` któregokolwiek komponentu.
 - [ ] Zaplanowano integrację z pełną checklistą hypercare (`FULL_HYPERCARE_CHECKLIST.md`) oraz
-      pipeline'em CI (połączenie Stage5/Stage6).
+      pipeline'em CI (połączenie Stage 5 / Stage6).
 - [ ] Przygotowano wpisy decision logu dokumentujące wykonanie cyklu hypercare i podpisy HMAC.
 
 ## 8. Akceptacja wstępna

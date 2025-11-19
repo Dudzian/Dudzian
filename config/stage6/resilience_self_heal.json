@@ -7,7 +7,7 @@
       "severity": "critical",
       "tags": ["stage6", "orchestrator"],
       "metadata": {
-        "playbook": "stage5_support"
+        "playbook": "legacy_support"
       },
       "actions": [
         {

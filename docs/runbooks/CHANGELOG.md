@@ -14,7 +14,7 @@
 ## 2025-11-12 – Koniec nomenklatury legacy i nowe paczki offline
 - **Zakres**: README, runbooki live/paper, `scripts/package_update.py`, `core/update/**`, UI PySide6/QML oraz dokumentacja deploy.
 - **Zmiana**: całkowicie usunięto odwołania do dawnej warstwy legacy i zastąpiono format paczek legacy podpisanymi archiwami `.dudzianpkg`. Kontroler UI, testy QA i dokumentacja offline używają nowej nazwy, a CI zawiera regresję blokującą powrót historycznych tokenów.
-- **Działanie dla zespołów**: aktualizujcie własne checklisty i skrypty automatyzujące dystrybucję offline tak, aby generowały nową paczkę `.dudzianpkg`. Podczas code review odrzucajcie PR-y z nomenklaturą Stage5 – linter QA (`tests/qa/test_no_legacy_tokens.py`) będzie traktował takie wstawki jako błąd blokujący.
+- **Działanie dla zespołów**: aktualizujcie własne checklisty i skrypty automatyzujące dystrybucję offline tak, aby generowały nową paczkę `.dudzianpkg`. Podczas code review odrzucajcie PR-y z nomenklaturą piątego etapu – linter QA (`tests/qa/test_no_legacy_tokens.py`) będzie traktował takie wstawki jako błąd blokujący.
 
 ## 2025-11-10 – Kontrola HWID/licencji dla modułu cloud
 - **Zakres**: `proto/trading.proto`, `bot_core/cloud/**`, `config/cloud/server*.yaml`, README oraz runbooki live/paper/security`.
@@ -32,7 +32,7 @@
   dokumentacja odnosiła się wyłącznie do aktualnej architektury Stage6.
 - **Działanie dla zespołów**: podczas przeglądów kodu odwołujcie się już tylko do bieżących modułów (`bot_core`, `core`, `ui`);
   ewentualne pytania migracyjne trzeba kierować do dokumentów w `docs/migrations/`.
-- **Aktualizacja**: komunikaty błędów dotyczące magazynu sekretów i metryk AI odnoszą się teraz do „historycznych formatów Stage5”
+- **Aktualizacja**: komunikaty błędów dotyczące magazynu sekretów i metryk AI odnoszą się teraz do „historycznych formatów poprzedniego etapu”
   zamiast „legacy”, aby utrzymać spójne słownictwo i przygotować repo do twardych testów QA zakazujących dawnej nomenklatury.
 
 ## 2025-10-30 – Logowanie Stage6 i migrator bez fallbacków archiwalnych

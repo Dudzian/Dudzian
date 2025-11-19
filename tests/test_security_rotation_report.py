@@ -38,13 +38,13 @@ def test_build_rotation_summary_entry_includes_signature(tmp_path: Path) -> None
         notes="Rotacja planowa",
     )
 
-    entry = build_rotation_summary_entry(summary, signing_key=b"demo_key", signing_key_id="stage5")
+    entry = build_rotation_summary_entry(summary, signing_key=b"demo_key", signing_key_id="legacy-rotation")
 
-    assert entry["type"] == "stage5_key_rotation"
+    assert entry["type"] == "key_rotation_report"
     assert entry["stats"]["total"] == 1
     assert entry["records"][0]["environment"] == "paper"
     assert entry["records"][0]["next_due_at"].startswith("2024-05-31")
-    assert entry["signature"]["key_id"] == "stage5"
+    assert entry["signature"]["key_id"] == "legacy-rotation"
 
 
 def test_write_rotation_summary_persists_json(tmp_path: Path) -> None:

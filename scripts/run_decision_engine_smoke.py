@@ -115,7 +115,7 @@ def _build_signature_payload(
     stress_failures: int,
 ) -> Mapping[str, object]:
     return {
-        "schema": "stage5.decision_engine.smoke",
+        "schema": "runtime.decision_engine.smoke",
         "schema_version": "1.0",
         "generated_at": generated_at,
         "result": output_path.name,

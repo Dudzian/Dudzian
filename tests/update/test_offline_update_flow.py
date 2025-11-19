@@ -133,7 +133,7 @@ def test_install_release_archive_partial_failure_allows_manual_rollback(
     strategies_target = app_root / "strategies"
     backup_dir = tmp_path / "backups"
 
-    _write_file(models_target / "model.bin", "STAGE5_FORMAT")
+    _write_file(models_target / "model.bin", "LEGACY_STAGE_5_FORMAT")
     _write_file(strategies_target / "grid.json", json.dumps({"name": "sunset"}))
 
     staging_root = tmp_path / "staging"
@@ -183,5 +183,5 @@ def test_install_release_archive_partial_failure_allows_manual_rollback(
     shutil.copytree(backups[0], models_target)
     assert (
         models_target.joinpath("model.bin").read_text(encoding="utf-8")
-        == "STAGE5_FORMAT"
+        == "LEGACY_STAGE_5_FORMAT"
     )

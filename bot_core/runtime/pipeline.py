@@ -4580,7 +4580,7 @@ def build_paper_multi_strategy_runtime(
         scheduler_name=scheduler_name,
         telemetry_emitter=telemetry_emitter,
         adapter_factories=adapter_factories,
-        environment_aliases=("paper", "stage6", "stage5"),
+        environment_aliases=("paper", "stage6"),
         environment_type=Environment.PAPER,
         prefer_offline=False,
         environment_name=environment_name,

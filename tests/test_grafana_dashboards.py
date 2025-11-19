@@ -6,7 +6,6 @@ from pathlib import Path
 import pytest
 
 STAGE4_DASHBOARD = Path("deploy/grafana/provisioning/dashboards/stage4_multi_strategy.json")
-STAGE5_DASHBOARD = Path("deploy/grafana/provisioning/dashboards/stage5_compliance_cost.json")
 STAGE6_DASHBOARD = Path("deploy/grafana/provisioning/dashboards/stage6_resilience_operations.json")
 
 
@@ -45,27 +44,6 @@ def test_stage4_dashboard_threshold_configuration() -> None:
         steps = thresholds.get("steps", [])
         assert steps, "stat panel should define threshold steps"
         assert steps == sorted(steps, key=lambda step: step.get("value", 0))
-
-
-@pytest.mark.parametrize(
-    "metric_substring",
-    [
-        "bot_core_decision_latency_ms",
-        "bot_core_trade_cost_bps",
-        "bot_core_fill_rate_pct",
-        "bot_core_key_rotation_due_in_days",
-    ],
-)
-def test_stage5_dashboard_contains_expected_metrics(metric_substring: str) -> None:
-    dashboard = json.loads(STAGE5_DASHBOARD.read_text(encoding="utf-8"))
-    assert dashboard["title"] == "Stage5 – Compliance & Cost Control"
-    expressions: list[str] = []
-    for panel in dashboard.get("panels", []):
-        for target in panel.get("targets", []):
-            expr = target.get("expr")
-            if expr:
-                expressions.append(expr)
-    assert any(metric_substring in expr for expr in expressions), metric_substring
 
 
 @pytest.mark.parametrize(

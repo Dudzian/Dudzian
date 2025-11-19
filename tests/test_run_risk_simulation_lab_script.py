@@ -53,7 +53,7 @@ def simple_config(tmp_path: Path) -> Path:
 
 
 @pytest.fixture()
-def stage5_config(tmp_path: Path) -> tuple[Path, Path]:
+def tco_config(tmp_path: Path) -> tuple[Path, Path]:
     config_path = tmp_path / "core.yaml"
     reports_dir = tmp_path / "reports"
     reports_dir.mkdir()
@@ -155,9 +155,9 @@ def test_cli_supports_stage2_profile_all(tmp_path: Path, simple_config: Path) ->
     assert profiles == {"conservative"}
 
 
-def test_cli_stage5_latency_tco(tmp_path: Path, stage5_config: tuple[Path, Path]) -> None:
-    config_path, tco_path = stage5_config
-    output_dir = tmp_path / "stage5"
+def test_cli_latency_tco(tmp_path: Path, tco_config: tuple[Path, Path]) -> None:
+    config_path, tco_path = tco_config
+    output_dir = tmp_path / "tco_checks"
     exit_code = run_main(
         [
             "--config",
@@ -195,7 +195,7 @@ def test_parser_stage2_defaults() -> None:
     assert args.profile == ["all"]
 
 
-def test_parser_stage5_defaults() -> None:
+def test_parser_tco_defaults() -> None:
     parser = _build_parser()
     args = parser.parse_args(["--scenario", "latency_spike", "--include-tco"])
     assert args.config == DEFAULT_CONFIG_PATH

@@ -140,7 +140,7 @@ def test_rotate_keys_updates_registry_and_writes_report_or_generates_plan(tmp_pa
         cache_path = tmp_path / "cache"
         _write_minimal_head_config(config_path, cache_path)
 
-        key_b64 = base64.b64encode(b"stage5_rotation_key").decode("ascii")
+        key_b64 = base64.b64encode(b"legacy_rotation_key").decode("ascii")
         output_path = tmp_path / "rotation.json"
 
         exit_code = rotate_keys_run(
@@ -156,7 +156,7 @@ def test_rotate_keys_updates_registry_and_writes_report_or_generates_plan(tmp_pa
                 "--signing-key",
                 key_b64,
                 "--signing-key-id",
-                "stage5",
+                "legacy-rotation",
                 "--output",
                 str(output_path),
             ]
@@ -165,7 +165,7 @@ def test_rotate_keys_updates_registry_and_writes_report_or_generates_plan(tmp_pa
 
         payload = json.loads(output_path.read_text(encoding="utf-8"))
         # oczekiwane pola z wariantu HEAD
-        assert payload.get("type") in {"stage5_key_rotation", "stage5.key_rotation", "rotation_summary"}
+        assert payload.get("type") in {"key_rotation_report", "rotation_summary"}
         assert payload["records"][0]["environment"] in {"paper", "demo", "core", payload["records"][0]["environment"]}
         if "signature" in payload:
             assert payload["signature"]["algorithm"].upper().startswith("HMAC-")

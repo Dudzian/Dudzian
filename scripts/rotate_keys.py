@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-Stage5 Key Rotation – merged CLI (HEAD + main)
+Key Rotation – merged CLI (HEAD + main)
 
 Subcommands:
   - batch  : aktualizuje rejestr rotacji dla wskazanych środowisk i zapisuje
-             podpisany raport Stage5 (HMAC Base64)
+             podpisany raport rotacji (HMAC Base64)
   - plan   : generuje plan rotacji wg observability.key_rotation i opcjonalnie
              oznacza klucze jako zrotowane (execute)
   - status : szybki podgląd rejestru rotacji dla bundla (np. mTLS `core-oem`)
@@ -175,14 +175,14 @@ def _status_payload(
     return payload
 
 # =====================================================================
-# Subcommand: batch  (HEAD – podpisany raport Stage5)
+# Subcommand: batch  (podpisany raport rotacji)
 # =====================================================================
 
 def _build_parser_batch(sub: argparse._SubParsersAction) -> argparse.ArgumentParser:
     p = sub.add_parser(
         "batch",
-        help="Wsadowa rotacja wg środowisk + podpisany raport Stage5",
-        description="Aktualizuje rejestry rotacji (po środowiskach) i zapisuje podpisany raport Stage5.",
+        help="Wsadowa rotacja wg środowisk + podpisany raport rotacji",
+        description="Aktualizuje rejestry rotacji (po środowiskach) i zapisuje podpisany raport z wynikami.",
     )
     p.add_argument("--config", default="config/core.yaml", help="Ścieżka do CoreConfig")
     p.add_argument("--environment", action="append", dest="environments",
@@ -191,7 +191,7 @@ def _build_parser_batch(sub: argparse._SubParsersAction) -> argparse.ArgumentPar
                    help="Interwał rotacji w dniach (domyślnie 90)")
     p.add_argument("--operator", required=True, help="Operator wykonujący rotację")
     p.add_argument("--notes", help="Uwagi do raportu")
-    p.add_argument("--artifact-root", default="var/audit/stage5/key_rotation",
+    p.add_argument("--artifact-root", default="var/audit/key_rotation",
                    help="Katalog docelowy raportów")
     p.add_argument("--output", help="Pełna ścieżka pliku raportu (opcjonalnie)")
     p.add_argument("--executed-at", help="Znacznik czasu rotacji (ISO8601); domyślnie teraz")
@@ -438,7 +438,7 @@ def _handle_plan(args: argparse.Namespace) -> int:
     return 0
 
 # =====================================================================
-# Subcommand: status  (Stage5 L2 – szybki podgląd bundla)
+# Subcommand: status  (szybki podgląd bundla)
 # =====================================================================
 
 def _extract_status_defaults(
@@ -677,7 +677,7 @@ def _handle_status(args: argparse.Namespace) -> int:
 
 def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
-        description="Stage5 Key Rotation – merged CLI (batch + plan + status)"
+        description="Key Rotation – merged CLI (batch + plan + status)"
     )
     sub = parser.add_subparsers(dest="_cmd", metavar="{batch|plan|status}")
     _build_parser_batch(sub)

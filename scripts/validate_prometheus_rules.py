@@ -28,10 +28,9 @@ def _parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         action="append",
         default=[
             "deploy/prometheus/rules/multi_strategy_rules.yml",
-            "deploy/prometheus/stage5_alerts.yaml",
             "deploy/prometheus/stage6_alerts.yaml",
         ],
-        help="Ścieżka do pliku YAML z regułami (domyślnie pliki Stage4/Stage5/Stage6)",
+        help="Ścieżka do pliku YAML z regułami (domyślnie pliki Stage4/Stage6)",
     )
     parser.add_argument(
         "--require-label",
