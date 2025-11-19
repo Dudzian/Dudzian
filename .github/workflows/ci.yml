@@ -524,7 +524,8 @@ jobs:
           python scripts/build_marketplace_catalog.py \
             --private-key config/marketplace/keys/dev-presets-ed25519.key \
             --key-id dev-presets \
-            --signing-key dev-hmac:config/marketplace/keys/dev-hmac.key
+            --signing-key dev-hmac:config/marketplace/keys/dev-hmac.key \
+            --catalog-signature-key dev-hmac
 
       - name: Validate catalog metadata
         run: python scripts/marketplace_cli.py validate --key dev-hmac:config/marketplace/keys/dev-hmac.key
@@ -542,6 +543,16 @@ jobs:
             sync-reviews \
             --source-dir config/marketplace/reviews
           python scripts/marketplace_cli.py sync --source config/marketplace/catalog.json --force
+
+      - name: Validate release bundle catalog
+        run: |
+          python scripts/build_release_bundle.py \
+            --check-only \
+            --require-clean \
+            --catalog config/marketplace/catalog.json \
+            --markdown config/marketplace/catalog.md \
+            --packages config/marketplace/packages \
+            --minimum-qa-strategies 15
 
       - name: Ensure repository is clean
         run: |
@@ -606,3 +617,52 @@ jobs:
         with:
           name: ui-${{ matrix.platform }}
           path: artifacts/ui/${{ matrix.platform }}
+
+  deploy:
+    name: Release marketplace assets
+    runs-on: ubuntu-latest
+    needs:
+      - marketplace-catalog
+      - ui-packaging
+    if: github.event_name != 'pull_request'
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install .[dev]
+
+      - name: Build signed marketplace catalog
+        run: |
+          python scripts/build_marketplace_catalog.py \
+            --private-key config/marketplace/keys/dev-presets-ed25519.key \
+            --key-id dev-presets \
+            --signing-key dev-hmac:config/marketplace/keys/dev-hmac.key \
+            --catalog-signature-key dev-hmac
+
+      - name: Synchronize installer marketplace bundle
+        run: |
+          python scripts/build_release_bundle.py \
+            --catalog config/marketplace/catalog.json \
+            --markdown config/marketplace/catalog.md \
+            --packages config/marketplace/packages \
+            --installer-root deploy/packaging/samples
+
+      - name: Publish catalog release artefacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: marketplace-catalog-release
+          path: |
+            config/marketplace/catalog.json
+            config/marketplace/catalog.json.sig
+            config/marketplace/catalog.md
+            config/marketplace/catalog.md.sig
+          if-no-files-found: error
