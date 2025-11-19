@@ -879,15 +879,16 @@ def test_runtime_service_feed_health_exports_alerts(monkeypatch: pytest.MonkeyPa
     sink = _Sink()
     service = RuntimeService(feed_alert_sink=sink, feed_metrics_exporter=exporter)
 
-    service._feed_latencies.clear()
-    service._feed_latencies.append(5.0)
+    samples = service._latency_samples_for("grpc")
+    samples.clear()
+    samples.append(5.0)
     service._update_feed_health(status="connected", reconnects=0, last_error="")
     critical_report = service.feedSlaReport
     assert critical_report["latency_state"] == "critical"
     assert critical_report["sla_state"] == "critical"
 
-    service._feed_latencies.clear()
-    service._feed_latencies.append(0.2)
+    samples.clear()
+    samples.append(0.2)
     service._update_feed_health(status="connected", reconnects=0, last_error="")
 
     assert events[:2] == ["critical", "info"]

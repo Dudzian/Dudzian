@@ -1,21 +1,56 @@
 {
-  "generated_at": "2024-01-01T00:00:00Z",
-  "status": "initializing",
-  "count": 0,
+  "generated_at": "2025-11-19T08:58:41.213421+00:00",
+  "count": 3,
   "reconnects": 0,
   "downtime_ms": 0.0,
   "downtimeMs": 0.0,
-  "p50_ms": 0.0,
-  "p95_ms": 0.0,
-  "p95_seconds": 0.0,
+  "status": "fallback",
+  "last_error": "grpc down",
+  "lastError": "grpc down",
+  "next_retry_seconds": null,
+  "nextRetrySeconds": null,
+  "channels": [
+    "decision_journal",
+    "ai_governor"
+  ],
+  "min_ms": 5.0,
+  "max_ms": 9.0,
+  "avg_ms": 7.0,
+  "p50_ms": 7.0,
+  "p95_ms": 8.8,
+  "latency_p95_ms": 8.8,
+  "p95_seconds": 0.0088,
+  "p95": 0.0088,
   "latency_state": "ok",
   "reconnects_state": "ok",
   "downtime_state": "ok",
   "latency_warning_ms": 2500.0,
   "latency_critical_ms": 5000.0,
-  "reconnects_warning": 3,
-  "reconnects_critical": 6,
+  "reconnects_warning": 3.0,
+  "reconnects_critical": 6.0,
   "downtime_warning_seconds": 30.0,
   "downtime_critical_seconds": 120.0,
-  "sla_state": "ok"
+  "downtime_seconds": 0.0,
+  "sla_state": "ok",
+  "transport_source": "grpc",
+  "transports": {
+    "grpc": {
+      "status": "connected",
+      "p50_ms": 7.0,
+      "p95_ms": 8.8,
+      "reconnects": 1,
+      "downtimeMs": 0.0,
+      "lastError": "",
+      "updatedAt": 1763542721.212438
+    },
+    "fallback": {
+      "status": "fallback",
+      "p50_ms": 0.5,
+      "p95_ms": 0.59,
+      "reconnects": 3,
+      "downtimeMs": 0.0,
+      "lastError": "grpc down",
+      "updatedAt": 1763542721.2125595
+    }
+  }
 }

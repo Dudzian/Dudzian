@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import statistics
 import sys
 import threading
 import time
@@ -295,6 +296,11 @@ def test_runtime_service_consumes_grpc_stream(
             health = service.feedHealth
             assert health["status"] == "connected"
             assert health["reconnects"] == payload["reconnects"]
+            transports = health.get("transports", {})
+            assert "grpc" in transports
+            grpc_view = transports["grpc"]
+            assert grpc_view["p95_ms"] == pytest.approx(payload["p95_ms"])
+            assert grpc_view["p50_ms"] == pytest.approx(payload["p50_ms"])
             sla_report = service.feedSlaReport
             assert sla_report["p95_ms"] == pytest.approx(payload["p95_ms"])
             assert sla_report["sla_state"] in {"ok", "warning"}
@@ -603,12 +609,13 @@ def test_feed_health_threshold_alerts_and_metrics(monkeypatch: pytest.MonkeyPatc
     try:
         service._active_stream_label = "grpc://demo"
 
-        service._feed_latencies.clear()
-        service._feed_latencies.append(10.0)
+        samples = service._latency_samples_for("grpc")
+        samples.clear()
+        samples.append(10.0)
         service._update_feed_health(status="connected", reconnects=0, last_error="")
 
-        service._feed_latencies.clear()
-        service._feed_latencies.append(0.1)
+        samples.clear()
+        samples.append(0.1)
         service._update_feed_health(status="connected", reconnects=0, last_error="")
 
         service._update_feed_health(status="connected", reconnects=5, last_error="retry")
@@ -700,6 +707,43 @@ def test_runtime_service_emits_feed_alerts_when_threshold_crossed(monkeypatch: p
         )
         assert events[-1]["severity"] == "info"
         assert events[-1]["context"].get("state") == "recovered"
+    finally:
+        service._longpoll_timer.stop()
+        service._stop_grpc_stream()
+        app.quit()
+
+
+def test_feed_health_reports_grpc_and_fallback_breakdown(monkeypatch: pytest.MonkeyPatch) -> None:
+    pytest.importorskip("PySide6")
+    os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+    from PySide6.QtCore import QCoreApplication  # type: ignore[attr-defined]
+
+    monkeypatch.setattr(RuntimeService, "_auto_connect_grpc", lambda self: None)
+    monkeypatch.setattr(RuntimeService, "_refresh_long_poll_metrics", lambda self: None)
+
+    app = QCoreApplication.instance() or QCoreApplication([])
+    service = RuntimeService(default_limit=1, decision_loader=lambda limit: [])
+    try:
+        service._active_stream_label = "grpc://demo"
+        grpc_samples = service._latency_samples_for("grpc")
+        grpc_samples.clear()
+        grpc_samples.extend([5.0, 7.0, 9.0])
+        service._update_feed_health(status="connected", reconnects=1, last_error="")
+
+        service._active_stream_label = "offline-demo"
+        fallback_samples = service._latency_samples_for("fallback")
+        fallback_samples.clear()
+        fallback_samples.extend([0.4, 0.6])
+        service._update_feed_health(status="fallback", reconnects=3, last_error="grpc down")
+
+        transports = service.feedHealth.get("transports", {})
+        assert transports["grpc"]["p95_ms"] >= transports["grpc"]["p50_ms"] >= 0.0
+        assert transports["grpc"]["status"] == "connected"
+        assert transports["fallback"]["status"] == "fallback"
+        assert transports["fallback"]["p50_ms"] == pytest.approx(statistics.median([0.4, 0.6]))
+        sla_report = service.feedSlaReport
+        assert sla_report["transports"]["grpc"]["p95_ms"] == pytest.approx(transports["grpc"]["p95_ms"])
+        assert sla_report["transports"]["fallback"]["status"] == "fallback"
     finally:
         service._longpoll_timer.stop()
         service._stop_grpc_stream()

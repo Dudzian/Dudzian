@@ -880,7 +880,32 @@ class RuntimeService(QObject):
         self._feed_channel_status: dict[str, dict[str, object]] = {
             channel: {"status": "initializing", "lastError": ""} for channel in self._feed_channels
         }
-        self._feed_latencies: deque[float] = deque(maxlen=1024)
+        buffer_size = 1024
+        self._latency_buffer_size = buffer_size
+        self._transport_latency_samples: dict[str, deque[float]] = {
+            "grpc": deque(maxlen=buffer_size),
+            "fallback": deque(maxlen=buffer_size),
+        }
+        self._feed_transport_stats: dict[str, dict[str, object]] = {
+            "grpc": {
+                "status": "initializing",
+                "p50_ms": None,
+                "p95_ms": None,
+                "reconnects": 0,
+                "downtimeMs": 0.0,
+                "lastError": "",
+                "updatedAt": 0.0,
+            },
+            "fallback": {
+                "status": "offline",
+                "p50_ms": None,
+                "p95_ms": None,
+                "reconnects": 0,
+                "downtimeMs": 0.0,
+                "lastError": "",
+                "updatedAt": 0.0,
+            },
+        }
         self._feed_health: dict[str, object] = {
             "status": "initializing",
             "reconnects": 0,
@@ -888,6 +913,7 @@ class RuntimeService(QObject):
             "lastError": "",
             "channels": list(self._feed_channels),
             "channelStates": {channel: dict(state) for channel, state in self._feed_channel_status.items()},
+            "transports": {key: dict(value) for key, value in self._feed_transport_stats.items()},
         }
         self._feed_sla_report: dict[str, object] = {}
         self._feed_transport_snapshot: dict[str, object] = {
@@ -1038,21 +1064,34 @@ class RuntimeService(QObject):
             payload["nextRetrySeconds"] = max(0.0, float(next_retry))
         else:
             payload.pop("nextRetrySeconds", None)
-        latencies = list(self._feed_latencies)
+        transport_key = self._current_transport_key()
+        latencies = list(self._latency_samples_for(transport_key))
         latency_p95: float | None = None
+        latency_p50: float | None = None
         if latencies:
             latency_p95 = float(self._percentile(latencies, 95.0))
             payload["p95LatencyMs"] = latency_p95
+            latency_p50 = float(statistics.median(latencies))
+            payload["p50LatencyMs"] = latency_p50
         else:
             payload.pop("p95LatencyMs", None)
+            payload.pop("p50LatencyMs", None)
         self._feed_health = payload
         payload["channelStates"] = {
             channel: dict(state) for channel, state in self._feed_channel_status.items()
         }
+        self._update_transport_breakdown(
+            transport_key,
+            payload,
+            latency_p50=latency_p50,
+            latency_p95=latency_p95,
+        )
+        payload["transports"] = self._serialize_transport_stats()
         self.feedHealthChanged.emit()
         self._refresh_feed_transport_snapshot(payload, latency_p95)
         self._publish_feed_metrics(payload, latency_p95)
         self._evaluate_feed_health_alerts(payload, latency_p95)
+        self._write_feed_metrics()
 
     def _refresh_feed_transport_snapshot(
         self, payload: Mapping[str, object], latency_p95: float | None
@@ -1081,6 +1120,7 @@ class RuntimeService(QObject):
             "queueDepth": self._grpc_queue.qsize() if self._grpc_queue is not None else 0,
             "channels": list(self._feed_channels),
             "channelStates": {channel: dict(state) for channel, state in self._feed_channel_status.items()},
+            "transports": self._serialize_transport_stats(),
         }
         if self._grpc_stream_active:
             snapshot["secondsSinceLastMessage"] = max(0.0, time.monotonic() - self._last_grpc_update)
@@ -1242,6 +1282,66 @@ class RuntimeService(QObject):
         if self._loader is _default_loader:
             return "demo"
         return "unknown"
+
+    def _current_transport_key(self) -> str:
+        label = self._active_stream_label or ""
+        if label.startswith("grpc://") or self._grpc_stream_active:
+            return "grpc"
+        return "fallback"
+
+    def _latency_samples_for(self, key: str | None) -> deque[float]:
+        transport = key or "grpc"
+        samples = self._transport_latency_samples.get(transport)
+        if samples is None:
+            samples = deque(maxlen=self._latency_buffer_size)
+            self._transport_latency_samples[transport] = samples
+        return samples
+
+    def _update_transport_breakdown(
+        self,
+        key: str,
+        payload: Mapping[str, object],
+        *,
+        latency_p50: float | None,
+        latency_p95: float | None,
+    ) -> None:
+        stats = self._feed_transport_stats.setdefault(
+            key,
+            {
+                "status": "unknown",
+                "p50_ms": None,
+                "p95_ms": None,
+                "reconnects": 0,
+                "downtimeMs": 0.0,
+                "lastError": "",
+                "updatedAt": 0.0,
+            },
+        )
+        stats.update(
+            {
+                "status": str(payload.get("status", stats.get("status", "unknown"))),
+                "p50_ms": latency_p50,
+                "p95_ms": latency_p95,
+                "reconnects": int(payload.get("reconnects", stats.get("reconnects", 0)) or 0),
+                "downtimeMs": float(payload.get("downtimeMs", stats.get("downtimeMs", 0.0)) or 0.0),
+                "lastError": str(payload.get("lastError", stats.get("lastError", "")) or ""),
+                "updatedAt": time.time(),
+            }
+        )
+
+    def _serialize_transport_stats(self) -> dict[str, dict[str, object]]:
+        snapshot: dict[str, dict[str, object]] = {}
+        for key, stats in self._feed_transport_stats.items():
+            snapshot[key] = {
+                "status": stats.get("status"),
+                "p50_ms": stats.get("p50_ms"),
+                "p95_ms": stats.get("p95_ms"),
+                "reconnects": stats.get("reconnects", 0),
+                "downtimeMs": stats.get("downtimeMs", 0.0),
+                "lastError": stats.get("lastError", ""),
+                "updatedAt": stats.get("updatedAt", 0.0),
+            }
+        return snapshot
 
     @staticmethod
     def _classify_threshold(
@@ -2656,12 +2756,16 @@ class RuntimeService(QObject):
             latency_value = 0.0
         self._last_grpc_update = time.monotonic()
         self._grpc_idle_flag = False
-        self._feed_latencies.append(latency_value)
+        self._latency_samples_for("grpc").append(latency_value)
         self._mark_feed_connected()
         self._update_feed_health(latest_latency=latency_value, reconnects=self._feed_reconnects, last_error="")
 
     def _write_feed_metrics(self, *, force: bool = False) -> None:
-        latencies = list(self._feed_latencies)
+        source_key = "grpc"
+        latencies = list(self._latency_samples_for(source_key))
+        if not latencies:
+            source_key = self._current_transport_key()
+            latencies = list(self._latency_samples_for(source_key))
         downtime_value = float(self._feed_health.get("downtimeMs", 0.0))
         next_retry_value = self._feed_health.get("nextRetrySeconds")
         status_value = self._feed_health.get("status", "unknown")
@@ -2740,6 +2844,8 @@ class RuntimeService(QObject):
                 ),
             }
         )
+        stats_payload["transport_source"] = source_key
+        stats_payload["transports"] = self._serialize_transport_stats()
         self._feed_sla_report = stats_payload
         self.feedSlaReportChanged.emit()
         now = time.monotonic()
