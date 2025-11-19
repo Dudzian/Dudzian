@@ -24,6 +24,10 @@ from bot_core.runtime.cloud_profiles import (
     RuntimeCloudClientSelection,
     resolve_runtime_cloud_client,
 )
+from bot_core.security.cloud_flag import (
+    CloudFlagValidationError,
+    validate_runtime_cloud_flag,
+)
 
 
 _LOG = logging.getLogger(__name__)
@@ -86,6 +90,11 @@ def main(argv: Iterable[str] | None = None) -> int:
 
     cloud_selection: RuntimeCloudClientSelection | None = None
     if getattr(args, "enable_cloud_runtime", False):
+        try:
+            validate_runtime_cloud_flag(Path(args.config))
+        except CloudFlagValidationError as exc:
+            _LOG.error("Walidacja flagi cloudowej nie powiodła się: %s", exc)
+            return 4
         try:
             cloud_selection = resolve_runtime_cloud_client(Path(args.config))
         except Exception as exc:  # pragma: no cover - diagnostyka konfiguracji

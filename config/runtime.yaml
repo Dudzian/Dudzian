@@ -261,6 +261,13 @@ ui:
 
 cloud:
   enabled: false
+  enabled_signed:
+    flag_path: var/runtime/cloud_flag.json
+    signature_path: var/runtime/cloud_flag.sig
+    algorithm: HMAC-SHA256
+    key_env: CLOUD_RUNTIME_FLAG_SECRET
+    key_path: null
+    key_value: null
   default_profile: local-desktop
   profiles:
     local-desktop:

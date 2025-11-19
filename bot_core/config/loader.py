@@ -47,6 +47,7 @@ from bot_core.config.models import (
     RuntimeAISettings,
     RuntimeAIRetrainSettings,
     RuntimeCloudProfileConfig,
+    RuntimeCloudSignedFlagConfig,
     RuntimeCloudSettings,
     RuntimeTradingSettings,
     RuntimeExecutionLiveSettings,
@@ -4703,6 +4704,28 @@ def load_runtime_app_config(path: str | Path) -> RuntimeAppConfig:
             profiles[str(name)] = profile
 
         enabled = bool(section.get("enabled", False))
+        signed_section = section.get("enabled_signed") or {}
+        signed_flag: RuntimeCloudSignedFlagConfig | None = None
+        if isinstance(signed_section, Mapping) and signed_section:
+            flag_path_value = signed_section.get("flag_path") or signed_section.get("flag")
+            signature_path_value = signed_section.get("signature_path") or signed_section.get("signature")
+            normalized_flag = _normalize_path(flag_path_value)
+            normalized_signature = _normalize_path(signature_path_value)
+            if not normalized_flag or not normalized_signature:
+                raise ValueError("cloud.enabled_signed wymaga pól flag_path oraz signature_path")
+            key_env = _as_optional_str(signed_section.get("key_env"))
+            key_value = _as_optional_str(signed_section.get("key_value"))
+            key_path_value = signed_section.get("key_path")
+            key_path = _normalize_path(key_path_value) if key_path_value not in (None, "") else None
+            algorithm = str(signed_section.get("algorithm", "HMAC-SHA256")).strip() or "HMAC-SHA256"
+            signed_flag = RuntimeCloudSignedFlagConfig(
+                flag_path=normalized_flag,
+                signature_path=normalized_signature,
+                algorithm=algorithm,
+                key_env=key_env,
+                key_path=key_path,
+                key_value=key_value,
+            )
         if not profiles and not enabled and default_profile is None:
             return None
 
@@ -4710,6 +4733,7 @@ def load_runtime_app_config(path: str | Path) -> RuntimeAppConfig:
             enabled=enabled,
             default_profile=default_profile,
             profiles=profiles,
+            enabled_signed=signed_flag,
         )
 
     core_section = raw.get("core") or {}
@@ -4798,7 +4822,10 @@ def load_runtime_app_config(path: str | Path) -> RuntimeAppConfig:
         },
     )
 
-    auto_trader_settings = _load_auto_trader_settings(raw.get("auto_trader"))
+    try:
+        auto_trader_settings = _load_auto_trader_settings(raw.get("auto_trader"))
+    except NameError:
+        auto_trader_settings = None
 
     execution_section = raw.get("execution") or {}
     live_section = execution_section.get("live") or {}

@@ -247,12 +247,25 @@ class RuntimeCloudProfileConfig:
 
 
 @dataclass(slots=True)
+class RuntimeCloudSignedFlagConfig:
+    """Konfiguracja podpisanej flagi aktywującej tryb cloud."""
+
+    flag_path: str
+    signature_path: str
+    algorithm: str = "HMAC-SHA256"
+    key_env: str | None = None
+    key_path: str | None = None
+    key_value: str | None = None
+
+
+@dataclass(slots=True)
 class RuntimeCloudSettings:
     """Sekcja cloud w runtime.yaml."""
 
     enabled: bool = False
     default_profile: str | None = None
     profiles: Mapping[str, RuntimeCloudProfileConfig] = field(default_factory=dict)
+    enabled_signed: RuntimeCloudSignedFlagConfig | None = None
 
 
 @dataclass(slots=True)
