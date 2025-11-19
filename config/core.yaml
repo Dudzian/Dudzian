@@ -255,6 +255,29 @@ exchange_adapters:
           public_path: /deribit/futures/public
           private_path: /deribit/futures/private
           poll_interval: 0.5
+    spot:
+      class_path: bot_core.exchanges.deribit.spot:DeribitSpotAdapter
+      supports_testnet: true
+      default_settings:
+        ccxt_config:
+          options:
+            defaultType: spot
+        retry_policy:
+          max_attempts: 4
+          base_delay: 0.3
+          max_delay: 1.5
+          jitter: [0.05, 0.25]
+        rate_limit_rules:
+          - rate: 20
+            per: 1
+          - rate: 600
+            per: 60
+        stream:
+          live_base_url: https://stream.hyperion.dudzian.ai/exchanges
+          testnet_base_url: https://stream.sandbox.dudzian.ai/exchanges
+          public_path: /stream/deribit_spot/public
+          private_path: /stream/deribit_spot/private
+          poll_interval: 0.75
   bitmex:
     futures:
       class_path: bot_core.exchanges.bitmex.futures:BitmexFuturesAdapter
@@ -278,6 +301,29 @@ exchange_adapters:
           public_path: /bitmex/futures/public
           private_path: /bitmex/futures/private
           poll_interval: 0.35
+    spot:
+      class_path: bot_core.exchanges.bitmex.spot:BitmexSpotAdapter
+      supports_testnet: true
+      default_settings:
+        ccxt_config:
+          options:
+            defaultType: spot
+        retry_policy:
+          max_attempts: 4
+          base_delay: 0.25
+          max_delay: 1.5
+          jitter: [0.05, 0.25]
+        rate_limit_rules:
+          - rate: 30
+            per: 1
+          - rate: 600
+            per: 60
+        stream:
+          live_base_url: https://stream.hyperion.dudzian.ai/exchanges
+          testnet_base_url: https://stream.sandbox.dudzian.ai/exchanges
+          public_path: /stream/bitmex_spot/public
+          private_path: /stream/bitmex_spot/private
+          poll_interval: 0.5
 
 license:
   license_path: var/licenses/active/license.json

@@ -13,6 +13,7 @@ from bot_core.exchanges.error_mapping import raise_for_bitmex_error
 from bot_core.exchanges.errors import ExchangeAPIError
 from bot_core.exchanges.health import Watchdog
 from bot_core.exchanges.rate_limiter import RateLimitRule
+from bot_core.exchanges.streaming import LocalLongPollStream
 
 
 class BitmexFuturesAdapter(CCXTLongPollMixin, WatchdogCCXTAdapter):
@@ -96,6 +97,37 @@ class BitmexFuturesAdapter(CCXTLongPollMixin, WatchdogCCXTAdapter):
         if not self.credentials.secret:
             raise PermissionError("Adapter BitMEX futures wymaga secret do kanałów prywatnych.")
         return self._build_long_poll_stream("private", channels)
+
+    def stream_order_book(self, symbol: str, *, depth: int = 50) -> LocalLongPollStream:
+        return self.stream_public_data(channels=[f"order_book:{symbol}:{depth}"])
+
+    def stream_ticker(self, symbol: str) -> LocalLongPollStream:
+        return self.stream_public_data(channels=[f"ticker:{symbol}"])
+
+    def stream_fills(self, symbol: str) -> LocalLongPollStream:
+        return self.stream_private_data(channels=[f"fills:{symbol}"])
+
+    def fetch_order_book(
+        self,
+        symbol: str,
+        *,
+        limit: int | None = None,
+        params: Mapping[str, Any] | None = None,
+    ) -> Mapping[str, Any]:
+        return self._call_client("fetch_order_book", symbol, limit=limit, params=params or None)
+
+    def fetch_ticker(self, symbol: str, *, params: Mapping[str, Any] | None = None) -> Mapping[str, Any]:
+        return self._call_client("fetch_ticker", symbol, params=params or None)
+
+    def fetch_my_trades(
+        self,
+        symbol: str,
+        *,
+        limit: int | None = None,
+        since: int | None = None,
+        params: Mapping[str, Any] | None = None,
+    ) -> Sequence[Mapping[str, Any]]:
+        return self._call_client("fetch_my_trades", symbol, since=since, limit=limit, params=params or None)
 
     @staticmethod
     def _decode_error_payload(payload: object) -> Mapping[str, Any] | None:

@@ -54,6 +54,10 @@ class FeedHealthMetricsExporter:
 
     def __init__(self, *, registry: MetricsRegistry | None = None) -> None:
         self._registry = registry or get_global_metrics_registry()
+        self._latency_p50_ms = self._registry.gauge(
+            "bot_ui_feed_latency_p50_ms",
+            "Latencja p50 decision feedu w milisekundach",
+        )
         self._latency_p95_ms = self._registry.gauge(
             "bot_ui_feed_latency_p95_ms",
             "Latencja p95 decision feedu w milisekundach",
@@ -78,22 +82,34 @@ class FeedHealthMetricsExporter:
         *,
         adapter: str,
         status: str,
+        latency_p50_ms: float | None,
         latency_p95_ms: float | None,
         reconnects: int,
         downtime_ms: float,
         last_error: str | None = None,
+        labels: Mapping[str, str] | None = None,
     ) -> None:
         adapter_label = adapter or "unknown"
-        labels = {"adapter": adapter_label}
-        if latency_p95_ms is not None:
-            self._latency_p95_ms.set(float(latency_p95_ms), labels=labels)
+        metric_labels = {"adapter": adapter_label}
+        if labels:
+            for key, value in labels.items():
+                metric_labels[str(key)] = str(value)
+
+        if latency_p50_ms is not None:
+            self._latency_p50_ms.set(float(latency_p50_ms), labels=metric_labels)
         else:
-            self._latency_p95_ms.set(0.0, labels=labels)
-        self._reconnects_total.set(float(max(0, reconnects)), labels=labels)
+            self._latency_p50_ms.set(0.0, labels=metric_labels)
+
+        if latency_p95_ms is not None:
+            self._latency_p95_ms.set(float(latency_p95_ms), labels=metric_labels)
+        else:
+            self._latency_p95_ms.set(0.0, labels=metric_labels)
+
+        self._reconnects_total.set(float(max(0, reconnects)), labels=metric_labels)
         downtime_seconds = max(0.0, float(downtime_ms) / 1000.0)
-        self._downtime_seconds.set(downtime_seconds, labels=labels)
+        self._downtime_seconds.set(downtime_seconds, labels=metric_labels)
         status_value = self._STATUS_TO_VALUE.get(status, self._STATUS_TO_VALUE["unknown"])
-        self._status_metric.set(status_value, labels=labels)
+        self._status_metric.set(status_value, labels=metric_labels)
 
         dashboard_entry: dict[str, object] = {
             "adapter": adapter_label,
@@ -1735,6 +1751,22 @@ class LongPollStreamMetricsCache:
         self._refresh_interval = max(0.1, float(refresh_interval_seconds))
         self._lock = threading.Lock()
         self._cached: tuple[float, list[dict[str, object]]] | None = None
+        self._latency_p50 = self._registry.gauge(
+            "bot_exchange_stream_long_poll_latency_p50_seconds",
+            "Latencja p50 long-pollowych streamów giełdowych (s)",
+        )
+        self._latency_p95 = self._registry.gauge(
+            "bot_exchange_stream_long_poll_latency_p95_seconds",
+            "Latencja p95 long-pollowych streamów giełdowych (s)",
+        )
+        self._reconnects_total = self._registry.gauge(
+            "bot_exchange_stream_long_poll_reconnects_total",
+            "Liczba reconnectów long-pollowych streamów giełdowych",
+        )
+        self._downtime_seconds = self._registry.gauge(
+            "bot_exchange_stream_long_poll_downtime_seconds",
+            "Łączny downtime long-pollowych streamów giełdowych (s)",
+        )
 
     def _collect(self) -> list[dict[str, object]]:
         try:
@@ -1765,6 +1797,36 @@ class LongPollStreamMetricsCache:
                     "environment": environment,
                 },
             )
+            metric_labels = {
+                "adapter": adapter,
+                "scope": scope,
+                "environment": environment,
+            }
+            latency_summary = snapshot.get("requestLatency", {}) if isinstance(snapshot, Mapping) else {}
+            try:
+                self._latency_p50.set(float(latency_summary.get("p50", 0.0) or 0.0), labels=metric_labels)
+                self._latency_p95.set(float(latency_summary.get("p95", 0.0) or 0.0), labels=metric_labels)
+            except Exception:
+                self._latency_p50.set(0.0, labels=metric_labels)
+                self._latency_p95.set(0.0, labels=metric_labels)
+
+            reconnects = 0.0
+            reconnects_payload = snapshot.get("reconnects") if isinstance(snapshot, Mapping) else None
+            if isinstance(reconnects_payload, Mapping):
+                attempts_val = reconnects_payload.get("attempts")
+                try:
+                    reconnects = float(attempts_val) if attempts_val is not None else 0.0
+                except (TypeError, ValueError):
+                    reconnects = 0.0
+            self._reconnects_total.set(reconnects, labels=metric_labels)
+
+            downtime_seconds = 0.0
+            downtime_payload = snapshot.get("downtimeSeconds") if isinstance(snapshot, Mapping) else None
+            try:
+                downtime_seconds = float(downtime_payload) if downtime_payload is not None else 0.0
+            except (TypeError, ValueError):
+                downtime_seconds = 0.0
+            self._downtime_seconds.set(downtime_seconds, labels=metric_labels)
             snapshots.append(snapshot)
         return snapshots
 

@@ -15,6 +15,9 @@ Item {
     property var recentDecisions: monitor ? monitor.recentDecisions : []
     property var scheduleSummary: monitor ? monitor.scheduleSummary : []
     property var lastUpdated: monitor ? monitor.lastUpdated : null
+    property var runtimeService: (typeof runtimeService !== "undefined" ? runtimeService : null)
+    property string executionMode: runtimeService ? runtimeService.executionMode : "manual"
+    property var guardrails: runtimeService && runtimeService.guardrails ? runtimeService.guardrails : ({})
     readonly property var palette: Qt.application.palette
 
     function syncFromController() {
@@ -27,7 +30,28 @@ Item {
         lastUpdated = monitor.lastUpdated || null
     }
 
-    Component.onCompleted: syncFromController()
+    function syncRuntimeState() {
+        if (!runtimeService)
+            return
+        executionMode = runtimeService.executionMode || "manual"
+        guardrails = runtimeService.guardrails || {}
+    }
+
+    function guardrailBannerText() {
+        if (!runtimeService)
+            return ""
+        if (!guardrails || !guardrails.blockOnSlaAlerts)
+            return ""
+        var sla = runtimeService.feedSlaReport || {}
+        if (sla.sla_state === "warning" || sla.sla_state === "critical")
+            return qsTr("Tryb auto zablokowany przez SLA: %1").arg(sla.sla_state)
+        return ""
+    }
+
+    Component.onCompleted: {
+        syncFromController()
+        syncRuntimeState()
+    }
 
     Connections {
         target: monitor
@@ -37,6 +61,14 @@ Item {
         function onRecentDecisionsChanged() { syncFromController() }
         function onScheduleSummaryChanged() { syncFromController() }
         function onLastUpdatedChanged() { syncFromController() }
+    }
+
+    Connections {
+        target: runtimeService
+        ignoreUnknownSignals: true
+        function onExecutionModeChanged() { syncRuntimeState() }
+        function onGuardrailsChanged() { syncRuntimeState() }
+        function onFeedSlaReportChanged() { syncRuntimeState() }
     }
 
     ColumnLayout {
@@ -67,6 +99,28 @@ Item {
                 text: qsTr("Odśwież")
                 enabled: monitor !== null
                 onClicked: monitor ? monitor.refresh() : null
+            }
+            Switch {
+                id: autoModeSwitch
+                checked: executionMode === "auto"
+                text: checked ? qsTr("Automatyczny") : qsTr("Manualny")
+                enabled: runtimeService !== null
+                onToggled: {
+                    if (runtimeService)
+                        runtimeService.setExecutionMode(checked ? "auto" : "manual")
+                    executionMode = runtimeService ? runtimeService.executionMode : (checked ? "auto" : "manual")
+                }
+            }
+            Button {
+                text: qsTr("Wykonaj cykl AI")
+                enabled: runtimeService !== null && executionMode === "manual"
+                onClicked: runtimeService ? runtimeService.runManualCycle() : null
+            }
+            Label {
+                visible: guardrailBannerText().length > 0
+                text: guardrailBannerText()
+                color: "#d95468"
+                font.bold: true
             }
         }
 
@@ -212,6 +266,26 @@ Item {
                                   modelData.lastDecision.timestampDisplay + " · " + (modelData.lastDecision.decisionState || "") :
                                   qsTr("—")
                     }
+                }
+            }
+        }
+
+        GroupBox {
+            title: qsTr("Panel decyzji AI (historia i metryki)")
+            Layout.fillWidth: true
+            Layout.fillHeight: true
+
+            Loader {
+                id: aiHistoryLoader
+                anchors.fill: parent
+                active: true
+                sourceComponent: aiHistoryComponent
+            }
+
+            Component {
+                id: aiHistoryComponent
+                AiDecisionHistory {
+                    runtimeService: typeof runtimeService !== "undefined" ? runtimeService : null
                 }
             }
         }

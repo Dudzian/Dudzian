@@ -61,11 +61,30 @@ jobs:
           pip install -r deploy/packaging/requirements-desktop.txt
         shell: bash
 
+      - name: Validate marketplace presets
+        run: >-
+          python scripts/validate_marketplace_presets.py
+          --presets config/marketplace/presets
+          --hmac-key config/marketplace/keys/dev-hmac.key
+          --ed25519-key config/marketplace/keys/dev-presets-ed25519.pub
+          --min-count 15
+        shell: bash
+
       - name: Install packaging requirements (Windows)
         if: matrix.name == 'windows'
         run: |
           python -m pip install --upgrade pip
           pip install -r deploy/packaging/requirements-desktop.txt
+        shell: pwsh
+
+      - name: Validate marketplace presets (Windows)
+        if: matrix.name == 'windows'
+        run: >-
+          python scripts/validate_marketplace_presets.py
+          --presets config/marketplace/presets
+          --hmac-key config/marketplace/keys/dev-hmac.key
+          --ed25519-key config/marketplace/keys/dev-presets-ed25519.pub
+          --min-count 15
         shell: pwsh
 
       - name: Build installer bundle (POSIX)

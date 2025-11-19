@@ -60,6 +60,21 @@ bundla upewnij się, że oba pakiety trafiają do katalogu `wheels/` (np. poprze
 `bundle.wheels_extra` lub lokalne mirrory), aby instalator mógł je zainstalować na
 docelowym sprzęcie.
 
+## Dołączanie katalogu Marketplace (presety + podpisy)
+
+Bundel instalatora powinien zawierać komplet presetów Marketplace wraz z opisami
+Markdown i podpisami HMAC/Ed25519:
+
+* `config/marketplace/presets/**/*.{json,md,sig}` – specyfikacje presetów (strategie + giełdy),
+* `config/marketplace/catalog.*` oraz `config/marketplace/catalog.*.sig` – wygenerowany katalog,
+* klucze publiczne weryfikacji: `config/marketplace/keys/dev-presets-ed25519.pub`.
+
+W profilu PyInstaller/Briefcase dodaj odpowiednie wpisy `bundle.include`, tak aby
+cały katalog `config/marketplace/presets` oraz pliki katalogu trafiły do artefaktu.
+Pipeline `deploy/ci/github_actions_cross_installer.yml` uruchamia obecnie
+`scripts/validate_marketplace_presets.py`, co powoduje przerwanie builda przy
+braku podpisów lub opisów Markdown.
+
 ## Automatyczna weryfikacja fingerprintu i podpisów
 
 Po zbudowaniu bundla uruchom jednorazowo komendę weryfikującą fingerprint oraz

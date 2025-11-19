@@ -48,6 +48,11 @@ zakazane katalogi (prefiksy legacy z poprzedniego etapu) albo pliki wykonywalne 
 Pozostałości należy usunąć lub przenieść do dokumentacji historycznej przed
 wysłaniem zmian do review.
 
+Importy z `archive/**` są zabronione w kodzie runtime/CI (patrz
+`scripts/check_no_archive_imports.py` oraz test `tests/qa/test_no_archive_imports.py`).
+Jeżeli potrzebujesz materiałów referencyjnych, trzymaj je w `archive/` bez
+wiązań importowych do aktywnego kodu.
+
 ### Użycie słowa „legacy”
 
 - W kodzie wykonywalnym (np. `bot_core`, `core`, `scripts/`, `ui/pyside_app`, `proto/`,

@@ -1,0 +1,95 @@
+{
+  "__inputs": [],
+  "__requires": [
+    {"type": "grafana", "id": "grafana", "name": "Grafana", "version": "9.x"},
+    {"type": "datasource", "id": "prometheus", "name": "Prometheus", "version": "1.0.0"}
+  ],
+  "title": "Feed transport comparison (gRPC vs long-poll)",
+  "panels": [
+    {
+      "type": "timeseries",
+      "title": "Latencja p50",
+      "targets": [
+        {
+          "expr": "bot_ui_feed_latency_p50_ms{transport=~\"grpc|fallback\",environment=~\".*\"} / 1000",
+          "legendFormat": "gRPC {{transport}} {{environment}}",
+          "datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"}
+        },
+        {
+          "expr": "bot_exchange_stream_long_poll_latency_p50_seconds",
+          "legendFormat": "long-poll {{adapter}}/{{scope}} {{environment}}",
+          "datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"}
+        }
+      ],
+      "fieldConfig": {"defaults": {"unit": "s"}, "overrides": []}
+    },
+    {
+      "type": "timeseries",
+      "title": "Latencja p95",
+      "targets": [
+        {
+          "expr": "bot_ui_feed_latency_p95_ms{transport=~\"grpc|fallback\",environment=~\".*\"} / 1000",
+          "legendFormat": "gRPC {{transport}} {{environment}}",
+          "datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"}
+        },
+        {
+          "expr": "bot_exchange_stream_long_poll_latency_p95_seconds",
+          "legendFormat": "long-poll {{adapter}}/{{scope}} {{environment}}",
+          "datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"}
+        }
+      ],
+      "fieldConfig": {"defaults": {"unit": "s"}, "overrides": []}
+    },
+    {
+      "type": "timeseries",
+      "title": "Reconnecty",
+      "targets": [
+        {
+          "expr": "bot_ui_feed_reconnects_total{transport=~\"grpc|fallback\",environment=~\".*\"}",
+          "legendFormat": "gRPC {{transport}} {{environment}}",
+          "datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"}
+        },
+        {
+          "expr": "bot_exchange_stream_long_poll_reconnects_total",
+          "legendFormat": "long-poll {{adapter}}/{{scope}} {{environment}}",
+          "datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"}
+        }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "Downtime",
+      "targets": [
+        {
+          "expr": "bot_ui_feed_downtime_seconds{transport=~\"grpc|fallback\",environment=~\".*\"}",
+          "legendFormat": "gRPC {{transport}} {{environment}}",
+          "datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"}
+        },
+        {
+          "expr": "bot_exchange_stream_long_poll_downtime_seconds",
+          "legendFormat": "long-poll {{adapter}}/{{scope}} {{environment}}",
+          "datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"}
+        }
+      ],
+      "fieldConfig": {"defaults": {"unit": "s"}, "overrides": []}
+    },
+    {
+      "type": "stat",
+      "title": "Alert SLA (feed_sla)",
+      "targets": [
+        {
+          "expr": "max_over_time(bot_ui_feed_status{transport=~\"grpc|fallback\",environment=~\".*\"}[5m])",
+          "legendFormat": "gRPC status"
+        },
+        {
+          "expr": "max_over_time(bot_exchange_stream_long_poll_reconnect_in_progress[5m])",
+          "legendFormat": "Long-poll reconnect in progress"
+        }
+      ],
+      "options": {"orientation": "horizontal"}
+    }
+  ],
+  "schemaVersion": 38,
+  "version": 1,
+  "editable": true
+}

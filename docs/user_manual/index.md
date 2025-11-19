@@ -93,6 +93,15 @@ Szczegóły techniczne opisano w `docs/reporting/optimization.md` oraz `docs/tra
 - Logi runtime zapisywane są w `logs/` oraz eksportowane do Prometheusa.
 - W przypadku pracy offline aplikacja korzysta z lokalnych cache danych.
 
+### Tryby manualny/automatyczny i guardraile
+- W panelu **Monitoring decyzji** dostępny jest przełącznik trybu manualnego/automatycznego powiązany bezpośrednio z
+  `AutoTraderAIGovernorRunner.run_cycle/run_until`. Tryb manualny uruchamia pojedynczy cykl decyzyjny, a tryb auto wykonuje
+  kolejne cykle aż do wypełnienia limitu historii.
+- Guardraile w sekcji **Zarządzanie ryzykiem** pozwalają ustawić maksymalną ekspozycję portfela oraz dzienny limit strat;
+  wartości są przekazywane do progów decyzyjnych runnera i resetują go po zmianie, aby nowy limit zaczął obowiązywać.
+- Opcja "blokuj otwieranie pozycji przy alertach SLA" wymusza tryb manualny, gdy stan SLA feedu AI jest w statusie
+  `warning` lub `critical`, dzięki czemu nie są otwierane nowe pozycje w czasie degradacji kanału danych.
+
 ## Bezpieczeństwo i kopie zapasowe
 - Klucze API są przechowywane wyłącznie w systemowym keyringu.
 - Licencja i fingerprint znajdują się w `secrets/license/` – wykonuj regularne kopie.

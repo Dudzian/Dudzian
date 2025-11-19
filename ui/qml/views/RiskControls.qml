@@ -14,6 +14,8 @@ Item {
                                    : (typeof costModel !== "undefined" ? costModel : null)
     property bool killSwitchFallback: false
     property bool killSwitchState: false
+    property var runtimeService: (typeof runtimeService !== "undefined" ? runtimeService : null)
+    property var guardrails: runtimeService && runtimeService.guardrails ? runtimeService.guardrails : ({})
 
     function refreshKillSwitchState() {
         if (appController && appController.hasOwnProperty("riskKillSwitchEngaged"))
@@ -57,8 +59,17 @@ Item {
         killSwitchState = value
     }
 
+    function syncGuardrails() {
+        if (!runtimeService)
+            return
+        guardrails = runtimeService.guardrails || {}
+    }
+
     onAppControllerChanged: refreshKillSwitchState()
-    Component.onCompleted: refreshKillSwitchState()
+    Component.onCompleted: {
+        refreshKillSwitchState()
+        syncGuardrails()
+    }
 
     Connections {
         target: appController
@@ -66,6 +77,12 @@ Item {
         function onRiskKillSwitchChanged() {
             root.refreshKillSwitchState()
         }
+    }
+
+    Connections {
+        target: runtimeService
+        ignoreUnknownSignals: true
+        function onGuardrailsChanged() { root.syncGuardrails() }
     }
 
     ColumnLayout {
@@ -193,6 +210,88 @@ Item {
                     }
                     ScrollBar.vertical: ScrollBar {}
                     placeholderText: qsTr("Brak zagregowanych metryk kosztów")
+                }
+            }
+        }
+
+        Frame {
+            Layout.fillWidth: true
+            padding: 12
+            background: Rectangle { radius: 8; color: Qt.darker(palette.base, 1.08) }
+
+            ColumnLayout {
+                anchors.fill: parent
+                spacing: 10
+
+                RowLayout {
+                    Layout.fillWidth: true
+                    spacing: 8
+                    Label {
+                        text: qsTr("Guardraile automatyzacji")
+                        font.pixelSize: 18
+                        font.bold: true
+                    }
+                    Item { Layout.fillWidth: true }
+                    Label {
+                        text: runtimeService && runtimeService.executionMode === "auto"
+                              ? qsTr("Tryb: automatyczny") : qsTr("Tryb: manualny")
+                        color: palette.mid
+                    }
+                }
+
+                RowLayout {
+                    Layout.fillWidth: true
+                    spacing: 10
+                    Label {
+                        text: qsTr("Maks. ekspozycja (%)")
+                        Layout.fillWidth: true
+                    }
+                    TextField {
+                        id: maxExposureField
+                        Layout.preferredWidth: 120
+                        text: guardrails && guardrails.maxExposure !== undefined ? (guardrails.maxExposure * 100).toFixed(2) : "35.00"
+                        validator: DoubleValidator { bottom: 0.0; top: 100.0; decimals: 3 }
+                        onEditingFinished: {
+                            var parsed = Number.fromLocaleString(Qt.locale(), text)
+                            if (isNaN(parsed) || !runtimeService) {
+                                text = guardrails && guardrails.maxExposure !== undefined ? (guardrails.maxExposure * 100).toFixed(2) : "35.00"
+                                return
+                            }
+                            runtimeService.setMaxExposureLimit(parsed / 100.0)
+                            text = guardrails && guardrails.maxExposure !== undefined ? (guardrails.maxExposure * 100).toFixed(2) : text
+                        }
+                    }
+                }
+
+                RowLayout {
+                    Layout.fillWidth: true
+                    spacing: 10
+                    Label {
+                        text: qsTr("Dzienny limit strat (%)")
+                        Layout.fillWidth: true
+                    }
+                    TextField {
+                        id: dailyLossField
+                        Layout.preferredWidth: 120
+                        text: guardrails && guardrails.dailyLossLimitPct !== undefined ? (guardrails.dailyLossLimitPct * 100).toFixed(2) : "3.00"
+                        validator: DoubleValidator { bottom: 0.0; top: 50.0; decimals: 3 }
+                        onEditingFinished: {
+                            var parsedLoss = Number.fromLocaleString(Qt.locale(), text)
+                            if (isNaN(parsedLoss) || !runtimeService) {
+                                text = guardrails && guardrails.dailyLossLimitPct !== undefined ? (guardrails.dailyLossLimitPct * 100).toFixed(2) : "3.00"
+                                return
+                            }
+                            runtimeService.setDailyLossLimitPct(parsedLoss / 100.0)
+                            text = guardrails && guardrails.dailyLossLimitPct !== undefined ? (guardrails.dailyLossLimitPct * 100).toFixed(2) : text
+                        }
+                    }
+                }
+
+                CheckBox {
+                    id: blockOnSlaToggle
+                    checked: guardrails && guardrails.blockOnSlaAlerts
+                    text: qsTr("Blokuj otwieranie pozycji przy alertach SLA")
+                    onToggled: runtimeService ? runtimeService.setBlockOnSlaAlerts(checked) : null
                 }
             }
         }

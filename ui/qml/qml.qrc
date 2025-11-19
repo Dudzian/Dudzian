@@ -56,6 +56,7 @@
         <file>views/Marketplace.qml</file>
         <file>views/StrategyConfigurator.qml</file>
         <file>views/StrategyRiskConsole.qml</file>
+        <file>views/AiDecisionHistory.qml</file>
         <file>views/DecisionMonitoringView.qml</file>
         <file>views/SetupWizard.qml</file>
         <file>views/PortfolioDashboard.qml</file>
