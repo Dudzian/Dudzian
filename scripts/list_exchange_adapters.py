@@ -6,6 +6,8 @@ from __future__ import annotations
 import argparse
 import csv
 import datetime as _dt
+import json
+import math
 import shutil
 import sys
 import urllib.error
@@ -42,6 +44,15 @@ except ModuleNotFoundError:  # pragma: no cover - fallback minimalny
     sys.modules.setdefault("packaging.version", version_module)
 
 from bot_core.config.loader import load_core_config
+
+LongPollMetrics = dict[tuple[str, str, str], dict[str, Any]]
+
+_DEFAULT_LONG_POLL_METRICS_PATH = "var/metrics/long_poll_snapshots.json"
+_DEFAULT_LONG_POLL_TTL_MINUTES = 720.0
+_MONITORED_LONG_POLL_ADAPTERS = {
+    "deribit_futures",
+    "bitmex_futures",
+}
 
 
 def _as_mapping(value: Any) -> Mapping[str, Any]:
@@ -237,11 +248,177 @@ def _load_hypercare_status(path: str | None) -> dict[str, str]:
     return _hypercare_status_from_config(payload)
 
 
+def _coerce_datetime(value: Any) -> _dt.datetime | None:
+    if isinstance(value, _dt.datetime):
+        return value if value.tzinfo else value.replace(tzinfo=_dt.timezone.utc)
+    if isinstance(value, (int, float)) and math.isfinite(value):
+        return _dt.datetime.fromtimestamp(float(value), tz=_dt.timezone.utc)
+    if isinstance(value, str):
+        text = value.strip()
+        if not text:
+            return None
+        cleaned = text.replace("Z", "+00:00")
+        try:
+            parsed = _dt.datetime.fromisoformat(cleaned)
+        except ValueError:
+            return None
+        return parsed if parsed.tzinfo else parsed.replace(tzinfo=_dt.timezone.utc)
+    return None
+
+
+def _load_long_poll_metrics(path: str | None) -> LongPollMetrics:
+    if not path:
+        return {}
+    metrics_path = Path(path)
+    if not metrics_path.exists():
+        return {}
+    try:
+        payload = json.loads(metrics_path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError as exc:  # pragma: no cover - diagnostyka wejścia
+        raise RuntimeError(f"Niepoprawny plik metryk long-pollowych ({path}): {exc}") from exc
+
+    default_timestamp = None
+    entries: Sequence[Any]
+    if isinstance(payload, Mapping):
+        default_timestamp = _coerce_datetime(payload.get("collected_at"))
+        entries_candidate = payload.get("snapshots") or payload.get("entries") or payload.get("data")
+        if isinstance(entries_candidate, Sequence) and not isinstance(entries_candidate, (str, bytes, bytearray)):
+            entries = entries_candidate
+        else:
+            entries = (payload,)
+    elif isinstance(payload, Sequence) and not isinstance(payload, (str, bytes, bytearray)):
+        entries = payload
+    else:
+        return {}
+
+    fallback_timestamp = _dt.datetime.fromtimestamp(
+        metrics_path.stat().st_mtime,
+        tz=_dt.timezone.utc,
+    )
+
+    metrics: LongPollMetrics = {}
+    for entry in entries:
+        if not isinstance(entry, Mapping):
+            continue
+        labels = _as_mapping(entry.get("labels"))
+        adapter = str(labels.get("adapter") or labels.get("exchange") or "").strip()
+        scope = str(labels.get("scope") or labels.get("channel") or "").strip()
+        environment = str(labels.get("environment") or labels.get("env") or "").strip()
+        if not adapter or not scope or not environment:
+            continue
+        normalized_labels = {
+            "adapter": adapter,
+            "scope": scope,
+            "environment": environment,
+        }
+        snapshot = {key: value for key, value in entry.items()}
+        snapshot["labels"] = normalized_labels
+        timestamp = _coerce_datetime(entry.get("collected_at")) or default_timestamp or fallback_timestamp
+        snapshot["_collected_at"] = timestamp
+        metrics[(adapter, scope, environment)] = snapshot
+    return metrics
+
+
+def _resolve_long_poll_snapshot(
+    *,
+    adapter_id: str | None,
+    environment: str,
+    metrics: LongPollMetrics,
+) -> tuple[str | None, dict[str, Any] | None]:
+    if not adapter_id:
+        return None, None
+    for scope in ("private", "public"):
+        snapshot = metrics.get((adapter_id, scope, environment))
+        if snapshot:
+            return scope, snapshot
+    return None, None
+
+
+def _empty_long_poll_summary(*, status: str) -> dict[str, Any]:
+    return {
+        "long_poll_scope": None,
+        "long_poll_latency_p95": None,
+        "long_poll_delivery_lag_p95": None,
+        "long_poll_http_errors": None,
+        "long_poll_reconnect_success": None,
+        "long_poll_reconnect_failure": None,
+        "long_poll_snapshot_age_minutes": None,
+        "long_poll_metrics_status": status,
+    }
+
+
+def _summarize_long_poll_metrics(
+    *,
+    adapter_id: str | None,
+    environment: str,
+    metrics: LongPollMetrics,
+    ttl_minutes: float,
+) -> dict[str, Any]:
+    if adapter_id not in _MONITORED_LONG_POLL_ADAPTERS:
+        return _empty_long_poll_summary(status="not_applicable")
+
+    scope, snapshot = _resolve_long_poll_snapshot(
+        adapter_id=adapter_id,
+        environment=environment,
+        metrics=metrics,
+    )
+    if snapshot is None:
+        return _empty_long_poll_summary(status="missing")
+
+    summary = _empty_long_poll_summary(status="unknown")
+    summary["long_poll_scope"] = scope
+
+    latency = _as_mapping(snapshot.get("requestLatency"))
+    summary["long_poll_latency_p95"] = latency.get("p95") if latency else None
+    delivery_lag = _as_mapping(snapshot.get("deliveryLag"))
+    summary["long_poll_delivery_lag_p95"] = delivery_lag.get("p95") if delivery_lag else None
+
+    http_errors = _as_mapping(snapshot.get("httpErrors"))
+    if http_errors:
+        total = http_errors.get("total")
+        try:
+            summary["long_poll_http_errors"] = int(total) if total is not None else None
+        except (TypeError, ValueError):
+            summary["long_poll_http_errors"] = None
+
+    reconnects = _as_mapping(snapshot.get("reconnects"))
+    if reconnects:
+        for key in ("success", "failure"):
+            value = reconnects.get(key)
+            try:
+                summary[f"long_poll_reconnect_{key}"] = int(value)
+            except (TypeError, ValueError):
+                summary[f"long_poll_reconnect_{key}"] = None
+
+    collected_at = snapshot.get("_collected_at")
+    if isinstance(collected_at, _dt.datetime):
+        now = _dt.datetime.now(tz=_dt.timezone.utc)
+        age_minutes = max(0.0, (now - collected_at).total_seconds() / 60.0)
+        summary["long_poll_snapshot_age_minutes"] = round(age_minutes, 2)
+        if ttl_minutes <= 0:
+            summary["long_poll_metrics_status"] = "fresh"
+        else:
+            summary["long_poll_metrics_status"] = "fresh" if age_minutes <= ttl_minutes else "stale"
+    else:
+        summary["long_poll_metrics_status"] = "unknown"
+
+    return summary
+
+
 def build_rows(
     config,
     hypercare_summary: Mapping[str, str] | None = None,
+    *,
+    long_poll_metrics: LongPollMetrics | None = None,
+    long_poll_ttl_minutes: float | None = None,
 ) -> list[dict[str, Any]]:  # type: ignore[no-untyped-def]
     rows: list[dict[str, Any]] = []
+    metrics = dict(long_poll_metrics or {})
+    ttl_minutes = (
+        float(long_poll_ttl_minutes)
+        if isinstance(long_poll_ttl_minutes, (int, float)) and math.isfinite(long_poll_ttl_minutes)
+        else _DEFAULT_LONG_POLL_TTL_MINUTES
+    )
 
     for exchange, profiles in config.exchange_accounts.items():
         for profile_name, account in profiles.items():
@@ -288,6 +465,14 @@ def build_rows(
                 readiness_signed = bool(live_readiness.get("signed", False))
                 readiness_signed_by = [str(entry) for entry in live_readiness.get("signed_by", ())]
 
+            adapter_id = getattr(env_cfg, "exchange", exchange)
+            long_poll_summary = _summarize_long_poll_metrics(
+                adapter_id=str(adapter_id) if adapter_id else None,
+                environment=env_cfg.environment.value,
+                metrics=metrics,
+                ttl_minutes=ttl_minutes,
+            )
+
             rows.append(
                 {
                     "exchange": exchange,
@@ -314,6 +499,7 @@ def build_rows(
                     "hypercare_failover_status": hypercare_summary.get("failover") if hypercare_summary else None,
                     "hypercare_latency_status": hypercare_summary.get("latency") if hypercare_summary else None,
                     "hypercare_cost_status": hypercare_summary.get("cost") if hypercare_summary else None,
+                    **long_poll_summary,
                 }
             )
     return rows
@@ -351,11 +537,28 @@ def main(argv: list[str] | None = None) -> int:
         "--hypercare-config",
         help="Ścieżka do pliku config/stage6/hypercare.yaml z metadanymi failover/latency/cost.",
     )
+    parser.add_argument(
+        "--long-poll-metrics",
+        default=_DEFAULT_LONG_POLL_METRICS_PATH,
+        help="Ścieżka do pliku JSON z metrykami long-polla (domyślnie var/metrics/long_poll_snapshots.json).",
+    )
+    parser.add_argument(
+        "--long-poll-ttl-minutes",
+        type=float,
+        default=_DEFAULT_LONG_POLL_TTL_MINUTES,
+        help="Maksymalny wiek metryk long-polla (w minutach) zanim status stanie się 'stale'.",
+    )
     args = parser.parse_args(argv)
 
     config = load_core_config(Path(args.config))
     hypercare_summary = _load_hypercare_status(args.hypercare_config)
-    rows = build_rows(config, hypercare_summary=hypercare_summary)
+    long_poll_metrics = _load_long_poll_metrics(args.long_poll_metrics)
+    rows = build_rows(
+        config,
+        hypercare_summary=hypercare_summary,
+        long_poll_metrics=long_poll_metrics,
+        long_poll_ttl_minutes=args.long_poll_ttl_minutes,
+    )
 
     fieldnames = [
         "exchange",
@@ -379,6 +582,14 @@ def main(argv: list[str] | None = None) -> int:
         "hypercare_failover_status",
         "hypercare_latency_status",
         "hypercare_cost_status",
+        "long_poll_scope",
+        "long_poll_latency_p95",
+        "long_poll_delivery_lag_p95",
+        "long_poll_http_errors",
+        "long_poll_reconnect_success",
+        "long_poll_reconnect_failure",
+        "long_poll_snapshot_age_minutes",
+        "long_poll_metrics_status",
     ]
 
     close_handle = False

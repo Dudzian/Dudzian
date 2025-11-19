@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import datetime as _dt
 from dataclasses import dataclass
 import json
 from pathlib import Path
@@ -207,9 +208,28 @@ def test_list_exchange_adapters_reports_futures_columns():
     from scripts import list_exchange_adapters as lea
 
     config = load_core_config(Path("config/core.yaml"))
+    now = _dt.datetime.now(tz=_dt.timezone.utc)
+
+    def _snapshot(adapter: str) -> dict[str, Any]:
+        return {
+            "labels": {"adapter": adapter, "scope": "private", "environment": "live"},
+            "requestLatency": {"count": 5, "avg": 0.2, "p50": 0.15, "p95": 0.42, "max": 0.5},
+            "deliveryLag": {"count": 5, "avg": 0.22, "p50": 0.19, "p95": 0.5, "max": 0.6},
+            "httpErrors": {"total": 1 if "bitmex" in adapter else 0, "byStatusCode": {}},
+            "reconnects": {"success": 2, "failure": 0},
+            "_collected_at": now,
+        }
+
+    long_poll_metrics = {
+        ("deribit_futures", "private", "live"): _snapshot("deribit_futures"),
+        ("bitmex_futures", "private", "live"): _snapshot("bitmex_futures"),
+    }
+
     rows = lea.build_rows(
         config,
         hypercare_summary={"failover": "ready", "latency": "ready", "cost": "ready"},
+        long_poll_metrics=long_poll_metrics,
+        long_poll_ttl_minutes=1440,
     )
 
     def _pick(exchange: str, profile: str) -> dict[str, Any]:
@@ -229,6 +249,9 @@ def test_list_exchange_adapters_reports_futures_columns():
     assert deribit_live["hypercare_failover_status"] == "ready"
     assert deribit_live["hypercare_latency_status"] == "ready"
     assert deribit_live["hypercare_cost_status"] == "ready"
+    assert deribit_live["long_poll_scope"] == "private"
+    assert deribit_live["long_poll_latency_p95"] == pytest.approx(0.42)
+    assert deribit_live["long_poll_metrics_status"] == "fresh"
 
     bitmex_live = _pick("bitmex", "live")
     assert bitmex_live["hypercare_checklist_signed"] is True
@@ -236,6 +259,8 @@ def test_list_exchange_adapters_reports_futures_columns():
     assert bitmex_live["missing_required_documents"] == ""
     assert bitmex_live["futures_checklist_id"]
     assert bitmex_live["futures_checklist_ready"] is True
+    assert bitmex_live["long_poll_http_errors"] == 1
+    assert bitmex_live["long_poll_reconnect_success"] == 2
 
 
 def test_private_backend_receives_passphrase(monkeypatch: pytest.MonkeyPatch) -> None:
