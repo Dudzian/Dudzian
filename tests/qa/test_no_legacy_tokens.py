@@ -4,8 +4,15 @@ from __future__ import annotations
 import os
 from pathlib import Path
 
-TOKEN_PATTERNS: tuple[str, ...] = ("stage5", "stage-5")
-TOKEN_LITERAL = "stage5"
+import pytest
+
+TOKEN_PATTERNS: tuple[str, ...] = ("stage5", "stage-5", "stage4", "stage-4", "legacy")
+SCAN_ROOTS: tuple[Path, ...] = (
+    Path("bot_core"),
+    Path("core"),
+    Path("config"),
+)
+
 SKIP_DIR_NAMES = {
     ".git",
     ".hg",
@@ -14,6 +21,7 @@ SKIP_DIR_NAMES = {
     ".tox",
     ".venv",
     "__pycache__",
+    "node_modules",
 }
 ALLOWLISTED_DIRS: tuple[Path, ...] = (Path("archive"),)
 ALLOWLISTED_FILES: set[Path] = {
@@ -36,20 +44,24 @@ def _should_skip(path: Path) -> bool:
     return any(part in SKIP_DIR_NAMES for part in path.parts)
 
 
-def _iter_repo_files(root: Path):
-    for dirpath, dirnames, filenames in os.walk(root):
-        rel_dir = Path(dirpath).relative_to(root)
-        if _should_skip(rel_dir):
-            dirnames[:] = []
+def _iter_repo_files(repo_root: Path):
+    for scan_root in SCAN_ROOTS:
+        abs_root = (repo_root / scan_root).resolve()
+        if not abs_root.exists():
             continue
-        if rel_dir != Path(".") and _is_allowlisted(rel_dir):
-            dirnames[:] = []
-            continue
-        for filename in filenames:
-            rel_path = rel_dir / filename
-            if _should_skip(rel_path):
+        for dirpath, dirnames, filenames in os.walk(abs_root):
+            rel_dir = Path(dirpath).relative_to(repo_root)
+            if _should_skip(rel_dir):
+                dirnames[:] = []
                 continue
-            yield rel_path
+            if rel_dir != Path(".") and _is_allowlisted(rel_dir):
+                dirnames[:] = []
+                continue
+            for filename in filenames:
+                rel_path = rel_dir / filename
+                if _should_skip(rel_path):
+                    continue
+                yield rel_path
 
 
 def _find_hypercare_token_violations(repo_root: Path) -> list[str]:
@@ -80,14 +92,18 @@ def test_no_legacy_tokens_outside_archive():  # pragma: no cover
         + "\n".join(violations)
     )
 
+@pytest.fixture(params=TOKEN_PATTERNS)
+def forbidden_token(request: pytest.FixtureRequest) -> str:
+    return str(request.param)
 
-def test_allowlisted_paths_can_use_token(tmp_path):
+
+def test_allowlisted_paths_can_use_token(tmp_path: Path, forbidden_token: str):
     (tmp_path / "archive").mkdir()
-    (tmp_path / "archive" / "notes.txt").write_text(TOKEN_LITERAL, encoding="utf-8")
+    (tmp_path / "archive" / "notes.txt").write_text(forbidden_token, encoding="utf-8")
 
-    (tmp_path / "core").mkdir()
-    blocked_file = tmp_path / "core" / "engine.py"
-    blocked_file.write_text(TOKEN_LITERAL, encoding="utf-8")
+    (tmp_path / "bot_core").mkdir()
+    blocked_file = tmp_path / "bot_core" / "engine.py"
+    blocked_file.write_text(forbidden_token, encoding="utf-8")
 
     violations = _find_hypercare_token_violations(tmp_path)
 

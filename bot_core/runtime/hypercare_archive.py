@@ -1,4 +1,4 @@
-"""Helpery archiwizacji raportów hypercare legacy Stage 5 / Stage6."""
+"""Helpery archiwizacji raportów hypercare Stage6 i materiałów historycznych."""
 
 from __future__ import annotations
 
@@ -28,9 +28,9 @@ def _copy_if_exists(source: Path | None, destination: Path) -> None:
 def archive_hypercare_reports(
     *,
     archive_dir: Path,
-    legacy_summary: Path,
+    historical_summary: Path,
     stage6_summary: Path,
-    legacy_signature: Path | None = None,
+    historical_signature: Path | None = None,
     stage6_signature: Path | None = None,
     full_summary: Path | None = None,
     extra_files: Iterable[Path] | None = None,
@@ -43,13 +43,13 @@ def archive_hypercare_reports(
     target_dir = archive_root / _timestamp_slug(timestamp)
     target_dir.mkdir(parents=True, exist_ok=True)
 
-    for required in (legacy_summary, stage6_summary):
+    for required in (historical_summary, stage6_summary):
         expanded = required.expanduser()
         if not expanded.exists():
             raise FileNotFoundError(f"Nie znaleziono raportu hypercare: {expanded}")
         shutil.copy2(expanded, target_dir / expanded.name)
 
-    _copy_if_exists(legacy_signature, target_dir)
+    _copy_if_exists(historical_signature, target_dir)
     _copy_if_exists(stage6_signature, target_dir)
     _copy_if_exists(full_summary, target_dir)
 

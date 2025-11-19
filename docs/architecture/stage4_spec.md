@@ -36,7 +36,7 @@ Etap 4 programu rozwoju `bot_core` koncentruje się na budowie zdywersyfikowanej
 2. Implementacja i testy mean reversion + volatility targeting wraz z pierwszą wersją zestawów danych.
 3. Implementacja i testy cross-exchange arbitrage + scheduler wielostrate-giczny; rozszerzenie harnessu ryzyka i telemetryki.
 4. Integracja z pipeline’em i aktualizacja runbooków/test planów; wdrożenie alertów i decision log.
-5. Automatyzacja CI/CD, szkolenie operatorów oraz testy obciążeniowe z raportem wydajności; przygotowanie planu wejścia w kolejny etap (archiwalna dokumentacja piątego etapu znajduje się w `archive/hypercare_legacy`).
+5. Automatyzacja CI/CD, szkolenie operatorów oraz testy obciążeniowe z raportem wydajności; przygotowanie planu wejścia w kolejny etap (archiwalna dokumentacja piątego etapu znajduje się w `archive/hypercare_stage5`).
 
 ## 6. Ryzyka i mitgacje
 - **Brak danych testnetowych**: wykorzystanie stubów danych OHLCV i symulacji rozbieżności cen (testy integracyjne) oraz znormalizowane snapshoty w repozytorium danych.

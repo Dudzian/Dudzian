@@ -1,4 +1,4 @@
-"""Pakiet narzędzi zgodności i szkoleń legacy Stage 5."""
+"""Pakiet narzędzi zgodności i szkoleń dla bieżącego etapu Stage6."""
 
 from .reports import (
     ComplianceControl,

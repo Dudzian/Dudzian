@@ -54,6 +54,6 @@ wysłaniem zmian do review.
   testy) słowo „legacy” jest zakazane i test `tests/qa/test_no_legacy_tokens.py` zablokuje merge.
 - Dopuszczalne konteksty to wyłącznie dokumentacja (`docs/**`), archiwum (`archive/**`)
   oraz pliki zaczynające się od `README`. Każda taka wzmianka musi wskazywać konkretną
-  lokalizację w `archive/` (np. `archive/ui_cpp_legacy.md`) albo sekcję migracji.
+  lokalizację w `archive/` (np. `archive/ui_cpp_preserved.md`) albo sekcję migracji.
 - Poza powyższą listą nie dodajemy nowych odwołań – w razie potrzeby rozszerzenia
   allowlisty należy dołączyć zmianę w teście QA i uzasadnienie w opisie PR.

@@ -11,7 +11,7 @@
 | Pasek | `####################` |
 | Stan czynności | brak elementów w toku, brak blokerów |
 
-**Raport zamknięcia:** patrz [Raport zamknięcia Etapu 4](stage4_final_report.md). Rozszerzony zakres opisano w [Specyfikacji Etapu 4](stage4_spec.md); plan kolejnego etapu jest opisany w archiwalnej specyfikacji piątego etapu (zob. `archive/hypercare_legacy`).
+**Raport zamknięcia:** patrz [Raport zamknięcia Etapu 4](stage4_final_report.md). Rozszerzony zakres opisano w [Specyfikacji Etapu 4](stage4_spec.md); plan kolejnego etapu jest opisany w archiwalnej specyfikacji piątego etapu (zob. `archive/hypercare_stage5`).
 
 ```json
 {"total_tasks":40,"completed":40,"percent":100}
