@@ -85,7 +85,11 @@ class AutoTraderDecisionScheduler:
                         break
                     retry_delay = 0.0
                 try:
-                    report = self.trader.run_cycle_once()
+                    run_cycle = getattr(self.trader, "run_single_cycle", None)
+                    if callable(run_cycle):
+                        report = run_cycle()
+                    else:
+                        report = self.trader.run_cycle_once()
                 except Exception as exc:  # pragma: no cover - defensive guard
                     LOGGER.exception("AutoTraderDecisionScheduler cycle failed")
                     retry_delay = self._handle_failure(exc, max_backoff=max_backoff)
@@ -156,7 +160,9 @@ class AutoTraderDecisionScheduler:
                     break
                 retry_delay = 0.0
             try:
-                report = await asyncio.to_thread(self.trader.run_cycle_once)
+                run_cycle = getattr(self.trader, "run_single_cycle", None)
+                target = run_cycle if callable(run_cycle) else self.trader.run_cycle_once
+                report = await asyncio.to_thread(target)
             except Exception as exc:  # pragma: no cover - defensive guard
                 LOGGER.exception("AutoTraderDecisionScheduler async cycle failed")
                 retry_delay = self._handle_failure(exc, max_backoff=max_backoff)

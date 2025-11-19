@@ -1,8 +1,11 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import threading
+from pathlib import Path
 
 import pandas as pd
+import pytest
 
 from bot_core.ai.regime import MarketRegime, MarketRegimeAssessment
 from bot_core.auto_trader import AutoTrader, AutoTraderAIGovernorRunner
@@ -156,7 +159,7 @@ def test_autotrader_paper_switches_to_growth_profile() -> None:
     ai_manager = _StaticAIManager(assessment=assessment, prediction=0.015, probability=0.71)
     trader, journal, emitter, _ = _build_trader(ai_manager)
 
-    report = trader.run_decision_cycle()
+    report = trader.run_single_cycle()
 
     assert trader._risk_profile_name == "aggressive"
     assert trader.current_strategy == "trend_following"
@@ -177,7 +180,7 @@ def test_autotrader_live_enforces_conservative_profile_on_high_risk() -> None:
     ai_manager = _StaticAIManager(assessment=assessment, prediction=0.0, probability=0.4)
     trader, journal, emitter, _ = _build_trader(ai_manager)
 
-    report = trader.run_decision_cycle()
+    report = trader.run_single_cycle()
 
     assert trader._risk_profile_name == "conservative"
     assert trader.current_strategy == "capital_preservation"
@@ -203,7 +206,7 @@ def test_autotrader_paper_executes_order_and_records_audit() -> None:
     service = FakeExecutionService()
     trader, _, _, audit_log = _build_trader(ai_manager, execution_service=service)
 
-    report = trader.run_decision_cycle()
+    report = trader.run_single_cycle()
 
     assert service.executed, "usługa egzekucji powinna zostać wywołana"
     recorded = service.executed[0]
@@ -211,7 +214,7 @@ def test_autotrader_paper_executes_order_and_records_audit() -> None:
     assert recorded.request.quantity > 0
     assert recorded.context.environment == "paper"
     assert recorded.request.metadata is not None
-    assert recorded.request.metadata.get("mode") == trader._schedule_mode
+    assert recorded.request.metadata.get("mode") == trader.schedule_mode
     assert report.decision is not None and report.decision.should_trade
     assert report.metrics["cycles_total"] >= 1
 
@@ -241,7 +244,7 @@ def test_autotrader_live_execution_failure_records_audit() -> None:
         symbol="ETHUSDT",
     )
 
-    report = trader.run_decision_cycle()
+    report = trader.run_single_cycle()
 
     assert service.executed, "nawet w przypadku błędu powinien wystąpić jeden attempt"
     recorded = service.executed[0]
@@ -270,7 +273,7 @@ def test_autotrader_ai_governor_snapshot_reports_mode() -> None:
     ai_manager = _StaticAIManager(assessment=assessment, prediction=0.02, probability=0.82)
     trader, _, _, _ = _build_trader(ai_manager)
 
-    trader.run_decision_cycle()
+    trader.run_single_cycle()
     snapshot = trader.build_auto_mode_snapshot(include_history=False)
     governor = snapshot.get("ai_governor", {})
 
@@ -313,9 +316,65 @@ def test_autotrader_cycle_report_without_new_decision() -> None:
     trader._enforce_work_schedule = lambda: False  # type: ignore[assignment]
     before_cycles = trader._metric_cycle_total.value(labels=trader._base_metric_labels)
 
-    report = trader.run_decision_cycle()
+    report = trader.run_single_cycle()
 
     assert report.decision is None
     assert report.metadata == {}
     assert report.metrics["cycles_total"] == before_cycles
+
+
+def test_autotrader_cycle_report_exposes_telemetry() -> None:
+    assessment = MarketRegimeAssessment(
+        regime=MarketRegime.MEAN_REVERSION,
+        confidence=0.81,
+        risk_score=0.35,
+        metrics={"volatility": 0.08},
+        symbol="ADAUSDT",
+    )
+    ai_manager = _StaticAIManager(assessment=assessment, prediction=0.01, probability=0.76)
+    trader, _, _, _ = _build_trader(ai_manager)
+
+    report = trader.run_single_cycle()
+
+    telemetry = report.telemetry or {}
+    latency = telemetry.get("cycleLatency", {})
+    assert latency.get("lastMs", 0.0) >= 0.0
+    transitions = telemetry.get("modeTransitions", [])
+    assert transitions and transitions[0].get("mode")
+    guardrails = telemetry.get("guardrails", {})
+    assert "active" in guardrails
+
+
+def test_autotrader_run_forever_respects_limit() -> None:
+    assessment = MarketRegimeAssessment(
+        regime=MarketRegime.TREND,
+        confidence=0.85,
+        risk_score=0.25,
+        metrics={"trend_strength": 0.9},
+        symbol="BTCUSDT",
+    )
+    ai_manager = _StaticAIManager(assessment=assessment, prediction=0.02, probability=0.82)
+    trader, _, _, _ = _build_trader(ai_manager)
+
+    reports = list(trader.run_forever(limit=2))
+
+    assert len(reports) == 2
+    assert all(report.metadata for report in reports)
+
+
+def test_e2e_suite_rejects_private_autotrader_fields() -> None:
+    root = Path(__file__).resolve().parents[2] / "tests"
+    tokens = ["._schedule_mode", "._execution_context"]
+    offenders: list[tuple[str, str]] = []
+    this_file = Path(__file__).resolve()
+    for file_path in root.rglob("*.py"):
+        if file_path.resolve() == this_file:
+            continue
+        text = file_path.read_text(encoding="utf-8")
+        for token in tokens:
+            if token in text:
+                offenders.append((str(file_path.relative_to(root)), token))
+    if offenders:
+        formatted = ", ".join(f"{path}:{token}" for path, token in offenders)
+        pytest.fail(f"Private AutoTrader fields referenced in tests: {formatted}")
 
