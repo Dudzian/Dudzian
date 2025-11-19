@@ -91,6 +91,7 @@ Item {
                         appController: root.appController
                         limitsModel: root.appController ? root.appController.riskLimitsModel : null
                         costModel: root.appController ? root.appController.riskCostModel : null
+                        runtimeService: root.runtimeService
                     }
                 }
             }

@@ -4,7 +4,6 @@ from __future__ import annotations
 import contextlib
 import json
 import logging
-import json
 import math
 import os
 import queue
@@ -23,6 +22,9 @@ import yaml
 
 from PySide6.QtCore import QObject, Property, QTimer, Signal, Slot
 
+from bot_core.auto_trader.ai_governor import AutoTraderAIGovernor, AutoTraderAIGovernorRunner
+from bot_core.config.models import DecisionEngineConfig, DecisionOrchestratorThresholds
+from bot_core.decision.orchestrator import DecisionOrchestrator
 from bot_core.config import load_core_config
 from bot_core.observability.ui_metrics import (
     FeedHealthMetricsExporter,
@@ -717,6 +719,40 @@ def _normalize_cycle_latency(payload: Mapping[str, object] | None) -> dict[str, 
     return normalized
 
 
+def _normalize_signals(value: object) -> list[dict[str, object]]:
+    if value is None:
+        return []
+    entries: Iterable[object] | None = None
+    if isinstance(value, Mapping):
+        candidate = value.get("signals")
+        entries = candidate if isinstance(candidate, Iterable) else None
+        if entries is None:
+            candidate = value.get("entries")
+            entries = candidate if isinstance(candidate, Iterable) else None
+    elif isinstance(value, Iterable) and not isinstance(value, (str, bytes)):
+        entries = value
+    if entries is None:
+        return []
+    normalized: list[dict[str, object]] = []
+    for entry in entries:
+        if not isinstance(entry, Mapping):
+            continue
+        name_value = entry.get("name") or entry.get("signal") or entry.get("feature")
+        name = str(name_value).strip() if name_value is not None else ""
+        weight = _coerce_float(entry.get("weight") or entry.get("importance"))
+        value_numeric = _coerce_float(entry.get("value"))
+        source = entry.get("source") or entry.get("origin")
+        normalized.append(
+            {
+                "name": name,
+                "weight": weight if weight is not None else 0.0,
+                "value": value_numeric if value_numeric is not None else entry.get("value"),
+                "source": str(source).strip() if source is not None else "",
+            }
+        )
+    return normalized
+
+
 def _normalize_mode_transitions(value: object) -> list[dict[str, object]]:
     entries: Iterable[object] | None = None
     if isinstance(value, Mapping):
@@ -844,6 +880,23 @@ def _normalize_ai_governor_record(payload: Mapping[str, object] | None) -> dict[
         transitions_payload = record.get("modeTransitions") or record.get("mode_transitions")
         guardrail_payload = record.get("guardrails")
 
+    decision_payload = record.get("decision") or record.get("Decision") or {}
+    decision_signals = _normalize_signals(decision_payload or record.get("signals"))
+    decision_state = ""
+    decision_signal_label = None
+    decision_should_trade: bool | None = None
+    if isinstance(decision_payload, Mapping):
+        decision_state_value = decision_payload.get("state") or decision_payload.get("outcome")
+        decision_state = str(decision_state_value).strip() if decision_state_value is not None else ""
+        decision_signal_label = decision_payload.get("signal") or decision_payload.get("label")
+        decision_should_trade = _normalize_bool(
+            decision_payload.get("shouldTrade") or decision_payload.get("should_trade")
+        )
+    elif "outcome" in record:
+        decision_state = str(record.get("outcome") or "").strip()
+    elif "decision_state" in record:
+        decision_state = str(record.get("decision_state") or "").strip()
+
     normalized: dict[str, object] = {
         "timestamp": timestamp,
         "mode": mode,
@@ -868,9 +921,39 @@ def _normalize_ai_governor_record(payload: Mapping[str, object] | None) -> dict[
     guardrails = _normalize_guardrail_snapshot(guardrail_payload)
     if guardrails:
         telemetry["guardrails"] = guardrails
+    decision_meta: dict[str, object] = {}
+    if decision_state:
+        decision_meta["state"] = decision_state
+    if decision_signal_label:
+        decision_meta["signal"] = str(decision_signal_label)
+    if decision_should_trade is not None:
+        decision_meta["shouldTrade"] = decision_should_trade
+    if decision_meta:
+        normalized["decision"] = decision_meta
+    if decision_signals:
+        normalized["signals"] = decision_signals
     if telemetry:
         normalized["telemetry"] = telemetry
     return normalized
+
+
+def _validate_ai_record_schema(payload: Mapping[str, object] | None) -> tuple[bool, str | None]:
+    if not isinstance(payload, Mapping):
+        return False, "payload not a mapping"
+    timestamp = payload.get("timestamp") or payload.get("generated_at") or payload.get("ts")
+    if not timestamp or not str(timestamp).strip():
+        return False, "brak stempla czasu w rekordzie AI"
+    mode_value = payload.get("mode") or payload.get("Mode")
+    if mode_value is None or str(mode_value).strip() == "":
+        return False, "brak trybu (mode) w rekordzie AI"
+    telemetry = payload.get("telemetry")
+    if telemetry is not None and not isinstance(telemetry, Mapping):
+        return False, "telemetry nie jest mapą"
+    if isinstance(telemetry, Mapping):
+        cycle_latency = telemetry.get("cycleLatency") or telemetry.get("cycle_latency")
+        if cycle_latency is not None and not isinstance(cycle_latency, Mapping):
+            return False, "cycleLatency ma niepoprawny format"
+    return True, None
 
 
 class RuntimeService(QObject):
@@ -893,6 +976,8 @@ class RuntimeService(QObject):
     feedTransportSnapshotChanged = Signal()
     aiGovernorSnapshotChanged = Signal()
     cloudRuntimeStatusChanged = Signal()
+    executionModeChanged = Signal()
+    guardrailsChanged = Signal()
 
     def __init__(
         self,
@@ -908,6 +993,8 @@ class RuntimeService(QObject):
         feed_metrics_exporter: FeedHealthMetricsExporter | None = None,
         cloud_runtime_enabled: bool = False,
         cloud_client_config_path: str | os.PathLike[str] | None = None,
+        ai_runner_factory: Callable[[], AutoTraderAIGovernorRunner] | None = None,
+        ai_runner: AutoTraderAIGovernorRunner | None = None,
     ) -> None:
         super().__init__(parent)
         if decision_loader is not None:
@@ -952,6 +1039,14 @@ class RuntimeService(QObject):
         self._risk_timeline: list[dict[str, object]] = []
         self._cycle_metrics: dict[str, float] = {}
         self._last_operator_action: dict[str, object] | None = None
+        self._ai_runner_factory = ai_runner_factory
+        self._ai_runner: AutoTraderAIGovernorRunner | None = ai_runner
+        self._execution_mode: str = "manual"
+        self._guardrails: dict[str, object] = {
+            "maxExposure": 0.35,
+            "dailyLossLimitPct": 0.03,
+            "blockOnSlaAlerts": True,
+        }
         self._grpc_thread: threading.Thread | None = None
         self._grpc_stop_event: threading.Event | None = None
         self._grpc_queue: "queue.Queue[tuple[str, object]] | None" = None
@@ -1120,6 +1215,14 @@ class RuntimeService(QObject):
     def cycleMetrics(self) -> dict[str, object]:  # type: ignore[override]
         return {key: float(value) for key, value in self._cycle_metrics.items()}
 
+    @Property(str, notify=executionModeChanged)
+    def executionMode(self) -> str:  # type: ignore[override]
+        return self._execution_mode
+
+    @Property("QVariantMap", notify=guardrailsChanged)
+    def guardrails(self) -> dict[str, object]:  # type: ignore[override]
+        return dict(self._guardrails)
+
     @Property("QVariantMap", notify=operatorActionChanged)
     def lastOperatorAction(self) -> dict[str, object]:  # type: ignore[override]
         if self._last_operator_action is None:
@@ -1213,7 +1316,7 @@ class RuntimeService(QObject):
         payload["transports"] = self._serialize_transport_stats()
         self.feedHealthChanged.emit()
         self._refresh_feed_transport_snapshot(payload, latency_p95)
-        self._publish_feed_metrics(payload, latency_p95)
+        self._publish_feed_metrics(payload, latency_p95, latency_p50)
         self._evaluate_feed_health_alerts(payload, latency_p95)
         self._write_feed_metrics()
 
@@ -1278,7 +1381,12 @@ class RuntimeService(QObject):
         self._feed_channel_status[channel] = payload
         self._update_feed_health()
 
-    def _publish_feed_metrics(self, payload: Mapping[str, object], latency_p95: float | None) -> None:
+    def _publish_feed_metrics(
+        self,
+        payload: Mapping[str, object],
+        latency_p95: float | None,
+        latency_p50: float | None,
+    ) -> None:
         exporter = self._feed_metrics_exporter
         if exporter is None:
             return
@@ -1295,13 +1403,20 @@ class RuntimeService(QObject):
             downtime_ms = float(downtime_raw)
         except (TypeError, ValueError):
             downtime_ms = 0.0
+        metric_labels = {
+            "transport": self._current_transport_key(),
+            "environment": self._active_profile or "default",
+            "scope": "decision_feed",
+        }
         exporter.record(
             adapter=adapter,
             status=status,
+            latency_p50_ms=latency_p50,
             latency_p95_ms=latency_p95,
             reconnects=reconnects_value,
             downtime_ms=downtime_ms,
             last_error=last_error,
+            labels=metric_labels,
         )
 
     def _evaluate_feed_health_alerts(
@@ -2629,6 +2744,11 @@ class RuntimeService(QObject):
     def _apply_ai_governor_records(self, records: Iterable[Mapping[str, object]]) -> None:
         normalized: list[dict[str, object]] = []
         for record in records:
+            ok, reason = _validate_ai_record_schema(record)
+            if not ok:
+                message = f"AI feed schema mismatch: {reason or 'nieznany błąd'}"
+                self._emit_ai_feed_event("warning", message)
+                continue
             entry = _normalize_ai_governor_record(record)
             if entry:
                 normalized.append(entry)
@@ -2650,6 +2770,12 @@ class RuntimeService(QObject):
         self._set_ai_governor_snapshot(snapshot)
 
     def _append_ai_governor_record(self, record: Mapping[str, object]) -> None:
+        ok, reason = _validate_ai_record_schema(record)
+        if not ok:
+            message = f"AI feed schema mismatch: {reason or 'nieznany błąd'}"
+            self._emit_ai_feed_event("warning", message)
+            self._schedule_ai_feed_retry(delay_seconds=2.0)
+            return
         entry = _normalize_ai_governor_record(record)
         if not entry:
             return
@@ -3121,6 +3247,162 @@ class RuntimeService(QObject):
         self._risk_timeline = timeline
         self.riskMetricsChanged.emit()
         self.riskTimelineChanged.emit()
+
+    def _update_ai_snapshot_from_runner(self, runner: AutoTraderAIGovernorRunner | None) -> None:
+        if runner is None:
+            return
+        snapshot = runner.snapshot()
+        self._set_ai_governor_snapshot(snapshot if isinstance(snapshot, Mapping) else {})
+
+    def _build_ai_runner(self) -> AutoTraderAIGovernorRunner:
+        thresholds = DecisionOrchestratorThresholds(
+            max_cost_bps=18.0,
+            min_net_edge_bps=5.0,
+            max_daily_loss_pct=float(self._guardrails.get("dailyLossLimitPct", 0.03)),
+            max_drawdown_pct=0.08,
+            max_position_ratio=float(self._guardrails.get("maxExposure", 0.35)),
+            max_open_positions=6,
+            max_latency_ms=320.0,
+        )
+        orchestrator = DecisionOrchestrator(
+            DecisionEngineConfig(
+                orchestrator=thresholds,
+                profile_overrides={},
+                stress_tests=None,
+                min_probability=0.55,
+                require_cost_data=False,
+                penalty_cost_bps=0.0,
+            )
+        )
+        return AutoTraderAIGovernorRunner(
+            orchestrator,
+            governor=AutoTraderAIGovernor(history_limit=self._ai_history_limit),
+        )
+
+    def _ensure_ai_runner(self) -> AutoTraderAIGovernorRunner | None:
+        if self._ai_runner is not None:
+            return self._ai_runner
+        if callable(self._ai_runner_factory):
+            try:
+                self._ai_runner = self._ai_runner_factory()
+            except Exception:  # pragma: no cover - diagnostyka fabryki
+                _LOGGER.debug("Fabryka runnera AI zgłosiła wyjątek", exc_info=True)
+        if self._ai_runner is None:
+            self._ai_runner = self._build_ai_runner()
+        return self._ai_runner
+
+    @staticmethod
+    def _safe_float(value: object) -> float | None:
+        try:
+            return float(value)
+        except (TypeError, ValueError):
+            return None
+
+    def _guardrail_block_reason(self) -> str | None:
+        sla_state = str(self._feed_sla_report.get("sla_state", "")).strip().lower()
+        if self._guardrails.get("blockOnSlaAlerts") and sla_state in {"warning", "critical"}:
+            return f"blokada SLA ({sla_state})"
+
+        exposure = self._safe_float(
+            self._risk_metrics.get("exposure")
+            or self._risk_metrics.get("gross_exposure")
+            or self._risk_metrics.get("max_exposure")
+        )
+        max_exposure = self._safe_float(self._guardrails.get("maxExposure"))
+        if exposure is not None and max_exposure is not None and exposure > max_exposure:
+            return f"ekspozycja {exposure:.3f} przekracza limit {max_exposure:.3f}"
+
+        daily_loss = self._safe_float(
+            self._risk_metrics.get("daily_loss_pct") or self._risk_metrics.get("dailyLossPct")
+        )
+        loss_limit = self._safe_float(self._guardrails.get("dailyLossLimitPct"))
+        if daily_loss is not None and loss_limit is not None and daily_loss > loss_limit:
+            return f"dzienne straty {daily_loss:.3f} przekraczają limit {loss_limit:.3f}"
+        return None
+
+    @Slot(result=bool)
+    def runManualCycle(self) -> bool:
+        runner = self._ensure_ai_runner()
+        if runner is None:
+            return False
+        block_reason = self._guardrail_block_reason()
+        if block_reason:
+            self._record_operator_action("guardrail_block", {"reason": block_reason})
+            return False
+        try:
+            runner.run_cycle()
+            self._update_ai_snapshot_from_runner(runner)
+            self._record_operator_action("manual_cycle", {"mode": "manual"})
+            return True
+        except Exception:
+            _LOGGER.exception("runManualCycle failed")
+            return False
+
+    @Slot(result=bool)
+    def startAutoMode(self) -> bool:
+        runner = self._ensure_ai_runner()
+        if runner is None:
+            return False
+        block_reason = self._guardrail_block_reason()
+        if block_reason:
+            self._record_operator_action("guardrail_block", {"reason": block_reason})
+            return False
+        try:
+            runner.run_until(limit=max(1, self._ai_history_limit))
+            self._execution_mode = "auto"
+            self.executionModeChanged.emit()
+            self._update_ai_snapshot_from_runner(runner)
+            self._record_operator_action("auto_mode_started", {"mode": "auto"})
+            return True
+        except Exception:
+            _LOGGER.exception("startAutoMode failed")
+            return False
+
+    @Slot(result=bool)
+    def stopAutoMode(self) -> bool:
+        if self._execution_mode != "auto":
+            return True
+        self._execution_mode = "manual"
+        self.executionModeChanged.emit()
+        self._record_operator_action("auto_mode_stopped", {"mode": "manual"})
+        return True
+
+    @Slot(str, result=bool)
+    def setExecutionMode(self, mode: str) -> bool:
+        normalized = str(mode or "").strip().lower()
+        if normalized not in {"manual", "auto"}:
+            return False
+        if normalized == "auto":
+            return self.startAutoMode()
+        return self.stopAutoMode()
+
+    @Slot(float, result=bool)
+    def setMaxExposureLimit(self, ratio: float) -> bool:
+        sanitized = max(0.0, min(1.0, float(ratio)))
+        if self._guardrails.get("maxExposure") == sanitized:
+            return True
+        self._guardrails["maxExposure"] = sanitized
+        self._ai_runner = None
+        self.guardrailsChanged.emit()
+        return True
+
+    @Slot(float, result=bool)
+    def setDailyLossLimitPct(self, ratio: float) -> bool:
+        sanitized = max(0.0, float(ratio))
+        if self._guardrails.get("dailyLossLimitPct") == sanitized:
+            return True
+        self._guardrails["dailyLossLimitPct"] = sanitized
+        self._ai_runner = None
+        self.guardrailsChanged.emit()
+        return True
+
+    @Slot(bool, result=bool)
+    def setBlockOnSlaAlerts(self, enabled: bool) -> bool:
+        if bool(self._guardrails.get("blockOnSlaAlerts")) == bool(enabled):
+            return True
+        self._guardrails["blockOnSlaAlerts"] = bool(enabled)
+        self.guardrailsChanged.emit()
+        return True
 
     def __del__(self) -> None:  # pragma: no cover - defensywne sprzątanie
         try:

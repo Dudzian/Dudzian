@@ -26,7 +26,7 @@ def test_deribit_spot_public_stream_defaults() -> None:
     adapter = DeribitSpotAdapter(_credentials(), environment=Environment.TESTNET, client=_StubClient())
     stream = adapter.stream_public_data(channels=["ticker", "trades"])
     assert isinstance(stream, LocalLongPollStream)
-    assert stream._base_url == "http://127.0.0.1:8765"  # noqa: SLF001 - dostęp testowy
+    assert stream._base_url == "https://stream.sandbox.dudzian.ai/exchanges"  # noqa: SLF001 - sandbox domyślny
     assert stream._path == "/stream/deribit_spot/public"  # noqa: SLF001
 
 

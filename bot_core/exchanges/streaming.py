@@ -379,6 +379,18 @@ def export_long_poll_metrics_snapshot(
         )
 
     try:
+        downtime_metric = registry.get("bot_exchange_stream_downtime_seconds_total")
+    except KeyError:
+        downtime_metric = None
+    if isinstance(downtime_metric, CounterMetric):
+        summary["downtimeSeconds"] = float(
+            _counter_total(
+                downtime_metric,
+                base_labels=labels,
+            )
+        )
+
+    try:
         backpressure_metric = registry.get("bot_exchange_stream_backpressure_total")
     except KeyError:
         backpressure_metric = None
@@ -557,6 +569,10 @@ class LocalLongPollStream(Iterable[StreamBatch]):
             "bot_exchange_stream_reconnect_duration_seconds",
             "Czas potrzebny na odzyskanie połączenia long-pollowego streamu",
             buckets=_DEFAULT_RECONNECT_BUCKETS,
+        )
+        self._metric_downtime: CounterMetric = self._metrics.counter(
+            "bot_exchange_stream_downtime_seconds_total",
+            "Łączny czas niedostępności long-pollowego streamu w sekundach",
         )
         self._metric_reconnect_state: GaugeMetric = self._metrics.gauge(
             "bot_exchange_stream_reconnect_in_progress",
@@ -1477,6 +1493,7 @@ class LocalLongPollStream(Iterable[StreamBatch]):
         self._metric_reconnect_state.set(0.0, labels=self._metric_labels)
         self._metric_reconnects.inc(labels=labels)
         self._metric_reconnect_latency.observe(max(0.0, duration), labels=labels)
+        self._metric_downtime.inc(max(0.0, duration), labels=self._metric_labels)
 
     def _record_http_error(
         self,
