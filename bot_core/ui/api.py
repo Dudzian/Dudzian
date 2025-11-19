@@ -154,6 +154,7 @@ class MarketplacePresetView:
     upgrade_available: bool = False
     upgrade_version: str | None = None
     license: Mapping[str, Any] | None = None
+    user_preferences: Sequence[Mapping[str, Any]] = field(default_factory=tuple)
 
     def to_payload(self) -> dict[str, Any]:
         return {
@@ -179,6 +180,7 @@ class MarketplacePresetView:
             "upgradeAvailable": self.upgrade_available,
             "upgradeVersion": self.upgrade_version,
             "license": _to_json_compatible(self.license) if self.license is not None else None,
+            "userPreferences": [dict(entry) for entry in self.user_preferences],
         }
 
 
@@ -870,11 +872,13 @@ class MarketplaceService:
             update_channels: Sequence[Mapping[str, object]] = ()
             preferred_channel: str | None = None
             available_version = preset.version
+            preference_profiles: Sequence[Mapping[str, object]] = ()
             if marketplace_entry is not None:
                 dependencies = [dep.to_payload() for dep in marketplace_entry.dependencies]
                 update_channels = [channel.to_payload() for channel in marketplace_entry.update_channels]
                 preferred_channel = marketplace_entry.preferred_channel
                 available_version = marketplace_entry.version or available_version
+                preference_profiles = marketplace_entry.preference_profiles
 
             installed_version = installed_doc.version if installed_doc else None
             upgrade_available = False
@@ -920,6 +924,7 @@ class MarketplaceService:
                     upgrade_available=upgrade_available,
                     upgrade_version=upgrade_version,
                     license=license_payload,
+                    user_preferences=preference_profiles,
                 )
             )
         return views

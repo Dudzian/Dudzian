@@ -1,0 +1,71 @@
+{
+  "preset": {
+    "metadata": {
+      "environments": [
+        "paper",
+        "live"
+      ],
+      "id": "volatility_breakout_guard",
+      "profile": "volatility_breakout",
+      "required_exchanges": [
+        "BINANCE",
+        "COINBASE"
+      ],
+      "summary": "Breakout na zmienności",
+      "tags": [
+        "volatility",
+        "swing"
+      ],
+      "user_preferences": [
+        {
+          "automation": "pełna",
+          "holding_period": "swing",
+          "max_positions": 5,
+          "notes": "Preset Volatility Breakout Guard preferuje volatility scenariusze.",
+          "persona": "Volatility Breakout Guard persona",
+          "recommended_budget": 18000,
+          "risk_target": "balanced"
+        }
+      ],
+      "version": "1.0.0"
+    },
+    "name": "Volatility Breakout Guard",
+    "risk": {
+      "guardrails": {
+        "max_daily_trades": 10,
+        "max_loss_pct": 6.5
+      },
+      "max_drawdown_pct": 11.0,
+      "max_notional": 36000,
+      "max_positions": 5
+    },
+    "strategies": [
+      {
+        "engine": "volatility_breakout",
+        "metadata": {
+          "description": "Breakout na zmienności",
+          "owners": [
+            "stage6-core"
+          ],
+          "tags": [
+            "volatility",
+            "swing"
+          ]
+        },
+        "name": "volatility_breakout_guard-engine",
+        "parameters": {
+          "alpha": 0.5,
+          "beta": 0.3,
+          "max_positions": 5
+        }
+      }
+    ]
+  },
+  "signature": {
+    "algorithm": "ed25519",
+    "key_id": "dev-presets",
+    "public_key": "wnD5eTEGDB3CPb6r3oMOmRjFtjCxHISZXHlHX0TIKhY=",
+    "signed_at": "2025-11-19T09:09:03Z",
+    "value": "hgJ2dHl2/DxGtufcD2r5GisuFqc4xcUx1SIZD8PAf7YyUw0X5xYPFRRpsdkLL8QN/xoGx26D42NnknN6PxT4AA=="
+  }
+}

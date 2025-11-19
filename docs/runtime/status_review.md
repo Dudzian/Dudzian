@@ -12,7 +12,7 @@
 
 ## Najważniejsze luki
 - **Alerty SLA dla feedu** – *rozwiązane*: `feedHealth` oraz `feedSlaReport` stosują progi `observability.feed_sla`, generują alerty `UiTelemetryAlertSink`→HyperCare/CloudAlertService i karmią panel SLA/raport CI. Runbook zachowuje wpis historyczny, aby przypomnieć o konieczności utrzymania konfiguracji progów.【F:ui/backend/runtime_service.py†L689-L1180】【F:ui/qml/dashboard/RuntimeOverview.qml†L1-L260】
-- **Marketplace presetów** – benchmark nadal wskazuje brak publicznego katalogu oraz procesu publikacji presetów, co blokuje dystrybucję konfiguracji dla użytkowników końcowych.【F:docs/benchmark/cryptohopper_comparison.md†L24-L37】【F:docs/benchmark/cryptohopper_comparison.md†L65-L97】
+- **Marketplace presetów** – benchmark nadal wskazuje brak publicznego katalogu oraz procesu publikacji presetów (JSON + Markdown `config/marketplace/catalog.md`), co blokuje dystrybucję konfiguracji dla użytkowników końcowych.【F:docs/benchmark/cryptohopper_comparison.md†L24-L97】【F:docs/marketplace/README.md†L1-L99】
 - **Monitoring futures** – adaptery Deribit/BitMEX zostały wdrożone, ale wymagają automatycznego monitoringu HyperCare (raporty `scripts/list_exchange_adapters.py`, alerty long-polla) oraz cyklicznej walidacji podpisanych checklist.【F:scripts/list_exchange_adapters.py†L1-L150】【F:docs/benchmark/cryptohopper_comparison.md†L65-L90】
 
 ### Konfiguracja środowiska runtime
@@ -45,6 +45,6 @@
 - Rozszerzyć testy (`tests/integration/test_grpc_transport.py`, `tests/ui/test_runtime_overview.py`) o scenariusze degradacji feedu i brakujących metadanych, aby potwierdzić alerty.【F:tests/integration/test_grpc_transport.py†L200-L360】【F:tests/ui/test_runtime_overview.py†L1-L220】
 
 ### Sprint 4 – Marketplace i roadmapa giełdowa
-- Utrzymać pipeline publikacji presetów (`scripts/build_marketplace_catalog.py`, workflow `marketplace-catalog`) i skalować katalog do ≥15 publicznych presetów wraz z recenzjami.【F:docs/benchmark/cryptohopper_comparison.md†L24-L97】【F:docs/marketplace/README.md†L1-L99】
+- Utrzymać pipeline publikacji presetów (`scripts/build_marketplace_catalog.py`, workflow `marketplace-catalog`) i skalować katalog do ≥15 publicznych presetów wraz z recenzjami i podpisanym `config/marketplace/catalog.md`.【F:docs/benchmark/cryptohopper_comparison.md†L24-L97】【F:docs/marketplace/README.md†L1-L99】
 - Dodać adaptery Deribit/BitMEX (REST + long-poll) wraz z profilami paper/live, aby zrównać liczbę giełd z konkurencją CryptoHopper.【F:docs/benchmark/cryptohopper_comparison.md†L35-L66】
 - Skorelować marketing Stress Lab z roadmapą produktów – eksportować raporty stres-testów i linkować je w materiałach sprzedażowych.【F:docs/benchmark/cryptohopper_comparison.md†L15-L37】

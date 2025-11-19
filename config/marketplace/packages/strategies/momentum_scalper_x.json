@@ -1,0 +1,71 @@
+{
+  "preset": {
+    "metadata": {
+      "environments": [
+        "paper",
+        "live"
+      ],
+      "id": "momentum_scalper_x",
+      "profile": "scalping",
+      "required_exchanges": [
+        "BYBIT",
+        "BITGET"
+      ],
+      "summary": "Momentum scalper na mikroruchach",
+      "tags": [
+        "scalping",
+        "high-frequency"
+      ],
+      "user_preferences": [
+        {
+          "automation": "pełna",
+          "holding_period": "intraday",
+          "max_positions": 5,
+          "notes": "Preset Momentum Scalper X preferuje scalping scenariusze.",
+          "persona": "Momentum Scalper X persona",
+          "recommended_budget": 12000,
+          "risk_target": "balanced"
+        }
+      ],
+      "version": "1.0.0"
+    },
+    "name": "Momentum Scalper X",
+    "risk": {
+      "guardrails": {
+        "max_daily_trades": 10,
+        "max_loss_pct": 6.5
+      },
+      "max_drawdown_pct": 11.0,
+      "max_notional": 24000,
+      "max_positions": 5
+    },
+    "strategies": [
+      {
+        "engine": "scalping",
+        "metadata": {
+          "description": "Momentum scalper na mikroruchach",
+          "owners": [
+            "stage6-core"
+          ],
+          "tags": [
+            "scalping",
+            "high-frequency"
+          ]
+        },
+        "name": "momentum_scalper_x-engine",
+        "parameters": {
+          "alpha": 0.5,
+          "beta": 0.3,
+          "max_positions": 5
+        }
+      }
+    ]
+  },
+  "signature": {
+    "algorithm": "ed25519",
+    "key_id": "dev-presets",
+    "public_key": "wnD5eTEGDB3CPb6r3oMOmRjFtjCxHISZXHlHX0TIKhY=",
+    "signed_at": "2025-11-19T09:08:30Z",
+    "value": "K+JjYayiQAHt053U2XHGPtAev+zZbdqbz5HKUg+8ysDaPwhTax//AkTsGoVxfxntRz+GNDBfVdZSWJNEtfcjCQ=="
+  }
+}

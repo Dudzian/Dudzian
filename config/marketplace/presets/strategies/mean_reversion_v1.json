@@ -49,6 +49,17 @@
       "environments": [
         "paper",
         "live"
+      ],
+      "user_preferences": [
+        {
+          "persona": "Mean Reversion Desk",
+          "risk_target": "conservative",
+          "recommended_budget": 15000,
+          "max_positions": 4,
+          "holding_period": "intra-day",
+          "automation": "pełna",
+          "notes": "Preferuje rynek spot z ograniczoną ekspozycją overnight."
+        }
       ]
     }
   },
@@ -81,6 +92,17 @@
       "mean-reversion",
       "spot",
       "stage6"
+    ],
+    "user_preferences": [
+      {
+        "persona": "Mean Reversion Desk",
+        "risk_target": "conservative",
+        "recommended_budget": 15000,
+        "max_positions": 4,
+        "holding_period": "intra-day",
+        "automation": "pełna",
+        "notes": "Preferuje rynek spot z ograniczoną ekspozycją overnight."
+      }
     ],
     "data_requirements": {
       "inputs": [

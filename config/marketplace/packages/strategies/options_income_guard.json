@@ -1,0 +1,70 @@
+{
+  "preset": {
+    "metadata": {
+      "environments": [
+        "paper",
+        "live"
+      ],
+      "id": "options_income_guard",
+      "profile": "options_income",
+      "required_exchanges": [
+        "DERIBIT"
+      ],
+      "summary": "Covered-call automatyzowany",
+      "tags": [
+        "options",
+        "income"
+      ],
+      "user_preferences": [
+        {
+          "automation": "pełna",
+          "holding_period": "swing",
+          "max_positions": 5,
+          "notes": "Preset Options Income Guard preferuje options scenariusze.",
+          "persona": "Options Income Guard persona",
+          "recommended_budget": 20000,
+          "risk_target": "balanced"
+        }
+      ],
+      "version": "1.0.0"
+    },
+    "name": "Options Income Guard",
+    "risk": {
+      "guardrails": {
+        "max_daily_trades": 10,
+        "max_loss_pct": 6.5
+      },
+      "max_drawdown_pct": 11.0,
+      "max_notional": 40000,
+      "max_positions": 5
+    },
+    "strategies": [
+      {
+        "engine": "options_income",
+        "metadata": {
+          "description": "Covered-call automatyzowany",
+          "owners": [
+            "stage6-core"
+          ],
+          "tags": [
+            "options",
+            "income"
+          ]
+        },
+        "name": "options_income_guard-engine",
+        "parameters": {
+          "alpha": 0.5,
+          "beta": 0.3,
+          "max_positions": 5
+        }
+      }
+    ]
+  },
+  "signature": {
+    "algorithm": "ed25519",
+    "key_id": "dev-presets",
+    "public_key": "wnD5eTEGDB3CPb6r3oMOmRjFtjCxHISZXHlHX0TIKhY=",
+    "signed_at": "2025-11-19T09:08:42Z",
+    "value": "LGePs5CvpvBhKc3HDewLi8LKVt6V73noOxZMRzGIQ4X5HYItU+cvRXzZwOBEFSdczeHusAXK4clymloPE8hKBA=="
+  }
+}

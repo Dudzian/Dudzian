@@ -4,6 +4,197 @@
   "packages": [
     {
       "schema_version": "1.1",
+      "package_id": "ai_macro_multi_horizon.v1",
+      "display_name": "AI Macro Multi-Horizon",
+      "summary": "AI multi-horizon macro preset",
+      "description": "AI multi-horizon macro preset zgodny z guardrailami Stage6.",
+      "version": "1.0.0",
+      "revision": "2025.01",
+      "release_date": "2025-01-15T12:00:00Z",
+      "maintainers": [
+        {
+          "name": "Marketplace Labs",
+          "email": "marketplace@example.com",
+          "organization": "Marketplace Guild",
+          "role": "maintainer",
+          "url": null
+        }
+      ],
+      "license": {
+        "name": "Marketplace Evaluation License",
+        "spdx_id": "Proprietary",
+        "url": "https://configs.example.com/licenses/marketplace-eval",
+        "terms_summary": "Do użytku ewaluacyjnego w środowiskach demo.",
+        "redistributable": false,
+        "commercial_use": false
+      },
+      "tags": [
+        "ai",
+        "macro"
+      ],
+      "data_requirements": {
+        "inputs": [
+          {
+            "asset_type": "market",
+            "provider": "ccxt.binance",
+            "access_level": "restricted",
+            "retention_days": 45,
+            "min_history_days": 14,
+            "sampling": "15m",
+            "notes": null
+          }
+        ],
+        "requires_personal_data": false,
+        "requires_realtime_access": true,
+        "pii_handling_notes": "Preset nie przetwarza PII."
+      },
+      "distribution": [
+        {
+          "name": "preset-document",
+          "uri": "packages/strategies/ai_macro_multi_horizon.json",
+          "kind": "preset",
+          "description": "Podpisany preset mean-reversion z guardrailami Stage6.",
+          "size_bytes": 1747,
+          "integrity": {
+            "algorithm": "sha256",
+            "digest": "6db9f7a60ef75e226a7d0b8c568c9526a120e3c1b0abbf17d7e3828a7a01a477"
+          },
+          "signature": {
+            "algorithm": "HMAC-SHA256",
+            "key_id": "dev-hmac",
+            "value": "Bb9jb3o0EpCJgYcvh3XyJgE/YVQTeW8IS7jcq/PDmAY=",
+            "signed_fields": [
+              "package_id",
+              "version",
+              "artifact",
+              "uri",
+              "sha256"
+            ]
+          }
+        }
+      ],
+      "compatibility": [
+        {
+          "component": "core",
+          "minimum": null,
+          "maximum": null,
+          "recommended": null,
+          "channel": null,
+          "notes": null
+        },
+        {
+          "component": "core",
+          "minimum": null,
+          "maximum": null,
+          "recommended": null,
+          "channel": null,
+          "notes": null
+        },
+        {
+          "component": "core",
+          "minimum": null,
+          "maximum": null,
+          "recommended": null,
+          "channel": null,
+          "notes": null
+        }
+      ],
+      "documentation_url": "https://configs.example.com/marketplace/ai_macro_multi_horizon",
+      "release_notes": [
+        "Pierwsza publikacja AI Macro Multi-Horizon",
+        "Dodano checklistę HyperCare."
+      ],
+      "security": {
+        "mode": "allowlist",
+        "allowed_fingerprints": [
+          "OEM-1234567890ABCDEF"
+        ],
+        "require_strict_match": false,
+        "audit_message": "Preset dostępny tylko dla licencjonowanych instalacji OEM."
+      },
+      "release": {
+        "channel": "public",
+        "review_status": "approved",
+        "reviewers": [
+          {
+            "name": "QA Guild",
+            "email": "qa@example.com",
+            "role": "quality"
+          },
+          {
+            "name": "Compliance Board",
+            "email": "compliance@example.com",
+            "role": "compliance"
+          }
+        ],
+        "ticket": "https://jira.example.com/browse/MKT-1313",
+        "approved_at": "2025-01-14T09:30:00Z",
+        "notes": "Wymagane monitorowanie drawdownu podczas pierwszego tygodnia rollout'u."
+      },
+      "exchange_compatibility": [
+        {
+          "exchange": "BINANCE",
+          "environments": [
+            "paper",
+            "live"
+          ],
+          "trading_modes": [
+            "spot",
+            "margin"
+          ],
+          "status": "certified",
+          "last_verified_at": null,
+          "notes": null
+        },
+        {
+          "exchange": "COINBASE",
+          "environments": [
+            "paper"
+          ],
+          "trading_modes": [
+            "spot",
+            "margin"
+          ],
+          "status": "beta",
+          "last_verified_at": null,
+          "notes": null
+        },
+        {
+          "exchange": "OKX",
+          "environments": [
+            "paper"
+          ],
+          "trading_modes": [
+            "spot",
+            "margin"
+          ],
+          "status": "beta",
+          "last_verified_at": null,
+          "notes": null
+        }
+      ],
+      "versioning": {
+        "channel": "public",
+        "iteration": "minor",
+        "supersedes": [],
+        "superseded_by": [],
+        "migration_required": false,
+        "source": "strategies/ai_macro_multi_horizon.json"
+      },
+      "user_preferences": [
+        {
+          "persona": "AI Macro Multi-Horizon persona",
+          "risk_target": "balanced",
+          "recommended_budget": 70000.0,
+          "max_positions": 5,
+          "holding_period": "swing",
+          "automation": "pełna",
+          "notes": "Preset AI Macro Multi-Horizon preferuje ai scenariusze."
+        }
+      ]
+    },
+    {
+      "schema_version": "1.1",
       "package_id": "exchange_binance.v1",
       "display_name": "Binance Exchange Environments",
       "summary": "Preset środowisk paper/testnet/live dla giełdy Binance.",
@@ -58,12 +249,12 @@
           "size_bytes": 3951,
           "integrity": {
             "algorithm": "sha256",
-            "digest": "2e276a236f43d5d34841747905ad7fd369277bda040c28ec64e2d630938794d1"
+            "digest": "f3df89470f2bdec269a2e1639509f7f3cce2c0e00f01f8ec6d80dd9b06ced7d3"
           },
           "signature": {
             "algorithm": "HMAC-SHA256",
             "key_id": "dev-hmac",
-            "value": "oQeJ6D2ui98OMowRAV+aY0z4GFqMOcJUtCxVsvLbHes=",
+            "value": "02XWVHvFzP2EQHYcY7PamNk4WrljOCXkRWscaOX2HTA=",
             "signed_fields": [
               "package_id",
               "version",
@@ -133,7 +324,8 @@
         "superseded_by": [],
         "migration_required": false,
         "source": "exchanges/exchange_binance.json"
-      }
+      },
+      "user_preferences": []
     },
     {
       "schema_version": "1.1",
@@ -190,12 +382,12 @@
           "size_bytes": 3422,
           "integrity": {
             "algorithm": "sha256",
-            "digest": "2f8f4357def8dc8c881daef248ea1afb1e380cd795d11b1dd3cfb36aab4c6d14"
+            "digest": "911181ae8482dd16d4856d29832af40b692a712ac5bb119cbda77b21dba093fc"
           },
           "signature": {
             "algorithm": "HMAC-SHA256",
             "key_id": "dev-hmac",
-            "value": "VrYtpGl2SVWEtmjNxD1+O47hx0Yzss2DMjAJNBMjobw=",
+            "value": "iDWOoXUVrHXVhcC0Gd9/QLYgaDFlIwPMTa0SYd/X9ho=",
             "signed_fields": [
               "package_id",
               "version",
@@ -264,7 +456,8 @@
         "superseded_by": [],
         "migration_required": false,
         "source": "exchanges/exchange_bitfinex.json"
-      }
+      },
+      "user_preferences": []
     },
     {
       "schema_version": "1.1",
@@ -321,12 +514,12 @@
           "size_bytes": 3841,
           "integrity": {
             "algorithm": "sha256",
-            "digest": "f83f8198a1108b9643b5b0d233d50a3706824c86602422913f9b97922f79c14d"
+            "digest": "3f015f76ed7c15cd573797a42867011e20effe631f45f2b5adb1afef16b781d5"
           },
           "signature": {
             "algorithm": "HMAC-SHA256",
             "key_id": "dev-hmac",
-            "value": "LHNOF9opuc+2CFB1EVD6RCgeldCFkooLSKkmWCHWNgs=",
+            "value": "9thS6gmOh2MdXbA3SKDtfnq6yq+WWL7mV4Vd7V7LeWU=",
             "signed_fields": [
               "package_id",
               "version",
@@ -396,7 +589,8 @@
         "superseded_by": [],
         "migration_required": false,
         "source": "exchanges/exchange_bitget.json"
-      }
+      },
+      "user_preferences": []
     },
     {
       "schema_version": "1.1",
@@ -453,12 +647,12 @@
           "size_bytes": 5949,
           "integrity": {
             "algorithm": "sha256",
-            "digest": "2bf50118a61e1959bf568bdc259921cd65ec1d7aed609035eec71ed37916e1bf"
+            "digest": "f6b1143ace612e5fc3b86647a3a273a65e4fd5fdaaeec62a6694269b0b00b158"
           },
           "signature": {
             "algorithm": "HMAC-SHA256",
             "key_id": "dev-hmac",
-            "value": "/R3K5n7e/g+Frz9+BKMTGXqPLe4EWAq+PK/C0wR3aNQ=",
+            "value": "2019KUoxAj7Blr9quHwcXbs/5YIuMr8bdcwYDXPS81Q=",
             "signed_fields": [
               "package_id",
               "version",
@@ -527,7 +721,8 @@
         "superseded_by": [],
         "migration_required": false,
         "source": "exchanges/exchange_bitmex.json"
-      }
+      },
+      "user_preferences": []
     },
     {
       "schema_version": "1.1",
@@ -584,12 +779,12 @@
           "size_bytes": 3345,
           "integrity": {
             "algorithm": "sha256",
-            "digest": "59e23ed6b940a6b697975b8df130f9e4c8fbbecf6613f645fbc6d8a44d613815"
+            "digest": "9fee5c7e1885b304e05866f7421816eb967ab466d8655b0cbab80bb09b0489c5"
           },
           "signature": {
             "algorithm": "HMAC-SHA256",
             "key_id": "dev-hmac",
-            "value": "o7ZW2IgawevEcodOcL3f8KDRJUj9en+Zrz/ttqFNVMI=",
+            "value": "YssDU33l7M22u9UBrRg8nnHGDyvdUXKVKB/AMgFRwEs=",
             "signed_fields": [
               "package_id",
               "version",
@@ -658,7 +853,8 @@
         "superseded_by": [],
         "migration_required": false,
         "source": "exchanges/exchange_bitstamp.json"
-      }
+      },
+      "user_preferences": []
     },
     {
       "schema_version": "1.1",
@@ -715,12 +911,12 @@
           "size_bytes": 3828,
           "integrity": {
             "algorithm": "sha256",
-            "digest": "eb47d8db9d4ad9a138cff9598c34aa146ff3ed23ddfede86a20485e5fe0fe9e6"
+            "digest": "67a5d5386671c97a1db1ebd5301922b8a717fa099212a25f5afde123ade1320c"
           },
           "signature": {
             "algorithm": "HMAC-SHA256",
             "key_id": "dev-hmac",
-            "value": "Yejm0qmzTW0iJwNh4c5GMm/yQy5t4JIQ2cTICUmEb3c=",
+            "value": "BahVJvhlj9qI1n41mWo26npJId6ikKJJY5UXFIR8zYk=",
             "signed_fields": [
               "package_id",
               "version",
@@ -790,7 +986,8 @@
         "superseded_by": [],
         "migration_required": false,
         "source": "exchanges/exchange_bybit.json"
-      }
+      },
+      "user_preferences": []
     },
     {
       "schema_version": "1.1",
@@ -847,12 +1044,12 @@
           "size_bytes": 4040,
           "integrity": {
             "algorithm": "sha256",
-            "digest": "74fd43fa442fd2da0c9d871fb8f494b62ec632daf82c853399df860f96387c69"
+            "digest": "010fbb651b1b7861846e16c07b2a0b4bf130fb388d5688386f05c876d745ecff"
           },
           "signature": {
             "algorithm": "HMAC-SHA256",
             "key_id": "dev-hmac",
-            "value": "Kptkvhnt7//3wkJJLkbZo3ENPPViJd45z5MkS47WqjI=",
+            "value": "um5oJFE4Nrn3JjPBv4SS6MT0NBozFjFxshI2ZRgwPJg=",
             "signed_fields": [
               "package_id",
               "version",
@@ -921,7 +1118,8 @@
         "superseded_by": [],
         "migration_required": false,
         "source": "exchanges/exchange_coinbase.json"
-      }
+      },
+      "user_preferences": []
     },
     {
       "schema_version": "1.1",
@@ -978,12 +1176,12 @@
           "size_bytes": 6001,
           "integrity": {
             "algorithm": "sha256",
-            "digest": "8c511ab2384b61d29ebec0f7eab79ec3b743a02938f8bdf6997e4ce15e4e55c2"
+            "digest": "144e6523a346dd2ecc0d57a8203ffac944dc3ae1ee9d1afa9b1ddef7039bc802"
           },
           "signature": {
             "algorithm": "HMAC-SHA256",
             "key_id": "dev-hmac",
-            "value": "auePyZsLfEaHJNraVbZVweWSue9UTriJJRjemF0Kmpc=",
+            "value": "knM3TDJ6xsMQZevIjoATbaQRojlWMIlxIITkp3kiO5k=",
             "signed_fields": [
               "package_id",
               "version",
@@ -1053,7 +1251,8 @@
         "superseded_by": [],
         "migration_required": false,
         "source": "exchanges/exchange_deribit.json"
-      }
+      },
+      "user_preferences": []
     },
     {
       "schema_version": "1.1",
@@ -1111,12 +1310,12 @@
           "size_bytes": 3728,
           "integrity": {
             "algorithm": "sha256",
-            "digest": "be3eeded4b486dcbc9202b2016f36f1814702df25749bc2c1e4ed86f2ff75a52"
+            "digest": "78257b5a58fb604067c9bae294e6cea7ad6740a223c370ce0c1f5b72f26b1509"
           },
           "signature": {
             "algorithm": "HMAC-SHA256",
             "key_id": "dev-hmac",
-            "value": "xL1Or+H4/We1aXzfgrcfgDCtwIu/95dgSdsw4pygCZc=",
+            "value": "Rx7pD8CrQ5HAOuM9l1SFq6RJ2extAChpeWIoJewy14o=",
             "signed_fields": [
               "package_id",
               "version",
@@ -1186,7 +1385,8 @@
         "superseded_by": [],
         "migration_required": false,
         "source": "exchanges/exchange_gateio.json"
-      }
+      },
+      "user_preferences": []
     },
     {
       "schema_version": "1.1",
@@ -1243,12 +1443,12 @@
           "size_bytes": 4310,
           "integrity": {
             "algorithm": "sha256",
-            "digest": "c289eb4be99b4763ffe856d0f1d722feeca615121bf59fc5698e6905e1b8ce42"
+            "digest": "aa135758faa20a55090c4d5a5937713e6846ebe0dd643a681e81ae1c2870626c"
           },
           "signature": {
             "algorithm": "HMAC-SHA256",
             "key_id": "dev-hmac",
-            "value": "cIQJnj6nXtp26GYJCu8eY6UFnz8EQOzTwppniRqWCMg=",
+            "value": "iZEJjOytkz4SFOMJIb2YLFu1lG8/kKa8I8DyJL7UaTw=",
             "signed_fields": [
               "package_id",
               "version",
@@ -1317,7 +1517,8 @@
         "superseded_by": [],
         "migration_required": false,
         "source": "exchanges/exchange_gemini.json"
-      }
+      },
+      "user_preferences": []
     },
     {
       "schema_version": "1.1",
@@ -1374,12 +1575,12 @@
           "size_bytes": 4239,
           "integrity": {
             "algorithm": "sha256",
-            "digest": "033ca2b66600aeceff05e4e76e10101026709dfc82116f2a7e038e42ededd98e"
+            "digest": "0ef5e5f2dfe2d85b8c8f88638190e827b2ecdbe0d7b82b42cf3d5ba619bcc3e1"
           },
           "signature": {
             "algorithm": "HMAC-SHA256",
             "key_id": "dev-hmac",
-            "value": "uE1q9qdQvvXm6LkoSI9e/BrjQmIUZHU0aeUPUCQndus=",
+            "value": "pabh466RdZsbdk2iDdzhUKSlTrua3u/PnJOKlktDtVw=",
             "signed_fields": [
               "package_id",
               "version",
@@ -1448,7 +1649,8 @@
         "superseded_by": [],
         "migration_required": false,
         "source": "exchanges/exchange_huobi.json"
-      }
+      },
+      "user_preferences": []
     },
     {
       "schema_version": "1.1",
@@ -1505,12 +1707,12 @@
           "size_bytes": 3803,
           "integrity": {
             "algorithm": "sha256",
-            "digest": "8bac5e67ac87bd0f89971dc9d259353353da11a6fd49c1e1b761e76b9df93a4b"
+            "digest": "affe21e502575adf6ee334326957ef7fb98a91f4e57a3d1aa98e03e4cc3e8771"
           },
           "signature": {
             "algorithm": "HMAC-SHA256",
             "key_id": "dev-hmac",
-            "value": "WP9EYYxJh/zMesSsvuM5soxsAgfdL3pRg1Xk7qvBPEo=",
+            "value": "vMxbVHlgMuwHzyCsGtuyWztOlXbkHv9FDwyx2C+dM+4=",
             "signed_fields": [
               "package_id",
               "version",
@@ -1580,7 +1782,8 @@
         "superseded_by": [],
         "migration_required": false,
         "source": "exchanges/exchange_kraken.json"
-      }
+      },
+      "user_preferences": []
     },
     {
       "schema_version": "1.1",
@@ -1637,12 +1840,12 @@
           "size_bytes": 5087,
           "integrity": {
             "algorithm": "sha256",
-            "digest": "b9acc9e3663fee102d0b4227152ae6d91995d319cf7f11c840e0723f992dc259"
+            "digest": "d8071e6c3b08e00320165539cedc3d09bd263e66398ffa716c3d91ea48a3945a"
           },
           "signature": {
             "algorithm": "HMAC-SHA256",
             "key_id": "dev-hmac",
-            "value": "48duzKH7YQtth+CHgyeHLj7R4Z6B+uFTprMbzll+5sU=",
+            "value": "1S8MamuyZi/Tv/SQFrx5HFofQsVBAfVru5GZUXLmlI0=",
             "signed_fields": [
               "package_id",
               "version",
@@ -1712,7 +1915,8 @@
         "superseded_by": [],
         "migration_required": false,
         "source": "exchanges/exchange_kucoin.json"
-      }
+      },
+      "user_preferences": []
     },
     {
       "schema_version": "1.1",
@@ -1769,12 +1973,12 @@
           "size_bytes": 3682,
           "integrity": {
             "algorithm": "sha256",
-            "digest": "8342dd4fa13bedd37322245f4c25edaea89ac2c20f86dc3585cbbaddf3c7f66c"
+            "digest": "f16f53d782ae31c3eccd7f8bc2847846226bd68812cb87c41a3665d44c51ccb8"
           },
           "signature": {
             "algorithm": "HMAC-SHA256",
             "key_id": "dev-hmac",
-            "value": "Yi5HoDdY6nFvGMuzQGVuerUenVQopz+hZ9tB1TIIB+s=",
+            "value": "vmf8dN3OSyvv+aT4SEwKmfVf7KOlOOOpF0WC1Sm5l2A=",
             "signed_fields": [
               "package_id",
               "version",
@@ -1843,7 +2047,8 @@
         "superseded_by": [],
         "migration_required": false,
         "source": "exchanges/exchange_mexc.json"
-      }
+      },
+      "user_preferences": []
     },
     {
       "schema_version": "1.1",
@@ -1900,12 +2105,12 @@
           "size_bytes": 4155,
           "integrity": {
             "algorithm": "sha256",
-            "digest": "3b07dcc7eae2d8c3ecfae946a55b9b1eb0141687678f50532508099135fda3f1"
+            "digest": "ee527c196a5810fad90eb9ee5bf4e31fae27aa971c39bb602e968e4a9550d07a"
           },
           "signature": {
             "algorithm": "HMAC-SHA256",
             "key_id": "dev-hmac",
-            "value": "USHoPIeR0Tiw9XeTahh9zI9t77uPGe3jl8twkSW1fvc=",
+            "value": "UBzuhSSeJ77tGyAA6aHfGMiAgdSg9NyM0NADptCA06M=",
             "signed_fields": [
               "package_id",
               "version",
@@ -1975,7 +2180,8 @@
         "superseded_by": [],
         "migration_required": false,
         "source": "exchanges/exchange_okx.json"
-      }
+      },
+      "user_preferences": []
     },
     {
       "schema_version": "1.1",
@@ -2032,12 +2238,12 @@
           "size_bytes": 3289,
           "integrity": {
             "algorithm": "sha256",
-            "digest": "2301f19e946438ba5e3f9032fa19ca4cf266133749b3ceffa40a798068fe8c8e"
+            "digest": "dbfaac4fbe3a32e3926b46039de16445a6ab423baaf394b437d99ac7aed9d1f2"
           },
           "signature": {
             "algorithm": "HMAC-SHA256",
             "key_id": "dev-hmac",
-            "value": "jjbGH1zzrBrYllFbtsaZ4prMPVKkbbr1gf12MQdlutk=",
+            "value": "Xk3E8RlxL67bxac6L793sQWyifAVh1CAciM40gQ/fIE=",
             "signed_fields": [
               "package_id",
               "version",
@@ -2106,7 +2312,687 @@
         "superseded_by": [],
         "migration_required": false,
         "source": "exchanges/exchange_zonda.json"
-      }
+      },
+      "user_preferences": []
+    },
+    {
+      "schema_version": "1.1",
+      "package_id": "futures_basis_shield.v1",
+      "display_name": "Futures Basis Shield",
+      "summary": "Futures basis + funding hedge",
+      "description": "Futures basis + funding hedge zgodny z guardrailami Stage6.",
+      "version": "1.0.0",
+      "revision": "2025.01",
+      "release_date": "2025-01-15T12:00:00Z",
+      "maintainers": [
+        {
+          "name": "Marketplace Labs",
+          "email": "marketplace@example.com",
+          "organization": "Marketplace Guild",
+          "role": "maintainer",
+          "url": null
+        }
+      ],
+      "license": {
+        "name": "Marketplace Evaluation License",
+        "spdx_id": "Proprietary",
+        "url": "https://configs.example.com/licenses/marketplace-eval",
+        "terms_summary": "Do użytku ewaluacyjnego w środowiskach demo.",
+        "redistributable": false,
+        "commercial_use": false
+      },
+      "tags": [
+        "futures",
+        "basis"
+      ],
+      "data_requirements": {
+        "inputs": [
+          {
+            "asset_type": "market",
+            "provider": "ccxt.deribit",
+            "access_level": "restricted",
+            "retention_days": 45,
+            "min_history_days": 14,
+            "sampling": "15m",
+            "notes": null
+          }
+        ],
+        "requires_personal_data": false,
+        "requires_realtime_access": true,
+        "pii_handling_notes": "Preset nie przetwarza PII."
+      },
+      "distribution": [
+        {
+          "name": "preset-document",
+          "uri": "packages/strategies/futures_basis_shield.json",
+          "kind": "preset",
+          "description": "Podpisany preset mean-reversion z guardrailami Stage6.",
+          "size_bytes": 1744,
+          "integrity": {
+            "algorithm": "sha256",
+            "digest": "8fb8afb6b6e51e4c5efcc8c8a8880500cc42b2b1afb8b9fad97371a6580bcd12"
+          },
+          "signature": {
+            "algorithm": "HMAC-SHA256",
+            "key_id": "dev-hmac",
+            "value": "2KU/qvFCr67PpAAc2H0ivvwK0LLFF+qneCTQuDST8RE=",
+            "signed_fields": [
+              "package_id",
+              "version",
+              "artifact",
+              "uri",
+              "sha256"
+            ]
+          }
+        }
+      ],
+      "compatibility": [
+        {
+          "component": "core",
+          "minimum": null,
+          "maximum": null,
+          "recommended": null,
+          "channel": null,
+          "notes": null
+        },
+        {
+          "component": "core",
+          "minimum": null,
+          "maximum": null,
+          "recommended": null,
+          "channel": null,
+          "notes": null
+        }
+      ],
+      "documentation_url": "https://configs.example.com/marketplace/futures_basis_shield",
+      "release_notes": [
+        "Pierwsza publikacja Futures Basis Shield",
+        "Dodano checklistę HyperCare."
+      ],
+      "security": {
+        "mode": "allowlist",
+        "allowed_fingerprints": [
+          "OEM-1234567890ABCDEF"
+        ],
+        "require_strict_match": false,
+        "audit_message": "Preset dostępny tylko dla licencjonowanych instalacji OEM."
+      },
+      "release": {
+        "channel": "public",
+        "review_status": "approved",
+        "reviewers": [
+          {
+            "name": "QA Guild",
+            "email": "qa@example.com",
+            "role": "quality"
+          },
+          {
+            "name": "Compliance Board",
+            "email": "compliance@example.com",
+            "role": "compliance"
+          }
+        ],
+        "ticket": "https://jira.example.com/browse/MKT-1307",
+        "approved_at": "2025-01-14T09:30:00Z",
+        "notes": "Wymagane monitorowanie drawdownu podczas pierwszego tygodnia rollout'u."
+      },
+      "exchange_compatibility": [
+        {
+          "exchange": "DERIBIT",
+          "environments": [
+            "paper",
+            "live"
+          ],
+          "trading_modes": [
+            "futures"
+          ],
+          "status": "certified",
+          "last_verified_at": null,
+          "notes": null
+        },
+        {
+          "exchange": "BITMEX",
+          "environments": [
+            "paper",
+            "live"
+          ],
+          "trading_modes": [
+            "futures"
+          ],
+          "status": "certified",
+          "last_verified_at": null,
+          "notes": null
+        }
+      ],
+      "versioning": {
+        "channel": "public",
+        "iteration": "minor",
+        "supersedes": [],
+        "superseded_by": [],
+        "migration_required": false,
+        "source": "strategies/futures_basis_shield.json"
+      },
+      "user_preferences": [
+        {
+          "persona": "Futures Basis Shield persona",
+          "risk_target": "balanced",
+          "recommended_budget": 35000.0,
+          "max_positions": 5,
+          "holding_period": "swing",
+          "automation": "pełna",
+          "notes": "Preset Futures Basis Shield preferuje futures scenariusze."
+        }
+      ]
+    },
+    {
+      "schema_version": "1.1",
+      "package_id": "grid_balance_pro.v1",
+      "display_name": "Grid Balance Pro",
+      "summary": "Dynamiczny grid z kontrolą kosztów",
+      "description": "Dynamiczny grid z kontrolą kosztów zgodny z guardrailami Stage6.",
+      "version": "1.0.0",
+      "revision": "2025.01",
+      "release_date": "2025-01-15T12:00:00Z",
+      "maintainers": [
+        {
+          "name": "Marketplace Labs",
+          "email": "marketplace@example.com",
+          "organization": "Marketplace Guild",
+          "role": "maintainer",
+          "url": null
+        }
+      ],
+      "license": {
+        "name": "Marketplace Evaluation License",
+        "spdx_id": "Proprietary",
+        "url": "https://configs.example.com/licenses/marketplace-eval",
+        "terms_summary": "Do użytku ewaluacyjnego w środowiskach demo.",
+        "redistributable": false,
+        "commercial_use": false
+      },
+      "tags": [
+        "grid",
+        "automation"
+      ],
+      "data_requirements": {
+        "inputs": [
+          {
+            "asset_type": "market",
+            "provider": "ccxt.binance",
+            "access_level": "restricted",
+            "retention_days": 45,
+            "min_history_days": 14,
+            "sampling": "15m",
+            "notes": null
+          }
+        ],
+        "requires_personal_data": false,
+        "requires_realtime_access": true,
+        "pii_handling_notes": "Preset nie przetwarza PII."
+      },
+      "distribution": [
+        {
+          "name": "preset-document",
+          "uri": "packages/strategies/grid_balance_pro.json",
+          "kind": "preset",
+          "description": "Podpisany preset mean-reversion z guardrailami Stage6.",
+          "size_bytes": 1718,
+          "integrity": {
+            "algorithm": "sha256",
+            "digest": "2551b4dc18d57ca792efdd537e9afefdeee05ab39090bb013323d5ae2251b8bd"
+          },
+          "signature": {
+            "algorithm": "HMAC-SHA256",
+            "key_id": "dev-hmac",
+            "value": "o2QNQSrTt/Y2wLoc0kPETU50L4u4HjQoKZohCakc0HI=",
+            "signed_fields": [
+              "package_id",
+              "version",
+              "artifact",
+              "uri",
+              "sha256"
+            ]
+          }
+        }
+      ],
+      "compatibility": [
+        {
+          "component": "core",
+          "minimum": null,
+          "maximum": null,
+          "recommended": null,
+          "channel": null,
+          "notes": null
+        }
+      ],
+      "documentation_url": "https://configs.example.com/marketplace/grid_balance_pro",
+      "release_notes": [
+        "Pierwsza publikacja Grid Balance Pro",
+        "Dodano checklistę HyperCare."
+      ],
+      "security": {
+        "mode": "allowlist",
+        "allowed_fingerprints": [
+          "OEM-1234567890ABCDEF"
+        ],
+        "require_strict_match": false,
+        "audit_message": "Preset dostępny tylko dla licencjonowanych instalacji OEM."
+      },
+      "release": {
+        "channel": "public",
+        "review_status": "approved",
+        "reviewers": [
+          {
+            "name": "QA Guild",
+            "email": "qa@example.com",
+            "role": "quality"
+          },
+          {
+            "name": "Compliance Board",
+            "email": "compliance@example.com",
+            "role": "compliance"
+          }
+        ],
+        "ticket": "https://jira.example.com/browse/MKT-1303",
+        "approved_at": "2025-01-14T09:30:00Z",
+        "notes": "Wymagane monitorowanie drawdownu podczas pierwszego tygodnia rollout'u."
+      },
+      "exchange_compatibility": [
+        {
+          "exchange": "BINANCE",
+          "environments": [
+            "paper",
+            "live"
+          ],
+          "trading_modes": [
+            "spot",
+            "margin"
+          ],
+          "status": "certified",
+          "last_verified_at": null,
+          "notes": null
+        }
+      ],
+      "versioning": {
+        "channel": "public",
+        "iteration": "minor",
+        "supersedes": [],
+        "superseded_by": [],
+        "migration_required": false,
+        "source": "strategies/grid_balance_pro.json"
+      },
+      "user_preferences": [
+        {
+          "persona": "Grid Balance Pro persona",
+          "risk_target": "balanced",
+          "recommended_budget": 8000.0,
+          "max_positions": 5,
+          "holding_period": "swing",
+          "automation": "pełna",
+          "notes": "Preset Grid Balance Pro preferuje grid scenariusze."
+        }
+      ]
+    },
+    {
+      "schema_version": "1.1",
+      "package_id": "liquidity_rebalance_core.v1",
+      "display_name": "Liquidity Rebalance Core",
+      "summary": "Rebalans płynności multi-exchange",
+      "description": "Rebalans płynności multi-exchange zgodny z guardrailami Stage6.",
+      "version": "1.0.0",
+      "revision": "2025.01",
+      "release_date": "2025-01-15T12:00:00Z",
+      "maintainers": [
+        {
+          "name": "Marketplace Labs",
+          "email": "marketplace@example.com",
+          "organization": "Marketplace Guild",
+          "role": "maintainer",
+          "url": null
+        }
+      ],
+      "license": {
+        "name": "Marketplace Evaluation License",
+        "spdx_id": "Proprietary",
+        "url": "https://configs.example.com/licenses/marketplace-eval",
+        "terms_summary": "Do użytku ewaluacyjnego w środowiskach demo.",
+        "redistributable": false,
+        "commercial_use": false
+      },
+      "tags": [
+        "liquidity",
+        "arbitrage"
+      ],
+      "data_requirements": {
+        "inputs": [
+          {
+            "asset_type": "market",
+            "provider": "ccxt.binance",
+            "access_level": "restricted",
+            "retention_days": 45,
+            "min_history_days": 14,
+            "sampling": "15m",
+            "notes": null
+          }
+        ],
+        "requires_personal_data": false,
+        "requires_realtime_access": true,
+        "pii_handling_notes": "Preset nie przetwarza PII."
+      },
+      "distribution": [
+        {
+          "name": "preset-document",
+          "uri": "packages/strategies/liquidity_rebalance_core.json",
+          "kind": "preset",
+          "description": "Podpisany preset mean-reversion z guardrailami Stage6.",
+          "size_bytes": 1802,
+          "integrity": {
+            "algorithm": "sha256",
+            "digest": "613c21c9812ac54c597a1637c99f9c4ba9fe27966254dd261859506a37248ff2"
+          },
+          "signature": {
+            "algorithm": "HMAC-SHA256",
+            "key_id": "dev-hmac",
+            "value": "HFEGXRh+tQU2jggWqWWbEXlF1jCxiDlw8FE96g4/tDs=",
+            "signed_fields": [
+              "package_id",
+              "version",
+              "artifact",
+              "uri",
+              "sha256"
+            ]
+          }
+        }
+      ],
+      "compatibility": [
+        {
+          "component": "core",
+          "minimum": null,
+          "maximum": null,
+          "recommended": null,
+          "channel": null,
+          "notes": null
+        },
+        {
+          "component": "core",
+          "minimum": null,
+          "maximum": null,
+          "recommended": null,
+          "channel": null,
+          "notes": null
+        },
+        {
+          "component": "core",
+          "minimum": null,
+          "maximum": null,
+          "recommended": null,
+          "channel": null,
+          "notes": null
+        }
+      ],
+      "documentation_url": "https://configs.example.com/marketplace/liquidity_rebalance_core",
+      "release_notes": [
+        "Pierwsza publikacja Liquidity Rebalance Core",
+        "Dodano checklistę HyperCare."
+      ],
+      "security": {
+        "mode": "allowlist",
+        "allowed_fingerprints": [
+          "OEM-1234567890ABCDEF"
+        ],
+        "require_strict_match": false,
+        "audit_message": "Preset dostępny tylko dla licencjonowanych instalacji OEM."
+      },
+      "release": {
+        "channel": "public",
+        "review_status": "approved",
+        "reviewers": [
+          {
+            "name": "QA Guild",
+            "email": "qa@example.com",
+            "role": "quality"
+          },
+          {
+            "name": "Compliance Board",
+            "email": "compliance@example.com",
+            "role": "compliance"
+          }
+        ],
+        "ticket": "https://jira.example.com/browse/MKT-1304",
+        "approved_at": "2025-01-14T09:30:00Z",
+        "notes": "Wymagane monitorowanie drawdownu podczas pierwszego tygodnia rollout'u."
+      },
+      "exchange_compatibility": [
+        {
+          "exchange": "BINANCE",
+          "environments": [
+            "paper",
+            "live"
+          ],
+          "trading_modes": [
+            "spot",
+            "margin"
+          ],
+          "status": "certified",
+          "last_verified_at": null,
+          "notes": null
+        },
+        {
+          "exchange": "KRAKEN",
+          "environments": [
+            "paper"
+          ],
+          "trading_modes": [
+            "spot",
+            "margin"
+          ],
+          "status": "beta",
+          "last_verified_at": null,
+          "notes": null
+        },
+        {
+          "exchange": "COINBASE",
+          "environments": [
+            "paper"
+          ],
+          "trading_modes": [
+            "spot",
+            "margin"
+          ],
+          "status": "beta",
+          "last_verified_at": null,
+          "notes": null
+        }
+      ],
+      "versioning": {
+        "channel": "public",
+        "iteration": "minor",
+        "supersedes": [],
+        "superseded_by": [],
+        "migration_required": false,
+        "source": "strategies/liquidity_rebalance_core.json"
+      },
+      "user_preferences": [
+        {
+          "persona": "Liquidity Rebalance Core persona",
+          "risk_target": "balanced",
+          "recommended_budget": 40000.0,
+          "max_positions": 5,
+          "holding_period": "swing",
+          "automation": "pełna",
+          "notes": "Preset Liquidity Rebalance Core preferuje liquidity scenariusze."
+        }
+      ]
+    },
+    {
+      "schema_version": "1.1",
+      "package_id": "market_making_microalpha.v1",
+      "display_name": "Market Making MicroAlpha",
+      "summary": "Market making na parze USD",
+      "description": "Market making na parze USD zgodny z guardrailami Stage6.",
+      "version": "1.0.0",
+      "revision": "2025.01",
+      "release_date": "2025-01-15T12:00:00Z",
+      "maintainers": [
+        {
+          "name": "Marketplace Labs",
+          "email": "marketplace@example.com",
+          "organization": "Marketplace Guild",
+          "role": "maintainer",
+          "url": null
+        }
+      ],
+      "license": {
+        "name": "Marketplace Evaluation License",
+        "spdx_id": "Proprietary",
+        "url": "https://configs.example.com/licenses/marketplace-eval",
+        "terms_summary": "Do użytku ewaluacyjnego w środowiskach demo.",
+        "redistributable": false,
+        "commercial_use": false
+      },
+      "tags": [
+        "market-making",
+        "liquidity"
+      ],
+      "data_requirements": {
+        "inputs": [
+          {
+            "asset_type": "market",
+            "provider": "ccxt.binance",
+            "access_level": "restricted",
+            "retention_days": 45,
+            "min_history_days": 14,
+            "sampling": "15m",
+            "notes": null
+          }
+        ],
+        "requires_personal_data": false,
+        "requires_realtime_access": true,
+        "pii_handling_notes": "Preset nie przetwarza PII."
+      },
+      "distribution": [
+        {
+          "name": "preset-document",
+          "uri": "packages/strategies/market_making_microalpha.json",
+          "kind": "preset",
+          "description": "Podpisany preset mean-reversion z guardrailami Stage6.",
+          "size_bytes": 1784,
+          "integrity": {
+            "algorithm": "sha256",
+            "digest": "2dbe8c3bea345f3ccb3bab6ac921ce15fc2026bcda75c5248013f90245f3d4f3"
+          },
+          "signature": {
+            "algorithm": "HMAC-SHA256",
+            "key_id": "dev-hmac",
+            "value": "L2XJHP+/MC8AQdnNU9VQ4KDzXXtIvCiCZZa3ArfExu8=",
+            "signed_fields": [
+              "package_id",
+              "version",
+              "artifact",
+              "uri",
+              "sha256"
+            ]
+          }
+        }
+      ],
+      "compatibility": [
+        {
+          "component": "core",
+          "minimum": null,
+          "maximum": null,
+          "recommended": null,
+          "channel": null,
+          "notes": null
+        },
+        {
+          "component": "core",
+          "minimum": null,
+          "maximum": null,
+          "recommended": null,
+          "channel": null,
+          "notes": null
+        }
+      ],
+      "documentation_url": "https://configs.example.com/marketplace/market_making_microalpha",
+      "release_notes": [
+        "Pierwsza publikacja Market Making MicroAlpha",
+        "Dodano checklistę HyperCare."
+      ],
+      "security": {
+        "mode": "allowlist",
+        "allowed_fingerprints": [
+          "OEM-1234567890ABCDEF"
+        ],
+        "require_strict_match": false,
+        "audit_message": "Preset dostępny tylko dla licencjonowanych instalacji OEM."
+      },
+      "release": {
+        "channel": "public",
+        "review_status": "approved",
+        "reviewers": [
+          {
+            "name": "QA Guild",
+            "email": "qa@example.com",
+            "role": "quality"
+          },
+          {
+            "name": "Compliance Board",
+            "email": "compliance@example.com",
+            "role": "compliance"
+          }
+        ],
+        "ticket": "https://jira.example.com/browse/MKT-1310",
+        "approved_at": "2025-01-14T09:30:00Z",
+        "notes": "Wymagane monitorowanie drawdownu podczas pierwszego tygodnia rollout'u."
+      },
+      "exchange_compatibility": [
+        {
+          "exchange": "BINANCE",
+          "environments": [
+            "paper",
+            "live"
+          ],
+          "trading_modes": [
+            "spot",
+            "margin"
+          ],
+          "status": "certified",
+          "last_verified_at": null,
+          "notes": null
+        },
+        {
+          "exchange": "KRAKEN",
+          "environments": [
+            "paper"
+          ],
+          "trading_modes": [
+            "spot",
+            "margin"
+          ],
+          "status": "beta",
+          "last_verified_at": null,
+          "notes": null
+        }
+      ],
+      "versioning": {
+        "channel": "public",
+        "iteration": "minor",
+        "supersedes": [],
+        "superseded_by": [],
+        "migration_required": false,
+        "source": "strategies/market_making_microalpha.json"
+      },
+      "user_preferences": [
+        {
+          "persona": "Market Making MicroAlpha persona",
+          "risk_target": "balanced",
+          "recommended_budget": 25000.0,
+          "max_positions": 5,
+          "holding_period": "swing",
+          "automation": "pełna",
+          "notes": "Preset Market Making MicroAlpha preferuje market-making scenariusze."
+        }
+      ]
     },
     {
       "schema_version": "1.1",
@@ -2161,15 +3047,15 @@
           "uri": "packages/strategies/mean_reversion_v1.json",
           "kind": "preset",
           "description": "Podpisany preset mean-reversion z guardrailami Stage6.",
-          "size_bytes": 1538,
+          "size_bytes": 1904,
           "integrity": {
             "algorithm": "sha256",
-            "digest": "59ca157884c69772d249b99612afbb60990520fcc349a6bc14c57f998d97ae8d"
+            "digest": "35efc868a1c11e90dfbdaf3a2f25ca56d0f39498bfdcccade74dd3b170c6d97d"
           },
           "signature": {
             "algorithm": "HMAC-SHA256",
             "key_id": "dev-hmac",
-            "value": "lkJY1P59hdGc6akPq7sZ9DeqxUQd02uVPpY8/c1ukS0=",
+            "value": "398ACdo2kJtvANWWEPNVvnuxiKN2qju1ejiJLVp+HBU=",
             "signed_fields": [
               "package_id",
               "version",
@@ -2265,7 +3151,1525 @@
         "superseded_by": [],
         "migration_required": false,
         "source": "strategies/mean_reversion_v1.json"
-      }
+      },
+      "user_preferences": [
+        {
+          "persona": "Mean Reversion Desk",
+          "risk_target": "conservative",
+          "recommended_budget": 15000.0,
+          "max_positions": 4,
+          "holding_period": "intra-day",
+          "automation": "pełna",
+          "notes": "Preferuje rynek spot z ograniczoną ekspozycją overnight."
+        }
+      ]
+    },
+    {
+      "schema_version": "1.1",
+      "package_id": "momentum_scalper_x.v1",
+      "display_name": "Momentum Scalper X",
+      "summary": "Momentum scalper na mikroruchach",
+      "description": "Momentum scalper na mikroruchach zgodny z guardrailami Stage6.",
+      "version": "1.0.0",
+      "revision": "2025.01",
+      "release_date": "2025-01-15T12:00:00Z",
+      "maintainers": [
+        {
+          "name": "Marketplace Labs",
+          "email": "marketplace@example.com",
+          "organization": "Marketplace Guild",
+          "role": "maintainer",
+          "url": null
+        }
+      ],
+      "license": {
+        "name": "Marketplace Evaluation License",
+        "spdx_id": "Proprietary",
+        "url": "https://configs.example.com/licenses/marketplace-eval",
+        "terms_summary": "Do użytku ewaluacyjnego w środowiskach demo.",
+        "redistributable": false,
+        "commercial_use": false
+      },
+      "tags": [
+        "scalping",
+        "high-frequency"
+      ],
+      "data_requirements": {
+        "inputs": [
+          {
+            "asset_type": "market",
+            "provider": "ccxt.bybit",
+            "access_level": "restricted",
+            "retention_days": 45,
+            "min_history_days": 14,
+            "sampling": "15m",
+            "notes": null
+          }
+        ],
+        "requires_personal_data": false,
+        "requires_realtime_access": true,
+        "pii_handling_notes": "Preset nie przetwarza PII."
+      },
+      "distribution": [
+        {
+          "name": "preset-document",
+          "uri": "packages/strategies/momentum_scalper_x.json",
+          "kind": "preset",
+          "description": "Podpisany preset mean-reversion z guardrailami Stage6.",
+          "size_bytes": 1752,
+          "integrity": {
+            "algorithm": "sha256",
+            "digest": "2ed693a3e301fa98db4dd0b2c5b5db5deb0e5d151d35cff02f2c03e1dc26846d"
+          },
+          "signature": {
+            "algorithm": "HMAC-SHA256",
+            "key_id": "dev-hmac",
+            "value": "l0G/LZ8wty+C5057L1DVodvChHi4zIHi+JmK27sSmxM=",
+            "signed_fields": [
+              "package_id",
+              "version",
+              "artifact",
+              "uri",
+              "sha256"
+            ]
+          }
+        }
+      ],
+      "compatibility": [
+        {
+          "component": "core",
+          "minimum": null,
+          "maximum": null,
+          "recommended": null,
+          "channel": null,
+          "notes": null
+        },
+        {
+          "component": "core",
+          "minimum": null,
+          "maximum": null,
+          "recommended": null,
+          "channel": null,
+          "notes": null
+        }
+      ],
+      "documentation_url": "https://configs.example.com/marketplace/momentum_scalper_x",
+      "release_notes": [
+        "Pierwsza publikacja Momentum Scalper X",
+        "Dodano checklistę HyperCare."
+      ],
+      "security": {
+        "mode": "allowlist",
+        "allowed_fingerprints": [
+          "OEM-1234567890ABCDEF"
+        ],
+        "require_strict_match": false,
+        "audit_message": "Preset dostępny tylko dla licencjonowanych instalacji OEM."
+      },
+      "release": {
+        "channel": "public",
+        "review_status": "approved",
+        "reviewers": [
+          {
+            "name": "QA Guild",
+            "email": "qa@example.com",
+            "role": "quality"
+          },
+          {
+            "name": "Compliance Board",
+            "email": "compliance@example.com",
+            "role": "compliance"
+          }
+        ],
+        "ticket": "https://jira.example.com/browse/MKT-1301",
+        "approved_at": "2025-01-14T09:30:00Z",
+        "notes": "Wymagane monitorowanie drawdownu podczas pierwszego tygodnia rollout'u."
+      },
+      "exchange_compatibility": [
+        {
+          "exchange": "BYBIT",
+          "environments": [
+            "paper"
+          ],
+          "trading_modes": [
+            "spot",
+            "margin"
+          ],
+          "status": "beta",
+          "last_verified_at": null,
+          "notes": null
+        },
+        {
+          "exchange": "BITGET",
+          "environments": [
+            "paper"
+          ],
+          "trading_modes": [
+            "spot",
+            "margin"
+          ],
+          "status": "beta",
+          "last_verified_at": null,
+          "notes": null
+        }
+      ],
+      "versioning": {
+        "channel": "public",
+        "iteration": "minor",
+        "supersedes": [],
+        "superseded_by": [],
+        "migration_required": false,
+        "source": "strategies/momentum_scalper_x.json"
+      },
+      "user_preferences": [
+        {
+          "persona": "Momentum Scalper X persona",
+          "risk_target": "balanced",
+          "recommended_budget": 12000.0,
+          "max_positions": 5,
+          "holding_period": "intraday",
+          "automation": "pełna",
+          "notes": "Preset Momentum Scalper X preferuje scalping scenariusze."
+        }
+      ]
+    },
+    {
+      "schema_version": "1.1",
+      "package_id": "multi_strategy_scheduler_v2.v1",
+      "display_name": "Multi Strategy Scheduler v2",
+      "summary": "Harmonogram multi-strategy Stage6",
+      "description": "Harmonogram multi-strategy Stage6 zgodny z guardrailami Stage6.",
+      "version": "1.0.0",
+      "revision": "2025.01",
+      "release_date": "2025-01-15T12:00:00Z",
+      "maintainers": [
+        {
+          "name": "Marketplace Labs",
+          "email": "marketplace@example.com",
+          "organization": "Marketplace Guild",
+          "role": "maintainer",
+          "url": null
+        }
+      ],
+      "license": {
+        "name": "Marketplace Evaluation License",
+        "spdx_id": "Proprietary",
+        "url": "https://configs.example.com/licenses/marketplace-eval",
+        "terms_summary": "Do użytku ewaluacyjnego w środowiskach demo.",
+        "redistributable": false,
+        "commercial_use": false
+      },
+      "tags": [
+        "multi-strategy",
+        "governor"
+      ],
+      "data_requirements": {
+        "inputs": [
+          {
+            "asset_type": "market",
+            "provider": "ccxt.binance",
+            "access_level": "restricted",
+            "retention_days": 45,
+            "min_history_days": 14,
+            "sampling": "15m",
+            "notes": null
+          }
+        ],
+        "requires_personal_data": false,
+        "requires_realtime_access": true,
+        "pii_handling_notes": "Preset nie przetwarza PII."
+      },
+      "distribution": [
+        {
+          "name": "preset-document",
+          "uri": "packages/strategies/multi_strategy_scheduler_v2.json",
+          "kind": "preset",
+          "description": "Podpisany preset mean-reversion z guardrailami Stage6.",
+          "size_bytes": 1831,
+          "integrity": {
+            "algorithm": "sha256",
+            "digest": "18d091d06ab9a9f8597672a5f276a5706fe29ecffbe30a64dab857329245bf0e"
+          },
+          "signature": {
+            "algorithm": "HMAC-SHA256",
+            "key_id": "dev-hmac",
+            "value": "ttJhcyL32dRieMmqJBIku4x62jPdNuA2xGapA2H+iQk=",
+            "signed_fields": [
+              "package_id",
+              "version",
+              "artifact",
+              "uri",
+              "sha256"
+            ]
+          }
+        }
+      ],
+      "compatibility": [
+        {
+          "component": "core",
+          "minimum": null,
+          "maximum": null,
+          "recommended": null,
+          "channel": null,
+          "notes": null
+        },
+        {
+          "component": "core",
+          "minimum": null,
+          "maximum": null,
+          "recommended": null,
+          "channel": null,
+          "notes": null
+        },
+        {
+          "component": "core",
+          "minimum": null,
+          "maximum": null,
+          "recommended": null,
+          "channel": null,
+          "notes": null
+        }
+      ],
+      "documentation_url": "https://configs.example.com/marketplace/multi_strategy_scheduler_v2",
+      "release_notes": [
+        "Pierwsza publikacja Multi Strategy Scheduler v2",
+        "Dodano checklistę HyperCare."
+      ],
+      "security": {
+        "mode": "allowlist",
+        "allowed_fingerprints": [
+          "OEM-1234567890ABCDEF"
+        ],
+        "require_strict_match": false,
+        "audit_message": "Preset dostępny tylko dla licencjonowanych instalacji OEM."
+      },
+      "release": {
+        "channel": "public",
+        "review_status": "approved",
+        "reviewers": [
+          {
+            "name": "QA Guild",
+            "email": "qa@example.com",
+            "role": "quality"
+          },
+          {
+            "name": "Compliance Board",
+            "email": "compliance@example.com",
+            "role": "compliance"
+          }
+        ],
+        "ticket": "https://jira.example.com/browse/MKT-1309",
+        "approved_at": "2025-01-14T09:30:00Z",
+        "notes": "Wymagane monitorowanie drawdownu podczas pierwszego tygodnia rollout'u."
+      },
+      "exchange_compatibility": [
+        {
+          "exchange": "BINANCE",
+          "environments": [
+            "paper",
+            "live"
+          ],
+          "trading_modes": [
+            "spot",
+            "margin"
+          ],
+          "status": "certified",
+          "last_verified_at": null,
+          "notes": null
+        },
+        {
+          "exchange": "OKX",
+          "environments": [
+            "paper"
+          ],
+          "trading_modes": [
+            "spot",
+            "margin"
+          ],
+          "status": "beta",
+          "last_verified_at": null,
+          "notes": null
+        },
+        {
+          "exchange": "BYBIT",
+          "environments": [
+            "paper"
+          ],
+          "trading_modes": [
+            "spot",
+            "margin"
+          ],
+          "status": "beta",
+          "last_verified_at": null,
+          "notes": null
+        }
+      ],
+      "versioning": {
+        "channel": "public",
+        "iteration": "minor",
+        "supersedes": [],
+        "superseded_by": [],
+        "migration_required": false,
+        "source": "strategies/multi_strategy_scheduler_v2.json"
+      },
+      "user_preferences": [
+        {
+          "persona": "Multi Strategy Scheduler v2 persona",
+          "risk_target": "balanced",
+          "recommended_budget": 60000.0,
+          "max_positions": 5,
+          "holding_period": "swing",
+          "automation": "pełna",
+          "notes": "Preset Multi Strategy Scheduler v2 preferuje multi-strategy scenariusze."
+        }
+      ]
+    },
+    {
+      "schema_version": "1.1",
+      "package_id": "news_sentiment_pulse.v1",
+      "display_name": "News Sentiment Pulse",
+      "summary": "Preset news-sentiment intraday",
+      "description": "Preset news-sentiment intraday zgodny z guardrailami Stage6.",
+      "version": "1.0.0",
+      "revision": "2025.01",
+      "release_date": "2025-01-15T12:00:00Z",
+      "maintainers": [
+        {
+          "name": "Marketplace Labs",
+          "email": "marketplace@example.com",
+          "organization": "Marketplace Guild",
+          "role": "maintainer",
+          "url": null
+        }
+      ],
+      "license": {
+        "name": "Marketplace Evaluation License",
+        "spdx_id": "Proprietary",
+        "url": "https://configs.example.com/licenses/marketplace-eval",
+        "terms_summary": "Do użytku ewaluacyjnego w środowiskach demo.",
+        "redistributable": false,
+        "commercial_use": false
+      },
+      "tags": [
+        "sentiment",
+        "news"
+      ],
+      "data_requirements": {
+        "inputs": [
+          {
+            "asset_type": "market",
+            "provider": "ccxt.binance",
+            "access_level": "restricted",
+            "retention_days": 45,
+            "min_history_days": 14,
+            "sampling": "15m",
+            "notes": null
+          }
+        ],
+        "requires_personal_data": false,
+        "requires_realtime_access": true,
+        "pii_handling_notes": "Preset nie przetwarza PII."
+      },
+      "distribution": [
+        {
+          "name": "preset-document",
+          "uri": "packages/strategies/news_sentiment_pulse.json",
+          "kind": "preset",
+          "description": "Podpisany preset mean-reversion z guardrailami Stage6.",
+          "size_bytes": 1727,
+          "integrity": {
+            "algorithm": "sha256",
+            "digest": "679356927a5359fb334fa65b03ff10282ad96217f285e8e6c3eaf9b55ddc1449"
+          },
+          "signature": {
+            "algorithm": "HMAC-SHA256",
+            "key_id": "dev-hmac",
+            "value": "RN2n1kg5dQi0MaKy4t2fS2qLr8oe8GPEsC4a5yrTxwk=",
+            "signed_fields": [
+              "package_id",
+              "version",
+              "artifact",
+              "uri",
+              "sha256"
+            ]
+          }
+        }
+      ],
+      "compatibility": [
+        {
+          "component": "core",
+          "minimum": null,
+          "maximum": null,
+          "recommended": null,
+          "channel": null,
+          "notes": null
+        }
+      ],
+      "documentation_url": "https://configs.example.com/marketplace/news_sentiment_pulse",
+      "release_notes": [
+        "Pierwsza publikacja News Sentiment Pulse",
+        "Dodano checklistę HyperCare."
+      ],
+      "security": {
+        "mode": "allowlist",
+        "allowed_fingerprints": [
+          "OEM-1234567890ABCDEF"
+        ],
+        "require_strict_match": false,
+        "audit_message": "Preset dostępny tylko dla licencjonowanych instalacji OEM."
+      },
+      "release": {
+        "channel": "public",
+        "review_status": "approved",
+        "reviewers": [
+          {
+            "name": "QA Guild",
+            "email": "qa@example.com",
+            "role": "quality"
+          },
+          {
+            "name": "Compliance Board",
+            "email": "compliance@example.com",
+            "role": "compliance"
+          }
+        ],
+        "ticket": "https://jira.example.com/browse/MKT-1312",
+        "approved_at": "2025-01-14T09:30:00Z",
+        "notes": "Wymagane monitorowanie drawdownu podczas pierwszego tygodnia rollout'u."
+      },
+      "exchange_compatibility": [
+        {
+          "exchange": "BINANCE",
+          "environments": [
+            "paper",
+            "live"
+          ],
+          "trading_modes": [
+            "spot",
+            "margin"
+          ],
+          "status": "certified",
+          "last_verified_at": null,
+          "notes": null
+        }
+      ],
+      "versioning": {
+        "channel": "public",
+        "iteration": "minor",
+        "supersedes": [],
+        "superseded_by": [],
+        "migration_required": false,
+        "source": "strategies/news_sentiment_pulse.json"
+      },
+      "user_preferences": [
+        {
+          "persona": "News Sentiment Pulse persona",
+          "risk_target": "balanced",
+          "recommended_budget": 15000.0,
+          "max_positions": 5,
+          "holding_period": "intraday",
+          "automation": "pełna",
+          "notes": "Preset News Sentiment Pulse preferuje sentiment scenariusze."
+        }
+      ]
+    },
+    {
+      "schema_version": "1.1",
+      "package_id": "options_income_guard.v1",
+      "display_name": "Options Income Guard",
+      "summary": "Covered-call automatyzowany",
+      "description": "Covered-call automatyzowany zgodny z guardrailami Stage6.",
+      "version": "1.0.0",
+      "revision": "2025.01",
+      "release_date": "2025-01-15T12:00:00Z",
+      "maintainers": [
+        {
+          "name": "Marketplace Labs",
+          "email": "marketplace@example.com",
+          "organization": "Marketplace Guild",
+          "role": "maintainer",
+          "url": null
+        }
+      ],
+      "license": {
+        "name": "Marketplace Evaluation License",
+        "spdx_id": "Proprietary",
+        "url": "https://configs.example.com/licenses/marketplace-eval",
+        "terms_summary": "Do użytku ewaluacyjnego w środowiskach demo.",
+        "redistributable": false,
+        "commercial_use": false
+      },
+      "tags": [
+        "options",
+        "income"
+      ],
+      "data_requirements": {
+        "inputs": [
+          {
+            "asset_type": "market",
+            "provider": "ccxt.deribit",
+            "access_level": "restricted",
+            "retention_days": 45,
+            "min_history_days": 14,
+            "sampling": "15m",
+            "notes": null
+          }
+        ],
+        "requires_personal_data": false,
+        "requires_realtime_access": true,
+        "pii_handling_notes": "Preset nie przetwarza PII."
+      },
+      "distribution": [
+        {
+          "name": "preset-document",
+          "uri": "packages/strategies/options_income_guard.json",
+          "kind": "preset",
+          "description": "Podpisany preset mean-reversion z guardrailami Stage6.",
+          "size_bytes": 1726,
+          "integrity": {
+            "algorithm": "sha256",
+            "digest": "d94723e8ec00fb138730948fc86e72804ed38bc1cb3e49c3d02b409c20f19990"
+          },
+          "signature": {
+            "algorithm": "HMAC-SHA256",
+            "key_id": "dev-hmac",
+            "value": "WEvV4Mx3tN17HT8Ot6fyI1RJ01l3VOtkZtCIw+Tjk3k=",
+            "signed_fields": [
+              "package_id",
+              "version",
+              "artifact",
+              "uri",
+              "sha256"
+            ]
+          }
+        }
+      ],
+      "compatibility": [
+        {
+          "component": "core",
+          "minimum": null,
+          "maximum": null,
+          "recommended": null,
+          "channel": null,
+          "notes": null
+        }
+      ],
+      "documentation_url": "https://configs.example.com/marketplace/options_income_guard",
+      "release_notes": [
+        "Pierwsza publikacja Options Income Guard",
+        "Dodano checklistę HyperCare."
+      ],
+      "security": {
+        "mode": "allowlist",
+        "allowed_fingerprints": [
+          "OEM-1234567890ABCDEF"
+        ],
+        "require_strict_match": false,
+        "audit_message": "Preset dostępny tylko dla licencjonowanych instalacji OEM."
+      },
+      "release": {
+        "channel": "public",
+        "review_status": "approved",
+        "reviewers": [
+          {
+            "name": "QA Guild",
+            "email": "qa@example.com",
+            "role": "quality"
+          },
+          {
+            "name": "Compliance Board",
+            "email": "compliance@example.com",
+            "role": "compliance"
+          }
+        ],
+        "ticket": "https://jira.example.com/browse/MKT-1308",
+        "approved_at": "2025-01-14T09:30:00Z",
+        "notes": "Wymagane monitorowanie drawdownu podczas pierwszego tygodnia rollout'u."
+      },
+      "exchange_compatibility": [
+        {
+          "exchange": "DERIBIT",
+          "environments": [
+            "paper",
+            "live"
+          ],
+          "trading_modes": [
+            "futures"
+          ],
+          "status": "certified",
+          "last_verified_at": null,
+          "notes": null
+        }
+      ],
+      "versioning": {
+        "channel": "public",
+        "iteration": "minor",
+        "supersedes": [],
+        "superseded_by": [],
+        "migration_required": false,
+        "source": "strategies/options_income_guard.json"
+      },
+      "user_preferences": [
+        {
+          "persona": "Options Income Guard persona",
+          "risk_target": "balanced",
+          "recommended_budget": 20000.0,
+          "max_positions": 5,
+          "holding_period": "swing",
+          "automation": "pełna",
+          "notes": "Preset Options Income Guard preferuje options scenariusze."
+        }
+      ]
+    },
+    {
+      "schema_version": "1.1",
+      "package_id": "risk_parity_multi_asset.v1",
+      "display_name": "Risk Parity Multi-Asset",
+      "summary": "Preset risk-parity na multi-asset",
+      "description": "Preset risk-parity na multi-asset zgodny z guardrailami Stage6.",
+      "version": "1.0.0",
+      "revision": "2025.01",
+      "release_date": "2025-01-15T12:00:00Z",
+      "maintainers": [
+        {
+          "name": "Marketplace Labs",
+          "email": "marketplace@example.com",
+          "organization": "Marketplace Guild",
+          "role": "maintainer",
+          "url": null
+        }
+      ],
+      "license": {
+        "name": "Marketplace Evaluation License",
+        "spdx_id": "Proprietary",
+        "url": "https://configs.example.com/licenses/marketplace-eval",
+        "terms_summary": "Do użytku ewaluacyjnego w środowiskach demo.",
+        "redistributable": false,
+        "commercial_use": false
+      },
+      "tags": [
+        "risk-parity",
+        "portfolio"
+      ],
+      "data_requirements": {
+        "inputs": [
+          {
+            "asset_type": "market",
+            "provider": "ccxt.binance",
+            "access_level": "restricted",
+            "retention_days": 45,
+            "min_history_days": 14,
+            "sampling": "15m",
+            "notes": null
+          }
+        ],
+        "requires_personal_data": false,
+        "requires_realtime_access": true,
+        "pii_handling_notes": "Preset nie przetwarza PII."
+      },
+      "distribution": [
+        {
+          "name": "preset-document",
+          "uri": "packages/strategies/risk_parity_multi_asset.json",
+          "kind": "preset",
+          "description": "Podpisany preset mean-reversion z guardrailami Stage6.",
+          "size_bytes": 1781,
+          "integrity": {
+            "algorithm": "sha256",
+            "digest": "4a8cbbedc4258e1ec3bda544b70a817ccb0c7044e5bb0f98f916d9d933180137"
+          },
+          "signature": {
+            "algorithm": "HMAC-SHA256",
+            "key_id": "dev-hmac",
+            "value": "Af8WRLgxK222+zzfGmMLkHvO0hI/YGRWCVl8FCV8ws8=",
+            "signed_fields": [
+              "package_id",
+              "version",
+              "artifact",
+              "uri",
+              "sha256"
+            ]
+          }
+        }
+      ],
+      "compatibility": [
+        {
+          "component": "core",
+          "minimum": null,
+          "maximum": null,
+          "recommended": null,
+          "channel": null,
+          "notes": null
+        },
+        {
+          "component": "core",
+          "minimum": null,
+          "maximum": null,
+          "recommended": null,
+          "channel": null,
+          "notes": null
+        }
+      ],
+      "documentation_url": "https://configs.example.com/marketplace/risk_parity_multi_asset",
+      "release_notes": [
+        "Pierwsza publikacja Risk Parity Multi-Asset",
+        "Dodano checklistę HyperCare."
+      ],
+      "security": {
+        "mode": "allowlist",
+        "allowed_fingerprints": [
+          "OEM-1234567890ABCDEF"
+        ],
+        "require_strict_match": false,
+        "audit_message": "Preset dostępny tylko dla licencjonowanych instalacji OEM."
+      },
+      "release": {
+        "channel": "public",
+        "review_status": "approved",
+        "reviewers": [
+          {
+            "name": "QA Guild",
+            "email": "qa@example.com",
+            "role": "quality"
+          },
+          {
+            "name": "Compliance Board",
+            "email": "compliance@example.com",
+            "role": "compliance"
+          }
+        ],
+        "ticket": "https://jira.example.com/browse/MKT-1305",
+        "approved_at": "2025-01-14T09:30:00Z",
+        "notes": "Wymagane monitorowanie drawdownu podczas pierwszego tygodnia rollout'u."
+      },
+      "exchange_compatibility": [
+        {
+          "exchange": "BINANCE",
+          "environments": [
+            "paper",
+            "live"
+          ],
+          "trading_modes": [
+            "spot",
+            "margin"
+          ],
+          "status": "certified",
+          "last_verified_at": null,
+          "notes": null
+        },
+        {
+          "exchange": "OKX",
+          "environments": [
+            "paper"
+          ],
+          "trading_modes": [
+            "spot",
+            "margin"
+          ],
+          "status": "beta",
+          "last_verified_at": null,
+          "notes": null
+        }
+      ],
+      "versioning": {
+        "channel": "public",
+        "iteration": "minor",
+        "supersedes": [],
+        "superseded_by": [],
+        "migration_required": false,
+        "source": "strategies/risk_parity_multi_asset.json"
+      },
+      "user_preferences": [
+        {
+          "persona": "Risk Parity Multi-Asset persona",
+          "risk_target": "balanced",
+          "recommended_budget": 50000.0,
+          "max_positions": 5,
+          "holding_period": "swing",
+          "automation": "pełna",
+          "notes": "Preset Risk Parity Multi-Asset preferuje risk-parity scenariusze."
+        }
+      ]
+    },
+    {
+      "schema_version": "1.1",
+      "package_id": "stat_arb_pairs_v1.v1",
+      "display_name": "Stat Arb Pairs v1",
+      "summary": "Arbitraż statystyczny par",
+      "description": "Arbitraż statystyczny par zgodny z guardrailami Stage6.",
+      "version": "1.0.0",
+      "revision": "2025.01",
+      "release_date": "2025-01-15T12:00:00Z",
+      "maintainers": [
+        {
+          "name": "Marketplace Labs",
+          "email": "marketplace@example.com",
+          "organization": "Marketplace Guild",
+          "role": "maintainer",
+          "url": null
+        }
+      ],
+      "license": {
+        "name": "Marketplace Evaluation License",
+        "spdx_id": "Proprietary",
+        "url": "https://configs.example.com/licenses/marketplace-eval",
+        "terms_summary": "Do użytku ewaluacyjnego w środowiskach demo.",
+        "redistributable": false,
+        "commercial_use": false
+      },
+      "tags": [
+        "stat-arb",
+        "pairs"
+      ],
+      "data_requirements": {
+        "inputs": [
+          {
+            "asset_type": "market",
+            "provider": "ccxt.binance",
+            "access_level": "restricted",
+            "retention_days": 45,
+            "min_history_days": 14,
+            "sampling": "15m",
+            "notes": null
+          }
+        ],
+        "requires_personal_data": false,
+        "requires_realtime_access": true,
+        "pii_handling_notes": "Preset nie przetwarza PII."
+      },
+      "distribution": [
+        {
+          "name": "preset-document",
+          "uri": "packages/strategies/stat_arb_pairs_v1.json",
+          "kind": "preset",
+          "description": "Podpisany preset mean-reversion z guardrailami Stage6.",
+          "size_bytes": 1716,
+          "integrity": {
+            "algorithm": "sha256",
+            "digest": "3649bfa2c9424c4d0727551cb87d98f764c2862dfdde938d8fb4252b98b89efa"
+          },
+          "signature": {
+            "algorithm": "HMAC-SHA256",
+            "key_id": "dev-hmac",
+            "value": "1vg+7p7M6dOEQnHdZUkBDRVMBezUoMH8zu0tkM9fimc=",
+            "signed_fields": [
+              "package_id",
+              "version",
+              "artifact",
+              "uri",
+              "sha256"
+            ]
+          }
+        }
+      ],
+      "compatibility": [
+        {
+          "component": "core",
+          "minimum": null,
+          "maximum": null,
+          "recommended": null,
+          "channel": null,
+          "notes": null
+        },
+        {
+          "component": "core",
+          "minimum": null,
+          "maximum": null,
+          "recommended": null,
+          "channel": null,
+          "notes": null
+        }
+      ],
+      "documentation_url": "https://configs.example.com/marketplace/stat_arb_pairs_v1",
+      "release_notes": [
+        "Pierwsza publikacja Stat Arb Pairs v1",
+        "Dodano checklistę HyperCare."
+      ],
+      "security": {
+        "mode": "allowlist",
+        "allowed_fingerprints": [
+          "OEM-1234567890ABCDEF"
+        ],
+        "require_strict_match": false,
+        "audit_message": "Preset dostępny tylko dla licencjonowanych instalacji OEM."
+      },
+      "release": {
+        "channel": "public",
+        "review_status": "approved",
+        "reviewers": [
+          {
+            "name": "QA Guild",
+            "email": "qa@example.com",
+            "role": "quality"
+          },
+          {
+            "name": "Compliance Board",
+            "email": "compliance@example.com",
+            "role": "compliance"
+          }
+        ],
+        "ticket": "https://jira.example.com/browse/MKT-1311",
+        "approved_at": "2025-01-14T09:30:00Z",
+        "notes": "Wymagane monitorowanie drawdownu podczas pierwszego tygodnia rollout'u."
+      },
+      "exchange_compatibility": [
+        {
+          "exchange": "BINANCE",
+          "environments": [
+            "paper",
+            "live"
+          ],
+          "trading_modes": [
+            "spot",
+            "margin"
+          ],
+          "status": "certified",
+          "last_verified_at": null,
+          "notes": null
+        },
+        {
+          "exchange": "KUCOIN",
+          "environments": [
+            "paper"
+          ],
+          "trading_modes": [
+            "spot",
+            "margin"
+          ],
+          "status": "beta",
+          "last_verified_at": null,
+          "notes": null
+        }
+      ],
+      "versioning": {
+        "channel": "public",
+        "iteration": "minor",
+        "supersedes": [],
+        "superseded_by": [],
+        "migration_required": false,
+        "source": "strategies/stat_arb_pairs_v1.json"
+      },
+      "user_preferences": [
+        {
+          "persona": "Stat Arb Pairs v1 persona",
+          "risk_target": "balanced",
+          "recommended_budget": 22000.0,
+          "max_positions": 5,
+          "holding_period": "swing",
+          "automation": "pełna",
+          "notes": "Preset Stat Arb Pairs v1 preferuje stat-arb scenariusze."
+        }
+      ]
+    },
+    {
+      "schema_version": "1.1",
+      "package_id": "swing_hedge_blend.v1",
+      "display_name": "Swing Hedge Blend",
+      "summary": "Swing trading z hedgingiem futures",
+      "description": "Swing trading z hedgingiem futures zgodny z guardrailami Stage6.",
+      "version": "1.0.0",
+      "revision": "2025.01",
+      "release_date": "2025-01-15T12:00:00Z",
+      "maintainers": [
+        {
+          "name": "Marketplace Labs",
+          "email": "marketplace@example.com",
+          "organization": "Marketplace Guild",
+          "role": "maintainer",
+          "url": null
+        }
+      ],
+      "license": {
+        "name": "Marketplace Evaluation License",
+        "spdx_id": "Proprietary",
+        "url": "https://configs.example.com/licenses/marketplace-eval",
+        "terms_summary": "Do użytku ewaluacyjnego w środowiskach demo.",
+        "redistributable": false,
+        "commercial_use": false
+      },
+      "tags": [
+        "swing",
+        "hedge"
+      ],
+      "data_requirements": {
+        "inputs": [
+          {
+            "asset_type": "market",
+            "provider": "ccxt.deribit",
+            "access_level": "restricted",
+            "retention_days": 45,
+            "min_history_days": 14,
+            "sampling": "15m",
+            "notes": null
+          }
+        ],
+        "requires_personal_data": false,
+        "requires_realtime_access": true,
+        "pii_handling_notes": "Preset nie przetwarza PII."
+      },
+      "distribution": [
+        {
+          "name": "preset-document",
+          "uri": "packages/strategies/swing_hedge_blend.json",
+          "kind": "preset",
+          "description": "Podpisany preset mean-reversion z guardrailami Stage6.",
+          "size_bytes": 1730,
+          "integrity": {
+            "algorithm": "sha256",
+            "digest": "6f48ffbfe32fbf2b886763865b842f298e1e408b34695c2cf738205c6300e66c"
+          },
+          "signature": {
+            "algorithm": "HMAC-SHA256",
+            "key_id": "dev-hmac",
+            "value": "C8F7+z3DW0ApvcWtQjcRZlHvx3r6tFnrgR4Yhft434k=",
+            "signed_fields": [
+              "package_id",
+              "version",
+              "artifact",
+              "uri",
+              "sha256"
+            ]
+          }
+        }
+      ],
+      "compatibility": [
+        {
+          "component": "core",
+          "minimum": null,
+          "maximum": null,
+          "recommended": null,
+          "channel": null,
+          "notes": null
+        },
+        {
+          "component": "core",
+          "minimum": null,
+          "maximum": null,
+          "recommended": null,
+          "channel": null,
+          "notes": null
+        }
+      ],
+      "documentation_url": "https://configs.example.com/marketplace/swing_hedge_blend",
+      "release_notes": [
+        "Pierwsza publikacja Swing Hedge Blend",
+        "Dodano checklistę HyperCare."
+      ],
+      "security": {
+        "mode": "allowlist",
+        "allowed_fingerprints": [
+          "OEM-1234567890ABCDEF"
+        ],
+        "require_strict_match": false,
+        "audit_message": "Preset dostępny tylko dla licencjonowanych instalacji OEM."
+      },
+      "release": {
+        "channel": "public",
+        "review_status": "approved",
+        "reviewers": [
+          {
+            "name": "QA Guild",
+            "email": "qa@example.com",
+            "role": "quality"
+          },
+          {
+            "name": "Compliance Board",
+            "email": "compliance@example.com",
+            "role": "compliance"
+          }
+        ],
+        "ticket": "https://jira.example.com/browse/MKT-1306",
+        "approved_at": "2025-01-14T09:30:00Z",
+        "notes": "Wymagane monitorowanie drawdownu podczas pierwszego tygodnia rollout'u."
+      },
+      "exchange_compatibility": [
+        {
+          "exchange": "DERIBIT",
+          "environments": [
+            "paper",
+            "live"
+          ],
+          "trading_modes": [
+            "futures"
+          ],
+          "status": "certified",
+          "last_verified_at": null,
+          "notes": null
+        },
+        {
+          "exchange": "BINANCE",
+          "environments": [
+            "paper",
+            "live"
+          ],
+          "trading_modes": [
+            "spot",
+            "margin"
+          ],
+          "status": "certified",
+          "last_verified_at": null,
+          "notes": null
+        }
+      ],
+      "versioning": {
+        "channel": "public",
+        "iteration": "minor",
+        "supersedes": [],
+        "superseded_by": [],
+        "migration_required": false,
+        "source": "strategies/swing_hedge_blend.json"
+      },
+      "user_preferences": [
+        {
+          "persona": "Swing Hedge Blend persona",
+          "risk_target": "balanced",
+          "recommended_budget": 30000.0,
+          "max_positions": 5,
+          "holding_period": "swing",
+          "automation": "pełna",
+          "notes": "Preset Swing Hedge Blend preferuje swing scenariusze."
+        }
+      ]
+    },
+    {
+      "schema_version": "1.1",
+      "package_id": "trend_following_alpha.v1",
+      "display_name": "Trend Alpha Pursuit",
+      "summary": "Preset trend-following dla portfeli swingowych.",
+      "description": "Trend Alpha Pursuit łączy breakout i momentum, aby utrzymywać pozycje swingowe zgodnie z guardrailami Stage6.",
+      "version": "1.0.0",
+      "revision": "2025.01",
+      "release_date": "2025-01-15T12:00:00Z",
+      "maintainers": [
+        {
+          "name": "Marketplace Labs",
+          "email": "marketplace@example.com",
+          "organization": "Marketplace Guild",
+          "role": "maintainer",
+          "url": null
+        }
+      ],
+      "license": {
+        "name": "Marketplace Evaluation License",
+        "spdx_id": "Proprietary",
+        "url": "https://configs.example.com/licenses/marketplace-eval",
+        "terms_summary": "Do użytku ewaluacyjnego w środowiskach demo.",
+        "redistributable": false,
+        "commercial_use": false
+      },
+      "tags": [
+        "trend",
+        "swing",
+        "automation"
+      ],
+      "data_requirements": {
+        "inputs": [
+          {
+            "asset_type": "market",
+            "provider": "ccxt.binance",
+            "access_level": "restricted",
+            "retention_days": 90,
+            "min_history_days": 30,
+            "sampling": "1h",
+            "notes": null
+          }
+        ],
+        "requires_personal_data": false,
+        "requires_realtime_access": true,
+        "pii_handling_notes": "Preset nie gromadzi danych osobowych."
+      },
+      "distribution": [
+        {
+          "name": "preset-document",
+          "uri": "packages/strategies/trend_following_alpha.json",
+          "kind": "preset",
+          "description": "Podpisany preset mean-reversion z guardrailami Stage6.",
+          "size_bytes": 1915,
+          "integrity": {
+            "algorithm": "sha256",
+            "digest": "53aa227c1283741735d7d6106a9dc6a7b5dc48a369afdedde7b1b6098639d896"
+          },
+          "signature": {
+            "algorithm": "HMAC-SHA256",
+            "key_id": "dev-hmac",
+            "value": "7mDGhPZAiK0OhTPfWMAFeFVrv8Ie+gXrSR2dV+s31LU=",
+            "signed_fields": [
+              "package_id",
+              "version",
+              "artifact",
+              "uri",
+              "sha256"
+            ]
+          }
+        }
+      ],
+      "compatibility": [
+        {
+          "component": "core",
+          "minimum": null,
+          "maximum": null,
+          "recommended": null,
+          "channel": null,
+          "notes": null
+        },
+        {
+          "component": "core",
+          "minimum": null,
+          "maximum": null,
+          "recommended": null,
+          "channel": null,
+          "notes": null
+        }
+      ],
+      "documentation_url": "https://configs.example.com/marketplace/trend_following_alpha",
+      "release_notes": [
+        "Wersja 1.0 – pipeline swingowy",
+        "Dodano guardraile momentum i ATR."
+      ],
+      "security": {
+        "mode": "allowlist",
+        "allowed_fingerprints": [
+          "OEM-1234567890ABCDEF"
+        ],
+        "require_strict_match": false,
+        "audit_message": "Preset dostępny tylko dla licencjonowanych instalacji OEM."
+      },
+      "release": {
+        "channel": "public",
+        "review_status": "approved",
+        "reviewers": [
+          {
+            "name": "QA Guild",
+            "email": "qa@example.com",
+            "role": "quality"
+          },
+          {
+            "name": "Compliance Board",
+            "email": "compliance@example.com",
+            "role": "compliance"
+          }
+        ],
+        "ticket": "https://jira.example.com/browse/MKT-1201",
+        "approved_at": "2025-01-14T09:30:00Z",
+        "notes": "Wymagane monitorowanie drawdownu podczas pierwszego tygodnia rollout'u."
+      },
+      "exchange_compatibility": [
+        {
+          "exchange": "BINANCE",
+          "environments": [
+            "paper",
+            "live"
+          ],
+          "trading_modes": [
+            "spot",
+            "margin"
+          ],
+          "status": "certified",
+          "last_verified_at": "2025-01-11T08:00:00Z",
+          "notes": null
+        },
+        {
+          "exchange": "OKX",
+          "environments": [
+            "paper"
+          ],
+          "trading_modes": [
+            "spot"
+          ],
+          "status": "beta",
+          "last_verified_at": null,
+          "notes": null
+        }
+      ],
+      "versioning": {
+        "channel": "public",
+        "iteration": "minor",
+        "supersedes": [],
+        "superseded_by": [],
+        "migration_required": false,
+        "source": "strategies/trend_following_alpha.json"
+      },
+      "user_preferences": [
+        {
+          "persona": "Trend desk",
+          "risk_target": "balanced",
+          "recommended_budget": 25000.0,
+          "max_positions": 6,
+          "holding_period": "1-5 dni",
+          "automation": "pełna",
+          "notes": "Preferuje instrumenty z wysokim wolumenem i wskaźnikami momentum."
+        }
+      ]
+    },
+    {
+      "schema_version": "1.1",
+      "package_id": "volatility_breakout_guard.v1",
+      "display_name": "Volatility Breakout Guard",
+      "summary": "Breakout na zmienności",
+      "description": "Breakout na zmienności zgodny z guardrailami Stage6.",
+      "version": "1.0.0",
+      "revision": "2025.01",
+      "release_date": "2025-01-15T12:00:00Z",
+      "maintainers": [
+        {
+          "name": "Marketplace Labs",
+          "email": "marketplace@example.com",
+          "organization": "Marketplace Guild",
+          "role": "maintainer",
+          "url": null
+        }
+      ],
+      "license": {
+        "name": "Marketplace Evaluation License",
+        "spdx_id": "Proprietary",
+        "url": "https://configs.example.com/licenses/marketplace-eval",
+        "terms_summary": "Do użytku ewaluacyjnego w środowiskach demo.",
+        "redistributable": false,
+        "commercial_use": false
+      },
+      "tags": [
+        "volatility",
+        "swing"
+      ],
+      "data_requirements": {
+        "inputs": [
+          {
+            "asset_type": "market",
+            "provider": "ccxt.binance",
+            "access_level": "restricted",
+            "retention_days": 45,
+            "min_history_days": 14,
+            "sampling": "15m",
+            "notes": null
+          }
+        ],
+        "requires_personal_data": false,
+        "requires_realtime_access": true,
+        "pii_handling_notes": "Preset nie przetwarza PII."
+      },
+      "distribution": [
+        {
+          "name": "preset-document",
+          "uri": "packages/strategies/volatility_breakout_guard.json",
+          "kind": "preset",
+          "description": "Podpisany preset mean-reversion z guardrailami Stage6.",
+          "size_bytes": 1780,
+          "integrity": {
+            "algorithm": "sha256",
+            "digest": "69bd342d141199cde294bf3c753745a58e28a5b81758bb5ccce842844613a36a"
+          },
+          "signature": {
+            "algorithm": "HMAC-SHA256",
+            "key_id": "dev-hmac",
+            "value": "zwiYdgjntuAneTM3fL7R/n187sqQfQh9rG1iHf6Fq2M=",
+            "signed_fields": [
+              "package_id",
+              "version",
+              "artifact",
+              "uri",
+              "sha256"
+            ]
+          }
+        }
+      ],
+      "compatibility": [
+        {
+          "component": "core",
+          "minimum": null,
+          "maximum": null,
+          "recommended": null,
+          "channel": null,
+          "notes": null
+        },
+        {
+          "component": "core",
+          "minimum": null,
+          "maximum": null,
+          "recommended": null,
+          "channel": null,
+          "notes": null
+        }
+      ],
+      "documentation_url": "https://configs.example.com/marketplace/volatility_breakout_guard",
+      "release_notes": [
+        "Pierwsza publikacja Volatility Breakout Guard",
+        "Dodano checklistę HyperCare."
+      ],
+      "security": {
+        "mode": "allowlist",
+        "allowed_fingerprints": [
+          "OEM-1234567890ABCDEF"
+        ],
+        "require_strict_match": false,
+        "audit_message": "Preset dostępny tylko dla licencjonowanych instalacji OEM."
+      },
+      "release": {
+        "channel": "public",
+        "review_status": "approved",
+        "reviewers": [
+          {
+            "name": "QA Guild",
+            "email": "qa@example.com",
+            "role": "quality"
+          },
+          {
+            "name": "Compliance Board",
+            "email": "compliance@example.com",
+            "role": "compliance"
+          }
+        ],
+        "ticket": "https://jira.example.com/browse/MKT-1302",
+        "approved_at": "2025-01-14T09:30:00Z",
+        "notes": "Wymagane monitorowanie drawdownu podczas pierwszego tygodnia rollout'u."
+      },
+      "exchange_compatibility": [
+        {
+          "exchange": "BINANCE",
+          "environments": [
+            "paper",
+            "live"
+          ],
+          "trading_modes": [
+            "spot",
+            "margin"
+          ],
+          "status": "certified",
+          "last_verified_at": null,
+          "notes": null
+        },
+        {
+          "exchange": "COINBASE",
+          "environments": [
+            "paper"
+          ],
+          "trading_modes": [
+            "spot",
+            "margin"
+          ],
+          "status": "beta",
+          "last_verified_at": null,
+          "notes": null
+        }
+      ],
+      "versioning": {
+        "channel": "public",
+        "iteration": "minor",
+        "supersedes": [],
+        "superseded_by": [],
+        "migration_required": false,
+        "source": "strategies/volatility_breakout_guard.json"
+      },
+      "user_preferences": [
+        {
+          "persona": "Volatility Breakout Guard persona",
+          "risk_target": "balanced",
+          "recommended_budget": 18000.0,
+          "max_positions": 5,
+          "holding_period": "swing",
+          "automation": "pełna",
+          "notes": "Preset Volatility Breakout Guard preferuje volatility scenariusze."
+        }
+      ]
     }
   ]
 }

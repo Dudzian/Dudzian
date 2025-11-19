@@ -1,0 +1,204 @@
+{
+  "preset": {
+    "name": "Options Income Guard",
+    "strategies": [
+      {
+        "name": "options_income_guard-engine",
+        "engine": "options_income",
+        "parameters": {
+          "alpha": 0.5,
+          "beta": 0.3,
+          "max_positions": 5
+        },
+        "metadata": {
+          "description": "Covered-call automatyzowany",
+          "owners": [
+            "stage6-core"
+          ],
+          "tags": [
+            "options",
+            "income"
+          ]
+        }
+      }
+    ],
+    "risk": {
+      "max_notional": 40000,
+      "max_positions": 5,
+      "max_drawdown_pct": 11.0,
+      "guardrails": {
+        "max_loss_pct": 6.5,
+        "max_daily_trades": 10
+      }
+    },
+    "metadata": {
+      "id": "options_income_guard",
+      "version": "1.0.0",
+      "summary": "Covered-call automatyzowany",
+      "tags": [
+        "options",
+        "income"
+      ],
+      "required_exchanges": [
+        "DERIBIT"
+      ],
+      "profile": "options_income",
+      "environments": [
+        "paper",
+        "live"
+      ],
+      "user_preferences": [
+        {
+          "persona": "Options Income Guard persona",
+          "risk_target": "balanced",
+          "recommended_budget": 20000,
+          "max_positions": 5,
+          "holding_period": "swing",
+          "automation": "pe\u0142na",
+          "notes": "Preset Options Income Guard preferuje options scenariusze."
+        }
+      ]
+    }
+  },
+  "catalog": {
+    "schema_version": "1.1",
+    "package_id": "options_income_guard.v1",
+    "display_name": "Options Income Guard",
+    "summary": "Covered-call automatyzowany",
+    "description": "Covered-call automatyzowany zgodny z guardrailami Stage6.",
+    "version": "1.0.0",
+    "revision": "2025.01",
+    "release_date": "2025-01-15T12:00:00Z",
+    "maintainers": [
+      {
+        "name": "Marketplace Labs",
+        "email": "marketplace@example.com",
+        "organization": "Marketplace Guild",
+        "role": "maintainer"
+      }
+    ],
+    "license": {
+      "name": "Marketplace Evaluation License",
+      "spdx_id": "Proprietary",
+      "url": "https://configs.example.com/licenses/marketplace-eval",
+      "terms_summary": "Do u\u017cytku ewaluacyjnego w \u015brodowiskach demo.",
+      "redistributable": false,
+      "commercial_use": false
+    },
+    "tags": [
+      "options",
+      "income"
+    ],
+    "data_requirements": {
+      "inputs": [
+        {
+          "asset_type": "market",
+          "provider": "ccxt.deribit",
+          "access_level": "restricted",
+          "retention_days": 45,
+          "min_history_days": 14,
+          "sampling": "15m"
+        }
+      ],
+      "requires_personal_data": false,
+      "requires_realtime_access": true,
+      "pii_handling_notes": "Preset nie przetwarza PII."
+    },
+    "distribution": [
+      {
+        "name": "preset-document",
+        "uri": "packages/strategies/options_income_guard.json",
+        "kind": "preset",
+        "description": "Podpisany preset mean-reversion z guardrailami Stage6.",
+        "signature": {
+          "algorithm": "HMAC-SHA256",
+          "key_id": "dev-hmac",
+          "signed_fields": [
+            "package_id",
+            "version",
+            "artifact",
+            "uri",
+            "sha256"
+          ]
+        }
+      }
+    ],
+    "compatibility": [
+      {
+        "exchange": "DERIBIT",
+        "environments": [
+          "paper",
+          "live"
+        ],
+        "trading_modes": [
+          "futures"
+        ],
+        "status": "certified"
+      }
+    ],
+    "documentation_url": "https://configs.example.com/marketplace/options_income_guard",
+    "release_notes": [
+      "Pierwsza publikacja Options Income Guard",
+      "Dodano checklist\u0119 HyperCare."
+    ],
+    "security": {
+      "mode": "allowlist",
+      "allowed_fingerprints": [
+        "OEM-1234567890ABCDEF"
+      ],
+      "require_strict_match": false,
+      "audit_message": "Preset dost\u0119pny tylko dla licencjonowanych instalacji OEM."
+    },
+    "release": {
+      "channel": "public",
+      "review_status": "approved",
+      "reviewers": [
+        {
+          "name": "QA Guild",
+          "email": "qa@example.com",
+          "role": "quality"
+        },
+        {
+          "name": "Compliance Board",
+          "email": "compliance@example.com",
+          "role": "compliance"
+        }
+      ],
+      "ticket": "https://jira.example.com/browse/MKT-1308",
+      "approved_at": "2025-01-14T09:30:00Z",
+      "notes": "Wymagane monitorowanie drawdownu podczas pierwszego tygodnia rollout'u."
+    },
+    "exchange_compatibility": [
+      {
+        "exchange": "DERIBIT",
+        "environments": [
+          "paper",
+          "live"
+        ],
+        "trading_modes": [
+          "futures"
+        ],
+        "status": "certified"
+      }
+    ],
+    "versioning": {
+      "channel": "public",
+      "iteration": "minor",
+      "supersedes": [],
+      "superseded_by": [],
+      "migration_required": false,
+      "source": "strategies/options_income_guard.json"
+    },
+    "user_preferences": [
+      {
+        "persona": "Options Income Guard persona",
+        "risk_target": "balanced",
+        "recommended_budget": 20000,
+        "max_positions": 5,
+        "holding_period": "swing",
+        "automation": "pe\u0142na",
+        "notes": "Preset Options Income Guard preferuje options scenariusze."
+      }
+    ]
+  }
+}

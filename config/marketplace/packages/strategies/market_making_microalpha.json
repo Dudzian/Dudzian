@@ -1,0 +1,71 @@
+{
+  "preset": {
+    "metadata": {
+      "environments": [
+        "paper",
+        "live"
+      ],
+      "id": "market_making_microalpha",
+      "profile": "market_making",
+      "required_exchanges": [
+        "BINANCE",
+        "KRAKEN"
+      ],
+      "summary": "Market making na parze USD",
+      "tags": [
+        "market-making",
+        "liquidity"
+      ],
+      "user_preferences": [
+        {
+          "automation": "pełna",
+          "holding_period": "swing",
+          "max_positions": 5,
+          "notes": "Preset Market Making MicroAlpha preferuje market-making scenariusze.",
+          "persona": "Market Making MicroAlpha persona",
+          "recommended_budget": 25000,
+          "risk_target": "balanced"
+        }
+      ],
+      "version": "1.0.0"
+    },
+    "name": "Market Making MicroAlpha",
+    "risk": {
+      "guardrails": {
+        "max_daily_trades": 10,
+        "max_loss_pct": 6.5
+      },
+      "max_drawdown_pct": 11.0,
+      "max_notional": 50000,
+      "max_positions": 5
+    },
+    "strategies": [
+      {
+        "engine": "market_making",
+        "metadata": {
+          "description": "Market making na parze USD",
+          "owners": [
+            "stage6-core"
+          ],
+          "tags": [
+            "market-making",
+            "liquidity"
+          ]
+        },
+        "name": "market_making_microalpha-engine",
+        "parameters": {
+          "alpha": 0.5,
+          "beta": 0.3,
+          "max_positions": 5
+        }
+      }
+    ]
+  },
+  "signature": {
+    "algorithm": "ed25519",
+    "key_id": "dev-presets",
+    "public_key": "wnD5eTEGDB3CPb6r3oMOmRjFtjCxHISZXHlHX0TIKhY=",
+    "signed_at": "2025-11-19T09:08:22Z",
+    "value": "CVFkfpKmao+5yIshPY+cOs6/HDIAfM/2RC8Gy1J607SBpj8qgk6EE1DpGgZ02WWNMCzu1lx9weZObH5jCTN7CQ=="
+  }
+}

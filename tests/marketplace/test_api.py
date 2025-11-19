@@ -115,3 +115,23 @@ def test_marketplace_plan_to_payload_serializes_dependencies() -> None:
     assert payload["requiredDependencies"]["parent"][0]["presetId"] == "child"
     assert payload["issues"] == []
     assert payload["upgrades"] == []
+
+
+def test_build_marketplace_preset_exposes_user_preferences() -> None:
+    metadata = {
+        "id": "alpha",
+        "version": "1.0.0",
+        "user_preferences": [
+            {
+                "persona": "Trend desk",
+                "risk_target": "balanced",
+                "recommended_budget": 20000,
+            },
+            {"persona": "", "risk_target": "aggressive"},
+        ],
+    }
+
+    preset = build_marketplace_preset(_document(metadata))
+
+    assert len(preset.preference_profiles) == 1
+    assert preset.preference_profiles[0]["persona"] == "Trend desk"

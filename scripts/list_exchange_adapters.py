@@ -14,6 +14,8 @@ from collections.abc import Mapping, Sequence
 from pathlib import Path
 from typing import Any
 
+import yaml
+
 ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:  # pragma: no cover - konfiguracja ścieżki wykonywana raz
     sys.path.insert(0, str(ROOT))
@@ -161,7 +163,84 @@ def _push_dashboard_snapshot(
             raise RuntimeError(f"Nie udało się wypchnąć CSV do endpointu dashboardu: {exc}") from exc
 
 
-def build_rows(config) -> list[dict[str, Any]]:  # type: ignore[no-untyped-def]
+def _futures_checklist_state(exchange: str, env_cfg: Any) -> tuple[str | None, bool | None]:
+    normalized = exchange.strip().lower()
+    if normalized not in {"deribit", "bitmex"}:
+        return None, None
+    readiness = getattr(env_cfg, "live_readiness", None)
+    if readiness is None:
+        return None, None
+    checklist_id = getattr(readiness, "checklist_id", None)
+    signed = bool(getattr(readiness, "signed", False))
+    missing_docs = _missing_required_documents(readiness)
+    ready = signed and not missing_docs
+    return checklist_id, ready
+
+
+def _hypercare_status_from_config(doc: Mapping[str, Any] | None) -> dict[str, str]:
+    if not isinstance(doc, Mapping):
+        return {
+            "failover": "not_configured",
+            "latency": "not_configured",
+            "cost": "not_configured",
+        }
+
+    def _ready(required: Sequence[str | None]) -> bool:
+        return all(bool(entry) for entry in required)
+
+    resilience = doc.get("resilience") or {}
+    failover = resilience.get("failover") or {}
+    if _ready((failover.get("plan"), failover.get("signature"))):
+        failover_status = "ready"
+    elif failover.get("plan"):
+        failover_status = "missing_signature"
+    elif failover:
+        failover_status = "missing_plan"
+    else:
+        failover_status = "not_configured"
+
+    observability = doc.get("observability") or {}
+    slo = observability.get("slo") or {}
+    metrics_path = observability.get("metrics")
+    if _ready((metrics_path, slo.get("signature"))):
+        latency_status = "ready"
+    elif metrics_path:
+        latency_status = "missing_signature"
+    elif slo:
+        latency_status = "missing_metrics"
+    else:
+        latency_status = "not_configured"
+
+    portfolio = doc.get("portfolio") or {}
+    inputs = portfolio.get("inputs") or {}
+    output = portfolio.get("output") or {}
+    if inputs.get("portfolio_value") and output.get("summary"):
+        cost_status = "ready"
+    elif not inputs.get("portfolio_value"):
+        cost_status = "missing_budget"
+    elif not output.get("summary"):
+        cost_status = "missing_summary"
+    else:
+        cost_status = "not_configured"
+
+    return {
+        "failover": failover_status,
+        "latency": latency_status,
+        "cost": cost_status,
+    }
+
+
+def _load_hypercare_status(path: str | None) -> dict[str, str]:
+    if not path:
+        return _hypercare_status_from_config(None)
+    payload = yaml.safe_load(Path(path).read_text(encoding="utf-8"))
+    return _hypercare_status_from_config(payload)
+
+
+def build_rows(
+    config,
+    hypercare_summary: Mapping[str, str] | None = None,
+) -> list[dict[str, Any]]:  # type: ignore[no-untyped-def]
     rows: list[dict[str, Any]] = []
 
     for exchange, profiles in config.exchange_accounts.items():
@@ -197,6 +276,7 @@ def build_rows(config) -> list[dict[str, Any]]:  # type: ignore[no-untyped-def]
                 getattr(env_cfg, "live_readiness", None)
             )
             missing_docs = _missing_required_documents(getattr(env_cfg, "live_readiness", None))
+            checklist_id, checklist_ready = _futures_checklist_state(exchange, env_cfg)
 
             live_readiness = getattr(env_cfg, "live_readiness", None)
             readiness_signed = bool(getattr(live_readiness, "signed", False))
@@ -229,6 +309,11 @@ def build_rows(config) -> list[dict[str, Any]]:  # type: ignore[no-untyped-def]
                     "hypercare_checklist_signed": hypercare_signed,
                     "hypercare_checklist_status": hypercare_status,
                     "missing_required_documents": missing_docs,
+                    "futures_checklist_id": checklist_id,
+                    "futures_checklist_ready": checklist_ready,
+                    "hypercare_failover_status": hypercare_summary.get("failover") if hypercare_summary else None,
+                    "hypercare_latency_status": hypercare_summary.get("latency") if hypercare_summary else None,
+                    "hypercare_cost_status": hypercare_summary.get("cost") if hypercare_summary else None,
                 }
             )
     return rows
@@ -262,10 +347,15 @@ def main(argv: list[str] | None = None) -> int:
         "--dashboard-endpoint",
         help="Opcjonalny endpoint HTTP (np. Prometheus/Grafana datasource) do publikacji CSV",
     )
+    parser.add_argument(
+        "--hypercare-config",
+        help="Ścieżka do pliku config/stage6/hypercare.yaml z metadanymi failover/latency/cost.",
+    )
     args = parser.parse_args(argv)
 
     config = load_core_config(Path(args.config))
-    rows = build_rows(config)
+    hypercare_summary = _load_hypercare_status(args.hypercare_config)
+    rows = build_rows(config, hypercare_summary=hypercare_summary)
 
     fieldnames = [
         "exchange",
@@ -284,6 +374,11 @@ def main(argv: list[str] | None = None) -> int:
         "hypercare_checklist_signed",
         "hypercare_checklist_status",
         "missing_required_documents",
+        "futures_checklist_id",
+        "futures_checklist_ready",
+        "hypercare_failover_status",
+        "hypercare_latency_status",
+        "hypercare_cost_status",
     ]
 
     close_handle = False

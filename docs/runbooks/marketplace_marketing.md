@@ -4,7 +4,7 @@ Ten runbook opisuje obowiązki marketingowe po przygotowaniu nowego presetu Mark
 
 ## 1. Artefakty wejściowe
 
-- Zatwierdzony preset w `config/marketplace/presets/...` oraz wpis w `catalog.json` (schemat 1.1).
+- Zatwierdzony preset w `config/marketplace/presets/...` oraz wpis w `catalog.json`/`catalog.md` (schemat 1.1 + podpisany Markdown z personami).
 - Raport QA / Stress Lab (link w `catalog.release_notes`).
 - Wynik workflow CI `marketplace-catalog` – artefakt `marketplace-packages` (podpisane paczki).
 
@@ -12,8 +12,8 @@ Ten runbook opisuje obowiązki marketingowe po przygotowaniu nowego presetu Mark
 
 | Krok | Odpowiedzialny | Szczegóły |
 | --- | --- | --- |
-| Weryfikacja katalogu | Marketplace Guild | `python scripts/marketplace_cli.py validate --key dev-hmac:config/marketplace/keys/dev-hmac.key` |
-| Audyt marketingowy | Zespół marketingu | Sprawdź `docs/benchmark/cryptohopper_comparison.md` – sekcja Marketplace powinna zawierać nowy preset i aktualny SLA. |
+| Weryfikacja katalogu | Marketplace Guild | `python scripts/marketplace_cli.py validate --key dev-hmac:config/marketplace/keys/dev-hmac.key` + kontrola `config/marketplace/catalog.md(.sig)` (≥15 strategii z personami). |
+| Audyt marketingowy | Zespół marketingu | Sprawdź `docs/benchmark/cryptohopper_comparison.md` – sekcja Marketplace powinna zawierać nowy preset, dane HyperCare i porównanie zarówno z CryptoHopperem jak i Gunbotem. |
 | Przygotowanie komunikacji | Marketing + CS | Draft wpisu na blog, newsletteru i komunikatu do klientów OEM. Załącz parametry `release.summary`, `tags`, `exchange_compatibility`. |
 | Aktualizacja materiałów sprzedażowych | Marketing | Zaktualizuj slajdy ofertowe i bazę Q&A (w tym informację o kanałach release: public/beta). |
 | Synchronizacja katalogu | Customer Success | Wyślij instrukcję `python scripts/marketplace_cli.py sync` partnerom korzystającym z katalogu offline. |
@@ -29,7 +29,7 @@ Ten runbook opisuje obowiązki marketingowe po przygotowaniu nowego presetu Mark
 
 - **Release note** – format Markdown, linkowany w `catalog.release_notes`.
 - **Slajd sprzedażowy** – uzupełnij w repozytorium marketingu (`marketing/assets/marketplace/`).
-- **QA FAQ** – wpis w bazie wiedzy `docs/support/plan.md` (sekcja presetów).
+- **QA FAQ** – wpis w bazie wiedzy `docs/support/plan.md` (sekcja presetów, z odniesieniem do `catalog.md` i benchmarku CryptoHopper/Gunbot).
 
 ## 5. Eskalacje
 

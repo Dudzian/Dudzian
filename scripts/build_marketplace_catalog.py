@@ -11,7 +11,7 @@ import subprocess
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Iterable, Mapping
+from typing import Any, Iterable, Mapping, Sequence
 
 import yaml
 
@@ -28,6 +28,7 @@ MARKETPLACE_CLI_MODULE = "scripts.marketplace_cli"
 DEFAULT_PRESETS_DIR = REPO_ROOT / "config" / "marketplace" / "presets"
 DEFAULT_PACKAGES_DIR = REPO_ROOT / "config" / "marketplace" / "packages"
 DEFAULT_CATALOG = REPO_ROOT / "config" / "marketplace" / "catalog.json"
+DEFAULT_MARKDOWN = REPO_ROOT / "config" / "marketplace" / "catalog.md"
 
 
 def _load_document(path: Path) -> dict[str, Any]:
@@ -110,17 +111,91 @@ def _package_spec(
     subprocess.run([sys.executable, *cli_args], check=True)
 
 
+def _format_budget_range(values: Sequence[float]) -> str:
+    if not values:
+        return "—"
+    minimum = min(values)
+    maximum = max(values)
+    if abs(maximum - minimum) < 1e-6:
+        return f"${minimum:,.0f}"
+    return f"${minimum:,.0f}–${maximum:,.0f}"
+
+
+def _markdown_escape(value: str) -> str:
+    return value.replace("|", "\\|")
+
+
+def _spec_label(spec_path: Path, root: Path) -> str:
+    try:
+        return str(spec_path.relative_to(root))
+    except ValueError:
+        return str(spec_path)
+
+
+def _build_markdown(catalog: MarketplaceCatalog) -> str:
+    lines = ["# Marketplace Catalog", ""]
+    lines.append(f"*Wygenerowano:* {catalog.generated_at.isoformat().replace('+00:00', 'Z')}")
+    lines.append("")
+    header = "| Paczka | Wersja | Persony | Ryzyko | Budżet | Podsumowanie |"
+    separator = "| --- | --- | --- | --- | --- | --- |"
+    lines.extend([header, separator])
+    for package in sorted(catalog.packages, key=lambda entry: entry.package_id):
+        personas = ", ".join(
+            _markdown_escape(pref.persona)
+            for pref in package.user_preferences
+            if getattr(pref, "persona", "")
+        ) or "—"
+        risk_summary = ", ".join(
+            sorted(
+                {
+                    pref.risk_target.strip()
+                    for pref in package.user_preferences
+                    if pref.risk_target
+                }
+            )
+        ) or "—"
+        budgets = [float(pref.recommended_budget) for pref in package.user_preferences if pref.recommended_budget]
+        budget_summary = _format_budget_range(budgets)
+        summary = _markdown_escape(package.summary or "—")
+        lines.append(
+            f"| {package.display_name} | {package.version} | {personas} | {risk_summary} | {budget_summary} | {summary} |"
+        )
+    lines.append("")
+    return "\n".join(lines)
+
+
+def _write_signature(path: Path, *, content: str, key_id: str | None, signing_keys: Mapping[str, bytes]) -> None:
+    if not key_id:
+        return
+    key_bytes = signing_keys.get(key_id)
+    if not key_bytes:
+        raise ValueError(f"Brak klucza HMAC '{key_id}' wymaganego do podpisu katalogu")
+    digest = hmac.new(key_bytes, content.encode("utf-8"), hashlib.sha256).digest()
+    payload = {
+        "algorithm": "HMAC-SHA256",
+        "key_id": key_id,
+        "signed_at": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
+        "value": base64.b64encode(digest).decode("ascii"),
+        "source": str(path),
+        "sha256": hashlib.sha256(content.encode("utf-8")).hexdigest(),
+    }
+    path.with_suffix(path.suffix + ".sig").write_text(json.dumps(payload, indent=2), encoding="utf-8")
+
+
 def build_catalog(
     *,
     presets_dir: Path,
     packages_dir: Path,
     catalog_path: Path,
+    markdown_path: Path,
     private_key: Path,
     key_id: str,
     signing_keys: dict[str, bytes],
     issuer: str | None = None,
+    catalog_signature_key: str | None = None,
 ) -> MarketplaceCatalog:
     packages: list[MarketplacePackageMetadata] = []
+    package_sources: list[tuple[MarketplacePackageMetadata, Path]] = []
     latest_release = datetime(1970, 1, 1, tzinfo=timezone.utc)
     for spec_path in _iter_specs(presets_dir):
         document = _load_document(spec_path)
@@ -179,8 +254,32 @@ def build_catalog(
         metadata_dict = _ensure_json_serializable(metadata_dict)
         package = MarketplacePackageMetadata.model_validate(metadata_dict)
         packages.append(package)
+        package_sources.append((package, spec_path))
         if package.release_date:
             latest_release = max(latest_release, package.release_date.astimezone(timezone.utc))
+
+    strategy_packages = [
+        (package, spec_path)
+        for package, spec_path in package_sources
+        if package.user_preferences
+    ]
+    if len(strategy_packages) < 15:
+        raise ValueError(
+            "Katalog Marketplace musi zawierać co najmniej 15 strategii z metadanymi user_preferences"
+        )
+    missing_persona = [
+        (package, spec_path)
+        for package, spec_path in strategy_packages
+        if any(not (getattr(pref, "persona", "") or "").strip() for pref in package.user_preferences)
+    ]
+    if missing_persona:
+        formatted = ", ".join(
+            f"{entry.package_id} ({_spec_label(spec_path, presets_dir)})"
+            for entry, spec_path in missing_persona
+        )
+        raise ValueError(
+            "Brak kompletnych metadanych person w strategiach: " + formatted
+        )
 
     packages.sort(key=lambda item: item.package_id)
     generated_at = latest_release if packages else datetime.now(timezone.utc)
@@ -190,9 +289,23 @@ def build_catalog(
         packages=packages,
     )
     catalog_path.parent.mkdir(parents=True, exist_ok=True)
-    catalog_path.write_text(
-        catalog.model_dump_json(indent=2, by_alias=False),
-        encoding="utf-8",
+    catalog_json = catalog.model_dump_json(indent=2, by_alias=False)
+    catalog_path.write_text(catalog_json, encoding="utf-8")
+    _write_signature(
+        catalog_path,
+        content=catalog_json,
+        key_id=catalog_signature_key,
+        signing_keys=signing_keys,
+    )
+
+    markdown_path.parent.mkdir(parents=True, exist_ok=True)
+    markdown_body = _build_markdown(catalog)
+    markdown_path.write_text(markdown_body, encoding="utf-8")
+    _write_signature(
+        markdown_path,
+        content=markdown_body,
+        key_id=catalog_signature_key,
+        signing_keys=signing_keys,
     )
     return catalog
 
@@ -214,6 +327,11 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--presets", default=str(DEFAULT_PRESETS_DIR), help="Katalog ze specyfikacjami presetów.")
     parser.add_argument("--packages", default=str(DEFAULT_PACKAGES_DIR), help="Katalog docelowy artefaktów Marketplace.")
     parser.add_argument("--catalog", default=str(DEFAULT_CATALOG), help="Ścieżka docelowa katalogu Marketplace.")
+    parser.add_argument(
+        "--markdown",
+        default=str(DEFAULT_MARKDOWN),
+        help="Ścieżka docelowa katalogu Marketplace w formacie Markdown.",
+    )
     parser.add_argument("--private-key", required=True, help="Klucz prywatny Ed25519 do podpisu presetów.")
     parser.add_argument("--key-id", required=True, help="Identyfikator klucza Ed25519 do podpisu presetów.")
     parser.add_argument("--issuer", help="Opcjonalny identyfikator wystawcy podpisu presetów.")
@@ -223,6 +341,10 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         required=True,
         help="Klucz HMAC do podpisu artefaktów w formacie KEY_ID:/sciezka/do/klucza (można powtarzać).",
     )
+    parser.add_argument(
+        "--catalog-signature-key",
+        help="Identyfikator klucza HMAC używanego do podpisu katalogu JSON i Markdown.",
+    )
     return parser.parse_args(argv)
 
 
@@ -231,6 +353,7 @@ def main(argv: list[str] | None = None) -> int:
     presets_dir = Path(args.presets).resolve()
     packages_dir = Path(args.packages).resolve()
     catalog_path = Path(args.catalog).resolve()
+    markdown_path = Path(args.markdown).resolve()
     private_key = Path(args.private_key).expanduser().resolve()
     signing_keys = _load_signing_keys(args.signing_key)
 
@@ -238,10 +361,12 @@ def main(argv: list[str] | None = None) -> int:
         presets_dir=presets_dir,
         packages_dir=packages_dir,
         catalog_path=catalog_path,
+        markdown_path=markdown_path,
         private_key=private_key,
         key_id=args.key_id,
         signing_keys=signing_keys,
         issuer=args.issuer,
+        catalog_signature_key=args.catalog_signature_key,
     )
     return 0
 

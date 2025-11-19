@@ -1,0 +1,227 @@
+{
+  "preset": {
+    "name": "Futures Basis Shield",
+    "strategies": [
+      {
+        "name": "futures_basis_shield-engine",
+        "engine": "futures_basis",
+        "parameters": {
+          "alpha": 0.5,
+          "beta": 0.3,
+          "max_positions": 5
+        },
+        "metadata": {
+          "description": "Futures basis + funding hedge",
+          "owners": [
+            "stage6-core"
+          ],
+          "tags": [
+            "futures",
+            "basis"
+          ]
+        }
+      }
+    ],
+    "risk": {
+      "max_notional": 70000,
+      "max_positions": 5,
+      "max_drawdown_pct": 11.0,
+      "guardrails": {
+        "max_loss_pct": 6.5,
+        "max_daily_trades": 10
+      }
+    },
+    "metadata": {
+      "id": "futures_basis_shield",
+      "version": "1.0.0",
+      "summary": "Futures basis + funding hedge",
+      "tags": [
+        "futures",
+        "basis"
+      ],
+      "required_exchanges": [
+        "DERIBIT",
+        "BITMEX"
+      ],
+      "profile": "futures_basis",
+      "environments": [
+        "paper",
+        "live"
+      ],
+      "user_preferences": [
+        {
+          "persona": "Futures Basis Shield persona",
+          "risk_target": "balanced",
+          "recommended_budget": 35000,
+          "max_positions": 5,
+          "holding_period": "swing",
+          "automation": "pe\u0142na",
+          "notes": "Preset Futures Basis Shield preferuje futures scenariusze."
+        }
+      ]
+    }
+  },
+  "catalog": {
+    "schema_version": "1.1",
+    "package_id": "futures_basis_shield.v1",
+    "display_name": "Futures Basis Shield",
+    "summary": "Futures basis + funding hedge",
+    "description": "Futures basis + funding hedge zgodny z guardrailami Stage6.",
+    "version": "1.0.0",
+    "revision": "2025.01",
+    "release_date": "2025-01-15T12:00:00Z",
+    "maintainers": [
+      {
+        "name": "Marketplace Labs",
+        "email": "marketplace@example.com",
+        "organization": "Marketplace Guild",
+        "role": "maintainer"
+      }
+    ],
+    "license": {
+      "name": "Marketplace Evaluation License",
+      "spdx_id": "Proprietary",
+      "url": "https://configs.example.com/licenses/marketplace-eval",
+      "terms_summary": "Do u\u017cytku ewaluacyjnego w \u015brodowiskach demo.",
+      "redistributable": false,
+      "commercial_use": false
+    },
+    "tags": [
+      "futures",
+      "basis"
+    ],
+    "data_requirements": {
+      "inputs": [
+        {
+          "asset_type": "market",
+          "provider": "ccxt.deribit",
+          "access_level": "restricted",
+          "retention_days": 45,
+          "min_history_days": 14,
+          "sampling": "15m"
+        }
+      ],
+      "requires_personal_data": false,
+      "requires_realtime_access": true,
+      "pii_handling_notes": "Preset nie przetwarza PII."
+    },
+    "distribution": [
+      {
+        "name": "preset-document",
+        "uri": "packages/strategies/futures_basis_shield.json",
+        "kind": "preset",
+        "description": "Podpisany preset mean-reversion z guardrailami Stage6.",
+        "signature": {
+          "algorithm": "HMAC-SHA256",
+          "key_id": "dev-hmac",
+          "signed_fields": [
+            "package_id",
+            "version",
+            "artifact",
+            "uri",
+            "sha256"
+          ]
+        }
+      }
+    ],
+    "compatibility": [
+      {
+        "exchange": "DERIBIT",
+        "environments": [
+          "paper",
+          "live"
+        ],
+        "trading_modes": [
+          "futures"
+        ],
+        "status": "certified"
+      },
+      {
+        "exchange": "BITMEX",
+        "environments": [
+          "paper",
+          "live"
+        ],
+        "trading_modes": [
+          "futures"
+        ],
+        "status": "certified"
+      }
+    ],
+    "documentation_url": "https://configs.example.com/marketplace/futures_basis_shield",
+    "release_notes": [
+      "Pierwsza publikacja Futures Basis Shield",
+      "Dodano checklist\u0119 HyperCare."
+    ],
+    "security": {
+      "mode": "allowlist",
+      "allowed_fingerprints": [
+        "OEM-1234567890ABCDEF"
+      ],
+      "require_strict_match": false,
+      "audit_message": "Preset dost\u0119pny tylko dla licencjonowanych instalacji OEM."
+    },
+    "release": {
+      "channel": "public",
+      "review_status": "approved",
+      "reviewers": [
+        {
+          "name": "QA Guild",
+          "email": "qa@example.com",
+          "role": "quality"
+        },
+        {
+          "name": "Compliance Board",
+          "email": "compliance@example.com",
+          "role": "compliance"
+        }
+      ],
+      "ticket": "https://jira.example.com/browse/MKT-1307",
+      "approved_at": "2025-01-14T09:30:00Z",
+      "notes": "Wymagane monitorowanie drawdownu podczas pierwszego tygodnia rollout'u."
+    },
+    "exchange_compatibility": [
+      {
+        "exchange": "DERIBIT",
+        "environments": [
+          "paper",
+          "live"
+        ],
+        "trading_modes": [
+          "futures"
+        ],
+        "status": "certified"
+      },
+      {
+        "exchange": "BITMEX",
+        "environments": [
+          "paper",
+          "live"
+        ],
+        "trading_modes": [
+          "futures"
+        ],
+        "status": "certified"
+      }
+    ],
+    "versioning": {
+      "channel": "public",
+      "iteration": "minor",
+      "supersedes": [],
+      "superseded_by": [],
+      "migration_required": false,
+      "source": "strategies/futures_basis_shield.json"
+    },
+    "user_preferences": [
+      {
+        "persona": "Futures Basis Shield persona",
+        "risk_target": "balanced",
+        "recommended_budget": 35000,
+        "max_positions": 5,
+        "holding_period": "swing",
+        "automation": "pe\u0142na",
+        "notes": "Preset Futures Basis Shield preferuje futures scenariusze."
+      }
+    ]
+  }
+}

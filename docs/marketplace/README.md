@@ -7,6 +7,7 @@ Ten dokument opisuje kompletny przepływ dodawania nowych presetów do katalogu 
 - **`config/marketplace/presets/`** – źródłowe specyfikacje presetów. Każdy plik zawiera sekcję `preset` (ładunek instalacyjny) oraz sekcję `catalog` z metadanymi publikacji.
 - **`config/marketplace/packages/`** – podpisane artefakty generowane z presetów (nie modyfikujemy ręcznie).
 - **`config/marketplace/catalog.json`** – indeks publicznych paczek generowany automatycznie na podstawie specyfikacji.
+- **`config/marketplace/catalog.md`** – podpisany (HMAC) katalog Markdown wykorzystywany przez marketing i support do szybkiego przeglądu person i budżetów.
 - **`config/marketplace/keys/`** – klucze testowe do podpisów Ed25519 (presety) oraz HMAC (artefakty katalogu).
 - **`config/marketplace/reviews/`** – podpisane recenzje community synchronizowane do klientów UI/HyperCare.
 
@@ -18,6 +19,7 @@ Ten dokument opisuje kompletny przepływ dodawania nowych presetów do katalogu 
    - `exchange_compatibility` – tablica obsługiwanych giełd z polami `status` i `last_verified_at`.
    - `versioning.source` – ścieżka do bieżącego pliku presetu (relatywnie względem katalogu `presets`).
    - `distribution[].signature.key_id` – identyfikator klucza HMAC używanego do podpisu artefaktu.
+   - `metadata.user_preferences` – lista person (co najmniej jedna na strategię) z polami `persona`, `risk_target`, `recommended_budget`, `holding_period` i `notes`, aby UI/marketing mógł prezentować blur + FontAwesome.
 3. Dołącz odnośniki do raportów QA/Stress Lab w `release_notes` lub `documentation_url`.
 
 ## 3. Generowanie katalogu i artefaktów
@@ -27,12 +29,14 @@ Ten dokument opisuje kompletny przepływ dodawania nowych presetów do katalogu 
    python scripts/build_marketplace_catalog.py \
      --private-key config/marketplace/keys/dev-presets-ed25519.key \
      --key-id dev-presets \
-     --signing-key dev-hmac:config/marketplace/keys/dev-hmac.key
+     --signing-key dev-hmac:config/marketplace/keys/dev-hmac.key \
+     --catalog-signature-key dev-hmac
    ```
 2. Skrypt wykona następujące kroki:
    - Podpisze każdy preset Ed25519 i zapisze go do `config/marketplace/packages/...`.
    - Policzy sumy SHA-256 i podpisy HMAC zadeklarowane w `catalog.distribution[].signature`.
-   - Zbuduje znormalizowany `config/marketplace/catalog.json` (schemat `1.1`).
+   - Zbuduje znormalizowany `config/marketplace/catalog.json` (schemat `1.1`) oraz `config/marketplace/catalog.md` wraz z plikami `.sig`.
+   - Zweryfikuje, że katalog zawiera ≥15 strategii z kompletnymi metadanymi person (`user_preferences`).
 3. Po uruchomieniu sprawdź `git status` – brak zmian oznacza, że artefakty są aktualne.
 
 ## 4. Recenzje community
@@ -46,6 +50,7 @@ Ten dokument opisuje kompletny przepływ dodawania nowych presetów do katalogu 
 - **Walidator CLI**: `python scripts/marketplace_cli.py validate --key dev-hmac:config/marketplace/keys/dev-hmac.key` – weryfikuje podpisy, fingerprinty i metadane release.
 - **Test regresyjny**: `pytest tests/test_marketplace_catalog.py` – kontroluje skróty, podpisy oraz obecność źródeł `versioning.source`.
 - **Workflow CI**: zadanie `marketplace-catalog` w `.github/workflows/ci.yml` powtarza powyższe kroki i publikuje artefakt `marketplace-packages`.
+- **Przegląd marketingowy**: upewnij się, że `config/marketplace/catalog.md` oraz `config/marketplace/catalog.md.sig` są zaktualizowane i odzwierciedlają pełen zestaw ≥15 strategii z personami.
 
 ## 6. Publikacja i marketing
 

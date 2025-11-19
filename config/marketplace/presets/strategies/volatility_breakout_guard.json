@@ -1,0 +1,229 @@
+{
+  "preset": {
+    "name": "Volatility Breakout Guard",
+    "strategies": [
+      {
+        "name": "volatility_breakout_guard-engine",
+        "engine": "volatility_breakout",
+        "parameters": {
+          "alpha": 0.5,
+          "beta": 0.3,
+          "max_positions": 5
+        },
+        "metadata": {
+          "description": "Breakout na zmienno\u015bci",
+          "owners": [
+            "stage6-core"
+          ],
+          "tags": [
+            "volatility",
+            "swing"
+          ]
+        }
+      }
+    ],
+    "risk": {
+      "max_notional": 36000,
+      "max_positions": 5,
+      "max_drawdown_pct": 11.0,
+      "guardrails": {
+        "max_loss_pct": 6.5,
+        "max_daily_trades": 10
+      }
+    },
+    "metadata": {
+      "id": "volatility_breakout_guard",
+      "version": "1.0.0",
+      "summary": "Breakout na zmienno\u015bci",
+      "tags": [
+        "volatility",
+        "swing"
+      ],
+      "required_exchanges": [
+        "BINANCE",
+        "COINBASE"
+      ],
+      "profile": "volatility_breakout",
+      "environments": [
+        "paper",
+        "live"
+      ],
+      "user_preferences": [
+        {
+          "persona": "Volatility Breakout Guard persona",
+          "risk_target": "balanced",
+          "recommended_budget": 18000,
+          "max_positions": 5,
+          "holding_period": "swing",
+          "automation": "pe\u0142na",
+          "notes": "Preset Volatility Breakout Guard preferuje volatility scenariusze."
+        }
+      ]
+    }
+  },
+  "catalog": {
+    "schema_version": "1.1",
+    "package_id": "volatility_breakout_guard.v1",
+    "display_name": "Volatility Breakout Guard",
+    "summary": "Breakout na zmienno\u015bci",
+    "description": "Breakout na zmienno\u015bci zgodny z guardrailami Stage6.",
+    "version": "1.0.0",
+    "revision": "2025.01",
+    "release_date": "2025-01-15T12:00:00Z",
+    "maintainers": [
+      {
+        "name": "Marketplace Labs",
+        "email": "marketplace@example.com",
+        "organization": "Marketplace Guild",
+        "role": "maintainer"
+      }
+    ],
+    "license": {
+      "name": "Marketplace Evaluation License",
+      "spdx_id": "Proprietary",
+      "url": "https://configs.example.com/licenses/marketplace-eval",
+      "terms_summary": "Do u\u017cytku ewaluacyjnego w \u015brodowiskach demo.",
+      "redistributable": false,
+      "commercial_use": false
+    },
+    "tags": [
+      "volatility",
+      "swing"
+    ],
+    "data_requirements": {
+      "inputs": [
+        {
+          "asset_type": "market",
+          "provider": "ccxt.binance",
+          "access_level": "restricted",
+          "retention_days": 45,
+          "min_history_days": 14,
+          "sampling": "15m"
+        }
+      ],
+      "requires_personal_data": false,
+      "requires_realtime_access": true,
+      "pii_handling_notes": "Preset nie przetwarza PII."
+    },
+    "distribution": [
+      {
+        "name": "preset-document",
+        "uri": "packages/strategies/volatility_breakout_guard.json",
+        "kind": "preset",
+        "description": "Podpisany preset mean-reversion z guardrailami Stage6.",
+        "signature": {
+          "algorithm": "HMAC-SHA256",
+          "key_id": "dev-hmac",
+          "signed_fields": [
+            "package_id",
+            "version",
+            "artifact",
+            "uri",
+            "sha256"
+          ]
+        }
+      }
+    ],
+    "compatibility": [
+      {
+        "exchange": "BINANCE",
+        "environments": [
+          "paper",
+          "live"
+        ],
+        "trading_modes": [
+          "spot",
+          "margin"
+        ],
+        "status": "certified"
+      },
+      {
+        "exchange": "COINBASE",
+        "environments": [
+          "paper"
+        ],
+        "trading_modes": [
+          "spot",
+          "margin"
+        ],
+        "status": "beta"
+      }
+    ],
+    "documentation_url": "https://configs.example.com/marketplace/volatility_breakout_guard",
+    "release_notes": [
+      "Pierwsza publikacja Volatility Breakout Guard",
+      "Dodano checklist\u0119 HyperCare."
+    ],
+    "security": {
+      "mode": "allowlist",
+      "allowed_fingerprints": [
+        "OEM-1234567890ABCDEF"
+      ],
+      "require_strict_match": false,
+      "audit_message": "Preset dost\u0119pny tylko dla licencjonowanych instalacji OEM."
+    },
+    "release": {
+      "channel": "public",
+      "review_status": "approved",
+      "reviewers": [
+        {
+          "name": "QA Guild",
+          "email": "qa@example.com",
+          "role": "quality"
+        },
+        {
+          "name": "Compliance Board",
+          "email": "compliance@example.com",
+          "role": "compliance"
+        }
+      ],
+      "ticket": "https://jira.example.com/browse/MKT-1302",
+      "approved_at": "2025-01-14T09:30:00Z",
+      "notes": "Wymagane monitorowanie drawdownu podczas pierwszego tygodnia rollout'u."
+    },
+    "exchange_compatibility": [
+      {
+        "exchange": "BINANCE",
+        "environments": [
+          "paper",
+          "live"
+        ],
+        "trading_modes": [
+          "spot",
+          "margin"
+        ],
+        "status": "certified"
+      },
+      {
+        "exchange": "COINBASE",
+        "environments": [
+          "paper"
+        ],
+        "trading_modes": [
+          "spot",
+          "margin"
+        ],
+        "status": "beta"
+      }
+    ],
+    "versioning": {
+      "channel": "public",
+      "iteration": "minor",
+      "supersedes": [],
+      "superseded_by": [],
+      "migration_required": false,
+      "source": "strategies/volatility_breakout_guard.json"
+    },
+    "user_preferences": [
+      {
+        "persona": "Volatility Breakout Guard persona",
+        "risk_target": "balanced",
+        "recommended_budget": 18000,
+        "max_positions": 5,
+        "holding_period": "swing",
+        "automation": "pe\u0142na",
+        "notes": "Preset Volatility Breakout Guard preferuje volatility scenariusze."
+      }
+    ]
+  }
+}

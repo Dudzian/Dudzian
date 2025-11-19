@@ -1,0 +1,227 @@
+{
+  "preset": {
+    "name": "Momentum Scalper X",
+    "strategies": [
+      {
+        "name": "momentum_scalper_x-engine",
+        "engine": "scalping",
+        "parameters": {
+          "alpha": 0.5,
+          "beta": 0.3,
+          "max_positions": 5
+        },
+        "metadata": {
+          "description": "Momentum scalper na mikroruchach",
+          "owners": [
+            "stage6-core"
+          ],
+          "tags": [
+            "scalping",
+            "high-frequency"
+          ]
+        }
+      }
+    ],
+    "risk": {
+      "max_notional": 24000,
+      "max_positions": 5,
+      "max_drawdown_pct": 11.0,
+      "guardrails": {
+        "max_loss_pct": 6.5,
+        "max_daily_trades": 10
+      }
+    },
+    "metadata": {
+      "id": "momentum_scalper_x",
+      "version": "1.0.0",
+      "summary": "Momentum scalper na mikroruchach",
+      "tags": [
+        "scalping",
+        "high-frequency"
+      ],
+      "required_exchanges": [
+        "BYBIT",
+        "BITGET"
+      ],
+      "profile": "scalping",
+      "environments": [
+        "paper",
+        "live"
+      ],
+      "user_preferences": [
+        {
+          "persona": "Momentum Scalper X persona",
+          "risk_target": "balanced",
+          "recommended_budget": 12000,
+          "max_positions": 5,
+          "holding_period": "intraday",
+          "automation": "pe\u0142na",
+          "notes": "Preset Momentum Scalper X preferuje scalping scenariusze."
+        }
+      ]
+    }
+  },
+  "catalog": {
+    "schema_version": "1.1",
+    "package_id": "momentum_scalper_x.v1",
+    "display_name": "Momentum Scalper X",
+    "summary": "Momentum scalper na mikroruchach",
+    "description": "Momentum scalper na mikroruchach zgodny z guardrailami Stage6.",
+    "version": "1.0.0",
+    "revision": "2025.01",
+    "release_date": "2025-01-15T12:00:00Z",
+    "maintainers": [
+      {
+        "name": "Marketplace Labs",
+        "email": "marketplace@example.com",
+        "organization": "Marketplace Guild",
+        "role": "maintainer"
+      }
+    ],
+    "license": {
+      "name": "Marketplace Evaluation License",
+      "spdx_id": "Proprietary",
+      "url": "https://configs.example.com/licenses/marketplace-eval",
+      "terms_summary": "Do u\u017cytku ewaluacyjnego w \u015brodowiskach demo.",
+      "redistributable": false,
+      "commercial_use": false
+    },
+    "tags": [
+      "scalping",
+      "high-frequency"
+    ],
+    "data_requirements": {
+      "inputs": [
+        {
+          "asset_type": "market",
+          "provider": "ccxt.bybit",
+          "access_level": "restricted",
+          "retention_days": 45,
+          "min_history_days": 14,
+          "sampling": "15m"
+        }
+      ],
+      "requires_personal_data": false,
+      "requires_realtime_access": true,
+      "pii_handling_notes": "Preset nie przetwarza PII."
+    },
+    "distribution": [
+      {
+        "name": "preset-document",
+        "uri": "packages/strategies/momentum_scalper_x.json",
+        "kind": "preset",
+        "description": "Podpisany preset mean-reversion z guardrailami Stage6.",
+        "signature": {
+          "algorithm": "HMAC-SHA256",
+          "key_id": "dev-hmac",
+          "signed_fields": [
+            "package_id",
+            "version",
+            "artifact",
+            "uri",
+            "sha256"
+          ]
+        }
+      }
+    ],
+    "compatibility": [
+      {
+        "exchange": "BYBIT",
+        "environments": [
+          "paper"
+        ],
+        "trading_modes": [
+          "spot",
+          "margin"
+        ],
+        "status": "beta"
+      },
+      {
+        "exchange": "BITGET",
+        "environments": [
+          "paper"
+        ],
+        "trading_modes": [
+          "spot",
+          "margin"
+        ],
+        "status": "beta"
+      }
+    ],
+    "documentation_url": "https://configs.example.com/marketplace/momentum_scalper_x",
+    "release_notes": [
+      "Pierwsza publikacja Momentum Scalper X",
+      "Dodano checklist\u0119 HyperCare."
+    ],
+    "security": {
+      "mode": "allowlist",
+      "allowed_fingerprints": [
+        "OEM-1234567890ABCDEF"
+      ],
+      "require_strict_match": false,
+      "audit_message": "Preset dost\u0119pny tylko dla licencjonowanych instalacji OEM."
+    },
+    "release": {
+      "channel": "public",
+      "review_status": "approved",
+      "reviewers": [
+        {
+          "name": "QA Guild",
+          "email": "qa@example.com",
+          "role": "quality"
+        },
+        {
+          "name": "Compliance Board",
+          "email": "compliance@example.com",
+          "role": "compliance"
+        }
+      ],
+      "ticket": "https://jira.example.com/browse/MKT-1301",
+      "approved_at": "2025-01-14T09:30:00Z",
+      "notes": "Wymagane monitorowanie drawdownu podczas pierwszego tygodnia rollout'u."
+    },
+    "exchange_compatibility": [
+      {
+        "exchange": "BYBIT",
+        "environments": [
+          "paper"
+        ],
+        "trading_modes": [
+          "spot",
+          "margin"
+        ],
+        "status": "beta"
+      },
+      {
+        "exchange": "BITGET",
+        "environments": [
+          "paper"
+        ],
+        "trading_modes": [
+          "spot",
+          "margin"
+        ],
+        "status": "beta"
+      }
+    ],
+    "versioning": {
+      "channel": "public",
+      "iteration": "minor",
+      "supersedes": [],
+      "superseded_by": [],
+      "migration_required": false,
+      "source": "strategies/momentum_scalper_x.json"
+    },
+    "user_preferences": [
+      {
+        "persona": "Momentum Scalper X persona",
+        "risk_target": "balanced",
+        "recommended_budget": 12000,
+        "max_positions": 5,
+        "holding_period": "intraday",
+        "automation": "pe\u0142na",
+        "notes": "Preset Momentum Scalper X preferuje scalping scenariusze."
+      }
+    ]
+  }
+}

@@ -1,0 +1,72 @@
+{
+  "preset": {
+    "metadata": {
+      "environments": [
+        "paper",
+        "live"
+      ],
+      "id": "ai_macro_multi_horizon",
+      "profile": "ai_macro",
+      "required_exchanges": [
+        "BINANCE",
+        "COINBASE",
+        "OKX"
+      ],
+      "summary": "AI multi-horizon macro preset",
+      "tags": [
+        "ai",
+        "macro"
+      ],
+      "user_preferences": [
+        {
+          "automation": "pełna",
+          "holding_period": "swing",
+          "max_positions": 5,
+          "notes": "Preset AI Macro Multi-Horizon preferuje ai scenariusze.",
+          "persona": "AI Macro Multi-Horizon persona",
+          "recommended_budget": 70000,
+          "risk_target": "balanced"
+        }
+      ],
+      "version": "1.0.0"
+    },
+    "name": "AI Macro Multi-Horizon",
+    "risk": {
+      "guardrails": {
+        "max_daily_trades": 10,
+        "max_loss_pct": 6.5
+      },
+      "max_drawdown_pct": 11.0,
+      "max_notional": 140000,
+      "max_positions": 5
+    },
+    "strategies": [
+      {
+        "engine": "ai_macro",
+        "metadata": {
+          "description": "AI multi-horizon macro preset",
+          "owners": [
+            "stage6-core"
+          ],
+          "tags": [
+            "ai",
+            "macro"
+          ]
+        },
+        "name": "ai_macro_multi_horizon-engine",
+        "parameters": {
+          "alpha": 0.5,
+          "beta": 0.3,
+          "max_positions": 5
+        }
+      }
+    ]
+  },
+  "signature": {
+    "algorithm": "ed25519",
+    "key_id": "dev-presets",
+    "public_key": "wnD5eTEGDB3CPb6r3oMOmRjFtjCxHISZXHlHX0TIKhY=",
+    "signed_at": "2025-11-19T09:08:07Z",
+    "value": "wHdoCRduXeX1+WuL2fHpcsWT8PbXBltE7Ucta8+ayNVLn9rspW17vfMLSsPHCLx9yt7h1NTIw6Q5cj6h4VlpCA=="
+  }
+}

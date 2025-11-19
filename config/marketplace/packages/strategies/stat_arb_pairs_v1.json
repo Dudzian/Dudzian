@@ -1,0 +1,71 @@
+{
+  "preset": {
+    "metadata": {
+      "environments": [
+        "paper",
+        "live"
+      ],
+      "id": "stat_arb_pairs_v1",
+      "profile": "stat_arb",
+      "required_exchanges": [
+        "BINANCE",
+        "KUCOIN"
+      ],
+      "summary": "Arbitraż statystyczny par",
+      "tags": [
+        "stat-arb",
+        "pairs"
+      ],
+      "user_preferences": [
+        {
+          "automation": "pełna",
+          "holding_period": "swing",
+          "max_positions": 5,
+          "notes": "Preset Stat Arb Pairs v1 preferuje stat-arb scenariusze.",
+          "persona": "Stat Arb Pairs v1 persona",
+          "recommended_budget": 22000,
+          "risk_target": "balanced"
+        }
+      ],
+      "version": "1.0.0"
+    },
+    "name": "Stat Arb Pairs v1",
+    "risk": {
+      "guardrails": {
+        "max_daily_trades": 10,
+        "max_loss_pct": 6.5
+      },
+      "max_drawdown_pct": 11.0,
+      "max_notional": 44000,
+      "max_positions": 5
+    },
+    "strategies": [
+      {
+        "engine": "stat_arb",
+        "metadata": {
+          "description": "Arbitraż statystyczny par",
+          "owners": [
+            "stage6-core"
+          ],
+          "tags": [
+            "stat-arb",
+            "pairs"
+          ]
+        },
+        "name": "stat_arb_pairs_v1-engine",
+        "parameters": {
+          "alpha": 0.5,
+          "beta": 0.3,
+          "max_positions": 5
+        }
+      }
+    ]
+  },
+  "signature": {
+    "algorithm": "ed25519",
+    "key_id": "dev-presets",
+    "public_key": "wnD5eTEGDB3CPb6r3oMOmRjFtjCxHISZXHlHX0TIKhY=",
+    "signed_at": "2025-11-19T09:08:51Z",
+    "value": "fYNhd4Rs+BZ90nhi4uXs7wODBQvWFncgmhAwKH/E0OkKF0/yLWgg7kdA47oBzWWUv1IZEiYBBQ7B4SSau+pbBA=="
+  }
+}

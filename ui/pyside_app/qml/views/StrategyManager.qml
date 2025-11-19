@@ -129,6 +129,86 @@ Item {
                         color: designSystem ? designSystem.color("textSecondary") : "#b5bfd8"
                         wrapMode: Text.WordWrap
                     }
+                    Item {
+                        Layout.fillWidth: true
+                        visible: modelData.userPreferences && modelData.userPreferences.length > 0
+                        implicitHeight: personaSection.implicitHeight + 12
+                        Rectangle {
+                            id: personaFrame
+                            anchors.fill: parent
+                            radius: 14
+                            color: designSystem ? designSystem.color("surfaceElevated") : "#23283b"
+                            opacity: 0.92
+                            border.color: designSystem ? designSystem.color("border") : "#30384a"
+                            border.width: 1
+                        }
+                        MultiEffect {
+                            anchors.fill: personaFrame
+                            source: personaFrame
+                            blurEnabled: true
+                            blurRadius: 18
+                            saturation: 0.9
+                            brightness: 0.04
+                        }
+                        ColumnLayout {
+                            id: personaSection
+                            anchors.fill: parent
+                            anchors.margins: 10
+                            spacing: 4
+                            Repeater {
+                                model: modelData.userPreferences || []
+                                delegate: ColumnLayout {
+                                    spacing: 2
+                                    Label {
+                                        text: qsTr("Persona: %1").arg(modelData.persona || qsTr("profil"))
+                                        font.bold: true
+                                        color: designSystem ? designSystem.color("textPrimary") : "#fff"
+                                    }
+                                    RowLayout {
+                                        spacing: 6
+                                        Text {
+                                            text: designSystem ? designSystem.iconGlyph("shield") : "\uf3ed"
+                                            font.family: designSystem ? designSystem.fontAwesomeFamily() : "Font Awesome 6 Free"
+                                            font.pixelSize: 14
+                                            color: designSystem ? designSystem.color("accent") : "#4fc3f7"
+                                        }
+                                        Label {
+                                            text: qsTr("Ryzyko: %1").arg(modelData.risk_target || qsTr("brak"))
+                                            color: designSystem ? designSystem.color("textSecondary") : "#b5bfd8"
+                                        }
+                                        Text {
+                                            text: designSystem ? designSystem.iconGlyph("package") : "\uf49e"
+                                            font.family: designSystem ? designSystem.fontAwesomeFamily() : "Font Awesome 6 Free"
+                                            font.pixelSize: 14
+                                            color: designSystem ? designSystem.color("accent") : "#4fc3f7"
+                                        }
+                                        Label {
+                                            text: modelData.recommended_budget
+                                                  ? qsTr("Budżet: %1 USD").arg(Number(modelData.recommended_budget).toLocaleString(Qt.locale(), 'f', 0))
+                                                  : qsTr("Budżet: brak")
+                                            color: designSystem ? designSystem.color("textSecondary") : "#b5bfd8"
+                                        }
+                                    }
+                                    RowLayout {
+                                        spacing: 6
+                                        Text {
+                                            property string fallbackGlyph: "\uf017"
+                                            text: designSystem && designSystem.iconGlyph("clock") && designSystem.iconGlyph("clock").length > 0
+                                                  ? designSystem.iconGlyph("clock")
+                                                  : fallbackGlyph
+                                            font.family: designSystem ? designSystem.fontAwesomeFamily() : "Font Awesome 6 Free"
+                                            font.pixelSize: 14
+                                            color: designSystem ? designSystem.color("accent") : "#4fc3f7"
+                                        }
+                                        Label {
+                                            text: qsTr("Horyzont: %1").arg(modelData.holding_period || qsTr("brak"))
+                                            color: designSystem ? designSystem.color("textSecondary") : "#b5bfd8"
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
                     Label {
                         text: modelData.signatureVerified ? qsTr("Podpis zweryfikowany") : qsTr("Podpis NIEZWERYFIKOWANY")
                         color: modelData.signatureVerified ? designSystem.color("textSecondary") : "#ff8a80"

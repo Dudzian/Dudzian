@@ -91,6 +91,19 @@ Item {
         return value
     }
 
+    function previewUserPreferencesList() {
+        if (!presetPreview)
+            return []
+        if (presetPreview.user_preferences && presetPreview.user_preferences.length > 0)
+            return presetPreview.user_preferences
+        var metadata = presetPreview.metadata || {}
+        if (metadata.user_preferences && metadata.user_preferences.length > 0)
+            return metadata.user_preferences
+        if (presetPreview.preset && presetPreview.preset.metadata && presetPreview.preset.metadata.user_preferences)
+            return presetPreview.preset.metadata.user_preferences
+        return []
+    }
+
     function previewPresetEntry(entry) {
         if (!runtimeService || !runtimeService.previewStrategyPreset) {
             actionStatus = qsTr("Mostek runtime nie obsługuje podglądu presetów")
@@ -779,6 +792,92 @@ Item {
                         color: palette.highlight
                         visible: actionStatus && actionStatus.length > 0
                         wrapMode: Text.Wrap
+                    }
+
+                    GroupBox {
+                        title: qsTr("Persony i preferencje")
+                        Layout.fillWidth: true
+                        visible: personaEntries.length > 0
+                        property var personaEntries: previewUserPreferencesList()
+
+                        ColumnLayout {
+                            anchors.fill: parent
+                            anchors.margins: 8
+                            spacing: 4
+                            DesignSystem.FrostedGlass {
+                                Layout.fillWidth: true
+                                sourceItem: root
+                                radius: 18
+                                blurRadius: 48
+                                ColumnLayout {
+                                    anchors.fill: parent
+                                    anchors.margins: 12
+                                    spacing: 6
+                                    Repeater {
+                                        model: personaEntries
+                                        delegate: ColumnLayout {
+                                            spacing: 3
+                                            Label {
+                                                text: qsTr("Persona: %1").arg(modelData.persona || qsTr("profil"))
+                                                font.bold: true
+                                            }
+                                            RowLayout {
+                                                spacing: 6
+                                                DesignSystem.Icon {
+                                                    glyph: "\uf3ed"
+                                                    size: 14
+                                                    color: DesignSystem.Palette.accent
+                                                }
+                                                Label {
+                                                    text: qsTr("Ryzyko: %1").arg(modelData.risk_target || qsTr("brak"))
+                                                    color: palette.mid
+                                                }
+                                                DesignSystem.Icon {
+                                                    glyph: "\uf49e"
+                                                    size: 14
+                                                    color: DesignSystem.Palette.accent
+                                                }
+                                                Label {
+                                                    text: modelData.recommended_budget
+                                                          ? qsTr("Budżet: %1 USD").arg(Number(modelData.recommended_budget).toLocaleString(Qt.locale(), 'f', 0))
+                                                          : qsTr("Budżet: brak")
+                                                    color: palette.mid
+                                                }
+                                            }
+                                            RowLayout {
+                                                spacing: 6
+                                                DesignSystem.Icon {
+                                                    glyph: "\uf017"
+                                                    size: 14
+                                                    color: DesignSystem.Palette.accent
+                                                }
+                                                Label {
+                                                    text: qsTr("Horyzont: %1").arg(modelData.holding_period || qsTr("brak"))
+                                                    color: palette.mid
+                                                }
+                                                DesignSystem.Icon {
+                                                    glyph: "\uf544"
+                                                    size: 14
+                                                    color: DesignSystem.Palette.accent
+                                                }
+                                                Label {
+                                                    text: modelData.automation
+                                                          ? qsTr("Automatyzacja: %1").arg(modelData.automation)
+                                                          : qsTr("Automatyzacja: brak")
+                                                    color: palette.mid
+                                                }
+                                            }
+                                            Label {
+                                                text: modelData.notes || ""
+                                                visible: text.length > 0
+                                                wrapMode: Text.WordWrap
+                                                color: palette.mid
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
                     }
 
                     GroupBox {

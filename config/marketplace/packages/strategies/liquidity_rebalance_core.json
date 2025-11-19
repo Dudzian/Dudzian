@@ -1,0 +1,72 @@
+{
+  "preset": {
+    "metadata": {
+      "environments": [
+        "paper",
+        "live"
+      ],
+      "id": "liquidity_rebalance_core",
+      "profile": "liquidity",
+      "required_exchanges": [
+        "BINANCE",
+        "KRAKEN",
+        "COINBASE"
+      ],
+      "summary": "Rebalans płynności multi-exchange",
+      "tags": [
+        "liquidity",
+        "arbitrage"
+      ],
+      "user_preferences": [
+        {
+          "automation": "pełna",
+          "holding_period": "swing",
+          "max_positions": 5,
+          "notes": "Preset Liquidity Rebalance Core preferuje liquidity scenariusze.",
+          "persona": "Liquidity Rebalance Core persona",
+          "recommended_budget": 40000,
+          "risk_target": "balanced"
+        }
+      ],
+      "version": "1.0.0"
+    },
+    "name": "Liquidity Rebalance Core",
+    "risk": {
+      "guardrails": {
+        "max_daily_trades": 10,
+        "max_loss_pct": 6.5
+      },
+      "max_drawdown_pct": 11.0,
+      "max_notional": 80000,
+      "max_positions": 5
+    },
+    "strategies": [
+      {
+        "engine": "liquidity",
+        "metadata": {
+          "description": "Rebalans płynności multi-exchange",
+          "owners": [
+            "stage6-core"
+          ],
+          "tags": [
+            "liquidity",
+            "arbitrage"
+          ]
+        },
+        "name": "liquidity_rebalance_core-engine",
+        "parameters": {
+          "alpha": 0.5,
+          "beta": 0.3,
+          "max_positions": 5
+        }
+      }
+    ]
+  },
+  "signature": {
+    "algorithm": "ed25519",
+    "key_id": "dev-presets",
+    "public_key": "wnD5eTEGDB3CPb6r3oMOmRjFtjCxHISZXHlHX0TIKhY=",
+    "signed_at": "2025-11-19T09:08:18Z",
+    "value": "CfCQh/IjgqshbZgWdEDTk2HY67i2H7FN+ZGaIIiv9a6OxrrOt39af/qGtKpJb9Bg4EAn4Ryj2wEzuIpVhjDaAA=="
+  }
+}
