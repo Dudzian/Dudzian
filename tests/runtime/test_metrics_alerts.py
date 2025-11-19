@@ -1,4 +1,5 @@
 import json
+import json
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -101,6 +102,47 @@ def test_get_feed_health_alert_sink_falls_back_to_memory_router(monkeypatch: pyt
     assert isinstance(sink._router, DefaultAlertRouter)  # type: ignore[attr-defined]
     assert isinstance(sink._router.audit_log, InMemoryAlertAuditLog)  # type: ignore[attr-defined]
     assert called, "Powinien zostać wykonany bootstrap kanałów HyperCare"
+
+
+def test_env_hypercare_webhook_channel(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    monkeypatch.setenv("BOT_CORE_UI_FEED_HYPERCARE_WEBHOOK", "https://hypercare.example/webhook")
+
+    sent: list[dict[str, object]] = []
+
+    def _fake_urlopen(request, timeout=None):  # pragma: no cover - prosty stub
+        sent.append(
+            {
+                "url": request.full_url,
+                "timeout": timeout,
+                "payload": json.loads(request.data.decode("utf-8")),
+            }
+        )
+
+        class _Response:
+            def read(self) -> bytes:
+                return b"ok"
+
+        return _Response()
+
+    monkeypatch.setattr(metrics_alerts.urllib_request, "urlopen", _fake_urlopen)
+    sink = metrics_alerts.get_feed_health_alert_sink(jsonl_path=tmp_path / "alerts.jsonl")
+    assert sink is not None
+    registered = [channel.name for channel in sink._router.channels]  # type: ignore[attr-defined]
+    assert "hypercare-webhook" in registered
+
+    sink.emit_feed_health_event(
+        severity="warning",
+        title="Latency warning",
+        body="latency 2500ms",
+        context={"adapter": "grpc"},
+        payload={"metric": "latency", "metric_value": 2500.0},
+    )
+
+    assert sent, "Kanał webhook HyperCare powinien otrzymać alert"
+    last = sent[-1]
+    assert last["url"].startswith("https://hypercare.example")
+    assert last["payload"]["severity"] == "warning"
+    assert last["payload"]["context"]["adapter"] == "grpc"
 
 
 def test_cloud_alert_channel_sends_payload(monkeypatch: pytest.MonkeyPatch) -> None:

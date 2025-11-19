@@ -14,6 +14,7 @@ Item {
     property var dashboardSettingsController: (typeof dashboardSettingsController !== "undefined" ? dashboardSettingsController : null)
     property var complianceController: (typeof complianceController !== "undefined" ? complianceController : null)
     property var runtimeService: (typeof runtimeService !== "undefined" ? runtimeService : null)
+    property var reportController: (typeof reportController !== "undefined" ? reportController : null)
     property int refreshIntervalMs: dashboardSettingsController ? dashboardSettingsController.refreshIntervalMs : 4000
     readonly property var defaultCardOrder: ["feed_sla", "io_queue", "guardrails", "retraining", "compliance", "risk_journal", "ai_decisions"]
     property var aiDecisions: []
@@ -40,6 +41,10 @@ Item {
     property var aiRegimeBreakdown: runtimeService && runtimeService.aiRegimeBreakdown
                                     ? runtimeService.aiRegimeBreakdown
                                     : []
+    property string feedLatencyAlertState: "ok"
+    property real feedLatencyAlertValue: 0.0
+    property string feedLatencyAlertTicket: ""
+    readonly property url feedSlaRunbookUrl: Qt.resolvedUrl("../../docs/runbooks/operations/feed_sla.md")
 
     function componentForCard(cardId) {
         switch (cardId) {
@@ -82,6 +87,7 @@ Item {
         root.feedTransportSnapshot = root.runtimeService ? root.runtimeService.feedTransportSnapshot : ({})
         root.feedHealth = root.runtimeService ? root.runtimeService.feedHealth : ({})
         root.feedSlaReport = root.runtimeService ? root.runtimeService.feedSlaReport : ({})
+        root.syncLatencyAlert()
         root.aiRegimeBreakdown = root.runtimeService ? root.runtimeService.aiRegimeBreakdown : []
         root.adaptiveStrategySummary = root.runtimeService ? root.runtimeService.adaptiveStrategySummary : ""
         root.regimeActivationSummary = root.runtimeService ? root.runtimeService.regimeActivationSummary : ""
@@ -98,6 +104,40 @@ Item {
         if (state === "warning")
             return Qt.rgba(0.95, 0.65, 0.2, 1)
         return Styles.AppTheme.textPrimary
+    }
+
+    function syncLatencyAlert() {
+        const report = root.feedSlaReport || ({})
+        const severity = report.latency_state || "ok"
+        const previous = root.feedLatencyAlertState
+        const p95 = report.p95_ms !== undefined ? Number(report.p95_ms) : 0.0
+        root.feedLatencyAlertState = severity
+        root.feedLatencyAlertValue = p95
+        if (severity === previous)
+            return
+        if (severity !== "warning" && severity !== "critical")
+            return
+        const threshold = severity === "critical"
+                ? Number(report.latency_critical_ms || 0)
+                : Number(report.latency_warning_ms || 0)
+        root.feedLatencyAlertTicket = "sla-feed-" + Date.now()
+        if (root.reportController && root.reportController.logOperationalAlert) {
+            const title = severity === "critical"
+                    ? qsTr("ALERT: SLA feedu przekroczone")
+                    : qsTr("Ostrzeżenie SLA feedu")
+            const message = qsTr("Latencja p95 = %1 ms (limit %2 ms)")
+                    .arg(p95.toFixed(0))
+                    .arg(threshold.toFixed(0))
+            root.reportController.logOperationalAlert("sla.feed", {
+                severity: severity,
+                title: title,
+                message: message,
+                latency_ms: p95,
+                warning_ms: Number(report.latency_warning_ms || 0),
+                critical_ms: Number(report.latency_critical_ms || 0),
+                ticket: root.feedLatencyAlertTicket
+            })
+        }
     }
 
     Timer {
@@ -178,6 +218,7 @@ Item {
             if (!root.runtimeService)
                 return
             root.feedSlaReport = root.runtimeService.feedSlaReport
+            root.syncLatencyAlert()
         }
 
         function onAiRegimeBreakdownChanged() {
@@ -299,6 +340,7 @@ Item {
 
             property var report: root.feedSlaReport || ({})
             property string severity: report && report.sla_state ? report.sla_state : "ok"
+            readonly property bool latencyAlertActive: report && report.latency_state && report.latency_state !== "ok"
 
             ColumnLayout {
                 anchors.fill: parent
@@ -397,6 +439,71 @@ Item {
                                ? Number(report.nextRetrySeconds).toFixed(1)
                                : "n/d")
                     color: Styles.AppTheme.textSecondary
+                }
+            }
+
+            Rectangle {
+                anchors.fill: parent
+                radius: feedSlaCard.radius
+                color: feedSlaCard.severity === "critical"
+                       ? Qt.rgba(0.42, 0.09, 0.13, 0.82)
+                       : Qt.rgba(0.4, 0.3, 0.08, 0.78)
+                border.color: Styles.AppTheme.warning
+                border.width: feedSlaCard.latencyAlertActive ? 1 : 0
+                visible: feedSlaCard.latencyAlertActive
+                z: 5
+
+                ColumnLayout {
+                    anchors.fill: parent
+                    anchors.margins: 20
+                    spacing: 10
+
+                    Label {
+                        text: feedSlaCard.severity === "critical"
+                              ? qsTr("HyperCare: natychmiastowa eskalacja SLA")
+                              : qsTr("HyperCare: monitoruj decision feed")
+                        color: Qt.rgba(1, 1, 1, 0.95)
+                        font.bold: true
+                        font.pixelSize: 17
+                    }
+
+                    Label {
+                        wrapMode: Text.WordWrap
+                        color: Qt.rgba(1, 1, 1, 0.85)
+                        text: feedSlaCard.report && feedSlaCard.report.p95_ms !== undefined
+                              ? qsTr("p95 = %1 ms • progi: %2 / %3 ms")
+                                    .arg(Number(feedSlaCard.report.p95_ms || 0).toFixed(0))
+                                    .arg(Number(feedSlaCard.report.latency_warning_ms || 0).toFixed(0))
+                                    .arg(Number(feedSlaCard.report.latency_critical_ms || 0).toFixed(0))
+                              : qsTr("Brak danych o latencji feedu")
+                    }
+
+                    RowLayout {
+                        Layout.alignment: Qt.AlignLeft
+                        spacing: 12
+
+                        Button {
+                            text: qsTr("Otwórz runbook SLA")
+                            icon.name: "link"
+                            onClicked: Qt.openUrlExternally(root.feedSlaRunbookUrl)
+                        }
+
+                        Button {
+                            visible: root.reportController && root.reportController.logOperationalAlert
+                            text: qsTr("Zaloguj eskalację")
+                            onClicked: {
+                                if (!root.reportController || !root.reportController.logOperationalAlert)
+                                    return
+                                root.reportController.logOperationalAlert("sla.feed", {
+                                                         severity: feedSlaCard.severity,
+                                                         title: qsTr("Manualna eskalacja SLA"),
+                                                         message: qsTr("Potwierdzono incydent HyperCare (%1)")
+                                                                   .arg(root.feedLatencyAlertTicket),
+                                                         latency_ms: Number(feedSlaCard.report.p95_ms || 0)
+                                                     })
+                            }
+                        }
+                    }
                 }
             }
         }

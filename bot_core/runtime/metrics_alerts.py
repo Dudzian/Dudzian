@@ -13,6 +13,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from threading import Lock
 from typing import Any, Callable
+from urllib import error as urllib_error, request as urllib_request
 
 from bot_core.alerts import AlertMessage, DefaultAlertRouter, InMemoryAlertAuditLog
 from bot_core.alerts.base import AlertChannel, AlertDeliveryError
@@ -308,6 +309,41 @@ class _CloudAlertChannel(AlertChannel):
             "profile": getattr(self._selection, "profile_name", "remote"),
         }
 
+class _FeedWebhookAlertChannel(AlertChannel):
+    """Minimalny kanał wysyłający alerty feedu na webhook HyperCare."""
+
+    def __init__(self, url: str, *, name: str = "hypercare-webhook", timeout: float = 3.0) -> None:
+        self.name = name
+        self._url = url
+        self._timeout = timeout
+
+    def send(self, message: AlertMessage) -> None:
+        payload = {
+            "category": message.category,
+            "title": message.title,
+            "body": message.body,
+            "severity": message.severity,
+            "context": dict(message.context),
+            "timestamp": message.timestamp.isoformat(),
+        }
+        data = json.dumps(payload, ensure_ascii=False).encode("utf-8")
+        req = urllib_request.Request(
+            self._url,
+            data=data,
+            headers={"Content-Type": "application/json"},
+        )
+        try:
+            urllib_request.urlopen(req, timeout=self._timeout)
+        except urllib_error.URLError as exc:  # pragma: no cover - zależne od środowiska CI
+            raise AlertDeliveryError(f"Webhook HyperCare odrzucił alert: {exc}") from exc
+
+    def health_check(self) -> Mapping[str, str]:  # pragma: no cover - brak live pingów
+        return {
+            "status": "configured",
+            "url": self._url,
+        }
+
+
 def _build_feed_alert_router() -> DefaultAlertRouter | None:
     if build_alert_channels is None or load_core_config is None:
         return None
@@ -375,6 +411,17 @@ def _build_feed_alert_router() -> DefaultAlertRouter | None:
             _LOGGER.exception("Nie udało się zarejestrować kanału cloudowego dla alertów feedu")
 
     return router
+
+
+def _register_env_hypercare_channels(router: DefaultAlertRouter) -> None:
+    webhook_url = os.environ.get("BOT_CORE_UI_FEED_HYPERCARE_WEBHOOK")
+    if webhook_url and webhook_url.strip():
+        try:
+            router.register(_FeedWebhookAlertChannel(webhook_url.strip()))
+        except ValueError:
+            _LOGGER.debug("Kanał webhook HyperCare jest już zarejestrowany")
+        except Exception:  # pragma: no cover - diagnostyka środowiska
+            _LOGGER.exception("Nie udało się zarejestrować kanału webhook HyperCare")
 
 
 def _build_cloud_alert_channel(
@@ -2507,6 +2554,7 @@ def get_feed_health_alert_sink(
             sink_router = router or _build_feed_alert_router()
             if sink_router is None:
                 sink_router = DefaultAlertRouter(audit_log=InMemoryAlertAuditLog())
+            _register_env_hypercare_channels(sink_router)
             path = Path(jsonl_path).expanduser() if jsonl_path else DEFAULT_UI_ALERTS_JSONL_PATH
             sink = UiTelemetryAlertSink(sink_router, jsonl_path=path)
         except Exception:  # pragma: no cover - środowiska bez alertów
