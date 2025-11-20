@@ -17,6 +17,7 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import TYPE_CHECKING, Callable
+from copy import deepcopy
 
 import yaml
 
@@ -978,6 +979,8 @@ class RuntimeService(QObject):
     cloudRuntimeStatusChanged = Signal()
     executionModeChanged = Signal()
     guardrailsChanged = Signal()
+    strategyConfigsChanged = Signal()
+    riskControlsChanged = Signal()
 
     def __init__(
         self,
@@ -1047,6 +1050,15 @@ class RuntimeService(QObject):
             "dailyLossLimitPct": 0.03,
             "blockOnSlaAlerts": True,
         }
+        config_base = (
+            self._runtime_config_path.parent
+            if self._runtime_config_path is not None
+            else Path("config").resolve()
+        )
+        self._strategy_config_path = (config_base / "strategies.yaml").resolve()
+        self._risk_controls_path = (config_base / "risk_controls.yaml").resolve()
+        self._strategy_configs: list[dict[str, object]] = self._load_strategy_configs()
+        self._risk_controls: dict[str, object] = self._load_risk_controls()
         self._grpc_thread: threading.Thread | None = None
         self._grpc_stop_event: threading.Event | None = None
         self._grpc_queue: "queue.Queue[tuple[str, object]] | None" = None
@@ -1223,6 +1235,14 @@ class RuntimeService(QObject):
     def guardrails(self) -> dict[str, object]:  # type: ignore[override]
         return dict(self._guardrails)
 
+    @Property("QVariantList", notify=strategyConfigsChanged)
+    def strategyConfigs(self) -> list[dict[str, object]]:  # type: ignore[override]
+        return [deepcopy(entry) for entry in self._strategy_configs]
+
+    @Property("QVariantMap", notify=riskControlsChanged)
+    def riskControls(self) -> dict[str, object]:  # type: ignore[override]
+        return deepcopy(self._risk_controls)
+
     @Property("QVariantMap", notify=operatorActionChanged)
     def lastOperatorAction(self) -> dict[str, object]:  # type: ignore[override]
         if self._last_operator_action is None:
@@ -1261,6 +1281,49 @@ class RuntimeService(QObject):
         """Pozwala QML-owi ręcznie odświeżyć handshake."""
 
         return self._refresh_cloud_handshake(force=True)
+
+    @Slot(result="QVariantList")
+    def loadStrategyConfigs(self) -> list[dict[str, object]]:
+        self._strategy_configs = self._load_strategy_configs()
+        self.strategyConfigsChanged.emit()
+        return self.strategyConfigs
+
+    @Slot(str, "QVariantMap", result="QVariantMap")
+    def saveStrategyConfig(self, strategy_id: str, payload: Mapping[str, object]) -> dict[str, object]:
+        result = self._sanitize_strategy_config(strategy_id, payload)
+        if not result["success"]:
+            return result
+        sanitized = result["strategy"]
+        existing_ids = [entry.get("id") for entry in self._strategy_configs]
+        updated: list[dict[str, object]] = []
+        replaced = False
+        for entry in self._strategy_configs:
+            if entry.get("id") == sanitized["id"]:
+                updated.append(deepcopy(sanitized))
+                replaced = True
+            else:
+                updated.append(deepcopy(entry))
+        if not replaced:
+            updated.append(deepcopy(sanitized))
+        self._strategy_configs = updated
+        self._persist_strategy_configs()
+        self.strategyConfigsChanged.emit()
+        message = "Zaktualizowano strategię" if strategy_id in existing_ids else "Dodano nową strategię"
+        return {"success": True, "message": message, "strategy": deepcopy(sanitized)}
+
+    @Slot(result="QVariantMap")
+    def loadRiskControls(self) -> dict[str, object]:
+        self._risk_controls = self._load_risk_controls()
+        self.riskControlsChanged.emit()
+        return self.riskControls
+
+    @Slot("QVariantMap", result="QVariantMap")
+    def saveRiskControls(self, payload: Mapping[str, object]) -> dict[str, object]:
+        sanitized = self._sanitize_risk_controls(payload)
+        self._risk_controls = sanitized
+        self._persist_risk_controls()
+        self.riskControlsChanged.emit()
+        return {"success": True, "message": "Zapisano limity ryzyka", "riskControls": deepcopy(sanitized)}
 
     def _update_feed_health(
         self,
@@ -3297,6 +3360,129 @@ class RuntimeService(QObject):
             return float(value)
         except (TypeError, ValueError):
             return None
+
+    def _load_strategy_configs(self) -> list[dict[str, object]]:
+        try:
+            if self._strategy_config_path.exists():
+                with self._strategy_config_path.open("r", encoding="utf-8") as handle:
+                    payload = yaml.safe_load(handle) or []
+                    if isinstance(payload, list):
+                        sanitized: list[dict[str, object]] = []
+                        for entry in payload:
+                            if isinstance(entry, Mapping):
+                                normalized = self._sanitize_strategy_config(entry.get("id", ""), entry)
+                                if normalized.get("success"):
+                                    sanitized.append(normalized["strategy"])
+                        if sanitized:
+                            return sanitized
+        except Exception:  # pragma: no cover - diagnostyka środowiska
+            _LOGGER.debug("Nie udało się wczytać strategies.yaml", exc_info=True)
+        return self._default_strategy_configs()
+
+    def _persist_strategy_configs(self) -> None:
+        try:
+            self._strategy_config_path.parent.mkdir(parents=True, exist_ok=True)
+            with self._strategy_config_path.open("w", encoding="utf-8") as handle:
+                yaml.safe_dump(self._strategy_configs, handle, sort_keys=False, allow_unicode=True)
+        except OSError:  # pragma: no cover - diagnostyka zapisu
+            _LOGGER.debug("Nie udało się zapisać strategies.yaml", exc_info=True)
+
+    def _default_strategy_configs(self) -> list[dict[str, object]]:
+        return [
+            {
+                "id": "grid_usdt",
+                "name": "Grid USDT",
+                "mode": "grid",
+                "profile": "balanced",
+                "params": {
+                    "exchange": "binance",
+                    "symbol": "BTC/USDT",
+                    "gridLevels": 7,
+                    "takeProfitPct": 1.2,
+                    "stopLossPct": 2.5,
+                },
+            },
+            {
+                "id": "dca_eth",
+                "name": "DCA ETH",
+                "mode": "dca",
+                "profile": "conservative",
+                "params": {
+                    "exchange": "kraken",
+                    "symbol": "ETH/USD",
+                    "baseOrder": 150.0,
+                    "safetyOrder": 120.0,
+                    "maxSafetyOrders": 4,
+                    "takeProfitPct": 1.0,
+                    "stopLossPct": 3.0,
+                },
+            },
+        ]
+
+    def _sanitize_strategy_config(self, strategy_id: str, payload: Mapping[str, object]) -> dict[str, object]:
+        identifier = str(strategy_id or payload.get("id") or "").strip()
+        if not identifier:
+            return {"success": False, "message": "Identyfikator strategii jest wymagany", "strategy": {}}
+        name = str(payload.get("name") or identifier).strip()
+        mode = str(payload.get("mode") or "custom").strip()
+        profile = str(payload.get("profile") or "balanced").strip()
+        params_raw = payload.get("params")
+        params: dict[str, object] = {}
+        if isinstance(params_raw, Mapping):
+            for key, value in params_raw.items():
+                key_str = str(key)
+                if isinstance(value, (int, float)):
+                    params[key_str] = float(value)
+                else:
+                    params[key_str] = value
+        strategy = {"id": identifier, "name": name, "mode": mode, "profile": profile, "params": params}
+        return {"success": True, "strategy": strategy}
+
+    def _load_risk_controls(self) -> dict[str, object]:
+        try:
+            if self._risk_controls_path.exists():
+                with self._risk_controls_path.open("r", encoding="utf-8") as handle:
+                    payload = yaml.safe_load(handle) or {}
+                    if isinstance(payload, Mapping):
+                        return self._sanitize_risk_controls(payload)
+        except Exception:  # pragma: no cover - diagnostyka środowiska
+            _LOGGER.debug("Nie udało się wczytać risk_controls.yaml", exc_info=True)
+        return self._default_risk_controls()
+
+    def _persist_risk_controls(self) -> None:
+        try:
+            self._risk_controls_path.parent.mkdir(parents=True, exist_ok=True)
+            with self._risk_controls_path.open("w", encoding="utf-8") as handle:
+                yaml.safe_dump(self._risk_controls, handle, sort_keys=False, allow_unicode=True)
+        except OSError:  # pragma: no cover - diagnostyka zapisu
+            _LOGGER.debug("Nie udało się zapisać risk_controls.yaml", exc_info=True)
+
+    def _default_risk_controls(self) -> dict[str, object]:
+        return {
+            "takeProfitPct": 1.5,
+            "stopLossPct": 2.0,
+            "maxOpenPositions": 5,
+            "maxPositionUsd": 5000.0,
+            "maxSlippagePct": 0.6,
+            "killSwitch": False,
+        }
+
+    def _sanitize_risk_controls(self, payload: Mapping[str, object]) -> dict[str, object]:
+        base = self._default_risk_controls()
+        for key in ("takeProfitPct", "stopLossPct", "maxSlippagePct"):
+            value = self._safe_float(payload.get(key))
+            if value is not None:
+                base[key] = max(0.0, float(value))
+        max_open_positions = payload.get("maxOpenPositions")
+        try:
+            base["maxOpenPositions"] = max(0, int(max_open_positions))
+        except (TypeError, ValueError):
+            pass
+        max_position_usd = self._safe_float(payload.get("maxPositionUsd"))
+        if max_position_usd is not None:
+            base["maxPositionUsd"] = max(0.0, float(max_position_usd))
+        base["killSwitch"] = bool(payload.get("killSwitch", base.get("killSwitch", False)))
+        return base
 
     def _guardrail_block_reason(self) -> str | None:
         sla_state = str(self._feed_sla_report.get("sla_state", "")).strip().lower()

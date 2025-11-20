@@ -22,8 +22,10 @@ ApplicationWindow {
         ({ panelId: "diagnosticsPanel", title: qsTr("Diagnostyka"), icon: "diagnostics", defaultColumn: 0, defaultOrder: 3 }),
         ({ panelId: "chartView", title: qsTr("Chart & Decision Stream"), icon: "cloud", defaultColumn: 1, defaultOrder: 0 }),
         ({ panelId: "strategyWorkbench", title: qsTr("Strategy Workbench"), icon: "package", defaultColumn: 1, defaultOrder: 1 }),
-        ({ panelId: "modeWizardPanel", title: qsTr("Tryby pracy"), icon: "mode_wizard", defaultColumn: 1, defaultOrder: 2 }),
-        ({ panelId: "strategyManagerPanel", title: qsTr("Strategy Manager"), icon: "strategy_manager", defaultColumn: 1, defaultOrder: 3 })
+        ({ panelId: "strategiesPanel", title: qsTr("Strategie"), icon: "strategy_manager", defaultColumn: 1, defaultOrder: 2 }),
+        ({ panelId: "riskControlsPanel", title: qsTr("Risk Controls"), icon: "shield", defaultColumn: 1, defaultOrder: 3 }),
+        ({ panelId: "modeWizardPanel", title: qsTr("Tryby pracy"), icon: "mode_wizard", defaultColumn: 1, defaultOrder: 4 }),
+        ({ panelId: "strategyManagerPanel", title: qsTr("Strategy Manager"), icon: "strategy_manager", defaultColumn: 1, defaultOrder: 5 })
     ]
 
     property var panelRegistry: ({
@@ -31,6 +33,8 @@ ApplicationWindow {
         "telemetryPanel": { title: qsTr("Telemetria feedu"), icon: "diagnostics", component: telemetryPanelComponent },
         "chartView": { title: qsTr("Chart & Decision Stream"), icon: "cloud", component: chartViewComponent },
         "strategyWorkbench": { title: qsTr("Strategy Workbench"), icon: "package", component: strategyWorkbenchComponent },
+        "strategiesPanel": { title: qsTr("Strategie"), icon: "strategy_manager", component: strategiesPanelComponent },
+        "riskControlsPanel": { title: qsTr("Risk Controls"), icon: "shield", component: riskControlsPanelComponent },
         "modeWizardPanel": { title: qsTr("Tryby pracy"), icon: "mode_wizard", component: modeWizardPanelComponent },
         "strategyManagerPanel": { title: qsTr("Strategy Manager"), icon: "strategy_manager", component: strategyManagerPanelComponent },
         "diagnosticsPanel": { title: qsTr("Diagnostyka"), icon: "diagnostics", component: diagnosticsPanelComponent },
@@ -585,6 +589,26 @@ ApplicationWindow {
                     }
                 }
             }
+        }
+    }
+
+    Component {
+        id: strategiesPanelComponent
+        Views.Strategies {
+            Layout.fillWidth: true
+            Layout.fillHeight: true
+            runtimeService: runtimeService
+            designSystem: designSystem
+        }
+    }
+
+    Component {
+        id: riskControlsPanelComponent
+        Views.RiskControls {
+            Layout.fillWidth: true
+            Layout.fillHeight: true
+            runtimeService: runtimeService
+            designSystem: designSystem
         }
     }
 
