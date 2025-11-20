@@ -42,6 +42,60 @@ ApplicationWindow {
         themeBridge: theme
     }
 
+    Dialog {
+        id: startupDialog
+        modal: true
+        standardButtons: Dialog.Ok
+        anchors.centerIn: parent
+        title: qsTr("Stan backendu")
+        property string body: ""
+        onAccepted: visible = false
+
+        contentItem: ColumnLayout {
+            spacing: 12
+            padding: 16
+
+            Label {
+                id: statusBody
+                text: startupDialog.body
+                wrapMode: Text.WordWrap
+                color: designSystem.color("textPrimary")
+                Layout.preferredWidth: 420
+            }
+
+            Label {
+                text: qsTr("Jeśli problem dotyczy konfiguracji, sprawdź plik runtime.yaml lub flagę cloud.")
+                wrapMode: Text.WordWrap
+                color: designSystem.color("textSecondary")
+                visible: startupDialog.title.indexOf(qsTr("Błąd")) !== -1
+            }
+        }
+    }
+
+    Connections {
+        target: runtimeService
+        function onErrorMessageChanged() {
+            if (!runtimeService)
+                return
+            if (runtimeService.errorMessage && runtimeService.errorMessage.length > 0) {
+                startupDialog.title = qsTr("Błąd uruchomienia runtime")
+                startupDialog.body = runtimeService.errorMessage
+                startupDialog.open()
+            }
+        }
+        function onCloudRuntimeStatusChanged() {
+            if (!runtimeService)
+                return
+            const status = runtimeService.cloudRuntimeStatus || {}
+            if (status.status === "ready") {
+                const targetLabel = status.target || (cloudRuntimeEnabled ? qsTr("profil cloud") : qsTr("tryb lokalny"))
+                startupDialog.title = qsTr("Runtime gotowy")
+                startupDialog.body = qsTr("Połączenie z backendem %1 aktywne.").arg(targetLabel)
+                startupDialog.open()
+            }
+        }
+    }
+
     Menu {
         id: panelMenu
         Repeater {

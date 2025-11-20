@@ -3,6 +3,8 @@
 ## Wprowadzenie
 Ten przewodnik opisuje kompletny proces przygotowania, konfiguracji i obsługi lokalnego bota handlowego. Dokument stanowi podstawową referencję dla użytkowników końcowych dystrybucji desktopowej.
 
+> **Uwaga etapowa:** aktywny produkt to **Stage6 (PySide6/QML)**. Odwołania do Stage5 mają charakter wyłącznie historyczny i są przeniesione do `archive/` – nie są wymagane ani ładowane podczas pracy aplikacji.
+
 ## Wymagania wstępne
 - System operacyjny Windows 11, macOS 13+ lub Linux (Ubuntu 22.04 LTS / Fedora 39).
 - Procesor x86_64 lub Apple Silicon, co najmniej 16 GB RAM.
