@@ -22,8 +22,10 @@ ApplicationWindow {
         ({ panelId: "diagnosticsPanel", title: qsTr("Diagnostyka"), icon: "diagnostics", defaultColumn: 0, defaultOrder: 3 }),
         ({ panelId: "chartView", title: qsTr("Chart & Decision Stream"), icon: "cloud", defaultColumn: 1, defaultOrder: 0 }),
         ({ panelId: "strategyWorkbench", title: qsTr("Strategy Workbench"), icon: "package", defaultColumn: 1, defaultOrder: 1 }),
-        ({ panelId: "modeWizardPanel", title: qsTr("Tryby pracy"), icon: "mode_wizard", defaultColumn: 1, defaultOrder: 2 }),
-        ({ panelId: "strategyManagerPanel", title: qsTr("Strategy Manager"), icon: "strategy_manager", defaultColumn: 1, defaultOrder: 3 })
+        ({ panelId: "strategiesPanel", title: qsTr("Strategie"), icon: "strategy_manager", defaultColumn: 1, defaultOrder: 2 }),
+        ({ panelId: "riskControlsPanel", title: qsTr("Risk Controls"), icon: "shield", defaultColumn: 1, defaultOrder: 3 }),
+        ({ panelId: "modeWizardPanel", title: qsTr("Tryby pracy"), icon: "mode_wizard", defaultColumn: 1, defaultOrder: 4 }),
+        ({ panelId: "strategyManagerPanel", title: qsTr("Strategy Manager"), icon: "strategy_manager", defaultColumn: 1, defaultOrder: 5 })
     ]
 
     property var panelRegistry: ({
@@ -31,6 +33,8 @@ ApplicationWindow {
         "telemetryPanel": { title: qsTr("Telemetria feedu"), icon: "diagnostics", component: telemetryPanelComponent },
         "chartView": { title: qsTr("Chart & Decision Stream"), icon: "cloud", component: chartViewComponent },
         "strategyWorkbench": { title: qsTr("Strategy Workbench"), icon: "package", component: strategyWorkbenchComponent },
+        "strategiesPanel": { title: qsTr("Strategie"), icon: "strategy_manager", component: strategiesPanelComponent },
+        "riskControlsPanel": { title: qsTr("Risk Controls"), icon: "shield", component: riskControlsPanelComponent },
         "modeWizardPanel": { title: qsTr("Tryby pracy"), icon: "mode_wizard", component: modeWizardPanelComponent },
         "strategyManagerPanel": { title: qsTr("Strategy Manager"), icon: "strategy_manager", component: strategyManagerPanelComponent },
         "diagnosticsPanel": { title: qsTr("Diagnostyka"), icon: "diagnostics", component: diagnosticsPanelComponent },
@@ -40,6 +44,60 @@ ApplicationWindow {
     Styles.DesignSystem {
         id: designSystem
         themeBridge: theme
+    }
+
+    Dialog {
+        id: startupDialog
+        modal: true
+        standardButtons: Dialog.Ok
+        anchors.centerIn: parent
+        title: qsTr("Stan backendu")
+        property string body: ""
+        onAccepted: visible = false
+
+        contentItem: ColumnLayout {
+            spacing: 12
+            padding: 16
+
+            Label {
+                id: statusBody
+                text: startupDialog.body
+                wrapMode: Text.WordWrap
+                color: designSystem.color("textPrimary")
+                Layout.preferredWidth: 420
+            }
+
+            Label {
+                text: qsTr("Jeśli problem dotyczy konfiguracji, sprawdź plik runtime.yaml lub flagę cloud.")
+                wrapMode: Text.WordWrap
+                color: designSystem.color("textSecondary")
+                visible: startupDialog.title.indexOf(qsTr("Błąd")) !== -1
+            }
+        }
+    }
+
+    Connections {
+        target: runtimeService
+        function onErrorMessageChanged() {
+            if (!runtimeService)
+                return
+            if (runtimeService.errorMessage && runtimeService.errorMessage.length > 0) {
+                startupDialog.title = qsTr("Błąd uruchomienia runtime")
+                startupDialog.body = runtimeService.errorMessage
+                startupDialog.open()
+            }
+        }
+        function onCloudRuntimeStatusChanged() {
+            if (!runtimeService)
+                return
+            const status = runtimeService.cloudRuntimeStatus || {}
+            if (status.status === "ready") {
+                const targetLabel = status.target || (cloudRuntimeEnabled ? qsTr("profil cloud") : qsTr("tryb lokalny"))
+                startupDialog.title = qsTr("Runtime gotowy")
+                startupDialog.body = qsTr("Połączenie z backendem %1 aktywne.").arg(targetLabel)
+                startupDialog.open()
+            }
+        }
     }
 
     Menu {
@@ -531,6 +589,26 @@ ApplicationWindow {
                     }
                 }
             }
+        }
+    }
+
+    Component {
+        id: strategiesPanelComponent
+        Views.Strategies {
+            Layout.fillWidth: true
+            Layout.fillHeight: true
+            runtimeService: runtimeService
+            designSystem: designSystem
+        }
+    }
+
+    Component {
+        id: riskControlsPanelComponent
+        Views.RiskControls {
+            Layout.fillWidth: true
+            Layout.fillHeight: true
+            runtimeService: runtimeService
+            designSystem: designSystem
         }
     }
 

@@ -3,6 +3,8 @@
 ## Opis projektu
 Repozytorium zawiera kompletny stack aplikacji desktopowej do automatycznego handlu kryptowalutami. Projekt obejmuje modułowy backend (`bot_core/**`), interfejs Qt/QML (`ui/**`), narzędzia do AI, strategii, licencjonowania oraz procesy dystrybucji offline.
 
+> **Status etapu:** aktywny kod to wyłącznie **Stage6 (PySide6/QML)**. Wszelkie materiały Stage5 znajdują się jedynie w katalogu `archive/` i nie są ładowane przez runtime ani instalatory.
+
 ## Kluczowe funkcjonalności
 - Integracja z najważniejszymi giełdami (Binance, Coinbase, Kraken, OKX, Bitget, Bybit) w trybie live i papierowym.
 - Zaawansowany pipeline AI: trening walk-forward, walidacja jakości, automatyczne retrainingi.

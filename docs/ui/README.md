@@ -18,6 +18,12 @@
 * Nowy panel **Explainability** korzysta z `bot_core.ui.api.build_explainability_feed`, aby prezentować listę ostatnich decyzji AI wraz z wiodącymi cechami modelu. Dane pobierane są z dziennika decyzji (`TradingDecisionJournal`) i zawierają nazwę modelu, metodę wyjaśnienia oraz top cechy pozytywne/negatywne.
 * Sekcja **Runtime Overview** otrzymała panel **Risk Journal**, który łączy się z usługą `RuntimeService.riskMetrics`/`riskTimeline` i prezentuje zagregowane blokady, zamrożenia oraz stress overrides. Panel zawiera wykres aktywności decyzji, filtry po strategii i sygnałach ryzyka, żetony z najczęściej flagowanymi strategiami oraz najczęściej pojawiającymi się flagami/stress failure, podsumowanie ostatniej akcji operatora, sygnalizację ostatnich blokad/zamrożeń/override'ów, karty ze statusem strategii wymagających uwagi (liczniki blokad/zamrożeń/override'ów + ostatnie zdarzenie) oraz modal do drill-downu (z akcjami zamrożenia/odblokowania portfela wywoływanymi na `RuntimeService`).
 
+## Panele Strategii i Risk Controls (Stage6 PySide/QML)
+
+* Lokalizacja widoków: `ui/pyside_app/qml/views/Strategies.qml` oraz `ui/pyside_app/qml/views/RiskControls.qml` (rejestrowane w `MainWindow.qml`).
+* Backend: `RuntimeService.strategyConfigs`/`saveStrategyConfig` oraz `RuntimeService.riskControls`/`saveRiskControls` z mockami danych dla trybu demo, zapis w `config/strategies.yaml` i `config/risk_controls.yaml` jeśli katalog istnieje.
+* Instrukcja użytkownika i lista pól konfiguracyjnych: [strategies_risk_panels.md](strategies_risk_panels.md).
+
 ## Offline Runtime API dla UI
 
 * Backend udostępnia funkcję `bot_core.ui.api.build_runtime_snapshot`, która zbiera migawkę portfela, statusy giełd, katalog strategii oraz najnowsze wpisy explainability/alertów. Snapshot jest zgodny z wymaganiami panelu dashboardu i konfiguratora strategii.
