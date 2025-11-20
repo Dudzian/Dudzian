@@ -39,6 +39,12 @@
 2. **Uporządkowanie API AutoTradera** – udostępnić publiczną metodę wyzwalającą pojedynczy cykl decyzyjny oraz zredukować zależności od atrybutów `_execution_context`/`_schedule_mode`, co uprości dalszą automatyzację i testowanie.【F:bot_core/auto_trader/app.py†L1-L200】
 3. **Marketplace i raportowanie futures** – utrzymać pipeline `exchange-report` (raport `reports/exchanges/*.csv` + snapshot `signal_quality/`), aktualizować `var/metrics/long_poll_snapshots.json` i reagować na statusy `long_poll_metrics_status`/`hypercare_*`, aby zachować przewagę nad CryptoHopperem i Gunbotem.【F:.github/workflows/ci.yml†L250-L320】【F:scripts/list_exchange_adapters.py†L300-L420】
 
+## Checklista „brak zależności na archive/**” (do cyklicznego przeglądu commitów)
+- [ ] `pytest tests/test_no_archive_imports.py` – blokuje importy `archive/**` i wymusza brak modułów Stage5 w kodzie produkcyjnym.
+- [ ] `rg "archive/hypercare_stage5" docs config scripts` – ręczna weryfikacja, że wzmianki pozostają jedynie w sekcjach historycznych i nie trafiają do nowych instrukcji operacyjnych.
+- [ ] Review `pyproject.toml`/`setup.cfg` pod kątem ewentualnych zmian scope narzędzi statycznych – upewnij się, że `archive/**` nadal jest wykluczony z mypy/ruff i nie trafia do paczek.
+- [ ] Przegląd nowych checklist/runbooków: brak zaleceń uruchamiania narzędzi Stage5 lub kopiowania artefaktów z `archive/` do ścieżek runtime.
+
 ## Proponowane sprinty
 ### Sprint 3 – Obserwowalność runtime
 - Zdefiniować progi SLA i kanały eskalacji dla `feedHealth`, generując alerty HyperCare i widoki statusu na podstawie metryk long-pollowych.【F:ui/backend/runtime_service.py†L600-L990】【F:ui/qml/dashboard/RuntimeOverview.qml†L640-L760】

@@ -35,7 +35,7 @@ Pełne logi testów są wersjonowane w katalogu `logs/` wraz z podpisami HMAC ge
 ## Wnioski i rekomendacje
 1. **Stabilność**: Harness ryzyka pokrywa scenariusze kumulacji ekspozycji w trybie multi-strategy – rekomendujemy uruchamianie suite’u regression co najmniej raz dziennie w pipeline’ie CI `run_paper_smoke_ci.py`.
 2. **Monitoring**: Dostarczono zintegrowane metryki scheduler-a/strategii oraz reguły Alertmanagera – zalecane jest bieżące monitorowanie paneli Grafany i logów decision logu w celu wychwycenia regresji budżetów ryzyka.
-3. **Przejście do kolejnego etapu**: Przygotowano pełną specyfikację oraz dokument discovery dostępne w katalogu `archive/hypercare_stage5`. Zadania obejmują optymalizację kosztów transakcyjnych, rozszerzenie decision engine’u i Observability+, przy zachowaniu rygorów compliance oraz podpisów HMAC.
+3. **Przejście do kolejnego etapu**: Przygotowano pełną specyfikację oraz dokument discovery – historyczne materiały Stage5 znajdują się wyłącznie w `archive/hypercare_stage5` i nie są częścią aktywnego Stage6. Zadania obejmują optymalizację kosztów transakcyjnych, rozszerzenie decision engine’u i Observability+, przy zachowaniu rygorów compliance oraz podpisów HMAC.
 
 ## Status iteracji 4AA
 - **Postęp Etapu 4**: 40/40 (100 %) – pasek `[####################]`.
