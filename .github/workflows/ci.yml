@@ -295,7 +295,7 @@ jobs:
         uses: jurplel/install-qt-action@v3
         with:
           version: 6.5.3
-          modules: qtcharts qtquickcontrols2 qtdeclarative
+          modules: qtcharts
 
       - name: Configure CMake
         run: cmake -S ui -B ui/build-tests -G Ninja -DBUILD_TESTING=ON -DCMAKE_PREFIX_PATH=$Qt6_DIR
@@ -649,7 +649,7 @@ jobs:
         uses: jurplel/install-qt-action@v3
         with:
           version: 6.5.3
-          modules: qtcharts qtquickcontrols2 qtdeclarative
+          modules: qtcharts
 
       - name: Build Qt bundle
         shell: bash
