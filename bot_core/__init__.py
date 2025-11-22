@@ -1,14 +1,23 @@
 """Podstawowy pakiet runtime bota handlowego."""
 from __future__ import annotations
 
-from typing import Any, Callable
+import importlib
+from typing import TYPE_CHECKING, Any, Callable
 
-try:  # pragma: no cover - komponent auto_trader może nie być dostępny
+if TYPE_CHECKING:  # pragma: no cover - tylko podpowiedzi typów
     from .auto_trader import AutoTrader, EmitterLike, RiskDecision
-except Exception:  # pragma: no cover - zapewnia bezpieczny import pakietu
-    AutoTrader = None  # type: ignore[assignment]
-    EmitterLike = object  # type: ignore[assignment]
-    RiskDecision = None  # type: ignore[assignment]
+    from .trading import TradingEngine, TradingEngineFactory, TradingParameters, TradingStrategies
+
+# Eksporty wymagające zależności opcjonalnych – ładowane leniwie w __getattr__
+_OPTIONAL_IMPORTS: dict[str, str] = {
+    "AutoTrader": ".auto_trader",
+    "EmitterLike": ".auto_trader",
+    "RiskDecision": ".auto_trader",
+    "TradingEngine": ".trading",
+    "TradingEngineFactory": ".trading",
+    "TradingParameters": ".trading",
+    "TradingStrategies": ".trading",
+}
 
 try:  # pragma: no cover - kanały alertów mogą wymagać zależności opcjonalnych
     from .alerts import (
@@ -70,22 +79,6 @@ except Exception:  # pragma: no cover
     def bootstrap_environment(*_: Any, **__: Any) -> Any:  # type: ignore[misc]
         raise RuntimeError("Runtime bootstrap is not available")
 
-try:  # pragma: no cover - moduły tradingu mogą wymagać dodatkowych zależności
-    from .trading import (
-        TradingEngine,
-        TradingEngineFactory,
-        TradingParameters,
-        TradingStrategies,
-    )
-except Exception:  # pragma: no cover
-    TradingEngine = TradingEngineFactory = TradingStrategies = None  # type: ignore[assignment]
-
-    class TradingParameters:  # type: ignore[override]
-        """Zaślepka używana, gdy moduł tradingu jest niedostępny."""
-
-        def __init__(self, *_: Any, **__: Any) -> None:
-            raise RuntimeError("Trading module is not available")
-
 try:  # pragma: no cover - komponenty bezpieczeństwa mogą nie być obecne
     from .security import (
         KeyringSecretStorage,
@@ -131,3 +124,16 @@ __all__ = [
     "get_sms_provider",
     "load_core_config",
 ]
+
+
+def __getattr__(name: str) -> Any:  # pragma: no cover - leniwe importy
+    module_name = _OPTIONAL_IMPORTS.get(name)
+    if module_name is None:
+        raise AttributeError(f"module 'bot_core' has no attribute {name!r}")
+    try:
+        module = importlib.import_module(module_name, __name__)
+        value = getattr(module, name)
+    except Exception as exc:  # pragma: no cover - zachowaj degradację
+        raise RuntimeError(f"{name} is not available: {exc}") from exc
+    globals()[name] = value
+    return value

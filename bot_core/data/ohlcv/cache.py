@@ -87,10 +87,11 @@ class CachedOHLCVSource(DataSource):
         cached_rows, columns = self._load_cached_payload(cache_key)
 
         snapshot_fetcher = self.snapshot_fetcher
-        if snapshot_fetcher is None and self.snapshots_enabled:
+        if snapshot_fetcher is None and (self.snapshots_enabled or getattr(self.upstream, "exchange_adapter", None)):
             snapshot_fetcher = self._fallback_snapshot_fetcher()
             if snapshot_fetcher is not None:
                 self.snapshot_fetcher = snapshot_fetcher
+                self.snapshots_enabled = True
 
         matching_cached_rows = [
             row for row in cached_rows if row and request.start <= float(row[0]) <= request.end
