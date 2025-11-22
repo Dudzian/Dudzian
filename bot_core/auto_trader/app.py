@@ -29,7 +29,7 @@ from collections.abc import Iterable
 from contextlib import contextmanager
 from dataclasses import asdict, dataclass, is_dataclass, replace
 from types import SimpleNamespace
-from typing import Any, Callable, Dict, Mapping, Optional, Protocol, Sequence, cast
+from typing import TYPE_CHECKING, Any, Callable, Dict, Mapping, Optional, Protocol, Sequence, cast
 
 from concurrent.futures import ThreadPoolExecutor
 
@@ -75,10 +75,6 @@ from bot_core.exchanges.base import OrderRequest
 from bot_core.risk.engine import ThresholdRiskEngine
 from bot_core.observability import MetricsRegistry, get_global_metrics_registry
 from bot_core.trading.strategies import StrategyCatalog
-from bot_core.strategies.regime_workflow import (
-    RegimePresetActivation,
-    StrategyRegimeWorkflow,
-)
 from bot_core.trading.strategy_aliasing import (
     StrategyAliasResolver,
     canonical_alias_map,
@@ -101,6 +97,13 @@ from bot_core.runtime.journal_analysis import (
 
 
 LOGGER = logging.getLogger(__name__)
+
+
+if TYPE_CHECKING:  # pragma: no cover - typing only
+    from bot_core.strategies.regime_workflow import (
+        RegimePresetActivation,
+        StrategyRegimeWorkflow,
+    )
 
 
 _PERFORMANCE_EXECUTOR: ThreadPoolExecutor | None = None
@@ -3404,9 +3407,11 @@ class AutoTrader:
                 return regime
         return None
 
-    def _initialize_strategy_regime_workflow(self) -> StrategyRegimeWorkflow | None:
+    def _initialize_strategy_regime_workflow(self) -> "StrategyRegimeWorkflow" | None:
         try:
-            return StrategyRegimeWorkflow(activation_history_limit=64)
+            from bot_core.strategies import regime_workflow
+
+            return regime_workflow.StrategyRegimeWorkflow(activation_history_limit=64)
         except Exception:  # pragma: no cover - środowiska light bez strategii
             LOGGER.debug("StrategyRegimeWorkflow initialization failed", exc_info=True)
             return None
@@ -3458,7 +3463,7 @@ class AutoTrader:
         summary: RegimeSummary | None,
         workflow_summary: RegimeSummary | None,
         ai_context: Mapping[str, Any] | None,
-    ) -> RegimePresetActivation | None:
+    ) -> "RegimePresetActivation" | None:
         workflow = getattr(self, "_strategy_regime_workflow", None)
         if workflow is None:
             return None
@@ -3501,7 +3506,7 @@ class AutoTrader:
             return json.dumps(safe_payload, ensure_ascii=False, sort_keys=True)
 
     def _build_regime_activation_metadata(
-        self, activation: RegimePresetActivation
+        self, activation: "RegimePresetActivation"
     ) -> dict[str, Any]:
         version_meta: dict[str, Any] = {}
         raw_meta = getattr(activation.version, "metadata", None)
@@ -3582,7 +3587,7 @@ class AutoTrader:
 
     def _apply_strategy_regime_activation(
         self,
-        activation: RegimePresetActivation | None,
+        activation: "RegimePresetActivation" | None,
     ) -> None:
         if activation is None:
             return
