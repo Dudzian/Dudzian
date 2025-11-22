@@ -1,0 +1,27 @@
+{
+  "symbol": "BTCUSDT",
+  "mid_price": 47500.0,
+  "avg_depth_usd": 1850000.0,
+  "avg_spread_bps": 6.0,
+  "funding_rate_bps": 8.5,
+  "sentiment_score": 0.42,
+  "realized_volatility": 0.32,
+  "weight": 1.0,
+  "baseline": {
+    "symbol": "BTCUSDT",
+    "mid_price": 47500.0,
+    "avg_depth_usd": 1850000.0,
+    "avg_spread_bps": 6.0,
+    "funding_rate_bps": 8.5,
+    "sentiment_score": 0.42,
+    "realized_volatility": 0.32,
+    "weight": 1.0
+  },
+  "metadata": {
+    "source": "static_fixture",
+    "generated_at": "2024-11-21T00:00:00Z",
+    "notes": [
+      "Seeded fixture to unblock Stress Lab when synthetic fallback is disabled"
+    ]
+  }
+}

@@ -14,6 +14,11 @@ from bot_core.observability.pandas_warnings import capture_pandas_warnings
 
 
 _LOGGER = logging.getLogger(__name__)
+# Upewnij się, że logger ma co najmniej jeden handler, aby ostrzeżenia pandas
+# były emitowane przez standardowy łańcuch loggerów (np. przechwytywany przez
+# caplog w testach), zamiast trafiać do lastResort handlera.
+if not _LOGGER.handlers:
+    _LOGGER.addHandler(logging.NullHandler())
 
 
 @dataclass(slots=True)

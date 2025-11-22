@@ -1,0 +1,27 @@
+{
+  "symbol": "ETHUSDT",
+  "mid_price": 3420.0,
+  "avg_depth_usd": 920000.0,
+  "avg_spread_bps": 8.5,
+  "funding_rate_bps": 6.2,
+  "sentiment_score": 0.28,
+  "realized_volatility": 0.29,
+  "weight": 0.8,
+  "baseline": {
+    "symbol": "ETHUSDT",
+    "mid_price": 3420.0,
+    "avg_depth_usd": 920000.0,
+    "avg_spread_bps": 8.5,
+    "funding_rate_bps": 6.2,
+    "sentiment_score": 0.28,
+    "realized_volatility": 0.29,
+    "weight": 0.8
+  },
+  "metadata": {
+    "source": "static_fixture",
+    "generated_at": "2024-11-21T00:00:00Z",
+    "notes": [
+      "Stage6 ETH baseline aligned with static provider"
+    ]
+  }
+}
