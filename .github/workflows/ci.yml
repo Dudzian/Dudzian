@@ -7,6 +7,7 @@ on:
 
 env:
   PYSIDE6_VERSION: "6.5.2"
+  QT_DESKTOP_MODULES: "qtcharts" # qttools is unavailable for Qt 6.5.3 on Windows via aqtinstall
 
 jobs:
   prepare-pyside6-wheel:
@@ -300,7 +301,7 @@ jobs:
         uses: jurplel/install-qt-action@v3
         with:
           version: 6.5.3
-          modules: qtcharts
+          modules: ${{ env.QT_DESKTOP_MODULES }}
 
       - name: Configure CMake
         run: cmake -S ui -B ui/build-tests -G Ninja -DBUILD_TESTING=ON -DCMAKE_PREFIX_PATH=$Qt6_DIR
@@ -660,7 +661,7 @@ jobs:
         uses: jurplel/install-qt-action@v3
         with:
           version: 6.5.3
-          modules: qtcharts
+          modules: ${{ env.QT_DESKTOP_MODULES }}
 
       - name: Build Qt bundle
         shell: bash
