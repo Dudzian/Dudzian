@@ -13,9 +13,10 @@ from typing import Any, Deque, Mapping, MutableMapping, Sequence
 
 from bot_core.alerts import DriftAlertPayload, emit_model_drift_alert
 
-from . import InferenceDataCompletenessWatcher, InferenceFeatureBoundsValidator
 from .data_monitoring import (
     DataQualityException,
+    DataCompletenessWatcher as InferenceDataCompletenessWatcher,
+    FeatureBoundsValidator as InferenceFeatureBoundsValidator,
     apply_policy_to_report,
     export_drift_alert_report,
 )

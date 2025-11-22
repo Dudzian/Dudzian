@@ -52,6 +52,9 @@ jobs:
       - name: Check out repository
         uses: actions/checkout@v4
 
+      - name: Install system dependencies for UI tests
+        run: sudo apt-get update && sudo apt-get install -y libegl1
+
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
@@ -65,7 +68,7 @@ jobs:
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install -r KryptoLowca/requirements.txt
+          pip install .[dev]
           pip install pytest pytest-cov pre-commit
 
       - name: Pre-commit (ruff + mypy)
@@ -91,7 +94,6 @@ jobs:
           tests/test_telemetry_risk_profiles.py
           tests/test_trading_decision_journal.py
           tests/test_smoke_demo_strategies_cli.py
-          KryptoLowca/tests/strategies/test_registry.py
 
       - name: Upload coverage report
         uses: actions/upload-artifact@v4
@@ -106,6 +108,9 @@ jobs:
     steps:
       - name: Check out repository
         uses: actions/checkout@v4
+
+      - name: Install system dependencies for UI tests
+        run: sudo apt-get update && sudo apt-get install -y libegl1
 
       - name: Set up Python
         uses: actions/setup-python@v5
@@ -142,6 +147,9 @@ jobs:
     steps:
       - name: Check out repository
         uses: actions/checkout@v4
+
+      - name: Install system dependencies for UI tests
+        run: sudo apt-get update && sudo apt-get install -y libegl1
 
       - name: Set up Python
         uses: actions/setup-python@v5
