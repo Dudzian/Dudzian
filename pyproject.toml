@@ -87,6 +87,7 @@ dependencies = [
   "responses>=0.25",
   "httpx>=0.26",
   "anyio>=4.0",
+  "aiosqlite>=0.20",
   "respx>=0.20",
   "jsonschema>=4.21",
   "sqlalchemy>=2.0",

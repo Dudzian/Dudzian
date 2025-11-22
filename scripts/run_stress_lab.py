@@ -282,10 +282,27 @@ def _ensure_packaging_stub() -> None:
         sys.modules.setdefault("packaging.version", version_module)
 
 
+def _prepare_argv(argv: list[str] | None) -> list[str]:
+    """Ensure the merged CLI always receives a subcommand."""
+
+    args = list(sys.argv[1:] if argv is None else argv)
+    if not args:
+        return args
+
+    if args[0] in {"evaluate", "run"}:
+        return args
+
+    for arg in args:
+        if arg == "--risk-report" or arg.startswith("--risk-report="):
+            return ["evaluate", *args]
+
+    return ["run", *args]
+
+
 def main(argv: list[str] | None = None) -> int:
     _ensure_packaging_stub()
     parser = _build_parser()
-    args = parser.parse_args(sys.argv[1:] if argv is None else argv)
+    args = parser.parse_args(_prepare_argv(argv))
     return args._handler(args)
 
 
