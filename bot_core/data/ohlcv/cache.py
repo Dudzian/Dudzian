@@ -87,10 +87,11 @@ class CachedOHLCVSource(DataSource):
         cached_rows, columns = self._load_cached_payload(cache_key)
 
         snapshot_fetcher = self.snapshot_fetcher
-        if snapshot_fetcher is None and self.snapshots_enabled:
+        if snapshot_fetcher is None and (self.snapshots_enabled or getattr(self.upstream, "exchange_adapter", None)):
             snapshot_fetcher = self._fallback_snapshot_fetcher()
             if snapshot_fetcher is not None:
                 self.snapshot_fetcher = snapshot_fetcher
+                self.snapshots_enabled = True
 
         matching_cached_rows = [
             row for row in cached_rows if row and request.start <= float(row[0]) <= request.end
@@ -112,7 +113,16 @@ class CachedOHLCVSource(DataSource):
 
         rows = cached_rows
         if should_hit_upstream:
-            upstream_request = replace(request, start=request.start)
+            upstream_request = request
+            if request.limit is not None and request.limit > 0 and cached_rows:
+                try:
+                    interval_ms = interval_to_milliseconds(request.interval)
+                except (KeyError, ValueError):  # pragma: no cover - brak znanych interwałów
+                    interval_ms = None
+
+                if interval_ms:
+                    trimmed_start = max(request.start, request.end - request.limit * interval_ms)
+                    upstream_request = replace(request, start=trimmed_start)
 
             upstream_response = self._fetch_upstream_response(upstream_request, columns)
             if upstream_response.rows:

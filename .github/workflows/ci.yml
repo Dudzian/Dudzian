@@ -43,6 +43,7 @@ jobs:
           name: pyside6-wheels-linux-${{ env.PYSIDE6_VERSION }}
           path: wheelhouse
           if-no-files-found: error
+          retention-days: 3
 
   lint-and-test:
     name: Lint and Test
@@ -59,6 +60,9 @@ jobs:
         uses: actions/setup-python@v5
         with:
           python-version: "3.11"
+
+      - name: Install system dependencies for UI tests
+        run: sudo apt-get update && sudo apt-get install -y libegl1
 
       - name: Lint repository paths
         env:
@@ -100,6 +104,7 @@ jobs:
         with:
           name: coverage-report
           path: coverage.xml
+          retention-days: 3
 
   release-quality-gates:
     name: Release Quality Gates
@@ -177,6 +182,7 @@ jobs:
         with:
           name: bot-core-pytest-results
           path: test-results/pytest.xml
+          retention-days: 3
 
       - name: Generate champion diff audit report
         if: always()
@@ -194,6 +200,7 @@ jobs:
           name: champion-quality-diff
           path: audit/champion_diffs_ci
           if-no-files-found: warn
+          retention-days: 3
 
   loopback-e2e:
     name: Loopback E2E
@@ -244,6 +251,7 @@ jobs:
           path: |
             reports/exchanges
             reports/exchanges/signal_quality
+          retention-days: 3
 
       - name: Tear down compose
         if: always()
@@ -337,6 +345,7 @@ jobs:
         with:
           name: coverage-runner-smoke
           path: violation.json
+          retention-days: 3
 
   ui-tests:
     name: UI QML Tests
@@ -392,6 +401,7 @@ jobs:
           name: qml-test-diagnostics
           path: test-results/qml
           if-no-files-found: warn
+          retention-days: 3
 
   grpc-feed-integration:
     name: gRPC Decision Feed Integration
@@ -527,6 +537,7 @@ jobs:
           name: grpc-feed-pytest-results
           path: test-results/grpc
           if-no-files-found: warn
+          retention-days: 3
 
       - name: Upload decision feed metrics
         if: always()
@@ -535,6 +546,7 @@ jobs:
           name: decision-feed-metrics
           path: reports/ci/decision_feed_metrics.json
           if-no-files-found: warn
+          retention-days: 3
 
       - name: Upload feed alert diagnostics
         if: always()
@@ -545,6 +557,7 @@ jobs:
             reports/ci/decision_feed_alerts.json
             logs/ui_telemetry_alerts.jsonl
           if-no-files-found: warn
+          retention-days: 3
 
   marketplace-catalog:
     name: Marketplace Catalog Packaging
@@ -618,6 +631,7 @@ jobs:
           name: marketplace-packages
           path: marketplace-packages.tar.gz
           if-no-files-found: error
+          retention-days: 3
 
   ui-packaging:
     name: UI Packaging
@@ -663,6 +677,7 @@ jobs:
         with:
           name: ui-${{ matrix.platform }}
           path: artifacts/ui/${{ matrix.platform }}
+          retention-days: 3
 
   deploy:
     name: Release marketplace assets
@@ -712,3 +727,4 @@ jobs:
             config/marketplace/catalog.md
             config/marketplace/catalog.md.sig
           if-no-files-found: error
+          retention-days: 3
