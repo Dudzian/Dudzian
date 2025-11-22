@@ -77,12 +77,24 @@ def capture_pandas_warnings(
         filename = getattr(warning, "filename", "") or "<unknown>"
         location = f"{Path(filename).name}:{getattr(warning, 'lineno', '?')}"
 
-        logger.warning(
-            "Pandas warning captured in %s (%s): %s",
-            component,
-            location,
-            message_text,
+        record = logger.makeRecord(
+            name=logger.name,
+            level=logging.WARNING,
+            fn=filename,
+            lno=getattr(warning, "lineno", 0) or 0,
+            msg="Pandas warning captured in %s (%s): %s",
+            args=(component, location, message_text),
+            exc_info=None,
+            func=None,
+            extra=None,
         )
+        # Emit bezpośrednio do loggera oraz root loggera, aby uniknąć sytuacji,
+        # w której konfiguracja logowania korzystająca z kolejki pomija
+        # tymczasowe handlery (np. pytest caplog).
+        logger.handle(record)
+        root_logger = logging.getLogger()
+        if root_logger is not logger:
+            root_logger.handle(record)
 
         observe_pandas_warning(
             component=component,

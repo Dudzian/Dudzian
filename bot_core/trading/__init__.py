@@ -1,36 +1,22 @@
 """Pakiet strategii tradingowych w natywnym rdzeniu bota."""
 from __future__ import annotations
 
+import importlib
 import logging
-from types import SimpleNamespace
+from typing import TYPE_CHECKING, Any
 
 _LOGGER = logging.getLogger(__name__)
 
-try:  # pragma: no cover - moduł może być opcjonalny w środowiskach CI
-    from . import auto_trade as _auto_trade
+if TYPE_CHECKING:  # pragma: no cover - tylko dla analiz statycznych
     from .auto_trade import AutoTradeConfig, AutoTradeEngine
-except Exception as exc:  # pragma: no cover - degradacja środowiska
-    _LOGGER.warning("Moduł auto_trade nie jest dostępny: %s", exc)
-    _auto_trade = SimpleNamespace()
-
-    class AutoTradeConfig:  # type: ignore[override]
-        def __init__(self, *_args, **_kwargs) -> None:
-            raise RuntimeError("Moduł auto_trade nie jest dostępny w tej dystrybucji")
-
-    class AutoTradeEngine:  # type: ignore[override]
-        def __init__(self, *_args, **_kwargs) -> None:
-            raise RuntimeError("Moduł auto_trade nie jest dostępny w tej dystrybucji")
-
-_ENGINE_AVAILABLE = True
-try:  # pragma: no cover - moduł silnika może być pominięty w okrojonych buildach
-    from . import engine as _engine
-    from .engine import *  # noqa: F401,F403 - udostępnij publiczne API modułu silnika
-except Exception as exc:  # pragma: no cover - degradacja do implementacji stub
-    _LOGGER.warning("Moduł trading.engine nie został poprawnie załadowany: %s", exc)
-    _engine = SimpleNamespace(__all__=[])
-    _ENGINE_AVAILABLE = False
-
-if _ENGINE_AVAILABLE:
+    from .engine import (
+        TechnicalIndicators,
+        TechnicalIndicatorsService,
+        TradingEngine,
+        TradingEngineFactory,
+        TradingParameters,
+        TradingStrategies,
+    )
     from .regime_workflow import RegimeSwitchDecision, RegimeSwitchWorkflow
     from .strategies import (
         ArbitrageStrategy,
@@ -40,31 +26,38 @@ if _ENGINE_AVAILABLE:
         StrategyPlugin,
         TrendFollowingStrategy,
     )
-else:  # pragma: no cover - udostępnij minimalne stuby
-    RegimeSwitchDecision = SimpleNamespace  # type: ignore[assignment]
-    RegimeSwitchWorkflow = SimpleNamespace  # type: ignore[assignment]
 
-    class StrategyCatalog:  # type: ignore[override]
-        @staticmethod
-        def default() -> "StrategyCatalog":
-            raise RuntimeError("StrategyCatalog niedostępny bez modułu trading.engine")
+_OPTIONAL_EXPORTS: dict[str, str] = {
+    "AutoTradeConfig": ".auto_trade",
+    "AutoTradeEngine": ".auto_trade",
+    "RegimeSwitchDecision": ".regime_workflow",
+    "RegimeSwitchWorkflow": ".regime_workflow",
+    "StrategyCatalog": ".strategies",
+    "StrategyPlugin": ".strategies",
+    "TrendFollowingStrategy": ".strategies",
+    "DayTradingStrategy": ".strategies",
+    "MeanReversionStrategy": ".strategies",
+    "ArbitrageStrategy": ".strategies",
+    "TradingEngine": ".engine",
+    "TradingEngineFactory": ".engine",
+    "TradingParameters": ".engine",
+    "TradingStrategies": ".engine",
+    "TechnicalIndicators": ".engine",
+    "TechnicalIndicatorsService": ".engine",
+}
 
-    StrategyPlugin = TrendFollowingStrategy = DayTradingStrategy = MeanReversionStrategy = ArbitrageStrategy = SimpleNamespace  # type: ignore[assignment]
+__all__ = sorted(_OPTIONAL_EXPORTS)
 
-__all__ = list(getattr(_engine, "__all__", ())) + [
-    "AutoTradeConfig",
-    "AutoTradeEngine",
-    "RegimeSwitchDecision",
-    "RegimeSwitchWorkflow",
-    "StrategyCatalog",
-    "StrategyPlugin",
-    "TrendFollowingStrategy",
-    "DayTradingStrategy",
-    "MeanReversionStrategy",
-    "ArbitrageStrategy",
-]
 
-if "_engine" in locals():
-    del _engine
-if "_auto_trade" in locals():
-    del _auto_trade
+def __getattr__(name: str) -> Any:  # pragma: no cover - leniwy import
+    module_name = _OPTIONAL_EXPORTS.get(name)
+    if module_name is None:
+        raise AttributeError(f"module 'bot_core.trading' has no attribute {name!r}")
+    try:
+        module = importlib.import_module(module_name, __name__)
+        value = getattr(module, name)
+    except Exception as exc:  # pragma: no cover - degradacja środowiska
+        _LOGGER.warning("Moduł %s nie jest dostępny: %s", module_name, exc)
+        raise RuntimeError(f"{name} is not available: {exc}") from exc
+    globals()[name] = value
+    return value

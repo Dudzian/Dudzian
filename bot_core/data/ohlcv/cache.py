@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 import logging
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Callable, Iterable, Sequence
 
 from bot_core.data.base import CacheStorage, DataSource, OHLCVRequest, OHLCVResponse
@@ -108,13 +108,13 @@ class CachedOHLCVSource(DataSource):
                     request, deduped_timestamps
                 )
 
-        should_hit_upstream = not (
-            cache_covers_request and snapshot_fetcher is not None
-        )
+        should_hit_upstream = not cache_covers_request
 
         rows = cached_rows
         if should_hit_upstream:
-            upstream_response = self._fetch_upstream_response(request, columns)
+            upstream_request = replace(request, start=request.start)
+
+            upstream_response = self._fetch_upstream_response(upstream_request, columns)
             if upstream_response.rows:
                 rows = self._merge_rows(cached_rows, upstream_response.rows)
                 # Aktualizacja cache: zapisujemy całą serię, aby kolejne zapytania były szybkie.
