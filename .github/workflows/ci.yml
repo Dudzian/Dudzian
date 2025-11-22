@@ -6,7 +6,7 @@ on:
   pull_request:
 
 env:
-  PYSIDE6_VERSION: "6.6.1"
+  PYSIDE6_VERSION: "6.5.2"
 
 jobs:
   prepare-pyside6-wheel:
