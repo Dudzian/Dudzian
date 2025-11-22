@@ -3674,7 +3674,13 @@ class AutoTrader:
             return
         strategy = self.current_strategy or profile.default_strategy
         if profile.allowed_strategies and strategy not in profile.allowed_strategies:
-            strategy = profile.allowed_strategies[0]
+            # Preserve explicit selections (e.g., orchestrator or guardrail fallbacks)
+            # even when they fall outside the current mode's allow-list. Only coerce
+            # to the mode default when no strategy has been selected yet.
+            if not self.current_strategy:
+                strategy = profile.allowed_strategies[0]
+            else:
+                strategy = self.current_strategy
         self.current_strategy = strategy
         try:
             leverage_value = float(getattr(self, "current_leverage", 0.0))
