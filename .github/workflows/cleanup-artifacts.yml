@@ -1,0 +1,19 @@
+name: Cleanup old artifacts
+
+on:
+  schedule:
+    - cron: "0 3 * * *"
+  workflow_dispatch:
+
+permissions:
+  actions: write
+
+jobs:
+  delete-old-artifacts:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Delete artifacts older than 7 days
+        uses: crazy-max/ghaction-delete-artifacts@v2
+        with:
+          max-age: 7
+          skip-tags: true
