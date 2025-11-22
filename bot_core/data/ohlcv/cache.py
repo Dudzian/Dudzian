@@ -109,9 +109,7 @@ class CachedOHLCVSource(DataSource):
                     request, deduped_timestamps
                 )
 
-        should_hit_upstream = not (
-            cache_covers_request and snapshot_fetcher is not None
-        )
+        should_hit_upstream = not cache_covers_request
 
         rows = cached_rows
         if should_hit_upstream:
