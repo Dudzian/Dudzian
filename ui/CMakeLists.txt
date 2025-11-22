@@ -8,7 +8,7 @@ set(CMAKE_AUTOMOC ON)
 set(CMAKE_AUTORCC ON)
 set(CMAKE_AUTOUIC ON)
 
-find_package(Qt6 6.5 COMPONENTS Quick QuickControls2 Charts Widgets REQUIRED)
+find_package(Qt6 6.5 COMPONENTS Quick QuickControls2 Charts Widgets LinguistTools REQUIRED)
 
 set(UI_TRANSLATIONS
     ${CMAKE_CURRENT_SOURCE_DIR}/i18n/bot_trading_shell_en.ts
