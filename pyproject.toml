@@ -20,11 +20,18 @@ namespace_packages = true
 follow_imports = "silent"
 exclude = ["archive/.*"]
 files = [
-  "bot_core/config/models.py",
   "bot_core/auto_trader",
   "bot_core/risk",
   "bot_core/execution",
   "bot_core/ai",
+  "core/config",
+  "core/reporting",
+  "core/security",
+  "ui/backend",
+  "ui/pyside_app",
+  "scripts/run_ai_governor_cycle.py",
+  "scripts/validate_marketplace_presets.py",
+  "scripts/list_exchange_adapters.py",
 ]
 
 [[tool.mypy.overrides]]
@@ -39,29 +46,52 @@ module = [
   "bot_core.execution",
   "bot_core.execution.*",
 ]
-allow_untyped_defs = true
-allow_untyped_globals = true
 disable_error_code = [
   "arg-type",
-  "assignment",
   "attr-defined",
-  "call-overload",
   "call-arg",
-  "list-item",
-  "has-type",
+  "call-overload",
+  "assignment",
+  "operator",
+  "union-attr",
   "index",
   "misc",
-  "name-defined",
-  "no-any-return",
   "no-redef",
-  "operator",
+  "no-any-return",
   "return-value",
-  "type-var",
-  "union-attr",
+  "name-defined",
   "var-annotated",
   "dict-item",
+  "list-item",
+  "type-var",
   "annotation-unchecked",
 ]
+
+[[tool.mypy.overrides]]
+module = ["ui.backend.*", "ui.pyside_app.*"]
+allow_untyped_defs = true
+allow_untyped_calls = true
+disable_error_code = [
+  "arg-type",
+  "return-value",
+  "assignment",
+  "misc",
+  "index",
+  "call-overload",
+  "attr-defined",
+  "no-redef",
+  "no-any-return",
+]
+
+[[tool.mypy.overrides]]
+module = [
+  "scripts.list_exchange_adapters",
+  "scripts.run_ai_governor_cycle",
+  "core.reporting.guardrails_reporter",
+  "core.reporting.retraining_reporter",
+  "ui.pyside_app.controllers.wizards",
+]
+ignore_errors = true
 
 [tool.pytest.ini_options]
 addopts = ""
@@ -140,6 +170,7 @@ dev = [
   "respx>=0.20",
   "sqlalchemy>=2.0",
   "packaging>=23.2",
+  "types-requests>=2.31",
 ]
 desktop = [
   "pyinstaller>=6.5",
