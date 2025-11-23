@@ -1,6 +1,7 @@
 """Raportowanie scenariuszy przejścia demo → paper."""
 from __future__ import annotations
 
+from collections.abc import Mapping as AbcMapping, Sequence as AbcSequence
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -16,6 +17,16 @@ class StepStatus:
     name: str
     status: str
     details: Mapping[str, object]
+
+
+def _as_mapping(value: object) -> AbcMapping[str, object]:
+    return value if isinstance(value, AbcMapping) else {}
+
+
+def _as_sequence(value: object) -> AbcSequence[object]:
+    if isinstance(value, AbcSequence) and not isinstance(value, (str, bytes, bytearray)):
+        return value
+    return ()
 
 
 def _parse_timestamp(value: object) -> datetime | None:
@@ -71,8 +82,8 @@ class DemoPaperReport:
         mode = str(payload.get("mode", "unknown"))
         started_at = _parse_timestamp(payload.get("started_at"))
         finished_at = _parse_timestamp(payload.get("finished_at"))
-        errors = tuple(str(item) for item in payload.get("errors", ()))
-        warnings = tuple(str(item) for item in payload.get("warnings", ()))
+        errors = tuple(str(item) for item in _as_sequence(payload.get("errors")))
+        warnings = tuple(str(item) for item in _as_sequence(payload.get("warnings")))
         events = tuple(dict(event) for event in decision_events)
 
         duration_seconds: float | None = None
@@ -92,9 +103,9 @@ class DemoPaperReport:
             validation_status = "failed"
         validation_details = {
             "entrypoint": payload.get("entrypoint"),
-            "environment": payload.get("validation", {}).get("environment"),
-            "expected_environment": payload.get("validation", {}).get("expected_environment"),
-            "symbols": payload.get("validation", {}).get("symbols"),
+            "environment": _as_mapping(payload.get("validation")).get("environment"),
+            "expected_environment": _as_mapping(payload.get("validation")).get("expected_environment"),
+            "symbols": _as_mapping(payload.get("validation")).get("symbols"),
         }
 
         checkpoint_required = mode in {"paper", "live"}

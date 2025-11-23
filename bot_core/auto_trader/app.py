@@ -3238,11 +3238,11 @@ class AutoTrader:
         if value in (None, "", False):
             return ()
         if isinstance(value, str):
-            tokens = [value]
+            tokens: list[str] = [value]
         elif isinstance(value, Sequence) and not isinstance(value, (bytes, bytearray)):
-            tokens = list(value)
+            tokens = [str(entry) for entry in value]
         else:
-            tokens = [value]
+            tokens = [str(value)]
         normalized: list[str] = []
         for token in tokens:
             candidate = str(token).strip()
@@ -4113,7 +4113,7 @@ class AutoTrader:
             payload = state.to_mapping()
             payload["reason"] = update_reason
             payload["overrides_applied"] = [
-                item.to_mapping(include_duration=True, timezone_hint=timezone.utc)
+                item.to_mapping()
                 for item in overrides_list
             ]
             payload["override_replace"] = bool(replace)
@@ -4169,7 +4169,7 @@ class AutoTrader:
             payload = state.to_mapping()
             payload["reason"] = update_reason
             payload["remaining_overrides"] = [
-                item.to_mapping(include_duration=True, timezone_hint=timezone.utc)
+                item.to_mapping()
                 for item in filtered
             ]
             if label_filter is not None:
@@ -4671,14 +4671,14 @@ class AutoTrader:
 
             execute_fn = getattr(service, "execute", None)
             if callable(execute_fn):
-                payload: Mapping[str, object]
+                payload: dict[str, object] = {"adapter": "execute"}
                 calls_attr = getattr(service, "calls", None)
                 methods_attr = getattr(service, "methods", None)
                 previous_calls = len(calls_attr) if isinstance(calls_attr, list) else None
                 previous_methods = len(methods_attr) if isinstance(methods_attr, list) else None
                 try:
                     execute_fn(decision)
-                    payload = {"adapter": "execute", "decision": decision.to_dict()}
+                    payload["decision"] = decision.to_dict()
                 except TypeError:
                     request = self._build_order_request(symbol, decision)
                     if request.quantity <= 0:
@@ -4691,14 +4691,11 @@ class AutoTrader:
                         return
                     context = execution_context or self._resolve_execution_context()
                     execute_fn(request, context)  # type: ignore[arg-type]
-                    payload = {
-                        "adapter": "execute",
-                        "order": {
-                            "symbol": request.symbol,
-                            "side": request.side,
-                            "quantity": request.quantity,
-                            "order_type": request.order_type,
-                        },
+                    payload["order"] = {
+                        "symbol": request.symbol,
+                        "side": request.side,
+                        "quantity": request.quantity,
+                        "order_type": request.order_type,
                     }
                 else:
                     self._trim_execution_records(calls_attr, previous_calls)

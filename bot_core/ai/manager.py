@@ -269,7 +269,9 @@ def _bundle_import_errors(primary: BaseException, secondary: BaseException) -> B
     """Połącz dwa wyjątki importu w jeden obiekt z zachowaniem kontekstu."""
 
     try:
-        return ExceptionGroup("AI backend import failed", [primary, secondary])  # type: ignore[name-defined]
+        return ExceptionGroup(
+            "AI backend import failed", [primary, secondary]
+        )  # type: ignore[name-defined,type-var]
     except NameError:  # pragma: no cover - Python < 3.11
         secondary.__cause__ = primary  # type: ignore[attr-defined]
         return secondary
@@ -3754,7 +3756,7 @@ class AIManager:
             epochs,
             batch_size,
         )
-        task = asyncio.create_task(runner())
+        task: asyncio.Task[None] = asyncio.create_task(runner())
         schedule = TrainingSchedule(
             symbol=self._normalize_symbol(symbol),
             interval_seconds=float(interval_seconds),
@@ -3837,7 +3839,7 @@ class AIManager:
             baseline_provider,
             on_result,
         )
-        task = asyncio.create_task(runner())
+        task: asyncio.Task[None] = asyncio.create_task(runner())
         schedule = PipelineSchedule(
             symbol=self._normalize_symbol(symbol),
             interval_seconds=float(interval_seconds),

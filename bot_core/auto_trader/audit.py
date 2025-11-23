@@ -190,10 +190,10 @@ class DecisionAuditLog:
         )
 
         total = len(records)
-        stages = Counter()
-        symbols = Counter()
-        modes = Counter()
-        decision_ids = Counter()
+        stages: Counter[str] = Counter()
+        symbols: Counter[str] = Counter()
+        modes: Counter[str] = Counter()
+        decision_ids: Counter[str] = Counter()
         risk_snapshot_count = 0
         portfolio_snapshot_count = 0
 

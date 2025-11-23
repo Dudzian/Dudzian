@@ -3,6 +3,7 @@ from __future__ import annotations
 import datetime as _dt
 from dataclasses import dataclass
 import json
+import os
 from pathlib import Path
 from typing import Any, Mapping
 
@@ -204,11 +205,18 @@ def test_public_feed_uses_margin_default_type(monkeypatch):
     assert feed.market_type == "margin"
 
 
-def test_list_exchange_adapters_reports_futures_columns():
+def test_list_exchange_adapters_reports_futures_columns(tmp_path):
     from scripts import list_exchange_adapters as lea
 
     config = load_core_config(Path("config/core.yaml"))
     now = _dt.datetime.now(tz=_dt.timezone.utc)
+
+    signal_quality_dir = tmp_path / "signal_quality"
+    signal_quality_dir.mkdir(parents=True)
+    (signal_quality_dir / "deribit_futures.json").write_text(json.dumps({"total": 3}), encoding="utf-8")
+    (signal_quality_dir / "bitmex_futures.json").write_text(json.dumps({"total": 2}), encoding="utf-8")
+    os.utime(signal_quality_dir / "deribit_futures.json", None)
+    os.utime(signal_quality_dir / "bitmex_futures.json", None)
 
     def _snapshot(adapter: str) -> dict[str, Any]:
         return {
@@ -230,6 +238,8 @@ def test_list_exchange_adapters_reports_futures_columns():
         hypercare_summary={"failover": "ready", "latency": "ready", "cost": "ready"},
         long_poll_metrics=long_poll_metrics,
         long_poll_ttl_minutes=1440,
+        signal_quality_dir=signal_quality_dir,
+        signal_quality_ttl_hours=72,
     )
 
     def _pick(exchange: str, profile: str) -> dict[str, Any]:
@@ -243,6 +253,7 @@ def test_list_exchange_adapters_reports_futures_columns():
     assert "liquidation_feed" in deribit_live and "deribit" in (deribit_live["liquidation_feed"] or "")
     assert deribit_live["hypercare_checklist_signed"] is True
     assert deribit_live["hypercare_checklist_status"] == "signed"
+    assert deribit_live["hypercare_checklist_id"]
     assert deribit_live["missing_required_documents"] == ""
     assert deribit_live["futures_checklist_id"]
     assert deribit_live["futures_checklist_ready"] is True
@@ -252,15 +263,19 @@ def test_list_exchange_adapters_reports_futures_columns():
     assert deribit_live["long_poll_scope"] == "private"
     assert deribit_live["long_poll_latency_p95"] == pytest.approx(0.42)
     assert deribit_live["long_poll_metrics_status"] == "fresh"
+    assert deribit_live["signal_quality_snapshot_status"] == "fresh"
+    assert deribit_live["signal_quality_records"] == 3
 
     bitmex_live = _pick("bitmex", "live")
     assert bitmex_live["hypercare_checklist_signed"] is True
     assert bitmex_live["hypercare_checklist_status"] == "signed"
+    assert bitmex_live["hypercare_checklist_id"]
     assert bitmex_live["missing_required_documents"] == ""
     assert bitmex_live["futures_checklist_id"]
     assert bitmex_live["futures_checklist_ready"] is True
     assert bitmex_live["long_poll_http_errors"] == 1
     assert bitmex_live["long_poll_reconnect_success"] == 2
+    assert bitmex_live["signal_quality_snapshot_status"] == "fresh"
 
 
 def test_private_backend_receives_passphrase(monkeypatch: pytest.MonkeyPatch) -> None:

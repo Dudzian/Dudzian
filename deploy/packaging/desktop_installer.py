@@ -287,7 +287,7 @@ if __name__ == "__main__":  # pragma: no cover
 
     # ------------------------------------------------------------------
     def _write_manifest(self, stage_dir: Path, config: BundleConfig) -> dict[str, object]:
-        files = []
+        files: list[dict[str, object]] = []
         for path in sorted(stage_dir.rglob("*")):
             if path.is_file():
                 relative = path.relative_to(stage_dir).as_posix()
@@ -299,7 +299,7 @@ if __name__ == "__main__":  # pragma: no cover
                     }
                 )
 
-        manifest = {
+        manifest: dict[str, object] = {
             "version": self._version,
             "platform": config.platform,
             "created_at": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),

@@ -615,6 +615,8 @@ class MultiAccountRiskManager:
         self._base_params = dict(base_params or {})
         self._managers: Dict[str, RiskManagement] = {}
         self.logger = logging.getLogger(__name__)
+        # Historia zagregowanej wartości portfela na potrzeby obliczeń drawdownów.
+        self.portfolio_value_history: list[float] = []
 
     def _ensure_manager(
         self, account_id: str, params: Mapping[str, Any] | None

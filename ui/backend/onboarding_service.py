@@ -1,6 +1,7 @@
 """Logika onboardingowa obsługująca wybór strategii i import kluczy API."""
 from __future__ import annotations
 
+
 from dataclasses import asdict
 from typing import Callable, Iterable, Sequence
 

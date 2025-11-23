@@ -472,7 +472,7 @@ class AIModels:
     def predict(self, X: Any) -> np.ndarray:
         samples = self._flatten_samples(X)
         self._ensure_ready()
-        weights = np.concatenate(([self._bias], self._weights))  # type: ignore[arg-type]
+        weights: np.ndarray = np.concatenate(([self._bias], self._weights))  # type: ignore[arg-type]
         design = self._design_matrix(samples)
         return (design @ weights).astype(float)
 

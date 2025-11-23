@@ -8,7 +8,7 @@ import logging
 import signal
 import sys
 from pathlib import Path
-from typing import Iterable, Mapping
+from typing import Iterable, Mapping, Sequence
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 SCRIPT_DIR = Path(__file__).resolve().parent
@@ -37,7 +37,7 @@ def _configure_logging(level: str) -> None:
     )
 
 
-def _parse_args(argv: Iterable[str] | None = None) -> argparse.Namespace:
+def _parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
         "--config",
@@ -74,7 +74,7 @@ def _emit_ready(payload: Mapping[str, object], *, ready_file: str | None, emit_s
         print(serialized, flush=True)
 
 
-def main(argv: Iterable[str] | None = None) -> int:
+def main(argv: Sequence[str] | None = None) -> int:
     args = _parse_args(argv)
     _configure_logging(args.log_level)
     try:

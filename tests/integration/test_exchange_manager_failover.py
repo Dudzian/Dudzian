@@ -200,8 +200,21 @@ def test_exchange_manager_stays_on_ccxt_after_rate_limit(
 @pytest.mark.integration
 def test_exchange_adapter_listing_includes_futures(tmp_path: Path) -> None:
     output = tmp_path / "adapters.csv"
+    signal_quality_dir = tmp_path / "signal_quality"
+    signal_quality_dir.mkdir(parents=True)
+    (signal_quality_dir / "deribit_futures.json").write_text("{}", encoding="utf-8")
+    (signal_quality_dir / "bitmex_futures.json").write_text("{}", encoding="utf-8")
     subprocess.run(
-        [sys.executable, "scripts/list_exchange_adapters.py", "--output", str(output)],
+        [
+            sys.executable,
+            "scripts/list_exchange_adapters.py",
+            "--output",
+            str(output),
+            "--signal-quality-dir",
+            str(signal_quality_dir),
+            "--signal-quality-ttl-hours",
+            "72",
+        ],
         check=True,
     )
     content = output.read_text(encoding="utf-8")

@@ -60,6 +60,13 @@ bundla upewnij się, że oba pakiety trafiają do katalogu `wheels/` (np. poprze
 `bundle.wheels_extra` lub lokalne mirrory), aby instalator mógł je zainstalować na
 docelowym sprzęcie.
 
+Od Sprintu 12 wszystkie pakiety rdzeniowe są oznaczone plikami `py.typed`
+(`bot_core.auto_trader`, `bot_core.ai`, `bot_core.risk`, `bot_core.execution`,
+`core`), dzięki czemu konsumenci wheel/sdist otrzymują pełne informacje typów w
+instalacjach produkcyjnych. Po zmianach warto lokalnie uruchomić `python -m build`
+i sprawdzić, czy artefakty w `dist/*.whl` zawierają odpowiednie pliki `py.typed`
+(`zipinfo dist/dudzian_bot-*.whl | grep py.typed`).
+
 ## Dołączanie katalogu Marketplace (presety + podpisy)
 
 Bundel instalatora powinien zawierać komplet presetów Marketplace wraz z opisami

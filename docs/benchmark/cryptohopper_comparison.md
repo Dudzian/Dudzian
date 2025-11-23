@@ -34,6 +34,7 @@
 - **Workflow eksportu:** patrz sekcja „Automatyzacja eksportu Stress Lab” w niniejszym dokumencie (poniżej) – pipeline CI publikuje artefakt `stress-lab-report` dla każdego releasu.
 - **Katalog presetów:** [`reports/strategy/presets_2025-01-15.md`](../../reports/strategy/presets_2025-01-15.md) – lista podpisanych presetów (≥15) wraz z metadanymi review i linkami do artefaktów QA.
 - **Katalog Marketplace (Markdown):** [`config/marketplace/catalog.md`](../../config/marketplace/catalog.md) – podpisany listing z personami wykorzystywany w komunikacji marketingowej oraz porównaniach z CryptoHopperem i Gunbotem.
+- **Rollout presetów:** proces publikacji podpisanych presetów i katalogu opisany w [`docs/marketplace/README.md`](../marketplace/README.md) (sekcja „Rollout presetów”) – wymagany przed aktualizacją benchmarku.
 
 ## Tabela funkcji i różnic
 
