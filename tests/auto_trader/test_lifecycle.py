@@ -296,7 +296,8 @@ def test_apply_lifecycle_bootstrap_restores_metadata() -> None:
         bootstrap_context=bootstrap,
     )
 
-    initial_revision = trader._decision_cycle_metadata_revision
+    snapshot = trader.lifecycle_snapshot()
+    initial_revision = snapshot.metadata_revision
 
     trader.apply_lifecycle_bootstrap(
         risk_profile="balanced",
@@ -305,16 +306,16 @@ def test_apply_lifecycle_bootstrap_restores_metadata() -> None:
         decision_signal="hold",
     )
 
-    assert trader._risk_profile_name == "balanced"
-    assert trader._decision_journal_context["risk_profile"] == "balanced"
-    assert trader._base_metric_labels["risk_profile"] == "balanced"
+    updated = trader.lifecycle_snapshot()
+    assert updated.risk_profile == "balanced"
+    assert updated.journal_context["risk_profile"] == "balanced"
+    assert updated.metric_labels["risk_profile"] == "balanced"
 
-    metadata = trader._decision_cycle_metadata
-    assert metadata is not None
+    metadata = updated.metadata
     assert metadata["market_regime"] == "trend"
     assert metadata["decision_state"] == "guardrail"
     assert metadata["decision_signal"] == "hold"
-    assert trader._decision_cycle_metadata_revision == initial_revision + 1
+    assert updated.metadata_revision == initial_revision + 1
 
     trader.apply_lifecycle_bootstrap(
         risk_profile="balanced",
@@ -323,4 +324,4 @@ def test_apply_lifecycle_bootstrap_restores_metadata() -> None:
         decision_signal="hold",
     )
 
-    assert trader._decision_cycle_metadata_revision == initial_revision + 1
+    assert trader.lifecycle_snapshot().metadata_revision == initial_revision + 1

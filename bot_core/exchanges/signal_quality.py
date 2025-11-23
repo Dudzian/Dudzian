@@ -90,6 +90,8 @@ class SignalQualityReporter:
         report_dir: str | os.PathLike[str] | None = None,
         metrics_registry: MetricsRegistry | None = None,
         watchdog_history_limit: int | None = None,
+        enable_csv_export: bool = False,
+        csv_dir: str | os.PathLike[str] | None = None,
     ) -> None:
         if history_limit <= 0:
             raise ValueError("history_limit musi być dodatni")
@@ -97,6 +99,10 @@ class SignalQualityReporter:
         self._records: Deque[SignalExecutionRecord] = deque(maxlen=int(history_limit))
         self._report_dir = Path(report_dir) if report_dir else Path("reports/exchanges/signal_quality")
         self._report_dir.mkdir(parents=True, exist_ok=True)
+        self._enable_csv_export = bool(enable_csv_export)
+        self._csv_dir = Path(csv_dir) if csv_dir else self._report_dir
+        if self._enable_csv_export:
+            self._csv_dir.mkdir(parents=True, exist_ok=True)
         self._metrics = metrics_registry or get_global_metrics_registry()
         labels = {"exchange": exchange_id, "component": "signal_quality"}
         self._metric_labels = labels
@@ -345,13 +351,63 @@ class SignalQualityReporter:
         alerts.reverse()
         return {"recent": recent, "alerts": alerts, "last_status": last_status}
 
-    def _persist(self) -> None:
-        summary = self.summarize()
+    def _persist(self, summary: Mapping[str, object] | None = None) -> Path:
+        payload = dict(summary or self.summarize())
         path = self._report_dir / f"{self._exchange_id}.json"
         tmp_path = path.with_suffix(".json.tmp")
-        payload = json.dumps(summary, indent=2, sort_keys=True)
-        tmp_path.write_text(payload, encoding="utf-8")
+        tmp_path.write_text(json.dumps(payload, indent=2, sort_keys=True), encoding="utf-8")
         tmp_path.replace(path)
+
+        if self._enable_csv_export:
+            self._write_csv_snapshot(payload)
+
+        return path
+
+    def _write_csv_snapshot(self, summary: Mapping[str, object]) -> Path:
+        timestamp = datetime.now(timezone.utc).isoformat()
+        csv_path = self._csv_dir / f"{self._exchange_id}.csv"
+        tmp_path = csv_path.with_suffix(".csv.tmp")
+
+        fields = [
+            "timestamp",
+            "exchange",
+            "total",
+            "failures",
+            "fill_ratio",
+            "slippage_bps",
+            "watchdog_alerts",
+        ]
+
+        watchdog_summary = summary.get("watchdog") if isinstance(summary, Mapping) else None
+        alerts = 0
+        if isinstance(watchdog_summary, Mapping):
+            recent_alerts = watchdog_summary.get("alerts")
+            if isinstance(recent_alerts, Sequence):
+                alerts = len(recent_alerts)
+
+        with tmp_path.open("w", encoding="utf-8", newline="") as handle:
+            handle.write(",".join(fields) + "\n")
+            handle.write(
+                ",".join(
+                    [
+                        timestamp,
+                        str(summary.get("exchange", self._exchange_id)),
+                        str(summary.get("total", 0)),
+                        str(summary.get("failures", 0)),
+                        str(summary.get("fill_ratio", 0.0)),
+                        str(summary.get("slippage_bps", 0.0)),
+                        str(alerts),
+                    ]
+                )
+                + "\n"
+            )
+        tmp_path.replace(csv_path)
+        return csv_path
+
+    def write_snapshot(self) -> Path:
+        """Publikuje snapshot jakości sygnałów w formie JSON/CSV."""
+
+        return self._persist(self.summarize())
 
 
 __all__ = ["SignalExecutionRecord", "SignalQualityReporter", "WatchdogEvent"]

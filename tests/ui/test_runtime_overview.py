@@ -1013,6 +1013,12 @@ def test_risk_journal_metrics_exporter_records_state(monkeypatch: pytest.MonkeyP
     registry = exporter._registry  # type: ignore[attr-defined]
     state_metric = registry.get("bot_ui_risk_journal_state")
     assert state_metric.value(labels={"channel": "risk_journal", "environment": "default"}) == 1.0
+    assert (
+        registry.get("bot_ui_risk_journal_incomplete_entries_total").value(
+            labels={"channel": "risk_journal", "environment": "default"}
+        )
+        == 2.0
+    )
 
 
 @pytest.mark.timeout(30)

@@ -452,6 +452,15 @@ class _ChampionSnapshot:
 
 
 @dataclass(slots=True)
+class DecisionCycleRequest:
+    """Publiczny kontrakt wywołania pojedynczego cyklu decyzyjnego."""
+
+    execution_context: ExecutionContext | None = None
+    schedule_state: "ScheduleState | None" = None
+    auto_trade_interval_s: float | None = None
+
+
+@dataclass(slots=True)
 class DecisionCycleReport:
     """Structured summary returned after a synchronous decision cycle.
 
@@ -463,6 +472,25 @@ class DecisionCycleReport:
     metadata: Mapping[str, str]
     metrics: Mapping[str, float]
     telemetry: Mapping[str, object] | None = None
+
+
+@dataclass(slots=True)
+class DecisionLifecycleSnapshot:
+    """Publiczny snapshot cyklu decyzyjnego używany w UI/CLI."""
+
+    risk_profile: str
+    strategy: str
+    metadata: Mapping[str, str]
+    metadata_revision: int
+    journal_context: Mapping[str, object]
+    metric_labels: Mapping[str, str]
+
+
+class DecisionCycleRunner(Protocol):
+    """Publiczny interfejs wywołania pojedynczego cyklu decyzyjnego."""
+
+    def run_cycle(self, request: DecisionCycleRequest | None = None) -> DecisionCycleReport:  # pragma: no cover - interface
+        ...
 
 
 class AutoTrader:
@@ -516,6 +544,41 @@ class AutoTrader:
 
         with self._lock:
             return self._schedule_mode
+
+    @property
+    def risk_profile(self) -> str:
+        """Public accessor exposing the active risk profile name."""
+
+        return self._risk_profile_name
+
+    @property
+    def active_strategy(self) -> str:
+        """Return the currently selected strategy name."""
+
+        return self.current_strategy
+
+    @property
+    def execution_context_cached(self) -> bool:
+        """Indicate whether an execution context instance is cached."""
+
+        return self._execution_context is not None
+
+    def lifecycle_snapshot(self) -> DecisionLifecycleSnapshot:
+        """Zwraca publiczny snapshot stanu cyklu dla UI/CLI i testów."""
+
+        metadata_source = getattr(self, "_decision_cycle_metadata", None)
+        metadata_revision = int(getattr(self, "_decision_cycle_metadata_revision", 0))
+        journal_context = getattr(self, "_decision_journal_context", {})
+        base_labels = getattr(self, "_base_metric_labels", {})
+        metadata = dict(metadata_source) if isinstance(metadata_source, Mapping) else {}
+        return DecisionLifecycleSnapshot(
+            risk_profile=self._risk_profile_name,
+            strategy=self.current_strategy,
+            metadata=metadata,
+            metadata_revision=metadata_revision,
+            journal_context=dict(journal_context),
+            metric_labels=dict(base_labels),
+        )
 
     @property
     def execution_context(self) -> ExecutionContext:
@@ -9548,6 +9611,16 @@ class AutoTrader:
         payload["guardrails"] = self._guardrail_telemetry_snapshot()
         return payload
 
+    def run_cycle(self, request: DecisionCycleRequest | None = None) -> DecisionCycleReport:
+        """Wykonuje cykl decyzyjny korzystając z publicznego kontraktu."""
+
+        normalized = request or DecisionCycleRequest()
+        return self.run_decision_cycle(
+            execution_context=normalized.execution_context,
+            schedule_state=normalized.schedule_state,
+            auto_trade_interval_s=normalized.auto_trade_interval_s,
+        )
+
     def run_decision_cycle(
         self,
         *,
@@ -9597,6 +9670,7 @@ class AutoTrader:
 
     def run_single_cycle(
         self,
+        request: DecisionCycleRequest | None = None,
         *,
         execution_context: ExecutionContext | None = None,
         schedule_state: ScheduleState | None = None,
@@ -9610,11 +9684,25 @@ class AutoTrader:
         configured factories and schedule resolver.
         """
 
-        return self.run_decision_cycle(
-            execution_context=execution_context,
-            schedule_state=schedule_state,
-            auto_trade_interval_s=auto_trade_interval_s,
-        )
+        if request is not None:
+            request = replace(
+                request,
+                execution_context=execution_context or request.execution_context,
+                schedule_state=schedule_state or request.schedule_state,
+                auto_trade_interval_s=(
+                    auto_trade_interval_s
+                    if auto_trade_interval_s is not None
+                    else request.auto_trade_interval_s
+                ),
+            )
+        else:
+            request = DecisionCycleRequest(
+                execution_context=execution_context,
+                schedule_state=schedule_state,
+                auto_trade_interval_s=auto_trade_interval_s,
+            )
+
+        return self.run_cycle(request)
 
     def run_cycle_once(
         self,

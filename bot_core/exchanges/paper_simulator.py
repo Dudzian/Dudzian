@@ -266,6 +266,15 @@ class PaperMarginSimulator(PaperBackend):
         self._last_prices[order.symbol] = adjusted_price
         self._enforce_margin(timestamp)
 
+        self._record_costs_event(
+            order.symbol,
+            side=order.side.value,
+            requested_price=price,
+            executed_price=adjusted_price,
+            fee=fee,
+            quantity=qty,
+        )
+
         leverage_after = self._effective_leverage()
         if abs(leverage_after - leverage_before) > 1e-9:
             self._record_margin_event(
@@ -283,6 +292,54 @@ class PaperMarginSimulator(PaperBackend):
 
         self._log_equity(timestamp)
         return dto
+
+    def _record_costs_event(
+        self,
+        symbol: str,
+        *,
+        side: str,
+        requested_price: float,
+        executed_price: float,
+        fee: float,
+        quantity: float,
+    ) -> None:
+        if self._risk_journal is None:
+            return
+
+        severity = "ok"
+        flags = []
+        if self._fee_rate and self._fee_rate > 0.01:
+            flags.append("high_fee")
+        if self._slippage_bps > 250:
+            flags.append("warning")
+        if flags:
+            severity = "warning"
+
+        metadata = {
+            "risk_action": "apply_costs",
+            "risk_flags": flags or [severity],
+            "requested_price": f"{requested_price:.8f}",
+            "executed_price": f"{executed_price:.8f}",
+            "fee": f"{fee:.8f}",
+            "quantity": f"{quantity:.8f}",
+            "slippage_bps": f"{self._slippage_bps:.4f}",
+            "fee_rate": f"{self._fee_rate:.6f}",
+        }
+
+        event = TradingDecisionEvent(
+            event_type="simulator_trade_costs",
+            timestamp=dt.datetime.utcnow(),
+            environment="paper",
+            portfolio="paper_simulator",
+            risk_profile="simulator",
+            symbol=symbol,
+            side=side,
+            metadata=metadata,
+        )
+        try:
+            self._risk_journal.record(event)
+        except Exception:  # pragma: no cover - diagnostyka pomocnicza
+            log.exception("Nie udało się zapisać kosztów transakcji do risk journal")
 
     def _apply_margin_fill(self, symbol: str, signed_quantity: float, price: float) -> None:
         pos = self._positions.get(symbol)

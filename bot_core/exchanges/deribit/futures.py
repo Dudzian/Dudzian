@@ -9,10 +9,12 @@ from typing import Any
 from bot_core.exchanges._long_poll_ccxt import CCXTLongPollMixin
 from bot_core.exchanges.base import Environment, ExchangeCredentials
 from bot_core.exchanges.ccxt_adapter import WatchdogCCXTAdapter, merge_adapter_settings
+from bot_core.exchanges.hypercare import HypercareChecklistExporter
 from bot_core.exchanges.error_mapping import raise_for_deribit_error
 from bot_core.exchanges.errors import ExchangeAPIError
 from bot_core.exchanges.health import Watchdog
 from bot_core.exchanges.rate_limiter import RateLimitRule
+from bot_core.exchanges.signal_quality import SignalQualityReporter
 from bot_core.exchanges.streaming import LocalLongPollStream
 
 
@@ -163,6 +165,35 @@ class DeribitFuturesAdapter(CCXTLongPollMixin, WatchdogCCXTAdapter):
                 except ExchangeAPIError as mapped:
                     raise mapped from exc
             raise
+
+    @classmethod
+    def export_hypercare_assets(
+        cls,
+        *,
+        report_dir: str | None = None,
+        signal_quality_dir: str | None = None,
+        daily_csv_dir: str | None = None,
+    ) -> tuple[str, str | None]:
+        """Publikuje checklistę HyperCare i snapshot jakości sygnałów."""
+
+        quality_reporter = SignalQualityReporter(
+            exchange_id=cls.name,
+            report_dir=signal_quality_dir,
+            enable_csv_export=True,
+            csv_dir=signal_quality_dir,
+        )
+        quality_snapshot = quality_reporter.write_snapshot()
+        checklist = HypercareChecklistExporter(
+            exchange=cls.name,
+            checklist_id=cls.hypercare_checklist_id,
+            signed_by="exchange_ops",
+        )
+        checklist_json, checklist_csv = checklist.export(
+            report_dir=report_dir or "reports/exchanges/hypercare",
+            signal_quality_snapshot=quality_snapshot,
+            daily_csv_dir=daily_csv_dir or "reports/exchanges",
+        )
+        return str(checklist_json), str(checklist_csv) if checklist_csv else None
 
 
 __all__ = ["DeribitFuturesAdapter"]

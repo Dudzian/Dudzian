@@ -189,20 +189,20 @@ class RiskJournalMetricsExporter:
             "bot_ui_risk_journal_state",
             "Stan kompletności Risk Journal (0=ok,1=warning,2=critical)",
         )
-        self._missing_entries = self._registry.gauge(
-            "bot_ui_risk_journal_missing_entries_total",
-            "Liczba brakujących wpisów Risk Journal wymagających uzupełnienia",
+        self._incomplete_entries = self._registry.gauge(
+            "bot_ui_risk_journal_incomplete_entries_total",
+            "Liczba niekompletnych wpisów Risk Journal wymagających uzupełnienia",
         )
         self._incomplete_samples = self._registry.gauge(
             "bot_ui_risk_journal_incomplete_samples_total",
-            "Liczba przykładowych brakujących wpisów raportowanych w diagnostyce",
+            "Liczba przykładowych niekompletnych wpisów raportowanych w diagnostyce",
         )
 
     def record(
         self,
         *,
         state: str,
-        missing_entries: int,
+        incomplete_entries: int,
         incomplete_samples: int,
         labels: Mapping[str, str] | None = None,
     ) -> None:
@@ -212,7 +212,9 @@ class RiskJournalMetricsExporter:
 
         value = self._STATE_TO_VALUE.get(state, 0.0)
         self._state.set(value, labels=metric_labels)
-        self._missing_entries.set(float(max(0, missing_entries)), labels=metric_labels)
+        self._incomplete_entries.set(
+            float(max(0, incomplete_entries)), labels=metric_labels
+        )
         self._incomplete_samples.set(
             float(max(0, incomplete_samples)), labels=metric_labels
         )

@@ -1,0 +1,84 @@
+{
+  "title": "Risk Journal Health",
+  "schemaVersion": 38,
+  "version": 1,
+  "description": "Panel kontrolny kompletności Risk Journal (UI runtime)",
+  "refresh": "30s",
+  "tags": ["risk", "runtime", "ui"],
+  "templating": {
+    "list": [
+      {
+        "name": "environment",
+        "type": "query",
+        "datasource": "Prometheus",
+        "label": "Environment",
+        "query": "label_values(bot_ui_risk_journal_state, environment)",
+        "refresh": 1,
+        "current": {
+          "text": "All",
+          "value": ""
+        },
+        "includeAll": true,
+        "multi": true
+      }
+    ]
+  },
+  "panels": [
+    {
+      "id": 1,
+      "type": "stat",
+      "title": "Risk Journal state",
+      "datasource": "Prometheus",
+      "targets": [
+        {
+          "expr": "max by(environment) (bot_ui_risk_journal_state{environment=~\"$environment\"})",
+          "legendFormat": "{{environment}}"
+        }
+      ],
+      "options": {
+        "reduceOptions": {"calcs": ["lastNotNull"], "fields": ""},
+        "orientation": "horizontal",
+        "colorMode": "value",
+        "graphMode": "none",
+        "textMode": "auto",
+        "thresholds": {
+          "mode": "absolute",
+          "steps": [
+            {"color": "green", "value": 0},
+            {"color": "yellow", "value": 1},
+            {"color": "red", "value": 2}
+          ]
+        }
+      }
+    },
+    {
+      "id": 2,
+      "type": "timeSeries",
+      "title": "Niekompletne wpisy Risk Journal",
+      "datasource": "Prometheus",
+      "targets": [
+        {
+          "expr": "bot_ui_risk_journal_incomplete_entries_total{environment=~\"$environment\"}",
+          "legendFormat": "{{environment}}"
+        },
+        {
+          "expr": "bot_ui_risk_journal_incomplete_samples_total{environment=~\"$environment\"}",
+          "legendFormat": "samples ({{environment}})",
+          "hide": false
+        }
+      ],
+      "options": {
+        "legend": {"displayMode": "table", "placement": "bottom"},
+        "tooltip": {"mode": "single", "sort": "none"}
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "decimals": 0,
+          "color": {"mode": "palette-classic"}
+        },
+        "overrides": []
+      }
+    }
+  ]
+}
