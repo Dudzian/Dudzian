@@ -140,7 +140,7 @@ def test_rotate_keys_updates_registry_and_writes_report_or_generates_plan(tmp_pa
         cache_path = tmp_path / "cache"
         _write_minimal_head_config(config_path, cache_path)
 
-        key_b64 = base64.b64encode(b"legacy_rotation_key").decode("ascii")
+        key_b64 = base64.b64encode(b"rotation_key_v1").decode("ascii")
         output_path = tmp_path / "rotation.json"
 
         exit_code = rotate_keys_run(
@@ -156,7 +156,7 @@ def test_rotate_keys_updates_registry_and_writes_report_or_generates_plan(tmp_pa
                 "--signing-key",
                 key_b64,
                 "--signing-key-id",
-                "legacy-rotation",
+                "rotation-v1",
                 "--output",
                 str(output_path),
             ]
