@@ -7,8 +7,8 @@ on:
 
 env:
   PYSIDE6_VERSION: "6.5.2"
-  QT_DESKTOP_MODULES: "qtcharts"
-  QT_WINDOWS_MODULES: "qtcharts" # qmltest is unavailable for Qt 6.5.3 on Windows via aqtinstall
+  QT_DESKTOP_MODULES: "qtcharts qml qmltest"
+  QT_WINDOWS_MODULES: "qtcharts qtqmltest"
 
 jobs:
   prepare-pyside6-wheel:
