@@ -21,17 +21,25 @@ follow_imports = "silent"
 exclude = ["archive/.*"]
 files = [
   "bot_core/auto_trader",
+  "bot_core/ai",
   "bot_core/risk",
   "bot_core/execution",
-  "bot_core/ai",
   "core/config",
   "core/reporting",
   "core/security",
-  "ui/backend",
-  "ui/pyside_app",
+  "core/licensing",
+  "ui",
+  "deploy/packaging/desktop_installer.py",
+  "deploy/packaging/build_core_bundle.py",
+  "deploy/packaging/build_strategy_bundle.py",
   "scripts/run_ai_governor_cycle.py",
   "scripts/validate_marketplace_presets.py",
   "scripts/list_exchange_adapters.py",
+  "scripts/run_local_bot.py",
+  "scripts/run_cloud_service.py",
+  "scripts/run_stage6_resilience_cycle.py",
+  "scripts/run_stage6_observability_cycle.py",
+  "reports",
 ]
 
 [[tool.mypy.overrides]]
@@ -40,29 +48,25 @@ ignore_missing_imports = true
 
 [[tool.mypy.overrides]]
 module = [
-  "bot_core.auto_trader.*",
-  "bot_core.ai.*",
-  "bot_core.risk.*",
-  "bot_core.execution",
-  "bot_core.execution.*",
+    "bot_core.auto_trader.*",
+    "bot_core.ai.*",
+    "bot_core.risk.*",
+    "bot_core.execution",
+    "bot_core.execution.*",
 ]
 disable_error_code = [
-  "arg-type",
-  "attr-defined",
-  "call-arg",
-  "call-overload",
-  "assignment",
-  "operator",
-  "union-attr",
-  "index",
-  "return-value",
-  "no-redef",
-  "no-any-return",
-  "name-defined",
-  "var-annotated",
-  "misc",
-  "dict-item",
-  "list-item",
+    "attr-defined",
+    "arg-type",
+    "call-overload",
+    "assignment",
+    "operator",
+    "union-attr",
+    "index",
+    "return-value",
+    "no-any-return",
+    "name-defined",
+    "misc",
+    "no-redef",
 ]
 
 [[tool.mypy.overrides]]

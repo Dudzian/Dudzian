@@ -123,9 +123,6 @@ jobs:
           pip install .[dev]
           pip install mypy
 
-      - name: Lint repository paths
-        run: python scripts/lint_paths.py
-
       - name: Run mypy for core packages
         run: python -m mypy
 

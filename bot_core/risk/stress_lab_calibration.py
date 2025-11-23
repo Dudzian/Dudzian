@@ -309,7 +309,7 @@ class StressLabCalibrator:
 
 
 def _matches_segment(snapshot: MarketIntelSnapshot, segment: StressLabCalibrationSegment) -> bool:
-    metadata_tags = set()
+    metadata_tags: set[str] = set()
     metadata_budget = None
     if snapshot.metadata:
         tags = snapshot.metadata.get("tags")

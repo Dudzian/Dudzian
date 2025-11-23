@@ -3756,7 +3756,7 @@ class AIManager:
             epochs,
             batch_size,
         )
-        task = asyncio.create_task(runner())
+        task: asyncio.Task[None] = asyncio.create_task(runner())
         schedule = TrainingSchedule(
             symbol=self._normalize_symbol(symbol),
             interval_seconds=float(interval_seconds),
@@ -3839,7 +3839,7 @@ class AIManager:
             baseline_provider,
             on_result,
         )
-        task = asyncio.create_task(runner())
+        task: asyncio.Task[None] = asyncio.create_task(runner())
         schedule = PipelineSchedule(
             symbol=self._normalize_symbol(symbol),
             interval_seconds=float(interval_seconds),
