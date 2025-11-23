@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 from collections.abc import Mapping, Sequence
+from pathlib import Path
 from typing import Any
 
 from bot_core.exchanges._long_poll_ccxt import CCXTLongPollMixin
@@ -179,16 +180,32 @@ class BitmexFuturesAdapter(CCXTLongPollMixin, WatchdogCCXTAdapter):
         report_dir: str | None = None,
         signal_quality_dir: str | None = None,
         daily_csv_dir: str | None = None,
+        reporter: SignalQualityReporter | None = None,
+        load_existing_snapshot: bool = True,
     ) -> tuple[str, str | None]:
         """Publikuje checklistę HyperCare i snapshot jakości sygnałów."""
+        signal_root = Path(signal_quality_dir) if signal_quality_dir else Path("reports/exchanges/signal_quality")
+        signal_root.mkdir(parents=True, exist_ok=True)
 
-        quality_reporter = SignalQualityReporter(
-            exchange_id=cls.name,
-            report_dir=signal_quality_dir,
-            enable_csv_export=True,
-            csv_dir=signal_quality_dir,
-        )
-        quality_snapshot = quality_reporter.write_snapshot()
+        quality_reporter = reporter
+        quality_snapshot: Path | None = None
+
+        if quality_reporter is None and load_existing_snapshot:
+            existing_snapshot = signal_root / f"{cls.name}.json"
+            if existing_snapshot.exists():
+                quality_snapshot = existing_snapshot
+
+        if quality_reporter is None and quality_snapshot is None:
+            quality_reporter = SignalQualityReporter(
+                exchange_id=cls.name,
+                report_dir=signal_root,
+                enable_csv_export=True,
+                csv_dir=signal_root,
+            )
+
+        if quality_reporter is not None:
+            quality_snapshot = quality_reporter.write_snapshot()
+
         checklist = HypercareChecklistExporter(
             exchange=cls.name,
             checklist_id=cls.hypercare_checklist_id,

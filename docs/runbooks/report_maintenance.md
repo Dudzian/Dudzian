@@ -132,6 +132,8 @@ Polecenie utworzy plik `reports/exchanges/<data>.csv` oraz skopiuje go do `repor
 
 **Nowe kolumny jakości sygnałów:** raport wymusza obecność dziennych snapshotów `reports/exchanges/signal_quality/*.json` dla `deribit_futures` i `bitmex_futures`. Kolumny `signal_quality_snapshot_status`/`signal_quality_snapshot_age_minutes` muszą raportować `fresh` oraz wiek < 48h – w przeciwnym razie skrypt zakończy się błędem. Wartości `signal_quality_records` pomagają szybko wychwycić puste raporty przed publikacją benchmarku.
 
+Eksport checklisty HyperCare w adapterach Deribit/BitMEX korzysta z istniejącego `SignalQualityReporter` (lub ostatniego snapshotu z dysku), więc przed uruchomieniem eksportu w pipeline CI/HyperCare upewnij się, że reporter zebrał realne rekordy z runtime. W przeciwnym razie checklisty zostaną podpisane, ale wskażą zerowe metryki jakości, co zablokuje publikację dashboardu.
+
 ## 9. Eksport champion/challenger i reakcja na degradację modeli
 
 ### 9.1. Generowanie raportu porównawczego championów

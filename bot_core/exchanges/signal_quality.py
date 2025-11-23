@@ -364,9 +364,10 @@ class SignalQualityReporter:
         return path
 
     def _write_csv_snapshot(self, summary: Mapping[str, object]) -> Path:
-        timestamp = datetime.now(timezone.utc).isoformat()
-        csv_path = self._csv_dir / f"{self._exchange_id}.csv"
-        tmp_path = csv_path.with_suffix(".csv.tmp")
+        now = datetime.now(timezone.utc)
+        timestamp = now.isoformat()
+        date_suffix = now.date().isoformat()
+        csv_path = self._csv_dir / f"{self._exchange_id}-{date_suffix}.csv"
 
         fields = [
             "timestamp",
@@ -385,22 +386,27 @@ class SignalQualityReporter:
             if isinstance(recent_alerts, Sequence):
                 alerts = len(recent_alerts)
 
+        row = ",".join(
+            [
+                timestamp,
+                str(summary.get("exchange", self._exchange_id)),
+                str(summary.get("total", 0)),
+                str(summary.get("failures", 0)),
+                str(summary.get("fill_ratio", 0.0)),
+                str(summary.get("slippage_bps", 0.0)),
+                str(alerts),
+            ]
+        )
+
+        if csv_path.exists():
+            with csv_path.open("a", encoding="utf-8", newline="") as handle:
+                handle.write(row + "\n")
+            return csv_path
+
+        tmp_path = csv_path.with_suffix(".csv.tmp")
         with tmp_path.open("w", encoding="utf-8", newline="") as handle:
             handle.write(",".join(fields) + "\n")
-            handle.write(
-                ",".join(
-                    [
-                        timestamp,
-                        str(summary.get("exchange", self._exchange_id)),
-                        str(summary.get("total", 0)),
-                        str(summary.get("failures", 0)),
-                        str(summary.get("fill_ratio", 0.0)),
-                        str(summary.get("slippage_bps", 0.0)),
-                        str(alerts),
-                    ]
-                )
-                + "\n"
-            )
+            handle.write(row + "\n")
         tmp_path.replace(csv_path)
         return csv_path
 
