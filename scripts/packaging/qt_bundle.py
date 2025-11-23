@@ -48,6 +48,55 @@ def _detect_qt_prefix(candidate: str | None) -> str | None:
     return None
 
 
+def _probe_protobuf_dir(base: Path | str | None) -> str | None:
+    if not base:
+        return None
+    root = Path(base)
+    candidates = [
+        root,
+        root / "lib" / "cmake" / "protobuf",
+        root / "cmake" / "protobuf",
+    ]
+    for candidate in candidates:
+        if candidate.is_dir():
+            return str(candidate)
+    return None
+
+
+def _detect_protobuf_dir() -> str | None:
+    for key in ("Protobuf_DIR", "Protobuf_ROOT"):
+        env_value = os.environ.get(key)
+        detected = _probe_protobuf_dir(env_value)
+        if detected:
+            return detected
+
+    homebrew_prefix = os.environ.get("HOMEBREW_PREFIX")
+    detected = _probe_protobuf_dir(Path(homebrew_prefix) / "opt" / "protobuf" if homebrew_prefix else None)
+    if detected:
+        return detected
+
+    for prefix in ("/opt/homebrew", "/usr/local"):
+        detected = _probe_protobuf_dir(Path(prefix) / "opt" / "protobuf")
+        if detected:
+            return detected
+
+    brew_executable = shutil.which("brew")
+    if brew_executable:
+        result = subprocess.run(
+            [brew_executable, "--prefix", "protobuf"],
+            check=False,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL,
+            text=True,
+        )
+        candidate = result.stdout.strip()
+        detected = _probe_protobuf_dir(Path(candidate) if candidate else None)
+        if detected:
+            return detected
+
+    return None
+
+
 def configure_and_build(
     source_dir: Path,
     build_dir: Path,
@@ -74,7 +123,18 @@ def configure_and_build(
         if qt6_dir.exists():
             cmake_args.append(f"-DQt6_DIR={qt6_dir}")
 
-    cmake_args.extend(extra_cmake_args)
+    extra_args = list(extra_cmake_args)
+    has_protobuf_override = any(
+        arg.startswith("-DProtobuf_DIR=") or arg.startswith("-DProtobuf_ROOT=")
+        for arg in extra_args
+    )
+    if not has_protobuf_override:
+        protobuf_dir = _detect_protobuf_dir()
+        if protobuf_dir:
+            logger.info("Detected Protobuf CMake directory: %s", protobuf_dir)
+            extra_args.append(f"-DProtobuf_DIR={protobuf_dir}")
+
+    cmake_args.extend(extra_args)
     _run(cmake_args)
 
     build_command = ["cmake", "--build", str(build_dir)]
