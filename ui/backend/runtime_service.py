@@ -1894,9 +1894,9 @@ class RuntimeService(QObject):
         return f"{int(round(value))}"
 
     def _maybe_emit_risk_journal_alert(self, diagnostics: Mapping[str, object]) -> None:
-        missing = int(diagnostics.get("incompleteEntries") or 0)
+        incomplete_entries = int(diagnostics.get("incompleteEntries") or 0)
         samples = diagnostics.get("incompleteSamples") or []
-        severity = "warning" if missing else "ok"
+        severity = "warning" if incomplete_entries else "ok"
         previous = self._risk_journal_alert_state
         if severity == previous:
             return
@@ -1904,17 +1904,17 @@ class RuntimeService(QObject):
 
         body = (
             "wykryto niekompletne wpisy Risk Journal wymagające pól risk_flags/stress_overrides lub risk_action"
-            if missing
+            if incomplete_entries
             else "wpisy Risk Journal zawierają wymagane pola"
         )
-        if missing and samples:
+        if incomplete_entries and samples:
             body = f"{body} (przykłady: {json.dumps(samples, ensure_ascii=False)})"
-        log_fn = _LOGGER.warning if missing else _LOGGER.info
+        log_fn = _LOGGER.warning if incomplete_entries else _LOGGER.info
         log_fn("%s", body)
 
         self._risk_journal_metrics_exporter.record(
             state=severity,
-            missing_entries=missing,
+            incomplete_entries=incomplete_entries,
             incomplete_samples=len(samples),
             labels={"environment": self._active_profile or "default"},
         )
@@ -1924,14 +1924,15 @@ class RuntimeService(QObject):
             return
 
         sink.emit_feed_health_event(
-            severity="warning" if missing else "info",
+            severity="warning" if incomplete_entries else "info",
             title="Risk Journal completeness",
             body=body,
             context={"channel": "risk_journal", "state": severity},
             payload={
                 "channel": "risk_journal",
                 "state": severity,
-                "missing_entries": missing,
+                "incomplete_entries": incomplete_entries,
+                "incompleteEntries": incomplete_entries,
                 "samples": samples,
             },
         )

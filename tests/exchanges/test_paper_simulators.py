@@ -133,6 +133,7 @@ def test_futures_simulator_applies_slippage_and_fee_validation():
     assert snapshot_after.balances["BTC/USDT_position"] > 0
 
     assert journal.events
+    assert any(getattr(event, "event_type", "") == "simulator_trade_costs" for event in journal.events)
 
     with pytest.raises(ValueError):
         PaperFuturesSimulator(_DummyFeed(20_000.0), database=_DummyDB(), fee_rate=-0.1, risk_journal=journal)
