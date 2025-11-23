@@ -8,12 +8,13 @@ from typing import Any, Mapping
 import pandas as pd
 import pytest
 
-from bot_core.auto_trader import AutoTrader
+from bot_core.auto_trader import AutoTrader, ScheduleState
 from bot_core.ai.regime import MarketRegime, MarketRegimeAssessment
 from bot_core.config.models import DecisionEngineConfig, DecisionOrchestratorThresholds
 from bot_core.decision.orchestrator import DecisionOrchestrator
 from bot_core.exchanges.base import OrderRequest
 from bot_core.runtime.journal import InMemoryTradingDecisionJournal
+from bot_core.execution import ExecutionContext
 
 
 class _Emitter:
@@ -225,8 +226,24 @@ def test_autotrader_applies_orchestrator_strategy_and_risk_limits(_market_frame:
         decision_journal=journal,
     )
     trader._auto_trade_user_confirmed = True
+    execution_context = ExecutionContext(
+        portfolio_id="demo",
+        risk_profile="paper",
+        environment="paper",
+        metadata={},
+    )
+    schedule_state = ScheduleState(
+        mode="paper",
+        is_open=True,
+        window=None,
+        next_transition=None,
+        reference_time=datetime.now(timezone.utc),
+    )
 
-    trader.run_cycle_once()
+    trader.run_single_cycle(
+        execution_context=execution_context,
+        schedule_state=schedule_state,
+    )
 
     assert trader.current_strategy == "momentum_alpha"
     assert risk_service.decisions, "risk service should evaluate at least one decision"
@@ -239,3 +256,4 @@ def test_autotrader_applies_orchestrator_strategy_and_risk_limits(_market_frame:
     assert thresholds["max_cost_bps"] == pytest.approx(12.0)
     assert payload.get("net_edge_bps") is not None
     assert payload.get("net_edge_bps") >= 4.0
+    assert trader._execution_context is None
