@@ -47,7 +47,10 @@ class HardwareFingerprintSnapshot:
         }
 
     def normalized(self) -> tuple[str, str, str]:
-        return tuple(_normalize_component(value) or "" for value in (self.cpu_id, self.board_id, self.tpm_id))
+        cpu_id = _normalize_component(self.cpu_id) or ""
+        board_id = _normalize_component(self.board_id) or ""
+        tpm_id = _normalize_component(self.tpm_id) or ""
+        return (cpu_id, board_id, tpm_id)
 
 
 class LicenseHardwareStatus(str, Enum):

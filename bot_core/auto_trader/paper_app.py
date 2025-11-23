@@ -107,7 +107,7 @@ class HeadlessTradingStub:
         self.network_var = SimpleNamespace(get=lambda: "demo")
         self.timeframe_var = SimpleNamespace(get=lambda: "1m")
         self.symbol_var = SimpleNamespace(get=self.get_symbol)
-        self._open_positions: dict[str, dict[str, float]] = {}
+        self._open_positions: dict[str, dict[str, float | str]] = {}
         self._logs: list[str] = []
 
     def get_symbol(self) -> str:
@@ -119,7 +119,7 @@ class HeadlessTradingStub:
     def is_live_trading_allowed(self) -> bool:
         return True
 
-    def get_portfolio_snapshot(self, symbol: str) -> dict[str, float | dict[str, dict[str, float]]]:
+    def get_portfolio_snapshot(self, symbol: str) -> dict[str, float | str | dict[str, dict[str, float]]]:
         position = self._open_positions.get(symbol.upper(), {})
         position_notional = position.get("qty", 0.0)
         if position.get("side") == "sell":

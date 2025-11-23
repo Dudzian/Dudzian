@@ -272,6 +272,9 @@ def _safe_ratio(numerator: float | None, denominator: float | None) -> float | N
 
 
 def _read_log_records(directory: str | Path | None, *, limit: int = 20) -> tuple[GuardrailLogRecord, ...]:
+    if directory is None:
+        return ()
+
     path = Path(directory).expanduser() / "events.log"
     if not path.exists():
         return ()

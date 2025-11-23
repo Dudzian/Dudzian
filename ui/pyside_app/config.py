@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Mapping, MutableMapping
+from typing import Any, Mapping, MutableMapping, cast
 
 import yaml
 
@@ -64,7 +64,7 @@ class UiAppConfig:
         theme_payload = dict(base["theme"])
         theme_payload.setdefault("palette", self.theme_palette)
         base["theme"] = theme_payload
-        return _coerce_variant(base)
+        return cast(dict[str, Any], _coerce_variant(base))
 
 
 def load_ui_app_config(
@@ -81,6 +81,7 @@ def load_ui_app_config(
     data = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
     if not isinstance(data, Mapping):
         raise ValueError(f"Plik {path} nie zawiera słownika YAML")
+    merged_payload: Mapping[str, Any]
     if profile:
         selected_profile = profile
         merged_payload = _resolve_profile_payload(data, profile)
@@ -101,7 +102,8 @@ def load_ui_app_config(
     if default_qml is None:
         default_qml = Path(__file__).resolve().parent / "qml" / "MainWindow.qml"
     qml_path = qml_override or Path(default_qml).expanduser().resolve()
-    theme_payload = merged_payload.get("theme") if isinstance(merged_payload.get("theme"), Mapping) else {}
+    theme_entry = merged_payload.get("theme")
+    theme_payload: Mapping[str, Any] = theme_entry if isinstance(theme_entry, Mapping) else {}
     palette_name = str(theme_payload.get("palette", "dark"))
     decision_limit = int(merged_payload.get("history_limit", 30))
     return UiAppConfig(

@@ -1,6 +1,7 @@
 """Dostawca danych telemetrycznych dla panelu RuntimeOverview."""
 from __future__ import annotations
 
+
 from datetime import datetime
 from typing import Callable, Iterable, Mapping
 

@@ -126,7 +126,7 @@ def _build_api_error(message: str, *, status: int = 422, payload: Mapping[str, o
     try:
         return ExchangeAPIError(message=message, status_code=status, payload=payload)
     except TypeError:  # pragma: no cover - fallback dla prostszej implementacji
-        error = ExchangeAPIError(message)  # type: ignore[arg-type]
+        error = ExchangeAPIError(message)  # type: ignore[call-arg]
         setattr(error, "status_code", status)
         setattr(error, "message", message)
         if payload is not None:

@@ -472,7 +472,7 @@ class AIModels:
     def predict(self, X: Any) -> np.ndarray:
         samples = self._flatten_samples(X)
         self._ensure_ready()
-        weights = np.concatenate(([self._bias], self._weights))  # type: ignore[arg-type]
+        weights: np.ndarray = np.concatenate(([self._bias], self._weights))  # type: ignore[arg-type]
         design = self._design_matrix(samples)
         return (design @ weights).astype(float)
 
@@ -1262,12 +1262,12 @@ class AIModels:
         if predictions.size == 0:
             return pd.Series(np.zeros(len(df), dtype=float), index=df.index)
         if seq_len > 1:
-            lead = np.repeat(predictions[0], seq_len - 1)
+            lead: np.ndarray = np.repeat(predictions[0], seq_len - 1)
             full = np.concatenate([lead, predictions])
         else:
             full = predictions
         if len(full) < len(df):
-            padding = np.repeat(full[-1], len(df) - len(full))
+            padding: np.ndarray = np.repeat(full[-1], len(df) - len(full))
             full = np.concatenate([full, padding])
         elif len(full) > len(df):
             full = full[-len(df) :]

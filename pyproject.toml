@@ -13,18 +13,32 @@ combine-as-imports = true
 python_version = "3.11"
 warn_return_any = true
 warn_unused_configs = true
-ignore_missing_imports = true
 strict_optional = true
 show_error_codes = true
 namespace_packages = true
-follow_imports = "silent"
+follow_imports = "skip"
 exclude = ["archive/.*"]
 files = [
-  "bot_core/config/models.py",
   "bot_core/auto_trader",
+  "bot_core/ai",
   "bot_core/risk",
   "bot_core/execution",
-  "bot_core/ai",
+  "core/config",
+  "core/reporting",
+  "core/security",
+  "core/licensing",
+  "ui",
+  "deploy/packaging/desktop_installer.py",
+  "deploy/packaging/build_core_bundle.py",
+  "deploy/packaging/build_strategy_bundle.py",
+  "scripts/run_ai_governor_cycle.py",
+  "scripts/validate_marketplace_presets.py",
+  "scripts/list_exchange_adapters.py",
+  "scripts/run_local_bot.py",
+  "scripts/run_cloud_service.py",
+  "scripts/run_stage6_resilience_cycle.py",
+  "scripts/run_stage6_observability_cycle.py",
+  "reports",
 ]
 
 [[tool.mypy.overrides]]
@@ -33,13 +47,69 @@ ignore_missing_imports = true
 
 [[tool.mypy.overrides]]
 module = [
-  "bot_core.auto_trader.*",
-  "bot_core.ai.*",
-  "bot_core.risk.*",
-  "bot_core.execution",
-  "bot_core.execution.*",
+  "PySide6", 
+  "PySide6.*",
+  "shiboken6",
+  "shiboken6.*",
+  "pandas",
+  "pandas.*",
+  "fastapi",
+  "fastapi.*",
+  "jsonschema",
+  "jsonschema.*",
+  "grpc",
+  "grpc.*",
+  "joblib",
+  "joblib.*",
+  "shap",
+  "shap.*",
 ]
-ignore_errors = true
+ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+module = [
+    "bot_core.auto_trader.*",
+    "bot_core.ai.*",
+    "bot_core.risk.*",
+    "bot_core.execution",
+    "bot_core.execution.*",
+]
+disable_error_code = [
+  "attr-defined",
+  "arg-type",
+  "call-overload",
+  "assignment",
+  "index",
+  "return-value",
+  "no-any-return",
+  "union-attr",
+  "name-defined",
+  "no-redef",
+  "operator",
+  "misc",
+]
+
+[[tool.mypy.overrides]]
+module = ["ui.backend.*", "ui.pyside_app.*"]
+disable_error_code = [
+  "attr-defined",
+  "arg-type",
+  "return-value",
+  "no-any-return",
+  "assignment",
+  "no-redef",
+  "call-overload",
+  "index",
+]
+
+[[tool.mypy.overrides]]
+module = [
+  "scripts.list_exchange_adapters",
+  "scripts.run_ai_governor_cycle",
+  "core.reporting.guardrails_reporter",
+  "core.reporting.retraining_reporter",
+  "ui.pyside_app.controllers.wizards",
+]
 
 [tool.pytest.ini_options]
 addopts = ""
@@ -118,6 +188,7 @@ dev = [
   "respx>=0.20",
   "sqlalchemy>=2.0",
   "packaging>=23.2",
+  "types-requests>=2.31",
 ]
 desktop = [
   "pyinstaller>=6.5",
@@ -148,3 +219,7 @@ include = ["bot_core*", "core*", "scripts*", "stage6_samples*"]
 
 [tool.setuptools.package-data]
 "bot_core.auto_trader" = ["py.typed"]
+"bot_core.ai" = ["py.typed"]
+"bot_core.risk" = ["py.typed"]
+"bot_core.execution" = ["py.typed"]
+"core" = ["py.typed"]

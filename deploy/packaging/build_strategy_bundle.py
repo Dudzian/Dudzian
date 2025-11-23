@@ -299,51 +299,53 @@ class StrategyBundleBuilder:
             strategies_dir.mkdir(parents=True, exist_ok=True)
             datasets_dir.mkdir(parents=True, exist_ok=True)
 
+            strategies: list[dict[str, object]] = []
+            datasets: list[dict[str, object]] = []
             manifest: Dict[str, object] = {
                 "bundle": BUNDLE_NAME,
                 "version": self._version,
                 "created_at": _now_utc(),
                 "git_revision": _git_revision(),
                 "digest_algorithm": self._digest_algorithm,
-                "strategies": [],
-                "datasets": [],
+                "strategies": strategies,
+                "datasets": datasets,
             }
 
-            for asset in sorted(self._strategies, key=lambda item: item.name):
-                target_name = f"{asset.name}{asset.source.suffix}"
+            for strategy_asset in sorted(self._strategies, key=lambda item: item.name):
+                target_name = f"{strategy_asset.name}{strategy_asset.source.suffix}"
                 _ensure_windows_safe_component(
                     component=target_name,
                     label="Strategy artifact name",
                     context=target_name,
                 )
                 destination = strategies_dir / target_name
-                digest_info = _copy_and_digest(asset.source, destination)
-                strategy_record = {
-                    "name": asset.name,
-                    "module": asset.module or _infer_module(asset.source),
-                    "source_path": _relative_to_repo(asset.source),
+                digest_info = _copy_and_digest(strategy_asset.source, destination)
+                strategy_record: dict[str, object] = {
+                    "name": strategy_asset.name,
+                    "module": strategy_asset.module or _infer_module(strategy_asset.source),
+                    "source_path": _relative_to_repo(strategy_asset.source),
                     "bundle_path": f"strategies/{target_name}",
                     **digest_info,
                 }
-                manifest["strategies"].append(strategy_record)
+                strategies.append(strategy_record)
 
-            for asset in sorted(self._datasets, key=lambda item: item.name):
-                target_name = asset.source.name
+            for dataset_asset in sorted(self._datasets, key=lambda item: item.name):
+                target_name = dataset_asset.source.name
                 _ensure_windows_safe_component(
                     component=target_name,
                     label="Dataset artifact name",
                     context=target_name,
                 )
                 destination = datasets_dir / target_name
-                digest_info = _copy_and_digest(asset.source, destination)
-                dataset_record = {
-                    "name": asset.name,
-                    "format": asset.format or asset.source.suffix.lstrip("."),
-                    "source_path": _relative_to_repo(asset.source),
+                digest_info = _copy_and_digest(dataset_asset.source, destination)
+                dataset_record: dict[str, object] = {
+                    "name": dataset_asset.name,
+                    "format": dataset_asset.format or dataset_asset.source.suffix.lstrip("."),
+                    "source_path": _relative_to_repo(dataset_asset.source),
                     "bundle_path": f"datasets/{target_name}",
                     **digest_info,
                 }
-                manifest["datasets"].append(dataset_record)
+                datasets.append(dataset_record)
 
             manifest_path = bundle_root / "manifest.json"
             manifest_path.write_text(

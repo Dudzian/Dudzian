@@ -269,7 +269,9 @@ def _bundle_import_errors(primary: BaseException, secondary: BaseException) -> B
     """Połącz dwa wyjątki importu w jeden obiekt z zachowaniem kontekstu."""
 
     try:
-        return ExceptionGroup("AI backend import failed", [primary, secondary])  # type: ignore[name-defined]
+        return ExceptionGroup(
+            "AI backend import failed", [primary, secondary]
+        )  # type: ignore[name-defined,type-var]
     except NameError:  # pragma: no cover - Python < 3.11
         secondary.__cause__ = primary  # type: ignore[attr-defined]
         return secondary
@@ -416,7 +418,7 @@ def _build_fallback_ai_models() -> type:
             self.input_size = input_size
             self.seq_len = seq_len
             self.model_type = model_type
-            self._coef = np.zeros(input_size, dtype=float)
+            self._coef: np.ndarray = np.zeros(input_size, dtype=float)
 
         async def train(
             self,
@@ -833,7 +835,7 @@ class EnsembleDefinition:
         meta_confidence: Mapping[str, float] | None = None,
     ) -> np.ndarray:
         size = len(self.components)
-        base = np.ones(size, dtype=float)
+        base: np.ndarray = np.ones(size, dtype=float)
         if self.aggregation == "weighted" and self.weights is not None:
             base = np.asarray(self.weights, dtype=float)
         if regime is not None and self.regime_weights:
@@ -3754,7 +3756,7 @@ class AIManager:
             epochs,
             batch_size,
         )
-        task = asyncio.create_task(runner())
+        task: asyncio.Task[None] = asyncio.create_task(runner())
         schedule = TrainingSchedule(
             symbol=self._normalize_symbol(symbol),
             interval_seconds=float(interval_seconds),
@@ -3837,7 +3839,7 @@ class AIManager:
             baseline_provider,
             on_result,
         )
-        task = asyncio.create_task(runner())
+        task: asyncio.Task[None] = asyncio.create_task(runner())
         schedule = PipelineSchedule(
             symbol=self._normalize_symbol(symbol),
             interval_seconds=float(interval_seconds),

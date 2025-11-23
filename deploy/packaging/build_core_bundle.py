@@ -374,7 +374,7 @@ class CoreBundleBuilder:
         )
         self.logger = logger or logging.getLogger(__name__)
         self._pipeline = pipeline
-        self._last_pipeline_report = None
+        self._last_pipeline_report: Optional[PackagingPipelineReport] = None
 
     def expected_archive_path(self) -> Path:
         """Return the destination path for the bundle archive."""
@@ -499,7 +499,7 @@ class CoreBundleBuilder:
                 relative = path.relative_to(staging_root).as_posix()
                 digest = self.signatures.digest_file(path)
                 files.append({"path": relative, "sha384": digest})
-        manifest = {
+        manifest: Dict[str, object] = {
             "bundle": BUNDLE_NAME,
             "platform": self.platform,
             "version": self.version,

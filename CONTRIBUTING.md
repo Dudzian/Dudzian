@@ -53,6 +53,26 @@ Importy z `archive/**` są zabronione w kodzie runtime/CI (patrz
 Jeżeli potrzebujesz materiałów referencyjnych, trzymaj je w `archive/` bez
 wiązań importowych do aktywnego kodu.
 
+### Statyczne typowanie
+
+- `python -m mypy` obejmuje teraz pakiety `bot_core.auto_trader`, `bot_core.ai`,
+  `bot_core.risk`, `bot_core.execution`, warstwy `core/config`, `core/reporting`,
+  `core/security`, `core/licensing`, a także kluczowe moduły packagingu desktopu
+  (`deploy/packaging/*`) oraz wybrane skrypty runtime (`run_cloud_service.py`,
+  `run_stage6_resilience_cycle.py`, `run_stage6_observability_cycle.py`,
+  `run_local_bot.py`, `list_exchange_adapters.py`, `run_ai_governor_cycle.py`,
+  `validate_marketplace_presets.py`).
+- `reports/__init__.py` utrzymuje katalog artefaktów raportowych w zakresie mypy,
+  aby potwierdzić kompletność instalacji z pełnymi informacjami o typach.
+- Wyjątki importowe dopuszczalne są wyłącznie w dedykowanych override'ach dla
+  bibliotek bez stubów (np. PySide6/shiboken6, pandas, fastapi, grpc, shap,
+  jsonschema); nie używamy globalnego `ignore_missing_imports` ani
+  `follow_imports="silent"`.
+- Lista `disable_error_code` w override'ach jest ograniczona do uzasadnionych
+  wyjątków dla dynamicznych API (m.in. `attr-defined`, kompatybilność `arg-type`
+  z Qt/QML); nowe tłumienia zgłaszaj w review wraz z kodami błędów i powodem,
+  zamiast dodawać globalne wyłączenia.
+
 ### Użycie słowa „legacy”
 
 - W kodzie wykonywalnym (np. `bot_core`, `core`, `scripts/`, `ui/pyside_app`, `proto/`,

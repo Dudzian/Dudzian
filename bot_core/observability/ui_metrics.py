@@ -62,17 +62,37 @@ class FeedHealthMetricsExporter:
             "bot_ui_feed_latency_p95_ms",
             "Latencja p95 decision feedu w milisekundach",
         )
+        self._latency_sla_p50_ms = self._registry.gauge(
+            "bot_ui_feed_sla_latency_p50_ms",
+            "Latencja p50 decision feedu (SLA) w milisekundach",
+        )
+        self._latency_sla_p95_ms = self._registry.gauge(
+            "bot_ui_feed_sla_latency_p95_ms",
+            "Latencja p95 decision feedu (SLA) w milisekundach",
+        )
         self._reconnects_total = self._registry.gauge(
             "bot_ui_feed_reconnects_total",
             "Liczba reconnectów decision feedu",
+        )
+        self._reconnects_sla_total = self._registry.gauge(
+            "bot_ui_feed_sla_reconnects_total",
+            "Liczba reconnectów decision feedu (SLA)",
         )
         self._downtime_seconds = self._registry.gauge(
             "bot_ui_feed_downtime_seconds",
             "Łączny czas niedostępności decision feedu w sekundach",
         )
+        self._downtime_sla_seconds = self._registry.gauge(
+            "bot_ui_feed_sla_downtime_seconds",
+            "Łączny czas niedostępności decision feedu (SLA) w sekundach",
+        )
         self._status_metric = self._registry.gauge(
             "bot_ui_feed_status",
             "Status decision feedu (0=unknown,1=connected,2=degraded,3=retrying,4=fallback)",
+        )
+        self._status_sla_metric = self._registry.gauge(
+            "bot_ui_feed_sla_status",
+            "Status SLA decision feedu (0=unknown,1=connected,2=degraded,3=retrying,4=fallback)",
         )
         self._lock = threading.Lock()
         self._dashboard: dict[str, dict[str, object]] = {}
@@ -97,19 +117,26 @@ class FeedHealthMetricsExporter:
 
         if latency_p50_ms is not None:
             self._latency_p50_ms.set(float(latency_p50_ms), labels=metric_labels)
+            self._latency_sla_p50_ms.set(float(latency_p50_ms), labels=metric_labels)
         else:
             self._latency_p50_ms.set(0.0, labels=metric_labels)
+            self._latency_sla_p50_ms.set(0.0, labels=metric_labels)
 
         if latency_p95_ms is not None:
             self._latency_p95_ms.set(float(latency_p95_ms), labels=metric_labels)
+            self._latency_sla_p95_ms.set(float(latency_p95_ms), labels=metric_labels)
         else:
             self._latency_p95_ms.set(0.0, labels=metric_labels)
+            self._latency_sla_p95_ms.set(0.0, labels=metric_labels)
 
         self._reconnects_total.set(float(max(0, reconnects)), labels=metric_labels)
+        self._reconnects_sla_total.set(float(max(0, reconnects)), labels=metric_labels)
         downtime_seconds = max(0.0, float(downtime_ms) / 1000.0)
         self._downtime_seconds.set(downtime_seconds, labels=metric_labels)
+        self._downtime_sla_seconds.set(downtime_seconds, labels=metric_labels)
         status_value = self._STATUS_TO_VALUE.get(status, self._STATUS_TO_VALUE["unknown"])
         self._status_metric.set(status_value, labels=metric_labels)
+        self._status_sla_metric.set(status_value, labels=metric_labels)
 
         dashboard_entry: dict[str, object] = {
             "adapter": adapter_label,
@@ -149,6 +176,60 @@ def reset_feed_health_metrics_exporter() -> None:
     global _FEED_HEALTH_METRICS_EXPORTER
     with _FEED_HEALTH_METRICS_LOCK:
         _FEED_HEALTH_METRICS_EXPORTER = None
+
+
+class RiskJournalMetricsExporter:
+    """Eksporter metryk kompletności Risk Journal do Prometheusa."""
+
+    _STATE_TO_VALUE = {"ok": 0.0, "warning": 1.0, "critical": 2.0}
+
+    def __init__(self, *, registry: MetricsRegistry | None = None) -> None:
+        self._registry = registry or get_global_metrics_registry()
+        self._state = self._registry.gauge(
+            "bot_ui_risk_journal_state",
+            "Stan kompletności Risk Journal (0=ok,1=warning,2=critical)",
+        )
+        self._missing_entries = self._registry.gauge(
+            "bot_ui_risk_journal_missing_entries_total",
+            "Liczba brakujących wpisów Risk Journal wymagających uzupełnienia",
+        )
+        self._incomplete_samples = self._registry.gauge(
+            "bot_ui_risk_journal_incomplete_samples_total",
+            "Liczba przykładowych brakujących wpisów raportowanych w diagnostyce",
+        )
+
+    def record(
+        self,
+        *,
+        state: str,
+        missing_entries: int,
+        incomplete_samples: int,
+        labels: Mapping[str, str] | None = None,
+    ) -> None:
+        metric_labels = {"channel": "risk_journal"}
+        if labels:
+            metric_labels.update({str(k): str(v) for k, v in labels.items()})
+
+        value = self._STATE_TO_VALUE.get(state, 0.0)
+        self._state.set(value, labels=metric_labels)
+        self._missing_entries.set(float(max(0, missing_entries)), labels=metric_labels)
+        self._incomplete_samples.set(
+            float(max(0, incomplete_samples)), labels=metric_labels
+        )
+
+
+_RISK_JOURNAL_METRICS_LOCK = threading.Lock()
+_RISK_JOURNAL_METRICS_EXPORTER: "RiskJournalMetricsExporter | None" = None
+
+
+def get_risk_journal_metrics_exporter() -> RiskJournalMetricsExporter:
+    """Zwraca globalny eksporter metryk Risk Journal."""
+
+    global _RISK_JOURNAL_METRICS_EXPORTER
+    with _RISK_JOURNAL_METRICS_LOCK:
+        if _RISK_JOURNAL_METRICS_EXPORTER is None:
+            _RISK_JOURNAL_METRICS_EXPORTER = RiskJournalMetricsExporter()
+        return _RISK_JOURNAL_METRICS_EXPORTER
 
 
 def _safe_json_loads(payload: str) -> Mapping[str, Any]:
@@ -1861,6 +1942,8 @@ __all__ = [
     "FeedHealthMetricsExporter",
     "UiTelemetryPrometheusExporter",
     "LongPollStreamMetricsCache",
+    "RiskJournalMetricsExporter",
+    "get_risk_journal_metrics_exporter",
     "get_feed_health_metrics_exporter",
     "reset_feed_health_metrics_exporter",
     "get_long_poll_metrics_cache",

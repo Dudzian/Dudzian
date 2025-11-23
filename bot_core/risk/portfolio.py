@@ -128,7 +128,7 @@ class VolatilityEstimator:
                     [(1 - lambda_param) * (lambda_param**i) for i in range(len(returns))]
                 )[::-1]
                 weights = weights / weights.sum()
-                weighted_variance = np.sum(weights * (returns**2))
+                weighted_variance: float = float(np.sum(weights * (returns**2)))
                 return float(np.sqrt(weighted_variance * 252))
         except Exception as exc:  # pragma: no cover - log i fallback
             self.logger.error("Error calculating EWMA volatility: %s", exc)
@@ -615,6 +615,8 @@ class MultiAccountRiskManager:
         self._base_params = dict(base_params or {})
         self._managers: Dict[str, RiskManagement] = {}
         self.logger = logging.getLogger(__name__)
+        # Historia zagregowanej wartości portfela na potrzeby obliczeń drawdownów.
+        self.portfolio_value_history: list[float] = []
 
     def _ensure_manager(
         self, account_id: str, params: Mapping[str, Any] | None

@@ -1,6 +1,7 @@
 """Generowanie raportów z przebiegu cyklu retreningu."""
 from __future__ import annotations
 
+
 import json
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -99,7 +100,9 @@ class RetrainingReport:
         if "row_count" in meta:
             kpi["dataset_rows"] = meta.get("row_count")
         if "feature_names" in meta:
-            kpi["feature_count"] = len(meta.get("feature_names", ()))
+            feature_names = meta.get("feature_names", ())
+            if isinstance(feature_names, (list, tuple, set)):
+                kpi["feature_count"] = len(feature_names)
 
         normalized_events = [_normalize_event(event) for event in events]
         alerts = _derive_alerts(normalized_events, fallback_chain, outcome)
@@ -331,7 +334,7 @@ def _derive_alerts(
     if fallback_chain:
         alerts.append(
             "Aktywowano fallback backendów: {}".format(
-                ", ".join(entry.get("backend", "n/d") for entry in fallback_chain)
+                ", ".join(str(entry.get("backend", "n/d")) for entry in fallback_chain)
             )
         )
     if outcome.drift_score is not None and outcome.drift_score > 0:
