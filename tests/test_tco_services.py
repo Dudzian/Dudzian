@@ -141,7 +141,7 @@ def test_aggregate_costs_groups_by_strategy_and_profile() -> None:
 
 def test_aggregate_costs_applies_extensions() -> None:
     service = BaseCostReportingService()
-    service.register_extension(_MetadataExtension(stage="legacy"))
+    service.register_extension(_MetadataExtension(stage="stage6"))
 
     report = service.aggregate_costs(
         (
@@ -151,7 +151,7 @@ def test_aggregate_costs_applies_extensions() -> None:
     )
 
     assert report.metadata["source"] == "unit-test"
-    assert report.metadata["stage"] == "legacy"
+    assert report.metadata["stage"] == "stage6"
     assert report.metadata["component_count"] == 1
 
 
