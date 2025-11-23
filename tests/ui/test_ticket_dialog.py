@@ -3,11 +3,12 @@ from pathlib import Path
 
 import pytest
 
-from tests.ui._qt import require_pyside6
+from tests.ui._qt import require_libgl, require_pyside6
 
 pytestmark = pytest.mark.qml
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+require_libgl()
 
 if os.getenv("PYTEST_REQUIRE_QML", "").lower() not in {"1", "true", "yes"}:
     pytest.skip(
@@ -22,11 +23,6 @@ os.environ.setdefault("QT_PLUGIN_PATH", str(qt_root / "Qt" / "plugins"))
 
 from PySide6.QtCore import QUrl  # type: ignore[attr-defined]
 from PySide6.QtQml import QQmlApplicationEngine  # type: ignore[attr-defined]
-
-try:  # pragma: no cover - zależne od środowiska
-    from PySide6.QtWidgets import QApplication  # type: ignore[attr-defined]
-except ImportError as exc:  # pragma: no cover - brak QtWidgets
-    pytest.skip(f"Brak zależności QtWidgets: {exc}", allow_module_level=True)
 
 from ui.backend.diagnostics_controller import DiagnosticsController
 
@@ -45,6 +41,19 @@ def project_with_data(tmp_path: Path) -> Path:
 
 @pytest.mark.timeout(30)
 def test_ticket_dialog_generates_package(tmp_path: Path, project_with_data: Path) -> None:
+    try:  # pragma: no cover - zależne od środowiska
+        from PySide6.QtCore import Qt  # type: ignore[attr-defined]
+        from PySide6.QtQuick import QQuickWindow, QSGRendererInterface  # type: ignore[attr-defined]
+        from PySide6.QtWidgets import QApplication  # type: ignore[attr-defined]
+    except ImportError as exc:  # pragma: no cover - brak QtWidgets/libGL
+        pytest.skip(f"Brak zależności QtWidgets: {exc}", allow_module_level=False)
+
+    QApplication.setAttribute(Qt.AA_UseSoftwareOpenGL)
+    try:
+        QQuickWindow.setGraphicsApi(QSGRendererInterface.Software)
+    except AttributeError:  # pragma: no cover - zgodność ze starszymi wersjami Qt
+        QQuickWindow.setSceneGraphBackend("software")
+
     controller = DiagnosticsController()
     controller.baseDirectory = str(project_with_data)
     controller.outputDirectory = str(tmp_path / "exports")
