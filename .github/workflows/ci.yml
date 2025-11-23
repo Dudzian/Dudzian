@@ -7,7 +7,7 @@ on:
 
 env:
   PYSIDE6_VERSION: "6.5.2"
-  QT_DESKTOP_MODULES: "qtcharts qtdeclarative qtquickcontrols2 qtshadertools qttools"
+  QT_DESKTOP_MODULES: "qtcharts qtshadertools"
   QT_WINDOWS_MODULES: "qtcharts qtdeclarative qtquickcontrols2 qtshadertools qttools"
 
 jobs:
