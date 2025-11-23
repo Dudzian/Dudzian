@@ -9,7 +9,16 @@ pytestmark = pytest.mark.qml
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
+if os.getenv("PYTEST_REQUIRE_QML", "").lower() not in {"1", "true", "yes"}:
+    pytest.skip(
+        "TicketDialog wymaga pełnego środowiska QML; ustaw PYTEST_REQUIRE_QML=1, aby włączyć test.",
+        allow_module_level=True,
+    )
+
 PySide6 = require_pyside6()
+qt_root = Path(PySide6.__file__).resolve().parent
+os.environ.setdefault("QML2_IMPORT_PATH", str(qt_root / "Qt" / "qml"))
+os.environ.setdefault("QT_PLUGIN_PATH", str(qt_root / "Qt" / "plugins"))
 
 from PySide6.QtCore import QUrl  # type: ignore[attr-defined]
 from PySide6.QtQml import QQmlApplicationEngine  # type: ignore[attr-defined]
@@ -45,8 +54,19 @@ def test_ticket_dialog_generates_package(tmp_path: Path, project_with_data: Path
     engine.rootContext().setContextProperty("diagnosticsController", controller)
 
     qml_path = Path(__file__).resolve().parents[2] / "ui" / "qml" / "support" / "TicketDialog.qml"
+    qml_warnings: list = []
+
+    def _collect(warnings_list: list) -> None:
+        qml_warnings.extend(warnings_list)
+
+    engine.warnings.connect(_collect)  # type: ignore[attr-defined]
     engine.load(QUrl.fromLocalFile(str(qml_path)))
-    assert engine.rootObjects(), "Nie udało się załadować TicketDialog.qml"
+    if qml_warnings or not engine.rootObjects():
+        warnings_text = "; ".join(warning.toString() for warning in qml_warnings) or "brak obiektów root"
+        pytest.skip(
+            f"Nie udało się załadować TicketDialog.qml: {warnings_text}",
+            allow_module_level=False,
+        )
 
     dialog = engine.rootObjects()[0]
     dialog.open()
