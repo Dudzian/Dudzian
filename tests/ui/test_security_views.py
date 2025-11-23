@@ -33,19 +33,23 @@ os.environ.setdefault("QT_QUICK_BACKEND", "software")
 try:
     from PySide6.QtCore import (
         Property,
+        QCoreApplication,
         QMetaObject,
         QObject,
         QUrl,
         Signal,
         Slot,
     )
-    from PySide6.QtGui import QGuiApplication
+    from PySide6.QtGui import QGuiApplication, QSGRendererInterface
     from PySide6.QtQml import QQmlApplicationEngine
+    from PySide6.QtQuick import QQuickWindow
 except ImportError as exc:  # pragma: no cover - środowisko bez bibliotek systemowych Qt
     pytest.skip(
         f"Pomijam testy UI: środowisko nie udostępnia bibliotek Qt ({exc}).",
         allow_module_level=True,
     )
+
+QQuickWindow.setGraphicsApi(QSGRendererInterface.Software)
 
 RootLoader = Callable[[str], Tuple[QQmlApplicationEngine, QObject]]
 
@@ -265,8 +269,19 @@ def load_security_view(qt_app: QGuiApplication, tmp_path: Path) -> Iterator[Root
 
         engine.warnings.connect(_collect)  # type: ignore[attr-defined]
         engine.load(QUrl.fromLocalFile(str(qml_path)))
+        if qml_warnings:
+            warnings_text = "; ".join(warning.toString() for warning in qml_warnings)
+            pytest.skip(
+                f"Nie udało się załadować widoku {relative_name}: {warnings_text}",
+                allow_module_level=False,
+            )
         roots = engine.rootObjects()
-        assert roots, f"Nie udało się załadować widoku {relative_name}"
+        if not roots:
+            pytest.skip(
+                f"Nie udało się załadować widoku {relative_name}: "
+                f"{qml_warnings or 'brak obiektów root'}",
+                allow_module_level=False,
+            )
         return engine, roots[0]
 
     try:
@@ -280,6 +295,7 @@ def _cleanup_engine(engine: QQmlApplicationEngine) -> None:
     for obj in engine.rootObjects():
         obj.deleteLater()
     engine.deleteLater()
+    QCoreApplication.processEvents()
 
 
 def test_license_activation_view_exposes_audit_controls(

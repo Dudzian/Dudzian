@@ -28,7 +28,11 @@ from PySide6.QtCore import (  # type: ignore[attr-defined]
     QByteArray,
 )
 from PySide6.QtQml import QQmlApplicationEngine  # type: ignore[attr-defined]
-from PySide6.QtGui import QImage  # type: ignore[attr-defined]
+
+try:  # pragma: no cover - zależne od bibliotek systemowych
+    from PySide6.QtGui import QImage  # type: ignore[attr-defined]
+except ImportError as exc:  # pragma: no cover - brak bibliotek systemowych
+    pytest.skip(f"Brak zależności QtGui: {exc}", allow_module_level=True)
 
 try:  # pragma: no cover - zależne od środowiska CI
     from PySide6.QtWidgets import QApplication  # type: ignore[attr-defined]
