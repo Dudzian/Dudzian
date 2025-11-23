@@ -2,8 +2,9 @@ name: CI
 
 on:
   push:
-    branches: ["main", "master", "develop"]
+    branches: ["**"]
   pull_request:
+  workflow_dispatch:
 
 env:
   PYSIDE6_VERSION: "6.5.2"
