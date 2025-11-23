@@ -4,16 +4,17 @@ from __future__ import annotations
 
 import json
 from collections.abc import Mapping, Sequence
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
 from bot_core.exchanges._long_poll_ccxt import CCXTLongPollMixin
 from bot_core.exchanges.base import Environment, ExchangeCredentials
 from bot_core.exchanges.ccxt_adapter import WatchdogCCXTAdapter, merge_adapter_settings
-from bot_core.exchanges.hypercare import HypercareChecklistExporter
 from bot_core.exchanges.error_mapping import raise_for_deribit_error
 from bot_core.exchanges.errors import ExchangeAPIError
 from bot_core.exchanges.health import Watchdog
+from bot_core.exchanges.hypercare import HypercareChecklistExporter
 from bot_core.exchanges.rate_limiter import RateLimitRule
 from bot_core.exchanges.signal_quality import SignalQualityReporter
 from bot_core.exchanges.streaming import LocalLongPollStream
@@ -180,16 +181,21 @@ class DeribitFuturesAdapter(CCXTLongPollMixin, WatchdogCCXTAdapter):
         """Publikuje checklistę HyperCare i snapshot jakości sygnałów."""
         signal_root = Path(signal_quality_dir) if signal_quality_dir else Path("reports/exchanges/signal_quality")
         signal_root.mkdir(parents=True, exist_ok=True)
-
+        signal_summary: Mapping[str, object] | None = None
         quality_reporter = reporter
         quality_snapshot: Path | None = None
+        daily_signal_csv: Path | None = None
 
         if quality_reporter is None and load_existing_snapshot:
             existing_snapshot = signal_root / f"{cls.name}.json"
             if existing_snapshot.exists():
                 quality_snapshot = existing_snapshot
+                try:
+                    signal_summary = json.loads(existing_snapshot.read_text(encoding="utf-8"))
+                except (TypeError, ValueError):
+                    signal_summary = None
 
-        if quality_reporter is None and quality_snapshot is None:
+        if quality_reporter is None and (quality_snapshot is None or signal_summary is None):
             quality_reporter = SignalQualityReporter(
                 exchange_id=cls.name,
                 report_dir=signal_root,
@@ -197,8 +203,28 @@ class DeribitFuturesAdapter(CCXTLongPollMixin, WatchdogCCXTAdapter):
                 csv_dir=signal_root,
             )
 
-        if quality_reporter is not None:
+        if quality_reporter is not None and signal_summary is None:
+            signal_summary = quality_reporter.summarize()
+
+        if quality_reporter is not None and quality_snapshot is None:
             quality_snapshot = quality_reporter.write_snapshot()
+
+        reporter_wrote_csv = bool(
+            quality_reporter is not None
+            and getattr(quality_reporter, "_enable_csv_export", False)
+            and (quality_snapshot is not None or signal_summary is not None)
+        )
+
+        if signal_summary is not None:
+            if quality_snapshot is None:
+                quality_snapshot = signal_root / f"{cls.name}.json"
+                quality_snapshot.write_text(json.dumps(signal_summary, indent=2, sort_keys=True), encoding="utf-8")
+            if reporter_wrote_csv:
+                existing_csv = signal_root / f"{cls.name}-{datetime.now(timezone.utc).date().isoformat()}.csv"
+                if existing_csv.exists():
+                    daily_signal_csv = existing_csv
+            if daily_signal_csv is None:
+                daily_signal_csv = cls._write_daily_signal_quality_csv(signal_summary, csv_dir=signal_root)
 
         checklist = HypercareChecklistExporter(
             exchange=cls.name,
@@ -208,9 +234,42 @@ class DeribitFuturesAdapter(CCXTLongPollMixin, WatchdogCCXTAdapter):
         checklist_json, checklist_csv = checklist.export(
             report_dir=report_dir or "reports/exchanges/hypercare",
             signal_quality_snapshot=quality_snapshot,
+            signal_quality_daily_csv=daily_signal_csv,
             daily_csv_dir=daily_csv_dir or "reports/exchanges",
         )
         return str(checklist_json), str(checklist_csv) if checklist_csv else None
+
+    @classmethod
+    def _write_daily_signal_quality_csv(
+        cls, summary: Mapping[str, object], *, csv_dir: Path
+    ) -> Path:
+        csv_dir.mkdir(parents=True, exist_ok=True)
+        now = datetime.now(timezone.utc)
+        date_suffix = now.date().isoformat()
+        csv_path = csv_dir / f"{cls.name}-{date_suffix}.csv"
+        watchdog = summary.get("watchdog") if isinstance(summary, Mapping) else None
+        alerts = 0
+        if isinstance(watchdog, Mapping):
+            recent_alerts = watchdog.get("alerts")
+            if isinstance(recent_alerts, Sequence):
+                alerts = len(recent_alerts)
+        row = (
+            f"{now.isoformat()},{summary.get('exchange', cls.name)},{summary.get('total', 0)},"
+            f"{summary.get('failures', 0)},{summary.get('fill_ratio', 0.0)},"
+            f"{summary.get('slippage_bps', 0.0)},{alerts}\n"
+        )
+        header = "timestamp,exchange,total,failures,fill_ratio,slippage_bps,watchdog_alerts\n"
+        if csv_path.exists():
+            with csv_path.open("a", encoding="utf-8", newline="") as handle:
+                handle.write(row)
+            return csv_path
+
+        tmp_path = csv_path.with_suffix(".csv.tmp")
+        with tmp_path.open("w", encoding="utf-8", newline="") as handle:
+            handle.write(header)
+            handle.write(row)
+        tmp_path.replace(csv_path)
+        return csv_path
 
 
 __all__ = ["DeribitFuturesAdapter"]

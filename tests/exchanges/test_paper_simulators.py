@@ -134,6 +134,15 @@ def test_futures_simulator_applies_slippage_and_fee_validation():
 
     assert journal.events
     assert any(getattr(event, "event_type", "") == "simulator_trade_costs" for event in journal.events)
+    ok_cost_events = [
+        event
+        for event in journal.events
+        if getattr(event, "event_type", "") == "simulator_trade_costs"
+    ]
+    assert ok_cost_events
+    assert all(
+        "ok" in getattr(event, "metadata", {}).get("risk_flags", []) for event in ok_cost_events
+    )
 
     with pytest.raises(ValueError):
         PaperFuturesSimulator(_DummyFeed(20_000.0), database=_DummyDB(), fee_rate=-0.1, risk_journal=journal)
@@ -148,9 +157,33 @@ def test_futures_simulator_applies_slippage_and_fee_validation():
     )
     warning_simulator.load_markets()
     assert any(
-        getattr(event, "metadata", {}).get("risk_flags") == ["warning"]
+        {
+            "slippage_high", "fee_rate_high"
+        }
+        & set(getattr(event, "metadata", {}).get("risk_flags", []))
         for event in journal.events
     )
+
+
+def test_futures_simulator_records_validation_journal_flags():
+    journal = _RecordingJournal()
+    PaperFuturesSimulator(
+        _DummyFeed(20_000.0),
+        database=_DummyDB(),
+        slippage_bps=320.0,
+        fee_rate=0.015,
+        risk_journal=journal,
+    )
+
+    validation_events = [
+        event
+        for event in journal.events
+        if getattr(event, "event_type", "") == "simulator_cost_validation"
+    ]
+    assert validation_events
+    flags = getattr(validation_events[-1], "metadata", {}).get("risk_flags", [])
+    assert "fee_rate_high" in flags
+    assert "slippage_high" in flags
 
 
 def test_simulator_describe_configuration_reports_runtime_values():

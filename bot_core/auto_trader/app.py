@@ -563,6 +563,35 @@ class AutoTrader:
 
         return self._execution_context is not None
 
+    @property
+    def metric_labels(self) -> Mapping[str, str]:
+        """Public accessor exposing metric label defaults used across cycles."""
+
+        return dict(self._base_metric_labels)
+
+    def set_metric_labels(self, labels: Mapping[str, str] | None = None, **overrides: str) -> None:
+        """Update default metric labels without touching prywatne atrybuty.
+
+        Parametry przekazywane jako ``labels`` lub ``overrides`` są konwertowane
+        do stringów, a wartości ``None`` skutkują usunięciem danego klucza.
+        Dzięki temu testy i narzędzia diagnostyczne nie muszą modyfikować
+        ``_base_metric_labels`` bezpośrednio.
+        """
+
+        payload: dict[str, str] = dict(self._base_metric_labels)
+        if labels:
+            for key, value in labels.items():
+                if value is None:
+                    payload.pop(str(key), None)
+                    continue
+                payload[str(key)] = str(value)
+        for key, value in overrides.items():
+            if value is None:
+                payload.pop(str(key), None)
+                continue
+            payload[str(key)] = str(value)
+        self._base_metric_labels = payload
+
     def lifecycle_snapshot(self) -> DecisionLifecycleSnapshot:
         """Zwraca publiczny snapshot stanu cyklu dla UI/CLI i testów."""
 
@@ -9634,7 +9663,7 @@ class AutoTrader:
             self, "_decision_cycle_metadata_revision", 0
         )
         decision_revision_before = getattr(self, "_last_decision_revision", 0)
-        label_snapshot = dict(self._base_metric_labels)
+        label_snapshot = self.metric_labels
         with self._profile_section("cycle") as profiler:
             self._auto_trade_loop(
                 execution_context=execution_context,

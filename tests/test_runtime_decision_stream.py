@@ -1,5 +1,6 @@
 from datetime import datetime, timezone
 from types import SimpleNamespace
+from typing import Mapping
 
 import pytest
 
@@ -179,6 +180,10 @@ def test_list_decisions_includes_cycle_metrics():
             self._decision_journal = journal
             self._base_metric_labels = {"portfolio": "alpha"}
 
+        @property
+        def metric_labels(self) -> Mapping[str, str]:
+            return dict(self._base_metric_labels)
+
         def _snapshot_decision_metrics(self, labels):
             assert labels == self._base_metric_labels
             return {
@@ -208,6 +213,10 @@ def test_stream_includes_cycle_metrics_when_available():
         def __init__(self) -> None:
             self._decision_journal = journal
             self._base_metric_labels = {"portfolio": "alpha"}
+
+        @property
+        def metric_labels(self) -> Mapping[str, str]:
+            return dict(self._base_metric_labels)
 
         def _snapshot_decision_metrics(self, labels):
             assert labels == self._base_metric_labels

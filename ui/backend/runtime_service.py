@@ -548,6 +548,7 @@ def _build_risk_context(
     metrics: dict[str, object] = {
         "totalEntries": total_entries,
         "incompleteEntries": incomplete_entries,
+        "incompleteSamples": 0,
     }
 
     severity_order = {"block": 0, "freeze": 1, "override": 2, "neutral": 3}
@@ -613,13 +614,22 @@ def _build_risk_context(
         }
     )
 
+    incomplete_samples = [
+        {
+            "event": item.get("event"),
+            "timestamp": item.get("timestamp"),
+            "missing": item.get("missingFields", []),
+        }
+        for item in timeline
+        if item.get("isIncomplete")
+    ][:5]
+    metrics["incompleteSamples"] = len(incomplete_samples)
+
     diagnostics = {
         "incompleteEntries": incomplete_entries,
-        "incompleteSamples": [
-            {"event": item.get("event"), "timestamp": item.get("timestamp"), "missing": item.get("missingFields", [])}
-            for item in timeline
-            if item.get("isIncomplete")
-        ][:5],
+        "incompleteSamples": incomplete_samples,
+        "incomplete_entries": incomplete_entries,
+        "incomplete_samples": incomplete_samples,
     }
 
     return metrics, timeline, diagnostics
@@ -1894,13 +1904,24 @@ class RuntimeService(QObject):
         return f"{int(round(value))}"
 
     def _maybe_emit_risk_journal_alert(self, diagnostics: Mapping[str, object]) -> None:
-        incomplete_entries = int(diagnostics.get("incompleteEntries") or 0)
-        samples = diagnostics.get("incompleteSamples") or []
+        incomplete_entries = int(
+            diagnostics.get("incompleteEntries")
+            or diagnostics.get("incomplete_entries")
+            or 0
+        )
+        samples = (
+            diagnostics.get("incompleteSamples")
+            or diagnostics.get("incomplete_samples")
+            or []
+        )
+        incomplete_samples_count = len(samples)
         severity = "warning" if incomplete_entries else "ok"
         previous = self._risk_journal_alert_state
         if severity == previous:
             return
         self._risk_journal_alert_state = severity
+
+        environment = self._active_profile or "default"
 
         body = (
             "wykryto niekompletne wpisy Risk Journal wymagające pól risk_flags/stress_overrides lub risk_action"
@@ -1915,8 +1936,8 @@ class RuntimeService(QObject):
         self._risk_journal_metrics_exporter.record(
             state=severity,
             incomplete_entries=incomplete_entries,
-            incomplete_samples=len(samples),
-            labels={"environment": self._active_profile or "default"},
+            incomplete_samples=incomplete_samples_count,
+            labels={"environment": environment},
         )
 
         sink = self._feed_alert_sink
@@ -1927,12 +1948,19 @@ class RuntimeService(QObject):
             severity="warning" if incomplete_entries else "info",
             title="Risk Journal completeness",
             body=body,
-            context={"channel": "risk_journal", "state": severity},
+            context={
+                "channel": "risk_journal",
+                "environment": environment,
+                "state": severity,
+            },
             payload={
                 "channel": "risk_journal",
+                "environment": environment,
                 "state": severity,
                 "incomplete_entries": incomplete_entries,
                 "incompleteEntries": incomplete_entries,
+                "incomplete_samples": incomplete_samples_count,
+                "incompleteSamples": incomplete_samples_count,
                 "samples": samples,
             },
         )

@@ -22,6 +22,7 @@ class HypercareChecklistExporter:
         *,
         report_dir: str | Path,
         signal_quality_snapshot: str | Path | None = None,
+        signal_quality_daily_csv: str | Path | None = None,
         daily_csv_dir: str | Path | None = None,
     ) -> tuple[Path, Path | None]:
         report_root = Path(report_dir)
@@ -36,6 +37,8 @@ class HypercareChecklistExporter:
         }
         if signal_quality_snapshot:
             payload["signal_quality_snapshot"] = str(signal_quality_snapshot)
+        if signal_quality_daily_csv:
+            payload["signal_quality_daily_csv"] = str(signal_quality_daily_csv)
 
         json_path = report_root / f"{self.exchange}_hypercare.json"
         tmp_json = json_path.with_suffix(".json.tmp")
@@ -47,8 +50,15 @@ class HypercareChecklistExporter:
             csv_root = Path(daily_csv_dir)
             csv_root.mkdir(parents=True, exist_ok=True)
             csv_path = csv_root / f"{datetime.now(timezone.utc).date()}_hypercare.csv"
-            header = "exchange,checklist_id,signed,signed_by,signal_quality_snapshot,generated_at\n"
-            row = f"{self.exchange},{self.checklist_id},True,{self.signed_by},{payload.get('signal_quality_snapshot','')},{payload['generated_at']}\n"
+            header = (
+                "exchange,checklist_id,signed,signed_by,signal_quality_snapshot,"
+                "signal_quality_daily_csv,generated_at\n"
+            )
+            row = (
+                f"{self.exchange},{self.checklist_id},True,{self.signed_by},"
+                f"{payload.get('signal_quality_snapshot','')},"
+                f"{payload.get('signal_quality_daily_csv','')},{payload['generated_at']}\n"
+            )
             tmp_csv = csv_path.with_suffix(".csv.tmp")
             tmp_csv.write_text(header + row, encoding="utf-8")
             tmp_csv.replace(csv_path)
