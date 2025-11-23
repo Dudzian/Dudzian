@@ -130,6 +130,8 @@ Polecenie utworzy plik `reports/exchanges/<data>.csv` oraz skopiuje go do `repor
 
 **Weryfikacja futures i HyperCare:** po wygenerowaniu CSV sprawdź, że wiersze `deribit,live` i `bitmex,live` mają `hypercare_checklist_signed == True`, `futures_checklist_ready == True` oraz pustą kolumnę `missing_required_documents`. Jeśli wartości są puste lub `False`, oznacza to brak podpisu checklisty HyperCare i należy otworzyć zadanie w HyperCare/Compliance. Kolumna `liquidation_feed` powinna wskazywać pełny URL kanału long-pollowego (np. `https://stream.hyperion.dudzian.ai/exchanges/deribit/futures/private`) – użyj jej w dashboardzie do szybkiego porównania konfiguracji feedów. Statusy `hypercare_failover_status`/`hypercare_latency_status`/`hypercare_cost_status` muszą raportować `ready` (źródłem prawdy jest `config/stage6/hypercare.yaml`); odchylenia blokują publikację benchmarku CryptoHopper/Gunbot.
 
+**Nowe kolumny jakości sygnałów:** raport wymusza obecność dziennych snapshotów `reports/exchanges/signal_quality/*.json` dla `deribit_futures` i `bitmex_futures`. Kolumny `signal_quality_snapshot_status`/`signal_quality_snapshot_age_minutes` muszą raportować `fresh` oraz wiek < 48h – w przeciwnym razie skrypt zakończy się błędem. Wartości `signal_quality_records` pomagają szybko wychwycić puste raporty przed publikacją benchmarku.
+
 ## 9. Eksport champion/challenger i reakcja na degradację modeli
 
 ### 9.1. Generowanie raportu porównawczego championów

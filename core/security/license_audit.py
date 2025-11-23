@@ -55,9 +55,13 @@ class LicenseActivationRecord:
         edition = str(payload.get("edition") or "").strip() or None
         hwid_hash = str(payload.get("local_hwid_hash") or "").strip() or None
 
-        try:
-            activation_count = int(payload.get("activation_count") or 0)
-        except (TypeError, ValueError):
+        raw_activation = payload.get("activation_count")
+        if isinstance(raw_activation, (str, bytes, bytearray, int, float)):
+            try:
+                activation_count = int(raw_activation)
+            except (TypeError, ValueError):
+                activation_count = 0
+        else:
             activation_count = 0
 
         repeat_activation = bool(payload.get("repeat_activation"))

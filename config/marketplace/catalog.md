@@ -1,6 +1,8 @@
 # Marketplace Catalog
 
-*Wygenerowano:* 2025-11-01T22:38:01Z
+*Wygenerowano:* 2025-02-11T12:00:00Z
+*QA/Release:* katalog i paczki podpisane (HMAC + Ed25519), recenzje QA zatwierdzone zgodnie z `release.review_status` i `release.reviewers`.
+*Proces rollout:* patrz `docs/marketplace/README.md` (sekcja „Rollout presetów”) oraz `docs/benchmark/cryptohopper_comparison.md` (aktualizacja benchmarku i artefaktów marketingowych).
 
 | Paczka | Wersja | Persony | Ryzyko | Budżet | Podsumowanie |
 | --- | --- | --- | --- | --- | --- |

@@ -7,6 +7,26 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Iterable, Mapping, MutableMapping, Sequence
 
+_DEFAULT_CARD_ORDER = (
+    "io_queue",
+    "guardrails",
+    "retraining",
+    "compliance",
+    "ai_decisions",
+)
+_DEFAULT_REFRESH_INTERVAL_MS = 4000
+_DEFAULT_THEME = "system"
+
+
+def _as_str_sequence(value: object, default: Sequence[str]) -> tuple[str, ...]:
+    if isinstance(value, Sequence) and not isinstance(value, (str, bytes, bytearray)):
+        return tuple(str(item) for item in value)
+    return tuple(default)
+
+
+def _as_mapping(value: object) -> Mapping[str, object]:
+    return value if isinstance(value, Mapping) else {}
+
 __all__ = [
     "DEFAULT_UI_SETTINGS_PATH",
     "DashboardSettings",
@@ -33,26 +53,21 @@ class UISettingsError(RuntimeError):
 class DashboardSettings:
     """Preferencje widoku dashboardu runtime."""
 
-    card_order: tuple[str, ...] = (
-        "io_queue",
-        "guardrails",
-        "retraining",
-        "compliance",
-        "ai_decisions",
-    )
+    card_order: tuple[str, ...] = _DEFAULT_CARD_ORDER
     hidden_cards: tuple[str, ...] = ()
-    refresh_interval_ms: int = 4000
-    theme: str = "system"
+    refresh_interval_ms: int = _DEFAULT_REFRESH_INTERVAL_MS
+    theme: str = _DEFAULT_THEME
 
     @classmethod
     def from_mapping(cls, mapping: Mapping[str, object] | None) -> "DashboardSettings":
         if not mapping:
             return cls()
-        card_order = tuple(str(item) for item in mapping.get("card_order", cls.card_order))
-        hidden_cards = tuple(str(item) for item in mapping.get("hidden_cards", ()))
-        refresh_interval = int(mapping.get("refresh_interval_ms", cls.refresh_interval_ms))
+        card_order = _as_str_sequence(mapping.get("card_order"), _DEFAULT_CARD_ORDER)
+        hidden_cards = _as_str_sequence(mapping.get("hidden_cards"), ())
+        refresh_raw = mapping.get("refresh_interval_ms", _DEFAULT_REFRESH_INTERVAL_MS)
+        refresh_interval = int(refresh_raw) if isinstance(refresh_raw, (int, float, str)) else _DEFAULT_REFRESH_INTERVAL_MS
         refresh_interval = max(500, refresh_interval)
-        theme = str(mapping.get("theme", cls.theme) or cls.theme)
+        theme = str(mapping.get("theme", _DEFAULT_THEME) or _DEFAULT_THEME)
         return cls(
             card_order=card_order,
             hidden_cards=hidden_cards,
@@ -127,10 +142,9 @@ class UISettings:
     def from_mapping(cls, mapping: Mapping[str, object] | None) -> "UISettings":
         if not mapping:
             return cls()
-        version = int(mapping.get("version", 1))
-        dashboard = DashboardSettings.from_mapping(
-            mapping.get("dashboard") if isinstance(mapping, Mapping) else None
-        )
+        version_raw = mapping.get("version", 1)
+        version = int(version_raw) if isinstance(version_raw, (int, float, str)) else 1
+        dashboard = DashboardSettings.from_mapping(_as_mapping(mapping.get("dashboard")))
         return cls(version=version, dashboard=dashboard)
 
     def to_mapping(self) -> dict[str, object]:

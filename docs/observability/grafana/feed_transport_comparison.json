@@ -11,8 +11,8 @@
       "title": "Latencja p50",
       "targets": [
         {
-          "expr": "bot_ui_feed_latency_p50_ms{transport=~\"grpc|fallback\",environment=~\".*\"} / 1000",
-          "legendFormat": "gRPC {{transport}} {{environment}}",
+          "expr": "bot_ui_feed_sla_latency_p50_ms{transport=~\"grpc|fallback\",environment=~\".*\"} / 1000",
+          "legendFormat": "gRPC/decision feed {{transport}} {{environment}}",
           "datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"}
         },
         {
@@ -28,8 +28,8 @@
       "title": "Latencja p95",
       "targets": [
         {
-          "expr": "bot_ui_feed_latency_p95_ms{transport=~\"grpc|fallback\",environment=~\".*\"} / 1000",
-          "legendFormat": "gRPC {{transport}} {{environment}}",
+          "expr": "bot_ui_feed_sla_latency_p95_ms{transport=~\"grpc|fallback\",environment=~\".*\"} / 1000",
+          "legendFormat": "gRPC/decision feed {{transport}} {{environment}}",
           "datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"}
         },
         {
@@ -45,8 +45,8 @@
       "title": "Reconnecty",
       "targets": [
         {
-          "expr": "bot_ui_feed_reconnects_total{transport=~\"grpc|fallback\",environment=~\".*\"}",
-          "legendFormat": "gRPC {{transport}} {{environment}}",
+          "expr": "bot_ui_feed_sla_reconnects_total{transport=~\"grpc|fallback\",environment=~\".*\"}",
+          "legendFormat": "gRPC/decision feed {{transport}} {{environment}}",
           "datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"}
         },
         {
@@ -61,8 +61,8 @@
       "title": "Downtime",
       "targets": [
         {
-          "expr": "bot_ui_feed_downtime_seconds{transport=~\"grpc|fallback\",environment=~\".*\"}",
-          "legendFormat": "gRPC {{transport}} {{environment}}",
+          "expr": "bot_ui_feed_sla_downtime_seconds{transport=~\"grpc|fallback\",environment=~\".*\"}",
+          "legendFormat": "gRPC/decision feed {{transport}} {{environment}}",
           "datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"}
         },
         {
@@ -78,7 +78,7 @@
       "title": "Alert SLA (feed_sla)",
       "targets": [
         {
-          "expr": "max_over_time(bot_ui_feed_status{transport=~\"grpc|fallback\",environment=~\".*\"}[5m])",
+          "expr": "max_over_time(bot_ui_feed_sla_status{transport=~\"grpc|fallback\",environment=~\".*\"}[5m])",
           "legendFormat": "gRPC status"
         },
         {
