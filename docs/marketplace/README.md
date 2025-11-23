@@ -45,6 +45,29 @@ Ten dokument opisuje kompletny przepływ dodawania nowych presetów do katalogu 
 2. Flagi `--check-only --require-clean` blokują merge, gdy `config/marketplace/catalog.md(.sig)` różnią się od wersji w repozytorium lub brakuje recenzji QA – dokładnie w ten sposób działa krok „Validate release bundle catalog” w jobie `marketplace-catalog` workflowa `.github/workflows/ci.yml`.
 3. Job `deploy` tego samego workflowa ponawia budowę katalogu, uruchamia `build_release_bundle.py` dla katalogu `deploy/packaging/samples` i publikuje artefakt `marketplace-catalog-release`, który można dołączyć do release notes.
 
+## 4a. Rollout presetów (produkcyjny)
+
+1. **Podpisz i zbuduj katalog**:
+   ```bash
+   python scripts/build_marketplace_catalog.py \
+     --private-key config/marketplace/keys/dev-presets-ed25519.key \
+     --key-id dev-presets \
+     --signing-key dev-hmac:config/marketplace/keys/dev-hmac.key \
+     --catalog-signature-key dev-hmac
+   ```
+2. **Zweryfikuj podpisy katalogu i presetów** (CLI używany także w CI):
+   ```bash
+   python scripts/validate_marketplace_presets.py \
+     --presets config/marketplace/presets \
+     --hmac-key config/marketplace/keys/dev-hmac.key \
+     --ed25519-key config/marketplace/keys/dev-presets-ed25519.pub \
+     --catalog config/marketplace/catalog.json \
+     --catalog-markdown config/marketplace/catalog.md
+   ```
+   Walidator sprawdza podpisy HMAC/Ed25519 dla `catalog.json` i `catalog.md` oraz kompletność metadanych QA (`release.review_status`, `release.reviewers`, `exchange_compatibility`).
+3. **Opublikuj artefakty**: dołącz `config/marketplace/catalog.json(.sig)` i `config/marketplace/catalog.md(.sig)` do bundla instalatora (`build_release_bundle.py`) oraz pipeline’u marketingowego (`marketplace-catalog` artifact `marketplace-catalog-release`).
+4. **Synchronizacja u klientów**: job `marketplace_cli.py sync` (lub manualny `python scripts/marketplace_cli.py sync --source <URL>`) aktualizuje katalog i recenzje w instalacjach OEM; UI PySide6 weryfikuje podpisy katalogu przed załadowaniem presetów.
+
 ## 5. Recenzje community
 
 1. Każdy preset może mieć dowolną liczbę recenzji w plikach `config/marketplace/reviews/<preset_id>.json`. Recenzje muszą być podpisane HMAC kluczem `dev-hmac` (lub produkcyjnym) – podpisujemy je poleceniem `python scripts/ui_marketplace_bridge.py submit-review --preset-id <id> --rating <1-5> --comment "..." --review-key-id dev-hmac` (CLI sam dopisze wpis w repozytorium i odświeży `.meta/reviews.json`).
