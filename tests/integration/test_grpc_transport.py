@@ -22,7 +22,7 @@ from bot_core.exchanges import interfaces as exchange_interfaces
 from bot_core.exchanges import streaming as exchange_streaming
 from bot_core.exchanges.base import AccountSnapshot
 from bot_core.execution.paper import MarketMetadata
-from bot_core.observability.metrics import MetricsRegistry
+from bot_core.observability.metrics import MetricsRegistry, get_global_metrics_registry
 from bot_core.observability.ui_metrics import FeedHealthMetricsExporter
 from bot_core.testing import TradingStubServer, build_default_dataset
 from bot_core.testing.trading_stub_server import InMemoryTradingDataset
@@ -276,7 +276,14 @@ def test_runtime_service_consumes_grpc_stream(
             assert service.attachToLiveDecisionLog("") is True
             assert _wait_for(lambda: bool(service.decisions), app)
 
-            assert _wait_for(lambda: ci_decision_feed_metrics.exists(), app)
+            assert _wait_for(
+                lambda: ci_decision_feed_metrics.exists()
+                and json.loads(ci_decision_feed_metrics.read_text(encoding="utf-8")).get(
+                    "count", 0
+                )
+                >= 1,
+                app,
+            )
             payload = json.loads(ci_decision_feed_metrics.read_text(encoding="utf-8"))
             assert payload["count"] >= 1
             assert payload["max_ms"] >= payload["min_ms"] >= 0.0
@@ -311,6 +318,18 @@ def test_runtime_service_consumes_grpc_stream(
             assert metrics["guardrail_blocks_total"] >= 0.0
             assert metrics.get("cycle_latency_p95_ms", 0.0) <= 3000.0
             assert metrics.get("cycle_latency_p50_ms", 0.0) <= metrics.get("cycle_latency_p95_ms", 0.0)
+
+            registry = get_global_metrics_registry()
+            sla_labels = {
+                "adapter": "grpc",
+                "transport": "grpc",
+                "environment": "default",
+                "scope": "decision_feed",
+            }
+            assert registry.get("bot_ui_feed_latency_p95_ms").value(labels=sla_labels) >= 0.0
+            assert registry.get("bot_ui_feed_latency_p50_ms").value(labels=sla_labels) >= 0.0
+            assert registry.get("bot_ui_feed_reconnects_total").value(labels=sla_labels) >= 0.0
+            assert registry.get("bot_ui_feed_downtime_seconds").value(labels=sla_labels) >= 0.0
         finally:
             service._stop_grpc_stream()
             app.quit()

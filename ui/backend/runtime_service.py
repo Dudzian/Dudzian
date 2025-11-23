@@ -2234,6 +2234,15 @@ class RuntimeService(QObject):
                 return candidate.strip()
         return None
 
+    def _resolve_grpc_target(self, profile: str | None) -> str | None:
+        prepared = self._prepare_grpc_connection(profile)
+        if prepared is None:
+            return None
+        target, metadata = prepared
+        self._active_grpc_metadata = metadata
+        self._grpc_target = target
+        return target
+
     def _prepare_grpc_connection(
         self, profile: str | None
     ) -> tuple[str, list[tuple[str, str]]] | None:
