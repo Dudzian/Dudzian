@@ -193,6 +193,20 @@ def _histogram_summary(
     return _summarize_histogram_state(state)
 
 
+def _export_quantile_gauge(
+    registry: MetricsRegistry,
+    *,
+    name: str,
+    description: str,
+    labels: Mapping[str, str],
+    value: float | None,
+) -> None:
+    if value is None:
+        return
+    gauge = registry.gauge(name, description)
+    gauge.set(float(value), labels=labels)
+
+
 def _counter_total(
     metric: CounterMetric,
     *,
@@ -289,7 +303,22 @@ def export_long_poll_metrics_snapshot(
     except KeyError:
         latency_metric = None
     if isinstance(latency_metric, HistogramMetric):
-        summary["requestLatency"] = _histogram_summary(latency_metric, labels=labels)
+        latency_summary = _histogram_summary(latency_metric, labels=labels)
+        summary["requestLatency"] = latency_summary
+        _export_quantile_gauge(
+            registry,
+            name="bot_exchange_stream_long_poll_latency_p50_seconds",
+            description="Latencja p50 zapytań long-pollowych",
+            labels=labels,
+            value=latency_summary.get("p50"),
+        )
+        _export_quantile_gauge(
+            registry,
+            name="bot_exchange_stream_long_poll_latency_p95_seconds",
+            description="Latencja p95 zapytań long-pollowych",
+            labels=labels,
+            value=latency_summary.get("p95"),
+        )
 
     try:
         lag_metric = registry.get("bot_exchange_stream_delivery_lag_seconds")
@@ -383,11 +412,19 @@ def export_long_poll_metrics_snapshot(
     except KeyError:
         downtime_metric = None
     if isinstance(downtime_metric, CounterMetric):
-        summary["downtimeSeconds"] = float(
+        downtime_seconds = float(
             _counter_total(
                 downtime_metric,
                 base_labels=labels,
             )
+        )
+        summary["downtimeSeconds"] = downtime_seconds
+        _export_quantile_gauge(
+            registry,
+            name="bot_exchange_stream_downtime_seconds_snapshot",
+            description="Łączny downtime streamu long-pollowego (snapshot)",
+            labels=labels,
+            value=downtime_seconds,
         )
 
     try:

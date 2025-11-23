@@ -108,9 +108,10 @@
   },
   "signature": {
     "algorithm": "ed25519",
-    "key_id": "dev-presets",
+    "issuer": "marketplace-ci",
+    "key_id": "dev-presets-ed25519",
     "public_key": "wnD5eTEGDB3CPb6r3oMOmRjFtjCxHISZXHlHX0TIKhY=",
-    "signed_at": "2025-11-19T09:07:07Z",
+    "signed_at": "2025-11-23T12:53:02Z",
     "value": "HljH6/3YPjMiLubs7USBSMMCio6CzEr1oCnfVIAD5pssPLcKxa4hfEqbcH5rbtlN12Pca38uLYjQaoJWHSC8BA=="
   }
 }

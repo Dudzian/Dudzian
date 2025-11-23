@@ -145,3 +145,6 @@ py-modules = [
 
 [tool.setuptools.packages.find]
 include = ["bot_core*", "core*", "scripts*", "stage6_samples*"]
+
+[tool.setuptools.package-data]
+"bot_core.auto_trader" = ["py.typed"]

@@ -4275,12 +4275,17 @@ class AutoTrader:
         context.metadata = metadata
         return context
 
-    def _enforce_work_schedule(self) -> bool:
-        schedule = getattr(self, "_work_schedule", None)
-        if schedule is None:
+    def _enforce_work_schedule(self, state_override: ScheduleState | None = None) -> bool:
+        state = state_override
+        if state is None:
+            schedule = getattr(self, "_work_schedule", None)
+            if schedule is None:
+                return True
+            described_state = self._describe_schedule(schedule)
+            state = self._attach_decision_mode_to_state(described_state)
+        if state is None:
             return True
-        state = self._describe_schedule(schedule)
-        self._schedule_state = self._attach_decision_mode_to_state(state)
+        self._schedule_state = state
         self._schedule_mode = state.mode
         snapshot = (state.mode, state.is_open)
         if snapshot != self._last_schedule_snapshot:
@@ -4616,7 +4621,14 @@ class AutoTrader:
         return candidate
 
 
-    def _dispatch_execution(self, service: Any, decision: RiskDecision, symbol: str) -> None:
+    def _dispatch_execution(
+        self,
+        service: Any,
+        decision: RiskDecision,
+        symbol: str,
+        *,
+        execution_context: ExecutionContext | None = None,
+    ) -> None:
         try:
             if isinstance(service, ExecutionService):
                 request = self._build_order_request(symbol, decision)
@@ -4628,7 +4640,7 @@ class AutoTrader:
                         portfolio_snapshot=self._capture_portfolio_snapshot(),
                     )
                     return
-                context = self._resolve_execution_context()
+                context = execution_context or self._resolve_execution_context()
                 service.execute(request, context)
                 payload = {
                     "order": {
@@ -4677,7 +4689,7 @@ class AutoTrader:
                             portfolio_snapshot=self._capture_portfolio_snapshot(),
                         )
                         return
-                    context = self._resolve_execution_context()
+                    context = execution_context or self._resolve_execution_context()
                     execute_fn(request, context)  # type: ignore[arg-type]
                     payload = {
                         "adapter": "execute",
@@ -8595,15 +8607,23 @@ class AutoTrader:
     # ------------------------------------------------------------------
     # Extension hook ----------------------------------------------------
     # ------------------------------------------------------------------
-    def _auto_trade_loop(self) -> None:
-        if not self._enforce_work_schedule():
+    def _auto_trade_loop(
+        self,
+        *,
+        execution_context: ExecutionContext | None = None,
+        schedule_state: ScheduleState | None = None,
+        auto_trade_interval_s: float | None = None,
+    ) -> None:
+        if not self._enforce_work_schedule(schedule_state):
             return
+        interval = self.auto_trade_interval_s if auto_trade_interval_s is None else auto_trade_interval_s
         self._metric_cycle_total.inc(labels=self._base_metric_labels)
         self._process_orchestrator_recalibrations()
         runner = self._resolve_controller_runner()
         if runner is not None:
             self._execute_controller_runner_cycle(runner)
-            self._auto_trade_stop.wait(self.auto_trade_interval_s)
+            interval = self.auto_trade_interval_s if auto_trade_interval_s is None else auto_trade_interval_s
+            self._auto_trade_stop.wait(interval)
             return
 
         risk_service = getattr(self, "risk_service", None)
@@ -8619,7 +8639,7 @@ class AutoTrader:
                 status="symbol_error",
                 metadata={"error": repr(exc)},
             )
-            self._auto_trade_stop.wait(self.auto_trade_interval_s)
+            self._auto_trade_stop.wait(interval)
             return
 
         execution_service = self._resolve_execution_service(symbol)
@@ -8663,7 +8683,7 @@ class AutoTrader:
                     "has_ai_manager": ai_manager is not None,
                 },
             )
-            self._auto_trade_stop.wait(self.auto_trade_interval_s)
+            self._auto_trade_stop.wait(interval)
             return
 
         market_data = self._fetch_market_data(symbol, timeframe)
@@ -8678,7 +8698,7 @@ class AutoTrader:
                 status="no_market_data",
                 metadata={"timeframe": timeframe},
             )
-            self._auto_trade_stop.wait(self.auto_trade_interval_s)
+            self._auto_trade_stop.wait(interval)
             return
 
         assessment: MarketRegimeAssessment
@@ -8693,7 +8713,7 @@ class AutoTrader:
                 assessment = classifier.assess(market_data, symbol=symbol)
         except Exception as exc:
             self._log(f"AI manager regime assessment failed: {exc!r}", level=logging.ERROR)
-            self._auto_trade_stop.wait(self.auto_trade_interval_s)
+            self._auto_trade_stop.wait(interval)
             return
 
         summary: RegimeSummary | None = None
@@ -9373,7 +9393,12 @@ class AutoTrader:
                 )
             elif service is not None:
                 try:
-                    self._dispatch_execution(service, decision, symbol)
+                    self._dispatch_execution(
+                        service,
+                        decision,
+                        symbol,
+                        execution_context=execution_context,
+                    )
                 except Exception as exc:  # pragma: no cover - defensive guard
                     self._log(
                         f"Execution service failed to execute trade: {exc!r}",
@@ -9526,7 +9551,13 @@ class AutoTrader:
         payload["guardrails"] = self._guardrail_telemetry_snapshot()
         return payload
 
-    def run_decision_cycle(self) -> DecisionCycleReport:
+    def run_decision_cycle(
+        self,
+        *,
+        execution_context: ExecutionContext | None = None,
+        schedule_state: ScheduleState | None = None,
+        auto_trade_interval_s: float | None = None,
+    ) -> DecisionCycleReport:
         """Execute a single decision cycle and return a structured report."""
 
         metadata_revision_before = getattr(
@@ -9535,7 +9566,11 @@ class AutoTrader:
         decision_revision_before = getattr(self, "_last_decision_revision", 0)
         label_snapshot = dict(self._base_metric_labels)
         with self._profile_section("cycle") as profiler:
-            self._auto_trade_loop()
+            self._auto_trade_loop(
+                execution_context=execution_context,
+                schedule_state=schedule_state,
+                auto_trade_interval_s=auto_trade_interval_s,
+            )
         if profiler is not None:
             self._store_profile(profiler.report)
         metadata_source = getattr(self, "_decision_cycle_metadata", None)
@@ -9563,15 +9598,41 @@ class AutoTrader:
             telemetry=telemetry,
         )
 
-    def run_single_cycle(self) -> DecisionCycleReport:
-        """Execute one decision cycle using the public automation API."""
+    def run_single_cycle(
+        self,
+        *,
+        execution_context: ExecutionContext | None = None,
+        schedule_state: ScheduleState | None = None,
+        auto_trade_interval_s: float | None = None,
+    ) -> DecisionCycleReport:
+        """Execute one decision cycle using the public automation API.
 
-        return self.run_decision_cycle()
+        ``execution_context`` and ``schedule_state`` allow callers to provide
+        fully isolated inputs without relying on mutable singleton state stored
+        on the instance.  When not provided, the trader falls back to its
+        configured factories and schedule resolver.
+        """
 
-    def run_cycle_once(self) -> DecisionCycleReport:
+        return self.run_decision_cycle(
+            execution_context=execution_context,
+            schedule_state=schedule_state,
+            auto_trade_interval_s=auto_trade_interval_s,
+        )
+
+    def run_cycle_once(
+        self,
+        *,
+        execution_context: ExecutionContext | None = None,
+        schedule_state: ScheduleState | None = None,
+        auto_trade_interval_s: float | None = None,
+    ) -> DecisionCycleReport:
         """Backward compatible wrapper around :meth:`run_single_cycle`."""
 
-        return self.run_single_cycle()
+        return self.run_single_cycle(
+            execution_context=execution_context,
+            schedule_state=schedule_state,
+            auto_trade_interval_s=auto_trade_interval_s,
+        )
 
     def run_forever(
         self,

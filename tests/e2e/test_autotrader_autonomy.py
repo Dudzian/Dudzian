@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import datetime, timezone
 import threading
 from pathlib import Path
 
@@ -8,7 +9,7 @@ import pandas as pd
 import pytest
 
 from bot_core.ai.regime import MarketRegime, MarketRegimeAssessment
-from bot_core.auto_trader import AutoTrader, AutoTraderAIGovernorRunner
+from bot_core.auto_trader import AutoTrader, AutoTraderAIGovernorRunner, ScheduleState
 from bot_core.auto_trader.audit import DecisionAuditLog
 from bot_core.execution import ExecutionContext, ExecutionService
 from bot_core.runtime.journal import InMemoryTradingDecisionJournal
@@ -110,7 +111,13 @@ def _build_trader(
     execution_service: ExecutionService | None = None,
     environment: str = "paper",
     symbol: str = "BTCUSDT",
-) -> tuple[AutoTrader, InMemoryTradingDecisionJournal, _Emitter, DecisionAuditLog]:
+) -> tuple[
+    AutoTrader,
+    InMemoryTradingDecisionJournal,
+    _Emitter,
+    DecisionAuditLog,
+    ExecutionContext,
+]:
     emitter = _Emitter()
     journal = InMemoryTradingDecisionJournal()
     audit_log = DecisionAuditLog()
@@ -119,12 +126,6 @@ def _build_trader(
         (),
         {"ai_mgr": ai_manager, "portfolio_manager": None, "decision_journal": journal},
     )()
-    context = ExecutionContext(
-        portfolio_id="autotrader",
-        risk_profile="paper" if environment == "paper" else "live",
-        environment=environment,
-        metadata={},
-    )
     trader = AutoTrader(
         emitter=emitter,
         gui=gui,
@@ -135,7 +136,6 @@ def _build_trader(
         decision_audit_log=audit_log,
         decision_journal=journal,
         execution_service=execution_service,
-        execution_context=context,
     )
     trader.risk_service = None
     trader.core_risk_engine = None
@@ -145,7 +145,23 @@ def _build_trader(
         "environment": environment,
     }
     trader._apply_active_mode_overrides = lambda: None  # type: ignore[assignment]
-    return trader, journal, emitter, audit_log
+    context = ExecutionContext(
+        portfolio_id="autotrader",
+        risk_profile="paper" if environment == "paper" else "live",
+        environment=environment,
+        metadata={},
+    )
+    return trader, journal, emitter, audit_log, context
+
+
+def _open_schedule_state(mode: str) -> ScheduleState:
+    return ScheduleState(
+        mode=mode,
+        is_open=True,
+        window=None,
+        next_transition=None,
+        reference_time=datetime.now(timezone.utc),
+    )
 
 
 def test_autotrader_paper_switches_to_growth_profile() -> None:
@@ -157,9 +173,12 @@ def test_autotrader_paper_switches_to_growth_profile() -> None:
         symbol="BTCUSDT",
     )
     ai_manager = _StaticAIManager(assessment=assessment, prediction=0.015, probability=0.71)
-    trader, journal, emitter, _ = _build_trader(ai_manager)
+    trader, journal, emitter, _, context = _build_trader(ai_manager)
 
-    report = trader.run_single_cycle()
+    report = trader.run_single_cycle(
+        execution_context=context,
+        schedule_state=_open_schedule_state(trader.schedule_mode),
+    )
 
     assert trader._risk_profile_name == "aggressive"
     assert trader.current_strategy == "trend_following"
@@ -167,6 +186,7 @@ def test_autotrader_paper_switches_to_growth_profile() -> None:
     assert journal.export(), "journal should capture decision events"
     assert any(event[0] == "auto_trader.decision_audit" for event in emitter.events)
     assert report.metrics["cycles_total"] >= 1
+    assert trader._execution_context is None
 
 
 def test_autotrader_live_enforces_conservative_profile_on_high_risk() -> None:
@@ -178,9 +198,12 @@ def test_autotrader_live_enforces_conservative_profile_on_high_risk() -> None:
         symbol="ETHUSDT",
     )
     ai_manager = _StaticAIManager(assessment=assessment, prediction=0.0, probability=0.4)
-    trader, journal, emitter, _ = _build_trader(ai_manager)
+    trader, journal, emitter, _, context = _build_trader(ai_manager)
 
-    report = trader.run_single_cycle()
+    report = trader.run_single_cycle(
+        execution_context=context,
+        schedule_state=_open_schedule_state(trader.schedule_mode),
+    )
 
     assert trader._risk_profile_name == "conservative"
     assert trader.current_strategy == "capital_preservation"
@@ -204,9 +227,12 @@ def test_autotrader_paper_executes_order_and_records_audit() -> None:
     )
     ai_manager = _StaticAIManager(assessment=assessment, prediction=0.022, probability=0.83)
     service = FakeExecutionService()
-    trader, _, _, audit_log = _build_trader(ai_manager, execution_service=service)
+    trader, _, _, audit_log, context = _build_trader(ai_manager, execution_service=service)
 
-    report = trader.run_single_cycle()
+    report = trader.run_single_cycle(
+        execution_context=context,
+        schedule_state=_open_schedule_state(trader.schedule_mode),
+    )
 
     assert service.executed, "usługa egzekucji powinna zostać wywołana"
     recorded = service.executed[0]
@@ -237,14 +263,17 @@ def test_autotrader_live_execution_failure_records_audit() -> None:
     )
     ai_manager = _StaticAIManager(assessment=assessment, prediction=0.018, probability=0.78)
     service = FakeExecutionService(should_fail=True, failure=RuntimeError("boom"))
-    trader, _, _, audit_log = _build_trader(
+    trader, _, _, audit_log, context = _build_trader(
         ai_manager,
         execution_service=service,
         environment="live",
         symbol="ETHUSDT",
     )
 
-    report = trader.run_single_cycle()
+    report = trader.run_single_cycle(
+        execution_context=context,
+        schedule_state=_open_schedule_state(trader.schedule_mode),
+    )
 
     assert service.executed, "nawet w przypadku błędu powinien wystąpić jeden attempt"
     recorded = service.executed[0]
@@ -252,6 +281,7 @@ def test_autotrader_live_execution_failure_records_audit() -> None:
     assert recorded.context.environment == "live"
     assert report.decision is not None
     assert report.metrics["cycles_total"] >= 1
+    assert trader._execution_context is None
 
     stages = audit_log.to_dicts(limit=10)
     assert any(entry["stage"] == "execution_failed" for entry in stages)
@@ -271,9 +301,12 @@ def test_autotrader_ai_governor_snapshot_reports_mode() -> None:
         symbol="BTCUSDT",
     )
     ai_manager = _StaticAIManager(assessment=assessment, prediction=0.02, probability=0.82)
-    trader, _, _, _ = _build_trader(ai_manager)
+    trader, _, _, _, context = _build_trader(ai_manager)
 
-    trader.run_single_cycle()
+    trader.run_single_cycle(
+        execution_context=context,
+        schedule_state=_open_schedule_state(trader.schedule_mode),
+    )
     snapshot = trader.build_auto_mode_snapshot(include_history=False)
     governor = snapshot.get("ai_governor", {})
 
@@ -311,12 +344,15 @@ def test_autotrader_cycle_report_without_new_decision() -> None:
         symbol="BTCUSDT",
     )
     ai_manager = _StaticAIManager(assessment=assessment, prediction=0.02, probability=0.8)
-    trader, _, _, _ = _build_trader(ai_manager)
+    trader, _, _, _, context = _build_trader(ai_manager)
 
-    trader._enforce_work_schedule = lambda: False  # type: ignore[assignment]
+    trader._enforce_work_schedule = lambda *_args, **_kwargs: False  # type: ignore[assignment]
     before_cycles = trader._metric_cycle_total.value(labels=trader._base_metric_labels)
 
-    report = trader.run_single_cycle()
+    report = trader.run_single_cycle(
+        execution_context=context,
+        schedule_state=_open_schedule_state(trader.schedule_mode),
+    )
 
     assert report.decision is None
     assert report.metadata == {}
@@ -332,9 +368,12 @@ def test_autotrader_cycle_report_exposes_telemetry() -> None:
         symbol="ADAUSDT",
     )
     ai_manager = _StaticAIManager(assessment=assessment, prediction=0.01, probability=0.76)
-    trader, _, _, _ = _build_trader(ai_manager)
+    trader, _, _, _, context = _build_trader(ai_manager)
 
-    report = trader.run_single_cycle()
+    report = trader.run_single_cycle(
+        execution_context=context,
+        schedule_state=_open_schedule_state(trader.schedule_mode),
+    )
 
     telemetry = report.telemetry or {}
     latency = telemetry.get("cycleLatency", {})
@@ -354,7 +393,7 @@ def test_autotrader_run_forever_respects_limit() -> None:
         symbol="BTCUSDT",
     )
     ai_manager = _StaticAIManager(assessment=assessment, prediction=0.02, probability=0.82)
-    trader, _, _, _ = _build_trader(ai_manager)
+    trader, _, _, _, _ = _build_trader(ai_manager)
 
     reports = list(trader.run_forever(limit=2))
 

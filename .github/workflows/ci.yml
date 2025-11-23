@@ -250,6 +250,9 @@ jobs:
             --hypercare-config config/stage6/hypercare.yaml \
             --long-poll-metrics var/metrics/long_poll_snapshots.json
 
+      - name: Inspect signal quality snapshots
+        run: ls -l reports/exchanges/signal_quality
+
       - name: Upload exchange report snapshot
         uses: actions/upload-artifact@v4
         with:
