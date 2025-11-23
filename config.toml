@@ -2,5 +2,8 @@
 [features]
 # Allow the agent to run shell/exec commands via streamable shell support.
 streamable_shell = true
+# Explicitly enable exec/shell helpers for compatibility with host tooling.
+exec = true
+shell = true
 # Permit issuing web search requests when available.
 web_search_request = true
