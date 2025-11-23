@@ -25,7 +25,7 @@ import os
 from dataclasses import dataclass, field, asdict
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Callable, Mapping, MutableMapping, Sequence
+from typing import Callable, Mapping, MutableMapping, Sequence, TypeAlias
 
 from bot_core.config.models import (
     PortfolioAssetConfig,
@@ -708,7 +708,7 @@ _SEVERITY_FACTORS: Mapping[str, float] = {
 
 # Bazowy zestaw metryk rynku współdzielony z agregatorem Market Intelligence.
 # Alias zachowuje dotychczasową nazwę eksportowaną przez moduł Stress Lab.
-MarketBaseline = MarketIntelBaseline
+MarketBaseline: TypeAlias = MarketIntelBaseline
 
 
 @dataclass(slots=True)

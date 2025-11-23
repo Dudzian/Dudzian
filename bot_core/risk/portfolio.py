@@ -128,7 +128,7 @@ class VolatilityEstimator:
                     [(1 - lambda_param) * (lambda_param**i) for i in range(len(returns))]
                 )[::-1]
                 weights = weights / weights.sum()
-                weighted_variance = np.sum(weights * (returns**2))
+                weighted_variance: float = float(np.sum(weights * (returns**2)))
                 return float(np.sqrt(weighted_variance * 252))
         except Exception as exc:  # pragma: no cover - log i fallback
             self.logger.error("Error calculating EWMA volatility: %s", exc)

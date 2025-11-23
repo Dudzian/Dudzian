@@ -13,11 +13,10 @@ combine-as-imports = true
 python_version = "3.11"
 warn_return_any = true
 warn_unused_configs = true
-ignore_missing_imports = true
 strict_optional = true
 show_error_codes = true
 namespace_packages = true
-follow_imports = "silent"
+follow_imports = "skip"
 exclude = ["archive/.*"]
 files = [
   "bot_core/auto_trader",
@@ -48,6 +47,27 @@ ignore_missing_imports = true
 
 [[tool.mypy.overrides]]
 module = [
+  "PySide6", 
+  "PySide6.*",
+  "shiboken6",
+  "shiboken6.*",
+  "pandas",
+  "pandas.*",
+  "fastapi",
+  "fastapi.*",
+  "jsonschema",
+  "jsonschema.*",
+  "grpc",
+  "grpc.*",
+  "joblib",
+  "joblib.*",
+  "shap",
+  "shap.*",
+]
+ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+module = [
     "bot_core.auto_trader.*",
     "bot_core.ai.*",
     "bot_core.risk.*",
@@ -55,32 +75,31 @@ module = [
     "bot_core.execution.*",
 ]
 disable_error_code = [
-    "attr-defined",
-    "arg-type",
-    "call-overload",
-    "assignment",
-    "operator",
-    "union-attr",
-    "index",
-    "return-value",
-    "no-any-return",
-    "name-defined",
-    "misc",
-    "no-redef",
+  "attr-defined",
+  "arg-type",
+  "call-overload",
+  "assignment",
+  "index",
+  "return-value",
+  "no-any-return",
+  "union-attr",
+  "name-defined",
+  "no-redef",
+  "operator",
+  "misc",
 ]
 
 [[tool.mypy.overrides]]
 module = ["ui.backend.*", "ui.pyside_app.*"]
 disable_error_code = [
-  "arg-type",
-  "assignment",
   "attr-defined",
+  "arg-type",
+  "return-value",
+  "no-any-return",
+  "assignment",
+  "no-redef",
   "call-overload",
   "index",
-  "misc",
-  "no-any-return",
-  "no-redef",
-  "return-value",
 ]
 
 [[tool.mypy.overrides]]

@@ -64,6 +64,14 @@ wiązań importowych do aktywnego kodu.
   `validate_marketplace_presets.py`).
 - `reports/__init__.py` utrzymuje katalog artefaktów raportowych w zakresie mypy,
   aby potwierdzić kompletność instalacji z pełnymi informacjami o typach.
+- Wyjątki importowe dopuszczalne są wyłącznie w dedykowanych override'ach dla
+  bibliotek bez stubów (np. PySide6/shiboken6, pandas, fastapi, grpc, shap,
+  jsonschema); nie używamy globalnego `ignore_missing_imports` ani
+  `follow_imports="silent"`.
+- Lista `disable_error_code` w override'ach jest ograniczona do uzasadnionych
+  wyjątków dla dynamicznych API (m.in. `attr-defined`, kompatybilność `arg-type`
+  z Qt/QML); nowe tłumienia zgłaszaj w review wraz z kodami błędów i powodem,
+  zamiast dodawać globalne wyłączenia.
 
 ### Użycie słowa „legacy”
 

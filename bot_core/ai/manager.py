@@ -418,7 +418,7 @@ def _build_fallback_ai_models() -> type:
             self.input_size = input_size
             self.seq_len = seq_len
             self.model_type = model_type
-            self._coef = np.zeros(input_size, dtype=float)
+            self._coef: np.ndarray = np.zeros(input_size, dtype=float)
 
         async def train(
             self,
@@ -835,7 +835,7 @@ class EnsembleDefinition:
         meta_confidence: Mapping[str, float] | None = None,
     ) -> np.ndarray:
         size = len(self.components)
-        base = np.ones(size, dtype=float)
+        base: np.ndarray = np.ones(size, dtype=float)
         if self.aggregation == "weighted" and self.weights is not None:
             base = np.asarray(self.weights, dtype=float)
         if regime is not None and self.regime_weights:
