@@ -20,6 +20,7 @@ class DeribitFuturesAdapter(CCXTLongPollMixin, WatchdogCCXTAdapter):
     """Adapter futures Deribit integrujący watchdog oraz long-poll."""
 
     name = "deribit_futures"
+    hypercare_checklist_id = "stage6-deribit-futures-2024q4"
 
     _STREAM_DEFAULTS: Mapping[str, Any] = {
         "base_url": "https://stream.hyperion.dudzian.ai/exchanges",

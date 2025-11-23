@@ -20,6 +20,7 @@ class BitmexFuturesAdapter(CCXTLongPollMixin, WatchdogCCXTAdapter):
     """Adapter futures BitMEX zintegrowany z watchdogiem i long-pollem."""
 
     name = "bitmex_futures"
+    hypercare_checklist_id = "stage6-bitmex-futures-2024q4"
 
     _STREAM_DEFAULTS: Mapping[str, Any] = {
         "base_url": "https://stream.hyperion.dudzian.ai/exchanges",

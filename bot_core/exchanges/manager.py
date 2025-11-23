@@ -245,7 +245,10 @@ def register_native_adapter(
     """
 
     if mode not in {Mode.MARGIN, Mode.FUTURES}:
-        raise ValueError("Native adapters are only supported for margin/futures modes")
+        log.debug(
+            "Pomijam rejestrację adaptera %s (%s) – tryb nieobsługiwany", exchange_id, mode
+        )
+        return
     key = (mode, exchange_id)
     source_path = Path(source).expanduser() if source is not None else None
     registration = _NativeAdapterRegistration(
@@ -1485,6 +1488,10 @@ class ExchangeManager:
                 raise ValueError(
                     "Parametr funding_interval_seconds wymaga dodatniej wartości (sekundy)."
                 )
+            if key in {"slippage_bps", "fee_rate"} and float_value < 0:
+                raise ValueError(
+                    f"Parametr symulatora '{key}' wymaga nieujemnej wartości."
+                )
             normalized[key] = float_value
 
         if not normalized:
@@ -2156,6 +2163,7 @@ class ExchangeManager:
                     maintenance_margin_ratio=float(defaults.get("maintenance_margin_ratio", 0.15)),
                     funding_rate=float(defaults.get("funding_rate", 0.0)),
                     funding_interval_seconds=float(defaults.get("funding_interval_seconds", 0.0)),
+                    slippage_bps=float(defaults.get("slippage_bps", 0.0)),
                 )
             elif self._paper_variant == "futures":
                 defaults = self._default_paper_simulator_settings()
@@ -2171,6 +2179,7 @@ class ExchangeManager:
                     maintenance_margin_ratio=float(defaults.get("maintenance_margin_ratio", 0.05)),
                     funding_rate=float(defaults.get("funding_rate", 0.0001)),
                     funding_interval_seconds=float(defaults.get("funding_interval_seconds", 0.0)),
+                    slippage_bps=float(defaults.get("slippage_bps", 0.0)),
                 )
             else:
                 simulator = PaperBackend(
@@ -2332,6 +2341,7 @@ class ExchangeManager:
                 "maintenance_margin_ratio": 0.15,
                 "funding_rate": 0.0,
                 "funding_interval_seconds": 0.0,
+                "slippage_bps": 0.0,
             }
         if self._paper_variant == "futures":
             return {
@@ -2339,6 +2349,7 @@ class ExchangeManager:
                 "maintenance_margin_ratio": 0.05,
                 "funding_rate": 0.0001,
                 "funding_interval_seconds": 0.0,
+                "slippage_bps": 0.0,
             }
         return {}
 

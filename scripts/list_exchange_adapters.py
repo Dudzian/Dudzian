@@ -473,6 +473,29 @@ def build_rows(
                 ttl_minutes=ttl_minutes,
             )
 
+            simulator_fee_rate = None
+            simulator_slippage_bps = None
+            adapter_defaults = _as_mapping(adapter_entry.default_settings) if adapter_entry else {}
+            simulator_defaults = _as_mapping(adapter_defaults.get("simulator"))
+            if simulator_defaults:
+                fee_candidate = simulator_defaults.get("fee_rate")
+                try:
+                    simulator_fee_rate = float(fee_candidate)
+                except (TypeError, ValueError):
+                    simulator_fee_rate = None
+                slippage_candidate = simulator_defaults.get("slippage_bps")
+                try:
+                    simulator_slippage_bps = float(slippage_candidate)
+                except (TypeError, ValueError):
+                    simulator_slippage_bps = None
+
+            if exchange in {"deribit", "bitmex"} and env_cfg.environment.value == "live":
+                status = long_poll_summary.get("long_poll_metrics_status")
+                if status in {"missing", "unknown"}:
+                    raise RuntimeError(
+                        f"Brak świeżych metryk long-pollowych dla {exchange}:{profile_name} (status={status})."
+                    )
+
             rows.append(
                 {
                     "exchange": exchange,
@@ -491,6 +514,8 @@ def build_rows(
                     "live_readiness_signed_by": ",".join(readiness_signed_by),
                     "futures_margin_mode": futures_margin_mode,
                     "liquidation_feed": liquidation_feed,
+                    "simulator_fee_rate": simulator_fee_rate,
+                    "simulator_slippage_bps": simulator_slippage_bps,
                     "hypercare_checklist_signed": hypercare_signed,
                     "hypercare_checklist_status": hypercare_status,
                     "missing_required_documents": missing_docs,
@@ -574,6 +599,8 @@ def main(argv: list[str] | None = None) -> int:
         "live_readiness_signed_by",
         "futures_margin_mode",
         "liquidation_feed",
+        "simulator_fee_rate",
+        "simulator_slippage_bps",
         "hypercare_checklist_signed",
         "hypercare_checklist_status",
         "missing_required_documents",
