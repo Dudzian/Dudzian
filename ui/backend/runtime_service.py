@@ -332,7 +332,7 @@ def _compute_activity_score(is_block: bool, is_freeze: bool, is_override: bool) 
 
 def _build_risk_context(
     entries: Iterable[Mapping[str, object]]
-) -> tuple[dict[str, object], list[dict[str, object]]]:
+) -> tuple[dict[str, object], list[dict[str, object]], dict[str, object]]:
     block_keywords = {"block", "blocked", "risk_block", "reject", "rejected"}
     freeze_keywords = {"freeze", "frozen", "lock"}
     override_keys = {"stressOverride", "stress_override", "stressOverrides", "stress_overrides"}
@@ -341,6 +341,7 @@ def _build_risk_context(
     freezes = 0
     overrides = 0
     total_entries = 0
+    incomplete_entries = 0
     latest_stress_failures: list[str] = []
     latest_failure_ts = ""
     latest_risk_flags: list[str] = []
@@ -387,6 +388,12 @@ def _build_risk_context(
             stress_overrides_payload = decision.get("stressOverrides") or decision.get("stress_overrides")
         stress_overrides = _normalize_sequence(stress_overrides_payload)
 
+        missing_fields: list[str] = []
+        if not risk_action:
+            missing_fields.append("risk_action")
+        if not risk_flags and not stress_overrides:
+            missing_fields.append("risk_flags|stress_overrides")
+
         is_block = any(keyword in risk_action.lower() for keyword in block_keywords) if risk_action else False
         if not is_block and status:
             is_block = any(keyword in status.lower() for keyword in block_keywords)
@@ -406,6 +413,10 @@ def _build_risk_context(
         is_override = override_indicator
 
         activity_score = _compute_activity_score(is_block, is_freeze, is_override)
+
+        is_incomplete = bool(missing_fields)
+        if is_incomplete:
+            incomplete_entries += 1
 
         summary_bucket: dict[str, object] | None = None
         if strategy:
@@ -427,79 +438,81 @@ def _build_risk_context(
                     "stressOverrideReasons": [],
                 },
             )
-        if summary_bucket is not None:
-            summary_bucket["totalEvents"] = int(summary_bucket.get("totalEvents", 0)) + 1
-        if risk_flags:
-            risk_flag_set.update(risk_flags)
-            risk_flag_counter.update(risk_flags)
-            latest_risk_flags = risk_flags
-            if summary_bucket is not None and risk_flags:
-                summary_bucket["lastRiskFlags"] = list(risk_flags)
-        if stress_failures:
-            stress_failure_set.update(stress_failures)
-            stress_failure_counter.update(stress_failures)
-            latest_stress_failures = stress_failures
-            latest_failure_ts = timestamp
-            if summary_bucket is not None and stress_failures:
-                summary_bucket["lastStressFailures"] = list(stress_failures)
-        if stress_overrides:
-            override_reason_set.update(stress_overrides)
-            if summary_bucket is not None and stress_overrides:
-                summary_bucket["stressOverrideReasons"] = list(stress_overrides)
 
-        if is_block:
-            blocks += 1
-            if timestamp and (
-                not last_block_entry
-                or str(timestamp) >= str(last_block_entry.get("timestamp", ""))
-            ):
-                last_block_entry = {
-                    "timestamp": timestamp,
-                    "event": event,
-                    "strategy": strategy,
-                }
+        if not is_incomplete:
             if summary_bucket is not None:
-                summary_bucket["blockCount"] = int(summary_bucket.get("blockCount", 0)) + 1
-        if is_freeze:
-            freezes += 1
-            if timestamp and (
-                not last_freeze_entry
-                or str(timestamp) >= str(last_freeze_entry.get("timestamp", ""))
-            ):
-                last_freeze_entry = {
-                    "timestamp": timestamp,
-                    "event": event,
-                    "strategy": strategy,
-                    "riskAction": risk_action,
-                }
-            if summary_bucket is not None:
-                summary_bucket["freezeCount"] = int(summary_bucket.get("freezeCount", 0)) + 1
-        if is_override:
-            overrides += 1
-            if timestamp and (
-                not last_override_entry
-                or str(timestamp) >= str(last_override_entry.get("timestamp", ""))
-            ):
-                last_override_entry = {
-                    "timestamp": timestamp,
-                    "event": event,
-                    "strategy": strategy,
-                }
-            if summary_bucket is not None:
-                summary_bucket["stressOverrideCount"] = int(
-                    summary_bucket.get("stressOverrideCount", 0)
-                ) + 1
-
-        if summary_bucket is not None:
-            if risk_action:
-                summary_bucket["lastRiskAction"] = risk_action
-            if timestamp:
-                last_timestamp = str(summary_bucket.get("lastTimestamp", ""))
-                if not last_timestamp or str(timestamp) >= last_timestamp:
-                    summary_bucket["lastTimestamp"] = timestamp
-                    summary_bucket["lastEvent"] = event
+                summary_bucket["totalEvents"] = int(summary_bucket.get("totalEvents", 0)) + 1
+            if risk_flags:
+                risk_flag_set.update(risk_flags)
+                risk_flag_counter.update(risk_flags)
+                latest_risk_flags = risk_flags
+                if summary_bucket is not None and risk_flags:
                     summary_bucket["lastRiskFlags"] = list(risk_flags)
+            if stress_failures:
+                stress_failure_set.update(stress_failures)
+                stress_failure_counter.update(stress_failures)
+                latest_stress_failures = stress_failures
+                latest_failure_ts = timestamp
+                if summary_bucket is not None and stress_failures:
                     summary_bucket["lastStressFailures"] = list(stress_failures)
+            if stress_overrides:
+                override_reason_set.update(stress_overrides)
+                if summary_bucket is not None and stress_overrides:
+                    summary_bucket["stressOverrideReasons"] = list(stress_overrides)
+
+            if is_block:
+                blocks += 1
+                if timestamp and (
+                    not last_block_entry
+                    or str(timestamp) >= str(last_block_entry.get("timestamp", ""))
+                ):
+                    last_block_entry = {
+                        "timestamp": timestamp,
+                        "event": event,
+                        "strategy": strategy,
+                    }
+                if summary_bucket is not None:
+                    summary_bucket["blockCount"] = int(summary_bucket.get("blockCount", 0)) + 1
+            if is_freeze:
+                freezes += 1
+                if timestamp and (
+                    not last_freeze_entry
+                    or str(timestamp) >= str(last_freeze_entry.get("timestamp", ""))
+                ):
+                    last_freeze_entry = {
+                        "timestamp": timestamp,
+                        "event": event,
+                        "strategy": strategy,
+                        "riskAction": risk_action,
+                    }
+                if summary_bucket is not None:
+                    summary_bucket["freezeCount"] = int(summary_bucket.get("freezeCount", 0)) + 1
+            if is_override:
+                overrides += 1
+                if timestamp and (
+                    not last_override_entry
+                    or str(timestamp) >= str(last_override_entry.get("timestamp", ""))
+                ):
+                    last_override_entry = {
+                        "timestamp": timestamp,
+                        "event": event,
+                        "strategy": strategy,
+                    }
+                if summary_bucket is not None:
+                    summary_bucket["stressOverrideCount"] = int(
+                        summary_bucket.get("stressOverrideCount", 0)
+                    ) + 1
+
+            if summary_bucket is not None:
+                if risk_action:
+                    summary_bucket["lastRiskAction"] = risk_action
+                if timestamp:
+                    last_timestamp = str(summary_bucket.get("lastTimestamp", ""))
+                    if not last_timestamp or str(timestamp) >= last_timestamp:
+                        summary_bucket["lastTimestamp"] = timestamp
+                        summary_bucket["lastEvent"] = event
+                        summary_bucket["lastRiskFlags"] = list(risk_flags)
+                        summary_bucket["lastStressFailures"] = list(stress_failures)
 
         timeline.append(
             {
@@ -515,7 +528,9 @@ def _build_risk_context(
                 "isBlock": is_block,
                 "isFreeze": is_freeze,
                 "isStressOverride": is_override,
-                "activityScore": activity_score,
+                "activityScore": 0.0 if is_incomplete else activity_score,
+                "isIncomplete": is_incomplete,
+                "missingFields": missing_fields,
                 "record": dict(entry),
             }
         )
@@ -526,7 +541,10 @@ def _build_risk_context(
 
     timeline.sort(key=_sort_key)
 
-    metrics: dict[str, object] = {"totalEntries": total_entries}
+    metrics: dict[str, object] = {
+        "totalEntries": total_entries,
+        "incompleteEntries": incomplete_entries,
+    }
 
     severity_order = {"block": 0, "freeze": 1, "override": 2, "neutral": 3}
 
@@ -591,7 +609,16 @@ def _build_risk_context(
         }
     )
 
-    return metrics, timeline
+    diagnostics = {
+        "incompleteEntries": incomplete_entries,
+        "incompleteSamples": [
+            {"event": item.get("event"), "timestamp": item.get("timestamp"), "missing": item.get("missingFields", [])}
+            for item in timeline
+            if item.get("isIncomplete")
+        ][:5],
+    }
+
+    return metrics, timeline, diagnostics
 
 
 def _camelize_key_name(key: str) -> str:
@@ -1164,6 +1191,7 @@ class RuntimeService(QObject):
             "reconnects": "ok",
             "downtime": "ok",
         }
+        self._risk_journal_alert_state: str = "ok"
         self._metrics_last_write = 0.0
         self._metrics_next_write = 0.0
         self._metrics_last_status = ""
@@ -1796,6 +1824,42 @@ class RuntimeService(QObject):
         if unit == "s":
             return f"{value:.1f} s"
         return f"{int(round(value))}"
+
+    def _maybe_emit_risk_journal_alert(self, diagnostics: Mapping[str, object]) -> None:
+        missing = int(diagnostics.get("incompleteEntries") or 0)
+        samples = diagnostics.get("incompleteSamples") or []
+        severity = "warning" if missing else "ok"
+        previous = self._risk_journal_alert_state
+        if severity == previous:
+            return
+        self._risk_journal_alert_state = severity
+
+        body = (
+            "wykryto niekompletne wpisy Risk Journal wymagające pól risk_flags/stress_overrides lub risk_action"
+            if missing
+            else "wpisy Risk Journal zawierają wymagane pola"
+        )
+        if missing and samples:
+            body = f"{body} (przykłady: {json.dumps(samples, ensure_ascii=False)})"
+        log_fn = _LOGGER.warning if missing else _LOGGER.info
+        log_fn("%s", body)
+
+        sink = self._feed_alert_sink
+        if sink is None:
+            return
+
+        sink.emit_feed_health_event(
+            severity="warning" if missing else "info",
+            title="Risk Journal completeness",
+            body=body,
+            context={"channel": "risk_journal", "state": severity},
+            payload={
+                "channel": "risk_journal",
+                "state": severity,
+                "missing_entries": missing,
+                "samples": samples,
+            },
+        )
 
     def _load_feed_thresholds(self) -> dict[str, float | None]:
         defaults: dict[str, float | None] = {
@@ -3305,9 +3369,10 @@ class RuntimeService(QObject):
         self._cancel_grpc_reconnect()
 
     def _apply_risk_context(self, entries: Iterable[Mapping[str, object]]) -> None:
-        metrics, timeline = _build_risk_context(entries)
+        metrics, timeline, diagnostics = _build_risk_context(entries)
         self._risk_metrics = metrics
         self._risk_timeline = timeline
+        self._maybe_emit_risk_journal_alert(diagnostics)
         self.riskMetricsChanged.emit()
         self.riskTimelineChanged.emit()
 

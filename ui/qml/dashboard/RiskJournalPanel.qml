@@ -118,6 +118,8 @@ Item {
         })
     }
 
+    readonly property bool hasIncompleteEntries: (root.metrics && root.metrics.incompleteEntries || 0) > 0
+
     signal freezeRequested(var entry)
     signal unfreezeRequested(var entry)
     signal unblockRequested(var entry)
@@ -237,6 +239,30 @@ Item {
     ColumnLayout {
         anchors.fill: parent
         spacing: Styles.AppTheme.spacingMd
+
+        Rectangle {
+            Layout.fillWidth: true
+            visible: root.hasIncompleteEntries
+            radius: Styles.AppTheme.radiusSmall
+            color: Qt.rgba(Styles.AppTheme.warning.r, Styles.AppTheme.warning.g, Styles.AppTheme.warning.b, 0.12)
+            border.color: Styles.AppTheme.warning
+            border.width: 1
+
+            RowLayout {
+                anchors.fill: parent
+                anchors.margins: Styles.AppTheme.spacingSm
+                spacing: Styles.AppTheme.spacingSm
+
+                Label {
+                    text: qsTr("Niekompletne wpisy Risk Journal – agregacje pomijają rekordy bez risk_flags/stress_overrides lub risk_action.")
+                    color: Styles.AppTheme.warning
+                    font.pointSize: Styles.AppTheme.fontSizeBody
+                    wrapMode: Text.Wrap
+                }
+
+                Item { Layout.fillWidth: true }
+            }
+        }
 
         RowLayout {
             Layout.fillWidth: true
@@ -687,12 +713,14 @@ Item {
                             width: ListView.view.width
                             height: 68
                             radius: Styles.AppTheme.radiusSmall
-                            color: modelData.isBlock
-                                   ? Qt.rgba(Styles.AppTheme.negative.r, Styles.AppTheme.negative.g, Styles.AppTheme.negative.b, 0.22)
-                                   : (modelData.isStressOverride
-                                      ? Qt.rgba(Styles.AppTheme.warning.r, Styles.AppTheme.warning.g, Styles.AppTheme.warning.b, 0.24)
-                                      : Styles.AppTheme.surfaceSubtle)
-                            border.color: modelData.isBlock ? Styles.AppTheme.negative : (modelData.isStressOverride ? Styles.AppTheme.warning : Styles.AppTheme.surfaceSubtle)
+                            color: modelData.isIncomplete
+                                   ? Qt.rgba(Styles.AppTheme.warning.r, Styles.AppTheme.warning.g, Styles.AppTheme.warning.b, 0.18)
+                                   : (modelData.isBlock
+                                      ? Qt.rgba(Styles.AppTheme.negative.r, Styles.AppTheme.negative.g, Styles.AppTheme.negative.b, 0.22)
+                                      : (modelData.isStressOverride
+                                         ? Qt.rgba(Styles.AppTheme.warning.r, Styles.AppTheme.warning.g, Styles.AppTheme.warning.b, 0.24)
+                                         : Styles.AppTheme.surfaceSubtle))
+                            border.color: modelData.isBlock ? Styles.AppTheme.negative : (modelData.isStressOverride || modelData.isIncomplete ? Styles.AppTheme.warning : Styles.AppTheme.surfaceSubtle)
 
                             ColumnLayout {
                                 anchors.fill: parent
@@ -715,6 +743,8 @@ Item {
                                             details.push(qsTr("Flag: %1").arg(modelData.riskFlags.join(", ")))
                                         if (modelData.stressFailures && modelData.stressFailures.length)
                                             details.push(qsTr("Stress: %1").arg(modelData.stressFailures.join(", ")))
+                                        if (modelData.isIncomplete)
+                                            details.push(qsTr("Brak wymaganych pól: %1").arg((modelData.missingFields || []).join(", ")))
                                         return details.join(" • ")
                                     }
                                     color: Styles.AppTheme.textSecondary

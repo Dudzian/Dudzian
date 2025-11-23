@@ -1,8 +1,8 @@
 # Ocena wdrożenia bota enterprise (Stage6)
 
 ## Ocena globalna (aktualizacja)
-- **Pokrycie wymagań funkcjonalnych:** **72%** – kluczowe ścieżki runtime (decyzje, SLA feedu, fallback long-poll, bundlowanie marketplace) są zaimplementowane, natomiast brak publicznego katalogu presetów, walidacji risk-journal i eksportu metryk do centralnego registry ogranicza kompletność funkcjonalną.
-- **Profesjonalizm kodu:** **84%** – projekt spełnia standardy enterprise (audytowalność, CI, gRPC + QML, podpisy HMAC) i ma bogate testy/artefakty. Obniżka vs. poprzednia ocena wynika z niespójności API decyzyjnego oraz braków w walidacji danych risk/routing.
+- **Pokrycie wymagań funkcjonalnych:** **72%** – kluczowe ścieżki runtime (decyzje, SLA feedu, fallback long-poll, bundlowanie marketplace) są zaimplementowane, natomiast brak publicznego katalogu presetów i eksportu metryk do centralnego registry ogranicza kompletność funkcjonalną.
+- **Profesjonalizm kodu:** **84%** – projekt spełnia standardy enterprise (audytowalność, CI, gRPC + QML, podpisy HMAC) i ma bogate testy/artefakty. Obniżka vs. poprzednia ocena wynika z niespójności API decyzyjnego oraz braków w walidacji danych routing.
 
 ## Co już mamy (z oceną wdrożenia)
 - **Strumieniowanie i SLA feedu (gRPC + fallback long-poll) – 85%:** RuntimeService mierzy p50/p95, reconnecty i downtime, publikuje je do UI i raportów CI, a fallback long-poll ma własne metryki. Pozostała praca to centralny eksport metryk (Prometheus/OpenMetrics) i automatyczne alerty HyperCare dla długotrwałych degradacji.【F:docs/runtime/status_review.md†L4-L54】
@@ -17,4 +17,4 @@
 - **Eksport metryk do rejestru centralnego:** Dodać Prometheus/OpenMetrics dla long-polla i decyzji, by uzupełnić SLA/alerty oraz dashboard porównujący gRPC vs fallback. Ustandaryzować nazwy metryk między feed SLA i risk journal.【F:docs/runtime/status_review.md†L48-L52】
 - **Automatyczne alerty HyperCare dla feedu:** Zautomatyzować eskalacje z raportów long-poll/gRPC (p95, reconnecty, downtime) do kanałów HyperCare i ustandaryzować progi w `observability.feed_sla`.【F:docs/runtime/status_review.md†L48-L55】
 - **Rozszerzenie adapterów futures i raportów:** Utrzymać/rozszerzyć Deribit/BitMEX z checklistami HyperCare, codziennymi CSV i snapshotami `signal_quality/`, aby wyrównać przewagę vs konkurencja. Dopiąć walidację fee/slippage w symulatorze futures.【F:docs/runtime/status_review.md†L48-L57】
-- **Walidacje Risk Journal:** Wymusić kompletność pól (`risk_flags`, `stress_overrides`, `risk_action`) w logach, by dashboard mógł poprawnie agregować statystyki i działania operatora. Dodać alert brakujących pól w CI.【F:docs/runtime/status_review.md†L32-L36】
+- **Walidacje Risk Journal:** (domknięte) – walidator w RuntimeService oznacza niekompletne wpisy, pomija je w agregacjach i emituje ostrzeżenia HyperCare; nowy test CI chroni wymagane pola. Kolejne kroki to monitorowanie jakości danych po stronie źródeł logów.【F:docs/runtime/status_review.md†L32-L39】【F:tests/ui/test_risk_journal_validation.py†L1-L83】
