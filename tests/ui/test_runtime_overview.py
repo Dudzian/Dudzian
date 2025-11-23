@@ -103,6 +103,8 @@ class _StubRuntimeService(QObject):
     feedTransportSnapshotChanged = Signal()
     feedHealthChanged = Signal()
     feedSlaReportChanged = Signal()
+    feedAlertHistoryChanged = Signal()
+    feedAlertChannelsChanged = Signal()
     aiRegimeBreakdownChanged = Signal()
     adaptiveStrategySummaryChanged = Signal()
     regimeActivationSummaryChanged = Signal()
@@ -129,6 +131,8 @@ class _StubRuntimeService(QObject):
             "lastError": "",
         }
         self._feed_sla_report: dict[str, Any] = {}
+        self._feed_alert_history: list[dict[str, Any]] = []
+        self._feed_alert_channels: list[dict[str, Any]] = []
         self._ai_regime_breakdown: list[dict[str, Any]] = []
         self._adaptive_summary = ""
         self._regime_summary = ""
@@ -172,6 +176,14 @@ class _StubRuntimeService(QObject):
     @Property("QVariantMap", notify=feedSlaReportChanged)
     def feedSlaReport(self) -> dict[str, Any]:  # type: ignore[override]
         return dict(self._feed_sla_report)
+
+    @Property("QVariantList", notify=feedAlertHistoryChanged)
+    def feedAlertHistory(self) -> list[dict[str, Any]]:  # type: ignore[override]
+        return list(self._feed_alert_history)
+
+    @Property("QVariantList", notify=feedAlertChannelsChanged)
+    def feedAlertChannels(self) -> list[dict[str, Any]]:  # type: ignore[override]
+        return list(self._feed_alert_channels)
 
     @Property("QVariantList", notify=aiRegimeBreakdownChanged)
     def aiRegimeBreakdown(self) -> list[dict[str, Any]]:  # type: ignore[override]
@@ -231,6 +243,12 @@ class _StubRuntimeService(QObject):
     def push_feed_sla_report(self, payload: dict[str, Any]) -> None:
         self._feed_sla_report = dict(payload)
         self.feedSlaReportChanged.emit()
+
+    def push_feed_alerts(self, history: list[dict[str, Any]], channels: list[dict[str, Any]]) -> None:
+        self._feed_alert_history = [dict(entry) for entry in history]
+        self._feed_alert_channels = [dict(entry) for entry in channels]
+        self.feedAlertHistoryChanged.emit()
+        self.feedAlertChannelsChanged.emit()
 
     def push_ai_regimes(self, payload: list[dict[str, Any]]) -> None:
         self._ai_regime_breakdown = [dict(entry) for entry in payload]
@@ -694,6 +712,25 @@ def test_runtime_overview_cards_react_to_live_signals() -> None:
             "nextRetrySeconds": 1.5,
         }
     )
+    runtime_service.push_feed_alerts(
+        [
+            {
+                "metric": "latency",
+                "label": "Latencja p95",
+                "severity": "warning",
+                "formattedValue": "2800 ms",
+                "timestamp": "2025-03-01T12:00:00Z",
+            },
+            {
+                "metric": "reconnects",
+                "label": "Reconnecty",
+                "severity": "info",
+                "formattedValue": "2",
+                "timestamp": "2025-03-01T12:00:00Z",
+            },
+        ],
+        [{"name": "cloud-escalation", "status": "ok"}],
+    )
     app.processEvents()
 
     sla_card = root.findChild(QObject, "runtimeOverviewFeedSlaCard")
@@ -707,6 +744,11 @@ def test_runtime_overview_cards_react_to_live_signals() -> None:
     assert sla_last_error is not None and sla_last_error.property("visible") is True
     sla_retry = root.findChild(QObject, "runtimeOverviewSlaRetry")
     assert sla_retry is not None and "1.5" in sla_retry.property("text")
+    alert_list = root.findChild(QObject, "runtimeOverviewSlaAlertList")
+    assert alert_list is not None and alert_list.property("count") == 2
+    escalation_label = root.findChild(QObject, "runtimeOverviewSlaEscalationStatus")
+    assert escalation_label is not None
+    assert "cloud-escalation" in escalation_label.property("text")
 
     metrics = {
         "blockCount": 1,
@@ -899,6 +941,8 @@ def test_runtime_service_feed_health_exports_alerts(monkeypatch: pytest.MonkeyPa
     recovery_report = service.feedSlaReport
     assert recovery_report["latency_state"] == "ok"
     assert recovery_report["sla_state"] == "ok"
+    assert service.feedAlertHistory
+    assert service.feedAlertHistory[0]["metric"] == "latency"
 
     feed_snapshot = service.feedHealth
     assert "p95LatencyMs" in feed_snapshot
@@ -909,6 +953,47 @@ def test_runtime_service_feed_health_exports_alerts(monkeypatch: pytest.MonkeyPa
     demo_entry = next(entry for entry in dashboard if entry["adapter"] == "demo")
     assert demo_entry["latency_p95_ms"] is not None
     assert demo_entry["status"] == "connected"
+
+
+def test_runtime_service_records_escalation_channels(monkeypatch: pytest.MonkeyPatch) -> None:
+    require_pyside6()
+    monkeypatch.setenv("BOT_CORE_UI_FEED_RECONNECT_WARNING", "1")
+    monkeypatch.setenv("BOT_CORE_UI_FEED_DOWNTIME_WARNING_SECONDS", "1.0")
+
+    from bot_core.alerts import DefaultAlertRouter, InMemoryAlertAuditLog
+    from bot_core.alerts.base import AlertChannel
+    from bot_core.runtime.metrics_alerts import UiTelemetryAlertSink
+
+    class _Channel(AlertChannel):
+        def __init__(self, name: str) -> None:
+            self.name = name
+            self.messages: list[object] = []
+
+        def send(self, message) -> None:  # pragma: no cover - prosta implementacja
+            self.messages.append(message)
+
+        def health_check(self) -> dict[str, str]:  # pragma: no cover - prosta implementacja
+            return {"status": "ok"}
+
+    router = DefaultAlertRouter(audit_log=InMemoryAlertAuditLog())
+    router.register(_Channel("cloud-escalation"))
+    sink = UiTelemetryAlertSink(router)
+    service = RuntimeService(feed_alert_sink=sink)
+
+    samples = service._latency_samples_for("grpc")
+    samples.clear()
+    samples.append(6000.0)
+    service._feed_downtime_total = 2.0
+    service._update_feed_health(status="connected", reconnects=4, last_error="timeout")
+
+    history = service.feedAlertHistory
+    assert history
+    assert any(entry.get("metric") == "reconnects" for entry in history)
+    assert any(entry.get("metric") == "downtime" for entry in history)
+
+    channels = service.feedAlertChannels
+    assert channels
+    assert channels[0]["name"] == "cloud-escalation"
 
 
 @pytest.mark.timeout(30)

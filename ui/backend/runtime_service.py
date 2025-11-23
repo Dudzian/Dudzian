@@ -965,6 +965,8 @@ class RuntimeService(QObject):
     liveSourceChanged = Signal()
     feedHealthChanged = Signal()
     feedSlaReportChanged = Signal()
+    feedAlertHistoryChanged = Signal()
+    feedAlertChannelsChanged = Signal()
     longPollMetricsChanged = Signal()
     retrainNextRunChanged = Signal()
     adaptiveStrategySummaryChanged = Signal()
@@ -1158,6 +1160,8 @@ class RuntimeService(QObject):
         }
         self._feed_metrics_exporter = feed_metrics_exporter or get_feed_health_metrics_exporter()
         self._feed_alert_sink = feed_alert_sink or get_feed_health_alert_sink()
+        self._feed_alert_history: deque[dict[str, object]] = deque(maxlen=12)
+        self._feed_alert_channels: list[dict[str, str]] = []
         self._feed_thresholds = self._load_feed_thresholds()
         self._feed_alert_state: dict[str, str] = {
             "latency": "ok",
@@ -1256,6 +1260,14 @@ class RuntimeService(QObject):
     @Property("QVariantMap", notify=feedSlaReportChanged)
     def feedSlaReport(self) -> dict[str, object]:  # type: ignore[override]
         return dict(self._feed_sla_report)
+
+    @Property("QVariantList", notify=feedAlertHistoryChanged)
+    def feedAlertHistory(self) -> list[dict[str, object]]:  # type: ignore[override]
+        return [dict(entry) for entry in self._feed_alert_history]
+
+    @Property("QVariantList", notify=feedAlertChannelsChanged)
+    def feedAlertChannels(self) -> list[dict[str, object]]:  # type: ignore[override]
+        return [dict(entry) for entry in self._feed_alert_channels]
 
     @Property("QVariantMap", notify=feedTransportSnapshotChanged)
     def feedTransportSnapshot(self) -> dict[str, object]:  # type: ignore[override]
@@ -1692,8 +1704,7 @@ class RuntimeService(QObject):
             return
         self._feed_alert_state[key] = severity
         sink = self._feed_alert_sink
-        if sink is None:
-            return
+        router = getattr(sink, "_router", None) if sink is not None else None
 
         severity_label = severity
         state = severity
@@ -1779,12 +1790,31 @@ class RuntimeService(QObject):
         if last_error:
             payload["last_error"] = last_error
 
-        sink.emit_feed_health_event(
+        if sink is not None:
+            sink.emit_feed_health_event(
+                severity=severity_label,
+                title=title,
+                body=body,
+                context=context,
+                payload=payload,
+            )
+
+        self._record_feed_alert(
             severity=severity_label,
-            title=title,
-            body=body,
-            context=context,
-            payload=payload,
+            state=state,
+            metric=key,
+            label=metric_label,
+            unit=unit,
+            value=value,
+            warning=warning,
+            critical=critical,
+            adapter=adapter,
+            status=status,
+            reconnects=reconnects,
+            downtime_seconds=downtime_seconds,
+            latency_p95=latency_p95,
+            last_error=last_error,
+            router=router,
         )
 
     @staticmethod
@@ -1902,6 +1932,67 @@ class RuntimeService(QObject):
             defaults["downtime_critical_seconds"],
         )
         return defaults
+
+    def _record_feed_alert(
+        self,
+        *,
+        severity: str,
+        state: str,
+        metric: str,
+        label: str,
+        unit: str,
+        value: float | None,
+        warning: float | None,
+        critical: float | None,
+        adapter: str,
+        status: str,
+        reconnects: int,
+        downtime_seconds: float,
+        latency_p95: float | None,
+        last_error: str,
+        router: object | None,
+    ) -> None:
+        timestamp = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+        entry: dict[str, object] = {
+            "id": f"{metric}:{int(time.time() * 1000)}",
+            "timestamp": timestamp,
+            "severity": severity,
+            "state": state,
+            "metric": metric,
+            "label": label,
+            "unit": unit,
+            "value": value,
+            "formattedValue": self._format_feed_metric(value, unit),
+            "warning": warning,
+            "critical": critical,
+            "adapter": adapter,
+            "status": status,
+            "reconnects": reconnects,
+            "downtimeSeconds": downtime_seconds,
+            "latencyP95": latency_p95,
+        }
+        if last_error:
+            entry["lastError"] = last_error
+        self._feed_alert_history.appendleft(entry)
+        self.feedAlertHistoryChanged.emit()
+        self._refresh_alert_channels(router)
+
+    def _refresh_alert_channels(self, router: object | None) -> None:
+        channels: list[dict[str, object]] = []
+        try:
+            health_snapshot = router.health_snapshot() if router and hasattr(router, "health_snapshot") else {}
+        except Exception:
+            health_snapshot = {}
+        if isinstance(health_snapshot, Mapping):
+            for name, payload in health_snapshot.items():
+                record = {"name": str(name)}
+                if isinstance(payload, Mapping):
+                    for key, value in payload.items():
+                        record[str(key)] = value
+                channels.append(record)
+        if channels != self._feed_alert_channels:
+            self._feed_alert_channels = channels
+            self.feedAlertChannelsChanged.emit()
 
     def _mark_feed_disconnected(self) -> None:
         if self._feed_downtime_started is None:
