@@ -32,6 +32,8 @@ Szczegółowe instrukcje znajdują się w dokumentacji:
 - [Plan wsparcia](docs/support/plan.md)
 - [Instalacja i budowa instalatorów](docs/deployment/installer_build.md)
 - [Monitorowanie offline](docs/monitoring_offline.md)
+- [Blueprint architektury enterprise](docs/architecture/enterprise_bot_blueprint.md)
+- [Ocena wdrożenia Stage6 (gap analysis)](docs/architecture/enterprise_gap_analysis.md)
 - [Raport katalogu presetów (2025-01-15)](reports/strategy/presets_2025-01-15.md)
 - Walidacja katalogu: `python scripts/validate_marketplace_presets.py --presets config/marketplace/presets --min-count 15`
 - [Benchmark Stage6 vs CryptoHopper](docs/benchmark/cryptohopper_comparison.md)
