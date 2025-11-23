@@ -652,44 +652,44 @@ jobs:
           - os: macos-latest
             platform: macos
 
-      steps:
-        - name: Check out repository
-          uses: actions/checkout@v4
+        steps:
+          - name: Check out repository
+            uses: actions/checkout@v4
 
-        - name: Set up Python
-          uses: actions/setup-python@v5
-          with:
-            python-version: "3.11"
+          - name: Set up Python
+            uses: actions/setup-python@v5
+            with:
+              python-version: "3.11"
 
-        - name: Install Protobuf on macOS
-          if: matrix.os == 'macos-latest'
-          run: |
-            brew update
-            brew install protobuf
-            echo "protobuf location: $(brew --prefix protobuf)"
+          - name: Install Protobuf on macOS
+            if: matrix.os == 'macos-latest'
+            run: |
+              brew update
+              brew install protobuf
+              echo "protobuf location: $(brew --prefix protobuf)"
 
-        - name: Install Qt
-          uses: jurplel/install-qt-action@v3
-          with:
-            version: 6.5.3
-            modules: ${{ matrix.platform == 'windows' && env.QT_WINDOWS_MODULES || env.QT_DESKTOP_MODULES }}
+          - name: Install Qt
+            uses: jurplel/install-qt-action@v3
+            with:
+              version: 6.5.3
+              modules: ${{ matrix.platform == 'windows' && env.QT_WINDOWS_MODULES || env.QT_DESKTOP_MODULES }}
 
-      - name: Build Qt bundle
-        shell: bash
-        run: |
-          python -m pip install --upgrade pip
-          python scripts/packaging/qt_bundle.py \
-            --platform ${{ matrix.platform }} \
-            --build-dir ui/build-${{ matrix.platform }} \
-            --install-dir ui/install-${{ matrix.platform }} \
-            --artifact-dir artifacts/ui/${{ matrix.platform }}
+          - name: Build Qt bundle
+            shell: bash
+            run: |
+              python -m pip install --upgrade pip
+              python scripts/packaging/qt_bundle.py \
+                --platform ${{ matrix.platform }} \
+                --build-dir ui/build-${{ matrix.platform }} \
+                --install-dir ui/install-${{ matrix.platform }} \
+                --artifact-dir artifacts/ui/${{ matrix.platform }}
 
-      - name: Upload UI bundle
-        uses: actions/upload-artifact@v4
-        with:
-          name: ui-${{ matrix.platform }}
-          path: artifacts/ui/${{ matrix.platform }}
-          retention-days: 3
+          - name: Upload UI bundle
+            uses: actions/upload-artifact@v4
+            with:
+              name: ui-${{ matrix.platform }}
+              path: artifacts/ui/${{ matrix.platform }}
+              retention-days: 3
 
   deploy:
     name: Release marketplace assets
