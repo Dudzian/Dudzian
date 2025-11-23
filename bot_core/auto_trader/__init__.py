@@ -2,7 +2,14 @@
 from __future__ import annotations
 
 from .ai_governor import AIGovernorDecision, AutoTraderAIGovernor, AutoTraderAIGovernorRunner
-from .app import AutoTrader, DecisionCycleReport, EmitterLike
+from .app import (
+    AutoTrader,
+    DecisionCycleReport,
+    DecisionCycleRequest,
+    DecisionLifecycleSnapshot,
+    DecisionCycleRunner,
+    EmitterLike,
+)
 from .paper_app import PaperAutoTradeApp
 from .audit import DecisionAuditLog, DecisionAuditRecord
 from .decision_scheduler import AutoTraderDecisionScheduler, AutoTraderSchedulerHooks
@@ -13,6 +20,9 @@ from .schedule import ScheduleOverride, ScheduleState, ScheduleWindow, TradingSc
 __all__ = [
     "AutoTrader",
     "DecisionCycleReport",
+    "DecisionCycleRequest",
+    "DecisionLifecycleSnapshot",
+    "DecisionCycleRunner",
     "AutoTraderDecisionScheduler",
     "AutoTraderLifecycleManager",
     "AutoTraderSchedulerHooks",

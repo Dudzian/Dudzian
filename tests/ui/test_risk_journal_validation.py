@@ -68,7 +68,7 @@ def test_risk_journal_emits_telemetry_warning() -> None:
 
     assert sink.events
     assert sink.events[-1]["severity"] == "warning"
-    assert sink.events[-1]["payload"]["missing_entries"] == 1
+    assert sink.events[-1]["payload"]["incomplete_entries"] == 1
 
     runtime_service._apply_risk_context(
         [

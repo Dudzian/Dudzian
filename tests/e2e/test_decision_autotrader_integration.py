@@ -8,7 +8,7 @@ from typing import Any, Mapping
 import pandas as pd
 import pytest
 
-from bot_core.auto_trader import AutoTrader, ScheduleState
+from bot_core.auto_trader import AutoTrader, DecisionCycleRequest, ScheduleState
 from bot_core.ai.regime import MarketRegime, MarketRegimeAssessment
 from bot_core.config.models import DecisionEngineConfig, DecisionOrchestratorThresholds
 from bot_core.decision.orchestrator import DecisionOrchestrator
@@ -240,9 +240,11 @@ def test_autotrader_applies_orchestrator_strategy_and_risk_limits(_market_frame:
         reference_time=datetime.now(timezone.utc),
     )
 
-    trader.run_single_cycle(
-        execution_context=execution_context,
-        schedule_state=schedule_state,
+    trader.run_cycle(
+        DecisionCycleRequest(
+            execution_context=execution_context,
+            schedule_state=schedule_state,
+        )
     )
 
     assert trader.current_strategy == "momentum_alpha"
@@ -256,4 +258,4 @@ def test_autotrader_applies_orchestrator_strategy_and_risk_limits(_market_frame:
     assert thresholds["max_cost_bps"] == pytest.approx(12.0)
     assert payload.get("net_edge_bps") is not None
     assert payload.get("net_edge_bps") >= 4.0
-    assert trader._execution_context is None
+    assert trader.execution_context_cached is False

@@ -4,12 +4,18 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 import threading
 from pathlib import Path
+from typing import Mapping
 
 import pandas as pd
 import pytest
 
 from bot_core.ai.regime import MarketRegime, MarketRegimeAssessment
-from bot_core.auto_trader import AutoTrader, AutoTraderAIGovernorRunner, ScheduleState
+from bot_core.auto_trader import (
+    AutoTrader,
+    AutoTraderAIGovernorRunner,
+    DecisionCycleRequest,
+    ScheduleState,
+)
 from bot_core.auto_trader.audit import DecisionAuditLog
 from bot_core.execution import ExecutionContext, ExecutionService
 from bot_core.runtime.journal import InMemoryTradingDecisionJournal
@@ -175,18 +181,19 @@ def test_autotrader_paper_switches_to_growth_profile() -> None:
     ai_manager = _StaticAIManager(assessment=assessment, prediction=0.015, probability=0.71)
     trader, journal, emitter, _, context = _build_trader(ai_manager)
 
-    report = trader.run_single_cycle(
+    request = DecisionCycleRequest(
         execution_context=context,
         schedule_state=_open_schedule_state(trader.schedule_mode),
     )
+    report = trader.run_cycle(request)
 
-    assert trader._risk_profile_name == "aggressive"
-    assert trader.current_strategy == "trend_following"
+    assert trader.risk_profile == "aggressive"
+    assert trader.active_strategy == "trend_following"
     assert report.metadata.get("decision_state") == "trade"
     assert journal.export(), "journal should capture decision events"
     assert any(event[0] == "auto_trader.decision_audit" for event in emitter.events)
     assert report.metrics["cycles_total"] >= 1
-    assert trader._execution_context is None
+    assert trader.execution_context_cached is False
 
 
 def test_autotrader_live_enforces_conservative_profile_on_high_risk() -> None:
@@ -200,13 +207,14 @@ def test_autotrader_live_enforces_conservative_profile_on_high_risk() -> None:
     ai_manager = _StaticAIManager(assessment=assessment, prediction=0.0, probability=0.4)
     trader, journal, emitter, _, context = _build_trader(ai_manager)
 
-    report = trader.run_single_cycle(
+    request = DecisionCycleRequest(
         execution_context=context,
         schedule_state=_open_schedule_state(trader.schedule_mode),
     )
+    report = trader.run_cycle(request)
 
-    assert trader._risk_profile_name == "conservative"
-    assert trader.current_strategy == "capital_preservation"
+    assert trader.risk_profile == "conservative"
+    assert trader.active_strategy == "capital_preservation"
     assert report.metadata.get("decision_state") == "hold"
     decision_events = [event for event in journal.export() if event.get("event") == "decision_composed"]
     assert decision_events and decision_events[0].get("risk_profile") == "conservative"
@@ -229,10 +237,11 @@ def test_autotrader_paper_executes_order_and_records_audit() -> None:
     service = FakeExecutionService()
     trader, _, _, audit_log, context = _build_trader(ai_manager, execution_service=service)
 
-    report = trader.run_single_cycle(
+    request = DecisionCycleRequest(
         execution_context=context,
         schedule_state=_open_schedule_state(trader.schedule_mode),
     )
+    report = trader.run_cycle(request)
 
     assert service.executed, "usługa egzekucji powinna zostać wywołana"
     recorded = service.executed[0]
@@ -270,10 +279,11 @@ def test_autotrader_live_execution_failure_records_audit() -> None:
         symbol="ETHUSDT",
     )
 
-    report = trader.run_single_cycle(
+    request = DecisionCycleRequest(
         execution_context=context,
         schedule_state=_open_schedule_state(trader.schedule_mode),
     )
+    report = trader.run_cycle(request)
 
     assert service.executed, "nawet w przypadku błędu powinien wystąpić jeden attempt"
     recorded = service.executed[0]
@@ -281,7 +291,7 @@ def test_autotrader_live_execution_failure_records_audit() -> None:
     assert recorded.context.environment == "live"
     assert report.decision is not None
     assert report.metrics["cycles_total"] >= 1
-    assert trader._execution_context is None
+    assert trader.execution_context_cached is False
 
     stages = audit_log.to_dicts(limit=10)
     assert any(entry["stage"] == "execution_failed" for entry in stages)
@@ -401,9 +411,31 @@ def test_autotrader_run_forever_respects_limit() -> None:
     assert all(report.metadata for report in reports)
 
 
+def test_decision_cycle_request_allows_kwarg_overrides() -> None:
+    assessment = MarketRegimeAssessment(
+        regime=MarketRegime.TREND,
+        confidence=0.77,
+        risk_score=0.22,
+        metrics={"trend_strength": 0.7},
+        symbol="BTCUSDT",
+    )
+    ai_manager = _StaticAIManager(assessment=assessment, prediction=0.02, probability=0.8)
+    trader, _, _, _, context = _build_trader(ai_manager)
+
+    base_request = DecisionCycleRequest(execution_context=context)
+    report = trader.run_single_cycle(
+        request=base_request,
+        schedule_state=_open_schedule_state(trader.schedule_mode),
+        auto_trade_interval_s=5.0,
+    )
+
+    assert isinstance(report.metadata, Mapping)
+    assert trader.execution_context_cached is False
+
+
 def test_e2e_suite_rejects_private_autotrader_fields() -> None:
     root = Path(__file__).resolve().parents[2] / "tests"
-    tokens = ["._schedule_mode", "._execution_context"]
+    tokens = ["._schedule_mode", "._execution_context", "._risk_profile_name"]
     offenders: list[tuple[str, str]] = []
     this_file = Path(__file__).resolve()
     for file_path in root.rglob("*.py"):

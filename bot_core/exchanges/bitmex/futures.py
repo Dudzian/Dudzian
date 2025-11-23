@@ -4,15 +4,18 @@ from __future__ import annotations
 
 import json
 from collections.abc import Mapping, Sequence
+from pathlib import Path
 from typing import Any
 
 from bot_core.exchanges._long_poll_ccxt import CCXTLongPollMixin
 from bot_core.exchanges.base import Environment, ExchangeCredentials
 from bot_core.exchanges.ccxt_adapter import WatchdogCCXTAdapter, merge_adapter_settings
+from bot_core.exchanges.hypercare import HypercareChecklistExporter
 from bot_core.exchanges.error_mapping import raise_for_bitmex_error
 from bot_core.exchanges.errors import ExchangeAPIError
 from bot_core.exchanges.health import Watchdog
 from bot_core.exchanges.rate_limiter import RateLimitRule
+from bot_core.exchanges.signal_quality import SignalQualityReporter
 from bot_core.exchanges.streaming import LocalLongPollStream
 
 
@@ -169,6 +172,51 @@ class BitmexFuturesAdapter(CCXTLongPollMixin, WatchdogCCXTAdapter):
                 except ExchangeAPIError as mapped:
                     raise mapped from exc
             raise
+
+    @classmethod
+    def export_hypercare_assets(
+        cls,
+        *,
+        report_dir: str | None = None,
+        signal_quality_dir: str | None = None,
+        daily_csv_dir: str | None = None,
+        reporter: SignalQualityReporter | None = None,
+        load_existing_snapshot: bool = True,
+    ) -> tuple[str, str | None]:
+        """Publikuje checklistę HyperCare i snapshot jakości sygnałów."""
+        signal_root = Path(signal_quality_dir) if signal_quality_dir else Path("reports/exchanges/signal_quality")
+        signal_root.mkdir(parents=True, exist_ok=True)
+
+        quality_reporter = reporter
+        quality_snapshot: Path | None = None
+
+        if quality_reporter is None and load_existing_snapshot:
+            existing_snapshot = signal_root / f"{cls.name}.json"
+            if existing_snapshot.exists():
+                quality_snapshot = existing_snapshot
+
+        if quality_reporter is None and quality_snapshot is None:
+            quality_reporter = SignalQualityReporter(
+                exchange_id=cls.name,
+                report_dir=signal_root,
+                enable_csv_export=True,
+                csv_dir=signal_root,
+            )
+
+        if quality_reporter is not None:
+            quality_snapshot = quality_reporter.write_snapshot()
+
+        checklist = HypercareChecklistExporter(
+            exchange=cls.name,
+            checklist_id=cls.hypercare_checklist_id,
+            signed_by="exchange_ops",
+        )
+        checklist_json, checklist_csv = checklist.export(
+            report_dir=report_dir or "reports/exchanges/hypercare",
+            signal_quality_snapshot=quality_snapshot,
+            daily_csv_dir=daily_csv_dir or "reports/exchanges",
+        )
+        return str(checklist_json), str(checklist_csv) if checklist_csv else None
 
 
 __all__ = ["BitmexFuturesAdapter"]
