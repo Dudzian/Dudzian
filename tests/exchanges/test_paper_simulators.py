@@ -105,6 +105,29 @@ def test_futures_simulator_applies_funding_and_reports_exposure():
     assert any(event["type"] == "funding" for event in events)
 
 
+def test_futures_simulator_applies_slippage_and_fee_validation():
+    simulator = PaperFuturesSimulator(
+        _DummyFeed(20_000.0),
+        database=_DummyDB(),
+        funding_rate=0.0,
+        slippage_bps=25.0,
+        fee_rate=0.001,
+    )
+    simulator.load_markets()
+    snapshot_before = simulator.fetch_account_snapshot()
+
+    simulator.create_order("BTC/USDT", OrderSide.BUY, OrderType.MARKET, 0.1)
+
+    snapshot_after = simulator.fetch_account_snapshot()
+    assert snapshot_after.total_equity < snapshot_before.total_equity
+    assert snapshot_after.balances["BTC/USDT_position"] > 0
+
+    with pytest.raises(ValueError):
+        PaperFuturesSimulator(_DummyFeed(20_000.0), database=_DummyDB(), fee_rate=-0.1)
+    with pytest.raises(ValueError):
+        PaperFuturesSimulator(_DummyFeed(20_000.0), database=_DummyDB(), slippage_bps=-1)
+
+
 def test_simulator_describe_configuration_reports_runtime_values():
     simulator = _make_margin_simulator(
         leverage_limit=7.0,

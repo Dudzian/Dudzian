@@ -249,6 +249,9 @@ exchange_adapters:
           base_delay: 0.4
           max_delay: 3.0
           jitter: [0.05, 0.35]
+        simulator:
+          fee_rate: 0.0005
+          slippage_bps: 12.5
         stream:
           live_base_url: https://stream.hyperion.dudzian.ai/exchanges
           testnet_base_url: https://stream.sandbox.dudzian.ai/exchanges
@@ -295,6 +298,9 @@ exchange_adapters:
           base_delay: 0.3
           max_delay: 2.5
           jitter: [0.05, 0.35]
+        simulator:
+          fee_rate: 0.00075
+          slippage_bps: 15.0
         stream:
           live_base_url: https://stream.hyperion.dudzian.ai/exchanges
           testnet_base_url: https://stream.sandbox.dudzian.ai/exchanges

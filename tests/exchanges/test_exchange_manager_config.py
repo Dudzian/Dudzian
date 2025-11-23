@@ -373,6 +373,7 @@ def test_exchange_manager_reports_paper_configuration() -> None:
         "maintenance_margin_ratio": pytest.approx(0.05),
         "funding_rate": pytest.approx(0.0001),
         "funding_interval_seconds": pytest.approx(0.0),
+        "slippage_bps": pytest.approx(0.0),
     }
 
 

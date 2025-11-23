@@ -72,9 +72,15 @@ class PaperMarginSimulator(PaperBackend):
         initial_cash: float = 10_000.0,
         cash_asset: str = "USDT",
         fee_rate: Optional[float] = None,
+        slippage_bps: float = 0.0,
         database=None,
         funding_interval_seconds: Optional[float] = None,
     ) -> None:
+        self._managed_db = False  # bezpieczeństwo destruktora nawet przy wyjątkach
+        if fee_rate is not None and float(fee_rate) < 0:
+            raise ValueError("fee_rate nie może być ujemny")
+        if slippage_bps < 0:
+            raise ValueError("slippage_bps nie może być ujemny")
         super().__init__(
             price_feed_backend,
             event_bus=event_bus,
@@ -83,6 +89,7 @@ class PaperMarginSimulator(PaperBackend):
             fee_rate=fee_rate,
             database=database,
         )
+        self._slippage_bps = float(slippage_bps)
         leverage_limit = max(1.0, float(leverage_limit))
         maintenance_margin_ratio = max(0.01, float(maintenance_margin_ratio))
         funding_rate = float(funding_rate)
@@ -138,6 +145,8 @@ class PaperMarginSimulator(PaperBackend):
             "maintenance_margin_ratio": float(state.maintenance_margin_ratio),
             "funding_rate": float(state.funding_rate),
             "funding_interval_seconds": float(state.funding_interval_seconds),
+            "slippage_bps": float(self._slippage_bps),
+            "fee_rate": float(self._fee_rate),
         }
 
     # ----------------------------------------------------------------- overrides
@@ -155,8 +164,12 @@ class PaperMarginSimulator(PaperBackend):
 
         self._apply_funding(timestamp)
         signed_quantity = qty if order.side == OrderSide.BUY else -qty
-        fee = qty * price * self._fee_rate
-        notional = qty * price
+        adjusted_price = price
+        if self._slippage_bps:
+            multiplier = 1 + (self._slippage_bps / 10_000.0)
+            adjusted_price = price * multiplier if order.side == OrderSide.BUY else price / multiplier
+        fee = qty * adjusted_price * self._fee_rate
+        notional = qty * adjusted_price
         leverage_before = self._effective_leverage()
 
         if order.side == OrderSide.BUY:
@@ -164,7 +177,7 @@ class PaperMarginSimulator(PaperBackend):
         else:
             self._cash_balance += notional - fee
 
-        self._apply_margin_fill(order.symbol, signed_quantity, price)
+        self._apply_margin_fill(order.symbol, signed_quantity, adjusted_price)
         order.remaining = 0.0
         order.status = OrderStatus.FILLED
         self._update_order_status(order, OrderStatus.FILLED)
@@ -172,12 +185,12 @@ class PaperMarginSimulator(PaperBackend):
 
         dto = self._to_order_dto(order)
         dto.status = OrderStatus.FILLED
-        dto.price = price
+        dto.price = adjusted_price
         dto.ts = timestamp.timestamp()
         self.event_bus.publish(Event(type="ORDER_FILLED", payload=dto.model_dump()))
 
-        self._record_trade(order, qty, price, fee, timestamp)
-        self._last_prices[order.symbol] = price
+        self._record_trade(order, qty, adjusted_price, fee, timestamp)
+        self._last_prices[order.symbol] = adjusted_price
         self._enforce_margin(timestamp)
 
         leverage_after = self._effective_leverage()
@@ -380,6 +393,7 @@ class PaperFuturesSimulator(PaperMarginSimulator):
         initial_cash: float = 10_000.0,
         cash_asset: str = "USDT",
         fee_rate: Optional[float] = None,
+        slippage_bps: float = 0.0,
         database=None,
         funding_interval_seconds: Optional[float] = None,
     ) -> None:
@@ -391,6 +405,7 @@ class PaperFuturesSimulator(PaperMarginSimulator):
             initial_cash=initial_cash,
             cash_asset=cash_asset,
             fee_rate=fee_rate,
+            slippage_bps=slippage_bps,
             database=database,
             funding_interval_seconds=funding_interval_seconds,
         )
