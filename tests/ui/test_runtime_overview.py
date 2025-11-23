@@ -5,7 +5,7 @@ import os
 from datetime import datetime, timezone
 import base64
 from pathlib import Path
-from typing import Any
+from typing import Any, Mapping
 
 import pytest
 
@@ -1004,7 +1004,13 @@ def test_runtime_service_records_escalation_channels(monkeypatch: pytest.MonkeyP
 
 def test_risk_journal_metrics_exporter_records_state(monkeypatch: pytest.MonkeyPatch) -> None:
     require_pyside6()
-    service = RuntimeService(feed_alert_sink=None)
+    captured: list[dict[str, object]] = []
+
+    class _Sink:
+        def emit_feed_health_event(self, **kwargs: object) -> None:  # pragma: no cover - prosta implementacja
+            captured.append(kwargs)
+
+    service = RuntimeService(feed_alert_sink=_Sink())
 
     diagnostics = {"incompleteEntries": 2, "incompleteSamples": ["a", "b"]}
     service._maybe_emit_risk_journal_alert(diagnostics)
@@ -1019,6 +1025,20 @@ def test_risk_journal_metrics_exporter_records_state(monkeypatch: pytest.MonkeyP
         )
         == 2.0
     )
+    assert (
+        registry.get("bot_ui_risk_journal_incomplete_samples_total").value(
+            labels={"channel": "risk_journal", "environment": "default"}
+        )
+        == 2.0
+    )
+    assert captured, "Brak zdarzenia alertu telemetrii"
+    event = captured[-1]
+    payload = event.get("payload") if isinstance(event, Mapping) else {}
+    assert payload.get("environment") == "default"
+    assert payload.get("incompleteEntries") == 2
+    assert payload.get("incomplete_entries") == 2
+    assert payload.get("incompleteSamples") == 2
+    assert payload.get("incomplete_samples") == 2
 
 
 @pytest.mark.timeout(30)

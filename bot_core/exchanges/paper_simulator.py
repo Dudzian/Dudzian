@@ -127,19 +127,23 @@ class PaperMarginSimulator(PaperBackend):
 
         severity = "ok"
         warning_message: str | None = None
+        flags: list[str] = []
         if fee_rate is not None and fee_rate > 0.01:
             severity = "warning"
             warning_message = "fee_rate przekracza 1% – sprawdź konfigurację symulatora"
+            flags.append("fee_rate_high")
         if slippage_bps > 250.0:
             severity = "warning"
             extra = "" if warning_message is None else f"; {warning_message}"
             warning_message = f"slippage_bps przekracza 250 bps{extra}"
-        if warning_message:
+            flags.append("slippage_high")
+        if warning_message or flags:
             self._record_risk_journal_entry(
                 severity=severity,
                 fee_rate=fee_rate,
                 slippage_bps=slippage_bps,
                 message=warning_message,
+                risk_flags=flags or [severity],
             )
         else:
             self._record_risk_journal_entry(
@@ -147,6 +151,7 @@ class PaperMarginSimulator(PaperBackend):
                 fee_rate=fee_rate,
                 slippage_bps=slippage_bps,
                 message="walidacja fee/slippage zakończona powodzeniem",
+                risk_flags=["ok"],
             )
 
     def _record_risk_journal_entry(
@@ -156,10 +161,12 @@ class PaperMarginSimulator(PaperBackend):
         fee_rate: float | None,
         slippage_bps: float,
         message: str,
+        risk_flags: Iterable[str] | None = None,
     ) -> None:
         if self._risk_journal is None:
             return
 
+        flags = list(risk_flags) if risk_flags is not None else [severity]
         event = TradingDecisionEvent(
             event_type="simulator_cost_validation",
             timestamp=dt.datetime.utcnow(),
@@ -168,7 +175,7 @@ class PaperMarginSimulator(PaperBackend):
             risk_profile="simulator",
             metadata={
                 "risk_action": "validate_costs",
-                "risk_flags": [severity],
+                "risk_flags": flags,
                 "fee_rate": fee_rate,
                 "slippage_bps": slippage_bps,
                 "message": message,
@@ -309,9 +316,9 @@ class PaperMarginSimulator(PaperBackend):
         severity = "ok"
         flags = []
         if self._fee_rate and self._fee_rate > 0.01:
-            flags.append("high_fee")
+            flags.append("fee_rate_high")
         if self._slippage_bps > 250:
-            flags.append("warning")
+            flags.append("slippage_high")
         if flags:
             severity = "warning"
 

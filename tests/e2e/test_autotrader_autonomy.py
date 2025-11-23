@@ -146,10 +146,7 @@ def _build_trader(
     trader.risk_service = None
     trader.core_risk_engine = None
     trader._environment_name = environment
-    trader._base_metric_labels = {
-        **trader._base_metric_labels,
-        "environment": environment,
-    }
+    trader.set_metric_labels(environment=environment)
     trader._apply_active_mode_overrides = lambda: None  # type: ignore[assignment]
     context = ExecutionContext(
         portfolio_id="autotrader",
@@ -357,7 +354,7 @@ def test_autotrader_cycle_report_without_new_decision() -> None:
     trader, _, _, _, context = _build_trader(ai_manager)
 
     trader._enforce_work_schedule = lambda *_args, **_kwargs: False  # type: ignore[assignment]
-    before_cycles = trader._metric_cycle_total.value(labels=trader._base_metric_labels)
+    before_cycles = trader._metric_cycle_total.value(labels=trader.metric_labels)
 
     report = trader.run_single_cycle(
         execution_context=context,
@@ -435,7 +432,12 @@ def test_decision_cycle_request_allows_kwarg_overrides() -> None:
 
 def test_e2e_suite_rejects_private_autotrader_fields() -> None:
     root = Path(__file__).resolve().parents[2] / "tests"
-    tokens = ["._schedule_mode", "._execution_context", "._risk_profile_name"]
+    tokens = [
+        "._schedule_mode",
+        "._execution_context",
+        "._risk_profile_name",
+        "._base_metric_labels",
+    ]
     offenders: list[tuple[str, str]] = []
     this_file = Path(__file__).resolve()
     for file_path in root.rglob("*.py"):

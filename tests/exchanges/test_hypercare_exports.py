@@ -42,6 +42,7 @@ def test_deribit_hypercare_export_creates_snapshot(tmp_path: Path) -> None:
     assert payload["checklist_id"] == DeribitFuturesAdapter.hypercare_checklist_id
     assert payload["signed"] is True
     assert payload.get("signal_quality_snapshot")
+    assert payload.get("signal_quality_daily_csv")
 
     snapshot = json.loads(Path(payload["signal_quality_snapshot"]).read_text(encoding="utf-8"))
     assert snapshot.get("total", 0) > 0
@@ -86,6 +87,7 @@ def test_bitmex_hypercare_export_creates_snapshot(tmp_path: Path) -> None:
     assert payload["checklist_id"] == BitmexFuturesAdapter.hypercare_checklist_id
     assert payload["signed_by"] == "exchange_ops"
     assert payload.get("signal_quality_snapshot")
+    assert payload.get("signal_quality_daily_csv")
 
     snapshot = json.loads(Path(payload["signal_quality_snapshot"]).read_text(encoding="utf-8"))
     assert snapshot.get("total", 0) > 0
@@ -93,6 +95,38 @@ def test_bitmex_hypercare_export_creates_snapshot(tmp_path: Path) -> None:
     assert (signal_dir / f"{BitmexFuturesAdapter.name}.json").exists()
     assert (signal_dir / f"{BitmexFuturesAdapter.name}-{today_suffix}.csv").exists()
     assert csv_path is not None and Path(csv_path).exists()
+
+
+def test_hypercare_export_uses_existing_snapshot_and_generates_daily_csv(tmp_path: Path) -> None:
+    signal_dir = tmp_path / "signal_quality"
+    signal_dir.mkdir(parents=True, exist_ok=True)
+    checklist_dir = tmp_path / "hypercare"
+    today_suffix = datetime.now(timezone.utc).date().isoformat()
+
+    existing_summary = {
+        "exchange": DeribitFuturesAdapter.name,
+        "total": 0,
+        "failures": 0,
+        "fill_ratio": 0.0,
+        "slippage_bps": 0.0,
+        "watchdog": {"recent": [], "alerts": [], "last_status": {}},
+    }
+    existing_path = signal_dir / f"{DeribitFuturesAdapter.name}.json"
+    existing_path.write_text(json.dumps(existing_summary), encoding="utf-8")
+
+    json_path, _ = DeribitFuturesAdapter.export_hypercare_assets(
+        signal_quality_dir=signal_dir,
+        report_dir=checklist_dir,
+        daily_csv_dir=tmp_path,
+        reporter=None,
+        load_existing_snapshot=True,
+    )
+
+    payload = json.loads(Path(json_path).read_text(encoding="utf-8"))
+    assert payload.get("signal_quality_snapshot") == str(existing_path)
+    assert payload.get("signal_quality_daily_csv")
+    assert Path(payload["signal_quality_daily_csv"]).exists()
+    assert (signal_dir / f"{DeribitFuturesAdapter.name}-{today_suffix}.csv").exists()
 
 
 def test_signal_quality_csv_appends_with_header_once(tmp_path: Path) -> None:

@@ -37,8 +37,11 @@ def test_risk_journal_marks_incomplete_entries() -> None:
     assert metrics["blockCount"] == 0
     assert metrics["freezeCount"] == 1
     assert metrics["incompleteEntries"] == 1
+    assert metrics["incompleteSamples"] == 1
     assert metrics["riskFlagCounts"] == {"drawdown_watch": 1}
     assert diagnostics["incompleteEntries"] == 1
+    assert diagnostics["incomplete_entries"] == 1
+    assert diagnostics["incomplete_samples"][0]["event"] == "missing_payload"
     assert diagnostics["incompleteSamples"][0]["event"] == "missing_payload"
 
     incomplete = next(item for item in timeline if item["event"] == "missing_payload")

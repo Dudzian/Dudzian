@@ -1522,7 +1522,10 @@ class _RuntimeServicer(trading_pb2_grpc.RuntimeServiceServicer):
             return {}
 
         snapshot_fn = getattr(auto_trader, "_snapshot_decision_metrics", None)
-        base_labels = getattr(auto_trader, "_base_metric_labels", None)
+        labels_source = getattr(auto_trader, "metric_labels", None)
+        base_labels = labels_source if isinstance(labels_source, Mapping) else None
+        if base_labels is None:
+            base_labels = getattr(auto_trader, "_base_metric_labels", None)
         if callable(snapshot_fn) and isinstance(base_labels, Mapping):
             try:
                 metrics = snapshot_fn(dict(base_labels))
