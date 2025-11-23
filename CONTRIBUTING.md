@@ -44,7 +44,7 @@ Jeżeli dodajesz dodatkowe testy jednostkowe/integracyjne, dopisz je do sekcji
 bez pisemnego zatwierdzenia zespołu compliance po zakończeniu testów demo.
 
 Lint layoutu kończy się błędem za każdym razem, gdy w repozytorium pojawią się
-zakazane katalogi (prefiksy legacy z poprzedniego etapu) albo pliki wykonywalne wewnątrz `archive/`.
+zakazane katalogi (prefiksy historyczne z poprzedniego etapu) albo pliki wykonywalne wewnątrz `archive/`.
 Pozostałości należy usunąć lub przenieść do dokumentacji historycznej przed
 wysłaniem zmian do review.
 
@@ -68,7 +68,8 @@ wiązań importowych do aktywnego kodu.
 ### Użycie słowa „legacy”
 
 - W kodzie wykonywalnym (np. `bot_core`, `core`, `scripts/`, `ui/pyside_app`, `proto/`,
-  testy) słowo „legacy” jest zakazane i test `tests/qa/test_no_legacy_tokens.py` zablokuje merge.
+  testy) odniesienia do starych formatów są zakazane i test `tests/qa/test_no_historical_tokens.py`
+  zablokuje merge.
 - Dopuszczalne konteksty to wyłącznie dokumentacja (`docs/**`), archiwum (`archive/**`)
   oraz pliki zaczynające się od `README`. Każda taka wzmianka musi wskazywać konkretną
   lokalizację w `archive/` (np. `archive/ui_cpp_preserved.md`) albo sekcję migracji.

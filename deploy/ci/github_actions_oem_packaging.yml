@@ -247,7 +247,7 @@ jobs:
             --tco-output-dir var/reports/tco \
             --tco-basename oem_tco \
             --tco-signing-key /tmp/oem_tco.key \
-            --tco-signing-key-id legacy-tco \
+            --tco-signing-key-id stage6-tco \
             --decision-config config/core.yaml \
             --decision-risk-snapshot var/data/risk_snapshot.json \
             --decision-candidates var/data/decision_candidates.json \
@@ -255,20 +255,20 @@ jobs:
             --decision-tco-report var/reports/tco/oem_tco.json \
             --decision-allow-empty \
             --decision-signing-key-file /tmp/oem_orchestrator.key \
-            --decision-signing-key-id legacy-decision \
+            --decision-signing-key-id stage6-decision \
             --slo-config config/core.yaml \
             --slo-metric var/data/slo_metrics.jsonl \
             --slo-output-dir var/reports/slo \
             --slo-basename slo_oem \
             --slo-signing-key /tmp/oem_slo.key \
-            --slo-signing-key-id legacy-slo \
+            --slo-signing-key-id stage6-slo \
             --rotation-config config/core.yaml \
             --rotation-output-dir config/rotation_audit \
             --rotation-basename rotation_plan_oem \
             --observability-version "$VERSION" \
             --observability-output-dir var/observability \
             --observability-signing-key /tmp/oem_observability.key \
-            --observability-key-id legacy-observability \
+            --observability-key-id stage6-observability \
             --summary-path var/audit/acceptance/acceptance_summary.json \
             --artifact-root var/audit/acceptance \
             --decision-log-path var/audit/acceptance/decision_log.jsonl \

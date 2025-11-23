@@ -6,11 +6,12 @@ from pathlib import Path
 
 import pytest
 
-TOKEN_PATTERNS: tuple[str, ...] = ("stage5", "stage-5", "stage4", "stage-4", "legacy")
+TOKEN_PATTERNS: tuple[str, ...] = ("stage5", "stage-5", "stage4", "stage-4", "historical")
 SCAN_ROOTS: tuple[Path, ...] = (
     Path("bot_core"),
     Path("core"),
     Path("config"),
+    Path("data"),
 )
 
 SKIP_DIR_NAMES = {
@@ -25,8 +26,8 @@ SKIP_DIR_NAMES = {
 }
 ALLOWLISTED_DIRS: tuple[Path, ...] = (Path("archive"),)
 ALLOWLISTED_FILES: set[Path] = {
-    Path("tests/qa/test_no_legacy_tokens.py"),
-    Path("qa/test_no_legacy_tokens.py"),
+    Path("tests/qa/test_no_historical_tokens.py"),
+    Path("qa/test_no_historical_tokens.py"),
 }
 ALLOWLISTED_FILENAME_PREFIXES: tuple[str, ...] = ()
 
@@ -83,12 +84,12 @@ def _find_hypercare_token_violations(repo_root: Path) -> list[str]:
     return violations
 
 
-def test_no_legacy_tokens_outside_archive():  # pragma: no cover
+def test_no_historical_tokens_outside_archive():  # pragma: no cover
     repo_root = Path(__file__).resolve().parents[1]
     violations = _find_hypercare_token_violations(repo_root)
 
     assert not violations, (
-        "Wykryto historyczne tokeny Stage" "5 w kodzie (poza archiwum):\n"
+        "Wykryto niedozwolone historyczne tokeny Stage" "5 w kodzie (poza archiwum):\n"
         + "\n".join(violations)
     )
 

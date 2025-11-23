@@ -1,4 +1,4 @@
-"""Mini-audyt zgodności Stage4/legacy Stage 5: RBAC, mTLS, TCO oraz observability."""
+"""Mini-audyt zgodności Stage4/historical Stage 5: RBAC, mTLS, TCO oraz observability."""
 
 from __future__ import annotations
 
@@ -422,7 +422,7 @@ def _validate_live_router(
         _record(
             issues,
             check="observability.key_rotation.registry_path",
-            message=f"Rejestr rotacji legacy Stage 5 nie istnieje: {registry_path_value}",
+            message=f"Rejestr rotacji historycznego Stage 5 nie istnieje: {registry_path_value}",
         )
         return
 
@@ -432,7 +432,7 @@ def _validate_live_router(
         _record(
             warnings,
             check="observability.key_rotation.entries",
-            message="Rejestr rotacji legacy Stage 5 istnieje, lecz nie zdefiniowano żadnych wpisów.",
+            message="Rejestr rotacji historycznego Stage 5 istnieje, lecz nie zdefiniowano żadnych wpisów.",
         )
         return
 
