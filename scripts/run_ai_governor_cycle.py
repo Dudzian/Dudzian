@@ -52,7 +52,7 @@ def _load_snapshot(path: Path | None) -> Mapping[str, StrategyPerformanceSummary
             pnl=float(entry.get("pnl", 0.0)),
             sharpe=float(entry.get("sharpe", 0.0)),
             updated_at=now,
-            observations=float(entry.get("observations", 1.0)),
+            observations=int(entry.get("observations", 1)),
         )
     return snapshot
 

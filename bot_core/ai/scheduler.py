@@ -487,10 +487,10 @@ class WalkForwardValidator:
             directional.append(accuracy)
             windows_metrics.append(
                 {
-                    "start_timestamp": test_dataset.metadata.get("start_timestamp", 0.0),
-                    "end_timestamp": test_dataset.metadata.get("end_timestamp", 0.0),
-                    "mae": mae,
-                    "directional_accuracy": accuracy,
+                    "start_timestamp": float(test_dataset.metadata.get("start_timestamp", 0.0)),
+                    "end_timestamp": float(test_dataset.metadata.get("end_timestamp", 0.0)),
+                    "mae": float(mae),
+                    "directional_accuracy": float(accuracy),
                 }
             )
 

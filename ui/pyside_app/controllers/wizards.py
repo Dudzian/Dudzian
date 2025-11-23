@@ -1,6 +1,7 @@
 """Kontroler odpowiedzialny za kreatory trybów pracy w PySide6."""
 from __future__ import annotations
 
+
 import json
 import logging
 from pathlib import Path
@@ -159,11 +160,11 @@ class ModeWizardController(QObject):
                 "telemetry_rules": data.get("telemetry_rules") or {},
                 "recommendations": data.get("recommendations") or {},
             }
-            steps_payload = []
+            steps_payload: list[dict[str, Any]] = []
             for step in data.get("steps") or []:
                 if not isinstance(step, Mapping):
                     continue
-                step_entry = {
+                step_entry: dict[str, Any] = {
                     "id": step.get("id") or f"step-{len(steps_payload)}",
                     "title": step.get("title") or "",
                     "description": step.get("description") or "",
@@ -172,7 +173,7 @@ class ModeWizardController(QObject):
                 for input_cfg in step.get("inputs") or []:
                     if not isinstance(input_cfg, Mapping):
                         continue
-                    option_payload = []
+                    option_payload: list[dict[str, str]] = []
                     for opt in input_cfg.get("options") or []:
                         if not isinstance(opt, Mapping):
                             continue

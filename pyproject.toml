@@ -55,32 +55,28 @@ disable_error_code = [
   "operator",
   "union-attr",
   "index",
-  "misc",
+  "return-value",
   "no-redef",
   "no-any-return",
-  "return-value",
   "name-defined",
   "var-annotated",
+  "misc",
   "dict-item",
   "list-item",
-  "type-var",
-  "annotation-unchecked",
 ]
 
 [[tool.mypy.overrides]]
 module = ["ui.backend.*", "ui.pyside_app.*"]
-allow_untyped_defs = true
-allow_untyped_calls = true
 disable_error_code = [
   "arg-type",
-  "return-value",
   "assignment",
-  "misc",
-  "index",
-  "call-overload",
   "attr-defined",
-  "no-redef",
+  "call-overload",
+  "index",
+  "misc",
   "no-any-return",
+  "no-redef",
+  "return-value",
 ]
 
 [[tool.mypy.overrides]]
@@ -91,7 +87,6 @@ module = [
   "core.reporting.retraining_reporter",
   "ui.pyside_app.controllers.wizards",
 ]
-ignore_errors = true
 
 [tool.pytest.ini_options]
 addopts = ""

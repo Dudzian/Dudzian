@@ -1,6 +1,7 @@
 """Kontroler zarządzania strategiami i marketplace dla PySide6."""
 from __future__ import annotations
 
+
 import re
 from datetime import datetime, timezone
 import json

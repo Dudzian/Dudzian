@@ -8,14 +8,14 @@ import csv
 import datetime as _dt
 import json
 import math
+import os
 import shutil
 import sys
 import urllib.error
 import urllib.request
 from collections.abc import Mapping, Sequence
 from pathlib import Path
-from typing import Any
-import os
+from typing import Any, cast
 
 import yaml
 
@@ -23,26 +23,7 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:  # pragma: no cover - konfiguracja ścieżki wykonywana raz
     sys.path.insert(0, str(ROOT))
 
-try:  # pragma: no cover - środowiska testowe mogą nie mieć packaging
-    import packaging.version  # type: ignore
-except ModuleNotFoundError:  # pragma: no cover - fallback minimalny
-    import types
-
-    packaging_module = types.ModuleType("packaging")
-    version_module = types.ModuleType("version")
-
-    class Version(str):  # type: ignore
-        def __new__(cls, value: str) -> "Version":
-            return str.__new__(cls, value)
-
-    class InvalidVersion(Exception):
-        """Minimalna implementacja na potrzeby loadera konfiguracji."""
-
-    version_module.Version = Version
-    version_module.InvalidVersion = InvalidVersion
-    packaging_module.version = version_module
-    sys.modules.setdefault("packaging", packaging_module)
-    sys.modules.setdefault("packaging.version", version_module)
+from packaging.version import InvalidVersion, Version
 
 from bot_core.config.loader import load_core_config
 
@@ -60,6 +41,20 @@ _MONITORED_LONG_POLL_ADAPTERS = {
 
 def _as_mapping(value: Any) -> Mapping[str, Any]:
     return value if isinstance(value, Mapping) else {}
+
+
+def _safe_int(value: Any) -> int | None:
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _safe_float(value: Any) -> float | None:
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
 
 
 def _stream_base_url(stream_settings: Mapping[str, Any], *, environment: str) -> str | None:
@@ -379,19 +374,13 @@ def _summarize_long_poll_metrics(
     http_errors = _as_mapping(snapshot.get("httpErrors"))
     if http_errors:
         total = http_errors.get("total")
-        try:
-            summary["long_poll_http_errors"] = int(total) if total is not None else None
-        except (TypeError, ValueError):
-            summary["long_poll_http_errors"] = None
+        summary["long_poll_http_errors"] = _safe_int(total)
 
     reconnects = _as_mapping(snapshot.get("reconnects"))
     if reconnects:
         for key in ("success", "failure"):
             value = reconnects.get(key)
-            try:
-                summary[f"long_poll_reconnect_{key}"] = int(value)
-            except (TypeError, ValueError):
-                summary[f"long_poll_reconnect_{key}"] = None
+            summary[f"long_poll_reconnect_{key}"] = _safe_int(value)
 
     collected_at = snapshot.get("_collected_at")
     if isinstance(collected_at, _dt.datetime):
@@ -536,15 +525,9 @@ def build_rows(
             simulator_defaults = _as_mapping(adapter_defaults.get("simulator"))
             if simulator_defaults:
                 fee_candidate = simulator_defaults.get("fee_rate")
-                try:
-                    simulator_fee_rate = float(fee_candidate)
-                except (TypeError, ValueError):
-                    simulator_fee_rate = None
+                simulator_fee_rate = _safe_float(fee_candidate)
                 slippage_candidate = simulator_defaults.get("slippage_bps")
-                try:
-                    simulator_slippage_bps = float(slippage_candidate)
-                except (TypeError, ValueError):
-                    simulator_slippage_bps = None
+                simulator_slippage_bps = _safe_float(slippage_candidate)
 
             if exchange in {"deribit", "bitmex"} and env_cfg.environment.value == "live":
                 status = long_poll_summary.get("long_poll_metrics_status")

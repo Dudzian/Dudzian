@@ -269,7 +269,9 @@ def _bundle_import_errors(primary: BaseException, secondary: BaseException) -> B
     """Połącz dwa wyjątki importu w jeden obiekt z zachowaniem kontekstu."""
 
     try:
-        return ExceptionGroup("AI backend import failed", [primary, secondary])  # type: ignore[name-defined]
+        return ExceptionGroup(
+            "AI backend import failed", [primary, secondary]
+        )  # type: ignore[name-defined,type-var]
     except NameError:  # pragma: no cover - Python < 3.11
         secondary.__cause__ = primary  # type: ignore[attr-defined]
         return secondary

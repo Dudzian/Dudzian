@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Mapping, MutableMapping
+from typing import Any, Mapping, MutableMapping, cast
 
 import yaml
 
@@ -64,7 +64,7 @@ class UiAppConfig:
         theme_payload = dict(base["theme"])
         theme_payload.setdefault("palette", self.theme_palette)
         base["theme"] = theme_payload
-        return _coerce_variant(base)
+        return cast(dict[str, Any], _coerce_variant(base))
 
 
 def load_ui_app_config(
