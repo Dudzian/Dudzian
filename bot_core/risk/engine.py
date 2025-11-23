@@ -2203,7 +2203,7 @@ def _ensure_decision_models() -> bool:
         return True
 
     try:  # pragma: no cover - fallback ładowania w środowiskach z modułem decision
-        from bot_core.decision.models import (  # type: ignore import-not-found
+        from bot_core.decision.models import (  # type: ignore[import-not-found]
             DecisionCandidate as _DecisionCandidate,
             DecisionEvaluation as _DecisionEvaluation,
             RiskSnapshot as _RiskSnapshot,

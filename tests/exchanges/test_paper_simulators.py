@@ -62,6 +62,14 @@ class _DummyDB:
         self.sync = self._Sync()
 
 
+class _RecordingJournal:
+    def __init__(self) -> None:
+        self.events: list[object] = []
+
+    def record(self, event) -> None:  # type: ignore[override]
+        self.events.append(event)
+
+
 def _make_margin_simulator(price: float = 100.0, **kwargs) -> PaperMarginSimulator:
     feed = _DummyFeed(price)
     database = _DummyDB()
@@ -106,12 +114,14 @@ def test_futures_simulator_applies_funding_and_reports_exposure():
 
 
 def test_futures_simulator_applies_slippage_and_fee_validation():
+    journal = _RecordingJournal()
     simulator = PaperFuturesSimulator(
         _DummyFeed(20_000.0),
         database=_DummyDB(),
         funding_rate=0.0,
         slippage_bps=25.0,
         fee_rate=0.001,
+        risk_journal=journal,
     )
     simulator.load_markets()
     snapshot_before = simulator.fetch_account_snapshot()
@@ -122,10 +132,24 @@ def test_futures_simulator_applies_slippage_and_fee_validation():
     assert snapshot_after.total_equity < snapshot_before.total_equity
     assert snapshot_after.balances["BTC/USDT_position"] > 0
 
+    assert journal.events
+
     with pytest.raises(ValueError):
-        PaperFuturesSimulator(_DummyFeed(20_000.0), database=_DummyDB(), fee_rate=-0.1)
+        PaperFuturesSimulator(_DummyFeed(20_000.0), database=_DummyDB(), fee_rate=-0.1, risk_journal=journal)
     with pytest.raises(ValueError):
-        PaperFuturesSimulator(_DummyFeed(20_000.0), database=_DummyDB(), slippage_bps=-1)
+        PaperFuturesSimulator(_DummyFeed(20_000.0), database=_DummyDB(), slippage_bps=-1, risk_journal=journal)
+
+    warning_simulator = PaperFuturesSimulator(
+        _DummyFeed(20_000.0),
+        database=_DummyDB(),
+        slippage_bps=400.0,
+        risk_journal=journal,
+    )
+    warning_simulator.load_markets()
+    assert any(
+        getattr(event, "metadata", {}).get("risk_flags") == ["warning"]
+        for event in journal.events
+    )
 
 
 def test_simulator_describe_configuration_reports_runtime_values():

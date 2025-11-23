@@ -15,6 +15,7 @@ import urllib.request
 from collections.abc import Mapping, Sequence
 from pathlib import Path
 from typing import Any
+import os
 
 import yaml
 
@@ -49,6 +50,8 @@ LongPollMetrics = dict[tuple[str, str, str], dict[str, Any]]
 
 _DEFAULT_LONG_POLL_METRICS_PATH = "var/metrics/long_poll_snapshots.json"
 _DEFAULT_LONG_POLL_TTL_MINUTES = 720.0
+_DEFAULT_SIGNAL_QUALITY_DIR = "reports/exchanges/signal_quality"
+_DEFAULT_SIGNAL_QUALITY_TTL_HOURS = 48.0
 _MONITORED_LONG_POLL_ADAPTERS = {
     "deribit_futures",
     "bitmex_futures",
@@ -405,12 +408,56 @@ def _summarize_long_poll_metrics(
     return summary
 
 
+def _summarize_signal_quality(
+    *,
+    adapter_id: str | None,
+    directory: str | os.PathLike[str] | None,
+    ttl_hours: float,
+) -> dict[str, Any]:
+    if adapter_id is None:
+        return {
+            "signal_quality_snapshot_status": "unknown",
+            "signal_quality_snapshot_age_minutes": None,
+            "signal_quality_snapshot_path": None,
+            "signal_quality_records": None,
+        }
+
+    base_dir = Path(directory or _DEFAULT_SIGNAL_QUALITY_DIR)
+    snapshot_path = base_dir / f"{adapter_id}.json"
+    if not snapshot_path.exists():
+        return {
+            "signal_quality_snapshot_status": "missing",
+            "signal_quality_snapshot_age_minutes": None,
+            "signal_quality_snapshot_path": str(snapshot_path),
+            "signal_quality_records": None,
+        }
+
+    try:
+        payload = json.loads(snapshot_path.read_text(encoding="utf-8"))
+    except Exception:
+        payload = {}
+
+    mtime = _dt.datetime.fromtimestamp(snapshot_path.stat().st_mtime, tz=_dt.timezone.utc)
+    age_minutes = (_dt.datetime.now(tz=_dt.timezone.utc) - mtime).total_seconds() / 60.0
+    total_records = payload.get("total") if isinstance(payload, Mapping) else None
+    status = "fresh" if age_minutes <= ttl_hours * 60.0 else "stale"
+
+    return {
+        "signal_quality_snapshot_status": status,
+        "signal_quality_snapshot_age_minutes": age_minutes,
+        "signal_quality_snapshot_path": str(snapshot_path),
+        "signal_quality_records": total_records if isinstance(total_records, (int, float)) else None,
+    }
+
+
 def build_rows(
     config,
     hypercare_summary: Mapping[str, str] | None = None,
     *,
     long_poll_metrics: LongPollMetrics | None = None,
     long_poll_ttl_minutes: float | None = None,
+    signal_quality_dir: str | os.PathLike[str] | None = None,
+    signal_quality_ttl_hours: float | None = None,
 ) -> list[dict[str, Any]]:  # type: ignore[no-untyped-def]
     rows: list[dict[str, Any]] = []
     metrics = dict(long_poll_metrics or {})
@@ -418,6 +465,11 @@ def build_rows(
         float(long_poll_ttl_minutes)
         if isinstance(long_poll_ttl_minutes, (int, float)) and math.isfinite(long_poll_ttl_minutes)
         else _DEFAULT_LONG_POLL_TTL_MINUTES
+    )
+    ttl_hours = (
+        float(signal_quality_ttl_hours)
+        if isinstance(signal_quality_ttl_hours, (int, float)) and math.isfinite(signal_quality_ttl_hours)
+        else _DEFAULT_SIGNAL_QUALITY_TTL_HOURS
     )
 
     for exchange, profiles in config.exchange_accounts.items():
@@ -472,6 +524,11 @@ def build_rows(
                 metrics=metrics,
                 ttl_minutes=ttl_minutes,
             )
+            signal_quality_summary = _summarize_signal_quality(
+                adapter_id=str(adapter_id) if adapter_id else None,
+                directory=signal_quality_dir,
+                ttl_hours=ttl_hours,
+            )
 
             simulator_fee_rate = None
             simulator_slippage_bps = None
@@ -494,6 +551,15 @@ def build_rows(
                 if status in {"missing", "unknown"}:
                     raise RuntimeError(
                         f"Brak świeżych metryk long-pollowych dla {exchange}:{profile_name} (status={status})."
+                    )
+                sq_status = signal_quality_summary.get("signal_quality_snapshot_status")
+                if sq_status in {"missing", "unknown"}:
+                    raise RuntimeError(
+                        f"Brak dziennego snapshotu signal_quality dla {exchange}:{profile_name} (status={sq_status})."
+                    )
+                if sq_status == "stale":
+                    raise RuntimeError(
+                        f"Snapshot signal_quality dla {exchange}:{profile_name} jest przeterminowany (status={sq_status})."
                     )
 
             rows.append(
@@ -518,6 +584,7 @@ def build_rows(
                     "simulator_slippage_bps": simulator_slippage_bps,
                     "hypercare_checklist_signed": hypercare_signed,
                     "hypercare_checklist_status": hypercare_status,
+                    "hypercare_checklist_id": getattr(live_readiness, "checklist_id", None),
                     "missing_required_documents": missing_docs,
                     "futures_checklist_id": checklist_id,
                     "futures_checklist_ready": checklist_ready,
@@ -525,6 +592,7 @@ def build_rows(
                     "hypercare_latency_status": hypercare_summary.get("latency") if hypercare_summary else None,
                     "hypercare_cost_status": hypercare_summary.get("cost") if hypercare_summary else None,
                     **long_poll_summary,
+                    **signal_quality_summary,
                 }
             )
     return rows
@@ -573,6 +641,17 @@ def main(argv: list[str] | None = None) -> int:
         default=_DEFAULT_LONG_POLL_TTL_MINUTES,
         help="Maksymalny wiek metryk long-polla (w minutach) zanim status stanie się 'stale'.",
     )
+    parser.add_argument(
+        "--signal-quality-dir",
+        default=_DEFAULT_SIGNAL_QUALITY_DIR,
+        help="Katalog ze snapshotami jakości sygnałów (domyślnie reports/exchanges/signal_quality).",
+    )
+    parser.add_argument(
+        "--signal-quality-ttl-hours",
+        type=float,
+        default=_DEFAULT_SIGNAL_QUALITY_TTL_HOURS,
+        help="Maksymalny wiek snapshotów signal_quality (w godzinach) zanim zostaną oznaczone jako stale.",
+    )
     args = parser.parse_args(argv)
 
     config = load_core_config(Path(args.config))
@@ -583,6 +662,8 @@ def main(argv: list[str] | None = None) -> int:
         hypercare_summary=hypercare_summary,
         long_poll_metrics=long_poll_metrics,
         long_poll_ttl_minutes=args.long_poll_ttl_minutes,
+        signal_quality_dir=args.signal_quality_dir,
+        signal_quality_ttl_hours=args.signal_quality_ttl_hours,
     )
 
     fieldnames = [
@@ -603,6 +684,7 @@ def main(argv: list[str] | None = None) -> int:
         "simulator_slippage_bps",
         "hypercare_checklist_signed",
         "hypercare_checklist_status",
+        "hypercare_checklist_id",
         "missing_required_documents",
         "futures_checklist_id",
         "futures_checklist_ready",
@@ -617,6 +699,10 @@ def main(argv: list[str] | None = None) -> int:
         "long_poll_reconnect_failure",
         "long_poll_snapshot_age_minutes",
         "long_poll_metrics_status",
+        "signal_quality_snapshot_status",
+        "signal_quality_snapshot_age_minutes",
+        "signal_quality_snapshot_path",
+        "signal_quality_records",
     ]
 
     close_handle = False

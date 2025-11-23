@@ -4,7 +4,7 @@ from __future__ import annotations
 from collections import deque
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
-from typing import Any, Callable, Deque, Iterable, Mapping, Sequence
+from typing import Any, Callable, Deque, Iterable, Mapping, Protocol, Sequence
 
 from bot_core.ai.regime import MarketRegime, MarketRegimeAssessment
 from bot_core.decision.orchestrator import StrategyPerformanceSummary
@@ -13,6 +13,13 @@ try:  # pragma: no cover - DecisionOrchestrator może być opcjonalny w buildach
     from bot_core.decision.orchestrator import DecisionOrchestrator
 except Exception:  # pragma: no cover - fallback dla środowisk okrojonych
     DecisionOrchestrator = Any  # type: ignore[misc, assignment]
+
+
+class StrategyPerformanceProvider(Protocol):
+    """Publiczny kontrakt na potrzeby AutoTraderAIGovernorRunner."""
+
+    def strategy_performance_snapshot(self) -> Mapping[str, StrategyPerformanceSummary]:
+        ...
 
 
 def _safe_float(value: object) -> float | None:
@@ -169,7 +176,7 @@ class AutoTraderAIGovernor:
 class AutoTraderAIGovernorRunner:
     """Wykonuje cykle AI Governora bazując na metrykach DecisionOrchestratora."""
 
-    orchestrator: "DecisionOrchestrator"
+    orchestrator: StrategyPerformanceProvider
     governor: AutoTraderAIGovernor = field(default_factory=AutoTraderAIGovernor)
     _cycles_total: int = field(default=0, init=False, repr=False)
     _switch_total: int = field(default=0, init=False, repr=False)
@@ -387,5 +394,6 @@ __all__ = [
     "AIGovernorDecision",
     "AutoTraderAIGovernor",
     "AutoTraderAIGovernorRunner",
+    "StrategyPerformanceProvider",
 ]
 

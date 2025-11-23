@@ -29,7 +29,10 @@ from bot_core.decision.orchestrator import DecisionOrchestrator
 from bot_core.config import load_core_config
 from bot_core.observability.ui_metrics import (
     FeedHealthMetricsExporter,
+    FeedHealthMetricsExporter,
+    RiskJournalMetricsExporter,
     get_feed_health_metrics_exporter,
+    get_risk_journal_metrics_exporter,
     get_long_poll_metrics_cache,
 )
 from bot_core.portfolio import resolve_decision_log_config
@@ -1185,7 +1188,11 @@ class RuntimeService(QObject):
             "channels": list(self._feed_channels),
             "channelStates": {channel: dict(state) for channel, state in self._feed_channel_status.items()},
         }
-        self._feed_metrics_exporter = feed_metrics_exporter or get_feed_health_metrics_exporter()
+        resolved_feed_metrics = feed_metrics_exporter or get_feed_health_metrics_exporter()
+        self._feed_metrics_exporter: FeedHealthMetricsExporter = resolved_feed_metrics
+        self._risk_journal_metrics_exporter: RiskJournalMetricsExporter = (
+            get_risk_journal_metrics_exporter()
+        )
         self._feed_alert_sink = feed_alert_sink or get_feed_health_alert_sink()
         self._feed_alert_history: deque[dict[str, object]] = deque(maxlen=12)
         self._feed_alert_channels: list[dict[str, str]] = []
@@ -1417,6 +1424,7 @@ class RuntimeService(QObject):
             latency_p95=latency_p95,
         )
         payload["transports"] = self._serialize_transport_stats()
+        self._export_feed_transport_metrics(payload["transports"])
         self.feedHealthChanged.emit()
         self._refresh_feed_transport_snapshot(payload, latency_p95)
         self._publish_feed_metrics(payload, latency_p95, latency_p50)
@@ -1685,6 +1693,35 @@ class RuntimeService(QObject):
             }
         return snapshot
 
+    def _export_feed_transport_metrics(
+        self, transports: Mapping[str, Mapping[str, object]]
+    ) -> None:
+        exporter = self._feed_metrics_exporter
+        environment_label = self._active_profile or "default"
+        for name, stats in transports.items():
+            if not isinstance(stats, Mapping):
+                continue
+            try:
+                reconnects_val = int(stats.get("reconnects", 0) or 0)
+            except (TypeError, ValueError):
+                reconnects_val = 0
+            try:
+                downtime_ms = float(stats.get("downtimeMs", 0.0) or 0.0)
+            except (TypeError, ValueError):
+                downtime_ms = 0.0
+            latency_p50 = stats.get("p50_ms")
+            latency_p95 = stats.get("p95_ms")
+            exporter.record(
+                adapter=str(name),
+                status=str(stats.get("status", "unknown")),
+                latency_p50_ms=float(latency_p50) if latency_p50 is not None else None,
+                latency_p95_ms=float(latency_p95) if latency_p95 is not None else None,
+                reconnects=reconnects_val,
+                downtime_ms=downtime_ms,
+                last_error=str(stats.get("lastError", "")),
+                labels={"transport": str(name), "environment": environment_label},
+            )
+
     @staticmethod
     def _classify_threshold(
         value: float | None,
@@ -1873,6 +1910,13 @@ class RuntimeService(QObject):
             body = f"{body} (przykłady: {json.dumps(samples, ensure_ascii=False)})"
         log_fn = _LOGGER.warning if missing else _LOGGER.info
         log_fn("%s", body)
+
+        self._risk_journal_metrics_exporter.record(
+            state=severity,
+            missing_entries=missing,
+            incomplete_samples=len(samples),
+            labels={"environment": self._active_profile or "default"},
+        )
 
         sink = self._feed_alert_sink
         if sink is None:
