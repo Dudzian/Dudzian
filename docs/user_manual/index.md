@@ -98,7 +98,8 @@ Szczegóły techniczne opisano w `docs/reporting/optimization.md` oraz `docs/tra
 ### Tryby manualny/automatyczny i guardraile
 - W panelu **Monitoring decyzji** dostępny jest przełącznik trybu manualnego/automatycznego powiązany bezpośrednio z
   `AutoTraderAIGovernorRunner.run_cycle/run_until`. Tryb manualny uruchamia pojedynczy cykl decyzyjny, a tryb auto wykonuje
-  kolejne cykle aż do wypełnienia limitu historii.
+  kolejne cykle aż do wypełnienia limitu historii. Oficjalne entrypointy są odizolowane od wewnętrznych pól orchestratora i
+  dostępne również z CLI `python scripts/run_ai_governor_cycle.py --mode scalping`.
 - Guardraile w sekcji **Zarządzanie ryzykiem** pozwalają ustawić maksymalną ekspozycję portfela oraz dzienny limit strat;
   wartości są przekazywane do progów decyzyjnych runnera i resetują go po zmianie, aby nowy limit zaczął obowiązywać.
 - Opcja "blokuj otwieranie pozycji przy alertach SLA" wymusza tryb manualny, gdy stan SLA feedu AI jest w statusie

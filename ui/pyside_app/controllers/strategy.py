@@ -136,6 +136,13 @@ def _build_marketplace_service(config_path: Path) -> tuple[MarketplaceService | 
             message = error or "Podpis katalogu Marketplace jest niepoprawny"
             _LOGGER.error(message)
             return None, message
+    catalog_markdown = catalog_root / "catalog.md"
+    if catalog_markdown.exists():
+        verified_md, error_md = _verify_catalog_index(catalog_markdown, signing_keys)
+        if not verified_md:
+            message = error_md or "Podpis katalogu Marketplace (Markdown) jest niepoprawny"
+            _LOGGER.error(message)
+            return None, message
     meta_root = repository.root / ".meta"
     licenses_dir = meta_root / "licenses"
     licenses_dir.mkdir(parents=True, exist_ok=True)

@@ -12,6 +12,8 @@ from pathlib import Path
 from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric import ed25519
 
+from bot_core.security.catalog_signatures import verify_catalog_signature_file
+
 REQUIRED_RELEASE_FIELDS = ("review_status", "approved_at", "reviewers")
 
 
@@ -22,15 +24,24 @@ def _load_hmac_key(path: Path) -> bytes:
     return key
 
 
-def _load_ed25519_public_key(path: Path) -> ed25519.Ed25519PublicKey:
-    data = path.read_bytes()
+def _load_ed25519_public_key(source: Path | bytes | bytearray | str) -> ed25519.Ed25519PublicKey:
+    if isinstance(source, Path):
+        data = source.read_bytes()
+        label = str(source)
+    elif isinstance(source, (bytes, bytearray)):
+        data = bytes(source)
+        label = "<bytes>"
+    else:
+        data = str(source).encode("utf-8")
+        label = "<inline>"
+
     try:
         return serialization.load_pem_public_key(data)  # type: ignore[return-value]
     except ValueError:
         try:
             return ed25519.Ed25519PublicKey.from_public_bytes(base64.b64decode(data))
         except Exception as exc:  # noqa: BLE001
-            raise ValueError(f"Nie udało się wczytać klucza publicznego Ed25519 z {path}") from exc
+            raise ValueError(f"Nie udało się wczytać klucza publicznego Ed25519 z {label}") from exc
 
 
 def _verify_signature(
@@ -78,6 +89,37 @@ def _verify_signature(
             ed25519_key.verify(ed_value, content)
         except Exception as exc:  # noqa: BLE001
             problems.append(f"{sig_path.name}: niepoprawny podpis Ed25519 ({exc})")
+    return problems
+
+
+def _validate_catalog_files(
+    *,
+    catalog_path: Path,
+    markdown_path: Path | None,
+    hmac_key: bytes,
+    ed25519_key_material: bytes,
+    require_signature: bool,
+    require_markdown: bool,
+) -> list[str]:
+    problems: list[str] = []
+
+    def _validate_single(path: Path) -> None:
+        if not path.exists():
+            problems.append(f"{path.name}: katalog Marketplace nie istnieje")
+            return
+        if require_signature:
+            problems.extend(
+                verify_catalog_signature_file(
+                    path,
+                    hmac_key=hmac_key,
+                    ed25519_key=ed25519_key_material,
+                )
+            )
+
+    _validate_single(catalog_path)
+    if require_markdown and markdown_path is not None:
+        _validate_single(markdown_path)
+
     return problems
 
 
@@ -191,10 +233,23 @@ def main() -> int:
         action="store_true",
         help="Pomiń wymóg obecności plików Markdown dla presetów",
     )
+    parser.add_argument(
+        "--catalog",
+        type=Path,
+        default=Path("config/marketplace/catalog.json"),
+        help="Ścieżka do katalogu Marketplace (JSON) do weryfikacji podpisu",
+    )
+    parser.add_argument(
+        "--catalog-markdown",
+        type=Path,
+        default=Path("config/marketplace/catalog.md"),
+        help="Ścieżka do katalogu Marketplace (Markdown) do weryfikacji podpisu",
+    )
     args = parser.parse_args()
 
     hmac_key = _load_hmac_key(args.hmac_key)
-    ed25519_key = _load_ed25519_public_key(args.ed25519_key)
+    ed25519_key_material = args.ed25519_key.read_bytes()
+    ed25519_key = _load_ed25519_public_key(ed25519_key_material)
 
     files = sorted(
         path
@@ -221,6 +276,17 @@ def main() -> int:
                 require_signature=not args.allow_missing_signatures,
             )
         )
+
+    failures.extend(
+        _validate_catalog_files(
+            catalog_path=args.catalog,
+            markdown_path=args.catalog_markdown,
+            hmac_key=hmac_key,
+            ed25519_key_material=ed25519_key_material,
+            require_signature=not args.allow_missing_signatures,
+            require_markdown=not args.skip_markdown,
+        )
+    )
 
     if failures:
         print("ERROR: Niektóre presety są niekompletne:", file=sys.stderr)
