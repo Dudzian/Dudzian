@@ -9,6 +9,8 @@ env:
   PYSIDE6_VERSION: "6.5.2"
   QT_DESKTOP_MODULES: "qtcharts qtdeclarative"
   QT_WINDOWS_MODULES: "qtcharts"
+  QT_DESKTOP_MODULES: "qtcharts qtdeclarative qtquickcontrols2 qtshadertools qttools"
+  QT_WINDOWS_MODULES: "qtcharts qtdeclarative qtquickcontrols2 qtshadertools qttools"
 
 jobs:
   prepare-pyside6-wheel:
