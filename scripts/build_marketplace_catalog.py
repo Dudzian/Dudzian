@@ -14,6 +14,8 @@ from pathlib import Path
 from typing import Any, Iterable, Mapping, Sequence
 
 import yaml
+from cryptography.hazmat.primitives import serialization
+from cryptography.hazmat.primitives.asymmetric import ed25519
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 if str(REPO_ROOT) not in sys.path:
@@ -78,6 +80,17 @@ def _compute_hmac(payload: dict[str, Any], *, key: bytes, algorithm: str) -> str
     body = json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
     digest = hmac.new(key, body.encode("utf-8"), hashlib.sha256).digest()
     return base64.b64encode(digest).decode("ascii")
+
+
+def _load_ed25519_private_key(path: Path) -> ed25519.Ed25519PrivateKey:
+    data = path.read_bytes()
+    try:
+        return serialization.load_pem_private_key(data, password=None)
+    except ValueError:
+        try:
+            return ed25519.Ed25519PrivateKey.from_private_bytes(base64.b64decode(data))
+        except Exception as exc:  # noqa: BLE001
+            raise ValueError(f"Nie udało się wczytać klucza Ed25519 z {path}") from exc
 
 
 def _package_spec(
@@ -164,21 +177,50 @@ def _build_markdown(catalog: MarketplaceCatalog) -> str:
     return "\n".join(lines)
 
 
-def _write_signature(path: Path, *, content: str, key_id: str | None, signing_keys: Mapping[str, bytes]) -> None:
-    if not key_id:
+def _write_signature(
+    path: Path,
+    *,
+    content: str,
+    hmac_key_id: str | None,
+    signing_keys: Mapping[str, bytes],
+    ed25519_key: ed25519.Ed25519PrivateKey | None,
+    ed25519_key_id: str | None,
+    issuer: str | None,
+) -> None:
+    if not hmac_key_id and not (ed25519_key and ed25519_key_id):
         return
-    key_bytes = signing_keys.get(key_id)
-    if not key_bytes:
-        raise ValueError(f"Brak klucza HMAC '{key_id}' wymaganego do podpisu katalogu")
-    digest = hmac.new(key_bytes, content.encode("utf-8"), hashlib.sha256).digest()
-    payload = {
-        "algorithm": "HMAC-SHA256",
-        "key_id": key_id,
-        "signed_at": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
-        "value": base64.b64encode(digest).decode("ascii"),
-        "source": str(path),
-        "sha256": hashlib.sha256(content.encode("utf-8")).hexdigest(),
-    }
+    digest = hashlib.sha256(content.encode("utf-8")).hexdigest()
+    timestamp = datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+    payload: dict[str, Any] = {"target": str(path), "sha256": digest}
+
+    if hmac_key_id:
+        key_bytes = signing_keys.get(hmac_key_id)
+        if not key_bytes:
+            raise ValueError(f"Brak klucza HMAC '{hmac_key_id}' wymaganego do podpisu katalogu")
+        hmac_value = hmac.new(key_bytes, content.encode("utf-8"), hashlib.sha256).digest()
+        payload["hmac"] = {
+            "algorithm": "HMAC-SHA256",
+            "key_id": hmac_key_id,
+            "signed_at": timestamp,
+            "value": base64.b64encode(hmac_value).decode("ascii"),
+        }
+
+    if ed25519_key and ed25519_key_id:
+        signature = ed25519_key.sign(content.encode("utf-8"))
+        payload["ed25519"] = {
+            "algorithm": "ed25519",
+            "key_id": ed25519_key_id,
+            "issuer": issuer,
+            "signed_at": timestamp,
+            "value": base64.b64encode(signature).decode("ascii"),
+            "public_key": base64.b64encode(
+                ed25519_key.public_key().public_bytes(
+                    encoding=serialization.Encoding.Raw,
+                    format=serialization.PublicFormat.Raw,
+                )
+            ).decode("ascii"),
+        }
+
     path.with_suffix(path.suffix + ".sig").write_text(json.dumps(payload, indent=2), encoding="utf-8")
 
 
@@ -193,6 +235,8 @@ def build_catalog(
     signing_keys: dict[str, bytes],
     issuer: str | None = None,
     catalog_signature_key: str | None = None,
+    catalog_ed25519_key: ed25519.Ed25519PrivateKey | None = None,
+    catalog_ed25519_key_id: str | None = None,
 ) -> MarketplaceCatalog:
     packages: list[MarketplacePackageMetadata] = []
     package_sources: list[tuple[MarketplacePackageMetadata, Path]] = []
@@ -294,8 +338,11 @@ def build_catalog(
     _write_signature(
         catalog_path,
         content=catalog_json,
-        key_id=catalog_signature_key,
+        hmac_key_id=catalog_signature_key,
         signing_keys=signing_keys,
+        ed25519_key=catalog_ed25519_key,
+        ed25519_key_id=catalog_ed25519_key_id,
+        issuer=issuer,
     )
 
     markdown_path.parent.mkdir(parents=True, exist_ok=True)
@@ -304,8 +351,11 @@ def build_catalog(
     _write_signature(
         markdown_path,
         content=markdown_body,
-        key_id=catalog_signature_key,
+        hmac_key_id=catalog_signature_key,
         signing_keys=signing_keys,
+        ed25519_key=catalog_ed25519_key,
+        ed25519_key_id=catalog_ed25519_key_id,
+        issuer=issuer,
     )
     return catalog
 
@@ -345,6 +395,14 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         "--catalog-signature-key",
         help="Identyfikator klucza HMAC używanego do podpisu katalogu JSON i Markdown.",
     )
+    parser.add_argument(
+        "--catalog-ed25519-key",
+        help="Klucz prywatny Ed25519 używany do podpisu katalogu JSON/Markdown (domyślnie jak --private-key).",
+    )
+    parser.add_argument(
+        "--catalog-ed25519-key-id",
+        help="Identyfikator klucza Ed25519 podpisującego katalog JSON/Markdown.",
+    )
     return parser.parse_args(argv)
 
 
@@ -355,7 +413,16 @@ def main(argv: list[str] | None = None) -> int:
     catalog_path = Path(args.catalog).resolve()
     markdown_path = Path(args.markdown).resolve()
     private_key = Path(args.private_key).expanduser().resolve()
+    catalog_ed25519_path = (
+        Path(args.catalog_ed25519_key).expanduser().resolve()
+        if args.catalog_ed25519_key
+        else private_key
+    )
     signing_keys = _load_signing_keys(args.signing_key)
+    catalog_ed25519_key_id = args.catalog_ed25519_key_id or args.key_id
+    catalog_ed25519_key = (
+        _load_ed25519_private_key(catalog_ed25519_path) if catalog_ed25519_key_id else None
+    )
 
     build_catalog(
         presets_dir=presets_dir,
@@ -367,6 +434,8 @@ def main(argv: list[str] | None = None) -> int:
         signing_keys=signing_keys,
         issuer=args.issuer,
         catalog_signature_key=args.catalog_signature_key,
+        catalog_ed25519_key=catalog_ed25519_key,
+        catalog_ed25519_key_id=catalog_ed25519_key_id,
     )
     return 0
 

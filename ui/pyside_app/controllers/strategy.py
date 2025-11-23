@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import re
 from datetime import datetime, timezone
+import json
 from pathlib import Path
 from typing import Any, Iterable, Mapping
 
@@ -11,6 +12,7 @@ from PySide6.QtCore import QObject, Property, Signal, Slot
 from bot_core.config.loader import load_runtime_app_config
 from bot_core.marketplace import PresetRepository
 from bot_core.security.hwid import HwIdProvider
+from bot_core.security.catalog_signatures import verify_catalog_signature_file
 from bot_core.strategies.installer import MarketplaceInstallResult, MarketplacePresetInstaller
 from bot_core.ui.api import MarketplaceService
 
@@ -42,9 +44,12 @@ def _load_signing_keys(config_path: Path, settings: Mapping[str, str] | None) ->
             keys[str(key_id)] = payload
     default_keys_dir = base_dir / "config" / "marketplace" / "keys"
     if default_keys_dir.exists():
-        for key_file in default_keys_dir.glob("*.key"):
+        key_candidates = list(default_keys_dir.glob("*.key")) + list(default_keys_dir.glob("*.pub"))
+        for key_file in sorted(key_candidates):
             try:
-                keys[key_file.stem] = key_file.read_text(encoding="utf-8").strip().encode("utf-8")
+                payload = key_file.read_text(encoding="utf-8").strip().encode("utf-8")
+                if payload and (key_file.stem not in keys or key_file.suffix == ".pub"):
+                    keys[key_file.stem] = payload
             except OSError:
                 _LOGGER.debug("Nie udało się wczytać klucza %s", key_file, exc_info=True)
     return keys
@@ -78,36 +83,70 @@ def _coerce_key_payload(value: object, base_dir: Path) -> bytes | None:
 def _resolve_catalog_path(repo_root: Path) -> Path:
     candidate = repo_root.parent
     catalog = candidate / "catalog.yaml"
-    if catalog.exists():
+    json_catalog = candidate / "catalog.json"
+    if catalog.exists() or json_catalog.exists():
         return candidate
     fallback = Path(__file__).resolve().parents[3] / "bot_core" / "strategies" / "marketplace"
     return fallback
 
 
-def _build_marketplace_service(config_path: Path) -> MarketplaceService | None:
+def _resolve_catalog_signature_keys(catalog_path: Path, signing_keys: Mapping[str, bytes]) -> tuple[bytes | None, bytes | None]:
+    signature_path = catalog_path.with_suffix(catalog_path.suffix + ".sig")
+    if not signature_path.exists():
+        return None, None
+    try:
+        signature_doc = json.loads(signature_path.read_text(encoding="utf-8"))
+    except Exception:  # noqa: BLE001 - defensywne
+        return None, None
+    hmac_id = signature_doc.get("hmac", {}).get("key_id")
+    ed25519_id = signature_doc.get("ed25519", {}).get("key_id")
+    hmac_key = signing_keys.get(str(hmac_id)) if isinstance(hmac_id, str) else None
+    ed25519_key = signing_keys.get(str(ed25519_id)) if isinstance(ed25519_id, str) else None
+    return hmac_key, ed25519_key
+
+
+def _verify_catalog_index(catalog_path: Path, signing_keys: Mapping[str, bytes]) -> tuple[bool, str | None]:
+    if not catalog_path.exists():
+        return False, f"Nie znaleziono katalogu Marketplace: {catalog_path}"
+    hmac_key, ed25519_key = _resolve_catalog_signature_keys(catalog_path, signing_keys)
+    errors = verify_catalog_signature_file(catalog_path, hmac_key=hmac_key, ed25519_key=ed25519_key)
+    if errors:
+        return False, "; ".join(errors)
+    return True, None
+
+
+def _build_marketplace_service(config_path: Path) -> tuple[MarketplaceService | None, str | None]:
     try:
         runtime_config = load_runtime_app_config(config_path)
     except Exception as exc:  # pragma: no cover - diagnostyka środowisk
         _LOGGER.error("Nie udało się wczytać runtime.yaml: %s", exc)
-        return None
+        return None, f"Błąd wczytywania runtime.yaml: {exc}"
     marketplace_settings = runtime_config.marketplace
     if marketplace_settings is None or not marketplace_settings.enabled:
         _LOGGER.info("Marketplace jest wyłączony w konfiguracji runtime")
-        return None
+        return None, "Marketplace jest wyłączony w konfiguracji runtime"
     repo_root = _resolve_repo_path(config_path, marketplace_settings.presets_path)
-    repository = PresetRepository(repo_root)
     signing_keys = _load_signing_keys(config_path, marketplace_settings.signing_keys)
+    catalog_root = _resolve_catalog_path(repo_root)
+    catalog_json = catalog_root / "catalog.json"
+    repository = PresetRepository(repo_root)
+    if catalog_json.exists():
+        verified, error = _verify_catalog_index(catalog_json, signing_keys)
+        if not verified:
+            message = error or "Podpis katalogu Marketplace jest niepoprawny"
+            _LOGGER.error(message)
+            return None, message
     meta_root = repository.root / ".meta"
     licenses_dir = meta_root / "licenses"
     licenses_dir.mkdir(parents=True, exist_ok=True)
     installer = MarketplacePresetInstaller(
         repository,
-        catalog_path=_resolve_catalog_path(repo_root),
+        catalog_path=catalog_root,
         licenses_dir=licenses_dir,
         signing_keys=signing_keys or None,
         hwid_provider=HwIdProvider(),
     )
-    return MarketplaceService(installer, repository)
+    return MarketplaceService(installer, repository), None
 
 
 class StrategyManagementController(QObject):
@@ -127,7 +166,12 @@ class StrategyManagementController(QObject):
     ) -> None:
         super().__init__()
         self._runtime_path = Path(runtime_config_path).expanduser()
-        self._service = marketplace_service or _build_marketplace_service(self._runtime_path)
+        self._service: MarketplaceService | None
+        status_message: str | None = None
+        if marketplace_service is None:
+            self._service, status_message = _build_marketplace_service(self._runtime_path)
+        else:
+            self._service = marketplace_service
         self._presets: list[dict[str, Any]] = []
         self._status_message = ""
         self._busy = False
@@ -139,8 +183,9 @@ class StrategyManagementController(QObject):
         self._last_bundle_path = ""
         self._cloud_runtime_enabled = self._read_cloud_runtime_flag()
         if self._service is None:
-            self._status_message = "Marketplace nie jest skonfigurowany"
+            self._status_message = status_message or "Marketplace nie jest skonfigurowany"
         else:
+            self._status_message = status_message or ""
             self.refreshMarketplace()
 
     # ------------------------------------------------------------------
@@ -206,7 +251,7 @@ class StrategyManagementController(QObject):
     @Slot()
     def refreshMarketplace(self) -> None:
         if self._service is None:
-            self._set_status("Marketplace nieaktywny")
+            self._set_status(self._status_message or "Marketplace nieaktywny")
             return
         self._set_busy(True)
         try:

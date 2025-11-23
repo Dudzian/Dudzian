@@ -11,6 +11,26 @@ from pathlib import Path
 from typing import Iterable, Mapping, Sequence
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
+if str(REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(REPO_ROOT))
+
+def _strip_conflicting_paths() -> None:
+    conflict_dirs = {REPO_ROOT / "scripts", REPO_ROOT / "deploy", REPO_ROOT / "tests"}
+    cleaned: list[str] = []
+    for entry in sys.path:
+        try:
+            if Path(entry).resolve() in conflict_dirs:
+                continue
+        except Exception:
+            cleaned.append(entry)
+            continue
+        cleaned.append(entry)
+    sys.path = cleaned
+
+
+_strip_conflicting_paths()
+import packaging.version  # ensure zależność dostępna zanim załadujemy bot_core
+from bot_core.security.catalog_signatures import verify_catalog_signature_file
 DEFAULT_MARKETPLACE_DIR = REPO_ROOT / "config" / "marketplace"
 DEFAULT_INSTALLER_ROOT = REPO_ROOT / "deploy" / "packaging" / "samples"
 _QA_REVIEW_TOKENS = ("qa", "quality")
@@ -92,6 +112,36 @@ def _copy_file(source: Path, destination: Path) -> None:
     shutil.copy2(source, destination)
 
 
+def _load_key(path: Path, description: str) -> bytes:
+    try:
+        payload = path.read_bytes().strip()
+    except OSError as exc:  # pragma: no cover - diagnostyka IO
+        raise ReleaseBundleError(f"Nie udało się odczytać {description}: {exc}") from exc
+    if not payload:
+        raise ReleaseBundleError(f"{description} jest pusty: {path}")
+    return payload
+
+
+def verify_catalog_signatures(
+    *,
+    catalog_path: Path,
+    markdown_path: Path,
+    hmac_key: bytes,
+    ed25519_key: bytes,
+) -> None:
+    errors: list[str] = []
+    for candidate in (catalog_path, markdown_path):
+        errors.extend(
+            verify_catalog_signature_file(
+                candidate,
+                hmac_key=hmac_key,
+                ed25519_key=ed25519_key,
+            )
+        )
+    if errors:
+        raise ReleaseBundleError("\n".join(errors))
+
+
 def copy_catalog_assets(
     *,
     catalog_path: Path,
@@ -152,6 +202,18 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         help="Katalog z podpisanymi paczkami marketplace.",
     )
     parser.add_argument(
+        "--catalog-hmac-key",
+        type=Path,
+        default=DEFAULT_MARKETPLACE_DIR / "keys" / "dev-hmac.key",
+        help="Klucz HMAC używany do weryfikacji podpisu catalog.json i catalog.md.",
+    )
+    parser.add_argument(
+        "--catalog-ed25519-key",
+        type=Path,
+        default=DEFAULT_MARKETPLACE_DIR / "keys" / "dev-presets-ed25519.pub",
+        help="Publiczny klucz Ed25519 do weryfikacji podpisu katalogu Marketplace.",
+    )
+    parser.add_argument(
         "--installer-root",
         action="append",
         type=Path,
@@ -182,9 +244,19 @@ def main(argv: Sequence[str] | None = None) -> int:
     catalog_path = args.catalog.expanduser().resolve()
     markdown_path = args.markdown.expanduser().resolve()
     packages_dir = args.packages.expanduser().resolve()
+    hmac_key = _load_key(args.catalog_hmac_key.expanduser().resolve(), "Klucz HMAC katalogu Marketplace")
+    ed25519_key = _load_key(
+        args.catalog_ed25519_key.expanduser().resolve(), "Publiczny klucz Ed25519 katalogu Marketplace"
+    )
 
     catalog = _load_catalog(catalog_path)
     ensure_minimum_qa_reviews(catalog, minimum=args.minimum_qa_strategies)
+    verify_catalog_signatures(
+        catalog_path=catalog_path,
+        markdown_path=markdown_path,
+        hmac_key=hmac_key,
+        ed25519_key=ed25519_key,
+    )
     if args.require_clean:
         ensure_git_clean([markdown_path, _signature_path(markdown_path)])
 

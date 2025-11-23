@@ -30,3 +30,24 @@ jobs:
           --hmac-key config/marketplace/keys/dev-hmac.key
           --ed25519-key config/marketplace/keys/dev-presets-ed25519.pub
           --min-count 15
+
+      - name: Validate catalog signatures and QA coverage
+        run: >-
+          python scripts/build_release_bundle.py
+          --catalog config/marketplace/catalog.json
+          --markdown config/marketplace/catalog.md
+          --packages config/marketplace/packages
+          --installer-root deploy/packaging/samples
+          --check-only
+          --require-clean
+
+      - name: Upload marketplace catalog artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: marketplace-catalog-latest
+          if-no-files-found: error
+          path: |
+            config/marketplace/catalog.json
+            config/marketplace/catalog.json.sig
+            config/marketplace/catalog.md
+            config/marketplace/catalog.md.sig
