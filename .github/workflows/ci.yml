@@ -652,20 +652,27 @@ jobs:
           - os: macos-latest
             platform: macos
 
-    steps:
-      - name: Check out repository
-        uses: actions/checkout@v4
+      steps:
+        - name: Check out repository
+          uses: actions/checkout@v4
 
-      - name: Set up Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: "3.11"
+        - name: Set up Python
+          uses: actions/setup-python@v5
+          with:
+            python-version: "3.11"
 
-      - name: Install Qt
-        uses: jurplel/install-qt-action@v3
-        with:
-          version: 6.5.3
-          modules: ${{ matrix.platform == 'windows' && env.QT_WINDOWS_MODULES || env.QT_DESKTOP_MODULES }}
+        - name: Install Protobuf on macOS
+          if: matrix.os == 'macos-latest'
+          run: |
+            brew update
+            brew install protobuf
+            echo "protobuf location: $(brew --prefix protobuf)"
+
+        - name: Install Qt
+          uses: jurplel/install-qt-action@v3
+          with:
+            version: 6.5.3
+            modules: ${{ matrix.platform == 'windows' && env.QT_WINDOWS_MODULES || env.QT_DESKTOP_MODULES }}
 
       - name: Build Qt bundle
         shell: bash
