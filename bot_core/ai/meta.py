@@ -29,7 +29,7 @@ class MetaClassifierModel:
         score = self.slope * float(prediction) + self.intercept
         return _sigmoid(score)
 
-    def to_metadata(self) -> Mapping[str, float]:
+    def to_metadata(self) -> Mapping[str, float | str]:
         return {
             "type": "logistic",
             "slope": float(self.slope),

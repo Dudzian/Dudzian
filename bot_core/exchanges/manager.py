@@ -40,6 +40,7 @@ from bot_core.exchanges.base import (
     OrderRequest,
     OrderResult,
 )
+from bot_core.runtime.journal import TradingDecisionJournal
 from bot_core.exchanges.health import (
     CircuitBreaker,
     CircuitOpenError,
@@ -1408,6 +1409,7 @@ class ExchangeManager:
         self._last_mark_signature: str | None = None
         self._strategy_catalog: StrategyCatalog | None = None
         self._strategy_contexts: Dict[str, _StrategyContextSnapshot] = {}
+        self._risk_journal: TradingDecisionJournal | None = None
         self._strategy_assignments: Dict[str, _StrategyBinding] = {}
         self._weight_history: dict[tuple[Mode, str], deque[float]] = {}
         self._weight_snapshots: dict[tuple[Mode, str], dict[str, object]] = {}
@@ -1504,6 +1506,11 @@ class ExchangeManager:
             log.info("Reconfiguring paper simulator with settings: %s", merged)
             self._paper = None
         self._paper = None
+
+    def set_risk_journal(self, journal: TradingDecisionJournal | None) -> None:
+        """Konfiguruje risk journal do raportowania walidacji kosztów symulatora."""
+
+        self._risk_journal = journal
 
     def set_credentials(
         self,
@@ -2164,6 +2171,7 @@ class ExchangeManager:
                     funding_rate=float(defaults.get("funding_rate", 0.0)),
                     funding_interval_seconds=float(defaults.get("funding_interval_seconds", 0.0)),
                     slippage_bps=float(defaults.get("slippage_bps", 0.0)),
+                    risk_journal=self._risk_journal,
                 )
             elif self._paper_variant == "futures":
                 defaults = self._default_paper_simulator_settings()
@@ -2180,6 +2188,7 @@ class ExchangeManager:
                     funding_rate=float(defaults.get("funding_rate", 0.0001)),
                     funding_interval_seconds=float(defaults.get("funding_interval_seconds", 0.0)),
                     slippage_bps=float(defaults.get("slippage_bps", 0.0)),
+                    risk_journal=self._risk_journal,
                 )
             else:
                 simulator = PaperBackend(

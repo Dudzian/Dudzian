@@ -42,6 +42,7 @@ from bot_core.exchanges.core import (
     PaperBackend,
     _PaperPositionState,
 )
+from bot_core.runtime.journal import TradingDecisionEvent, TradingDecisionJournal
 
 
 log = logging.getLogger(__name__)
@@ -75,12 +76,11 @@ class PaperMarginSimulator(PaperBackend):
         slippage_bps: float = 0.0,
         database=None,
         funding_interval_seconds: Optional[float] = None,
+        risk_journal: TradingDecisionJournal | None = None,
     ) -> None:
         self._managed_db = False  # bezpieczeństwo destruktora nawet przy wyjątkach
-        if fee_rate is not None and float(fee_rate) < 0:
-            raise ValueError("fee_rate nie może być ujemny")
-        if slippage_bps < 0:
-            raise ValueError("slippage_bps nie może być ujemny")
+        self._risk_journal = risk_journal
+        self._validate_costs(fee_rate=fee_rate, slippage_bps=slippage_bps)
         super().__init__(
             price_feed_backend,
             event_bus=event_bus,
@@ -105,6 +105,79 @@ class PaperMarginSimulator(PaperBackend):
             funding_interval_seconds=funding_interval,
         )
         self._margin_events: list[dict[str, object]] = []
+
+    # ------------------------------------------------------------------ utils
+    def _validate_costs(self, *, fee_rate: float | None, slippage_bps: float) -> None:
+        if fee_rate is not None and float(fee_rate) < 0:
+            self._record_risk_journal_entry(
+                severity="critical",
+                fee_rate=fee_rate,
+                slippage_bps=slippage_bps,
+                message="fee_rate nie może być ujemny",
+            )
+            raise ValueError("fee_rate nie może być ujemny")
+        if slippage_bps < 0:
+            self._record_risk_journal_entry(
+                severity="critical",
+                fee_rate=fee_rate,
+                slippage_bps=slippage_bps,
+                message="slippage_bps nie może być ujemny",
+            )
+            raise ValueError("slippage_bps nie może być ujemny")
+
+        severity = "ok"
+        warning_message: str | None = None
+        if fee_rate is not None and fee_rate > 0.01:
+            severity = "warning"
+            warning_message = "fee_rate przekracza 1% – sprawdź konfigurację symulatora"
+        if slippage_bps > 250.0:
+            severity = "warning"
+            extra = "" if warning_message is None else f"; {warning_message}"
+            warning_message = f"slippage_bps przekracza 250 bps{extra}"
+        if warning_message:
+            self._record_risk_journal_entry(
+                severity=severity,
+                fee_rate=fee_rate,
+                slippage_bps=slippage_bps,
+                message=warning_message,
+            )
+        else:
+            self._record_risk_journal_entry(
+                severity="ok",
+                fee_rate=fee_rate,
+                slippage_bps=slippage_bps,
+                message="walidacja fee/slippage zakończona powodzeniem",
+            )
+
+    def _record_risk_journal_entry(
+        self,
+        *,
+        severity: str,
+        fee_rate: float | None,
+        slippage_bps: float,
+        message: str,
+    ) -> None:
+        if self._risk_journal is None:
+            return
+
+        event = TradingDecisionEvent(
+            event_type="simulator_cost_validation",
+            timestamp=dt.datetime.utcnow(),
+            environment="paper",
+            portfolio="paper_simulator",
+            risk_profile="simulator",
+            metadata={
+                "risk_action": "validate_costs",
+                "risk_flags": [severity],
+                "fee_rate": fee_rate,
+                "slippage_bps": slippage_bps,
+                "message": message,
+            },
+        )
+        try:
+            self._risk_journal.record(event)
+        except Exception:  # pragma: no cover - diagnostyka pomocnicza
+            log.exception("Nie udało się zapisać wpisu walidacji kosztów do risk journal")
 
     # ------------------------------------------------------------------ public
     def fetch_account_snapshot(self) -> AccountSnapshot:
@@ -396,6 +469,7 @@ class PaperFuturesSimulator(PaperMarginSimulator):
         slippage_bps: float = 0.0,
         database=None,
         funding_interval_seconds: Optional[float] = None,
+        risk_journal: TradingDecisionJournal | None = None,
     ) -> None:
         super().__init__(
             price_feed_backend,
@@ -408,6 +482,7 @@ class PaperFuturesSimulator(PaperMarginSimulator):
             slippage_bps=slippage_bps,
             database=database,
             funding_interval_seconds=funding_interval_seconds,
+            risk_journal=risk_journal,
         )
 
     def fetch_account_snapshot(self) -> AccountSnapshot:  # type: ignore[override]

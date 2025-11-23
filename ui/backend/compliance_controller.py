@@ -1,6 +1,7 @@
 """Kontroler udostępniający wyniki audytu zgodności dla QML."""
 from __future__ import annotations
 
+
 from datetime import timezone
 from typing import Callable, Mapping, MutableMapping, Sequence
 

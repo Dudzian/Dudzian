@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Iterable, List, Mapping, MutableMapping, Optional
+from typing import Any, Iterable, List, Mapping, MutableMapping, Optional, cast
 
 
 THEME_DIR = Path(__file__).resolve().parent
@@ -65,7 +65,7 @@ class ThemeRegistry:
 
 def _load_json(path: Path) -> MutableMapping[str, object]:
     with path.open("r", encoding="utf-8") as handle:
-        return json.load(handle)
+        return cast(MutableMapping[str, object], json.load(handle))
 
 
 def load_default_theme(
@@ -74,9 +74,9 @@ def load_default_theme(
 ) -> ThemeRegistry:
     palette_data = _load_json(palette_path or DEFAULT_PALETTE_PATH)
     icons_data = _load_json(icons_path or DEFAULT_ICONS_PATH)
-    palettes = palette_data.get("palettes", {})
-    gradients = palette_data.get("gradients", {})
-    icons = icons_data.get("icons", {})
+    palettes = cast(Mapping[str, Mapping[str, str]], palette_data.get("palettes", {}))
+    gradients = cast(Mapping[str, Mapping[str, List[str]]], palette_data.get("gradients", {}))
+    icons = cast(Mapping[str, Mapping[str, str]], icons_data.get("icons", {}))
     return ThemeRegistry(
         palettes=palettes, gradients=gradients, icons=icons, icons_dir=THEME_DIR / "icons"
     )

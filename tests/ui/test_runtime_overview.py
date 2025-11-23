@@ -954,6 +954,12 @@ def test_runtime_service_feed_health_exports_alerts(monkeypatch: pytest.MonkeyPa
     assert demo_entry["latency_p95_ms"] is not None
     assert demo_entry["status"] == "connected"
 
+    registry = exporter._registry  # type: ignore[attr-defined]
+    sla_latency_gauge = registry.get("bot_ui_feed_sla_latency_p95_ms")
+    assert sla_latency_gauge.value(labels={"adapter": "demo", "transport": "grpc"}) > 0.0
+    sla_reconnects = registry.get("bot_ui_feed_sla_reconnects_total")
+    assert sla_reconnects.value(labels={"adapter": "demo", "transport": "grpc"}) >= 0.0
+
 
 def test_runtime_service_records_escalation_channels(monkeypatch: pytest.MonkeyPatch) -> None:
     require_pyside6()
@@ -994,6 +1000,19 @@ def test_runtime_service_records_escalation_channels(monkeypatch: pytest.MonkeyP
     channels = service.feedAlertChannels
     assert channels
     assert channels[0]["name"] == "cloud-escalation"
+
+
+def test_risk_journal_metrics_exporter_records_state(monkeypatch: pytest.MonkeyPatch) -> None:
+    require_pyside6()
+    service = RuntimeService(feed_alert_sink=None)
+
+    diagnostics = {"incompleteEntries": 2, "incompleteSamples": ["a", "b"]}
+    service._maybe_emit_risk_journal_alert(diagnostics)
+
+    exporter = service._risk_journal_metrics_exporter
+    registry = exporter._registry  # type: ignore[attr-defined]
+    state_metric = registry.get("bot_ui_risk_journal_state")
+    assert state_metric.value(labels={"channel": "risk_journal", "environment": "default"}) == 1.0
 
 
 @pytest.mark.timeout(30)

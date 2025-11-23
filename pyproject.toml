@@ -20,11 +20,18 @@ namespace_packages = true
 follow_imports = "silent"
 exclude = ["archive/.*"]
 files = [
-  "bot_core/config/models.py",
   "bot_core/auto_trader",
   "bot_core/risk",
   "bot_core/execution",
   "bot_core/ai",
+  "core/config",
+  "core/reporting",
+  "core/security",
+  "ui/backend",
+  "ui/pyside_app",
+  "scripts/run_ai_governor_cycle.py",
+  "scripts/validate_marketplace_presets.py",
+  "scripts/list_exchange_adapters.py",
 ]
 
 [[tool.mypy.overrides]]
@@ -39,7 +46,47 @@ module = [
   "bot_core.execution",
   "bot_core.execution.*",
 ]
-ignore_errors = true
+disable_error_code = [
+  "arg-type",
+  "attr-defined",
+  "call-arg",
+  "call-overload",
+  "assignment",
+  "operator",
+  "union-attr",
+  "index",
+  "return-value",
+  "no-redef",
+  "no-any-return",
+  "name-defined",
+  "var-annotated",
+  "misc",
+  "dict-item",
+  "list-item",
+]
+
+[[tool.mypy.overrides]]
+module = ["ui.backend.*", "ui.pyside_app.*"]
+disable_error_code = [
+  "arg-type",
+  "assignment",
+  "attr-defined",
+  "call-overload",
+  "index",
+  "misc",
+  "no-any-return",
+  "no-redef",
+  "return-value",
+]
+
+[[tool.mypy.overrides]]
+module = [
+  "scripts.list_exchange_adapters",
+  "scripts.run_ai_governor_cycle",
+  "core.reporting.guardrails_reporter",
+  "core.reporting.retraining_reporter",
+  "ui.pyside_app.controllers.wizards",
+]
 
 [tool.pytest.ini_options]
 addopts = ""
@@ -118,6 +165,7 @@ dev = [
   "respx>=0.20",
   "sqlalchemy>=2.0",
   "packaging>=23.2",
+  "types-requests>=2.31",
 ]
 desktop = [
   "pyinstaller>=6.5",
@@ -148,3 +196,7 @@ include = ["bot_core*", "core*", "scripts*", "stage6_samples*"]
 
 [tool.setuptools.package-data]
 "bot_core.auto_trader" = ["py.typed"]
+"bot_core.ai" = ["py.typed"]
+"bot_core.risk" = ["py.typed"]
+"bot_core.execution" = ["py.typed"]
+"core" = ["py.typed"]

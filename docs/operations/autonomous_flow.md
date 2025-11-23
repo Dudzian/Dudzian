@@ -80,11 +80,14 @@ orkiestratora. Runner udostępnia dwa scenariusze pracy:
 1. `run_cycle()` – pojedynczy krok wykonywany ręcznie (np. w trakcie testów,
    warsztatów lub budowania materiałów marketingowych). Metoda sama pobiera
    `MarketRegimeAssessment`, telemetry ryzyka/cyklu i szacowany koszt decyzji,
-   po czym aktualizuje historię AI Governora.
+   po czym aktualizuje historię AI Governora. Entry point nie korzysta z pól
+   prywatnych orchestratora – wymaga jedynie kontraktu
+   `strategy_performance_snapshot()`.
 2. `run_until(mode=..., limit=...)` – tryb launch-and-forget, który pętli cykle
    aż do osiągnięcia wskazanego trybu (scalping/hedge/grid) lub spełnienia
-   predykatu. Z tego trybu korzysta m.in. `scripts/run_local_bot.py`, dzięki
-   czemu snapshot `ai_governor` trafia do komunikatu `ready` oraz raportu E2E.
+   predykatu. Z tego trybu korzysta m.in. `scripts/run_local_bot.py` oraz CLI
+   `scripts/run_ai_governor_cycle.py`, dzięki czemu snapshot `ai_governor`
+   trafia do komunikatu `ready` oraz raportu E2E.
 
 `RuntimeService.reloadAiGovernorSnapshot` używa tego samego runnera w trybie
 demo, więc fallback QML nie musi już ręcznie manipulować schedulerem ani
