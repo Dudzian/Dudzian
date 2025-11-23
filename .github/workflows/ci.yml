@@ -7,7 +7,8 @@ on:
 
 env:
   PYSIDE6_VERSION: "6.5.2"
-  QT_DESKTOP_MODULES: "qtcharts" # qttools is unavailable for Qt 6.5.3 on Windows via aqtinstall
+  QT_DESKTOP_MODULES: "qtcharts"
+  QT_WINDOWS_MODULES: "qtcharts" # qttools is unavailable for Qt 6.5.3 on Windows via aqtinstall
 
 jobs:
   prepare-pyside6-wheel:
@@ -661,7 +662,7 @@ jobs:
         uses: jurplel/install-qt-action@v3
         with:
           version: 6.5.3
-          modules: ${{ env.QT_DESKTOP_MODULES }}
+          modules: ${{ matrix.platform == 'windows' && env.QT_WINDOWS_MODULES || env.QT_DESKTOP_MODULES }}
 
       - name: Build Qt bundle
         shell: bash
