@@ -129,6 +129,9 @@ jobs:
           python -m pip install --upgrade pip
           pip install .[dev]
 
+      - name: Install mypy
+        run: pip install mypy
+
       - name: Lint repository paths
         env:
           LINT_PATHS_ALLOW_LEGACY: "1"
