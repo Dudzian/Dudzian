@@ -38,6 +38,8 @@ Item {
                                         : ({})
     property var feedHealth: runtimeService && runtimeService.feedHealth ? runtimeService.feedHealth : ({})
     property var feedSlaReport: runtimeService && runtimeService.feedSlaReport ? runtimeService.feedSlaReport : ({})
+    property var feedAlertHistory: runtimeService && runtimeService.feedAlertHistory ? runtimeService.feedAlertHistory : []
+    property var feedAlertChannels: runtimeService && runtimeService.feedAlertChannels ? runtimeService.feedAlertChannels : []
     property var aiRegimeBreakdown: runtimeService && runtimeService.aiRegimeBreakdown
                                     ? runtimeService.aiRegimeBreakdown
                                     : []
@@ -87,6 +89,12 @@ Item {
         root.feedTransportSnapshot = root.runtimeService ? root.runtimeService.feedTransportSnapshot : ({})
         root.feedHealth = root.runtimeService ? root.runtimeService.feedHealth : ({})
         root.feedSlaReport = root.runtimeService ? root.runtimeService.feedSlaReport : ({})
+        root.feedAlertHistory = root.runtimeService && root.runtimeService.feedAlertHistory
+                ? root.runtimeService.feedAlertHistory
+                : []
+        root.feedAlertChannels = root.runtimeService && root.runtimeService.feedAlertChannels
+                ? root.runtimeService.feedAlertChannels
+                : []
         root.syncLatencyAlert()
         root.aiRegimeBreakdown = root.runtimeService ? root.runtimeService.aiRegimeBreakdown : []
         root.adaptiveStrategySummary = root.runtimeService ? root.runtimeService.adaptiveStrategySummary : ""
@@ -221,6 +229,18 @@ Item {
             root.syncLatencyAlert()
         }
 
+        function onFeedAlertHistoryChanged() {
+            if (!root.runtimeService)
+                return
+            root.feedAlertHistory = root.runtimeService.feedAlertHistory
+        }
+
+        function onFeedAlertChannelsChanged() {
+            if (!root.runtimeService)
+                return
+            root.feedAlertChannels = root.runtimeService.feedAlertChannels
+        }
+
         function onAiRegimeBreakdownChanged() {
             if (!root.runtimeService)
                 return
@@ -339,6 +359,8 @@ Item {
             border.width: 1
 
             property var report: root.feedSlaReport || ({})
+            property var alertHistory: root.feedAlertHistory || []
+            property var alertChannels: root.feedAlertChannels || []
             property string severity: report && report.sla_state ? report.sla_state : "ok"
             readonly property bool latencyAlertActive: report && report.latency_state && report.latency_state !== "ok"
 
@@ -439,6 +461,70 @@ Item {
                                ? Number(report.nextRetrySeconds).toFixed(1)
                                : "n/d")
                     color: Styles.AppTheme.textSecondary
+                }
+
+                ColumnLayout {
+                    Layout.fillWidth: true
+                    spacing: 6
+
+                    Label {
+                        text: qsTr("Ostatnie alerty")
+                        font.bold: true
+                        color: Styles.AppTheme.textPrimary
+                    }
+
+                    ListView {
+                        id: slaAlertList
+                        objectName: "runtimeOverviewSlaAlertList"
+                        Layout.fillWidth: true
+                        Layout.preferredHeight: Math.min(160, count * 48)
+                        interactive: false
+                        clip: true
+                        model: alertHistory
+                        delegate: RowLayout {
+                            spacing: 8
+                            Layout.fillWidth: true
+
+                            Rectangle {
+                                width: 10
+                                height: 10
+                                radius: 5
+                                color: slaSeverityColor(modelData.severity || "ok")
+                                Layout.alignment: Qt.AlignVCenter
+                            }
+
+                            ColumnLayout {
+                                Layout.fillWidth: true
+                                spacing: 2
+
+                                Label {
+                                    text: (modelData.label || modelData.metric || qsTr("SLA")) +
+                                          ": " + (modelData.formattedValue || "n/d")
+                                    color: Styles.AppTheme.textPrimary
+                                    font.bold: true
+                                }
+
+                                Label {
+                                    text: qsTr("%1 • %2")
+                                          .arg(modelData.severity || "ok")
+                                          .arg(modelData.timestamp ? modelData.timestamp.toString() : "")
+                                    color: Styles.AppTheme.textSecondary
+                                }
+                            }
+                        }
+                    }
+
+                    Label {
+                        objectName: "runtimeOverviewSlaEscalationStatus"
+                        text: alertChannels && alertChannels.length > 0
+                              ? qsTr("Kanały eskalacji: %1")
+                                    .arg(alertChannels.map(function(channel) {
+                                        return channel.name + " (" + (channel.status || channel.state || "n/a") + ")"
+                                    }).join(", "))
+                              : qsTr("Kanały eskalacji nieaktywne")
+                        color: Styles.AppTheme.textSecondary
+                        wrapMode: Text.WordWrap
+                    }
                 }
             }
 
