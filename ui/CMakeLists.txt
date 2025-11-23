@@ -15,11 +15,6 @@ set(UI_TRANSLATIONS
     ${CMAKE_CURRENT_SOURCE_DIR}/i18n/bot_trading_shell_pl.ts
 )
 
-qt_add_translations(UI_TRANSLATION_QM
-    TS_FILES ${UI_TRANSLATIONS}
-    LUPDATE_OPTIONS -no-obsolete
-)
-
 # --- Testing toggle ---
 include(CTest)
 if(BUILD_TESTING)
@@ -189,9 +184,11 @@ qt_add_executable(bot_trading_shell
     qml/qml.qrc
 )
 
-qt_add_resources(bot_trading_shell translations
-    PREFIX "/i18n"
-    FILES ${UI_TRANSLATION_QM}
+qt_add_translations(bot_trading_shell
+    TS_FILES ${UI_TRANSLATIONS}
+    SOURCES ${UI_SOURCES} ${UI_HEADERS}
+    RESOURCE_PREFIX "/i18n"
+    LUPDATE_OPTIONS -no-obsolete
 )
 
 target_include_directories(bot_trading_shell PRIVATE src ${GENERATED_DIR})
