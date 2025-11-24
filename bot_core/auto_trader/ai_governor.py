@@ -246,8 +246,9 @@ class AutoTraderAIGovernorRunner:
             predicate_fn = lambda decision: True
 
         idx = 0
+        cycle_len = len(target_cycle)
         while idx < max(1, int(limit)):
-            regime_hint = target_cycle[idx % len(target_cycle)] if target_cycle else None
+            regime_hint = target_cycle[idx % cycle_len] if cycle_len else None
             decision = self.run_cycle(regime=regime_hint)
             decisions.append(decision)
             if predicate_fn(decision):

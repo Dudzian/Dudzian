@@ -55,3 +55,17 @@ def test_run_until_stops_on_target_mode() -> None:
     assert len(decisions) == 1
     assert decisions[0].mode == "grid"
     assert runner.snapshot()["telemetry"]["cycleMetrics"]["cycles_total"] == 1.0
+
+
+def test_run_until_handles_empty_regime_cycle() -> None:
+    snapshot = {
+        "scalping_alpha": _summary(regime=MarketRegime.TREND, hit_rate=0.8, pnl=10.0, sharpe=1.5)
+    }
+    orchestrator = SimpleNamespace(strategy_performance_snapshot=lambda: snapshot)
+
+    runner = AutoTraderAIGovernorRunner(orchestrator)
+
+    decisions = runner.run_until(regimes=(), limit=2)
+
+    assert len(decisions) == 1
+    assert decisions[0].mode == "scalping"
