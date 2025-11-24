@@ -9,9 +9,20 @@ import csv
 import logging
 
 import pandas as pd
-import yaml
+
+try:
+    import yaml
+except ImportError:  # pragma: no cover - optional dependency
+    yaml = None
 
 from bot_core.observability.pandas_warnings import capture_pandas_warnings
+
+
+def _require_yaml() -> None:
+    if yaml is None:
+        raise RuntimeError(
+            "PyYAML is required to load backtest manifests. Install with `pip install PyYAML`."
+        )
 
 
 _LOGGER = logging.getLogger(__name__)
@@ -89,15 +100,23 @@ class BacktestDatasetLibrary:
         return self._manifest
 
     def _load_manifest(self, manifest_path: Path) -> Manifest:
+        _require_yaml()
         with manifest_path.open("r", encoding="utf-8") as handle:
             raw_manifest = yaml.safe_load(handle)
+        if not isinstance(raw_manifest, Mapping):
+            raise TypeError("Backtest manifest root must be a mapping")
         version = int(raw_manifest.get("version", 1))
-        interval_units = {
-            unit: int(seconds) for unit, seconds in raw_manifest.get("interval_units", {}).items()
-        }
-        datasets_section: Mapping[str, Mapping[str, object]] = raw_manifest.get("datasets", {})
+        interval_units_raw = raw_manifest.get("interval_units", {})
+        if not isinstance(interval_units_raw, Mapping):
+            raise TypeError("Manifest interval_units must be a mapping")
+        interval_units = {unit: int(seconds) for unit, seconds in interval_units_raw.items()}
+        datasets_section = raw_manifest.get("datasets", {})
+        if not isinstance(datasets_section, Mapping):
+            raise TypeError("Manifest datasets section must be a mapping")
         descriptors: Dict[str, DatasetDescriptor] = {}
         for dataset_name, config in datasets_section.items():
+            if not isinstance(config, Mapping):
+                raise TypeError(f"Dataset entry {dataset_name!r} must be a mapping")
             file_name = config["file"]
             descriptor = DatasetDescriptor(
                 name=dataset_name,

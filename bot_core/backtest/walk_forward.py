@@ -286,7 +286,7 @@ class WalkForwardBacktester:
 
 def _frame_to_snapshots(frame: pd.DataFrame, symbol: str) -> Iterable[MarketSnapshot]:
     if frame.empty:
-        return
+        return tuple()
     base_columns = {"open", "high", "low", "close", "volume"}
     for ts, row in frame.iterrows():
         timestamp = pd.Timestamp(ts)

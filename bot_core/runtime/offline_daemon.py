@@ -23,11 +23,18 @@ from urllib.parse import parse_qs, urlparse
 
 from google.protobuf.timestamp_pb2 import Timestamp
 
-from bot_core.testing.trading_stub_server import (
-    InMemoryTradingDataset,
-    build_default_dataset,
-    load_dataset_from_yaml,
-)
+try:  # pragma: no cover - optional dependency guard for PyYAML
+    from bot_core.testing.trading_stub_server import (
+        InMemoryTradingDataset,
+        build_default_dataset,
+        load_dataset_from_yaml,
+    )
+except ModuleNotFoundError as exc:  # pragma: no cover - clearer error in light builds
+    if exc.name == "yaml":
+        raise RuntimeError(
+            "PyYAML is required to load offline datasets; install it via 'pip install pyyaml'"
+        ) from exc
+    raise
 
 _LOG = logging.getLogger(__name__)
 

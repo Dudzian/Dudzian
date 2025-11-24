@@ -7,7 +7,10 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Iterable, Mapping, MutableMapping, Sequence
 
-import yaml
+try:  # PyYAML jest zależnością opcjonalną w środowisku runtime
+    import yaml
+except ModuleNotFoundError:  # pragma: no cover - zależne od środowiska
+    yaml = None  # type: ignore[assignment]
 
 CATALOG_FILENAME = "catalog.yaml"
 PRESETS_DIRNAME = "presets"
@@ -91,6 +94,10 @@ def _normalize_sequence(values: Iterable[str] | None) -> tuple[str, ...]:
 
 
 def _load_yaml(path: Path) -> Mapping[str, Any]:
+    if yaml is None:
+        raise RuntimeError(
+            "PyYAML is required to load Marketplace manifests. Install it with `pip install pyyaml`."
+        )
     try:
         raw = path.read_text(encoding="utf-8")
     except OSError as exc:
@@ -150,6 +157,10 @@ def _parse_preset(base_path: Path, payload: Mapping[str, Any]) -> MarketplacePre
             f"Preset {preset_id} musi wskazywać ścieżkę artefaktu w polu 'artifact'."
         )
     artifact_path = (base_path / artifact).resolve()
+    if not artifact_path.is_file():
+        raise MarketplaceCatalogError(
+            f"Artefakt presetu {preset_id} nie istnieje lub nie jest plikiem: {artifact_path}"
+        )
 
     signature = payload.get("signature") if isinstance(payload.get("signature"), Mapping) else None
 

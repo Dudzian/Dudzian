@@ -7,7 +7,11 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Mapping, Sequence
 
-import yaml
+# PyYAML jest opcjonalny w środowiskach bez trybu cloud
+try:  # pragma: no cover - zależność środowiskowa
+    import yaml
+except ModuleNotFoundError:  # pragma: no cover - brak PyYAML
+    yaml = None
 
 from bot_core.security.fingerprint import decode_secret
 
@@ -126,10 +130,12 @@ def _load_shared_secret(entry: Mapping[str, Any], base: Path) -> tuple[bytes, st
 
 
 def _parse_allowed_clients(entries: Sequence[Any], base: Path) -> tuple[CloudAllowedClientConfig, ...]:
+    if isinstance(entries, (str, bytes)):
+        raise CloudConfigError("Sekcja allowed_clients musi być listą obiektów, nie tekstem.")
     allowed: list[CloudAllowedClientConfig] = []
     for raw in entries:
         if not isinstance(raw, Mapping):
-            continue
+            raise CloudConfigError("Każdy wpis allowed_clients musi być mapą z parametrami klienta")
         license_id = str(raw.get("license_id") or "").strip()
         fingerprint = str(raw.get("fingerprint") or "").strip()
         if not license_id or not fingerprint:
@@ -151,6 +157,11 @@ def _parse_allowed_clients(entries: Sequence[Any], base: Path) -> tuple[CloudAll
 
 def load_cloud_server_config(path: str | Path) -> CloudServerConfig:
     """Ładuje konfigurację cloud z pliku YAML."""
+
+    if yaml is None:
+        raise CloudConfigError(
+            "PyYAML nie jest zainstalowany. Zainstaluj pakiet 'pyyaml' aby wczytać konfigurację cloud."
+        )
 
     config_path = Path(path).expanduser().resolve()
     if not config_path.exists():
@@ -198,14 +209,21 @@ def load_cloud_server_config(path: str | Path) -> CloudServerConfig:
         security_section = {}
     audit_path = _resolve_path(config_path.parent, security_section.get("audit_log_path", "logs/security_admin.log"))
     allowed_entries = security_section.get("allowed_clients") or ()
+    if isinstance(allowed_entries, (str, bytes)):
+        raise CloudConfigError("Sekcja security.allowed_clients musi być listą obiektów, nie tekstem.")
     if not isinstance(allowed_entries, Sequence):
-        allowed_entries = []
+        raise CloudConfigError("Sekcja security.allowed_clients musi być sekwencją wpisów konfiguracyjnych")
     security_cfg = CloudSecurityConfig(
         require_handshake=bool(security_section.get("require_handshake", False)),
         session_ttl_seconds=max(60, int(security_section.get("session_ttl_seconds", 900) or 900)),
         audit_log_path=audit_path,
         allowed_clients=_parse_allowed_clients(allowed_entries, config_path.parent),
     )
+
+    if security_cfg.require_handshake and not security_cfg.allowed_clients:
+        raise CloudConfigError(
+            "Pole security.require_handshake ustawiono na True, ale allowed_clients jest puste lub niepoprawne."
+        )
 
     return CloudServerConfig(
         host=str(payload.get("host") or "0.0.0.0"),

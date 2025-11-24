@@ -20,7 +20,10 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Callable
 from copy import deepcopy
 
-import yaml
+try:  # pragma: no cover - PyYAML może być opcjonalne w dystrybucjach light
+    import yaml
+except Exception:  # pragma: no cover - fallback gdy brak zależności PyYAML
+    yaml = None  # type: ignore[assignment]
 
 from PySide6.QtCore import QObject, Property, QTimer, Signal, Slot
 
@@ -75,6 +78,16 @@ if TYPE_CHECKING:  # pragma: no cover - adnotacje tylko w czasie statycznym
     from bot_core.config.models import RuntimeAppConfig
 
 _LOGGER = logging.getLogger(__name__)
+
+
+def _require_yaml() -> None:
+    """Zapewnia obecność zależności PyYAML zanim spróbujemy parsować pliki YAML."""
+
+    if yaml is None:
+        raise RuntimeError(
+            "Do obsługi konfiguracji YAML w warstwie UI wymagany jest pakiet PyYAML;"
+            " zainstaluj go poleceniem `pip install pyyaml`."
+        )
 
 try:  # pragma: no cover - gRPC może nie być dostępne w trybach light
     import grpc
@@ -3641,6 +3654,7 @@ class RuntimeService(QObject):
             return None
 
     def _load_strategy_configs(self) -> list[dict[str, object]]:
+        _require_yaml()
         try:
             if self._strategy_config_path.exists():
                 with self._strategy_config_path.open("r", encoding="utf-8") as handle:
@@ -3659,6 +3673,7 @@ class RuntimeService(QObject):
         return self._default_strategy_configs()
 
     def _persist_strategy_configs(self) -> None:
+        _require_yaml()
         try:
             self._strategy_config_path.parent.mkdir(parents=True, exist_ok=True)
             with self._strategy_config_path.open("w", encoding="utf-8") as handle:
@@ -3718,6 +3733,7 @@ class RuntimeService(QObject):
         return {"success": True, "strategy": strategy}
 
     def _load_risk_controls(self) -> dict[str, object]:
+        _require_yaml()
         try:
             if self._risk_controls_path.exists():
                 with self._risk_controls_path.open("r", encoding="utf-8") as handle:
@@ -3729,6 +3745,7 @@ class RuntimeService(QObject):
         return self._default_risk_controls()
 
     def _persist_risk_controls(self) -> None:
+        _require_yaml()
         try:
             self._risk_controls_path.parent.mkdir(parents=True, exist_ok=True)
             with self._risk_controls_path.open("w", encoding="utf-8") as handle:
@@ -3924,8 +3941,10 @@ class RuntimeService(QObject):
                 return path
 
         default = Path("config/core.yaml")
-        self._core_config_path = default
-        return default
+        if default.exists():
+            self._core_config_path = default
+            return default
+        return None
 
     # ------------------------------------------------------------------ runtime metadata helpers --
     def _update_runtime_metadata(self, *, invalidate_cache: bool) -> None:
@@ -3973,10 +3992,13 @@ class RuntimeService(QObject):
                 return path
 
         default = Path("config/runtime.yaml")
-        self._runtime_config_path = default
-        return default
+        if default.exists():
+            self._runtime_config_path = default
+            return default
+        return None
 
     def _load_registry_path_from_yaml(self) -> Path | None:
+        _require_yaml()
         config_path = self._resolve_runtime_config_path()
         if config_path is None or not config_path.exists():
             return None

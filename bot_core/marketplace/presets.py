@@ -11,7 +11,10 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Mapping, MutableMapping, Sequence
 
-import yaml
+try:  # opcjonalna zależność
+    import yaml
+except ImportError:  # pragma: no cover - środowiska bez PyYAML
+    yaml = None  # type: ignore[assignment]
 from cryptography.exceptions import InvalidSignature
 from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric import ed25519
@@ -19,6 +22,15 @@ from cryptography.hazmat.primitives.asymmetric import ed25519
 from bot_core.security.signing import canonical_json_bytes, verify_hmac_signature
 
 LOGGER = logging.getLogger(__name__)
+
+
+def _require_yaml():
+    if yaml is None:
+        raise RuntimeError(
+            "PyYAML nie jest zainstalowany. Zainstaluj pakiet 'pyyaml' aby wczytać lub zapisać preset YAML."
+        )
+
+    return yaml
 
 _SUPPORTED_FORMATS = {"json", "yaml", "yml"}
 _DIACRITIC_OVERRIDES = str.maketrans({
@@ -496,9 +508,10 @@ def parse_preset_document(
         fmt = "json"
     except json.JSONDecodeError:
         try:
-            document = yaml.safe_load(raw_text)
+            _yaml = _require_yaml()
+            document = _yaml.safe_load(raw_text)
             fmt = "yaml"
-        except yaml.YAMLError as exc:
+        except _yaml.YAMLError as exc:  # type: ignore[attr-defined]
             raise ValueError(f"Nie udało się wczytać presetu {source or '<memory>'}: {exc}") from exc
     if not isinstance(document, Mapping):
         raise ValueError("Dokument presetu musi być obiektem JSON/YAML")
@@ -533,7 +546,8 @@ def serialize_preset_document(document: PresetDocument, *, format: str = "json")
             json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True) + "\n"
         ).encode("utf-8")
     if fmt in {"yaml", "yml"}:
-        return yaml.safe_dump(payload, allow_unicode=True, sort_keys=False).encode("utf-8")
+        _yaml = _require_yaml()
+        return _yaml.safe_dump(payload, allow_unicode=True, sort_keys=False).encode("utf-8")
     raise ValueError(f"Nieobsługiwany format eksportu: {format}")
 
 

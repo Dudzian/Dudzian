@@ -4,7 +4,7 @@ from __future__ import annotations
 import logging
 import os
 from pathlib import Path
-from typing import Any, Mapping, MutableMapping
+from typing import Any, Callable, Mapping, MutableMapping
 
 from bot_core.config.models import RuntimeExecutionLiveSettings, RuntimeExecutionSettings
 from bot_core.execution.base import ExecutionContext, ExecutionService
@@ -130,15 +130,30 @@ def _normalize_signer_config(config: Mapping[str, Any], *, base: str | None = No
 def _collect_adapters(bootstrap_ctx: Any) -> MutableMapping[str, ExchangeAdapter]:
     adapters: MutableMapping[str, ExchangeAdapter] = {}
     primary = getattr(bootstrap_ctx, "adapter", None)
+    if callable(primary):
+        try:
+            primary = primary()
+        except Exception:
+            primary = None
     if isinstance(primary, ExchangeAdapter):
-        adapters[str(getattr(primary, "name", "")) or getattr(primary, "exchange", "") or "primary"] = primary
+        adapters[
+            str(getattr(primary, "name", ""))
+            or getattr(primary, "exchange", "")
+            or "primary"
+        ] = primary
 
     for attr_name in ("exchange_adapters", "adapters", "adapter_pool"):
         extra = getattr(bootstrap_ctx, attr_name, None)
         if isinstance(extra, Mapping):
             for name, adapter in extra.items():
-                if isinstance(adapter, ExchangeAdapter):
-                    adapters[str(name)] = adapter
+                candidate = adapter
+                if callable(candidate):
+                    try:
+                        candidate = candidate()
+                    except Exception:
+                        candidate = None
+                if isinstance(candidate, ExchangeAdapter):
+                    adapters[str(name)] = candidate
     return adapters
 
 
