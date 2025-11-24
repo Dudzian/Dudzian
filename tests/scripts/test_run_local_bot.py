@@ -233,11 +233,24 @@ def test_cloud_flag_emits_ready_payload(
     )
 
     monkeypatch.setattr(run_local_bot, "resolve_runtime_cloud_client", lambda path: selection)
-
-    def _fail_build_context(**_kwargs):  # pragma: no cover - nie powinno być wywołane
-        raise AssertionError("build_local_runtime_context nie powinno zostać wywołane w trybie cloud")
-
-    monkeypatch.setattr(run_local_bot, "build_local_runtime_context", _fail_build_context)
+    cloud_options = SimpleNamespace(
+        client=selection.client,
+        config_path=Path("config/cloud/client.yaml"),
+        metadata=[],
+        tls_credentials=None,
+        authority_override=None,
+    )
+    monkeypatch.setattr(run_local_bot, "load_cloud_client_options", lambda path: cloud_options)
+    monkeypatch.setattr(
+        run_local_bot,
+        "load_license_identity",
+        lambda: run_local_bot.LicenseIdentity("lic-1", "fp-1", "status.json"),
+    )
+    monkeypatch.setattr(
+        run_local_bot,
+        "perform_cloud_handshake",
+        lambda *_args, **_kwargs: run_local_bot.CloudHandshakeResult(status="ok", message="ok"),
+    )
 
     config_file = tmp_path / "runtime.yaml"
     config_file.write_text("cloud: {}", encoding="utf-8")
@@ -255,6 +268,75 @@ def test_cloud_flag_emits_ready_payload(
     assert exit_code == 0
     captured = capsys.readouterr().out.strip().splitlines()
     assert any("\"cloud\"" in line for line in captured), "Brak payloadu cloud w STDOUT"
+
+
+def test_cloud_handshake_failure_falls_back_to_local(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    _stub_dependencies: SimpleNamespace,
+) -> None:
+    cloud_options = SimpleNamespace(
+        client=SimpleNamespace(
+            address="cloud.example:50052",
+            metadata={},
+            metadata_env={},
+            metadata_files={},
+            fallback_entrypoint="cloud_entry",
+            allow_local_fallback=True,
+            auto_connect=True,
+            use_tls=False,
+        ),
+        config_path=Path("config/cloud/client.yaml"),
+        metadata=[],
+        tls_credentials=None,
+        authority_override=None,
+    )
+
+    monkeypatch.setattr(run_local_bot, "load_cloud_client_options", lambda path: cloud_options)
+    monkeypatch.setattr(
+        run_local_bot,
+        "load_license_identity",
+        lambda: run_local_bot.LicenseIdentity("lic-1", "fp-1", "status.json"),
+    )
+    monkeypatch.setattr(
+        run_local_bot,
+        "perform_cloud_handshake",
+        lambda *_args, **_kwargs: run_local_bot.CloudHandshakeResult(
+            status="denied", message="forbidden"
+        ),
+    )
+
+    config_file = _create_runtime_file(tmp_path)
+    state_dir = tmp_path / "state"
+    report_dir = tmp_path / "reports"
+    markdown_dir = tmp_path / "markdown"
+
+    exit_code = run_local_bot.main(
+        [
+            "--config",
+            str(config_file),
+            "--entrypoint",
+            "demo_desktop",
+            "--mode",
+            "demo",
+            "--enable-cloud-runtime",
+            "--state-dir",
+            str(state_dir),
+            "--report-dir",
+            str(report_dir),
+            "--report-markdown-dir",
+            str(markdown_dir),
+        ]
+    )
+
+    assert exit_code == 0
+    report_files = list(report_dir.glob("run_local_bot_demo_*.json"))
+    assert report_files
+    payload = json.loads(report_files[0].read_text(encoding="utf-8"))
+    assert payload["mode"] == "demo"
+    assert payload.get("cloud_status") == "denied"
+    assert payload.get("cloud_fallback") is True
+    assert any("handshake cloudowy" in warn.lower() for warn in payload.get("warnings", []))
 
 
 def test_paper_mode_requires_checkpoint(tmp_path: Path, _stub_dependencies: SimpleNamespace) -> None:

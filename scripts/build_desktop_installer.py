@@ -4,12 +4,16 @@ from __future__ import annotations
 
 import argparse
 import json
+import logging
 import shutil
 import subprocess
 from pathlib import Path
 
 from bot_core.security.signing import build_hmac_signature
 from scripts import generate_trading_stubs
+
+
+_LOGGER = logging.getLogger("desktop.installer")
 
 
 DEFAULT_OUTPUT = Path("var/dist/desktop")
@@ -73,10 +77,17 @@ def build_bundle(args: argparse.Namespace) -> Path:
         raise SystemExit(f"Nie znaleziono skompilowanej aplikacji pod {binary_path}")
 
     try:
-        generate_trading_stubs.main(["--skip-cpp"])
-    except SystemExit as exc:  # pragma: no cover - obsługa CLI
-        if exc.code not in (0, None):
-            raise RuntimeError("Generowanie stubów trading.proto nie powiodło się") from exc
+        import grpc_tools  # type: ignore  # pragma: no cover - opcjonalna zależność
+    except ImportError:
+        _LOGGER.warning(
+            "Pomijam generowanie stubów trading.proto – brak pakietu 'grpcio-tools'",
+        )
+    else:
+        try:
+            generate_trading_stubs.main(["--skip-cpp"])
+        except SystemExit as exc:  # pragma: no cover - obsługa CLI
+            if exc.code not in (0, None):
+                raise RuntimeError("Generowanie stubów trading.proto nie powiodło się") from exc
     shutil.copy2(binary_path, bundle_dir / binary_name)
     _copy_tree(Path("ui/qml"), bundle_dir / "qml")
     _copy_tree(Path("config"), bundle_dir / "config")

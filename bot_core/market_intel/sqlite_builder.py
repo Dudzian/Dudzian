@@ -317,9 +317,14 @@ def _baseline_from_row(row: Mapping[str, object], config: MarketIntelConfig) -> 
     sqlite_cfg = config.sqlite
     assert sqlite_cfg is not None
     symbol = str(row[sqlite_cfg.symbol_column])
-    weight = row.get(str(sqlite_cfg.weight_column))
-    if weight is None:
-        weight = config.default_weight
+    if sqlite_cfg.weight_column in (None, ""):
+        weight_value: float | object = config.default_weight
+    else:
+        weight_value = row.get(str(sqlite_cfg.weight_column), config.default_weight)
+        try:
+            weight_value = float(weight_value)
+        except (TypeError, ValueError):
+            weight_value = config.default_weight
     return MarketIntelBaseline(
         symbol=symbol,
         mid_price=float(row[sqlite_cfg.mid_price_column]),
@@ -328,7 +333,7 @@ def _baseline_from_row(row: Mapping[str, object], config: MarketIntelConfig) -> 
         funding_rate_bps=float(row[sqlite_cfg.funding_column]),
         sentiment_score=float(row[sqlite_cfg.sentiment_column]),
         realized_volatility=float(row[sqlite_cfg.volatility_column]),
-        weight=float(weight),
+        weight=float(weight_value),
     )
 
 

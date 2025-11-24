@@ -106,3 +106,28 @@ def test_builder_rejects_missing_orderbook(sqlite_config: MarketIntelConfig) -> 
 
     with pytest.raises(ValueError):
         builder.collect()
+
+
+def test_builder_uses_default_weight_when_column_disabled(tmp_path: Path) -> None:
+    config = MarketIntelConfig(
+        enabled=True,
+        output_directory=str(tmp_path / "metrics"),
+        manifest_path=str(tmp_path / "manifest.json"),
+        sqlite=MarketIntelSqliteConfig(path=str(tmp_path / "mi.sqlite"), weight_column=None),
+        required_symbols=("BTCUSDT", "ETHUSDT"),
+        default_weight=2.5,
+    )
+
+    builder = MarketIntelSqliteBuilder(
+        config,
+        provider=_StubProvider(),
+        depth_levels=1,
+        volatility_lookback=8,
+    )
+
+    baselines = builder.collect()
+    builder.write_database(baselines)
+
+    rows = builder.read_database()
+    assert {row.symbol for row in rows} == {"BTCUSDT", "ETHUSDT"}
+    assert all(row.weight == pytest.approx(config.default_weight) for row in rows)

@@ -43,6 +43,7 @@ from bot_core.observability.metrics import CounterMetric, summarize_live_executi
 from core.reporting import DemoPaperReport, GuardrailReport
 
 _LOGGER = logging.getLogger(__name__)
+CLOUD_FALLBACK = object()
 
 
 def _configure_logging(level: str) -> None:
@@ -372,12 +373,33 @@ def _run_cloud_proxy(
     handshake: CloudHandshakeResult | None,
     *,
     ai_governor_snapshot: Mapping[str, Any] | None,
-) -> int:
+    original_mode: str,
+) -> int | object:
     cloud_payload = _serialize_cloud_payload(options, identity, handshake)
-    report_payload["mode"] = "cloud"
     report_payload["cloud"] = cloud_payload
     if cloud_payload.get("entrypoint"):
         report_payload["entrypoint"] = cloud_payload["entrypoint"]
+
+    handshake_status = getattr(handshake, "status", None)
+    report_payload["cloud_status"] = handshake_status or "missing_handshake"
+    allowed_statuses = {"ok", "not_required"}
+
+    if handshake is None or handshake_status not in allowed_statuses:
+        message = (
+            "Brak wyniku handshake cloudowego (brak licencji lub fingerprintu)"
+            if handshake is None
+            else f"Handshake cloudowy niepoprawny: {handshake_status} ({handshake.message or 'brak komunikatu'})"
+        )
+        report_payload["mode"] = original_mode
+        if options.client.allow_local_fallback:
+            report_payload.setdefault("warnings", []).append(message)
+            report_payload["cloud_fallback"] = True
+            return CLOUD_FALLBACK
+        report_payload.setdefault("errors", []).append(message)
+        report_payload.setdefault("status", "cloud_error")
+        return 4
+
+    report_payload["mode"] = "cloud"
     emit_stdout = not args.no_ready_stdout
     _write_ready_payload(
         options.client.address,
@@ -516,15 +538,21 @@ def main(argv: list[str] | None = None) -> int:
 
     try:
         if cloud_options is not None:
-            exit_code = _run_cloud_proxy(
+            proxy_result = _run_cloud_proxy(
                 args,
                 report_payload,
                 cloud_options,
                 cloud_identity,
                 cloud_handshake,
                 ai_governor_snapshot=ai_governor_snapshot,
+                original_mode=args.mode,
             )
-        else:
+            if proxy_result is CLOUD_FALLBACK:
+                cloud_options = None
+            else:
+                exit_code = proxy_result
+
+        if cloud_options is None:
             context = build_local_runtime_context(
                 config_path=str(config_path),
                 entrypoint=args.entrypoint,

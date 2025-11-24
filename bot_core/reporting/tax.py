@@ -22,8 +22,10 @@ class TaxReportExporter:
 
     def __init__(self, *, default_schema: Path | None = None) -> None:
         if default_schema is None:
-            default_schema = Path("docs/schemas/tax_report.json")
-        self._default_schema = default_schema
+            repo_root = Path(__file__).resolve().parents[2]
+            candidate = repo_root / "docs" / "schemas" / "tax_report.json"
+            default_schema = candidate if candidate.exists() else None
+        self._default_schema = Path(default_schema) if default_schema else None
 
     def export(
         self,

@@ -128,8 +128,10 @@ class MatchingEngine:
         slippage_value = price * self._slippage_rate
         if order.side == "buy":
             execution_price = price + slippage_value
+            signed_slippage = slippage_value
         else:
             execution_price = max(0.0, price - slippage_value)
+            signed_slippage = -slippage_value
         fee = abs(execution_price * fill_size) * self._fee_rate
         is_partial = fill_size < remaining - self._EPSILON
         fill = BacktestFill(
@@ -138,7 +140,7 @@ class MatchingEngine:
             size=fill_size,
             price=execution_price,
             fee=fee,
-            slippage=slippage_value,
+            slippage=signed_slippage * fill_size,
             timestamp=timestamp,
             partial=is_partial,
         )

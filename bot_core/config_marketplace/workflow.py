@@ -14,6 +14,7 @@ from bot_core.config_marketplace.schema import (
     MarketplacePackageMetadata,
     load_catalog,
 )
+from bot_core.security.signing import canonical_json_bytes
 
 
 def _load_json(path: Path) -> Mapping[str, Any]:
@@ -112,8 +113,8 @@ class PresetPublicationWorkflow:
         algorithm = str(signature.get("algorithm", "HMAC-SHA256")).strip().lower()
         if algorithm not in {"hmac-sha256", "sha256"}:
             return False
-        serialized = json.dumps(payload, separators=(",", ":"), sort_keys=True)
-        digest = hmac.new(key, serialized.encode("utf-8"), hashlib.sha256).digest()
+        serialized = canonical_json_bytes(payload)
+        digest = hmac.new(key, serialized, hashlib.sha256).digest()
         expected = base64.b64encode(digest).decode("ascii")
         value = signature.get("value")
         if isinstance(value, str):

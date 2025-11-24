@@ -972,7 +972,10 @@ def register_model_artifact(
 
 
 def _load_frame_from_path(path: Path) -> pd.DataFrame:
-    if path.suffix.lower() in {".json", ".jsonl"}:
+    suffix = path.suffix.lower()
+    if suffix == ".jsonl":
+        return pd.read_json(path, lines=True)
+    if suffix == ".json":
         with path.open("r", encoding="utf-8") as handle:
             payload = json.load(handle)
         return pd.DataFrame(payload)
