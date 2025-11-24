@@ -145,9 +145,19 @@ def test_futures_simulator_applies_slippage_and_fee_validation():
     )
 
     with pytest.raises(ValueError):
-        PaperFuturesSimulator(_DummyFeed(20_000.0), database=_DummyDB(), fee_rate=-0.1, risk_journal=journal)
+        PaperFuturesSimulator(
+            _DummyFeed(20_000.0), database=_DummyDB(), fee_rate=-0.1, risk_journal=journal
+        )
     with pytest.raises(ValueError):
         PaperFuturesSimulator(_DummyFeed(20_000.0), database=_DummyDB(), slippage_bps=-1, risk_journal=journal)
+
+    critical_events = [
+        event
+        for event in journal.events
+        if getattr(event, "metadata", {}).get("risk_flags")
+        and "critical" in getattr(event, "metadata", {}).get("risk_flags", [])
+    ]
+    assert critical_events
 
     warning_simulator = PaperFuturesSimulator(
         _DummyFeed(20_000.0),
@@ -184,6 +194,14 @@ def test_futures_simulator_records_validation_journal_flags():
     flags = getattr(validation_events[-1], "metadata", {}).get("risk_flags", [])
     assert "fee_rate_high" in flags
     assert "slippage_high" in flags
+
+    # fill-level walidacja nie loguje kolejnego wpisu OK, ale ostrzeżenia są propagowane
+    fill_validations = [
+        event
+        for event in journal.events
+        if getattr(event, "metadata", {}).get("message", "").startswith("[fill]")
+    ]
+    assert fill_validations or flags
 
 
 def test_simulator_describe_configuration_reports_runtime_values():

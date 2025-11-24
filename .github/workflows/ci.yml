@@ -260,6 +260,13 @@ jobs:
           python -m pip install --upgrade pip
           pip install .[dev]
 
+      - name: Seed HyperCare assets for Deribit/BitMEX
+        run: |
+          python scripts/generate_hypercare_assets.py \
+            --signal-quality-dir reports/exchanges/signal_quality \
+            --hypercare-dir reports/exchanges/hypercare \
+            --daily-csv-dir reports/exchanges
+
       - name: Generate exchange adapter report
         run: |
           REPORT_DATE=$(date +%Y-%m-%d)

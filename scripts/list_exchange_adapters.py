@@ -35,7 +35,9 @@ _DEFAULT_SIGNAL_QUALITY_DIR = "reports/exchanges/signal_quality"
 _DEFAULT_SIGNAL_QUALITY_TTL_HOURS = 48.0
 _MONITORED_LONG_POLL_ADAPTERS = {
     "deribit_futures",
+    "deribit_spot",
     "bitmex_futures",
+    "bitmex_spot",
 }
 
 
@@ -170,6 +172,73 @@ def _push_dashboard_snapshot(
             urllib.request.urlopen(request, timeout=10)
         except urllib.error.URLError as exc:  # pragma: no cover - zależy od środowiska CI
             raise RuntimeError(f"Nie udało się wypchnąć CSV do endpointu dashboardu: {exc}") from exc
+
+
+def _validate_monitored_rows(rows: Sequence[Mapping[str, Any]]) -> None:
+    """Wymusza dostępność krytycznych metryk dla monitorowanych adapterów.
+
+    Wymagamy świeżych metryk long-poll oraz skonfigurowanych statusów HyperCare
+    (failover/latency/cost) dla profili paper/live nowych adapterów futures.
+    """
+
+    required: Sequence[tuple[str, str]] = (
+        ("deribit", "paper"),
+        ("deribit", "live"),
+        ("bitmex", "paper"),
+        ("bitmex", "live"),
+    )
+
+    def _row_for(exchange: str, profile: str) -> Mapping[str, Any] | None:
+        for row in rows:
+            if row.get("exchange") == exchange and row.get("profile") == profile:
+                return row
+        return None
+
+    errors: list[str] = []
+    for exchange, profile in required:
+        row = _row_for(exchange, profile)
+        if row is None:
+            errors.append(f"brak wiersza dla {exchange}:{profile}")
+            continue
+
+        lp_status = row.get("long_poll_metrics_status")
+        if lp_status != "fresh":
+            errors.append(
+                f"{exchange}:{profile} long_poll_metrics_status={lp_status or 'missing'}"
+            )
+
+        lp_age = row.get("long_poll_snapshot_age_minutes")
+        if lp_status == "fresh" and lp_age in (None, ""):
+            errors.append(f"{exchange}:{profile} long_poll_snapshot_age_minutes={lp_age or 'missing'}")
+
+        for key in ("hypercare_failover_status", "hypercare_latency_status", "hypercare_cost_status"):
+            status = row.get(key)
+            if status in (None, "not_configured", "unknown"):
+                errors.append(f"{exchange}:{profile} {key}={status or 'missing'}")
+
+        signal_quality_status = row.get("signal_quality_snapshot_status")
+        if signal_quality_status != "fresh":
+            errors.append(
+                f"{exchange}:{profile} signal_quality_snapshot_status={signal_quality_status or 'missing'}"
+            )
+
+        snapshot_age = row.get("signal_quality_snapshot_age_minutes")
+        if signal_quality_status == "fresh" and snapshot_age in (None, ""):
+            errors.append(
+                f"{exchange}:{profile} signal_quality_snapshot_age_minutes={snapshot_age or 'missing'}"
+            )
+
+        snapshot_path = row.get("signal_quality_snapshot_path")
+        if signal_quality_status == "fresh" and not snapshot_path:
+            errors.append(f"{exchange}:{profile} signal_quality_snapshot_path=missing")
+
+        records = row.get("signal_quality_records")
+        if records is None or (isinstance(records, (int, float)) and records <= 0):
+            errors.append(f"{exchange}:{profile} signal_quality_records={records or 'missing'}")
+
+    if errors:
+        formatted = "; ".join(errors)
+        raise RuntimeError(f"Walidacja monitoringu adapterów nie powiodła się: {formatted}")
 
 
 def _futures_checklist_state(exchange: str, env_cfg: Any) -> tuple[str | None, bool | None]:
@@ -529,20 +598,28 @@ def build_rows(
                 slippage_candidate = simulator_defaults.get("slippage_bps")
                 simulator_slippage_bps = _safe_float(slippage_candidate)
 
-            if exchange in {"deribit", "bitmex"} and env_cfg.environment.value == "live":
+            if exchange in {"deribit", "bitmex"} and env_cfg.environment.value in {"live", "paper"}:
                 status = long_poll_summary.get("long_poll_metrics_status")
-                if status in {"missing", "unknown"}:
+                if status in {"missing", "unknown", "stale"}:
                     raise RuntimeError(
-                        f"Brak świeżych metryk long-pollowych dla {exchange}:{profile_name} (status={status})."
+                        "Brak świeżych metryk long-pollowych dla "
+                        f"{exchange}:{profile_name} (status={status})."
                     )
                 sq_status = signal_quality_summary.get("signal_quality_snapshot_status")
-                if sq_status in {"missing", "unknown"}:
+                if sq_status in {"missing", "unknown", "stale"}:
                     raise RuntimeError(
-                        f"Brak dziennego snapshotu signal_quality dla {exchange}:{profile_name} (status={sq_status})."
+                        "Brak dziennego snapshotu signal_quality dla "
+                        f"{exchange}:{profile_name} (status={sq_status})."
                     )
-                if sq_status == "stale":
+                hypercare_state = hypercare_summary or {}
+                missing_states = [
+                    key
+                    for key, value in hypercare_state.items()
+                    if value in {None, "not_configured"}
+                ]
+                if missing_states:
                     raise RuntimeError(
-                        f"Snapshot signal_quality dla {exchange}:{profile_name} jest przeterminowany (status={sq_status})."
+                        f"Brak kompletnego statusu HyperCare ({','.join(missing_states)}) dla {exchange}:{profile_name}."
                     )
 
             rows.append(
@@ -648,6 +725,7 @@ def main(argv: list[str] | None = None) -> int:
         signal_quality_dir=args.signal_quality_dir,
         signal_quality_ttl_hours=args.signal_quality_ttl_hours,
     )
+    _validate_monitored_rows(rows)
 
     fieldnames = [
         "exchange",
