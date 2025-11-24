@@ -157,6 +157,10 @@ def _parse_preset(base_path: Path, payload: Mapping[str, Any]) -> MarketplacePre
             f"Preset {preset_id} musi wskazywać ścieżkę artefaktu w polu 'artifact'."
         )
     artifact_path = (base_path / artifact).resolve()
+    if not artifact_path.is_file():
+        raise MarketplaceCatalogError(
+            f"Artefakt presetu {preset_id} nie istnieje lub nie jest plikiem: {artifact_path}"
+        )
 
     signature = payload.get("signature") if isinstance(payload.get("signature"), Mapping) else None
 

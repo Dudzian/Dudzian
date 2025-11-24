@@ -137,7 +137,7 @@ class SLOStatus:
     target: float
     comparison: str
     status: str
-    severity: str
+    severity: str = "warning"
     warning_threshold: float | None = None
     error_budget_pct: float | None = None
     window_start: datetime | None = None
@@ -145,6 +145,11 @@ class SLOStatus:
     sample_size: int = 0
     reason: str | None = None
     metadata: Mapping[str, float] = field(default_factory=dict)
+
+    def __post_init__(self) -> None:
+        if self.comparison not in {">=", "<="}:
+            raise ValueError("Dozwolone porównania to '>=' oraz '<='")
+        self.severity = _normalize_severity(self.severity)
 
     def to_dict(self) -> dict[str, object]:
         payload: dict[str, object] = {

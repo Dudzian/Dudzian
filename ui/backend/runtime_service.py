@@ -3941,8 +3941,10 @@ class RuntimeService(QObject):
                 return path
 
         default = Path("config/core.yaml")
-        self._core_config_path = default
-        return default
+        if default.exists():
+            self._core_config_path = default
+            return default
+        return None
 
     # ------------------------------------------------------------------ runtime metadata helpers --
     def _update_runtime_metadata(self, *, invalidate_cache: bool) -> None:
@@ -3990,8 +3992,10 @@ class RuntimeService(QObject):
                 return path
 
         default = Path("config/runtime.yaml")
-        self._runtime_config_path = default
-        return default
+        if default.exists():
+            self._runtime_config_path = default
+            return default
+        return None
 
     def _load_registry_path_from_yaml(self) -> Path | None:
         _require_yaml()

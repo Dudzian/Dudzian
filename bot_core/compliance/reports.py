@@ -153,7 +153,7 @@ def validate_compliance_report(
         warnings.append("Zarejestrowano raport z przyszłości – sprawdź zegar systemowy.")
 
     controls_raw = raw.get("controls")
-    if not isinstance(controls_raw, Sequence):
+    if not (isinstance(controls_raw, Sequence) and not isinstance(controls_raw, (str, bytes))):
         issues.append("Raport musi zawierać listę kontroli w polu controls.")
         controls_raw = []
     elif not controls_raw:
