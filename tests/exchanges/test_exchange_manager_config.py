@@ -218,9 +218,9 @@ def test_list_exchange_adapters_reports_futures_columns(tmp_path):
     os.utime(signal_quality_dir / "deribit_futures.json", None)
     os.utime(signal_quality_dir / "bitmex_futures.json", None)
 
-    def _snapshot(adapter: str) -> dict[str, Any]:
+    def _snapshot(adapter: str, environment: str = "live") -> dict[str, Any]:
         return {
-            "labels": {"adapter": adapter, "scope": "private", "environment": "live"},
+            "labels": {"adapter": adapter, "scope": "private", "environment": environment},
             "requestLatency": {"count": 5, "avg": 0.2, "p50": 0.15, "p95": 0.42, "max": 0.5},
             "deliveryLag": {"count": 5, "avg": 0.22, "p50": 0.19, "p95": 0.5, "max": 0.6},
             "httpErrors": {"total": 1 if "bitmex" in adapter else 0, "byStatusCode": {}},
@@ -230,7 +230,9 @@ def test_list_exchange_adapters_reports_futures_columns(tmp_path):
 
     long_poll_metrics = {
         ("deribit_futures", "private", "live"): _snapshot("deribit_futures"),
+        ("deribit_futures", "private", "paper"): _snapshot("deribit_futures", "paper"),
         ("bitmex_futures", "private", "live"): _snapshot("bitmex_futures"),
+        ("bitmex_futures", "private", "paper"): _snapshot("bitmex_futures", "paper"),
     }
 
     rows = lea.build_rows(
@@ -276,6 +278,140 @@ def test_list_exchange_adapters_reports_futures_columns(tmp_path):
     assert bitmex_live["long_poll_http_errors"] == 1
     assert bitmex_live["long_poll_reconnect_success"] == 2
     assert bitmex_live["signal_quality_snapshot_status"] == "fresh"
+
+
+def test_validate_monitored_rows_flags_missing_metrics():
+    from scripts import list_exchange_adapters as lea
+
+    rows = [
+        {
+            "exchange": "deribit",
+            "profile": "paper",
+            "long_poll_metrics_status": "unknown",
+            "long_poll_snapshot_age_minutes": None,
+            "hypercare_failover_status": "not_configured",
+            "hypercare_latency_status": "ready",
+            "hypercare_cost_status": "ready",
+            "signal_quality_snapshot_status": "missing",
+            "signal_quality_snapshot_age_minutes": None,
+            "signal_quality_snapshot_path": None,
+            "signal_quality_records": None,
+        },
+        {
+            "exchange": "deribit",
+            "profile": "live",
+            "long_poll_metrics_status": "fresh",
+            "long_poll_snapshot_age_minutes": 5.0,
+            "hypercare_failover_status": "ready",
+            "hypercare_latency_status": "ready",
+            "hypercare_cost_status": "ready",
+            "signal_quality_snapshot_status": "fresh",
+            "signal_quality_snapshot_age_minutes": 42.0,
+            "signal_quality_snapshot_path": "/tmp/deribit.json",
+            "signal_quality_records": 3,
+        },
+        {
+            "exchange": "bitmex",
+            "profile": "paper",
+            "long_poll_metrics_status": "fresh",
+            "long_poll_snapshot_age_minutes": 12.0,
+            "hypercare_failover_status": "ready",
+            "hypercare_latency_status": "ready",
+            "hypercare_cost_status": "ready",
+            "signal_quality_snapshot_status": "fresh",
+            "signal_quality_snapshot_age_minutes": 16.0,
+            "signal_quality_snapshot_path": "/tmp/bitmex_paper.json",
+            "signal_quality_records": 2,
+        },
+        {
+            "exchange": "bitmex",
+            "profile": "live",
+            "long_poll_metrics_status": "fresh",
+            "long_poll_snapshot_age_minutes": 1.0,
+            "hypercare_failover_status": "ready",
+            "hypercare_latency_status": "ready",
+            "hypercare_cost_status": "ready",
+            "signal_quality_snapshot_status": "fresh",
+            "signal_quality_snapshot_age_minutes": 10.0,
+            "signal_quality_snapshot_path": "/tmp/bitmex_live.json",
+            "signal_quality_records": 1,
+        },
+    ]
+
+    with pytest.raises(RuntimeError) as excinfo:
+        lea._validate_monitored_rows(rows)  # type: ignore[attr-defined]
+
+    message = str(excinfo.value)
+    assert "deribit:paper long_poll_metrics_status" in message
+    assert "hypercare_failover_status" in message
+    assert "signal_quality_snapshot_status" in message
+    assert "signal_quality_records" in message
+
+
+def test_validate_monitored_rows_requires_snapshot_age_and_path():
+    from scripts import list_exchange_adapters as lea
+
+    rows = [
+        {
+            "exchange": "deribit",
+            "profile": "paper",
+            "long_poll_metrics_status": "fresh",
+            "long_poll_snapshot_age_minutes": None,
+            "hypercare_failover_status": "ready",
+            "hypercare_latency_status": "ready",
+            "hypercare_cost_status": "ready",
+            "signal_quality_snapshot_status": "fresh",
+            "signal_quality_snapshot_age_minutes": 5.0,
+            "signal_quality_snapshot_path": "/tmp/deribit.json",
+            "signal_quality_records": 1,
+        },
+        {
+            "exchange": "bitmex",
+            "profile": "live",
+            "long_poll_metrics_status": "fresh",
+            "long_poll_snapshot_age_minutes": 2.5,
+            "hypercare_failover_status": "ready",
+            "hypercare_latency_status": "ready",
+            "hypercare_cost_status": "ready",
+            "signal_quality_snapshot_status": "fresh",
+            "signal_quality_snapshot_age_minutes": 12.0,
+            "signal_quality_snapshot_path": "",
+            "signal_quality_records": 4,
+        },
+        {
+            "exchange": "bitmex",
+            "profile": "paper",
+            "long_poll_metrics_status": "fresh",
+            "long_poll_snapshot_age_minutes": 4.0,
+            "hypercare_failover_status": "ready",
+            "hypercare_latency_status": "ready",
+            "hypercare_cost_status": "ready",
+            "signal_quality_snapshot_status": "fresh",
+            "signal_quality_snapshot_age_minutes": 10.0,
+            "signal_quality_snapshot_path": "/tmp/bitmex.json",
+            "signal_quality_records": 2,
+        },
+        {
+            "exchange": "deribit",
+            "profile": "live",
+            "long_poll_metrics_status": "fresh",
+            "long_poll_snapshot_age_minutes": 3.0,
+            "hypercare_failover_status": "ready",
+            "hypercare_latency_status": "ready",
+            "hypercare_cost_status": "ready",
+            "signal_quality_snapshot_status": "fresh",
+            "signal_quality_snapshot_age_minutes": 8.0,
+            "signal_quality_snapshot_path": "/tmp/deribit_live.json",
+            "signal_quality_records": 6,
+        },
+    ]
+
+    with pytest.raises(RuntimeError) as excinfo:
+        lea._validate_monitored_rows(rows)  # type: ignore[attr-defined]
+
+    message = str(excinfo.value)
+    assert "long_poll_snapshot_age_minutes" in message
+    assert "signal_quality_snapshot_path" in message
 
 
 def test_private_backend_receives_passphrase(monkeypatch: pytest.MonkeyPatch) -> None:
