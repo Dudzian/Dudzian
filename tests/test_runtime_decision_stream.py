@@ -178,18 +178,13 @@ def test_list_decisions_includes_cycle_metrics():
     class _MetricAutoTrader:
         def __init__(self) -> None:
             self._decision_journal = journal
-            self._base_metric_labels = {"portfolio": "alpha"}
+            self.metric_labels = {"portfolio": "alpha"}
 
-        @property
-        def metric_labels(self) -> Mapping[str, str]:
-            return dict(self._base_metric_labels)
-
-        def _snapshot_decision_metrics(self, labels):
-            assert labels == self._base_metric_labels
+        def get_cycle_metrics(self):
             return {
                 "cycles_total": 12.0,
-                "strategy_switch_total": 2,
-                "guardrail_blocks_total": 1,
+                "strategy_switch_total": 2.0,
+                "guardrail_blocks_total": 1.0,
             }
 
     context = _DummyRuntimeContext(journal, _MetricAutoTrader())
@@ -212,14 +207,9 @@ def test_stream_includes_cycle_metrics_when_available():
     class _MetricAutoTrader:
         def __init__(self) -> None:
             self._decision_journal = journal
-            self._base_metric_labels = {"portfolio": "alpha"}
+            self.metric_labels = {"portfolio": "alpha"}
 
-        @property
-        def metric_labels(self) -> Mapping[str, str]:
-            return dict(self._base_metric_labels)
-
-        def _snapshot_decision_metrics(self, labels):
-            assert labels == self._base_metric_labels
+        def get_cycle_metrics(self):
             return {
                 "cycles_total": 21.0,
                 "strategy_switch_total": 5.0,

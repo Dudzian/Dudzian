@@ -4,7 +4,7 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 import threading
 from pathlib import Path
-from typing import Mapping
+from typing import Mapping, cast
 
 import pandas as pd
 import pytest
@@ -428,6 +428,95 @@ def test_decision_cycle_request_allows_kwarg_overrides() -> None:
 
     assert isinstance(report.metadata, Mapping)
     assert trader.execution_context_cached is False
+
+
+def test_decision_cycle_request_rejects_invalid_payload() -> None:
+    assessment = MarketRegimeAssessment(
+        regime=MarketRegime.TREND,
+        confidence=0.66,
+        risk_score=0.2,
+        metrics={"trend_strength": 0.65},
+        symbol="BTCUSDT",
+    )
+    ai_manager = _StaticAIManager(assessment=assessment, prediction=0.01, probability=0.71)
+    trader, _, _, _, _ = _build_trader(ai_manager)
+
+    with pytest.raises(TypeError):
+        trader.run_cycle(cast(DecisionCycleRequest, object()))
+
+
+def test_decision_cycle_request_validates_schedule_state() -> None:
+    assessment = MarketRegimeAssessment(
+        regime=MarketRegime.MEAN_REVERSION,
+        confidence=0.66,
+        risk_score=0.2,
+        metrics={"volatility": 0.65},
+        symbol="SOLUSDT",
+    )
+    ai_manager = _StaticAIManager(assessment=assessment, prediction=0.01, probability=0.71)
+    trader, _, _, _, _ = _build_trader(ai_manager)
+
+    with pytest.raises(TypeError):
+        DecisionCycleRequest(schedule_state=cast(ScheduleState, object()))
+
+
+def test_decision_cycle_request_rejects_negative_interval() -> None:
+    assessment = MarketRegimeAssessment(
+        regime=MarketRegime.TREND,
+        confidence=0.7,
+        risk_score=0.22,
+        metrics={"trend_strength": 0.6},
+        symbol="BTCUSDT",
+    )
+    ai_manager = _StaticAIManager(assessment=assessment, prediction=0.02, probability=0.75)
+    trader, _, _, _, _ = _build_trader(ai_manager)
+
+    with pytest.raises(ValueError):
+        DecisionCycleRequest(auto_trade_interval_s=-1.0)
+
+
+def test_decision_cycle_handles_closed_schedule_state() -> None:
+    assessment = MarketRegimeAssessment(
+        regime=MarketRegime.MEAN_REVERSION,
+        confidence=0.73,
+        risk_score=0.41,
+        metrics={"volatility": 0.12},
+        symbol="SOLUSDT",
+    )
+    ai_manager = _StaticAIManager(assessment=assessment, prediction=0.0, probability=0.69)
+    trader, journal, emitter, _, context = _build_trader(ai_manager)
+
+    closed_schedule = ScheduleState(
+        mode=trader.schedule_mode,
+        is_open=False,
+        window=None,
+        next_transition=None,
+        reference_time=datetime.now(timezone.utc),
+    )
+    report = trader.run_cycle(
+        DecisionCycleRequest(
+            execution_context=context,
+            schedule_state=closed_schedule,
+            auto_trade_interval_s=1.0,
+        )
+    )
+
+    assert report.decision is None
+    assert report.metadata == {}
+    exported = journal.export()
+    assert exported
+    assert {entry.get("event") for entry in exported} <= {
+        "schedule_transition",
+        "schedule_blocked",
+    }
+    assert emitter.events
+    assert {
+        stage
+        for _, event in emitter.events
+        if isinstance(event, Mapping)
+        for stage in (event.get("stage"),)
+        if stage
+    } <= {"schedule_transition", "schedule_blocked"}
 
 
 def test_e2e_suite_rejects_private_autotrader_fields() -> None:

@@ -11,7 +11,7 @@ from typing import TYPE_CHECKING, Protocol
 LOGGER = logging.getLogger(__name__)
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
-    from .app import AutoTrader, DecisionCycleReport
+    from .app import AutoTrader, DecisionCycleReport, DecisionCycleRequest
 
 
 class AutoTraderSchedulerHooks(Protocol):
@@ -41,6 +41,11 @@ class AutoTraderDecisionScheduler:
     _stop_event: asyncio.Event | None = field(init=False, default=None, repr=False)
     _thread: threading.Thread | None = field(init=False, default=None, repr=False)
     _thread_stop: threading.Event | None = field(init=False, default=None, repr=False)
+
+    def _build_request(self) -> "DecisionCycleRequest":
+        from bot_core.auto_trader.app import DecisionCycleRequest
+
+        return DecisionCycleRequest(auto_trade_interval_s=float(self.interval_s))
 
     async def start(self) -> None:
         """Start the scheduler inside an asyncio event loop."""
@@ -85,11 +90,10 @@ class AutoTraderDecisionScheduler:
                         break
                     retry_delay = 0.0
                 try:
-                    run_cycle = getattr(self.trader, "run_single_cycle", None)
-                    if callable(run_cycle):
-                        report = run_cycle()
-                    else:
-                        report = self.trader.run_cycle_once()
+                    run_cycle = getattr(self.trader, "run_cycle", None)
+                    if not callable(run_cycle):
+                        raise TypeError("AutoTrader.run_cycle is not callable")
+                    report = run_cycle(self._build_request())
                 except Exception as exc:  # pragma: no cover - defensive guard
                     LOGGER.exception("AutoTraderDecisionScheduler cycle failed")
                     retry_delay = self._handle_failure(exc, max_backoff=max_backoff)
@@ -160,9 +164,11 @@ class AutoTraderDecisionScheduler:
                     break
                 retry_delay = 0.0
             try:
-                run_cycle = getattr(self.trader, "run_single_cycle", None)
-                target = run_cycle if callable(run_cycle) else self.trader.run_cycle_once
-                report = await asyncio.to_thread(target)
+                run_cycle = getattr(self.trader, "run_cycle", None)
+                if not callable(run_cycle):
+                    raise TypeError("AutoTrader.run_cycle is not callable")
+                request = self._build_request()
+                report = await asyncio.to_thread(run_cycle, request)
             except Exception as exc:  # pragma: no cover - defensive guard
                 LOGGER.exception("AutoTraderDecisionScheduler async cycle failed")
                 retry_delay = self._handle_failure(exc, max_backoff=max_backoff)
