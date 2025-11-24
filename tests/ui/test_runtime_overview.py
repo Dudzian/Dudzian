@@ -1041,6 +1041,77 @@ def test_risk_journal_metrics_exporter_records_state(monkeypatch: pytest.MonkeyP
     assert payload.get("incomplete_samples") == 2
 
 
+def test_risk_journal_metrics_exporter_normalizes_snake_case() -> None:
+    require_pyside6()
+    service = RuntimeService(feed_alert_sink=None)
+
+    diagnostics = {"incomplete_entries": 3, "incomplete_samples": ["x", "y"]}
+    service._maybe_emit_risk_journal_alert(diagnostics)
+
+    exporter = service._risk_journal_metrics_exporter
+    registry = exporter._registry  # type: ignore[attr-defined]
+    assert (
+        registry.get("bot_ui_risk_journal_incomplete_entries_total").value(
+            labels={"channel": "risk_journal", "environment": "default"}
+        )
+        == 3.0
+    )
+    assert (
+        registry.get("bot_ui_risk_journal_incomplete_samples_total").value(
+            labels={"channel": "risk_journal", "environment": "default"}
+        )
+        == 2.0
+    )
+
+
+def test_risk_journal_metrics_exporter_accepts_numeric_samples() -> None:
+    require_pyside6()
+    registry = MetricsRegistry()
+    service = RuntimeService(feed_alert_sink=None)
+    service._risk_journal_metrics_exporter = RiskJournalMetricsExporter(
+        registry=registry
+    )
+
+    diagnostics = {"incomplete_entries": 1, "incomplete_samples": 5}
+    service._maybe_emit_risk_journal_alert(diagnostics)
+
+    assert (
+        registry.get("bot_ui_risk_journal_incomplete_entries_total").value(
+            labels={"channel": "risk_journal", "environment": "default"}
+        )
+        == 1.0
+    )
+    assert (
+        registry.get("bot_ui_risk_journal_incomplete_samples_total").value(
+            labels={"channel": "risk_journal", "environment": "default"}
+        )
+        == 5.0
+    )
+
+
+def test_risk_journal_metrics_exporter_prefers_explicit_sample_count() -> None:
+    require_pyside6()
+    registry = MetricsRegistry()
+    service = RuntimeService(feed_alert_sink=None)
+    service._risk_journal_metrics_exporter = RiskJournalMetricsExporter(
+        registry=registry
+    )
+
+    diagnostics = {
+        "incompleteEntries": 4,
+        "incompleteSamples": [{"timestamp": "t1", "event": "missing"}],
+        "incompleteSamplesCount": 4,
+    }
+    service._maybe_emit_risk_journal_alert(diagnostics)
+
+    assert (
+        registry.get("bot_ui_risk_journal_incomplete_samples_total").value(
+            labels={"channel": "risk_journal", "environment": "default"}
+        )
+        == 4.0
+    )
+
+
 @pytest.mark.timeout(30)
 def test_runtime_overview_strategy_ai_panel_tracks_transport() -> None:
     provider = _StubTelemetryProvider()
