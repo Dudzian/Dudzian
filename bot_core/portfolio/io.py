@@ -7,7 +7,10 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Mapping, Sequence
 
-import yaml
+try:  # Opcjonalna zależność
+    import yaml
+except ImportError:  # pragma: no cover - środowiska bez PyYAML
+    yaml = None  # type: ignore[assignment]
 
 from bot_core.market_intel import MarketIntelSnapshot
 from bot_core.observability.slo import SLOStatus
@@ -31,6 +34,11 @@ def load_json_or_yaml(path: Path) -> Any:
     try:
         return json.loads(text)
     except json.JSONDecodeError:
+        if yaml is None:
+            raise RuntimeError(
+                "PyYAML jest wymagany do wczytania plików YAML. "
+                "Zainstaluj pakiet: pip install pyyaml"
+            )
         return yaml.safe_load(text)
 
 

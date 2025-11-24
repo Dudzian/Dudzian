@@ -7,7 +7,10 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Iterable, Mapping, MutableMapping, Sequence
 
-import yaml
+try:  # PyYAML jest zależnością opcjonalną w środowisku runtime
+    import yaml
+except ModuleNotFoundError:  # pragma: no cover - zależne od środowiska
+    yaml = None  # type: ignore[assignment]
 
 CATALOG_FILENAME = "catalog.yaml"
 PRESETS_DIRNAME = "presets"
@@ -91,6 +94,10 @@ def _normalize_sequence(values: Iterable[str] | None) -> tuple[str, ...]:
 
 
 def _load_yaml(path: Path) -> Mapping[str, Any]:
+    if yaml is None:
+        raise RuntimeError(
+            "PyYAML is required to load Marketplace manifests. Install it with `pip install pyyaml`."
+        )
     try:
         raw = path.read_text(encoding="utf-8")
     except OSError as exc:

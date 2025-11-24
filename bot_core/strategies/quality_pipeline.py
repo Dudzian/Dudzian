@@ -7,7 +7,10 @@ import json
 from pathlib import Path
 from typing import Any, Mapping, MutableMapping, Sequence
 
-import yaml
+try:  # PyYAML może być niewgrane w środowiskach minimalnych
+    import yaml
+except ModuleNotFoundError:  # pragma: no cover - zależne od środowiska
+    yaml = None  # type: ignore[assignment]
 
 from .catalog import DEFAULT_STRATEGY_CATALOG, StrategyCatalog
 
@@ -77,6 +80,10 @@ class StrategyQualityPipeline:
             return ()
 
         for candidate in sorted(self._simulations_dir.glob("*.yaml")):
+            if yaml is None:
+                raise RuntimeError(
+                    "PyYAML is required to load strategy quality scenarios. Install it with `pip install pyyaml`."
+                )
             raw = yaml.safe_load(candidate.read_text(encoding="utf-8")) or {}
             for entry in raw.get("scenarios", []):
                 scenario = self._parse_scenario(entry, source_path=candidate)

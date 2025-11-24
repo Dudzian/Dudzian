@@ -12,7 +12,10 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Mapping, Optional, Sequence
 
-import yaml
+try:  # pragma: no cover - PyYAML może być opcjonalny w środowiskach light
+    import yaml
+except ModuleNotFoundError:
+    yaml = None  # type: ignore[assignment]
 
 from bot_core.config.models import (
     AIModelManagementConfig,
@@ -106,6 +109,15 @@ try:  # Stage6 asset-level konfiguracja governora
     from bot_core.config.models import PortfolioGovernorV6Config  # type: ignore
 except Exception:  # pragma: no cover - opcjonalne w starszych gałęziach
     PortfolioGovernorV6Config = None  # type: ignore
+
+
+def _require_yaml():
+    if yaml is None:
+        raise RuntimeError(
+            "PyYAML nie jest zainstalowany. Zainstaluj pakiet 'pyyaml' aby wczytać konfigurację."
+        )
+
+    return yaml
 
 
 _ALLOWED_ENSEMBLE_AGGREGATIONS = {"mean", "median", "max", "min", "weighted"}
@@ -3393,7 +3405,8 @@ def _load_observability_config(
                 )
                 slo_payload = {}
             else:
-                slo_payload = yaml.safe_load(raw_text) or {}
+                _yaml = _require_yaml()
+                slo_payload = _yaml.safe_load(raw_text) or {}
             if not isinstance(slo_payload, Mapping):
                 raise ValueError(
                     f"Plik definicji SLO {slo_path} musi zawierać mapę z wpisami"
@@ -4268,8 +4281,9 @@ def _load_portfolio_decision_log(
 def load_core_config(path: str | Path) -> CoreConfig:
     """Wczytuje plik YAML i mapuje go na dataclasses."""
     config_path = Path(path).expanduser()
+    _yaml = _require_yaml()
     with config_path.open("r", encoding="utf-8") as handle:
-        raw: dict[str, Any] = yaml.safe_load(handle) or {}
+        raw: dict[str, Any] = _yaml.safe_load(handle) or {}
 
     try:
         config_absolute_path = config_path.resolve(strict=False)
@@ -4641,8 +4655,9 @@ def load_runtime_app_config(path: str | Path) -> RuntimeAppConfig:
     """Wczytaj zunifikowaną konfigurację runtime z ``config/runtime.yaml``."""
 
     config_path = Path(path).expanduser()
+    _yaml = _require_yaml()
     with config_path.open("r", encoding="utf-8") as handle:
-        raw: dict[str, Any] = yaml.safe_load(handle) or {}
+        raw: dict[str, Any] = _yaml.safe_load(handle) or {}
 
     try:
         config_base_dir = config_path.resolve(strict=False).parent
@@ -5254,7 +5269,8 @@ def load_cloud_client_config(path: str | Path) -> CloudClientConfig:
     if not config_path.exists():
         raise FileNotFoundError(f"Nie znaleziono pliku konfiguracji client.yaml: {config_path}")
 
-    payload = yaml.safe_load(config_path.read_text(encoding="utf-8")) or {}
+    _yaml = _require_yaml()
+    payload = _yaml.safe_load(config_path.read_text(encoding="utf-8")) or {}
     if not isinstance(payload, Mapping):
         raise ValueError("client.yaml musi zawierać mapę klucz→wartość")
 
