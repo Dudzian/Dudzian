@@ -30,7 +30,6 @@ from bot_core.decision.orchestrator import DecisionOrchestrator
 from bot_core.config import load_core_config
 from bot_core.observability.ui_metrics import (
     FeedHealthMetricsExporter,
-    FeedHealthMetricsExporter,
     RiskJournalMetricsExporter,
     get_feed_health_metrics_exporter,
     get_risk_journal_metrics_exporter,
@@ -296,6 +295,49 @@ def _to_mapping(value: object) -> Mapping[str, object]:
     if isinstance(value, Mapping):
         return value
     return {}
+
+
+def _normalize_risk_journal_diagnostics(payload: Mapping[str, object]) -> dict[str, object]:
+    diagnostics = _to_mapping(payload)
+    entries_raw = diagnostics.get("incompleteEntries")
+    if entries_raw is None:
+        entries_raw = diagnostics.get("incomplete_entries")
+    try:
+        incomplete_entries = max(0, int(entries_raw or 0))
+    except (TypeError, ValueError):
+        incomplete_entries = 0
+
+    samples_raw = diagnostics.get("incompleteSamples")
+    if samples_raw is None:
+        samples_raw = diagnostics.get("incomplete_samples")
+
+    samples_count_raw = diagnostics.get("incompleteSamplesCount")
+    if samples_count_raw is None:
+        samples_count_raw = diagnostics.get("incomplete_samples_count")
+    try:
+        explicit_samples_count = max(0, int(samples_count_raw))
+    except (TypeError, ValueError):
+        explicit_samples_count = 0
+
+    samples: list[object] = []
+    samples_count = explicit_samples_count
+    if isinstance(samples_raw, (int, float)) and not isinstance(samples_raw, bool):
+        samples_count = max(samples_count, int(samples_raw))
+    elif isinstance(samples_raw, Mapping):
+        samples = [dict(samples_raw)]
+    elif isinstance(samples_raw, Iterable) and not isinstance(samples_raw, (str, bytes)):
+        samples = list(samples_raw)
+
+    if not samples_count:
+        samples_count = len(samples)
+    else:
+        samples_count = max(samples_count, len(samples))
+
+    return {
+        "incompleteEntries": incomplete_entries,
+        "incompleteSamples": samples,
+        "incompleteSamplesCount": samples_count,
+    }
 
 
 def _first_non_empty(*values: object) -> str:
@@ -623,13 +665,16 @@ def _build_risk_context(
         for item in timeline
         if item.get("isIncomplete")
     ][:5]
-    metrics["incompleteSamples"] = len(incomplete_samples)
+    incomplete_samples_count = len(incomplete_samples)
+    metrics["incompleteSamples"] = incomplete_samples_count
 
     diagnostics = {
         "incompleteEntries": incomplete_entries,
         "incompleteSamples": incomplete_samples,
+        "incompleteSamplesCount": incomplete_samples_count,
         "incomplete_entries": incomplete_entries,
         "incomplete_samples": incomplete_samples,
+        "incomplete_samples_count": incomplete_samples_count,
     }
 
     return metrics, timeline, diagnostics
@@ -1904,17 +1949,12 @@ class RuntimeService(QObject):
         return f"{int(round(value))}"
 
     def _maybe_emit_risk_journal_alert(self, diagnostics: Mapping[str, object]) -> None:
-        incomplete_entries = int(
-            diagnostics.get("incompleteEntries")
-            or diagnostics.get("incomplete_entries")
-            or 0
+        normalized_diagnostics = _normalize_risk_journal_diagnostics(diagnostics)
+        incomplete_entries = int(normalized_diagnostics.get("incompleteEntries", 0))
+        samples = normalized_diagnostics.get("incompleteSamples", [])
+        incomplete_samples_count = int(
+            normalized_diagnostics.get("incompleteSamplesCount", len(samples)) or 0
         )
-        samples = (
-            diagnostics.get("incompleteSamples")
-            or diagnostics.get("incomplete_samples")
-            or []
-        )
-        incomplete_samples_count = len(samples)
         severity = "warning" if incomplete_entries else "ok"
         previous = self._risk_journal_alert_state
         if severity == previous:

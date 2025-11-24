@@ -30,8 +30,7 @@ Item {
         return entries
     }
     readonly property var riskFlagHistogram: {
-        const metrics = root.metrics || {}
-        const counts = metrics.riskFlagCounts || {}
+        const counts = root.metricValue("riskFlagCounts", {})
         const entries = []
         for (const key in counts) {
             if (!Object.prototype.hasOwnProperty.call(counts, key))
@@ -46,8 +45,7 @@ Item {
         return entries
     }
     readonly property var stressFailureHistogram: {
-        const metrics = root.metrics || {}
-        const counts = metrics.stressFailureCounts || {}
+        const counts = root.metricValue("stressFailureCounts", {})
         const entries = []
         for (const key in counts) {
             if (!Object.prototype.hasOwnProperty.call(counts, key))
@@ -62,8 +60,7 @@ Item {
         return entries
     }
     readonly property var strategySummaries: {
-        const metrics = root.metrics || {}
-        const summaries = metrics.strategySummaries || []
+        const summaries = root.metricValue("strategySummaries", [])
         return Array.isArray(summaries) ? summaries : []
     }
     readonly property int strategyChipCount: strategyRepeater ? strategyRepeater.count : 0
@@ -86,9 +83,8 @@ Item {
 
     readonly property var availableRiskSignals: {
         const result = []
-        const metrics = root.metrics || {}
-        const riskFlags = metrics.uniqueRiskFlags || []
-        const stressFailures = metrics.uniqueStressFailures || []
+        const riskFlags = root.metricValue("uniqueRiskFlags", [])
+        const stressFailures = root.metricValue("uniqueStressFailures", [])
         const aggregate = riskFlags.concat(stressFailures)
         for (let i = 0; i < aggregate.length; ++i) {
             const item = aggregate[i]
@@ -118,7 +114,17 @@ Item {
         })
     }
 
-    readonly property bool hasIncompleteEntries: (root.metrics && root.metrics.incompleteEntries || 0) > 0
+    readonly property bool hasIncompleteEntries: (root.metricValue("incompleteEntries", 0) || 0) > 0
+
+    function metricValue(key, defaultValue) {
+        const metrics = root.metrics || {}
+        if (metrics[key] !== undefined)
+            return metrics[key]
+        const snakeKey = key.replace(/([a-z0-9])([A-Z])/g, "$1_$2").toLowerCase()
+        if (metrics[snakeKey] !== undefined)
+            return metrics[snakeKey]
+        return defaultValue
+    }
 
     signal freezeRequested(var entry)
     signal unfreezeRequested(var entry)
@@ -286,7 +292,7 @@ Item {
                     }
 
                     Label {
-                        text: String((root.metrics && root.metrics.blockCount) || 0)
+                        text: String(root.metricValue("blockCount", 0))
                         color: Styles.AppTheme.textPrimary
                         font.pointSize: Styles.AppTheme.fontSizeSubtitle
                         font.bold: true
@@ -312,7 +318,7 @@ Item {
                     }
 
                     Label {
-                        text: String((root.metrics && root.metrics.freezeCount) || 0)
+                        text: String(root.metricValue("freezeCount", 0))
                         color: Styles.AppTheme.textPrimary
                         font.pointSize: Styles.AppTheme.fontSizeSubtitle
                         font.bold: true
@@ -338,7 +344,7 @@ Item {
                     }
 
                     Label {
-                        text: String((root.metrics && root.metrics.stressOverrideCount) || 0)
+                        text: String(root.metricValue("stressOverrideCount", 0))
                         color: Styles.AppTheme.textPrimary
                         font.pointSize: Styles.AppTheme.fontSizeSubtitle
                         font.bold: true
@@ -353,16 +359,16 @@ Item {
 
                 Label {
                     text: qsTr("Ostatnie stress failures: %1").arg(
-                              (root.metrics && root.metrics.latestStressFailures && root.metrics.latestStressFailures.length)
-                              ? root.metrics.latestStressFailures.join(", ") : qsTr("brak"))
+                              (root.metricValue("latestStressFailures", []).length
+                              ? root.metricValue("latestStressFailures", []).join(", ") : qsTr("brak"))
                     color: Styles.AppTheme.textSecondary
                     font.pointSize: Styles.AppTheme.fontSizeCaption
                 }
 
                 Label {
                     text: qsTr("Zakres osi czasu: %1 – %2").arg(
-                              (root.metrics && root.metrics.timelineStart) || qsTr("n/d")).arg(
-                              (root.metrics && root.metrics.timelineEnd) || qsTr("n/d"))
+                              root.metricValue("timelineStart", qsTr("n/d"))).arg(
+                              root.metricValue("timelineEnd", qsTr("n/d")))
                     color: Styles.AppTheme.textSecondary
                     font.pointSize: Styles.AppTheme.fontSizeCaption
                 }
@@ -378,21 +384,21 @@ Item {
 
                 Label {
                     objectName: "riskJournalLastBlock"
-                    text: root.describeLastRiskEvent(qsTr("Ostatnia blokada"), root.metrics && root.metrics.lastBlock)
+                    text: root.describeLastRiskEvent(qsTr("Ostatnia blokada"), root.metricValue("lastBlock", null))
                     color: Styles.AppTheme.textSecondary
                     font.pointSize: Styles.AppTheme.fontSizeCaption
                 }
 
                 Label {
                     objectName: "riskJournalLastFreeze"
-                    text: root.describeLastRiskEvent(qsTr("Ostatnia blokada strategiczna"), root.metrics && root.metrics.lastFreeze)
+                    text: root.describeLastRiskEvent(qsTr("Ostatnia blokada strategiczna"), root.metricValue("lastFreeze", null))
                     color: Styles.AppTheme.textSecondary
                     font.pointSize: Styles.AppTheme.fontSizeCaption
                 }
 
                 Label {
                     objectName: "riskJournalLastOverride"
-                    text: root.describeLastRiskEvent(qsTr("Ostatni stress override"), root.metrics && root.metrics.lastStressOverride)
+                    text: root.describeLastRiskEvent(qsTr("Ostatni stress override"), root.metricValue("lastStressOverride", null))
                     color: Styles.AppTheme.textSecondary
                     font.pointSize: Styles.AppTheme.fontSizeCaption
                 }

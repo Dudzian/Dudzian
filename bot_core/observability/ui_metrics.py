@@ -178,6 +178,9 @@ def reset_feed_health_metrics_exporter() -> None:
         _FEED_HEALTH_METRICS_EXPORTER = None
 
 
+_RISK_JOURNAL_CHANNEL_LABEL = {"channel": "risk_journal"}
+
+
 class RiskJournalMetricsExporter:
     """Eksporter metryk kompletności Risk Journal do Prometheusa."""
 
@@ -198,6 +201,12 @@ class RiskJournalMetricsExporter:
             "Liczba przykładowych niekompletnych wpisów raportowanych w diagnostyce",
         )
 
+    def _build_labels(self, labels: Mapping[str, str] | None) -> dict[str, str]:
+        normalized = dict(_RISK_JOURNAL_CHANNEL_LABEL)
+        if labels:
+            normalized.update({str(k): str(v) for k, v in labels.items()})
+        return normalized
+
     def record(
         self,
         *,
@@ -206,9 +215,7 @@ class RiskJournalMetricsExporter:
         incomplete_samples: int,
         labels: Mapping[str, str] | None = None,
     ) -> None:
-        metric_labels = {"channel": "risk_journal"}
-        if labels:
-            metric_labels.update({str(k): str(v) for k, v in labels.items()})
+        metric_labels = self._build_labels(labels)
 
         value = self._STATE_TO_VALUE.get(state, 0.0)
         self._state.set(value, labels=metric_labels)
