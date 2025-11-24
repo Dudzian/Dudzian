@@ -57,10 +57,12 @@ class BotPysideApplication:
             profile=self._options.profile,
             default_qml=self._options.qml_path,
         )
+        qml_file = (self._options.qml_path or self._config.qml_entrypoint).resolve()
         engine = QQmlApplicationEngine()
         qml_paths = {
             Path(__file__).resolve().parent / "qml",
             Path(__file__).resolve().parent.parent / "qml",
+            qml_file.parent,
         }
         for import_path in qml_paths:
             engine.addImportPath(import_path.as_posix())
@@ -70,7 +72,6 @@ class BotPysideApplication:
             enable_cloud_runtime=self._options.enable_cloud_runtime,
         )
         bridge.install()
-        qml_file = self._options.qml_path or self._config.qml_entrypoint
         engine.load(QUrl.fromLocalFile(qml_file.as_posix()))
         if not engine.rootObjects():  # pragma: no cover - informacyjne
             raise RuntimeError(f"Nie udało się załadować QML z {qml_file}")

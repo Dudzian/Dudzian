@@ -527,6 +527,18 @@ def test_exporter_outputs(tmp_path, sample_trades: list[LedgerEntry]) -> None:
     assert "total_tax_liability" in csv_contents
 
 
+def test_exporter_resolves_default_schema_outside_repo_root(monkeypatch, tmp_path) -> None:
+    """Domyślny schemat musi być odnajdywany niezależnie od katalogu roboczego."""
+
+    monkeypatch.chdir(tmp_path)
+    exporter = TaxReportExporter()
+
+    schema = exporter._load_schema(None)
+
+    assert schema is not None
+    assert schema.get("title") == "TaxReport"
+
+
 def test_generator_deduplicates_overlapping_sources(sample_trades: list[LedgerEntry]) -> None:
     generator = TaxReportGenerator(config_path=CONFIG_PATH)
     generator.ingest_ledger_entries(sample_trades)

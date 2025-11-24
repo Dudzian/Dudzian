@@ -90,8 +90,13 @@ class CloudRuntimeService:
             )
             context.start()
             self._context = context
-            self._maybe_attach_license()
-            security_manager = self._ensure_security_manager()
+            try:
+                self._maybe_attach_license()
+                security_manager = self._ensure_security_manager()
+            except Exception:
+                context.stop()
+                self._context = None
+                raise
             interceptors: list[grpc.ServerInterceptor] = []
             if security_manager and security_manager.requires_handshake:
                 interceptors.append(CloudAuthInterceptor(security_manager))
@@ -185,6 +190,14 @@ class CloudRuntimeService:
         security_cfg = self._config.security
         if not security_cfg.allowed_clients:
             return None
+        if self._license_service is None and any(
+            entry.license_bundle_path is not None for entry in security_cfg.allowed_clients
+        ):
+            try:
+                self._license_service = LicenseService()
+            except LicenseServiceError as exc:
+                LOGGER.error("Nie udało się zainicjalizować LicenseService dla klientów cloud: %s", exc)
+                raise
         if self._security_manager is None:
             try:
                 self._security_manager = CloudSecurityManager(

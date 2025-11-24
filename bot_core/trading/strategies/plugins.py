@@ -595,6 +595,7 @@ class VolatilityTargetStrategy(StrategyPlugin):
 class ScalpingStrategy(StrategyPlugin):
     """Fast mean-reversion around short momentum for low-latency trading."""
 
+    engine_key = "scalping"
     name = "scalping"
     description = "MACD micro-divergence with stochastic confirmation."
     license_tier = "professional"
@@ -622,6 +623,7 @@ class ScalpingStrategy(StrategyPlugin):
 class OptionsIncomeStrategy(StrategyPlugin):
     """Simplified theta harvesting profile informed by volatility spreads."""
 
+    engine_key = "options_income"
     name = "options_income"
     description = "Harvests premium when implied volatility outruns realised."
     license_tier = "enterprise"
@@ -712,6 +714,7 @@ class TriangularArbitragePlugin(StrategyPlugin):
 class StatisticalArbitrageStrategy(StrategyPlugin):
     """Pairs-style mean reversion using MACD and Bollinger spreads."""
 
+    engine_key = "statistical_arbitrage"
     name = "statistical_arbitrage"
     description = "Pairs spreads using MACD z-score and Bollinger confirmation."
     license_tier = "professional"

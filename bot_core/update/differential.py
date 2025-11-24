@@ -15,7 +15,55 @@ from typing import Callable, Mapping, MutableMapping, TYPE_CHECKING
 
 from bot_core.security.hwid import HwIdProvider, HwIdProviderError
 from bot_core.security.signing import validate_hmac_signature
-from packaging.version import InvalidVersion, Version
+
+try:  # pragma: no cover - opcjonalna zależność
+    from packaging.version import InvalidVersion, Version
+except Exception:  # pragma: no cover - środowiska bez "packaging"
+    class InvalidVersion(ValueError):
+        """Minimalna zamiana wyjątku z ``packaging``."""
+
+
+    class Version:
+        """Lekki parser wersji pozwalający na porównania ``<``/``<=``.
+
+        Akceptuje ciągi z liter, cyfr, kropek, myślników i podkreśleń. W razie
+        niepoprawnego formatu zgłasza ``InvalidVersion`` podobnie jak
+        ``packaging.version``. Zaimplementowane porównania obsługują krotki
+        (int/str) powstałe po rozbiciu ciągu na separatory ``.`` i ``-``.
+        """
+
+        _VALID_RE = re.compile(r"^[0-9A-Za-z._-]+$")
+
+        def __init__(self, value: str) -> None:
+            if not isinstance(value, str) or not value.strip():
+                raise InvalidVersion("Version string cannot be empty")
+            value = value.strip()
+            if not self._VALID_RE.match(value):
+                raise InvalidVersion(f"Invalid characters in version: {value!r}")
+            self._value = value
+            self._parts = tuple(self._normalize(token) for token in re.split(r"[.-]", value))
+
+        @staticmethod
+        def _normalize(token: str) -> int | str:
+            return int(token) if token.isdigit() else token.lower()
+
+        def __lt__(self, other: object) -> bool:
+            if not isinstance(other, Version):
+                return NotImplemented
+            return self._parts < other._parts
+
+        def __le__(self, other: object) -> bool:
+            if not isinstance(other, Version):
+                return NotImplemented
+            return self._parts <= other._parts
+
+        def __eq__(self, other: object) -> bool:  # pragma: no cover - porównania pomocnicze
+            if not isinstance(other, Version):
+                return NotImplemented
+            return self._parts == other._parts
+
+        def __repr__(self) -> str:  # pragma: no cover - diagnostyka
+            return f"Version({self._value!r})"
 
 if TYPE_CHECKING:  # pragma: no cover - mypy-only imports
     from bot_core.security.update import LicenseValidationResult, UpdateVerificationResult

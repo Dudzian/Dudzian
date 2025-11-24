@@ -526,6 +526,118 @@ class RiskManagement:
             self.logger.error("Error calculating max position size: %s", exc)
             return 0.01
 
+    def _calculate_var(
+        self,
+        portfolio_data: Mapping[str, Mapping[str, Any]],
+        market_data: Mapping[str, pd.DataFrame],
+        confidence: float = 0.95,
+    ) -> float:
+        try:
+            if not portfolio_data:
+                return 0.0
+            portfolio_returns: List[float] = []
+            for symbol, position in portfolio_data.items():
+                md = market_data.get(symbol)
+                if isinstance(md, pd.DataFrame) and "close" in md:
+                    rets = md["close"].pct_change().dropna()
+                    if len(rets) > 10:
+                        sim = np.random.choice(rets, size=1000, replace=True)
+                        size = float(position.get("size", 0.0))
+                        portfolio_returns.extend(list(sim * size))
+            if not portfolio_returns:
+                return 0.0
+            percentile = (1.0 - confidence) * 100.0
+            var = np.percentile(portfolio_returns, percentile)
+            return float(abs(var))
+        except Exception as exc:  # pragma: no cover - log i fallback
+            self.logger.error("Error calculating VaR: %s", exc)
+            return 0.05
+
+    def _calculate_expected_shortfall(
+        self,
+        portfolio_data: Mapping[str, Mapping[str, Any]],
+        market_data: Mapping[str, pd.DataFrame],
+    ) -> float:
+        try:
+            var_95 = float(self._calculate_var(portfolio_data, market_data, 0.95))
+            es = float(min(var_95 * 1.3, 0.5))
+            return es
+        except Exception as exc:  # pragma: no cover - log i fallback
+            self.logger.error("Error calculating Expected Shortfall: %s", exc)
+            return 0.08
+
+    def _calculate_drawdown_risk(
+        self, portfolio_data: Mapping[str, Mapping[str, Any]]
+    ) -> float:
+        try:
+            if not self.portfolio_value_history or len(self.portfolio_value_history) < 10:
+                return 0.1
+            pv = np.array(self.portfolio_value_history, dtype=float)
+            peak = np.maximum.accumulate(pv)
+            dd = (peak - pv) / np.maximum(peak, 1e-9)
+            max_dd = float(np.max(dd))
+            return float(min(max_dd * 1.8, 0.5))
+        except Exception as exc:  # pragma: no cover - log i fallback
+            self.logger.error("Error calculating drawdown risk: %s", exc)
+            return 0.1
+
+    def _calculate_correlation_risk(
+        self,
+        portfolio_data: Mapping[str, Mapping[str, Any]],
+        market_data: Mapping[str, pd.DataFrame],
+    ) -> float:
+        try:
+            if len(portfolio_data) < 2:
+                return 0.0
+
+            returns_dict: Dict[str, pd.Series] = {}
+            for symbol, position in portfolio_data.items():
+                if symbol in self.historical_returns:
+                    returns_dict[symbol] = self.historical_returns[symbol]
+                    continue
+                md = market_data.get(symbol)
+                if isinstance(md, pd.DataFrame) and "close" in md:
+                    returns_dict[symbol] = md["close"].pct_change().dropna().tail(252)
+
+            if len(returns_dict) < 2:
+                return 0.0
+
+            corr_risk = self.correlation_analyzer.portfolio_correlation_risk(returns_dict)
+            if corr_risk > self.max_correlation_risk:
+                self._emit_alert(
+                    "Ryzyko korelacji przekracza dopuszczalny poziom",
+                    severity=AlertSeverity.WARNING,
+                    context={"correlation_risk": float(corr_risk)},
+                )
+            return float(corr_risk)
+        except Exception as exc:  # pragma: no cover - log i fallback
+            self.logger.error("Error calculating correlation risk: %s", exc)
+            return 0.5
+
+    def _calculate_liquidity_risk(
+        self,
+        portfolio_data: Mapping[str, Mapping[str, Any]],
+        market_data: Mapping[str, pd.DataFrame],
+    ) -> float:
+        try:
+            liquidity_scores: List[float] = []
+            for symbol, position in portfolio_data.items():
+                md = market_data.get(symbol)
+                if not isinstance(md, pd.DataFrame) or "volume" not in md:
+                    liquidity_scores.append(0.3)
+                    continue
+                avg_volume = float(md["volume"].tail(30).mean())
+                size = float(position.get("size", 0.0))
+                if avg_volume <= 0:
+                    liquidity_scores.append(0.8)
+                    continue
+                volume_impact = size / max(avg_volume, 1e-9)
+                liquidity_scores.append(min(1.0, volume_impact))
+            return float(np.mean(liquidity_scores)) if liquidity_scores else 0.0
+        except Exception as exc:  # pragma: no cover - log i fallback
+            self.logger.error("Error calculating liquidity risk: %s", exc)
+            return 0.3
+
     # ------------------------------------------------------------------
     # Metryki ryzyka
     # ------------------------------------------------------------------
@@ -649,8 +761,18 @@ class MultiAccountRiskManager:
         aggregated_portfolio: Dict[str, Dict[str, float]] = {}
 
         for exposure in exposures:
+            portfolio_data: Mapping[str, Mapping[str, Any]]
+            if isinstance(exposure.portfolio, Mapping):
+                portfolio_data = exposure.portfolio
+            else:
+                self.logger.warning(
+                    "Brak lub niepoprawne portfolio dla konta %s, używam pustego.",
+                    exposure.account_id,
+                )
+                portfolio_data = {}
+
             manager = self._ensure_manager(exposure.account_id, exposure.params)
-            metrics = manager.calculate_risk_metrics(exposure.portfolio, market_data)
+            metrics = manager.calculate_risk_metrics(portfolio_data, market_data)
             dynamic_limit = float(
                 min(
                     manager.max_portfolio_risk,
@@ -660,14 +782,25 @@ class MultiAccountRiskManager:
             account_reports.append(
                 AccountRiskReport(
                     account_id=exposure.account_id,
-                    equity=float(exposure.equity),
+                    equity=float(exposure.equity or 0.0),
                     metrics=metrics,
                     dynamic_limit=dynamic_limit,
                 )
             )
 
-            for symbol, position in exposure.portfolio.items():
-                container = aggregated_portfolio.setdefault(symbol, {"size": 0.0, "notional": 0.0})
+            for symbol, position in portfolio_data.items():
+                if not isinstance(position, Mapping):
+                    self.logger.debug(
+                        "Ignoruję pozycję %s dla konta %s – niepoprawny typ: %s",
+                        symbol,
+                        exposure.account_id,
+                        type(position).__name__,
+                    )
+                    continue
+
+                container = aggregated_portfolio.setdefault(
+                    symbol, {"size": 0.0, "notional": 0.0}
+                )
                 size = float(position.get("size") or position.get("quantity") or 0.0)
                 price = float(position.get("price") or position.get("last_price") or 0.0)
                 notional = float(position.get("notional") or size * price)
