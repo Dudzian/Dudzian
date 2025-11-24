@@ -15,7 +15,10 @@ from cryptography.hazmat.primitives.asymmetric import ed25519
 from bot_core.config.models import RuntimeCloudSignedFlagConfig
 from bot_core.security.fingerprint import decode_secret
 from bot_core.security.signing import canonical_json_bytes, verify_hmac_signature
-import yaml
+try:  # pragma: no cover - PyYAML może nie być dostępny w dystrybucjach light
+    import yaml
+except ModuleNotFoundError:  # pragma: no cover
+    yaml = None  # type: ignore[assignment]
 
 
 class CloudFlagValidationError(RuntimeError):
@@ -155,9 +158,20 @@ def validate_runtime_cloud_flag(config_path: str | Path) -> Mapping[str, Any]:
     return validate_signed_cloud_flag(signed_config)
 
 
+def _require_yaml() -> None:
+    """Zapewnia obecność PyYAML zanim zparsujemy runtime.yaml."""
+
+    if yaml is None:
+        raise RuntimeError(
+            "Do walidacji podpisanej flagi cloud wymagany jest pakiet PyYAML;"
+            " zainstaluj go poleceniem `pip install pyyaml`."
+        )
+
+
 def _load_runtime_signed_flag_config(config_path: Path) -> RuntimeCloudSignedFlagConfig:
     if not config_path.exists():
         raise CloudFlagValidationError(f"Plik konfiguracji runtime nie istnieje: {config_path}")
+    _require_yaml()
     try:
         payload = yaml.safe_load(config_path.read_text(encoding="utf-8")) or {}
     except yaml.YAMLError as exc:  # pragma: no cover - diagnostyka YAML

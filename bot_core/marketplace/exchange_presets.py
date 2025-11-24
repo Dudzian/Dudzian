@@ -9,7 +9,10 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Iterable, Mapping, MutableMapping, Sequence
 
-import yaml
+try:  # opcjonalna zależność
+    import yaml
+except ImportError:  # pragma: no cover - środowiska bez PyYAML
+    yaml = None  # type: ignore[assignment]
 from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric import ed25519
 
@@ -21,6 +24,15 @@ from bot_core.marketplace.presets import (
 )
 
 LOGGER = logging.getLogger(__name__)
+
+
+def _require_yaml():
+    if yaml is None:
+        raise RuntimeError(
+            "PyYAML nie jest zainstalowany. Zainstaluj pakiet 'pyyaml' aby wczytać pliki giełdowe."
+        )
+
+    return yaml
 
 
 @dataclass(slots=True)
@@ -62,13 +74,14 @@ class ExchangePresetValidationResult:
 
 
 def _load_exchange_file(path: Path) -> Mapping[str, object]:
+    _yaml = _require_yaml()
     try:
         raw = path.read_text(encoding="utf-8")
     except OSError as exc:
         raise RuntimeError(f"Nie udało się odczytać pliku giełdy {path}: {exc}") from exc
     try:
-        data = yaml.safe_load(raw)
-    except yaml.YAMLError as exc:
+        data = _yaml.safe_load(raw)
+    except _yaml.YAMLError as exc:  # type: ignore[attr-defined]
         raise RuntimeError(f"Plik giełdy {path} zawiera niepoprawny YAML: {exc}") from exc
     if not isinstance(data, Mapping):
         raise RuntimeError(f"Plik giełdy {path} musi być słownikiem.")

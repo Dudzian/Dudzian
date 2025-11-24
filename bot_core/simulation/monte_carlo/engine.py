@@ -1,6 +1,6 @@
-"""Silnik symulacji Monte Carlo dla strategii inwestycyjnych."""
-
 from __future__ import annotations
+
+"""Silnik symulacji Monte Carlo dla strategii inwestycyjnych."""
 
 import logging
 from dataclasses import dataclass

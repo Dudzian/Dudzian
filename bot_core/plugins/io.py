@@ -5,9 +5,21 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-import yaml
+try:  # opcjonalna zależność
+    import yaml
+except ImportError:  # pragma: no cover - środowiska bez PyYAML
+    yaml = None  # type: ignore[assignment]
 
 from .manifest import SignedStrategyPlugin, StrategyPluginManifest
+
+
+def _require_yaml():
+    if yaml is None:
+        raise RuntimeError(
+            "PyYAML nie jest zainstalowany. Zainstaluj pakiet 'pyyaml' aby obsługiwać manifesty YAML."
+        )
+
+    return yaml
 
 
 def load_manifest(path: str | Path) -> StrategyPluginManifest:
@@ -15,7 +27,8 @@ def load_manifest(path: str | Path) -> StrategyPluginManifest:
 
     data = _read_file(path)
     if path_as_path(path).suffix.lower() in {".yaml", ".yml"}:
-        payload = yaml.safe_load(data) or {}
+        _yaml = _require_yaml()
+        payload = _yaml.safe_load(data) or {}
     else:
         payload = json.loads(data)
     if not isinstance(payload, dict):
@@ -26,8 +39,11 @@ def load_manifest(path: str | Path) -> StrategyPluginManifest:
 def dump_manifest(manifest: StrategyPluginManifest, path: str | Path) -> None:
     destination = path_as_path(path)
     if destination.suffix.lower() in {".yaml", ".yml"}:
+        _yaml = _require_yaml()
         payload = manifest.to_dict()
-        destination.write_text(yaml.safe_dump(payload, sort_keys=False, allow_unicode=True), encoding="utf-8")
+        destination.write_text(
+            _yaml.safe_dump(payload, sort_keys=False, allow_unicode=True), encoding="utf-8"
+        )
     else:
         destination.write_text(manifest.to_json(), encoding="utf-8")
 

@@ -9,7 +9,10 @@ from typing import Callable, Mapping, MutableMapping, Sequence
 
 import math
 
-import yaml
+try:  # pragma: no cover - PyYAML opcjonalne w środowiskach minimalnych
+    import yaml
+except Exception:  # pragma: no cover - zapewnia łagodne zachowanie bez zależności
+    yaml = None  # type: ignore[assignment]
 
 from bot_core.ai.inference import DecisionModelInference
 from bot_core.alerts import AlertSeverity
@@ -68,6 +71,11 @@ def _resolve_config_path(path: str | Path | None) -> Path:
 
 def load_sandbox_config(path: str | Path | None = None) -> SandboxScenarioConfig:
     """Ładuje konfigurację sandboxa AI z pliku YAML."""
+
+    if yaml is None:
+        raise RuntimeError(
+            "PyYAML is required to load sandbox configuration (pip install pyyaml)"
+        )
 
     config_path = _resolve_config_path(path)
     with config_path.open("r", encoding="utf-8") as handle:

@@ -7,7 +7,11 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Mapping, Sequence
 
-import yaml
+# PyYAML jest opcjonalny w środowiskach bez trybu cloud
+try:  # pragma: no cover - zależność środowiskowa
+    import yaml
+except ModuleNotFoundError:  # pragma: no cover - brak PyYAML
+    yaml = None
 
 from bot_core.security.fingerprint import decode_secret
 
@@ -151,6 +155,11 @@ def _parse_allowed_clients(entries: Sequence[Any], base: Path) -> tuple[CloudAll
 
 def load_cloud_server_config(path: str | Path) -> CloudServerConfig:
     """Ładuje konfigurację cloud z pliku YAML."""
+
+    if yaml is None:
+        raise CloudConfigError(
+            "PyYAML nie jest zainstalowany. Zainstaluj pakiet 'pyyaml' aby wczytać konfigurację cloud."
+        )
 
     config_path = Path(path).expanduser().resolve()
     if not config_path.exists():

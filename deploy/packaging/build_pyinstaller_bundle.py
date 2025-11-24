@@ -24,7 +24,10 @@ from urllib import parse as urlparse
 from urllib import request as urlrequest
 
 import tomllib
-import yaml
+try:  # pragma: no cover - optional dependency
+    import yaml
+except Exception:  # pragma: no cover - optional dependency
+    yaml = None
 
 
 def _ensure_mutable_mapping(value: object, *, context: str) -> dict[str, object]:
@@ -37,6 +40,17 @@ def _ensure_mutable_mapping(value: object, *, context: str) -> dict[str, object]
     raise SystemExit(
         f"Pole metadanych {context} musi być obiektem JSON (mapą), otrzymano {type(value).__name__}"
     )
+
+
+def _require_yaml(context: str) -> "yaml":
+    """Return the PyYAML module or raise a user-facing error when unavailable."""
+
+    if yaml is None:
+        raise RuntimeError(
+            "PyYAML is required to load metadata from YAML files. Install it with `pip install pyyaml` "
+            f"before użyciem opcji {context}."
+        )
+    return yaml
 
 
 def _apply_metadata_entry(metadata: dict[str, object], key: str, value: object) -> None:
@@ -1131,13 +1145,15 @@ def _load_metadata_from_yaml(paths: Iterable[str] | None) -> dict[str, object]:
     if not paths:
         return metadata
 
+    yaml_module = _require_yaml("--metadata-yaml")
+
     for raw_path in paths:
         path = Path(raw_path).expanduser().resolve()
         if not path.exists():
             raise SystemExit(f"Plik YAML z metadanymi nie istnieje: {path}")
         try:
-            payload = yaml.safe_load(path.read_text(encoding="utf-8"))
-        except yaml.YAMLError as exc:  # pragma: no cover - trudne do uzyskania w testach
+            payload = yaml_module.safe_load(path.read_text(encoding="utf-8"))
+        except yaml_module.YAMLError as exc:  # pragma: no cover - trudne do uzyskania w testach
             raise SystemExit(f"Plik YAML {path} zawiera niepoprawną składnię: {exc}") from exc
         if payload is None:
             continue

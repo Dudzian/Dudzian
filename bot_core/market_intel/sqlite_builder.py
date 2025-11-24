@@ -6,6 +6,7 @@ import hashlib
 import json
 import logging
 import sqlite3
+import logging
 from dataclasses import dataclass
 from pathlib import Path
 from statistics import pstdev
