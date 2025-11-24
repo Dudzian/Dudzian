@@ -459,6 +459,31 @@ class DecisionCycleRequest:
     schedule_state: "ScheduleState | None" = None
     auto_trade_interval_s: float | None = None
 
+    def __post_init__(self) -> None:
+        if self.execution_context is not None and not isinstance(
+            self.execution_context, ExecutionContext
+        ):
+            raise TypeError(
+                "execution_context musi być instancją ExecutionContext lub None"
+            )
+        if self.schedule_state is not None:
+            from bot_core.auto_trader.schedule import ScheduleState
+
+            if not isinstance(self.schedule_state, ScheduleState):
+                raise TypeError(
+                    "schedule_state musi być instancją ScheduleState lub None"
+                )
+        if self.auto_trade_interval_s is not None:
+            try:
+                normalized = float(self.auto_trade_interval_s)
+            except (TypeError, ValueError) as exc:
+                raise TypeError(
+                    "auto_trade_interval_s musi być liczbą lub None"
+                ) from exc
+            if normalized < 0:
+                raise ValueError("auto_trade_interval_s nie może być ujemne")
+            object.__setattr__(self, "auto_trade_interval_s", normalized)
+
 
 @dataclass(slots=True)
 class DecisionCycleReport:
@@ -9643,7 +9668,12 @@ class AutoTrader:
     def run_cycle(self, request: DecisionCycleRequest | None = None) -> DecisionCycleReport:
         """Wykonuje cykl decyzyjny korzystając z publicznego kontraktu."""
 
-        normalized = request or DecisionCycleRequest()
+        if request is None:
+            normalized = DecisionCycleRequest()
+        elif not isinstance(request, DecisionCycleRequest):
+            raise TypeError("run_cycle wymaga instancji DecisionCycleRequest")
+        else:
+            normalized = request
         return self.run_decision_cycle(
             execution_context=normalized.execution_context,
             schedule_state=normalized.schedule_state,
@@ -9714,6 +9744,8 @@ class AutoTrader:
         """
 
         if request is not None:
+            if not isinstance(request, DecisionCycleRequest):
+                raise TypeError("run_single_cycle wymaga instancji DecisionCycleRequest")
             request = replace(
                 request,
                 execution_context=execution_context or request.execution_context,
@@ -9747,6 +9779,26 @@ class AutoTrader:
             schedule_state=schedule_state,
             auto_trade_interval_s=auto_trade_interval_s,
         )
+
+    def get_cycle_metrics(self) -> Mapping[str, float]:
+        """Expose snapshot of decision metrics using the public contract."""
+
+        try:
+            labels = dict(self.metric_labels)
+        except Exception:  # pragma: no cover - defensive guard
+            labels = {}
+        try:
+            metrics = self._snapshot_decision_metrics(labels)
+        except Exception:  # pragma: no cover - diagnostyka metryk
+            LOGGER.debug("Nie udało się odczytać metryk cyklu", exc_info=True)
+            return {}
+        normalized: dict[str, float] = {}
+        for key, value in metrics.items():
+            try:
+                normalized[str(key)] = float(value)
+            except (TypeError, ValueError):
+                continue
+        return normalized
 
     def run_forever(
         self,

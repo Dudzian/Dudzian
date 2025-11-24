@@ -1521,18 +1521,13 @@ class _RuntimeServicer(trading_pb2_grpc.RuntimeServiceServicer):
         if auto_trader is None:
             return {}
 
-        snapshot_fn = getattr(auto_trader, "_snapshot_decision_metrics", None)
-        labels_source = getattr(auto_trader, "metric_labels", None)
-        base_labels = labels_source if isinstance(labels_source, Mapping) else None
-        if base_labels is None:
-            base_labels = getattr(auto_trader, "_base_metric_labels", None)
-        if callable(snapshot_fn) and isinstance(base_labels, Mapping):
+        public_metrics = getattr(auto_trader, "get_cycle_metrics", None)
+        if callable(public_metrics):
             try:
-                metrics = snapshot_fn(dict(base_labels))
+                normalized = self._normalize_cycle_metrics(public_metrics())
             except Exception:  # pragma: no cover - diagnostyka metryk cyklu
                 _LOGGER.debug("Nie udało się uzyskać metryk cyklu z AutoTradera", exc_info=True)
             else:
-                normalized = self._normalize_cycle_metrics(metrics if isinstance(metrics, Mapping) else None)
                 if normalized:
                     return normalized
 
