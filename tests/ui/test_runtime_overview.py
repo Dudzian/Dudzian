@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 from datetime import datetime, timezone
 import base64
 from pathlib import Path
@@ -1039,6 +1040,7 @@ def test_risk_journal_metrics_exporter_records_state(monkeypatch: pytest.MonkeyP
     assert payload.get("incomplete_entries") == 2
     assert payload.get("incompleteSamples") == 2
     assert payload.get("incomplete_samples") == 2
+    assert payload.get("riskFlagCounts") == {}
 
 
 def test_risk_journal_metrics_exporter_normalizes_snake_case() -> None:
@@ -1059,6 +1061,43 @@ def test_risk_journal_metrics_exporter_normalizes_snake_case() -> None:
     assert (
         registry.get("bot_ui_risk_journal_incomplete_samples_total").value(
             labels={"channel": "risk_journal", "environment": "default"}
+        )
+        == 2.0
+    )
+
+
+def test_risk_journal_metrics_exporter_tracks_risk_flag_counts() -> None:
+    require_pyside6()
+    registry = MetricsRegistry()
+    service = RuntimeService(feed_alert_sink=None)
+    service._risk_journal_metrics_exporter = RiskJournalMetricsExporter(
+        registry=registry
+    )
+
+    diagnostics = {
+        "incompleteEntries": 1,
+        "incompleteSamples": [],
+        "riskFlagCounts": {"missing_action": 3, "stress_override": 2},
+    }
+    service._maybe_emit_risk_journal_alert(diagnostics)
+
+    assert (
+        registry.get("bot_ui_risk_journal_risk_flag_entries_total").value(
+            labels={
+                "channel": "risk_journal",
+                "environment": "default",
+                "riskFlag": "missing_action",
+            }
+        )
+        == 3.0
+    )
+    assert (
+        registry.get("bot_ui_risk_journal_risk_flag_entries_total").value(
+            labels={
+                "channel": "risk_journal",
+                "environment": "default",
+                "riskFlag": "stress_override",
+            }
         )
         == 2.0
     )

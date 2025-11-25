@@ -179,6 +179,7 @@ def reset_feed_health_metrics_exporter() -> None:
 
 
 _RISK_JOURNAL_CHANNEL_LABEL = {"channel": "risk_journal"}
+_RISK_JOURNAL_RISK_FLAG_LABEL = "riskFlag"
 
 
 class RiskJournalMetricsExporter:
@@ -186,11 +187,36 @@ class RiskJournalMetricsExporter:
 
     _STATE_TO_VALUE = {"ok": 0.0, "warning": 1.0, "critical": 2.0}
 
+    _METADATA = {
+        "state": {
+            "metric": "bot_ui_risk_journal_state",
+            "labels": ("channel", "environment"),
+        },
+        "incompleteEntries": {
+            "metric": "bot_ui_risk_journal_incomplete_entries_total",
+            "labels": ("channel", "environment"),
+        },
+        "incompleteSamples": {
+            "metric": "bot_ui_risk_journal_incomplete_samples_total",
+            "labels": ("channel", "environment"),
+        },
+        "riskFlagCounts": {
+            "metric": "bot_ui_risk_journal_risk_flag_entries_total",
+            "labels": ("channel", "environment", _RISK_JOURNAL_RISK_FLAG_LABEL),
+        },
+    }
+
     def __init__(self, *, registry: MetricsRegistry | None = None) -> None:
         self._registry = registry or get_global_metrics_registry()
+        self._risk_flag_series: dict[tuple[tuple[str, str], ...], set[str]] = {}
+        self._lock = threading.Lock()
         self._state = self._registry.gauge(
             "bot_ui_risk_journal_state",
             "Stan kompletności Risk Journal (0=ok,1=warning,2=critical)",
+        )
+        self._risk_flag_counts = self._registry.gauge(
+            "bot_ui_risk_journal_risk_flag_entries_total",
+            "Liczba wpisów z danym oznaczeniem ryzyka (riskFlag)",
         )
         self._incomplete_entries = self._registry.gauge(
             "bot_ui_risk_journal_incomplete_entries_total",
@@ -213,6 +239,7 @@ class RiskJournalMetricsExporter:
         state: str,
         incomplete_entries: int,
         incomplete_samples: int,
+        risk_flag_counts: Mapping[str, int] | None = None,
         labels: Mapping[str, str] | None = None,
     ) -> None:
         metric_labels = self._build_labels(labels)
@@ -225,6 +252,44 @@ class RiskJournalMetricsExporter:
         self._incomplete_samples.set(
             float(max(0, incomplete_samples)), labels=metric_labels
         )
+
+        with self._lock:
+            active_flags: set[str] = set()
+            if risk_flag_counts:
+                for risk_flag, count in risk_flag_counts.items():
+                    if not isinstance(risk_flag, str) or not risk_flag.strip():
+                        continue
+                    normalized_flag = risk_flag.strip()
+                    metric_risk_labels = dict(metric_labels)
+                    metric_risk_labels[_RISK_JOURNAL_RISK_FLAG_LABEL] = normalized_flag
+                    try:
+                        numeric_count = float(max(0, int(count)))
+                    except (TypeError, ValueError):
+                        continue
+                    active_flags.add(normalized_flag)
+                    self._risk_flag_counts.set(
+                        numeric_count, labels=metric_risk_labels
+                    )
+
+            self._clear_missing_risk_flags(metric_labels, active_flags)
+
+    def _clear_missing_risk_flags(
+        self, metric_labels: Mapping[str, str], active_flags: set[str]
+    ) -> None:
+        label_key = tuple(sorted(metric_labels.items()))
+        previous_flags = self._risk_flag_series.get(label_key, set())
+        missing_flags = previous_flags - active_flags
+        if missing_flags:
+            for missing_flag in missing_flags:
+                metric_risk_labels = dict(metric_labels)
+                metric_risk_labels[_RISK_JOURNAL_RISK_FLAG_LABEL] = missing_flag
+                self._risk_flag_counts.set(0.0, labels=metric_risk_labels)
+        self._risk_flag_series[label_key] = set(active_flags)
+
+    def metadata(self) -> dict[str, dict[str, object]]:
+        """Zwraca mapę kluczy QML na metryki Prometheusa i etykiety."""
+
+        return dict(self._METADATA)
 
 
 _RISK_JOURNAL_METRICS_LOCK = threading.Lock()

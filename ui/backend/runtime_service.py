@@ -346,10 +346,22 @@ def _normalize_risk_journal_diagnostics(payload: Mapping[str, object]) -> dict[s
     else:
         samples_count = max(samples_count, len(samples))
 
+    risk_flag_counts_raw = diagnostics.get("riskFlagCounts")
+    if risk_flag_counts_raw is None:
+        risk_flag_counts_raw = diagnostics.get("risk_flag_counts")
+    risk_flag_counts: dict[str, int] = {}
+    if isinstance(risk_flag_counts_raw, Mapping):
+        for key, value in risk_flag_counts_raw.items():
+            try:
+                risk_flag_counts[str(key)] = max(0, int(value))
+            except (TypeError, ValueError):
+                continue
+
     return {
         "incompleteEntries": incomplete_entries,
         "incompleteSamples": samples,
         "incompleteSamplesCount": samples_count,
+        "riskFlagCounts": risk_flag_counts,
     }
 
 
@@ -688,6 +700,8 @@ def _build_risk_context(
         "incomplete_entries": incomplete_entries,
         "incomplete_samples": incomplete_samples,
         "incomplete_samples_count": incomplete_samples_count,
+        "riskFlagCounts": dict(risk_flag_counter),
+        "risk_flag_counts": dict(risk_flag_counter),
     }
 
     return metrics, timeline, diagnostics
@@ -1968,6 +1982,9 @@ class RuntimeService(QObject):
         incomplete_samples_count = int(
             normalized_diagnostics.get("incompleteSamplesCount", len(samples)) or 0
         )
+        risk_flag_counts = _to_mapping(
+            normalized_diagnostics.get("riskFlagCounts", {})
+        )
         severity = "warning" if incomplete_entries else "ok"
         previous = self._risk_journal_alert_state
         if severity == previous:
@@ -1990,6 +2007,7 @@ class RuntimeService(QObject):
             state=severity,
             incomplete_entries=incomplete_entries,
             incomplete_samples=incomplete_samples_count,
+            risk_flag_counts=risk_flag_counts,
             labels={"environment": environment},
         )
 
@@ -2014,6 +2032,7 @@ class RuntimeService(QObject):
                 "incompleteEntries": incomplete_entries,
                 "incomplete_samples": incomplete_samples_count,
                 "incompleteSamples": incomplete_samples_count,
+                "riskFlagCounts": dict(risk_flag_counts),
                 "samples": samples,
             },
         )
