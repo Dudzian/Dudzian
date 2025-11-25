@@ -79,6 +79,30 @@
         },
         "overrides": []
       }
+    },
+    {
+      "id": 3,
+      "type": "timeSeries",
+      "title": "Wpisy wg flagi ryzyka",
+      "datasource": "Prometheus",
+      "targets": [
+        {
+          "expr": "sum by(environment, riskFlag) (bot_ui_risk_journal_risk_flag_entries_total{environment=~\"$environment\"})",
+          "legendFormat": "{{environment}}/{{riskFlag}}"
+        }
+      ],
+      "options": {
+        "legend": {"displayMode": "table", "placement": "bottom"},
+        "tooltip": {"mode": "single", "sort": "none"}
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "decimals": 0,
+          "color": {"mode": "palette-classic"}
+        },
+        "overrides": []
+      }
     }
   ]
 }
