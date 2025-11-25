@@ -204,6 +204,44 @@ def test_futures_simulator_records_validation_journal_flags():
     assert fill_validations or flags
 
 
+def test_validate_cost_parameters_shared_logic():
+    severity, flags, message = PaperFuturesSimulator.validate_cost_parameters(
+        fee_rate=0.02, slippage_bps=320.0, context="unit"
+    )
+
+    assert severity == "warning"
+    assert {"fee_rate_high", "slippage_high"} <= set(flags)
+    assert "unit" in message
+
+    with pytest.raises(ValueError):
+        PaperFuturesSimulator.validate_cost_parameters(
+            fee_rate=-0.1, slippage_bps=0.0, context="unit"
+        )
+
+
+def test_futures_simulator_propagates_risk_journal_flags_during_fill():
+    journal = _RecordingJournal()
+    simulator = PaperFuturesSimulator(
+        _DummyFeed(21_000.0),
+        database=_DummyDB(),
+        funding_rate=0.0,
+        slippage_bps=300.0,
+        fee_rate=0.011,
+        risk_journal=journal,
+    )
+    simulator.load_markets()
+    simulator.create_order("BTC/USDT", OrderSide.BUY, OrderType.MARKET, 0.2)
+
+    cost_events = [
+        event
+        for event in journal.events
+        if getattr(event, "event_type", "") == "simulator_trade_costs"
+    ]
+    assert cost_events
+    assert any("slippage_high" in getattr(event, "metadata", {}).get("risk_flags", []) for event in cost_events)
+    assert any("fee_rate_high" in getattr(event, "metadata", {}).get("risk_flags", []) for event in cost_events)
+
+
 def test_simulator_describe_configuration_reports_runtime_values():
     simulator = _make_margin_simulator(
         leverage_limit=7.0,

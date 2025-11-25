@@ -8,6 +8,7 @@ import pytest
 import yaml
 
 from bot_core.exchanges import manager as manager_module
+from bot_core.exchanges.core import OrderSide, OrderType
 from bot_core.exchanges.manager import ExchangeManager, Mode
 
 
@@ -99,6 +100,21 @@ class _StubDatabaseManager:
     def init_db(self) -> None:  # pragma: no cover - brak logiki
         return None
 
+    def record_order(self, payload):
+        return 1
+
+    def update_order_status(self, order_id: int, status: str) -> None:  # pragma: no cover - helper
+        return None
+
+    def record_trade(self, payload) -> None:  # pragma: no cover - helper
+        return None
+
+    def upsert_position(self, payload) -> None:  # pragma: no cover - helper
+        return None
+
+    def log_equity(self, payload) -> None:  # pragma: no cover - helper
+        return None
+
 
 class _StubPaperBackend:
     def __init__(self, *args: Any, **kwargs: Any) -> None:
@@ -112,6 +128,14 @@ class _StubPaperBackend:
         if self.price_feed_backend and hasattr(self.price_feed_backend, "load_markets"):
             return self.price_feed_backend.load_markets()
         return {}
+
+
+class _RecordingJournal:
+    def __init__(self) -> None:
+        self.events: list[object] = []
+
+    def record(self, event) -> None:  # type: ignore[override]
+        self.events.append(event)
 
 
 @pytest.mark.parametrize("config_path", sorted(Path("config/exchanges").glob("*.yaml")))
@@ -155,3 +179,21 @@ def test_exchange_profiles_spawn_backends(config_path: Path, monkeypatch: pytest
     paper_backend = paper_manager._ensure_paper()  # pylint: disable=protected-access
     assert isinstance(paper_backend, _StubPaperBackend)
     assert paper_backend.loaded is True
+
+
+def test_paper_futures_simulator_records_risk_journal(monkeypatch: pytest.MonkeyPatch) -> None:
+    stub_ccxt = _StubCCXTModule()
+    monkeypatch.setattr(manager_module, "ccxt", stub_ccxt)
+    monkeypatch.setattr(manager_module, "DatabaseManager", _StubDatabaseManager)
+
+    journal = _RecordingJournal()
+    manager_module._EXCHANGE_PROFILE_CACHE.clear()
+    manager = ExchangeManager("deribit")
+    manager.set_risk_journal(journal)
+    manager.apply_environment_profile("paper", config_dir=Path("config/exchanges"))
+
+    manager.load_markets()
+    manager.create_order("BTC/USDT", OrderSide.BUY, OrderType.MARKET, 0.01)
+
+    assert any(getattr(event, "event_type", "") == "simulator_cost_validation" for event in journal.events)
+    assert any(getattr(event, "event_type", "") == "simulator_trade_costs" for event in journal.events)
