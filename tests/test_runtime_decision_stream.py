@@ -201,6 +201,56 @@ def test_list_decisions_includes_cycle_metrics():
     assert metrics["guardrail_blocks_total"] == pytest.approx(1.0)
 
 
+def test_runtime_servicer_prefers_public_journal_export():
+    exported = [{"event": "public", "timestamp": "2024-01-01T00:00:00Z"}]
+
+    class _AutoTraderWithExport:
+        def __init__(self):
+            self.called = False
+
+        def export_decision_journal(self):  # pragma: no cover - prosta delegacja
+            self.called = True
+            return exported
+
+    context = _DummyRuntimeContext(None, _AutoTraderWithExport())
+    servicer = api_server._RuntimeServicer(context)
+
+    response = servicer.ListDecisions(
+        trading_pb2.ListDecisionsRequest(limit=1),
+        _DummyRpcContext(),
+    )
+
+    assert context.auto_trader.called is True
+    assert [entry.fields["event"] for entry in response.records] == ["public"]
+
+
+def test_runtime_servicer_normalizes_fallback_journal_entries():
+    event_dt = datetime(2024, 1, 1, 0, 0, tzinfo=timezone.utc)
+    journal = _DummyJournal(
+        [
+            {
+                "event": "raw",
+                "timestamp": event_dt,
+                "environment": "test",
+                "portfolio": "alpha",
+                "metadata": {"foo": "bar"},
+            }
+        ]
+    )
+
+    context = _DummyRuntimeContext(journal)
+    servicer = api_server._RuntimeServicer(context)
+
+    response = servicer.ListDecisions(
+        trading_pb2.ListDecisionsRequest(limit=1),
+        _DummyRpcContext(),
+    )
+
+    assert [entry.fields["event"] for entry in response.records] == ["raw"]
+    assert response.records[0].fields["timestamp"] == event_dt.isoformat()
+    assert response.records[0].fields["metadata"] == "{'foo': 'bar'}"
+
+
 def test_stream_includes_cycle_metrics_when_available():
     journal = _DummyJournal([_record("first")])
 
@@ -227,3 +277,31 @@ def test_stream_includes_cycle_metrics_when_available():
     assert metrics["cycles_total"] == pytest.approx(21.0)
     assert metrics["strategy_switch_total"] == pytest.approx(5.0)
     assert metrics["guardrail_blocks_total"] == pytest.approx(0.0)
+
+
+def test_runtime_servicer_handles_positional_export_limit():
+    class _PositionalExporter:
+        def __init__(self) -> None:
+            self.calls: list[object] = []
+
+        def export_decision_journal(self, limit):  # pragma: no cover - prosty stub
+            self.calls.append(limit)
+            return [
+                {
+                    "event": "positional",
+                    "timestamp": "2024-02-01T00:00:00Z",
+                    "environment": "test",
+                    "portfolio": "alpha",
+                }
+            ]
+
+    context = _DummyRuntimeContext(None, _PositionalExporter())
+    servicer = api_server._RuntimeServicer(context)
+
+    response = servicer.ListDecisions(
+        trading_pb2.ListDecisionsRequest(limit=1),
+        _DummyRpcContext(),
+    )
+
+    assert context.auto_trader.calls == [None]
+    assert [entry.fields["event"] for entry in response.records] == ["positional"]

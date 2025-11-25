@@ -33,6 +33,7 @@ from bot_core.alerts.dispatcher import (
     get_alert_dispatcher,
 )
 from bot_core.alerts.base import AlertMessage
+from bot_core.auto_trader.contracts import normalize_decision_journal_entry
 from bot_core.config.loader import load_core_config, load_runtime_app_config
 from bot_core.config.models import CoreConfig, RuntimeAppConfig, RuntimeEntrypointConfig
 from bot_core.data.base import OHLCVRequest
@@ -160,6 +161,10 @@ def _interval_from_iso(granularity: Optional[trading_pb2.CandleGranularity], def
     return _ISO_TO_INTERVAL.get(normalized, default)
 
 
+def _normalize_decision_record(entry: Mapping[str, Any]) -> Mapping[str, Any]:
+    return normalize_decision_journal_entry(entry)
+
+
 def _export_decision_records(journal: Any) -> list[Mapping[str, Any]]:
     if journal is None:
         return []
@@ -171,7 +176,7 @@ def _export_decision_records(journal: Any) -> list[Mapping[str, Any]]:
     normalized: list[Mapping[str, Any]] = []
     for entry in exported:
         if isinstance(entry, Mapping):
-            normalized.append(entry)
+            normalized.append(_normalize_decision_record(entry))
     return normalized
 
 
@@ -1441,7 +1446,37 @@ class _RuntimeServicer(trading_pb2_grpc.RuntimeServiceServicer):
     def __init__(self, context: LocalRuntimeContext) -> None:
         self._context = context
 
-    def _export_records(self) -> list[Mapping[str, Any]]:
+    def _export_records(self, limit: int | None = None) -> list[Mapping[str, Any]]:
+        exporter = getattr(self._context.auto_trader, "export_decision_journal", None)
+        if callable(exporter):
+            try:
+                if limit is None:
+                    records = exporter()
+                else:
+                    records = exporter(limit=limit)
+            except TypeError:
+                # Część implementacji spodziewa się parametru pozycyjnego ``limit``.
+                try:
+                    records = exporter(limit)  # type: ignore[misc]
+                except Exception:  # pragma: no cover - diagnostyczne logowanie
+                    _LOGGER.debug(
+                        "Publiczny eksport decision journal zgłosił wyjątek",
+                        exc_info=True,
+                    )
+                    records = None
+            except Exception:  # pragma: no cover - diagnostyczne logowanie
+                _LOGGER.debug(
+                    "Nie udało się uzyskać decision journal przez publiczny eksport",
+                    exc_info=True,
+                )
+                records = None
+
+            if isinstance(records, IterableABC):
+                normalized: list[Mapping[str, Any]] = []
+                for entry in records:
+                    if isinstance(entry, Mapping):
+                        normalized.append(_normalize_decision_record(entry))
+                return normalized
         journal = getattr(self._context.auto_trader, "_decision_journal", None)
         return _export_decision_records(journal)
 
