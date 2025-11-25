@@ -1,0 +1,44 @@
+name: exchange-report
+
+on:
+  schedule:
+    - cron: "0 4 * * *"
+  workflow_dispatch:
+
+jobs:
+  generate-exchange-report:
+    name: Generate exchange signal-quality snapshots
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install .
+
+      - name: Generate exchange report
+        run: |
+          REPORT_DATE=$(date -I)
+          python scripts/list_exchange_adapters.py \
+            --report-date "$REPORT_DATE" \
+            --generate-hypercare-assets
+
+      - name: Upload exchange report artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: exchange-report
+          path: |
+            reports/exchanges/*.csv
+            reports/exchanges/hypercare/*.json
+            reports/exchanges/hypercare/*.csv
+            reports/exchanges/signal_quality/*.json
+            reports/exchanges/signal_quality/*.csv
+          if-no-files-found: error
+          retention-days: 7

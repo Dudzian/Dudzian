@@ -107,30 +107,14 @@ class PaperMarginSimulator(PaperBackend):
         self._margin_events: list[dict[str, object]] = []
 
     # ------------------------------------------------------------------ utils
-    def _validate_costs(
-        self,
-        *,
-        fee_rate: float | None,
-        slippage_bps: float,
-        context: str = "init",
-        log_ok: bool = True,
-    ) -> tuple[str, list[str]]:
+    @staticmethod
+    def _evaluate_costs(
+        *, fee_rate: float | None, slippage_bps: float, context: str = "init"
+    ) -> tuple[str, list[str], str]:
         if fee_rate is not None and float(fee_rate) < 0:
-            self._record_risk_journal_entry(
-                severity="critical",
-                fee_rate=fee_rate,
-                slippage_bps=slippage_bps,
-                message=f"[{context}] fee_rate nie może być ujemny",
-            )
-            raise ValueError("fee_rate nie może być ujemny")
+            raise ValueError(f"[{context}] fee_rate nie może być ujemny")
         if slippage_bps < 0:
-            self._record_risk_journal_entry(
-                severity="critical",
-                fee_rate=fee_rate,
-                slippage_bps=slippage_bps,
-                message=f"[{context}] slippage_bps nie może być ujemny",
-            )
-            raise ValueError("slippage_bps nie może być ujemny")
+            raise ValueError(f"[{context}] slippage_bps nie może być ujemny")
 
         severity = "ok"
         warning_message: str | None = None
@@ -144,15 +128,49 @@ class PaperMarginSimulator(PaperBackend):
             extra = "" if warning_message is None else f"; {warning_message}"
             warning_message = f"slippage_bps przekracza 250 bps{extra}"
             flags.append("slippage_high")
-        if warning_message:
-            warning_message = f"[{context}] {warning_message}"
-        if warning_message or flags or log_ok:
+        message = f"[{context}] {warning_message}" if warning_message else ""
+        if not message:
+            message = f"[{context}] walidacja fee/slippage zakończona powodzeniem"
+        return severity, flags, message
+
+    @classmethod
+    def validate_cost_parameters(
+        cls, *, fee_rate: float | None, slippage_bps: float, context: str = "init"
+    ) -> tuple[str, list[str], str]:
+        """Shared fee/slippage validation used by paper and monitoring flows."""
+
+        return cls._evaluate_costs(fee_rate=fee_rate, slippage_bps=slippage_bps, context=context)
+
+    def _validate_costs(
+        self,
+        *,
+        fee_rate: float | None,
+        slippage_bps: float,
+        context: str = "init",
+        log_ok: bool = True,
+    ) -> tuple[str, list[str]]:
+        severity: str
+        flags: list[str]
+        message: str
+        try:
+            severity, flags, message = self._evaluate_costs(
+                fee_rate=fee_rate, slippage_bps=slippage_bps, context=context
+            )
+        except ValueError as exc:
+            self._record_risk_journal_entry(
+                severity="critical",
+                fee_rate=fee_rate,
+                slippage_bps=slippage_bps,
+                message=str(exc),
+                risk_flags=["critical"],
+            )
+            raise
+        if log_ok or flags:
             self._record_risk_journal_entry(
                 severity=severity,
                 fee_rate=fee_rate,
                 slippage_bps=slippage_bps,
-                message=warning_message
-                or f"[{context}] walidacja fee/slippage zakończona powodzeniem",
+                message=message,
                 risk_flags=flags or [severity],
             )
         return severity, flags
@@ -533,6 +551,7 @@ class PaperFuturesSimulator(PaperMarginSimulator):
         self,
         price_feed_backend,
         *,
+        event_bus=None,
         leverage_limit: float = 10.0,
         maintenance_margin_ratio: float = 0.05,
         funding_rate: float = 0.0001,
@@ -543,9 +562,10 @@ class PaperFuturesSimulator(PaperMarginSimulator):
         database=None,
         funding_interval_seconds: Optional[float] = None,
         risk_journal: TradingDecisionJournal | None = None,
-    ) -> None:
+        ) -> None:
         super().__init__(
             price_feed_backend,
+            event_bus=event_bus,
             leverage_limit=leverage_limit,
             maintenance_margin_ratio=maintenance_margin_ratio,
             funding_rate=funding_rate,

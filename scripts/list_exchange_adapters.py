@@ -20,12 +20,22 @@ from typing import Any, cast
 import yaml
 
 ROOT = Path(__file__).resolve().parents[1]
+SCRIPT_DIR = Path(__file__).resolve().parent
+
+# Utrzymujemy preferencję na moduły projektu, ale usuwamy katalog skryptu z
+# sys.path, aby uniknąć kolizji nazw (np. lokalny pakiet scripts/packaging vs
+# biblioteka `packaging` z PyPI).
 if str(ROOT) not in sys.path:  # pragma: no cover - konfiguracja ścieżki wykonywana raz
     sys.path.insert(0, str(ROOT))
+if sys.path[1:2] and Path(sys.path[1]).resolve() == SCRIPT_DIR:  # pragma: no cover - jednorazowa modyfikacja
+    sys.path.pop(1)
 
 from packaging.version import InvalidVersion, Version
 
 from bot_core.config.loader import load_core_config
+from bot_core.exchanges.bitmex.futures import BitmexFuturesAdapter
+from bot_core.exchanges.deribit.futures import DeribitFuturesAdapter
+from bot_core.exchanges.paper_simulator import PaperFuturesSimulator
 
 LongPollMetrics = dict[tuple[str, str, str], dict[str, Any]]
 
@@ -33,12 +43,20 @@ _DEFAULT_LONG_POLL_METRICS_PATH = "var/metrics/long_poll_snapshots.json"
 _DEFAULT_LONG_POLL_TTL_MINUTES = 720.0
 _DEFAULT_SIGNAL_QUALITY_DIR = "reports/exchanges/signal_quality"
 _DEFAULT_SIGNAL_QUALITY_TTL_HOURS = 48.0
+_DEFAULT_HYPERCARE_DIR = "reports/exchanges/hypercare"
+_DEFAULT_HYPERCARE_CONFIG = "config/stage6/hypercare.yaml"
+_DEFAULT_DAILY_CSV_DIR = "reports/exchanges"
 _MONITORED_LONG_POLL_ADAPTERS = {
     "deribit_futures",
     "deribit_spot",
     "bitmex_futures",
     "bitmex_spot",
 }
+
+_MONITORED_FUTURES_ADAPTERS = (
+    DeribitFuturesAdapter,
+    BitmexFuturesAdapter,
+)
 
 
 def _as_mapping(value: Any) -> Mapping[str, Any]:
@@ -239,6 +257,37 @@ def _validate_monitored_rows(rows: Sequence[Mapping[str, Any]]) -> None:
     if errors:
         formatted = "; ".join(errors)
         raise RuntimeError(f"Walidacja monitoringu adapterów nie powiodła się: {formatted}")
+
+
+def _export_hypercare_assets(
+    *, signal_quality_dir: Path, hypercare_dir: Path, daily_csv_dir: Path
+) -> dict[str, tuple[str, str | None]]:
+    assets: dict[str, tuple[str, str | None]] = {}
+    signal_quality_dir.mkdir(parents=True, exist_ok=True)
+    hypercare_dir.mkdir(parents=True, exist_ok=True)
+    daily_csv_dir.mkdir(parents=True, exist_ok=True)
+    for adapter_cls in _MONITORED_FUTURES_ADAPTERS:
+        checklist_json, checklist_csv = adapter_cls.export_hypercare_assets(
+            signal_quality_dir=str(signal_quality_dir),
+            report_dir=str(hypercare_dir),
+            daily_csv_dir=str(daily_csv_dir),
+            reporter=None,
+            load_existing_snapshot=True,
+        )
+        assets[adapter_cls.name] = (checklist_json, checklist_csv)
+    return assets
+
+
+def _validate_simulator_costs(
+    *, fee_rate: float | None, slippage_bps: float | None, adapter_id: str
+) -> tuple[str, list[str]]:
+    normalized_slippage = float(slippage_bps) if slippage_bps is not None else 0.0
+    severity, flags, _ = PaperFuturesSimulator.validate_cost_parameters(
+        fee_rate=fee_rate,
+        slippage_bps=normalized_slippage,
+        context=f"{adapter_id}.simulator",
+    )
+    return severity, flags
 
 
 def _futures_checklist_state(exchange: str, env_cfg: Any) -> tuple[str | None, bool | None]:
@@ -516,6 +565,7 @@ def build_rows(
     long_poll_ttl_minutes: float | None = None,
     signal_quality_dir: str | os.PathLike[str] | None = None,
     signal_quality_ttl_hours: float | None = None,
+    hypercare_assets: Mapping[str, tuple[str, str | None]] | None = None,
 ) -> list[dict[str, Any]]:  # type: ignore[no-untyped-def]
     rows: list[dict[str, Any]] = []
     metrics = dict(long_poll_metrics or {})
@@ -590,6 +640,8 @@ def build_rows(
 
             simulator_fee_rate = None
             simulator_slippage_bps = None
+            simulator_cost_status = "unknown"
+            simulator_cost_flags: list[str] = []
             adapter_defaults = _as_mapping(adapter_entry.default_settings) if adapter_entry else {}
             simulator_defaults = _as_mapping(adapter_defaults.get("simulator"))
             if simulator_defaults:
@@ -597,6 +649,20 @@ def build_rows(
                 simulator_fee_rate = _safe_float(fee_candidate)
                 slippage_candidate = simulator_defaults.get("slippage_bps")
                 simulator_slippage_bps = _safe_float(slippage_candidate)
+
+            if adapter_id:
+                simulator_cost_status, simulator_cost_flags = _validate_simulator_costs(
+                    fee_rate=simulator_fee_rate,
+                    slippage_bps=simulator_slippage_bps,
+                    adapter_id=str(adapter_id),
+                )
+
+            checklist_json = None
+            checklist_csv = None
+            if hypercare_assets:
+                asset_entry = hypercare_assets.get(str(adapter_id))
+                if asset_entry:
+                    checklist_json, checklist_csv = asset_entry
 
             if exchange in {"deribit", "bitmex"} and env_cfg.environment.value in {"live", "paper"}:
                 status = long_poll_summary.get("long_poll_metrics_status")
@@ -642,9 +708,13 @@ def build_rows(
                     "liquidation_feed": liquidation_feed,
                     "simulator_fee_rate": simulator_fee_rate,
                     "simulator_slippage_bps": simulator_slippage_bps,
+                    "simulator_cost_status": simulator_cost_status,
+                    "simulator_cost_flags": ",".join(simulator_cost_flags),
                     "hypercare_checklist_signed": hypercare_signed,
                     "hypercare_checklist_status": hypercare_status,
                     "hypercare_checklist_id": getattr(live_readiness, "checklist_id", None),
+                    "hypercare_checklist_json": checklist_json,
+                    "hypercare_checklist_csv": checklist_csv,
                     "missing_required_documents": missing_docs,
                     "futures_checklist_id": checklist_id,
                     "futures_checklist_ready": checklist_ready,
@@ -688,7 +758,18 @@ def main(argv: list[str] | None = None) -> int:
     )
     parser.add_argument(
         "--hypercare-config",
+        default=_DEFAULT_HYPERCARE_CONFIG,
         help="Ścieżka do pliku config/stage6/hypercare.yaml z metadanymi failover/latency/cost.",
+    )
+    parser.add_argument(
+        "--hypercare-dir",
+        default=_DEFAULT_HYPERCARE_DIR,
+        help="Katalog docelowy checklist HyperCare.",
+    )
+    parser.add_argument(
+        "--daily-csv-dir",
+        default=_DEFAULT_DAILY_CSV_DIR,
+        help="Katalog na dzienne CSV HyperCare.",
     )
     parser.add_argument(
         "--long-poll-metrics",
@@ -712,11 +793,23 @@ def main(argv: list[str] | None = None) -> int:
         default=_DEFAULT_SIGNAL_QUALITY_TTL_HOURS,
         help="Maksymalny wiek snapshotów signal_quality (w godzinach) zanim zostaną oznaczone jako stale.",
     )
+    parser.add_argument(
+        "--generate-hypercare-assets",
+        action="store_true",
+        help="Eksportuje checklisty HyperCare i CSV jakości sygnałów dla monitorowanych adapterów.",
+    )
     args = parser.parse_args(argv)
 
     config = load_core_config(Path(args.config))
     hypercare_summary = _load_hypercare_status(args.hypercare_config)
     long_poll_metrics = _load_long_poll_metrics(args.long_poll_metrics)
+    hypercare_assets: dict[str, tuple[str, str | None]] = {}
+    if args.generate_hypercare_assets:
+        hypercare_assets = _export_hypercare_assets(
+            signal_quality_dir=Path(args.signal_quality_dir),
+            hypercare_dir=Path(args.hypercare_dir),
+            daily_csv_dir=Path(args.daily_csv_dir),
+        )
     rows = build_rows(
         config,
         hypercare_summary=hypercare_summary,
@@ -724,6 +817,7 @@ def main(argv: list[str] | None = None) -> int:
         long_poll_ttl_minutes=args.long_poll_ttl_minutes,
         signal_quality_dir=args.signal_quality_dir,
         signal_quality_ttl_hours=args.signal_quality_ttl_hours,
+        hypercare_assets=hypercare_assets,
     )
     _validate_monitored_rows(rows)
 
@@ -743,9 +837,13 @@ def main(argv: list[str] | None = None) -> int:
         "liquidation_feed",
         "simulator_fee_rate",
         "simulator_slippage_bps",
+        "simulator_cost_status",
+        "simulator_cost_flags",
         "hypercare_checklist_signed",
         "hypercare_checklist_status",
         "hypercare_checklist_id",
+        "hypercare_checklist_json",
+        "hypercare_checklist_csv",
         "missing_required_documents",
         "futures_checklist_id",
         "futures_checklist_ready",
