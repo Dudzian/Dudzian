@@ -29,7 +29,17 @@ from collections.abc import Iterable
 from contextlib import contextmanager
 from dataclasses import asdict, dataclass, is_dataclass, replace
 from types import SimpleNamespace
-from typing import TYPE_CHECKING, Any, Callable, Dict, Mapping, Optional, Protocol, Sequence, cast
+from typing import (
+    TYPE_CHECKING,
+    Any,
+    Callable,
+    Dict,
+    Mapping,
+    Optional,
+    Protocol,
+    Sequence,
+    cast,
+)
 
 from concurrent.futures import ThreadPoolExecutor
 
@@ -40,6 +50,18 @@ from core.perf import ProfileReport, profile_block
 from bot_core.alerts.base import AlertMessage, AlertRouter
 from bot_core.auto_trader.ai_governor import AutoTraderAIGovernor
 from bot_core.auto_trader.audit import DecisionAuditLog
+from bot_core.auto_trader.contracts import (
+    DecisionCycleDecision,
+    DecisionCycleGuardrails,
+    DecisionGuardrailEvent,
+    DecisionCycleLatency,
+    DecisionCycleMetadata,
+    DecisionCycleMetrics,
+    DecisionCycleModeTransition,
+    DecisionCycleTelemetry,
+    DecisionJournalEntry,
+    normalize_decision_journal_entry,
+)
 from bot_core.auto_trader.decision_scheduler import AutoTraderDecisionScheduler
 from bot_core.auto_trader.performance import build_cycle_equity_summary
 from bot_core.auto_trader.risk_bridge import GuardrailTrigger, RiskDecision
@@ -493,10 +515,10 @@ class DecisionCycleReport:
     ``metadata`` pozostają puste, aby odzwierciedlić brak nowej decyzji.
     """
 
-    decision: RiskDecision | None
-    metadata: Mapping[str, str]
-    metrics: Mapping[str, float]
-    telemetry: Mapping[str, object] | None = None
+    decision: DecisionCycleDecision
+    metadata: DecisionCycleMetadata
+    metrics: DecisionCycleMetrics
+    telemetry: DecisionCycleTelemetry | None = None
 
 
 @dataclass(slots=True)
@@ -9577,7 +9599,7 @@ class AutoTrader:
         upper_value = ordered[upper]
         return lower_value + (upper_value - lower_value) * (position - lower)
 
-    def _cycle_latency_snapshot(self) -> dict[str, float]:
+    def _cycle_latency_snapshot(self) -> DecisionCycleLatency:
         with self._lock:
             durations = [
                 float(entry.get("duration_s", 0.0))
@@ -9601,12 +9623,12 @@ class AutoTrader:
             "sampleCount": float(len(latencies_ms)),
         }
 
-    def _mode_transition_snapshot(self, limit: int = 16) -> list[dict[str, object]]:
+    def _mode_transition_snapshot(self, limit: int = 16) -> list[DecisionCycleModeTransition]:
         with self._lock:
             history = list(self._mode_transition_history)
         if not history:
             return []
-        transitions: list[dict[str, object]] = []
+        transitions: list[DecisionCycleModeTransition] = []
         for entry in reversed(history[-limit:]):
             if not isinstance(entry, Mapping):
                 continue
@@ -9632,20 +9654,20 @@ class AutoTrader:
             transitions.append(transition)
         return transitions
 
-    def _guardrail_telemetry_snapshot(self) -> dict[str, object]:
+    def _guardrail_telemetry_snapshot(self) -> DecisionCycleGuardrails:
         now = time.time()
         with self._lock:
             recent = list(self._recent_guardrail_events)
             active = bool(self._exchange_degradation_guardrail_active)
             kill_switch = bool(self._exchange_degradation_kill_switch)
             reasons = list(self._last_guardrail_reasons)
-        recent_payload: list[dict[str, object]] = []
+        recent_payload: list[DecisionGuardrailEvent] = []
         for name, timestamp in reversed(recent):
             if not name:
                 continue
             age = max(0.0, now - float(timestamp))
             recent_payload.append({"name": name, "ageSeconds": age})
-        payload: dict[str, object] = {
+        payload: DecisionCycleGuardrails = {
             "active": active,
             "killSwitch": kill_switch,
             "recent": recent_payload,
@@ -9654,8 +9676,8 @@ class AutoTrader:
             payload["reasons"] = [str(reason) for reason in reasons if reason]
         return payload
 
-    def _build_ai_governor_extra_telemetry(self) -> dict[str, object]:
-        payload: dict[str, object] = {}
+    def _build_ai_governor_extra_telemetry(self) -> DecisionCycleTelemetry:
+        payload: DecisionCycleTelemetry = {}
         latency = self._cycle_latency_snapshot()
         if latency:
             payload["cycleLatency"] = latency
@@ -9664,6 +9686,12 @@ class AutoTrader:
             payload["modeTransitions"] = transitions
         payload["guardrails"] = self._guardrail_telemetry_snapshot()
         return payload
+
+    @staticmethod
+    def _normalize_decision_journal_entry(
+        entry: Mapping[str, Any]
+    ) -> DecisionJournalEntry:
+        return normalize_decision_journal_entry(entry)
 
     def run_cycle(self, request: DecisionCycleRequest | None = None) -> DecisionCycleReport:
         """Wykonuje cykl decyzyjny korzystając z publicznego kontraktu."""
@@ -9828,6 +9856,41 @@ class AutoTrader:
             yield report
             if interval > 0:
                 time.sleep(interval)
+
+    def export_decision_journal(
+        self, *, limit: int | None = None
+    ) -> list[DecisionJournalEntry]:
+        """Expose a normalized snapshot of the decision journal.
+
+        The export avoids accessing private journal internals and provides a
+        stable mapping-based payload suitable for gRPC and CLI clients.
+        """
+
+        journal = getattr(self, "_decision_journal", None)
+        if journal is None:
+            return []
+        try:
+            exported = list(journal.export())
+        except Exception:  # pragma: no cover - diagnostyczne logowanie
+            LOGGER.debug("Nie udało się wyeksportować decision journal", exc_info=True)
+            return []
+
+        normalized: list[DecisionJournalEntry] = []
+        for entry in exported:
+            if isinstance(entry, Mapping):
+                normalized.append(self._normalize_decision_journal_entry(entry))
+
+        if limit is None:
+            return normalized
+
+        try:
+            normalized_limit = int(limit)
+        except (TypeError, ValueError):
+            return normalized
+
+        if normalized_limit <= 0:
+            return []
+        return normalized[-normalized_limit:]
 
     def _resolve_risk_service(self) -> Any | None:
         risk_service = self.risk_service

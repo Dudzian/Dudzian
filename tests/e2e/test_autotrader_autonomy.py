@@ -391,6 +391,41 @@ def test_autotrader_cycle_report_exposes_telemetry() -> None:
     assert "active" in guardrails
 
 
+def test_autotrader_cycle_contract_exported_for_cli_clients() -> None:
+    assessment = MarketRegimeAssessment(
+        regime=MarketRegime.MEAN_REVERSION,
+        confidence=0.9,
+        risk_score=0.33,
+        metrics={"volatility": 0.11},
+        symbol="BTCUSDT",
+    )
+    ai_manager = _StaticAIManager(assessment=assessment, prediction=0.015, probability=0.79)
+    trader, _, _, _, context = _build_trader(ai_manager)
+
+    report = trader.run_cycle(
+        DecisionCycleRequest(
+            execution_context=context,
+            schedule_state=_open_schedule_state(trader.schedule_mode),
+        )
+    )
+
+    assert isinstance(report.metadata, Mapping)
+    assert isinstance(report.metrics, Mapping)
+
+    telemetry = report.telemetry or {}
+    guardrails = telemetry.get("guardrails") or {}
+    assert "active" in guardrails and "killSwitch" in guardrails
+    mode_transitions = telemetry.get("modeTransitions") or []
+    assert isinstance(mode_transitions, list)
+    if mode_transitions:
+        assert "mode" in mode_transitions[0]
+
+    exported = trader.export_decision_journal(limit=1)
+    assert isinstance(exported, list)
+    if exported:
+        assert "event" in exported[-1]
+
+
 def test_autotrader_run_forever_respects_limit() -> None:
     assessment = MarketRegimeAssessment(
         regime=MarketRegime.TREND,
@@ -406,6 +441,27 @@ def test_autotrader_run_forever_respects_limit() -> None:
 
     assert len(reports) == 2
     assert all(report.metadata for report in reports)
+
+
+def test_export_decision_journal_trims_with_zero_limit() -> None:
+    assessment = MarketRegimeAssessment(
+        regime=MarketRegime.TREND,
+        confidence=0.82,
+        risk_score=0.21,
+        metrics={"trend_strength": 0.75},
+        symbol="BTCUSDT",
+    )
+    ai_manager = _StaticAIManager(assessment=assessment, prediction=0.014, probability=0.72)
+    trader, _, _, _, context = _build_trader(ai_manager)
+
+    trader.run_cycle(
+        DecisionCycleRequest(
+            execution_context=context,
+            schedule_state=_open_schedule_state(trader.schedule_mode),
+        )
+    )
+
+    assert trader.export_decision_journal(limit=0) == []
 
 
 def test_decision_cycle_request_allows_kwarg_overrides() -> None:

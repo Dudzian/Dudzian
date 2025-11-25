@@ -6,9 +6,20 @@ from .app import (
     AutoTrader,
     DecisionCycleReport,
     DecisionCycleRequest,
-    DecisionLifecycleSnapshot,
     DecisionCycleRunner,
+    DecisionLifecycleSnapshot,
     EmitterLike,
+)
+from .contracts import (
+    DecisionCycleDecision,
+    DecisionCycleGuardrails,
+    DecisionCycleLatency,
+    DecisionCycleMetadata,
+    DecisionCycleMetrics,
+    DecisionCycleModeTransition,
+    DecisionCycleTelemetry,
+    DecisionJournalEntry,
+    normalize_decision_journal_entry,
 )
 from .paper_app import PaperAutoTradeApp
 from .audit import DecisionAuditLog, DecisionAuditRecord
@@ -23,6 +34,15 @@ __all__ = [
     "DecisionCycleRequest",
     "DecisionLifecycleSnapshot",
     "DecisionCycleRunner",
+    "DecisionCycleDecision",
+    "DecisionCycleGuardrails",
+    "DecisionCycleLatency",
+    "DecisionCycleMetadata",
+    "DecisionCycleMetrics",
+    "DecisionCycleModeTransition",
+    "DecisionCycleTelemetry",
+    "DecisionJournalEntry",
+    "normalize_decision_journal_entry",
     "AutoTraderDecisionScheduler",
     "AutoTraderLifecycleManager",
     "AutoTraderSchedulerHooks",
