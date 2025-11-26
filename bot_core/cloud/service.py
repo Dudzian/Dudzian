@@ -129,6 +129,7 @@ class CloudRuntimeService:
                 context,
                 marketplace_refresh_interval=marketplace_interval,
             )
+            context.cloud_orchestrator = orchestrator
             orchestrator.start()
             self._server = server
             self._orchestrator = orchestrator

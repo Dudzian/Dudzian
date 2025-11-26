@@ -693,6 +693,7 @@ class LocalRuntimeContext:
     auto_mode_alerts: MutableMapping[str, Any] = field(default_factory=dict)
     adaptive_learner: AdaptiveStrategyLearner | None = None
     retrain_scheduler: LocalRetrainScheduler | None = None
+    cloud_orchestrator: Any | None = None
     _started: bool = field(default=False, init=False, repr=False)
 
     def start(self, *, auto_confirm: bool = True) -> None:
@@ -1731,7 +1732,46 @@ class _HealthServicer(trading_pb2_grpc.HealthServiceServicer):
             git_commit=self._context.git_commit or "unknown",
         )
         response.started_at.CopyFrom(_timestamp_from_ms(int(self._context.started_at.timestamp() * 1000)))
+        self._attach_cloud_health(response)
         return response
+
+    def _attach_cloud_health(self, response: trading_pb2.HealthCheckResponse) -> None:
+        orchestrator = getattr(self._context, "cloud_orchestrator", None)
+        if orchestrator is None or not hasattr(orchestrator, "health_snapshot"):
+            return
+
+        snapshot = orchestrator.health_snapshot()
+        if not isinstance(snapshot, Mapping):
+            return
+
+        cloud_health = trading_pb2.CloudHealthSnapshot()
+        status = snapshot.get("status")
+        if isinstance(status, str):
+            cloud_health.status = status
+        updated_at = snapshot.get("updatedAt")
+        if isinstance(updated_at, str):
+            cloud_health.updated_at = updated_at
+
+        workers = snapshot.get("workers")
+        if isinstance(workers, Mapping):
+            for name, payload in workers.items():
+                if not isinstance(payload, Mapping):
+                    continue
+                worker_health = trading_pb2.CloudWorkerHealth()
+                worker_health.name = str(name)
+                worker_health.enabled = bool(payload.get("enabled", False))
+                if isinstance(payload.get("lastRunAt"), str):
+                    worker_health.last_run_at = str(payload.get("lastRunAt"))
+                if isinstance(payload.get("lastError"), str):
+                    worker_health.last_error = str(payload.get("lastError"))
+                try:
+                    worker_health.interval_seconds = int(payload.get("interval") or 0)
+                except Exception:
+                    worker_health.interval_seconds = 0
+                cloud_health.workers.append(worker_health)
+
+        if cloud_health.status or cloud_health.workers:
+            response.cloud_health.CopyFrom(cloud_health)
 
 
 class _MarketplaceServicer(trading_pb2_grpc.MarketplaceServiceServicer):
