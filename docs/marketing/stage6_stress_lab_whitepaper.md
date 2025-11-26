@@ -35,6 +35,14 @@ Ten dokument streszcza przewagi Stage6 Stress Lab na tle konkurencji klasy Crypt
 - Raporty muszą być przechowywane wraz z podpisami (`*.sig`) i manifestem (`*.manifest.json`).[^audit-manifest]
 - Marketing publikuje streszczenie wyników w cyklu T+7 po release (zgodnie z runbookiem).
 
+## Checklist QA/marketing (Stress Lab)
+- **Częstotliwość aktualizacji:**
+  - Co release: wygeneruj bundel `var/marketing/benchmark/` z raportami `reports/stress_lab/*` i checklistami `reports/exchanges/signal_quality/*` przy użyciu `scripts/export_marketing_bundle.py`.
+  - Miesięcznie: potwierdź świeżość snapshotów adapterów (CSV + JSON) oraz ich podpisów HMAC przed publikacją w benchmarku.
+- **Artefakty obowiązkowe:** podpisane raporty Stress Lab (`*.json`, `.sig`, `.manifest.json`), checklisty HyperCare/Signal Quality (JSON + CSV), manifest bundla marketingowego (`var/marketing/benchmark/manifest.json`) oraz linki do artefaktów release (`stress-lab-report`, `benchmark-marketing-bundle`).
+- **Walidacja:** uruchom `python scripts/export_marketing_bundle.py --destination var/marketing/benchmark --signing-key-env MARKETING_BUNDLE_HMAC --validate-only`, a następnie sprawdź, czy manifest w sekcji `release_artifacts` wskazuje aktywne artefakty releasowe oraz bieżący zakres raportu.
+- **Przegląd zawartości:** upewnij się, że marketing korzysta z najnowszych case studies i whitepapera (sekcja benchmarku „Publikacja materiałów marketingowych” zawiera linki do pakietu), a odchylenia od checklist są udokumentowane w przeglądzie statusowym.
+
 ## Załączniki
 - Raport warsztatowy: `var/audit/stage6/2024-06-07-stage6-operator-workshop.md`.
 - Checklisty audytowe: `var/audit/stage6/stage6_preliminary_checklist.md`.

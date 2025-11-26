@@ -36,6 +36,11 @@
 - **Katalog Marketplace (Markdown):** [`config/marketplace/catalog.md`](../../config/marketplace/catalog.md) – podpisany listing z personami wykorzystywany w komunikacji marketingowej oraz porównaniach z CryptoHopperem i Gunbotem.
 - **Rollout presetów:** proces publikacji podpisanych presetów i katalogu opisany w [`docs/marketplace/README.md`](../marketplace/README.md) (sekcja „Rollout presetów”) – wymagany przed aktualizacją benchmarku.
 
+### Publikacja materiałów marketingowych
+- **Pakietowanie Stress Lab:** najnowsze raporty z `reports/stress_lab/` (JSON + `.sig` + `.manifest.json`) są kopiowane do `var/marketing/benchmark/stress_lab/` oraz linkowane w manifeście release (artefakt CI `stress-lab-report`).
+- **Checklisty adapterów:** dzienny snapshot checklist HyperCare i jakości sygnałów z `reports/exchanges/signal_quality/` jest dołączany do pakietu marketingowego (CSV/JSON) jako dowód pokrycia giełdowego i gotowości failoveru.
+- **Artefakty release:** manifest bundla marketingowego zawiera linki do artefaktów CI (`stress-lab-report`, `benchmark-marketing-bundle`) i katalogu `var/marketing/benchmark/`, aby ułatwić aktualizację whitepapera/case studies.
+
 ## Tabela funkcji i różnic
 
 | Funkcja | Dudzian (Stage6) | CryptoHopper (publiczny plan) | Gunbot Ultimate | Status różnicy |
