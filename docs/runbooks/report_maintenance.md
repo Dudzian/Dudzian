@@ -134,6 +134,12 @@ Polecenie utworzy plik `reports/exchanges/<data>.csv` oraz skopiuje go do `repor
 
 Eksport checklisty HyperCare w adapterach Deribit/BitMEX korzysta z istniejącego `SignalQualityReporter` (lub ostatniego snapshotu z dysku), więc przed uruchomieniem eksportu w pipeline CI/HyperCare upewnij się, że reporter zebrał realne rekordy z runtime. W przeciwnym razie checklisty zostaną podpisane, ale wskażą zerowe metryki jakości, co zablokuje publikację dashboardu.
 
+### 8.2. Kopiowanie snapshotów do pakietu marketingowego
+1. Wygeneruj najnowsze raporty: `python scripts/run_stress_lab.py run --config config/core.yaml --output reports/stress_lab/latest.json --signing-key-env STRESS_LAB_HMAC` oraz `python scripts/list_exchange_adapters.py --report-date $(date +%Y-%m-%d) --report-dir reports/exchanges --dashboard-dir reports/exchanges/signal_quality`.
+2. Uruchom bundler marketingowy: `python scripts/export_marketing_bundle.py --report-range $(date +%Y-%m-%d) --destination var/marketing/benchmark --signing-key-env MARKETING_BUNDLE_HMAC`. Skrypt skopiuje najświeższe pliki z `reports/stress_lab/` oraz checklisty z `reports/exchanges/signal_quality/` do `var/marketing/benchmark/` i utworzy manifest linków.
+3. Zweryfikuj podpisy HMAC: `python scripts/export_marketing_bundle.py --destination var/marketing/benchmark --signing-key-env MARKETING_BUNDLE_HMAC --validate-only` – manifest zostanie porównany z kluczem release’owym. W przypadku rozbieżności zatrzymaj publikację i ponów eksport po zweryfikowaniu źródeł.
+4. Zanim opublikujesz materiały marketingowe, upewnij się, że w katalogu `var/marketing/benchmark/` znajdują się co najmniej: `stress_lab/*.json` + `.sig` + `.manifest.json`, `signal_quality/*.json` + nowszy CSV adapterów oraz podpisany manifest bundla marketingowego.
+
 ## 9. Eksport champion/challenger i reakcja na degradację modeli
 
 ### 9.1. Generowanie raportu porównawczego championów

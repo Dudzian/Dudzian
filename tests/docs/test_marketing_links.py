@@ -43,4 +43,17 @@ def test_benchmark_references_latest_marketing(marketing_docs: dict[str, Path]) 
     assert "Stress Lab i materiały marketingowe" in text
     assert "../marketing/stage6_stress_lab_whitepaper.md" in text
     assert "../marketing/stage6_stress_lab_case_studies.md" in text
+    assert "Publikacja materiałów marketingowych" in text
+    assert "var/marketing/benchmark" in text
+
+
+def test_whitepaper_contains_marketing_checklist(marketing_docs: dict[str, Path]) -> None:
+    whitepaper = marketing_docs["whitepaper"].read_text(encoding="utf-8")
+    assert "Checklist QA/marketing" in whitepaper
+    assert "var/marketing/benchmark" in whitepaper
+
+
+def test_marketing_bundle_script_exists() -> None:
+    script_path = REPO_ROOT / "scripts/export_marketing_bundle.py"
+    assert script_path.exists(), "Brak skryptu eksportu bundla marketingowego"
 
