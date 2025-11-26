@@ -1262,6 +1262,8 @@ class RuntimeService(QObject):
             "transports": {key: dict(value) for key, value in self._feed_transport_stats.items()},
         }
         self._feed_sla_report: dict[str, object] = {}
+        self._consecutive_degraded_periods: int = 0
+        self._consecutive_healthy_periods: int = 0
         self._feed_transport_snapshot: dict[str, object] = {
             "status": "initializing",
             "mode": "demo",
@@ -3454,6 +3456,13 @@ class RuntimeService(QObject):
             warning=thresholds["downtime_warning_seconds"],
             critical=thresholds["downtime_critical_seconds"],
         )
+        sla_state = self._aggregate_sla_state((latency_state, reconnects_state, downtime_state))
+        if sla_state in {"warning", "critical"}:
+            self._consecutive_degraded_periods += 1
+            self._consecutive_healthy_periods = 0
+        else:
+            self._consecutive_healthy_periods += 1
+            self._consecutive_degraded_periods = 0
         stats_payload.update(
             {
                 "latency_state": latency_state,
@@ -3466,9 +3475,9 @@ class RuntimeService(QObject):
                 "downtime_warning_seconds": thresholds["downtime_warning_seconds"],
                 "downtime_critical_seconds": thresholds["downtime_critical_seconds"],
                 "downtime_seconds": downtime_seconds,
-                "sla_state": self._aggregate_sla_state(
-                    (latency_state, reconnects_state, downtime_state)
-                ),
+                "sla_state": sla_state,
+                "consecutive_degraded_periods": self._consecutive_degraded_periods,
+                "consecutive_healthy_periods": self._consecutive_healthy_periods,
             }
         )
         stats_payload["transport_source"] = source_key
