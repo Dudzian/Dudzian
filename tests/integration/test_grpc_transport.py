@@ -767,3 +767,55 @@ def test_feed_health_reports_grpc_and_fallback_breakdown(monkeypatch: pytest.Mon
         service._longpoll_timer.stop()
         service._stop_grpc_stream()
         app.quit()
+
+
+def test_grpc_longpoll_oscillation_is_debounced(monkeypatch: pytest.MonkeyPatch) -> None:
+    pytest.importorskip("PySide6")
+    os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+    from PySide6.QtCore import QCoreApplication  # type: ignore[attr-defined]
+
+    monkeypatch.setattr(RuntimeService, "_auto_connect_grpc", lambda self: None)
+    monkeypatch.setattr(RuntimeService, "_refresh_long_poll_metrics", lambda self: None)
+    monkeypatch.setenv("BOT_CORE_UI_FEED_LATENCY_P95_WARNING_MS", "150.0")
+    monkeypatch.setenv("BOT_CORE_UI_FEED_LATENCY_P95_CRITICAL_MS", "500.0")
+
+    app = QCoreApplication.instance() or QCoreApplication([])
+    service = RuntimeService(default_limit=1, decision_loader=lambda limit: [])
+    try:
+        service._active_stream_label = "grpc://demo"
+        grpc_samples = service._latency_samples_for("grpc")
+        grpc_samples.clear()
+        grpc_samples.extend([45.0, 55.0])
+        service._update_feed_health(status="connected", reconnects=0, last_error="")
+        initial_state = service.feedSlaReport.get("sla_state")
+
+        history: list[str | None] = []
+        for index in range(1, 5):
+            if index % 2 == 0:
+                service._active_stream_label = "fallback://demo"
+                samples = service._latency_samples_for("fallback")
+                status = "fallback"
+            else:
+                service._active_stream_label = "grpc://demo"
+                samples = service._latency_samples_for("grpc")
+                status = "connected"
+            samples.clear()
+            samples.extend([1100.0 + index * 50])
+            service._feed_reconnects += 1
+            service._update_feed_health(
+                status=status,
+                reconnects=service._feed_reconnects,
+                last_error="flaky transport",
+            )
+            report = service.feedSlaReport
+            history.append(report.get("sla_state"))
+            assert report.get("consecutive_degraded_periods") == index
+            assert report.get("consecutive_healthy_periods") == 0
+
+        assert initial_state == "ok"
+        assert history and len(set(history)) == 1
+        assert history[0] in {"warning", "critical"}
+    finally:
+        service._longpoll_timer.stop()
+        service._stop_grpc_stream()
+        app.quit()

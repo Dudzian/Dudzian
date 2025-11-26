@@ -1206,6 +1206,40 @@ def test_runtime_overview_strategy_ai_panel_tracks_transport() -> None:
     app.quit()
 
 
+@pytest.mark.timeout(30)
+def test_runtime_overview_feed_sla_exposes_anti_flap_counters() -> None:
+    provider = TelemetryProvider(snapshot_loader=_sample_snapshot)
+    runtime_service = RuntimeService(decision_loader=lambda limit: [])
+
+    app = QApplication.instance() or QApplication([])
+    engine = QQmlApplicationEngine()
+    engine.rootContext().setContextProperty("telemetryProvider", provider)
+    engine.rootContext().setContextProperty("runtimeService", runtime_service)
+    qml_path = Path(__file__).resolve().parents[2] / "ui" / "qml" / "dashboard" / "RuntimeOverview.qml"
+    engine.load(QUrl.fromLocalFile(str(qml_path)))
+    assert engine.rootObjects(), "Nie udało się załadować RuntimeOverview.qml"
+    root = engine.rootObjects()[0]
+
+    runtime_service._feed_sla_report = {
+        "sla_state": "warning",
+        "p95_ms": 1250.0,
+        "latency_warning_ms": 800.0,
+        "latency_critical_ms": 1500.0,
+        "consecutive_degraded_periods": 3,
+        "consecutive_healthy_periods": 0,
+    }
+    runtime_service.feedSlaReportChanged.emit()
+    app.processEvents()
+
+    report = root.property("feedSlaReport")
+    assert isinstance(report, dict)
+    assert report.get("consecutive_degraded_periods") == 3
+    assert report.get("consecutive_healthy_periods") == 0
+    sla_card = root.findChild(QObject, "runtimeOverviewFeedSlaCard")
+    assert sla_card is not None
+    assert sla_card.property("severity") == "warning"
+
+
 def test_runtime_overview_reference_screenshot_exists() -> None:
     reference_path = Path(__file__).resolve().parent / "screenshots" / "runtime_overview_reference.json"
     assert reference_path.exists(), "Brak referencyjnego zrzutu RuntimeOverview"

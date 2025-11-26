@@ -87,6 +87,38 @@
         }
       ],
       "options": {"orientation": "horizontal"}
+    },
+    {
+      "type": "stat",
+      "title": "SLA hysteresis (max_over_time 5m)",
+      "description": "Stabilizowany status gRPC/fallback na bazie max_over_time(...[5m]) zmniejsza flapowanie alertów przy krótkich skokach.",
+      "targets": [
+        {
+          "expr": "max_over_time(bot_ui_feed_sla_status{transport=~\"grpc|fallback\",environment=~\".*\"}[5m])",
+          "legendFormat": "stabilized SLA status"
+        },
+        {
+          "expr": "(max_over_time(bot_ui_feed_sla_status{transport=~\"grpc|fallback\",environment=~\".*\"}[5m]) >= 2)",
+          "legendFormat": "degraded for 5m"
+        }
+      ],
+      "options": {"reduceOptions": {"calcs": ["lastNotNull"]}, "orientation": "horizontal"}
+    },
+    {
+      "type": "stat",
+      "title": "SLA metric presence (anti-flap)",
+      "description": "Wymusza obecność próbek i używa absent()/count_over_time, aby wykryć utratę metryk zamiast chwilowych fluktuacji transportu.",
+      "targets": [
+        {
+          "expr": "count_over_time(bot_ui_feed_sla_status{transport=\"grpc\",environment=~\".*\"}[10m])",
+          "legendFormat": "gRPC samples (10m)"
+        },
+        {
+          "expr": "absent(bot_ui_feed_sla_status{transport=\"fallback\",environment=~\".*\"})",
+          "legendFormat": "fallback metric absent"
+        }
+      ],
+      "options": {"reduceOptions": {"calcs": ["lastNotNull"]}, "orientation": "horizontal"}
     }
   ],
   "schemaVersion": 38,
