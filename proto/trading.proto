@@ -289,6 +289,21 @@ message HealthCheckResponse {
   string version = 1;
   string git_commit = 2;
   google.protobuf.Timestamp started_at = 3;
+  CloudHealthSnapshot cloud_health = 4;
+}
+
+message CloudWorkerHealth {
+  string name = 1;
+  bool enabled = 2;
+  string last_run_at = 3;
+  string last_error = 4;
+  int32 interval_seconds = 5;
+}
+
+message CloudHealthSnapshot {
+  string status = 1;
+  string updated_at = 2;
+  repeated CloudWorkerHealth workers = 3;
 }
 
 message MarketplacePresetSummary {
