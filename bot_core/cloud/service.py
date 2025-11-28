@@ -55,6 +55,7 @@ class CloudRuntimeService:
         self._ready_hook = ready_hook
         self._health_path = Path(health_probe_path).expanduser() if health_probe_path else None
         self._health_snapshot: dict[str, object] = {"status": "stopped"}
+        self._cloud_health_headers: dict[str, str] = {}
 
     @property
     def address(self) -> str | None:
@@ -114,7 +115,10 @@ class CloudRuntimeService:
                 raise
             if security_manager:
                 trading_pb2_grpc.add_CloudAuthServiceServicer_to_server(
-                    CloudAuthServicer(security_manager),
+                    CloudAuthServicer(
+                        security_manager,
+                        health_headers_provider=lambda: self._cloud_health_headers,
+                    ),
                     server.grpc_server,
                 )
             for registrar in self._registrars:
@@ -128,8 +132,10 @@ class CloudRuntimeService:
             orchestrator = CloudOrchestrator(
                 context,
                 marketplace_refresh_interval=marketplace_interval,
+                health_hook=self._on_orchestrator_health,
             )
             context.cloud_orchestrator = orchestrator
+            self._on_orchestrator_health(orchestrator.health_snapshot())
             orchestrator.start()
             self._server = server
             self._orchestrator = orchestrator
@@ -154,10 +160,12 @@ class CloudRuntimeService:
                 self._orchestrator.stop()
             if self._context is not None:
                 self._context.stop()
+                self._context.cloud_health_headers = {}
             self._server = None
             self._orchestrator = None
             self._context = None
             self._address = None
+            self._cloud_health_headers = {}
             self._update_health(status="stopped", address=None)
 
     def wait(self) -> None:
@@ -255,6 +263,21 @@ class CloudRuntimeService:
             )
         except OSError:  # pragma: no cover - diagnostyka środowiska
             LOGGER.debug("Nie udało się zapisać pliku health probe", exc_info=True)
+
+    def _on_orchestrator_health(self, snapshot: Mapping[str, object]) -> None:
+        self._cloud_health_headers = _build_cloud_health_headers(snapshot)
+        if self._context is not None:
+            self._context.cloud_health_headers = dict(self._cloud_health_headers)
+        self._update_health(orchestrator=snapshot)
+
+
+def _build_cloud_health_headers(snapshot: Mapping[str, object]) -> dict[str, str]:
+    headers: dict[str, str] = {}
+    if "_health" in snapshot:
+        headers["x-bot-cloud-health"] = "1" if snapshot.get("_health") else "0"
+    if snapshot.get("_lastError"):
+        headers["x-bot-cloud-last-error"] = str(snapshot.get("_lastError"))
+    return headers
 
 
 __all__ = ["CloudRuntimeService", "GrpcRegistrar"]

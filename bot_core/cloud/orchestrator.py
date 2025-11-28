@@ -24,6 +24,7 @@ class CloudOrchestrator:
         marketplace_refresh_interval: int = 900,
         retrain_poll_interval: int = 60,
         metrics_registry: MetricsRegistry | None = None,
+        health_hook=None,
     ) -> None:
         self._context = context
         self._marketplace_interval = max(0, int(marketplace_refresh_interval or 0))
@@ -43,6 +44,14 @@ class CloudOrchestrator:
             "bot_cloud_worker_last_error",
             "Ostatni błąd workerów CloudOrchestrator (1=obecny)",
         )
+        self._health_metric = self._metrics.gauge(
+            "bot_cloud_health_status",
+            "Aktualny status CloudOrchestrator (1=zdrowy, 0=problem)",
+        )
+        self._last_error_metric = self._metrics.gauge(
+            "bot_cloud_last_error",
+            "Ostatni błąd CloudOrchestrator (1=obecny)",
+        )
         self._health_lock = threading.Lock()
         self._health: dict[str, object] = {
             "status": "stopped",
@@ -61,6 +70,13 @@ class CloudOrchestrator:
                 },
             },
         }
+        self._health_hook = health_hook
+        self._last_reported: tuple[object, object] | None = None
+        healthy, last_error = self._compute_overall_health(self._health)
+        self._health["_health"] = healthy
+        self._health["_lastError"] = last_error
+        self._sync_metrics(self._health)
+        self._emit_health(self._health)
 
     def start(self) -> None:
         scheduler = getattr(self._context, "retrain_scheduler", None)
@@ -169,25 +185,62 @@ class CloudOrchestrator:
                     current_workers[name] = entry
             payload["workers"] = current_workers
             payload["updatedAt"] = datetime.now(timezone.utc).isoformat()
+            healthy, last_error = self._compute_overall_health(payload)
+            payload["_health"] = healthy
+            payload["_lastError"] = last_error
             self._health = payload
             self._sync_metrics(payload)
+            self._emit_health(payload)
 
     def _sync_metrics(self, snapshot: Mapping[str, object]) -> None:
         workers = snapshot.get("workers")
-        if not isinstance(workers, Mapping):
-            return
+        if isinstance(workers, Mapping):
+            for name, payload in workers.items():
+                if not isinstance(payload, Mapping):
+                    continue
+                enabled = bool(payload.get("enabled", False))
+                last_error = payload.get("lastError")
+                status_value = 1.0 if enabled and not last_error else 0.0
+                self._worker_status_metric.set(status_value, labels={"worker": str(name)})
+                self._worker_last_error_metric.set(
+                    1.0 if last_error else 0.0,
+                    labels={"worker": str(name), "error": str(last_error or "")},
+                )
+        overall_health = 1.0 if snapshot.get("_health") else 0.0
+        last_error = snapshot.get("_lastError")
+        self._health_metric.set(overall_health)
+        self._last_error_metric.set(
+            1.0 if last_error else 0.0,
+            labels={"error": str(last_error or "")},
+        )
 
-        for name, payload in workers.items():
-            if not isinstance(payload, Mapping):
-                continue
-            enabled = bool(payload.get("enabled", False))
-            last_error = payload.get("lastError")
-            status_value = 1.0 if enabled and not last_error else 0.0
-            self._worker_status_metric.set(status_value, labels={"worker": str(name)})
-            self._worker_last_error_metric.set(
-                1.0 if last_error else 0.0,
-                labels={"worker": str(name), "error": str(last_error or "")},
-            )
+    def _compute_overall_health(self, payload: Mapping[str, object]) -> tuple[bool, str | None]:
+        status = payload.get("status")
+        workers = payload.get("workers")
+        last_error: str | None = None
+        if isinstance(workers, Mapping):
+            for worker_payload in workers.values():
+                if not isinstance(worker_payload, Mapping):
+                    continue
+                worker_error = worker_payload.get("lastError")
+                if worker_error:
+                    last_error = str(worker_error)
+                    break
+        healthy = bool(status == "running" and not last_error)
+        if not healthy and last_error is None and isinstance(status, str):
+            last_error = status
+        return healthy, last_error
+
+    def _emit_health(self, snapshot: Mapping[str, object]) -> None:
+        current = (snapshot.get("_health"), snapshot.get("_lastError"))
+        if self._last_reported != current:
+            LOGGER.info("Cloud orchestrator health update", extra={"_health": current[0], "_lastError": current[1]})
+            self._last_reported = current
+        if callable(self._health_hook):
+            try:
+                self._health_hook(snapshot)
+            except Exception:  # pragma: no cover - defensywne logowanie hooków
+                LOGGER.debug("Health hook zgłosił wyjątek", exc_info=True)
 
 
 __all__ = ["CloudOrchestrator"]
