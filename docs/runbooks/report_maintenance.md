@@ -140,7 +140,55 @@ Eksport checklisty HyperCare w adapterach Deribit/BitMEX korzysta z istniejąceg
 3. Zweryfikuj podpisy HMAC: `python scripts/export_marketing_bundle.py --destination var/marketing/benchmark --signing-key-env MARKETING_BUNDLE_HMAC --validate-only` – manifest zostanie porównany z kluczem release’owym. W przypadku rozbieżności zatrzymaj publikację i ponów eksport po zweryfikowaniu źródeł.
 4. Zanim opublikujesz materiały marketingowe, upewnij się, że w katalogu `var/marketing/benchmark/` znajdują się co najmniej: `stress_lab/*.json` + `.sig` + `.manifest.json`, `signal_quality/*.json` + nowszy CSV adapterów oraz podpisany manifest bundla marketingowego.
 
-## 9. Eksport champion/challenger i reakcja na degradację modeli
+## 9. Publikacja snapshotów i stres-testów do marketingu oraz release notes
+
+### 9.1. Przygotowanie materiałów źródłowych
+1. Zweryfikuj świeżość stres-testów: `find reports/stress_lab -name "*.json" -mtime -3` i `find reports/exchanges/signal_quality -name "*.json" -mtime -2`. Brak wyników dla kluczowych giełd (`binance`, `coinbase`, `deribit_futures`, `bitmex_futures`) oznacza blokadę publikacji.
+2. Wygeneruj checklistę adapterów: `python scripts/list_exchange_adapters.py --report-date $(date +%Y-%m-%d) --report-dir reports/exchanges --push-dashboard --dashboard-dir reports/exchanges/signal_quality --hypercare-config config/stage6/hypercare.yaml`.
+3. Zweryfikuj kolumny `hypercare_checklist_signed`, `signal_quality_snapshot_status`, `futures_checklist_ready` oraz `hypercare_cost_status` w wygenerowanym CSV (`reports/exchanges/<data>.csv`). Wszelkie wartości różne od `True`/`ready` dla Deribit/BitMEX blokują publikację.
+
+### 9.2. Budowanie i publikacja pakietu
+1. Zbuduj bundel marketingowy ze stres-testami i checklistą: `python scripts/export_marketing_bundle.py --report-range $(date +%Y-%m-%d) --destination var/marketing/benchmark --signing-key-env MARKETING_BUNDLE_HMAC --include-signal-quality`.
+2. Uruchom walidację podpisu: `python scripts/export_marketing_bundle.py --destination var/marketing/benchmark --signing-key-env MARKETING_BUNDLE_HMAC --validate-only` – bez poprawnej walidacji publikacja jest niedozwolona.
+3. Dołącz bundel do release notes: w sekcji „Release artifacts” dodaj link do `var/marketing/benchmark/manifest.json` oraz CSV checklisty (`reports/exchanges/<data>.csv`).
+4. Przekaż marketingowi ścieżki `var/marketing/benchmark/stress_lab/`, `var/marketing/benchmark/signal_quality/` oraz podpis `benchmark_marketing_bundle.sig`; upewnij się, że linki trafią do whitepaper/case studies.
+5. Zweryfikuj, że `signal_quality/index.csv` zawiera komplet giełd z CSV checklisty oraz że kolumna `snapshot_created_at` ma wartości <48 h; w razie braków ponów eksport po uzupełnieniu snapshotów.
+6. Potwierdź spójność bundla: liczba rekordów `signal_quality/index.csv` powinna odpowiadać liczbie plików `.json` w `reports/exchanges/signal_quality/`, a ścieżki w `manifest.json` muszą zgadzać się z artefaktami wypisanymi w release notes; w przypadku lustrzanego bucketa S3/Git porównaj sumę SHA256 `index.csv` z wersją zarchiwizowaną w `var/audit/benchmark/<data>/`.
+7. Zarchiwizuj paczkę w `var/audit/benchmark/<data>/` (kopiuj cały katalog bundla wraz z podpisem) i odnotuj w dzienniku `docs/audit/paper_trading_log.md` datę publikacji oraz listę artefaktów.
+8. Przeklej skrót (źródła, ścieżki artefaktów, status walidacji HMAC) do szablonu release notes i zgłoszenia marketingowego; brak wpisu blokuje zamknięcie releasu.
+9. Zsynchronizuj lustrzane repozytorium (S3/Git): `aws s3 sync var/marketing/benchmark/ s3://<bucket>/benchmark/ --delete` lub `git add var/marketing/benchmark && git commit -m "Update benchmark bundle"`; po synchronizacji wykonaj `sha256sum` na `index.csv` i `manifest.json` w obu lokalizacjach i zapisz wynik w audycie. Rozbieżności oznaczają blokadę publikacji do czasu wyrównania hashy.
+
+### 9.3. Obsługa odchyleń i publikacja cross-channel
+1. Jeśli bundler zwróci niespójny manifest (`signal_quality` lub `stress_lab` nie zawiera pełnych ścieżek), uruchom go ponownie z `--force-rebuild --include-signal-quality`, a poprzedni manifest zachowaj w `var/audit/benchmark/<data>/failed_manifest.json` jako dowód audytowy.
+2. W przypadku braków snapshotów w `index.csv` (< liczby plików `.json`), dobuduj stres-testy dla brakujących giełd (`scripts/run_stress_lab.py run --exchanges <lista>`) i powtórz eksport; dopiero po zgodności liczby wierszy i plików opublikuj bundel.
+3. Po zatwierdzeniu bundla opublikuj linki w trzech miejscach: release notes (sekcja „Release artifacts”), zgłoszenie marketingowe (biała księga/case studies) oraz wewnętrzny kanał operacyjny; wszędzie wklej sumę SHA256 `benchmark_marketing_bundle.sig` oraz timestamp walidacji HMAC.
+4. Jeśli marketing korzysta z lustrzanego repozytorium S3/Git, porównaj sumę SHA256 `signal_quality/index.csv` z wersją w lustrze; w razie rozbieżności wykonaj `aws s3 cp var/marketing/benchmark/signal_quality/index.csv s3://<bucket>/benchmark/ --metadata sha256=<hash>` lub odpowiedni `git commit` w repo marketingowym, dokumentując zmianę w `docs/audit/paper_trading_log.md`.
+5. W przypadku opóźnionego potwierdzenia lustrzanego (np. region S3 z opóźnioną spójnością) oznacz release notes statusem „oczekuje na parzystość lustra” i w ciągu 24 h powtórz walidację hashy; brak zgodności po 24 h wymaga rollbacku bundla do ostatniej zweryfikowanej wersji.
+
+### 9.4. Monitoring powydawniczy i rollback
+1. Utwórz job kontrolny (CI lub cron) uruchamiany co 12 h: `find reports/exchanges/signal_quality -name "*.json" -mtime -2 | wc -l` oraz `python scripts/export_marketing_bundle.py --destination var/marketing/benchmark --signing-key-env MARKETING_BUNDLE_HMAC --validate-only`. Jeżeli liczba plików jest mniejsza niż liczba wierszy w `reports/exchanges/<data>.csv` lub walidacja HMAC zwraca błąd, eskaluj do HyperCare i marketingu.
+2. W razie wykrycia niespójności po publikacji (różne sumy SHA między lustrami lub brakujące snapshoty) wykonaj regenerację bundla z `--force-rebuild --include-signal-quality`, a poprzednią wersję przenieś do `var/audit/benchmark/<data>/superseded/` wraz z notatką audytową opisującą różnicę.
+3. Jeżeli release notes zostały już podpisane, dołącz erratę z nową sumą SHA256 i timestampem walidacji HMAC; w marketingowym repo/buckecie dodaj plik `ERRATA_<data>.md` z listą zmienionych artefaktów i linkiem do nowego manifestu.
+4. Po rollbacku zaktualizuj `docs/audit/paper_trading_log.md` oraz wewnętrzny kanał operacyjny, wskazując przyczynę, zakres poprawki i potwierdzenie ponownej walidacji bundla.
+5. Gdy rollback nastąpił z powodu niespójności lustra, odnotuj w audycie, który bucket/branch posiadał odchylenie oraz dołącz wynik `sha256sum` przed i po korekcie; pozwoli to na późniejszą retrospekcję SLA replikacji.
+6. Jeśli w trakcie walidacji bundla pojawi się nowy snapshot lub checklista (zmieniający liczbę rekordów vs. release notes), zamroź bundel w wersji z artefaktami użytymi do podpisu (`freeze`), wykonaj rebuild na kopii roboczej i dopiero po zatwierdzeniu audytowym zamień wersję w marketingu/release notes.
+7. Przy każdym rebuildzie, który dotyka release notes lub zgłoszenia marketingowego, zaktualizuj dziennik z odniesieniem do wersji manifestu (`manifest.json`/`benchmark_marketing_bundle.sig`) oraz dołącz tabelę „przed/po” (liczba snapshotów, hash `index.csv`, hash `manifest.json`).
+
+### 9.5. Checklist publikacji wielokanałowej
+1. Przed publikacją na kanałach zewnętrznych (whitepaper, case studies, newsletter) wygeneruj diff bundla: `python scripts/export_marketing_bundle.py --destination var/marketing/benchmark --diff-only` i dołącz wynik do zgłoszenia marketingowego; brak diffu = blokada publikacji.
+2. Zweryfikuj parytet liczby wpisów w `signal_quality/index.csv` z liczbą plików `.json` w `reports/exchanges/signal_quality/` oraz liczbą wierszy w `reports/exchanges/<data>.csv`; odchylenie >0 = wymagany rebuild i adnotacja w audycie.
+3. Zanim opublikujesz linki, dodaj zapis „proof-of-source” w `docs/audit/paper_trading_log.md` zawierający hash `manifest.json`, sumę SHA256 `benchmark_marketing_bundle.sig` oraz ścieżkę archiwum w `var/audit/benchmark/<data>/`.
+4. Jeśli liczba wierszy `index.csv` zmienia się o >10% względem poprzedniego releasu, dołącz tabelę różnic (`added_exchanges`, `dropped_exchanges`) do release notes oraz oznacz release statusem „ważna zmiana pokrycia” w komunikacji marketingowej.
+5. Po dystrybucji do luster S3/Git wykonaj `sha256sum` na `index.csv` i `manifest.json` w obu lokalizacjach; wynik zapisz w `var/audit/benchmark/<data>/parity_report.json` i podlinkuj w release notes. Rozbieżność hashy = blokada i rollback bundla zgodnie z pkt 9.4.
+
+### 9.6. Proof-of-source i rotacja bundli marketingowych
+1. Po pozytywnej walidacji bundla utwórz plik `var/audit/benchmark/<data>/marketing_bundle_proof.md` zawierający: listę giełd z `signal_quality/index.csv`, hash `index.csv`, hash `manifest.json`, sumę SHA256 `benchmark_marketing_bundle.sig`, timestamp walidacji HMAC oraz adres lustra S3/Git.
+2. Do release notes i zgłoszenia marketingowego wklej link do `marketing_bundle_proof.md`; brak linku blokuje publikację materiałów zewnętrznych.
+3. Jeśli bundel został opublikowany w trybie „freeze” (np. oczekiwanie na parytet luster), dopisz sekcję „status freeze” w `marketing_bundle_proof.md` z datą rozpoczęcia, listą brakujących hashy i planem odblokowania.
+4. Gdy parytet hashy zostanie osiągnięty, zaktualizuj `marketing_bundle_proof.md` o tabelę „przed/po” (hash `index.csv`, hash `manifest.json`, liczba snapshotów) i oznacz datę odblokowania; w release notes dodaj informację o usunięciu statusu freeze.
+5. Przy każdym rebuildzie bundla z nowym zakresem danych pozostaw poprzedni `marketing_bundle_proof.md` w `var/audit/benchmark/<data>/superseded/` wraz z linkiem do erraty i hashami wersji bieżącej – umożliwia to śledzenie rotacji w audycie marketingu.
+
+## 10. Eksport champion/challenger i reakcja na degradację modeli
 
 ### 9.1. Generowanie raportu porównawczego championów
 
@@ -157,7 +205,7 @@ Eksport checklisty HyperCare w adapterach Deribit/BitMEX korzysta z istniejąceg
 4. Po promocji zweryfikuj w panelu Strategy Management, że nowy champion jest aktywny, a wpis audytowy pojawił się w `audit/champion_promotions/<model>/`.
 5. Uzupełnij dziennik operacyjny (`docs/audit/paper_trading_log.md`) o decyzję, dołącz raport `champion_diff` i snapshot rekomendacji, aby zachować pełny kontekst eskalacji.
 
-## 10. Materiały uzupełniające
+## 11. Materiały uzupełniające
 
 * Dokument konfiguracji instalatora desktopowego: `docs/deployment/desktop_installer.md`.
 * Walidacja hooka HWID i keyring: `docs/deployment/installer_build.md#walidacja-hooka-hwid-i-keyring`.
