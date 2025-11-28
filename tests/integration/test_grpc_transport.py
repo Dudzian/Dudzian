@@ -684,10 +684,12 @@ def test_runtime_service_emits_feed_alerts_when_threshold_crossed(monkeypatch: p
     monkeypatch.setattr(RuntimeService, "_refresh_long_poll_metrics", lambda self: None)
 
     app = QCoreApplication.instance() or QCoreApplication([])
+    exporter = FeedHealthMetricsExporter(registry=MetricsRegistry())
     service = RuntimeService(
         default_limit=1,
         decision_loader=lambda *_args, **_kwargs: [],
         feed_alert_sink=_RecordingSink(),
+        feed_metrics_exporter=exporter,
     )
     try:
         service._feed_alert_state["latency"] = "ok"
@@ -815,6 +817,292 @@ def test_grpc_longpoll_oscillation_is_debounced(monkeypatch: pytest.MonkeyPatch)
         assert initial_state == "ok"
         assert history and len(set(history)) == 1
         assert history[0] in {"warning", "critical"}
+    finally:
+        service._longpoll_timer.stop()
+        service._stop_grpc_stream()
+        app.quit()
+
+
+def test_long_fallback_periods_keep_sla_alerts_stable(monkeypatch: pytest.MonkeyPatch) -> None:
+    pytest.importorskip("PySide6")
+    os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+    from PySide6.QtCore import QCoreApplication  # type: ignore[attr-defined]
+
+    events: list[dict[str, object]] = []
+
+    class _RecordingSink:
+        def emit_feed_health_event(self, *, severity: str, title: str, body: str, context=None, payload=None) -> None:  # pragma: no cover - pomocnicza struktura
+            events.append(
+                {
+                    "severity": severity,
+                    "title": title,
+                    "body": body,
+                    "context": dict(context or {}),
+                }
+            )
+
+    monkeypatch.setattr(RuntimeService, "_auto_connect_grpc", lambda self: None)
+    monkeypatch.setattr(RuntimeService, "_refresh_long_poll_metrics", lambda self: None)
+
+    app = QCoreApplication.instance() or QCoreApplication([])
+    exporter = FeedHealthMetricsExporter(registry=MetricsRegistry())
+    service = RuntimeService(
+        default_limit=1,
+        decision_loader=lambda *_args, **_kwargs: [],
+        feed_alert_sink=_RecordingSink(),
+        feed_metrics_exporter=exporter,
+    )
+    try:
+        service._feed_thresholds.update(
+            {
+                "latency_warning_ms": 120.0,
+                "latency_critical_ms": 180.0,
+                "reconnects_warning": 1,
+                "reconnects_critical": 2,
+                "downtime_warning_seconds": 60.0,
+                "downtime_critical_seconds": 300.0,
+            }
+        )
+        service._latency_samples_for("grpc").clear()
+        service._active_stream_label = "fallback://demo"
+        fallback_samples = service._latency_samples_for("fallback")
+        for hour in range(3):
+            fallback_samples.clear()
+            fallback_samples.extend([240.0 + hour * 5])
+            service._feed_reconnects = 1
+            service._feed_downtime_total = float((hour + 1) * 3600)
+            service._update_feed_health(
+                status="fallback", reconnects=service._feed_reconnects, last_error="grpc unavailable"
+            )
+            assert service.feedSlaReport.get("sla_state") in {"warning", "critical"}
+            assert service.feedSlaReport.get("consecutive_degraded_periods", 0) >= hour + 1
+
+        assert len(events) == 3
+        assert {entry["context"].get("metric") for entry in events} == {"latency", "reconnects", "downtime"}
+
+        fallback_dashboard = [entry for entry in exporter.dashboard() if entry.get("adapter") == "fallback"]
+        assert len(fallback_dashboard) == 1
+        fallback_entry = fallback_dashboard[0]
+        assert fallback_entry["status"] == "fallback"
+        assert fallback_entry["reconnects"] == 1
+        assert fallback_entry["downtime_seconds"] == pytest.approx(3600.0 * 3, rel=0.01)
+
+        registry = exporter._registry
+        fallback_labels = {
+            "adapter": "fallback",
+            "transport": "fallback",
+            "environment": "default",
+            "scope": "decision_feed",
+        }
+        assert registry.get("bot_ui_feed_sla_reconnects_total").value(labels=fallback_labels) == pytest.approx(1.0)
+        assert registry.get("bot_ui_feed_sla_downtime_seconds").value(labels=fallback_labels) == pytest.approx(3600.0 * 3, rel=0.01)
+
+        service._active_stream_label = "grpc://demo"
+        service._latency_samples_for("fallback").clear()
+        fallback_samples.clear()
+        fallback_samples.extend([40.0])
+        service._feed_downtime_total = 0.0
+        service._feed_reconnects = 0
+        service._update_feed_health(status="connected", reconnects=service._feed_reconnects, last_error="")
+        assert service.feedSlaReport.get("sla_state") == "ok"
+        assert len(events) == 6
+        recovery_states = [entry for entry in events if entry["severity"] == "info"]
+        assert len(recovery_states) == 3
+
+        dashboard = exporter.dashboard()
+        assert any(entry.get("adapter") == "grpc" and entry.get("status") == "connected" for entry in dashboard)
+        grpc_labels = {
+            "adapter": "grpc",
+            "transport": "grpc",
+            "environment": "default",
+            "scope": "decision_feed",
+        }
+        assert registry.get("bot_ui_feed_sla_reconnects_total").value(labels=grpc_labels) == pytest.approx(0.0)
+        assert registry.get("bot_ui_feed_sla_downtime_seconds").value(labels=grpc_labels) == pytest.approx(0.0)
+    finally:
+        service._longpoll_timer.stop()
+        service._stop_grpc_stream()
+        app.quit()
+
+
+def test_frequent_transport_switches_do_not_reset_alert_hysteresis(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    pytest.importorskip("PySide6")
+    os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+    from PySide6.QtCore import QCoreApplication  # type: ignore[attr-defined]
+
+    events: list[dict[str, object]] = []
+
+    class _RecordingSink:
+        def emit_feed_health_event(self, *, severity: str, title: str, body: str, context=None, payload=None) -> None:  # pragma: no cover - pomocnicza struktura
+            events.append(
+                {
+                    "severity": severity,
+                    "title": title,
+                    "body": body,
+                    "context": dict(context or {}),
+                }
+            )
+
+    monkeypatch.setattr(RuntimeService, "_auto_connect_grpc", lambda self: None)
+    monkeypatch.setattr(RuntimeService, "_refresh_long_poll_metrics", lambda self: None)
+
+    app = QCoreApplication.instance() or QCoreApplication([])
+    service = RuntimeService(
+        default_limit=1,
+        decision_loader=lambda *_args, **_kwargs: [],
+        feed_alert_sink=_RecordingSink(),
+    )
+    try:
+        service._feed_thresholds.update(
+            {
+                "latency_warning_ms": 150.0,
+                "latency_critical_ms": 200.0,
+                "reconnects_warning": 1,
+                "reconnects_critical": 3,
+                "downtime_warning_seconds": 30.0,
+                "downtime_critical_seconds": 120.0,
+            }
+        )
+        service._active_stream_label = "grpc://demo"
+        grpc_samples = service._latency_samples_for("grpc")
+        grpc_samples.clear()
+        grpc_samples.extend([80.0])
+        service._feed_reconnects = 0
+        service._feed_downtime_total = 0.0
+        service._update_feed_health(status="connected", reconnects=service._feed_reconnects, last_error="")
+        assert service.feedSlaReport.get("sla_state") == "ok"
+
+        for index in range(6):
+            active_label = "fallback://demo" if index % 2 == 0 else "grpc://demo"
+            status = "fallback" if active_label.startswith("fallback") else "connected"
+            service._active_stream_label = active_label
+            service._feed_reconnects = index + 1
+            service._feed_downtime_total = 180.0
+            for key in ("grpc", "fallback"):
+                service._latency_samples_for(key).clear()
+            samples = service._latency_samples_for("fallback" if status == "fallback" else "grpc")
+            samples.extend([240.0 + index])
+            service._update_feed_health(
+                status=status, reconnects=service._feed_reconnects, last_error="flapping stream"
+            )
+            report = service.feedSlaReport
+            assert report.get("sla_state") in {"warning", "critical"}
+            assert report.get("consecutive_degraded_periods") == index + 1
+
+        degraded_metrics = {
+            entry["context"].get("metric") for entry in events if entry["severity"] != "info"
+        }
+        assert degraded_metrics.issuperset({"latency", "reconnects", "downtime"})
+
+        service._active_stream_label = "grpc://demo"
+        for key in ("grpc", "fallback"):
+            service._latency_samples_for(key).clear()
+        samples = service._latency_samples_for("grpc")
+        samples.extend([60.0])
+        service._feed_reconnects = 0
+        service._feed_downtime_total = 0.0
+        service._update_feed_health(status="connected", reconnects=service._feed_reconnects, last_error="")
+        assert service.feedSlaReport.get("sla_state") == "ok"
+        recovery_metrics = {
+            entry["context"].get("metric") for entry in events if entry["severity"] == "info"
+        }
+        assert recovery_metrics.issuperset({"latency", "reconnects", "downtime"})
+    finally:
+        service._longpoll_timer.stop()
+        service._stop_grpc_stream()
+        app.quit()
+
+
+def test_repeated_long_fallback_cycles_preserve_transport_counters(
+    monkeypatch: pytest.MonkeyPatch, ci_decision_feed_metrics: Path
+) -> None:
+    pytest.importorskip("PySide6")
+    os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+    from PySide6.QtCore import QCoreApplication  # type: ignore[attr-defined]
+
+    monkeypatch.setattr(RuntimeService, "_auto_connect_grpc", lambda self: None)
+    monkeypatch.setattr(RuntimeService, "_refresh_long_poll_metrics", lambda self: None)
+
+    app = QCoreApplication.instance() or QCoreApplication([])
+    exporter = FeedHealthMetricsExporter(registry=MetricsRegistry())
+    service = RuntimeService(
+        default_limit=1,
+        decision_loader=lambda *_args, **_kwargs: [],
+        feed_metrics_exporter=exporter,
+    )
+    try:
+        service._feed_thresholds.update(
+            {
+                "latency_warning_ms": 140.0,
+                "latency_critical_ms": 220.0,
+                "reconnects_warning": 1,
+                "reconnects_critical": 2,
+                "downtime_warning_seconds": 45.0,
+                "downtime_critical_seconds": 240.0,
+            }
+        )
+        service._active_stream_label = "grpc://demo"
+        service._latency_samples_for("grpc").clear()
+        service._latency_samples_for("grpc").extend([75.0])
+        service._update_feed_health(status="connected", reconnects=0, last_error="")
+        assert service.feedSlaReport.get("sla_state") == "ok"
+
+        for cycle in range(2):
+            service._active_stream_label = "fallback://demo"
+            fallback_samples = service._latency_samples_for("fallback")
+            fallback_samples.clear()
+            fallback_samples.extend([320.0 + cycle * 10])
+            service._feed_reconnects = cycle + 1
+            service._feed_downtime_total = float((cycle + 1) * 1800)
+            service._update_feed_health(
+                status="fallback", reconnects=service._feed_reconnects, last_error="grpc timeout"
+            )
+            sla_state = service.feedSlaReport.get("sla_state")
+            assert sla_state in {"warning", "critical"}
+            assert service.feedSlaReport.get("consecutive_degraded_periods") >= cycle + 1
+
+        fallback_dashboard = [entry for entry in exporter.dashboard() if entry.get("adapter") == "fallback"]
+        assert len(fallback_dashboard) == 1
+        fallback_entry = fallback_dashboard[0]
+        assert fallback_entry["reconnects"] == 2
+        assert fallback_entry["downtime_seconds"] == pytest.approx(3600.0, rel=0.01)
+
+        registry = exporter._registry
+        fallback_labels = {
+            "adapter": "fallback",
+            "transport": "fallback",
+            "environment": "default",
+            "scope": "decision_feed",
+        }
+        assert registry.get("bot_ui_feed_sla_reconnects_total").value(labels=fallback_labels) == pytest.approx(2.0)
+        assert registry.get("bot_ui_feed_sla_downtime_seconds").value(labels=fallback_labels) == pytest.approx(3600.0, rel=0.01)
+
+        service._active_stream_label = "grpc://demo"
+        service._feed_reconnects = 0
+        service._feed_downtime_total = 0.0
+        for key in ("grpc", "fallback"):
+            service._latency_samples_for(key).clear()
+        service._latency_samples_for("grpc").extend([65.0])
+        service._update_feed_health(status="connected", reconnects=service._feed_reconnects, last_error="")
+        assert service.feedSlaReport.get("sla_state") == "ok"
+
+        dashboard = exporter.dashboard()
+        grpc_labels = {
+            "adapter": "grpc",
+            "transport": "grpc",
+            "environment": "default",
+            "scope": "decision_feed",
+        }
+        assert any(entry.get("adapter") == "grpc" and entry.get("status") == "connected" for entry in dashboard)
+        assert registry.get("bot_ui_feed_sla_reconnects_total").value(labels=grpc_labels) == pytest.approx(0.0)
+        assert registry.get("bot_ui_feed_sla_downtime_seconds").value(labels=grpc_labels) == pytest.approx(0.0)
+
+        payload = json.loads(ci_decision_feed_metrics.read_text(encoding="utf-8"))
+        assert payload.get("status") == "connected"
+        assert payload.get("transports", {}).get("fallback", {}).get("reconnects") == 2
+        assert payload.get("transports", {}).get("grpc", {}).get("reconnects") == 0
     finally:
         service._longpoll_timer.stop()
         service._stop_grpc_stream()

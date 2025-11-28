@@ -1,10 +1,39 @@
 {
-  "__inputs": [],
+  "__inputs": [
+    {
+      "name": "DS_PROMETHEUS",
+      "label": "Prometheus",
+      "type": "datasource",
+      "pluginId": "prometheus",
+      "pluginName": "Prometheus"
+    }
+  ],
   "__requires": [
     {"type": "grafana", "id": "grafana", "name": "Grafana", "version": "9.x"},
-    {"type": "datasource", "id": "prometheus", "name": "Prometheus", "version": "1.0.0"}
+    {"type": "datasource", "id": "prometheus", "name": "Prometheus", "version": "1.0.0"},
+    {"type": "panel", "id": "timeseries", "name": "Time series", "version": "9.0.0"},
+    {"type": "panel", "id": "stat", "name": "Stat", "version": "9.0.0"},
+    {"type": "panel", "id": "heatmap", "name": "Heatmap", "version": "9.0.0"}
   ],
   "title": "Feed transport comparison (gRPC vs long-poll)",
+  "templating": {
+    "list": [
+      {
+        "type": "datasource",
+        "name": "DS_PROMETHEUS",
+        "label": "Prometheus",
+        "query": "prometheus",
+        "refresh": 1,
+        "options": [],
+        "current": {
+          "selected": false,
+          "text": "Prometheus",
+          "value": "${DS_PROMETHEUS}"
+        },
+        "hide": 0
+      }
+    ]
+  },
   "panels": [
     {
       "type": "timeseries",
@@ -76,49 +105,141 @@
     {
       "type": "stat",
       "title": "Alert SLA (feed_sla)",
-      "targets": [
-        {
-          "expr": "max_over_time(bot_ui_feed_sla_status{transport=~\"grpc|fallback\",environment=~\".*\"}[5m])",
-          "legendFormat": "gRPC status"
-        },
-        {
-          "expr": "max_over_time(bot_exchange_stream_long_poll_reconnect_in_progress[5m])",
-          "legendFormat": "Long-poll reconnect in progress"
+    "targets": [
+      {
+        "expr": "max_over_time(bot_ui_feed_sla_status{transport=~\"grpc|fallback\",environment=~\".*\"}[5m])",
+        "legendFormat": "gRPC status",
+        "datasource": {
+          "type": "prometheus",
+          "uid": "${DS_PROMETHEUS}"
         }
-      ],
+      },
+      {
+        "expr": "max_over_time(bot_exchange_stream_long_poll_reconnect_in_progress[5m])",
+        "legendFormat": "Long-poll reconnect in progress",
+        "datasource": {
+          "type": "prometheus",
+          "uid": "${DS_PROMETHEUS}"
+        }
+      }
+    ],
       "options": {"orientation": "horizontal"}
     },
     {
       "type": "stat",
       "title": "SLA hysteresis (max_over_time 5m)",
       "description": "Stabilizowany status gRPC/fallback na bazie max_over_time(...[5m]) zmniejsza flapowanie alertów przy krótkich skokach.",
-      "targets": [
-        {
-          "expr": "max_over_time(bot_ui_feed_sla_status{transport=~\"grpc|fallback\",environment=~\".*\"}[5m])",
-          "legendFormat": "stabilized SLA status"
-        },
-        {
-          "expr": "(max_over_time(bot_ui_feed_sla_status{transport=~\"grpc|fallback\",environment=~\".*\"}[5m]) >= 2)",
-          "legendFormat": "degraded for 5m"
+    "targets": [
+      {
+        "expr": "max_over_time(bot_ui_feed_sla_status{transport=~\"grpc|fallback\",environment=~\".*\"}[5m])",
+        "legendFormat": "stabilized SLA status",
+        "datasource": {
+          "type": "prometheus",
+          "uid": "${DS_PROMETHEUS}"
         }
-      ],
+      },
+      {
+        "expr": "(max_over_time(bot_ui_feed_sla_status{transport=~\"grpc|fallback\",environment=~\".*\"}[5m]) >= 2)",
+        "legendFormat": "degraded for 5m",
+        "datasource": {
+          "type": "prometheus",
+          "uid": "${DS_PROMETHEUS}"
+        }
+      }
+    ],
       "options": {"reduceOptions": {"calcs": ["lastNotNull"]}, "orientation": "horizontal"}
     },
     {
       "type": "stat",
       "title": "SLA metric presence (anti-flap)",
       "description": "Wymusza obecność próbek i używa absent()/count_over_time, aby wykryć utratę metryk zamiast chwilowych fluktuacji transportu.",
+    "targets": [
+      {
+        "expr": "count_over_time(bot_ui_feed_sla_status{transport=\"grpc\",environment=~\".*\"}[10m])",
+        "legendFormat": "gRPC samples (10m)",
+        "datasource": {
+          "type": "prometheus",
+          "uid": "${DS_PROMETHEUS}"
+        }
+      },
+      {
+        "expr": "absent(bot_ui_feed_sla_status{transport=\"fallback\",environment=~\".*\"})",
+        "legendFormat": "fallback metric absent",
+        "datasource": {
+          "type": "prometheus",
+          "uid": "${DS_PROMETHEUS}"
+        }
+      }
+    ],
+      "options": {"reduceOptions": {"calcs": ["lastNotNull"]}, "orientation": "horizontal"}
+    },
+    {
+      "type": "timeseries",
+      "title": "Długotrwałe przełączenia (1h max_over_time)",
+      "description": "Wizualizacja wielogodzinnego fallbacku i reconnect in progress, aby łatwiej wychwycić utrzymujące się degradacje feedu.",
       "targets": [
         {
-          "expr": "count_over_time(bot_ui_feed_sla_status{transport=\"grpc\",environment=~\".*\"}[10m])",
-          "legendFormat": "gRPC samples (10m)"
+          "expr": "max_over_time(bot_ui_feed_sla_status{transport=\"fallback\",environment=~\".*\"}[1h])",
+          "legendFormat": "fallback status (1h)",
+          "datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"}
         },
         {
-          "expr": "absent(bot_ui_feed_sla_status{transport=\"fallback\",environment=~\".*\"})",
-          "legendFormat": "fallback metric absent"
+          "expr": "max_over_time(bot_exchange_stream_long_poll_reconnect_in_progress[1h])",
+          "legendFormat": "long-poll reconnect in progress (1h)",
+          "datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"}
         }
       ],
-      "options": {"reduceOptions": {"calcs": ["lastNotNull"]}, "orientation": "horizontal"}
+      "fieldConfig": {"defaults": {"unit": "short"}, "overrides": []}
+    },
+    {
+      "type": "heatmap",
+      "title": "Histogram reconnectów (increase 15m)",
+      "description": "Rozkład reconnectów w 15-minutowych kubełkach dla gRPC i long-poll, pomocny przy diagnozie częstych fluktuacji transportu.",
+      "targets": [
+        {
+          "expr": "increase(bot_ui_feed_sla_reconnects_total{transport=~\"grpc|fallback\",environment=~\".*\"}[15m])",
+          "legendFormat": "gRPC/fallback reconnecty",
+          "datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"}
+        },
+        {
+          "expr": "increase(bot_exchange_stream_long_poll_reconnects_total[15m])",
+          "legendFormat": "long-poll reconnecty",
+          "datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"}
+        }
+      ],
+      "options": {"tooltip": {"show": true}, "color": {"mode": "palette-classic"}},
+      "fieldConfig": {"defaults": {"unit": "short"}, "overrides": []}
+    },
+    {
+      "type": "timeseries",
+      "title": "Downtime fallbacku (increase 15m)",
+      "description": "Przyrost downtime fallbacku w 15-minutowych oknach, ułatwia ocenę długości trwania przełączeń.",
+      "targets": [
+        {
+          "expr": "increase(bot_ui_feed_sla_downtime_seconds{transport=\"fallback\",environment=~\".*\"}[15m])",
+          "legendFormat": "fallback downtime",
+          "datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"}
+        }
+      ],
+      "fieldConfig": {"defaults": {"unit": "s"}, "overrides": []}
+    },
+    {
+      "type": "timeseries",
+      "title": "Częstotliwość przełączeń (increase 1h)",
+      "description": "Liczba reconnectów gRPC/fallback oraz long-poll w godzinnych oknach, aby szybciej zauważyć flapping transportu.",
+      "targets": [
+        {
+          "expr": "increase(bot_ui_feed_sla_reconnects_total{transport=~\"grpc|fallback\",environment=~\".*\"}[1h])",
+          "legendFormat": "gRPC/fallback reconnecty (1h)",
+          "datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"}
+        },
+        {
+          "expr": "increase(bot_exchange_stream_long_poll_reconnects_total[1h])",
+          "legendFormat": "long-poll reconnecty (1h)",
+          "datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"}
+        }
+      ],
+      "fieldConfig": {"defaults": {"unit": "short"}, "overrides": []}
     }
   ],
   "schemaVersion": 38,
