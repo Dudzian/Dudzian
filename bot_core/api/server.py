@@ -1162,7 +1162,28 @@ class LocalRuntimeContext:
         return exporter.metrics_url
 
 
-class _MarketDataServicer(trading_pb2_grpc.MarketDataServiceServicer):
+class _CloudHealthMixin:
+    def _cloud_health_metadata(self) -> list[tuple[str, str]]:
+        headers = getattr(self, "_context", None)
+        headers = getattr(headers, "cloud_health_headers", None)
+        if not headers:
+            return []
+        return [(str(key), str(value)) for key, value in headers.items()]
+
+    def _apply_cloud_health_metadata(self, rpc_context) -> None:
+        metadata = self._cloud_health_metadata()
+        if not metadata or rpc_context is None:
+            return
+        for method_name in ("send_initial_metadata", "set_trailing_metadata"):
+            sender = getattr(rpc_context, method_name, None)
+            if callable(sender):
+                try:
+                    sender(metadata)
+                except Exception:  # pragma: no cover - defensywne logowanie
+                    _LOGGER.debug("Nie udało się przesłać metadanych health do klienta", exc_info=True)
+
+
+class _MarketDataServicer(_CloudHealthMixin, trading_pb2_grpc.MarketDataServiceServicer):
     def __init__(self, context: LocalRuntimeContext) -> None:
         self._context = context
         self._lock = threading.Lock()
@@ -1227,6 +1248,7 @@ class _MarketDataServicer(trading_pb2_grpc.MarketDataServiceServicer):
         return generated
 
     def GetOhlcvHistory(self, request, context):  # noqa: N802
+        self._apply_cloud_health_metadata(context)
         symbol = request.instrument.symbol or request.instrument.venue_symbol or self._context.primary_symbol
         metadata = self._resolve_metadata(symbol)
         default_interval = getattr(self._context.pipeline.controller, "interval", "1h")
@@ -1272,6 +1294,7 @@ class _MarketDataServicer(trading_pb2_grpc.MarketDataServiceServicer):
         return trading_pb2.GetOhlcvHistoryResponse(candles=candles, has_more=False)
 
     def StreamOhlcv(self, request, context):  # noqa: N802
+        self._apply_cloud_health_metadata(context)
         history_request = trading_pb2.GetOhlcvHistoryRequest()
         history_request.instrument.CopyFrom(request.instrument)
         if request.HasField("granularity"):
@@ -1288,6 +1311,7 @@ class _MarketDataServicer(trading_pb2_grpc.MarketDataServiceServicer):
             yield trading_pb2.StreamOhlcvUpdate(increment=increment)
 
     def ListTradableInstruments(self, request, context):  # noqa: N802
+        self._apply_cloud_health_metadata(context)
         requested_exchange = (request.exchange or "").strip().upper()
         context_exchange = (self._context.exchange_name or "PAPER").upper()
         if requested_exchange and requested_exchange != context_exchange:
@@ -1309,7 +1333,7 @@ class _MarketDataServicer(trading_pb2_grpc.MarketDataServiceServicer):
         return trading_pb2.ListTradableInstrumentsResponse(instruments=instruments)
 
 
-class _OrderServicer(trading_pb2_grpc.OrderServiceServicer):
+class _OrderServicer(_CloudHealthMixin, trading_pb2_grpc.OrderServiceServicer):
     def __init__(self, context: LocalRuntimeContext) -> None:
         self._context = context
         self._lock = threading.Lock()
@@ -1338,6 +1362,7 @@ class _OrderServicer(trading_pb2_grpc.OrderServiceServicer):
 
     def SubmitOrder(self, request, context):  # noqa: N802
         self._context.authorize(context)
+        self._apply_cloud_health_metadata(context)
         symbol = request.instrument.symbol or request.instrument.venue_symbol or self._context.primary_symbol
         execution_service: ExecutionService = self._context.pipeline.execution_service
         order_request = OrderRequest(
@@ -1375,6 +1400,7 @@ class _OrderServicer(trading_pb2_grpc.OrderServiceServicer):
 
     def CancelOrder(self, request, context):  # noqa: N802
         self._context.authorize(context)
+        self._apply_cloud_health_metadata(context)
         execution_service: ExecutionService = self._context.pipeline.execution_service
         try:
             with self._lock:
@@ -1394,16 +1420,18 @@ class _OrderServicer(trading_pb2_grpc.OrderServiceServicer):
         return trading_pb2.CancelOrderResponse(status=trading_pb2.ORDER_STATUS_ACCEPTED)
 
 
-class _RiskServicer(trading_pb2_grpc.RiskServiceServicer):
+class _RiskServicer(_CloudHealthMixin, trading_pb2_grpc.RiskServiceServicer):
     def __init__(self, context: LocalRuntimeContext) -> None:
         if context.risk_store is None:
             raise RuntimeError("Risk store is not configured")
         self._store = context.risk_store
 
     def GetRiskState(self, request, context):  # noqa: N802
+        self._apply_cloud_health_metadata(context)
         return self._store.latest()
 
     def StreamRiskState(self, request, context):  # noqa: N802
+        self._apply_cloud_health_metadata(context)
         for snapshot in self._store.history():
             yield snapshot
         queue = self._store.register()
@@ -1420,11 +1448,12 @@ class _RiskServicer(trading_pb2_grpc.RiskServiceServicer):
             self._store.unregister(queue)
 
 
-class _MetricsServicer(trading_pb2_grpc.MetricsServiceServicer):
+class _MetricsServicer(_CloudHealthMixin, trading_pb2_grpc.MetricsServiceServicer):
     def __init__(self, context: LocalRuntimeContext) -> None:
         self._context = context
 
     def StreamMetrics(self, request, context):  # noqa: N802
+        self._apply_cloud_health_metadata(context)
         snapshot = trading_pb2.MetricsSnapshot(
             generated_at=_timestamp_from_ms(int(time.time() * 1000)),
             event_to_frame_p95_ms=0.0,
@@ -1439,11 +1468,12 @@ class _MetricsServicer(trading_pb2_grpc.MetricsServiceServicer):
         yield snapshot
 
     def PushMetrics(self, request, context):  # noqa: N802
+        self._apply_cloud_health_metadata(context)
         del request, context
         return trading_pb2.MetricsAck(accepted=True)
 
 
-class _RuntimeServicer(trading_pb2_grpc.RuntimeServiceServicer):
+class _RuntimeServicer(_CloudHealthMixin, trading_pb2_grpc.RuntimeServiceServicer):
     def __init__(self, context: LocalRuntimeContext) -> None:
         self._context = context
 
@@ -1638,6 +1668,7 @@ class _RuntimeServicer(trading_pb2_grpc.RuntimeServiceServicer):
 
     def StreamDecisions(self, request, context):  # noqa: N802
         self._context.authorize(context)
+        self._apply_cloud_health_metadata(context)
         poll_interval = request.poll_interval_seconds
         if poll_interval <= 0.0:
             poll_interval = 1.0
@@ -1695,6 +1726,7 @@ class _RuntimeServicer(trading_pb2_grpc.RuntimeServiceServicer):
 
     def ListDecisions(self, request, context):  # noqa: N802
         self._context.authorize(context)
+        self._apply_cloud_health_metadata(context)
         limit = int(getattr(request, "limit", 0) or 0)
         cursor = int(getattr(request, "cursor", 0) or 0)
         if cursor < 0:
@@ -1721,28 +1753,30 @@ class _RuntimeServicer(trading_pb2_grpc.RuntimeServiceServicer):
         return response
 
 
-class _HealthServicer(trading_pb2_grpc.HealthServiceServicer):
+class _HealthServicer(_CloudHealthMixin, trading_pb2_grpc.HealthServiceServicer):
     def __init__(self, context: LocalRuntimeContext) -> None:
         self._context = context
 
     def Check(self, request, context):  # noqa: N802
-        del request, context
+        del request
+        self._apply_cloud_health_metadata(context)
         response = trading_pb2.HealthCheckResponse(
             version=self._context.version,
             git_commit=self._context.git_commit or "unknown",
         )
         response.started_at.CopyFrom(_timestamp_from_ms(int(self._context.started_at.timestamp() * 1000)))
-        self._attach_cloud_health(response)
+        snapshot = self._attach_cloud_health(response)
+        self._apply_cloud_health_status(snapshot, context)
         return response
 
-    def _attach_cloud_health(self, response: trading_pb2.HealthCheckResponse) -> None:
+    def _attach_cloud_health(self, response: trading_pb2.HealthCheckResponse) -> Mapping[str, object] | None:
         orchestrator = getattr(self._context, "cloud_orchestrator", None)
         if orchestrator is None or not hasattr(orchestrator, "health_snapshot"):
-            return
+            return None
 
         snapshot = orchestrator.health_snapshot()
         if not isinstance(snapshot, Mapping):
-            return
+            return None
 
         cloud_health = trading_pb2.CloudHealthSnapshot()
         status = snapshot.get("status")
@@ -1772,9 +1806,29 @@ class _HealthServicer(trading_pb2_grpc.HealthServiceServicer):
 
         if cloud_health.status or cloud_health.workers:
             response.cloud_health.CopyFrom(cloud_health)
+        return snapshot
+
+    def _apply_cloud_health_status(self, snapshot: Mapping[str, object] | None, rpc_context) -> None:
+        if snapshot is None or rpc_context is None:
+            return
+        try:
+            healthy = bool(snapshot.get("_health"))
+            last_error = snapshot.get("_lastError")
+            if not healthy and hasattr(rpc_context, "set_code"):
+                rpc_context.set_code(grpc.StatusCode.UNAVAILABLE)
+                details = "cloud_unhealthy"
+                if last_error:
+                    details = f"cloud_unhealthy: {last_error}"
+                if hasattr(rpc_context, "set_details"):
+                    rpc_context.set_details(str(details))
+            headers = getattr(self._context, "cloud_health_headers", None)
+            if headers and hasattr(rpc_context, "set_trailing_metadata"):
+                rpc_context.set_trailing_metadata([(str(k), str(v)) for k, v in headers.items()])
+        except Exception:  # pragma: no cover - defensywne logowanie błędów RPC
+            _LOGGER.debug("Nie udało się ustawić statusu health w gRPC", exc_info=True)
 
 
-class _MarketplaceServicer(trading_pb2_grpc.MarketplaceServiceServicer):
+class _MarketplaceServicer(_CloudHealthMixin, trading_pb2_grpc.MarketplaceServiceServicer):
     def __init__(self, context: LocalRuntimeContext) -> None:
         self._context = context
 
@@ -1796,6 +1850,7 @@ class _MarketplaceServicer(trading_pb2_grpc.MarketplaceServiceServicer):
     def ListPresets(self, request, context):  # noqa: N802
         del request
         self._context.authorize(context)
+        self._apply_cloud_health_metadata(context)
         response = trading_pb2.ListMarketplacePresetsResponse()
         for document in self._context.list_marketplace_presets():
             response.presets.append(self._build_summary(document))
@@ -1803,6 +1858,7 @@ class _MarketplaceServicer(trading_pb2_grpc.MarketplaceServiceServicer):
 
     def ImportPreset(self, request, context):  # noqa: N802
         self._context.authorize(context)
+        self._apply_cloud_health_metadata(context)
         if not request.payload:
             context.abort(grpc.StatusCode.INVALID_ARGUMENT, "payload is required")
         try:
@@ -1820,6 +1876,7 @@ class _MarketplaceServicer(trading_pb2_grpc.MarketplaceServiceServicer):
 
     def ExportPreset(self, request, context):  # noqa: N802
         self._context.authorize(context)
+        self._apply_cloud_health_metadata(context)
         format_value = request.format or "json"
         try:
             document, payload = self._context.export_marketplace_preset(
@@ -1847,11 +1904,13 @@ class _MarketplaceServicer(trading_pb2_grpc.MarketplaceServiceServicer):
 
     def RemovePreset(self, request, context):  # noqa: N802
         self._context.authorize(context)
+        self._apply_cloud_health_metadata(context)
         removed = self._context.remove_marketplace_preset(request.preset_id)
         return trading_pb2.RemoveMarketplacePresetResponse(removed=removed)
 
     def ActivatePreset(self, request, context):  # noqa: N802
         self._context.authorize(context)
+        self._apply_cloud_health_metadata(context)
         document = self._context.activate_marketplace_preset(request.preset_id)
         if document is None:
             context.abort(

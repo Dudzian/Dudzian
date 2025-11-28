@@ -9,7 +9,7 @@ import threading
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import Iterable, Mapping, Sequence
+from typing import Callable, Iterable, Mapping, Sequence
 
 import grpc
 from google.protobuf import timestamp_pb2
@@ -332,8 +332,34 @@ class CloudAuthInterceptor(grpc.ServerInterceptor):
 class CloudAuthServicer(trading_pb2_grpc.CloudAuthServiceServicer):
     """Udostępnia RPC AuthorizeClient dla klientów UI."""
 
-    def __init__(self, security_manager: CloudSecurityManager) -> None:
+    def __init__(
+        self,
+        security_manager: CloudSecurityManager,
+        *,
+        health_headers_provider: Callable[[], Mapping[str, str]] | None = None,
+    ) -> None:
         self._manager = security_manager
+        self._health_headers_provider = health_headers_provider or (lambda: {})
+
+    def _cloud_health_metadata(self) -> list[tuple[str, str]]:
+        try:
+            headers = self._health_headers_provider() or {}
+        except Exception:  # pragma: no cover - defensywne logowanie
+            LOGGER.debug("Health provider dla CloudAuth zgłosił wyjątek", exc_info=True)
+            headers = {}
+        return [(str(key), str(value)) for key, value in headers.items()]
+
+    def _apply_cloud_health_metadata(self, rpc_context) -> None:
+        metadata = self._cloud_health_metadata()
+        if not metadata or rpc_context is None:
+            return
+        for method_name in ("send_initial_metadata", "set_trailing_metadata"):
+            sender = getattr(rpc_context, method_name, None)
+            if callable(sender):
+                try:
+                    sender(metadata)
+                except Exception:  # pragma: no cover - defensywne logowanie
+                    LOGGER.debug("Nie udało się przesłać metadanych health (auth)", exc_info=True)
 
     def AuthorizeClient(self, request, context):  # type: ignore[override]
         try:
@@ -341,15 +367,18 @@ class CloudAuthServicer(trading_pb2_grpc.CloudAuthServiceServicer):
         except CloudAuthorizationError as exc:
             context.set_code(grpc.StatusCode.PERMISSION_DENIED)
             context.set_details(str(exc))
+            self._apply_cloud_health_metadata(context)
             return trading_pb2.CloudAuthResponse(authorized=False, message=str(exc))
         expires_pb = timestamp_pb2.Timestamp()
         expires_pb.FromDatetime(session.expires_at)
-        return trading_pb2.CloudAuthResponse(
+        response = trading_pb2.CloudAuthResponse(
             authorized=True,
             session_token=session.token,
             expires_at=expires_pb,
             message="authorized",
         )
+        self._apply_cloud_health_metadata(context)
+        return response
 
 
 __all__ = [
