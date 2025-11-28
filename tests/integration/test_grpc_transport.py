@@ -925,6 +925,68 @@ def test_long_fallback_periods_keep_sla_alerts_stable(monkeypatch: pytest.Monkey
         app.quit()
 
 
+def test_long_horizon_fallback_increments_consecutive_counters(monkeypatch: pytest.MonkeyPatch) -> None:
+    pytest.importorskip("PySide6")
+    os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+    from PySide6.QtCore import QCoreApplication  # type: ignore[attr-defined]
+
+    monkeypatch.setattr(RuntimeService, "_auto_connect_grpc", lambda self: None)
+    monkeypatch.setattr(RuntimeService, "_refresh_long_poll_metrics", lambda self: None)
+
+    app = QCoreApplication.instance() or QCoreApplication([])
+    service = RuntimeService(default_limit=1, decision_loader=lambda *_args, **_kwargs: [])
+    try:
+        service._feed_thresholds.update(
+            {
+                "latency_warning_ms": 100.0,
+                "latency_critical_ms": 180.0,
+                "reconnects_warning": 1,
+                "reconnects_critical": 4,
+                "downtime_warning_seconds": 60.0,
+                "downtime_critical_seconds": 600.0,
+            }
+        )
+        service._active_stream_label = "fallback://demo"
+        for key in ("grpc", "fallback"):
+            service._latency_samples_for(key).clear()
+
+        for hour in range(6):
+            samples = service._latency_samples_for("fallback")
+            samples.clear()
+            samples.extend([280.0 + hour * 5])
+            service._feed_reconnects = hour + 1
+            service._feed_downtime_total = float((hour + 1) * 3600)
+            service._update_feed_health(
+                status="fallback", reconnects=service._feed_reconnects, last_error="grpc unavailable"
+            )
+            report = service.feedSlaReport
+            assert report.get("sla_state") in {"warning", "critical"}
+            assert report.get("consecutive_degraded_periods") == hour + 1
+            assert report.get("consecutive_healthy_periods") == 0
+
+        service._active_stream_label = "grpc://demo"
+        service._feed_reconnects = 0
+        service._feed_downtime_total = 0.0
+        for key in ("grpc", "fallback"):
+            service._latency_samples_for(key).clear()
+
+        healthy_progression: list[int | None] = []
+        for _ in range(3):
+            grpc_samples = service._latency_samples_for("grpc")
+            grpc_samples.clear()
+            grpc_samples.extend([55.0])
+            service._update_feed_health(status="connected", reconnects=service._feed_reconnects, last_error="")
+            report = service.feedSlaReport
+            healthy_progression.append(report.get("consecutive_healthy_periods"))
+            assert report.get("consecutive_degraded_periods") == 0
+
+        assert healthy_progression == [1, 2, 3]
+    finally:
+        service._longpoll_timer.stop()
+        service._stop_grpc_stream()
+        app.quit()
+
+
 def test_frequent_transport_switches_do_not_reset_alert_hysteresis(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -974,6 +1036,9 @@ def test_frequent_transport_switches_do_not_reset_alert_hysteresis(
         service._update_feed_health(status="connected", reconnects=service._feed_reconnects, last_error="")
         assert service.feedSlaReport.get("sla_state") == "ok"
 
+        consecutive_degraded: list[int] = []
+        consecutive_healthy: list[int] = []
+
         for index in range(6):
             active_label = "fallback://demo" if index % 2 == 0 else "grpc://demo"
             status = "fallback" if active_label.startswith("fallback") else "connected"
@@ -989,7 +1054,11 @@ def test_frequent_transport_switches_do_not_reset_alert_hysteresis(
             )
             report = service.feedSlaReport
             assert report.get("sla_state") in {"warning", "critical"}
-            assert report.get("consecutive_degraded_periods") == index + 1
+            consecutive_degraded.append(report.get("consecutive_degraded_periods", 0))
+            consecutive_healthy.append(report.get("consecutive_healthy_periods", 0))
+
+        assert consecutive_degraded == [1, 2, 3, 4, 5, 6]
+        assert all(value == 0 for value in consecutive_healthy)
 
         degraded_metrics = {
             entry["context"].get("metric") for entry in events if entry["severity"] != "info"
@@ -1005,6 +1074,7 @@ def test_frequent_transport_switches_do_not_reset_alert_hysteresis(
         service._feed_downtime_total = 0.0
         service._update_feed_health(status="connected", reconnects=service._feed_reconnects, last_error="")
         assert service.feedSlaReport.get("sla_state") == "ok"
+        assert service.feedSlaReport.get("consecutive_healthy_periods") == 1
         recovery_metrics = {
             entry["context"].get("metric") for entry in events if entry["severity"] == "info"
         }
@@ -1103,6 +1173,72 @@ def test_repeated_long_fallback_cycles_preserve_transport_counters(
         assert payload.get("status") == "connected"
         assert payload.get("transports", {}).get("fallback", {}).get("reconnects") == 2
         assert payload.get("transports", {}).get("grpc", {}).get("reconnects") == 0
+    finally:
+        service._longpoll_timer.stop()
+        service._stop_grpc_stream()
+        app.quit()
+
+
+def test_oscillation_between_transports_keeps_counters_balanced(monkeypatch: pytest.MonkeyPatch) -> None:
+    pytest.importorskip("PySide6")
+    os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+    from PySide6.QtCore import QCoreApplication  # type: ignore[attr-defined]
+
+    monkeypatch.setattr(RuntimeService, "_auto_connect_grpc", lambda self: None)
+    monkeypatch.setattr(RuntimeService, "_refresh_long_poll_metrics", lambda self: None)
+
+    app = QCoreApplication.instance() or QCoreApplication([])
+    service = RuntimeService(default_limit=1, decision_loader=lambda *_args, **_kwargs: [])
+    try:
+        service._feed_thresholds.update(
+            {
+                "latency_warning_ms": 120.0,
+                "latency_critical_ms": 200.0,
+                "reconnects_warning": 2,
+                "reconnects_critical": 5,
+                "downtime_warning_seconds": 45.0,
+                "downtime_critical_seconds": 180.0,
+            }
+        )
+        service._active_stream_label = "grpc://demo"
+        service._latency_samples_for("grpc").clear()
+        service._latency_samples_for("grpc").extend([65.0])
+        service._update_feed_health(status="connected", reconnects=0, last_error="")
+        assert service.feedSlaReport.get("consecutive_healthy_periods") == 1
+
+        degraded_history: list[int] = []
+        healthy_history: list[int] = [1]
+        degraded_side_reset: list[int] = []
+        for cycle in range(4):
+            service._active_stream_label = "fallback://demo"
+            for key in ("grpc", "fallback"):
+                service._latency_samples_for(key).clear()
+            fallback_samples = service._latency_samples_for("fallback")
+            fallback_samples.extend([260.0 + cycle * 10])
+            service._feed_reconnects = cycle + 1
+            service._feed_downtime_total = float(120.0 * (cycle + 1))
+            service._update_feed_health(
+                status="fallback", reconnects=service._feed_reconnects, last_error="forced fallback"
+            )
+            report = service.feedSlaReport
+            degraded_history.append(report.get("consecutive_degraded_periods", 0))
+            degraded_side_reset.append(report.get("consecutive_healthy_periods", 0))
+
+            service._active_stream_label = "grpc://demo"
+            for key in ("grpc", "fallback"):
+                service._latency_samples_for(key).clear()
+            grpc_samples = service._latency_samples_for("grpc")
+            grpc_samples.extend([60.0])
+            service._feed_reconnects = 0
+            service._feed_downtime_total = 0.0
+            service._update_feed_health(status="connected", reconnects=service._feed_reconnects, last_error="")
+            recovery_report = service.feedSlaReport
+            healthy_history.append(recovery_report.get("consecutive_healthy_periods", 0))
+            assert recovery_report.get("consecutive_degraded_periods") == 0
+
+        assert all(value == 1 for value in degraded_history)
+        assert all(value == 0 for value in degraded_side_reset)
+        assert healthy_history == [1] * len(healthy_history)
     finally:
         service._longpoll_timer.stop()
         service._stop_grpc_stream()
