@@ -41,6 +41,56 @@
 - **Checklisty adapterów:** dzienny snapshot checklist HyperCare i jakości sygnałów z `reports/exchanges/signal_quality/` jest dołączany do pakietu marketingowego (CSV/JSON) jako dowód pokrycia giełdowego i gotowości failoveru.
 - **Artefakty release:** manifest bundla marketingowego zawiera linki do artefaktów CI (`stress-lab-report`, `benchmark-marketing-bundle`) i katalogu `var/marketing/benchmark/`, aby ułatwić aktualizację whitepapera/case studies.
 
+### Agregat stres-testów i checklist adapterów
+- **Cel:** jedna paczka „signal-quality + checklisty” dla marketingu i release notes, oparta o świeże stres-testy z `reports/exchanges/signal_quality/` i CSV z `reports/exchanges/<data>.csv` (generowane przez `scripts/list_exchange_adapters.py`).
+- **Zakres danych:**
+  - ostatnie 7 dni snapshotów JSON dla każdej giełdy (`reports/exchanges/signal_quality/*.json`) z polami `fill_ratio`, `slippage_bps`, `failures`, `watchdog.alerts`,
+  - najnowszy CSV checklisty adapterów (kolumny `hypercare_checklist_signed`, `signal_quality_snapshot_status`, `futures_checklist_ready`, `hypercare_cost_status`).
+- **Przebieg aktualizacji:**
+  1. Wygeneruj checklistę: `python scripts/list_exchange_adapters.py --report-date $(date +%Y-%m-%d) --report-dir reports/exchanges --push-dashboard --dashboard-dir reports/exchanges/signal_quality --hypercare-config config/stage6/hypercare.yaml`.
+  2. Zweryfikuj świeżość stres-testów: `find reports/exchanges/signal_quality -name "*.json" -mtime -2 -print` powinien zwrócić pliki dla kluczowych giełd (`binance`, `coinbase`, `deribit_futures`, `bitmex_futures`). Brak wyników = blokada publikacji.
+  3. Zbuduj paczkę marketingową z agregatem: `python scripts/export_marketing_bundle.py --report-range $(date +%Y-%m-%d) --destination var/marketing/benchmark --signing-key-env MARKETING_BUNDLE_HMAC --include-signal-quality`.
+  4. Sprawdź manifest bundla (`var/marketing/benchmark/manifest.json`) – musi zawierać sekcje `stress_lab`, `signal_quality` (JSON + CSV) oraz podpis HMAC (`benchmark_marketing_bundle.sig`).
+  5. Upewnij się, że agregat `var/marketing/benchmark/signal_quality/index.csv` zawiera wiersze dla wszystkich giełd z `reports/exchanges/<data>.csv` i że timestampy w kolumnie `snapshot_created_at` są nie starsze niż 48 h; w przypadku braków ponów eksport po odświeżeniu snapshotów.
+  6. Zsynchronizuj pakiet z repozytorium marketingowym (jeśli istnieje lustrzany bucket S3/Git) i oznacz wersję w release notes w formacie `benchmark_marketing_bundle-<data>.sig`.
+- **Artefakty porównawcze:**
+  - `var/marketing/benchmark/signal_quality/index.csv` – agregat ostatnich stres-testów i checklist adapterów wykorzystywany w whitepaperze,
+  - `reports/exchanges/signal_quality/` – źródło prawdy dla historycznych snapshotów (dashboard Hypercare),
+  - `reports/exchanges/<data>.csv` – CSV checklisty adapterów włączane do release notes jako dowód pokrycia giełdowego.
+- **Walidacja spójności bundla:**
+  - porównaj liczbę wierszy w `signal_quality/index.csv` z liczbą snapshotów `.json` w katalogu dashboardu (`find reports/exchanges/signal_quality -name "*.json" | wc -l`) – różnice oznaczają brakujące rekordy w agregacie,
+  - sprawdź, że `manifest.json` zawiera identyczne ścieżki jak release notes (sekcja „Release artifacts”) oraz że hash pliku `benchmark_marketing_bundle.sig` jest przeklejony do zgłoszenia marketingowego,
+  - jeśli marketing korzysta z lustrzanego bucketa S3/Git, potwierdź, że commit/tag bundla zawiera ten sam `index.csv` (porównanie sumy SHA256) co wersja archiwalna w `var/audit/benchmark/<data>/` – w razie rozbieżności powtórz eksport i walidację.
+  - jeżeli bundel w lustrze wymaga rekordu w rejestrze marketingowym, dopisz identyfikator releasu (`benchmark_marketing_bundle-<data>.sig`) oraz status walidacji hashy; brak wpisu blokuje dystrybucję do kanałów zewnętrznych,
+  - gdy pipeline CI wykryje rozjazd hashy między lustrami, na czas naprawy włącz tryb „freeze” (oznaczenie releasu jako oczekującego w release notes, blokada publikacji materiałów) i wyłącz dopływ nowych snapshotów do bundla, aby zachować odtwarzalność pakietu,
+  - po usunięciu rozbieżności opublikuj notatkę audytową z zestawieniem hashy „przed/po” oraz wersją bundla, która została uznana za źródło prawdy.
+  - przed każdym podpisaniem bundla uruchom szybki diff na `manifest.json` względem poprzedniego releasu (`python scripts/export_marketing_bundle.py --destination var/marketing/benchmark --diff-only`), aby potwierdzić, że ścieżki w sekcji `signal_quality` pokrywają się z listą snapshotów w `reports/exchanges/signal_quality/`;
+  - po publikacji bundla porównaj listę giełd w `signal_quality/index.csv` z checklistą HyperCare (`reports/exchanges/<data>.csv`) i zapisz wynik w `var/audit/benchmark/<data>/parity_report.json` (różnice = blokada dystrybucji do kanałów zewnętrznych),
+  - gdy marketing zgłasza użycie bundla w materiałach zewnętrznych, sporządź zapis „proof-of-source” (hash `manifest.json`, timestamp walidacji HMAC, ścieżka do archiwum) w dzienniku marketingowym – brak wpisu uniemożliwia referencję w whitepaper/case studies,
+  - jeśli nowy bundel zmienia liczbę wierszy `index.csv` o >10% vs. poprzedni release, oznacz release notes notatką o zakresie zmian i dołącz krótką tabelę różnic (`added_exchanges`, `dropped_exchanges`) do `var/audit/benchmark/<data>/delta.csv`.
+- **Kontrola jakości:**
+  - jeżeli `signal_quality_snapshot_status != "fresh"` lub `hypercare_cost_status != "ready"` dla `deribit`/`bitmex`, otwórz zadanie w HyperCare i wstrzymaj publikację benchmarku,
+  - marketing otrzymuje tylko paczki z ważnym podpisem HMAC; w razie rozbieżności uruchom `--validate-only` w bundlerze i powtórz eksport po korektach.
+  - dla materiałów zewnętrznych (whitepaper/newsletter) wygeneruj notatkę `marketing_bundle_proof.md` z listą giełd, hashami `index.csv`/`manifest.json`, timestampem walidacji HMAC i adresem lustra S3/Git; dołącz ją do zgłoszenia marketingowego i release notes jako „proof-of-source”,
+  - przy zmianie pokrycia (<-10% lub >+10% liczby giełd vs. poprzedni release) dołącz tabelę różnic do `var/audit/benchmark/<data>/delta.csv`, oznacz release notes statusem „ważna zmiana pokrycia” i wyślij alert do właścicieli Strategia/HyperCare.
+
+#### Monitoring po publikacji i retrospekcje
+- **Alerty świeżości:** skonfiguruj job w CI (`cron` lub `workflow_dispatch`) sprawdzający co 12 h, czy `reports/exchanges/signal_quality/*.json` mają `mtime < 48 h`; w przypadku naruszenia wyślij alert na kanał operacyjny i dodaj notatkę do `docs/audit/paper_trading_log.md`.
+- **Parzystość z checklistą:** po publikacji uruchom szybki diff CSV → `python - <<'PY'\nimport csv, pathlib, sys\nidx = pathlib.Path('var/marketing/benchmark/signal_quality/index.csv')\nchecklist = sorted(row['exchange'] for row in csv.DictReader(open('reports/exchanges/$(date +%Y-%m-%d).csv')))\nindex = sorted(row['exchange'] for row in csv.DictReader(idx.open()))\nmissing = sorted(set(checklist) - set(index))\nextra = sorted(set(index) - set(checklist))\nprint({'missing_in_index': missing, 'extra_in_index': extra})\nif missing or extra:\n    sys.exit('signal_quality/index.csv wymaga regeneracji')\nPY` – wynik z brakami oznacza konieczność regeneracji bundla marketingowego.
+- **Retrospekcja releasu:** w ciągu 48 h od releasu porównaj `var/audit/benchmark/<data>/manifest.json` z `var/marketing/benchmark/manifest.json` i release notes; brakujące lub dodatkowe artefakty dopisz do dziennika audytowego wraz z hashami SHA256.
+- **Parzystość międzylustrzana:** jeżeli marketing przechowuje bundel w lustrze S3/Git, uruchom diff hashy `index.csv` oraz `manifest.json` (`sha256sum <plik>`) między lokalnym `var/marketing/benchmark/` a lustrem. Rozbieżności oznaczają blokadę publikacji lub konieczność wymiany linków w release notes.
+
+#### Reakcja na brakujące lub niespójne snapshoty
+- **Brakujące rekordy w agregacie:** jeśli `index.csv` zawiera mniej wierszy niż raport CSV checklisty, wygeneruj brakujące stres-testy (`scripts/run_stress_lab.py run --exchanges <lista>`) i powtórz kroki 1–5, aż liczba wierszy i plików `.json` będzie zgodna.
+- **Stare snapshoty (>48 h):** ponownie uruchom `scripts/list_exchange_adapters.py` z `--report-date $(date +%Y-%m-%d)` i dopisz wynik do `reports/exchanges/signal_quality/`, a następnie zaktualizuj `index.csv` bundlerem marketingowym.
+- **Niespójny manifest:** jeśli `manifest.json` nie zawiera sekcji `signal_quality` lub brakuje ścieżek podlinkowanych w release notes, uruchom bundler z `--include-signal-quality --force-rebuild` i zweryfikuj sumę SHA256 `benchmark_marketing_bundle.sig` względem archiwum `var/audit/benchmark/<data>/`.
+- **Fallback na ostatni poprawny zestaw:** gdy bieżący cykl nie przechodzi walidacji HMAC lub liczby wierszy, użyj ostatniej paczki z `var/audit/benchmark/<poprzednia_data>/` (kopiuj cały katalog do `var/marketing/benchmark/`), a w release notes zaznacz, że użyto snapshotu archiwalnego.
+
+#### Procedura awaryjna bundla marketingowego
+- **Szybkie przywrócenie:** jeśli walidacja HMAC lub hashów lustra zawodzi, skopiuj w 1:1 ostatni zweryfikowany katalog z `var/audit/benchmark/<poprzednia_data>/` do `var/marketing/benchmark/`, podmień `benchmark_marketing_bundle.sig` na wersję archiwalną i oznacz wydanie jako rollback w `docs/audit/paper_trading_log.md`.
+- **Przebudowa z wymuszeniem:** ponów eksport `python scripts/export_marketing_bundle.py --report-range $(date +%Y-%m-%d) --destination var/marketing/benchmark --signing-key-env MARKETING_BUNDLE_HMAC --include-signal-quality --force-rebuild --regenerate-index` i porównaj sumy SHA256 z plikami z lustrzanej kopii; dopiero po zgodności hashów i walidacji HMAC opublikuj nową wersję.
+- **Deklaracja statusu:** w release notes i zgłoszeniu marketingowym umieść sekcję „Bundel marketingowy – status awaryjny” z informacją, czy użyto fallbacku czy nowej regeneracji, wraz z timestampem walidacji HMAC.
+
 ## Tabela funkcji i różnic
 
 | Funkcja | Dudzian (Stage6) | CryptoHopper (publiczny plan) | Gunbot Ultimate | Status różnicy |
