@@ -240,6 +240,45 @@
         }
       ],
       "fieldConfig": {"defaults": {"unit": "short"}, "overrides": []}
+    },
+    {
+      "type": "timeseries",
+      "title": "Long-horizon SLA",
+      "description": "Stabilizowany status SLA na bazie okna co najmniej 24h, pomocny przy analizie długotrwałych degradacji.",
+      "timeFrom": "24h",
+      "targets": [
+        {
+          "expr": "max_over_time(bot_ui_feed_sla_status{transport=~\"grpc|fallback\",environment=~\".*\"}[24h])",
+          "legendFormat": "gRPC/fallback SLA (24h)",
+          "datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"}
+        },
+        {
+          "expr": "max_over_time(bot_exchange_stream_long_poll_reconnect_in_progress[24h])",
+          "legendFormat": "long-poll reconnect in progress (24h)",
+          "datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"}
+        }
+      ],
+      "fieldConfig": {"defaults": {"unit": "short"}, "overrides": []}
+    },
+    {
+      "type": "heatmap",
+      "title": "gRPC↔long-poll oscillation",
+      "description": "Histogram reconnectów w oknie 24h dla gRPC/fallback oraz long-poll, wizualizuje częste oscylacje między transportami.",
+      "timeFrom": "24h",
+      "targets": [
+        {
+          "expr": "increase(bot_ui_feed_sla_reconnects_total{transport=~\"grpc|fallback\",environment=~\".*\"}[24h])",
+          "legendFormat": "gRPC/fallback reconnecty (24h)",
+          "datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"}
+        },
+        {
+          "expr": "increase(bot_exchange_stream_long_poll_reconnects_total[24h])",
+          "legendFormat": "long-poll reconnecty (24h)",
+          "datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"}
+        }
+      ],
+      "options": {"tooltip": {"show": true}, "color": {"mode": "palette-classic"}},
+      "fieldConfig": {"defaults": {"unit": "short"}, "overrides": []}
     }
   ],
   "schemaVersion": 38,
