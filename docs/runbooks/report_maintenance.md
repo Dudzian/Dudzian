@@ -188,6 +188,15 @@ Eksport checklisty HyperCare w adapterach Deribit/BitMEX korzysta z istniejąceg
 4. Gdy parytet hashy zostanie osiągnięty, zaktualizuj `marketing_bundle_proof.md` o tabelę „przed/po” (hash `index.csv`, hash `manifest.json`, liczba snapshotów) i oznacz datę odblokowania; w release notes dodaj informację o usunięciu statusu freeze.
 5. Przy każdym rebuildzie bundla z nowym zakresem danych pozostaw poprzedni `marketing_bundle_proof.md` w `var/audit/benchmark/<data>/superseded/` wraz z linkiem do erraty i hashami wersji bieżącej – umożliwia to śledzenie rotacji w audycie marketingu.
 
+### 9.7. Snapshoty Stress Lab w release notes
+1. Wygeneruj świeży snapshot: `python scripts/run_stress_lab.py run --config config/core.yaml --output reports/stress_lab/<data>.json --signing-key-env STRESS_LAB_HMAC --fail-on-breach` i upewnij się, że powstały pliki `.json`, `.sig` oraz `.manifest.json`.
+2. Zarejestruj snapshot w bundlu marketingowym: `python scripts/export_marketing_bundle.py --report-range $(date +%Y-%m-%d) --destination var/marketing/benchmark --signing-key-env MARKETING_BUNDLE_HMAC --include-signal-quality --include-stress-lab` – manifest musi zawierać sekcję `stress_lab` z nowym plikiem i podpisem.
+3. Zweryfikuj podpis HMAC snapshotu: `python scripts/verify_signature.py --input reports/stress_lab/<data>.json --signature reports/stress_lab/<data>.sig --key-env STRESS_LAB_HMAC`; brak zgodności = blokada publikacji.
+4. Dołącz snapshot do release notes: w sekcji „Release artifacts” dodaj ścieżki `reports/stress_lab/<data>.json`, `reports/stress_lab/<data>.sig` oraz wpis z `manifest.json` bundla marketingowego (`var/marketing/benchmark/manifest.json`); wklej `sha256sum` obu plików, by uniknąć rozbieżności lustrzanych.
+5. Dystrybuuj snapshot do luster: `aws s3 cp reports/stress_lab/<data>.json s3://<bucket>/stress_lab/` oraz `aws s3 cp reports/stress_lab/<data>.sig s3://<bucket>/stress_lab/ --metadata sha256=<hash>` (lub analogiczny commit w repo lustrzanym Git). Udokumentuj sumy SHA w `var/audit/stage6/<data>/stress_lab_distribution.json` i w release notes.
+6. Po dystrybucji uruchom walidację bundla: `python scripts/export_marketing_bundle.py --destination var/marketing/benchmark --signing-key-env MARKETING_BUNDLE_HMAC --validate-only` i zapisz wynik w release notes (status walidacji + hash `benchmark_marketing_bundle.sig`). Brak walidacji blokuje publikację releasu.
+7. Dodaj do release notes sekcję „Stress Lab snapshots” z tabelą (`plik`, `hash`, `lokacja`) oraz potwierdzeniem, że hash snapshotu i podpisu jest identyczny w lustrze; w przypadku różnic między lustrami dopisz adnotację „freeze” i wykonaj rollback zgodnie z pkt 9.4.
+
 ## 10. Eksport champion/challenger i reakcja na degradację modeli
 
 ### 9.1. Generowanie raportu porównawczego championów

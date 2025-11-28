@@ -27,6 +27,17 @@
 | UI | 🟢 SLO spełnione | opóźnienie feedu gRPC p95 (≤3 s), pokrycie telemetrii decyzji (100%), testy UI gRPC w CI (zielone) | Zespół UI Runtime | Utrzymać monitoring SLA (artefakt `decision-feed-metrics`), zautomatyzować alerty HyperCare i raportować compliance p95 |
 | Compliance | 🟢 Przewaga | pokrycie podpisów HMAC (100%), audyty kwartalne bez zastrzeżeń (100%), kompletność TradingDecisionJournal (≥99%) | Zespół Compliance & Audyt | Zestawić wyniki audytu Q2, odświeżyć materiały produktowe i checklisty |
 
+## Stress Lab
+
+| Giełda | Data snapshotu (UTC) | Liczba zleceń | Fill ratio | Średni slippage (bps) | Failures | Alerty watchdog | Notatki |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| testex | 2025-11-10 17:41:43 | 2 | 1.00 | 0.0 | 0 | 0 | Tryb margin, opóźnienia <0,2 ms; komplet podpisanych rekordów. |
+
+- Dane bazowe pochodzą z raportów `reports/exchanges/signal_quality/*.json`; snapshot `reports/exchanges/signal_quality/testex.json` (`total=2`, `fill_ratio=1.0`, `slippage_bps=0.0`, `watchdog.alerts=[]`) potwierdza brak slippage i brak alertów watchdog, co spełnia wewnętrzne SLO Stress Lab.
+- **Porównanie konkurencyjne:**
+  - *CryptoHopper:* brak publikowanych, podpisanych raportów Stress Lab oraz brak jawnych metryk `fill_ratio`/`slippage_bps` w release notes – utrzymujemy przewagę transparentności i audytu.
+  - *Gunbot:* oferuje głównie backtesty per para bez multi-market watchdogów; brak raportów HMAC/manifestów = brak dowodu na niezawodność w scenariuszach DR. Nasze snapshoty Stress Lab pozostają wyróżnikiem do komunikacji marketingowej.
+
 ## Stress Lab i materiały marketingowe
 - **Whitepaper:** [`docs/marketing/stage6_stress_lab_whitepaper.md`](../marketing/stage6_stress_lab_whitepaper.md) – kompendium przewag technologicznych, integracji z Portfolio Governor oraz wymogów operacyjnych Stress Lab.
 - **Case studies:** [`docs/marketing/stage6_stress_lab_case_studies.md`](../marketing/stage6_stress_lab_case_studies.md) – scenariusze wykorzystania Stress Lab u klientów OEM (desk prop, OEM on-prem, rollout marketplace).
