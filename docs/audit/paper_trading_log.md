@@ -42,3 +42,8 @@ Dokument stanowi append-only rejestr zdarzeń operacyjnych związanych z trybem 
 > Dla smoke testów kopiuj zarówno hash `summary.json`, jak i treść pliku `summary.txt` (skrót można dodać w kolumnie „Uwagi”). Jeśli skrypt utworzył archiwum ZIP (`--archive-smoke`), dopisz ścieżkę pliku w kolumnie „Uwagi” i zabezpiecz archiwum w sejfie audytu. W razie wykonywania weryfikacji `python scripts/check_data_coverage.py` dopisz status (`ok` / `error`) do kolumny „Uwagi” wraz z wykorzystanymi filtrami (`--symbol`, `--interval`) i ścieżką raportu (`--output`), jeśli została podana.
 > Gdy konfiguracja `reporting.smoke_archive_upload` wykona dodatkowy upload (np. do `audit/smoke_archives/` lub koszyka S3), dopisz docelową lokalizację z pola alertu `archive_upload_location` – ułatwi to odtworzenie pakietu podczas audytu.
 > Jeśli smoke test został uruchomiony z flagą `--smoke-output`, zapisz w kolumnie „Uwagi” pełną ścieżkę katalogu `daily_trend_smoke_*`, aby umożliwić szybkie odnalezienie raportu przed archiwizacją.
+
+## Sekcja F – Walidacje luster bundla marketingowego
+| ID | Data (UTC) | Operator | Artefakt | Status | Hash źródła | Hash lustra | Uwagi |
+|----|------------|----------|----------|--------|-------------|-------------|-------|
+| P-0001 | 2025-11-29T23:44:40Z | CI Bootstrap | stress-lab-report + signal_quality/index.csv | pending-first-run | n/d | n/d | Automatyzacja `marketing-bundle-parity` skonfigurowana; raporty audytowe: `docs/audit/marketing_parity_report.md` i `docs/audit/marketing_parity_report.json` (nadpisywane przez CI). |
