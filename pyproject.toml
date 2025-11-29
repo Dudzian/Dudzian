@@ -127,6 +127,7 @@ markers = [
   "retraining: testy weryfikujące cykl retreningu i raporty",
   "smoke: szybkie testy dymne release candidate",
   "qml: testy wymagające środowiska Qt/QML (PySide6)",
+  "soak: długotrwałe scenariusze stabilności i anti-flap",
 ]
 
 [project]
