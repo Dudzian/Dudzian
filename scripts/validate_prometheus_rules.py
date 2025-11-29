@@ -29,6 +29,7 @@ def _parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         default=[
             "deploy/prometheus/rules/multi_strategy_rules.yml",
             "deploy/prometheus/stage6_alerts.yaml",
+            "deploy/prometheus/rules/cloud_worker_alerts.yml",
         ],
         help="Ścieżka do pliku YAML z regułami (domyślnie pliki Stage4/Stage6)",
     )
@@ -60,6 +61,7 @@ def _parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
             "bot_core_trade_cost",
             "bot_core_fill_rate",
             "bot_core_key_rotation",
+            "bot_cloud_worker",
         ],
         help="Prefiks metryk wymagany w wyrażeniu alertu",
     )
@@ -147,6 +149,76 @@ def _validate_rule(
         lowered = expr.lower()
         if not any(prefix.lower() in lowered for prefix in metric_prefixes):
             _error("wyrażenie 'expr' nie zawiera wymaganego prefiksu metryk")
+
+        def _has_placeholder(label: str) -> bool:
+            placeholder = f"{{{{ $labels.{label} }}}}"
+            return any(isinstance(text, str) and placeholder in text for text in annotations.values())
+
+        def _annotation_has_placeholder(annotation: str, label: str) -> bool:
+            placeholder = f"{{{{ $labels.{label} }}}}"
+            value = annotations.get(annotation)
+            return isinstance(value, str) and placeholder in value
+
+        uses_cloud_worker_status = "bot_cloud_worker_status" in lowered
+        uses_cloud_worker_error = "bot_cloud_worker_last_error" in lowered
+        if uses_cloud_worker_status:
+            if not _has_placeholder("worker"):
+                _error("alert korzystający z bot_cloud_worker_status musi renderować {{ $labels.worker }} w adnotacjach")
+            if not _annotation_has_placeholder("summary", "worker"):
+                _error(
+                    "alert korzystający z bot_cloud_worker_status musi renderować {{ $labels.worker }} w polu 'summary'"
+                )
+            if not _annotation_has_placeholder("description", "worker"):
+                _error(
+                    "alert korzystający z bot_cloud_worker_status musi renderować {{ $labels.worker }} w polu 'description'"
+                )
+        if uses_cloud_worker_error:
+            if not _has_placeholder("worker"):
+                _error("alert korzystający z bot_cloud_worker_last_error musi renderować {{ $labels.worker }} w adnotacjach")
+            if not _has_placeholder("error"):
+                _error("alert korzystający z bot_cloud_worker_last_error musi renderować {{ $labels.error }} w adnotacjach")
+            if not _annotation_has_placeholder("summary", "worker"):
+                _error(
+                    "alert korzystający z bot_cloud_worker_last_error musi renderować {{ $labels.worker }} w polu 'summary'"
+                )
+            if not _annotation_has_placeholder("summary", "error"):
+                _error(
+                    "alert korzystający z bot_cloud_worker_last_error musi renderować {{ $labels.error }} w polu 'summary'"
+                )
+            if not _annotation_has_placeholder("description", "worker"):
+                _error(
+                    "alert korzystający z bot_cloud_worker_last_error musi renderować {{ $labels.worker }} w polu 'description'"
+                )
+            if not _annotation_has_placeholder("description", "error"):
+                _error(
+                    "alert korzystający z bot_cloud_worker_last_error musi renderować {{ $labels.error }} w polu 'description'"
+                )
+
+        def _require_label(label: str, *, expected: str | None = None) -> str | None:
+            value = labels.get(label)
+            if not isinstance(value, str) or not value.strip():
+                _error(
+                    "alert korzystający z bot_cloud_worker_* musi definiować etykietę "
+                    f"'{label}' (kanał lub właściciel)"
+                )
+                return None
+            if expected is not None and value != expected:
+                _error(
+                    "alert korzystający z bot_cloud_worker_* musi mieć etykietę "
+                    f"'{label}' ustawioną na '{expected}'"
+                )
+            return value
+
+        if uses_cloud_worker_status or uses_cloud_worker_error:
+            channel_value = _require_label("channel")
+            _require_label("owner", expected="cloud-alerts")
+            _require_label("team", expected="hypercare")
+            _require_label("service", expected="cloud-orchestrator")
+
+            if uses_cloud_worker_status and channel_value:
+                _require_label("channel", expected="HyperCare")
+            if uses_cloud_worker_error and channel_value:
+                _require_label("channel", expected="CloudAlertService")
 
     return errors
 

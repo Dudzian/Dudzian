@@ -1,0 +1,34 @@
+groups:
+  - name: cloud_worker_hypercare
+    interval: 30s
+    rules:
+      - alert: CloudWorkerHealthDegraded
+        expr: max_over_time(bot_cloud_worker_status[5m]) == 0
+        for: 5m
+        labels:
+          severity: warning
+          team: hypercare
+          service: cloud-orchestrator
+          owner: cloud-alerts
+          channel: HyperCare
+        annotations:
+          summary: "Worker {{ $labels.worker }} zgłosił stan degraded (status=0)"
+          description: |
+            Cloud worker {{ $labels.worker }} pozostaje w stanie degraded przez co najmniej 5 minut.
+            Zweryfikuj `_health` z HealthService.Check oraz logi orchestratora (pole `_health`/`_lastError`),
+            aby potwierdzić źródło degradacji i uruchomić ścieżkę CloudAlertService.
+      - alert: CloudWorkerErrorCritical
+        expr: max_over_time(bot_cloud_worker_last_error[10m]) > 0
+        for: 10m
+        labels:
+          severity: critical
+          team: hypercare
+          service: cloud-orchestrator
+          owner: cloud-alerts
+          channel: CloudAlertService
+        annotations:
+          summary: "Krytyczny błąd {{ $labels.error }} na workerze {{ $labels.worker }}"
+          description: |
+            Cloud worker {{ $labels.worker }} raportuje błąd {{ $labels.error }} przez ostatnie 10 minut.
+            Skoreluj komunikat z logami orchestratora (`cloud_health`, `_lastError`) i zgłoś do L2/L3 zgodnie z runbookiem
+            CloudAlertService.
