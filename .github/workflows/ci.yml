@@ -290,6 +290,79 @@ jobs:
         if: always()
         run: docker compose -f deploy/compose/loopback-tests.yml down -v
 
+  marketing-bundle-parity:
+    name: Marketing bundle parity
+    runs-on: ubuntu-latest
+    needs: exchange-report
+    env:
+      MIRROR_S3_URI: ${{ secrets.MARKETING_PARITY_MIRROR_S3 || vars.MARKETING_PARITY_MIRROR_S3 }}
+      MIRROR_GIT_REPO: ${{ secrets.MARKETING_PARITY_MIRROR_GIT || vars.MARKETING_PARITY_MIRROR_GIT }}
+      MIRROR_SUBPATH: ${{ vars.MARKETING_PARITY_MIRROR_SUBPATH }}
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Download exchange report artefact
+        uses: actions/download-artifact@v4
+        with:
+          name: exchange-report
+          path: artifacts/exchange-report
+
+      - name: Download latest Stress Lab artefact
+        uses: dawidd6/action-download-artifact@v2
+        with:
+          workflow: stress-lab-report.yml
+          name: stress-lab-report
+          branch: ${{ github.event.pull_request.base.ref || github.ref_name }}
+          repo: ${{ github.repository }}
+          path: artifacts/stress-lab-report
+
+      - name: Sync mirror from S3
+        if: env.MIRROR_S3_URI != ''
+        run: |
+          aws s3 sync "${MIRROR_S3_URI}" mirror --exact-timestamps
+          echo "MIRROR_ROOT=mirror/${MIRROR_SUBPATH:-benchmark}" >> "$GITHUB_ENV"
+
+      - name: Clone mirror Git repository
+        if: env.MIRROR_S3_URI == '' && env.MIRROR_GIT_REPO != ''
+        run: |
+          git clone --depth=1 "${MIRROR_GIT_REPO}" mirror_git
+          echo "MIRROR_ROOT=mirror_git/${MIRROR_SUBPATH:-benchmark}" >> "$GITHUB_ENV"
+
+      - name: Ensure mirror location configured
+        run: |
+          if [ -z "${MIRROR_ROOT}" ]; then
+            echo "Mirror location not configured; set MARKETING_PARITY_MIRROR_S3 or MARKETING_PARITY_MIRROR_GIT." >&2
+            exit 1
+          fi
+        env:
+          MIRROR_ROOT: ${{ env.MIRROR_ROOT }}
+
+      - name: Validate marketing bundle parity
+        run: |
+          python -m scripts.audit.marketing_parity_check \
+            --stress-lab-dir artifacts/stress-lab-report/reports/stress_lab \
+            --signal-quality-index artifacts/exchange-report/reports/exchanges/signal_quality/index.csv \
+            --mirror-dir "${MIRROR_ROOT}" \
+            --audit-output docs/audit/marketing_parity_report.md \
+            --json-output docs/audit/marketing_parity_report.json
+
+      - name: Upload parity audit report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: marketing-parity-report
+          path: |
+            docs/audit/marketing_parity_report.md
+            docs/audit/marketing_parity_report.json
+          if-no-files-found: error
+
 
   ui-ctest:
     name: UI Native Tests
