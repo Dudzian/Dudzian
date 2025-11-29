@@ -279,6 +279,63 @@
       ],
       "options": {"tooltip": {"show": true}, "color": {"mode": "palette-classic"}},
       "fieldConfig": {"defaults": {"unit": "short"}, "overrides": []}
+    },
+    {
+      "type": "heatmap",
+      "title": "Dobowy histogram reconnectów (5m)",
+      "description": "Rozkład reconnectów gRPC/fallback oraz long-poll w kubełkach 5-minutowych dla walidacji flappingu w oknie dobowym.",
+      "timeFrom": "24h",
+      "targets": [
+        {
+          "expr": "increase(bot_ui_feed_sla_reconnects_total{transport=~\"grpc|fallback\",environment=~\".*\"}[5m])",
+          "legendFormat": "gRPC/fallback reconnecty (5m)",
+          "datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"}
+        },
+        {
+          "expr": "increase(bot_exchange_stream_long_poll_reconnects_total[5m])",
+          "legendFormat": "long-poll reconnecty (5m)",
+          "datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"}
+        }
+      ],
+      "options": {"tooltip": {"show": true}, "color": {"mode": "palette-classic"}},
+      "fieldConfig": {"defaults": {"unit": "short"}, "overrides": []}
+    },
+    {
+      "type": "timeseries",
+      "title": "Okno dobowe – udział degradacji (anti-flap)",
+      "description": "Średni udział próbek w stanie warning/critical oraz healthy w przesuwnym oknie 1h (zakres 24h) – pozwala potwierdzić stabilizację alertów i brak flappingu.",
+      "timeFrom": "24h",
+      "targets": [
+        {
+          "expr": "avg_over_time((bot_ui_feed_sla_status{transport=~\"grpc|fallback\",environment=~\".*\"}>=2)[1h])",
+          "legendFormat": "gRPC/fallback degradowane (1h avg)",
+          "datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"}
+        },
+        {
+          "expr": "avg_over_time((bot_ui_feed_sla_status{transport=~\"grpc|fallback\",environment=~\".*\"}==1)[1h])",
+          "legendFormat": "gRPC/fallback healthy (1h avg)",
+          "datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"}
+        }
+      ],
+      "fieldConfig": {"defaults": {"unit": "percentunit"}, "overrides": []}
+    },
+    {
+      "type": "stat",
+      "title": "Anti-flap weryfikacja (24h)",
+      "description": "Rozstęp statusu SLA (max-min) w 24h wraz z sumą reconnect_in_progress long-polla pokazują stabilność anti-flap i ciągłość próbkowania.",
+      "targets": [
+        {
+          "expr": "max_over_time(bot_ui_feed_sla_status{transport=~\"grpc|fallback\",environment=~\".*\"}[24h]) - min_over_time(bot_ui_feed_sla_status{transport=~\"grpc|fallback\",environment=~\".*\"}[24h])",
+          "legendFormat": "rozstęp SLA gRPC/fallback (24h)",
+          "datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"}
+        },
+        {
+          "expr": "sum_over_time(clamp_max(bot_exchange_stream_long_poll_reconnect_in_progress,1)[24h])",
+          "legendFormat": "ciągłość reconnect in progress (24h)",
+          "datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"}
+        }
+      ],
+      "options": {"reduceOptions": {"calcs": ["lastNotNull"]}, "orientation": "horizontal"}
     }
   ],
   "schemaVersion": 38,

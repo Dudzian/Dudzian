@@ -1179,6 +1179,106 @@ def test_repeated_long_fallback_cycles_preserve_transport_counters(
         app.quit()
 
 
+@pytest.mark.integration
+@pytest.mark.soak
+def test_grpc_longpoll_soak_flapping_counters(
+    ci_decision_feed_metrics: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    pytest.importorskip("PySide6")
+    os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+    from PySide6.QtCore import QCoreApplication  # type: ignore[attr-defined]
+
+    monkeypatch.setattr(RuntimeService, "_auto_connect_grpc", lambda self: None)
+    monkeypatch.setattr(RuntimeService, "_refresh_long_poll_metrics", lambda self: None)
+
+    app = QCoreApplication.instance() or QCoreApplication([])
+    exporter = FeedHealthMetricsExporter(registry=MetricsRegistry())
+    service = RuntimeService(
+        default_limit=1,
+        decision_loader=lambda *_args, **_kwargs: [],
+        feed_metrics_exporter=exporter,
+    )
+    try:
+        service._feed_thresholds.update(
+            {
+                "latency_warning_ms": 150.0,
+                "latency_critical_ms": 220.0,
+                "reconnects_warning": 20,
+                "reconnects_critical": 50,
+                "downtime_warning_seconds": 86_400.0,
+                "downtime_critical_seconds": 172_800.0,
+            }
+        )
+
+        degraded_streaks: list[int] = []
+        healthy_streaks: list[int] = []
+        reconnect_history: list[int] = []
+        peak_degraded = 0
+        peak_healthy = 0
+        hours_elapsed = 0
+        downtime_seconds_total = 0.0
+
+        for hour in range(24):
+            is_fallback_window = hour % 4 < 2
+            hours_elapsed += 1
+            if is_fallback_window:
+                service._active_stream_label = "fallback://demo"
+                for key in ("grpc", "fallback"):
+                    service._latency_samples_for(key).clear()
+                fallback_samples = service._latency_samples_for("fallback")
+                fallback_samples.extend([320.0 + hour])
+                service._feed_reconnects += 1
+                downtime_seconds_total += 3600.0
+                service._feed_downtime_total = downtime_seconds_total
+                service._update_feed_health(
+                    status="fallback", reconnects=service._feed_reconnects, last_error="grpc unavailable"
+                )
+                report = service.feedSlaReport
+                degraded_streaks.append(report.get("consecutive_degraded_periods", 0))
+                reconnect_history.append(report.get("reconnects", 0))
+                peak_degraded = max(peak_degraded, report.get("consecutive_degraded_periods", 0))
+            else:
+                service._active_stream_label = "grpc://demo"
+                for key in ("grpc", "fallback"):
+                    service._latency_samples_for(key).clear()
+                grpc_samples = service._latency_samples_for("grpc")
+                grpc_samples.extend([70.0])
+                service._feed_downtime_total = downtime_seconds_total
+                service._update_feed_health(status="connected", reconnects=service._feed_reconnects, last_error="")
+                report = service.feedSlaReport
+                healthy_streaks.append(report.get("consecutive_healthy_periods", 0))
+                peak_healthy = max(peak_healthy, report.get("consecutive_healthy_periods", 0))
+
+        assert hours_elapsed == 24
+        assert peak_degraded >= 2
+        assert peak_healthy >= 2
+        assert degraded_streaks[:4] == [1, 2, 1, 2]
+        assert healthy_streaks[:4] == [1, 2, 1, 2]
+        assert reconnect_history[-1] == service._feed_reconnects == 12
+
+        final_report = service.feedSlaReport
+        assert final_report.get("consecutive_healthy_periods") >= healthy_streaks[-1]
+        assert final_report.get("downtime_seconds", 0.0) == pytest.approx(downtime_seconds_total)
+        service._write_feed_metrics(force=True)
+        payload = json.loads(ci_decision_feed_metrics.read_text(encoding="utf-8"))
+        assert payload.get("reconnects") == reconnect_history[-1]
+        assert payload.get("downtime_ms") == pytest.approx(downtime_seconds_total * 1000.0)
+        assert payload.get("consecutive_degraded_periods") == 0
+        assert payload.get("downtime_seconds") == pytest.approx(downtime_seconds_total)
+        assert payload.get("consecutive_healthy_periods", 0) >= healthy_streaks[-1]
+        assert payload.get("status") == "connected"
+        transports = payload.get("transports", {})
+        assert set(transports) >= {"grpc", "fallback"}
+        assert transports["fallback"].get("downtimeMs", 0.0) == pytest.approx(downtime_seconds_total * 1000.0)
+        assert transports["fallback"].get("status") == "fallback"
+        assert transports["grpc"].get("status") == "connected"
+        assert transports["fallback"]["reconnects"] >= 6
+    finally:
+        service._longpoll_timer.stop()
+        service._stop_grpc_stream()
+        app.quit()
+
+
 def test_oscillation_between_transports_keeps_counters_balanced(monkeypatch: pytest.MonkeyPatch) -> None:
     pytest.importorskip("PySide6")
     os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
