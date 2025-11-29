@@ -90,6 +90,35 @@ def test_validation_returns_error_when_file_missing(tmp_path: Path) -> None:
     assert exit_code == 2
 
 
+def test_validation_rejects_cloud_worker_rules_without_placeholders(tmp_path: Path) -> None:
+    path = tmp_path / "cloud.yml"
+    path.write_text(
+        """
+groups:
+  - name: cloud_worker
+    rules:
+      - alert: CloudWorkerMissingTemplates
+        expr: max_over_time(bot_cloud_worker_last_error[5m]) > 0
+        for: 5m
+        labels:
+          severity: critical
+          team: hypercare
+        annotations:
+          summary: "Alert dla workera"
+          description: "Ten opis ma wystarczającą długość, ale brakuje szablonów."
+        """.strip(),
+        encoding="utf-8",
+    )
+
+    exit_code = validate_prometheus_rules.main([
+        "--rules",
+        str(path),
+        "--metric-prefix",
+        "bot_cloud_worker",
+    ])
+
+    assert exit_code == 1
+
 
 def test_stage6_rules_file_passes_validation() -> None:
     rules_path = Path("deploy/prometheus/stage6_alerts.yaml")
@@ -104,3 +133,267 @@ def test_stage6_rules_file_passes_validation() -> None:
         ]
     )
     assert exit_code == 0
+
+
+def test_cloud_worker_rules_require_owner_and_channel(tmp_path: Path) -> None:
+    path = tmp_path / "cloud_missing_labels.yml"
+    path.write_text(
+        """
+groups:
+  - name: cloud_worker
+    rules:
+      - alert: CloudWorkerMissingOwner
+        expr: max_over_time(bot_cloud_worker_status[5m]) == 0
+        for: 5m
+        labels:
+          severity: warning
+          team: hypercare
+          service: cloud-orchestrator
+        annotations:
+          summary: "Worker {{ $labels.worker }} w stanie degraded"
+          description: "Opis zawiera {{ $labels.worker }} i ma odpowiednią długość."
+        """.strip(),
+        encoding="utf-8",
+    )
+
+    exit_code = validate_prometheus_rules.main(
+        [
+            "--rules",
+            str(path),
+        ]
+    )
+
+    assert exit_code == 1
+
+
+def test_cloud_worker_rules_file_passes_validation() -> None:
+    rules_path = Path("deploy/prometheus/rules/cloud_worker_alerts.yml")
+    exit_code = validate_prometheus_rules.main(
+        [
+            "--rules",
+            str(rules_path),
+        ]
+    )
+    assert exit_code == 0
+
+
+def test_cloud_worker_rules_require_correct_channel_and_owner(tmp_path: Path) -> None:
+    path = tmp_path / "cloud_wrong_channel.yml"
+    path.write_text(
+        """
+groups:
+  - name: cloud_worker
+    rules:
+      - alert: CloudWorkerWrongChannel
+        expr: max_over_time(bot_cloud_worker_status[5m]) == 0
+        for: 5m
+        labels:
+          severity: warning
+          team: hypercare
+          service: cloud-orchestrator
+          channel: CloudAlertService
+          owner: platform
+        annotations:
+          summary: "Worker {{ $labels.worker }} w stanie degraded"
+          description: "Opis zawiera {{ $labels.worker }} i ma odpowiednią długość."
+      - alert: CloudWorkerErrorWrongChannel
+        expr: max_over_time(bot_cloud_worker_last_error[5m]) > 0
+        for: 5m
+        labels:
+          severity: critical
+          team: hypercare
+          service: cloud-orchestrator
+          channel: HyperCare
+          owner: cloud-alerts
+        annotations:
+          summary: "Błąd {{ $labels.error }} na workerze {{ $labels.worker }}"
+          description: "Opis zawiera {{ $labels.worker }} i {{ $labels.error }} oraz jest wystarczająco długi."
+        """.strip(),
+        encoding="utf-8",
+    )
+
+    exit_code = validate_prometheus_rules.main(
+        [
+            "--rules",
+            str(path),
+        ]
+    )
+
+    assert exit_code == 1
+
+
+def test_cloud_worker_rules_require_hypercare_team_and_service(tmp_path: Path) -> None:
+    path = tmp_path / "cloud_wrong_team.yml"
+    path.write_text(
+        """
+groups:
+  - name: cloud_worker
+    rules:
+      - alert: CloudWorkerWrongTeam
+        expr: max_over_time(bot_cloud_worker_status[5m]) == 0
+        for: 5m
+        labels:
+          severity: warning
+          team: platform
+          service: orchestration
+          channel: HyperCare
+          owner: cloud-alerts
+        annotations:
+          summary: "Worker {{ $labels.worker }} w stanie degraded"
+          description: "Cloud worker {{ $labels.worker }} jest degraded przez 5 minut."
+      - alert: CloudWorkerErrorWrongService
+        expr: max_over_time(bot_cloud_worker_last_error[10m]) > 0
+        for: 10m
+        labels:
+          severity: critical
+          team: hypercare
+          service: orchestration
+          channel: CloudAlertService
+          owner: cloud-alerts
+        annotations:
+          summary: "Błąd {{ $labels.error }} na workerze {{ $labels.worker }}"
+          description: "Błąd {{ $labels.error }} utrzymuje się na {{ $labels.worker }}."
+        """.strip(),
+        encoding="utf-8",
+    )
+
+    exit_code = validate_prometheus_rules.main(
+        [
+            "--rules",
+            str(path),
+        ]
+    )
+
+    assert exit_code == 1
+
+
+def test_cloud_worker_status_requires_worker_placeholder_in_summary(tmp_path: Path) -> None:
+    path = tmp_path / "cloud_missing_worker_summary.yml"
+    path.write_text(
+        """
+groups:
+  - name: cloud_worker
+    rules:
+      - alert: CloudWorkerMissingWorkerInSummary
+        expr: max_over_time(bot_cloud_worker_status[5m]) == 0
+        for: 5m
+        labels:
+          severity: warning
+          team: hypercare
+          service: cloud-orchestrator
+          channel: HyperCare
+          owner: cloud-alerts
+        annotations:
+          summary: "Worker w stanie degraded"
+          description: "Worker {{ $labels.worker }} ma status degraded i wymaga interwencji."
+        """.strip(),
+        encoding="utf-8",
+    )
+
+    exit_code = validate_prometheus_rules.main(
+        [
+            "--rules",
+            str(path),
+        ]
+    )
+
+    assert exit_code == 1
+
+
+def test_cloud_worker_error_requires_worker_and_error_in_summary(tmp_path: Path) -> None:
+    path = tmp_path / "cloud_missing_error_summary.yml"
+    path.write_text(
+        """
+groups:
+  - name: cloud_worker
+    rules:
+      - alert: CloudWorkerErrorMissingSummaryPlaceholders
+        expr: max_over_time(bot_cloud_worker_last_error[10m]) > 0
+        for: 10m
+        labels:
+          severity: critical
+          team: hypercare
+          service: cloud-orchestrator
+          channel: CloudAlertService
+          owner: cloud-alerts
+        annotations:
+          summary: "Krytyczny błąd wykryty na workerze"
+          description: "Błąd {{ $labels.error }} na workerze {{ $labels.worker }} trwa od 10 minut."
+        """.strip(),
+        encoding="utf-8",
+    )
+
+    exit_code = validate_prometheus_rules.main(
+        [
+            "--rules",
+            str(path),
+        ]
+    )
+
+    assert exit_code == 1
+
+
+def test_cloud_worker_status_requires_worker_in_description(tmp_path: Path) -> None:
+    path = tmp_path / "cloud_missing_worker_description.yml"
+    path.write_text(
+        """
+groups:
+  - name: cloud_worker
+    rules:
+      - alert: CloudWorkerMissingWorkerInDescription
+        expr: max_over_time(bot_cloud_worker_status[5m]) == 0
+        for: 5m
+        labels:
+          severity: warning
+          team: hypercare
+          service: cloud-orchestrator
+          channel: HyperCare
+          owner: cloud-alerts
+        annotations:
+          summary: "Worker {{ $labels.worker }} w stanie degraded"
+          description: "Opis nie zawiera wymaganych placeholderów."
+        """.strip(),
+        encoding="utf-8",
+    )
+
+    exit_code = validate_prometheus_rules.main(
+        [
+            "--rules",
+            str(path),
+        ]
+    )
+
+    assert exit_code == 1
+
+
+def test_cloud_worker_error_requires_worker_and_error_in_description(tmp_path: Path) -> None:
+    path = tmp_path / "cloud_missing_error_description.yml"
+    path.write_text(
+        """
+groups:
+  - name: cloud_worker
+    rules:
+      - alert: CloudWorkerErrorMissingDescriptionPlaceholders
+        expr: max_over_time(bot_cloud_worker_last_error[10m]) > 0
+        for: 10m
+        labels:
+          severity: critical
+          team: hypercare
+          service: cloud-orchestrator
+          channel: CloudAlertService
+          owner: cloud-alerts
+        annotations:
+          summary: "Błąd {{ $labels.error }} na workerze {{ $labels.worker }}"
+          description: "Opis nie zawiera wymaganych placeholderów, powinien wprost wskazywać błąd i workera."
+        """.strip(),
+        encoding="utf-8",
+    )
+
+    exit_code = validate_prometheus_rules.main(
+        [
+            "--rules",
+            str(path),
+        ]
+    )
+
+    assert exit_code == 1
