@@ -4,6 +4,7 @@ on:
   workflow_dispatch:
   schedule:
     - cron: "30 2 * * *"
+    - cron: "0 3 * * 1"
 
 jobs:
   dr-probes:
@@ -43,3 +44,48 @@ jobs:
           path: reports/ci/dr_probes/
           if-no-files-found: warn
           retention-days: 7
+
+  dr-failover-validation:
+    name: Alerting DR failover validation
+    if: github.event_name == 'workflow_dispatch' || github.event.schedule == '0 3 * * 1'
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install .[dev]
+
+      - name: Run DR failover validation
+        env:
+          DR_GRPC_ENDPOINT: ${{ secrets.DR_GRPC_ENDPOINT }}
+          DR_ALERTMANAGER_URL: ${{ secrets.DR_ALERTMANAGER_URL }}
+          DR_PROMETHEUS_URL: ${{ secrets.DR_PROMETHEUS_URL }}
+          DR_STANDBY_ALERTMANAGER_URL: ${{ secrets.DR_STANDBY_ALERTMANAGER_URL }}
+          DR_STANDBY_PROMETHEUS_URL: ${{ secrets.DR_STANDBY_PROMETHEUS_URL }}
+          DR_FAILOVER_WEBHOOK: ${{ secrets.DR_FAILOVER_WEBHOOK }}
+        run: |
+          python scripts/dr_failover_validation.py \
+            --endpoint "${DR_GRPC_ENDPOINT:-localhost:50051}" \
+            ${DR_ALERTMANAGER_URL:+--alertmanager-url "$DR_ALERTMANAGER_URL"} \
+            ${DR_PROMETHEUS_URL:+--prometheus-url "$DR_PROMETHEUS_URL"} \
+            ${DR_STANDBY_ALERTMANAGER_URL:+--dr-alertmanager-url "$DR_STANDBY_ALERTMANAGER_URL"} \
+            ${DR_STANDBY_PROMETHEUS_URL:+--dr-prometheus-url "$DR_STANDBY_PROMETHEUS_URL"} \
+            ${DR_FAILOVER_WEBHOOK:+--failover-webhook "$DR_FAILOVER_WEBHOOK"} \
+            --output-dir reports/ci/dr_failover
+
+      - name: Publish DR failover report
+        uses: actions/upload-artifact@v4
+        with:
+          name: dr-failover-report
+          path: reports/ci/dr_failover/
+          if-no-files-found: warn
+          retention-days: 14
