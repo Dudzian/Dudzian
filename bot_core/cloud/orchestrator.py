@@ -168,6 +168,44 @@ class CloudOrchestrator:
             )
             LOGGER.debug("Nie udało się odświeżyć presetów Marketplace", exc_info=True)
 
+    def run_synthetic_probes(
+        self,
+        *,
+        previous_snapshot: Mapping[str, object] | None = None,
+        prometheus_ok: bool | None = None,
+    ) -> dict[str, object]:
+        """Zwraca wynik sondy DR łączącej bieżące `_health`/`_lastError` z poprzednim stanem.
+
+        Synthetic probe służy do potwierdzania gotowości failover (multi-region
+        Alertmanager/Prometheus) oraz do rehydratacji alertów `_lastError` w
+        przypadku świeżo podniesionego procesu cloud (np. po przełączeniu
+        control-plane). Gdy bieżący snapshot nie zawiera `_lastError`, a poprzedni
+        tak, wynik sondy nadal zwróci informację o błędzie i oznaczy ją jako
+        `rehydratedFromPrevious`.
+        """
+
+        current_snapshot = self.health_snapshot()
+        current_error = current_snapshot.get("_lastError")
+        previous_error = None
+        if previous_snapshot:
+            previous_error = previous_snapshot.get("_lastError")
+
+        effective_error = current_error or previous_error
+        rehydrated = bool(effective_error and not current_error and previous_error)
+        health_ok = bool(current_snapshot.get("_health"))
+        prometheus_healthy = prometheus_ok is True
+        failover_ready = bool(health_ok and prometheus_healthy and not effective_error)
+
+        return {
+            "timestamp": current_snapshot.get("updatedAt"),
+            "healthOk": health_ok,
+            "prometheusOk": prometheus_ok,
+            "failoverReady": failover_ready,
+            "effectiveLastError": effective_error,
+            "rehydratedFromPrevious": rehydrated,
+            "snapshot": current_snapshot,
+        }
+
     def health_snapshot(self) -> dict[str, object]:
         with self._health_lock:
             return json.loads(json.dumps(self._health))
