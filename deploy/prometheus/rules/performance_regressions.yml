@@ -1,0 +1,46 @@
+groups:
+  - name: performance-benchmarks
+    interval: 1m
+    rules:
+      - alert: PerformanceUIRenderP90Regression
+        expr: |
+          ci_performance_p90_ms{source="ui_render"}
+            > (avg_over_time(ci_performance_p90_ms{source="ui_render"}[7d]) * 1.25)
+            and ci_performance_p90_ms{source="ui_render"} > 220
+        for: 30m
+        labels:
+          severity: warning
+          team: sre
+        annotations:
+          summary: "UI render p90 wzrósł powyżej budżetu regresji"
+          description: |
+            P90 czasu renderu paneli UI rośnie (>125% średniej 7d) i przekracza 220 ms.
+            Sprawdź ostatnie commity ({{ $labels.git_commit }}) i raporty w artefakcie performance-benchmark-history.
+
+      - alert: PerformanceBacktestThroughputRegression
+        expr: |
+          avg_over_time(ci_performance_pairs_per_second{source="backtest"}[1h])
+            < (avg_over_time(ci_performance_pairs_per_second{source="backtest"}[7d]) * 0.9)
+        for: 45m
+        labels:
+          severity: warning
+          team: sre
+        annotations:
+          summary: "Przepustowość backtestów spada poniżej trendu"
+          description: |
+            Średnia przepustowość backtestów z ostatniej godziny spadła >10% względem trendu 7d.
+            Zweryfikuj regresje w commitach ({{ $labels.git_commit }}) oraz histogram rolling window w Grafanie.
+
+      - alert: PerformanceStrategyBenchmarkRegression
+        expr: |
+          avg_over_time(ci_performance_bars_per_second{source="backtest_benchmark"}[1h])
+            < (avg_over_time(ci_performance_bars_per_second{source="backtest_benchmark"}[30d]) * 0.9)
+        for: 45m
+        labels:
+          severity: warning
+          team: sre
+        annotations:
+          summary: "Benchmark per-strategy traci przepustowość"
+          description: |
+            Rolling 1h bars/s dla benchmarków strategii spadł >10% vs średnia 30d.
+            Koreluj z SHA ({{ $labels.git_commit }}) i raportami w artefakcie performance-benchmark-history.
