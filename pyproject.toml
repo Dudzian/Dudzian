@@ -128,6 +128,7 @@ markers = [
   "smoke: szybkie testy dymne release candidate",
   "qml: testy wymagające środowiska Qt/QML (PySide6)",
   "soak: długotrwałe scenariusze stabilności i anti-flap",
+  "performance: benchmarki i testy SLA wydajnościowej",
 ]
 
 [project]
