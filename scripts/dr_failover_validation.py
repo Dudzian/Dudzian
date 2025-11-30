@@ -43,6 +43,14 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         help=f"Katalog na raport porównawczy (domyślnie {_DEF_OUTPUT})",
     )
     parser.add_argument(
+        "--snapshot-prefix",
+        type=Path,
+        help=(
+            "Prefiks ścieżki dla snapshotów before/after (_lastError, rulesDigest). "
+            "Gdy nie ustawione, snapshoty zapisują się w katalogu output pod prefiksem 'failover_snapshot'."
+        ),
+    )
+    parser.add_argument(
         "--latency-threshold-ms",
         type=int,
         default=5000,
@@ -145,11 +153,24 @@ def _write_report(path: Path, payload: dict[str, Any]) -> Path:
     return path
 
 
+def _state_to_dict(state: FailoverState) -> dict[str, Any]:
+    return {
+        "lastError": state.last_error,
+        "rulesDigest": state.rules_digest,
+        "firingAlerts": state.firing_alerts,
+    }
+
+
+def _write_state_snapshot(path: Path, state: FailoverState) -> Path:
+    return _write_report(path, _state_to_dict(state))
+
+
 def main(argv: list[str] | None = None) -> int:
     args = _parse_args(argv)
     output_dir: Path = args.output_dir
     output_dir.mkdir(parents=True, exist_ok=True)
     report_path = output_dir / "dr_failover_report.json"
+    snapshot_prefix = args.snapshot_prefix or output_dir / "failover_snapshot"
 
     before, before_ok = _collect_probe(
         endpoint=args.endpoint,
@@ -170,7 +191,17 @@ def main(argv: list[str] | None = None) -> int:
         health_timeout=max(args.health_timeout, 1),
     )
 
-    comparison: FailoverComparison = compare_last_error(_extract_state(before), _extract_state(after))
+    before_state = _extract_state(before)
+    after_state = _extract_state(after)
+
+    before_snapshot_path = _write_state_snapshot(
+        snapshot_prefix.with_name(f"{snapshot_prefix.name}_before.json"), before_state
+    )
+    after_snapshot_path = _write_state_snapshot(
+        snapshot_prefix.with_name(f"{snapshot_prefix.name}_after.json"), after_state
+    )
+
+    comparison: FailoverComparison = compare_last_error(before_state, after_state)
     status, failure_reasons = evaluate_outcome(
         comparison, before_ok=before_ok, after_ok=after_ok
     )
@@ -181,6 +212,10 @@ def main(argv: list[str] | None = None) -> int:
         "webhook": webhook,
         "status": status,
         "failureReasons": failure_reasons,
+        "states": {
+            "before": _state_to_dict(before_state),
+            "after": _state_to_dict(after_state),
+        },
     }
 
     payload = {
@@ -188,6 +223,11 @@ def main(argv: list[str] | None = None) -> int:
         "before": before,
         "after": after,
         "summary": summary,
+        "states": summary["states"],
+        "snapshots": {
+            "before": str(before_snapshot_path),
+            "after": str(after_snapshot_path),
+        },
     }
     _write_report(report_path, payload)
     print(f"Failover validation report written to {report_path}")
