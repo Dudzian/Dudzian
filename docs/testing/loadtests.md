@@ -137,12 +137,19 @@ Job `performance-benchmarks` w workflow `.github/workflows/ci.yml` po kroku
 oraz `avg_ms` (wraz z `git_commit` i `timestamp_utc`) z raportów
 `reports/ci/performance_backtests/*.json` i `reports/ci/performance_ui_render/*.json`
 do skonfigurowanego Pushgateway. Adres podaj w sekrecie/zmiennej
-`PERFORMANCE_METRICS_PUSHGATEWAY`; brak konfiguracji lub brak plików z
-metrykami powoduje pominięcie wysyłki, ale nie psuje joba. W Pushgateway
-metryki trafiają do jobu `performance-benchmarks` z etykietami źródła
-(`backtest`/`ui_render`) i scenariusza (plus `pair_count`/`timeframe` tam, gdzie
-są dostępne), co ułatwia wizualizację. Etykiety są bezpiecznie escapowane, a
-błędne raporty JSON są pomijane, więc publikacja nie zatrzyma całego pipeline'u.
+`PERFORMANCE_METRICS_PUSHGATEWAY` (repo lub organizacja); opcjonalnie można
+udostępnić domyślny endpoint jako zmienną organizacyjną
+`CI_PUSHGATEWAY_DEFAULT`, którą workflow pobierze automatycznie zarówno przy
+healthchecku, jak i publikacji. Brak konfiguracji lub niedostępność `/-/healthy`
+powoduje **fail joba** jeszcze przed uruchomieniem testów, a samo
+publikowanie przerwie się z błędem również wtedy, gdy URL został usunięty na
+etapie publikacji – dzięki temu nie pominiemy metryk i łatwo zdiagnozujesz
+problem (jasny komunikat trafi do `GITHUB_STEP_SUMMARY`). W Pushgateway metryki
+trafiają do jobu `performance-benchmarks` z etykietami źródła
+(`backtest`/`ui_render`) i scenariusza (plus `pair_count`/`timeframe` tam,
+gdzie są dostępne), co ułatwia wizualizację. Etykiety są bezpiecznie
+escapowane, a błędne raporty JSON są pomijane, więc publikacja nie zatrzyma
+całego pipeline'u.
 
 ### Wizualizacja i alerty
 
