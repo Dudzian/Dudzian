@@ -86,6 +86,15 @@ Workflow składa się z pojedynczego joba, który:
 3. publikuje tabelę metryk w `exchange_stress_summary.md` oraz dopisuje ją do
    podsumowania `GITHUB_STEP_SUMMARY` (aby nie przepadła nawet w razie faila).
 
+Na końcu joba `performance-benchmarks` uruchamiany jest etap
+`Persist benchmark history to Parquet/SQLite`, który scala wszystkie raporty
+JSON, dokleja domyślny `git_commit` (z `GITHUB_SHA` jeśli raport go nie ma),
+aplikuje okno kroczące `--window-size 120` per źródło/scenariusz i zapisuje
+wyniki do `reports/ci/performance_history/performance_history.parquet` oraz
+`...sqlite`. Artefakt `performance-benchmark-history` zawiera oba formaty, więc
+może być wykorzystywany przez pipeline’y i Grafanę niezależnie od dostępności
+Pushgateway/Prometheusa.
+
 Publikacja metryk z joba `performance-benchmarks` wymaga dostępnego Pushgateway.
 Adres instancji należy wstrzyknąć jako sekret lub zmienną
 `PERFORMANCE_METRICS_PUSHGATEWAY`, a endpoint healthcheck (`/-/healthy`) musi być
@@ -167,6 +176,29 @@ alertowanie na odchylenia od progów SLA.
 Benchmarki per-strategy uruchamiane przez `scripts/benchmark_backtesting.py`
 zapisują wyniki do `reports/ci/benchmark_backtests/` wraz z p95 i budżetem
 regresji, który musi być <10% względem wartości SLA.
+
+### Korelacja wyników z commitami i reakcja na alerty
+
+- **SLA i progi regresji**: p90 renderu paneli SLA/Risk nie może przekroczyć
+  220–230 ms (w zależności od scenariusza), a średnia renderu kart ryzyka musi
+  być <180 ms. Backtesty muszą utrzymać przepustowość ≥1.5/1.0/0.6 par/s dla
+  wariantów 2p@1m, 4p@5m i 6p@1h.
+- **Korelacja SHA → pomiar**: w artefakcie
+  `reports/ci/performance_history/performance_history.{parquet,sqlite}` każda
+  próbka zawiera etykiety `git_commit` i `timestamp_utc`. Otwórz plik
+  Parquet/SQLite i przefiltruj `git_commit` lub `scenario`, aby sprawdzić, czy
+  spike pokrywa się z konkretnym commitem. W Grafanie panel
+  „UI render p90 (7d rolling trend)” wizualizuje to samo okno kroczące na
+  podstawie metryk Prometheusa.
+- **Reakcja na alert `PerformanceUIRenderP90Regression`**: zweryfikuj panel
+  7-dniowy w Grafanie, porównaj wartości do linii SLA 220 ms i podepnij
+  `git_commit` z tooltipa do zmian w QML. Jeśli regresja utrzymuje się przez
+  kilka buildów, rozpocznij bisekcję lub cofnięcie animacji/overlays.
+- **Reakcja na alert `PerformanceBacktestThroughputRegression`**: sprawdź
+  panel 7-dniowy dla throughputu i linie SLA (1.5/1.0/0.6). W artefakcie SQLite
+  przejrzyj `pair_count`/`timeframe` i `git_commit`, aby potwierdzić regresję
+  dla wszystkich scenariuszy; następnie porównaj wyniki per dataset w
+  `benchmark_backtests` i rozpocznij profilowanie silnika backtestów.
 
 ## Raportowanie w CI i Grafanie
 

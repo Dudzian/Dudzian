@@ -40,6 +40,11 @@
           "expr": "avg_over_time(ci_performance_p90_ms{source=\"ui_render\"}[24h])",
           "legendFormat": "p90 {{scenario}}",
           "datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"}
+        },
+        {
+          "expr": "vector(220)",
+          "legendFormat": "SLA 220 ms",
+          "datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"}
         }
       ],
       "description": "Rolling 24h p90 render time z etykietami git_commit/timestamp_utc.",
@@ -59,6 +64,21 @@
         {
           "expr": "avg_over_time(ci_performance_bars_per_second{source=\"backtest_benchmark\"}[24h])",
           "legendFormat": "bars/s {{dataset}}",
+          "datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"}
+        },
+        {
+          "expr": "vector(1.5)",
+          "legendFormat": "SLA 2p @1m (1.5 pairs/s)",
+          "datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"}
+        },
+        {
+          "expr": "vector(1.0)",
+          "legendFormat": "SLA 4p @5m (1.0 pairs/s)",
+          "datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"}
+        },
+        {
+          "expr": "vector(0.6)",
+          "legendFormat": "SLA 6p @1h (0.6 pairs/s)",
           "datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"}
         }
       ],
@@ -83,6 +103,61 @@
       ],
       "description": "Ułatwia korelację alertu z SHA zebranym w artefakcie SQLite/Parquet.",
       "gridPos": {"h": 4, "w": 24, "x": 0, "y": 8}
+    },
+    {
+      "type": "timeseries",
+      "title": "UI render p90 (7d rolling trend)",
+      "fieldConfig": {"defaults": {"unit": "ms"}},
+      "targets": [
+        {
+          "expr": "avg_over_time(ci_performance_p90_ms{source=\"ui_render\"}[7d])",
+          "legendFormat": "p90 7d {{scenario}}",
+          "datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"}
+        },
+        {
+          "expr": "vector(220)",
+          "legendFormat": "SLA 220 ms",
+          "datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"}
+        }
+      ],
+      "description": "Rolling 7d p90 z etykietami git_commit/timestamp_utc do porównania z oknem Parquet/SQLite.",
+      "options": {"tooltip": {"mode": "multi", "sort": "desc"}},
+      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 12}
+    },
+    {
+      "type": "timeseries",
+      "title": "Backtest throughput (7d rolling trend)",
+      "fieldConfig": {"defaults": {"unit": "ops"}},
+      "targets": [
+        {
+          "expr": "avg_over_time(ci_performance_pairs_per_second{source=\"backtest\"}[7d])",
+          "legendFormat": "pairs/s 7d {{pair_count}}p {{timeframe}}",
+          "datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"}
+        },
+        {
+          "expr": "avg_over_time(ci_performance_bars_per_second{source=\"backtest_benchmark\"}[7d])",
+          "legendFormat": "bars/s 7d {{dataset}}",
+          "datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"}
+        },
+        {
+          "expr": "vector(1.5)",
+          "legendFormat": "SLA 2p @1m (1.5 pairs/s)",
+          "datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"}
+        },
+        {
+          "expr": "vector(1.0)",
+          "legendFormat": "SLA 4p @5m (1.0 pairs/s)",
+          "datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"}
+        },
+        {
+          "expr": "vector(0.6)",
+          "legendFormat": "SLA 6p @1h (0.6 pairs/s)",
+          "datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"}
+        }
+      ],
+      "description": "Rolling 7d throughput per scenario i dataset z progami SLA dla alertów regresji.",
+      "options": {"tooltip": {"mode": "multi", "sort": "desc"}},
+      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 12}
     }
   ],
   "schemaVersion": 37,
