@@ -1,0 +1,91 @@
+{
+  "__inputs": [
+    {
+      "name": "DS_PROMETHEUS",
+      "label": "Prometheus",
+      "type": "datasource",
+      "pluginId": "prometheus",
+      "pluginName": "Prometheus"
+    }
+  ],
+  "__requires": [
+    {"type": "grafana", "id": "grafana", "name": "Grafana", "version": "9.x"},
+    {"type": "datasource", "id": "prometheus", "name": "Prometheus", "version": "1.0.0"},
+    {"type": "panel", "id": "timeseries", "name": "Time series", "version": "9.0.0"},
+    {"type": "panel", "id": "stat", "name": "Stat", "version": "9.0.0"}
+  ],
+  "title": "CI performance benchmarks",
+  "time": {"from": "now-30d", "to": "now"},
+  "templating": {
+    "list": [
+      {
+        "type": "datasource",
+        "name": "DS_PROMETHEUS",
+        "label": "Prometheus",
+        "query": "prometheus",
+        "refresh": 1,
+        "options": [],
+        "current": {"selected": false, "text": "Prometheus", "value": "${DS_PROMETHEUS}"},
+        "hide": 0
+      }
+    ]
+  },
+  "panels": [
+    {
+      "type": "timeseries",
+      "title": "UI render p90 (rolling)",
+      "fieldConfig": {"defaults": {"unit": "ms"}},
+      "targets": [
+        {
+          "expr": "avg_over_time(ci_performance_p90_ms{source=\"ui_render\"}[24h])",
+          "legendFormat": "p90 {{scenario}}",
+          "datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"}
+        }
+      ],
+      "description": "Rolling 24h p90 render time z etykietami git_commit/timestamp_utc.",
+      "options": {"tooltip": {"mode": "multi", "sort": "desc"}},
+      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 0}
+    },
+    {
+      "type": "timeseries",
+      "title": "Backtest throughput (rolling)",
+      "fieldConfig": {"defaults": {"unit": "ops"}},
+      "targets": [
+        {
+          "expr": "avg_over_time(ci_performance_pairs_per_second{source=\"backtest\"}[24h])",
+          "legendFormat": "pairs/s {{pair_count}}p {{timeframe}}",
+          "datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"}
+        },
+        {
+          "expr": "avg_over_time(ci_performance_bars_per_second{source=\"backtest_benchmark\"}[24h])",
+          "legendFormat": "bars/s {{dataset}}",
+          "datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"}
+        }
+      ],
+      "description": "Rolling 24h throughput porównywany z alertami regresji.",
+      "options": {"tooltip": {"mode": "multi", "sort": "desc"}},
+      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 0}
+    },
+    {
+      "type": "stat",
+      "title": "Ostatni commit z regresją",
+      "datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"},
+      "options": {
+        "colorMode": "value",
+        "graphMode": "area",
+        "reduceOptions": {"fields": "", "values": false, "calcs": ["lastNotNull"]}
+      },
+      "targets": [
+        {
+          "expr": "label_replace(ci_performance_p90_ms{source=\"ui_render\"}, \"git_commit\", \"$1\", \"git_commit\", \"(.*)\")",
+          "legendFormat": "{{git_commit}}"
+        }
+      ],
+      "description": "Ułatwia korelację alertu z SHA zebranym w artefakcie SQLite/Parquet.",
+      "gridPos": {"h": 4, "w": 24, "x": 0, "y": 8}
+    }
+  ],
+  "schemaVersion": 37,
+  "version": 1,
+  "editable": true
+}

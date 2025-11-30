@@ -763,6 +763,12 @@ jobs:
       - name: Check out repository
         uses: actions/checkout@v4
 
+      - name: Restore performance history cache
+        uses: actions/cache@v4
+        with:
+          path: reports/ci/performance_history
+          key: performance-history-${{ github.ref_name }}
+
       - name: Set up Python
         id: setup-python
         uses: actions/setup-python@v5
@@ -804,7 +810,7 @@ jobs:
               PySide6==${{ env.PYSIDE6_VERSION }} \
               PySide6_Addons==${{ env.PYSIDE6_VERSION }} \
               PySide6_Essentials==${{ env.PYSIDE6_VERSION }} \
-            shiboken6==${{ env.PYSIDE6_VERSION }}
+              shiboken6==${{ env.PYSIDE6_VERSION }}
           fi
           pip install .[dev]
 
@@ -926,6 +932,17 @@ jobs:
           path: reports/ci/performance_ui_render
           if-no-files-found: warn
           retention-days: 7
+
+      - name: Persist benchmark history to Parquet/SQLite
+        if: always()
+        run: |
+          python scripts/persist_performance_benchmarks.py \
+            --report-root reports/ci/performance_backtests \
+            --report-root reports/ci/performance_ui_render \
+            --report-root reports/ci/benchmark_backtests \
+            --parquet reports/ci/performance_history/performance_history.parquet \
+            --sqlite reports/ci/performance_history/performance_history.sqlite \
+            --window-size 120
 
       - name: Summarize performance metrics
         if: always()
@@ -1083,6 +1100,17 @@ PY
             echo ":white_check_mark: Tryb strict — metryki zostały opublikowane do Pushgateway (${gateway_target})."
             echo "- Dashboardy Prometheus/Grafana otrzymają dane z tego uruchomienia."
           } >> "${GITHUB_STEP_SUMMARY}"
+
+      - name: Upload performance history artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: performance-benchmark-history
+          path: |
+            reports/ci/performance_history/performance_history.parquet
+            reports/ci/performance_history/performance_history.sqlite
+          if-no-files-found: warn
+          retention-days: 14
 
   marketplace-catalog:
     name: Marketplace Catalog Packaging
