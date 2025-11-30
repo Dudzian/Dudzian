@@ -62,6 +62,28 @@ Kontroler sesji handlowej rezerwuje slot licencyjny (`paper_controller` lub
 braku uprawnień użytkownik otrzymuje komunikat z instrukcją kontaktu z opiekunem
 licencji, zgodnie z wymaganiami OEM.
 
+## Tolerancja dryfu fingerprintu
+
+Podpisy `license.json` i `fingerprint.json` są porównywane z marginesem tolerancji:
+
+- dryf **MAC** lub **dysku** powoduje ostrzeżenie (`degraded`), ale nie blokuje startu,
+- dryf **CPU** lub **TPM** wymaga ponownego przypisania licencji (`rebind_required`).
+
+Scenariusze dryfu są dokumentowane w raporcie `reports/ci/licensing_drift/compatibility.json`, generowanym nocnie, aby operatorzy mogli potwierdzić zgodność sprzętu z podpisem OEM.
+
+## Procedura rebind offline
+
+1. Zbierz nowy fingerprint (`fingerprint.json`) z hosta, na którym wystąpił błąd `rebind_required`.
+2. Zweryfikuj raport dryfu (`reports/ci/licensing_drift/compatibility.json`), aby potwierdzić, że zmiana dotyczy krytycznych komponentów.
+3. Przekaż fingerprint OEM wraz z ID licencji; po otrzymaniu nowego pakietu `.lic` zapisz go na hoście i zrestartuj runtime.
+4. Zaktualizuj dziennik operacyjny wpisem: data, komponenty, kto podpisał nową licencję, wynik walidacji.
+
+## Procedura appeal offline
+
+1. Jeśli rebind nie jest możliwy (np. brak dostępu do OEM), przygotuj pakiet dowodów: log `logs/security_admin.log`, ostatni fingerprint oraz raport CI dryfu.
+2. Przekaż pakiet do zespołu bezpieczeństwa; decyzja o tymczasowym obejściu (np. whitelist komponentów) musi być udokumentowana.
+3. Po decyzji security zarejestruj wyjątek w systemie ticketowym i zaplanuj właściwy rebind przy pierwszej dostępnej okoliczności.
+
 ## Launcher AutoTrader (headless)
 
 `bot_core.auto_trader.app` stanowi kanoniczny runtime, a
