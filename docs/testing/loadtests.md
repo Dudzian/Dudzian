@@ -74,3 +74,35 @@ Skrypt nie ma osobnego joba CI – można go dodać do istniejących pipeline’
 wywołując CLI i archiwizując plik z `logs/loadtests/`. Dzięki parametrowi
 `--seed` raporty mogą być deterministyczne, co ułatwia porównania między
 buildami.
+
+## SLA dla dashboardów i backtestów
+
+Nowe testy wydajnościowe pokrywają dwa obszary:
+
+- **render SLA/Risk w `RuntimeOverview.qml`** – p90 czasu renderu kart SLA pod
+  sztucznym obciążeniem feedu nie może przekraczać **220 ms**, a średni czas
+  renderu kart ryzyka przy gęstej osi czasu musi być niższy niż **180 ms**.
+- **backtest throughput** – minimalna przepustowość backtestów w CI to:
+  - 2 pary @ 1m: **≥ 1.5 par/s**,
+  - 4 pary @ 5m: **≥ 1.0 par/s**,
+  - 6 par @ 1h: **≥ 0.6 par/s**.
+
+Wyniki benchmarków backtestów są automatycznie zapisywane do
+`reports/ci/performance_backtests/` jako JSON, dzięki czemu mogą być
+zaciągane przez pipeline’y i Grafanę. Analogicznie, pomiary renderingu
+paneli SLA i Risk w QML zapisujemy w `reports/ci/performance_ui_render/`
+z polami `avg_ms`, `p90_ms` i `sla_ms` – ułatwia to wizualizację trendów i
+alertowanie na odchylenia od progów SLA.
+
+## Raportowanie w CI i Grafanie
+
+W CI zapisuj artefakty z katalogu `reports/ci/performance_backtests/` oraz
+strumień STDOUT z testów wydajnościowych. Raporty JSON zawierają czasy
+całkowite, przepustowość oraz liczbę transakcji na parę, co pozwala
+automatycznie porównać je z progami SLA. Każdy plik zawiera również stemple
+`timestamp_utc` oraz `git_commit`, co ułatwia korelację wyników z konkretną
+wersją kodu. W Grafanie podpinaj pliki raportów jako źródło danych (np.
+lokacje artefaktów z ostatnich buildów) i twórz alerty na podstawie pól
+`pairs_per_second` oraz `sla_pairs_per_second`. Te same metadane commit/timestamp
+znajdziesz w raportach UI renderingu w `reports/ci/performance_ui_render/`,
+dzięki czemu można śledzić trend p90/avg względem rewizji i buildów.
