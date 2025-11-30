@@ -91,6 +91,7 @@ def test_mac_drift_is_tolerated(rotation_path: Path) -> None:
     result = evaluate_hwid_drift(baseline, drifted)
 
     assert result["status"] == "degraded"
+    assert result["changed_components"] == ["mac"]
     assert result["tolerated"] == ["mac"]
     assert result["blocked"] == []
 
@@ -114,6 +115,7 @@ def test_disk_drift_is_tolerated(rotation_path: Path) -> None:
     result = evaluate_hwid_drift(baseline, drifted)
 
     assert result["status"] == "degraded"
+    assert result["changed_components"] == ["disk"]
     assert result["tolerated"] == ["disk"]
     assert result["blocked"] == []
 
@@ -137,6 +139,7 @@ def test_cpu_drift_requires_rebind(rotation_path: Path) -> None:
     result = evaluate_hwid_drift(baseline, drifted)
 
     assert result["status"] == "rebind_required"
+    assert result["changed_components"] == ["cpu"]
     assert "cpu" in result["blocked"]
     assert "mac" not in result["blocked"]
 
@@ -160,8 +163,50 @@ def test_tpm_drift_requires_rebind(rotation_path: Path) -> None:
     result = evaluate_hwid_drift(baseline, drifted)
 
     assert result["status"] == "rebind_required"
+    assert result["changed_components"] == ["tpm"]
     assert "tpm" in result["blocked"]
     assert "disk" not in result["blocked"]
+
+
+def test_minor_drift_harness_with_custom_tolerance(rotation_path: Path) -> None:
+    baseline = _build_record(
+        rotation_path,
+        cpu="Intel Xeon Silver 4210R",  # CPU stepping baseline
+        mac="aa:bb:cc:dd:ee:01",
+        disk="nvme-SN-001",
+        tpm=None,
+    )
+
+    drifted = _build_record(
+        rotation_path,
+        cpu="Intel Xeon Silver 4210R v2",  # Microcode / revision change
+        mac="aa:bb:cc:dd:ee:05",  # Swapped NIC in chassis
+        disk="nvme-SN-002",  # SSD replacement
+        tpm=None,
+    )
+
+    tolerant = evaluate_hwid_drift(
+        baseline,
+        drifted,
+        tolerances={"cpu": 1, "mac": 1, "disk": 2},
+    )
+
+    assert tolerant["status"] == "degraded"
+    assert tolerant["changed_components"] == ["cpu", "disk", "mac"]
+    assert tolerant["blocked"] == []
+    assert tolerant["tolerated"] == ["cpu", "disk", "mac"]
+
+    strict = evaluate_hwid_drift(
+        baseline,
+        drifted,
+        tolerances={"cpu": 0, "mac": 0, "disk": 0},
+    )
+
+    assert strict["status"] == "rebind_required"
+    assert strict["changed_components"] == ["cpu", "disk", "mac"]
+    assert "cpu" in strict["blocked"]
+    assert "disk" in strict["blocked"]
+    assert "mac" in strict["blocked"]
 
 
 def test_cli_report_produces_json(tmp_path: Path) -> None:
