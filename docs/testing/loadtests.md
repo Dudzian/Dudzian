@@ -121,10 +121,17 @@ Nowe testy wydajnościowe pokrywają dwa obszary:
 - **render SLA/Risk w `RuntimeOverview.qml`** – p90 czasu renderu kart SLA pod
   sztucznym obciążeniem feedu nie może przekraczać **220 ms**, a średni czas
   renderu kart ryzyka przy gęstej osi czasu musi być niższy niż **180 ms**.
+- **render paneli SLA/Risk na próbkach telemetrii** – p90 renderu na
+  odtworzeniu historycznych alertów i timeline’u ryzyka nie może przekraczać
+  **230 ms** (SLA) ani spaść poniżej budżetu regresji **10%** względem
+  poprzednich runów.
 - **backtest throughput** – minimalna przepustowość backtestów w CI to:
   - 2 pary @ 1m: **≥ 1.5 par/s**,
   - 4 pary @ 5m: **≥ 1.0 par/s**,
   - 6 par @ 1h: **≥ 0.6 par/s**.
+  Dodatkowo benchmark per-strategy nie może spaść poniżej 10% względem SLA dla
+  datasetów `mean_reversion`, `volatility_target` i `cross_exchange_arbitrage`
+  (min. throughput 600–750 barów/s, p95 ≤ 5–6 ms).
 
 Wyniki benchmarków backtestów są automatycznie zapisywane do
 `reports/ci/performance_backtests/` jako JSON, dzięki czemu mogą być
@@ -132,6 +139,9 @@ zaciągane przez pipeline’y i Grafanę. Analogicznie, pomiary renderingu
 paneli SLA i Risk w QML zapisujemy w `reports/ci/performance_ui_render/`
 z polami `avg_ms`, `p90_ms` i `sla_ms` – ułatwia to wizualizację trendów i
 alertowanie na odchylenia od progów SLA.
+Benchmarki per-strategy uruchamiane przez `scripts/benchmark_backtesting.py`
+zapisują wyniki do `reports/ci/benchmark_backtests/` wraz z p95 i budżetem
+regresji, który musi być <10% względem wartości SLA.
 
 ## Raportowanie w CI i Grafanie
 
