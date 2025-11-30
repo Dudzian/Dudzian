@@ -57,3 +57,28 @@ groups:
             W ciągu ostatnich 7 dni pojawiło się więcej niż trzy tolerowane dryfy HWID. Zweryfikuj raporty dryfu
             oraz zaplanuj serwis sprzętu zanim pojawią się odrzucenia licencji.
 
+      - alert: LicensingDriftRebindBurst
+        expr: sum_over_time(licensing_drift_status{status="rebind_required"}[7d]) > 1
+        for: 5m
+        labels:
+          severity: critical
+          stage: licensing
+        annotations:
+          summary: "Licensing: eskalacja OEM/SRE z powodu powtarzających się rebindów"
+          description: |
+            W ciągu 7 dni odnotowano wiele scenariuszy wymagających ponownego podpisu licencji. Uruchom procedurę
+            rebind/appeal i eskaluj do OEM oraz L3 Security. Zweryfikuj trend na dashboardzie Grafany
+            (UID licensing-drift) i raport Parquet z CI.
+
+      - alert: LicensingDriftDegradedErosion
+        expr: sum_over_time(licensing_drift_status{status="degraded"}[7d]) > 5
+        for: 15m
+        labels:
+          severity: critical
+          stage: licensing
+        annotations:
+          summary: "Licensing: degradacja HWID przekracza próg eskalacji"
+          description: |
+            Liczba tolerowanych dryfów w ostatnich 7 dniach przekracza próg 5. Zaplanuj wymianę komponentów i
+            przygotuj rebind zanim system zacznie odrzucać licencje. Eskaluj do SRE/OEM z aktualnym raportem CI.
+

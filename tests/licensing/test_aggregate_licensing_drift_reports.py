@@ -1,6 +1,7 @@
+import json
 from datetime import datetime, timezone
 
-import json
+import pandas as pd
 
 import scripts.aggregate_licensing_drift_reports as agg
 
@@ -41,6 +42,20 @@ def test_generates_empty_outputs_when_matrix_missing(tmp_path):
     prom = prom_path.read_text(encoding="utf-8")
     assert "licensing_drift_rejections_total 0" in prom
     assert "licensing_drift_degraded_total 0" in prom
+
+    parquet_path = input_dir / "licensing_drift_summary.parquet"
+    assert parquet_path.exists()
+    df = pd.read_parquet(parquet_path)
+    assert list(df.columns) == [
+        "run_id",
+        "generated_at",
+        "scenario",
+        "status",
+        "changed_components",
+        "tolerated",
+        "blocked",
+    ]
+    assert df.empty
 
 
 def test_collects_records_and_metrics(tmp_path):
@@ -93,9 +108,14 @@ def test_collects_records_and_metrics(tmp_path):
     assert 'licensing_drift_rejections_total 1' in prom
     assert f'licensing_drift_run_timestamp{{run_id="run-42"}} {int(generated_at.timestamp())}' in prom
 
+    parquet = pd.read_parquet(input_dir / "licensing_drift_summary.parquet")
+    assert parquet.shape[0] == 3
+    assert parquet[parquet["scenario"] == "cpu"]["status"].iloc[0] == "rebind_required"
+
     # Kopie dla dashboardu powinny istnieć
     assert (dashboard_dir / "licensing_drift_summary.json").exists()
     assert (dashboard_dir / "licensing_drift_summary.csv").exists()
+    assert (dashboard_dir / "licensing_drift_summary.parquet").exists()
 
 
 def test_handles_invalid_json_matrix(tmp_path):
