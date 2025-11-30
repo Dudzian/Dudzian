@@ -86,6 +86,11 @@ Workflow składa się z pojedynczego joba, który:
 3. publikuje tabelę metryk w `exchange_stress_summary.md` oraz dopisuje ją do
    podsumowania `GITHUB_STEP_SUMMARY` (aby nie przepadła nawet w razie faila).
 
+Publikacja metryk z joba `performance-benchmarks` wymaga dostępnego Pushgateway.
+Adres instancji należy wstrzyknąć jako sekret lub zmienną
+`PERFORMANCE_METRICS_PUSHGATEWAY`, a endpoint healthcheck (`/-/healthy`) musi być
+osiągalny z runnera GitHub Actions przed startem testów.
+
 Aby podejrzeć metryki z uruchomienia, otwórz konkretne wykonanie w Actions,
 kliknij job „Exchange stress load test”, a w zakładce **Summary** przewiń do
 sekcji `GITHUB_STEP_SUMMARY` – wyświetli się tam tabela z
@@ -152,3 +157,19 @@ Do alertowania wykorzystaj progowe porównania z wartościami SLA (np.
 `ci_performance_p90_ms > 220`) i oznaczaj serie labelami `git_commit` oraz
 `timestamp_utc`, aby łatwo zidentyfikować regresje wydajności w konkretnych
 buildach.
+
+### Diagnostyka braku metryk
+
+- Upewnij się, że sekret/zmienna `PERFORMANCE_METRICS_PUSHGATEWAY` jest ustawiona
+  w repozytorium lub środowisku, a URL kończy się hostem dostępnym z runnera.
+- Przed uruchomieniem testów sprawdź zdrowie instancji (np. z retry i limitem
+  czasu):
+
+  ```bash
+  curl -sSf --retry 3 --retry-delay 2 --retry-connrefused --max-time 10 \  
+    "$PERFORMANCE_METRICS_PUSHGATEWAY/-/healthy"
+  ```
+  polecenie powinno zwrócić status 200.
+- Jeśli check w jobie `performance-benchmarks` zgłosi brak konfiguracji lub
+  niedostępność, zajrzyj do `GITHUB_STEP_SUMMARY` po szczegóły i uzupełnij
+  zmienną, aby kolejne runy mogły wypchnąć metryki.

@@ -788,6 +788,35 @@ jobs:
           fi
           pip install .[dev]
 
+      - name: Check Pushgateway availability
+        env:
+          PUSHGATEWAY_URL: ${{ secrets.PERFORMANCE_METRICS_PUSHGATEWAY || vars.PERFORMANCE_METRICS_PUSHGATEWAY }}
+        run: |
+          set -euo pipefail
+
+          summarize_warning() {
+            {
+              echo "### Pushgateway availability"
+              echo ":warning: Pushgateway nie jest skonfigurowany lub jest niedostępny."
+              echo "- Ustaw sekret/zmienną \\"PERFORMANCE_METRICS_PUSHGATEWAY\\" z adresem Pushgateway"
+              echo "- Zweryfikuj dostępność poleceniem: curl -sf ${PUSHGATEWAY_URL:-<url>}/-/healthy"
+              echo "- Upewnij się, że adres jest osiągalny (DNS/firewall) i odpowiada kodem 200"
+            } >> "${GITHUB_STEP_SUMMARY}"
+          }
+
+          if [ -z "${PUSHGATEWAY_URL}" ]; then
+            echo "PERFORMANCE_METRICS_PUSHGATEWAY not configured; metrics push will be skipped."
+            summarize_warning
+            exit 0
+          fi
+
+          gateway_target="${PUSHGATEWAY_URL%/}"
+          if ! curl -sSf --retry 3 --retry-delay 2 --retry-connrefused --max-time 10 "${gateway_target}/-/healthy"; then
+            echo "Pushgateway healthcheck failed at ${gateway_target}/-/healthy"
+            summarize_warning
+            exit 1
+          fi
+
       - name: Run backtest performance tests
         run: >-
           pytest
