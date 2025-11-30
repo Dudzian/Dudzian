@@ -56,3 +56,12 @@ Każde uruchomienie walidacji zapisuje w logu:
 - dodatkowe szczegóły (ścieżki plików, identyfikatory kluczy, fingerprinty).
 
 Dzięki temu operator ma pełną historię prób walidacji oraz gotowe wskazówki naprawcze wynikające z `ValidationMessage.hint`.
+
+## Tolerancja dryfu HWID
+
+Walidacja podpisów fingerprintu dopuszcza kontrolowany dryf sprzętowy, aby nie blokować wymiany elementów serwisowych:
+
+- zmiana adresu **MAC** (wymiana karty sieciowej) oraz identyfikatora **dysku** mieści się w marginesie tolerancji i generuje status `degraded` z ostrzeżeniem audytowym,
+- zmiana identyfikatora **CPU** lub **TPM** jest traktowana jako krytyczna i wymaga ponownego podpisania licencji (`rebind_required`).
+
+Raport tolerancji jest generowany w nightly (`reports/ci/licensing_drift/compatibility.json`) na podstawie scenariuszy dryfu MAC/CPU/dysku/TPM i powinien być załączany do przeglądów bezpieczeństwa.

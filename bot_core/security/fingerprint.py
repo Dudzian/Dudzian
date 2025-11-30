@@ -1963,6 +1963,24 @@ def _probe_tpm_info() -> str | None:
     return None
 
 
+def _probe_disk_info() -> str | None:
+    env_override = os.environ.get("DUDZIAN_DISK_ID")
+    if env_override:
+        override = env_override.strip()
+        if override:
+            return override
+
+    candidates: list[Path] = [
+        Path("/sys/class/block/sda/device/serial"),
+        Path("/sys/class/block/vda/device/serial"),
+        Path("/sys/block/sda/device/wwid"),
+    ]
+    content = _read_first_existing(candidates)
+    if content:
+        return content
+    return None
+
+
 def _format_mac_address(value: int) -> str:
     hex_value = f"{value:012x}"
     parts = [hex_value[i : i + 2] for i in range(0, len(hex_value), 2)]
@@ -2074,6 +2092,7 @@ class HardwareFingerprintService:
         cpu_probe: Callable[[], str | None] | None = None,
         tpm_probe: Callable[[], str | None] | None = None,
         mac_probe: Callable[[], str | None] | None = None,
+        disk_probe: Callable[[], str | None] | None = None,
         dongle_probe: Callable[[], str | None] | None = None,
         clock: Callable[[], datetime] | None = None,
     ) -> None:
@@ -2081,6 +2100,7 @@ class HardwareFingerprintService:
         self._cpu_probe = cpu_probe or _probe_cpu_info
         self._tpm_probe = tpm_probe or _probe_tpm_info
         self._mac_probe = mac_probe or _probe_mac_address
+        self._disk_probe = disk_probe or _probe_disk_info
         self._dongle_probe = dongle_probe or _probe_dongle
         self._clock = clock or _ensure_utc_now
 
@@ -2096,6 +2116,8 @@ class HardwareFingerprintService:
         else:
             mac_component = None
 
+        disk_component = _component_entry(self._disk_probe())
+
         if dongle_serial is None:
             dongle_serial = self._dongle_probe()
         dongle_component = _component_entry(dongle_serial)
@@ -2104,6 +2126,7 @@ class HardwareFingerprintService:
             "cpu": cpu_component,
             "tpm": tpm_component,
             "mac": mac_component,
+            "disk": disk_component,
             "dongle": dongle_component,
         }
 
@@ -2138,6 +2161,58 @@ class HardwareFingerprintService:
 
         key_id, signature = self._provider.sign(payload, now=current_time)
         return FingerprintRecord(payload=payload, signature=signature, key_id=key_id)
+
+
+_DEFAULT_DRIFT_TOLERANCES: Mapping[str, int] = MappingProxyType({"mac": 1, "disk": 1})
+
+
+def evaluate_hwid_drift(
+    baseline_record: Mapping[str, Any],
+    candidate_record: Mapping[str, Any],
+    *,
+    tolerances: Mapping[str, int] | None = None,
+) -> dict[str, Any]:
+    """Porównuje dwa odciski sprzętowe i wskazuje konieczność rebindu.
+
+    Weryfikuje różnice na poziomie ``component_digests`` i pozwala na
+    konfigurowalne marginesy tolerancji dla zmiennych elementów (np. wymiana
+    karty sieciowej).
+    """
+
+    def _extract_digests(source: Mapping[str, Any]) -> dict[str, str]:
+        payload = source.get("component_digests")
+        if isinstance(payload, Mapping):
+            return {key: str(value) for key, value in payload.items() if value is not None}
+        return {}
+
+    baseline = _extract_digests(baseline_record)
+    candidate = _extract_digests(candidate_record)
+
+    changed_components = sorted({key for key in set(baseline) | set(candidate) if baseline.get(key) != candidate.get(key)})
+    tolerance_budget = dict(_DEFAULT_DRIFT_TOLERANCES)
+    if tolerances:
+        tolerance_budget.update({key: int(value) for key, value in tolerances.items()})
+
+    tolerated = [key for key in changed_components if tolerance_budget.get(key, 0) > 0]
+    blocked = [key for key in changed_components if tolerance_budget.get(key, 0) <= 0]
+
+    if blocked:
+        status = "rebind_required"
+        summary = "Zmiana krytycznych komponentów wymaga ponownego podpisania licencji."
+    elif changed_components:
+        status = "degraded"
+        summary = "Wykryto tolerowany dryf sprzętowy – zweryfikuj logi bezpieczeństwa."
+    else:
+        status = "match"
+        summary = "Fingerprint zgodny z podpisanym artefaktem."
+
+    return {
+        "status": status,
+        "changed_components": changed_components,
+        "tolerated": sorted(tolerated),
+        "blocked": sorted(blocked),
+        "summary": summary,
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -2298,6 +2373,7 @@ __all__ = [
     "FingerprintRecord",
     "HardwareFingerprintService",
     "RotatingHmacKeyProvider",
+    "evaluate_hwid_drift",
     "build_key_provider",
     "decode_secret",
     "SecuritySignals",
