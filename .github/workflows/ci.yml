@@ -783,15 +783,54 @@ jobs:
               PySide6==${{ env.PYSIDE6_VERSION }} \
               PySide6_Addons==${{ env.PYSIDE6_VERSION }} \
               PySide6_Essentials==${{ env.PYSIDE6_VERSION }} \
-              shiboken6==${{ env.PYSIDE6_VERSION }}
+            shiboken6==${{ env.PYSIDE6_VERSION }}
           fi
           pip install .[dev]
+
+      - name: Determine performance metrics mode
+        env:
+          PUSHGATEWAY_URL: ${{ secrets.PERFORMANCE_METRICS_PUSHGATEWAY || vars.PERFORMANCE_METRICS_PUSHGATEWAY || vars.CI_PUSHGATEWAY_DEFAULT }}
+          IS_FORK: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.repo.fork }}
+          EVENT_NAME: ${{ github.event_name }}
+        run: |
+          set -euo pipefail
+
+          mode="strict"
+          reason="Pushgateway configured for publication"
+          if [ "${EVENT_NAME}" = "pull_request" ] && [ "${IS_FORK:-false}" = "true" ]; then
+            mode="fallback"
+            reason="pull request from fork (secrets niedostępne)"
+          elif [ -z "${PUSHGATEWAY_URL:-}" ]; then
+            mode="fallback"
+            reason="brak skonfigurowanego Pushgateway"
+          fi
+
+          {
+            echo "METRICS_MODE=${mode}"
+            echo "METRICS_MODE_REASON=${reason}"
+          } >> "${GITHUB_ENV}"
+
+          {
+            echo "### Performance metrics mode"
+            if [ "${mode}" = "strict" ]; then
+              echo ":lock: Tryb **strict** — metryki muszą zostać opublikowane do Pushgateway; niedostępność przerwie job."
+            else
+              echo ":warning: Tryb **fallback** — publikacja metryk jest pomijana/best-effort, aby testy mogły się wykonać."
+              echo "- Powód: ${reason}"
+              echo "- Konsekwencje: raporty JSON będą dostępne jako artefakty, ale Pushgateway nie otrzyma danych z tego runu."
+            fi
+          } >> "${GITHUB_STEP_SUMMARY}"
 
       - name: Check Pushgateway availability
         env:
           PUSHGATEWAY_URL: ${{ secrets.PERFORMANCE_METRICS_PUSHGATEWAY || vars.PERFORMANCE_METRICS_PUSHGATEWAY || vars.CI_PUSHGATEWAY_DEFAULT }}
         run: |
           set -euo pipefail
+
+          if [ "${METRICS_MODE:-strict}" != "strict" ]; then
+            echo "Skipping Pushgateway availability check in fallback mode (${METRICS_MODE_REASON:-no reason})."
+            exit 0
+          fi
 
           summarize_failure() {
             {
@@ -872,6 +911,17 @@ jobs:
           PUSHGATEWAY_URL: ${{ secrets.PERFORMANCE_METRICS_PUSHGATEWAY || vars.PERFORMANCE_METRICS_PUSHGATEWAY || vars.CI_PUSHGATEWAY_DEFAULT }}
         run: |
           set -euo pipefail
+
+          if [ "${METRICS_MODE:-strict}" != "strict" ]; then
+            echo "Fallback mode (${METRICS_MODE_REASON:-unknown}) — skipping metrics push."
+            {
+              echo "### Pushgateway availability"
+              echo ":warning: Tryb fallback — metryki nie zostały wypchnięte do Pushgateway."
+              echo "- Powód: ${METRICS_MODE_REASON:-brak informacji}"
+              echo "- Następstwa: artefakty z raportami JSON są dostępne, ale dashboardy Prometheus/Grafana nie otrzymają danych."
+            } >> "${GITHUB_STEP_SUMMARY}"
+            exit 0
+          fi
 
           summarize_failure() {
             {
@@ -971,6 +1021,12 @@ PY
 
           gateway_target="${PUSHGATEWAY_URL%/}"
           curl -sSf -X PUT --data-binary "@${payload_file}" "${gateway_target}/metrics/job/performance-benchmarks"
+
+          {
+            echo "### Pushgateway availability"
+            echo ":white_check_mark: Tryb strict — metryki zostały opublikowane do Pushgateway (${gateway_target})."
+            echo "- Dashboardy Prometheus/Grafana otrzymają dane z tego uruchomienia."
+          } >> "${GITHUB_STEP_SUMMARY}"
 
   marketplace-catalog:
     name: Marketplace Catalog Packaging
