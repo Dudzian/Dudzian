@@ -14,8 +14,9 @@
 - **Raporty HyperCare futures** – `scripts/list_exchange_adapters.py` (z flagą `--generate-hypercare-assets`) tworzy checklisty HyperCare, dzienne CSV jakości sygnałów oraz agreguje sygnatury dokumentów i metryki long-pollowe Deribit/BitMEX (kolumny `long_poll_*`, `simulator_cost_status`, `signal_quality_*`), a workflow `exchange-report` pakuje artefakty do `reports/exchanges/` i `reports/exchanges/signal_quality/`.【F:scripts/list_exchange_adapters.py†L1-L430】【F:.github/workflows/exchange-report.yml†L1-L50】
 
 ## Najważniejsze luki
-- **Stabilność feedu w długim horyzoncie** – brak regresyjnych testów oscylacji gRPC↔long-poll i długotrwałego fallbacku; potrzebna jest walidacja braku „flapów” w alertach SLA oraz metrykach `bot_ui_feed_sla_*`.【F:tests/integration/test_grpc_transport.py†L228-L320】【F:docs/observability/grafana/feed_transport_comparison.json†L1-L92】
-- **Eksport materiałów marketingowych** – raporty stress-testów i checklisty adapterów nie są jeszcze linkowane w materiałach sprzedażowych; runbook marketingowy powinien publikować `reports/exchanges/signal_quality/` wraz z porównaniem do konkurencji i wskazówką z runbooka utrzymaniowego, jak produkować i dystrybuować snapshoty.【F:docs/benchmark/cryptohopper_comparison.md†L15-L66】【F:docs/runbooks/report_maintenance.md†L104-L133】
+- **DR i ćwiczenia failover dla Alertmanager/Prometheus** – brak regularnych prób przełączeniowych multi-region i checklist przywracania konfiguracji alertów `_lastError`/`_health` CloudOrchestratora; potrzeba synthetic probes oraz procedur DR spinających metryki, logi i status gRPC.【F:bot_core/cloud/orchestrator.py†L15-L140】【F:docs/monitoring/guardrails.md†L1-L120】
+- **Odporność licencji/HWID na dryf sprzętu** – walidacja TPM/licencji jest kompletna, ale nie ma harnessu testowego, który potwierdza tolerancję niewielkich zmian hardware’u i procedurę rewokacji/ponownego przypisania w trybie offline; wymaga to checklist operatora i testów regresyjnych.【F:docs/security.md†L1-L120】【F:docs/licensing/offline_licensing.md†L1-L160】
+- **Benchmarki wydajności UI/backtestingu** – brak cyklicznych benchmarków QML (czas renderu paneli SLA/Risk) i throughputu backtestów w CI; potrzebne progi SLA, raporty w `reports/ci/` oraz integracja z istniejącymi loadtestami giełdowymi.【F:docs/testing/loadtests.md†L1-L120】【F:ui/qml/dashboard/RuntimeOverview.qml†L1-L260】
 
 ## Runbook: metryki anti-flap SLA
 - **Nowe pola w raporcie SLA** – `RuntimeService.feedSlaReport` zawiera liczniki `consecutive_degraded_periods` oraz `consecutive_healthy_periods`, które rosną przy kolejnych cyklach w stanie ostrzeżenia/krytycznym lub zdrowym. Liczniki są używane przez alerty HyperCare do odfiltrowania pojedynczych pików latencji (anti-flap).【F:ui/backend/runtime_service.py†L1363-L1402】【F:tests/integration/test_grpc_transport.py†L770-L829】
@@ -49,9 +50,9 @@
 - Niepoprawny wpis (odrzucony z agregacji, oznaczony w UI): `{ "timestamp": "2024-01-01T00:00:00Z", "event": "missing_payload", "metadata": {} }` – brak `risk_action` oraz `risk_flags`/`stress_overrides` wyzwala alert telemetryczny i etykietę „Brak wymaganych pól”.【F:ui/backend/runtime_service.py†L360-L520】【F:ui/qml/dashboard/RiskJournalPanel.qml†L600-L700】
 
 ## Priorytetowe poprawki
-1. **Alerty degradacji feedu** – zdefiniować progi SLA i integrację z HyperCare, aby `feedHealth` generowało ostrzeżenia push/mail przy przekroczeniu limitów latencji lub liczby błędów.【F:ui/backend/runtime_service.py†L600-L990】
-2. **Marketplace i raportowanie futures** – utrzymać pipeline `exchange-report` (raport `reports/exchanges/*.csv` + checklisty HyperCare + snapshoty `signal_quality/`), aktualizować `var/metrics/long_poll_snapshots.json` i reagować na statusy `long_poll_metrics_status`/`hypercare_*`/`simulator_cost_status`, aby zachować przewagę nad CryptoHopperem i Gunbotem.【F:.github/workflows/exchange-report.yml†L1-L50】【F:scripts/list_exchange_adapters.py†L300-L420】
-3. **Alerty HyperCare dla workerów cloud** – skonfigurować progi Prometheus/Alertmanager na `bot_cloud_worker_status{worker="retrain"}` oraz `bot_cloud_worker_last_error{worker="marketplace"}` (np. status=0 >5m albo `last_error!=""`) i propagować je do kanałów HyperCare/CloudAlertService wraz z kontekstem `cloud_health` z `HealthService.Check`.【F:bot_core/cloud/orchestrator.py†L15-L119】【F:bot_core/api/server.py†L1717-L1755】
+1. **Ćwiczenia DR alertingu cloud** – dodać job `dr-alertmanager` uruchamiający synthetic probes (symulacja `_lastError` i wyłączenia Prometheusa) oraz checklistę DR z przywracaniem reguł/sekretów; wyniki archiwizować w `reports/ci/dr_alerts.json`.【F:bot_core/cloud/orchestrator.py†L15-L140】【F:docs/monitoring/guardrails.md†L1-L120】
+2. **Harness dryfu HWID/licencji** – przygotować scenariusze testowe z delikatną zmianą fingerprintu (np. MAC/CPU count) i ścieżką rewokacji w `docs/licensing/offline_licensing.md`; raportować wyniki do `reports/ci/licensing_drift.json` i wzbogacić panel bezpieczeństwa o status tolerancji. 【F:docs/security.md†L1-L120】【F:docs/licensing/offline_licensing.md†L1-L160】
+3. **Benchmark UI/backtesting** – dodać job CI `ui-backtest-bench` uruchamiający metryki renderu QML (RuntimeOverview, Risk Journal) oraz throughput backtestów; wyniki zapisywać w `reports/ci/ui_bench.json` i porównywać z progami SLA, wykorzystując istniejące loadtesty jako tło ruchu giełdowego. 【F:docs/testing/loadtests.md†L1-L120】【F:ui/qml/dashboard/RuntimeOverview.qml†L1-L260】
 
 ## Checklista „brak zależności na archive/**” (do cyklicznego przeglądu commitów)
 - [ ] `pytest tests/test_no_archive_imports.py` – blokuje importy `archive/**` i wymusza brak modułów Stage5 w kodzie produkcyjnym.
@@ -60,12 +61,12 @@
 - [ ] Przegląd nowych checklist/runbooków: brak zaleceń uruchamiania narzędzi Stage5 lub kopiowania artefaktów z `archive/` do ścieżek runtime.
 
 ## Proponowane sprinty
-### Sprint 3 – Obserwowalność runtime
-- Zdefiniować progi SLA i kanały eskalacji dla `feedHealth`, generując alerty HyperCare i widoki statusu na podstawie metryk long-pollowych.【F:ui/backend/runtime_service.py†L600-L990】【F:ui/qml/dashboard/RuntimeOverview.qml†L640-L760】
-- Dodać eksport metryk long-polla do centralnego `MetricsRegistry` (np. Prometheus/OpenMetrics) i zbudować dashboard porównujący gRPC vs fallback.【F:bot_core/observability/ui_metrics.py†L1-L200】【F:bot_core/exchanges/streaming.py†L150-L420】
-- Rozszerzyć testy (`tests/integration/test_grpc_transport.py`, `tests/ui/test_runtime_overview.py`) o scenariusze degradacji feedu i brakujących metadanych, aby potwierdzić alerty.【F:tests/integration/test_grpc_transport.py†L200-L360】【F:tests/ui/test_runtime_overview.py†L1-L220】
+### Sprint 3 – DR + bezpieczeństwo
+- Opracować scenariusze DR dla Alertmanager/Prometheus (synthetic probes, odtwarzanie reguł, test multi-region) i archiwizować raporty w `reports/ci/dr_alerts.json`.【F:bot_core/cloud/orchestrator.py†L15-L140】【F:docs/monitoring/guardrails.md†L1-L120】
+- Zbudować harness dryfu HWID/licencji (zmiany MAC/CPU) z raportem `reports/ci/licensing_drift.json` oraz checklistą rewokacji/offline rebind w `docs/licensing/offline_licensing.md`.【F:docs/security.md†L1-L120】【F:docs/licensing/offline_licensing.md†L1-L160】
+- Ustalić progi SLA dla paneli QML i throughputu backtestów; dodać job `ui-backtest-bench` zapisujący wyniki do `reports/ci/ui_bench.json`.【F:docs/testing/loadtests.md†L1-L120】【F:ui/qml/dashboard/RuntimeOverview.qml†L1-L260】
 
 ### Sprint 4 – Marketplace i roadmapa giełdowa
-- Utrzymać pipeline publikacji presetów (`scripts/build_marketplace_catalog.py`, workflow `marketplace-catalog`) i skalować katalog do ≥15 publicznych presetów wraz z recenzjami i podpisanym `config/marketplace/catalog.md`.【F:docs/benchmark/cryptohopper_comparison.md†L24-L97】【F:docs/marketplace/README.md†L1-L99】
-- Dodać adaptery Deribit/BitMEX (REST + long-poll) wraz z profilami paper/live i walidacją kosztów/HyperCare, aby zrównać liczbę giełd z konkurencją CryptoHopper.【F:docs/benchmark/cryptohopper_comparison.md†L35-L66】
-- Skorelować marketing Stress Lab z roadmapą produktów – eksportować raporty stres-testów i linkować je w materiałach sprzedażowych.【F:docs/benchmark/cryptohopper_comparison.md†L15-L37】
+- Skalować pipeline presetów (`scripts/build_marketplace_catalog.py`, workflow `marketplace-catalog`) z walidacją podpisów i QA dla ≥15 strategii. 【F:docs/benchmark/cryptohopper_comparison.md†L24-L97】【F:docs/marketplace/README.md†L1-L99】
+- Rozbudować adaptery Deribit/BitMEX (REST + long-poll) z profilami paper/live i walidacją kosztów/HyperCare, aby zrównać liczbę giełd z konkurencją CryptoHopper. 【F:docs/benchmark/cryptohopper_comparison.md†L35-L66】
+- Utrzymać zautomatyzowaną walidację bundla marketingowego (parytet hashy `stress-lab-report`/`signal_quality/index.csv` vs lustra S3/Git) z logiem w `docs/audit/paper_trading_log.md`.【F:docs/runbooks/report_maintenance.md†L170-L245】【F:docs/benchmark/cryptohopper_comparison.md†L68-L150】
