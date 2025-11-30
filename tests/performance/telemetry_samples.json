@@ -1,0 +1,161 @@
+{
+  "sla_threshold_ms": 230.0,
+  "risk_threshold_ms": 190.0,
+  "feed_panels": [
+    {
+      "name": "recovering_feed",
+      "properties": {
+        "feedSlaReport": {
+          "sla_state": "warning",
+          "latency_state": "warning",
+          "latency_warning_ms": 150.0,
+          "latency_critical_ms": 240.0,
+          "p50_ms": 55.0,
+          "p95_ms": 138.0,
+          "reconnects": 2,
+          "reconnects_warning": 5,
+          "downtime_seconds": 1.7,
+          "downtime_warning_seconds": 12.0,
+          "nextRetrySeconds": 2.1
+        },
+        "feedHealth": {"lastError": "Recovered after throttle"},
+        "feedAlertHistory": [
+          {
+            "severity": "warning",
+            "label": "latency_p95",
+            "timestamp": "2024-06-01T10:14:00Z",
+            "formattedValue": "132 ms"
+          },
+          {
+            "severity": "critical",
+            "label": "downtime",
+            "timestamp": "2024-06-01T10:15:00Z",
+            "formattedValue": "8.5 s"
+          }
+        ],
+        "feedAlertChannels": [
+          {"name": "pagerduty", "status": "healthy"},
+          {"name": "opsgenie", "status": "healthy"},
+          {"name": "slack", "status": "warning"}
+        ]
+      }
+    },
+    {
+      "name": "degraded_feed",
+      "properties": {
+        "feedSlaReport": {
+          "sla_state": "critical",
+          "latency_state": "critical",
+          "latency_warning_ms": 160.0,
+          "latency_critical_ms": 230.0,
+          "p50_ms": 72.0,
+          "p95_ms": 180.0,
+          "reconnects": 4,
+          "reconnects_warning": 5,
+          "downtime_seconds": 4.4,
+          "downtime_warning_seconds": 12.0,
+          "nextRetrySeconds": 3.6
+        },
+        "feedHealth": {"lastError": "Order router degraded"},
+        "feedAlertHistory": [
+          {
+            "severity": "warning",
+            "label": "latency_p50",
+            "timestamp": "2024-06-02T08:11:00Z",
+            "formattedValue": "78 ms"
+          },
+          {
+            "severity": "warning",
+            "label": "latency_p95",
+            "timestamp": "2024-06-02T08:11:30Z",
+            "formattedValue": "176 ms"
+          },
+          {
+            "severity": "critical",
+            "label": "reconnects",
+            "timestamp": "2024-06-02T08:12:10Z",
+            "formattedValue": "4"
+          }
+        ],
+        "feedAlertChannels": [
+          {"name": "pagerduty", "status": "warning"},
+          {"name": "sms", "status": "healthy"}
+        ]
+      }
+    }
+  ],
+  "risk_panels": [
+    {
+      "name": "margin_buffer_spike",
+      "properties": {
+        "riskTimeline": [
+          {
+            "timestamp": "2024-06-01T10:00:00Z",
+            "severity": "warning",
+            "metric": "margin_buffer",
+            "value": 0.22
+          },
+          {
+            "timestamp": "2024-06-01T10:02:00Z",
+            "severity": "error",
+            "metric": "margin_buffer",
+            "value": 0.31
+          },
+          {
+            "timestamp": "2024-06-01T10:05:00Z",
+            "severity": "warning",
+            "metric": "liquidity_gap",
+            "value": 0.18
+          }
+        ],
+        "riskMetrics": {
+          "var": 0.027,
+          "expected_shortfall": 0.045,
+          "max_drawdown": 0.14,
+          "margin_buffer": 0.19
+        },
+        "longPollMetrics": [
+          {"name": "decision_lag_ms", "value": 14.0},
+          {"name": "rebalance_latency_ms", "value": 38.0}
+        ],
+        "cycleMetrics": {"p50_ms": 46.0, "p95_ms": 89.0, "max_ms": 155.0}
+      }
+    },
+    {
+      "name": "escalating_es",
+      "properties": {
+        "riskTimeline": [
+          {
+            "timestamp": "2024-06-01T11:00:00Z",
+            "severity": "warning",
+            "metric": "expected_shortfall",
+            "value": 0.051
+          },
+          {
+            "timestamp": "2024-06-01T11:03:00Z",
+            "severity": "error",
+            "metric": "expected_shortfall",
+            "value": 0.065
+          },
+          {
+            "timestamp": "2024-06-01T11:05:00Z",
+            "severity": "warning",
+            "metric": "volatility_jump",
+            "value": 0.17
+          }
+        ],
+        "riskMetrics": {
+          "var": 0.033,
+          "expected_shortfall": 0.062,
+          "max_drawdown": 0.16,
+          "margin_buffer": 0.21
+        },
+        "longPollMetrics": [
+          {"name": "decision_lag_ms", "value": 19.0},
+          {"name": "rebalance_latency_ms", "value": 44.0}
+        ],
+        "cycleMetrics": {"p50_ms": 52.0, "p95_ms": 102.0, "max_ms": 189.0}
+      }
+    }
+  ]
+}

@@ -858,6 +858,13 @@ jobs:
 
           echo "Pushgateway is reachable at ${gateway_target}; continuing with performance tests."
 
+      - name: Run strategy backtesting benchmarks
+        run: |
+          python scripts/benchmark_backtesting.py \
+            --manifest data/backtests/normalized/manifest.yaml \
+            --output-dir reports/ci/benchmark_backtests \
+            --regression-budget 0.10
+
       - name: Run backtest performance tests
         run: >-
           pytest
@@ -871,6 +878,15 @@ jobs:
         with:
           name: performance-backtests
           path: reports/ci/performance_backtests
+          if-no-files-found: warn
+          retention-days: 7
+
+      - name: Upload strategy benchmark reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: performance-backtest-benchmarks
+          path: reports/ci/benchmark_backtests
           if-no-files-found: warn
           retention-days: 7
 
@@ -900,7 +916,7 @@ jobs:
             jq '{file: $report, pairs_per_second: .pairs_per_second, p90_ms: (.p90_ms // .p90)}' \
               --arg report "${report}" "${report}"
             echo "::endgroup::"
-          done < <(find reports/ci/performance_backtests reports/ci/performance_ui_render -type f -name "*.json" -print0 2>/dev/null)
+          done < <(find reports/ci/performance_backtests reports/ci/performance_ui_render reports/ci/benchmark_backtests -type f -name "*.json" -print0 2>/dev/null)
           if [ "${found_reports}" -eq 0 ]; then
             echo "No performance report JSON files found."
           fi
@@ -948,6 +964,7 @@ import sys
 report_roots = [
     pathlib.Path("reports/ci/performance_backtests"),
     pathlib.Path("reports/ci/performance_ui_render"),
+    pathlib.Path("reports/ci/benchmark_backtests"),
 ]
 
 def escape_label(value: str) -> str:
@@ -975,9 +992,15 @@ for report_path in reports:
             print(f"Skipping unreadable report {report_path}: {exc}", file=sys.stderr)
             continue
 
-    source = "backtest" if "performance_backtests" in report_path.parts else "ui_render"
+    if "performance_backtests" in report_path.parts:
+        source = "backtest"
+    elif "benchmark_backtests" in report_path.parts:
+        source = "backtest_benchmark"
+    else:
+        source = "ui_render"
     labels_common = {
         "source": source,
+        "dataset": str(payload.get("dataset", payload.get("scenario", "unknown"))),
         "pair_count": str(payload.get("pair_count", "unknown")),
         "timeframe": str(payload.get("timeframe", "unknown")),
         "scenario": str(payload.get("scenario", "unknown")),
@@ -997,6 +1020,14 @@ for report_path in reports:
     if avg_value is not None:
         metrics.append(("ci_performance_avg_ms", labels_common, avg_value))
 
+    bars_value = maybe_get(payload, "bars_per_second")
+    if bars_value is not None:
+        metrics.append(("ci_performance_bars_per_second", labels_common, bars_value))
+
+    p95_value = maybe_get(payload, "p95_ms")
+    if p95_value is not None:
+        metrics.append(("ci_performance_p95_ms", labels_common, p95_value))
+
 if not metrics:
     sys.exit(0)
 
@@ -1006,6 +1037,10 @@ print("# HELP ci_performance_p90_ms Performance p90 latency (ms)")
 print("# TYPE ci_performance_p90_ms gauge")
 print("# HELP ci_performance_avg_ms Performance avg latency (ms)")
 print("# TYPE ci_performance_avg_ms gauge")
+print("# HELP ci_performance_bars_per_second Strategy backtest throughput (bars/s)")
+print("# TYPE ci_performance_bars_per_second gauge")
+print("# HELP ci_performance_p95_ms Performance p95 latency (ms)")
+print("# TYPE ci_performance_p95_ms gauge")
 
 for metric_name, labels, value in metrics:
     rendered_labels = ",".join(

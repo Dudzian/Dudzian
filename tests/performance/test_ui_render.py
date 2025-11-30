@@ -28,6 +28,7 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 QML_PATH = REPO_ROOT / "ui/qml/dashboard/RuntimeOverview.qml"
 REPORT_DIR = REPO_ROOT / "reports/ci/performance_ui_render"
 REPORT_DIR.mkdir(parents=True, exist_ok=True)
+TELEMETRY_FIXTURE = REPO_ROOT / "tests/performance/telemetry_samples.json"
 
 
 @pytest.fixture(scope="session")
@@ -43,6 +44,12 @@ def qml_engine(qt_app: QGuiApplication) -> QQmlEngine:  # pragma: no cover - inf
     engine = QQmlEngine()
     yield engine
     engine.collectGarbage()
+
+
+@pytest.fixture(scope="session")
+def telemetry_samples() -> dict[str, Any]:
+    payload = json.loads(TELEMETRY_FIXTURE.read_text(encoding="utf-8"))
+    return payload
 
 
 def _load_component(engine: QQmlEngine) -> QQmlComponent:
@@ -185,3 +192,59 @@ def test_risk_panels_render_time_with_dense_timeline(qml_engine: QQmlEngine, tim
         threshold_ms=180.0,
     )
     assert avg_ms < 180.0, f"Risk panels rendering averaged {avg_ms:.2f} ms"
+
+
+@pytest.mark.performance
+def test_sla_panels_render_across_telemetry_samples(
+    qml_engine: QQmlEngine, telemetry_samples: dict[str, Any]
+) -> None:
+    component = _load_component(qml_engine)
+    latencies: list[float] = []
+    feed_samples = telemetry_samples.get("feed_panels", [])
+    baseline_properties = {
+        "feedAlertChannels": [],
+        "feedAlertHistory": [],
+        "feedHealth": {},
+        "feedSlaReport": {},
+    }
+
+    for sample in feed_samples:
+        properties = {**baseline_properties, **sample.get("properties", {})}
+        latencies.extend(_render_component(component, properties) for _ in range(3))
+
+    p90_ms = _p90(latencies)
+    threshold_ms = float(telemetry_samples.get("sla_threshold_ms", 230.0))
+    _log_report(
+        "feed_sla_panel_render_telemetry",
+        latencies,
+        threshold_ms=threshold_ms,
+    )
+    assert p90_ms < threshold_ms, f"Telemetry feed SLA p90 too slow: {p90_ms:.2f} ms"
+
+
+@pytest.mark.performance
+def test_risk_panels_render_across_telemetry_samples(
+    qml_engine: QQmlEngine, telemetry_samples: dict[str, Any]
+) -> None:
+    component = _load_component(qml_engine)
+    latencies: list[float] = []
+    risk_samples = telemetry_samples.get("risk_panels", [])
+    baseline_properties = {
+        "riskTimeline": [],
+        "riskMetrics": {},
+        "longPollMetrics": [],
+        "cycleMetrics": {},
+    }
+
+    for sample in risk_samples:
+        properties = {**baseline_properties, **sample.get("properties", {})}
+        latencies.extend(_render_component(component, properties) for _ in range(3))
+
+    p90_ms = _p90(latencies)
+    threshold_ms = float(telemetry_samples.get("risk_threshold_ms", 190.0))
+    _log_report(
+        "risk_panels_render_telemetry",
+        latencies,
+        threshold_ms=threshold_ms,
+    )
+    assert p90_ms < threshold_ms, f"Telemetry risk panels p90 too slow: {p90_ms:.2f} ms"
