@@ -789,32 +789,35 @@ jobs:
 
       - name: Check Pushgateway availability
         env:
-          PUSHGATEWAY_URL: ${{ secrets.PERFORMANCE_METRICS_PUSHGATEWAY || vars.PERFORMANCE_METRICS_PUSHGATEWAY }}
+          PUSHGATEWAY_URL: ${{ secrets.PERFORMANCE_METRICS_PUSHGATEWAY || vars.PERFORMANCE_METRICS_PUSHGATEWAY || vars.CI_PUSHGATEWAY_DEFAULT }}
         run: |
           set -euo pipefail
 
-          summarize_warning() {
+          summarize_failure() {
             {
               echo "### Pushgateway availability"
-              echo ":warning: Pushgateway nie jest skonfigurowany lub jest niedostępny."
-              echo "- Ustaw sekret/zmienną \\"PERFORMANCE_METRICS_PUSHGATEWAY\\" z adresem Pushgateway"
+              echo ":x: Pushgateway nie jest skonfigurowany lub jest niedostępny — workflow przerwany."
+              echo "- Ustaw sekret/zmienną \\"PERFORMANCE_METRICS_PUSHGATEWAY\\" (repo lub organizacja) z adresem Pushgateway"
+              echo "- Możesz użyć domyślnego endpointu CI (np. org-level \\"CI_PUSHGATEWAY_DEFAULT\\")"
               echo "- Zweryfikuj dostępność poleceniem: curl -sf ${PUSHGATEWAY_URL:-<url>}/-/healthy"
               echo "- Upewnij się, że adres jest osiągalny (DNS/firewall) i odpowiada kodem 200"
             } >> "${GITHUB_STEP_SUMMARY}"
           }
 
           if [ -z "${PUSHGATEWAY_URL}" ]; then
-            echo "PERFORMANCE_METRICS_PUSHGATEWAY not configured; metrics push will be skipped."
-            summarize_warning
-            exit 0
+            echo "PERFORMANCE_METRICS_PUSHGATEWAY not configured; failing to avoid missing performance metrics."
+            summarize_failure
+            exit 1
           fi
 
           gateway_target="${PUSHGATEWAY_URL%/}"
           if ! curl -sSf --retry 3 --retry-delay 2 --retry-connrefused --max-time 10 "${gateway_target}/-/healthy"; then
             echo "Pushgateway healthcheck failed at ${gateway_target}/-/healthy"
-            summarize_warning
+            summarize_failure
             exit 1
           fi
+
+          echo "Pushgateway is reachable at ${gateway_target}; continuing with performance tests."
 
       - name: Run backtest performance tests
         run: >-
@@ -866,11 +869,23 @@ jobs:
       - name: Publish performance metrics
         if: always()
         env:
-          PUSHGATEWAY_URL: ${{ secrets.PERFORMANCE_METRICS_PUSHGATEWAY || vars.PERFORMANCE_METRICS_PUSHGATEWAY }}
+          PUSHGATEWAY_URL: ${{ secrets.PERFORMANCE_METRICS_PUSHGATEWAY || vars.PERFORMANCE_METRICS_PUSHGATEWAY || vars.CI_PUSHGATEWAY_DEFAULT }}
         run: |
-          if [ -z "${PUSHGATEWAY_URL}" ]; then
-            echo "PUSHGATEWAY_URL not set; skipping metrics publication."
-            exit 0
+          set -euo pipefail
+
+          summarize_failure() {
+            {
+              echo "### Pushgateway availability"
+              echo ":x: Pushgateway nie jest skonfigurowany — publikacja metryk przerwana."
+              echo "- Ustaw sekret/zmienną \"PERFORMANCE_METRICS_PUSHGATEWAY\" (repo lub organizacja) z adresem Pushgateway"
+              echo "- Możesz użyć domyślnego endpointu CI (np. org-level \"CI_PUSHGATEWAY_DEFAULT\")"
+            } >> "${GITHUB_STEP_SUMMARY}"
+          }
+
+          if [ -z "${PUSHGATEWAY_URL:-}" ]; then
+            echo "PUSHGATEWAY_URL not set; failing to avoid missing performance metrics."
+            summarize_failure
+            exit 1
           fi
 
           payload_file="$(mktemp)"
