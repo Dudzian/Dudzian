@@ -127,3 +127,48 @@ def test_health_servicer_exposes_cloud_health_snapshot() -> None:
     assert response.cloud_health.workers[0].last_run_at == "2024-01-01T00:00:00Z"
     assert response.cloud_health.workers[0].interval_seconds == 30
     assert response.started_at.seconds > 0
+
+
+def test_synthetic_probe_flags_failover_and_rehydrates_alerts() -> None:
+    registry = MetricsRegistry()
+    context = _StubContext(registry=registry)
+    orchestrator = CloudOrchestrator(context, metrics_registry=registry)
+
+    # healthy baseline
+    orchestrator._set_health(status="running")
+    baseline = orchestrator.run_synthetic_probes(prometheus_ok=True)
+    assert baseline["healthOk"] is True
+    assert baseline["failoverReady"] is True
+    assert baseline["effectiveLastError"] is None
+    assert baseline["rehydratedFromPrevious"] is False
+
+    # brak deklaracji `prometheusOk` blokuje failover readiness (konserwatywne domyślnie)
+    no_prometheus = orchestrator.run_synthetic_probes()
+    assert no_prometheus["healthOk"] is True
+    assert no_prometheus["failoverReady"] is False
+    assert no_prometheus["prometheusOk"] is None
+
+    # failure snapshot (np. region primary) i brak failover readiness
+    orchestrator._set_health(status="degraded", workers={"retrain": {"lastError": "scheduler_failure"}})
+    failure_snapshot = orchestrator.health_snapshot()
+    failure_probe = orchestrator.run_synthetic_probes(previous_snapshot=baseline["snapshot"], prometheus_ok=False)
+    assert failure_probe["healthOk"] is False
+    assert failure_probe["failoverReady"] is False
+    assert failure_probe["effectiveLastError"] == "scheduler_failure"
+    assert failure_probe["prometheusOk"] is False
+
+    # rehydratacja alertu `_lastError` gdy nowy proces nie ma już błędu
+    orchestrator._set_health(status="running", workers={"retrain": {"lastError": None}})
+    recovery_probe = orchestrator.run_synthetic_probes(previous_snapshot=failure_snapshot, prometheus_ok=True)
+    assert recovery_probe["healthOk"] is True
+    assert recovery_probe["failoverReady"] is False  # efektywny błąd pochodzi z poprzedniego snapshotu
+    assert recovery_probe["effectiveLastError"] == "scheduler_failure"
+    assert recovery_probe["rehydratedFromPrevious"] is True
+    assert recovery_probe["prometheusOk"] is True
+
+    # brak `_lastError`, ale niedostępny Prometheus blokuje failover readiness
+    orchestrator._set_health(status="running", workers={"retrain": {"lastError": None}})
+    prometheus_probe = orchestrator.run_synthetic_probes(prometheus_ok=False)
+    assert prometheus_probe["healthOk"] is True
+    assert prometheus_probe["failoverReady"] is False
+    assert prometheus_probe["prometheusOk"] is False
