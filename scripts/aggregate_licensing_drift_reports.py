@@ -9,6 +9,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Mapping
 
+import pandas as pd
+
 
 def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Konsoliduje artefakty dryfu licencji na potrzeby dashboardów.")
@@ -36,6 +38,11 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         "--csv-output",
         default=None,
         help="Ścieżka pliku CSV z podsumowaniem (domyślnie <input-dir>/licensing_drift_summary.csv)",
+    )
+    parser.add_argument(
+        "--parquet-output",
+        default=None,
+        help="Ścieżka pliku Parquet z podsumowaniem (domyślnie <input-dir>/licensing_drift_summary.parquet)",
     )
     parser.add_argument(
         "--dashboard-dir",
@@ -172,6 +179,26 @@ def _write_csv(path: Path, records: list[dict[str, Any]]) -> None:
             writer.writerow(row)
 
 
+def _write_parquet(path: Path, records: list[dict[str, Any]]) -> None:
+    fieldnames = [
+        "run_id",
+        "generated_at",
+        "scenario",
+        "status",
+        "changed_components",
+        "tolerated",
+        "blocked",
+    ]
+
+    if records:
+        df = pd.DataFrame.from_records(records, columns=fieldnames)
+    else:
+        df = pd.DataFrame(columns=fieldnames, dtype=object)
+
+    path.parent.mkdir(parents=True, exist_ok=True)
+    df.to_parquet(path, index=False)
+
+
 def _write_prometheus_metrics(path: Path, *, records: list[dict[str, Any]], generated_at: datetime, run_id: str) -> None:
     statuses = ("match", "degraded", "rebind_required")
     totals = {status: 0 for status in statuses}
@@ -214,6 +241,7 @@ def main(argv: list[str] | None = None) -> int:
     pytest_log_path = Path(args.pytest_log) if args.pytest_log else input_dir / "pytest.log"
     json_output = Path(args.json_output) if args.json_output else input_dir / "licensing_drift_summary.json"
     csv_output = Path(args.csv_output) if args.csv_output else input_dir / "licensing_drift_summary.csv"
+    parquet_output = Path(args.parquet_output) if args.parquet_output else input_dir / "licensing_drift_summary.parquet"
     dashboard_dir = Path(args.dashboard_dir)
     prom_output = Path(args.prom_output) if args.prom_output else dashboard_dir / "licensing_drift.prom"
 
@@ -250,11 +278,13 @@ def main(argv: list[str] | None = None) -> int:
         diagnostics=diagnostics,
     )
     _write_csv(csv_output, records)
+    _write_parquet(parquet_output, records)
     _write_prometheus_metrics(prom_output, records=records, generated_at=generated_at, run_id=args.run_id)
 
     dashboard_dir.mkdir(parents=True, exist_ok=True)
     (dashboard_dir / json_output.name).write_text(json_output.read_text(encoding="utf-8"), encoding="utf-8")
     (dashboard_dir / csv_output.name).write_text(csv_output.read_text(encoding="utf-8"), encoding="utf-8")
+    (dashboard_dir / parquet_output.name).write_bytes(parquet_output.read_bytes())
 
     return 0
 

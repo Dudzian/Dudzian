@@ -11,6 +11,7 @@ podsumowanie z informacją o problemie z artefaktem, aby nie blokować publikacj
 
 - `reports/ci/licensing_drift/licensing_drift_summary.json`
 - `reports/ci/licensing_drift/licensing_drift_summary.csv`
+- `reports/ci/licensing_drift/licensing_drift_summary.parquet` (źródło dla dashboardów/pobierania do BI)
 - kopie do `reports/ci/licensing_drift/dashboard/` wraz z plikiem `licensing_drift.prom` pod metryki Prometheus
 
 Podsumowanie JSON zawiera pole `diagnostics` z listą komunikatów o brakujących lub uszkodzonych artefaktach (np. brak

@@ -78,25 +78,27 @@ Począwszy od nightly joba `Licensing drift consolidation` (`.github/workflows/l
 Job zawsze uruchamia konsolidację (nawet przy niepowodzeniu testów), a w razie braku `compatibility.json` generuje puste
 podsumowanie, dzięki czemu monitoring nie traci sygnału o ostatnim biegu.
 Pliki są kopiowane do `reports/ci/licensing_drift/dashboard/`, skąd mogą być scrapowane przez textfile collector lub serwowane
-statycznie do Grafany.
+statycznie do Grafany. W tym samym katalogu publikowane są także `licensing_drift_summary.parquet` i
+`licensing_drift_summary.csv` na potrzeby paneli trendów oraz zasilenia BI.
 
 Pole `diagnostics` w `licensing_drift_summary.json` zbiera komunikaty o brakujących lub uszkodzonych artefaktach (np. brak logu
 pytest albo `compatibility.json`). Dzięki temu operator może szybko zrozumieć przyczynę pustych metryk bez wchodzenia w logi
 workflowa.
 
-Reguły alertów Prometheusa (`deploy/prometheus/rules/stage6_alerts.yml`) pokrywają dwa progi:
+Reguły alertów Prometheusa (`deploy/prometheus/rules/stage6_alerts.yml`) pokrywają progi operacyjne:
 
-- **LicensingDriftRebindRequired (critical):** `sum(licensing_drift_status{status="rebind_required"}) > 0` – natychmiastowa eskalacja do OEM/SRE,
-  blokada startu runtime do czasu ponownego podpisu.
+- **LicensingDriftRebindRequired (critical):** `sum(licensing_drift_status{status="rebind_required"}) > 0` – natychmiastowa eskalacja do OEM/SRE, blokada startu runtime do czasu ponownego podpisu.
+- **LicensingDriftRebindBurst (critical):** `sum_over_time(licensing_drift_status{status="rebind_required"}[7d]) > 1` – powtarzane rebindy w tygodniu, eskalacja do L3 Security i OEM z wnioskiem o badanie przyczyn sprzętowych.
 - **LicensingDriftDegradedSpike (warning):** `sum_over_time(licensing_drift_status{status="degraded"}[7d]) > 3` – zaplanuj serwis sprzętu zanim dryf przejdzie w rebind.
+- **LicensingDriftDegradedErosion (critical):** `sum_over_time(licensing_drift_status{status="degraded"}[7d]) > 5` – eskalacja do SRE z planem wymiany komponentów.
 
-Dashboard Grafany `deploy/grafana/provisioning/dashboards/licensing_drift.json` prezentuje trendy odrzuceń/degradacji oraz
+Dashboard Grafany `deploy/grafana/provisioning/dashboards/licensing_drift.json` (UID `licensing-drift`) prezentuje trendy odrzuceń/degradacji oraz
 aktualny status scenariuszy HWID. Procedura operacyjna:
 
-1. L1/NOC obserwuje panele trendów oraz staty rebind/degraded; przy alertach critical otwiera zgłoszenie OEM.
-2. Zweryfikuj `reports/ci/licensing_drift/licensing_drift_summary.json` (kolumny `scenario`, `status`, `blocked`) i odnotuj w decision logu.
+1. L1/NOC obserwuje panele trendów (`Kumulacja odrzuceń w 7 dniach`, `Trend tolerowanych dryfów (7d)`) oraz staty rebind/degraded; przy alertach critical otwiera zgłoszenie OEM oraz eskaluje do SRE/Security.
+2. Zweryfikuj `reports/ci/licensing_drift/licensing_drift_summary.parquet` lub JSON/CSV (kolumny `scenario`, `status`, `blocked`) i odnotuj wynik w decision logu z ID alertu.
 3. L2 przygotowuje rebind: zbiera fingerprint, synchronizuje z OEM, po podpisaniu aktualizuje magazyn licencji oraz domyka alert w Grafanie.
-4. W scenariuszu degraded monitoruj wzrost liczników w kolejnych runach; jeśli wskaźnik przekroczy próg critical, przełącz playbook na procedurę rebind.
+4. W scenariuszu degraded monitoruj wzrost liczników w kolejnych runach; jeśli wskaźnik przekroczy próg critical, przełącz playbook na procedurę rebind i eskaluj do OEM/SRE.
 
 ## Procedura rebind offline
 

@@ -106,6 +106,11 @@ jobs:
         with:
           python-version: "3.11"
 
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install .[dev]
+
       - name: Consolidate licensing drift artifacts
         run: |
           python scripts/aggregate_licensing_drift_reports.py \
@@ -120,5 +125,6 @@ jobs:
           path: |
             reports/ci/licensing_drift/licensing_drift_summary.json
             reports/ci/licensing_drift/licensing_drift_summary.csv
+            reports/ci/licensing_drift/licensing_drift_summary.parquet
             reports/ci/licensing_drift/dashboard/
           if-no-files-found: error
