@@ -71,6 +71,33 @@ Podpisy `license.json` i `fingerprint.json` są porównywane z marginesem tolera
 
 Scenariusze dryfu są dokumentowane w raporcie `reports/ci/licensing_drift/compatibility.json`, generowanym nocnie, aby operatorzy mogli potwierdzić zgodność sprzętu z podpisem OEM.
 
+## Obsługa alertów dryfu licencji
+
+Począwszy od nightly joba `Licensing drift consolidation` (`.github/workflows/licensing-drift.yml`) raporty z katalogu
+`reports/ci/licensing_drift/` są agregowane do zestawień JSON/CSV oraz eksportu metryk Prometheus (`licensing_drift.prom`).
+Job zawsze uruchamia konsolidację (nawet przy niepowodzeniu testów), a w razie braku `compatibility.json` generuje puste
+podsumowanie, dzięki czemu monitoring nie traci sygnału o ostatnim biegu.
+Pliki są kopiowane do `reports/ci/licensing_drift/dashboard/`, skąd mogą być scrapowane przez textfile collector lub serwowane
+statycznie do Grafany.
+
+Pole `diagnostics` w `licensing_drift_summary.json` zbiera komunikaty o brakujących lub uszkodzonych artefaktach (np. brak logu
+pytest albo `compatibility.json`). Dzięki temu operator może szybko zrozumieć przyczynę pustych metryk bez wchodzenia w logi
+workflowa.
+
+Reguły alertów Prometheusa (`deploy/prometheus/rules/stage6_alerts.yml`) pokrywają dwa progi:
+
+- **LicensingDriftRebindRequired (critical):** `sum(licensing_drift_status{status="rebind_required"}) > 0` – natychmiastowa eskalacja do OEM/SRE,
+  blokada startu runtime do czasu ponownego podpisu.
+- **LicensingDriftDegradedSpike (warning):** `sum_over_time(licensing_drift_status{status="degraded"}[7d]) > 3` – zaplanuj serwis sprzętu zanim dryf przejdzie w rebind.
+
+Dashboard Grafany `deploy/grafana/provisioning/dashboards/licensing_drift.json` prezentuje trendy odrzuceń/degradacji oraz
+aktualny status scenariuszy HWID. Procedura operacyjna:
+
+1. L1/NOC obserwuje panele trendów oraz staty rebind/degraded; przy alertach critical otwiera zgłoszenie OEM.
+2. Zweryfikuj `reports/ci/licensing_drift/licensing_drift_summary.json` (kolumny `scenario`, `status`, `blocked`) i odnotuj w decision logu.
+3. L2 przygotowuje rebind: zbiera fingerprint, synchronizuje z OEM, po podpisaniu aktualizuje magazyn licencji oraz domyka alert w Grafanie.
+4. W scenariuszu degraded monitoruj wzrost liczników w kolejnych runach; jeśli wskaźnik przekroczy próg critical, przełącz playbook na procedurę rebind.
+
 ## Procedura rebind offline
 
 1. Zbierz nowy fingerprint (`fingerprint.json`) z hosta, na którym wystąpił błąd `rebind_required`.
