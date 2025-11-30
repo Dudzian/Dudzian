@@ -33,3 +33,27 @@ groups:
           description: |
             Paczka obserwowalności Stage6 nie była regenerowana od ponad 12 godzin. Uruchom eksport.
 
+      - alert: LicensingDriftRebindRequired
+        expr: sum(licensing_drift_status{status="rebind_required"}) > 0
+        for: 5m
+        labels:
+          severity: critical
+          stage: licensing
+        annotations:
+          summary: "Licensing: wykryto scenariusz wymagający rebind"
+          description: |
+            Co najmniej jeden scenariusz dryfu HWID wymaga ponownego podpisania licencji. Sprawdź artefakt
+            reports/ci/licensing_drift/licensing_drift_summary.json lub dashboard Grafany i eskaluj do OEM/SRE.
+
+      - alert: LicensingDriftDegradedSpike
+        expr: sum_over_time(licensing_drift_status{status="degraded"}[7d]) > 3
+        for: 10m
+        labels:
+          severity: warning
+          stage: licensing
+        annotations:
+          summary: "Licensing: rosnąca liczba tolerowanych dryfów"
+          description: |
+            W ciągu ostatnich 7 dni pojawiło się więcej niż trzy tolerowane dryfy HWID. Zweryfikuj raporty dryfu
+            oraz zaplanuj serwis sprzętu zanim pojawią się odrzucenia licencji.
+

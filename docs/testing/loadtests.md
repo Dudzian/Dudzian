@@ -133,6 +133,31 @@ Nowe testy wydajnościowe pokrywają dwa obszary:
   datasetów `mean_reversion`, `volatility_target` i `cross_exchange_arbitrage`
   (min. throughput 600–750 barów/s, p95 ≤ 5–6 ms).
 
+### Progi alertowe i reakcja
+
+- **Wzrost p90 renderu UI** – alert `PerformanceUIRenderP90Regression` włącza
+  się, gdy `ci_performance_p90_ms{source="ui_render"}` rośnie o >25% względem
+  średniej z 7 dni i jednocześnie przekracza 220 ms. Procedura:
+  1. Otwórz artefakt `performance-benchmark-history` (Parquet/SQLite) z danego
+     runu i sprawdź, które scenariusze `scenario` oraz `git_commit` są
+     oznaczone najwyższymi wartościami.
+  2. W Grafanie na panelu „UI render p90 (rolling)” zweryfikuj, czy trend jest
+     chwilowy, czy utrzymuje się w oknach 24h/7d.
+  3. Jeśli regresja pokrywa się z ostatnim SHA, wykonaj bisekcję zmian w QML
+     (dashboard `RuntimeOverview.qml`) lub cofnij regresyjną zmianę animacji.
+
+- **Spadek throughputu backtestów** – alert
+  `PerformanceBacktestThroughputRegression` uruchamia się przy spadku
+  `ci_performance_pairs_per_second` o >10% względem średniej 7 dni.
+  Procedura:
+  1. Sprawdź w artefakcie `performance-benchmark-history` rekordy z danym SHA
+     i porównaj metryki `pairs_per_second`/`bars_per_second` do SLA.
+  2. W panelu Grafany „Backtest throughput (rolling)” upewnij się, że problem
+     nie wynika z pojedynczego datasetu (etykiety `pair_count`/`timeframe`).
+  3. Jeśli degradacja dotyczy wszystkich scenariuszy, zdiagnozuj zmiany w
+     silniku backtestów (`bot_core.backtest`) i przywróć poprzednią wersję lub
+     ogranicz funkcje zwiększające koszt CPU.
+
 Wyniki benchmarków backtestów są automatycznie zapisywane do
 `reports/ci/performance_backtests/` jako JSON, dzięki czemu mogą być
 zaciągane przez pipeline’y i Grafanę. Analogicznie, pomiary renderingu
@@ -176,6 +201,14 @@ trafiają do jobu `performance-benchmarks` z etykietami źródła
 gdzie są dostępne), co ułatwia wizualizację. Etykiety są bezpiecznie
 escapowane, a błędne raporty JSON są pomijane, więc publikacja nie zatrzyma
 całego pipeline'u.
+
+Historia wyników z CI jest utrzymywana w artefakcie
+`performance-benchmark-history` (Parquet + SQLite) generowanym w jobie
+`performance-benchmarks`. Skrypt `scripts/persist_performance_benchmarks.py`
+łączy bieżące raporty JSON z cachem (`reports/ci/performance_history/`),
+odcina dane do okna kroczącego (domyślnie 120 rekordów na scenariusz) i zapisuje
+je z metadanymi SHA i znacznikami czasu. Dzięki temu w dashboardach można
+wykresami rolling window porównywać trend do konkretnego commita.
 
 ### Wizualizacja i alerty
 

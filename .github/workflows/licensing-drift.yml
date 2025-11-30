@@ -74,3 +74,51 @@ jobs:
       - name: Fail if licensing drift tests failed
         if: ${{ steps.pytest.conclusion == 'failure' }}
         run: exit 1
+
+  licensing-drift-summary:
+    name: Licensing drift consolidation
+    runs-on: ubuntu-latest
+    needs:
+      - licensing-drift-check
+    if: ${{ always() }}
+    env:
+      LICENSING_DRIFT_DIR: reports/ci/licensing_drift
+      LICENSING_DRIFT_DASHBOARD_DIR: reports/ci/licensing_drift/dashboard
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Download licensing drift artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: licensing-drift-reports
+          path: reports/ci/licensing_drift
+
+      - name: Download licensing drift test log
+        uses: actions/download-artifact@v4
+        with:
+          name: licensing-drift-pytest-log
+          path: reports/ci/licensing_drift
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Consolidate licensing drift artifacts
+        run: |
+          python scripts/aggregate_licensing_drift_reports.py \
+            --input-dir "${LICENSING_DRIFT_DIR}" \
+            --dashboard-dir "${LICENSING_DRIFT_DASHBOARD_DIR}" \
+            --run-id "${GITHUB_RUN_ID}"
+
+      - name: Upload consolidated licensing drift summary
+        uses: actions/upload-artifact@v4
+        with:
+          name: licensing-drift-summary
+          path: |
+            reports/ci/licensing_drift/licensing_drift_summary.json
+            reports/ci/licensing_drift/licensing_drift_summary.csv
+            reports/ci/licensing_drift/dashboard/
+          if-no-files-found: error
