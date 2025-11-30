@@ -1,0 +1,45 @@
+name: DR Checks
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "30 2 * * *"
+
+jobs:
+  dr-probes:
+    name: Cloud DR synthetic probes
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install .[dev]
+
+      - name: Run CloudOrchestrator DR probes
+        env:
+          DR_GRPC_ENDPOINT: ${{ secrets.DR_GRPC_ENDPOINT }}
+          DR_ALERTMANAGER_URL: ${{ secrets.DR_ALERTMANAGER_URL }}
+          DR_PROMETHEUS_URL: ${{ secrets.DR_PROMETHEUS_URL }}
+        run: |
+          python scripts/dr_synthetic_probes.py \
+            --endpoint "${DR_GRPC_ENDPOINT:-localhost:50051}" \
+            ${DR_ALERTMANAGER_URL:+--alertmanager-url "$DR_ALERTMANAGER_URL"} \
+            ${DR_PROMETHEUS_URL:+--prometheus-url "$DR_PROMETHEUS_URL"} \
+            --output-dir reports/ci/dr_probes
+
+      - name: Publish DR probe report
+        uses: actions/upload-artifact@v4
+        with:
+          name: dr-probes-report
+          path: reports/ci/dr_probes/
+          if-no-files-found: warn
+          retention-days: 7
