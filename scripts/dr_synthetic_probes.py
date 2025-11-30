@@ -101,6 +101,8 @@ def _probe_health(
         ]
         last_error = headers.get("x-bot-cloud-last-error") or response.cloud_health.last_error
         health_flag = headers.get("x-bot-cloud-health", "1") != "0"
+        snapshot["_health"] = bool(health_flag)
+        snapshot["_lastError"] = last_error
         latency_ok = latency_ms <= latency_threshold_ms
         ok = bool(health_flag and not last_error and latency_ok)
         if not ok:
