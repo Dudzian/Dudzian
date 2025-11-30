@@ -1,0 +1,76 @@
+name: Licensing Drift
+
+on:
+  schedule:
+    - cron: '0 1 * * *'
+  workflow_dispatch:
+
+jobs:
+  licensing-drift-check:
+    name: Licensing drift compatibility
+    runs-on: ubuntu-latest
+    env:
+      HWID_DRIFT_REPORT: reports/ci/licensing_drift/compatibility.json
+      SECURITY_ALERTS_WEBHOOK: ${{ secrets.SECURITY_ALERTS_WEBHOOK }}
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install .[dev]
+
+      - name: Prepare report directory
+        run: mkdir -p "$(dirname "${HWID_DRIFT_REPORT}")"
+
+      - name: Run licensing drift tests
+        id: pytest
+        continue-on-error: true
+        run: |
+          set -o pipefail
+          pytest tests/licensing/test_hwid_drift.py -q | tee reports/ci/licensing_drift/pytest.log
+
+      - name: Generate licensing drift report
+        run: python scripts/generate_hwid_drift_report.py --output "${HWID_DRIFT_REPORT}"
+
+      - name: Upload licensing drift artifacts
+        if: ${{ always() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: licensing-drift-reports
+          path: reports/ci/licensing_drift/
+          if-no-files-found: error
+
+      - name: Upload licensing drift test log
+        if: ${{ always() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: licensing-drift-pytest-log
+          path: reports/ci/licensing_drift/pytest.log
+          if-no-files-found: error
+
+      - name: Publish licensing drift status
+        if: ${{ always() && env.SECURITY_ALERTS_WEBHOOK != '' }}
+        run: |
+          status=$(python - <<'PY'
+          import json
+          from pathlib import Path
+
+          report_path = Path("${HWID_DRIFT_REPORT}")
+          data = json.loads(report_path.read_text()) if report_path.exists() else {}
+          print(data.get("status", "unknown"))
+          PY
+          )
+          echo "Parsed status: ${status}"
+          curl -X POST -H "Content-Type: application/json" -d "{\"status\":\"${status}\"}" "${SECURITY_ALERTS_WEBHOOK}"
+
+      - name: Fail if licensing drift tests failed
+        if: ${{ steps.pytest.conclusion == 'failure' }}
+        run: exit 1
