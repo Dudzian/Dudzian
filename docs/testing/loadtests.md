@@ -124,3 +124,31 @@ lokacje artefaktów z ostatnich buildów) i twórz alerty na podstawie pól
 `pairs_per_second` oraz `sla_pairs_per_second`. Te same metadane commit/timestamp
 znajdziesz w raportach UI renderingu w `reports/ci/performance_ui_render/`,
 dzięki czemu można śledzić trend p90/avg względem rewizji i buildów.
+
+## Publikacja metryk do zewnętrznych dashboardów
+
+Job `performance-benchmarks` w workflow `.github/workflows/ci.yml` po kroku
+`Summarize performance metrics` publikuje wartości `pairs_per_second`, `p90_ms`
+oraz `avg_ms` (wraz z `git_commit` i `timestamp_utc`) z raportów
+`reports/ci/performance_backtests/*.json` i `reports/ci/performance_ui_render/*.json`
+do skonfigurowanego Pushgateway. Adres podaj w sekrecie/zmiennej
+`PERFORMANCE_METRICS_PUSHGATEWAY`; brak konfiguracji lub brak plików z
+metrykami powoduje pominięcie wysyłki, ale nie psuje joba. W Pushgateway
+metryki trafiają do jobu `performance-benchmarks` z etykietami źródła
+(`backtest`/`ui_render`) i scenariusza (plus `pair_count`/`timeframe` tam, gdzie
+są dostępne), co ułatwia wizualizację. Etykiety są bezpiecznie escapowane, a
+błędne raporty JSON są pomijane, więc publikacja nie zatrzyma całego pipeline'u.
+
+### Wizualizacja i alerty
+
+W Grafanie dodaj datasource Prometheus wskazujący na instancję scrapującą
+Pushgateway. Najważniejsze metryki to:
+
+- `ci_performance_pairs_per_second` (etykiety `pair_count`, `timeframe`),
+- `ci_performance_p90_ms` (etykieta `scenario`),
+- `ci_performance_avg_ms` (etykieta `scenario`).
+
+Do alertowania wykorzystaj progowe porównania z wartościami SLA (np.
+`ci_performance_p90_ms > 220`) i oznaczaj serie labelami `git_commit` oraz
+`timestamp_utc`, aby łatwo zidentyfikować regresje wydajności w konkretnych
+buildach.
