@@ -91,6 +91,22 @@ Adres instancji należy wstrzyknąć jako sekret lub zmienną
 `PERFORMANCE_METRICS_PUSHGATEWAY`, a endpoint healthcheck (`/-/healthy`) musi być
 osiągalny z runnera GitHub Actions przed startem testów.
 
+### Tryb fallback dla publikacji metryk
+
+Wykonania z forków (PR z zewnętrznego repozytorium) lub bez skonfigurowanego
+Pushgateway wchodzą w **tryb fallback**. Zamiast przerywać job, workflow
+wykonuje testy, zapisuje raporty JSON jako artefakty i dodaje ostrzeżenie do
+`GITHUB_STEP_SUMMARY`, że metryki nie zostały wysłane do Pushgateway. Podsumowanie
+zawsze wskazuje wybrany tryb (`strict` lub `fallback`) oraz konsekwencje dla
+metryk, więc od razu widać, czy dashboardy Prometheus/Grafana dostaną dane z
+danego uruchomienia.
+
+W środowiskach wewnętrznych włącz **twardą walidację** (tryb `strict`) przez
+zapewnienie dostępnego endpointu (sekret/zmienna `PERFORMANCE_METRICS_PUSHGATEWAY`
+lub domyślny `CI_PUSHGATEWAY_DEFAULT`). Workflow sam wykryje poprawną
+konfigurację i zablokuje job przy braku dostępu (`/-/healthy`) lub błędzie
+publikacji – dzięki temu dashboards Prometheusa/Grafany zawsze dostaną dane.
+
 Aby podejrzeć metryki z uruchomienia, otwórz konkretne wykonanie w Actions,
 kliknij job „Exchange stress load test”, a w zakładce **Summary** przewiń do
 sekcji `GITHUB_STEP_SUMMARY` – wyświetli się tam tabela z
