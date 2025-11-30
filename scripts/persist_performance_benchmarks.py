@@ -11,6 +11,7 @@ import argparse
 import json
 import sqlite3
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Iterable
 
@@ -56,7 +57,9 @@ def _load_json_reports(report_roots: Iterable[Path]) -> list[Path]:
     return reports
 
 
-def _normalize_payload(report_path: Path, payload: dict) -> ReportPayload:
+def _normalize_payload(
+    report_path: Path, payload: dict, default_git_commit: str | None
+) -> ReportPayload:
     if "performance_backtests" in report_path.parts:
         source = "backtest"
         scenario = f"backtests_{payload.get('pair_count', 'unknown')}pairs"
@@ -88,8 +91,8 @@ def _normalize_payload(report_path: Path, payload: dict) -> ReportPayload:
         avg_ms = float(payload.get("avg_ms", 0.0)) if payload.get("avg_ms") is not None else None
         p90_ms = float(payload.get("p90_ms", 0.0)) if payload.get("p90_ms") is not None else None
 
-    git_commit = str(payload.get("git_commit", "unknown"))
-    timestamp = str(payload.get("timestamp_utc", "")) or ""
+    git_commit = str(payload.get("git_commit") or default_git_commit or "unknown")
+    timestamp = str(payload.get("timestamp_utc", "")) or datetime.now(timezone.utc).isoformat()
 
     return ReportPayload(
         source=source,
@@ -161,12 +164,19 @@ def _parse_args() -> argparse.Namespace:
         default=120,
         help="Maksymalna liczba rekordów utrzymywanych per źródło/scenariusz.",
     )
+    parser.add_argument(
+        "--default-git-commit",
+        type=str,
+        default=None,
+        help="Domyślna wartość git_commit używana, gdy raport JSON jej nie zawiera.",
+    )
     return parser.parse_args()
 
 
 def main() -> int:
     args = _parse_args()
     report_roots = args.report_roots or []
+    default_git_commit = args.default_git_commit
     reports = _load_json_reports(report_roots)
 
     payloads: list[ReportPayload] = []
@@ -176,7 +186,11 @@ def main() -> int:
         except Exception as exc:  # pragma: no cover - defensive fallback in CI
             print(f"[warn] Pomijam raport {report_path}: {exc}")
             continue
-        payloads.append(_normalize_payload(report_path, raw))
+        payloads.append(_normalize_payload(report_path, raw, default_git_commit))
+
+    if not payloads:
+        print("[warn] Nie znaleziono raportów JSON — pomijam zapis okna kroczącego.")
+        return 0
 
     df_new = pd.DataFrame([payload.as_dict for payload in payloads])
     df_existing = _load_existing_dataframe(args.parquet)

@@ -935,6 +935,8 @@ jobs:
 
       - name: Persist benchmark history to Parquet/SQLite
         if: always()
+        env:
+          GIT_COMMIT_SHA: ${{ github.sha }}
         run: |
           python scripts/persist_performance_benchmarks.py \
             --report-root reports/ci/performance_backtests \
@@ -942,7 +944,8 @@ jobs:
             --report-root reports/ci/benchmark_backtests \
             --parquet reports/ci/performance_history/performance_history.parquet \
             --sqlite reports/ci/performance_history/performance_history.sqlite \
-            --window-size 120
+            --window-size 120 \
+            --default-git-commit "${GIT_COMMIT_SHA}"
 
       - name: Summarize performance metrics
         if: always()

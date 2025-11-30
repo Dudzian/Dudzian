@@ -16,6 +16,7 @@ groups:
           description: |
             P90 czasu renderu paneli UI rośnie (>125% średniej 7d) i przekracza 220 ms.
             Sprawdź ostatnie commity ({{ $labels.git_commit }}) i raporty w artefakcie performance-benchmark-history.
+          runbook: docs/testing/loadtests.md#korelacja-wyników-z-commitami-i-reakcja-na-alerty
 
       - alert: PerformanceBacktestThroughputRegression
         expr: |
@@ -30,6 +31,7 @@ groups:
           description: |
             Średnia przepustowość backtestów z ostatniej godziny spadła >10% względem trendu 7d.
             Zweryfikuj regresje w commitach ({{ $labels.git_commit }}) oraz histogram rolling window w Grafanie.
+          runbook: docs/testing/loadtests.md#korelacja-wyników-z-commitami-i-reakcja-na-alerty
 
       - alert: PerformanceStrategyBenchmarkRegression
         expr: |
