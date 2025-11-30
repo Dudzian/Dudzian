@@ -76,13 +76,15 @@ Scenariusze dryfu są dokumentowane w raporcie `reports/ci/licensing_drift/compa
 1. Zbierz nowy fingerprint (`fingerprint.json`) z hosta, na którym wystąpił błąd `rebind_required`.
 2. Zweryfikuj raport dryfu (`reports/ci/licensing_drift/compatibility.json`), aby potwierdzić, że zmiana dotyczy krytycznych komponentów.
 3. Przekaż fingerprint OEM wraz z ID licencji; po otrzymaniu nowego pakietu `.lic` zapisz go na hoście i zrestartuj runtime.
-4. Zaktualizuj dziennik operacyjny wpisem: data, komponenty, kto podpisał nową licencję, wynik walidacji.
+4. Zaktualizuj dziennik operacyjny wpisem JSONL w `logs/security_admin.log` (źródło `licensing`). Minimalny schemat: `{ "event": "rebind", "license_id": "...", "components": ["cpu", "tpm"], "signed_by": "...", "result": "validated", "timestamp": "..." }`.
+5. Wyeksportuj migawkę `var/security/license_status.json` po rebindzie i dołącz do zgłoszenia audytowego w systemie ticketowym OEM.
 
 ## Procedura appeal offline
 
 1. Jeśli rebind nie jest możliwy (np. brak dostępu do OEM), przygotuj pakiet dowodów: log `logs/security_admin.log`, ostatni fingerprint oraz raport CI dryfu.
-2. Przekaż pakiet do zespołu bezpieczeństwa; decyzja o tymczasowym obejściu (np. whitelist komponentów) musi być udokumentowana.
-3. Po decyzji security zarejestruj wyjątek w systemie ticketowym i zaplanuj właściwy rebind przy pierwszej dostępnej okoliczności.
+2. Przekaż pakiet do zespołu bezpieczeństwa; decyzja o tymczasowym obejściu (np. whitelist komponentów) musi być udokumentowana i wprowadzona jako wpis w `logs/security_admin.log` z polami: `appeal`, ID licencji, przyczyna, akceptujący audytor.
+3. Zarejestruj wyjątek w systemie ticketowym i odnotuj jego identyfikator w logu audytowym (przykład: `{ "event": "appeal", "license_id": "...", "reason": "tpm replacement", "auditor": "...", "ticket": "OEM-1234", "decision": "temporary_allow" }`).
+4. Po wykonaniu rebindu offline zaktualizuj wpis audytowy o numer biletu oraz potwierdzenie, że wyjątek został zamknięty, a następnie dołącz nową migawkę `license_status.json` do tego samego zgłoszenia.
 
 ## Launcher AutoTrader (headless)
 
