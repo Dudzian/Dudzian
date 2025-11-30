@@ -70,10 +70,28 @@ pytest tests/load/test_exchange_stress.py
 
 ## Integracja z CI
 
-Skrypt nie ma osobnego joba CI – można go dodać do istniejących pipeline’ów,
-wywołując CLI i archiwizując plik z `logs/loadtests/`. Dzięki parametrowi
-`--seed` raporty mogą być deterministyczne, co ułatwia porównania między
-buildami.
+Automatyczne uruchomienia obsługuje workflow
+`.github/workflows/exchange-stress.yml`. Dostępne są dwa wyzwalacze:
+
+- `workflow_dispatch` do ręcznego odpalenia,
+- harmonogram `cron: "0 3 * * 1"`, czyli każdy poniedziałek o 03:00 UTC.
+
+Workflow składa się z pojedynczego joba, który:
+
+1. uruchamia skrypt z konfiguracją `config/loadtests/exchange_stress.yml`,
+   zapisując surowe wyniki do `logs/loadtests/exchange_stress.json`,
+2. waliduje próg SLA w `tests/load/test_exchange_stress.py` – krok
+   `Validate exchange stress SLA` kończy cały job statusem failed, jeżeli
+   zostaną przekroczone założone limity,
+3. publikuje tabelę metryk w `exchange_stress_summary.md` oraz dopisuje ją do
+   podsumowania `GITHUB_STEP_SUMMARY` (aby nie przepadła nawet w razie faila).
+
+Aby podejrzeć metryki z uruchomienia, otwórz konkretne wykonanie w Actions,
+kliknij job „Exchange stress load test”, a w zakładce **Summary** przewiń do
+sekcji `GITHUB_STEP_SUMMARY` – wyświetli się tam tabela z
+`exchange_stress_summary.md`. Surowy raport JSON jest archiwizowany jako
+artefakt `exchange-stress-report`; w widoku runu w Actions w sekcji
+**Artifacts** znajdziesz do pobrania plik `logs/loadtests/exchange_stress.json`.
 
 ## SLA dla dashboardów i backtestów
 
