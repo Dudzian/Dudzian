@@ -111,7 +111,12 @@ def _find_repo_root(start: Path, sentinels: Iterable[str]) -> Path | None:
 # środowiskach bez repozytorium źródłowego.
 repo_root = _find_repo_root(Path(__file__).resolve().parent, sentinels=("pyproject.toml",))
 if repo_root:
-    ensure_repo_root_on_sys_path(repo_root, position="append")
+    try:
+        ensure_repo_root_on_sys_path(repo_root, position="append")
+    except FileNotFoundError:
+        # W środowiskach, gdzie skrypt jest zainstalowany bez pełnego repozytorium
+        # źródłowego, pomijamy modyfikację ścieżki, by nie blokować startu Pythona.
+        pass
 _ensure_stdlib_packaging()
 _stabilize_numpy_no_value()
 
