@@ -337,6 +337,30 @@ def test_get_repo_info_uses_git_when_requested(tmp_path: Path) -> None:
     assert info.start == nested.resolve()
 
 
+def test_get_repo_root_prefers_cwd_when_module_in_site_packages(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    repo_root = tmp_path / "repo"
+    repo_root.mkdir()
+    (repo_root / "pyproject.toml").write_text("", encoding="utf-8")
+
+    site_packages = tmp_path / "venv" / "lib" / "python3.11" / "site-packages"
+    site_packages.mkdir(parents=True)
+    fake_module = site_packages / "pathbootstrap.py"
+    fake_module.touch()
+
+    clear_cache()
+    try:
+        monkeypatch.chdir(repo_root)
+        monkeypatch.setattr(pathbootstrap, "__file__", str(fake_module))
+
+        discovered = get_repo_root()
+    finally:
+        clear_cache()
+
+    assert discovered == repo_root.resolve()
+
+
 def test_ensure_repo_root_on_sys_path_requires_sentinel(tmp_path: Path) -> None:
     with pytest.raises(FileNotFoundError):
         ensure_repo_root_on_sys_path(tmp_path, sentinels=("pyproject.toml",))
