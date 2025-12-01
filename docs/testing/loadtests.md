@@ -264,10 +264,53 @@ buildach.
   czasu):
 
   ```bash
-  curl -sSf --retry 3 --retry-delay 2 --retry-connrefused --max-time 10 \  
+  curl -sSf --retry 3 --retry-delay 2 --retry-connrefused --max-time 10 \
     "$PERFORMANCE_METRICS_PUSHGATEWAY/-/healthy"
   ```
   polecenie powinno zwrócić status 200.
 - Jeśli check w jobie `performance-benchmarks` zgłosi brak konfiguracji lub
   niedostępność, zajrzyj do `GITHUB_STEP_SUMMARY` po szczegóły i uzupełnij
   zmienną, aby kolejne runy mogły wypchnąć metryki.
+
+## Harmonogram rolling window i alerty trendu
+
+Utrzymujemy 7- i 30-dniowe okno kroczące, które zbiera kluczowe metryki
+wydajnościowe i koreluje je z rewizjami kodu:
+
+- **Zakres danych** – do okna trafiają: p90 renderu UI
+  (`reports/ci/performance_ui_render/*.json`) oraz przepustowość backtestów
+  (JSON z `reports/ci/performance_backtests/`). Skrypty
+  `scripts/persist_performance_benchmarks.py` i job `performance-benchmarks`
+  doklejają etykiety `git_commit` i `timestamp_utc`, dzięki czemu każdy punkt
+  w rolling window można powiązać z konkretnym SHA.
+- **Harmonogram** – rolling window odświeżamy co noc o 02:30 UTC (scheduler
+  GitHub Actions `cron: "30 2 * * *"`). Run zbiera najnowsze raporty, scala je z
+  artefaktem `performance-benchmark-history` i obcina dane do 7/30 dni (lub
+  limitu 120 rekordów) na scenariusz.
+- **Algorytm trendu** – przed publikacją liczymy średnią kroczącą 7d oraz bazę
+  referencyjną 30d: `trend_delta = (rolling_7d - rolling_30d) / rolling_30d`.
+  W przypadku krótszej historii (np. świeży scenariusz) fallbackiem jest
+  porównanie do progu SLA z sekcji „SLA dla dashboardów i backtestów”.
+- **Korelacja commitów** – przed publikacją raportu skrypt wylicza medianę i
+  trend p90/throughput per `git_commit`. W `GITHUB_STEP_SUMMARY` dodawana jest
+  tabela z kolumnami `git_commit`, `p90_ms` i `pairs_per_second`, a pełny
+  raport Parquet/SQLite jest publikowany jako artefakt CI. Dodatkowo snapshot
+  `reports/ci/performance_history/rolling_window/latest.json` zawiera listę
+  rekordów `{git_commit, scenario, p90_ms, pairs_per_second, timestamp_utc}` do
+  szybkiej inspekcji bez pobierania całego artefaktu.
+- **Alerty trendu** – jeśli rolling średnia 7-dniowa p90 renderu rośnie >15% lub
+  rolling throughput backtestów spada >10% wobec 30-dniowej bazy, generowany
+  jest alert tekstowy w podsumowaniu joba oraz promQL (dla środowisk z
+  Pushgateway) dodaje etykietę `trend="regression"` do metryk
+  `ci_performance_p90_ms` i `ci_performance_pairs_per_second`. Alert wskazuje
+  SHA z ostatniego punktu regresji.
+- **Publikacja raportów** – każdy run zapisuje:
+  - Parquet/SQLite z odciętym oknem do artefaktu `performance-benchmark-history`,
+  - markdown z trendami i ostrzeżeniami do `GITHUB_STEP_SUMMARY`,
+  - snapshot JSON (7/30 dni) do `reports/ci/performance_history/rolling_window/`
+    tak, by dashboard Grafany mógł czytać je jako fallback, gdy Prometheus jest
+    niedostępny.
+- **Dashboard** – panel „CI rolling performance” w Grafanie korzysta z tych samych
+  etykiet (`scenario`, `git_commit`, `pair_count`, `timeframe`) i pokazuje
+  rolling średnie oraz ostatni SHA; pola `trend` i `regression_reason` są
+  wyświetlane w tooltipie, co przyspiesza diagnozę regresji.
