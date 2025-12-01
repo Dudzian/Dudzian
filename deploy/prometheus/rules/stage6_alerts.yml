@@ -70,6 +70,18 @@ groups:
             rebind/appeal i eskaluj do OEM oraz L3 Security. Zweryfikuj trend na dashboardzie Grafany
             (UID licensing-drift) i raport Parquet z CI.
 
+      - alert: LicensingDriftRejectionSpike
+        expr: increase(licensing_drift_rejections_total[14d]) > 2
+        for: 10m
+        labels:
+          severity: warning
+          stage: licensing
+        annotations:
+          summary: "Licensing: wzrost odrzuceń licencji w ostatnich 14 dniach"
+          description: |
+            Liczba scenariuszy rebind_required wzrosła w dwutygodniowym oknie. Zweryfikuj agregat licensing_drift_summary
+            z CI oraz panel Grafany (UID licensing-drift) i przygotuj eskalację do OEM/SRE.
+
       - alert: LicensingDriftDegradedErosion
         expr: sum_over_time(licensing_drift_status{status="degraded"}[7d]) > 5
         for: 15m
