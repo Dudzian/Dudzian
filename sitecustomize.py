@@ -89,7 +89,13 @@ def _stabilize_numpy_no_value() -> None:
 # `deploy/packaging`).  Dlatego katalog repozytorium dołączamy na koniec
 # `sys.path`, dzięki czemu nie przesłania on bibliotek zainstalowanych w
 # środowisku wykonawczym.
-ensure_repo_root_on_sys_path(Path(__file__).resolve().parent, position="append")
+try:
+    ensure_repo_root_on_sys_path(Path(__file__).resolve().parent, position="append")
+except FileNotFoundError:
+    # Środowiska uruchamiane poza repozytorium (np. po instalacji pakietu)
+    # mogą nie mieć żadnego z plików-wskaźników; w takim przypadku
+    # zachowujemy ciszę i pomijamy dodawanie repo do sys.path.
+    pass
 _ensure_stdlib_packaging()
 _stabilize_numpy_no_value()
 
