@@ -4,6 +4,7 @@
 import argparse
 import base64
 import hmac
+import importlib.util
 import json
 import sys
 from hashlib import sha256
@@ -33,7 +34,21 @@ _strip_conflicting_paths()
 from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric import ed25519
 
-from bot_core.security.catalog_signatures import verify_catalog_signature_file
+# Importujemy moduł bezpośrednio z pliku, aby ominąć ciężkie zależności z
+# bot_core.security.__init__, które nie są potrzebne w tym skrypcie (np.
+# SQLAlchemy). Ładowanie modułu w ten sposób pozwala uruchamiać walidator w
+# środowiskach CI bez instalacji pełnego zestawu zależności.
+
+_CATALOG_SIGNATURES_PATH = REPO_ROOT / "bot_core" / "security" / "catalog_signatures.py"
+_catalog_signatures_spec = importlib.util.spec_from_file_location(
+    "bot_core.security.catalog_signatures", _CATALOG_SIGNATURES_PATH
+)
+if _catalog_signatures_spec is None or _catalog_signatures_spec.loader is None:
+    raise ImportError(f"Nie można wczytać modułu katalogu z {_CATALOG_SIGNATURES_PATH}")
+_catalog_signatures = importlib.util.module_from_spec(_catalog_signatures_spec)
+_catalog_signatures_spec.loader.exec_module(_catalog_signatures)
+
+verify_catalog_signature_file = _catalog_signatures.verify_catalog_signature_file
 
 REQUIRED_RELEASE_FIELDS = ("review_status", "approved_at", "reviewers")
 
