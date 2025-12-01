@@ -109,14 +109,20 @@ def _find_repo_root(start: Path, sentinels: Iterable[str]) -> Path | None:
 # środowisku wykonawczym.  Jeżeli nie znajdziemy żadnego sentinela, po prostu
 # pomijamy modyfikację ścieżki, co pozwala uruchomić Pythona również w
 # środowiskach bez repozytorium źródłowego.
-repo_root = _find_repo_root(Path(__file__).resolve().parent, sentinels=("pyproject.toml",))
+try:
+    repo_root = _find_repo_root(Path(__file__).resolve().parent, sentinels=("pyproject.toml",))
+except FileNotFoundError:
+    # W niefortunnym scenariuszu, gdy `_find_repo_root` sam podniesie wyjątek,
+    # przechodzimy do trybu degradacji i nie modyfikujemy ``sys.path``.
+    repo_root = None
+
 if repo_root:
     try:
         ensure_repo_root_on_sys_path(repo_root, position="append")
     except FileNotFoundError:
         # W środowiskach, gdzie skrypt jest zainstalowany bez pełnego repozytorium
         # źródłowego, pomijamy modyfikację ścieżki, by nie blokować startu Pythona.
-        pass
+        repo_root = None
 _ensure_stdlib_packaging()
 _stabilize_numpy_no_value()
 
