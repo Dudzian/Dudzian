@@ -162,7 +162,11 @@ def _normalize_hint(root_hint: Optional[PathLike[str] | str]) -> Path:
         if env_hint:
             base = env_hint
         else:
-            base = Path(__file__).resolve().parent
+            module_dir = Path(__file__).resolve().parent
+            if any(part.lower() in {"site-packages", "dist-packages"} for part in module_dir.parts):
+                base = Path.cwd()
+            else:
+                base = module_dir
     else:
         base = root_hint
     path = _expand_pathlike(base)
