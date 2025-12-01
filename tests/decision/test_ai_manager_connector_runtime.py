@@ -37,6 +37,33 @@ class DummyRiskProfile:
     def stop_loss_atr_multiple(self) -> float:
         return 1.5
 
+    def trade_risk_pct_range(self) -> tuple[float, float]:
+        return (0.0, 0.02)
+
+    def max_cost_to_profit_ratio(self) -> float:
+        return 0.5
+
+    def daily_kill_switch_r_multiple(self) -> float:
+        return 0.0
+
+    def daily_kill_switch_loss_pct(self) -> float:
+        return 0.0
+
+    def weekly_kill_switch_loss_pct(self) -> float:
+        return 0.0
+
+    def instrument_limit_pct(self) -> float:
+        return self.max_position_exposure()
+
+    def instrument_alert_pct(self) -> float:
+        return self.max_position_exposure()
+
+    def portfolio_alert_pct(self) -> float:
+        return 1.0
+
+    def portfolio_limit_pct(self) -> float:
+        return 1.0
+
 
 class StubAIManager:
     def __init__(self, *, signal: float = 0.015) -> None:

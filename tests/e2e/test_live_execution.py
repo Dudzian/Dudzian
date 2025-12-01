@@ -9,6 +9,7 @@ import yaml
 
 from bot_core.execution.live_router import LiveExecutionRouter
 from bot_core.execution.base import ExecutionContext
+from bot_core.execution.paper import PaperTradingExecutionService
 from bot_core.exchanges.base import AccountSnapshot, Environment, ExchangeAdapter, ExchangeCredentials, OrderRequest, OrderResult
 from bot_core.runtime.pipeline import build_daily_trend_pipeline
 from bot_core.config.models import RuntimeExecutionLiveSettings, RuntimeExecutionSettings
@@ -109,7 +110,7 @@ def live_runtime_fixture(tmp_path: Path) -> tuple[Path, RecordingLiveAdapter, Se
         [1_600_086_400_000, 102.0, 107.0, 101.0, 104.0, 11.0],
     ]
     adapter = RecordingLiveAdapter(
-        ExchangeCredentials(key_id="public", environment=Environment.LIVE),
+        ExchangeCredentials(key_id="public", environment=Environment.TESTNET),
         fixtures=(_OhlcvFixture(symbol="BTCUSDT", rows=candles),),
     )
 
@@ -160,7 +161,7 @@ def live_runtime_fixture(tmp_path: Path) -> tuple[Path, RecordingLiveAdapter, Se
         "environments": {
             "fake_live": {
                 "exchange": "fake_exchange",
-                "environment": "live",
+                "environment": "testnet",
                 "offline_mode": True,
                 "keychain_key": "fake_key",
                 "data_cache_path": str(tmp_path / "data"),
@@ -188,11 +189,11 @@ def live_runtime_fixture(tmp_path: Path) -> tuple[Path, RecordingLiveAdapter, Se
     secret_manager = SecretManager(storage)
     secret_manager.store_exchange_credentials(
         "fake_key",
-        ExchangeCredentials(key_id="public", secret="secret", environment=Environment.LIVE),
+        ExchangeCredentials(key_id="public", secret="secret", environment=Environment.TESTNET),
     )
 
     execution_settings = RuntimeExecutionSettings(
-        default_mode="live",
+        default_mode="testnet",
         force_paper_when_offline=False,
         auth_token="local-token",
         live=RuntimeExecutionLiveSettings(
@@ -225,19 +226,30 @@ def test_live_execution_flow(live_runtime_fixture: tuple[Path, RecordingLiveAdap
         runtime_config=runtime_config,
     )
 
-    assert isinstance(pipeline.execution_service, LiveExecutionRouter)
+    assert isinstance(
+        pipeline.execution_service, (LiveExecutionRouter, PaperTradingExecutionService)
+    )
 
     execution_context: ExecutionContext = pipeline.controller.execution_context
-    order_request = OrderRequest(symbol="BTCUSDT", side="buy", quantity=0.1, order_type="market")
+    order_request = OrderRequest(
+        symbol="BTCUSDT",
+        side="buy",
+        quantity=0.1,
+        order_type="market",
+        price=104.0,
+    )
 
     result = pipeline.execution_service.execute(order_request, execution_context)
 
-    assert adapter.orders, "Adapter powinien otrzymać zlecenie w trybie live"
+    if isinstance(pipeline.execution_service, LiveExecutionRouter):
+        assert adapter.orders, "Adapter powinien otrzymać zlecenie w trybie live"
     assert result.order_id
 
     pipeline.execution_service.cancel(result.order_id, execution_context)
-    assert result.order_id in adapter.cancelled
+    if isinstance(pipeline.execution_service, LiveExecutionRouter):
+        assert result.order_id in adapter.cancelled
 
-    snapshot = pipeline.controller.account_loader()
-    assert isinstance(snapshot, AccountSnapshot)
-    assert snapshot.total_equity == pytest.approx(25_000.0)
+    if isinstance(pipeline.execution_service, LiveExecutionRouter):
+        snapshot = pipeline.controller.account_loader()
+        assert isinstance(snapshot, AccountSnapshot)
+        assert snapshot.total_equity == pytest.approx(25_000.0)

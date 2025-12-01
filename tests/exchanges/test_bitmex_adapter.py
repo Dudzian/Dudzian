@@ -26,7 +26,7 @@ def test_bitmex_spot_stream_paths() -> None:
     adapter = BitmexSpotAdapter(_credentials(), environment=Environment.TESTNET, client=_StubClient())
     stream = adapter.stream_public_data(channels=["orderbook"])
     assert isinstance(stream, LocalLongPollStream)
-    assert stream._base_url == "http://127.0.0.1:8765"  # noqa: SLF001
+    assert stream._base_url == "https://stream.sandbox.dudzian.ai/exchanges"  # noqa: SLF001
     assert stream._path == "/stream/bitmex_spot/public"  # noqa: SLF001
 
 

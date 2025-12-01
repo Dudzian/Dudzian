@@ -673,6 +673,7 @@ class LocalRuntimeContext:
     runner: DailyTrendRealtimeRunner
     auto_trader: Any
     secret_manager: SecretManager
+    cloud_health_headers: dict[str, str] = field(default_factory=dict)
     alert_router: Any | None = None
     risk_store: RiskSnapshotStore | None = None
     risk_builder: RiskSnapshotBuilder | None = None

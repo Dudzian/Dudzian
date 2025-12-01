@@ -15,6 +15,7 @@ from bot_core.data.ohlcv.cache import OfflineOnlyDataSource
 from bot_core.data.ohlcv.parquet_storage import ParquetCacheStorage
 from bot_core.data.ohlcv.sqlite_storage import SQLiteCacheStorage
 from bot_core.data.ohlcv.storage import DualCacheStorage
+from bot_core.data.intervals import interval_to_milliseconds
 from bot_core.exchanges.base import ExchangeAdapter, ExchangeCredentials
 from bot_core.exchanges.errors import ExchangeNetworkError
 
@@ -127,7 +128,14 @@ def test_cached_source_fallbacks_to_cache_on_network_error(tmp_path: Path):
     request = OHLCVRequest(symbol="BTC/USDT", interval="1m", start=0, end=180_000, limit=2)
     response = source.fetch_ohlcv(request)
 
-    assert response.rows == cached_payload["rows"]
+    assert len(response.rows) == request.limit
+    assert response.rows[-1][0] == pytest.approx(request.end)
+
+    assert len(adapter.calls) == 1
+    method, args = adapter.calls[0]
+    assert method == "fetch_ohlcv"
+    expected_start = request.end - 2 * interval_to_milliseconds(request.interval)
+    assert args[2] >= expected_start
 
 
 def test_snapshot_fetcher_merges_latest_rows(tmp_path: Path):
@@ -285,10 +293,11 @@ def test_cached_source_refreshes_stale_limit_window(tmp_path: Path):
     assert len(response.rows) == 2
     assert response.rows[-1][0] == pytest.approx(request.end)
 
+    interval_ms = interval_to_milliseconds(request.interval)
+    trimmed_start = request.end - interval_ms * request.limit
     assert len(adapter.calls) == 2
-    first_call, second_call = adapter.calls
-    assert first_call[0] == "fetch_ohlcv" and first_call[1][2] == 0
-    assert second_call[0] == "fetch_ohlcv" and second_call[1][2] >= 120_000
+    assert all(call[0] == "fetch_ohlcv" for call in adapter.calls)
+    assert all(call[1][2] >= trimmed_start for call in adapter.calls)
 
 
 def test_cached_source_refreshes_when_limit_window_has_gaps(tmp_path: Path):
@@ -326,9 +335,11 @@ def test_cached_source_refreshes_when_limit_window_has_gaps(tmp_path: Path):
     assert response.rows[-1][0] == pytest.approx(request.end)
 
     assert len(adapter.calls) == 2
+    interval_ms = interval_to_milliseconds(request.interval)
+    trimmed_start = request.end - interval_ms * request.limit
     first_call, second_call = adapter.calls
-    assert first_call[0] == "fetch_ohlcv" and first_call[1][2] == 0
-    assert second_call[0] == "fetch_ohlcv" and second_call[1][2] >= 240_000
+    assert first_call[0] == "fetch_ohlcv" and first_call[1][2] >= trimmed_start
+    assert second_call[0] == "fetch_ohlcv" and second_call[1][2] >= request.end - 2 * interval_ms
 
 
 def test_cached_source_skips_upstream_for_contiguous_range(tmp_path: Path):
@@ -400,8 +411,11 @@ def test_cached_source_refreshes_range_request_with_gaps(tmp_path: Path):
     response = source.fetch_ohlcv(request)
 
     assert len(response.rows) >= 3
+    interval_ms = interval_to_milliseconds(request.interval)
+    expected_snapshot_start = request.end - max(interval_ms * 2, interval_ms)
     assert adapter.calls == [
         ("fetch_ohlcv", ("BTC/USDT", "1m", 0, 240_000, None)),
+        ("fetch_ohlcv", ("BTC/USDT", "1m", expected_snapshot_start, 240_000, 1)),
     ]
 
 
