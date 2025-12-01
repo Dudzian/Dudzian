@@ -8,6 +8,7 @@ from typing import Any, Callable, Deque, Iterable, Mapping, Protocol, Sequence
 
 from bot_core.ai.regime import MarketRegime, MarketRegimeAssessment
 from bot_core.decision.orchestrator import StrategyPerformanceSummary
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 try:  # pragma: no cover - DecisionOrchestrator może być opcjonalny w buildach light
     from bot_core.decision.orchestrator import DecisionOrchestrator
@@ -29,30 +30,46 @@ def _safe_float(value: object) -> float | None:
         return None
 
 
-@dataclass(slots=True)
-class AIGovernorDecision:
+class AIGovernorDecision(BaseModel):
     """Reprezentuje ostatnią decyzję AI Governora."""
 
-    mode: str
-    reason: str
-    confidence: float
-    regime: str
+    model_config = ConfigDict(extra="ignore", validate_assignment=True)
+
+    mode: str = Field(..., description="Tryb wybrany przez AI Governora")
+    reason: str = Field(..., description="Opis motywacji wyboru trybu")
+    confidence: float = Field(..., ge=0.0, le=1.0)
+    regime: str = Field(..., description="Reżim rynku użyty do decyzji")
     risk_score: float
     transaction_cost_bps: float | None
-    risk_metrics: Mapping[str, float] = field(default_factory=dict)
-    cycle_metrics: Mapping[str, float] = field(default_factory=dict)
+    risk_metrics: Mapping[str, float] = Field(default_factory=dict)
+    cycle_metrics: Mapping[str, float] = Field(default_factory=dict)
+
+    @field_validator("mode", "reason", "regime", mode="before")
+    @classmethod
+    def _normalize_text(cls, value: Any) -> str:
+        if value is None:
+            raise ValueError("wartość nie może być pusta")
+        text = str(value).strip()
+        if not text:
+            raise ValueError("wartość nie może być pusta")
+        return text
+
+    @field_validator("risk_metrics", "cycle_metrics", mode="before")
+    @classmethod
+    def _ensure_mapping(cls, value: Any) -> Mapping[str, float]:
+        if value is None:
+            return {}
+        mapping: Mapping[str, Any]
+        if isinstance(value, Mapping):
+            mapping = value
+        else:
+            mapping = dict(value)
+        return {str(key): float(val) for key, val in mapping.items()}
 
     def to_mapping(self) -> dict[str, Any]:
-        payload = {
-            "mode": self.mode,
-            "reason": self.reason,
-            "confidence": float(self.confidence),
-            "regime": self.regime,
-            "risk_score": float(self.risk_score),
-            "transaction_cost_bps": self.transaction_cost_bps,
-            "risk_metrics": dict(self.risk_metrics),
-            "cycle_metrics": dict(self.cycle_metrics),
-        }
+        payload = self.model_dump()
+        payload["risk_metrics"] = dict(self.risk_metrics)
+        payload["cycle_metrics"] = dict(self.cycle_metrics)
         return payload
 
 

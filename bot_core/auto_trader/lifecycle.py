@@ -9,32 +9,35 @@ from typing import Any, Mapping, Sequence
 from .app import AutoTrader, DecisionCycleReport
 from .decision_scheduler import AutoTraderDecisionScheduler, AutoTraderSchedulerHooks
 from bot_core.runtime.journal import TradingDecisionJournal
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 
 LOGGER = logging.getLogger(__name__)
 _SCHEDULE_SYMBOL = "<schedule>"
 
 
-@dataclass(slots=True)
-class LifecycleBootstrapSnapshot:
+class LifecycleBootstrapSnapshot(BaseModel):
     """State recovered from the decision journal during bootstrap."""
 
-    risk_profile: str | None = None
-    market_regime: str | None = None
-    decision_state: str | None = None
-    decision_signal: str | None = None
+    model_config = ConfigDict(extra="ignore", validate_assignment=True)
+
+    risk_profile: str | None = Field(default=None)
+    market_regime: str | None = Field(default=None)
+    decision_state: str | None = Field(default=None)
+    decision_signal: str | None = Field(default=None)
+
+    @field_validator(
+        "risk_profile", "market_regime", "decision_state", "decision_signal", mode="before"
+    )
+    @classmethod
+    def _normalize_optional_text(cls, value: Any) -> str | None:
+        if value is None:
+            return None
+        text = str(value).strip()
+        return text or None
 
     def to_metadata(self) -> dict[str, object]:
-        payload: dict[str, object] = {}
-        if self.risk_profile:
-            payload["risk_profile"] = self.risk_profile
-        if self.market_regime:
-            payload["market_regime"] = self.market_regime
-        if self.decision_state:
-            payload["decision_state"] = self.decision_state
-        if self.decision_signal:
-            payload["decision_signal"] = self.decision_signal
-        return payload
+        return self.model_dump(exclude_none=True)
 
 
 @dataclass
