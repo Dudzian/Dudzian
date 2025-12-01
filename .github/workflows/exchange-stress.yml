@@ -31,6 +31,9 @@ jobs:
           python -m pip install --upgrade pip
           pip install .[dev]
 
+      - name: Prepare log directory
+        run: mkdir -p logs/loadtests
+
       - name: Run exchange stress test
         run: |
           python scripts/loadtests/exchange_stress.py \
