@@ -23,11 +23,15 @@ jobs:
 
       - name: Install dependencies
         run: |
-          python -m pip install --upgrade pip
+          python -m pip install --upgrade pip setuptools wheel build
+          # optional: ensure common problematic packages are up-to-date
+          python -m pip install --upgrade setuptools_scm
+          # install the local package
           pip install .[dev]
 
       - name: Run CloudOrchestrator DR probes
         env:
+          PYTHONVERBOSE: "1"
           DR_GRPC_ENDPOINT: ${{ secrets.DR_GRPC_ENDPOINT }}
           DR_ALERTMANAGER_URL: ${{ secrets.DR_ALERTMANAGER_URL }}
           DR_PROMETHEUS_URL: ${{ secrets.DR_PROMETHEUS_URL }}
@@ -62,7 +66,10 @@ jobs:
 
       - name: Install dependencies
         run: |
-          python -m pip install --upgrade pip
+          python -m pip install --upgrade pip setuptools wheel build
+          # optional: ensure common problematic packages are up-to-date
+          python -m pip install --upgrade setuptools_scm
+          # install the local package
           pip install .[dev]
 
       - name: Run DR failover validation
@@ -107,7 +114,10 @@ jobs:
 
       - name: Install dependencies
         run: |
-          python -m pip install --upgrade pip
+          python -m pip install --upgrade pip setuptools wheel build
+          # optional: ensure common problematic packages are up-to-date
+          python -m pip install --upgrade setuptools_scm
+          # install the local package
           pip install .[dev]
 
       - name: Run DR failover with snapshots
@@ -153,7 +163,10 @@ jobs:
 
       - name: Install dependencies
         run: |
-          python -m pip install --upgrade pip
+          python -m pip install --upgrade pip setuptools wheel build
+          # optional: ensure common problematic packages are up-to-date
+          python -m pip install --upgrade setuptools_scm
+          # install the local package
           pip install .[dev]
 
       - name: Execute DR failover runbook
