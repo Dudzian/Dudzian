@@ -331,15 +331,15 @@ jobs:
       MIRROR_GIT_REPO: ${{ secrets.MARKETING_PARITY_MIRROR_GIT || vars.MARKETING_PARITY_MIRROR_GIT }}
       MIRROR_SUBPATH: ${{ vars.MARKETING_PARITY_MIRROR_SUBPATH }}
 
-      steps:
-        - name: Check out repository
-          uses: actions/checkout@v4
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
 
-        - name: Set up Python
-          id: setup-python
-          uses: actions/setup-python@v5
-          with:
-            python-version: "3.11"
+      - name: Set up Python
+        id: setup-python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
 
       - name: Download exchange report artefact
         uses: actions/download-artifact@v4
