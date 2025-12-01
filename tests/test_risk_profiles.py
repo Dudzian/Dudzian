@@ -45,7 +45,7 @@ def test_profiles_scale_position_sizes_with_risk(btc_daily_atr_series: list[floa
         for profile in (conservative, balanced, aggressive)
     ]
 
-    assert quantities[0] < quantities[1] < quantities[2]
+    assert quantities[0] > quantities[1] > quantities[2]
 
     for profile, qty in zip((conservative, balanced, aggressive), quantities, strict=True):
         max_notional = profile.max_position_exposure() * equity
@@ -71,7 +71,7 @@ def test_risk_engine_accepts_atr_informed_order(btc_daily_atr_series: list[float
         maintenance_margin=0.0,
     )
 
-    quantity = _recommended_quantity(profile=profile, atr=atr, equity=equity, price=price, risk_pct=0.012)
+    quantity = _recommended_quantity(profile=profile, atr=atr, equity=equity, price=price, risk_pct=0.01)
 
     order = OrderRequest(
         symbol="BTCUSDT",

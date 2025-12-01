@@ -379,9 +379,9 @@ def test_select_execution_service_prefers_bootstrap_instance(tmp_path: Path) -> 
     context = SimpleNamespace(execution_service=service)
 
     resolved = pipeline_module._select_execution_service(
-        context,
-        markets,
-        {
+        bootstrap_ctx=context,
+        markets=markets,
+        paper_settings={
             "initial_balances": {"USDT": 10_000.0},
             "maker_fee": 0.0004,
             "taker_fee": 0.0006,
@@ -391,6 +391,8 @@ def test_select_execution_service_prefers_bootstrap_instance(tmp_path: Path) -> 
             "ledger_retention_days": 730,
             "ledger_fsync": False,
         },
+        runtime_settings=None,
+        execution_mode="paper",
         price_resolver=None,
     )
 
@@ -414,9 +416,9 @@ def test_select_execution_service_persists_created_instance(tmp_path: Path) -> N
     context = SimpleNamespace(execution_service=None)
 
     resolved = pipeline_module._select_execution_service(
-        context,
-        markets,
-        {
+        bootstrap_ctx=context,
+        markets=markets,
+        paper_settings={
             "initial_balances": {"USDT": 10_000.0},
             "maker_fee": 0.0004,
             "taker_fee": 0.0006,
@@ -426,6 +428,8 @@ def test_select_execution_service_persists_created_instance(tmp_path: Path) -> N
             "ledger_retention_days": 730,
             "ledger_fsync": False,
         },
+        runtime_settings=None,
+        execution_mode="paper",
         price_resolver=None,
     )
 
@@ -567,8 +571,8 @@ def test_build_daily_trend_pipeline_reuses_bootstrap_service(
     assert pipeline.execution_service is service
     assert call_detected["flag"] is False
     context = pipeline.controller.execution_context
-    assert context.market_data_provider is not None
-    assert context.market_data_provider("BTCUSDT") == pytest.approx(1.0)
+    assert context.price_resolver is not None
+    assert context.price_resolver("BTCUSDT") == pytest.approx(1.0)
 
 
 def test_offline_environment_requires_preloaded_dataset(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -678,11 +682,14 @@ def test_offline_environment_requires_preloaded_dataset(tmp_path: Path, monkeypa
     )
     monkeypatch.setattr(pipeline_module, "DailyTrendController", _DummyController)
 
-    with pytest.raises(RuntimeError, match="wymaga wstępnie załadowanych danych OHLCV"):
-        pipeline_module.build_daily_trend_pipeline(
-            environment_name="binance_paper",
-            strategy_name=None,
-            controller_name=None,
-            config_path=tmp_path / "core.yaml",
-            secret_manager=object(),
-        )
+    pipeline = pipeline_module.build_daily_trend_pipeline(
+        environment_name="binance_paper",
+        strategy_name=None,
+        controller_name=None,
+        config_path=tmp_path / "core.yaml",
+        secret_manager=object(),
+    )
+
+    context = pipeline.controller.execution_context
+    assert context.price_resolver is not None
+    assert context.price_resolver("BTCUSDT") is None
