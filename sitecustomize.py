@@ -6,7 +6,7 @@ from pathlib import Path
 import importlib
 import sys
 from contextlib import contextmanager
-from typing import Iterator
+from typing import Iterable, Iterator
 
 from pathbootstrap import ensure_repo_root_on_sys_path
 
@@ -82,20 +82,36 @@ def _stabilize_numpy_no_value() -> None:
         pass
 
 
+def _find_repo_root(start: Path, sentinels: Iterable[str]) -> Path | None:
+    """Znajdź katalog repozytorium zawierający jeden z plików-wskaźników.
+
+    W środowiskach, gdzie ``sitecustomize`` jest importowane z ``site-packages``,
+    nie chcemy przerywać działania interpretera, jeśli repozytorium źródłowe nie
+    jest dostępne.  Funkcja zwraca pierwszy katalog nadrzędny zawierający
+    sentinel lub ``None`` gdy nie uda się go odnaleźć.
+    """
+
+    current = start
+    while True:
+        if any((current / sentinel).exists() for sentinel in sentinels):
+            return current
+        if current.parent == current:
+            return None
+        current = current.parent
+
+
 # Repozytorium musi być widoczne na ścieżce importu nawet wtedy, gdy
 # skrypty są uruchamiane spoza katalogu głównego.  Jednocześnie chcemy, by
 # standardowe pakiety (np. `packaging`) pozostawały nadrzędne względem
 # lokalnych modułów o tych samych nazwach (`scripts/packaging`,
 # `deploy/packaging`).  Dlatego katalog repozytorium dołączamy na koniec
 # `sys.path`, dzięki czemu nie przesłania on bibliotek zainstalowanych w
-# środowisku wykonawczym.
-try:
-    ensure_repo_root_on_sys_path(Path(__file__).resolve().parent, position="append")
-except FileNotFoundError:
-    # Środowiska uruchamiane poza repozytorium (np. po instalacji pakietu)
-    # mogą nie mieć żadnego z plików-wskaźników; w takim przypadku
-    # zachowujemy ciszę i pomijamy dodawanie repo do sys.path.
-    pass
+# środowisku wykonawczym.  Jeżeli nie znajdziemy żadnego sentinela, po prostu
+# pomijamy modyfikację ścieżki, co pozwala uruchomić Pythona również w
+# środowiskach bez repozytorium źródłowego.
+repo_root = _find_repo_root(Path(__file__).resolve().parent, sentinels=("pyproject.toml",))
+if repo_root:
+    ensure_repo_root_on_sys_path(repo_root, position="append")
 _ensure_stdlib_packaging()
 _stabilize_numpy_no_value()
 
