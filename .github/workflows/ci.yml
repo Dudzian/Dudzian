@@ -1003,97 +1003,97 @@ jobs:
           payload_file="$(mktemp)"
 
           python - <<'PY' > "${payload_file}"
-import json
-import pathlib
-import sys
+            import json
+            import pathlib
+            import sys
 
-report_roots = [
-    pathlib.Path("reports/ci/performance_backtests"),
-    pathlib.Path("reports/ci/performance_ui_render"),
-    pathlib.Path("reports/ci/benchmark_backtests"),
-]
+            report_roots = [
+                pathlib.Path("reports/ci/performance_backtests"),
+                pathlib.Path("reports/ci/performance_ui_render"),
+                pathlib.Path("reports/ci/benchmark_backtests"),
+            ]
 
-def escape_label(value: str) -> str:
-    return (
-        value.replace("\\", "\\\\")
-        .replace("\n", "\\n")
-        .replace("\"", "\\\"")
-    )
+            def escape_label(value: str) -> str:
+                return (
+                    value.replace("\\", "\\\\")
+                    .replace("\n", "\\n")
+                    .replace("\"", "\\\"")
+                )
 
-def maybe_get(data: dict, key: str):
-    value = data.get(key)
-    return value if value is not None else None
+            def maybe_get(data: dict, key: str):
+                value = data.get(key)
+                return value if value is not None else None
 
-reports = []
-for root in report_roots:
-    if root.exists():
-        reports.extend(sorted(root.rglob("*.json")))
+            reports = []
+            for root in report_roots:
+                if root.exists():
+                    reports.extend(sorted(root.rglob("*.json")))
 
-metrics = []
-for report_path in reports:
-    with report_path.open("r", encoding="utf-8") as fh:
-        try:
-            payload = json.load(fh)
-        except json.JSONDecodeError as exc:
-            print(f"Skipping unreadable report {report_path}: {exc}", file=sys.stderr)
-            continue
+            metrics = []
+            for report_path in reports:
+                with report_path.open("r", encoding="utf-8") as fh:
+                    try:
+                        payload = json.load(fh)
+                    except json.JSONDecodeError as exc:
+                        print(f"Skipping unreadable report {report_path}: {exc}", file=sys.stderr)
+                        continue
 
-    if "performance_backtests" in report_path.parts:
-        source = "backtest"
-    elif "benchmark_backtests" in report_path.parts:
-        source = "backtest_benchmark"
-    else:
-        source = "ui_render"
-    labels_common = {
-        "source": source,
-        "dataset": str(payload.get("dataset", payload.get("scenario", "unknown"))),
-        "pair_count": str(payload.get("pair_count", "unknown")),
-        "timeframe": str(payload.get("timeframe", "unknown")),
-        "scenario": str(payload.get("scenario", "unknown")),
-        "git_commit": str(payload.get("git_commit", "unknown")),
-        "timestamp_utc": str(payload.get("timestamp_utc", "unknown")),
-    }
+                if "performance_backtests" in report_path.parts:
+                    source = "backtest"
+                elif "benchmark_backtests" in report_path.parts:
+                    source = "backtest_benchmark"
+                else:
+                    source = "ui_render"
+                labels_common = {
+                    "source": source,
+                    "dataset": str(payload.get("dataset", payload.get("scenario", "unknown"))),
+                    "pair_count": str(payload.get("pair_count", "unknown")),
+                    "timeframe": str(payload.get("timeframe", "unknown")),
+                    "scenario": str(payload.get("scenario", "unknown")),
+                    "git_commit": str(payload.get("git_commit", "unknown")),
+                    "timestamp_utc": str(payload.get("timestamp_utc", "unknown")),
+                }
 
-    pairs_value = maybe_get(payload, "pairs_per_second")
-    if pairs_value is not None:
-        metrics.append(("ci_performance_pairs_per_second", labels_common, pairs_value))
+                pairs_value = maybe_get(payload, "pairs_per_second")
+                if pairs_value is not None:
+                    metrics.append(("ci_performance_pairs_per_second", labels_common, pairs_value))
 
-    p90_value = maybe_get(payload, "p90_ms")
-    if p90_value is not None:
-        metrics.append(("ci_performance_p90_ms", labels_common, p90_value))
+                p90_value = maybe_get(payload, "p90_ms")
+                if p90_value is not None:
+                    metrics.append(("ci_performance_p90_ms", labels_common, p90_value))
 
-    avg_value = maybe_get(payload, "avg_ms")
-    if avg_value is not None:
-        metrics.append(("ci_performance_avg_ms", labels_common, avg_value))
+                avg_value = maybe_get(payload, "avg_ms")
+                if avg_value is not None:
+                    metrics.append(("ci_performance_avg_ms", labels_common, avg_value))
 
-    bars_value = maybe_get(payload, "bars_per_second")
-    if bars_value is not None:
-        metrics.append(("ci_performance_bars_per_second", labels_common, bars_value))
+                bars_value = maybe_get(payload, "bars_per_second")
+                if bars_value is not None:
+                    metrics.append(("ci_performance_bars_per_second", labels_common, bars_value))
 
-    p95_value = maybe_get(payload, "p95_ms")
-    if p95_value is not None:
-        metrics.append(("ci_performance_p95_ms", labels_common, p95_value))
+                p95_value = maybe_get(payload, "p95_ms")
+                if p95_value is not None:
+                    metrics.append(("ci_performance_p95_ms", labels_common, p95_value))
 
-if not metrics:
-    sys.exit(0)
+            if not metrics:
+                sys.exit(0)
 
-print("# HELP ci_performance_pairs_per_second Backtest throughput (pairs/s)")
-print("# TYPE ci_performance_pairs_per_second gauge")
-print("# HELP ci_performance_p90_ms Performance p90 latency (ms)")
-print("# TYPE ci_performance_p90_ms gauge")
-print("# HELP ci_performance_avg_ms Performance avg latency (ms)")
-print("# TYPE ci_performance_avg_ms gauge")
-print("# HELP ci_performance_bars_per_second Strategy backtest throughput (bars/s)")
-print("# TYPE ci_performance_bars_per_second gauge")
-print("# HELP ci_performance_p95_ms Performance p95 latency (ms)")
-print("# TYPE ci_performance_p95_ms gauge")
+            print("# HELP ci_performance_pairs_per_second Backtest throughput (pairs/s)")
+            print("# TYPE ci_performance_pairs_per_second gauge")
+            print("# HELP ci_performance_p90_ms Performance p90 latency (ms)")
+            print("# TYPE ci_performance_p90_ms gauge")
+            print("# HELP ci_performance_avg_ms Performance avg latency (ms)")
+            print("# TYPE ci_performance_avg_ms gauge")
+            print("# HELP ci_performance_bars_per_second Strategy backtest throughput (bars/s)")
+            print("# TYPE ci_performance_bars_per_second gauge")
+            print("# HELP ci_performance_p95_ms Performance p95 latency (ms)")
+            print("# TYPE ci_performance_p95_ms gauge")
 
-for metric_name, labels, value in metrics:
-    rendered_labels = ",".join(
-        f"{key}=\"{escape_label(str(val))}\"" for key, val in labels.items()
-    )
-    print(f"{metric_name}{{{rendered_labels}}} {value}")
-PY
+            for metric_name, labels, value in metrics:
+                rendered_labels = ",".join(
+                    f"{key}=\"{escape_label(str(val))}\"" for key, val in labels.items()
+                )
+                print(f"{metric_name}{{{rendered_labels}}} {value}")
+          PY
 
           if ! grep -q '^ci_performance_' "${payload_file}"; then
             echo "No performance metrics found to publish; skipping push."
