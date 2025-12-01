@@ -24,6 +24,7 @@ jobs:
       - name: Install dependencies
         run: |
           pip install -r deploy/packaging/requirements-desktop.txt
+          pip install pydantic
 
       - name: Validate marketplace presets (signatures + markdown)
         run: >-
