@@ -1,5 +1,5 @@
 {
-  "collected_at": "2025-11-25T16:34:46.556155Z",
+  "collected_at": "2025-12-01T18:01:10.893977Z",
   "snapshots": [
     {
       "labels": {
@@ -32,7 +32,7 @@
       },
       "backpressure": 0,
       "queueSize": 0,
-      "collected_at": "2025-11-25T16:34:46.556155Z"
+      "collected_at": "2025-12-01T18:01:10.893977Z"
     },
     {
       "labels": {
@@ -65,7 +65,7 @@
       },
       "backpressure": 0,
       "queueSize": 0,
-      "collected_at": "2025-11-25T16:34:46.556155Z"
+      "collected_at": "2025-12-01T18:01:10.893977Z"
     },
     {
       "labels": {
@@ -98,7 +98,7 @@
       },
       "backpressure": 0,
       "queueSize": 0,
-      "collected_at": "2025-11-25T16:34:46.556155Z"
+      "collected_at": "2025-12-01T18:01:10.893977Z"
     },
     {
       "labels": {
@@ -131,7 +131,7 @@
       },
       "backpressure": 0,
       "queueSize": 0,
-      "collected_at": "2025-11-25T16:34:46.556155Z"
+      "collected_at": "2025-12-01T18:01:10.893977Z"
     }
   ]
 }
