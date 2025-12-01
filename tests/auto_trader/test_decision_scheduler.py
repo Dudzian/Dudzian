@@ -11,6 +11,9 @@ class _StubTrader:
     def __init__(self) -> None:
         self.invocations: list[float] = []
 
+    def run_cycle(self, _request=None) -> None:  # noqa: ANN001 - interfejs schedulera
+        self.run_cycle_once()
+
     def run_cycle_once(self) -> None:
         self.invocations.append(time.monotonic())
 

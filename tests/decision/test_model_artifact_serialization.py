@@ -10,7 +10,12 @@ def base_payload() -> dict[str, object]:
     return {
         "feature_names": ["momentum", "volume"],
         "model_state": {"weights": [0.1, -0.2]},
-        "metrics": {"mae": 1.5, "directional_accuracy": 0.6},
+        "metrics": {
+            "summary": {"mae": 1.5, "directional_accuracy": 0.6},
+            "train": {},
+            "validation": {},
+            "test": {},
+        },
         "metadata": {
             "feature_scalers": {
                 "momentum": {"mean": 0.0, "stdev": 1.0},
