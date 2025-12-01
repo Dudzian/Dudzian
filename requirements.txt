@@ -1,0 +1,4 @@
+# Consolidated dependencies for CI workflows
+# Includes pinned desktop requirements and project extras.
+-r deploy/packaging/requirements-desktop.txt
+.[desktop]
