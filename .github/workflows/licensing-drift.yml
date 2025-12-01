@@ -84,6 +84,8 @@ jobs:
     env:
       LICENSING_DRIFT_DIR: reports/ci/licensing_drift
       LICENSING_DRIFT_DASHBOARD_DIR: reports/ci/licensing_drift/dashboard
+      LICENSING_DRIFT_PUSHGATEWAY: ${{ secrets.LICENSING_DRIFT_PUSHGATEWAY || vars.LICENSING_DRIFT_PUSHGATEWAY || vars.CI_PUSHGATEWAY_DEFAULT }}
+      LICENSING_DRIFT_PUSHGATEWAY_AUTH: ${{ secrets.LICENSING_DRIFT_PUSHGATEWAY_AUTH }}
 
     steps:
       - name: Check out repository
@@ -117,6 +119,45 @@ jobs:
             --input-dir "${LICENSING_DRIFT_DIR}" \
             --dashboard-dir "${LICENSING_DRIFT_DASHBOARD_DIR}" \
             --run-id "${GITHUB_RUN_ID}"
+
+      - name: Publish licensing drift metrics to Pushgateway
+        if: ${{ always() }}
+        run: |
+          set -euo pipefail
+
+          prom_file="${LICENSING_DRIFT_DASHBOARD_DIR}/licensing_drift.prom"
+
+          if [ ! -f "${prom_file}" ]; then
+            echo "licensing_drift.prom is missing; skipping metrics push."
+            exit 0
+          fi
+
+          if [ -z "${LICENSING_DRIFT_PUSHGATEWAY:-}" ]; then
+            {
+              echo "### Licensing drift metrics"
+              echo ":warning: Pushgateway is not configured (LICENSING_DRIFT_PUSHGATEWAY)."
+              echo "- Artefakty .prom/.parquet są dostępne, ale Grafana nie otrzyma danych z tego przebiegu."
+            } >> "${GITHUB_STEP_SUMMARY}"
+            exit 0
+          fi
+
+          basic_auth_args=()
+          if [ -n "${LICENSING_DRIFT_PUSHGATEWAY_AUTH:-}" ]; then
+            basic_auth_args+=(--basic-auth-env LICENSING_DRIFT_PUSHGATEWAY_AUTH)
+          fi
+
+          python scripts/publish_licensing_drift_metrics.py \
+            --prom-file "${prom_file}" \
+            --pushgateway "${LICENSING_DRIFT_PUSHGATEWAY}" \
+            --grouping-label run_id="${GITHUB_RUN_ID}" \
+            --timeout 15 "${basic_auth_args[@]}"
+
+          {
+            echo "### Licensing drift metrics"
+            echo ":white_check_mark: Metryki licensing drift zostały wypchnięte do Pushgateway."
+            echo "- Źródło: ${prom_file}"
+            echo "- Target: ${LICENSING_DRIFT_PUSHGATEWAY%/}/metrics/job/licensing-drift/run_id/${GITHUB_RUN_ID}"
+          } >> "${GITHUB_STEP_SUMMARY}"
 
       - name: Upload consolidated licensing drift summary
         uses: actions/upload-artifact@v4

@@ -81,6 +81,13 @@ Pliki są kopiowane do `reports/ci/licensing_drift/dashboard/`, skąd mogą być
 statycznie do Grafany. W tym samym katalogu publikowane są także `licensing_drift_summary.parquet` i
 `licensing_drift_summary.csv` na potrzeby paneli trendów oraz zasilenia BI.
 
+Job konsolidacyjny publikuje metryki z `licensing_drift.prom` do Pushgateway (domyślnie `CI_PUSHGATEWAY_DEFAULT`, można
+nadpisać zmienną/sekret `LICENSING_DRIFT_PUSHGATEWAY`) za pomocą `scripts/publish_licensing_drift_metrics.py`. Jeśli
+Pushgateway wymaga podstawowej autoryzacji, ustaw `LICENSING_DRIFT_PUSHGATEWAY_AUTH` na `user:pass` – sekret nie pojawi się
+in-line w logach CLI, bo skrypt odczytuje go z otoczenia i dodaje nagłówek `Authorization`. Parametr `--timeout` (domyślnie
+10s) chroni job przed wiszącym połączeniem. Dzięki temu centralny dashboard Grafany (UID `licensing-drift`) otrzymuje
+najnowszy run CI bez ręcznego kopiowania artefaktów.
+
 Pole `diagnostics` w `licensing_drift_summary.json` zbiera komunikaty o brakujących lub uszkodzonych artefaktach (np. brak logu
 pytest albo `compatibility.json`). Dzięki temu operator może szybko zrozumieć przyczynę pustych metryk bez wchodzenia w logi
 workflowa.
@@ -89,6 +96,8 @@ Reguły alertów Prometheusa (`deploy/prometheus/rules/stage6_alerts.yml`) pokry
 
 - **LicensingDriftRebindRequired (critical):** `sum(licensing_drift_status{status="rebind_required"}) > 0` – natychmiastowa eskalacja do OEM/SRE, blokada startu runtime do czasu ponownego podpisu.
 - **LicensingDriftRebindBurst (critical):** `sum_over_time(licensing_drift_status{status="rebind_required"}[7d]) > 1` – powtarzane rebindy w tygodniu, eskalacja do L3 Security i OEM z wnioskiem o badanie przyczyn sprzętowych.
+- **LicensingDriftRejectionSpike (warning):** `increase(licensing_drift_rejections_total[14d]) > 2` – wykryty trend wzrostu
+  odrzuceń licencji w ostatnich dwóch tygodniach, przygotuj eskalację OEM/SRE i zweryfikuj agregat CI.
 - **LicensingDriftDegradedSpike (warning):** `sum_over_time(licensing_drift_status{status="degraded"}[7d]) > 3` – zaplanuj serwis sprzętu zanim dryf przejdzie w rebind.
 - **LicensingDriftDegradedErosion (critical):** `sum_over_time(licensing_drift_status{status="degraded"}[7d]) > 5` – eskalacja do SRE z planem wymiany komponentów.
 
