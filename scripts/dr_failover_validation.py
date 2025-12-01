@@ -205,9 +205,12 @@ def main(argv: list[str] | None = None) -> int:
     status, failure_reasons = evaluate_outcome(
         comparison, before_ok=before_ok, after_ok=after_ok
     )
+    probe_regression = bool(before_ok and not after_ok)
+
     summary = {
         "beforeOk": before_ok,
         "afterOk": after_ok,
+        "probeRegression": probe_regression,
         "comparison": comparison.to_dict(),
         "webhook": webhook,
         "status": status,
