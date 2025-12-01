@@ -9,6 +9,27 @@ import sys
 from hashlib import sha256
 from pathlib import Path
 
+REPO_ROOT = Path(__file__).resolve().parents[1]
+if str(REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(REPO_ROOT))
+
+
+def _strip_conflicting_paths() -> None:
+    conflict_dirs = {REPO_ROOT / "scripts", REPO_ROOT / "deploy", REPO_ROOT / "tests"}
+    cleaned: list[str] = []
+    for entry in sys.path:
+        try:
+            if Path(entry).resolve() in conflict_dirs:
+                continue
+        except Exception:
+            cleaned.append(entry)
+            continue
+        cleaned.append(entry)
+    sys.path = cleaned
+
+
+_strip_conflicting_paths()
+
 from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric import ed25519
 
