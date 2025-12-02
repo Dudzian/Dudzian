@@ -798,6 +798,8 @@ class AutoTrader:
         self.symbol_getter = symbol_getter
         self.market_data_provider = market_data_provider
         self.bootstrap_context = bootstrap_context
+        self._lock = threading.RLock()
+        self._base_metric_labels: dict[str, str] = {}
 
         alias_override = canonical_alias_map(strategy_alias_map)
         suffix_override = (

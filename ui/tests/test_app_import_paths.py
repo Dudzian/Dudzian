@@ -5,7 +5,7 @@ from __future__ import annotations
 from pathlib import Path
 import sys
 import types
-from typing import Any, cast
+from typing import Any
 
 
 class DummySignal:
@@ -131,24 +131,20 @@ class DummyBridge:
 def _install_pyside6_dummies() -> None:
     """Rejestruje minimalne moduły PySide6 wymagane do importu app.py."""
 
-    qtgui = cast(Any, types.ModuleType("PySide6.QtGui"))
-    qtgui.QGuiApplication = DummyQGuiApplication
+    qtgui: Any = types.SimpleNamespace(QGuiApplication=DummyQGuiApplication)
 
-    qtqml = cast(Any, types.ModuleType("PySide6.QtQml"))
-    qtqml.QQmlApplicationEngine = DummyEngine
+    qtqml: Any = types.SimpleNamespace(QQmlApplicationEngine=DummyEngine)
 
-    qtcore = cast(Any, types.ModuleType("PySide6.QtCore"))
-    qtcore.QUrl = DummyQUrl
-    qtcore.QObject = DummyQObject
-    qtcore.Signal = DummySignal
-    qtcore.Slot = DummySlot
-    qtcore.Property = DummyProperty
-    qtcore.QTimer = DummyQTimer
+    qtcore: Any = types.SimpleNamespace(
+        QUrl=DummyQUrl,
+        QObject=DummyQObject,
+        Signal=DummySignal,
+        Slot=DummySlot,
+        Property=DummyProperty,
+        QTimer=DummyQTimer,
+    )
 
-    pyside6 = cast(Any, types.ModuleType("PySide6"))
-    pyside6.QtGui = qtgui
-    pyside6.QtQml = qtqml
-    pyside6.QtCore = qtcore
+    pyside6: Any = types.SimpleNamespace(QtGui=qtgui, QtQml=qtqml, QtCore=qtcore)
 
     sys.modules.setdefault("PySide6", pyside6)
     sys.modules.setdefault("PySide6.QtGui", qtgui)
