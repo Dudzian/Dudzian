@@ -1230,7 +1230,7 @@ jobs:
           version: 6.5.3
           # Windows runners frequently lack qtdeclarative/qtquickcontrols2 for 6.5.3;
           # request only the known-available subset explicitly.
-          modules: ${{ matrix.platform == 'windows' ? env.QT_WINDOWS_MODULES : env.QT_DESKTOP_MODULES }}
+          modules: "${{ matrix.platform == 'windows' ? env.QT_WINDOWS_MODULES : env.QT_DESKTOP_MODULES }}"
 
       - name: Build Qt bundle
         shell: bash
