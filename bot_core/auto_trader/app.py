@@ -1006,7 +1006,7 @@ class AutoTrader:
 
         self.alert_router: AlertRouter | None = getattr(bootstrap_context, "alert_router", None)
         self._metrics: MetricsRegistry = get_global_metrics_registry()
-        self._base_metric_labels = {
+        self._base_metric_labels: dict[str, str] = {
             "environment": self._environment_name,
             "portfolio": self._portfolio_id,
             "risk_profile": self._risk_profile_name,
@@ -1154,7 +1154,7 @@ class AutoTrader:
         self._trusted_auto_confirm = bool(trusted_auto_confirm)
         self._auto_trade_user_confirmed = self._trusted_auto_confirm
         self._started = False
-        self._lock = threading.RLock()
+        self._lock: threading.RLock = threading.RLock()
 
         initial_state = self.get_schedule_state()
         self._schedule_last_alert_state = initial_state.is_open
