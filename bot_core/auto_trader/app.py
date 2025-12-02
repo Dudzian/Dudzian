@@ -557,6 +557,8 @@ class AutoTrader:
     _ALIAS_RESOLVER: StrategyAliasResolver | None = None
     _DEFAULT_CHAMPION_KEY = "__default__"
     _risk_service: Any | None = None
+    _lock: threading.RLock
+    _base_metric_labels: dict[str, str]
 
     @classmethod
     def _alias_resolver(cls) -> StrategyAliasResolver:
@@ -796,6 +798,8 @@ class AutoTrader:
         self.symbol_getter = symbol_getter
         self.market_data_provider = market_data_provider
         self.bootstrap_context = bootstrap_context
+        self._lock = threading.RLock()
+        self._base_metric_labels: dict[str, str] = {}
 
         alias_override = canonical_alias_map(strategy_alias_map)
         suffix_override = (
@@ -1004,7 +1008,7 @@ class AutoTrader:
 
         self.alert_router: AlertRouter | None = getattr(bootstrap_context, "alert_router", None)
         self._metrics: MetricsRegistry = get_global_metrics_registry()
-        self._base_metric_labels: Mapping[str, str] = {
+        self._base_metric_labels: dict[str, str] = {
             "environment": self._environment_name,
             "portfolio": self._portfolio_id,
             "risk_profile": self._risk_profile_name,
@@ -1152,7 +1156,7 @@ class AutoTrader:
         self._trusted_auto_confirm = bool(trusted_auto_confirm)
         self._auto_trade_user_confirmed = self._trusted_auto_confirm
         self._started = False
-        self._lock = threading.RLock()
+        self._lock: threading.RLock = threading.RLock()
 
         initial_state = self.get_schedule_state()
         self._schedule_last_alert_state = initial_state.is_open

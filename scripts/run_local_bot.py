@@ -17,7 +17,7 @@ import threading
 import time
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Mapping, Optional, Sequence
+from typing import Any, Final, Mapping, Optional, Sequence
 
 from bot_core.api.server import build_local_runtime_context, LocalRuntimeServer
 from bot_core.execution.live_router import LiveExecutionRouter
@@ -43,7 +43,11 @@ from bot_core.observability.metrics import CounterMetric, summarize_live_executi
 from core.reporting import DemoPaperReport, GuardrailReport
 
 _LOGGER = logging.getLogger(__name__)
-CLOUD_FALLBACK = object()
+class _CloudFallbackSentinel:
+    pass
+
+
+CLOUD_FALLBACK: Final[_CloudFallbackSentinel] = _CloudFallbackSentinel()
 
 
 def _configure_logging(level: str) -> None:
@@ -374,7 +378,7 @@ def _run_cloud_proxy(
     *,
     ai_governor_snapshot: Mapping[str, Any] | None,
     original_mode: str,
-) -> int | object:
+) -> int | _CloudFallbackSentinel:
     cloud_payload = _serialize_cloud_payload(options, identity, handshake)
     report_payload["cloud"] = cloud_payload
     if cloud_payload.get("entrypoint"):
@@ -529,7 +533,7 @@ def main(argv: list[str] | None = None) -> int:
 
     context = None
     server: LocalRuntimeServer | None = None
-    exit_code = 0
+    exit_code: int = 0
     runtime_started = False
     checkpoint = None
     decision_events: tuple[Mapping[str, Any], ...] = ()
