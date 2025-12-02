@@ -17,7 +17,7 @@ import threading
 import time
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Mapping, Optional, Sequence
+from typing import Any, Mapping, Optional, Sequence, cast
 
 from bot_core.api.server import build_local_runtime_context, LocalRuntimeServer
 from bot_core.execution.live_router import LiveExecutionRouter
@@ -550,7 +550,8 @@ def main(argv: list[str] | None = None) -> int:
             if proxy_result is CLOUD_FALLBACK:
                 cloud_options = None
             else:
-                exit_code = proxy_result
+                assert isinstance(proxy_result, int)
+                exit_code = cast(int, proxy_result)
 
         if cloud_options is None:
             context = build_local_runtime_context(
