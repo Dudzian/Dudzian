@@ -550,6 +550,7 @@ def main(argv: list[str] | None = None) -> int:
             if proxy_result is CLOUD_FALLBACK:
                 cloud_options = None
             else:
+                assert isinstance(proxy_result, int)
                 exit_code = proxy_result
 
         if cloud_options is None:

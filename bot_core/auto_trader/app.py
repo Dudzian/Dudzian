@@ -557,6 +557,8 @@ class AutoTrader:
     _ALIAS_RESOLVER: StrategyAliasResolver | None = None
     _DEFAULT_CHAMPION_KEY = "__default__"
     _risk_service: Any | None = None
+    _lock: threading.RLock
+    _base_metric_labels: dict[str, str]
 
     @classmethod
     def _alias_resolver(cls) -> StrategyAliasResolver:
@@ -1004,7 +1006,7 @@ class AutoTrader:
 
         self.alert_router: AlertRouter | None = getattr(bootstrap_context, "alert_router", None)
         self._metrics: MetricsRegistry = get_global_metrics_registry()
-        self._base_metric_labels: Mapping[str, str] = {
+        self._base_metric_labels = {
             "environment": self._environment_name,
             "portfolio": self._portfolio_id,
             "risk_profile": self._risk_profile_name,
