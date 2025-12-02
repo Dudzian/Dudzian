@@ -5,6 +5,7 @@ from __future__ import annotations
 from pathlib import Path
 import sys
 import types
+from typing import Any
 
 
 class DummySignal:
@@ -130,13 +131,13 @@ class DummyBridge:
 def _install_pyside6_dummies() -> None:
     """Rejestruje minimalne moduły PySide6 wymagane do importu app.py."""
 
-    qtgui = types.ModuleType("PySide6.QtGui")
+    qtgui: Any = types.ModuleType("PySide6.QtGui")
     qtgui.QGuiApplication = DummyQGuiApplication
 
-    qtqml = types.ModuleType("PySide6.QtQml")
+    qtqml: Any = types.ModuleType("PySide6.QtQml")
     qtqml.QQmlApplicationEngine = DummyEngine
 
-    qtcore = types.ModuleType("PySide6.QtCore")
+    qtcore: Any = types.ModuleType("PySide6.QtCore")
     qtcore.QUrl = DummyQUrl
     qtcore.QObject = DummyQObject
     qtcore.Signal = DummySignal
@@ -144,7 +145,7 @@ def _install_pyside6_dummies() -> None:
     qtcore.Property = DummyProperty
     qtcore.QTimer = DummyQTimer
 
-    pyside6 = types.ModuleType("PySide6")
+    pyside6: Any = types.ModuleType("PySide6")
     pyside6.QtGui = qtgui
     pyside6.QtQml = qtqml
     pyside6.QtCore = qtcore
