@@ -116,7 +116,7 @@ jobs:
 
   licensing-hwid-tolerance:
     name: Licensing HWID Tolerance
-    runs-on: [self-hosted, local, windows]
+    runs-on: self-hosted
 
     steps:
       - name: Check out repository
@@ -137,7 +137,7 @@ jobs:
 
   mypy-core:
     name: Mypy (core packages)
-    runs-on: [self-hosted, local, windows]
+    runs-on: self-hosted
 
     steps:
       - name: Check out repository
@@ -556,7 +556,7 @@ jobs:
               "downtime_warning_seconds": 30.0,
           }
           if config_path.exists():
-              config = yaml.safe_load(config_path.read_text(encoding="utf-8")) or {}
+              config = yaml.safe_load(config.read_text(encoding="utf-8")) or {}
               feed_sla.update(((config.get("observability") or {}).get("feed_sla")) or {})
 
           p95_ms = float(payload.get("p95_ms", 0.0))
@@ -868,8 +868,8 @@ jobs:
             {
               echo "### Pushgateway availability"
               echo ":x: Pushgateway nie jest skonfigurowany lub jest niedostępny — workflow przerwany."
-              echo "- Ustaw sekret/zmienną \\"PERFORMANCE_METRICS_PUSHGATEWAY\\" (repo lub organizacja) z adresem Pushgateway"
-              echo "- Możesz użyć domyślnego endpointu CI (np. org-level \\"CI_PUSHGATEWAY_DEFAULT\\")"
+              echo "- Ustaw sekret/zmienną \"PERFORMANCE_METRICS_PUSHGATEWAY\" (repo lub organizacja) z adresem Pushgateway"
+              echo "- Możesz użyć domyślnego endpointu CI (np. org-level \"CI_PUSHGATEWAY_DEFAULT\")"
               echo "- Zweryfikuj dostępność poleceniem: curl -sf ${PUSHGATEWAY_URL:-<url>}/-/healthy"
               echo "- Upewnij się, że adres jest osiągalny (DNS/firewall) i odpowiada kodem 200"
             } >> "${GITHUB_STEP_SUMMARY}"
@@ -980,7 +980,7 @@ jobs:
               echo "### Pushgateway availability"
               echo ":warning: Tryb fallback — metryki nie zostały wypchnięte do Pushgateway."
               echo "- Powód: ${METRICS_MODE_REASON:-brak informacji}"
-              echo "- Następstwa: artefakty z raportami JSON są dostępne, ale dashboardy Prometheus/Grafana nie otrzymają danych."
+              echo "- Następstwa: artefakty z raportami JSON są dostępne, ale dashboardy Prometheus/Grafana nie otrzymają danych z tego runu."
             } >> "${GITHUB_STEP_SUMMARY}"
             exit 0
           fi
@@ -1122,7 +1122,7 @@ jobs:
 
   marketplace-catalog:
     name: Marketplace Catalog Packaging
-    runs-on: [self-hosted, local, windows]
+    runs-on: self-hosted
     needs: lint-and-test
 
     steps:
@@ -1251,7 +1251,7 @@ jobs:
 
   deploy:
     name: Release marketplace assets
-    runs-on: [self-hosted, local, windows]
+    runs-on: self-hosted
     needs:
       - marketplace-catalog
       - ui-packaging
