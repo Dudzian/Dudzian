@@ -49,86 +49,86 @@ jobs:
         id: publish-metrics
         run: |
           python - <<'PY'
-            import json
-            import os
-            from pathlib import Path
-            from typing import Any, Mapping
+          import json
+          import os
+          from pathlib import Path
+          from typing import Any, Mapping
 
-            report_path = Path("logs/loadtests/exchange_stress.json")
-            if not report_path.is_file():
-                raise SystemExit(f"Report not found: {report_path}")
+          report_path = Path("logs/loadtests/exchange_stress.json")
+          if not report_path.is_file():
+              raise SystemExit(f"Report not found: {report_path}")
 
-            try:
-                payload = json.loads(report_path.read_text(encoding="utf-8"))
-            except json.JSONDecodeError as exc:
-                raise SystemExit(f"Unable to parse JSON report: {exc}")
+          try:
+              payload = json.loads(report_path.read_text(encoding="utf-8"))
+          except json.JSONDecodeError as exc:
+              raise SystemExit(f"Unable to parse JSON report: {exc}")
 
-            if not isinstance(payload, Mapping):
-                raise SystemExit("Report root must be a mapping")
+          if not isinstance(payload, Mapping):
+              raise SystemExit("Report root must be a mapping")
 
-            exchanges = payload.get("exchanges")
-            if not isinstance(exchanges, Mapping) or not exchanges:
-                raise SystemExit("Report must contain non-empty 'exchanges' mapping")
+          exchanges = payload.get("exchanges")
+          if not isinstance(exchanges, Mapping) or not exchanges:
+              raise SystemExit("Report must contain non-empty 'exchanges' mapping")
 
 
-            def _get_number(value: Any, default: float) -> float:
-                try:
-                    return float(value)
-                except (TypeError, ValueError):
-                    return default
+          def _get_number(value: Any, default: float) -> float:
+              try:
+                  return float(value)
+              except (TypeError, ValueError):
+                  return default
 
-            rows = []
-            for name, metrics in sorted(exchanges.items()):
-                if not isinstance(metrics, Mapping):
-                    raise SystemExit(f"Metrics for '{name}' must be a mapping")
+          rows = []
+          for name, metrics in sorted(exchanges.items()):
+              if not isinstance(metrics, Mapping):
+                  raise SystemExit(f"Metrics for '{name}' must be a mapping")
 
-                latency = metrics.get("latency_ms", {})
-                if not isinstance(latency, Mapping):
-                    raise SystemExit(f"Latency metrics for '{name}' must be a mapping")
+              latency = metrics.get("latency_ms", {})
+              if not isinstance(latency, Mapping):
+                  raise SystemExit(f"Latency metrics for '{name}' must be a mapping")
 
-                avg_ms = _get_number(latency.get("avg_ms", 0.0), 0.0)
-                p95_ms = _get_number(latency.get("p95_ms", 0.0), 0.0)
-                errors = int(_get_number(metrics.get("errors", 0), 0))
-                total = int(_get_number(metrics.get("total_requests", 0), 0))
-                throttled = int(_get_number(metrics.get("throttled", 0), 0))
-                denominator = total if total > 0 else 1
-                throttle_rate = throttled / denominator
-                rows.append((name, avg_ms, p95_ms, errors, throttle_rate))
+              avg_ms = _get_number(latency.get("avg_ms", 0.0), 0.0)
+              p95_ms = _get_number(latency.get("p95_ms", 0.0), 0.0)
+              errors = int(_get_number(metrics.get("errors", 0), 0))
+              total = int(_get_number(metrics.get("total_requests", 0), 0))
+              throttled = int(_get_number(metrics.get("throttled", 0), 0))
+              denominator = total if total > 0 else 1
+              throttle_rate = throttled / denominator
+              rows.append((name, avg_ms, p95_ms, errors, throttle_rate))
 
-            lines = [
-                "# Exchange stress metrics",
-                "",
-                "| Exchange | avg_ms | p95_ms | errors | throttle_rate |",
-                "| --- | ---: | ---: | ---: | ---: |",
-            ]
-            for name, avg_ms, p95_ms, errors, throttle_rate in rows:
-                lines.append(
-                    f"| {name} | {avg_ms:.3f} | {p95_ms:.3f} | {errors} | {throttle_rate:.2%} |"
-                )
+          lines = [
+              "# Exchange stress metrics",
+              "",
+              "| Exchange | avg_ms | p95_ms | errors | throttle_rate |",
+              "| --- | ---: | ---: | ---: | ---: |",
+          ]
+          for name, avg_ms, p95_ms, errors, throttle_rate in rows:
+              lines.append(
+                  f"| {name} | {avg_ms:.3f} | {p95_ms:.3f} | {errors} | {throttle_rate:.2%} |"
+              )
 
-            content = "\n".join(lines) + "\n"
-            summary_path = Path("exchange_stress_summary.md")
-            summary_path.write_text(content, encoding="utf-8")
+          content = "\n".join(lines) + "\n"
+          summary_path = Path("exchange_stress_summary.md")
+          summary_path.write_text(content, encoding="utf-8")
 
-            summary_file = os.environ.get("GITHUB_STEP_SUMMARY")
-            if summary_file:
-                with Path(summary_file).open("a", encoding="utf-8") as handle:
-                    handle.write(content)
+          summary_file = os.environ.get("GITHUB_STEP_SUMMARY")
+          if summary_file:
+              with Path(summary_file).open("a", encoding="utf-8") as handle:
+                  handle.write(content)
 
-            outputs = {name: {
-                "avg_ms": avg_ms,
-                "p95_ms": p95_ms,
-                "errors": errors,
-                "throttle_rate": throttle_rate,
-            } for name, avg_ms, p95_ms, errors, throttle_rate in rows}
+          outputs = {name: {
+              "avg_ms": avg_ms,
+              "p95_ms": p95_ms,
+              "errors": errors,
+              "throttle_rate": throttle_rate,
+          } for name, avg_ms, p95_ms, errors, throttle_rate in rows}
 
-            output_file = os.environ.get("GITHUB_OUTPUT")
-            if output_file:
-                payload = json.dumps(outputs, sort_keys=True)
-                with Path(output_file).open("a", encoding="utf-8") as handle:
-                    handle.write(f"metrics_json<<'EOF'\n{payload}\nEOF\n")
+          output_file = os.environ.get("GITHUB_OUTPUT")
+          if output_file:
+              payload = json.dumps(outputs, sort_keys=True)
+              with Path(output_file).open("a", encoding="utf-8") as handle:
+                  handle.write(f"metrics_json<<'EOF'\n{payload}\nEOF\n")
 
-            print(content)
+          print(content)
           PY
 
       - name: Upload exchange stress artifact
