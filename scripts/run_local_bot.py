@@ -17,7 +17,7 @@ import threading
 import time
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Final, Mapping, Optional, Sequence
+from typing import Any, Final, Mapping, Optional, Sequence, cast
 
 from bot_core.api.server import build_local_runtime_context, LocalRuntimeServer
 from bot_core.execution.live_router import LiveExecutionRouter
