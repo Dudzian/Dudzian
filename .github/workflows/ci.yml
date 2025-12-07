@@ -59,7 +59,7 @@ jobs:
 
   lint-and-test:
     name: Lint and Test
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, local, windows]
 
     steps:
       - name: Check out repository
@@ -73,9 +73,6 @@ jobs:
         uses: actions/setup-python@v5
         with:
           python-version: "3.11"
-
-      - name: Install system dependencies for UI tests
-        run: sudo apt-get update && sudo apt-get install -y libegl1
 
       - name: Install dependencies
         run: |
@@ -116,7 +113,7 @@ jobs:
 
   licensing-hwid-tolerance:
     name: Licensing HWID Tolerance
-    runs-on: self-hosted
+    runs-on: [self-hosted, local, windows]
 
     steps:
       - name: Check out repository
@@ -137,7 +134,7 @@ jobs:
 
   mypy-core:
     name: Mypy (core packages)
-    runs-on: self-hosted
+    runs-on: [self-hosted, local, windows]
 
     steps:
       - name: Check out repository
@@ -199,7 +196,7 @@ jobs:
 
   bot-core-fast-tests:
     name: Bot Core Fast Tests
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, local, windows]
     timeout-minutes: 25
 
     steps:
@@ -208,9 +205,6 @@ jobs:
 
       - name: Lint repository paths
         run: python scripts/lint_paths.py
-
-      - name: Install system dependencies for UI tests
-        run: sudo apt-get update && sudo apt-get install -y libegl1
 
       - name: Set up Python
         uses: actions/setup-python@v5
@@ -401,7 +395,6 @@ jobs:
             docs/audit/marketing_parity_report.json
           if-no-files-found: error
 
-
   ui-ctest:
     name: UI Native Tests
     runs-on: ubuntu-latest
@@ -556,7 +549,7 @@ jobs:
               "downtime_warning_seconds": 30.0,
           }
           if config_path.exists():
-              config = yaml.safe_load(config.read_text(encoding="utf-8")) or {}
+              config = yaml.safe_load(config_path.read_text(encoding="utf-8")) or {}
               feed_sla.update(((config.get("observability") or {}).get("feed_sla")) or {})
 
           p95_ms = float(payload.get("p95_ms", 0.0))
@@ -980,7 +973,7 @@ jobs:
               echo "### Pushgateway availability"
               echo ":warning: Tryb fallback — metryki nie zostały wypchnięte do Pushgateway."
               echo "- Powód: ${METRICS_MODE_REASON:-brak informacji}"
-              echo "- Następstwa: artefakty z raportami JSON są dostępne, ale dashboardy Prometheus/Grafana nie otrzymają danych z tego runu."
+              echo "- Następstwa: artefakty z raportami JSON są dostępne, ale dashboardy Prometheus/Grafana nie otrzymają danych."
             } >> "${GITHUB_STEP_SUMMARY}"
             exit 0
           fi
@@ -1122,7 +1115,7 @@ jobs:
 
   marketplace-catalog:
     name: Marketplace Catalog Packaging
-    runs-on: self-hosted
+    runs-on: [self-hosted, local, windows]
     needs: lint-and-test
 
     steps:
@@ -1251,7 +1244,7 @@ jobs:
 
   deploy:
     name: Release marketplace assets
-    runs-on: self-hosted
+    runs-on: [self-hosted, local, windows]
     needs:
       - marketplace-catalog
       - ui-packaging
