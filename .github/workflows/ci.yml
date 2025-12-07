@@ -59,7 +59,7 @@ jobs:
 
   lint-and-test:
     name: Lint and Test
-    runs-on: [self-hosted, local, windows]
+    runs-on: self-hosted
 
     steps:
       - name: Check out repository
@@ -113,7 +113,7 @@ jobs:
 
   licensing-hwid-tolerance:
     name: Licensing HWID Tolerance
-    runs-on: [self-hosted, local, windows]
+    runs-on: self-hosted
 
     steps:
       - name: Check out repository
@@ -134,7 +134,7 @@ jobs:
 
   mypy-core:
     name: Mypy (core packages)
-    runs-on: [self-hosted, local, windows]
+    runs-on: self-hosted
 
     steps:
       - name: Check out repository
@@ -196,7 +196,7 @@ jobs:
 
   bot-core-fast-tests:
     name: Bot Core Fast Tests
-    runs-on: [self-hosted, local, windows]
+    runs-on: self-hosted
     timeout-minutes: 25
 
     steps:
@@ -1115,7 +1115,7 @@ jobs:
 
   marketplace-catalog:
     name: Marketplace Catalog Packaging
-    runs-on: [self-hosted, local, windows]
+    runs-on: self-hosted
     needs: lint-and-test
 
     steps:
@@ -1244,7 +1244,7 @@ jobs:
 
   deploy:
     name: Release marketplace assets
-    runs-on: [self-hosted, local, windows]
+    runs-on: self-hosted
     needs:
       - marketplace-catalog
       - ui-packaging
