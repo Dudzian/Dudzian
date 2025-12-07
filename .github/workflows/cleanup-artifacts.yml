@@ -13,7 +13,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Delete artifacts older than 7 days
-        uses: crazy-max/ghaction-delete-artifact@v3
+        uses: c-hive/gha-remove-artifacts@v1
         with:
-          max-age: 7
+          age: '7 days'
           skip-tags: true
