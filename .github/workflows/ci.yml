@@ -116,7 +116,7 @@ jobs:
 
   licensing-hwid-tolerance:
     name: Licensing HWID Tolerance
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, local, windows]
 
     steps:
       - name: Check out repository
@@ -137,7 +137,7 @@ jobs:
 
   mypy-core:
     name: Mypy (core packages)
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, local, windows]
 
     steps:
       - name: Check out repository
@@ -1122,7 +1122,7 @@ jobs:
 
   marketplace-catalog:
     name: Marketplace Catalog Packaging
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, local, windows]
     needs: lint-and-test
 
     steps:
@@ -1251,7 +1251,7 @@ jobs:
 
   deploy:
     name: Release marketplace assets
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, local, windows]
     needs:
       - marketplace-catalog
       - ui-packaging
