@@ -126,7 +126,9 @@ jobs:
           if output_file:
               payload = json.dumps(outputs, sort_keys=True)
               with Path(output_file).open("a", encoding="utf-8") as handle:
-                  handle.write(f"metrics_json<<'EOF'\n{payload}\nEOF\n")
+                  handle.write("metrics_json<<EOF\n")
+                  handle.write(f"{payload}\n")
+                  handle.write("EOF\n")
 
           print(content)
           PY
