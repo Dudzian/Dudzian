@@ -1223,6 +1223,8 @@ jobs:
 
     needs: prepare-wheelhouse
 
+    needs: prepare-wheelhouse
+
     steps:
       - name: Check out repository
         uses: actions/checkout@v4
