@@ -15,6 +15,7 @@ env:
   QT_WINDOWS_MODULES: "qtcharts qtdeclarative qtquickcontrols2 qtshadertools qtimageformats"
 
 jobs:
+  # Source of truth: builds or fetches wheelhouse artifacts consumed by downstream jobs.
   prepare-wheelhouse:
     name: Prepare wheelhouse
     runs-on: ${{ matrix.os }}
@@ -116,6 +117,7 @@ jobs:
           name: ${{ steps.wheelhouse-plan.outputs.wheelhouse_artifact }}
           path: ${{ steps.wheelhouse-plan.outputs.wheelhouse_dir }}
           run-id: ${{ env.WHEELHOUSE_RUN_ID }}
+          if-no-artifact-found: error
 
       - name: Upload wheelhouse artifact
         if: steps.wheelhouse-plan.outputs.wheelhouse_source == 'build'
@@ -140,12 +142,14 @@ jobs:
       - name: Check out repository
         uses: actions/checkout@v4
 
+      # Wheelhouse consumer: expects artifact from prepare-wheelhouse.
       - name: Download wheelhouse
         if: env.WHEELHOUSE_ENABLED == 'true'
         uses: actions/download-artifact@v4
         with:
           name: ${{ env.WHEELHOUSE_ARTIFACT }}
           path: ${{ env.WHEELHOUSE_DIR }}
+          if-no-artifact-found: error
 
       - name: Lint repository paths
         run: python scripts/lint_paths.py
@@ -256,12 +260,14 @@ jobs:
       - name: Check out repository
         uses: actions/checkout@v4
 
+      # Wheelhouse consumer: uses artifact produced in prepare-wheelhouse.
       - name: Download wheelhouse
         if: env.WHEELHOUSE_ENABLED == 'true'
         uses: actions/download-artifact@v4
         with:
           name: ${{ env.WHEELHOUSE_ARTIFACT }}
           path: ${{ env.WHEELHOUSE_DIR }}
+          if-no-artifact-found: error
 
       - name: Lint repository paths
         run: python scripts/lint_paths.py
@@ -327,12 +333,14 @@ jobs:
       - name: Check out repository
         uses: actions/checkout@v4
 
+      # Wheelhouse consumer: uses artifact produced in prepare-wheelhouse.
       - name: Download wheelhouse
         if: env.WHEELHOUSE_ENABLED == 'true'
         uses: actions/download-artifact@v4
         with:
           name: ${{ env.WHEELHOUSE_ARTIFACT }}
           path: ${{ env.WHEELHOUSE_DIR }}
+          if-no-artifact-found: error
 
       - name: Lint repository paths
         run: python scripts/lint_paths.py
@@ -593,12 +601,14 @@ jobs:
           sudo apt-get install -y libegl1 libgl1 libpulse0 libxkbcommon-x11-0 \
             libxcb-cursor0 libxcb-xinerama0
 
+      # Wheelhouse consumer: uses artifact produced in prepare-wheelhouse.
       - name: Download PySide6 wheel artifact
         if: env.WHEELHOUSE_ENABLED == 'true'
         uses: actions/download-artifact@v4
         with:
           name: ${{ env.WHEELHOUSE_ARTIFACT }}
           path: ${{ env.WHEELHOUSE_DIR }}
+          if-no-artifact-found: error
 
       - name: Install Python dependencies
         run: |
@@ -652,12 +662,14 @@ jobs:
           sudo apt-get install -y libegl1 libgl1 libpulse0 libxkbcommon-x11-0 \
             libxcb-cursor0 libxcb-xinerama0
 
+      # Wheelhouse consumer: uses artifact produced in prepare-wheelhouse.
       - name: Download PySide6 wheel artifact
         if: env.WHEELHOUSE_ENABLED == 'true'
         uses: actions/download-artifact@v4
         with:
           name: ${{ env.WHEELHOUSE_ARTIFACT }}
           path: ${{ env.WHEELHOUSE_DIR }}
+          if-no-artifact-found: error
 
       - name: Install Python dependencies
         run: |
@@ -813,12 +825,14 @@ jobs:
           sudo apt-get install -y libegl1 libgl1 libpulse0 libxkbcommon-x11-0 \
             libxcb-cursor0 libxcb-xinerama0
 
+      # Wheelhouse consumer: uses artifact produced in prepare-wheelhouse.
       - name: Download PySide6 wheel artifact
         if: env.WHEELHOUSE_ENABLED == 'true'
         uses: actions/download-artifact@v4
         with:
           name: ${{ env.WHEELHOUSE_ARTIFACT }}
           path: ${{ env.WHEELHOUSE_DIR }}
+          if-no-artifact-found: error
 
       - name: Install Python dependencies
         run: |
@@ -935,12 +949,14 @@ jobs:
           sudo apt-get install -y libegl1 libgl1 libpulse0 libxkbcommon-x11-0 \
             libxcb-cursor0 libxcb-xinerama0
 
+      # Wheelhouse consumer: uses artifact produced in prepare-wheelhouse.
       - name: Download wheelhouse
         if: env.WHEELHOUSE_ENABLED == 'true'
         uses: actions/download-artifact@v4
         with:
           name: ${{ env.WHEELHOUSE_ARTIFACT }}
           path: ${{ env.WHEELHOUSE_DIR }}
+          if-no-artifact-found: error
 
       - name: Install Python dependencies
         run: |
@@ -1341,17 +1357,20 @@ jobs:
       WHEELHOUSE_DIR: ${{ needs.prepare-wheelhouse.outputs.wheelhouse_dir }}
       WHEELHOUSE_SOURCE: ${{ needs.prepare-wheelhouse.outputs.wheelhouse_source }}
       WHEELHOUSE_ARTIFACT: ${{ needs.prepare-wheelhouse.outputs.wheelhouse_artifact }}
+      WHEELHOUSE_ENABLED: ${{ needs.prepare-wheelhouse.outputs.wheelhouse_enabled }}
 
     steps:
       - name: Check out repository
         uses: actions/checkout@v4
 
+      # Wheelhouse consumer: uses artifact produced in prepare-wheelhouse.
       - name: Download wheelhouse
         if: env.WHEELHOUSE_ENABLED == 'true'
         uses: actions/download-artifact@v4
         with:
           name: ${{ env.WHEELHOUSE_ARTIFACT }}
           path: ${{ env.WHEELHOUSE_DIR }}
+          if-no-artifact-found: error
 
       - name: Set up Python
         uses: actions/setup-python@v5
