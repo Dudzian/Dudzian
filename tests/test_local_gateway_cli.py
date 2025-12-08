@@ -3,6 +3,8 @@ import json
 import sys
 import types
 
+import pytest
+
 from bot_core.runtime import local_gateway
 from bot_core.security.cloud_flag import CloudFlagValidationError
 
