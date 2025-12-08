@@ -73,13 +73,15 @@ def test_run_stress_lab_cli_fails_on_breach(tmp_path: Path, monkeypatch: pytest.
     monkeypatch.setenv("STRESS_LAB_SIGNING_KEY", "unit-test-secret")
     module = _patch_stress_lab_runner(monkeypatch, has_failures=True)
 
-    exit_code = module.main([
-        "--config",
-        "config/core.yaml",
-        "--output",
-        str(output_path),
-        "--fail-on-breach",
-    ])
+    exit_code = module.main(
+        [
+            "--config",
+            "config/core.yaml",
+            "--output",
+            str(output_path),
+            "--fail-on-breach",
+        ],
+    )
 
     assert exit_code == 3
     assert output_path.exists()
@@ -91,14 +93,16 @@ def test_run_stress_lab_cli_missing_signing_env(monkeypatch: pytest.MonkeyPatch,
     monkeypatch.delenv("STRESS_LAB_SIGNING_KEY", raising=False)
     monkeypatch.delenv("MISSING_KEY", raising=False)
 
-    exit_code = module.main([
-        "--config",
-        "config/core.yaml",
-        "--output",
-        str(tmp_path / "report.json"),
-        "--signing-key-env",
-        "MISSING_KEY",
-    ])
+    exit_code = module.main(
+        [
+            "--config",
+            "config/core.yaml",
+            "--output",
+            str(tmp_path / "report.json"),
+            "--signing-key-env",
+            "MISSING_KEY",
+        ],
+    )
 
     assert exit_code == 2
     assert not module_calls
@@ -110,14 +114,16 @@ def test_run_stress_lab_cli_missing_signing_file(monkeypatch: pytest.MonkeyPatch
     module = _patch_stress_lab_runner(monkeypatch, has_failures=False, run_called=module_calls)
     monkeypatch.delenv("STRESS_LAB_SIGNING_KEY", raising=False)
 
-    exit_code = module.main([
-        "--config",
-        "config/core.yaml",
-        "--output",
-        str(tmp_path / "report.json"),
-        "--signing-key-path",
-        str(tmp_path / "missing.key"),
-    ])
+    exit_code = module.main(
+        [
+            "--config",
+            "config/core.yaml",
+            "--output",
+            str(tmp_path / "report.json"),
+            "--signing-key-path",
+            str(tmp_path / "missing.key"),
+        ],
+    )
 
     assert exit_code == 2
     assert not module_calls
