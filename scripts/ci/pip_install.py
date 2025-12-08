@@ -24,6 +24,11 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
         default=os.environ.get("WHEELHOUSE_DIR"),
         help="Wheelhouse directory; if set and exists, installs with --no-index/--find-links",
     )
+    parser.add_argument(
+        "--require-wheelhouse",
+        action="store_true",
+        help="Fail if the provided wheelhouse path is missing",
+    )
     return parser.parse_args(argv)
 
 
@@ -36,6 +41,9 @@ def main(argv: list[str]) -> int:
     if wheelhouse:
         wheel_path = Path(wheelhouse).expanduser().resolve()
         extra_env["WHEELHOUSE_DIR"] = str(wheel_path)
+        if not wheel_path.is_dir() and ns.require_wheelhouse:
+            print(f"Required wheelhouse not found at: {wheel_path}", file=sys.stderr)
+            return 1
         if wheel_path.is_dir():
             pip_cmd.extend(["--no-index", "--find-links", str(wheel_path)])
     if not ns.args:
