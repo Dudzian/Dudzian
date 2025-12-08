@@ -18,6 +18,10 @@ on:
           - ui-packaging-windows
           - ui-native-tests
           - release-quality-gates
+      # wheelhouse_source options:
+      # - artifact: download the wheelhouse artifact produced by prepare-wheelhouse
+      # - local_path: reuse an existing directory on the self-hosted runner (set wheelhouse_local_path)
+      # - none: skip wheelhouse usage entirely
       wheelhouse_source:
         description: "Source for wheelhouse"
         required: true
@@ -44,6 +48,7 @@ concurrency:
 
 env:
   CI: "1"
+  # Non-dispatch triggers default to wheelhouse_source=none to avoid missing artifacts; set wheelhouse_source when manually dispatching.
 
 jobs:
   prepare-wheelhouse-windows:
@@ -55,8 +60,8 @@ jobs:
     timeout-minutes: 240
     env:
       SELECTED_JOB: prepare-wheelhouse
-      WHEELHOUSE_SOURCE: ${{ inputs.wheelhouse_source || 'artifact' }}
-      WHEELHOUSE_LOCAL_PATH: ${{ inputs.wheelhouse_local_path || '' }}
+      WHEELHOUSE_SOURCE: ${{ github.event_name == 'workflow_dispatch' && inputs.wheelhouse_source || 'none' }}
+      WHEELHOUSE_LOCAL_PATH: ${{ github.event_name == 'workflow_dispatch' && inputs.wheelhouse_local_path || '' }}
       UPLOAD_ARTIFACTS: ${{ inputs.upload_artifacts != 'false' }}
 
     steps:
@@ -79,22 +84,34 @@ jobs:
         shell: pwsh
         run: python --version
 
-      - name: Configure wheelhouse directory
+      - &configure-wheelhouse
+        name: Configure wheelhouse directory
         shell: pwsh
         run: |
           switch ("$env:WHEELHOUSE_SOURCE") {
-            'artifact'   { "WHEELHOUSE_DIR=$env:GITHUB_WORKSPACE\wheelhouse" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append }
+            'artifact' {
+              "WHEELHOUSE_DIR=$env:GITHUB_WORKSPACE\wheelhouse" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+            }
             'local_path' {
-              if ("$env:WHEELHOUSE_LOCAL_PATH") {
-                "WHEELHOUSE_DIR=$env:WHEELHOUSE_LOCAL_PATH" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
-              } else {
+              if (-not "$env:WHEELHOUSE_LOCAL_PATH") {
                 Write-Error "wheelhouse_local_path is required when wheelhouse_source=local_path"
+              } elseif (-not (Test-Path "$env:WHEELHOUSE_LOCAL_PATH")) {
+                Write-Error "wheelhouse_local_path '$env:WHEELHOUSE_LOCAL_PATH' does not exist on the runner"
+              } else {
+                "WHEELHOUSE_DIR=$env:WHEELHOUSE_LOCAL_PATH" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
               }
             }
-            default { }
+            'none' {
+              Write-Host "wheelhouse_source=none -> skipping wheelhouse usage"
+              "WHEELHOUSE_DIR=" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+            }
+            default {
+              Write-Error "Unknown wheelhouse_source '$env:WHEELHOUSE_SOURCE'"
+            }
           }
 
-      - name: Download wheelhouse artifact
+      - &download-wheelhouse
+        name: Download wheelhouse artifact
         if: env.WHEELHOUSE_SOURCE == 'artifact'
         uses: actions/download-artifact@v4
         with:
@@ -159,8 +176,8 @@ jobs:
     timeout-minutes: 240
     env:
       SELECTED_JOB: lint-and-test
-      WHEELHOUSE_SOURCE: ${{ inputs.wheelhouse_source || 'artifact' }}
-      WHEELHOUSE_LOCAL_PATH: ${{ inputs.wheelhouse_local_path || '' }}
+      WHEELHOUSE_SOURCE: ${{ github.event_name == 'workflow_dispatch' && inputs.wheelhouse_source || 'none' }}
+      WHEELHOUSE_LOCAL_PATH: ${{ github.event_name == 'workflow_dispatch' && inputs.wheelhouse_local_path || '' }}
       UPLOAD_ARTIFACTS: ${{ inputs.upload_artifacts != 'false' }}
 
     steps:
@@ -183,28 +200,9 @@ jobs:
         shell: pwsh
         run: python --version
 
-      - name: Configure wheelhouse directory
-        shell: pwsh
-        run: |
-          switch ("$env:WHEELHOUSE_SOURCE") {
-            'artifact'   { "WHEELHOUSE_DIR=$env:GITHUB_WORKSPACE\wheelhouse" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append }
-            'local_path' {
-              if ("$env:WHEELHOUSE_LOCAL_PATH") {
-                "WHEELHOUSE_DIR=$env:WHEELHOUSE_LOCAL_PATH" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
-              } else {
-                Write-Error "wheelhouse_local_path is required when wheelhouse_source=local_path"
-              }
-            }
-            default { }
-          }
+      - *configure-wheelhouse
 
-      - name: Download wheelhouse artifact
-        if: env.WHEELHOUSE_SOURCE == 'artifact'
-        uses: actions/download-artifact@v4
-        with:
-          name: wheelhouse-windows
-          path: wheelhouse
-          if-no-artifact-found: error
+      - *download-wheelhouse
 
       - name: Python and proxy diagnostics
         shell: pwsh
@@ -255,8 +253,8 @@ jobs:
     timeout-minutes: 240
     env:
       SELECTED_JOB: bot-core-fast-tests
-      WHEELHOUSE_SOURCE: ${{ inputs.wheelhouse_source || 'artifact' }}
-      WHEELHOUSE_LOCAL_PATH: ${{ inputs.wheelhouse_local_path || '' }}
+      WHEELHOUSE_SOURCE: ${{ github.event_name == 'workflow_dispatch' && inputs.wheelhouse_source || 'none' }}
+      WHEELHOUSE_LOCAL_PATH: ${{ github.event_name == 'workflow_dispatch' && inputs.wheelhouse_local_path || '' }}
       UPLOAD_ARTIFACTS: ${{ inputs.upload_artifacts != 'false' }}
 
     steps:
@@ -279,28 +277,9 @@ jobs:
         shell: pwsh
         run: python --version
 
-      - name: Configure wheelhouse directory
-        shell: pwsh
-        run: |
-          switch ("$env:WHEELHOUSE_SOURCE") {
-            'artifact'   { "WHEELHOUSE_DIR=$env:GITHUB_WORKSPACE\wheelhouse" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append }
-            'local_path' {
-              if ("$env:WHEELHOUSE_LOCAL_PATH") {
-                "WHEELHOUSE_DIR=$env:WHEELHOUSE_LOCAL_PATH" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
-              } else {
-                Write-Error "wheelhouse_local_path is required when wheelhouse_source=local_path"
-              }
-            }
-            default { }
-          }
+      - *configure-wheelhouse
 
-      - name: Download wheelhouse artifact
-        if: env.WHEELHOUSE_SOURCE == 'artifact'
-        uses: actions/download-artifact@v4
-        with:
-          name: wheelhouse-windows
-          path: wheelhouse
-          if-no-artifact-found: error
+      - *download-wheelhouse
 
       - name: Python and proxy diagnostics
         shell: pwsh
@@ -351,8 +330,8 @@ jobs:
     timeout-minutes: 240
     env:
       SELECTED_JOB: ui-packaging-windows
-      WHEELHOUSE_SOURCE: ${{ inputs.wheelhouse_source || 'artifact' }}
-      WHEELHOUSE_LOCAL_PATH: ${{ inputs.wheelhouse_local_path || '' }}
+      WHEELHOUSE_SOURCE: ${{ github.event_name == 'workflow_dispatch' && inputs.wheelhouse_source || 'none' }}
+      WHEELHOUSE_LOCAL_PATH: ${{ github.event_name == 'workflow_dispatch' && inputs.wheelhouse_local_path || '' }}
       UPLOAD_ARTIFACTS: ${{ inputs.upload_artifacts != 'false' }}
 
     steps:
@@ -375,28 +354,9 @@ jobs:
         shell: pwsh
         run: python --version
 
-      - name: Configure wheelhouse directory
-        shell: pwsh
-        run: |
-          switch ("$env:WHEELHOUSE_SOURCE") {
-            'artifact'   { "WHEELHOUSE_DIR=$env:GITHUB_WORKSPACE\wheelhouse" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append }
-            'local_path' {
-              if ("$env:WHEELHOUSE_LOCAL_PATH") {
-                "WHEELHOUSE_DIR=$env:WHEELHOUSE_LOCAL_PATH" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
-              } else {
-                Write-Error "wheelhouse_local_path is required when wheelhouse_source=local_path"
-              }
-            }
-            default { }
-          }
+      - *configure-wheelhouse
 
-      - name: Download wheelhouse artifact
-        if: env.WHEELHOUSE_SOURCE == 'artifact'
-        uses: actions/download-artifact@v4
-        with:
-          name: wheelhouse-windows
-          path: wheelhouse
-          if-no-artifact-found: error
+      - *download-wheelhouse
 
       - name: Python and proxy diagnostics
         shell: pwsh
@@ -447,8 +407,8 @@ jobs:
     timeout-minutes: 240
     env:
       SELECTED_JOB: ui-native-tests
-      WHEELHOUSE_SOURCE: ${{ inputs.wheelhouse_source || 'artifact' }}
-      WHEELHOUSE_LOCAL_PATH: ${{ inputs.wheelhouse_local_path || '' }}
+      WHEELHOUSE_SOURCE: ${{ github.event_name == 'workflow_dispatch' && inputs.wheelhouse_source || 'none' }}
+      WHEELHOUSE_LOCAL_PATH: ${{ github.event_name == 'workflow_dispatch' && inputs.wheelhouse_local_path || '' }}
       UPLOAD_ARTIFACTS: ${{ inputs.upload_artifacts != 'false' }}
 
     steps:
@@ -471,28 +431,9 @@ jobs:
         shell: pwsh
         run: python --version
 
-      - name: Configure wheelhouse directory
-        shell: pwsh
-        run: |
-          switch ("$env:WHEELHOUSE_SOURCE") {
-            'artifact'   { "WHEELHOUSE_DIR=$env:GITHUB_WORKSPACE\wheelhouse" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append }
-            'local_path' {
-              if ("$env:WHEELHOUSE_LOCAL_PATH") {
-                "WHEELHOUSE_DIR=$env:WHEELHOUSE_LOCAL_PATH" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
-              } else {
-                Write-Error "wheelhouse_local_path is required when wheelhouse_source=local_path"
-              }
-            }
-            default { }
-          }
+      - *configure-wheelhouse
 
-      - name: Download wheelhouse artifact
-        if: env.WHEELHOUSE_SOURCE == 'artifact'
-        uses: actions/download-artifact@v4
-        with:
-          name: wheelhouse-windows
-          path: wheelhouse
-          if-no-artifact-found: error
+      - *download-wheelhouse
 
       - name: Python and proxy diagnostics
         shell: pwsh
@@ -543,8 +484,8 @@ jobs:
     timeout-minutes: 240
     env:
       SELECTED_JOB: release-quality-gates
-      WHEELHOUSE_SOURCE: ${{ inputs.wheelhouse_source || 'artifact' }}
-      WHEELHOUSE_LOCAL_PATH: ${{ inputs.wheelhouse_local_path || '' }}
+      WHEELHOUSE_SOURCE: ${{ github.event_name == 'workflow_dispatch' && inputs.wheelhouse_source || 'none' }}
+      WHEELHOUSE_LOCAL_PATH: ${{ github.event_name == 'workflow_dispatch' && inputs.wheelhouse_local_path || '' }}
       UPLOAD_ARTIFACTS: ${{ inputs.upload_artifacts != 'false' }}
 
     steps:
@@ -567,28 +508,9 @@ jobs:
         shell: pwsh
         run: python --version
 
-      - name: Configure wheelhouse directory
-        shell: pwsh
-        run: |
-          switch ("$env:WHEELHOUSE_SOURCE") {
-            'artifact'   { "WHEELHOUSE_DIR=$env:GITHUB_WORKSPACE\wheelhouse" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append }
-            'local_path' {
-              if ("$env:WHEELHOUSE_LOCAL_PATH") {
-                "WHEELHOUSE_DIR=$env:WHEELHOUSE_LOCAL_PATH" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
-              } else {
-                Write-Error "wheelhouse_local_path is required when wheelhouse_source=local_path"
-              }
-            }
-            default { }
-          }
+      - *configure-wheelhouse
 
-      - name: Download wheelhouse artifact
-        if: env.WHEELHOUSE_SOURCE == 'artifact'
-        uses: actions/download-artifact@v4
-        with:
-          name: wheelhouse-windows
-          path: wheelhouse
-          if-no-artifact-found: error
+      - *download-wheelhouse
 
       - name: Python and proxy diagnostics
         shell: pwsh
