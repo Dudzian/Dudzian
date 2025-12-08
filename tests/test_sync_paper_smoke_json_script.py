@@ -49,7 +49,11 @@ def test_missing_json_log_returns_error(tmp_path: Path, capsys) -> None:
     assert exit_code == 1
     output = json.loads(capsys.readouterr().out)
     assert output["status"] == "error"
-    assert output["error"] == "missing_json_log"
+    status_field = output.get("status")
+    error_value = output.get("error")
+    if isinstance(status_field, dict):
+        error_value = status_field.get("error", error_value)
+    assert error_value == "missing_json_log"
 
 
 def test_missing_config_returns_error(tmp_path: Path, capsys, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -74,7 +78,11 @@ def test_missing_config_returns_error(tmp_path: Path, capsys, monkeypatch: pytes
     assert exit_code == 2
     output = json.loads(capsys.readouterr().out)
     assert output["status"] == "error"
-    assert output["error"] == "missing_config"
+    status_field = output.get("status")
+    error_value = output.get("error")
+    if isinstance(status_field, dict):
+        error_value = status_field.get("error", error_value)
+    assert error_value == "missing_config"
 
 
 def test_successful_sync_uses_latest_record(monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys) -> None:

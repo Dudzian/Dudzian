@@ -1,6 +1,9 @@
 name: Manual Windows Self-Hosted
 
 on:
+  push:
+    branches: ["**"]
+  pull_request:
   workflow_dispatch:
     inputs:
       job:
@@ -45,7 +48,7 @@ env:
 jobs:
   windows_selfhosted:
     name: Windows self-hosted job
-    runs-on: [self-hosted, Windows]
+    runs-on: [self-hosted, windows]
     timeout-minutes: 240
 
     steps:
