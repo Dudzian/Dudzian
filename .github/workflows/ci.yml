@@ -69,7 +69,7 @@ jobs:
 
   lint-and-test:
     name: Lint and Test
-    runs-on: self-hosted
+    runs-on: [self-hosted, windows]
     needs: prepare-wheelhouse
 
     steps:
@@ -130,7 +130,7 @@ jobs:
 
   licensing-hwid-tolerance:
     name: Licensing HWID Tolerance
-    runs-on: self-hosted
+    runs-on: [self-hosted, windows]
 
     steps:
       - name: Check out repository
@@ -151,7 +151,7 @@ jobs:
 
   mypy-core:
     name: Mypy (core packages)
-    runs-on: self-hosted
+    runs-on: [self-hosted, windows]
 
     steps:
       - name: Check out repository
@@ -228,7 +228,7 @@ jobs:
 
   bot-core-fast-tests:
     name: Bot Core Fast Tests
-    runs-on: self-hosted
+    runs-on: [self-hosted, windows]
     needs: prepare-wheelhouse
     timeout-minutes: 25
 
@@ -997,7 +997,7 @@ jobs:
               echo "### Pushgateway availability"
               echo ":warning: Tryb fallback — metryki nie zostały wypchnięte do Pushgateway."
               echo "- Powód: ${METRICS_MODE_REASON:-brak informacji}"
-              echo "- Następstwa: artefakty z raportami JSON są dostępne, ale dashboardy Prometheus/Grafana nie otrzymają danych."
+              echo "- Następstwa: artefakty z raportami JSON są dostępne, ale dashboardy Prometheus/Grafana nie otrzymają danych z tego uruchomienia."
             } >> "${GITHUB_STEP_SUMMARY}"
             exit 0
           fi
@@ -1139,7 +1139,7 @@ jobs:
 
   marketplace-catalog:
     name: Marketplace Catalog Packaging
-    runs-on: self-hosted
+    runs-on: [self-hosted, windows]
     needs: lint-and-test
 
     steps:
@@ -1229,7 +1229,7 @@ jobs:
       - name: Download wheelhouse
         uses: actions/download-artifact@v4
         with:
-          name: wheelhouse-${{ matrix.os }}-py3.11
+          name: wheelhouse-${{ runner.os }}-py3.11
           path: wheelhouse
 
       - name: Set up Python
@@ -1279,7 +1279,7 @@ jobs:
 
   deploy:
     name: Release marketplace assets
-    runs-on: self-hosted
+    runs-on: [self-hosted, windows]
     needs:
       - marketplace-catalog
       - ui-packaging
