@@ -1,15 +1,22 @@
-name: Windows Self-Hosted CI
+name: Manual Windows Self-Hosted
 
 on:
   workflow_dispatch:
     inputs:
-      jobs:
-        description: "Comma-separated jobs to run (prepare-wheelhouse, lint-and-test, bot-core-fast-tests, ui-packaging-windows, ui-native-tests, release-quality-gates)"
+      job:
+        description: "Job to run"
         required: true
-        default: "prepare-wheelhouse"
-        type: string
+        default: lint-and-test
+        type: choice
+        options:
+          - prepare-wheelhouse
+          - lint-and-test
+          - bot-core-fast-tests
+          - ui-packaging-windows
+          - ui-native-tests
+          - release-quality-gates
       wheelhouse_source:
-        description: "Source for wheelhouse (artifact | local_path | none)"
+        description: "Source for wheelhouse"
         required: true
         default: artifact
         type: choice
@@ -18,14 +25,9 @@ on:
           - local_path
           - none
       wheelhouse_local_path:
-        description: "Local wheelhouse path on runner when using local_path"
+        description: "Local path to wheelhouse directory (used when wheelhouse_source=local_path)"
         required: false
         default: ""
-        type: string
-      pyside6_version:
-        description: "Override PySide6 version"
-        required: false
-        default: "6.7.0"
         type: string
       upload_artifacts:
         description: "Upload artifacts/local-ci and test-results"
@@ -34,35 +36,48 @@ on:
         type: boolean
 
 concurrency:
-  group: windows-self-hosted
+  group: windows-selfhosted
   cancel-in-progress: false
 
 env:
-  PYSIDE6_VERSION: "6.7.0"
+  CI: "1"
 
 jobs:
-  windows-self-hosted:
-    name: Windows self-hosted jobs
+  windows_selfhosted:
+    name: Windows self-hosted job
     runs-on: [self-hosted, Windows]
     timeout-minutes: 240
+
     steps:
       - name: Check out repository
         uses: actions/checkout@v4
 
-      - name: Resolve PySide6 version
+      - name: Check existing Python
+        id: python_check
         shell: pwsh
-        run: |
-          $version = if ('${{ inputs.pyside6_version }}') { '${{ inputs.pyside6_version }}' } else { '$env:PYSIDE6_VERSION' }
-          echo "PYSIDE6_VERSION=$version" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+        run: python --version
+        continue-on-error: true
+
+      - name: Setup Python 3.11
+        if: steps.python_check.outcome == 'failure'
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Verify Python
+        shell: pwsh
+        run: python --version
 
       - name: Configure wheelhouse directory
         shell: pwsh
         run: |
           switch ('${{ inputs.wheelhouse_source }}') {
-            'artifact' { echo "WHEELHOUSE_DIR=$PWD/wheelhouse" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append }
+            'artifact'   { "WHEELHOUSE_DIR=$env:GITHUB_WORKSPACE\wheelhouse" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append }
             'local_path' {
               if ('${{ inputs.wheelhouse_local_path }}') {
-                echo "WHEELHOUSE_DIR=${{ inputs.wheelhouse_local_path }}" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+                "WHEELHOUSE_DIR=${{ inputs.wheelhouse_local_path }}" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+              } else {
+                Write-Error "wheelhouse_local_path is required when wheelhouse_source=local_path"
               }
             }
             default { }
@@ -72,85 +87,54 @@ jobs:
         if: inputs.wheelhouse_source == 'artifact'
         uses: actions/download-artifact@v4
         with:
-          name: wheelhouse-windows-py3.11
+          name: wheelhouse-windows
           path: wheelhouse
+          if-no-artifact-found: error
 
-      - name: Prepare wheelhouse
-        if: contains(inputs.jobs, 'prepare-wheelhouse')
+      - name: Python and proxy diagnostics
         shell: pwsh
-        env:
-          PYSIDE6_VERSION: ${{ env.PYSIDE6_VERSION }}
+        run: |
+          if (Get-Command python -ErrorAction SilentlyContinue) {
+            python -m pip config debug -v
+          } else {
+            Write-Host "python command not found"
+          }
+          Write-Host "HTTP_PROXY=$env:HTTP_PROXY"
+          Write-Host "HTTPS_PROXY=$env:HTTPS_PROXY"
+          Write-Host "NO_PROXY=$env:NO_PROXY"
+          Write-Host "PIP_INDEX_URL=$env:PIP_INDEX_URL"
+          Write-Host "PIP_EXTRA_INDEX_URL=$env:PIP_EXTRA_INDEX_URL"
+          if ($env:WHEELHOUSE_DIR) {
+            Write-Host "WHEELHOUSE_DIR=$env:WHEELHOUSE_DIR"
+            if (Test-Path $env:WHEELHOUSE_DIR) {
+              Write-Host "Wheelhouse exists. Listing first 20 entries:"
+              Get-ChildItem -Path $env:WHEELHOUSE_DIR | Select-Object -First 20 | Format-Table -AutoSize
+            } else {
+              Write-Host "Wheelhouse path does not exist on disk (yet)."
+            }
+          }
+
+      - name: Run scripts/ci/run_windows.ps1
+        shell: pwsh
         run: |
           $wheelArg = ""
           if ($env:WHEELHOUSE_DIR) { $wheelArg = "-Wheelhouse `"$env:WHEELHOUSE_DIR`"" }
-          ./scripts/ci/run_windows.ps1 -Job prepare-wheelhouse $wheelArg
+          powershell -ExecutionPolicy Bypass -File scripts/ci/run_windows.ps1 -Job '${{ inputs.job }}' $wheelArg
 
-      - name: Lint and Test
-        if: contains(inputs.jobs, 'lint-and-test')
-        shell: pwsh
-        env:
-          PYSIDE6_VERSION: ${{ env.PYSIDE6_VERSION }}
-        run: |
-          $wheelArg = ""
-          if ($env:WHEELHOUSE_DIR) { $wheelArg = "-Wheelhouse `"$env:WHEELHOUSE_DIR`"" }
-          ./scripts/ci/run_windows.ps1 -Job lint-and-test $wheelArg
-
-      - name: Bot Core Fast Tests
-        if: contains(inputs.jobs, 'bot-core-fast-tests')
-        shell: pwsh
-        env:
-          PYSIDE6_VERSION: ${{ env.PYSIDE6_VERSION }}
-        run: |
-          $wheelArg = ""
-          if ($env:WHEELHOUSE_DIR) { $wheelArg = "-Wheelhouse `"$env:WHEELHOUSE_DIR`"" }
-          ./scripts/ci/run_windows.ps1 -Job bot-core-fast-tests $wheelArg
-
-      - name: UI Packaging (Windows)
-        if: contains(inputs.jobs, 'ui-packaging-windows')
-        shell: pwsh
-        env:
-          PYSIDE6_VERSION: ${{ env.PYSIDE6_VERSION }}
-        run: |
-          $wheelArg = ""
-          if ($env:WHEELHOUSE_DIR) { $wheelArg = "-Wheelhouse `"$env:WHEELHOUSE_DIR`"" }
-          ./scripts/ci/run_windows.ps1 -Job ui-packaging-windows $wheelArg
-
-      - name: UI Native Tests
-        if: contains(inputs.jobs, 'ui-native-tests')
-        shell: pwsh
-        env:
-          PYSIDE6_VERSION: ${{ env.PYSIDE6_VERSION }}
-        run: |
-          $wheelArg = ""
-          if ($env:WHEELHOUSE_DIR) { $wheelArg = "-Wheelhouse `"$env:WHEELHOUSE_DIR`"" }
-          ./scripts/ci/run_windows.ps1 -Job ui-native-tests $wheelArg
-
-      - name: Release Quality Gates
-        if: contains(inputs.jobs, 'release-quality-gates')
-        shell: pwsh
-        env:
-          PYSIDE6_VERSION: ${{ env.PYSIDE6_VERSION }}
-        run: |
-          $wheelArg = ""
-          if ($env:WHEELHOUSE_DIR) { $wheelArg = "-Wheelhouse `"$env:WHEELHOUSE_DIR`"" }
-          ./scripts/ci/run_windows.ps1 -Job release-quality-gates $wheelArg
-
-      - name: Upload artifacts
+      - name: Upload artifacts (logs/results)
         if: always() && inputs.upload_artifacts == true
         uses: actions/upload-artifact@v4
         with:
           name: windows-selfhost-artifacts
           path: |
-            artifacts/local-ci
-            test-results
-            wheelhouse
+            artifacts/local-ci/**
+            test-results/**
           if-no-files-found: warn
-          retention-days: 7
 
-      - name: Job summary
-        if: always()
-        shell: pwsh
-        run: |
-          Write-Host "Artifacts rooted at $(Join-Path $PWD 'artifacts/local-ci')"
-          if (Test-Path "wheelhouse") { Write-Host "Wheelhouse at $(Resolve-Path wheelhouse)" }
-          if (Test-Path "test-results") { Write-Host "Test results at $(Resolve-Path test-results)" }
+      - name: Upload wheelhouse artifact
+        if: always() && inputs.upload_artifacts == true && inputs.job == 'prepare-wheelhouse'
+        uses: actions/upload-artifact@v4
+        with:
+          name: wheelhouse-windows
+          path: wheelhouse/**
+          if-no-files-found: warn
