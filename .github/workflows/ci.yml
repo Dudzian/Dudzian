@@ -10,14 +10,18 @@ on:
     - cron: "0 3 * * *"
 
 env:
-  PYSIDE6_VERSION: "6.5.2"
+  PYSIDE6_VERSION: "6.7.0"
   QT_DESKTOP_MODULES: "qtcharts qtdeclarative qtquickcontrols2"
-  QT_WINDOWS_MODULES: "qtcharts"
+  QT_WINDOWS_MODULES: "qtcharts qtdeclarative qtquickcontrols2 qtshadertools qtimageformats"
 
 jobs:
-  prepare-pyside6-wheel:
-    name: Prepare PySide6 wheels (Linux)
-    runs-on: ubuntu-latest
+  prepare-wheelhouse:
+    name: Prepare wheelhouse
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
     if: |
       github.event_name == 'schedule' ||
       github.event_name == 'workflow_dispatch' ||
@@ -27,43 +31,56 @@ jobs:
     timeout-minutes: 25
 
     steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
       - name: Set up Python
         id: setup-python
         uses: actions/setup-python@v5
         with:
           python-version: "3.11"
 
-      - name: Prepare wheelhouse directory
-        run: mkdir -p wheelhouse
+      - name: Inspect pip configuration
+        shell: bash
+        run: |
+          echo "HTTPS_PROXY=${HTTPS_PROXY:-}"
+          echo "HTTP_PROXY=${HTTP_PROXY:-}"
+          echo "PIP_INDEX_URL=${PIP_INDEX_URL:-}"
+          echo "PIP_EXTRA_INDEX_URL=${PIP_EXTRA_INDEX_URL:-}"
+          echo "NO_PROXY=${NO_PROXY:-}"
+          python -m pip config debug -v
 
-      - name: Cache PySide6 wheels
-        id: wheel-cache
-        uses: actions/cache@v4
-        with:
-          path: wheelhouse
-          key: pyside6-${{ runner.os }}-py${{ steps.setup-python.outputs.python-version }}-${{ env.PYSIDE6_VERSION }}
-
-      - name: Download PySide6 distribution
-        if: steps.wheel-cache.outputs.cache-hit != 'true'
+      - name: Build wheelhouse
+        shell: bash
         run: |
           python -m pip install --upgrade pip
-          python -m pip download PySide6==${{ env.PYSIDE6_VERSION }} --dest wheelhouse --only-binary=:all:
+          python scripts/ci/build_wheelhouse.py \
+            --wheelhouse wheelhouse \
+            --pyside6-version "${PYSIDE6_VERSION}" \
+            --only-binary :all:
 
-      - name: Upload PySide6 wheels
+      - name: Upload wheelhouse artifact
         uses: actions/upload-artifact@v4
         with:
-          name: pyside6-wheels-linux-${{ env.PYSIDE6_VERSION }}
+          name: wheelhouse-${{ runner.os }}-py${{ steps.setup-python.outputs.python-version }}
           path: wheelhouse
           if-no-files-found: error
-          retention-days: 3
+          retention-days: 7
 
   lint-and-test:
     name: Lint and Test
     runs-on: self-hosted
+    needs: prepare-wheelhouse
 
     steps:
       - name: Check out repository
         uses: actions/checkout@v4
+
+      - name: Download wheelhouse
+        uses: actions/download-artifact@v4
+        with:
+          name: wheelhouse-${{ runner.os }}-py3.11
+          path: wheelhouse
 
       - name: Lint repository paths
         run: python scripts/lint_paths.py
@@ -77,8 +94,8 @@ jobs:
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install .[dev]
-          pip install pytest pytest-cov pre-commit
+          python scripts/ci/pip_install.py --wheelhouse wheelhouse -- .[dev]
+          python scripts/ci/pip_install.py --wheelhouse wheelhouse -- pytest pytest-cov pre-commit
 
       - name: Pre-commit (ruff + mypy)
         run: pre-commit run --all-files --show-diff-on-failure
@@ -158,16 +175,31 @@ jobs:
   release-quality-gates:
     name: Release Quality Gates
     runs-on: ubuntu-latest
+    needs: prepare-wheelhouse
 
     steps:
       - name: Check out repository
         uses: actions/checkout@v4
 
+      - name: Download wheelhouse
+        uses: actions/download-artifact@v4
+        with:
+          name: wheelhouse-${{ runner.os }}-py3.11
+          path: wheelhouse
+
       - name: Lint repository paths
         run: python scripts/lint_paths.py
 
       - name: Install system dependencies for UI tests
-        run: sudo apt-get update && sudo apt-get install -y libegl1
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libegl1 \
+            libgl1 \
+            libpulse0 \
+            libxkbcommon-x11-0 \
+            libxcb-cursor0 \
+            libxcb-xinerama0
 
       - name: Set up Python
         uses: actions/setup-python@v5
@@ -177,10 +209,10 @@ jobs:
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install .[dev]
+          python scripts/ci/pip_install.py --wheelhouse wheelhouse -- .[dev]
 
       - name: Install mypy
-        run: pip install mypy
+        run: python scripts/ci/pip_install.py --wheelhouse wheelhouse -- mypy
 
       - name: Type check with mypy
         run: mypy
@@ -197,11 +229,18 @@ jobs:
   bot-core-fast-tests:
     name: Bot Core Fast Tests
     runs-on: self-hosted
+    needs: prepare-wheelhouse
     timeout-minutes: 25
 
     steps:
       - name: Check out repository
         uses: actions/checkout@v4
+
+      - name: Download wheelhouse
+        uses: actions/download-artifact@v4
+        with:
+          name: wheelhouse-${{ runner.os }}-py3.11
+          path: wheelhouse
 
       - name: Lint repository paths
         run: python scripts/lint_paths.py
@@ -214,7 +253,7 @@ jobs:
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install .[dev]
+          python scripts/ci/pip_install.py --wheelhouse wheelhouse -- .[dev]
 
       - name: Generate trading stubs
         run: python scripts/generate_trading_stubs.py --skip-cpp
@@ -408,12 +447,14 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y build-essential ninja-build pkg-config \
             libprotobuf-dev protobuf-compiler protobuf-compiler-grpc \
-            libgrpc-dev libgrpc++-dev libarchive-dev
+            libgrpc-dev libgrpc++-dev libarchive-dev \
+            libegl1 libgl1 libpulse0 libxkbcommon-x11-0 \
+            libxcb-cursor0 libxcb-xinerama0
 
       - name: Install Qt
         uses: jurplel/install-qt-action@v3
         with:
-          version: 6.5.3
+          version: 6.7.0
           modules: ${{ env.QT_DESKTOP_MODULES }}
 
       - name: Configure CMake
@@ -428,7 +469,7 @@ jobs:
   ui-tests:
     name: UI QML Tests
     runs-on: ubuntu-latest
-    needs: prepare-pyside6-wheel
+    needs: prepare-wheelhouse
     env:
       QT_QPA_PLATFORM: offscreen
       QT_QUICK_BACKEND: software
@@ -454,18 +495,18 @@ jobs:
       - name: Download PySide6 wheel artifact
         uses: actions/download-artifact@v4
         with:
-          name: pyside6-wheels-linux-${{ env.PYSIDE6_VERSION }}
+          name: wheelhouse-${{ runner.os }}-py3.11
           path: wheelhouse
 
       - name: Install Python dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install --no-index --find-links wheelhouse \
+          python scripts/ci/pip_install.py --wheelhouse wheelhouse -- \
             PySide6==${{ env.PYSIDE6_VERSION }} \
             PySide6_Addons==${{ env.PYSIDE6_VERSION }} \
             PySide6_Essentials==${{ env.PYSIDE6_VERSION }} \
             shiboken6==${{ env.PYSIDE6_VERSION }}
-          pip install .[dev]
+          python scripts/ci/pip_install.py --wheelhouse wheelhouse -- .[dev]
 
       - name: Run QML pytest suite
         run: |
@@ -485,7 +526,7 @@ jobs:
   grpc-feed-integration:
     name: gRPC Decision Feed Integration
     runs-on: ubuntu-latest
-    needs: prepare-pyside6-wheel
+    needs: prepare-wheelhouse
     env:
       QT_QPA_PLATFORM: offscreen
       QT_QUICK_BACKEND: software
@@ -508,18 +549,18 @@ jobs:
       - name: Download PySide6 wheel artifact
         uses: actions/download-artifact@v4
         with:
-          name: pyside6-wheels-linux-${{ env.PYSIDE6_VERSION }}
+          name: wheelhouse-${{ runner.os }}-py3.11
           path: wheelhouse
 
       - name: Install Python dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install --no-index --find-links wheelhouse \
+          python scripts/ci/pip_install.py --wheelhouse wheelhouse -- \
             PySide6==${{ env.PYSIDE6_VERSION }} \
             PySide6_Addons==${{ env.PYSIDE6_VERSION }} \
             PySide6_Essentials==${{ env.PYSIDE6_VERSION }} \
             shiboken6==${{ env.PYSIDE6_VERSION }}
-          pip install .[dev]
+          python scripts/ci/pip_install.py --wheelhouse wheelhouse -- .[dev]
 
       - name: Generate trading stubs
         run: python scripts/generate_trading_stubs.py --skip-cpp
@@ -641,7 +682,7 @@ jobs:
   grpc-feed-soak:
     name: gRPC Feed Soak (cron)
     runs-on: ubuntu-latest
-    needs: prepare-pyside6-wheel
+    needs: prepare-wheelhouse
     if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
     env:
       QT_QPA_PLATFORM: offscreen
@@ -665,18 +706,18 @@ jobs:
       - name: Download PySide6 wheel artifact
         uses: actions/download-artifact@v4
         with:
-          name: pyside6-wheels-linux-${{ env.PYSIDE6_VERSION }}
+          name: wheelhouse-${{ runner.os }}-py3.11
           path: wheelhouse
 
       - name: Install Python dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install --no-index --find-links wheelhouse \
+          python scripts/ci/pip_install.py --wheelhouse wheelhouse -- \
             PySide6==${{ env.PYSIDE6_VERSION }} \
             PySide6_Addons==${{ env.PYSIDE6_VERSION }} \
             PySide6_Essentials==${{ env.PYSIDE6_VERSION }} \
             shiboken6==${{ env.PYSIDE6_VERSION }}
-          pip install .[dev]
+          python scripts/ci/pip_install.py --wheelhouse wheelhouse -- .[dev]
 
       - name: Generate trading stubs
         run: python scripts/generate_trading_stubs.py --skip-cpp
@@ -744,7 +785,7 @@ jobs:
   performance-benchmarks:
     name: Performance Benchmarks
     runs-on: ubuntu-latest
-    needs: prepare-pyside6-wheel
+    needs: prepare-wheelhouse
     if: |
       github.event_name == 'schedule' ||
       github.event_name == 'workflow_dispatch' ||
@@ -779,38 +820,21 @@ jobs:
           sudo apt-get install -y libegl1 libgl1 libpulse0 libxkbcommon-x11-0 \
             libxcb-cursor0 libxcb-xinerama0
 
-      - name: Restore PySide6 wheel cache
-        id: wheel-cache
-        uses: actions/cache@v4
-        with:
-          path: wheelhouse
-          key: pyside6-${{ runner.os }}-py${{ steps.setup-python.outputs.python-version }}-${{ env.PYSIDE6_VERSION }}
-
-      - name: Download PySide6 wheel artifact
-        if: steps.wheel-cache.outputs.cache-hit != 'true'
+      - name: Download wheelhouse
         uses: actions/download-artifact@v4
         with:
-          name: pyside6-wheels-linux-${{ env.PYSIDE6_VERSION }}
+          name: wheelhouse-${{ runner.os }}-py3.11
           path: wheelhouse
-        continue-on-error: true
 
       - name: Install Python dependencies
         run: |
           python -m pip install --upgrade pip
-          if [ -d wheelhouse ] && ls wheelhouse/* >/dev/null 2>&1; then
-            pip install --no-index --find-links wheelhouse \
-              PySide6==${{ env.PYSIDE6_VERSION }} \
-              PySide6_Addons==${{ env.PYSIDE6_VERSION }} \
-              PySide6_Essentials==${{ env.PYSIDE6_VERSION }} \
-              shiboken6==${{ env.PYSIDE6_VERSION }}
-          else
-            pip install \
-              PySide6==${{ env.PYSIDE6_VERSION }} \
-              PySide6_Addons==${{ env.PYSIDE6_VERSION }} \
-              PySide6_Essentials==${{ env.PYSIDE6_VERSION }} \
-              shiboken6==${{ env.PYSIDE6_VERSION }}
-          fi
-          pip install .[dev]
+          python scripts/ci/pip_install.py --wheelhouse wheelhouse -- \
+            PySide6==${{ env.PYSIDE6_VERSION }} \
+            PySide6_Addons==${{ env.PYSIDE6_VERSION }} \
+            PySide6_Essentials==${{ env.PYSIDE6_VERSION }} \
+            shiboken6==${{ env.PYSIDE6_VERSION }}
+          python scripts/ci/pip_install.py --wheelhouse wheelhouse -- .[dev]
 
       - name: Determine performance metrics mode
         env:
@@ -1201,9 +1225,17 @@ jobs:
           - os: macos-latest
             platform: macos
 
+    needs: prepare-wheelhouse
+
     steps:
       - name: Check out repository
         uses: actions/checkout@v4
+
+      - name: Download wheelhouse
+        uses: actions/download-artifact@v4
+        with:
+          name: wheelhouse-${{ matrix.os }}-py3.11
+          path: wheelhouse
 
       - name: Set up Python
         uses: actions/setup-python@v5
@@ -1220,15 +1252,23 @@ jobs:
       - name: Install Qt
         uses: jurplel/install-qt-action@v3
         with:
-          version: 6.5.3
-          # Windows runners frequently lack qtdeclarative/qtquickcontrols2 for 6.5.3;
-          # request only the known-available subset explicitly.
+          version: 6.7.0
+          # Windows runners frequently lack qtdeclarative/qtquickcontrols2; request
+          # only the known-available subset explicitly.
           modules: ${{ matrix.platform == 'windows' && env.QT_WINDOWS_MODULES || env.QT_DESKTOP_MODULES }}
+
+      - name: Install PySide6 runtime
+        run: |
+          python -m pip install --upgrade pip
+          python scripts/ci/pip_install.py --wheelhouse wheelhouse -- \
+            PySide6==${{ env.PYSIDE6_VERSION }} \
+            PySide6_Addons==${{ env.PYSIDE6_VERSION }} \
+            PySide6_Essentials==${{ env.PYSIDE6_VERSION }} \
+            shiboken6==${{ env.PYSIDE6_VERSION }}
 
       - name: Build Qt bundle
         shell: bash
         run: |
-          python -m pip install --upgrade pip
           python scripts/packaging/qt_bundle.py \
             --platform ${{ matrix.platform }} \
             --build-dir ui/build-${{ matrix.platform }} \
