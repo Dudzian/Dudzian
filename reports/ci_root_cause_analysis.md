@@ -24,13 +24,13 @@
 - pierwsze 20 linii po komunikacie "ERROR"/"HTTP"/"Hash";
 - linie z pip pokazujące URL / kod HTTP; jeśli log długi, uruchom na runnerze: grep -n "ERROR\|hash\|404" download.log]
 ```
-**Root cause:** Wheelhouse wymusza PySide6 6.5.2 (PyPI), podczas gdy reszta CI instaluje Qt 6.5.3 – wysokie ryzyko 404/ABI mismatch + brak mirroru.
-**Evidence:** `env.PYSIDE6_VERSION=6.5.2` w workflow; brak fallbacków/mirrorów.【F:.github/workflows/ci.yml†L11-L41】
+**Root cause:** Wheelhouse wymuszało PySide6 6.5.2, podczas gdy projekt wymaga ≥6.7 i Qt w CI został zainstalowany jako 6.5.x – wersje były rozjechane, brakował też mirror fallback.
+**Evidence:** `env.PYSIDE6_VERSION` było ustawione na 6.5.2; wymaganie `PySide6>=6.7` w `pyproject.toml` powodowało upgrade na runnerze i możliwy ABI mismatch.【F:.github/workflows/ci.yml†L11-L41】【F:pyproject.toml†L164-L169】
 **Minimal fix (preferowane):**
-* Po uzyskaniu logów podnieść `PYSIDE6_VERSION` do najbliższej dostępnej wersji zgodnej z Qt 6.5.3 (propozycja: 6.5.3) + ewentualny mirror.
-* Przygotowany patch C (preflight) umożliwia szybkie wykrycie brakujących modułów/wersji przed buildem.
+* Ujednolicenie do `PYSIDE6_VERSION=6.7.0` oraz ustawienie Qt 6.7.0 w workflow (wdrożone) + mirror według potrzeb.
+* Preflight w `qt_bundle.py` wykrywa brak modułów/wersji przed buildem.
 **Validation:**
-* Lokalnie: `python -m pip download PySide6==6.5.3 --dest /tmp/wheelhouse --only-binary=:all:`
+* Lokalnie: `python -m pip download PySide6==6.7.0 --dest /tmp/wheelhouse --only-binary=:all:`
 * CI: rerun job `Prepare PySide6 wheels`.
 **Flakiness check:** Tak, jeśli błąd sieci/PyPI. Rerun 3× na tym samym runnerze.
 **1-liner confirm:** `python - <<'PY'
@@ -64,11 +64,11 @@ python scripts/packaging/qt_bundle.py \
 - linie z komunikatem o brakującym module Qt/PySide6 lub otool/ldd "not found";
 - jeśli log długi: grep -n "Qt" ui-packaging.log | head -n 20]
 ```
-**Root cause:** Brak walidacji instalacji Qt/PySide6 przed buildem; na Windows instalowane było tylko `qtcharts`, brak `qtdeclarative/qtquickcontrols2/qtshadertools/qtimageformats`, co zwykle powoduje brakujące QML/Quick dll.
-**Evidence:** `QT_WINDOWS_MODULES` ograniczone do `qtcharts` (naprawione patchem B). Preflight w `qt_bundle.py` dodany w patchu C, wykryje brak modułów przed CMake.【F:.github/workflows/ci.yml†L12-L58】【F:.github/workflows/ci.yml†L1190-L1237】【F:scripts/packaging/qt_bundle.py†L1-L169】
+**Root cause:** Brak walidacji instalacji Qt/PySide6 przed buildem oraz brak instalacji pakietów PySide6 w jobie; na Windows wcześniej instalowano tylko `qtcharts`, brak `qtdeclarative/qtquickcontrols2/qtshadertools/qtimageformats`, co powodowało brakujące biblioteki QML/Quick.
+**Evidence:** `QT_WINDOWS_MODULES` rozszerzone w workflow; dodano preflight w `qt_bundle.py` i dedykowany krok instalacji PySide6 (nowy), aby uniknąć uruchamiania CMake bez runtime.【F:.github/workflows/ci.yml†L11-L58】【F:.github/workflows/ci.yml†L1190-L1249】【F:scripts/packaging/qt_bundle.py†L121-L169】
 **Minimal fix (preferowane):**
-* Patch B: rozszerzenie `QT_WINDOWS_MODULES` do `qtcharts qtdeclarative qtquickcontrols2 qtshadertools qtimageformats` (gotowe w workflow).
-* Patch C: preflight w `qt_bundle.py` weryfikujący wersję Qt, PySide6 i obecność modułów – fail fast z jasnym komunikatem.
+* Rozszerzenie `QT_WINDOWS_MODULES` do `qtcharts qtdeclarative qtquickcontrols2 qtshadertools qtimageformats` (wdrożone).
+* Nowy krok instalacji `PySide6`, `PySide6_Addons`, `PySide6_Essentials`, `shiboken6` w matrix jobie (wdrożone) + preflight w `qt_bundle.py` (wdrożone) weryfikujący wersję Qt, PySide6 i obecność modułów – fail fast z jasnym komunikatem.
 **Validation:**
 * Lokalnie: `QT_DESKTOP_MODULES="qtcharts qtdeclarative qtquickcontrols2" python scripts/packaging/qt_bundle.py --platform linux --build-dir /tmp/ui-build --install-dir /tmp/ui-install --artifact-dir /tmp/ui-artifacts --skip-archive`
 * CI: rerun matrix `UI Packaging` (wszystkie OS) – preflight powinien wypisać wersje i przerwać przed CMake, jeśli modułów brak.
@@ -204,8 +204,8 @@ Log checklist do wklejenia:
 
 1. **Brak runtime libs Qt na Ubuntu** → ofiary: `UI Native Tests`, `Release Quality Gates`. (Naprawione patchem A.)
 2. **Niepełne moduły Qt na Windows** → ofiary: `UI Packaging (Windows)`. (Naprawione patchem B.)
-3. **Brak preflight/diagnostyki Qt/PySide6** → ofiary: `UI Packaging` (wszystkie OS); preflight dodany w patchu C.
-4. **PySide6 wersja/cache (6.5.2 z PyPI)** → ofiary: `Prepare PySide6 wheels`, potencjalnie `UI Packaging`/e2e jeśli wersja niezgodna (wymaga logów, patch do rozważenia po potwierdzeniu).
+3. **Brak preflight/diagnostyki Qt/PySide6** → ofiary: `UI Packaging` (wszystkie OS); preflight + instalacja PySide6 dodane.
+4. **PySide6 wersja/cache (6.5.2 z PyPI vs wymagane ≥6.7)** → ofiary: `Prepare PySide6 wheels`, `UI Packaging` (rozwiązane przez ujednolicenie do 6.7.0).
 5. **Możliwa luka w generacji stubów/protoc** → ofiary: `Bot Core Fast Tests`, ewentualnie `Lint and Test` (wymaga logów).
 
 ---
@@ -214,15 +214,14 @@ Log checklist do wklejenia:
 
 * **Patch A – Linux runtime deps**: `.github/workflows/ci.yml` dodaje `libegl1 libgl1 libpulse0 libxkbcommon-x11-0 libxcb-cursor0 libxcb-xinerama0` do `ui-ctest` i `release-quality-gates`.
 * **Patch B – Windows Qt modules**: `.github/workflows/ci.yml` poszerza `QT_WINDOWS_MODULES` o `qtdeclarative qtquickcontrols2 qtshadertools qtimageformats`.
-* **Patch C – Preflight Qt/PySide6**: `scripts/packaging/qt_bundle.py` drukuje wykryte wersje Qt/PySide6, weryfikuje obecność modułów i failuje, gdy brakuje katalogów CMake dla wymaganych modułów.
-* **Patch D – opcjonalny po logach**: ujednolicenie `PYSIDE6_VERSION` do 6.5.3 + mirror PyPI (do wykonania po potwierdzeniu logami, aby nie pogorszyć sytuacji, bo `pyproject.toml` deklaruje `PySide6>=6.7`).
+* **Patch C – Preflight Qt/PySide6 + instalacja runtime**: `scripts/packaging/qt_bundle.py` drukuje wykryte wersje Qt/PySide6, weryfikuje obecność modułów i failuje, gdy brakuje katalogów CMake; workflow instaluje PySide6 runtime przed buildem.
+* **Patch D – ujednolicenie wersji**: `PYSIDE6_VERSION=6.7.0` + Qt 6.7.0 w workflow, spójne z `PySide6>=6.7` w `pyproject.toml`.
 
 ---
 
 # Plan PR-ów (kolejność i odblokowania)
 
-1. **PR1: Runtime deps + Windows moduły + preflight (patches A–C)** – odblokuje `UI Native Tests`, `Release Quality Gates`, wyłapie braki modułów w `UI Packaging` przed buildem.
-2. **PR2: PySide6 wheelhouse ujednolicenie (patch D + mirror)** – stabilizuje `Prepare PySide6 wheels` i downstream `UI Packaging`/e2e.
-3. **PR3: Stuby/protoc hardening** – walidacja w `generate_trading_stubs.py` + ewentualny install `protoc`; celuje w `Bot Core Fast Tests` i ewentualnie `Lint and Test`.
-4. **PR4: E2E/nightly hermetyzacja** – jeśli po PR1–3 nadal pada `Release Quality Gates`, rozdzielić flaky scenariusze do nightly lub dodać artefakt PySide6 download.
+1. **PR1: Runtime deps + Windows moduły + preflight + wersje (patches A–D)** – odblokuje `UI Native Tests`, `Release Quality Gates`, stabilizuje `UI Packaging` i spójność PySide6/Qt.
+2. **PR2: Stuby/protoc hardening** – walidacja w `generate_trading_stubs.py` + ewentualny install `protoc`; celuje w `Bot Core Fast Tests` i ewentualnie `Lint and Test`.
+3. **PR3: E2E/nightly hermetyzacja** – jeśli po PR1–2 nadal pada `Release Quality Gates`, rozdzielić flaky scenariusze do nightly lub dodać artefakt PySide6 download.
 

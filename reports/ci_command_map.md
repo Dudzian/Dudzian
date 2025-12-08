@@ -18,10 +18,10 @@ Summary of workflows and commands for key jobs mentioned in failing checks.
   - `python scripts/lint_paths.py`
   - Install `. [dev]`, generate trading stubs (`python scripts/generate_trading_stubs.py --skip-cpp`), then `pytest --fast --maxfail=1 --durations=10 --junitxml=test-results/pytest.xml` with `PYTEST_FAST=1`.
 - **UI Native Tests**
-  - Install build deps (protobuf/grpc/archive), install Qt 6.5.3 desktop modules, configure/build CMake (`cmake -S ui -B ui/build-tests -G Ninja -DBUILD_TESTING=ON -DCMAKE_PREFIX_PATH=$Qt6_DIR`), run `ctest --test-dir ui/build-tests --output-on-failure`.
+  - Install build deps (protobuf/grpc/archive), install Qt 6.7.0 desktop modules, configure/build CMake (`cmake -S ui -B ui/build-tests -G Ninja -DBUILD_TESTING=ON -DCMAKE_PREFIX_PATH=$Qt6_DIR`), run `ctest --test-dir ui/build-tests --output-on-failure`.
 - **UI Packaging** (matrix: linux/windows/macos)
   - Python 3.11; macOS installs protobuf via brew.
-  - Install Qt 6.5.3 (desktop modules; Windows limited modules).
+  - Install Qt 6.7.0 (desktop modules; Windows limited modules) plus PySide6 runtime (`PySide6[_Addons,_Essentials], shiboken6` matching `PYSIDE6_VERSION`).
   - Build bundle: `python scripts/packaging/qt_bundle.py --platform <platform> --build-dir ui/build-<platform> --install-dir ui/install-<platform> --artifact-dir artifacts/ui/<platform>`.
   - Uploads artifact `ui-<platform>`.
 - **Prepare PySide6 wheels**

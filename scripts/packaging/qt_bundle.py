@@ -62,6 +62,16 @@ def _read_qt_version(qt_prefix: Path) -> str | None:
     return None
 
 
+def _major_minor(version: str | None) -> tuple[int, int] | None:
+    if not version:
+        return None
+    parts = version.split(".")
+    try:
+        return int(parts[0]), int(parts[1])
+    except (ValueError, IndexError):
+        return None
+
+
 def _gather_available_modules(qt_prefix: Path) -> set[str]:
     cmake_dir = qt_prefix / "lib" / "cmake"
     if not cmake_dir.is_dir():
@@ -136,6 +146,14 @@ def preflight(qt_prefix: str | None, required_modules: Sequence[str]) -> Path:
         raise RuntimeError("PySide6 nie jest zainstalowany w środowisku") from exc
 
     logger.info("Wykryta wersja PySide6: %s", pyside_version)
+
+    qt_major_minor = _major_minor(qt_version)
+    pyside_major_minor = _major_minor(pyside_version)
+    if qt_major_minor and pyside_major_minor and qt_major_minor != pyside_major_minor:
+        raise RuntimeError(
+            "Niezgodne wersje Qt/PySide6: Qt="
+            f"{qt_version or 'unknown'} vs PySide6={pyside_version}. Ustaw PYSIDE6_VERSION zgodnie z instalacją Qt"
+        )
 
     available_modules = _gather_available_modules(qt_prefix_path)
     missing_modules = []
