@@ -10,9 +10,9 @@ on:
     - cron: "0 3 * * *"
 
 env:
-  PYSIDE6_VERSION: "6.5.2"
+  PYSIDE6_VERSION: "6.7.0"
   QT_DESKTOP_MODULES: "qtcharts qtdeclarative qtquickcontrols2"
-  QT_WINDOWS_MODULES: "qtcharts"
+  QT_WINDOWS_MODULES: "qtcharts qtdeclarative qtquickcontrols2 qtshadertools qtimageformats"
 
 jobs:
   prepare-pyside6-wheel:
@@ -167,7 +167,15 @@ jobs:
         run: python scripts/lint_paths.py
 
       - name: Install system dependencies for UI tests
-        run: sudo apt-get update && sudo apt-get install -y libegl1
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libegl1 \
+            libgl1 \
+            libpulse0 \
+            libxkbcommon-x11-0 \
+            libxcb-cursor0 \
+            libxcb-xinerama0
 
       - name: Set up Python
         uses: actions/setup-python@v5
@@ -408,12 +416,14 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y build-essential ninja-build pkg-config \
             libprotobuf-dev protobuf-compiler protobuf-compiler-grpc \
-            libgrpc-dev libgrpc++-dev libarchive-dev
+            libgrpc-dev libgrpc++-dev libarchive-dev \
+            libegl1 libgl1 libpulse0 libxkbcommon-x11-0 \
+            libxcb-cursor0 libxcb-xinerama0
 
       - name: Install Qt
         uses: jurplel/install-qt-action@v3
         with:
-          version: 6.5.3
+          version: 6.7.0
           modules: ${{ env.QT_DESKTOP_MODULES }}
 
       - name: Configure CMake
@@ -1220,15 +1230,23 @@ jobs:
       - name: Install Qt
         uses: jurplel/install-qt-action@v3
         with:
-          version: 6.5.3
-          # Windows runners frequently lack qtdeclarative/qtquickcontrols2 for 6.5.3;
-          # request only the known-available subset explicitly.
+          version: 6.7.0
+          # Windows runners frequently lack qtdeclarative/qtquickcontrols2; request
+          # only the known-available subset explicitly.
           modules: ${{ matrix.platform == 'windows' && env.QT_WINDOWS_MODULES || env.QT_DESKTOP_MODULES }}
+
+      - name: Install PySide6 runtime
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install \
+            PySide6==${{ env.PYSIDE6_VERSION }} \
+            PySide6_Addons==${{ env.PYSIDE6_VERSION }} \
+            PySide6_Essentials==${{ env.PYSIDE6_VERSION }} \
+            shiboken6==${{ env.PYSIDE6_VERSION }}
 
       - name: Build Qt bundle
         shell: bash
         run: |
-          python -m pip install --upgrade pip
           python scripts/packaging/qt_bundle.py \
             --platform ${{ matrix.platform }} \
             --build-dir ui/build-${{ matrix.platform }} \
