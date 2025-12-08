@@ -1213,6 +1213,7 @@ jobs:
 
   ui-packaging:
     name: UI Packaging
+    needs: prepare-wheelhouse
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
@@ -1220,10 +1221,6 @@ jobs:
         include:
           - os: ubuntu-latest
             platform: linux
-
-    needs: prepare-wheelhouse
-
-    needs: prepare-wheelhouse
 
     steps:
       - name: Check out repository
