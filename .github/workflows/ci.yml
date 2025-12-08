@@ -21,7 +21,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, windows-latest, macos-latest]
+        os: [ubuntu-latest]
     if: |
       github.event_name == 'schedule' ||
       github.event_name == 'workflow_dispatch' ||
@@ -1220,10 +1220,8 @@ jobs:
         include:
           - os: ubuntu-latest
             platform: linux
-          - os: windows-latest
-            platform: windows
-          - os: macos-latest
-            platform: macos
+
+    needs: prepare-wheelhouse
 
     needs: prepare-wheelhouse
 

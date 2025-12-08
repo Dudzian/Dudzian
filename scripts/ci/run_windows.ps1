@@ -34,8 +34,10 @@ function Pip-Install {
     param([string]$Args)
     Activate-Venv -VenvPath (".venv-" + $Job)
     $wheelArg = ""
-    if ($Wheelhouse -and (Test-Path $Wheelhouse)) {
-        $resolved = (Resolve-Path $Wheelhouse).Path
+    $wheelhousePath = $Wheelhouse
+    if (-not $wheelhousePath -and $env:WHEELHOUSE_DIR) { $wheelhousePath = $env:WHEELHOUSE_DIR }
+    if ($wheelhousePath -and (Test-Path $wheelhousePath)) {
+        $resolved = (Resolve-Path $wheelhousePath).Path
         $wheelArg = "--wheelhouse `"$resolved`""
     }
     Run "python scripts/ci/pip_install.py $wheelArg -- $Args"
@@ -59,6 +61,45 @@ function Ui-Packaging-Windows {
     Run "Get-ChildItem -Force $artifactRoot"
 }
 
+function Lint-And-Test {
+    Install-DevDeps
+    Pip-Install "pytest pytest-cov pre-commit"
+    Run "python scripts/lint_paths.py"
+    Run "pre-commit run --all-files --show-diff-on-failure"
+    Run "pytest --cov=bot_core.strategies --cov=bot_core.runtime.multi_strategy_scheduler --cov=bot_core.runtime.journal --cov-config=.coveragerc --cov-report=xml --cov-report=term --cov-fail-under=75 tests/test_pipeline_paper.py tests/test_risk_profiles.py tests/test_mean_reversion_strategy.py tests/test_volatility_target_strategy.py tests/test_cross_exchange_arbitrage_strategy.py tests/test_multi_strategy_scheduler.py tests/test_backtest_dataset_library.py tests/test_telemetry_risk_profiles.py tests/test_trading_decision_journal.py tests/test_smoke_demo_strategies_cli.py"
+}
+
+function Bot-Core-Fast-Tests {
+    Install-DevDeps
+    Run "python scripts/lint_paths.py"
+    Run "python scripts/generate_trading_stubs.py --skip-cpp"
+    $env:PYTEST_FAST = "1"
+    Run "mkdir -Force test-results | Out-Null"
+    Run "pytest --fast --maxfail=1 --durations=10 --junitxml=test-results/pytest.xml"
+}
+
+function Release-Quality-Gates {
+    Install-DevDeps
+    Run "python scripts/lint_paths.py"
+    Pip-Install "mypy"
+    Run "mypy"
+    Run "pytest -m e2e_demo_paper --maxfail=1 --disable-warnings"
+    Run "pytest tests/test_paper_execution.py"
+    Run "pytest tests/integration/test_execution_router_failover.py"
+}
+
+function Ui-Native-Tests {
+    Install-DevDeps
+    $qtPrefix = $env:Qt6_DIR
+    if (-not $qtPrefix) { $qtPrefix = $env:QT_ROOT_DIR }
+    if (-not $qtPrefix) { Write-Log "Qt prefix not set; set Qt6_DIR or QT_ROOT_DIR" }
+    $cmakePrefixArg = ""
+    if ($qtPrefix) { $cmakePrefixArg = "-DCMAKE_PREFIX_PATH=`"$qtPrefix`"" }
+    Run "cmake -S ui -B ui/build-tests -G Ninja -DBUILD_TESTING=ON $cmakePrefixArg"
+    Run "cmake --build ui/build-tests"
+    Run "ctest --test-dir ui/build-tests --output-on-failure"
+}
+
 function Prepare-Wheelhouse {
     Activate-Venv -VenvPath (".venv-" + $Job)
     $target = $Wheelhouse
@@ -69,6 +110,10 @@ function Prepare-Wheelhouse {
 
 switch ($Job) {
     "ui-packaging-windows" { Ui-Packaging-Windows }
+    "ui-native-tests" { Ui-Native-Tests }
+    "lint-and-test" { Lint-And-Test }
+    "bot-core-fast-tests" { Bot-Core-Fast-Tests }
+    "release-quality-gates" { Release-Quality-Gates }
     "prepare-wheelhouse" { Prepare-Wheelhouse }
     default { Write-Log "Unknown job: $Job"; exit 1 }
 }
