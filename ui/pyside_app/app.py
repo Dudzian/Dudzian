@@ -19,12 +19,83 @@ _LOGGER = logging.getLogger(__name__)
 
 @dataclass(slots=True)
 class AppOptions:
-    """Parametry startowe przekazywane z CLI lub testów."""
+    """Centralna definicja opcji startowych oraz ich walidacji."""
 
     config_path: Path
     profile: str | None = None
     enable_cloud_runtime: bool = False
     qml_path: Path | None = None
+    log_level: str = "INFO"
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "config_path", Path(self.config_path).expanduser().resolve())
+        qml_path = Path(self.qml_path).expanduser().resolve() if self.qml_path else None
+        object.__setattr__(self, "qml_path", qml_path)
+        object.__setattr__(self, "log_level", str(self.log_level).upper())
+        self.validate()
+
+    @classmethod
+    def build_parser(cls) -> argparse.ArgumentParser:
+        parser = argparse.ArgumentParser(description="Uruchamia PySide6 UI dla Stage6")
+        parser.add_argument(
+            "--config",
+            default="ui/config/example.yaml",
+            help="Ścieżka do profilu UI (domyślnie ui/config/example.yaml)",
+        )
+        parser.add_argument(
+            "--profile",
+            help="Opcjonalny profil z sekcji profiles w pliku YAML",
+        )
+        parser.add_argument(
+            "--enable-cloud-runtime",
+            action="store_true",
+            help="Sygnalizuje, że UI ma komunikować się z backendem cloudowym",
+        )
+        parser.add_argument(
+            "--qml",
+            help="Własny plik QML (domyślnie ui/pyside_app/qml/MainWindow.qml)",
+        )
+        parser.add_argument(
+            "--log-level",
+            default="INFO",
+            help="Poziom logowania PySide6 UI",
+        )
+        return parser
+
+    @classmethod
+    def parse(cls, argv: list[str] | None = None) -> "AppOptions":
+        """Buduje instancję na podstawie argumentów CLI."""
+
+        args = cls.build_parser().parse_args(argv)
+        return cls.from_namespace(args)
+
+    @classmethod
+    def from_namespace(cls, args: argparse.Namespace) -> "AppOptions":
+        """Tworzy opcje na bazie przestrzeni nazw argparse."""
+
+        return cls(
+            config_path=Path(args.config),
+            profile=args.profile,
+            enable_cloud_runtime=args.enable_cloud_runtime,
+            qml_path=Path(args.qml) if args.qml else None,
+            log_level=args.log_level,
+        )
+
+    def validate(self) -> None:
+        """Waliduje obecność kluczowych ścieżek i poziom logowania."""
+
+        if not self.config_path.exists():
+            raise FileNotFoundError(f"Nie znaleziono pliku konfiguracji UI: {self.config_path}")
+        if self.qml_path is not None and not self.qml_path.exists():
+            raise FileNotFoundError(f"Nie znaleziono pliku QML: {self.qml_path}")
+        if not hasattr(logging, self.log_level):
+            raise ValueError(f"Nieprawidłowy poziom logowania: {self.log_level}")
+
+    @property
+    def logging_level(self) -> int:
+        """Przekłada nazwę poziomu na wartość liczbową używaną w logging."""
+
+        return getattr(logging, self.log_level, logging.INFO)
 
 
 class BotPysideApplication:
@@ -91,43 +162,9 @@ class BotPysideApplication:
         return qt_app.exec()
 
 
-def parse_cli_arguments(argv: list[str] | None = None) -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Uruchamia PySide6 UI dla Stage6")
-    parser.add_argument(
-        "--config",
-        default="ui/config/example.yaml",
-        help="Ścieżka do profilu UI (domyślnie ui/config/example.yaml)",
-    )
-    parser.add_argument(
-        "--profile",
-        help="Opcjonalny profil z sekcji profiles w pliku YAML",
-    )
-    parser.add_argument(
-        "--enable-cloud-runtime",
-        action="store_true",
-        help="Sygnalizuje, że UI ma komunikować się z backendem cloudowym",
-    )
-    parser.add_argument(
-        "--qml",
-        help="Własny plik QML (domyślnie ui/pyside_app/qml/MainWindow.qml)",
-    )
-    parser.add_argument(
-        "--log-level",
-        default="INFO",
-        help="Poziom logowania PySide6 UI",
-    )
-    return parser.parse_args(argv)
-
-
 def main(argv: list[str] | None = None) -> int:
-    args = parse_cli_arguments(argv)
-    logging.basicConfig(level=getattr(logging, args.log_level.upper(), logging.INFO))
-    options = AppOptions(
-        config_path=Path(args.config).expanduser(),
-        profile=args.profile,
-        enable_cloud_runtime=args.enable_cloud_runtime,
-        qml_path=Path(args.qml).expanduser() if args.qml else None,
-    )
+    options = AppOptions.parse(argv)
+    logging.basicConfig(level=options.logging_level)
     app = BotPysideApplication(options)
     return app.run()
 

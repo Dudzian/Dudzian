@@ -10,6 +10,8 @@ from .controllers import (
     LayoutProfileController,
     ModeWizardController,
     StrategyManagementController,
+    UiRuntimeState,
+    UiGrpcBridge,
 )
 from .theme import ThemeBridge, load_default_theme
 
@@ -31,6 +33,8 @@ class QmlContextBridge:
             default_limit=max(5, config.decision_limit),
             cloud_runtime_enabled=enable_cloud_runtime,
         )
+        self.ui_grpc_bridge = UiGrpcBridge(self.runtime_service)
+        self.ui_runtime_state = UiRuntimeState(self.runtime_service, enable_cloud_runtime)
         self.licensing_controller = LicensingController()
         self.diagnostics_controller = DiagnosticsController()
         self.layout_controller = LayoutProfileController()
@@ -43,7 +47,8 @@ class QmlContextBridge:
         context = self._engine.rootContext()
         context.setContextProperty("uiConfig", self._config.as_variant())
         context.setContextProperty("cloudRuntimeEnabled", self._enable_cloud_runtime)
-        context.setContextProperty("runtimeService", self.runtime_service)
+        context.setContextProperty("grpcBridge", self.ui_grpc_bridge)
+        context.setContextProperty("runtimeState", self.ui_runtime_state)
         context.setContextProperty("licensingController", self.licensing_controller)
         context.setContextProperty("diagnosticsController", self.diagnostics_controller)
         context.setContextProperty("layoutController", self.layout_controller)

@@ -30,7 +30,8 @@ def test_pyside_app_bootstrap_loads_qml(tmp_path: Path) -> None:
     engine = app.load()
     assert engine.rootObjects(), "QML nie został załadowany"
     ctx = engine.rootContext()
-    runtime_service = ctx.contextProperty("runtimeService")
+    grpc_bridge = ctx.contextProperty("grpcBridge")
+    runtime_service = grpc_bridge.runtimeService if grpc_bridge else None
     assert runtime_service is not None
     runtime_service.loadRecentDecisions(5)
     decisions = runtime_service.decisions
