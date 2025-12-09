@@ -10,7 +10,7 @@ from bot_core.portfolio import (
     PortfolioCycleInputs,
     PortfolioCycleOutputConfig,
     PortfolioDecisionLog,
-    PortfolioGovernor,
+    AssetPortfolioGovernor,
     PortfolioHypercareCycle,
 )
 from bot_core.security.signing import verify_hmac_signature
@@ -21,7 +21,7 @@ def _write_json(path: Path, payload: dict[str, object]) -> None:
     path.write_text(json.dumps(payload), encoding="utf-8")
 
 
-def _build_governor(tmp_path: Path) -> tuple[PortfolioGovernor, PortfolioDecisionLog]:
+def _build_governor(tmp_path: Path) -> tuple[AssetPortfolioGovernor, PortfolioDecisionLog]:
     config = AssetPortfolioGovernorConfig(
         name="core",
         portfolio_id="core",
@@ -43,7 +43,7 @@ def _build_governor(tmp_path: Path) -> tuple[PortfolioGovernor, PortfolioDecisio
         signing_key=b"decision-secret",
         signing_key_id="stage6-log",
     )
-    return PortfolioGovernor(config, decision_log=decision_log), decision_log
+    return AssetPortfolioGovernor(config, decision_log=decision_log), decision_log
 
 
 def test_portfolio_hypercare_cycle_generates_signed_summary(tmp_path: Path) -> None:

@@ -5,6 +5,8 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any, Mapping, MutableMapping
 
+from bot_core.portfolio.models import PayoutRecord
+
 
 @dataclass(slots=True)
 class PayoutRequest:
@@ -16,13 +18,22 @@ class PayoutRequest:
     destination: str
     metadata: Mapping[str, Any] = field(default_factory=dict)
 
-    def with_hardware_wallet_requirement(self) -> "PayoutRequest":
+    def to_record(self) -> PayoutRecord:
+        return PayoutRecord(
+            account_id=self.account_id,
+            asset=self.asset,
+            amount=self.amount,
+            destination=self.destination,
+            metadata=self.metadata,
+        )
+
+    def with_hardware_wallet_requirement(self) -> PayoutRecord:
         enriched = require_hardware_wallet_metadata(
             self.metadata,
             account_id=self.account_id,
             operation="withdrawal",
         )
-        return PayoutRequest(
+        return PayoutRecord(
             account_id=self.account_id,
             asset=self.asset,
             amount=self.amount,
@@ -45,5 +56,4 @@ def require_hardware_wallet_metadata(
     document["requires_hardware_wallet"] = True
     return document
 
-
-__all__ = ["PayoutRequest", "require_hardware_wallet_metadata"]
+__all__ = ["PayoutRequest", "PayoutRecord", "require_hardware_wallet_metadata"]
