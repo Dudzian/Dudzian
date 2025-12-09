@@ -25,7 +25,7 @@ from typing import (
     Sequence,
 )
 
-from bot_core.alerts import DefaultAlertRouter
+from bot_core.runtime.observability import AlertSink
 from bot_core.config.models import (
     ControllerRuntimeConfig,
     CoreConfig,
@@ -689,7 +689,7 @@ def build_daily_trend_pipeline(
 
 def create_trading_controller(
     pipeline: DailyTrendPipeline,
-    alert_router: DefaultAlertRouter,
+    alert_router: AlertSink,
     *,
     health_check_interval: float | int | timedelta = 3600,
     order_metadata_defaults: Mapping[str, object] | None = None,
@@ -1845,23 +1845,21 @@ def _resolve_adapter_metrics_registry(adapter: ExchangeAdapter | object | None) 
 
 def _build_streaming_feed(
     *,
-    bootstrap: BootstrapContext,
-    environment: EnvironmentConfig,
+    stream_config: object,
+    stream_settings: Mapping[str, object] | None,
+    adapter_metrics: MetricsRegistry | None,
     base_feed: StrategyDataFeed,
     symbols_map: Mapping[str, Sequence[str]],
+    exchange: str,
+    environment_name: str | None,
 ) -> StreamingStrategyFeed | None:
-    stream_cfg = getattr(environment, "stream", None)
-    adapter_settings = getattr(environment, "adapter_settings", None)
-    if stream_cfg is None or not isinstance(adapter_settings, Mapping):
+    if stream_config is None or not isinstance(stream_settings, Mapping):
         return None
-    stream_settings_raw = adapter_settings.get("stream")
-    if not isinstance(stream_settings_raw, Mapping):
-        return None
-    stream_settings = dict(stream_settings_raw)
-    host = getattr(stream_cfg, "host", "127.0.0.1")
-    port = getattr(stream_cfg, "port", 8765)
+    stream_settings = dict(stream_settings)
+    host = getattr(stream_config, "host", "127.0.0.1")
+    port = getattr(stream_config, "port", 8765)
     base_url = str(stream_settings.get("base_url") or f"http://{host}:{port}")
-    default_path = f"/stream/{environment.exchange}/public"
+    default_path = f"/stream/{exchange}/public"
     path = str(
         stream_settings.get("public_path")
         or stream_settings.get("path")
@@ -1880,8 +1878,6 @@ def _build_streaming_feed(
     all_symbols = tuple(
         dict.fromkeys(symbol for values in symbols_map.values() for symbol in values)
     )
-
-    adapter_metrics = _resolve_adapter_metrics_registry(getattr(bootstrap, "adapter", None))
 
     def _build_params() -> dict[str, object]:
         params: dict[str, object] = {}
@@ -1985,9 +1981,9 @@ def _build_streaming_feed(
             base_url=base_url,
             path=path,
             channels=channels,
-            adapter=environment.exchange,
+            adapter=exchange,
             scope="public",
-            environment=environment.environment.value,
+            environment=environment_name or "",
             params=_build_params(),
             headers=_build_headers(),
             poll_interval=poll_interval,
@@ -3580,11 +3576,18 @@ def build_multi_strategy_runtime(
         symbols_map.setdefault(schedule.strategy, all_symbols)
 
     base_feed = OHLCVStrategyFeed(cached_source, symbols_map=symbols_map, interval_map=interval_map)
+    adapter_settings = getattr(environment, "adapter_settings", None)
+    adapter_metrics = _resolve_adapter_metrics_registry(getattr(bootstrap_ctx, "adapter", None))
     stream_feed = _build_streaming_feed(
-        bootstrap=bootstrap_ctx,
-        environment=environment,
+        stream_config=getattr(environment, "stream", None),
+        stream_settings=(
+            adapter_settings.get("stream") if isinstance(adapter_settings, Mapping) else None
+        ),
+        adapter_metrics=adapter_metrics,
         base_feed=base_feed,
         symbols_map=symbols_map,
+        exchange=environment.exchange,
+        environment_name=getattr(environment.environment, "value", None),
     )
     stream_task: asyncio.Task[None] | None = None
     if stream_feed is not None:

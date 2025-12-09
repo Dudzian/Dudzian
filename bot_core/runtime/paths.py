@@ -8,6 +8,7 @@ from pathlib import Path
 
 __all__ = [
     "DesktopAppPaths",
+    "RuntimePaths",
     "build_desktop_app_paths",
     "build_desktop_app_paths_from_root",
     "resolve_core_config_path",
@@ -97,3 +98,49 @@ def build_desktop_app_paths_from_root(
 
     return _build_paths_for_root(Path(app_root), logs_dir=logs_dir, text_log_file=text_log_file)
 
+@dataclass(frozen=True)
+class RuntimePaths:
+    """Zestaw ścieżek używanych przez runtime do cache, presetów i dzienników."""
+
+    data_cache_root: Path
+    presets_dir: Path
+    decisions_dir: Path
+
+    @classmethod
+    def from_environment(cls, environment: object) -> "RuntimePaths":
+        """Buduje ścieżki runtime na podstawie konfiguracji środowiska.
+
+        Obiekt ``environment`` jest traktowany duck-typingowo i powinien
+        udostępniać pola ``data_cache_path`` oraz ``name``.
+        """
+
+        base_value = getattr(environment, "data_cache_path", None) or Path("var/data") / getattr(
+            environment, "name", "default",
+        )
+        base_path = Path(str(base_value)).expanduser()
+
+        def _resolve(candidate: str | Path | None, default: str) -> Path:
+            if candidate is None:
+                return base_path / default
+            path = Path(str(candidate)).expanduser()
+            return path if path.is_absolute() else base_path / path
+
+        return cls(
+            data_cache_root=base_path,
+            presets_dir=_resolve(getattr(environment, "presets_dir", None), "presets"),
+            decisions_dir=_resolve(getattr(environment, "decisions_dir", None), "decisions"),
+        )
+
+    def resolve_data_path(self, candidate: str | Path | None, *, default: str | Path) -> Path:
+        """Zwraca ścieżkę w ``data_cache_root`` lub absolutną, jeśli podano pełną.
+
+        Args:
+            candidate: Konfigurowana ścieżka (może być względna lub absolutna).
+            default: Nazwa pliku/katalogu używana, gdy ``candidate`` jest puste.
+        """
+
+        if candidate in (None, ""):
+            return self.data_cache_root / default
+
+        path = Path(str(candidate)).expanduser()
+        return path if path.is_absolute() else self.data_cache_root / path
