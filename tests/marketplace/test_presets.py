@@ -10,7 +10,7 @@ import yaml
 from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric import ed25519
 
-from bot_core.marketplace import PresetRepository, sign_preset_payload
+from bot_core.marketplace import MarketplaceService, PresetRepository
 
 
 @pytest.fixture()
@@ -21,6 +21,11 @@ def ed25519_keypair() -> tuple[ed25519.Ed25519PrivateKey, str]:
         format=serialization.PublicFormat.Raw,
     )
     return private_key, base64.b64encode(public_key).decode("ascii")
+
+
+@pytest.fixture()
+def marketplace_service() -> MarketplaceService:
+    return MarketplaceService()
 
 
 def _build_payload(preset_id: str, version: str) -> dict[str, object]:
@@ -47,8 +52,9 @@ def _write_signed_preset(
     version: str = "1.0.0",
     key_id: str = "author",
 ) -> None:
+    service = MarketplaceService()
     payload = _build_payload(preset_id, version)
-    signature = sign_preset_payload(payload, private_key=private_key, key_id=key_id)
+    signature = service.sign(payload, private_key=private_key, key_id=key_id)
     document = {"preset": payload, "signature": signature.as_dict()}
     path = directory / filename
     if path.suffix.lower() == ".json":
@@ -60,11 +66,11 @@ def _write_signed_preset(
         )
 
 
-def test_import_signed_json_preset(tmp_path, ed25519_keypair) -> None:
+def test_import_signed_json_preset(tmp_path, ed25519_keypair, marketplace_service) -> None:
     private_key, public_key_b64 = ed25519_keypair
     repo = PresetRepository(tmp_path)
     payload = _build_payload("alpha", "1.0.0")
-    signature = sign_preset_payload(
+    signature = marketplace_service.sign(
         payload,
         private_key=private_key,
         key_id="author",
@@ -87,7 +93,8 @@ def test_import_rejects_invalid_signature(tmp_path, ed25519_keypair) -> None:
     private_key, public_key_b64 = ed25519_keypair
     repo = PresetRepository(tmp_path)
     payload = _build_payload("beta", "1.2.3")
-    signature = sign_preset_payload(payload, private_key=private_key, key_id="author")
+    service = MarketplaceService()
+    signature = service.sign(payload, private_key=private_key, key_id="author")
     broken = signature.as_dict()
     broken["value"] = base64.b64encode(b"invalid").decode("ascii")
     blob = json.dumps({"preset": payload, "signature": broken}).encode("utf-8")
@@ -100,7 +107,8 @@ def test_import_version_conflict(tmp_path, ed25519_keypair) -> None:
     private_key, public_key_b64 = ed25519_keypair
     repo = PresetRepository(tmp_path)
     payload = _build_payload("gamma", "2.0.0")
-    signature = sign_preset_payload(payload, private_key=private_key, key_id="author")
+    service = MarketplaceService()
+    signature = service.sign(payload, private_key=private_key, key_id="author")
     blob = json.dumps({"preset": payload, "signature": signature.as_dict()}).encode("utf-8")
     repo.import_payload(blob, signing_keys={"author": public_key_b64})
 
@@ -112,7 +120,8 @@ def test_export_returns_requested_format(tmp_path, ed25519_keypair) -> None:
     private_key, public_key_b64 = ed25519_keypair
     repo = PresetRepository(tmp_path)
     payload = _build_payload("delta", "3.0.0")
-    signature = sign_preset_payload(payload, private_key=private_key, key_id="author")
+    service = MarketplaceService()
+    signature = service.sign(payload, private_key=private_key, key_id="author")
     repo.import_payload(
         json.dumps({"preset": payload, "signature": signature.as_dict()}).encode("utf-8"),
         signing_keys={"author": public_key_b64},

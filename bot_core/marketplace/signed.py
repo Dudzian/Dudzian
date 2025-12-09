@@ -8,6 +8,7 @@ from typing import TYPE_CHECKING, Mapping, Sequence
 from bot_core.security.hwid import HwIdProvider
 
 from .presets import PresetRepository
+from .service import MarketplaceService
 
 if TYPE_CHECKING:
     from bot_core.strategies.catalog import StrategyCatalog, StrategyPresetDescriptor
@@ -32,8 +33,8 @@ class SignedPresetMarketplace:
         *,
         signing_keys: Mapping[str, bytes | str],
     ) -> None:
-        self._repository = PresetRepository(root)
-        self._signing_keys = dict(signing_keys)
+        self._service = MarketplaceService(repository_root=root, signing_keys=signing_keys)
+        self._repository = self._service.repository or PresetRepository(root)
 
     def sync(
         self,
@@ -43,7 +44,7 @@ class SignedPresetMarketplace:
     ) -> MarketplaceSyncResult:
         """Wczytuje presety i rejestruje je w katalogu strategi."""
 
-        documents = self._repository.load_all(signing_keys=self._signing_keys)
+        documents = self._repository.load_all(signing_keys=self._service.signing_keys)
         installed: list[str] = []
         skipped: list[str] = []
         issues: dict[str, list[str]] = {}
