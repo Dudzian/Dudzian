@@ -8,7 +8,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Iterable, Mapping, MutableMapping, Sequence
 
-from .inference import ModelRepository
+from .repository import ModelRepository
 from .models import ModelArtifact
 
 try:  # pragma: no cover - DecisionOrchestrator may be absent in trimmed builds

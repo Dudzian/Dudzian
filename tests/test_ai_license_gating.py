@@ -7,8 +7,8 @@ from pathlib import Path
 
 import pytest
 
-from bot_core.ai import AIManager
-from bot_core.ai.inference import DecisionModelInference, ModelRepository
+from bot_core.ai import AIManager, FilesystemModelRepository, ModelRepository
+from bot_core.ai.inference import DecisionModelInference
 from bot_core.ai.scheduler import RetrainingScheduler, ScheduledTrainingJob, TrainingScheduler
 from bot_core.ai.training import (
     ExternalModelAdapter,
@@ -53,7 +53,7 @@ def test_ai_manager_requires_ai_module(tmp_path: Path) -> None:
 
 def test_inference_requires_ai_module(tmp_path: Path) -> None:
     _install_capabilities(ai_enabled=False)
-    repository = ModelRepository(tmp_path)
+    repository = FilesystemModelRepository(tmp_path)
     with pytest.raises(LicenseCapabilityError):
         DecisionModelInference(repository)
 
@@ -93,7 +93,7 @@ def test_ai_components_allowed_when_module_enabled(tmp_path: Path) -> None:
     _install_capabilities(ai_enabled=True)
 
     manager = AIManager(model_dir=tmp_path)
-    repository = ModelRepository(tmp_path)
+    repository = FilesystemModelRepository(tmp_path)
     DecisionModelInference(repository)
     scheduler = TrainingScheduler()
     job = ScheduledTrainingJob(

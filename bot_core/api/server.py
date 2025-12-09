@@ -26,7 +26,7 @@ from google.protobuf import empty_pb2, timestamp_pb2
 from google.protobuf.json_format import MessageToDict
 
 from bot_core.alerts import DefaultAlertRouter
-from bot_core.ai import AdaptiveStrategyLearner, ModelRepository
+from bot_core.ai import AdaptiveStrategyLearner, FilesystemModelRepository, ModelRepository
 from bot_core.alerts.dispatcher import (
     AlertSeverity,
     ensure_offline_logging_sink,
@@ -2541,7 +2541,7 @@ def build_local_runtime_context(
     model_registry_path = getattr(runtime_config.ai, "model_registry_path", None)
     if orchestrator_instance is not None and model_registry_path:
         try:
-            repository = ModelRepository(Path(model_registry_path))
+            repository = FilesystemModelRepository(Path(model_registry_path))
             adaptive_learner = AdaptiveStrategyLearner(
                 repository=repository,
                 orchestrator=orchestrator_instance,

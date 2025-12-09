@@ -44,7 +44,8 @@ if "lightgbm" not in sys.modules:
 
 
 import bot_core.ai.manager as manager_module
-from bot_core.ai.inference import DecisionModelInference, ModelRepository
+from bot_core.ai.inference import DecisionModelInference
+from bot_core.ai.repository import FilesystemModelRepository, ModelRepository
 from bot_core.ai.pipeline import train_gradient_boosting_model
 
 
@@ -198,7 +199,7 @@ def test_ai_manager_clears_fallback_degradation_when_backend_ready(
     assert manager.degradation_reason is not None
     assert manager.degradation_reason.startswith("fallback_ai_models")
 
-    inference = DecisionModelInference(ModelRepository(tmp_path))
+    inference = DecisionModelInference(FilesystemModelRepository(tmp_path))
     inference._model = object()  # type: ignore[attr-defined]
     manager._mark_backend_ready(inference)
     assert manager.is_degraded is False

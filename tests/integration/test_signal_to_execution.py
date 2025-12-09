@@ -7,6 +7,7 @@ from bot_core.ai import (
     DecisionModelInference,
     FeatureDataset,
     FeatureVector,
+    FilesystemModelRepository,
     ModelRepository,
     ModelTrainer,
     generate_model_artifact_bundle,
@@ -106,7 +107,7 @@ def test_signal_to_execution_flow(tmp_path: Path) -> None:
     assert signature_payload["signature"]["algorithm"] == "HMAC-SHA256"
     assert signature_payload["target"] == bundle.artifact_path.name
 
-    repository = ModelRepository(tmp_path / "models")
+    repository = FilesystemModelRepository(tmp_path / "models")
     repository.save(artifact, "btc-trend.json", version="1.0.0", activate=True)
 
     inference = DecisionModelInference(repository)

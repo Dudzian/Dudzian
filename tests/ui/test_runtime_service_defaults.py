@@ -2,7 +2,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from types import SimpleNamespace
 
-from bot_core.ai import ModelRepository
+from bot_core.ai import FilesystemModelRepository, ModelRepository
 from bot_core.ai.models import ModelArtifact
 from ui.backend.runtime_service import RuntimeService
 
@@ -30,7 +30,7 @@ def test_runtime_service_refreshes_runtime_metadata(tmp_path: Path) -> None:
         encoding="utf-8",
     )
 
-    repository = ModelRepository(registry_dir)
+    repository = FilesystemModelRepository(registry_dir)
     now = datetime.now(timezone.utc)
     artifact = ModelArtifact(
         feature_names=("regime", "strategy"),

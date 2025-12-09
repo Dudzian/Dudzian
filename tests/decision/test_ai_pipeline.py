@@ -10,6 +10,7 @@ from bot_core.ai import (
     DecisionModelInference,
     FeatureEngineer,
     MarketRegime,
+    FilesystemModelRepository,
     ModelRepository,
     ModelTrainer,
     RegimeStrategyWeights,
@@ -668,7 +669,7 @@ def test_training_and_inference(tmp_path: Path, ohlcv_rows: list[tuple[float, ..
 
     trainer = ModelTrainer(learning_rate=0.2, n_estimators=10, validation_split=0.2)
     artifact = trainer.train(dataset)
-    repo = ModelRepository(tmp_path)
+    repo = FilesystemModelRepository(tmp_path)
     artifact_path = repo.save(artifact, "test_model.json")
 
     assert set(artifact.feature_scalers.keys()) == set(dataset.feature_names)

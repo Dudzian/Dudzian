@@ -13,10 +13,12 @@ from typing import Iterable, Mapping, MutableMapping, Sequence
 import numpy as np
 import pandas as pd
 
-from .inference import DecisionModelInference, ModelRepository
+from .inference import DecisionModelInference
+from .repository import FilesystemModelRepository, ModelRepository
 from .meta import build_meta_labeling_payload, train_meta_classifier
 from .models import ModelArtifact, ModelScore
 from .training import SimpleGradientBoostingModel
+from .validation import CalibrationReport
 
 try:  # pragma: no cover - opcjonalna zależność
     import yaml
@@ -30,39 +32,6 @@ except ImportError:  # pragma: no cover - Python <3.8 fallback
 
 if TYPE_CHECKING:  # pragma: no cover - tylko dla statycznych analizatorów
     from .manager import AIManager
-
-
-def _calibrate_predictions(
-    targets: Sequence[float], predictions: Sequence[float]
-) -> tuple[float, float]:
-    """Return a simple linear calibration (slope, intercept).
-
-    The calibration rescales raw model outputs to better match the
-    distribution of training targets.  We intentionally keep the
-    implementation minimal – a closed form least squares regression – so
-    that it works in constrained environments (CI, smoke tests) without
-    requiring additional dependencies.
-    """
-
-    if not targets or not predictions:
-        return 1.0, 0.0
-
-    y = np.asarray(targets, dtype=float)
-    x = np.asarray(predictions, dtype=float)
-    if x.size != y.size:
-        raise ValueError("Targets and predictions must have the same size for calibration")
-
-    if np.allclose(x, x[0]):
-        # Degenerate case – the model produced a constant prediction.  In
-        # that scenario the best calibration we can do is to shift the
-        # output towards the empirical mean of the targets.
-        return 0.0, float(np.mean(y))
-
-    A = np.vstack([x, np.ones_like(x)]).T
-    solution, *_ = np.linalg.lstsq(A, y, rcond=None)
-    slope = float(solution[0])
-    intercept = float(solution[1])
-    return slope, intercept
 
 
 def _cross_validate(
@@ -768,7 +737,7 @@ def train_gradient_boosting_model(
     model = SimpleGradientBoostingModel(min_samples_leaf=min_leaf)
     model.fit(train_features, train_targets)
     raw_predictions = list(model.batch_predict(train_features))
-    calibration_slope, calibration_intercept = _calibrate_predictions(train_targets, raw_predictions)
+    calibration_report = CalibrationReport.fit(train_targets, raw_predictions)
     cv_payload = _cross_validate(
         train_features, train_targets, folds=max(3, min(5, len(train_features)))
     )
@@ -833,10 +802,7 @@ def train_gradient_boosting_model(
     if test_subset is not None and "test" in subset_predictions:
         test_meta = (subset_predictions["test"], test_subset.targets)
     meta_payload = {
-        "calibration": {
-            "slope": calibration_slope,
-            "intercept": calibration_intercept,
-        },
+            "calibration": calibration_report.to_mapping(),
         "cross_validation": {
             "folds": len(cv_payload["mae"]),
             "mae": list(cv_payload["mae"]),
@@ -906,7 +872,7 @@ def train_gradient_boosting_model(
         decision_journal_entry_id=decision_journal_entry_id,
         backend="builtin",
     )
-    repository = ModelRepository(output_dir)
+    repository = FilesystemModelRepository(output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
     filename = f"{model_name}.json"
     if model_version:
@@ -934,7 +900,7 @@ def register_model_artifact(
     """Register a model artifact with ``DecisionOrchestrator``."""
 
     repository_base = repository_root or artifact_path.parent
-    repository = ModelRepository(repository_base)
+    repository = FilesystemModelRepository(repository_base)
     inference = DecisionModelInference(repository)
     # load_weights expects a path relative to repository root when str provided
     path_obj = Path(artifact_path)

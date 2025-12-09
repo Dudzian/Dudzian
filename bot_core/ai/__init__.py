@@ -13,7 +13,9 @@ from .inference import DecisionModelInference  # noqa: F401
 _EXPORTS: Dict[str, Tuple[str, str]] = {
     # inference / repository
     "DecisionModelInference": (".inference", "DecisionModelInference"),
-    "ModelRepository": (".inference", "ModelRepository"),
+    "ModelRepository": (".repository", "ModelRepository"),
+    "FilesystemModelRepository": (".repository", "FilesystemModelRepository"),
+    "CloudModelRepository": (".repository", "CloudModelRepository"),
     "ModelHealthMonitor": (".health", "ModelHealthMonitor"),
     "ModelHealthStatus": (".health", "ModelHealthStatus"),
     "HealthObservation": (".health", "HealthObservation"),
@@ -73,6 +75,7 @@ _EXPORTS: Dict[str, Tuple[str, str]] = {
     "ScheduledTrainingJob": (".scheduler", "ScheduledTrainingJob"),
     "TrainingRunRecord": (".scheduler", "TrainingRunRecord"),
     "TrainingScheduler": (".scheduler", "TrainingScheduler"),
+    "WalkForwardPlan": (".scheduler", "WalkForwardPlan"),
     "WalkForwardResult": (".scheduler", "WalkForwardResult"),
     "WalkForwardValidator": (".scheduler", "WalkForwardValidator"),
     # reżimy rynku
