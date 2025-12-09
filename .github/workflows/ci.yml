@@ -142,6 +142,34 @@ jobs:
       - name: Check out repository
         uses: actions/checkout@v4
 
+      - name: Set up Python
+        id: setup-python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Determine pip cache directory
+        id: pip-cache
+        shell: bash
+        run: |
+          python - <<'PY'
+          import os
+          import subprocess
+
+          cache_dir = subprocess.check_output(["python", "-m", "pip", "cache", "dir"], text=True).strip()
+          print(f"cache_dir={cache_dir}")
+          with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as fh:
+            fh.write(f"cache_dir={cache_dir}\n")
+          PY
+
+      - name: Cache pip
+        uses: actions/cache@v4
+        with:
+          path: ${{ steps.pip-cache.outputs.cache_dir }}
+          key: ${{ runner.os }}-pip-${{ steps.setup-python.outputs.python-version }}-${{ hashFiles('pyproject.toml', 'requirements.txt', 'pytest_cov_stub.py') }}
+          restore-keys: |
+            ${{ runner.os }}-pip-${{ steps.setup-python.outputs.python-version }}-
+
       # Wheelhouse consumer: expects artifact from prepare-wheelhouse.
       - name: Download wheelhouse
         if: env.WHEELHOUSE_ENABLED == 'true'
@@ -151,14 +179,10 @@ jobs:
           path: ${{ env.WHEELHOUSE_DIR }}
           if-no-artifact-found: error
 
+      # Quick structural lint: ensures repo path casing/length expectations are met.
+      # Local: python scripts/lint_paths.py
       - name: Lint repository paths
         run: python scripts/lint_paths.py
-
-      - name: Set up Python
-        id: setup-python
-        uses: actions/setup-python@v5
-        with:
-          python-version: "3.11"
 
       - name: Install dependencies
         shell: bash
@@ -171,10 +195,19 @@ jobs:
           python scripts/ci/pip_install.py "${wheelhouse_args[@]}" -- .[dev]
           python scripts/ci/pip_install.py "${wheelhouse_args[@]}" -- pytest pytest-cov pre-commit
 
-      - name: Pre-commit (ruff + mypy)
+      # Full lint suite via pre-commit: runs ruff + mypy just like local `pre-commit run --all-files`.
+      # Local: pre-commit run --all-files --show-diff-on-failure
+      - name: Lint (pre-commit: ruff + mypy)
         run: pre-commit run --all-files --show-diff-on-failure
 
-      - name: Pytest with coverage
+      - name: Prepare test reports directory
+        shell: bash
+        run: mkdir -p test-results
+
+      # Unit tests with coverage and JUnit output; replicate locally with the same pytest command.
+      # Local: pytest --cov=bot_core.strategies --cov=bot_core.runtime.multi_strategy_scheduler --cov=bot_core.runtime.journal \
+      #   --cov-config=.coveragerc --cov-report=xml --cov-report=term --cov-fail-under=75 tests/... (list below)
+      - name: Pytest (unit suite) with coverage
         run: >-
           pytest
           --cov=bot_core.strategies
@@ -184,6 +217,7 @@ jobs:
           --cov-report=xml
           --cov-report=term
           --cov-fail-under=75
+          --junitxml=test-results/pytest-unit.xml
           tests/test_pipeline_paper.py
           tests/test_risk_profiles.py
           tests/test_mean_reversion_strategy.py
@@ -196,10 +230,20 @@ jobs:
           tests/test_smoke_demo_strategies_cli.py
 
       - name: Upload coverage report
+        if: always()
         uses: actions/upload-artifact@v4
         with:
           name: coverage-report
           path: coverage.xml
+          retention-days: 3
+
+      - name: Upload pytest results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: lint-and-test-pytest-results
+          path: test-results
+          if-no-files-found: warn
           retention-days: 3
 
   licensing-hwid-tolerance:
