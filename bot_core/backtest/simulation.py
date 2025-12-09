@@ -6,19 +6,7 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import List, Mapping
 
-
-@dataclass(slots=True)
-class BacktestFill:
-    """Result of executing an order inside the matching engine."""
-
-    order_id: int
-    side: str
-    size: float
-    price: float
-    fee: float
-    slippage: float
-    timestamp: datetime
-    partial: bool
+from .models import BacktestFill
 
 
 @dataclass(slots=True)
@@ -29,6 +17,37 @@ class MatchingConfig:
     slippage_bps: float = 5.0
     fee_bps: float = 10.0
     liquidity_share: float = 0.5
+
+
+@dataclass(slots=True)
+class SimulationScenario:
+    """Opis parametrów egzekucji używany w backteście / symulacji."""
+
+    name: str = "default"
+    latency_bars: int = 1
+    slippage_bps: float = 5.0
+    fee_bps: float = 10.0
+    liquidity_share: float = 0.5
+
+    def to_matching_config(self) -> MatchingConfig:
+        return MatchingConfig(
+            latency_bars=self.latency_bars,
+            slippage_bps=self.slippage_bps,
+            fee_bps=self.fee_bps,
+            liquidity_share=self.liquidity_share,
+        )
+
+    @classmethod
+    def from_matching_config(
+        cls, cfg: MatchingConfig, *, name: str | None = None
+    ) -> "SimulationScenario":
+        return cls(
+            name=name or "custom",
+            latency_bars=cfg.latency_bars,
+            slippage_bps=cfg.slippage_bps,
+            fee_bps=cfg.fee_bps,
+            liquidity_share=cfg.liquidity_share,
+        )
 
 
 @dataclass(slots=True)
@@ -47,8 +66,17 @@ class MatchingEngine:
 
     _EPSILON = 1e-12
 
-    def __init__(self, config: MatchingConfig | None = None) -> None:
-        self._config = config or MatchingConfig()
+    def __init__(
+        self, config: MatchingConfig | SimulationScenario | None = None
+    ) -> None:
+        scenario = (
+            config
+            if isinstance(config, SimulationScenario)
+            else SimulationScenario.from_matching_config(config, name="custom")
+            if isinstance(config, MatchingConfig)
+            else SimulationScenario()
+        )
+        self._config = scenario.to_matching_config()
         self._orders: List[_PendingOrder] = []
         self._next_order_id = 1
         self._latency = max(0, int(self._config.latency_bars))
@@ -210,4 +238,4 @@ class MatchingEngine:
         return price
 
 
-__all__ = ["BacktestFill", "MatchingConfig", "MatchingEngine"]
+__all__ = ["BacktestFill", "MatchingConfig", "MatchingEngine", "SimulationScenario"]

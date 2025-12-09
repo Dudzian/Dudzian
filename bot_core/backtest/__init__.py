@@ -3,15 +3,15 @@ from __future__ import annotations
 from .engine import (
     BacktestEngine,
     BacktestError,
-    BacktestReport,
-    BacktestTrade,
+    DataProviderProtocol,
     HistoricalDataProvider,
-    PerformanceMetrics,
 )
 from .ma import Bar as MABar, Trade as MATrade, param_grid_fast_slow, simulate_trades_ma
 from .metrics import MetricsResult, compute_metrics, to_dict
 from .reporting import export_report, render_html_report
-from .simulation import BacktestFill, MatchingConfig, MatchingEngine
+from .simulation import MatchingConfig, MatchingEngine, SimulationScenario
+from .models import BacktestFill, BacktestReport, BacktestTrade, PerformanceMetrics
+from .providers import ListHistoryProvider, OHLCVBar, PandasHistoryProvider, TradeTick
 from .trade_loader import load_trades
 from .trend_following import (
     DEFAULT_FEE,
@@ -36,7 +36,12 @@ __all__ = [
     "DEFAULT_FEE",
     "EntryParams",
     "ExchangeLike",
+    "DataProviderProtocol",
     "HistoricalDataProvider",
+    "OHLCVBar",
+    "TradeTick",
+    "PandasHistoryProvider",
+    "ListHistoryProvider",
     "load_trades",
     "MABar",
     "MATrade",
@@ -44,6 +49,7 @@ __all__ = [
     "MIN_SL_PCT",
     "MatchingConfig",
     "MatchingEngine",
+    "SimulationScenario",
     "PerformanceMetrics",
     "StrategyParams",
     "TradeFill",

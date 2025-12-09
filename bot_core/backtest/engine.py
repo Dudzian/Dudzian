@@ -5,27 +5,14 @@ from __future__ import annotations
 import asyncio
 import logging
 import math
-from dataclasses import dataclass, field
 from datetime import datetime, timezone
-from typing import (
-    Any,
-    Awaitable,
-    Callable,
-    Dict,
-    Iterable,
-    List,
-    Mapping,
-    MutableMapping,
-    Protocol,
-    Sequence,
-    Tuple,
-    TypeVar,
-    runtime_checkable,
-)
+from typing import Any, Awaitable, Callable, Dict, Iterable, List, Mapping, MutableMapping, Protocol, Sequence, Tuple, TypeVar, runtime_checkable
 
 import pandas as pd
 
-from .simulation import BacktestFill, MatchingConfig, MatchingEngine
+from .models import BacktestFill, BacktestReport, BacktestTrade, PerformanceMetrics
+from .providers import HistoryProvider, PandasHistoryProvider
+from .simulation import MatchingConfig, MatchingEngine, SimulationScenario
 
 __all__ = [
     "BacktestError",
@@ -49,7 +36,7 @@ class BacktestError(RuntimeError):
 
 
 @runtime_checkable
-class DataProviderProtocol(Protocol):
+class DataProviderProtocol(HistoryProvider, Protocol):
     async def get_ohlcv(self, symbol: str, timeframe: str, *, limit: int = 500) -> Mapping[str, Any]:
         ...
 
@@ -170,71 +157,20 @@ def _normalize_strategy_metadata(metadata: Any) -> Dict[str, Any]:
     return {"raw": metadata}
 
 
-@dataclass(slots=True)
-class BacktestTrade:
-    direction: str
-    entry_time: datetime
-    exit_time: datetime
-    entry_price: float
-    exit_price: float
-    quantity: float
-    pnl: float
-    pnl_pct: float
-    fees_paid: float
-    slippage_cost: float
-
-
-@dataclass(slots=True)
-class PerformanceMetrics:
-    total_return_pct: float
-    cagr_pct: float
-    max_drawdown_pct: float
-    sharpe_ratio: float
-    sortino_ratio: float
-    omega_ratio: float
-    hit_ratio_pct: float
-    risk_of_ruin_pct: float
-    max_exposure_pct: float
-    fees_paid: float
-    slippage_cost: float
-
-
-@dataclass(slots=True)
-class BacktestReport:
-    trades: List[BacktestTrade] = field(default_factory=list)
-    fills: List[BacktestFill] = field(default_factory=list)
-    equity_curve: List[float] = field(default_factory=list)
-    equity_timestamps: List[datetime] = field(default_factory=list)
-    starting_balance: float = 0.0
-    final_balance: float = 0.0
-    metrics: PerformanceMetrics | None = None
-    warnings: List[str] = field(default_factory=list)
-    parameters: Dict[str, Any] = field(default_factory=dict)
-    strategy_metadata: Dict[str, Any] = field(default_factory=dict)
-
-
-class HistoricalDataProvider(DataProviderProtocol):
+class HistoricalDataProvider(PandasHistoryProvider, DataProviderProtocol):
     """Adapter udostępniający dane historyczne strategiom."""
 
-    def __init__(self, data: pd.DataFrame, symbol: str, timeframe: str) -> None:
-        if data.empty:
-            raise BacktestError("Backtest wymaga danych historycznych")
-        if "close" not in data.columns:
-            raise BacktestError("Dane historyczne wymagają kolumny 'close'")
-        if "volume" not in data.columns:
-            data = data.copy()
-            data["volume"] = 0.0
-        self._data = data.sort_index()
-        self.symbol = symbol
-        self.timeframe = timeframe
-        self._history_cache_idx = -1
-        self._history_cache: pd.DataFrame = self._data.iloc[:0]
+    def __init__(self, data: pd.DataFrame, symbol: str, timeframe: str) -> None:  # type: ignore[misc]
+        try:
+            super().__init__(data, symbol, timeframe)
+        except ValueError as exc:
+            raise BacktestError(str(exc)) from exc
 
     async def get_ohlcv(
         self, symbol: str, timeframe: str, *, limit: int = 500
     ) -> Mapping[str, Any]:
         limit = max(1, int(limit))
-        window = self._data.tail(limit)
+        window = self.dataframe.tail(limit)
         return {
             "symbol": symbol,
             "timeframe": timeframe,
@@ -243,38 +179,8 @@ class HistoricalDataProvider(DataProviderProtocol):
         }
 
     async def get_ticker(self, symbol: str) -> Mapping[str, Any]:
-        last_close = float(self._data["close"].iloc[-1])
+        last_close = float(self.dataframe["close"].iloc[-1])
         return {"symbol": symbol, "last": last_close}
-
-    def iter_rows(self) -> Iterable[Tuple[datetime, Mapping[str, float]]]:
-        for ts, row in self._data.iterrows():
-            timestamp = (
-                ts
-                if isinstance(ts, datetime)
-                else datetime.fromtimestamp(float(ts) / 1000.0, tz=timezone.utc)
-            )
-            if timestamp.tzinfo is None:
-                timestamp = timestamp.replace(tzinfo=timezone.utc)
-            yield timestamp, {
-                "open": float(row.get("open", row["close"])),
-                "high": float(row.get("high", row["close"])),
-                "low": float(row.get("low", row["close"])),
-                "close": float(row["close"]),
-                "volume": float(row.get("volume", 0.0)),
-            }
-
-    def history_until(self, index: int) -> pd.DataFrame:
-        if index < 0:
-            return self._data.iloc[:0]
-        if index == self._history_cache_idx:
-            return self._history_cache
-        self._history_cache = self._data.head(index + 1)
-        self._history_cache_idx = index
-        return self._history_cache
-
-    @property
-    def dataframe(self) -> pd.DataFrame:
-        return self._data
 
 
 class StrategyBacktestSession:
@@ -397,7 +303,7 @@ class BacktestEngine:
         symbol: str,
         timeframe: str,
         initial_balance: float,
-        matching: MatchingConfig,
+        matching: MatchingConfig | SimulationScenario,
         allow_short: bool = False,
         context_extra: Mapping[str, Any] | None = None,
         metadata: Any | None = None,
@@ -409,8 +315,13 @@ class BacktestEngine:
         self._timeframe = timeframe
         self._initial_balance = float(initial_balance)
         self._allow_short = bool(allow_short)
-        self._matching_config = matching
-        self._matching_engine = MatchingEngine(matching)
+        self._scenario = (
+            matching
+            if isinstance(matching, SimulationScenario)
+            else SimulationScenario.from_matching_config(matching, name="custom")
+        )
+        self._matching_config = self._scenario.to_matching_config()
+        self._matching_engine = MatchingEngine(self._scenario)
         self._data_provider = HistoricalDataProvider(data, symbol, timeframe)
         self._metadata = metadata
         self._strategy_metadata = _normalize_strategy_metadata(metadata)
@@ -742,6 +653,7 @@ class BacktestEngine:
             "symbol": self._symbol,
             "timeframe": self._timeframe,
             "initial_balance": self._initial_balance,
+            "scenario": self._scenario.name,
             "matching": {
                 "latency_bars": self._matching_config.latency_bars,
                 "slippage_bps": self._matching_config.slippage_bps,
