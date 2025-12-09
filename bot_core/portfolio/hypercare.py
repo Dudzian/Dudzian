@@ -12,7 +12,7 @@ from bot_core.market_intel import MarketIntelSnapshot
 from bot_core.observability.slo import SLOStatus
 from bot_core.portfolio.governor import PortfolioDecision, PortfolioGovernor
 from bot_core.portfolio.io import load_allocations_file, load_market_intel_report
-from bot_core.risk import StressOverrideRecommendation
+from bot_core.portfolio.adapters import StressOverrideRecommendation
 from bot_core.runtime.portfolio_inputs import (
     build_portfolio_stress_provider,
     build_slo_status_provider,

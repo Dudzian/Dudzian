@@ -14,7 +14,7 @@ except ImportError:  # pragma: no cover - środowiska bez PyYAML
 
 from bot_core.market_intel import MarketIntelSnapshot
 from bot_core.observability.slo import SLOStatus
-from bot_core.risk import StressOverrideRecommendation
+from bot_core.portfolio.adapters import StressOverrideRecommendation
 
 __all__ = [
     "load_json_or_yaml",

@@ -37,50 +37,11 @@ except Exception:  # pragma: no cover
         def record(self, *_args: Any, **_kw: Any) -> None:
             pass
 
-try:  # Market Intel snapshot (HEAD)
-    from bot_core.market_intel import MarketIntelSnapshot  # type: ignore
-except Exception:  # pragma: no cover
-    @dataclass(slots=True)
-    class MarketIntelSnapshot:  # minimalny fallback
-        symbol: str
-        interval: str
-        start: datetime | None
-        end: datetime | None
-        bar_count: int
-        price_change_pct: float | None = None
-        volatility_pct: float | None = None
-        max_drawdown_pct: float | None = None
-        average_volume: float | None = None
-        liquidity_usd: float | None = None
-        momentum_score: float | None = None
-        metadata: Mapping[str, float] = field(default_factory=dict)
-
-try:  # SLO status (HEAD)
-    from bot_core.observability.slo import SLOStatus  # type: ignore
-except Exception:  # pragma: no cover
-    @dataclass(slots=True)
-    class SLOStatus:  # fallback minimalny
-        status: str | None = None
-        severity: str = "warning"
-        error_budget_pct: float | None = None
-
-        @property
-        def is_breach(self) -> bool:
-            return (self.status or "").lower() == "breach"
-
-try:  # Stress overrides (HEAD)
-    from bot_core.risk import StressOverrideRecommendation  # type: ignore
-except Exception:  # pragma: no cover
-    @dataclass(slots=True)
-    class StressOverrideRecommendation:  # fallback minimalny
-        symbol: str | None = None
-        risk_budget: str | None = None
-        reason: str = ""
-        severity: str | None = "warning"
-        weight_multiplier: float | None = None
-        min_weight: float | None = None
-        max_weight: float | None = None
-        force_rebalance: bool = False
+from bot_core.portfolio.adapters import (
+    MarketIntelSnapshot,
+    SLOStatus,
+    StressOverrideRecommendation,
+)
 
 # TCO/report (opcjonalne dla wariantu strategii)
 try:  # pragma: no cover
