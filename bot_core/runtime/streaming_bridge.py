@@ -9,6 +9,7 @@ import pandas as pd
 
 from bot_core.exchanges.streaming import LocalLongPollStream, StreamBatch
 from bot_core.observability.metrics import MetricsRegistry
+from bot_core.backtest.providers import ListHistoryProvider, OHLCVBar
 
 
 def _normalize_timestamp(value: Any) -> int:
@@ -44,7 +45,7 @@ def _normalize_event(event: Mapping[str, Any], *, channel: str | None = None) ->
 
 
 def history_to_stream_batches(
-    history: Sequence[Mapping[str, Any]],
+    history: Sequence[Mapping[str, Any]] | Sequence[OHLCVBar],
     *,
     channel: str,
     batch_size: int = 250,
@@ -56,7 +57,18 @@ def history_to_stream_batches(
     buffer: list[Mapping[str, Any]] = []
     cursor_counter = 0
     for entry in history:
-        buffer.append(_normalize_event(entry, channel=channel))
+        if isinstance(entry, OHLCVBar):
+            payload: Mapping[str, Any] = {
+                "open": entry.open,
+                "high": entry.high,
+                "low": entry.low,
+                "close": entry.close,
+                "volume": entry.volume,
+                "timestamp": entry.timestamp,
+            }
+        else:
+            payload = entry
+        buffer.append(_normalize_event(payload, channel=channel))
         if len(buffer) >= max(1, batch_size):
             cursor_counter += 1
             batches.append(
@@ -96,6 +108,28 @@ def stream_batches_to_frame(batches: Iterable[StreamBatch]) -> pd.DataFrame:
     frame.set_index("timestamp", inplace=True)
     columns = [column for column in ("open", "high", "low", "close", "volume") if column in frame]
     return frame[columns]
+
+
+def history_events_to_provider(history: Sequence[Mapping[str, Any]] | Sequence[OHLCVBar]) -> ListHistoryProvider:
+    """Konwertuje snapshot historii OHLCV do interfejsu providerów backtest/runtime."""
+
+    bars: list[OHLCVBar] = []
+    for entry in history:
+        if isinstance(entry, OHLCVBar):
+            bars.append(entry)
+            continue
+        normalized = _normalize_event(entry)
+        bars.append(
+            OHLCVBar(
+                timestamp=datetime.fromtimestamp(normalized["timestamp_ms"] / 1000.0, tz=timezone.utc),
+                open=float(normalized.get("open", normalized.get("close", 0.0))),
+                high=float(normalized.get("high", normalized.get("close", 0.0))),
+                low=float(normalized.get("low", normalized.get("close", 0.0))),
+                close=float(normalized.get("close", 0.0)),
+                volume=float(normalized.get("volume", 0.0)),
+            )
+        )
+    return ListHistoryProvider(bars)
 
 
 def _build_snapshot_stream(
@@ -289,6 +323,7 @@ __all__ = [
     "capture_stream_snapshot",
     "capture_stream_snapshot_async",
     "history_to_stream_batches",
+    "history_events_to_provider",
     "load_snapshot_from_file",
     "stream_batches_to_frame",
     "write_snapshot_to_file",

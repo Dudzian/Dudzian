@@ -3,13 +3,11 @@ from datetime import datetime, timezone
 
 import pytest
 
-from bot_core.backtest.simulation import MatchingConfig, MatchingEngine
+from bot_core.backtest.simulation import MatchingEngine
 
 
-def test_slippage_scales_with_filled_size_and_direction():
-    engine = MatchingEngine(
-        MatchingConfig(latency_bars=0, slippage_bps=100.0, fee_bps=0.0, liquidity_share=1.0)
-    )
+def test_slippage_scales_with_filled_size_and_direction(heavy_slippage_scenario):
+    engine = MatchingEngine(heavy_slippage_scenario)
     now = datetime.now(timezone.utc)
 
     engine.submit_market_order(side="buy", size=10.0, index=0, timestamp=now)
