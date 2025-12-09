@@ -15,12 +15,12 @@ class ConservativeProfile(StaticRiskProfile):
     _max_leverage: float = 2.0
     _drawdown_limit: float = 0.05
     _daily_loss_limit: float = 0.04
-    _max_position_pct: float = 0.30
+    _max_position_pct: float = 0.10
     _target_volatility: float = 0.07
     _stop_loss_atr_multiple: float = 1.0
     _trade_risk_pct_range: tuple[float, float] = (0.005, 0.0075)
-    _instrument_alert_pct: float = 0.25
-    _instrument_limit_pct: float = 0.30
+    _instrument_alert_pct: float = 0.08
+    _instrument_limit_pct: float = 0.10
     _portfolio_alert_pct: float = 0.50
     _portfolio_limit_pct: float = 0.60
     _daily_kill_switch_r_multiple: float = 2.0
