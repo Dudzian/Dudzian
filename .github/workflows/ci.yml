@@ -626,6 +626,11 @@ jobs:
     name: UI Native Tests
     runs-on: ubuntu-latest
 
+    env:
+      QT_QPA_PLATFORM: offscreen
+      QT_QUICK_BACKEND: software
+      CTEST_OUTPUT_ON_FAILURE: 1
+
     steps:
       - name: Check out repository
         uses: actions/checkout@v4
@@ -637,13 +642,22 @@ jobs:
             libprotobuf-dev protobuf-compiler protobuf-compiler-grpc \
             libgrpc-dev libgrpc++-dev libarchive-dev \
             libegl1 libgl1 libpulse0 libxkbcommon-x11-0 \
-            libxcb-cursor0 libxcb-xinerama0
+            libxcb-cursor0 libxcb-xinerama0 xvfb
 
       - name: Install Qt
         uses: jurplel/install-qt-action@v3
         with:
           version: 6.7.0
           modules: ${{ env.QT_DESKTOP_MODULES }}
+
+      - name: Start virtual display
+        run: |
+          export DISPLAY=:99
+          Xvfb "$DISPLAY" -screen 0 1920x1080x24 > /tmp/xvfb.log 2>&1 &
+          echo "DISPLAY=${DISPLAY}" >> "$GITHUB_ENV"
+          echo "XVFB_PID=$!" >> "$GITHUB_ENV"
+          # Give Xvfb a moment to become ready.
+          sleep 3
 
       - name: Configure CMake
         run: cmake -S ui -B ui/build-tests -G Ninja -DBUILD_TESTING=ON -DCMAKE_PREFIX_PATH=$Qt6_DIR
@@ -652,7 +666,29 @@ jobs:
         run: cmake --build ui/build-tests
 
       - name: Run UI test suite
-        run: ctest --test-dir ui/build-tests --output-on-failure
+        run: |
+          set -o pipefail
+          mkdir -p ui/build-tests/Testing/Temporary
+          ctest --test-dir ui/build-tests --output-on-failure --output-log ui/build-tests/Testing/Temporary/ctest.log | tee ui/build-tests/Testing/Temporary/ctest-console.log
+
+      - name: Upload UI native test artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ui-native-test-artifacts
+          path: |
+            ui/build-tests/Testing/Temporary/ctest.log
+            ui/build-tests/Testing/Temporary/ctest-console.log
+            ui/build-tests/Testing/Temporary/LastTest.log
+          if-no-files-found: warn
+          retention-days: 5
+
+      - name: Stop virtual display
+        if: always()
+        run: |
+          if [[ -n "${XVFB_PID:-}" ]]; then
+            kill "$XVFB_PID" || true
+          fi
 
   ui-tests:
     name: UI QML Tests
@@ -682,7 +718,16 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y libegl1 libgl1 libpulse0 libxkbcommon-x11-0 \
-            libxcb-cursor0 libxcb-xinerama0
+            libxcb-cursor0 libxcb-xinerama0 xvfb
+
+      - name: Start virtual display
+        run: |
+          export DISPLAY=:99
+          Xvfb "$DISPLAY" -screen 0 1920x1080x24 > /tmp/xvfb.log 2>&1 &
+          echo "DISPLAY=${DISPLAY}" >> "$GITHUB_ENV"
+          echo "XVFB_PID=$!" >> "$GITHUB_ENV"
+          # Give Xvfb a moment to become ready.
+          sleep 3
 
       # Wheelhouse consumer: uses artifact produced in prepare-wheelhouse.
       - name: Download PySide6 wheel artifact
@@ -705,9 +750,11 @@ jobs:
 
       - name: Run QML pytest suite
         run: |
+          set -o pipefail
           mkdir -p test-results/qml
           pytest -m qml --maxfail=1 --disable-warnings \
-            --junitxml=test-results/qml/pytest.xml --durations=15
+            --junitxml=test-results/qml/pytest.xml --durations=15 \
+            --log-file=test-results/qml/pytest.log --log-file-level=INFO | tee test-results/qml/pytest-console.log
 
       - name: Upload QML diagnostics
         if: always()
@@ -717,6 +764,13 @@ jobs:
           path: test-results/qml
           if-no-files-found: warn
           retention-days: 3
+
+      - name: Stop virtual display
+        if: always()
+        run: |
+          if [[ -n "${XVFB_PID:-}" ]]; then
+            kill "$XVFB_PID" || true
+          fi
 
   grpc-feed-integration:
     name: gRPC Decision Feed Integration
