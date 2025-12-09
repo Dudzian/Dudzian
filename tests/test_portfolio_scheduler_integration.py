@@ -8,7 +8,7 @@ from bot_core.config.models import (
     PortfolioGovernorScoringWeights,
     PortfolioGovernorStrategyConfig,
 )
-from bot_core.portfolio import PortfolioGovernor
+from bot_core.portfolio import StrategyPortfolioGovernor
 from bot_core.runtime.multi_strategy_scheduler import (
     MultiStrategyScheduler,
     StrategyDataFeed,
@@ -72,7 +72,7 @@ class _CollectSink(StrategySignalSink):
 
 
 def test_scheduler_applies_portfolio_governor_allocations() -> None:
-    governor = PortfolioGovernor(
+    governor = StrategyPortfolioGovernor(
         PortfolioGovernorConfig(
             enabled=True,
             rebalance_interval_minutes=0.0,
