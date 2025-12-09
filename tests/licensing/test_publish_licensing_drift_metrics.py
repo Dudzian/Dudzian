@@ -3,6 +3,11 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest import mock
 
+import argparse
+from pathlib import Path
+from types import SimpleNamespace
+from unittest import mock
+
 import pytest
 
 import scripts.publish_licensing_drift_metrics as metrics

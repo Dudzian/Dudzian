@@ -1,7 +1,7 @@
-"""
-Publish licensing drift Prometheus metrics to a Pushgateway instance.
+"""Publikuje metryki dryfu licencyjnego do Pushgateway.
 
-This helper reads the generated `licensing_drift.prom` file produced by
+Publish licensing drift Prometheus metrics to a Pushgateway instance. This
+helper reads the generated `licensing_drift.prom` file produced by
 `scripts/aggregate_licensing_drift_reports.py` and uploads it to a configured
 Pushgateway endpoint so Grafana dashboards can consume the latest CI results.
 
