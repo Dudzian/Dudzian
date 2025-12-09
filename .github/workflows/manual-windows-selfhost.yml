@@ -75,113 +75,15 @@ jobs:
         if: env.PREPARE_WHEELHOUSE_REQUESTED != 'true'
         run: echo "wheelhouse preparation skipped; add wheelhouse_source=artifact when dispatching to reuse wheelhouse"
 
-      - name: Check out repository
-        if: env.PREPARE_WHEELHOUSE_REQUESTED == 'true'
-        uses: actions/checkout@v4
-
-      - name: Check existing Python
-        id: python_check
-        if: env.PREPARE_WHEELHOUSE_REQUESTED == 'true'
-        shell: pwsh
-        run: python --version
-        continue-on-error: true
-
-      - name: Setup Python 3.11
-        if: env.PREPARE_WHEELHOUSE_REQUESTED == 'true' && steps.python_check.outcome == 'failure'
-        uses: actions/setup-python@v5
+      - name: Run Windows job steps
+        uses: ./.github/actions/windows-job-runner
         with:
-          python-version: "3.11"
-
-      - name: Verify Python
-        if: env.PREPARE_WHEELHOUSE_REQUESTED == 'true'
-        shell: pwsh
-        run: python --version
-
-      - &configure-wheelhouse
-        name: Configure wheelhouse directory
-        if: env.PREPARE_WHEELHOUSE_REQUESTED == 'true'
-        shell: pwsh
-        run: |
-          switch ("$env:WHEELHOUSE_SOURCE") {
-            'artifact' {
-              "WHEELHOUSE_DIR=$env:GITHUB_WORKSPACE\wheelhouse" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
-            }
-            'local_path' {
-              if (-not "$env:WHEELHOUSE_LOCAL_PATH") {
-                Write-Error "wheelhouse_local_path is required when wheelhouse_source=local_path"
-              } elseif (-not (Test-Path "$env:WHEELHOUSE_LOCAL_PATH")) {
-                Write-Error "wheelhouse_local_path '$env:WHEELHOUSE_LOCAL_PATH' does not exist on the runner"
-              } else {
-                "WHEELHOUSE_DIR=$env:WHEELHOUSE_LOCAL_PATH" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
-              }
-            }
-            'none' {
-              Write-Host "wheelhouse_source=none -> skipping wheelhouse usage"
-              "WHEELHOUSE_DIR=" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
-            }
-            default {
-              Write-Error "Unknown wheelhouse_source '$env:WHEELHOUSE_SOURCE'"
-            }
-          }
-
-      - &download-wheelhouse
-        name: Download wheelhouse artifact
-        if: env.PREPARE_WHEELHOUSE_REQUESTED == 'true' && env.WHEELHOUSE_SOURCE == 'artifact'
-        uses: actions/download-artifact@v4
-        with:
-          name: wheelhouse-windows
-          path: wheelhouse
-          if-no-artifact-found: error
-
-      - name: Python and proxy diagnostics
-        if: env.PREPARE_WHEELHOUSE_REQUESTED == 'true'
-        shell: pwsh
-        run: |
-          if (Get-Command python -ErrorAction SilentlyContinue) {
-            python -m pip config debug -v
-          } else {
-            Write-Host "python command not found"
-          }
-          Write-Host "HTTP_PROXY=$env:HTTP_PROXY"
-          Write-Host "HTTPS_PROXY=$env:HTTPS_PROXY"
-          Write-Host "NO_PROXY=$env:NO_PROXY"
-          Write-Host "PIP_INDEX_URL=$env:PIP_INDEX_URL"
-          Write-Host "PIP_EXTRA_INDEX_URL=$env:PIP_EXTRA_INDEX_URL"
-          if ($env:WHEELHOUSE_DIR) {
-            Write-Host "WHEELHOUSE_DIR=$env:WHEELHOUSE_DIR"
-            if (Test-Path $env:WHEELHOUSE_DIR) {
-              Write-Host "Wheelhouse exists. Listing first 20 entries:"
-              Get-ChildItem -Path $env:WHEELHOUSE_DIR | Select-Object -First 20 | Format-Table -AutoSize
-            } else {
-              Write-Host "Wheelhouse path does not exist on disk (yet)."
-            }
-          }
-
-      - name: Run scripts/ci/run_windows.ps1
-        if: env.PREPARE_WHEELHOUSE_REQUESTED == 'true'
-        shell: pwsh
-        run: |
-          $wheelArg = ""
-          if ($env:WHEELHOUSE_DIR) { $wheelArg = "-Wheelhouse `"$env:WHEELHOUSE_DIR`"" }
-          powershell -ExecutionPolicy Bypass -File scripts/ci/run_windows.ps1 -Job "$env:SELECTED_JOB" $wheelArg
-
-      - name: Upload artifacts (logs/results)
-        if: always() && env.PREPARE_WHEELHOUSE_REQUESTED == 'true' && env.UPLOAD_ARTIFACTS == 'true'
-        uses: actions/upload-artifact@v4
-        with:
-          name: windows-selfhost-artifacts
-          path: |
-            artifacts/local-ci/**
-            test-results/**
-          if-no-files-found: warn
-
-      - name: Upload wheelhouse artifact
-        if: always() && env.PREPARE_WHEELHOUSE_REQUESTED == 'true' && env.UPLOAD_ARTIFACTS == 'true'
-        uses: actions/upload-artifact@v4
-        with:
-          name: wheelhouse-windows
-          path: wheelhouse/**
-          if-no-files-found: warn
+          selected_job: ${{ env.SELECTED_JOB }}
+          wheelhouse_source: ${{ env.WHEELHOUSE_SOURCE }}
+          wheelhouse_local_path: ${{ env.WHEELHOUSE_LOCAL_PATH }}
+          upload_artifacts: ${{ env.UPLOAD_ARTIFACTS }}
+          upload_wheelhouse_artifact: ${{ env.UPLOAD_ARTIFACTS }}
+          enabled: ${{ env.PREPARE_WHEELHOUSE_REQUESTED }}
 
   # Postęp: 40% (ukończone kroki: 1, 2)
   lint-and-test-windows:
@@ -202,68 +104,13 @@ jobs:
       UPLOAD_ARTIFACTS: ${{ inputs.upload_artifacts != 'false' }}
 
     steps:
-      - name: Check out repository
-        uses: actions/checkout@v4
-
-      - name: Check existing Python
-        id: python_check
-        shell: pwsh
-        run: python --version
-        continue-on-error: true
-
-      - name: Setup Python 3.11
-        if: steps.python_check.outcome == 'failure'
-        uses: actions/setup-python@v5
+      - name: Run Windows job steps
+        uses: ./.github/actions/windows-job-runner
         with:
-          python-version: "3.11"
-
-      - name: Verify Python
-        shell: pwsh
-        run: python --version
-
-      - *configure-wheelhouse
-
-      - *download-wheelhouse
-
-      - name: Python and proxy diagnostics
-        shell: pwsh
-        run: |
-          if (Get-Command python -ErrorAction SilentlyContinue) {
-            python -m pip config debug -v
-          } else {
-            Write-Host "python command not found"
-          }
-          Write-Host "HTTP_PROXY=$env:HTTP_PROXY"
-          Write-Host "HTTPS_PROXY=$env:HTTPS_PROXY"
-          Write-Host "NO_PROXY=$env:NO_PROXY"
-          Write-Host "PIP_INDEX_URL=$env:PIP_INDEX_URL"
-          Write-Host "PIP_EXTRA_INDEX_URL=$env:PIP_EXTRA_INDEX_URL"
-          if ($env:WHEELHOUSE_DIR) {
-            Write-Host "WHEELHOUSE_DIR=$env:WHEELHOUSE_DIR"
-            if (Test-Path $env:WHEELHOUSE_DIR) {
-              Write-Host "Wheelhouse exists. Listing first 20 entries:"
-              Get-ChildItem -Path $env:WHEELHOUSE_DIR | Select-Object -First 20 | Format-Table -AutoSize
-            } else {
-              Write-Host "Wheelhouse path does not exist on disk (yet)."
-            }
-          }
-
-      - name: Run scripts/ci/run_windows.ps1
-        shell: pwsh
-        run: |
-          $wheelArg = ""
-          if ($env:WHEELHOUSE_DIR) { $wheelArg = "-Wheelhouse `"$env:WHEELHOUSE_DIR`"" }
-          powershell -ExecutionPolicy Bypass -File scripts/ci/run_windows.ps1 -Job "$env:SELECTED_JOB" $wheelArg
-
-      - name: Upload artifacts (logs/results)
-        if: always() && env.UPLOAD_ARTIFACTS == 'true'
-        uses: actions/upload-artifact@v4
-        with:
-          name: windows-selfhost-artifacts
-          path: |
-            artifacts/local-ci/**
-            test-results/**
-          if-no-files-found: warn
+          selected_job: ${{ env.SELECTED_JOB }}
+          wheelhouse_source: ${{ env.WHEELHOUSE_SOURCE }}
+          wheelhouse_local_path: ${{ env.WHEELHOUSE_LOCAL_PATH }}
+          upload_artifacts: ${{ env.UPLOAD_ARTIFACTS }}
 
   bot-core-fast-tests-windows:
     if: >
@@ -283,68 +130,13 @@ jobs:
       UPLOAD_ARTIFACTS: ${{ inputs.upload_artifacts != 'false' }}
 
     steps:
-      - name: Check out repository
-        uses: actions/checkout@v4
-
-      - name: Check existing Python
-        id: python_check
-        shell: pwsh
-        run: python --version
-        continue-on-error: true
-
-      - name: Setup Python 3.11
-        if: steps.python_check.outcome == 'failure'
-        uses: actions/setup-python@v5
+      - name: Run Windows job steps
+        uses: ./.github/actions/windows-job-runner
         with:
-          python-version: "3.11"
-
-      - name: Verify Python
-        shell: pwsh
-        run: python --version
-
-      - *configure-wheelhouse
-
-      - *download-wheelhouse
-
-      - name: Python and proxy diagnostics
-        shell: pwsh
-        run: |
-          if (Get-Command python -ErrorAction SilentlyContinue) {
-            python -m pip config debug -v
-          } else {
-            Write-Host "python command not found"
-          }
-          Write-Host "HTTP_PROXY=$env:HTTP_PROXY"
-          Write-Host "HTTPS_PROXY=$env:HTTPS_PROXY"
-          Write-Host "NO_PROXY=$env:NO_PROXY"
-          Write-Host "PIP_INDEX_URL=$env:PIP_INDEX_URL"
-          Write-Host "PIP_EXTRA_INDEX_URL=$env:PIP_EXTRA_INDEX_URL"
-          if ($env:WHEELHOUSE_DIR) {
-            Write-Host "WHEELHOUSE_DIR=$env:WHEELHOUSE_DIR"
-            if (Test-Path $env:WHEELHOUSE_DIR) {
-              Write-Host "Wheelhouse exists. Listing first 20 entries:"
-              Get-ChildItem -Path $env:WHEELHOUSE_DIR | Select-Object -First 20 | Format-Table -AutoSize
-            } else {
-              Write-Host "Wheelhouse path does not exist on disk (yet)."
-            }
-          }
-
-      - name: Run scripts/ci/run_windows.ps1
-        shell: pwsh
-        run: |
-          $wheelArg = ""
-          if ($env:WHEELHOUSE_DIR) { $wheelArg = "-Wheelhouse `"$env:WHEELHOUSE_DIR`"" }
-          powershell -ExecutionPolicy Bypass -File scripts/ci/run_windows.ps1 -Job "$env:SELECTED_JOB" $wheelArg
-
-      - name: Upload artifacts (logs/results)
-        if: always() && env.UPLOAD_ARTIFACTS == 'true'
-        uses: actions/upload-artifact@v4
-        with:
-          name: windows-selfhost-artifacts
-          path: |
-            artifacts/local-ci/**
-            test-results/**
-          if-no-files-found: warn
+          selected_job: ${{ env.SELECTED_JOB }}
+          wheelhouse_source: ${{ env.WHEELHOUSE_SOURCE }}
+          wheelhouse_local_path: ${{ env.WHEELHOUSE_LOCAL_PATH }}
+          upload_artifacts: ${{ env.UPLOAD_ARTIFACTS }}
 
   ui-packaging-windows:
     if: >
@@ -363,68 +155,13 @@ jobs:
       UPLOAD_ARTIFACTS: ${{ inputs.upload_artifacts != 'false' }}
 
     steps:
-      - name: Check out repository
-        uses: actions/checkout@v4
-
-      - name: Check existing Python
-        id: python_check
-        shell: pwsh
-        run: python --version
-        continue-on-error: true
-
-      - name: Setup Python 3.11
-        if: steps.python_check.outcome == 'failure'
-        uses: actions/setup-python@v5
+      - name: Run Windows job steps
+        uses: ./.github/actions/windows-job-runner
         with:
-          python-version: "3.11"
-
-      - name: Verify Python
-        shell: pwsh
-        run: python --version
-
-      - *configure-wheelhouse
-
-      - *download-wheelhouse
-
-      - name: Python and proxy diagnostics
-        shell: pwsh
-        run: |
-          if (Get-Command python -ErrorAction SilentlyContinue) {
-            python -m pip config debug -v
-          } else {
-            Write-Host "python command not found"
-          }
-          Write-Host "HTTP_PROXY=$env:HTTP_PROXY"
-          Write-Host "HTTPS_PROXY=$env:HTTPS_PROXY"
-          Write-Host "NO_PROXY=$env:NO_PROXY"
-          Write-Host "PIP_INDEX_URL=$env:PIP_INDEX_URL"
-          Write-Host "PIP_EXTRA_INDEX_URL=$env:PIP_EXTRA_INDEX_URL"
-          if ($env:WHEELHOUSE_DIR) {
-            Write-Host "WHEELHOUSE_DIR=$env:WHEELHOUSE_DIR"
-            if (Test-Path $env:WHEELHOUSE_DIR) {
-              Write-Host "Wheelhouse exists. Listing first 20 entries:"
-              Get-ChildItem -Path $env:WHEELHOUSE_DIR | Select-Object -First 20 | Format-Table -AutoSize
-            } else {
-              Write-Host "Wheelhouse path does not exist on disk (yet)."
-            }
-          }
-
-      - name: Run scripts/ci/run_windows.ps1
-        shell: pwsh
-        run: |
-          $wheelArg = ""
-          if ($env:WHEELHOUSE_DIR) { $wheelArg = "-Wheelhouse `"$env:WHEELHOUSE_DIR`"" }
-          powershell -ExecutionPolicy Bypass -File scripts/ci/run_windows.ps1 -Job "$env:SELECTED_JOB" $wheelArg
-
-      - name: Upload artifacts (logs/results)
-        if: always() && env.UPLOAD_ARTIFACTS == 'true'
-        uses: actions/upload-artifact@v4
-        with:
-          name: windows-selfhost-artifacts
-          path: |
-            artifacts/local-ci/**
-            test-results/**
-          if-no-files-found: warn
+          selected_job: ${{ env.SELECTED_JOB }}
+          wheelhouse_source: ${{ env.WHEELHOUSE_SOURCE }}
+          wheelhouse_local_path: ${{ env.WHEELHOUSE_LOCAL_PATH }}
+          upload_artifacts: ${{ env.UPLOAD_ARTIFACTS }}
 
   ui-native-tests-windows:
     if: >
@@ -443,68 +180,13 @@ jobs:
       UPLOAD_ARTIFACTS: ${{ inputs.upload_artifacts != 'false' }}
 
     steps:
-      - name: Check out repository
-        uses: actions/checkout@v4
-
-      - name: Check existing Python
-        id: python_check
-        shell: pwsh
-        run: python --version
-        continue-on-error: true
-
-      - name: Setup Python 3.11
-        if: steps.python_check.outcome == 'failure'
-        uses: actions/setup-python@v5
+      - name: Run Windows job steps
+        uses: ./.github/actions/windows-job-runner
         with:
-          python-version: "3.11"
-
-      - name: Verify Python
-        shell: pwsh
-        run: python --version
-
-      - *configure-wheelhouse
-
-      - *download-wheelhouse
-
-      - name: Python and proxy diagnostics
-        shell: pwsh
-        run: |
-          if (Get-Command python -ErrorAction SilentlyContinue) {
-            python -m pip config debug -v
-          } else {
-            Write-Host "python command not found"
-          }
-          Write-Host "HTTP_PROXY=$env:HTTP_PROXY"
-          Write-Host "HTTPS_PROXY=$env:HTTPS_PROXY"
-          Write-Host "NO_PROXY=$env:NO_PROXY"
-          Write-Host "PIP_INDEX_URL=$env:PIP_INDEX_URL"
-          Write-Host "PIP_EXTRA_INDEX_URL=$env:PIP_EXTRA_INDEX_URL"
-          if ($env:WHEELHOUSE_DIR) {
-            Write-Host "WHEELHOUSE_DIR=$env:WHEELHOUSE_DIR"
-            if (Test-Path $env:WHEELHOUSE_DIR) {
-              Write-Host "Wheelhouse exists. Listing first 20 entries:"
-              Get-ChildItem -Path $env:WHEELHOUSE_DIR | Select-Object -First 20 | Format-Table -AutoSize
-            } else {
-              Write-Host "Wheelhouse path does not exist on disk (yet)."
-            }
-          }
-
-      - name: Run scripts/ci/run_windows.ps1
-        shell: pwsh
-        run: |
-          $wheelArg = ""
-          if ($env:WHEELHOUSE_DIR) { $wheelArg = "-Wheelhouse `"$env:WHEELHOUSE_DIR`"" }
-          powershell -ExecutionPolicy Bypass -File scripts/ci/run_windows.ps1 -Job "$env:SELECTED_JOB" $wheelArg
-
-      - name: Upload artifacts (logs/results)
-        if: always() && env.UPLOAD_ARTIFACTS == 'true'
-        uses: actions/upload-artifact@v4
-        with:
-          name: windows-selfhost-artifacts
-          path: |
-            artifacts/local-ci/**
-            test-results/**
-          if-no-files-found: warn
+          selected_job: ${{ env.SELECTED_JOB }}
+          wheelhouse_source: ${{ env.WHEELHOUSE_SOURCE }}
+          wheelhouse_local_path: ${{ env.WHEELHOUSE_LOCAL_PATH }}
+          upload_artifacts: ${{ env.UPLOAD_ARTIFACTS }}
 
   release-quality-gates-windows:
     if: >
@@ -524,66 +206,11 @@ jobs:
       UPLOAD_ARTIFACTS: ${{ inputs.upload_artifacts != 'false' }}
 
     steps:
-      - name: Check out repository
-        uses: actions/checkout@v4
-
-      - name: Check existing Python
-        id: python_check
-        shell: pwsh
-        run: python --version
-        continue-on-error: true
-
-      - name: Setup Python 3.11
-        if: steps.python_check.outcome == 'failure'
-        uses: actions/setup-python@v5
+      - name: Run Windows job steps
+        uses: ./.github/actions/windows-job-runner
         with:
-          python-version: "3.11"
-
-      - name: Verify Python
-        shell: pwsh
-        run: python --version
-
-      - *configure-wheelhouse
-
-      - *download-wheelhouse
-
-      - name: Python and proxy diagnostics
-        shell: pwsh
-        run: |
-          if (Get-Command python -ErrorAction SilentlyContinue) {
-            python -m pip config debug -v
-          } else {
-            Write-Host "python command not found"
-          }
-          Write-Host "HTTP_PROXY=$env:HTTP_PROXY"
-          Write-Host "HTTPS_PROXY=$env:HTTPS_PROXY"
-          Write-Host "NO_PROXY=$env:NO_PROXY"
-          Write-Host "PIP_INDEX_URL=$env:PIP_INDEX_URL"
-          Write-Host "PIP_EXTRA_INDEX_URL=$env:PIP_EXTRA_INDEX_URL"
-          if ($env:WHEELHOUSE_DIR) {
-            Write-Host "WHEELHOUSE_DIR=$env:WHEELHOUSE_DIR"
-            if (Test-Path $env:WHEELHOUSE_DIR) {
-              Write-Host "Wheelhouse exists. Listing first 20 entries:"
-              Get-ChildItem -Path $env:WHEELHOUSE_DIR | Select-Object -First 20 | Format-Table -AutoSize
-            } else {
-              Write-Host "Wheelhouse path does not exist on disk (yet)."
-            }
-          }
-
-      - name: Run scripts/ci/run_windows.ps1
-        shell: pwsh
-        run: |
-          $wheelArg = ""
-          if ($env:WHEELHOUSE_DIR) { $wheelArg = "-Wheelhouse `"$env:WHEELHOUSE_DIR`"" }
-          powershell -ExecutionPolicy Bypass -File scripts/ci/run_windows.ps1 -Job "$env:SELECTED_JOB" $wheelArg
-
-      - name: Upload artifacts (logs/results)
-        if: always() && env.UPLOAD_ARTIFACTS == 'true'
-        uses: actions/upload-artifact@v4
-        with:
-          name: windows-selfhost-artifacts
-          path: |
-            artifacts/local-ci/**
-            test-results/**
-          if-no-files-found: warn
+          selected_job: ${{ env.SELECTED_JOB }}
+          wheelhouse_source: ${{ env.WHEELHOUSE_SOURCE }}
+          wheelhouse_local_path: ${{ env.WHEELHOUSE_LOCAL_PATH }}
+          upload_artifacts: ${{ env.UPLOAD_ARTIFACTS }}
 

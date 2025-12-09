@@ -1,0 +1,136 @@
+name: Windows job runner
+description: Common Windows self-hosted steps for manual workflows
+
+inputs:
+  selected_job:
+    description: Job name to pass to scripts/ci/run_windows.ps1
+    required: true
+  wheelhouse_source:
+    description: Source for wheelhouse directory (artifact | local_path | none)
+    required: false
+    default: none
+  wheelhouse_local_path:
+    description: Local path used when wheelhouse_source=local_path
+    required: false
+    default: ""
+  upload_artifacts:
+    description: Upload logs and test results
+    required: false
+    default: "true"
+  upload_wheelhouse_artifact:
+    description: Upload wheelhouse artifact (used by prepare job)
+    required: false
+    default: "false"
+  enabled:
+    description: Whether to execute the common steps
+    required: false
+    default: "true"
+
+runs:
+  using: composite
+  steps:
+    - name: Check out repository
+      if: ${{ inputs.enabled == 'true' }}
+      uses: actions/checkout@v4
+
+    - name: Check existing Python
+      if: ${{ inputs.enabled == 'true' }}
+      id: python_check
+      shell: pwsh
+      run: python --version
+      continue-on-error: true
+
+    - name: Setup Python 3.11
+      if: ${{ inputs.enabled == 'true' && steps.python_check.outcome == 'failure' }}
+      uses: actions/setup-python@v5
+      with:
+        python-version: "3.11"
+
+    - name: Verify Python
+      if: ${{ inputs.enabled == 'true' }}
+      shell: pwsh
+      run: python --version
+
+    - name: Configure wheelhouse directory
+      if: ${{ inputs.enabled == 'true' }}
+      shell: pwsh
+      run: |
+        switch ("${{ inputs.wheelhouse_source }}") {
+          'artifact' {
+            "WHEELHOUSE_DIR=$env:GITHUB_WORKSPACE\wheelhouse" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          }
+          'local_path' {
+            if (-not "${{ inputs.wheelhouse_local_path }}") {
+              Write-Error "wheelhouse_local_path is required when wheelhouse_source=local_path"
+            } elseif (-not (Test-Path "${{ inputs.wheelhouse_local_path }}")) {
+              Write-Error "wheelhouse_local_path '${{ inputs.wheelhouse_local_path }}' does not exist on the runner"
+            } else {
+              "WHEELHOUSE_DIR=${{ inputs.wheelhouse_local_path }}" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+            }
+          }
+          'none' {
+            Write-Host "wheelhouse_source=none -> skipping wheelhouse usage"
+            "WHEELHOUSE_DIR=" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          }
+          default {
+            Write-Error "Unknown wheelhouse_source '${{ inputs.wheelhouse_source }}'"
+          }
+        }
+
+    - name: Download wheelhouse artifact
+      if: ${{ inputs.enabled == 'true' && inputs.wheelhouse_source == 'artifact' }}
+      uses: actions/download-artifact@v4
+      with:
+        name: wheelhouse-windows
+        path: wheelhouse
+        if-no-artifact-found: error
+
+    - name: Python and proxy diagnostics
+      if: ${{ inputs.enabled == 'true' }}
+      shell: pwsh
+      run: |
+        if (Get-Command python -ErrorAction SilentlyContinue) {
+          python -m pip config debug -v
+        } else {
+          Write-Host "python command not found"
+        }
+        Write-Host "HTTP_PROXY=$env:HTTP_PROXY"
+        Write-Host "HTTPS_PROXY=$env:HTTPS_PROXY"
+        Write-Host "NO_PROXY=$env:NO_PROXY"
+        Write-Host "PIP_INDEX_URL=$env:PIP_INDEX_URL"
+        Write-Host "PIP_EXTRA_INDEX_URL=$env:PIP_EXTRA_INDEX_URL"
+        if ($env:WHEELHOUSE_DIR) {
+          Write-Host "WHEELHOUSE_DIR=$env:WHEELHOUSE_DIR"
+          if (Test-Path $env:WHEELHOUSE_DIR) {
+            Write-Host "Wheelhouse exists. Listing first 20 entries:"
+            Get-ChildItem -Path $env:WHEELHOUSE_DIR | Select-Object -First 20 | Format-Table -AutoSize
+          } else {
+            Write-Host "Wheelhouse path does not exist on disk (yet)."
+          }
+        }
+
+    - name: Run scripts/ci/run_windows.ps1
+      if: ${{ inputs.enabled == 'true' }}
+      shell: pwsh
+      run: |
+        $wheelArg = ""
+        if ($env:WHEELHOUSE_DIR) { $wheelArg = "-Wheelhouse `"$env:WHEELHOUSE_DIR`"" }
+        powershell -ExecutionPolicy Bypass -File scripts/ci/run_windows.ps1 -Job "${{ inputs.selected_job }}" $wheelArg
+
+    - name: Upload artifacts (logs/results)
+      if: ${{ always() && inputs.enabled == 'true' && inputs.upload_artifacts == 'true' }}
+      uses: actions/upload-artifact@v4
+      with:
+        name: windows-selfhost-artifacts
+        path: |
+          artifacts/local-ci/**
+          test-results/**
+        if-no-files-found: warn
+
+    - name: Upload wheelhouse artifact
+      if: ${{ always() && inputs.enabled == 'true' && inputs.upload_artifacts == 'true' && inputs.upload_wheelhouse_artifact == 'true' }}
+      uses: actions/upload-artifact@v4
+      with:
+        name: wheelhouse-windows
+        path: wheelhouse/**
+        if-no-files-found: warn
