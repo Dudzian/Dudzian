@@ -3,7 +3,7 @@ from pathlib import Path
 
 from bot_core.marketplace import PresetRepository
 from bot_core.security.hwid import HwIdProvider
-from bot_core.strategies.installer import MarketplacePresetInstaller
+from bot_core.strategies.presets import MarketplacePresetInstaller
 from bot_core.strategies.marketplace import load_catalog
 
 MARKETPLACE_DIR = Path(__file__).resolve().parents[2] / "bot_core" / "strategies" / "marketplace"

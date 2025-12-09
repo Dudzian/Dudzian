@@ -32,11 +32,10 @@ from bot_core.exchanges.base import Environment
 from bot_core.strategies.base import StrategyEngine
 from bot_core.strategies.catalog import (
     DEFAULT_STRATEGY_CATALOG,
-    PresetLicenseState,
     StrategyCatalog,
     StrategyDefinition,
-    StrategyPresetWizard,
 )
+from bot_core.strategies.presets import PresetLicenseState, StrategyPresetWizard
 from bot_core.runtime.pipeline import _collect_strategy_definitions
 
 

@@ -30,12 +30,13 @@ def test_day_trading_strategy_generates_long_and_exit() -> None:
         bias_strength=0.0,
     )
     strategy = DayTradingStrategy(settings)
-    strategy.warm_up([_snapshot("BTCUSDT", 100.0, 0.01, high=101.0, low=99.0)])
+    strategy.prepare()
+    strategy.warmup([_snapshot("BTCUSDT", 100.0, 0.01, high=101.0, low=99.0)])
 
-    enter = strategy.on_data(_snapshot("BTCUSDT", 101.0, 0.01, high=101.5, low=100.2, timestamp=2))
+    enter = strategy.decide(_snapshot("BTCUSDT", 101.0, 0.01, high=101.5, low=100.2, timestamp=2))
     assert enter and enter[0].side == "buy"
 
-    exit_signals = strategy.on_data(_snapshot("BTCUSDT", 104.0, 0.01, high=104.5, low=103.5, timestamp=3))
+    exit_signals = strategy.decide(_snapshot("BTCUSDT", 104.0, 0.01, high=104.5, low=103.5, timestamp=3))
     assert exit_signals and exit_signals[0].side == "sell"
     assert exit_signals[0].metadata.get("exit_reason") == "take_profit"
 
@@ -53,11 +54,12 @@ def test_day_trading_strategy_short_stop_loss() -> None:
         bias_strength=0.0,
     )
     strategy = DayTradingStrategy(settings)
-    strategy.warm_up([_snapshot("ETHUSDT", 200.0, 0.01, high=201.0, low=199.0)])
+    strategy.prepare()
+    strategy.warmup([_snapshot("ETHUSDT", 200.0, 0.01, high=201.0, low=199.0)])
 
-    enter = strategy.on_data(_snapshot("ETHUSDT", 198.0, 0.01, high=199.0, low=197.0, timestamp=2))
+    enter = strategy.decide(_snapshot("ETHUSDT", 198.0, 0.01, high=199.0, low=197.0, timestamp=2))
     assert enter and enter[0].side == "sell"
 
-    stop = strategy.on_data(_snapshot("ETHUSDT", 202.0, 0.01, high=203.0, low=201.5, timestamp=3))
+    stop = strategy.decide(_snapshot("ETHUSDT", 202.0, 0.01, high=203.0, low=201.5, timestamp=3))
     assert stop and stop[0].side == "buy"
     assert stop[0].metadata.get("exit_reason") == "stop_loss"

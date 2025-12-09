@@ -1,10 +1,7 @@
 import pytest
 
-from bot_core.strategies.catalog import (
-    DEFAULT_STRATEGY_CATALOG,
-    StrategyCatalog,
-    StrategyPresetValidationError,
-)
+from bot_core.strategies.catalog import DEFAULT_STRATEGY_CATALOG, StrategyCatalog
+from bot_core.strategies.presets import StrategyPresetValidationError
 
 
 def _build_minimal_preset() -> dict[str, object]:

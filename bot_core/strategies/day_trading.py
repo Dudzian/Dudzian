@@ -6,7 +6,13 @@ from dataclasses import dataclass
 from statistics import mean
 from typing import Any, Deque, Dict, List, Mapping, Sequence
 
-from bot_core.strategies.base import MarketSnapshot, StrategyEngine, StrategySignal
+from bot_core.strategies.base import (
+    BaseStrategy,
+    MarketSnapshot,
+    StrategySignal,
+    ensure_positive_float,
+    ensure_positive_int,
+)
 from bot_core.trading.exit_reasons import ExitReason
 
 
@@ -25,16 +31,16 @@ class DayTradingSettings:
     bias_strength: float = 0.2
 
     def __post_init__(self) -> None:
-        self.momentum_window = self._ensure_positive_int(self.momentum_window, "momentum_window")
-        self.volatility_window = self._ensure_positive_int(self.volatility_window, "volatility_window")
-        self.max_holding_bars = self._ensure_positive_int(self.max_holding_bars, "max_holding_bars")
-        self.entry_threshold = self._ensure_positive_float(self.entry_threshold, "entry_threshold")
-        self.exit_threshold = self._ensure_positive_float(self.exit_threshold, "exit_threshold")
+        self.momentum_window = ensure_positive_int(self.momentum_window, field="momentum_window")
+        self.volatility_window = ensure_positive_int(self.volatility_window, field="volatility_window")
+        self.max_holding_bars = ensure_positive_int(self.max_holding_bars, field="max_holding_bars")
+        self.entry_threshold = ensure_positive_float(self.entry_threshold, field="entry_threshold")
+        self.exit_threshold = ensure_positive_float(self.exit_threshold, field="exit_threshold")
         if self.exit_threshold >= self.entry_threshold:
             raise ValueError("exit_threshold must be lower than entry_threshold")
-        self.take_profit_atr = self._ensure_positive_float(self.take_profit_atr, "take_profit_atr")
-        self.stop_loss_atr = self._ensure_positive_float(self.stop_loss_atr, "stop_loss_atr")
-        self.atr_floor = self._ensure_positive_float(self.atr_floor, "atr_floor")
+        self.take_profit_atr = ensure_positive_float(self.take_profit_atr, field="take_profit_atr")
+        self.stop_loss_atr = ensure_positive_float(self.stop_loss_atr, field="stop_loss_atr")
+        self.atr_floor = ensure_positive_float(self.atr_floor, field="atr_floor")
         if not 0.0 <= self.bias_strength <= 1.0:
             raise ValueError("bias_strength must be in the range [0, 1]")
 
@@ -54,21 +60,6 @@ class DayTradingSettings:
             bias_strength=float(params.get("bias_strength", defaults.bias_strength)),
         )
 
-    @staticmethod
-    def _ensure_positive_int(value: int, field: str) -> int:
-        value = int(value)
-        if value < 1:
-            raise ValueError(f"{field} must be at least 1")
-        return value
-
-    @staticmethod
-    def _ensure_positive_float(value: float, field: str) -> float:
-        value = float(value)
-        if value <= 0:
-            raise ValueError(f"{field} must be positive")
-        return value
-
-
 @dataclass(slots=True)
 class _DayTradingState:
     closes: Deque[float]
@@ -79,21 +70,25 @@ class _DayTradingState:
     bars_in_position: int = 0
 
 
-class DayTradingStrategy(StrategyEngine):
+class DayTradingStrategy(BaseStrategy):
     """Intraday engine reacting to short-lived momentum bursts."""
 
     def __init__(self, settings: DayTradingSettings | None = None) -> None:
+        super().__init__(
+            required_data=("ohlcv", "technical_indicators"),
+            metadata={"capability": "day_trading", "tags": ("intraday", "momentum")},
+        )
         self._settings = settings or DayTradingSettings()
         window = max(self._settings.momentum_window + 1, self._settings.volatility_window)
         self._states: Dict[str, _DayTradingState] = {}
         self._history_size = max(window, 2)
 
-    def warm_up(self, history: Sequence[MarketSnapshot]) -> None:
+    def warmup(self, history: Sequence[MarketSnapshot]) -> None:
         for snapshot in history:
             state = self._ensure_state(snapshot.symbol)
             self._update_state(state, snapshot)
 
-    def on_data(self, snapshot: MarketSnapshot) -> Sequence[StrategySignal]:
+    def decide(self, snapshot: MarketSnapshot) -> Sequence[StrategySignal]:
         state = self._ensure_state(snapshot.symbol)
         self._update_state(state, snapshot)
 
@@ -165,6 +160,9 @@ class DayTradingStrategy(StrategyEngine):
             )
             self._reset_state(state)
         return signals
+
+    def teardown(self) -> None:
+        self._states.clear()
 
     # ------------------------------------------------------------------
     def _ensure_state(self, symbol: str) -> _DayTradingState:
