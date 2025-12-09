@@ -8,8 +8,9 @@ from typing import Any, Callable, Mapping, MutableMapping
 
 from bot_core.config.models import RuntimeExecutionLiveSettings, RuntimeExecutionSettings
 from bot_core.execution.base import ExecutionContext, ExecutionService
+from bot_core.execution.mode_policy import DEFAULT_MODE_SELECTOR
 from bot_core.execution.live_router import LiveExecutionRouter, QoSConfig
-from bot_core.exchanges.base import Environment as ExchangeEnvironment, ExchangeAdapter, OrderRequest
+from bot_core.exchanges.base import ExchangeAdapter, OrderRequest
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -18,42 +19,7 @@ def resolve_execution_mode(
     environment: Any,
 ) -> str:
     """Określa efektywny tryb egzekucji dla wskazanego środowiska."""
-
-    if settings is None:
-        settings = RuntimeExecutionSettings()
-
-    mode = (settings.default_mode or "paper").strip().lower()
-    if mode not in {"paper", "live", "auto"}:
-        mode = "paper"
-
-    environment_value = getattr(environment, "environment", ExchangeEnvironment.PAPER)
-    if isinstance(environment_value, str):
-        try:
-            env_enum = ExchangeEnvironment(environment_value.lower())
-        except ValueError:
-            env_enum = ExchangeEnvironment.PAPER
-    elif isinstance(environment_value, ExchangeEnvironment):
-        env_enum = environment_value
-    else:
-        env_enum = ExchangeEnvironment.PAPER
-
-    offline_mode = bool(getattr(environment, "offline_mode", False))
-    if settings.force_paper_when_offline and offline_mode:
-        return "paper"
-
-    if mode == "paper":
-        return "paper"
-    if mode == "live":
-        if settings.live is None or not settings.live.enabled:
-            raise ValueError(
-                "Konfiguracja runtime.execution.live nie jest aktywna, a wymuszono tryb live."
-            )
-        return "live"
-
-    # tryb auto
-    if env_enum in {ExchangeEnvironment.LIVE, ExchangeEnvironment.TESTNET} and settings.live and settings.live.enabled:
-        return "live"
-    return "paper"
+    return DEFAULT_MODE_SELECTOR.resolve(settings, environment)
 
 
 def _resolve_path(candidate: str | None, *, base: str | None = None) -> str | None:

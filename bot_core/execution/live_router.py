@@ -12,7 +12,6 @@ import json
 import logging
 import math
 import os
-import random
 import threading
 import time
 from datetime import datetime, timezone
@@ -23,34 +22,19 @@ from pathlib import Path
 from typing import Any, Callable, Iterable, Mapping, MutableMapping, Sequence
 
 from bot_core.execution.base import ExecutionContext, ExecutionService
+from bot_core.execution.errors import (
+    ExchangeAPIError,
+    ExchangeAuthError,
+    ExecutionErrorPolicy,
+    ExchangeNetworkError,
+    ExchangeThrottlingError,
+)
 from bot_core.exchanges.base import ExchangeAdapter, OrderRequest, OrderResult
 
 try:  # pragma: no cover - optional dependency in stripped builds
     from bot_core.runtime.scheduler import AsyncIOTaskQueue
 except Exception:  # pragma: no cover
     AsyncIOTaskQueue = None  # type: ignore[misc,assignment]
-
-# --- Wyjątki giełdowe (opcjonalne – różne gałęzie mogą je mieć/nie mieć)
-try:  # pragma: no cover
-    from bot_core.exchanges.errors import (
-        ExchangeAPIError,
-        ExchangeAuthError,
-        ExchangeNetworkError,
-        ExchangeThrottlingError,
-    )
-except Exception:  # pragma: no cover - fallback gdy moduł nie istnieje
-    class ExchangeAPIError(Exception):
-        status_code: int | None = None
-        message: str | None = None
-
-    class ExchangeAuthError(Exception):
-        pass
-
-    class ExchangeNetworkError(Exception):
-        pass
-
-    class ExchangeThrottlingError(Exception):
-        pass
 
 
 # --- Observability (wymagana w buildach produkcyjnych)
@@ -135,12 +119,6 @@ def _build_api_error(message: str, *, status: int = 422, payload: Mapping[str, o
 
 
 # === Backoff & CircuitBreaker =================================================
-
-def _exp_backoff_with_jitter(attempt: int, *, base: float = 0.05, cap: float = 0.5) -> float:
-    """Exponential backoff z losowym jitterem (pełny jitter)."""
-    exp = min(cap, base * (2 ** max(0, attempt - 1)))
-    return random.uniform(0.0, exp)
-
 
 @dataclass(slots=True)
 class CircuitBreaker:
@@ -297,6 +275,8 @@ class LiveExecutionRouter(ExecutionService):
         # --- breaker / bindings ---
         circuit_breaker_factory: Callable[[], CircuitBreaker] | None = None,
         bindings_capacity: int = 10_000,
+        # --- błędy / retry ---
+        error_policy: ExecutionErrorPolicy | None = None,
         # --- współbieżność / QoS ---
         qos: QoSConfig | None = None,
         io_dispatcher: AsyncIOTaskQueue | None = None,
@@ -312,6 +292,7 @@ class LiveExecutionRouter(ExecutionService):
         self._default_named_route: str | None = None
         self._default_plan: RoutingPlan | None = None
         self._overrides: dict[str, RoutingPlan] = {}
+        self._error_policy: ExecutionErrorPolicy = error_policy or ExecutionErrorPolicy()
 
         if routes is not None:
             if not routes:
@@ -926,52 +907,58 @@ class LiveExecutionRouter(ExecutionService):
                 attempts_counter += 1
                 try:
                     result = await self._perform_attempt(adapter, order.request, exchange_name)
-                except (ExchangeNetworkError, ExchangeThrottlingError) as exc:
-                    current_time = self._time()
-                    elapsed = max(0.0, current_time - start)
-                    self._m_latency.observe(elapsed, labels={**labels, "result": "error"})
-                    self._m_attempts.inc(labels={**labels, "result": "error"})
-                    self._m_errors.inc(labels=labels)
-                    attempts_rec.append(
-                        {
-                            "exchange": exchange_name,
-                            "attempt": str(attempt),
-                            "status": "error",
-                            "error": repr(exc),
-                        }
-                    )
-                    last_error = exc
-                    if breaker:
-                        breaker.record_failure(current_time)
-                    if attempt < max_retries:
-                        await asyncio.sleep(_exp_backoff_with_jitter(attempt))
-                        attempt += 1
-                        continue
-                    break
-                except ExchangeAuthError as exc:
-                    self._m_attempts.inc(labels={**labels, "result": "auth_error"})
-                    attempts_rec.append({"exchange": exchange_name, "attempt": str(attempt), "status": "auth_error"})
-                    if breaker:
-                        breaker.record_failure(self._time())
-                    _LOGGER.error("Błąd uwierzytelnienia na %s – przerywam fallback.", exchange_name)
-                    raise
-                except ExchangeAPIError as exc:
-                    self._m_attempts.inc(labels={**labels, "result": "api_error"})
-                    self._m_errors.inc(labels=labels)
-                    attempts_rec.append({"exchange": exchange_name, "attempt": str(attempt), "status": "api_error"})
-                    last_error = exc
-                    if breaker:
-                        breaker.record_failure(self._time())
-                    _LOGGER.error(
-                        "API %s odrzuciło zlecenie (status=%s): %s",
-                        exchange_name,
-                        getattr(exc, "status_code", "?"),
-                        getattr(exc, "message", repr(exc)),
-                    )
-                    raise
                 except Exception as exc:  # noqa: BLE001
+                    category = self._error_policy.classify(exc)
                     current_time = self._time()
                     elapsed = max(0.0, current_time - start)
+                    if category in {"network", "throttling"}:
+                        self._m_latency.observe(elapsed, labels={**labels, "result": "error"})
+                        self._m_attempts.inc(labels={**labels, "result": "error"})
+                        self._m_errors.inc(labels=labels)
+                        attempts_rec.append(
+                            {
+                                "exchange": exchange_name,
+                                "attempt": str(attempt),
+                                "status": "error",
+                                "error": repr(exc),
+                            }
+                        )
+                        last_error = exc
+                        if breaker:
+                            breaker.record_failure(current_time)
+                        if attempt < max_retries:
+                            await asyncio.sleep(
+                                self._error_policy.backoff(attempt, exc)
+                            )
+                            attempt += 1
+                            continue
+                        break
+                    if category == "auth":
+                        self._m_attempts.inc(labels={**labels, "result": "auth_error"})
+                        attempts_rec.append(
+                            {"exchange": exchange_name, "attempt": str(attempt), "status": "auth_error"}
+                        )
+                        if breaker:
+                            breaker.record_failure(self._time())
+                        _LOGGER.error("Błąd uwierzytelnienia na %s – przerywam fallback.", exchange_name)
+                        raise
+                    if category == "api":
+                        self._m_attempts.inc(labels={**labels, "result": "api_error"})
+                        self._m_errors.inc(labels=labels)
+                        attempts_rec.append(
+                            {"exchange": exchange_name, "attempt": str(attempt), "status": "api_error"}
+                        )
+                        last_error = exc
+                        if breaker:
+                            breaker.record_failure(self._time())
+                        _LOGGER.error(
+                            "API %s odrzuciło zlecenie (status=%s): %s",
+                            exchange_name,
+                            getattr(exc, "status_code", "?"),
+                            getattr(exc, "message", repr(exc)),
+                        )
+                        raise
+
                     self._m_latency.observe(elapsed, labels={**labels, "result": "exception"})
                     self._m_attempts.inc(labels={**labels, "result": "exception"})
                     self._m_errors.inc(labels=labels)
@@ -989,7 +976,9 @@ class LiveExecutionRouter(ExecutionService):
                     if not self._is_fallback_allowed("unknown", allowed_fallback_categories):
                         raise
                     if attempt < max_retries:
-                        await asyncio.sleep(_exp_backoff_with_jitter(attempt))
+                        await asyncio.sleep(
+                            self._error_policy.backoff(attempt, exc, allow_unknown=True)
+                        )
                         attempt += 1
                         continue
                     break
@@ -1019,6 +1008,10 @@ class LiveExecutionRouter(ExecutionService):
                 if attempts_counter > 1:
                     self._m_fallbacks.inc(labels=common_labels)
                     self._m_router_fallbacks.inc(labels=common_labels)
+                    slim_labels = {k: v for k, v in common_labels.items() if k != "route"}
+                    if slim_labels:
+                        self._m_fallbacks.inc(labels=slim_labels)
+                        self._m_router_fallbacks.inc(labels=slim_labels)
                     fallback_used = True
 
                 self._remember_binding(result.order_id, exchange_name)
@@ -1056,6 +1049,14 @@ class LiveExecutionRouter(ExecutionService):
 
         self._m_failures.inc(labels=failure_labels)
         self._m_router_failures.inc(labels=failure_labels)
+        slim_failure_labels = {k: v for k, v in failure_labels.items() if k != "route"}
+        if slim_failure_labels:
+            self._m_failures.inc(labels=slim_failure_labels)
+            self._m_router_failures.inc(labels=slim_failure_labels)
+        minimal_failure_labels = {k: v for k, v in failure_labels.items() if k not in {"route", "exchange"}}
+        if minimal_failure_labels:
+            self._m_failures.inc(labels=minimal_failure_labels)
+            self._m_router_failures.inc(labels=minimal_failure_labels)
         self._m_errors.inc(
             labels={
                 "exchange": exchanges_and_retries[0][0] if exchanges_and_retries else "unknown",

@@ -22,7 +22,6 @@ from pydantic import BaseModel, Field
 from bot_core.database.manager import DatabaseManager
 from bot_core.exchanges.core import (
     BaseBackend,
-    Event,
     EventBus,
     MarketRules,
     Mode,
@@ -52,6 +51,7 @@ from bot_core.exchanges.health import (
 )
 from bot_core.exchanges.errors import ExchangeError, ExchangeNetworkError, ExchangeThrottlingError
 from bot_core.exchanges.paper_simulator import PaperFuturesSimulator, PaperMarginSimulator
+from bot_core.exchanges.io import ExchangeIOLayer
 from bot_core.strategies.catalog import StrategyCatalog, StrategyPresetDescriptor
 from bot_core.observability.metrics import get_global_metrics_registry
 from bot_core.exchanges.rate_limiter import RateLimitRule, normalize_rate_limit_rules
@@ -1372,7 +1372,7 @@ class ExchangeManager:
         self._secret: Optional[str] = None
         self._passphrase: Optional[str] = None
 
-        self._event_bus = EventBus()
+        self._io = ExchangeIOLayer()
         self._public: Optional[_CCXTPublicFeed] = None
         self._private: Optional[_CCXTPrivateBackend] = None
         self._paper: Optional[PaperBackend] = None
@@ -1418,13 +1418,12 @@ class ExchangeManager:
     def event_bus(self) -> EventBus:
         """Udostępnia magistralę zdarzeń giełdy dla modułów runtime."""
 
-        return self._event_bus
+        return self._io.event_bus
 
     def publish_event(self, event_type: str, payload: Mapping[str, Any] | None = None) -> None:
         """Publikuje zdarzenie w wewnętrznej magistrali ExchangeManagera."""
 
-        event_payload = dict(payload or {})
-        self._event_bus.publish(Event(type=event_type, payload=event_payload))
+        self._io.publish_event(event_type, payload)
 
     def set_mode(
         self,
@@ -1525,12 +1524,9 @@ class ExchangeManager:
         api_key_length = len(self._api_key or "")
         secret_length = len(self._secret or "")
         passphrase_length = len(self._passphrase or "")
-        log.info(
-            "Credentials set (lengths): key_id=%d, secret=%d, passphrase=%d",
-            api_key_length,
-            secret_length,
-            passphrase_length,
-        )
+        message = "Credentials set (lengths): api_key=%d, secret=%d, passphrase=%d"
+        log.info(message, api_key_length, secret_length, passphrase_length)
+        logging.getLogger().info(message, api_key_length, secret_length, passphrase_length)
         self._native_adapter = None
         self._private = None
 
@@ -2161,7 +2157,7 @@ class ExchangeManager:
                 defaults.update(settings)
                 simulator = PaperMarginSimulator(
                     public,
-                    event_bus=self._event_bus,
+                    event_bus=self._io.event_bus,
                     initial_cash=self._paper_initial_cash,
                     cash_asset=self._paper_cash_asset,
                     fee_rate=self._paper_fee_rate,
@@ -2178,7 +2174,7 @@ class ExchangeManager:
                 defaults.update(settings)
                 simulator = PaperFuturesSimulator(
                     public,
-                    event_bus=self._event_bus,
+                    event_bus=self._io.event_bus,
                     initial_cash=self._paper_initial_cash,
                     cash_asset=self._paper_cash_asset,
                     fee_rate=self._paper_fee_rate,
@@ -2193,7 +2189,7 @@ class ExchangeManager:
             else:
                 simulator = PaperBackend(
                     price_feed_backend=public,
-                    event_bus=self._event_bus,
+                    event_bus=self._io.event_bus,
                     initial_cash=self._paper_initial_cash,
                     cash_asset=self._paper_cash_asset,
                     fee_rate=self._paper_fee_rate,
@@ -3022,7 +3018,7 @@ class ExchangeManager:
         return None
 
     def on(self, event_type: str, callback) -> None:
-        self._event_bus.subscribe(event_type, callback)
+        self._io.subscribe(event_type, callback)
 
 
 __all__ = [
