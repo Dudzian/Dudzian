@@ -197,7 +197,7 @@ jobs:
 
       # Full lint suite via pre-commit: runs ruff + mypy just like local `pre-commit run --all-files`.
       # Local: pre-commit run --all-files --show-diff-on-failure
-      - name: Lint (pre-commit: ruff + mypy)
+      - name: "Lint (pre-commit: ruff + mypy)"
         run: pre-commit run --all-files --show-diff-on-failure
 
       - name: Prepare test reports directory
