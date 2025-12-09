@@ -1,10 +1,11 @@
 """Futures spread hedging engine."""
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Dict, List, Sequence
 
 from .base import MarketSnapshot, SignalLeg, StrategyEngine, StrategySignal
+from .market_params import DEFAULT_FUTURES_PARAMS, MarketParams, quantity_from_notional
 
 
 @dataclass(slots=True)
@@ -16,6 +17,7 @@ class FuturesSpreadSettings:
     max_bars: int = 48
     funding_exit: float = 0.002
     basis_exit: float = 0.02
+    market: MarketParams = field(default_factory=lambda: DEFAULT_FUTURES_PARAMS)
 
 
 @dataclass(slots=True)
@@ -60,13 +62,13 @@ class FuturesSpreadStrategy(StrategyEngine):
                     SignalLeg(
                         symbol=front_symbol,
                         side="SELL" if direction < 0 else "BUY",
-                        quantity=_spread_leg_quantity(front_price),
+                        quantity=quantity_from_notional(1.0, front_price, params=self._settings.market),
                         metadata={"leg": "front", "price": front_price},
                     ),
                     SignalLeg(
                         symbol=back_symbol,
                         side="BUY" if direction < 0 else "SELL",
-                        quantity=_spread_leg_quantity(back_price),
+                        quantity=quantity_from_notional(1.0, back_price, params=self._settings.market),
                         metadata={"leg": "back", "price": back_price},
                     ),
                 )
@@ -82,6 +84,8 @@ class FuturesSpreadStrategy(StrategyEngine):
                             "funding_rate": funding,
                             "spread_z": zscore,
                             "entry_z": self._settings.entry_z,
+                            "taker_fee_rate": self._settings.market.taker_fee_rate,
+                            "lot_size": self._settings.market.lot_size,
                         },
                     )
                 )
@@ -99,13 +103,13 @@ class FuturesSpreadStrategy(StrategyEngine):
                 SignalLeg(
                     symbol=front_symbol,
                     side="BUY" if state.direction < 0 else "SELL",
-                    quantity=_spread_leg_quantity(front_price),
+                    quantity=quantity_from_notional(1.0, front_price, params=self._settings.market),
                     metadata={"leg": "front_exit", "price": front_price},
                 ),
                 SignalLeg(
                     symbol=back_symbol,
                     side="SELL" if state.direction < 0 else "BUY",
-                    quantity=_spread_leg_quantity(back_price),
+                    quantity=quantity_from_notional(1.0, back_price, params=self._settings.market),
                     metadata={"leg": "back_exit", "price": back_price},
                 ),
             )
@@ -128,6 +132,8 @@ class FuturesSpreadStrategy(StrategyEngine):
                             exit_due_to_basis,
                             exit_due_to_time,
                         ),
+                        "taker_fee_rate": self._settings.market.taker_fee_rate,
+                        "lot_size": self._settings.market.lot_size,
                     },
                 )
             )
@@ -156,9 +162,3 @@ def _exit_reason(z: bool, funding: bool, basis: bool, time_stop: bool) -> str:
 
 
 __all__ = ["FuturesSpreadSettings", "FuturesSpreadStrategy"]
-
-
-def _spread_leg_quantity(price: float) -> float:
-    if price <= 0:
-        return 1.0
-    return max(1.0 / max(price, 1e-9), 1e-9)

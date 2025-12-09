@@ -1,11 +1,12 @@
 """Strategia arbitrażu między giełdami."""
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Dict, List, Sequence
 
 from bot_core.strategies.base import MarketSnapshot, SignalLeg, StrategyEngine, StrategySignal
+from bot_core.strategies.market_params import DEFAULT_SPOT_PARAMS, MarketParams, quantity_from_notional
 
 
 @dataclass(slots=True)
@@ -18,6 +19,7 @@ class CrossExchangeArbitrageSettings:
     spread_exit: float = 0.0005
     max_notional: float = 50_000.0
     max_open_seconds: int = 120
+    market: MarketParams = field(default_factory=lambda: DEFAULT_SPOT_PARAMS)
 
 
 @dataclass(slots=True)
@@ -64,8 +66,16 @@ class CrossExchangeArbitrageStrategy(StrategyEngine):
                     opened_at=timestamp,
                     entry_spread=spread_ratio_positive,
                 )
-                primary_qty = _notional_to_quantity(self._settings.max_notional, primary_ask)
-                secondary_qty = _notional_to_quantity(self._settings.max_notional, secondary_bid)
+                primary_qty = quantity_from_notional(
+                    self._settings.max_notional,
+                    primary_ask,
+                    params=self._settings.market,
+                )
+                secondary_qty = quantity_from_notional(
+                    self._settings.max_notional,
+                    secondary_bid,
+                    params=self._settings.market,
+                )
                 signals.append(
                     StrategySignal(
                         symbol=snapshot.symbol,
@@ -100,6 +110,8 @@ class CrossExchangeArbitrageStrategy(StrategyEngine):
                             "spread": positive_spread,
                             "spread_ratio": spread_ratio_positive,
                             "max_notional": self._settings.max_notional,
+                            "taker_fee_rate": self._settings.market.taker_fee_rate,
+                            "lot_size": self._settings.market.lot_size,
                         },
                     )
                 )
@@ -109,8 +121,16 @@ class CrossExchangeArbitrageStrategy(StrategyEngine):
                     opened_at=timestamp,
                     entry_spread=spread_ratio_negative,
                 )
-                primary_qty = _notional_to_quantity(self._settings.max_notional, primary_bid)
-                secondary_qty = _notional_to_quantity(self._settings.max_notional, secondary_ask)
+                primary_qty = quantity_from_notional(
+                    self._settings.max_notional,
+                    primary_bid,
+                    params=self._settings.market,
+                )
+                secondary_qty = quantity_from_notional(
+                    self._settings.max_notional,
+                    secondary_ask,
+                    params=self._settings.market,
+                )
                 signals.append(
                     StrategySignal(
                         symbol=snapshot.symbol,
@@ -145,6 +165,8 @@ class CrossExchangeArbitrageStrategy(StrategyEngine):
                             "spread": negative_spread,
                             "spread_ratio": spread_ratio_negative,
                             "max_notional": self._settings.max_notional,
+                            "taker_fee_rate": self._settings.market.taker_fee_rate,
+                            "lot_size": self._settings.market.lot_size,
                         },
                     )
                 )
@@ -158,8 +180,16 @@ class CrossExchangeArbitrageStrategy(StrategyEngine):
                 or elapsed >= self._settings.max_open_seconds
             ):
                 del self._positions[snapshot.symbol]
-                primary_qty = _notional_to_quantity(self._settings.max_notional, primary_bid)
-                secondary_qty = _notional_to_quantity(self._settings.max_notional, secondary_ask)
+                primary_qty = quantity_from_notional(
+                    self._settings.max_notional,
+                    primary_bid,
+                    params=self._settings.market,
+                )
+                secondary_qty = quantity_from_notional(
+                    self._settings.max_notional,
+                    secondary_ask,
+                    params=self._settings.market,
+                )
                 signals.append(
                     StrategySignal(
                         symbol=snapshot.symbol,
@@ -195,6 +225,8 @@ class CrossExchangeArbitrageStrategy(StrategyEngine):
                             "secondary_delay_ms": max(
                                 0, (timestamp - secondary_time).total_seconds() * 1000
                             ),
+                            "taker_fee_rate": self._settings.market.taker_fee_rate,
+                            "lot_size": self._settings.market.lot_size,
                         },
                     )
                 )
@@ -204,8 +236,16 @@ class CrossExchangeArbitrageStrategy(StrategyEngine):
                 or elapsed >= self._settings.max_open_seconds
             ):
                 del self._positions[snapshot.symbol]
-                primary_qty = _notional_to_quantity(self._settings.max_notional, primary_ask)
-                secondary_qty = _notional_to_quantity(self._settings.max_notional, secondary_bid)
+                primary_qty = quantity_from_notional(
+                    self._settings.max_notional,
+                    primary_ask,
+                    params=self._settings.market,
+                )
+                secondary_qty = quantity_from_notional(
+                    self._settings.max_notional,
+                    secondary_bid,
+                    params=self._settings.market,
+                )
                 signals.append(
                     StrategySignal(
                         symbol=snapshot.symbol,
@@ -241,6 +281,8 @@ class CrossExchangeArbitrageStrategy(StrategyEngine):
                             "secondary_delay_ms": max(
                                 0, (timestamp - secondary_time).total_seconds() * 1000
                             ),
+                            "taker_fee_rate": self._settings.market.taker_fee_rate,
+                            "lot_size": self._settings.market.lot_size,
                         },
                     )
                 )
@@ -258,11 +300,3 @@ def _to_datetime(value: int | float) -> datetime:
 
 
 __all__ = ["CrossExchangeArbitrageSettings", "CrossExchangeArbitrageStrategy"]
-
-
-def _notional_to_quantity(max_notional: float, price: float) -> float:
-    reference_price = max(price, 1e-9)
-    if max_notional <= 0:
-        return 1.0
-    quantity = max_notional / reference_price
-    return max(quantity, 1e-9)

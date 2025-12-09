@@ -154,7 +154,7 @@ class MLStrategyEngine(StrategyEngine):
     threshold: float = 0.5
     buffer: MutableSequence[MarketSnapshot] = field(default_factory=list)
 
-    def warm_up(self, history: Sequence[MarketSnapshot]) -> None:
+    def warmup(self, history: Sequence[MarketSnapshot]) -> None:
         self.buffer.clear()
         self.buffer.extend(history)
         if history:
@@ -163,7 +163,7 @@ class MLStrategyEngine(StrategyEngine):
             if len(features) and len(target):
                 self.model.fit(features, target)
 
-    def on_data(self, snapshot: MarketSnapshot) -> Sequence[StrategySignal]:
+    def decide(self, snapshot: MarketSnapshot) -> Sequence[StrategySignal]:
         if not self.feature_pipeline.feature_names:
             raise RuntimeError("Pipeline nie został poprawnie zainicjalizowany")
         features = self.feature_pipeline.transform_features(snapshot)
@@ -179,6 +179,9 @@ class MLStrategyEngine(StrategyEngine):
             },
         )
         return (signal,)
+
+    def teardown(self) -> None:
+        self.buffer.clear()
 
 
 __all__ = [

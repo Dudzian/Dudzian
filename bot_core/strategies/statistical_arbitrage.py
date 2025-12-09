@@ -2,10 +2,11 @@
 from __future__ import annotations
 
 from collections import deque
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any, Deque, Dict, List, Mapping, Sequence
 
 from bot_core.strategies.base import MarketSnapshot, SignalLeg, StrategyEngine, StrategySignal
+from bot_core.strategies.market_params import DEFAULT_SPOT_PARAMS, MarketParams, quantity_from_notional
 
 
 @dataclass(slots=True)
@@ -16,6 +17,7 @@ class StatisticalArbitrageSettings:
     spread_entry_z: float = 2.0
     spread_exit_z: float = 0.5
     max_notional: float = 25_000.0
+    market: MarketParams = field(default_factory=lambda: DEFAULT_SPOT_PARAMS)
 
     def __post_init__(self) -> None:
         if int(self.lookback) < 5:
@@ -42,6 +44,7 @@ class StatisticalArbitrageSettings:
             spread_entry_z=float(params.get("spread_entry_z", defaults.spread_entry_z)),
             spread_exit_z=float(params.get("spread_exit_z", defaults.spread_exit_z)),
             max_notional=float(params.get("max_notional", defaults.max_notional)),
+            market=defaults.market,
         )
 
 
@@ -111,13 +114,21 @@ class StatisticalArbitrageStrategy(StrategyEngine):
                             SignalLeg(
                                 symbol=snapshot.symbol,
                                 side="SELL",
-                                quantity=_leg_quantity(self._settings.max_notional, snapshot.close),
+                                quantity=quantity_from_notional(
+                                    self._settings.max_notional,
+                                    snapshot.close,
+                                    params=self._settings.market,
+                                ),
                                 metadata={"leg": "primary_short", "price": snapshot.close},
                             ),
                             SignalLeg(
                                 symbol=paired_symbol or snapshot.symbol,
                                 side="BUY",
-                                quantity=_leg_quantity(self._settings.max_notional, paired_price),
+                                quantity=quantity_from_notional(
+                                    self._settings.max_notional,
+                                    paired_price,
+                                    params=self._settings.market,
+                                ),
                                 metadata={"leg": "secondary_long", "price": paired_price},
                             ),
                         ),
@@ -143,13 +154,21 @@ class StatisticalArbitrageStrategy(StrategyEngine):
                             SignalLeg(
                                 symbol=snapshot.symbol,
                                 side="BUY",
-                                quantity=_leg_quantity(self._settings.max_notional, snapshot.close),
+                                quantity=quantity_from_notional(
+                                    self._settings.max_notional,
+                                    snapshot.close,
+                                    params=self._settings.market,
+                                ),
                                 metadata={"leg": "primary_long", "price": snapshot.close},
                             ),
                             SignalLeg(
                                 symbol=paired_symbol or snapshot.symbol,
                                 side="SELL",
-                                quantity=_leg_quantity(self._settings.max_notional, paired_price),
+                                quantity=quantity_from_notional(
+                                    self._settings.max_notional,
+                                    paired_price,
+                                    params=self._settings.market,
+                                ),
                                 metadata={"leg": "secondary_short", "price": paired_price},
                             ),
                         ),
@@ -175,13 +194,21 @@ class StatisticalArbitrageStrategy(StrategyEngine):
                     SignalLeg(
                         symbol=snapshot.symbol,
                         side="BUY",
-                        quantity=_leg_quantity(self._settings.max_notional, snapshot.close),
+                        quantity=quantity_from_notional(
+                            self._settings.max_notional,
+                            snapshot.close,
+                            params=self._settings.market,
+                        ),
                         metadata={"leg": "primary_exit", "price": snapshot.close},
                     ),
                     SignalLeg(
                         symbol=paired_symbol or snapshot.symbol,
                         side="SELL",
-                        quantity=_leg_quantity(self._settings.max_notional, paired_price),
+                        quantity=quantity_from_notional(
+                            self._settings.max_notional,
+                            paired_price,
+                            params=self._settings.market,
+                        ),
                         metadata={"leg": "secondary_exit", "price": paired_price},
                     ),
                 )
@@ -190,13 +217,21 @@ class StatisticalArbitrageStrategy(StrategyEngine):
                     SignalLeg(
                         symbol=snapshot.symbol,
                         side="SELL",
-                        quantity=_leg_quantity(self._settings.max_notional, snapshot.close),
+                        quantity=quantity_from_notional(
+                            self._settings.max_notional,
+                            snapshot.close,
+                            params=self._settings.market,
+                        ),
                         metadata={"leg": "primary_exit", "price": snapshot.close},
                     ),
                     SignalLeg(
                         symbol=paired_symbol or snapshot.symbol,
                         side="BUY",
-                        quantity=_leg_quantity(self._settings.max_notional, paired_price),
+                        quantity=quantity_from_notional(
+                            self._settings.max_notional,
+                            paired_price,
+                            params=self._settings.market,
+                        ),
                         metadata={"leg": "secondary_exit", "price": paired_price},
                     ),
                 )
@@ -240,6 +275,8 @@ class StatisticalArbitrageStrategy(StrategyEngine):
             "z_score": z_score,
             "status": status,
             "max_notional": self._settings.max_notional,
+            "taker_fee_rate": self._settings.market.taker_fee_rate,
+            "lot_size": self._settings.market.lot_size,
             "timestamp": snapshot.timestamp,
         }
 
@@ -248,10 +285,3 @@ __all__ = [
     "StatisticalArbitrageSettings",
     "StatisticalArbitrageStrategy",
 ]
-
-
-def _leg_quantity(max_notional: float, price: float) -> float:
-    if price <= 0:
-        return 1.0
-    quantity = max_notional / max(price, 1e-9)
-    return max(quantity, 1e-9)

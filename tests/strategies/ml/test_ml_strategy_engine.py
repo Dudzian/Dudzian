@@ -42,7 +42,8 @@ def test_strategy_engine_generates_signal_after_warmup() -> None:
     pipeline = MLFeaturePipeline(window=5, forecast_horizon=1)
     engine = MLStrategyEngine(model=adapter, feature_pipeline=pipeline, threshold=0.6)
     history = _build_history(20)
-    engine.warm_up(history)
+    engine.prepare()
+    engine.warmup(history)
     assert adapter.fitted is True
     assert adapter.last_train_shape is not None
 
@@ -55,7 +56,7 @@ def test_strategy_engine_generates_signal_after_warmup() -> None:
         close=151.0,
         volume=1_500,
     )
-    signal = engine.on_data(new_snapshot)[0]
+    signal = engine.decide(new_snapshot)[0]
     assert signal.side == "BUY"
     assert signal.confidence == pytest.approx(0.1)
     assert signal.metadata["prediction"] == pytest.approx(0.7)
