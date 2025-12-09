@@ -13,7 +13,7 @@ from bot_core.config.models import (
     DecisionOrchestratorThresholds,
     DecisionStressTestConfig,
 )
-from bot_core.decision.models import DecisionCandidate, RiskSnapshot
+from bot_core.decision.models import DecisionCandidate, DecisionContext, RiskSnapshot
 from bot_core.decision.orchestrator import DecisionOrchestrator
 
 
@@ -52,6 +52,10 @@ def _snapshot() -> RiskSnapshot:
     )
 
 
+def _context(snapshot: Mapping[str, object] | RiskSnapshot | None = None) -> DecisionContext:
+    return DecisionContext(risk_snapshot=snapshot or _snapshot())
+
+
 def test_accepts_candidate_with_positive_edge() -> None:
     orchestrator = DecisionOrchestrator(_make_config())
     candidate = DecisionCandidate(
@@ -66,7 +70,7 @@ def test_accepts_candidate_with_positive_edge() -> None:
         latency_ms=180.0,
     )
 
-    evaluation = orchestrator.evaluate_candidate(candidate, _snapshot())
+    evaluation = orchestrator.evaluate_candidate(candidate, _context())
 
     assert evaluation.accepted is True
     assert evaluation.net_edge_bps is not None and evaluation.net_edge_bps > 3.0
@@ -90,7 +94,7 @@ def test_rejects_when_cost_exceeds_limit() -> None:
         latency_ms=120.0,
     )
 
-    evaluation = orchestrator.evaluate_candidate(candidate, _snapshot())
+    evaluation = orchestrator.evaluate_candidate(candidate, _context())
 
     assert evaluation.accepted is False
     assert any("koszt" in reason for reason in evaluation.reasons)
@@ -122,7 +126,7 @@ def test_rejects_on_risk_limits() -> None:
         latency_ms=150.0,
     )
 
-    evaluation = orchestrator.evaluate_candidate(candidate, snapshot)
+    evaluation = orchestrator.evaluate_candidate(candidate, _context(snapshot))
 
     assert evaluation.accepted is False
     assert evaluation.thresholds_snapshot is not None
@@ -143,7 +147,7 @@ def test_logs_threshold_snapshot_on_rejection(caplog: pytest.LogCaptureFixture) 
     )
 
     with caplog.at_level(logging.INFO):
-        orchestrator.evaluate_candidate(candidate, _snapshot())
+        orchestrator.evaluate_candidate(candidate, _context())
 
     record = next(
         (entry for entry in caplog.records if "DecisionOrchestrator rejected candidate" in entry.message),
@@ -167,7 +171,7 @@ def test_stress_failure_blocks_candidate() -> None:
         latency_ms=220.0,
     )
 
-    evaluation = orchestrator.evaluate_candidate(candidate, _snapshot())
+    evaluation = orchestrator.evaluate_candidate(candidate, _context())
 
     assert evaluation.accepted is False
     assert evaluation.stress_failures != ()
@@ -200,7 +204,7 @@ def test_costs_loaded_from_tco_report_dict() -> None:
         latency_ms=120.0,
     )
 
-    evaluation = orchestrator.evaluate_candidate(candidate, _snapshot())
+    evaluation = orchestrator.evaluate_candidate(candidate, _context())
 
     assert evaluation.accepted is True
     assert evaluation.cost_bps == 4.2
@@ -220,7 +224,7 @@ def test_missing_cost_requires_data_when_configured() -> None:
         latency_ms=120.0,
     )
 
-    evaluation = orchestrator.evaluate_candidate(candidate, _snapshot())
+    evaluation = orchestrator.evaluate_candidate(candidate, _context())
 
     assert evaluation.accepted is False
     assert any("brak danych" in reason for reason in evaluation.reasons)
@@ -240,7 +244,7 @@ def test_penalty_cost_used_when_configured() -> None:
         latency_ms=120.0,
     )
 
-    evaluation = orchestrator.evaluate_candidate(candidate, _snapshot())
+    evaluation = orchestrator.evaluate_candidate(candidate, _context())
 
     assert evaluation.cost_bps == 1.5
 
@@ -258,7 +262,7 @@ def test_evaluate_candidates_handles_missing_snapshot() -> None:
         latency_ms=120.0,
     )
 
-    evaluations = orchestrator.evaluate_candidates([candidate], risk_snapshots={})
+    evaluations = orchestrator.evaluate_candidates([candidate], contexts={})
     assert evaluations[0].accepted is False
     assert any("snapshot" in reason for reason in evaluations[0].reasons)
     assert evaluations[0].recommended_risk_score is None
@@ -283,7 +287,7 @@ def test_evaluation_includes_bandit_recommendations() -> None:
         },
     )
 
-    evaluation = orchestrator.evaluate_candidate(candidate, _snapshot())
+    evaluation = orchestrator.evaluate_candidate(candidate, _context())
 
     assert evaluation.recommended_modes != ()
     assert evaluation.recommended_modes[0] in {"live", "shadow", "disabled"}
@@ -329,7 +333,7 @@ def test_model_selection_metadata_receives_recommendations() -> None:
         },
     )
 
-    evaluation = orchestrator.evaluate_candidate(candidate, _snapshot())
+    evaluation = orchestrator.evaluate_candidate(candidate, _context())
 
     assert evaluation.model_selection is not None
     assert evaluation.model_selection.recommended_modes != ()

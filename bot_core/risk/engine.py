@@ -28,6 +28,7 @@ try:  # pragma: no cover - moduły decision/tco mogą być opcjonalne w innych g
     from bot_core.decision import DecisionOrchestrator
     from bot_core.decision.models import (
         DecisionCandidate,
+        DecisionContext,
         DecisionEvaluation,
         ModelSelectionDetail,
         ModelSelectionMetadata,
@@ -36,6 +37,7 @@ try:  # pragma: no cover - moduły decision/tco mogą być opcjonalne w innych g
 except Exception:  # pragma: no cover - decyzje mogą nie być dostępne
     DecisionOrchestrator = None  # type: ignore
     DecisionCandidate = None  # type: ignore
+    DecisionContext = None  # type: ignore
     DecisionEvaluation = None  # type: ignore
     ModelSelectionDetail = None  # type: ignore
     ModelSelectionMetadata = None  # type: ignore
@@ -1583,7 +1585,7 @@ class ThresholdRiskEngine(RiskEngine):
         try:
             evaluation = self._decision_orchestrator.evaluate_candidate(  # type: ignore[union-attr]
                 candidate,
-                snapshot,
+                DecisionContext(risk_snapshot=snapshot, runtime={"account": account.account_id}),
             )
         except Exception:
             _LOGGER.exception("DecisionOrchestrator: błąd ewaluacji")
@@ -2197,14 +2199,18 @@ class ThresholdRiskEngine(RiskEngine):
 def _ensure_decision_models() -> bool:
     """Gwarantuje, że zależności modułu decision są załadowane."""
 
-    global DecisionCandidate, DecisionEvaluation, RiskSnapshot
+    global DecisionCandidate, DecisionContext, DecisionEvaluation, RiskSnapshot
 
-    if all(dependency is not None for dependency in (DecisionCandidate, DecisionEvaluation, RiskSnapshot)):
+    if all(
+        dependency is not None
+        for dependency in (DecisionCandidate, DecisionContext, DecisionEvaluation, RiskSnapshot)
+    ):
         return True
 
     try:  # pragma: no cover - fallback ładowania w środowiskach z modułem decision
         from bot_core.decision.models import (  # type: ignore[import-not-found]
             DecisionCandidate as _DecisionCandidate,
+            DecisionContext as _DecisionContext,
             DecisionEvaluation as _DecisionEvaluation,
             RiskSnapshot as _RiskSnapshot,
         )
@@ -2212,6 +2218,7 @@ def _ensure_decision_models() -> bool:
         return False
 
     DecisionCandidate = _DecisionCandidate  # type: ignore[assignment]
+    DecisionContext = _DecisionContext  # type: ignore[assignment]
     DecisionEvaluation = _DecisionEvaluation  # type: ignore[assignment]
     RiskSnapshot = _RiskSnapshot  # type: ignore[assignment]
     return True

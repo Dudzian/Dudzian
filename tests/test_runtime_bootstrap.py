@@ -22,7 +22,7 @@ import tests._pathbootstrap  # noqa: F401  # pylint: disable=unused-import
 
 from bot_core.config.models import DecisionEngineTCOConfig, SMSProviderSettings
 from bot_core.alerts import EmailChannel, SMSChannel, TelegramChannel
-from bot_core.decision.models import DecisionCandidate, RiskSnapshot
+from bot_core.decision.models import DecisionCandidate, DecisionContext, RiskSnapshot
 from bot_core.exchanges.base import (
     AccountSnapshot,
     Environment,
@@ -2585,7 +2585,9 @@ def test_bootstrap_loads_tco_report_for_decision_engine(tmp_path: Path) -> None:
         force_liquidation=False,
     )
 
-    evaluation = context.decision_orchestrator.evaluate_candidate(candidate, snapshot)
+    evaluation = context.decision_orchestrator.evaluate_candidate(
+        candidate, DecisionContext(risk_snapshot=snapshot)
+    )
     assert evaluation.accepted is True
     assert evaluation.cost_bps == pytest.approx(11.0)
 

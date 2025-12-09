@@ -109,7 +109,7 @@ class _SequencedOrchestrator:
         self._evaluations = iter(evaluations)
 
     def evaluate_candidate(
-        self, candidate: DecisionCandidate, snapshot: Mapping[str, object]
+        self, candidate: DecisionCandidate, context: Mapping[str, object]
     ) -> DecisionEvaluation:
         try:
             return next(self._evaluations)
@@ -119,7 +119,7 @@ class _SequencedOrchestrator:
 
 class _FailingOrchestrator:
     def evaluate_candidate(
-        self, candidate: DecisionCandidate, snapshot: Mapping[str, object]
+        self, candidate: DecisionCandidate, context: Mapping[str, object]
     ) -> DecisionEvaluation:
         raise RuntimeError("evaluation failed")
 

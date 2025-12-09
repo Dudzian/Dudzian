@@ -78,7 +78,7 @@ def test_alert_smoke_decision_metrics_missing_snapshot() -> None:
     )
     orchestrator = DecisionOrchestrator(config, metrics=metrics)
 
-    evaluations = orchestrator.evaluate_candidates([_build_candidate()], risk_snapshots={})
+    evaluations = orchestrator.evaluate_candidates([_build_candidate()], contexts={})
     assert len(evaluations) == 1
     assert evaluations[0].accepted is False
 

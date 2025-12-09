@@ -5,7 +5,7 @@ import pandas as pd
 
 from bot_core.config.models import DecisionEngineConfig, DecisionOrchestratorThresholds
 from bot_core.decision.ai_connector import AIManagerDecisionConnector
-from bot_core.decision.models import RiskSnapshot
+from bot_core.decision.models import DecisionContext, RiskSnapshot
 from bot_core.decision.orchestrator import DecisionOrchestrator
 from bot_core.exchanges.base import AccountSnapshot, OrderRequest
 from bot_core.execution.base import ExecutionContext
@@ -136,7 +136,10 @@ def test_connector_creates_candidate_and_executes_order() -> None:
         active_positions=0,
         symbols=(),
     )
-    evaluation = orchestrator.evaluate_candidate(candidates[0], snapshot)
+    evaluation = orchestrator.evaluate_candidate(
+        candidates[0],
+        DecisionContext(risk_snapshot=snapshot),
+    )
     assert evaluation.accepted
 
     risk_engine = ThresholdRiskEngine()

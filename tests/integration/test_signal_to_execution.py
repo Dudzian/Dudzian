@@ -12,7 +12,7 @@ from bot_core.ai import (
     generate_model_artifact_bundle,
 )
 from bot_core.config.models import DecisionEngineConfig, DecisionOrchestratorThresholds
-from bot_core.decision.models import DecisionCandidate
+from bot_core.decision.models import DecisionCandidate, DecisionContext
 from bot_core.decision.orchestrator import DecisionOrchestrator
 from bot_core.execution.base import ExecutionContext
 from bot_core.execution.bridge import ExchangeAdapterExecutionService, decision_to_order_request
@@ -156,7 +156,10 @@ def test_signal_to_execution_flow(tmp_path: Path) -> None:
         metadata={"features": dict(latest_features)},
     )
 
-    evaluation = orchestrator.evaluate_candidate(candidate, risk_snapshot)
+    evaluation = orchestrator.evaluate_candidate(
+        candidate,
+        DecisionContext(risk_snapshot=risk_snapshot),
+    )
     assert evaluation.accepted, evaluation.reasons
     assert evaluation.model_name == "btc-trend"
 

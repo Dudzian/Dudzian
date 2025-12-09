@@ -66,9 +66,15 @@ except Exception:  # pragma: no cover
 
 # Decision Engine (opcjonalnie)
 try:  # pragma: no cover
-    from bot_core.decision import DecisionCandidate, DecisionEvaluation, DecisionOrchestrator  # type: ignore
+    from bot_core.decision import (
+        DecisionCandidate,
+        DecisionContext,
+        DecisionEvaluation,
+        DecisionOrchestrator,
+    )  # type: ignore
 except Exception:  # pragma: no cover
     DecisionCandidate = None  # type: ignore
+    DecisionContext = Any  # type: ignore
     DecisionEvaluation = Any  # type: ignore
     DecisionOrchestrator = None  # type: ignore
 
@@ -1258,7 +1264,16 @@ class TradingController:
             return None
         snapshot = self._decision_risk_snapshot(candidate.risk_profile)
         try:
-            return orchestrator.evaluate_candidate(candidate, snapshot)
+            return orchestrator.evaluate_candidate(
+                candidate,
+                DecisionContext(
+                    risk_snapshot=snapshot,
+                    runtime={
+                        "portfolio": self._portfolio,
+                        "environment": self._environment,
+                    },
+                ),
+            )
         except Exception:  # pragma: no cover - diagnostyka orchestratora
             _LOGGER.exception("DecisionOrchestrator: błąd ewaluacji")
             return None
@@ -1947,7 +1962,10 @@ class AIDecisionLoop:
             if snapshot is None:
                 snapshot = self.risk_snapshot_provider(self.risk_profile)
                 snapshots_cache[self.risk_profile] = snapshot
-            evaluation = self.orchestrator.evaluate_candidate(candidate, snapshot)
+            evaluation = self.orchestrator.evaluate_candidate(
+                candidate,
+                DecisionContext(risk_snapshot=snapshot, runtime={"vector_timestamp": vector.timestamp}),
+            )
             evaluations.append(evaluation)
         return evaluations
 

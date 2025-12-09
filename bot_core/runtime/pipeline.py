@@ -130,11 +130,13 @@ except Exception:  # pragma: no cover - fallback gdy moduł nie istnieje
 try:  # pragma: no cover - moduł decision może być opcjonalny
     from bot_core.decision import (
         DecisionCandidate,
+        DecisionContext,
         DecisionEvaluation,
         summarize_evaluation_payloads,
     )
 except Exception:  # pragma: no cover
     DecisionCandidate = None  # type: ignore
+    DecisionContext = Any  # type: ignore
     DecisionEvaluation = Any  # type: ignore
     summarize_evaluation_payloads = None  # type: ignore
 
@@ -3044,7 +3046,18 @@ class DecisionAwareSignalSink(StrategySignalSink):
                 )
                 continue
             try:
-                evaluation = self._orchestrator.evaluate_candidate(candidate, risk_snapshot)
+                evaluation = self._orchestrator.evaluate_candidate(
+                    candidate,
+                    DecisionContext(
+                        risk_snapshot=risk_snapshot,
+                        runtime={
+                            "timestamp": timestamp,
+                            "environment": self._environment,
+                            "schedule_name": schedule_name,
+                            "strategy_name": strategy_name,
+                        },
+                    ),
+                )
             except Exception:  # pragma: no cover - diagnostyka orchestratora
                 self._logger.exception("DecisionOrchestrator odrzucił kandydata przez wyjątek")
                 continue

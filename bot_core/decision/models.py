@@ -85,6 +85,15 @@ class DecisionCandidate:
 
 
 @dataclass(slots=True)
+class DecisionContext:
+    """Kontekst runtime dla oceny kandydata."""
+
+    risk_snapshot: Mapping[str, object] | RiskSnapshot = field(default_factory=dict)
+    runtime: Mapping[str, object] = field(default_factory=dict)
+    costs: Mapping[str, object] = field(default_factory=dict)
+
+
+@dataclass(slots=True)
 class RiskSnapshot:
     """Minimalny snapshot stanu profilu ryzyka."""
 
