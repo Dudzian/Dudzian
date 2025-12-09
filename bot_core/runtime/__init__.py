@@ -912,22 +912,6 @@ except Exception:  # pragma: no cover - brak modułu load testu
     LoadTestSettings = None  # type: ignore
     execute_scheduler_load_test = None  # type: ignore
 
-try:  # pragma: no cover - moduł stage6 może nie istnieć
-    from bot_core.runtime.stage6_hypercare import (
-        Stage6HypercareConfig,
-        Stage6HypercareCycle,
-        Stage6HypercareResult,
-        Stage6HypercareVerificationResult,
-        verify_stage6_hypercare_summary,
-    )
-except Exception:  # pragma: no cover - brak modułu stage6
-    Stage6HypercareConfig = None  # type: ignore
-    Stage6HypercareCycle = None  # type: ignore
-    Stage6HypercareResult = None  # type: ignore
-    Stage6HypercareVerificationResult = None  # type: ignore
-    verify_stage6_hypercare_summary = None  # type: ignore
-    PaperTradingAdapter = None  # type: ignore
-
 # --- Metrics service (opcjonalny – zależy od dostępności gRPC i wygenerowanych stubów) ---
 try:
     from bot_core.runtime.metrics_service import (  # type: ignore
@@ -1045,11 +1029,6 @@ __all__ = [
     "LoadTestSettings",
     "LoadTestResult",
     "execute_scheduler_load_test",
-    "Stage6HypercareCycle",
-    "Stage6HypercareConfig",
-    "Stage6HypercareResult",
-    "Stage6HypercareVerificationResult",
-    "verify_stage6_hypercare_summary",
 ]
 
 # Eksport elementów metrics service tylko jeśli są dostępne

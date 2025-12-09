@@ -12,14 +12,13 @@ from datetime import datetime, timedelta, timezone
 from typing import Any
 from typing import (
     TYPE_CHECKING,
+    Awaitable,
     Callable,
     Mapping,
     MutableMapping,
     Protocol,
     Sequence,
 )
-
-from threading import RLock
 
 if TYPE_CHECKING:
     from bot_core.backtest.walk_forward import WalkForwardReport
@@ -49,6 +48,7 @@ from bot_core.runtime.suspensions import SuspensionManager, SuspensionRecord
 from bot_core.strategies.base import MarketSnapshot, StrategyEngine, StrategySignal
 
 _LOGGER = logging.getLogger(__name__)
+_LOGGER.propagate = True
 
 
 def _split_symbol_components(symbol: str | None) -> tuple[str | None, str | None]:
@@ -139,6 +139,28 @@ class _ScheduleContext:
     cost_report_summary: Mapping[str, float] | None = None
     last_window_state: bool | None = None
     order_index: int = 0
+
+
+@dataclass(slots=True)
+class StrategyRunContext:
+    """Stan pojedynczego uruchomienia strategii w schedulerze."""
+
+    schedule: _ScheduleContext
+    timestamp: datetime
+    start_time: datetime
+    snapshots: Sequence[MarketSnapshot] = ()
+    total_signals: int = 0
+    confidence_sum: float = 0.0
+    confidence_count: int = 0
+    mean_reversion_zscores: list[float] = field(default_factory=list)
+    mean_reversion_vols: list[float] = field(default_factory=list)
+    volatility_alloc_errors: list[float] = field(default_factory=list)
+    volatility_target_errors: list[float] = field(default_factory=list)
+    arbitrage_captures: list[float] = field(default_factory=list)
+    arbitrage_delays: list[float] = field(default_factory=list)
+
+    def latency_ms(self, clock: Callable[[], datetime]) -> float:
+        return max(0.0, (clock() - self.timestamp).total_seconds() * 1000)
 
 def _extract_tags(metadata: Mapping[str, object] | None) -> tuple[tuple[str, ...], str | None]:
     if not isinstance(metadata, Mapping):
@@ -1149,175 +1171,198 @@ class MultiStrategyScheduler:
                 _LOGGER.exception("PortfolioGovernor: błąd ewaluacji w schedulerze")
 
     async def _execute_schedule(self, schedule: _ScheduleContext, timestamp: datetime) -> None:
+        context = StrategyRunContext(
+            schedule=schedule,
+            timestamp=timestamp,
+            start_time=timestamp,
+        )
         try:
-            await self._maybe_rebalance_allocation(timestamp)
-            if not schedule.warmed_up and schedule.warmup_bars > 0:
-                history = await self._load_history_async(schedule, schedule.warmup_bars)
-                if history:
-                    schedule.strategy.warm_up(history)
-                schedule.warmed_up = True
-
-            schedule.metrics.clear()
-            schedule.metrics["base_max_signals"] = float(schedule.base_max_signals)
-            schedule.metrics["portfolio_weight_target"] = 0.0
-            schedule.metrics["portfolio_signal_factor"] = 1.0
-            schedule.metrics["allocator_signal_factor"] = float(schedule.allocator_signal_factor)
-            schedule.metrics["allocator_weight_target"] = float(schedule.allocator_weight)
-            schedule.metrics["governor_signal_factor"] = float(schedule.governor_signal_factor)
-            if self._portfolio_governor is not None:
-                allocation = self._portfolio_governor.resolve_allocation(
-                    schedule.strategy_name,
-                    schedule.risk_profile,
-                )
-                if allocation.max_signal_hint is not None:
-                    schedule.base_max_signals = max(1, allocation.max_signal_hint)
-                factor = float(allocation.signal_factor)
-                schedule.governor_signal_factor = max(0.0, factor)
-                schedule.portfolio_weight = float(allocation.weight)
-                schedule.metrics["portfolio_weight_target"] = float(allocation.weight)
-                schedule.metrics["portfolio_signal_factor"] = factor
-            else:
-                schedule.governor_signal_factor = 1.0
-                schedule.portfolio_weight = 0.0
-
-            schedule.metrics["portfolio_weight"] = float(schedule.portfolio_weight)
-            schedule.metrics["governor_signal_factor"] = float(schedule.governor_signal_factor)
-            schedule.metrics["governor_max_signals"] = float(
-                schedule.base_max_signals * max(0.0, schedule.governor_signal_factor)
-            )
-            self._apply_signal_limits(schedule)
-            self._apply_cost_summary(schedule)
-            schedule.metrics["priority"] = float(schedule.priority)
-            schedule.metrics["failover_count"] = float(schedule.failover_count)
-            schedule.metrics["active_fallback_indicator"] = 1.0 if schedule.active_fallback else 0.0
-
-            window_active = self._is_window_open(schedule, timestamp)
-            schedule.metrics["window_active"] = 1.0 if window_active else 0.0
-            self._update_window_state(schedule, active=window_active, timestamp=timestamp)
-            if not window_active:
-                return
-
-            try:
-                snapshots = await self._fetch_latest_async(schedule)
-            except Exception as exc:  # pragma: no cover - diagnostyka feedu
-                self._handle_schedule_failure(schedule, "feed", exc)
-                return
-
-            total_signals = 0
-            confidence_sum = 0.0
-            confidence_count = 0
-            mean_reversion_zscores: list[float] = []
-            mean_reversion_vols: list[float] = []
-            volatility_alloc_errors: list[float] = []
-            volatility_target_errors: list[float] = []
-            arbitrage_captures: list[float] = []
-            arbitrage_delays: list[float] = []
-
-            for snapshot in snapshots:
-                try:
-                    raw_signals = list(schedule.strategy.on_data(snapshot))
-                except Exception as exc:  # pragma: no cover - diagnostyka strategii
-                    self._handle_schedule_failure(schedule, "strategy", exc)
-                    return
-                if not raw_signals:
-                    continue
-                bounded_signals = self._bounded_signals(raw_signals, schedule.active_max_signals)
-                if not bounded_signals:
-                    continue
-                total_signals += len(bounded_signals)
-                for signal in bounded_signals:
-                    confidence_sum += float(signal.confidence)
-                    confidence_count += 1
-                    metadata = signal.metadata
-                    if schedule.strategy_name.startswith("mean_reversion"):
-                        zscore = metadata.get("zscore")
-                        if isinstance(zscore, (int, float)):
-                            mean_reversion_zscores.append(abs(float(zscore)))
-                        volatility = metadata.get("volatility")
-                        if isinstance(volatility, (int, float)):
-                            mean_reversion_vols.append(float(volatility))
-                    if "target_allocation" in metadata and "current_allocation" in metadata:
-                        target_alloc = metadata.get("target_allocation")
-                        current_alloc = metadata.get("current_allocation")
-                        if isinstance(target_alloc, (int, float)) and isinstance(
-                            current_alloc, (int, float)
-                        ) and target_alloc:
-                            diff_pct = abs(float(target_alloc) - float(current_alloc)) / max(
-                                abs(float(target_alloc)), 1e-9
-                            )
-                            volatility_alloc_errors.append(diff_pct * 100.0)
-                    realized_vol = metadata.get("realized_volatility")
-                    target_vol = metadata.get("target_volatility")
-                    if isinstance(realized_vol, (int, float)) and isinstance(target_vol, (int, float)) and target_vol:
-                        variance_pct = abs(float(realized_vol) - float(target_vol)) / max(
-                            abs(float(target_vol)), 1e-9
-                        )
-                        volatility_target_errors.append(variance_pct * 100.0)
-                    secondary_delay = metadata.get("secondary_delay_ms")
-                    if isinstance(secondary_delay, (int, float)):
-                        arbitrage_delays.append(float(secondary_delay))
-                    entry_spread = metadata.get("entry_spread")
-                    exit_spread = metadata.get("exit_spread")
-                    if isinstance(entry_spread, (int, float)) and isinstance(exit_spread, (int, float)) and entry_spread:
-                        capture = (float(entry_spread) - float(exit_spread)) / abs(float(entry_spread))
-                        arbitrage_captures.append(capture * 10_000.0)
-                self._record_decisions(schedule, bounded_signals, timestamp, snapshot.symbol)
-                try:
-                    schedule.sink.submit(
-                        strategy_name=schedule.strategy_name,
-                        schedule_name=schedule.name,
-                        risk_profile=schedule.risk_profile,
-                        timestamp=timestamp,
-                        signals=bounded_signals,
-                    )
-                except Exception as exc:  # pragma: no cover - diagnostyka sinka
-                    self._handle_schedule_failure(schedule, "sink", exc)
-                    return
-            schedule.metrics["signals"] = float(total_signals)
-            schedule.metrics["active_max_signals"] = float(schedule.active_max_signals)
-            schedule.metrics["last_latency_ms"] = max(
-                0.0, (self._clock() - timestamp).total_seconds() * 1000
-            )
-            if confidence_count:
-                schedule.metrics["avg_confidence"] = confidence_sum / confidence_count
-            if mean_reversion_zscores:
-                schedule.metrics["avg_abs_zscore"] = sum(mean_reversion_zscores) / len(
-                    mean_reversion_zscores
-                )
-            if mean_reversion_vols:
-                schedule.metrics["avg_realized_volatility"] = sum(mean_reversion_vols) / len(
-                    mean_reversion_vols
-                )
-            if volatility_alloc_errors:
-                schedule.metrics["allocation_error_pct"] = sum(volatility_alloc_errors) / len(
-                    volatility_alloc_errors
-                )
-            if volatility_target_errors:
-                schedule.metrics["realized_vs_target_vol_pct"] = sum(
-                    volatility_target_errors
-                ) / len(volatility_target_errors)
-            if arbitrage_delays:
-                schedule.metrics["secondary_delay_ms"] = max(arbitrage_delays)
-            if arbitrage_captures:
-                schedule.metrics["spread_capture_bps"] = sum(arbitrage_captures) / len(
-                    arbitrage_captures
-                )
-            self._emit_metrics(schedule)
-
-            if self._portfolio_governor is not None:
-                observation_payload = dict(schedule.metrics)
-                observation_payload["signals"] = float(total_signals)
-                self._portfolio_governor.observe_strategy_metrics(
-                    schedule.strategy_name,
-                    observation_payload,
-                    timestamp=timestamp,
-                    risk_profile=schedule.risk_profile,
-                )
-                decision = self._portfolio_governor.maybe_rebalance(timestamp=timestamp)
-                if decision is not None:
-                    self._apply_portfolio_decision(decision)
+            await self._run_with_policy(context, self._execute_strategy_once)
         except Exception:  # pragma: no cover - chronimy scheduler przed przerwaniem
             _LOGGER.exception("Błąd podczas wykonywania harmonogramu %s", schedule.name)
+
+    async def _run_with_policy(
+        self,
+        context: StrategyRunContext,
+        runner: Callable[[StrategyRunContext], Awaitable[None]],
+    ) -> None:
+        attempts = 1
+        timeout_seconds: float | None = None
+        last_error: Exception | None = None
+        for attempt in range(attempts):
+            try:
+                if timeout_seconds and timeout_seconds > 0:
+                    await asyncio.wait_for(runner(context), timeout=timeout_seconds)
+                else:
+                    await runner(context)
+                return
+            except Exception as exc:  # pragma: no cover - retry/timeout policer
+                last_error = exc
+                _LOGGER.debug(
+                    "Strategia %s: próba %d zakończona błędem",
+                    context.schedule.name,
+                    attempt + 1,
+                )
+        if last_error is not None:
+            raise last_error
+
+    async def _execute_strategy_once(self, context: StrategyRunContext) -> None:
+        schedule = context.schedule
+        timestamp = context.timestamp
+        await self._maybe_rebalance_allocation(timestamp)
+        if not schedule.warmed_up and schedule.warmup_bars > 0:
+            history = await self._load_history_async(schedule, schedule.warmup_bars)
+            if history:
+                schedule.strategy.warm_up(history)
+            schedule.warmed_up = True
+
+        schedule.metrics.clear()
+        schedule.metrics["base_max_signals"] = float(schedule.base_max_signals)
+        schedule.metrics["portfolio_weight_target"] = 0.0
+        schedule.metrics["portfolio_signal_factor"] = 1.0
+        schedule.metrics["allocator_signal_factor"] = float(schedule.allocator_signal_factor)
+        schedule.metrics["allocator_weight_target"] = float(schedule.allocator_weight)
+        schedule.metrics["governor_signal_factor"] = float(schedule.governor_signal_factor)
+        if self._portfolio_governor is not None:
+            allocation = self._portfolio_governor.resolve_allocation(
+                schedule.strategy_name,
+                schedule.risk_profile,
+            )
+            if allocation.max_signal_hint is not None:
+                schedule.base_max_signals = max(1, allocation.max_signal_hint)
+            factor = float(allocation.signal_factor)
+            schedule.governor_signal_factor = max(0.0, factor)
+            schedule.portfolio_weight = float(allocation.weight)
+            schedule.metrics["portfolio_weight_target"] = float(allocation.weight)
+            schedule.metrics["portfolio_signal_factor"] = factor
+        else:
+            schedule.governor_signal_factor = 1.0
+            schedule.portfolio_weight = 0.0
+
+        schedule.metrics["portfolio_weight"] = float(schedule.portfolio_weight)
+        schedule.metrics["governor_signal_factor"] = float(schedule.governor_signal_factor)
+        schedule.metrics["governor_max_signals"] = float(
+            schedule.base_max_signals * max(0.0, schedule.governor_signal_factor)
+        )
+        self._apply_signal_limits(schedule)
+        self._apply_cost_summary(schedule)
+        schedule.metrics["priority"] = float(schedule.priority)
+        schedule.metrics["failover_count"] = float(schedule.failover_count)
+        schedule.metrics["active_fallback_indicator"] = 1.0 if schedule.active_fallback else 0.0
+
+        window_active = self._is_window_open(schedule, timestamp)
+        schedule.metrics["window_active"] = 1.0 if window_active else 0.0
+        self._update_window_state(schedule, active=window_active, timestamp=timestamp)
+        if not window_active:
+            return
+
+        try:
+            context.snapshots = await self._fetch_latest_async(schedule)
+        except Exception as exc:  # pragma: no cover - diagnostyka feedu
+            self._handle_schedule_failure(schedule, "feed", exc)
+            return
+
+        for snapshot in context.snapshots:
+            try:
+                raw_signals = list(schedule.strategy.on_data(snapshot))
+            except Exception as exc:  # pragma: no cover - diagnostyka strategii
+                self._handle_schedule_failure(schedule, "strategy", exc)
+                return
+            if not raw_signals:
+                continue
+            bounded_signals = self._bounded_signals(raw_signals, schedule.active_max_signals)
+            if not bounded_signals:
+                continue
+            context.total_signals += len(bounded_signals)
+            for signal in bounded_signals:
+                context.confidence_sum += float(signal.confidence)
+                context.confidence_count += 1
+                metadata = signal.metadata
+                if schedule.strategy_name.startswith("mean_reversion"):
+                    zscore = metadata.get("zscore")
+                    if isinstance(zscore, (int, float)):
+                        context.mean_reversion_zscores.append(abs(float(zscore)))
+                    volatility = metadata.get("volatility")
+                    if isinstance(volatility, (int, float)):
+                        context.mean_reversion_vols.append(float(volatility))
+                if "target_allocation" in metadata and "current_allocation" in metadata:
+                    target_alloc = metadata.get("target_allocation")
+                    current_alloc = metadata.get("current_allocation")
+                    if isinstance(target_alloc, (int, float)) and isinstance(
+                        current_alloc, (int, float)
+                    ) and target_alloc:
+                        diff_pct = abs(float(target_alloc) - float(current_alloc)) / max(
+                            abs(float(target_alloc)), 1e-9
+                        )
+                        context.volatility_alloc_errors.append(diff_pct * 100.0)
+                realized_vol = metadata.get("realized_volatility")
+                target_vol = metadata.get("target_volatility")
+                if isinstance(realized_vol, (int, float)) and isinstance(target_vol, (int, float)) and target_vol:
+                    variance_pct = abs(float(realized_vol) - float(target_vol)) / max(
+                        abs(float(target_vol)), 1e-9
+                    )
+                    context.volatility_target_errors.append(variance_pct * 100.0)
+                secondary_delay = metadata.get("secondary_delay_ms")
+                if isinstance(secondary_delay, (int, float)):
+                    context.arbitrage_delays.append(float(secondary_delay))
+                entry_spread = metadata.get("entry_spread")
+                exit_spread = metadata.get("exit_spread")
+                if isinstance(entry_spread, (int, float)) and isinstance(exit_spread, (int, float)) and entry_spread:
+                    capture = (float(entry_spread) - float(exit_spread)) / abs(float(entry_spread))
+                    context.arbitrage_captures.append(capture * 10_000.0)
+            self._record_decisions(schedule, bounded_signals, timestamp, snapshot.symbol)
+            try:
+                schedule.sink.submit(
+                    strategy_name=schedule.strategy_name,
+                    schedule_name=schedule.name,
+                    risk_profile=schedule.risk_profile,
+                    timestamp=timestamp,
+                    signals=bounded_signals,
+                )
+            except Exception as exc:  # pragma: no cover - diagnostyka sinka
+                self._handle_schedule_failure(schedule, "sink", exc)
+                return
+        schedule.metrics["signals"] = float(context.total_signals)
+        schedule.metrics["active_max_signals"] = float(schedule.active_max_signals)
+        schedule.metrics["last_latency_ms"] = context.latency_ms(self._clock)
+        if context.confidence_count:
+            schedule.metrics["avg_confidence"] = context.confidence_sum / context.confidence_count
+        if context.mean_reversion_zscores:
+            schedule.metrics["avg_abs_zscore"] = sum(context.mean_reversion_zscores) / len(
+                context.mean_reversion_zscores
+            )
+        if context.mean_reversion_vols:
+            schedule.metrics["avg_realized_volatility"] = sum(context.mean_reversion_vols) / len(
+                context.mean_reversion_vols
+            )
+        if context.volatility_alloc_errors:
+            schedule.metrics["allocation_error_pct"] = sum(context.volatility_alloc_errors) / len(
+                context.volatility_alloc_errors
+            )
+        if context.volatility_target_errors:
+            schedule.metrics["realized_vs_target_vol_pct"] = sum(
+                context.volatility_target_errors
+            ) / len(context.volatility_target_errors)
+        if context.arbitrage_delays:
+            schedule.metrics["secondary_delay_ms"] = max(context.arbitrage_delays)
+        if context.arbitrage_captures:
+            schedule.metrics["spread_capture_bps"] = sum(context.arbitrage_captures) / len(
+                context.arbitrage_captures
+            )
+        self._emit_metrics(schedule)
+
+        if self._portfolio_governor is not None:
+            observation_payload = dict(schedule.metrics)
+            observation_payload["signals"] = float(context.total_signals)
+            self._portfolio_governor.observe_strategy_metrics(
+                schedule.strategy_name,
+                observation_payload,
+                timestamp=timestamp,
+                risk_profile=schedule.risk_profile,
+            )
+            decision = self._portfolio_governor.maybe_rebalance(timestamp=timestamp)
+            if decision is not None:
+                self._apply_portfolio_decision(decision)
 
     def _bounded_signals(
         self, signals: Sequence[StrategySignal], max_signals: int

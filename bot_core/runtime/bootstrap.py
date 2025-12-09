@@ -13,34 +13,18 @@ import hashlib
 from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
-from functools import lru_cache
 from pathlib import Path
 from types import ModuleType, SimpleNamespace
 from typing import TYPE_CHECKING, Any, Callable, Iterable, Iterator, Mapping, MutableMapping, Sequence
 
 import yaml
 
-from bot_core.alerts import (
-    AlertSeverity,
-    AlertThrottle,
-    DefaultAlertRouter,
-    EmailChannel,
-    FileAlertAuditLog,
-    InMemoryAlertAuditLog,
-    MessengerChannel,
-    SMSChannel,
-    SignalChannel,
-    TelegramChannel,
-    WhatsAppChannel,
-    emit_alert,
-    get_sms_provider,
-)
+from bot_core.alerts import AlertSeverity, DefaultAlertRouter, emit_alert
 from bot_core.alerts.base import AlertAuditLog, AlertChannel
 from bot_core.config.loader import load_core_config
 from bot_core.config.models import (
     CoreConfig,
     DecisionJournalConfig,
-    EmailChannelSettings,
     EnvironmentAIConfig,
     EnvironmentAIEnsembleConfig,
     EnvironmentAIModelConfig,
@@ -49,12 +33,7 @@ from bot_core.config.models import (
     LicenseValidationConfig,
     LiveChecklistDocumentConfig,
     LiveReadinessChecklistConfig,
-    MessengerChannelSettings,
     RiskProfileConfig,
-    SMSProviderSettings,
-    SignalChannelSettings,
-    TelegramChannelSettings,
-    WhatsAppChannelSettings,
 )
 from bot_core.config.validation import assert_core_config_valid
 from bot_core.exchanges.base import (
@@ -206,6 +185,13 @@ from bot_core.runtime.file_metadata import (
     file_reference_metadata,
     log_security_warnings,
 )
+from bot_core.runtime.paths import RuntimePaths
+import bot_core.runtime.observability as _observability
+from bot_core.runtime.observability import (
+    RouterAlertSink,
+    build_alert_channels,
+    build_ui_alert_audit_metadata,
+)
 from bot_core.observability.metrics import get_global_metrics_registry
 from bot_core.portfolio import PortfolioDecisionLog
 
@@ -222,33 +208,10 @@ except Exception:  # pragma: no cover - środowiska bez modułu bot_core.ai.mana
 # --- Rejestr komponentów alertowych ---------------------------------------------------
 
 
-@lru_cache(maxsize=1)
 def _get_alert_components() -> Mapping[str, Any]:
-    """Zwraca klasowe zależności alertów wymagane podczas bootstrapa."""
+    from bot_core.runtime import observability as _observability
 
-    components: dict[str, Any] = {
-        "FileAlertAuditLog": FileAlertAuditLog,
-        "InMemoryAlertAuditLog": InMemoryAlertAuditLog,
-        "AlertThrottle": AlertThrottle,
-        "DefaultAlertRouter": DefaultAlertRouter,
-        "EmailChannel": EmailChannel,
-        "TelegramChannel": TelegramChannel,
-        "SMSChannel": SMSChannel,
-        "SignalChannel": SignalChannel,
-        "WhatsAppChannel": WhatsAppChannel,
-        "MessengerChannel": MessengerChannel,
-        "get_sms_provider": get_sms_provider,
-    }
-
-    try:  # pragma: no cover - zależność opcjonalna w dystrybucjach bez SMS
-        from bot_core.alerts.channels.providers import (
-            SmsProviderConfig as _SmsProviderConfig,
-        )
-    except Exception:  # pragma: no cover - brak modułu providers
-        _SmsProviderConfig = SmsProviderConfig  # type: ignore[name-defined]
-
-    components["SmsProviderConfig"] = _SmsProviderConfig
-    return components
+    return _observability._get_alert_components()
 
 
 # --- Metrics service (opcjonalny – w niektórych gałęziach może nie istnieć) ---
@@ -828,50 +791,11 @@ def _build_ui_alert_audit_metadata(
     *,
     requested_backend: str | None,
 ) -> dict[str, object]:
-    """Zwraca metadane backendu audytu alertów UI dostępne w runtime."""
+    from bot_core.runtime import observability as _observability
 
-    components = _get_alert_components()
-    FileAlertAuditLogCls = components["FileAlertAuditLog"]
-    InMemoryAlertAuditLogCls = components["InMemoryAlertAuditLog"]
-
-    normalized_request = (requested_backend or "inherit").lower()
-    metadata: dict[str, object] = {"requested": normalized_request}
-
-    audit_log = getattr(router, "audit_log", None)
-
-    if isinstance(audit_log, FileAlertAuditLogCls):
-        metadata.update(
-            {
-                "backend": "file",
-                "directory": str(getattr(audit_log, "directory", "")) or None,
-                "pattern": getattr(audit_log, "filename_pattern", None),
-                "retention_days": getattr(audit_log, "retention_days", None),
-                "fsync": bool(getattr(audit_log, "fsync", False)),
-            }
-        )
-    elif isinstance(audit_log, InMemoryAlertAuditLogCls):
-        metadata["backend"] = "memory"
-    elif audit_log is None:
-        metadata["backend"] = None
-    else:  # pragma: no cover - diagnostyka innych backendów
-        metadata["backend"] = audit_log.__class__.__name__.lower()
-
-    note: str | None = None
-    backend_value = metadata.get("backend")
-    if normalized_request == "inherit":
-        note = "inherited_environment_router"
-    elif normalized_request == "file" and backend_value != "file":
-        note = "file_backend_unavailable"
-    elif normalized_request == "memory" and backend_value != "memory":
-        note = "memory_backend_not_selected"
-
-    if backend_value is None and note is None:
-        note = "router_missing_audit_log"
-
-    if note is not None:
-        metadata["note"] = note
-
-    return metadata
+    return _observability.build_ui_alert_audit_metadata(
+        router, requested_backend=requested_backend
+    )
 
 
 def _config_value(source: object, *names: str) -> Any:
@@ -1020,6 +944,7 @@ def _initialize_runtime_tco_reporter(
     *,
     environment: EnvironmentConfig,
     risk_profile: str,
+    runtime_paths: RuntimePaths,
 ) -> RuntimeTCOReporter | None:
     """Buduje usługę raportowania TCO w runtime, jeśli konfiguracja ją aktywuje."""
 
@@ -1031,7 +956,7 @@ def _initialize_runtime_tco_reporter(
     if directory_value:
         directory = Path(str(directory_value)).expanduser()
     else:
-        directory = Path(environment.data_cache_path).expanduser() / "tco_runtime"
+        directory = runtime_paths.resolve_data_path(None, default="tco_runtime")
 
     basename = getattr(config, "runtime_report_basename", None)
     formats = getattr(config, "runtime_export_formats", None)
@@ -1087,20 +1012,21 @@ def _optional_float(value: Any) -> float | None:
         return None
 
 
-def _normalize_paper_execution_settings(environment: EnvironmentConfig) -> MutableMapping[str, Any]:
+def _normalize_paper_execution_settings(
+    environment: EnvironmentConfig, runtime_paths: RuntimePaths
+) -> MutableMapping[str, Any]:
     if environment.environment not in {Environment.PAPER, Environment.TESTNET}:
         raise ValueError("Paper execution settings are available only for paper/testnet environments")
 
     raw_adapter = getattr(environment, "adapter_settings", {}) or {}
     raw_settings = raw_adapter.get("paper_trading", {}) or {}
 
-    base_path_value = getattr(environment, "data_cache_path", None) or Path("var/data") / environment.name
     try:
-        base_path = Path(str(base_path_value)).expanduser()
+        base_path = runtime_paths.data_cache_root
         if not base_path.is_absolute():
             base_path = base_path.resolve(strict=False)
     except Exception:  # pragma: no cover - fallback na ścieżkę absolutną
-        base_path = Path(str(base_path_value))
+        base_path = runtime_paths.data_cache_root
 
     valuation_asset = str(raw_settings.get("valuation_asset", "USDT")).upper()
     allowed_quotes = {
@@ -1223,12 +1149,13 @@ def _initialize_paper_execution_service(
     core_config: CoreConfig,
     environment: EnvironmentConfig,
     risk_profile: str,
+    runtime_paths: RuntimePaths,
 ) -> CoreExecutionService | None:
     if CoreExecutionService is None or PaperTradingExecutionService is None:
         return None
 
     try:
-        settings = _normalize_paper_execution_settings(environment)
+        settings = _normalize_paper_execution_settings(environment, runtime_paths)
     except Exception:  # pragma: no cover - diagnostyka konfiguracji
         _LOGGER.debug(
             "Nie udało się znormalizować konfiguracji paper trading dla środowiska %s.",
@@ -1948,6 +1875,7 @@ class BootstrapContext:
 
     core_config: CoreConfig
     environment: EnvironmentConfig
+    runtime_paths: RuntimePaths
     credentials: ExchangeCredentials
     adapter: ExchangeAdapter
     risk_engine: ThresholdRiskEngine
@@ -2012,6 +1940,7 @@ def bootstrap_environment(
     adapter_factories: Mapping[str, ExchangeAdapterFactory] | None = None,
     risk_profile_name: str | None = None,
     core_config: CoreConfig | None = None,
+    runtime_paths: RuntimePaths | None = None,
 ) -> BootstrapContext:
     """Tworzy kompletny kontekst uruchomieniowy dla wskazanego środowiska."""
     from bot_core.config.validation import assert_core_config_valid
@@ -2034,6 +1963,7 @@ def bootstrap_environment(
         raise KeyError(f"Środowisko '{environment_name}' nie istnieje w konfiguracji")
 
     environment = core_config.environments[environment_name]
+    runtime_paths = runtime_paths or RuntimePaths.from_environment(environment)
     offline_mode = bool(getattr(environment, "offline_mode", False))
     if offline_mode:
         _LOGGER.info(
@@ -2169,9 +2099,9 @@ def bootstrap_environment(
             exc_info=True,
         )
 
-    risk_repository_path = Path(environment.data_cache_path) / "risk_state"
+    risk_repository_path = runtime_paths.data_cache_root / "risk_state"
     risk_repository = FileRiskRepository(risk_repository_path)
-    risk_decision_log = _build_risk_decision_log(core_config, environment)
+    risk_decision_log = _build_risk_decision_log(core_config, environment, runtime_paths)
     risk_engine = ThresholdRiskEngine(
         repository=risk_repository,
         decision_log=risk_decision_log,
@@ -2206,6 +2136,7 @@ def bootstrap_environment(
             tco_config,
             environment=environment,
             risk_profile=selected_profile,
+            runtime_paths=runtime_paths,
         )
         if reporter is not None:
             tco_reporter = reporter
@@ -2265,6 +2196,7 @@ def bootstrap_environment(
                     tco_config,
                     environment=environment,
                     risk_profile=selected_profile,
+                    runtime_paths=runtime_paths,
                 )
             except Exception:
                 reporter_candidate = None
@@ -2288,7 +2220,7 @@ def bootstrap_environment(
             model_dir_path = (
                 Path(model_dir_value).expanduser()
                 if model_dir_value
-                else Path(environment.data_cache_path) / "models" / "ai_manager"
+                else runtime_paths.data_cache_root / "models" / "ai_manager"
             )
             try:
                 model_dir_path.mkdir(parents=True, exist_ok=True)
@@ -2506,6 +2438,7 @@ def bootstrap_environment(
         core_config=core_config,
         environment=environment,
         secret_manager=secret_manager,
+        runtime_paths=runtime_paths,
     )
     setter = getattr(adapter, "set_alert_router", None)
     if callable(setter):
@@ -2514,8 +2447,8 @@ def bootstrap_environment(
         except Exception:  # pragma: no cover - konfiguracja alertów nie może zatrzymać bootstrapa
             _LOGGER.exception("Nie udało się podpiąć AlertRouter do adaptera %s", adapter.name)
 
-    decision_journal = _build_decision_journal(environment)
-    portfolio_decision_log = _build_portfolio_decision_log(core_config, environment)
+    decision_journal = _build_decision_journal(environment, runtime_paths)
+    portfolio_decision_log = _build_portfolio_decision_log(core_config, environment, runtime_paths)
 
     # --- MetricsService (opcjonalny, kompatybilny z różnymi sygnaturami funkcji) ---
     metrics_server: Any | None = None
@@ -3370,6 +3303,7 @@ def bootstrap_environment(
             core_config=core_config,
             environment=environment,
             risk_profile=selected_profile,
+            runtime_paths=runtime_paths,
         )
     live_readiness_checklist: Sequence[Mapping[str, Any]] | None = None
     live_signature_verification: Mapping[str, Any] | None = None
@@ -3403,6 +3337,7 @@ def bootstrap_environment(
     return BootstrapContext(
         core_config=core_config,
         environment=environment,
+        runtime_paths=runtime_paths,
         credentials=credentials,
         adapter=adapter,
         risk_engine=risk_engine,
@@ -3576,21 +3511,16 @@ def _instantiate_adapter(
 
 
 def _build_risk_decision_log(
-    core_config: CoreConfig, environment: EnvironmentConfig
+    core_config: CoreConfig,
+    environment: EnvironmentConfig,
+    runtime_paths: RuntimePaths,
 ) -> RiskDecisionLog | None:
     config = getattr(core_config, "risk_decision_log", None)
     if config is None or not getattr(config, "enabled", True):
         return None
 
     configured_path = getattr(config, "path", None)
-    if configured_path:
-        candidate = Path(str(configured_path)).expanduser()
-        if not candidate.is_absolute():
-            log_path = Path(environment.data_cache_path) / candidate
-        else:
-            log_path = candidate
-    else:
-        log_path = Path(environment.data_cache_path) / "risk_decisions.jsonl"
+    log_path = runtime_paths.resolve_data_path(configured_path, default="risk_decisions.jsonl")
 
     max_entries = int(getattr(config, "max_entries", 1_000) or 1_000)
     signing_key = _load_risk_decision_log_key(config)
@@ -3653,101 +3583,21 @@ def build_alert_channels(
     core_config: CoreConfig,
     environment: EnvironmentConfig,
     secret_manager: SecretManager,
+    runtime_paths: RuntimePaths | None = None,
 ) -> tuple[Mapping[str, AlertChannel], DefaultAlertRouter, AlertAuditLog]:
-    """Tworzy i rejestruje kanały alertów + router + backend audytu."""
-    components = _get_alert_components()
-    FileAlertAuditLogCls = components["FileAlertAuditLog"]
-    InMemoryAlertAuditLogCls = components["InMemoryAlertAuditLog"]
-    AlertThrottleCls = components["AlertThrottle"]
-    DefaultAlertRouterCls = components["DefaultAlertRouter"]
+    from bot_core.runtime import observability as _observability
 
-    audit_config = getattr(environment, "alert_audit", None)
-    if audit_config and getattr(audit_config, "backend", "memory") == "file":
-        directory = Path(audit_config.directory) if audit_config.directory else Path("alerts")
-        if not directory.is_absolute():
-            base = Path(environment.data_cache_path)
-            directory = base / directory
-        audit_log: AlertAuditLog = FileAlertAuditLogCls(
-            directory=directory,
-            filename_pattern=audit_config.filename_pattern,
-            retention_days=audit_config.retention_days,
-            fsync=audit_config.fsync,
-        )
-    else:
-        audit_log = InMemoryAlertAuditLogCls()
-
-    throttle_cfg = getattr(environment, "alert_throttle", None)
-    throttle: AlertThrottle | None = None
-    if throttle_cfg is not None:
-        throttle = AlertThrottleCls(
-            window=timedelta(seconds=float(throttle_cfg.window_seconds)),
-            exclude_severities=frozenset(throttle_cfg.exclude_severities),
-            exclude_categories=frozenset(throttle_cfg.exclude_categories),
-            max_entries=int(throttle_cfg.max_entries),
-        )
-
-    router = DefaultAlertRouterCls(audit_log=audit_log, throttle=throttle)
-    channels: MutableMapping[str, AlertChannel] = {}
-    offline_mode = bool(getattr(environment, "offline_mode", False))
-    skipped_offline: list[str] = []
-    guard = get_capability_guard()
-
-    for entry in environment.alert_channels:
-        channel_type, _, channel_key = entry.partition(":")
-        channel_type = channel_type.strip().lower()
-        channel_key = channel_key.strip() or "default"
-
-        requires_network = channel_type in {
-            "telegram",
-            "email",
-            "sms",
-            "signal",
-            "whatsapp",
-            "messenger",
-        }
-        if offline_mode and requires_network:
-            skipped_offline.append(entry)
-            continue
-
-        if guard and channel_type in _ADVANCED_ALERT_TYPES:
-            guard.require_module(
-                "alerts_advanced",
-                message=(
-                    "Kanały SMS/Signal/WhatsApp/Messenger wymagają modułu Alerts Advanced."
-                ),
-            )
-
-        if channel_type == "telegram":
-            channel = _build_telegram_channel(core_config.telegram_channels, channel_key, secret_manager)
-        elif channel_type == "email":
-            channel = _build_email_channel(core_config.email_channels, channel_key, secret_manager)
-        elif channel_type == "sms":
-            channel = _build_sms_channel(core_config.sms_providers, channel_key, secret_manager)
-        elif channel_type == "signal":
-            channel = _build_signal_channel(core_config.signal_channels, channel_key, secret_manager)
-        elif channel_type == "whatsapp":
-            channel = _build_whatsapp_channel(core_config.whatsapp_channels, channel_key, secret_manager)
-        elif channel_type == "messenger":
-            channel = _build_messenger_channel(core_config.messenger_channels, channel_key, secret_manager)
-        else:
-            raise KeyError(f"Nieobsługiwany typ kanału alertów: {channel_type}")
-
-        if guard:
-            guard.reserve_slot("alert_channel")
-        router.register(channel)
-        channels[channel.name] = channel
-
-    if skipped_offline:
-        _LOGGER.info(
-            "Tryb offline środowiska %s: pominięto kanały alertów wymagające sieci: %s",
-            environment.name,
-            ", ".join(skipped_offline),
-        )
-
-    return channels, router, audit_log
+    return _observability.build_alert_channels(
+        core_config=core_config,
+        environment=environment,
+        secret_manager=secret_manager,
+        runtime_paths=runtime_paths,
+    )
 
 
-def _build_decision_journal(environment: EnvironmentConfig) -> TradingDecisionJournal | None:
+def _build_decision_journal(
+    environment: EnvironmentConfig, runtime_paths: RuntimePaths
+) -> TradingDecisionJournal | None:
     config: DecisionJournalConfig | None = getattr(environment, "decision_journal", None)
     if config is None:
         return None
@@ -3756,10 +3606,7 @@ def _build_decision_journal(environment: EnvironmentConfig) -> TradingDecisionJo
     if backend == "memory":
         return InMemoryTradingDecisionJournal()
     if backend == "file":
-        directory = Path(config.directory) if config.directory else Path("decisions")
-        if not directory.is_absolute():
-            base = Path(environment.data_cache_path)
-            directory = base / directory
+        directory = runtime_paths.resolve_data_path(getattr(config, "directory", None), default="decisions")
         return JsonlTradingDecisionJournal(
             directory=directory,
             filename_pattern=config.filename_pattern,
@@ -3770,21 +3617,14 @@ def _build_decision_journal(environment: EnvironmentConfig) -> TradingDecisionJo
 
 
 def _build_portfolio_decision_log(
-    core_config: CoreConfig, environment: EnvironmentConfig
+    core_config: CoreConfig, environment: EnvironmentConfig, runtime_paths: RuntimePaths
 ) -> PortfolioDecisionLog | None:
     config = getattr(core_config, "portfolio_decision_log", None)
     if config is None or not getattr(config, "enabled", True):
         return None
 
     configured_path = getattr(config, "path", None)
-    if configured_path:
-        candidate = Path(str(configured_path)).expanduser()
-        if not candidate.is_absolute():
-            log_path = Path(environment.data_cache_path) / candidate
-        else:
-            log_path = candidate
-    else:
-        log_path = Path(environment.data_cache_path) / "portfolio_decisions.jsonl"
+    log_path = runtime_paths.resolve_data_path(configured_path, default="portfolio_decisions.jsonl")
 
     max_entries = int(getattr(config, "max_entries", 512) or 512)
     signing_key = _load_portfolio_decision_log_key(config)
@@ -3836,479 +3676,19 @@ def _load_portfolio_decision_log_key(config: object) -> bytes | None:
     return None
 
 
-def _build_telegram_channel(
-    definitions: Mapping[str, TelegramChannelSettings],
-    channel_key: str,
-    secret_manager: SecretManager,
-) -> TelegramChannel:
-    components = _get_alert_components()
-    TelegramChannelCls = components["TelegramChannel"]
-    try:
-        settings = definitions[channel_key]
-    except KeyError as exc:
-        raise KeyError(f"Brak definicji kanału Telegram '{channel_key}'") from exc
-
-    token = secret_manager.load_secret_value(settings.token_secret, purpose="alerts:telegram")
-
-    return TelegramChannelCls(
-        bot_token=token,
-        chat_id=settings.chat_id,
-        parse_mode=settings.parse_mode,
-        name=f"telegram:{channel_key}",
-    )
-
-
-def _build_email_channel(
-    definitions: Mapping[str, EmailChannelSettings],
-    channel_key: str,
-    secret_manager: SecretManager,
-) -> EmailChannel:
-    components = _get_alert_components()
-    EmailChannelCls = components["EmailChannel"]
-    try:
-        settings = definitions[channel_key]
-    except KeyError as exc:
-        raise KeyError(f"Brak definicji kanału e-mail '{channel_key}'") from exc
-
-    username = None
-    password = None
-    if settings.credential_secret:
-        raw_secret = secret_manager.load_secret_value(settings.credential_secret, purpose="alerts:email")
-        try:
-            parsed = json.loads(raw_secret) if raw_secret else {}
-        except json.JSONDecodeError as exc:  # pragma: no cover
-            raise SecretStorageError(
-                "Sekret dla kanału e-mail musi zawierać poprawny JSON z polami 'username' i 'password'."
-            ) from exc
-        username = parsed.get("username")
-        password = parsed.get("password")
-
-    return EmailChannelCls(
-        host=settings.host,
-        port=settings.port,
-        from_address=settings.from_address,
-        recipients=settings.recipients,
-        username=username,
-        password=password,
-        use_tls=settings.use_tls,
-        name=f"email:{channel_key}",
-    )
-
-
-def _build_sms_channel(
-    definitions: Mapping[str, SMSProviderSettings],
-    channel_key: str,
-    secret_manager: SecretManager,
-) -> SMSChannel:
-    components = _get_alert_components()
-    SMSChannelCls = components["SMSChannel"]
-    get_sms_provider_fn = components["get_sms_provider"]
-    try:
-        settings = definitions[channel_key]
-    except KeyError as exc:
-        raise KeyError(f"Brak definicji dostawcy SMS '{channel_key}'") from exc
-
-    if not settings.credential_key:
-        raise SecretStorageError(
-            f"Konfiguracja dostawcy SMS '{channel_key}' musi wskazywać 'credential_key'."
-        )
-
-    raw_secret = secret_manager.load_secret_value(settings.credential_key, purpose="alerts:sms")
-    try:
-        payload = json.loads(raw_secret)
-    except json.JSONDecodeError as exc:  # pragma: no cover
-        raise SecretStorageError(
-            "Sekret dostawcy SMS powinien zawierać JSON z polami 'account_sid' i 'auth_token'."
-        ) from exc
-
-    account_sid = payload.get("account_sid")
-    auth_token = payload.get("auth_token")
-    if not account_sid or not auth_token:
-        raise SecretStorageError(
-            "Sekret dostawcy SMS musi zawierać pola 'account_sid' oraz 'auth_token'."
-        )
-
-    wants_alphanumeric = bool(settings.allow_alphanumeric_sender)
-    has_sender_id = bool(settings.sender_id)
-
-    if wants_alphanumeric and not has_sender_id:
-        raise SecretStorageError(
-            (
-                f"Konfiguracja dostawcy SMS '{channel_key}' ma włączone pole "
-                "'allow_alphanumeric_sender', ale nie dostarczono 'sender_id'."
-            )
-        )
-
-    if not wants_alphanumeric and has_sender_id:
-        raise SecretStorageError(
-            (
-                f"Konfiguracja dostawcy SMS '{channel_key}' zawiera 'sender_id', lecz "
-                "'allow_alphanumeric_sender' pozostaje wyłączone."
-            )
-        )
-
-    provider_config = _resolve_sms_provider(
-        settings,
-        get_sms_provider_fn,
-        channel_key=channel_key,
-    )
-    supports_alphanumeric = bool(
-        getattr(provider_config, "supports_alphanumeric_sender", False)
-    )
-    if wants_alphanumeric and not supports_alphanumeric:
-        raise SecretStorageError(
-            (
-                f"Konfiguracja dostawcy SMS '{channel_key}' włącza nadawcę alfanumerycznego, "
-                "ale operator go nie obsługuje."
-            )
-        )
-
-    if wants_alphanumeric:
-        normalized_sender = str(settings.sender_id).strip()
-        if not normalized_sender:
-            raise SecretStorageError(
-                f"Pole 'sender_id' dla dostawcy SMS '{channel_key}' nie może być puste."
-            )
-        if not _ALPHANUMERIC_SENDER_PATTERN.fullmatch(normalized_sender):
-            raise SecretStorageError(
-                (
-                    f"Identyfikator nadawcy '{settings.sender_id}' może zawierać wyłącznie "
-                    "litery A-Z, cyfry 0-9, spacje oraz znaki '-' i '_'."
-                )
-            )
-        sender = normalized_sender.upper()
-        if len(sender) < 3:
-            raise SecretStorageError(
-                (
-                    f"Identyfikator nadawcy '{settings.sender_id}' musi mieć co najmniej trzy znaki, "
-                    "aby spełniał wymagania operatorów alfanumerycznych."
-                )
-            )
-        if not any(ch.isalpha() for ch in sender):
-            raise SecretStorageError(
-                (
-                    f"Identyfikator nadawcy '{settings.sender_id}' musi zawierać co najmniej jedną literę, "
-                    "zgodnie ze standardem alfanumerycznych nadawców."
-                )
-            )
-        max_sender_length = getattr(provider_config, "max_sender_length", None)
-        if max_sender_length not in (None, ""):
-            try:
-                max_length_int = int(max_sender_length)
-            except (TypeError, ValueError):  # pragma: no cover - brak spójności metadanych
-                max_length_int = None
-            else:
-                if len(sender) > max_length_int:
-                    raise SecretStorageError(
-                        (
-                            f"Identyfikator nadawcy '{settings.sender_id}' przekracza dopuszczalny "
-                            f"limit {max_length_int} znaków dla operatora '{channel_key}'."
-                        )
-                    )
-    else:
-        sender = str(settings.from_number or "").strip()
-        if not sender:
-            raise SecretStorageError(
-                f"Konfiguracja dostawcy SMS '{channel_key}' wymaga pola 'from_number'."
-            )
-        _validate_e164_number(sender, channel_key, field="from_number")
-
-    raw_recipients: Sequence[str] = tuple(settings.recipients)
-    if not raw_recipients:
-        raise SecretStorageError(
-            f"Konfiguracja dostawcy SMS '{channel_key}' wymaga co najmniej jednego odbiorcy."
-        )
-
-    normalized_recipients: list[str] = []
-    seen_recipients: set[str] = set()
-    duplicate_recipients: set[str] = set()
-    for recipient in raw_recipients:
-        normalized = str(recipient).strip()
-        _validate_e164_number(normalized, channel_key, field="recipient")
-        if normalized in seen_recipients:
-            duplicate_recipients.add(normalized)
-        else:
-            seen_recipients.add(normalized)
-            normalized_recipients.append(normalized)
-
-    if duplicate_recipients:
-        duplicates = ", ".join(sorted(duplicate_recipients))
-        raise SecretStorageError(
-            (
-                f"Konfiguracja dostawcy SMS '{channel_key}' zawiera zduplikowane "
-                f"numery odbiorców: {duplicates}."
-            )
-        )
-
-    recipients = tuple(normalized_recipients)
-
-    return SMSChannelCls(
-        account_sid=str(account_sid),
-        auth_token=str(auth_token),
-        from_number=sender,
-        recipients=recipients,
-        provider=provider_config,
-        name=f"sms:{channel_key}",
-    )
-
-
-def _build_signal_channel(
-    definitions: Mapping[str, SignalChannelSettings],
-    channel_key: str,
-    secret_manager: SecretManager,
-) -> SignalChannel:
-    components = _get_alert_components()
-    SignalChannelCls = components.get("SignalChannel")
-    try:
-        settings = definitions[channel_key]
-    except KeyError as exc:
-        raise KeyError(f"Brak definicji kanału Signal '{channel_key}'") from exc
-
-    token: str | None = None
-    if settings.credential_secret:
-        token = secret_manager.load_secret_value(settings.credential_secret, purpose="alerts:signal")
-
-    if SignalChannelCls is None:
-        raise KeyError("Kanał Signal jest niedostępny w tej dystrybucji")
-
-    return SignalChannelCls(
-        service_url=settings.service_url,
-        sender_number=settings.sender_number,
-        recipients=settings.recipients,
-        auth_token=token,
-        verify_tls=settings.verify_tls,
-        name=f"signal:{channel_key}",
-    )
-
-
-def _build_whatsapp_channel(
-    definitions: Mapping[str, WhatsAppChannelSettings],
-    channel_key: str,
-    secret_manager: SecretManager,
-) -> WhatsAppChannel:
-    components = _get_alert_components()
-    WhatsAppChannelCls = components.get("WhatsAppChannel")
-    try:
-        settings = definitions[channel_key]
-    except KeyError as exc:
-        raise KeyError(f"Brak definicji kanału WhatsApp '{channel_key}'") from exc
-
-    token = secret_manager.load_secret_value(settings.token_secret, purpose="alerts:whatsapp")
-
-    if WhatsAppChannelCls is None:
-        raise KeyError("Kanał WhatsApp nie jest dostępny w tej dystrybucji")
-
-    return WhatsAppChannelCls(
-        phone_number_id=settings.phone_number_id,
-        access_token=token,
-        recipients=settings.recipients,
-        api_base_url=settings.api_base_url,
-        api_version=settings.api_version,
-        name=f"whatsapp:{channel_key}",
-    )
-
-
-def _build_messenger_channel(
-    definitions: Mapping[str, MessengerChannelSettings],
-    channel_key: str,
-    secret_manager: SecretManager,
-) -> MessengerChannel:
-    components = _get_alert_components()
-    MessengerChannelCls = components.get("MessengerChannel")
-    try:
-        settings = definitions[channel_key]
-    except KeyError as exc:
-        raise KeyError(f"Brak definicji kanału Messenger '{channel_key}'") from exc
-
-    token = secret_manager.load_secret_value(settings.token_secret, purpose="alerts:messenger")
-
-    if MessengerChannelCls is None:
-        raise KeyError("Kanał Messenger nie jest dostępny w tej instalacji")
-
-    return MessengerChannelCls(
-        page_id=settings.page_id,
-        access_token=token,
-        recipients=settings.recipients,
-        api_base_url=settings.api_base_url,
-        api_version=settings.api_version,
-        name=f"messenger:{channel_key}",
-    )
+_build_telegram_channel = _observability._build_telegram_channel
+_build_email_channel = _observability._build_email_channel
+_build_sms_channel = _observability._build_sms_channel
+_build_signal_channel = _observability._build_signal_channel
+_build_whatsapp_channel = _observability._build_whatsapp_channel
+_build_messenger_channel = _observability._build_messenger_channel
+_resolve_sms_provider = _observability._resolve_sms_provider
+_normalize_iso_country_code = _observability._normalize_iso_country_code
+_validate_e164_number = _observability._validate_e164_number
 
 
 def _install_sms_provider_stub() -> None:
-    """Instaluje minimalny rejestr dostawców SMS na potrzeby testów."""
-
-    providers_module = sys.modules.get(_SMS_PROVIDERS_MODULE)
-    if providers_module is None:
-        providers_module = ModuleType(_SMS_PROVIDERS_MODULE)
-        providers_module.DEFAULT_SMS_PROVIDERS = {}
-
-        @dataclass(slots=True)
-        class SmsProviderConfig:  # type: ignore[invalid-annotation]
-            provider_id: str
-            display_name: str
-            api_base_url: str | None = None
-            iso_country_code: str | None = None
-            supports_alphanumeric_sender: bool = False
-            notes: str | None = None
-            max_sender_length: int = 11
-
-        def get_sms_provider(key: str) -> SmsProviderConfig:
-            try:
-                return providers_module.DEFAULT_SMS_PROVIDERS[key]
-            except KeyError as exc:  # pragma: no cover - diagnostyka testowa
-                raise KeyError(f"Brak zarejestrowanego dostawcy SMS '{key}'") from exc
-
-        providers_module.SmsProviderConfig = SmsProviderConfig  # type: ignore[attr-defined]
-        providers_module.get_sms_provider = get_sms_provider  # type: ignore[attr-defined]
-        sys.modules[_SMS_PROVIDERS_MODULE] = providers_module
-    else:
-        providers_module.DEFAULT_SMS_PROVIDERS = getattr(
-            providers_module, "DEFAULT_SMS_PROVIDERS", {}
-        )
-
-        if not hasattr(providers_module, "SmsProviderConfig"):
-            @dataclass(slots=True)
-            class SmsProviderConfig:  # type: ignore[invalid-annotation]
-                provider_id: str
-                display_name: str
-                api_base_url: str | None = None
-                iso_country_code: str | None = None
-                supports_alphanumeric_sender: bool = False
-                notes: str | None = None
-                max_sender_length: int = 11
-
-            providers_module.SmsProviderConfig = SmsProviderConfig  # type: ignore[attr-defined]
-
-        if not hasattr(providers_module, "get_sms_provider"):
-            def get_sms_provider(key: str):
-                return providers_module.DEFAULT_SMS_PROVIDERS[key]
-
-            providers_module.get_sms_provider = get_sms_provider  # type: ignore[attr-defined]
-
-    setattr(providers_module, _SMS_PROVIDERS_STUB_FLAG, True)
-    get_provider_fn = getattr(providers_module, "get_sms_provider")
-    setattr(get_provider_fn, _SMS_PROVIDERS_STUB_FLAG, True)
-
-
-def _resolve_sms_provider(
-    settings: SMSProviderSettings,
-    get_sms_provider_fn: Any,
-    *,
-    channel_key: str,
-) -> SmsProviderConfig:
-    components = _get_alert_components()
-    SmsProviderConfigCls = components.get("SmsProviderConfig")
-    if SmsProviderConfigCls is None:
-        raise KeyError("Typ SmsProviderConfig nie jest dostępny w module alertów")
-
-    is_stub_registry = getattr(get_sms_provider_fn, _SMS_PROVIDERS_STUB_FLAG, False)
-    try:
-        override_iso_code = _normalize_iso_country_code(settings.iso_country_code)
-    except ValueError:
-        raise SecretStorageError(
-            (
-                f"Konfiguracja dostawcy SMS '{channel_key}' zawiera nieprawidłowy kod kraju "
-                f"'{settings.iso_country_code}'. Oczekiwany jest kod ISO 3166-1 alfa-2."
-            )
-        ) from None
-    try:
-        base = get_sms_provider_fn(settings.provider_key)
-    except KeyError:
-        if not is_stub_registry:
-            raise
-
-        _LOGGER.warning(
-            "Fallback rejestru SMS: używam konfiguracji lokalnej bez metadanych dostawcy.",
-            extra={
-                "provider_key": settings.provider_key,
-                "channel": settings.name,
-            },
-        )
-        base = SimpleNamespace(
-            provider_id=settings.provider_key,
-            display_name=settings.display_name
-            or f"{settings.provider_key} (bootstrap)",
-            api_base_url=settings.api_base_url,
-            iso_country_code=override_iso_code or "ZZ",
-            supports_alphanumeric_sender=settings.allow_alphanumeric_sender,
-            notes=settings.notes
-            or "Bootstrap fallback provider – brak zarejestrowanego operatora.",
-            max_sender_length=settings.max_sender_length or 11,
-        )
-
-    raw_base_iso = getattr(base, "iso_country_code", None)
-    try:
-        base_iso_code = _normalize_iso_country_code(raw_base_iso)
-    except ValueError:
-        _LOGGER.warning(
-            (
-                "Rejestr dostawców SMS zwrócił nieprawidłowy kod kraju %r dla operatora '%s'. "
-                "Zastępuję wartością 'ZZ'."
-            ),
-            raw_base_iso,
-            settings.provider_key,
-            extra={
-                "provider_key": settings.provider_key,
-                "channel": settings.name,
-                "invalid_iso_country_code": raw_base_iso,
-            },
-        )
-        base_iso_code = "ZZ"
-
-    display_name = settings.display_name or getattr(base, "display_name", settings.provider_key)
-    iso_country_code = override_iso_code or base_iso_code or "ZZ"
-    notes = settings.notes if settings.notes is not None else getattr(base, "notes", None)
-    max_sender_length = (
-        settings.max_sender_length
-        if settings.max_sender_length is not None
-        else getattr(base, "max_sender_length", 11)
-    )
-    supports_attr = getattr(base, "supports_alphanumeric_sender", None)
-    if supports_attr is None:
-        supports_alphanumeric = bool(settings.allow_alphanumeric_sender)
-    else:
-        supports_alphanumeric = bool(supports_attr)
-
-    provider_config = SmsProviderConfigCls(
-        provider_id=base.provider_id,
-        display_name=display_name,
-        api_base_url=settings.api_base_url or getattr(base, "api_base_url", settings.api_base_url),
-        iso_country_code=iso_country_code,
-        supports_alphanumeric_sender=supports_alphanumeric,
-        notes=notes,
-        max_sender_length=max_sender_length,
-    )
-
-    if is_stub_registry:
-        providers_module = sys.modules.get(_SMS_PROVIDERS_MODULE)
-        if providers_module and getattr(providers_module, _SMS_PROVIDERS_STUB_FLAG, False):
-            providers_module.DEFAULT_SMS_PROVIDERS[settings.provider_key] = provider_config
-
-    return provider_config
-
-
-def _normalize_iso_country_code(value: Any) -> str | None:
-    if value in (None, "", False):
-        return None
-
-    candidate = str(value).strip().upper()
-    if _ISO_COUNTRY_PATTERN.match(candidate):
-        return candidate
-
-    raise ValueError(candidate)
-
-
-def _validate_e164_number(value: str, channel_key: str, *, field: str) -> None:
-    if not _E164_PATTERN.match(str(value)):
-        example = "+48123456789"
-        raise SecretStorageError(
-            (
-                f"Wartość '{value}' dla pola '{field}' dostawcy SMS '{channel_key}' musi być "
-                f"w formacie E.164 (np. {example})."
-            )
-        )
-
+    _observability._install_sms_provider_stub()
 
 __all__ = [
     "BootstrapContext",

@@ -235,9 +235,19 @@ class SuspensionManager:
                 name,
                 descriptor,
             )
+            logging.getLogger().info(
+                "Harmonogram %s automatycznie wznowiony po wygaśnięciu zawieszenia (%s)",
+                name,
+                descriptor,
+            )
         for tag_name, record in expired_tags:
             descriptor = record.reason
             self._logger.info(
+                "Tag strategii %s automatycznie wznowiony po wygaśnięciu zawieszenia (%s)",
+                tag_name,
+                descriptor,
+            )
+            logging.getLogger().info(
                 "Tag strategii %s automatycznie wznowiony po wygaśnięciu zawieszenia (%s)",
                 tag_name,
                 descriptor,

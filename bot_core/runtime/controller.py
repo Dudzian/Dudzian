@@ -38,7 +38,8 @@ from bot_core.ai.health import ModelHealthMonitor, ModelHealthStatus
 # --- elastyczne importy (różne gałęzie mogą mieć różne ścieżki modułów) -----
 
 # Alerts
-from bot_core.alerts import AlertMessage, DefaultAlertRouter  # dostępne w obu gałęziach
+from bot_core.alerts import AlertMessage  # dostępne w obu gałęziach
+from bot_core.runtime.observability import AlertSink
 
 # Execution
 try:
@@ -236,7 +237,7 @@ class TradingController:
 
     risk_engine: RiskEngine
     execution_service: ExecutionService
-    alert_router: DefaultAlertRouter
+    alert_router: "AlertSink"
     account_snapshot_provider: Callable[[], AccountSnapshot]
     portfolio_id: str
     environment: str
