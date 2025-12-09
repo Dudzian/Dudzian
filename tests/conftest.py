@@ -179,8 +179,17 @@ def pytest_collection_modifyitems(config: pytest.Config, items: list[pytest.Item
 
     if getattr(config, "fast_mode", False):  # type: ignore[attr-defined]
         skip_marker = pytest.mark.skip(reason="pomijam test integracyjny w trybie fast")
+        slow_markers = {
+            "integration",
+            "external",
+            "soak",
+            "performance",
+            "retraining",
+            "e2e_demo_paper",
+            "qml",
+        }
         for item in items:
-            if "integration" in item.keywords or "external" in item.keywords:
+            if slow_markers.intersection(item.keywords):
                 item.add_marker(skip_marker)
 
     if _HAS_TRADING_STUBS:
