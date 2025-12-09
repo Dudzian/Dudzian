@@ -70,7 +70,7 @@ from bot_core.auto_trader.schedule import (
     ScheduleState,
     TradingSchedule,
 )
-from bot_core.ai.inference import ModelRepository
+from bot_core.ai.repository import FilesystemModelRepository, ModelRepository
 from bot_core.ai.regime import (
     MarketRegime,
     MarketRegimeAssessment,
@@ -2297,7 +2297,7 @@ class AutoTrader:
                     base,
                     exc_info=True,
                 )
-            repository = ModelRepository(base)
+            repository = FilesystemModelRepository(base)
             self._model_repositories[model_name] = repository
         return repository
 

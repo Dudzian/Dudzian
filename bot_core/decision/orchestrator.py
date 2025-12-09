@@ -12,7 +12,7 @@ from typing import Callable, Mapping, MutableMapping, Protocol, Sequence
 import numpy as np
 
 from bot_core.ai import DecisionModelInference, MarketRegime, ModelScore
-from bot_core.ai.inference import ModelRepository
+from bot_core.ai.repository import FilesystemModelRepository, ModelRepository
 from bot_core.decision.costs import DecisionCostResolver
 from bot_core.decision.reports import ModelQualityReport, load_latest_quality_report
 from bot_core.reporting.model_quality import DEFAULT_QUALITY_DIR

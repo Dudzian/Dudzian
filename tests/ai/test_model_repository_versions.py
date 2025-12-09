@@ -8,7 +8,7 @@ from typing import Mapping
 
 import pytest
 
-from bot_core.ai.inference import ModelRepository
+from bot_core.ai.repository import FilesystemModelRepository
 from bot_core.ai.models import ModelArtifact
 
 
@@ -39,7 +39,7 @@ def _make_artifact(*, metadata: dict[str, object] | None = None) -> ModelArtifac
 
 
 def test_publish_registers_version_and_aliases(tmp_path: Path) -> None:
-    repository = ModelRepository(tmp_path)
+    repository = FilesystemModelRepository(tmp_path)
     artifact = _make_artifact()
 
     destination = repository.publish(
@@ -62,7 +62,7 @@ def test_publish_registers_version_and_aliases(tmp_path: Path) -> None:
 
 
 def test_publish_updates_aliases_and_allows_active_switch(tmp_path: Path) -> None:
-    repository = ModelRepository(tmp_path)
+    repository = FilesystemModelRepository(tmp_path)
     v1 = repository.publish(
         _make_artifact(),
         version="1.0.0",
@@ -91,7 +91,7 @@ def test_publish_updates_aliases_and_allows_active_switch(tmp_path: Path) -> Non
 
 
 def test_save_without_version_does_not_touch_manifest(tmp_path: Path) -> None:
-    repository = ModelRepository(tmp_path)
+    repository = FilesystemModelRepository(tmp_path)
     destination = repository.save(_make_artifact(), "manual.json")
     assert destination.exists()
     manifest = repository.get_manifest()
@@ -99,7 +99,7 @@ def test_save_without_version_does_not_touch_manifest(tmp_path: Path) -> None:
 
 
 def test_get_version_entry_returns_copy(tmp_path: Path) -> None:
-    repository = ModelRepository(tmp_path)
+    repository = FilesystemModelRepository(tmp_path)
     repository.publish(
         _make_artifact(),
         version="5.0.0",
@@ -116,7 +116,7 @@ def test_get_version_entry_returns_copy(tmp_path: Path) -> None:
 
 
 def test_remove_alias_updates_manifest(tmp_path: Path) -> None:
-    repository = ModelRepository(tmp_path)
+    repository = FilesystemModelRepository(tmp_path)
     repository.publish(
         _make_artifact(),
         version="2.0.0",
@@ -133,7 +133,7 @@ def test_remove_alias_updates_manifest(tmp_path: Path) -> None:
 
 
 def test_assign_alias_creates_mapping(tmp_path: Path) -> None:
-    repository = ModelRepository(tmp_path)
+    repository = FilesystemModelRepository(tmp_path)
     repository.publish(
         _make_artifact(),
         version="4.0.0",
@@ -149,7 +149,7 @@ def test_assign_alias_creates_mapping(tmp_path: Path) -> None:
 
 
 def test_assign_alias_replaces_previous_target(tmp_path: Path) -> None:
-    repository = ModelRepository(tmp_path)
+    repository = FilesystemModelRepository(tmp_path)
     repository.publish(
         _make_artifact(),
         version="6.0.0",
@@ -172,13 +172,13 @@ def test_assign_alias_replaces_previous_target(tmp_path: Path) -> None:
 
 
 def test_assign_alias_rejects_missing_version(tmp_path: Path) -> None:
-    repository = ModelRepository(tmp_path)
+    repository = FilesystemModelRepository(tmp_path)
     with pytest.raises(KeyError):
         repository.assign_alias("missing", "9.9.9")
 
 
 def test_promote_version_sets_active_and_aliases(tmp_path: Path) -> None:
-    repository = ModelRepository(tmp_path)
+    repository = FilesystemModelRepository(tmp_path)
     repository.publish(
         _make_artifact(),
         version="1.0.0",
@@ -207,7 +207,7 @@ def test_promote_version_sets_active_and_aliases(tmp_path: Path) -> None:
 
 
 def test_promote_version_clears_aliases_when_empty_sequence(tmp_path: Path) -> None:
-    repository = ModelRepository(tmp_path)
+    repository = FilesystemModelRepository(tmp_path)
     repository.publish(
         _make_artifact(),
         version="2.0.0",
@@ -224,7 +224,7 @@ def test_promote_version_clears_aliases_when_empty_sequence(tmp_path: Path) -> N
 
 
 def test_remove_version_clears_aliases_and_optionally_deletes_file(tmp_path: Path) -> None:
-    repository = ModelRepository(tmp_path)
+    repository = FilesystemModelRepository(tmp_path)
     path = repository.publish(
         _make_artifact(),
         version="3.1.0",

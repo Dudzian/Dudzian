@@ -8,7 +8,14 @@ os.environ.setdefault("BOT_CORE_MINIMAL_EXCHANGES", "1")
 os.environ.setdefault("BOT_CORE_MINIMAL_CORE", "1")
 os.environ.setdefault("BOT_CORE_MINIMAL_DECISION", "1")
 
-from bot_core.ai import FeatureDataset, FeatureVector, ModelArtifact, ModelRepository, ModelTrainer
+from bot_core.ai import (
+    FeatureDataset,
+    FeatureVector,
+    FilesystemModelRepository,
+    ModelArtifact,
+    ModelRepository,
+    ModelTrainer,
+)
 from bot_core.ai.manager import AIManager
 
 
@@ -20,7 +27,7 @@ def test_require_real_models_raises_when_repository_empty(tmp_path) -> None:
 
 def test_require_real_models_passes_when_repository_loaded(tmp_path) -> None:
     repo_path = tmp_path / "repo"
-    repo = ModelRepository(repo_path)
+    repo = FilesystemModelRepository(repo_path)
     vectors = [
         FeatureVector(
             timestamp=1_700_000_000 + idx,

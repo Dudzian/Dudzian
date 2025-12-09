@@ -13,6 +13,7 @@ from bot_core.ai import (
     ModelTrainer,
     RetrainingScheduler,
     TrainingScheduler,
+    WalkForwardPlan,
     WalkForwardValidator,
 )
 from bot_core.ai.audit import (
@@ -115,7 +116,8 @@ def test_walk_forward_validator_produces_metrics() -> None:
         )
     dataset = FeatureDataset(vectors=tuple(vectors), metadata={"symbols": ["BTCUSDT"]})
 
-    validator = WalkForwardValidator(dataset, train_window=8, test_window=4)
+    plan = WalkForwardPlan(train_window=8, test_window=4)
+    validator = WalkForwardValidator(dataset, plan=plan)
 
     def factory() -> ModelTrainer:
         return ModelTrainer(learning_rate=0.15, n_estimators=5)
@@ -844,7 +846,7 @@ def test_training_job_writes_walk_forward_audit(tmp_path: Path) -> None:
     dataset = FeatureDataset(vectors=tuple(vectors), metadata={"symbols": ["BTCUSDT"]})
 
     def _validator_factory(data: FeatureDataset) -> WalkForwardValidator:
-        return WalkForwardValidator(data, train_window=8, test_window=4)
+        return WalkForwardValidator(data, plan=WalkForwardPlan(train_window=8, test_window=4))
 
     schedule = RetrainingScheduler(interval=timedelta(minutes=10))
     journal = InMemoryTradingDecisionJournal()

@@ -8,7 +8,7 @@ from pathlib import Path
 
 import pytest
 
-from bot_core.ai.inference import ModelRepository
+from bot_core.ai.repository import FilesystemModelRepository, ModelRepository
 from bot_core.ai.models import ModelArtifact
 from bot_core.ai.validation import ModelQualityReport, record_model_quality_report
 from bot_core.reporting.model_quality import load_champion_overview
@@ -54,7 +54,7 @@ def _make_report(version: str, directional: float, mae: float, status: str = "im
 def test_offline_snapshot_matches_champion_registry(tmp_path: Path) -> None:
     repo_root = tmp_path / "var" / "models"
     model_dir = repo_root / "decision_engine"
-    repository = ModelRepository(model_dir)
+    repository = FilesystemModelRepository(model_dir)
     repository.publish(_make_artifact(), version="v1", filename="model-v1.json", aliases=("latest",), activate=True)
 
     quality_dir = repo_root / "quality"
