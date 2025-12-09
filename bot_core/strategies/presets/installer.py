@@ -9,7 +9,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Mapping, Sequence
 
-from bot_core.marketplace import PresetDocument, PresetRepository, parse_preset_document
+from bot_core.marketplace import MarketplaceService, PresetDocument, PresetRepository
 from bot_core.security.hwid import HwIdProvider, HwIdProviderError
 from bot_core.security.license import (
     _parse_seat_policy,
@@ -66,6 +66,7 @@ class MarketplacePresetInstaller:
         hwid_provider: HwIdProvider | None = None,
     ) -> None:
         self._repository = repository
+        self._service = MarketplaceService(signing_keys=signing_keys)
         if catalog is not None:
             self._catalog = catalog
         else:
@@ -76,7 +77,6 @@ class MarketplacePresetInstaller:
             )
             self._catalog = load_catalog(base_path)
         self._licenses_dir = Path(licenses_dir).expanduser().resolve() if licenses_dir else None
-        self._signing_keys = signing_keys
         self._hwid_provider = hwid_provider or HwIdProvider()
 
     # ------------------------------------------------------------------
@@ -104,7 +104,7 @@ class MarketplacePresetInstaller:
         except OSError as exc:
             raise RuntimeError(f"Nie udało się odczytać pliku presetu {path}: {exc}") from exc
 
-        document = parse_preset_document(payload, source=path, signing_keys=self._signing_keys)
+        document = self._service.load(payload, source=path)
         evaluation = self._evaluate_document(document)
 
         installed_path: Path | None = None
@@ -112,7 +112,7 @@ class MarketplacePresetInstaller:
             installed_doc = self._repository.import_payload(
                 payload,
                 filename=path.name,
-                signing_keys=self._signing_keys,
+                signing_keys=self._service.signing_keys,
                 require_signature=False,
             )
             installed_path = installed_doc.path
@@ -144,7 +144,7 @@ class MarketplacePresetInstaller:
             raise MarketplaceCatalogError(f"Preset {preset_id!r} nie istnieje w katalogu Marketplace.")
 
         payload = preset.artifact_path.read_bytes()
-        document = parse_preset_document(payload, source=preset.artifact_path, signing_keys=self._signing_keys)
+        document = self._service.load(payload, source=preset.artifact_path)
         evaluation = self._evaluate_document(document)
         return MarketplaceInstallResult(
             preset_id=document.preset_id,
@@ -168,7 +168,7 @@ class MarketplacePresetInstaller:
                 f"Preset {preset_id!r} nie istnieje w katalogu Marketplace."
             )
         payload = preset.artifact_path.read_bytes()
-        return parse_preset_document(payload, source=preset.artifact_path, signing_keys=self._signing_keys)
+        return self._service.load(payload, source=preset.artifact_path)
 
     # ------------------------------------------------------------------
     def _evaluate_document(self, document: PresetDocument) -> _EvaluationResult:

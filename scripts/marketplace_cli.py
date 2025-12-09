@@ -31,12 +31,9 @@ from bot_core.security.marketplace_validator import (  # noqa: E402
 )
 from bot_core.marketplace import (  # noqa: E402
     ExchangePresetValidationResult,
+    MarketplaceService,
     generate_exchange_presets,
-    PresetDocument,
-    PresetSignatureVerification,
     load_private_key,
-    serialize_preset_document,
-    sign_preset_payload,
     reconcile_exchange_presets,
     validate_exchange_presets,
 )
@@ -281,26 +278,19 @@ def _cmd_package(repo: MarketplaceRepository, args: argparse.Namespace) -> int:
     spec_path = Path(args.input).expanduser()
     payload = _load_preset_spec(spec_path)
     private_key = load_private_key(Path(args.private_key).expanduser())
-    signature = sign_preset_payload(
+    service = MarketplaceService()
+    signature = service.sign(
         payload,
         private_key=private_key,
         key_id=args.key_id,
         issuer=args.issuer,
         include_public_key=not args.omit_public_key,
     )
-    verification = PresetSignatureVerification(
-        verified=True,
-        issues=(),
-        algorithm=signature.algorithm,
-        key_id=signature.key_id,
+    document = service.validate(
+        {"preset": payload, "signature": signature.as_dict()},
+        require_signature=True,
     )
-    document = PresetDocument(
-        payload=payload,
-        signature=signature,
-        verification=verification,
-        fmt=args.format,
-    )
-    serialized = serialize_preset_document(document, format=args.format)
+    serialized = service.export(document, format=args.format)
     ext = "yaml" if args.format == "yaml" else "json"
     metadata = payload.get("metadata") if isinstance(payload.get("metadata"), Mapping) else {}
     preset_id = str(metadata.get("id") or "").strip() or spec_path.stem

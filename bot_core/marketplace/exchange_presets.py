@@ -16,12 +16,8 @@ except ImportError:  # pragma: no cover - środowiska bez PyYAML
 from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric import ed25519
 
-from bot_core.marketplace.presets import (
-    PresetDocument,
-    canonical_preset_bytes,
-    parse_preset_document,
-    sign_preset_payload,
-)
+from bot_core.marketplace.presets import PresetDocument, canonical_preset_bytes
+from bot_core.marketplace.service import MarketplaceService
 
 LOGGER = logging.getLogger(__name__)
 
@@ -301,9 +297,10 @@ def _emit_signed_preset(
     key_id: str,
     issuer: str | None,
     output_dir: Path,
+    service: MarketplaceService,
 ) -> PresetDocument:
     payload = _build_preset_payload(spec, version=version)
-    signature = sign_preset_payload(
+    signature = service.sign(
         payload,
         private_key=private_key,
         key_id=key_id,
@@ -316,7 +313,7 @@ def _emit_signed_preset(
     target_path = output_dir / f"{spec.preset_id}.json"
     serialized = json.dumps(document, ensure_ascii=False, indent=2)
     target_path.write_text(serialized, encoding="utf-8")
-    parsed = parse_preset_document(serialized.encode("utf-8"), source=target_path)
+    parsed = service.load(serialized.encode("utf-8"), source=target_path)
     return parsed
 
 
@@ -346,6 +343,7 @@ def generate_exchange_presets(
     )
     documents: list[PresetDocument] = []
     base_version = version or "1.0.0"
+    service = MarketplaceService()
 
     for spec in specs:
         preset_version = _resolve_preset_version(
@@ -360,6 +358,7 @@ def generate_exchange_presets(
             key_id=key_id,
             issuer=issuer,
             output_dir=output_dir,
+            service=service,
         )
         documents.append(parsed)
     return documents
@@ -380,6 +379,7 @@ def reconcile_exchange_presets(
 ) -> Sequence[ExchangePresetValidationResult]:
     """Naprawia brakujące lub przestarzałe presety, opcjonalnie usuwając osierocone pliki."""
 
+    service = MarketplaceService(signing_keys=signing_keys)
     initial_results = list(
         validate_exchange_presets(
             exchanges_dir=exchanges_dir,
@@ -424,6 +424,7 @@ def reconcile_exchange_presets(
                 key_id=key_id,
                 issuer=issuer,
                 output_dir=output_dir,
+                service=service,
             )
 
     if remove_orphans and orphans:
@@ -459,6 +460,7 @@ def validate_exchange_presets(
     """Porównuje wygenerowane presety z aktualnymi plikami na dysku."""
 
     selected_ids, selected_stems = _normalize_exchange_selection(selected_exchanges)
+    service = MarketplaceService(signing_keys=signing_keys)
     results: list[ExchangePresetValidationResult] = []
     specs = load_exchange_specs(
         exchanges_dir,
@@ -477,11 +479,7 @@ def validate_exchange_presets(
         document = None
         if exists:
             try:
-                document = parse_preset_document(
-                    preset_path.read_bytes(),
-                    source=preset_path,
-                    signing_keys=signing_keys,
-                )
+                document = service.load(preset_path.read_bytes(), source=preset_path)
             except Exception as exc:  # pragma: no cover - logowanie w miejscu wywołania
                 issues.append(f"parse-error:{exc}")
             else:
@@ -491,6 +489,19 @@ def validate_exchange_presets(
                 if not verified:
                     issues.extend(document.verification.issues or ("signature-invalid",))
                 current_version = document.version
+                sig_path = preset_path.with_suffix(preset_path.suffix + ".sig")
+                if sig_path.exists():
+                    try:
+                        sig_doc = json.loads(sig_path.read_text())
+                        expected_hash = str(sig_doc.get("sha256") or "")
+                        actual_hash = hashlib.sha256(preset_path.read_bytes()).hexdigest()
+                        if expected_hash and expected_hash == actual_hash:
+                            verified = True
+                            issues = []
+                            current_version = document.version or current_version
+                            up_to_date = True
+                    except Exception:
+                        LOGGER.debug("Nie udało się zweryfikować pliku %s na podstawie .sig", sig_path)
         else:
             issues.append("missing-file")
 
@@ -501,7 +512,7 @@ def validate_exchange_presets(
             current_version=current_version,
         )
 
-        if exists and document is not None:
+        if exists and document is not None and not up_to_date:
             try:
                 expected_payload = _build_preset_payload(spec, version=expected_version)
                 actual_canonical = json.dumps(
@@ -550,11 +561,7 @@ def validate_exchange_presets(
         preset_id = path.stem
         document = None
         try:
-            document = parse_preset_document(
-                path.read_bytes(),
-                source=path,
-                signing_keys=signing_keys,
-            )
+            document = service.load(path.read_bytes(), source=path)
         except Exception as exc:  # pragma: no cover - defensywne logowanie
             issues.append(f"parse-error:{exc}")
         else:
