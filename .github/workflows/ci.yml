@@ -1410,6 +1410,10 @@ jobs:
     name: Marketplace Catalog Packaging
     runs-on: [self-hosted, windows]
     needs: lint-and-test
+    # Packages marketplace catalog metadata and presets for deployment consumers.
+    outputs:
+      packages_artifact_name: ${{ steps.marketplace-artifact-metadata.outputs.packages_artifact_name }}
+      packages_archive: ${{ steps.marketplace-artifact-metadata.outputs.packages_archive }}
 
     steps:
       - name: Check out repository
@@ -1424,6 +1428,12 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           python -m pip install .[dev]
+
+      - name: Define marketplace packaging artifacts
+        id: marketplace-artifact-metadata
+        run: |
+          echo "packages_artifact_name=marketplace-packages" >> "$GITHUB_OUTPUT"
+          echo "packages_archive=marketplace-packages.tar.gz" >> "$GITHUB_OUTPUT"
 
       - name: Build marketplace catalog
         run: |
@@ -1469,14 +1479,14 @@ jobs:
       - name: Upload marketplace packages
         if: always()
         run: |
-          tar -czf marketplace-packages.tar.gz -C config/marketplace packages
+          tar -czf "${{ steps.marketplace-artifact-metadata.outputs.packages_archive }}" -C config/marketplace packages
 
       - name: Publish marketplace packages artifact
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: marketplace-packages
-          path: marketplace-packages.tar.gz
+          name: ${{ steps.marketplace-artifact-metadata.outputs.packages_artifact_name }}
+          path: ${{ steps.marketplace-artifact-metadata.outputs.packages_archive }}
           if-no-files-found: error
           retention-days: 3
 
@@ -1490,6 +1500,7 @@ jobs:
         include:
           - os: ubuntu-latest
             platform: linux
+    # Builds platform-specific UI bundles that the deploy job publishes.
     env:
       WHEELHOUSE_DIR: ${{ needs.prepare-wheelhouse.outputs.wheelhouse_dir }}
       WHEELHOUSE_SOURCE: ${{ needs.prepare-wheelhouse.outputs.wheelhouse_source }}
@@ -1550,7 +1561,7 @@ jobs:
       - name: Upload UI bundle
         uses: actions/upload-artifact@v4
         with:
-          name: ui-${{ matrix.platform }}
+          name: ui-bundle-${{ matrix.platform }}
           path: artifacts/ui/${{ matrix.platform }}
           retention-days: 3
 
@@ -1561,6 +1572,13 @@ jobs:
       - marketplace-catalog
       - ui-packaging
     if: github.event_name != 'pull_request'
+    # Consumes marketplace catalog packages and UI bundle artifacts prepared upstream.
+    env:
+      MARKETPLACE_PACKAGES_ARTIFACT: ${{ needs.marketplace-catalog.outputs.packages_artifact_name || 'marketplace-packages' }}
+      MARKETPLACE_PACKAGES_ARCHIVE: ${{ needs.marketplace-catalog.outputs.packages_archive || 'marketplace-packages.tar.gz' }}
+      MARKETPLACE_PACKAGES_DIR: artifacts/marketplace
+      UI_BUNDLE_ARTIFACT: ui-bundle-linux
+      UI_BUNDLE_DIR: artifacts/ui/linux
 
     steps:
       - name: Check out repository
@@ -1575,6 +1593,42 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           python -m pip install .[dev]
+
+      - name: Download marketplace packages artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: ${{ env.MARKETPLACE_PACKAGES_ARTIFACT }}
+          path: ${{ env.MARKETPLACE_PACKAGES_DIR }}
+          if-no-artifact-found: error
+
+      - name: Verify marketplace packages artifact
+        shell: bash
+        run: |
+          archive="${MARKETPLACE_PACKAGES_DIR}/${MARKETPLACE_PACKAGES_ARCHIVE}"
+          if [[ ! -f "${archive}" ]]; then
+            echo "Expected marketplace package archive missing: ${archive}" >&2
+            echo "Directory listing for ${MARKETPLACE_PACKAGES_DIR}:"
+            ls -la "${MARKETPLACE_PACKAGES_DIR}" || true
+            exit 1
+          fi
+          echo "Marketplace packages archive located: ${archive}"
+
+      - name: Download UI bundle artifact (linux)
+        uses: actions/download-artifact@v4
+        with:
+          name: ${{ env.UI_BUNDLE_ARTIFACT }}
+          path: ${{ env.UI_BUNDLE_DIR }}
+          if-no-artifact-found: error
+
+      - name: Verify UI bundle contents
+        shell: bash
+        run: |
+          if [[ ! -d "${UI_BUNDLE_DIR}" || -z "$(ls -A "${UI_BUNDLE_DIR}" 2>/dev/null)" ]]; then
+            echo "UI bundle directory is missing or empty: ${UI_BUNDLE_DIR}" >&2
+            ls -la "${UI_BUNDLE_DIR}" || true
+            exit 1
+          fi
+          echo "UI bundle contents:" && ls -la "${UI_BUNDLE_DIR}"
 
       - name: Build signed marketplace catalog
         run: |
