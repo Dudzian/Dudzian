@@ -123,6 +123,12 @@ class ExchangeAdapter(abc.ABC):
         """Udostępnia strumień zdarzeń prywatnych (gRPC lub REST long-poll)."""
 
 
+class ExchangeBackend(ExchangeAdapter):
+    """Alias utrzymujący spójny kontrakt backendu/adaptera giełdowego."""
+
+    pass
+
+
 class ExchangeAdapterFactory(Protocol):
     """Prosty kontrakt dla fabryk adapterów (używany w konfiguracji)."""
 
@@ -137,5 +143,6 @@ __all__ = [
     "OrderRequest",
     "OrderResult",
     "ExchangeAdapter",
+    "ExchangeBackend",
     "ExchangeAdapterFactory",
 ]

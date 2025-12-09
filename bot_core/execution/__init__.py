@@ -1,6 +1,14 @@
 """Moduł egzekucji zleceń."""
 
 from bot_core.execution.base import ExecutionContext, ExecutionService, PriceResolver, RetryPolicy
+from bot_core.execution.errors import ExecutionErrorPolicy
+from bot_core.execution.mode_policy import (
+    DEFAULT_MODE_SELECTOR,
+    ExecutionModeContext,
+    ExecutionModePolicy,
+    ExecutionModeSelector,
+    build_mode_context,
+)
 
 # Zgodność wstecz/naprzód: obsłuż zarówno RoutingPlan (nowa nazwa),
 # jak i RouteDefinition (starsza nazwa) z live_router.
@@ -41,6 +49,7 @@ __all__ = [
     "ExecutionService",
     "PriceResolver",
     "RetryPolicy",
+    "ExecutionErrorPolicy",
     "LiveExecutionRouter",
     "RoutingPlan",
     "RouteDefinition",
@@ -55,4 +64,9 @@ __all__ = [
     "decision_to_order_request",
     "resolve_execution_mode",
     "build_live_execution_service",
+    "ExecutionModePolicy",
+    "ExecutionModeSelector",
+    "ExecutionModeContext",
+    "build_mode_context",
+    "DEFAULT_MODE_SELECTOR",
 ]

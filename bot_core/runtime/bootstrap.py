@@ -42,6 +42,7 @@ from bot_core.exchanges.base import (
     ExchangeAdapterFactory,
     ExchangeCredentials,
 )
+from bot_core.exchanges.factory import ExchangeAdapterConfig, build_exchange_adapter
 from bot_core.exchanges.binance import BinanceFuturesAdapter, BinanceSpotAdapter
 from bot_core.exchanges.bitfinex import BitfinexSpotAdapter
 from bot_core.exchanges.bybit import BybitFuturesAdapter, BybitMarginAdapter, BybitSpotAdapter
@@ -3480,9 +3481,14 @@ def _instantiate_adapter(
     except KeyError as exc:
         raise KeyError(f"Brak fabryki adaptera dla giełdy '{exchange_name}'") from exc
     try:
-        if settings:
-            return factory(credentials, environment=environment, settings=settings)
-        return factory(credentials, environment=environment)
+        config = ExchangeAdapterConfig(
+            name=exchange_name,
+            credentials=credentials,
+            factory=factory,
+            environment=environment,
+            settings=settings or {},
+        )
+        return build_exchange_adapter(config)
     except RuntimeError as exc:
         if offline_mode and "ccxt" in str(exc).lower():
             from bot_core.exchanges.ccxt_adapter import (  # noqa: WPS433 - import lokalny
@@ -3493,18 +3499,16 @@ def _instantiate_adapter(
             if not hasattr(dummy_client, "symbols"):
                 dummy_client.symbols = []  # type: ignore[attr-defined]
             try:
-                if settings:
-                    return factory(
-                        credentials,
-                        environment=environment,
-                        settings=settings,
-                        client=dummy_client,
-                    )
-                return factory(
-                    credentials,
+                fallback_settings = dict(settings or {})
+                fallback_settings.setdefault("client", dummy_client)
+                config = ExchangeAdapterConfig(
+                    name=exchange_name,
+                    credentials=credentials,
+                    factory=factory,
                     environment=environment,
-                    client=dummy_client,
+                    settings=fallback_settings,
                 )
+                return build_exchange_adapter(config)
             except TypeError:
                 pass
         raise
