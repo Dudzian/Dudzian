@@ -100,6 +100,12 @@ Wariant Ed25519 polega na podpisaniu `bot_core.security.signing.canonical_json_b
 - W `archive/` pozostawiamy wyłącznie materiały historyczne (np. [docs/archive/trading_model_pipeline.md](docs/archive/trading_model_pipeline.md)),
   aby nie rozpraszać zespołu nieużywaną implementacją. Aktywny kod żyje w `bot_core/**`.
 
+## Self-hosted Windows runner (PowerShell Core)
+- Wszystkie kroki CI na Windowsie zakładają dostępność PowerShell Core (`pwsh`).
+- Instalacja na runnerze self-hosted (wymaga `winget`): `winget install --id Microsoft.PowerShell --source winget --accept-package-agreements --accept-source-agreements`.
+- Po instalacji zweryfikuj wersję i obecność w `PATH`: `pwsh --version`.
+- Jeśli runner ma zainstalowany wyłącznie Windows PowerShell (`powershell.exe`), dołóż `pwsh` przed uruchomieniem workflowów – unikniemy różnic w modułach/encodingu oraz w obsłudze argumentów.
+
 ## Kontrybucje
 Zobacz [CONTRIBUTING.md](CONTRIBUTING.md) w celu poznania zasad współpracy. Przed zgłoszeniem zmian uruchom testy jednostkowe i integracyjne.
 

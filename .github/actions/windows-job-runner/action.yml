@@ -115,7 +115,7 @@ runs:
       run: |
         $wheelArg = ""
         if ($env:WHEELHOUSE_DIR) { $wheelArg = "-Wheelhouse `"$env:WHEELHOUSE_DIR`"" }
-        powershell -ExecutionPolicy Bypass -File scripts/ci/run_windows.ps1 -Job "${{ inputs.selected_job }}" $wheelArg
+        pwsh -File scripts/ci/run_windows.ps1 -Job "${{ inputs.selected_job }}" $wheelArg
 
     - name: Upload artifacts (logs/results)
       if: ${{ always() && inputs.enabled == 'true' && inputs.upload_artifacts == 'true' }}
