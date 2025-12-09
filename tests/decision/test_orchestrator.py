@@ -1,6 +1,6 @@
 import pytest
 
-from bot_core.decision.models import DecisionCandidate, DecisionEvaluation
+from bot_core.decision.models import DecisionCandidate, DecisionContext, DecisionEvaluation
 from bot_core.decision.orchestrator import (
     DecisionOrchestrator,
     _BanditRecommendation,
@@ -63,7 +63,10 @@ def test_custom_strategy_advisor_controls_recommendations() -> None:
         latency_ms=150.0,
     )
 
-    evaluation = orchestrator.evaluate_candidate(candidate, _snapshot())
+    evaluation = orchestrator.evaluate_candidate(
+        candidate,
+        DecisionContext(risk_snapshot=_snapshot()),
+    )
 
     assert evaluation.recommended_modes == ("shadow", "deterministic")
     assert evaluation.recommended_position_size == pytest.approx(2_500.0)
@@ -94,7 +97,7 @@ def test_strategy_advisor_not_invoked_without_snapshot() -> None:
         latency_ms=180.0,
     )
 
-    evaluations = orchestrator.evaluate_candidates([candidate], risk_snapshots={})
+    evaluations = orchestrator.evaluate_candidates([candidate], contexts={})
 
     assert advisor.recommend_calls == []
     assert evaluations[0].recommended_modes == ()

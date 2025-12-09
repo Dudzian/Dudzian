@@ -6,7 +6,7 @@ from typing import Deque, Mapping, Sequence
 
 import pytest
 
-from bot_core.decision import DecisionEvaluation
+from bot_core.decision import DecisionContext, DecisionEvaluation
 from bot_core.runtime.pipeline import DecisionAwareSignalSink, InMemoryStrategySignalSink
 from bot_core.strategies.base import StrategySignal
 
@@ -16,7 +16,7 @@ class _StubDecisionOrchestrator:
         self._responses: Deque[Mapping[str, object]] = deque(responses)
         self.calls: list[Mapping[str, object]] = []
 
-    def evaluate_candidate(self, candidate, risk_snapshot):  # pragma: no cover - prosty stub
+    def evaluate_candidate(self, candidate, context):  # pragma: no cover - prosty stub
         if not self._responses:
             raise AssertionError("Brak przygotowanych odpowiedzi orchestratora")
         response = dict(self._responses.popleft())
@@ -34,7 +34,8 @@ class _StubDecisionOrchestrator:
             model_selection=response.get("model_selection"),
             thresholds_snapshot=response.get("thresholds_snapshot"),
         )
-        self.calls.append({"candidate": candidate, "snapshot": dict(risk_snapshot)})
+        snapshot = getattr(context, "risk_snapshot", {}) if context is not None else {}
+        self.calls.append({"candidate": candidate, "snapshot": dict(snapshot)})
         return evaluation
 
 
