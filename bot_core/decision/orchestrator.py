@@ -7,24 +7,28 @@ import random
 from dataclasses import dataclass, replace
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import Callable, Mapping, MutableMapping, Protocol, Sequence
+from typing import Callable, Mapping, MutableMapping, Sequence
 
 import numpy as np
 
 from bot_core.ai import DecisionModelInference, MarketRegime, ModelScore
 from bot_core.ai.repository import FilesystemModelRepository, ModelRepository
+from bot_core.decision.bandits import (
+    BanditRecommendation,
+    StrategyAdvisor,
+    _LinUCBArm,
+    _ThompsonArm,
+)
+from bot_core.decision.cost_resolvers import DecisionCostResolverProtocol
 from bot_core.decision.costs import DecisionCostResolver
+from bot_core.decision.evaluators import DecisionEvaluator
 from bot_core.decision.reports import ModelQualityReport, load_latest_quality_report
 from bot_core.reporting.model_quality import DEFAULT_QUALITY_DIR
 from bot_core.config.models import (
     DecisionEngineConfig,
     DecisionOrchestratorThresholds,
 )
-from bot_core.decision.evaluator import (
-    DecisionEvaluationService,
-    DecisionEvaluator,
-    DecisionProvider,
-)
+from bot_core.decision.evaluator import DecisionEvaluationService
 from bot_core.decision.models import (
     DecisionCandidate,
     DecisionContext,
@@ -34,6 +38,7 @@ from bot_core.decision.models import (
     RiskSnapshot,
 )
 from bot_core.decision.metrics import DecisionMetricSet
+from bot_core.decision.providers import DecisionProvider
 
 from bot_core.tco.models import TCOReport
 
@@ -73,93 +78,6 @@ class StrategyRecalibrationSchedule:
     next_run: datetime
 
 
-@dataclass(slots=True)
-class _BanditRecommendation:
-    modes: tuple[str, ...]
-    position_size: float | None
-    risk_score: float
-
-
-class StrategyAdvisor(Protocol):
-    """Kontrakt dla doradcy wyboru strategii używanego przez orchestrator."""
-
-    def recommend(
-        self,
-        candidate: DecisionCandidate,
-        *,
-        regime: MarketRegime | str,
-        model_score: ModelScore | None,
-        selection: ModelSelectionMetadata | None,
-        cost_bps: float | None,
-        net_edge_bps: float,
-    ) -> _BanditRecommendation:
-        """Zwraca rekomendowane tryby wykonania i wielkość pozycji."""
-
-    def observe(self, candidate: DecisionCandidate, evaluation: DecisionEvaluation) -> None:
-        """Aktualizuje stan doradcy po zakończonej ewaluacji."""
-
-
-class _LinUCBArm:
-    """Minimalna implementacja ramienia LinUCB do eksploracji strategii."""
-
-    def __init__(self, dimension: int, alpha: float) -> None:
-        self.alpha = float(alpha)
-        self.dimension = int(max(1, dimension))
-        self.A = np.eye(self.dimension, dtype=float)
-        self.b = np.zeros(self.dimension, dtype=float)
-
-    def ensure_dimension(self, dimension: int) -> None:
-        if dimension <= self.dimension:
-            return
-        dimension = int(max(1, dimension))
-        new_A = np.eye(dimension, dtype=float)
-        new_A[: self.dimension, : self.dimension] = self.A
-        new_b = np.zeros(dimension, dtype=float)
-        new_b[: self.dimension] = self.b
-        self.A = new_A
-        self.b = new_b
-        self.dimension = dimension
-
-    def predict(self, context: np.ndarray) -> float:
-        self.ensure_dimension(context.size)
-        try:
-            theta = np.linalg.solve(self.A, self.b)
-        except np.linalg.LinAlgError:
-            theta = np.linalg.pinv(self.A) @ self.b
-        try:
-            inv_a = np.linalg.inv(self.A)
-        except np.linalg.LinAlgError:
-            inv_a = np.linalg.pinv(self.A)
-        mean = float(context @ theta)
-        exploration = float(np.sqrt(context @ inv_a @ context))
-        return mean + self.alpha * exploration
-
-    def update(self, context: np.ndarray, reward: float) -> None:
-        self.ensure_dimension(context.size)
-        context = context.reshape(-1, 1)
-        self.A += context @ context.T
-        self.b += reward * context.ravel()
-
-
-class _ThompsonArm:
-    """Beta-Bernoulli ramię używane do rekomendacji ryzyka."""
-
-    def __init__(self, alpha: float = 1.0, beta: float = 1.0) -> None:
-        self.alpha = float(max(alpha, 1e-3))
-        self.beta = float(max(beta, 1e-3))
-
-    def posterior_mean(self) -> float:
-        total = self.alpha + self.beta
-        if total <= 0:
-            return 0.5
-        return self.alpha / total
-
-    def update(self, outcome: float) -> None:
-        outcome = float(max(0.0, min(1.0, outcome)))
-        self.alpha += outcome
-        self.beta += 1.0 - outcome
-
-
 class _StrategyBanditAdvisor:
     """Łączy LinUCB i Thompson sampling dla rekomendacji strategii oraz ryzyka."""
 
@@ -178,7 +96,7 @@ class _StrategyBanditAdvisor:
         selection: ModelSelectionMetadata | None,
         cost_bps: float | None,
         net_edge_bps: float,
-    ) -> _BanditRecommendation:
+    ) -> BanditRecommendation:
         regime_value = self._normalise_regime(regime)
         key = (candidate.strategy.lower(), regime_value)
         context = self._build_context(
@@ -201,7 +119,9 @@ class _StrategyBanditAdvisor:
         modes = self._modes_from_scores(score, risk_score)
         position_size = self._position_from_risk(candidate.notional, risk_score)
         self._pending[id(candidate)] = (key, context, self._extract_meta_label(candidate))
-        return _BanditRecommendation(modes=modes, position_size=position_size, risk_score=risk_score)
+        return BanditRecommendation(
+            modes=modes, position_size=position_size, risk_score=risk_score
+        )
 
     def observe(
         self,
@@ -404,10 +324,14 @@ class DecisionOrchestrator(DecisionProvider):
         performance_history_limit: int = 100,
         clock: Callable[[], datetime] | None = None,
         strategy_advisor: StrategyAdvisor | None = None,
+        cost_resolver: DecisionCostResolverProtocol | None = None,
+        evaluator: DecisionEvaluator | None = None,
         metrics: DecisionMetricSet | None = None,
     ) -> None:
         self._config = config
-        self._costs = DecisionCostResolver(penalty_cost_bps=self._config.penalty_cost_bps)
+        self._cost_resolver: DecisionCostResolverProtocol = cost_resolver or DecisionCostResolver(
+            penalty_cost_bps=self._config.penalty_cost_bps
+        )
         self._inference: DecisionModelInference | None = None
         self._inferences: MutableMapping[str, DecisionModelInference] = {}
         self._default_model_name: str | None = None
@@ -426,7 +350,7 @@ class DecisionOrchestrator(DecisionProvider):
         self._strategy_schedules: MutableMapping[str, StrategyRecalibrationSchedule] = {}
         self._strategy_advisor: StrategyAdvisor = strategy_advisor or _StrategyBanditAdvisor()
         self._metrics = metrics or DecisionMetricSet()
-        self._evaluation_service: DecisionEvaluator = DecisionEvaluationService(
+        self._evaluation_service: DecisionEvaluator = evaluator or DecisionEvaluationService(
             config=self._config,
             provider=self,
             strategy_advisor=self._strategy_advisor,
@@ -625,7 +549,7 @@ class DecisionOrchestrator(DecisionProvider):
     ) -> None:
         """Buduje indeks kosztów (bps) na podstawie raportu TCO."""
 
-        self._costs.update_costs_from_report(report)
+        self._cost_resolver.update_costs_from_report(report)
 
     # --------------------------------------------------------------- ewaluacja --
     def evaluate_candidate(
@@ -704,7 +628,7 @@ class DecisionOrchestrator(DecisionProvider):
         raise TypeError("Nieobsługiwany typ snapshotu ryzyka")
 
     def _resolve_cost(self, candidate: DecisionCandidate) -> tuple[float | None, bool]:
-        return self._costs.resolve_cost(candidate)
+        return self._cost_resolver.resolve_cost(candidate)
 
     def _resolve_regime(self, candidate: DecisionCandidate) -> MarketRegime:
         metadata = candidate.metadata or {}

@@ -5,15 +5,19 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any, Mapping, MutableMapping, Protocol
 
+try:  # pragma: no cover - moduł decision może być opcjonalny
+    from bot_core.decision.evaluators import DecisionEvaluator
+except Exception:  # pragma: no cover - fallback gdy moduł decision nie jest dostępny
+    class DecisionEvaluator(Protocol):
+        def evaluate_candidate(self, candidate: Any, context: Any) -> Any:
+            ...
+
 from bot_core.exchanges.base import AccountSnapshot
 from bot_core.risk.state import RiskState, build_risk_snapshot
 
 
-class DecisionBackend(Protocol):
+class DecisionBackend(DecisionEvaluator, Protocol):
     """Minimalny kontrakt backendu decyzyjnego używanego przez silnik ryzyka."""
-
-    def evaluate_candidate(self, candidate: Any, context: Any) -> Any:
-        ...
 
 
 @dataclass(slots=True)

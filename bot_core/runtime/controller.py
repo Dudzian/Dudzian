@@ -70,13 +70,21 @@ try:  # pragma: no cover
         DecisionCandidate,
         DecisionContext,
         DecisionEvaluation,
-        DecisionOrchestrator,
     )  # type: ignore
+    from bot_core.decision.evaluators import DecisionEvaluator
+    from bot_core.decision.providers import DecisionProvider
 except Exception:  # pragma: no cover
     DecisionCandidate = None  # type: ignore
     DecisionContext = Any  # type: ignore
     DecisionEvaluation = Any  # type: ignore
-    DecisionOrchestrator = None  # type: ignore
+
+    class DecisionEvaluator(Protocol):  # type: ignore[misc]
+        def evaluate_candidate(self, candidate: Any, context: Any) -> Any:
+            ...
+
+    class DecisionProvider(Protocol):  # type: ignore[misc]
+        def ensure_snapshot(self, profile: str, snapshot: Mapping[str, object] | Any) -> Any:
+            ...
 
 # Dane OHLCV – w zależności od gałęzi
 try:
@@ -258,7 +266,7 @@ class TradingController:
     exchange_name: str | None = None
     tco_reporter: RuntimeTCOReporter | None = None
     tco_metadata: Mapping[str, object] | None = None
-    decision_orchestrator: Any | None = None
+    decision_orchestrator: DecisionEvaluator | DecisionProvider | None = None
     decision_min_probability: float | None = None
     decision_default_notional: float = 1_000.0
     ai_health_monitor: ModelHealthMonitor | None = None
@@ -283,7 +291,9 @@ class TradingController:
     _exchange_name: str | None = field(init=False, repr=False, default=None)
     _tco_reporter: RuntimeTCOReporter | None = field(init=False, repr=False, default=None)
     _tco_metadata: Mapping[str, object] = field(init=False, repr=False, default_factory=dict)
-    _decision_orchestrator: Any | None = field(init=False, repr=False, default=None)
+    _decision_orchestrator: DecisionEvaluator | DecisionProvider | None = field(
+        init=False, repr=False, default=None
+    )
     _decision_min_probability: float = field(init=False, repr=False, default=0.0)
     _decision_default_notional: float = field(init=False, repr=False, default=1_000.0)
     _signal_mode_priorities: Mapping[str, int] = field(init=False, repr=False, default_factory=dict)
