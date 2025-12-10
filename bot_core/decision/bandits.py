@@ -1,3 +1,5 @@
+"""Interfejsy i prymitywy bandyty używane przez decyzje tradingowe."""
+
 from __future__ import annotations
 
 from dataclasses import dataclass
