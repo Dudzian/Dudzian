@@ -5,7 +5,7 @@ import logging
 from collections import defaultdict
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
-from typing import Callable, Iterable, Mapping, MutableMapping, Sequence
+from typing import Callable, Iterable, Mapping, MutableMapping, Protocol, Sequence, runtime_checkable
 
 from bot_core.portfolio.governor import (
     PortfolioAdjustment,
@@ -22,6 +22,36 @@ _LOGGER = logging.getLogger(__name__)
 
 AuditLogger = Callable[[Mapping[str, object]], None]
 Clock = Callable[[], datetime]
+
+
+@runtime_checkable
+class PortfolioScheduler(Protocol):
+    """Kontrakt harmonogramu portfela używany w runtime i mostkach UI."""
+
+    governor: "PortfolioGovernor"
+
+    def evaluate(self, *, force: bool = False) -> "PortfolioDecision | None":
+        ...
+
+    async def start(self) -> None:
+        ...
+
+    async def run_forever(self) -> None:
+        ...
+
+    async def run_once(self) -> None:
+        ...
+
+    def stop(self) -> None:
+        ...
+
+    @property
+    def last_decision(self) -> "PortfolioDecision | None":
+        ...
+
+    @property
+    def last_run(self) -> datetime | None:
+        ...
 
 
 def _default_clock() -> datetime:
@@ -446,5 +476,6 @@ __all__ = [
     "SchedulerEvent",
     "PortfolioScheduleResult",
     "StrategyHealthMonitor",
+    "PortfolioScheduler",
     "MultiPortfolioScheduler",
 ]

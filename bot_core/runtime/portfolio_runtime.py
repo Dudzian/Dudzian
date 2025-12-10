@@ -11,6 +11,7 @@ from bot_core.market_intel import MarketIntelAggregator, MarketIntelQuery, Marke
 from bot_core.portfolio import (
     PortfolioDecisionLog,
     PortfolioGovernor,
+    PortfolioScheduler,
     StrategyPortfolioGovernor,
 )
 from bot_core.risk import StressOverrideRecommendation
@@ -166,7 +167,7 @@ def build_portfolio_runtime(
     paper_settings,
     resolved_scheduler_name: str,
 ):
-    portfolio_coordinator: PortfolioRuntimeCoordinator | None = None
+    portfolio_coordinator: PortfolioScheduler | None = None
     governor_name = getattr(scheduler_cfg, "portfolio_governor", None)
     if not governor_name:
         return portfolio_coordinator, getattr(bootstrap_ctx, "portfolio_governor", None)

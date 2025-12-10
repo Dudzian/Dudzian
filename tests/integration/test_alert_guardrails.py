@@ -9,7 +9,8 @@ from bot_core.decision.models import DecisionCandidate, DecisionEvaluation
 from bot_core.decision.orchestrator import DecisionOrchestrator
 from bot_core.exchanges.base import AccountSnapshot, OrderRequest
 from bot_core.observability.metrics import MetricsRegistry
-from bot_core.risk.engine import InMemoryRiskRepository, ThresholdRiskEngine
+from bot_core.risk.engine import ThresholdRiskEngine
+from bot_core.risk.repository import InMemoryRiskRepository
 from bot_core.risk.guardrails import LossGuardrailConfig, RiskGuardrailMetricSet
 from bot_core.risk.profiles.manual import ManualProfile
 from bot_core.risk.repository import FileRiskRepository

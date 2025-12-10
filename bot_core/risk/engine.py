@@ -15,8 +15,10 @@ from bot_core.risk.guardrails import (
     GuardrailsEngine,
     LossGuardrailConfig,
     RiskGuardrailMetricSet,
+    RiskGuardrailsService,
 )
 from bot_core.risk.adapters import DecisionOrchestratorAdapter
+from bot_core.risk.repository import InMemoryRiskRepository, RiskProfileRepository
 from bot_core.risk.state import (
     PositionState,
     RiskState,
@@ -31,6 +33,7 @@ from bot_core.risk.simulation import (
     run_profile_scenario,
 )
 from bot_core.decision.models import ModelSelectionDetail, ModelSelectionMetadata
+from bot_core.observability.risk import RiskObservabilitySink, RiskAlertSink
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -45,26 +48,14 @@ def _coerce_float(value: object) -> float | None:
         return None
 
 
-class InMemoryRiskRepository(RiskRepository):
-    """Najprostsze repozytorium używane do testów i trybu offline."""
-
-    def __init__(self) -> None:
-        self._storage: Dict[str, MutableMapping[str, object]] = {}
-
-    def load(self, profile: str) -> Mapping[str, object] | None:
-        return self._storage.get(profile)
-
-    def store(self, profile: str, state: Mapping[str, object]) -> None:
-        self._storage[profile] = dict(state)
-
-
 class ThresholdRiskEngine(RiskEngine):
     """Silnik egzekwujący limity dzienne, ekspozycji i dźwigni."""
 
     def __init__(
         self,
-        repository: RiskRepository | None = None,
+        profile_repository: RiskProfileRepository | None = None,
         *,
+        repository: RiskRepository | None = None,
         clock: Callable[[], datetime] | None = None,
         decision_log: RiskDecisionLog | None = None,
         alert_log: RiskAlertLog | None = None,
@@ -72,13 +63,24 @@ class ThresholdRiskEngine(RiskEngine):
         decision_adapter: DecisionOrchestratorAdapter | None = None,
         guardrail_config: LossGuardrailConfig | None = None,
         guardrail_metrics: RiskGuardrailMetricSet | None = None,
+        guardrails_service: RiskGuardrailsService | None = None,
+        observability_sink: RiskObservabilitySink | None = None,
     ) -> None:
-        self._repository = repository or InMemoryRiskRepository()
         self._clock = clock or datetime.utcnow
-        self._profiles: Dict[str, RiskProfile] = {}
-        self._states: Dict[str, RiskState] = {}
+        self._observability_sink = observability_sink or RiskObservabilitySink()
+        if profile_repository is not None:
+            self._profile_repository = profile_repository
+        else:
+            storage = repository or InMemoryRiskRepository()
+            self._profile_repository = RiskProfileRepository(storage, clock=self._clock)
+        self._profiles = self._profile_repository.profiles
+        self._states = self._profile_repository.states
         self._decision_log = decision_log
-        self._alert_log = alert_log or RiskAlertLog()
+        if alert_log is not None:
+            self._alert_log = alert_log
+            self._observability_sink.alerts = RiskAlertSink(alert_log)
+        else:
+            self._alert_log = self._observability_sink.alert_log
         self._decision_adapter: DecisionOrchestratorAdapter | None = decision_adapter
         if self._decision_adapter is None and decision_orchestrator is not None:
             self._decision_adapter = DecisionOrchestratorAdapter(decision_orchestrator)
@@ -103,38 +105,32 @@ class ThresholdRiskEngine(RiskEngine):
         self._default_profile: str | None = None
         self._loss_guardrails = guardrail_config
         self._guardrail_metrics = guardrail_metrics
-        if self._loss_guardrails is not None and self._guardrail_metrics is None:
-            self._guardrail_metrics = RiskGuardrailMetricSet()
-        self._guardrails_engine = GuardrailsEngine(
-            self._loss_guardrails,
-            metrics=self._guardrail_metrics,
-            alert_log=self._alert_log,
-            clock=self._clock,
-            logger=_LOGGER,
-        )
+        if guardrails_service is not None:
+            self._guardrails_service = guardrails_service
+            if self._guardrail_metrics is None:
+                self._guardrail_metrics = getattr(guardrails_service, "_metrics", None)
+        else:
+            if self._loss_guardrails is not None and self._guardrail_metrics is None:
+                self._guardrail_metrics = RiskGuardrailMetricSet()
+            guardrails_engine = GuardrailsEngine(
+                self._loss_guardrails,
+                metrics=self._guardrail_metrics,
+                alert_log=self._alert_log,
+                clock=self._clock,
+                logger=_LOGGER,
+            )
+            self._guardrails_service = RiskGuardrailsService(
+                guardrails_engine, metrics=self._guardrail_metrics
+            )
 
     def register_profile(self, profile: RiskProfile) -> None:
-        self._profiles[profile.name] = profile
-        state = self._repository.load(profile.name)
-        if state is None:
-            today = self._clock().date()
-            new_state = RiskState(profile=profile.name, current_day=today)
-            new_state.ensure_week_alignment(day=today, equity=0.0)
-            self._states[profile.name] = new_state
-            self._repository.store(profile.name, new_state.to_mapping())
-        else:
-            restored_state = RiskState.from_mapping(profile.name, state)
-            restored_state.ensure_week_alignment(
-                day=restored_state.current_day,
-                equity=restored_state.start_of_day_equity or restored_state.last_equity,
-            )
-            self._states[profile.name] = restored_state
+        stored_state = self._profile_repository.register(profile)
         _LOGGER.info("Zarejestrowano profil ryzyka %s", profile.name)
         if self._default_profile is None:
             self._default_profile = profile.name
-        if self._guardrail_metrics is not None:
-            stored_state = self._states[profile.name]
-            self._guardrail_metrics.record_state(profile.name, active=stored_state.hedge_mode)
+        self._guardrails_service.record_profile_state(
+            profile.name, stored_state
+        )
 
     def attach_exchange_manager(
         self,
@@ -385,7 +381,7 @@ class ThresholdRiskEngine(RiskEngine):
             is_reducing=is_reducing,
             metadata=metadata,
         )
-        guardrail_decision = self._guardrails_engine.evaluate(
+        guardrail_decision = self._guardrails_service.evaluate(
             state,
             (guardrail_order,),
             profile_name=profile_name,
@@ -873,7 +869,16 @@ class ThresholdRiskEngine(RiskEngine):
                 state, metrics.gross_notional, float(current_equity or 0.0)
             ),
         )
-        return snapshot.to_mapping()
+        snapshot_mapping = snapshot.to_mapping()
+        try:
+            self._observability_sink.publish_snapshot(
+                profile_name,
+                snapshot_mapping,
+                metadata={"limits": dict(limits)} if limits is not None else None,
+            )
+        except Exception:  # pragma: no cover - obserwowalność nie może blokować silnika
+            _LOGGER.debug("Nie udało się opublikować snapshotu ryzyka", exc_info=True)
+        return snapshot_mapping
 
     def _build_cost_breakdown(
         self,
@@ -1438,8 +1443,7 @@ class ThresholdRiskEngine(RiskEngine):
         return result
 
     def _persist_state(self, profile_name: str) -> None:
-        state = self._states[profile_name]
-        self._repository.store(profile_name, state.to_mapping())
+        self._profile_repository.persist(profile_name)
 
     def _record_decision_model_outcome(
         self,
@@ -1859,4 +1863,4 @@ class ThresholdRiskEngine(RiskEngine):
             "json_path": str(json_path),
             "pdf_path": str(pdf_path),
         }
-__all__ = ["InMemoryRiskRepository", "ThresholdRiskEngine", "RiskState", "PositionState"]
+__all__ = ["ThresholdRiskEngine", "RiskState", "PositionState"]

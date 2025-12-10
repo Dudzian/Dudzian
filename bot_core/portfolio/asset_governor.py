@@ -176,6 +176,7 @@ class AssetPortfolioGovernor:
         self._slo_overrides = tuple(config.slo_overrides)
         self._last_rebalance: datetime | None = None
         self._io = io_service or PortfolioIOService(decision_log=decision_log)
+        self._decision_log = getattr(self._io, "_decision_log", None)
 
     @property
     def last_rebalance_at(self) -> datetime | None:

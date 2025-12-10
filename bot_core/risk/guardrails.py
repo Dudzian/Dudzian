@@ -6,7 +6,7 @@ from collections import Counter
 import logging
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
-from typing import Any, Callable, Dict, Iterable, Mapping, Sequence
+from typing import TYPE_CHECKING, Any, Callable, Dict, Iterable, Mapping, Sequence
 
 from bot_core.backtest.engine import BacktestReport
 from bot_core.risk.base import RiskCheckResult, RiskProfile
@@ -17,6 +17,9 @@ from bot_core.observability.metrics import (
     MetricsRegistry,
     get_global_metrics_registry,
 )
+
+if TYPE_CHECKING:
+    from bot_core.risk.state import RiskState
 
 _DEFAULT_ALLOWED_INTENTS = ("hedge", "neutral", "rebalance", "rebalance_delta")
 
@@ -492,6 +495,7 @@ __all__ = [
     "GuardrailOrder",
     "RiskDecision",
     "GuardrailsEngine",
+    "RiskGuardrailsService",
     "RiskGuardrailMetricSet",
 ]
 @dataclass(slots=True)
@@ -675,6 +679,42 @@ class RiskDecision:
     cooldown_until: datetime | None = None
     metadata: Mapping[str, object] = field(default_factory=dict)
     changed_state: bool = False
+
+
+class RiskGuardrailsService:
+    """Serwis opakowujący logikę GuardrailsEngine na potrzeby RiskEngine."""
+
+    def __init__(
+        self,
+        guardrails_engine: GuardrailsEngine,
+        *,
+        metrics: RiskGuardrailMetricSet | None = None,
+    ) -> None:
+        self._engine = guardrails_engine
+        self._metrics = metrics
+
+    def evaluate(
+        self,
+        snapshot: "RiskState",
+        orders: Sequence[GuardrailOrder],
+        *,
+        profile_name: str | None,
+        drawdown_pct: float,
+        daily_loss_pct: float,
+        weekly_loss_pct: float,
+    ) -> RiskDecision:
+        return self._engine.evaluate(
+            snapshot,
+            orders,
+            profile_name=profile_name,
+            drawdown_pct=drawdown_pct,
+            daily_loss_pct=daily_loss_pct,
+            weekly_loss_pct=weekly_loss_pct,
+        )
+
+    def record_profile_state(self, profile_name: str, state: "RiskState") -> None:
+        if self._metrics is not None:
+            self._metrics.record_state(profile_name, active=state.hedge_mode)
 
 
 class GuardrailsEngine:
