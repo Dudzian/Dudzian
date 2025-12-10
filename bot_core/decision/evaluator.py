@@ -4,10 +4,12 @@ from __future__ import annotations
 
 import logging
 from dataclasses import replace
-from typing import Mapping, Protocol, Sequence, TYPE_CHECKING
+from typing import Mapping, Sequence
 
 from bot_core.ai import ModelScore
 from bot_core.config.models import DecisionEngineConfig, DecisionOrchestratorThresholds
+from bot_core.decision.bandits import StrategyAdvisor
+from bot_core.decision.evaluators import DecisionEvaluator
 from bot_core.decision.metrics import DecisionMetricSet
 from bot_core.decision.models import (
     DecisionCandidate,
@@ -15,58 +17,10 @@ from bot_core.decision.models import (
     DecisionEvaluation,
     RiskSnapshot,
 )
-
-if TYPE_CHECKING:  # pragma: no cover - tylko dla statycznego typowania
-    from bot_core.decision.orchestrator import StrategyAdvisor
+from bot_core.decision.providers import DecisionProvider
 
 
 _LOGGER = logging.getLogger(__name__)
-
-
-class DecisionProvider(Protocol):
-    """Źródło informacji potrzebnych do ewaluacji kandydata."""
-
-    def score_with_model(
-        self, candidate: DecisionCandidate
-    ) -> tuple[str | None, ModelScore | None, object | None]:
-        """Zwraca wynik modelu, nazwę oraz metadane selekcji modeli."""
-
-    def thresholds_for_profile(self, profile: str) -> DecisionOrchestratorThresholds:
-        """Udostępnia progi dla danego profilu ryzyka."""
-
-    def threshold_snapshot(
-        self, thresholds: DecisionOrchestratorThresholds
-    ) -> Mapping[str, float | None]:
-        """Tworzy snapshot progów użyty w odpowiedzi."""
-
-    def ensure_snapshot(
-        self, profile: str, snapshot: Mapping[str, object] | RiskSnapshot
-    ) -> RiskSnapshot:
-        """Normalizuje snapshot ryzyka."""
-
-    def resolve_cost(self, candidate: DecisionCandidate) -> tuple[float | None, bool]:
-        """Zwraca koszt strategii oraz informację o brakujących danych."""
-
-    def resolve_regime(self, candidate: DecisionCandidate):
-        """Określa reżim rynkowy dla kandydata."""
-
-
-class DecisionEvaluator(Protocol):
-    """Kontrakt dla serwisu ewaluującego kandydatów."""
-
-    def evaluate_candidate(
-        self,
-        candidate: DecisionCandidate,
-        context: DecisionContext,
-    ) -> DecisionEvaluation:
-        """Ewaluacja pojedynczego kandydata."""
-
-    def evaluate_candidates(
-        self,
-        candidates: Sequence[DecisionCandidate],
-        contexts: Mapping[str, DecisionContext],
-    ) -> Sequence[DecisionEvaluation]:
-        """Ewaluacja wielu kandydatów."""
 
 
 class DecisionEvaluationService(DecisionEvaluator):
@@ -189,7 +143,7 @@ class DecisionEvaluationService(DecisionEvaluator):
         )
         if not accepted:
             _LOGGER.info(
-                "Decision evaluation rejected candidate strategy=%s symbol=%s reasons=%s risk_flags=%s stress_failures=%s thresholds=%s",
+                "DecisionOrchestrator rejected candidate strategy=%s symbol=%s reasons=%s risk_flags=%s stress_failures=%s thresholds=%s",
                 candidate.strategy,
                 candidate.symbol or "<unknown>",
                 tuple(reasons),
@@ -334,8 +288,6 @@ class DecisionEvaluationService(DecisionEvaluator):
 
 
 __all__ = [
-    "DecisionEvaluator",
     "DecisionEvaluationService",
-    "DecisionProvider",
 ]
 
