@@ -13,6 +13,7 @@ from typing import Any, AsyncIterable, AsyncIterator, Callable, Iterable, Mappin
 
 from bot_core.data import CachedOHLCVSource, resolve_cache_namespace, create_cached_ohlcv_source
 from bot_core.data.base import OHLCVRequest, OHLCVResponse
+from bot_core.data.backfill_scheduler import BackfillScheduler
 from bot_core.data.ohlcv import OHLCVBackfillService
 from bot_core.exchanges.base import ExchangeAdapter, Environment
 from bot_core.exchanges.streaming import LocalLongPollStream, StreamBatch
@@ -746,97 +747,17 @@ def _ensure_local_market_data_availability(
     backfill_service: OHLCVBackfillService | None = None,
     adapter: ExchangeAdapter | None = None,
 ) -> None:
-    offline_mode = bool(getattr(environment, "offline_mode", False))
     now_ms = int(datetime.now(timezone.utc).timestamp() * 1000)
-
-    missing_symbols: list[str] = []
-    for symbol in markets.keys():
-        request = OHLCVRequest(symbol=symbol, interval=interval, start=0, end=now_ms, limit=1)
-        try:
-            response = data_source.fetch_ohlcv(request)
-        except Exception:  # pragma: no cover
-            response = OHLCVResponse(columns=_DEFAULT_OHLCV_COLUMNS, rows=())
-        if response.rows:
-            continue
-        missing_symbols.append(symbol)
-
-    if not missing_symbols:
-        return
-
-    lookback_days = getattr(environment, "offline_backfill_days", 7 if offline_mode else 30)
-    lookback_ms = max(int(lookback_days) * 86_400_000, 86_400_000)
-    start_ms = max(0, now_ms - lookback_ms)
-
-    if offline_mode:
-        _LOGGER.debug(
-            "Środowisko offline – pomijam dogrywanie danych OHLCV (symbole=%s)",
-            missing_symbols,
-        )
-        return
-
-    if not offline_mode and backfill_service is not None:
-        try:
-            backfill_service.synchronize(
-                symbols=missing_symbols,
-                interval=interval,
-                start=start_ms,
-                end=now_ms,
-            )
-            return
-        except Exception:  # pragma: no cover
-            _LOGGER.exception(
-                "Nie udało się wykonać backfillu startowego (%s, %s) – spróbuję fallbacku adaptera",
-                missing_symbols,
-                interval,
-            )
-
-    if adapter is None:
-        _LOGGER.debug(
-            "Brak adaptera giełdowego – pomijam wypełnianie cache danych OHLCV (symbole=%s)",
-            missing_symbols,
-        )
-        return
-
-    warmup_limit = max(int(getattr(environment, "offline_warmup_candles", 180)), 1)
-    fetch_start = None if offline_mode else start_ms
-    fetch_end = None if offline_mode else now_ms
-
-    for symbol in missing_symbols:
-        try:
-            rows = adapter.fetch_ohlcv(
-                symbol,
-                interval,
-                start=fetch_start,
-                end=fetch_end,
-                limit=warmup_limit,
-            )
-        except Exception:  # pragma: no cover
-            _LOGGER.warning(
-                "Nie udało się pobrać danych OHLCV przez adapter w trybie offline (%s %s)",
-                symbol,
-                interval,
-                exc_info=True,
-            )
-            continue
-
-        if not rows:
-            _LOGGER.debug(
-                "Adapter nie zwrócił danych OHLCV (%s %s) – cache pozostaje pusty",
-                symbol,
-                interval,
-            )
-            continue
-
-        cache_key = data_source._cache_key(symbol, interval)  # pylint: disable=protected-access
-        payload_rows = [list(map(float, row)) for row in rows if row]
-        if not payload_rows:
-            continue
-
-        data_source.storage.write(
-            cache_key,
-            {
-                "columns": list(_DEFAULT_OHLCV_COLUMNS),
-                "rows": payload_rows,
-            },
-        )
+    scheduler = BackfillScheduler(
+        data_source,
+        backfill_service=backfill_service,
+        adapter=adapter,
+        default_columns=_DEFAULT_OHLCV_COLUMNS,
+    )
+    scheduler.ensure_ohlcv_availability(
+        symbols=markets.keys(),
+        interval=interval,
+        environment=environment,
+        now_ms=now_ms,
+    )
 
