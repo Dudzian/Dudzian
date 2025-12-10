@@ -39,8 +39,10 @@ from bot_core.exchanges.errors import (
     ExchangeThrottlingError,
 )
 from bot_core.exchanges.network_guard import (
+    ExchangeNetworkGuard,
     NetworkAccessGuard,
     NetworkAccessViolation,
+    build_exchange_network_guard,
     normalize_http_method,
     normalize_relative_api_path,
 )
@@ -52,6 +54,7 @@ from bot_core.exchanges.rate_limiter import (
     normalize_rate_limit_rules,
 )
 from bot_core.exchanges.streaming import LocalLongPollStream
+from bot_core.exchanges.streaming_base import StreamingBackoff
 from bot_core.exchanges.http_client import urlopen
 from bot_core.observability.metrics import MetricsRegistry, get_global_metrics_registry
 
@@ -279,6 +282,7 @@ class BinanceSpotAdapter(ExchangeAdapter):
         "_throttle_cooldown_reason",
         "_reconnect_backoff_until",
         "_reconnect_reason",
+        "_streaming_backoff",
         "_network_guard",
     )
 
@@ -292,6 +296,7 @@ class BinanceSpotAdapter(ExchangeAdapter):
         settings: Mapping[str, object] | None = None,
         metrics_registry: MetricsRegistry | None = None,
         watchdog: Watchdog | None = None,
+        network_guard: ExchangeNetworkGuard | None = None,
         network_error_handler: Callable[[str, Exception], None] | None = None,
         alert_router: "AlertRouter | None" = None,
     ) -> None:
@@ -326,22 +331,30 @@ class BinanceSpotAdapter(ExchangeAdapter):
             "binance_spot_used_weight",
             "Ostatnie wartości nagłówków X-MBX-USED-WEIGHT od Binance Spot.",
         )
-        self._watchdog = watchdog or Watchdog()
+        default_rules = normalize_rate_limit_rules(
+            self._settings.get("rate_limit_rules"),
+            _RATE_LIMIT_DEFAULTS,
+        )
+        guard = network_guard or build_exchange_network_guard(
+            adapter_name=self.name,
+            environment=self._environment.value,
+            rate_limit_rules=default_rules,
+            default_rules=_RATE_LIMIT_DEFAULTS,
+            watchdog=watchdog,
+            metric_labels={"exchange": self.name, "environment": self._environment.value},
+        )
+        self._watchdog = guard.watchdog
         self._network_error_handler = network_error_handler
         self._throttle_cooldown_until = 0.0
         self._throttle_cooldown_reason: str | None = None
+        self._streaming_backoff = StreamingBackoff(
+            base=_BASE_BACKOFF, cap=_BACKOFF_CAP, jitter=_JITTER_RANGE
+        )
         self._reconnect_backoff_until = 0.0
         self._reconnect_reason: str | None = None
-        self._network_guard = NetworkAccessGuard(logger=_LOGGER)
+        self._network_guard = guard.network_access
         self._network_guard.attach_alert_router(alert_router)
-        self._rate_limiter = get_global_rate_limiter_registry().configure(
-            f"{self.name}:{self._environment.value}",
-            normalize_rate_limit_rules(
-                self._settings.get("rate_limit_rules"),
-                _RATE_LIMIT_DEFAULTS,
-            ),
-            metric_labels={"exchange": self.name, "environment": self._environment.value},
-        )
+        self._rate_limiter = guard.rate_limiter
 
     # ----------------------------------------------------------------------------------
     # Konfiguracja streamingu long-pollowego
@@ -357,6 +370,13 @@ class BinanceSpotAdapter(ExchangeAdapter):
         base_url = str(
             stream_settings.get("base_url", self._settings.get("stream_base_url", "http://127.0.0.1:8765"))
         )
+        try:
+            self._network_guard.ensure_allowed(base_url, check_source_ip=False)
+        except NetworkAccessViolation as exc:
+            raise ExchangeNetworkError(
+                message=f"Naruszenie konfiguracji sieci: {exc.reason}",
+                reason=exc,
+            ) from exc
         default_path = f"/stream/{self.name}/{scope}"
         path = str(
             stream_settings.get(
@@ -587,9 +607,8 @@ class BinanceSpotAdapter(ExchangeAdapter):
 
     @staticmethod
     def _calculate_backoff(attempt: int) -> float:
-        base_delay = min(_BASE_BACKOFF * (2 ** (attempt - 1)), _BACKOFF_CAP)
-        jitter = random.uniform(*_JITTER_RANGE)
-        return base_delay + jitter
+        manager = StreamingBackoff(base=_BASE_BACKOFF, cap=_BACKOFF_CAP, jitter=_JITTER_RANGE)
+        return manager.calculate_delay(attempt)
 
     def _record_weight_headers(self, headers: Any) -> None:
         if not headers:
@@ -673,17 +692,17 @@ class BinanceSpotAdapter(ExchangeAdapter):
         if cooldown <= 0:
             return
         cooldown = max(1.0, min(cooldown, 90.0))
-        deadline = time.monotonic() + cooldown
-        if deadline > self._reconnect_backoff_until:
-            self._reconnect_backoff_until = deadline
-            self._reconnect_reason = reason
-            _LOGGER.warning(
-                "Binance Spot wymaga ponownego połączenia – odczekaj %.2fs (powód=%s)",
-                cooldown,
-                reason,
-            )
+        self._streaming_backoff.register_cooldown(cooldown, reason=reason)
+        self._reconnect_backoff_until = self._streaming_backoff.deadline
+        self._reconnect_reason = self._streaming_backoff.reason
+        _LOGGER.warning(
+            "Binance Spot wymaga ponownego połączenia – odczekaj %.2fs (powód=%s)",
+            cooldown,
+            reason,
+        )
 
     def _reset_reconnect_state(self) -> None:
+        self._streaming_backoff.reset()
         self._reconnect_backoff_until = 0.0
         self._reconnect_reason = None
 
@@ -703,8 +722,12 @@ class BinanceSpotAdapter(ExchangeAdapter):
             self._throttle_cooldown_until = 0.0
             self._throttle_cooldown_reason = None
         if self._reconnect_backoff_until > 0.0:
-            if now < self._reconnect_backoff_until:
-                remaining = self._reconnect_backoff_until - now
+            self._streaming_backoff.enforce()
+            status = self._streaming_backoff.status()
+            self._reconnect_backoff_until = self._streaming_backoff.deadline
+            self._reconnect_reason = status[2]
+            if status[0]:  # pragma: no cover - redundancja stanu
+                remaining = status[1]
                 raise ExchangeNetworkError(
                     message=(
                         "Adapter Binance oczekuje na ponowne połączenie (pozostało %.2fs, powód=%s)."
@@ -717,18 +740,20 @@ class BinanceSpotAdapter(ExchangeAdapter):
     def failover_status(self) -> Mapping[str, Any]:
         now = time.monotonic()
         throttle_remaining = max(0.0, self._throttle_cooldown_until - now)
-        reconnect_remaining = max(0.0, self._reconnect_backoff_until - now)
+        reconnect_required, reconnect_remaining, reconnect_reason = self._streaming_backoff.status()
+        self._reconnect_backoff_until = self._streaming_backoff.deadline
+        self._reconnect_reason = reconnect_reason
         return {
             "throttle_active": throttle_remaining > 0.0,
             "throttle_remaining": _CooldownMeasurement(
                 throttle_remaining if throttle_remaining > 0.0 else 0.0
             ),
             "throttle_reason": self._throttle_cooldown_reason,
-            "reconnect_required": reconnect_remaining > 0.0,
+            "reconnect_required": reconnect_required,
             "reconnect_remaining": _CooldownMeasurement(
                 reconnect_remaining if reconnect_remaining > 0.0 else 0.0
             ),
-            "reconnect_reason": self._reconnect_reason,
+            "reconnect_reason": reconnect_reason,
         }
 
     def _execute_request(

@@ -23,21 +23,24 @@ class _AdapterInit:
     environment: Environment
     settings: dict[str, object]
     watchdog: object | None
+    network_guard: object | None
     passphrase: str | None
 
 
 class _FakeMarginAdapter:
     last_init: _AdapterInit | None = None
 
-    def __init__(self, credentials, *, environment, settings=None, watchdog=None):
+    def __init__(self, credentials, *, environment, settings=None, watchdog=None, network_guard=None):
         self.credentials = credentials
         self.environment = environment
         self.settings = dict(settings or {})
-        self.watchdog = watchdog
+        self.network_guard = network_guard
+        self.watchdog = getattr(network_guard, "watchdog", watchdog)
         _FakeMarginAdapter.last_init = _AdapterInit(
             environment,
             self.settings,
-            watchdog,
+            self.watchdog,
+            network_guard,
             credentials.passphrase,
         )
 

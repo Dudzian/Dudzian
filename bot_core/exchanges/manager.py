@@ -55,6 +55,10 @@ from bot_core.exchanges.io import ExchangeIOLayer
 from bot_core.strategies.catalog import StrategyCatalog, StrategyPresetDescriptor
 from bot_core.observability.metrics import get_global_metrics_registry
 from bot_core.exchanges.rate_limiter import RateLimitRule, normalize_rate_limit_rules
+from bot_core.exchanges.network_guard import (
+    ExchangeNetworkGuard,
+    build_exchange_network_guard,
+)
 from bot_core.exchanges.signal_quality import SignalQualityReporter
 
 try:  # pragma: no cover
@@ -1389,6 +1393,7 @@ class ExchangeManager:
         self._watchdog: Watchdog | None = None
         self._watchdog_config: Dict[str, Any] = {}
         self._shared_rate_limit_rules: tuple[RateLimitRule, ...] | None = None
+        self._network_guard: ExchangeNetworkGuard | None = None
         self._signal_reporter = SignalQualityReporter(exchange_id=self.exchange_id)
         self._failover_enabled: bool = False
         self._failover_threshold: int = 2
@@ -2076,6 +2081,21 @@ class ExchangeManager:
             self._watchdog = Watchdog()
         return self._watchdog
 
+    def _ensure_network_guard(
+        self, *, adapter_name: str, environment: Environment, rate_limit_rules: Sequence[RateLimitRule] | None
+    ) -> ExchangeNetworkGuard:
+        labels = {"exchange": adapter_name, "environment": environment.value}
+        defaults = tuple(rate_limit_rules or (RateLimitRule(rate=60, per=60.0),))
+        self._network_guard = build_exchange_network_guard(
+            adapter_name=adapter_name,
+            environment=environment.value,
+            rate_limit_rules=rate_limit_rules,
+            default_rules=defaults,
+            watchdog=self._ensure_watchdog(),
+            metric_labels=labels,
+        )
+        return self._network_guard
+
     def _record_network_error(self, operation: str, exc: Exception) -> None:
         self._network_error_counts[operation] += 1
         log.warning("Network error during %s: %s", operation, exc)
@@ -2119,7 +2139,12 @@ class ExchangeManager:
             kwargs: Dict[str, object] = {"environment": environment}
             if settings:
                 kwargs["settings"] = settings
-            kwargs["watchdog"] = self._ensure_watchdog()
+            guard = self._ensure_network_guard(
+                adapter_name=self.exchange_id,
+                environment=environment,
+                rate_limit_rules=settings.get("rate_limit_rules"),
+            )
+            kwargs["network_guard"] = guard
             self._native_adapter = registration.factory(credentials, **kwargs)
 
         return self._native_adapter
