@@ -18,9 +18,11 @@ from bot_core.observability.dashboard_sync import (
 from bot_core.observability.io import load_slo_definitions, load_slo_measurements
 from bot_core.observability.metrics import (
     CounterMetric,
+    DataFeedMetricSet,
     GaugeMetric,
     HistogramMetric,
     MetricsRegistry,
+    get_data_feed_metrics,
     get_global_metrics_registry,
 )
 from bot_core.observability.exporters import (
@@ -73,8 +75,10 @@ def __getattr__(name: str) -> Any:  # pragma: no cover - mechanizm leniwy
 
 __all__ = [
     "CounterMetric",
+    "DataFeedMetricSet",
     "GaugeMetric",
     "HistogramMetric",
+    "get_data_feed_metrics",
     "MetricsRegistry",
     "get_global_metrics_registry",
     "MetricsHTTPServer",
