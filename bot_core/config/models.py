@@ -1033,6 +1033,7 @@ class StrategyDefinitionConfig:
     license_tier: str | None = None
     risk_classes: Sequence[str] = field(default_factory=tuple)
     required_data: Sequence[str] = field(default_factory=tuple)
+    risk_hooks: Sequence[str] = field(default_factory=tuple)
     capability: str | None = None
     risk_profile: str | None = None
     tags: Sequence[str] = field(default_factory=tuple)

@@ -13,6 +13,7 @@ from bot_core.strategies.base import (
     ensure_positive_float,
     ensure_positive_int,
 )
+from bot_core.strategies.utils import build_signal_metadata
 from bot_core.trading.exit_reasons import ExitReason
 
 
@@ -229,18 +230,14 @@ class DayTradingStrategy(BaseStrategy):
         direction: str,
         exit_reason: str | None = None,
     ) -> StrategySignal:
-        metadata: Dict[str, Any] = {
-            "strategy": {
-                "type": "day_trading",
-                "profile": "intraday_momentum",
-                "risk_label": "intraday",
-            },
-            "signal_strength": strength,
-            "volatility": volatility,
-            "position": direction,
-        }
-        if exit_reason:
-            metadata["exit_reason"] = exit_reason
+        metadata = build_signal_metadata(
+            strategy_type="day_trading",
+            profile="intraday_momentum",
+            risk_label="intraday",
+            position=direction,
+            exit_reason=exit_reason,
+            extra={"signal_strength": strength, "volatility": volatility},
+        )
         return StrategySignal(
             symbol=snapshot.symbol,
             side=side,

@@ -12,6 +12,7 @@ from bot_core.strategies.base import (
     ensure_ratio,
 )
 from bot_core.trading.exit_reasons import ExitReason
+from bot_core.strategies.utils import build_signal_metadata, compute_change_ratio
 
 
 @dataclass(slots=True)
@@ -70,10 +71,9 @@ class ScalpingStrategy(BaseStrategy):
         state.last_price = snapshot.close
 
         signals: List[StrategySignal] = []
-        if previous_price is None or previous_price <= 0:
+        change_ratio = compute_change_ratio(previous_price, snapshot.close)
+        if change_ratio is None:
             return signals
-
-        change_ratio = (snapshot.close - previous_price) / previous_price
 
         if state.position is None:
             if change_ratio >= self._settings.min_price_change:
@@ -165,19 +165,17 @@ class ScalpingStrategy(BaseStrategy):
         direction: str,
         exit_reason: str | None = None,
     ) -> Dict[str, object]:
-        metadata: Dict[str, object] = {
-            "strategy": {
-                "type": "scalping",
-                "profile": "scalping_aggressive",
-                "risk_label": "high",
+        return build_signal_metadata(
+            strategy_type="scalping",
+            profile="scalping_aggressive",
+            risk_label="high",
+            position=direction,
+            exit_reason=exit_reason,
+            extra={
+                "change_ratio": change_ratio,
+                "last_close": snapshot.close,
             },
-            "change_ratio": change_ratio,
-            "last_close": snapshot.close,
-        }
-        if exit_reason:
-            metadata["exit_reason"] = exit_reason
-        metadata["position"] = direction
-        return metadata
+        )
 
 
 __all__ = ["ScalpingSettings", "ScalpingStrategy"]
