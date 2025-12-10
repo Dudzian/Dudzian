@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass
-from typing import Iterator, Mapping, Sequence
+from typing import Collection, Iterator, Mapping, Sequence
 
 from bot_core.exchanges.errors import (
     ExchangeAPIError,
@@ -181,6 +181,15 @@ _BITMEX_THROTTLE_KEYWORDS = (
     "retry",
     "throttle",
 ) + _NETWORK_THROTTLE_KEYWORDS
+
+
+_NOWA_GIELD_CODE_MAPPING: Mapping[str, type[ExchangeAPIError]] = {
+    "INVALID_SIGNATURE": ExchangeAuthError,
+    "AUTHENTICATION_REQUIRED": ExchangeAuthError,
+    "RATE_LIMIT_EXCEEDED": ExchangeThrottlingError,
+    "ORDER_NOT_FOUND": ExchangeAPIError,
+    "INVALID_SYMBOL": ExchangeAPIError,
+}
 
 
 @dataclass(slots=True)
@@ -461,6 +470,28 @@ def _iter_error_messages(source: object) -> Iterator[str]:
         yield text
 
 
+def raise_for_http_status(
+    *,
+    status_code: int,
+    payload: object,
+    default_message: str,
+    auth_statuses: Collection[int] = (401, 403),
+    throttle_statuses: Collection[int] = _HTTP_THROTTLE_STATUS_CODES,
+) -> None:
+    """Mapuje standardowe błędy HTTP na wyjątki domenowe."""
+
+    message = next(_iter_error_messages(payload), default_message)
+    if status_code in auth_statuses:
+        raise ExchangeAuthError(message=message, status_code=status_code, payload=payload)
+    if status_code in throttle_statuses:
+        raise ExchangeThrottlingError(
+            message=message,
+            status_code=status_code,
+            payload=payload,
+        )
+    raise ExchangeAPIError(message=message, status_code=status_code, payload=payload)
+
+
 def _parse_int(value: object) -> int | None:
     """Próbuje sparsować wartość do liczby całkowitej."""
 
@@ -635,6 +666,25 @@ def _coerce_payload_mapping(payload: object) -> Mapping[str, object] | None:
     return None
 
 
+def raise_for_nowa_gielda_error(*, status_code: int, payload: object, default_message: str) -> None:
+    """Mapuje odpowiedzi API nowa_gielda na wyjątki domenowe."""
+
+    mapping = _coerce_payload_mapping(payload)
+    code: str | None = None
+    message = next(_iter_error_messages(mapping or payload), default_message)
+    if mapping:
+        raw_code = mapping.get("code")
+        if isinstance(raw_code, str):
+            code = raw_code
+    if code and (exc_cls := _NOWA_GIELD_CODE_MAPPING.get(code)):
+        raise exc_cls(message=message, status_code=status_code, payload=payload)
+    raise_for_http_status(
+        status_code=status_code,
+        payload=payload,
+        default_message=message or default_message,
+    )
+
+
 def raise_for_deribit_error(*, status_code: int, payload: Mapping[str, object], default_message: str) -> None:
     """Mapuje odpowiedź Deribit na wyjątki domenowe."""
 
@@ -709,9 +759,11 @@ def raise_for_bitmex_error(*, status_code: int, payload: Mapping[str, object], d
 
 
 __all__ = [
+    "raise_for_http_status",
     "raise_for_binance_error",
     "raise_for_kraken_error",
     "raise_for_zonda_error",
     "raise_for_deribit_error",
     "raise_for_bitmex_error",
+    "raise_for_nowa_gielda_error",
 ]

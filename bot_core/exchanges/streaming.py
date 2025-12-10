@@ -27,6 +27,7 @@ from bot_core.exchanges.errors import (
     ExchangeNetworkError,
     ExchangeThrottlingError,
 )
+from bot_core.exchanges.streaming_base import StreamingBackoff
 from bot_core.exchanges.http_client import urlopen
 from bot_core.observability.metrics import (
     CounterMetric,
@@ -548,6 +549,9 @@ class LocalLongPollStream(Iterable[StreamBatch]):
         self._backoff_cap = max(self._backoff_base, float(backoff_cap))
         jitter_values = tuple(float(item) for item in jitter) if jitter else _DEFAULT_JITTER
         self._jitter = jitter_values if len(jitter_values) == 2 else _DEFAULT_JITTER
+        self._streaming_backoff = StreamingBackoff(
+            base=self._backoff_base, cap=self._backoff_cap, jitter=self._jitter
+        )
         self._clock = clock or time.monotonic
         self._sleep = sleep or time.sleep
 
@@ -972,10 +976,9 @@ class LocalLongPollStream(Iterable[StreamBatch]):
             if self._closed:
                 break
             if self._backoff_base > 0.0 and should_backoff:
-                delay = min(self._backoff_base * (2 ** (attempt - 1)), self._backoff_cap)
-                jitter = random.uniform(*self._jitter) if self._jitter[1] > 0 else 0.0
-                if delay + jitter > 0:
-                    self._sleep(delay + jitter)
+                delay = self._streaming_backoff.calculate_delay(attempt)
+                if delay > 0:
+                    self._sleep(delay)
 
         if reconnect_attempts > 0 and reconnect_started_at is not None:
             self._record_reconnect_result(

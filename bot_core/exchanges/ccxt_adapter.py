@@ -23,12 +23,13 @@ from bot_core.exchanges.errors import (
     ExchangeThrottlingError,
 )
 from bot_core.exchanges.health import RetryPolicy, Watchdog
-from bot_core.exchanges.network_guard import NetworkAccessGuard, NetworkAccessViolation
-from bot_core.exchanges.rate_limiter import (
-    RateLimitRule,
-    get_global_rate_limiter_registry,
-    normalize_rate_limit_rules,
+from bot_core.exchanges.network_guard import (
+    ExchangeNetworkGuard,
+    NetworkAccessGuard,
+    NetworkAccessViolation,
+    build_exchange_network_guard,
 )
+from bot_core.exchanges.rate_limiter import RateLimitRule, normalize_rate_limit_rules
 from bot_core.observability.metrics import MetricsRegistry, get_global_metrics_registry
 
 try:  # pragma: no cover - opcjonalny import CCXT
@@ -118,6 +119,7 @@ class CCXTSpotAdapter(ExchangeAdapter):
         "_rate_limit_errors",
         "_base_errors",
         "_network_guard",
+        "_network_guard_bundle",
         "_rate_limiter",
         "_retry_policy",
         "_sleep",
@@ -134,6 +136,7 @@ class CCXTSpotAdapter(ExchangeAdapter):
         settings: Mapping[str, Any] | None = None,
         client: CCXTExchange | None = None,
         metrics_registry: MetricsRegistry | None = None,
+        network_guard: ExchangeNetworkGuard | None = None,
     ) -> None:
         super().__init__(credentials)
         self._exchange_id = exchange_id
@@ -173,17 +176,20 @@ class CCXTSpotAdapter(ExchangeAdapter):
         self._base_errors = self._resolve_error_types(
             "base_error_types", (_CCXTExchangeError,) if _CCXTExchangeError else ()
         )
-        self._network_guard = NetworkAccessGuard(logger=_LOGGER)
-        self._client = client or self._build_client()
-        default_rules = (
-            RateLimitRule(rate=60, per=60.0),
-        )
+        default_rules = (RateLimitRule(rate=60, per=60.0),)
         configured_rules = self._settings.get("rate_limit_rules")
-        self._rate_limiter = get_global_rate_limiter_registry().configure(
-            f"{self.name}:{self._exchange_id}:{self._environment.value}",
-            normalize_rate_limit_rules(configured_rules, default_rules),
-            metric_labels={"exchange": self.name, "mode": self._environment.value},
+        guard_labels = {"exchange": self.name, "mode": self._environment.value}
+        guard = network_guard or build_exchange_network_guard(
+            adapter_name=f"{self.name}:{self._exchange_id}",
+            environment=self._environment.value,
+            rate_limit_rules=normalize_rate_limit_rules(configured_rules, default_rules),
+            default_rules=default_rules,
+            metric_labels=guard_labels,
         )
+        self._network_guard_bundle = guard
+        self._network_guard = guard.network_access
+        self._rate_limiter = guard.rate_limiter
+        self._client = client or self._build_client()
         retry_settings = self._settings.get("retry_policy")
         if isinstance(retry_settings, Mapping):
             self._retry_policy = RetryPolicy(**retry_settings)  # type: ignore[arg-type]
@@ -424,8 +430,21 @@ class WatchdogCCXTAdapter(CCXTSpotAdapter):
         client: CCXTExchange | None = None,
         metrics_registry: MetricsRegistry | None = None,
         watchdog: Watchdog | None = None,
+        network_guard: ExchangeNetworkGuard | None = None,
     ) -> None:
-        self._watchdog = watchdog or Watchdog()
+        guard = network_guard
+        if guard is None:
+            guard = build_exchange_network_guard(
+                adapter_name=f"{self.name}:{exchange_id}",
+                environment=(environment or credentials.environment or Environment.LIVE).value,
+                rate_limit_rules=normalize_rate_limit_rules(
+                    (settings or {}).get("rate_limit_rules"), (),
+                ),
+                default_rules=(RateLimitRule(rate=60, per=60.0),),
+                watchdog=watchdog,
+                metric_labels={"exchange": self.name},
+            )
+        self._watchdog = guard.watchdog
         super().__init__(
             credentials,
             exchange_id=exchange_id,
@@ -433,6 +452,7 @@ class WatchdogCCXTAdapter(CCXTSpotAdapter):
             settings=settings,
             client=client,
             metrics_registry=metrics_registry,
+            network_guard=guard,
         )
 
     def _call_client(self, method_name: str, *args: Any, **kwargs: Any) -> Any:

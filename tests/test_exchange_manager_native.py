@@ -100,13 +100,14 @@ class _DummyExchange:
 class _StubMarginAdapter:
     instances: List["_StubMarginAdapter"] = []
 
-    def __init__(self, credentials, *, environment, settings=None, **kwargs) -> None:
+    def __init__(self, credentials, *, environment, settings=None, network_guard=None, **kwargs) -> None:
         self.credentials = credentials
         self.environment = environment
         self.settings = settings or {}
         self.orders: List[Any] = []
         self.canceled: List[Any] = []
-        self.watchdog = kwargs.get("watchdog")
+        self.network_guard = network_guard
+        self.watchdog = getattr(network_guard, "watchdog", kwargs.get("watchdog"))
         _StubMarginAdapter.instances.append(self)
 
     def fetch_account_snapshot(self) -> AccountSnapshot:

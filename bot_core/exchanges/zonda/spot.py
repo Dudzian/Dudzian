@@ -1029,7 +1029,10 @@ class ZondaSpotAdapter(ExchangeAdapter):
 
     def _ensure_network_access(self, url: str, *, check_source_ip: bool = True) -> None:
         try:
-            self._network_guard.ensure_allowed(url, check_source_ip=check_source_ip)
+            try:
+                self._network_guard.ensure_allowed(url, check_source_ip=check_source_ip)
+            except TypeError:  # pragma: no cover - kompatybilność z testowymi atrapami
+                self._network_guard.ensure_allowed(url)
         except NetworkAccessViolation as exc:  # pragma: no cover - ścieżka logowana w testach
             raise ExchangeNetworkError(
                 message=f"Naruszenie konfiguracji sieci: {exc.reason}",

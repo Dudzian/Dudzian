@@ -34,7 +34,7 @@ from bot_core.exchanges.network_guard import (
     NetworkAccessViolation,
     normalize_relative_api_path,
 )
-from bot_core.exchanges.error_mapping import raise_for_kraken_error
+from bot_core.exchanges.error_mapping import raise_for_http_status, raise_for_kraken_error
 from bot_core.exchanges.health import Watchdog
 from bot_core.exchanges.rate_limiter import (
     RateLimitRule,
@@ -922,23 +922,14 @@ class KrakenSpotAdapter(ExchangeAdapter):
                     )
                     time.sleep(sleep_for + jitter)
                     continue
-                if exc.code in {401, 403}:
-                    raise ExchangeAuthError(
-                        f"Kraken odrzucił uwierzytelnienie ({exc.code}).",
-                        exc.code,
-                        payload=None,
-                    ) from exc
-                if exc.code == 429:
-                    raise ExchangeThrottlingError(
-                        "Kraken zgłosił limit zapytań (HTTP 429).",
-                        exc.code,
-                        payload=None,
-                    ) from exc
-                raise ExchangeAPIError(
-                    f"Kraken API zgłosiło błąd HTTP {exc.code}.",
-                    exc.code,
-                    payload=None,
-                ) from exc
+                try:
+                    raise_for_http_status(
+                        status_code=exc.code,
+                        payload=exc.read() or b"",
+                        default_message=f"Kraken API zgłosiło błąd HTTP {exc.code}.",
+                    )
+                except ExchangeAPIError as api_error:
+                    raise api_error from exc
             except URLError as exc:
                 duration = max(time.monotonic() - start, 0.0)
                 self._metric_http_latency.observe(duration, labels=labels)
