@@ -195,3 +195,70 @@ def test_pipeline_configures_optimization_scheduler(tmp_path: Path) -> None:
     reports = runtime.optimization_scheduler.trigger()
     runtime.optimization_scheduler.stop()
     assert reports
+
+
+def test_scheduler_uses_queue_and_quality_baseline(tmp_path: Path) -> None:
+    catalog, definition = _build_catalog()
+    strategy_config = StrategyDefinitionConfig(
+        name="alpha",
+        engine="dummy",
+        parameters={"alpha": 0.0},
+        license_tier="basic",
+        risk_classes=("a",),
+        required_data=(),
+    )
+    core_config = type("CoreStub", (), {"strategy_definitions": {"alpha": strategy_config}})()
+    optimization_cfg = RuntimeOptimizationSettings(
+        enabled=True,
+        default_algorithm="grid",
+        report_directory=tmp_path,
+        tasks=(
+            StrategyOptimizationTaskConfig(
+                name="alpha-task",
+                strategy="alpha",
+                algorithm="grid",
+                max_trials=2,
+                search_space=StrategyOptimizationSearchSpaceConfig(grid={"alpha": [0.0, 1.0]}),
+            ),
+        ),
+    )
+
+    class StubRepo:
+        def get_quality_report(self, version: str) -> dict[str, float]:  # pragma: no cover - prosty stub
+            return {"version": version, "score": 0.42}
+
+    class StubFeed:
+        def load_history(self, strategy_name: str, bars: int) -> tuple[MarketSnapshot, ...]:
+            snapshot = MarketSnapshot(
+                symbol="TEST/USDT",
+                timestamp=0,
+                open=1.0,
+                high=1.0,
+                low=1.0,
+                close=1.0,
+                volume=0.0,
+            )
+            return tuple(snapshot for _ in range(max(1, bars)))
+
+    class StubRuntime:
+        def __init__(self) -> None:
+            self.data_feed = StubFeed()
+            self.optimization_scheduler = None
+            self.optimization_queue = None
+
+    runtime = StubRuntime()
+    scheduler = _configure_optimization_scheduler(
+        runtime,
+        core_config=core_config,
+        optimization_cfg=optimization_cfg,
+        model_repository=StubRepo(),
+        catalog=catalog,
+    )
+
+    assert scheduler is not None
+    reports = runtime.optimization_scheduler.trigger()
+    runtime.optimization_scheduler.stop()
+    assert runtime.optimization_queue is not None
+    runtime.optimization_queue.shutdown()
+    assert reports
+    assert reports[0].best.metadata.get("baseline_quality", {}).get("score") == 0.42

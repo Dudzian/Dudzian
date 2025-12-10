@@ -2164,7 +2164,7 @@ class AIManager:
             except ModelArtifactValidationError:
                 logger.exception("Artefakt modelu %s nie spełnia wymogów schematu JSON", name)
                 raise
-            destination = repository.save(enriched, filename)
+            destination = repository.save_model(enriched, filename=filename)
 
             inference = DecisionModelInference(repository)
             inference.load_weights(destination)
@@ -2386,7 +2386,18 @@ class AIManager:
             repository = self._model_repository
 
         loaded = 0
-        for artifact_path in sorted(repository.base_path.glob(pattern)):
+        versions = tuple(repository.list_versions())
+        sources: list[Path] = []
+        if versions:
+            for version in versions:
+                try:
+                    sources.append(repository.resolve(version))
+                except Exception:
+                    logger.debug("Could not resolve version %s from manifest", version, exc_info=True)
+        else:
+            sources.extend(sorted(repository.base_path.glob(pattern)))
+
+        for artifact_path in sources:
             try:
                 inference = DecisionModelInference(repository)
                 inference.load_weights(artifact_path)

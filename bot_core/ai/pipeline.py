@@ -875,16 +875,13 @@ def train_gradient_boosting_model(
     repository = FilesystemModelRepository(output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
     filename = f"{model_name}.json"
-    if model_version:
-        destination = repository.publish(
-            artifact,
-            version=model_version,
-            filename=filename,
-            aliases=publish_aliases,
-            activate=activate_version,
-        )
-    else:
-        destination = repository.save(artifact, filename)
+    destination = repository.save_model(
+        artifact,
+        version=model_version,
+        filename=filename,
+        aliases=publish_aliases if model_version else None,
+        activate=activate_version,
+    )
     LOGGER.info("Saved decision model artifact to %s", destination)
     return destination
 

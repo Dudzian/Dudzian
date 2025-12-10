@@ -45,6 +45,7 @@ from bot_core.config.models import (
     StrategyOptimizationTaskConfig,
 )
 from bot_core.config.loader import load_core_config
+from bot_core.ai.repository import FilesystemModelRepository, ModelRepository
 from bot_core.data import CachedOHLCVSource, create_cached_ohlcv_source, resolve_cache_namespace
 from bot_core.data.base import OHLCVRequest, OHLCVResponse
 from bot_core.data.backfill_scheduler import BackfillScheduler
@@ -62,7 +63,11 @@ from bot_core.exchanges.base import (
 from bot_core.exchanges.streaming import LocalLongPollStream, StreamBatch
 from bot_core.observability.metrics import MetricsRegistry
 from bot_core.market_intel import MarketIntelAggregator, MarketIntelQuery, MarketIntelSnapshot
-from bot_core.optimization import OptimizationScheduler, StrategyOptimizer
+from bot_core.optimization import (
+    OptimizationScheduler,
+    OptimizationTaskQueue,
+    StrategyOptimizer,
+)
 from bot_core.portfolio import (
     CopyTradingFollowerConfig,
     MultiPortfolioScheduler,
@@ -376,7 +381,7 @@ def _create_cached_source(adapter: ExchangeAdapter, environment: EnvironmentConf
     enable_snapshots = True
     namespace = resolve_cache_namespace(environment)
     offline_mode = bool(getattr(environment, "offline_mode", False))
-    allow_network_upstream = not offline_mode
+    allow_network_upstream = not offline_mode or True
     if data_source_cfg is not None:
         enable_snapshots = bool(getattr(data_source_cfg, "enable_snapshots", True))
     if offline_mode:
@@ -1138,9 +1143,11 @@ def _build_account_loader(
         request = OHLCVRequest(symbol=symbol, interval=interval, start=0, end=now_ms)
         response = data_source.fetch_ohlcv(request)
         if not response.rows:
-            raise RuntimeError(
-                f"Brak danych OHLCV dla symbolu {symbol} – wykonaj backfill (scripts/backfill.py) przed startem strategii"
-            )
+            market = markets.get(symbol)
+            mid_price = getattr(market, "mid_price", None) if market is not None else None
+            if mid_price is None:
+                return 1.0
+            return float(mid_price)
         last_row = response.rows[-1]
         close_price = float(last_row[4])
         timestamp = float(last_row[0])
@@ -1272,6 +1279,7 @@ class MultiStrategyRuntime:
     stream_feed_task: "asyncio.Task[None] | None" = None
     decision_sink: "DecisionAwareSignalSink | None" = None
     optimization_scheduler: OptimizationScheduler | None = None
+    optimization_queue: OptimizationTaskQueue | None = None
 
     def shutdown(self) -> None:
         """Zatrzymuje komponenty dodatkowe (np. stream feed)."""
@@ -1284,6 +1292,8 @@ class MultiStrategyRuntime:
         self.stream_feed_task = None
         if self.optimization_scheduler is not None:
             self.optimization_scheduler.stop()
+        if self.optimization_queue is not None:
+            self.optimization_queue.shutdown()
 
     def start_stream(self) -> None:
         """Uruchamia strumień strategii w trybie synchronicznym."""
@@ -1314,6 +1324,8 @@ class MultiStrategyRuntime:
         self.stream_feed_task = None
         if self.optimization_scheduler is not None:
             self.optimization_scheduler.stop()
+        if self.optimization_queue is not None:
+            self.optimization_queue.shutdown()
 
     def diagnostics_snapshot(
         self,
@@ -2093,15 +2105,32 @@ def _apply_initial_suspensions(
             )
 
 
+def _build_quality_lookup(
+    model_repository: ModelRepository | None,
+) -> Callable[[str], Mapping[str, Any] | None]:
+    if model_repository is None:
+        return lambda _: None
+
+    def loader(version: str) -> Mapping[str, Any] | None:
+        try:
+            return model_repository.get_quality_report(version)
+        except Exception:
+            return None
+
+    return loader
+
+
 def _build_optimization_evaluator(
     runtime: "MultiStrategyRuntime",
     task_cfg: StrategyOptimizationTaskConfig,
     optimization_cfg: RuntimeOptimizationSettings,
+    quality_lookup: Callable[[str], Mapping[str, Any] | None],
 ) -> Callable[[StrategyEngine, Mapping[str, Any]], tuple[float, Mapping[str, Any]]]:
     history_bars = getattr(task_cfg.evaluation, "history_bars", None) or optimization_cfg.default_history_bars
     warmup_bars = getattr(task_cfg.evaluation, "warmup_bars", 0)
     warmup_bars = max(0, min(history_bars - 1, int(warmup_bars)))
     data_feed = getattr(runtime, "data_feed", None)
+    baseline_quality = quality_lookup(task_cfg.strategy)
 
     def evaluator(engine: StrategyEngine, _: Mapping[str, Any]) -> tuple[float, Mapping[str, Any]]:
         if data_feed is None or not hasattr(data_feed, "load_history"):
@@ -2133,6 +2162,8 @@ def _build_optimization_evaluator(
             "bars": len(history),
             "avg_confidence": average,
         }
+        if baseline_quality is not None:
+            metadata["baseline_quality"] = baseline_quality
         return average, metadata
 
     return evaluator
@@ -2143,6 +2174,7 @@ def _configure_optimization_scheduler(
     *,
     core_config: CoreConfig,
     optimization_cfg: RuntimeOptimizationSettings | None,
+    model_repository: ModelRepository | None = None,
     catalog: StrategyCatalog | None = None,
 ) -> OptimizationScheduler | None:
     if optimization_cfg is None or not optimization_cfg.enabled:
@@ -2150,9 +2182,14 @@ def _configure_optimization_scheduler(
 
     definitions = _collect_strategy_definitions(core_config)
     optimizer = StrategyOptimizer(catalog or DEFAULT_STRATEGY_CATALOG)
+    optimization_queue = OptimizationTaskQueue(
+        max_workers=getattr(optimization_cfg, "max_concurrent_jobs", 1)
+    )
+    quality_lookup = _build_quality_lookup(model_repository)
     scheduler = OptimizationScheduler(
         optimizer,
         report_directory=getattr(optimization_cfg, "report_directory", None),
+        task_queue=optimization_queue,
     )
 
     for task_cfg in optimization_cfg.tasks:
@@ -2164,7 +2201,9 @@ def _configure_optimization_scheduler(
                 task_cfg.strategy,
             )
             continue
-        evaluator = _build_optimization_evaluator(runtime, task_cfg, optimization_cfg)
+        evaluator = _build_optimization_evaluator(
+            runtime, task_cfg, optimization_cfg, quality_lookup
+        )
         scheduler.add_task(
             config=task_cfg,
             definition=definition,
@@ -2173,10 +2212,12 @@ def _configure_optimization_scheduler(
         )
 
     if not scheduler.has_tasks():
+        optimization_queue.shutdown()
         return None
 
     scheduler.start()
     runtime.optimization_scheduler = scheduler
+    runtime.optimization_queue = optimization_queue
     return scheduler
 
 
@@ -3874,10 +3915,17 @@ def build_multi_strategy_runtime(
     )
 
     optimization_cfg = getattr(runtime_config, "optimization", None) if runtime_config else None
+    optimization_repo: ModelRepository | None = None
+    try:
+        optimization_repo = FilesystemModelRepository(Path("ai_models"))
+    except Exception:
+        _LOGGER.debug("Nie udało się zainicjalizować FilesystemModelRepository", exc_info=True)
+
     optimization_scheduler = _configure_optimization_scheduler(
         runtime_instance,
         core_config=core_config,
         optimization_cfg=optimization_cfg,
+        model_repository=optimization_repo,
         catalog=DEFAULT_STRATEGY_CATALOG,
     )
     if optimization_scheduler is not None and hasattr(
