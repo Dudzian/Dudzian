@@ -16,6 +16,7 @@ from typing import Any, Callable, Iterable, Mapping, MutableMapping, Sequence
 
 from bot_core.risk.engine import ThresholdRiskEngine
 from bot_core.security.tokens import ServiceToken, ServiceTokenValidator
+from bot_core.observability.risk import RiskObservabilitySink
 
 try:  # pragma: no cover - środowiska bez protobuf/gRPC
     from bot_core.generated import trading_pb2, trading_pb2_grpc  # type: ignore
@@ -160,10 +161,12 @@ class RiskSnapshotBuilder:
         *,
         clock: Callable[[], datetime] | None = None,
         profile_summary_resolver: Callable[[str], Mapping[str, Any]] | None = None,
+        observability_sink: RiskObservabilitySink | None = None,
     ) -> None:
         self._risk_engine = risk_engine
         self._clock = clock or _utc_now
         self._summary_resolver = profile_summary_resolver or _default_profile_summary_resolver
+        self._observability_sink = observability_sink
 
     def build(self, profile_name: str) -> RiskSnapshot | None:
         state = self._risk_engine.snapshot_state(profile_name)
@@ -340,6 +343,20 @@ class RiskSnapshotBuilder:
             force_liquidation=force_liquidation,
             metadata=metadata,
         )
+        if self._observability_sink is not None:
+            try:
+                self._observability_sink.publish_snapshot(
+                    profile_name,
+                    {
+                        "limits": dict(limits),
+                        "statistics": dict(statistics),
+                        "cost_breakdown": dict(cost_breakdown),
+                        "state": dict(state) if isinstance(state, Mapping) else {},
+                    },
+                    metadata=metadata,
+                )
+            except Exception:  # pragma: no cover - defensywne logowanie
+                _LOGGER.debug("Nie udało się przekazać snapshotu do obserwowalności", exc_info=True)
         metadata["profile"] = profile_name
         metadata["generated_at"] = snapshot.generated_at.isoformat()
         return snapshot

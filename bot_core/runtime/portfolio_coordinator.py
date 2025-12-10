@@ -10,7 +10,7 @@ from datetime import datetime, timezone
 
 from bot_core.market_intel import MarketIntelSnapshot
 from bot_core.observability.slo import SLOStatus
-from bot_core.portfolio import PortfolioDecision, PortfolioGovernor
+from bot_core.portfolio import PortfolioDecision, PortfolioGovernor, PortfolioScheduler
 from bot_core.risk import StressOverrideRecommendation
 from bot_core.runtime.schedulers import RuntimeScheduler
 
@@ -30,7 +30,11 @@ def _default_clock() -> datetime:
 
 @dataclass(slots=True)
 class PortfolioRuntimeCoordinator(RuntimeScheduler):
-    """Odpowiada za cykliczną ewaluację PortfolioGovernora w runtime."""
+    """Odpowiada za cykliczną ewaluację PortfolioGovernora w runtime.
+
+    Zgodny z kontraktem :class:`bot_core.portfolio.PortfolioScheduler` oraz
+    protokołem :class:`bot_core.runtime.schedulers.RuntimeScheduler`.
+    """
 
     governor: PortfolioGovernor
     allocation_provider: AllocationProvider

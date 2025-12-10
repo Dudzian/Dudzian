@@ -5,10 +5,70 @@ import json
 import os
 import re
 import threading
+from datetime import datetime
 from pathlib import Path
-from typing import Mapping, MutableMapping
+from typing import Callable, Dict, Mapping, MutableMapping
 
-from bot_core.risk.base import RiskRepository
+from bot_core.risk.base import RiskProfile, RiskRepository
+from bot_core.risk.state import RiskState
+
+
+class InMemoryRiskRepository(RiskRepository):
+    """Najprostsze repozytorium używane do testów i trybu offline."""
+
+    def __init__(self) -> None:
+        self._storage: Dict[str, MutableMapping[str, object]] = {}
+
+    def load(self, profile: str) -> Mapping[str, object] | None:
+        return self._storage.get(profile)
+
+    def store(self, profile: str, state: Mapping[str, object]) -> None:
+        self._storage[profile] = dict(state)
+
+
+class RiskProfileRepository:
+    """Repozytorium zarządzające profilami i stanem silnika ryzyka."""
+
+    def __init__(
+        self,
+        storage: RiskRepository | None = None,
+        *,
+        clock: Callable[[], datetime] | None = None,
+    ) -> None:
+        self._storage = storage or InMemoryRiskRepository()
+        self._clock = clock or datetime.utcnow
+        self._profiles: Dict[str, RiskProfile] = {}
+        self._states: Dict[str, RiskState] = {}
+
+    @property
+    def profiles(self) -> Dict[str, RiskProfile]:
+        return self._profiles
+
+    @property
+    def states(self) -> Dict[str, RiskState]:
+        return self._states
+
+    def register(self, profile: RiskProfile) -> RiskState:
+        self._profiles[profile.name] = profile
+        state = self._storage.load(profile.name)
+        if state is None:
+            today = self._clock().date()
+            new_state = RiskState(profile=profile.name, current_day=today)
+            new_state.ensure_week_alignment(day=today, equity=0.0)
+            self._states[profile.name] = new_state
+            self._storage.store(profile.name, new_state.to_mapping())
+        else:
+            restored_state = RiskState.from_mapping(profile.name, state)
+            restored_state.ensure_week_alignment(
+                day=restored_state.current_day,
+                equity=restored_state.start_of_day_equity or restored_state.last_equity,
+            )
+            self._states[profile.name] = restored_state
+        return self._states[profile.name]
+
+    def persist(self, profile_name: str) -> None:
+        state = self._states[profile_name]
+        self._storage.store(profile_name, state.to_mapping())
 
 
 def _sanitize_profile_name(name: str) -> str:
@@ -79,4 +139,8 @@ class FileRiskRepository(RiskRepository):
         return self._base_path / filename
 
 
-__all__ = ["FileRiskRepository"]
+__all__ = [
+    "FileRiskRepository",
+    "InMemoryRiskRepository",
+    "RiskProfileRepository",
+]

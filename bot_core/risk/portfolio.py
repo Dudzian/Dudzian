@@ -13,6 +13,7 @@ import pandas as pd
 
 from bot_core.alerts import AlertSeverity, emit_alert
 from bot_core.observability.pandas_warnings import capture_pandas_warnings
+from bot_core.observability.risk import RiskObservabilitySink
 
 __all__ = [
     "RiskLevel",
@@ -228,9 +229,15 @@ class CorrelationAnalyzer:
 class RiskManagement:
     """Zaawansowane zarządzanie ryzykiem (sizing, alerty, raporty)."""
 
-    def __init__(self, params: Optional[Mapping[str, Any]] = None) -> None:
+    def __init__(
+        self,
+        params: Optional[Mapping[str, Any]] = None,
+        *,
+        observability_sink: RiskObservabilitySink | None = None,
+    ) -> None:
         self.params = dict(params or {})
         self.logger = logging.getLogger(__name__)
+        self._observability_sink = observability_sink
 
         self.max_risk_per_trade = float(self.params.get("max_risk_per_trade", 0.02))
         self.max_portfolio_risk = float(self.params.get("max_portfolio_risk", 0.10))
@@ -267,7 +274,23 @@ class RiskManagement:
         context: Optional[Mapping[str, Any]] = None,
     ) -> None:
         try:
-            emit_alert(message, severity=severity, source="risk", context=dict(context or {}))
+            if self._observability_sink is not None:
+                profile_name = "portfolio"
+                limit_name = "portfolio_alert"
+                alert_context = context if isinstance(context, Mapping) else {}
+                if isinstance(context, Mapping):
+                    profile_name = str(context.get("profile") or profile_name)
+                    limit_name = str(context.get("limit") or limit_name)
+                self._observability_sink.record_alert(
+                    profile=profile_name,
+                    limit=limit_name,
+                    value=float(alert_context.get("value", 0.0) or 0.0),
+                    threshold=float(alert_context.get("threshold", 0.0) or 0.0),
+                    severity=severity,
+                    context=context,
+                )
+            else:
+                emit_alert(message, severity=severity, source="risk", context=dict(context or {}))
         except Exception:  # pragma: no cover - alert nie może zatrzymać silnika
             self.logger.exception("Failed to emit risk alert")
 

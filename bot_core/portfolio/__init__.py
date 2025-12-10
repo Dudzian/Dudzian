@@ -50,6 +50,7 @@ from bot_core.portfolio.io import (
 from bot_core.portfolio.scheduler import (
     CopyTradeInstruction,
     CopyTradingFollowerConfig,
+    PortfolioScheduler,
     MultiPortfolioScheduler,
     PortfolioBinding,
     PortfolioScheduleResult,
@@ -98,6 +99,7 @@ __all__ = [
     "PayoutRequest",
     "CopyTradeInstruction",
     "CopyTradingFollowerConfig",
+    "PortfolioScheduler",
     "MultiPortfolioScheduler",
     "PortfolioBinding",
     "PortfolioScheduleResult",
