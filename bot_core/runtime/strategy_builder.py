@@ -15,7 +15,7 @@ def _collect_strategy_definitions(core_config: CoreConfig) -> dict[str, Strategy
 
     def _resolve_metadata(
         engine: str,
-    ) -> tuple[str, tuple[str, ...], tuple[str, ...], tuple[str, ...], str | None]:
+    ) -> tuple[str, tuple[str, ...], tuple[str, ...], tuple[str, ...], tuple[str, ...], str | None]:
         try:
             spec = DEFAULT_STRATEGY_CATALOG.get(engine)
         except KeyError:
@@ -24,12 +24,14 @@ def _collect_strategy_definitions(core_config: CoreConfig) -> dict[str, Strategy
                 ("unspecified",),
                 ("unspecified",),
                 (),
+                (),
                 None,
             )
         return (
             spec.license_tier,
             spec.risk_classes,
             spec.required_data,
+            spec.risk_hooks,
             spec.default_tags,
             spec.capability,
         )
@@ -39,6 +41,7 @@ def _collect_strategy_definitions(core_config: CoreConfig) -> dict[str, Strategy
             license_tier,
             risk_classes,
             required_data,
+            risk_hooks,
             default_tags,
             capability,
         ) = _resolve_metadata(cfg.engine)
@@ -55,6 +58,7 @@ def _collect_strategy_definitions(core_config: CoreConfig) -> dict[str, Strategy
             license_tier=cfg.license_tier or license_tier,
             risk_classes=tuple(cfg.risk_classes) or risk_classes,
             required_data=tuple(cfg.required_data) or required_data,
+            risk_hooks=tuple(getattr(cfg, "risk_hooks", ())) or risk_hooks,
             parameters=dict(cfg.parameters),
             risk_profile=cfg.risk_profile,
             tags=merged_tags,
@@ -68,6 +72,7 @@ def _collect_strategy_definitions(core_config: CoreConfig) -> dict[str, Strategy
             license_tier,
             risk_classes,
             required_data,
+            risk_hooks,
             default_tags,
             capability,
         ) = _resolve_metadata(engine)
@@ -82,6 +87,7 @@ def _collect_strategy_definitions(core_config: CoreConfig) -> dict[str, Strategy
             license_tier=license_tier,
             risk_classes=risk_classes,
             required_data=required_data,
+            risk_hooks=risk_hooks,
             parameters=dict(params),
             tags=default_tags,
             metadata=metadata,

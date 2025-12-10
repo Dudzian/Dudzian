@@ -818,6 +818,7 @@ def _load_strategy_definitions(raw: Mapping[str, Any]):
         license_tier = str(entry.get("license_tier", "")).strip()
         risk_classes = _normalize_sequence_field(entry.get("risk_classes"))
         required_data = _normalize_sequence_field(entry.get("required_data"))
+        risk_hooks = _normalize_sequence_field(entry.get("risk_hooks"))
         capability = str(entry.get("capability", "")).strip() or None
         if capability is None and spec and spec.capability:
             capability = spec.capability
@@ -836,6 +837,7 @@ def _load_strategy_definitions(raw: Mapping[str, Any]):
             license_tier=license_tier or (spec.license_tier if spec else None),
             risk_classes=risk_classes or (spec.risk_classes if spec else ()),
             required_data=required_data or (spec.required_data if spec else ()),
+            risk_hooks=risk_hooks or (spec.risk_hooks if spec else ()),
             capability=capability,
             risk_profile=str(entry.get("risk_profile")) if entry.get("risk_profile") else None,
             tags=tags,
@@ -851,12 +853,14 @@ def _load_strategy_definitions(raw: Mapping[str, Any]):
             license_tier = spec.license_tier
             risk_classes = spec.risk_classes
             required_data = spec.required_data
+            risk_hooks = spec.risk_hooks
             capability = spec.capability
             default_tags = spec.default_tags
         except KeyError:
             license_tier = None
             risk_classes = ()
             required_data = ()
+            risk_hooks = ()
             capability = None
             default_tags = ()
         metadata: dict[str, Any] = {}
@@ -871,6 +875,7 @@ def _load_strategy_definitions(raw: Mapping[str, Any]):
             license_tier=license_tier,
             risk_classes=risk_classes,
             required_data=required_data,
+            risk_hooks=risk_hooks,
             capability=capability,
             tags=default_tags,
             metadata=metadata,

@@ -193,6 +193,7 @@ class StrategyOptimizer:
             license_tier=base.license_tier,
             risk_classes=tuple(base.risk_classes),
             required_data=tuple(base.required_data),
+            risk_hooks=tuple(getattr(base, "risk_hooks", ())),
             parameters=dict(parameters),
             risk_profile=base.risk_profile,
             tags=tuple(base.tags),
