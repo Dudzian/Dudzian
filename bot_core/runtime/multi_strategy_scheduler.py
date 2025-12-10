@@ -43,6 +43,7 @@ from bot_core.runtime.capital_policies import (
 )
 from bot_core.runtime.journal import TradingDecisionEvent, TradingDecisionJournal
 from bot_core.runtime.scheduler import AsyncIOTaskQueue
+from bot_core.runtime.schedulers import RuntimeScheduler
 from bot_core.runtime.signal_limits import SignalLimitManager, SignalLimitOverride
 from bot_core.runtime.suspensions import SuspensionManager, SuspensionRecord
 from bot_core.strategies.base import MarketSnapshot, StrategyEngine, StrategySignal
@@ -375,7 +376,7 @@ def _extract_schedule_metadata(
     )
 
 
-class MultiStrategyScheduler:
+class MultiStrategyScheduler(RuntimeScheduler):
     """Koordynuje wykonywanie wielu strategii zgodnie z harmonogramem."""
 
     def __init__(
@@ -1092,6 +1093,9 @@ class MultiStrategyScheduler:
         finally:
             self._tasks.clear()
             self._stop_event = None
+
+    async def start(self) -> None:
+        await self.run_forever()
 
     def stop(self) -> None:
         if self._stop_event and not self._stop_event.is_set():
