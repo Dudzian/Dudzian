@@ -2,7 +2,9 @@ import asyncio
 
 import pytest
 
+from bot_core.decision.models import DecisionCandidate, DecisionEvaluation
 from bot_core.execution.base import ExecutionContext, ExecutionService
+from bot_core.execution import decision_to_order_request
 from bot_core.exchanges.base import OrderRequest, OrderResult
 
 
@@ -121,6 +123,29 @@ def test_close_async_propagates_errors() -> None:
 
     with pytest.raises(ValueError):
         asyncio.run(service.close_async())
+
+
+def test_decision_to_order_request_accepts_decision_evaluation() -> None:
+    evaluation = DecisionEvaluation(
+        candidate=DecisionCandidate(
+            strategy="mean_reversion",
+            action="buy",
+            risk_profile="balanced",
+            symbol="BTC/USDT",
+            notional=1000.0,
+            expected_return_bps=25.0,
+            expected_probability=0.6,
+        ),
+        accepted=True,
+        cost_bps=10.0,
+        net_edge_bps=5.0,
+    )
+
+    request = decision_to_order_request(evaluation, price=25_000.0)
+
+    assert request.symbol == "BTC/USDT"
+    assert request.side == "buy"
+    assert request.quantity > 0.0
 
 
 def test_execution_service_context_manager_calls_close(sample_request: OrderRequest, sample_context: ExecutionContext) -> None:

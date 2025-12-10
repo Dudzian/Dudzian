@@ -27,6 +27,17 @@ def test_linucb_updates_weights_after_reward():
     assert improved_score > base_score
 
 
+def test_linucb_expands_dimension_on_larger_context():
+    arm = _LinUCBArm(dimension=1, alpha=0.3)
+    context = np.array([1.0, 0.5, -0.25, 0.1])
+
+    arm.predict(context)
+
+    assert arm.dimension == context.size
+    assert arm.A.shape == (context.size, context.size)
+    assert arm.b.shape == (context.size,)
+
+
 def test_thompson_arm_posterior_updates():
     arm = _ThompsonArm(alpha=1.0, beta=1.0)
 
@@ -39,3 +50,14 @@ def test_thompson_arm_posterior_updates():
     assert prior_mean == 0.5
     assert mean_after_success > prior_mean
     assert abs(mean_after_failure - 0.5) < 1e-6
+
+
+def test_thompson_arm_clamps_outcomes_to_unit_interval():
+    arm = _ThompsonArm(alpha=2.0, beta=3.0)
+
+    arm.update(10.0)
+    arm.update(-5.0)
+
+    mean = arm.posterior_mean()
+
+    assert 0.0 < mean < 1.0
