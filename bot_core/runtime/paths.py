@@ -5,6 +5,7 @@ from __future__ import annotations
 import os
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Mapping
 
 __all__ = [
     "DesktopAppPaths",
@@ -19,10 +20,16 @@ def resolve_core_config_path(
     *,
     env_var: str = "DUDZIAN_CORE_CONFIG",
     default: str | Path = Path("config/core.yaml"),
+    environ: Mapping[str, str] | None = None,
 ) -> Path:
-    """Zwraca ścieżkę do pliku konfiguracyjnego rdzenia."""
+    """Zwraca ścieżkę do pliku konfiguracyjnego rdzenia.
 
-    candidate = os.environ.get(env_var, str(default))
+    Parametr ``environ`` pozwala na wstrzyknięcie mapy zmiennych środowiskowych,
+    co ułatwia hermetyzację testów bez modyfikowania globalnego ``os.environ``.
+    """
+
+    env = environ or os.environ
+    candidate = env.get(env_var, str(default))
     return Path(candidate).expanduser()
 
 

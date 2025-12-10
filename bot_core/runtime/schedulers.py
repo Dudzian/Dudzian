@@ -7,7 +7,7 @@ import logging
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import TYPE_CHECKING, Callable, Mapping, MutableMapping, Sequence
+from typing import TYPE_CHECKING, Callable, Mapping, MutableMapping, Protocol, Sequence, runtime_checkable
 
 from bot_core.ai.pipeline import (
     AutoRetrainPolicy,
@@ -23,6 +23,23 @@ from bot_core.runtime.journal import TradingDecisionEvent, TradingDecisionJourna
 _LOGGER = logging.getLogger(__name__)
 
 Clock = Callable[[], datetime]
+
+
+@runtime_checkable
+class RuntimeScheduler(Protocol):
+    """Minimalny kontrakt wspólny dla schedulerów runtime."""
+
+    async def start(self) -> None:
+        ...
+
+    async def run_forever(self) -> None:
+        ...
+
+    async def run_once(self) -> None:
+        ...
+
+    def stop(self) -> None:
+        ...
 
 
 def _ensure_utc(timestamp: datetime | None) -> datetime:

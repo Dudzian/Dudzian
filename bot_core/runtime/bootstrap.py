@@ -186,7 +186,7 @@ from bot_core.runtime.file_metadata import (
     file_reference_metadata,
     log_security_warnings,
 )
-from bot_core.runtime.paths import RuntimePaths
+from bot_core.runtime.paths import RuntimePaths, resolve_core_config_path
 import bot_core.runtime.observability as _observability
 from bot_core.runtime.observability import (
     RouterAlertSink,
@@ -785,6 +785,36 @@ def resolve_runtime_entrypoint(
         )
 
     return entrypoint, context
+
+
+def prepare_runtime_bootstrap_config(
+    *,
+    config_path: str | Path | None = None,
+    secret_manager: SecretManager | None = None,
+    runtime_paths: RuntimePaths | None = None,
+    environ: Mapping[str, str] | None = None,
+) -> RuntimeBootstrapConfig:
+    """Normalizuje argumenty bootstrapu do struktury konfiguracyjnej.
+
+    Funkcja umożliwia wstrzykiwanie mapy zmiennych środowiskowych (``environ``)
+    w testach, aby uniknąć globalnych efektów ubocznych przy rozwiązywaniu
+    ścieżki konfiguracji.
+    """
+
+    if secret_manager is None:
+        raise ValueError("prepare_runtime_bootstrap_config wymaga SecretManager")
+
+    resolved_config_path = (
+        resolve_core_config_path(environ=environ)
+        if config_path is None
+        else Path(config_path).expanduser()
+    )
+
+    return RuntimeBootstrapConfig(
+        config_path=resolved_config_path,
+        secret_manager=secret_manager,
+        runtime_paths=runtime_paths,
+    )
 
 
 def _build_ui_alert_audit_metadata(
@@ -1871,6 +1901,15 @@ def extract_live_readiness_metadata(
 
 
 @dataclass(slots=True)
+class RuntimeBootstrapConfig:
+    """Konfiguracja wejściowa bootstrapu runtime."""
+
+    config_path: Path
+    secret_manager: SecretManager
+    runtime_paths: RuntimePaths | None = None
+
+
+@dataclass(slots=True)
 class BootstrapContext:
     """Zawiera wszystkie komponenty zainicjalizowane dla danego środowiska."""
 
@@ -1946,9 +1985,17 @@ def bootstrap_environment(
     """Tworzy kompletny kontekst uruchomieniowy dla wskazanego środowiska."""
     from bot_core.config.validation import assert_core_config_valid
 
-    _enforce_installation_hardware()
+    bootstrap_config = prepare_runtime_bootstrap_config(
+        config_path=config_path,
+        secret_manager=secret_manager,
+        runtime_paths=runtime_paths,
+    )
 
-    config_path_obj = Path(config_path)
+    config_path_obj = bootstrap_config.config_path
+    secret_manager = bootstrap_config.secret_manager
+    runtime_paths = bootstrap_config.runtime_paths
+
+    _enforce_installation_hardware()
     if core_config is None:
         core_config = load_core_config(config_path_obj)
     validation = assert_core_config_valid(core_config)
