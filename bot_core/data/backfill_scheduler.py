@@ -75,6 +75,22 @@ class BackfillScheduler:
         lookback_ms = max(int(lookback_days) * 86_400_000, 86_400_000)
         start_ms = max(0, current_ms - lookback_ms)
 
+        if offline_mode and self._backfill_service is not None:
+            try:
+                self._backfill_service.synchronize(
+                    symbols=missing_symbols,
+                    interval=interval,
+                    start=start_ms,
+                    end=current_ms,
+                )
+                return
+            except Exception:  # pragma: no cover - defensywne logowanie w trybie offline
+                _LOGGER.debug(
+                    "Offline backfill nie powiódł się dla %s – przechodzę do fallbacku adaptera",
+                    missing_symbols,
+                    exc_info=True,
+                )
+
         if offline_mode:
             _LOGGER.debug(
                 "Środowisko offline – pomijam dogrywanie danych OHLCV (symbole=%s)",
@@ -82,7 +98,7 @@ class BackfillScheduler:
             )
             return
 
-        if not offline_mode and self._backfill_service is not None:
+        if self._backfill_service is not None:
             try:
                 self._backfill_service.synchronize(
                     symbols=missing_symbols,

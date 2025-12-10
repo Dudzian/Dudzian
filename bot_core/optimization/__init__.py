@@ -3,6 +3,7 @@ from __future__ import annotations
 
 from .optimizer import (
     OptimizationScheduler,
+    OptimizationTaskQueue,
     OptimizationTrial,
     StrategyOptimizationReport,
     StrategyOptimizer,
@@ -10,6 +11,7 @@ from .optimizer import (
 
 __all__ = [
     "OptimizationScheduler",
+    "OptimizationTaskQueue",
     "OptimizationTrial",
     "StrategyOptimizationReport",
     "StrategyOptimizer",

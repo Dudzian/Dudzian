@@ -166,7 +166,7 @@ class DecisionModelInference:
         from .models import ModelArtifact
         from .validation import CalibrationReport
 
-        self._artifact = self._repository.load(artifact)
+        self._artifact = self._repository.load_model(artifact)
         self._model = self._artifact.build_model()
         metadata = dict(self._artifact.metadata)
         self._target_scale = float(

@@ -25,6 +25,22 @@ except Exception:  # pragma: no cover - środowiska bez optuna
 StrategyEvaluator = Callable[[StrategyEngine, Mapping[str, Any]], tuple[float, Mapping[str, Any]] | float]
 
 
+class OptimizationTaskQueue:
+    """Pojedyncza kolejka zadań optymalizacji, aby unikać wyścigów."""
+
+    def __init__(self, *, max_workers: int = 1) -> None:
+        from concurrent.futures import ThreadPoolExecutor
+
+        self._executor = ThreadPoolExecutor(max_workers=max(1, int(max_workers)))
+
+    def submit(self, fn: Callable[[], StrategyOptimizationReport | None]) -> StrategyOptimizationReport | None:
+        future = self._executor.submit(fn)
+        return future.result()
+
+    def shutdown(self) -> None:
+        self._executor.shutdown(wait=True)
+
+
 @dataclass(slots=True)
 class OptimizationTrial:
     """Pojedyncza próba optymalizacji z wynikiem."""
@@ -327,6 +343,7 @@ class OptimizationScheduler:
         clock: Callable[[], float] | None = None,
         time_factory: Callable[[], datetime] | None = None,
         report_directory: str | Path | None = None,
+        task_queue: "OptimizationTaskQueue | None" = None,
         logger: logging.Logger | None = None,
     ) -> None:
         self._optimizer = optimizer
@@ -338,6 +355,7 @@ class OptimizationScheduler:
         self._stop_event = threading.Event()
         self._thread: threading.Thread | None = None
         self._report_directory = Path(report_directory).expanduser() if report_directory else None
+        self._task_queue = task_queue
 
     # ------------------------------------------------------------------
 
@@ -481,33 +499,42 @@ class OptimizationScheduler:
                 self._stop_event.wait(0.5)
 
     def _execute_task(self, task: _ScheduledTask) -> StrategyOptimizationReport | None:
+        def _run() -> StrategyOptimizationReport | None:
+            report: StrategyOptimizationReport | None = None
+            try:
+                report = self._optimizer.optimize(
+                    base_definition=task.definition,
+                    algorithm=task.algorithm,
+                    objective=task.objective,
+                    goal=task.goal,
+                    search_grid=task.search_grid,
+                    search_bounds=task.search_bounds,
+                    max_trials=task.max_trials,
+                    evaluator=task.evaluator,
+                    dataset=task.dataset,
+                    tags=task.tags,
+                    random_seed=task.random_seed,
+                )
+            except Exception:  # pragma: no cover - logika awaryjna
+                self._logger.exception(
+                    "Błąd podczas wykonywania zadania optymalizacji %s",
+                    task.config.name,
+                )
+            else:
+                if report is not None and self._report_directory is not None:
+                    self._export_report(report)
+            return report
+
         with self._lock:
             if task.running:
                 return None
             task.running = True
         report: StrategyOptimizationReport | None = None
         try:
-            report = self._optimizer.optimize(
-                base_definition=task.definition,
-                algorithm=task.algorithm,
-                objective=task.objective,
-                goal=task.goal,
-                search_grid=task.search_grid,
-                search_bounds=task.search_bounds,
-                max_trials=task.max_trials,
-                evaluator=task.evaluator,
-                dataset=task.dataset,
-                tags=task.tags,
-                random_seed=task.random_seed,
-            )
-        except Exception:  # pragma: no cover - logika awaryjna
-            self._logger.exception(
-                "Błąd podczas wykonywania zadania optymalizacji %s",
-                task.config.name,
-            )
-        else:
-            if report is not None and self._report_directory is not None:
-                self._export_report(report)
+            if self._task_queue is None:
+                report = _run()
+            else:
+                report = self._task_queue.submit(_run)
         finally:
             with self._lock:
                 task.running = False
@@ -529,6 +556,7 @@ class OptimizationScheduler:
 __all__ = [
     "OptimizationScheduler",
     "OptimizationTrial",
+    "OptimizationTaskQueue",
     "StrategyOptimizationReport",
     "StrategyOptimizer",
 ]

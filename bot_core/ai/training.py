@@ -1424,7 +1424,7 @@ class WalkForwardTrainingCoordinator:
 
         version = self._resolve_version(artifact)
         filename = f"{self.job_name}-{version}.json"
-        artifact_path = self.repository.publish(
+        artifact_path = self.repository.save_model(
             artifact,
             version=version,
             filename=filename,
@@ -1455,6 +1455,11 @@ class WalkForwardTrainingCoordinator:
             dataset_rows=len(dataset.vectors),
             validation=validation_payload,
         )
+
+        try:
+            self.repository.attach_quality_report(version, report.to_dict())
+        except Exception:
+            _LOGGER.debug("Nie udało się podłączyć raportu jakości do repozytorium", exc_info=True)
 
         champion_decision = record_model_quality_report(
             report,
