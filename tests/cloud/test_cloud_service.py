@@ -165,6 +165,7 @@ def test_cloud_cli_serves_core_services(tmp_path: Path) -> None:
             time.sleep(0.25)
 
         if not ready_file.exists():
+            _terminate_process(proc)
             output = _read_available_stdout(proc)
             raise AssertionError(
                 f"Serwer cloud nie zasygnalizował gotowości (brak {ready_file}):\n{output}"
