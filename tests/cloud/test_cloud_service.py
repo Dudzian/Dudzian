@@ -20,7 +20,12 @@ from bot_core.generated import trading_pb2, trading_pb2_grpc
 from bot_core.security.signing import build_hmac_signature
 
 
-def _write_signed_flag(flag_path: Path, signature_path: Path, secret: bytes, payload: dict[str, Any] | None = None) -> dict[str, Any]:
+def _write_signed_flag(
+    flag_path: Path,
+    signature_path: Path,
+    secret: bytes,
+    payload: dict[str, Any] | None = None,
+) -> dict[str, Any]:
     document = payload or {"enabled": True, "issued_by": "pytest", "nonce": "cloud"}
     flag_path.write_text(json.dumps(document, ensure_ascii=False), encoding="utf-8")
     signature = build_hmac_signature(document, key=secret)
@@ -82,6 +87,31 @@ def test_cloud_runtime_service_registers_extra_servicer(monkeypatch):
     service.stop()
 
 
+def _terminate_process(proc: subprocess.Popen[str]) -> None:
+    """Zamyka proces w sposób przenośny (Windows/Linux/macOS)."""
+    if proc.poll() is not None:
+        return
+
+    if os.name == "nt":
+        # Na Windows subprocess.send_signal(SIGINT) rzuca ValueError ("Unsupported signal: 2").
+        # CTRL_BREAK_EVENT działa, ale tylko gdy proces jest w osobnej grupie.
+        try:
+            proc.send_signal(signal.CTRL_BREAK_EVENT)
+        except Exception:
+            try:
+                proc.terminate()
+            except Exception:
+                pass
+    else:
+        try:
+            proc.send_signal(signal.SIGINT)
+        except Exception:
+            try:
+                proc.terminate()
+            except Exception:
+                pass
+
+
 @pytest.mark.integration
 @pytest.mark.requires_trading_stubs
 def test_cloud_cli_serves_core_services(tmp_path: Path):
@@ -108,14 +138,23 @@ marketplace:
   refresh_interval_seconds: 1
 """.strip()
     )
+
     ready_file = tmp_path / "ready.json"
+
+    creationflags = 0
+    if os.name == "nt":
+        # Wymagane, żeby CTRL_BREAK_EVENT działał poprawnie.
+        creationflags = subprocess.CREATE_NEW_PROCESS_GROUP
+
     proc = subprocess.Popen(
         [sys.executable, "scripts/run_cloud_service.py", "--config", str(config_path), "--ready-file", str(ready_file)],
         stdout=subprocess.PIPE,
         stderr=subprocess.STDOUT,
         text=True,
         env=env,
+        creationflags=creationflags,
     )
+
     try:
         for _ in range(120):
             if ready_file.exists():
@@ -123,8 +162,6 @@ marketplace:
             if proc.poll() is not None:
                 break
             time.sleep(0.25)
-        else:
-            pass
 
         if not ready_file.exists():
             output = ""
@@ -149,11 +186,10 @@ marketplace:
         assert runtime_response.total >= 0
 
         market_stub = trading_pb2_grpc.MarketDataServiceStub(channel)
-        instruments = market_stub.ListTradableInstruments(
-            trading_pb2.ListTradableInstrumentsRequest()
-        )
+        instruments = market_stub.ListTradableInstruments(trading_pb2.ListTradableInstrumentsRequest())
         assert instruments.instruments, "serwer powinien udostępniać instrumenty"
         instrument = instruments.instruments[0].instrument
+
         ohlcv = market_stub.GetOhlcvHistory(
             trading_pb2.GetOhlcvHistoryRequest(
                 instrument=instrument,
@@ -169,8 +205,14 @@ marketplace:
 
         channel.close()
     finally:
-        proc.send_signal(signal.SIGINT)
-        proc.wait(timeout=20)
+        _terminate_process(proc)
+        try:
+            proc.wait(timeout=20)
+        except Exception:
+            try:
+                proc.kill()
+            except Exception:
+                pass
 
 
 @pytest.mark.integration
