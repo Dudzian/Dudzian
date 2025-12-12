@@ -2,13 +2,14 @@
 from __future__ import annotations
 
 import base64
+import hashlib
+import hmac
 import json
 import os
 import signal
 import subprocess
 import sys
 import time
-from dataclasses import dataclass
 from enum import Enum
 from pathlib import Path
 from typing import Any
@@ -17,35 +18,50 @@ import pytest
 
 # --- Importy z bot_core.cloud (z fallbackiem na CloudRuntimeState) ---
 try:
-    # nowa/najnowsza ścieżka (jeśli istnieje)
     from bot_core.cloud import CloudRuntimeService, CloudServerConfig, CloudRuntimeState  # type: ignore
 except Exception:
-    # minimalny, kompatybilny import dla wersji gdzie CloudRuntimeState nie jest eksportowany w __init__.py
     from bot_core.cloud import CloudRuntimeService, CloudServerConfig  # type: ignore
 
     class CloudRuntimeState(str, Enum):
         """
         Fallback tylko do testów: wystarczy, żeby plik się importował.
-        Jeżeli w Twoim kodzie runtime ma inne nazwy stanów, test i tak tego nie użyje,
-        a ImportError przestanie blokować collection.
         """
-
         UNKNOWN = "unknown"
 
 
 # --- Helpers ---
 def _write_signed_flag(flag_path: Path, signature_path: Path, secret: bytes) -> None:
     """
-    Minimalny, deterministyczny "podpis" używany przez testy integracyjne.
-    To NIE jest kryptografia produkcyjna – chodzi o prosty handshake dla runtime flag.
+    Runtime w tym repo wygląda na to, że oczekuje, że plik *.sig będzie JSON-em.
+    Ten helper zapisuje:
+      - cloud_flag.json jako JSON
+      - cloud_flag.sig jako JSON z HMAC-SHA256 nad bajtami cloud_flag.json
     """
-    payload = {"ts": int(time.time()), "enabled": True}
-    flag_path.write_text(json.dumps(payload), encoding="utf-8")
+    now = int(time.time())
+    payload: dict[str, Any] = {
+        "enabled": True,
+        "issued_at": now,
+        "expires_at": now + 3600,
+        "version": 1,
+    }
+    raw = json.dumps(payload, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
+    flag_path.write_bytes(raw)
 
-    # podpis: base64(secret) + ":" + base64(json)
-    raw = flag_path.read_bytes()
-    sig = base64.b64encode(secret) + b":" + base64.b64encode(raw)
-    signature_path.write_bytes(sig)
+    digest = hmac.new(secret, raw, hashlib.sha256).hexdigest()
+
+    sig_obj: dict[str, Any] = {
+        # najbardziej typowe pola
+        "algo": "HMAC-SHA256",
+        "encoding": "hex",
+        "signature": digest,
+        # dodatkowe aliasy (na wypadek gdy walidator szuka innej nazwy)
+        "sig": digest,
+        "hmac": digest,
+        # czasem walidatory chcą też hash samego payloadu
+        "payload_sha256": hashlib.sha256(raw).hexdigest(),
+        "ts": now,
+    }
+    signature_path.write_text(json.dumps(sig_obj, ensure_ascii=False), encoding="utf-8")
 
 
 def _terminate_process(proc: subprocess.Popen[str], timeout_s: float = 10.0) -> None:
@@ -54,7 +70,6 @@ def _terminate_process(proc: subprocess.Popen[str], timeout_s: float = 10.0) -> 
 
     try:
         if os.name == "nt":
-            # na Windows CTRL_BREAK_EVENT działa tylko dla CREATE_NEW_PROCESS_GROUP
             proc.send_signal(signal.CTRL_BREAK_EVENT)  # type: ignore[attr-defined]
         else:
             proc.send_signal(signal.SIGINT)
@@ -74,21 +89,15 @@ def _terminate_process(proc: subprocess.Popen[str], timeout_s: float = 10.0) -> 
 
 
 def _read_available_stdout(proc: subprocess.Popen[str]) -> str:
-    """
-    Zbiera to co jest dostępne w stdout (nie blokując w nieskończoność).
-    """
-    out = []
+    out: list[str] = []
     if proc.stdout is None:
         return ""
     try:
-        # .read() może blokować; tu wolimy próbować małymi porcjami.
-        # Na Windows w GH runnerze to zwykle działa OK.
         while True:
-            chunk = proc.stdout.readline()
-            if not chunk:
+            line = proc.stdout.readline()
+            if not line:
                 break
-            out.append(chunk)
-            # jeśli proces żyje, nie ciągniemy bez końca
+            out.append(line)
             if proc.poll() is None and len(out) > 5000:
                 break
     except Exception:
@@ -112,6 +121,7 @@ def test_cloud_cli_serves_core_services(tmp_path: Path) -> None:
     _write_signed_flag(flag_path, signature_path, secret)
 
     env = os.environ.copy()
+    # nadal ustawiamy secret w env (bo runtime może go potrzebować do weryfikacji HMAC)
     env["CLOUD_RUNTIME_FLAG_SECRET"] = f"base64:{base64.b64encode(secret).decode('ascii')}"
 
     # config cloud dla uruchomienia
@@ -138,11 +148,17 @@ def test_cloud_cli_serves_core_services(tmp_path: Path) -> None:
 
     creationflags = 0
     if os.name == "nt":
-        # Wymagane, żeby CTRL_BREAK_EVENT działał poprawnie.
         creationflags = subprocess.CREATE_NEW_PROCESS_GROUP  # type: ignore[attr-defined]
 
     proc = subprocess.Popen(
-        [sys.executable, "scripts/run_cloud_service.py", "--config", str(config_path), "--ready-file", str(ready_file)],
+        [
+            sys.executable,
+            "scripts/run_cloud_service.py",
+            "--config",
+            str(config_path),
+            "--ready-file",
+            str(ready_file),
+        ],
         stdout=subprocess.PIPE,
         stderr=subprocess.STDOUT,
         text=True,
@@ -161,9 +177,10 @@ def test_cloud_cli_serves_core_services(tmp_path: Path) -> None:
 
         if not ready_file.exists():
             output = _read_available_stdout(proc)
-            raise AssertionError(f"Serwer cloud nie zasygnalizował gotowości (brak {ready_file}):\n{output}")
+            raise AssertionError(
+                f"Serwer cloud nie zasygnalizował gotowości (brak {ready_file}):\n{output}"
+            )
 
-        # sanity check: ready.json powinien być JSON-em
         data = json.loads(ready_file.read_text(encoding="utf-8"))
         assert isinstance(data, dict)
 
@@ -172,16 +189,10 @@ def test_cloud_cli_serves_core_services(tmp_path: Path) -> None:
 
 
 def test_cloud_runtime_state_importable() -> None:
-    """
-    Ten test gwarantuje, że plik nie wywali się na ImportError przy zmianach eksportów.
-    """
     assert CloudRuntimeState is not None
 
 
 def test_cloud_runtime_service_smoke() -> None:
-    """
-    Bardzo lekki smoke: czy da się skonstruować config/serwis bez crasha importów.
-    """
     cfg = CloudServerConfig(host="127.0.0.1", port=0)  # type: ignore[call-arg]
     svc = CloudRuntimeService(cfg)  # type: ignore[call-arg]
     assert svc is not None
