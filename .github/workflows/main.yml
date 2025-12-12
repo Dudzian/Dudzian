@@ -53,20 +53,20 @@ jobs:
           python-version: ${{ env.PYTHON_VERSION }}
 
       - name: Install deps
-        shell: bash
+        shell: pwsh
         run: |
           python -m pip install --upgrade pip
           python -m pip install -e ".[dev]"
           python -m pip install pytest
 
       - name: Environment snapshot
-        shell: bash
+        shell: pwsh
         run: |
           python -V
           python -m pip list --format=columns | sed -n '1,120p'
 
       - name: Pytest (first failure)
-        shell: bash
+        shell: pwsh
         run: pytest -q --maxfail=1 -x
 
   lint:
@@ -107,14 +107,14 @@ jobs:
           python -m pip install pytest
 
       - name: Generate stubs (optional)
-        shell: bash
+        shell: pwsh
         run: |
           if [ -f scripts/generate_trading_stubs.py ]; then
             python scripts/generate_trading_stubs.py --skip-cpp || true
           fi
 
       - name: Pytest fast
-        shell: bash
+        shell: pwsh
         run: |
           pytest \
             --maxfail=1 \
@@ -140,7 +140,7 @@ jobs:
           python -m pip install pytest
 
       - name: Pytest curated
-        shell: bash
+        shell: pwsh
         run: |
           pytest \
             tests/test_pipeline_paper.py \
@@ -166,7 +166,7 @@ jobs:
           python -m pip install pytest
 
       - name: Pytest integration
-        shell: bash
+        shell: pwsh
         run: pytest -m integration --maxfail=1
 
   ui-tests:
@@ -183,7 +183,7 @@ jobs:
           python-version: ${{ env.PYTHON_VERSION }}
 
       - name: Skip if no UI deps
-        shell: bash
+        shell: pwsh
         run: |
           python - <<'PY'
           try:
