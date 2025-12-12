@@ -301,6 +301,14 @@ class SignalLimitManager:
                 reason_part,
                 expiry_part,
             )
+            logging.getLogger().info(
+                "Wygasło nadpisanie limitu sygnałów %s/%s (limit=%s%s%s)",
+                strategy,
+                profile,
+                override.limit,
+                reason_part,
+                expiry_part,
+            )
 
     def reapply_expired(
         self,

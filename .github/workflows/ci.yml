@@ -10,14 +10,19 @@ on:
     - cron: "0 3 * * *"
 
 env:
-  PYSIDE6_VERSION: "6.5.2"
+  PYSIDE6_VERSION: "6.7.0"
   QT_DESKTOP_MODULES: "qtcharts qtdeclarative qtquickcontrols2"
-  QT_WINDOWS_MODULES: "qtcharts"
+  QT_WINDOWS_MODULES: "qtcharts qtdeclarative qtquickcontrols2 qtshadertools qtimageformats"
 
 jobs:
-  prepare-pyside6-wheel:
-    name: Prepare PySide6 wheels (Linux)
-    runs-on: ubuntu-latest
+  # Source of truth: builds or fetches wheelhouse artifacts consumed by downstream jobs.
+  prepare-wheelhouse:
+    name: Prepare wheelhouse
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest]
     if: |
       github.event_name == 'schedule' ||
       github.event_name == 'workflow_dispatch' ||
@@ -25,48 +30,117 @@ jobs:
       (github.event_name == 'push' &&
         (startsWith(github.ref, 'refs/heads/release/') || github.ref == 'refs/heads/stable' || github.ref == 'refs/heads/main'))
     timeout-minutes: 25
-
-    steps:
-      - name: Set up Python
-        id: setup-python
-        uses: actions/setup-python@v5
-        with:
-          python-version: "3.11"
-
-      - name: Prepare wheelhouse directory
-        run: mkdir -p wheelhouse
-
-      - name: Cache PySide6 wheels
-        id: wheel-cache
-        uses: actions/cache@v4
-        with:
-          path: wheelhouse
-          key: pyside6-${{ runner.os }}-py${{ steps.setup-python.outputs.python-version }}-${{ env.PYSIDE6_VERSION }}
-
-      - name: Download PySide6 distribution
-        if: steps.wheel-cache.outputs.cache-hit != 'true'
-        run: |
-          python -m pip install --upgrade pip
-          python -m pip download PySide6==${{ env.PYSIDE6_VERSION }} --dest wheelhouse --only-binary=:all:
-
-      - name: Upload PySide6 wheels
-        uses: actions/upload-artifact@v4
-        with:
-          name: pyside6-wheels-linux-${{ env.PYSIDE6_VERSION }}
-          path: wheelhouse
-          if-no-files-found: error
-          retention-days: 3
-
-  lint-and-test:
-    name: Lint and Test
-    runs-on: self-hosted
+    outputs:
+      wheelhouse_source: ${{ steps.wheelhouse-plan.outputs.wheelhouse_source }}
+      wheelhouse_dir: ${{ steps.wheelhouse-plan.outputs.wheelhouse_dir }}
+      wheelhouse_artifact: ${{ steps.wheelhouse-plan.outputs.wheelhouse_artifact }}
+      wheelhouse_enabled: ${{ steps.wheelhouse-plan.outputs.wheelhouse_enabled }}
 
     steps:
       - name: Check out repository
         uses: actions/checkout@v4
 
-      - name: Lint repository paths
-        run: python scripts/lint_paths.py
+      - name: Set up Python
+        id: setup-python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Decide wheelhouse strategy
+        id: wheelhouse-plan
+        shell: bash
+        env:
+          PY_VERSION: ${{ steps.setup-python.outputs.python-version }}
+        run: |
+          # Single decision point: choose how wheelhouse is sourced in this workflow run.
+          source="${WHEELHOUSE_SOURCE:-build}"
+          wheelhouse_dir="${WHEELHOUSE_DIR:-wheelhouse}"
+          artifact_name="${WHEELHOUSE_ARTIFACT_NAME:-wheelhouse-${{ runner.os }}-py${PY_VERSION}}"
+          wheelhouse_enabled=true
+
+          case "${source}" in
+            build)
+              echo "Planning to build wheelhouse into ${wheelhouse_dir} and upload as ${artifact_name}."
+              ;;
+            artifact)
+              # Artifact mode requires the producing run id so we download a known wheelhouse snapshot.
+              if [[ -z "${WHEELHOUSE_RUN_ID:-}" ]]; then
+                echo "WHEELHOUSE_RUN_ID must be set when WHEELHOUSE_SOURCE=artifact" >&2
+                exit 1
+              fi
+              echo "Planning to download wheelhouse artifact ${artifact_name} (run ${WHEELHOUSE_RUN_ID})."
+              ;;
+            skip)
+              # Skip mode disables wheelhouse usage for downstream jobs.
+              wheelhouse_dir=""
+              artifact_name=""
+              wheelhouse_enabled=false
+              echo "Wheelhouse handling disabled (WHEELHOUSE_SOURCE=skip)."
+              ;;
+            *)
+              echo "Invalid WHEELHOUSE_SOURCE: ${source} (expected build|artifact|skip)" >&2
+              exit 1
+              ;;
+          esac
+
+          echo "wheelhouse_source=${source}" >> "$GITHUB_OUTPUT"
+          echo "wheelhouse_dir=${wheelhouse_dir}" >> "$GITHUB_OUTPUT"
+          echo "wheelhouse_artifact=${artifact_name}" >> "$GITHUB_OUTPUT"
+          echo "wheelhouse_enabled=${wheelhouse_enabled}" >> "$GITHUB_OUTPUT"
+
+      - name: Inspect pip configuration
+        shell: bash
+        run: |
+          echo "HTTPS_PROXY=${HTTPS_PROXY:-}"
+          echo "HTTP_PROXY=${HTTP_PROXY:-}"
+          echo "PIP_INDEX_URL=${PIP_INDEX_URL:-}"
+          echo "PIP_EXTRA_INDEX_URL=${PIP_EXTRA_INDEX_URL:-}"
+          echo "NO_PROXY=${NO_PROXY:-}"
+          python -m pip config debug -v
+
+      - name: Build wheelhouse
+        if: steps.wheelhouse-plan.outputs.wheelhouse_source == 'build'
+        shell: bash
+        env:
+          WHEELHOUSE_DIR: ${{ steps.wheelhouse-plan.outputs.wheelhouse_dir }}
+        run: |
+          python -m pip install --upgrade pip
+          python scripts/ci/build_wheelhouse.py \
+            --wheelhouse "${WHEELHOUSE_DIR}" \
+            --pyside6-version "${PYSIDE6_VERSION}" \
+            --only-binary :all:
+
+      - name: Download existing wheelhouse artifact
+        if: steps.wheelhouse-plan.outputs.wheelhouse_source == 'artifact'
+        uses: actions/download-artifact@v4
+        with:
+          name: ${{ steps.wheelhouse-plan.outputs.wheelhouse_artifact }}
+          path: ${{ steps.wheelhouse-plan.outputs.wheelhouse_dir }}
+          run-id: ${{ env.WHEELHOUSE_RUN_ID }}
+          if-no-artifact-found: error
+
+      - name: Upload wheelhouse artifact
+        if: steps.wheelhouse-plan.outputs.wheelhouse_source == 'build'
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ steps.wheelhouse-plan.outputs.wheelhouse_artifact }}
+          path: ${{ steps.wheelhouse-plan.outputs.wheelhouse_dir }}
+          if-no-files-found: error
+          retention-days: 7
+
+  lint-and-test:
+    name: Lint and Test
+    runs-on: [self-hosted, windows]
+    needs: prepare-wheelhouse
+    env:
+      WHEELHOUSE_DIR: ${{ needs.prepare-wheelhouse.outputs.wheelhouse_dir }}
+      WHEELHOUSE_SOURCE: ${{ needs.prepare-wheelhouse.outputs.wheelhouse_source }}
+      WHEELHOUSE_ARTIFACT: ${{ needs.prepare-wheelhouse.outputs.wheelhouse_artifact }}
+      WHEELHOUSE_ENABLED: ${{ needs.prepare-wheelhouse.outputs.wheelhouse_enabled }}
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
 
       - name: Set up Python
         id: setup-python
@@ -74,16 +148,66 @@ jobs:
         with:
           python-version: "3.11"
 
+      - name: Determine pip cache directory
+        id: pip-cache
+        shell: bash
+        run: |
+          python - <<'PY'
+          import os
+          import subprocess
+
+          cache_dir = subprocess.check_output(["python", "-m", "pip", "cache", "dir"], text=True).strip()
+          print(f"cache_dir={cache_dir}")
+          with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as fh:
+            fh.write(f"cache_dir={cache_dir}\n")
+          PY
+
+      - name: Cache pip
+        uses: actions/cache@v4
+        with:
+          path: ${{ steps.pip-cache.outputs.cache_dir }}
+          key: ${{ runner.os }}-pip-${{ steps.setup-python.outputs.python-version }}-${{ hashFiles('pyproject.toml', 'requirements.txt', 'pytest_cov_stub.py') }}
+          restore-keys: |
+            ${{ runner.os }}-pip-${{ steps.setup-python.outputs.python-version }}-
+
+      # Wheelhouse consumer: expects artifact from prepare-wheelhouse.
+      - name: Download wheelhouse
+        if: env.WHEELHOUSE_ENABLED == 'true'
+        uses: actions/download-artifact@v4
+        with:
+          name: ${{ env.WHEELHOUSE_ARTIFACT }}
+          path: ${{ env.WHEELHOUSE_DIR }}
+          if-no-artifact-found: error
+
+      # Quick structural lint: ensures repo path casing/length expectations are met.
+      # Local: python scripts/lint_paths.py
+      - name: Lint repository paths
+        run: python scripts/lint_paths.py
+
       - name: Install dependencies
+        shell: bash
         run: |
           python -m pip install --upgrade pip
-          pip install .[dev]
-          pip install pytest pytest-cov pre-commit
+          wheelhouse_args=()
+          if [[ "${WHEELHOUSE_ENABLED}" == "true" ]]; then
+            wheelhouse_args+=(--wheelhouse "$WHEELHOUSE_DIR" --require-wheelhouse)
+          fi
+          python scripts/ci/pip_install.py "${wheelhouse_args[@]}" -- .[dev]
+          python scripts/ci/pip_install.py "${wheelhouse_args[@]}" -- pytest pytest-cov pre-commit
 
-      - name: Pre-commit (ruff + mypy)
+      # Full lint suite via pre-commit: runs ruff + mypy just like local `pre-commit run --all-files`.
+      # Local: pre-commit run --all-files --show-diff-on-failure
+      - name: "Lint (pre-commit: ruff + mypy)"
         run: pre-commit run --all-files --show-diff-on-failure
 
-      - name: Pytest with coverage
+      - name: Prepare test reports directory
+        shell: bash
+        run: mkdir -p test-results
+
+      # Unit tests with coverage and JUnit output; replicate locally with the same pytest command.
+      # Local: pytest --cov=bot_core.strategies --cov=bot_core.runtime.multi_strategy_scheduler --cov=bot_core.runtime.journal \
+      #   --cov-config=.coveragerc --cov-report=xml --cov-report=term --cov-fail-under=75 tests/... (list below)
+      - name: Pytest (unit suite) with coverage
         run: >-
           pytest
           --cov=bot_core.strategies
@@ -93,6 +217,7 @@ jobs:
           --cov-report=xml
           --cov-report=term
           --cov-fail-under=75
+          --junitxml=test-results/pytest-unit.xml
           tests/test_pipeline_paper.py
           tests/test_risk_profiles.py
           tests/test_mean_reversion_strategy.py
@@ -105,15 +230,30 @@ jobs:
           tests/test_smoke_demo_strategies_cli.py
 
       - name: Upload coverage report
+        if: always()
         uses: actions/upload-artifact@v4
         with:
           name: coverage-report
           path: coverage.xml
           retention-days: 3
 
+      - name: Upload pytest results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: lint-and-test-pytest-results
+          path: test-results
+          if-no-files-found: warn
+          retention-days: 3
+
   licensing-hwid-tolerance:
     name: Licensing HWID Tolerance
-    runs-on: self-hosted
+    runs-on: [self-hosted, windows]
+    env:
+      PYTHONHASHSEED: "0"
+      PYTEST_DISABLE_PLUGIN_AUTOLOAD: "1"
+      LICENSING_HWID_LOG: reports/ci/licensing_hwid/pytest.log
+      LICENSING_HWID_JUNIT: reports/ci/licensing_hwid/pytest.xml
 
     steps:
       - name: Check out repository
@@ -125,16 +265,36 @@ jobs:
           python-version: "3.11"
 
       - name: Install dependencies
+        shell: bash
         run: |
           python -m pip install --upgrade pip
           pip install .[dev]
 
       - name: Run HWID tolerance tests
-        run: pytest tests/licensing -q
+        shell: bash
+        run: |
+          set -o pipefail
+          mkdir -p "$(dirname "${LICENSING_HWID_LOG}")"
+          pytest tests/licensing/test_hwid_drift.py \
+            --maxfail=1 \
+            --disable-warnings \
+            --junitxml "${LICENSING_HWID_JUNIT}" \
+            --color=yes \
+            -q 2>&1 | tee "${LICENSING_HWID_LOG}"
+
+      - name: Upload HWID tolerance artifacts
+        if: ${{ always() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: licensing-hwid-tolerance
+          path: |
+            ${LICENSING_HWID_LOG}
+            ${LICENSING_HWID_JUNIT}
+          if-no-files-found: warn
 
   mypy-core:
     name: Mypy (core packages)
-    runs-on: self-hosted
+    runs-on: [self-hosted, windows]
 
     steps:
       - name: Check out repository
@@ -158,16 +318,39 @@ jobs:
   release-quality-gates:
     name: Release Quality Gates
     runs-on: ubuntu-latest
+    needs: prepare-wheelhouse
+    env:
+      WHEELHOUSE_DIR: ${{ needs.prepare-wheelhouse.outputs.wheelhouse_dir }}
+      WHEELHOUSE_SOURCE: ${{ needs.prepare-wheelhouse.outputs.wheelhouse_source }}
+      WHEELHOUSE_ARTIFACT: ${{ needs.prepare-wheelhouse.outputs.wheelhouse_artifact }}
+      WHEELHOUSE_ENABLED: ${{ needs.prepare-wheelhouse.outputs.wheelhouse_enabled }}
 
     steps:
       - name: Check out repository
         uses: actions/checkout@v4
 
+      # Wheelhouse consumer: uses artifact produced in prepare-wheelhouse.
+      - name: Download wheelhouse
+        if: env.WHEELHOUSE_ENABLED == 'true'
+        uses: actions/download-artifact@v4
+        with:
+          name: ${{ env.WHEELHOUSE_ARTIFACT }}
+          path: ${{ env.WHEELHOUSE_DIR }}
+          if-no-artifact-found: error
+
       - name: Lint repository paths
         run: python scripts/lint_paths.py
 
       - name: Install system dependencies for UI tests
-        run: sudo apt-get update && sudo apt-get install -y libegl1
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libegl1 \
+            libgl1 \
+            libpulse0 \
+            libxkbcommon-x11-0 \
+            libxcb-cursor0 \
+            libxcb-xinerama0
 
       - name: Set up Python
         uses: actions/setup-python@v5
@@ -175,12 +358,23 @@ jobs:
           python-version: "3.11"
 
       - name: Install dependencies
+        shell: bash
         run: |
           python -m pip install --upgrade pip
-          pip install .[dev]
+          wheelhouse_args=()
+          if [[ "${WHEELHOUSE_ENABLED}" == "true" ]]; then
+            wheelhouse_args+=(--wheelhouse "$WHEELHOUSE_DIR" --require-wheelhouse)
+          fi
+          python scripts/ci/pip_install.py "${wheelhouse_args[@]}" -- .[dev]
 
       - name: Install mypy
-        run: pip install mypy
+        shell: bash
+        run: |
+          wheelhouse_args=()
+          if [[ "${WHEELHOUSE_ENABLED}" == "true" ]]; then
+            wheelhouse_args+=(--wheelhouse "$WHEELHOUSE_DIR" --require-wheelhouse)
+          fi
+          python scripts/ci/pip_install.py "${wheelhouse_args[@]}" -- mypy
 
       - name: Type check with mypy
         run: mypy
@@ -196,12 +390,26 @@ jobs:
 
   bot-core-fast-tests:
     name: Bot Core Fast Tests
-    runs-on: self-hosted
+    runs-on: [self-hosted, windows]
+    needs: prepare-wheelhouse
     timeout-minutes: 25
+    env:
+      WHEELHOUSE_DIR: ${{ needs.prepare-wheelhouse.outputs.wheelhouse_dir }}
+      WHEELHOUSE_SOURCE: ${{ needs.prepare-wheelhouse.outputs.wheelhouse_source }}
+      WHEELHOUSE_ARTIFACT: ${{ needs.prepare-wheelhouse.outputs.wheelhouse_artifact }}
 
     steps:
       - name: Check out repository
         uses: actions/checkout@v4
+
+      # Wheelhouse consumer: uses artifact produced in prepare-wheelhouse.
+      - name: Download wheelhouse
+        if: env.WHEELHOUSE_ENABLED == 'true'
+        uses: actions/download-artifact@v4
+        with:
+          name: ${{ env.WHEELHOUSE_ARTIFACT }}
+          path: ${{ env.WHEELHOUSE_DIR }}
+          if-no-artifact-found: error
 
       - name: Lint repository paths
         run: python scripts/lint_paths.py
@@ -212,9 +420,14 @@ jobs:
           python-version: "3.11"
 
       - name: Install dependencies
+        shell: bash
         run: |
           python -m pip install --upgrade pip
-          pip install .[dev]
+          wheelhouse_args=()
+          if [[ "${WHEELHOUSE_ENABLED}" == "true" ]]; then
+            wheelhouse_args+=(--wheelhouse "$WHEELHOUSE_DIR" --require-wheelhouse)
+          fi
+          python scripts/ci/pip_install.py "${wheelhouse_args[@]}" -- .[dev]
 
       - name: Generate trading stubs
         run: python scripts/generate_trading_stubs.py --skip-cpp
@@ -222,9 +435,17 @@ jobs:
       - name: Run fast pytest suite
         env:
           PYTEST_FAST: "1"
+          PYTEST_DISABLE_PLUGIN_AUTOLOAD: "1"
         run: |
           mkdir -p test-results
-          pytest --fast --maxfail=1 --durations=10 --junitxml=test-results/pytest.xml
+          pytest \
+            --fast \
+            -m "not integration and not e2e_demo_paper and not retraining and not soak and not performance" \
+            --ignore=tests/e2e \
+            --ignore=tests/integration \
+            --maxfail=1 \
+            --durations=10 \
+            --junitxml=test-results/pytest.xml
 
       - name: Upload pytest results
         if: always()
@@ -262,7 +483,38 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Run loopback tests via Docker Compose
-        run: docker compose -f deploy/compose/loopback-tests.yml up --abort-on-container-exit
+        shell: bash
+        run: |
+          mkdir -p loopback-logs
+          docker compose -f deploy/compose/loopback-tests.yml down -v --remove-orphans || true
+          docker compose -f deploy/compose/loopback-tests.yml up \
+            --abort-on-container-exit \
+            --force-recreate \
+            --renew-anon-volumes \
+            --remove-orphans \
+            2>&1 | tee loopback-logs/compose.log
+          exit ${PIPESTATUS[0]}
+
+      - name: Collect loopback diagnostics
+        if: always()
+        shell: bash
+        run: |
+          mkdir -p loopback-logs
+          docker compose -f deploy/compose/loopback-tests.yml ps -a > loopback-logs/compose-ps.txt
+          docker compose -f deploy/compose/loopback-tests.yml logs --no-color > loopback-logs/compose-services.log
+
+      - name: Upload loopback artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: loopback-e2e-logs
+          path: loopback-logs
+          if-no-files-found: warn
+          retention-days: 5
+
+      - name: Tear down loopback compose
+        if: always()
+        run: docker compose -f deploy/compose/loopback-tests.yml down -v --remove-orphans
 
   exchange-report:
     name: Exchange HyperCare Report
@@ -399,6 +651,11 @@ jobs:
     name: UI Native Tests
     runs-on: ubuntu-latest
 
+    env:
+      QT_QPA_PLATFORM: offscreen
+      QT_QUICK_BACKEND: software
+      CTEST_OUTPUT_ON_FAILURE: 1
+
     steps:
       - name: Check out repository
         uses: actions/checkout@v4
@@ -408,13 +665,24 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y build-essential ninja-build pkg-config \
             libprotobuf-dev protobuf-compiler protobuf-compiler-grpc \
-            libgrpc-dev libgrpc++-dev libarchive-dev
+            libgrpc-dev libgrpc++-dev libarchive-dev \
+            libegl1 libgl1 libpulse0 libxkbcommon-x11-0 \
+            libxcb-cursor0 libxcb-xinerama0 xvfb
 
       - name: Install Qt
         uses: jurplel/install-qt-action@v3
         with:
-          version: 6.5.3
+          version: 6.7.0
           modules: ${{ env.QT_DESKTOP_MODULES }}
+
+      - name: Start virtual display
+        run: |
+          export DISPLAY=:99
+          Xvfb "$DISPLAY" -screen 0 1920x1080x24 > /tmp/xvfb.log 2>&1 &
+          echo "DISPLAY=${DISPLAY}" >> "$GITHUB_ENV"
+          echo "XVFB_PID=$!" >> "$GITHUB_ENV"
+          # Give Xvfb a moment to become ready.
+          sleep 3
 
       - name: Configure CMake
         run: cmake -S ui -B ui/build-tests -G Ninja -DBUILD_TESTING=ON -DCMAKE_PREFIX_PATH=$Qt6_DIR
@@ -423,17 +691,43 @@ jobs:
         run: cmake --build ui/build-tests
 
       - name: Run UI test suite
-        run: ctest --test-dir ui/build-tests --output-on-failure
+        run: |
+          set -o pipefail
+          mkdir -p ui/build-tests/Testing/Temporary
+          ctest --test-dir ui/build-tests --output-on-failure --output-log ui/build-tests/Testing/Temporary/ctest.log | tee ui/build-tests/Testing/Temporary/ctest-console.log
+
+      - name: Upload UI native test artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ui-native-test-artifacts
+          path: |
+            ui/build-tests/Testing/Temporary/ctest.log
+            ui/build-tests/Testing/Temporary/ctest-console.log
+            ui/build-tests/Testing/Temporary/LastTest.log
+          if-no-files-found: warn
+          retention-days: 5
+
+      - name: Stop virtual display
+        if: always()
+        run: |
+          if [[ -n "${XVFB_PID:-}" ]]; then
+            kill "$XVFB_PID" || true
+          fi
 
   ui-tests:
     name: UI QML Tests
     runs-on: ubuntu-latest
-    needs: prepare-pyside6-wheel
+    needs: prepare-wheelhouse
     env:
       QT_QPA_PLATFORM: offscreen
       QT_QUICK_BACKEND: software
       PYTEST_REQUIRE_QML: "1"
       QML_DIAGNOSTICS_DIR: test-results/qml
+      WHEELHOUSE_DIR: ${{ needs.prepare-wheelhouse.outputs.wheelhouse_dir }}
+      WHEELHOUSE_SOURCE: ${{ needs.prepare-wheelhouse.outputs.wheelhouse_source }}
+      WHEELHOUSE_ARTIFACT: ${{ needs.prepare-wheelhouse.outputs.wheelhouse_artifact }}
+      WHEELHOUSE_ENABLED: ${{ needs.prepare-wheelhouse.outputs.wheelhouse_enabled }}
 
     steps:
       - name: Check out repository
@@ -449,29 +743,43 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y libegl1 libgl1 libpulse0 libxkbcommon-x11-0 \
-            libxcb-cursor0 libxcb-xinerama0
+            libxcb-cursor0 libxcb-xinerama0 xvfb
 
+      - name: Start virtual display
+        run: |
+          export DISPLAY=:99
+          Xvfb "$DISPLAY" -screen 0 1920x1080x24 > /tmp/xvfb.log 2>&1 &
+          echo "DISPLAY=${DISPLAY}" >> "$GITHUB_ENV"
+          echo "XVFB_PID=$!" >> "$GITHUB_ENV"
+          # Give Xvfb a moment to become ready.
+          sleep 3
+
+      # Wheelhouse consumer: uses artifact produced in prepare-wheelhouse.
       - name: Download PySide6 wheel artifact
+        if: env.WHEELHOUSE_ENABLED == 'true'
         uses: actions/download-artifact@v4
         with:
-          name: pyside6-wheels-linux-${{ env.PYSIDE6_VERSION }}
-          path: wheelhouse
+          name: ${{ env.WHEELHOUSE_ARTIFACT }}
+          path: ${{ env.WHEELHOUSE_DIR }}
+          if-no-artifact-found: error
 
       - name: Install Python dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install --no-index --find-links wheelhouse \
+          python scripts/ci/pip_install.py --wheelhouse "$WHEELHOUSE_DIR" -- \
             PySide6==${{ env.PYSIDE6_VERSION }} \
             PySide6_Addons==${{ env.PYSIDE6_VERSION }} \
             PySide6_Essentials==${{ env.PYSIDE6_VERSION }} \
             shiboken6==${{ env.PYSIDE6_VERSION }}
-          pip install .[dev]
+          python scripts/ci/pip_install.py --wheelhouse "$WHEELHOUSE_DIR" -- .[dev]
 
       - name: Run QML pytest suite
         run: |
+          set -o pipefail
           mkdir -p test-results/qml
           pytest -m qml --maxfail=1 --disable-warnings \
-            --junitxml=test-results/qml/pytest.xml --durations=15
+            --junitxml=test-results/qml/pytest.xml --durations=15 \
+            --log-file=test-results/qml/pytest.log --log-file-level=INFO | tee test-results/qml/pytest-console.log
 
       - name: Upload QML diagnostics
         if: always()
@@ -482,13 +790,24 @@ jobs:
           if-no-files-found: warn
           retention-days: 3
 
+      - name: Stop virtual display
+        if: always()
+        run: |
+          if [[ -n "${XVFB_PID:-}" ]]; then
+            kill "$XVFB_PID" || true
+          fi
+
   grpc-feed-integration:
     name: gRPC Decision Feed Integration
     runs-on: ubuntu-latest
-    needs: prepare-pyside6-wheel
+    needs: prepare-wheelhouse
     env:
       QT_QPA_PLATFORM: offscreen
       QT_QUICK_BACKEND: software
+      WHEELHOUSE_DIR: ${{ needs.prepare-wheelhouse.outputs.wheelhouse_dir }}
+      WHEELHOUSE_SOURCE: ${{ needs.prepare-wheelhouse.outputs.wheelhouse_source }}
+      WHEELHOUSE_ARTIFACT: ${{ needs.prepare-wheelhouse.outputs.wheelhouse_artifact }}
+      WHEELHOUSE_ENABLED: ${{ needs.prepare-wheelhouse.outputs.wheelhouse_enabled }}
 
     steps:
       - name: Check out repository
@@ -505,21 +824,24 @@ jobs:
           sudo apt-get install -y libegl1 libgl1 libpulse0 libxkbcommon-x11-0 \
             libxcb-cursor0 libxcb-xinerama0
 
+      # Wheelhouse consumer: uses artifact produced in prepare-wheelhouse.
       - name: Download PySide6 wheel artifact
+        if: env.WHEELHOUSE_ENABLED == 'true'
         uses: actions/download-artifact@v4
         with:
-          name: pyside6-wheels-linux-${{ env.PYSIDE6_VERSION }}
-          path: wheelhouse
+          name: ${{ env.WHEELHOUSE_ARTIFACT }}
+          path: ${{ env.WHEELHOUSE_DIR }}
+          if-no-artifact-found: error
 
       - name: Install Python dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install --no-index --find-links wheelhouse \
+          python scripts/ci/pip_install.py --wheelhouse "$WHEELHOUSE_DIR" -- \
             PySide6==${{ env.PYSIDE6_VERSION }} \
             PySide6_Addons==${{ env.PYSIDE6_VERSION }} \
             PySide6_Essentials==${{ env.PYSIDE6_VERSION }} \
             shiboken6==${{ env.PYSIDE6_VERSION }}
-          pip install .[dev]
+          python scripts/ci/pip_install.py --wheelhouse "$WHEELHOUSE_DIR" -- .[dev]
 
       - name: Generate trading stubs
         run: python scripts/generate_trading_stubs.py --skip-cpp
@@ -641,11 +963,14 @@ jobs:
   grpc-feed-soak:
     name: gRPC Feed Soak (cron)
     runs-on: ubuntu-latest
-    needs: prepare-pyside6-wheel
+    needs: prepare-wheelhouse
     if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
     env:
       QT_QPA_PLATFORM: offscreen
       QT_QUICK_BACKEND: software
+      WHEELHOUSE_DIR: ${{ needs.prepare-wheelhouse.outputs.wheelhouse_dir }}
+      WHEELHOUSE_SOURCE: ${{ needs.prepare-wheelhouse.outputs.wheelhouse_source }}
+      WHEELHOUSE_ARTIFACT: ${{ needs.prepare-wheelhouse.outputs.wheelhouse_artifact }}
 
     steps:
       - name: Check out repository
@@ -662,21 +987,24 @@ jobs:
           sudo apt-get install -y libegl1 libgl1 libpulse0 libxkbcommon-x11-0 \
             libxcb-cursor0 libxcb-xinerama0
 
+      # Wheelhouse consumer: uses artifact produced in prepare-wheelhouse.
       - name: Download PySide6 wheel artifact
+        if: env.WHEELHOUSE_ENABLED == 'true'
         uses: actions/download-artifact@v4
         with:
-          name: pyside6-wheels-linux-${{ env.PYSIDE6_VERSION }}
-          path: wheelhouse
+          name: ${{ env.WHEELHOUSE_ARTIFACT }}
+          path: ${{ env.WHEELHOUSE_DIR }}
+          if-no-artifact-found: error
 
       - name: Install Python dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install --no-index --find-links wheelhouse \
+          python scripts/ci/pip_install.py --wheelhouse "$WHEELHOUSE_DIR" -- \
             PySide6==${{ env.PYSIDE6_VERSION }} \
             PySide6_Addons==${{ env.PYSIDE6_VERSION }} \
             PySide6_Essentials==${{ env.PYSIDE6_VERSION }} \
             shiboken6==${{ env.PYSIDE6_VERSION }}
-          pip install .[dev]
+          python scripts/ci/pip_install.py --wheelhouse "$WHEELHOUSE_DIR" -- .[dev]
 
       - name: Generate trading stubs
         run: python scripts/generate_trading_stubs.py --skip-cpp
@@ -744,7 +1072,7 @@ jobs:
   performance-benchmarks:
     name: Performance Benchmarks
     runs-on: ubuntu-latest
-    needs: prepare-pyside6-wheel
+    needs: prepare-wheelhouse
     if: |
       github.event_name == 'schedule' ||
       github.event_name == 'workflow_dispatch' ||
@@ -756,6 +1084,10 @@ jobs:
       cancel-in-progress: true
     env:
       QT_QPA_PLATFORM: offscreen
+      WHEELHOUSE_DIR: ${{ needs.prepare-wheelhouse.outputs.wheelhouse_dir }}
+      WHEELHOUSE_SOURCE: ${{ needs.prepare-wheelhouse.outputs.wheelhouse_source }}
+      WHEELHOUSE_ARTIFACT: ${{ needs.prepare-wheelhouse.outputs.wheelhouse_artifact }}
+      WHEELHOUSE_ENABLED: ${{ needs.prepare-wheelhouse.outputs.wheelhouse_enabled }}
 
     steps:
       - name: Check out repository
@@ -779,38 +1111,24 @@ jobs:
           sudo apt-get install -y libegl1 libgl1 libpulse0 libxkbcommon-x11-0 \
             libxcb-cursor0 libxcb-xinerama0
 
-      - name: Restore PySide6 wheel cache
-        id: wheel-cache
-        uses: actions/cache@v4
-        with:
-          path: wheelhouse
-          key: pyside6-${{ runner.os }}-py${{ steps.setup-python.outputs.python-version }}-${{ env.PYSIDE6_VERSION }}
-
-      - name: Download PySide6 wheel artifact
-        if: steps.wheel-cache.outputs.cache-hit != 'true'
+      # Wheelhouse consumer: uses artifact produced in prepare-wheelhouse.
+      - name: Download wheelhouse
+        if: env.WHEELHOUSE_ENABLED == 'true'
         uses: actions/download-artifact@v4
         with:
-          name: pyside6-wheels-linux-${{ env.PYSIDE6_VERSION }}
-          path: wheelhouse
-        continue-on-error: true
+          name: ${{ env.WHEELHOUSE_ARTIFACT }}
+          path: ${{ env.WHEELHOUSE_DIR }}
+          if-no-artifact-found: error
 
       - name: Install Python dependencies
         run: |
           python -m pip install --upgrade pip
-          if [ -d wheelhouse ] && ls wheelhouse/* >/dev/null 2>&1; then
-            pip install --no-index --find-links wheelhouse \
-              PySide6==${{ env.PYSIDE6_VERSION }} \
-              PySide6_Addons==${{ env.PYSIDE6_VERSION }} \
-              PySide6_Essentials==${{ env.PYSIDE6_VERSION }} \
-              shiboken6==${{ env.PYSIDE6_VERSION }}
-          else
-            pip install \
-              PySide6==${{ env.PYSIDE6_VERSION }} \
-              PySide6_Addons==${{ env.PYSIDE6_VERSION }} \
-              PySide6_Essentials==${{ env.PYSIDE6_VERSION }} \
-              shiboken6==${{ env.PYSIDE6_VERSION }}
-          fi
-          pip install .[dev]
+          python scripts/ci/pip_install.py --wheelhouse "$WHEELHOUSE_DIR" -- \
+            PySide6==${{ env.PYSIDE6_VERSION }} \
+            PySide6_Addons==${{ env.PYSIDE6_VERSION }} \
+            PySide6_Essentials==${{ env.PYSIDE6_VERSION }} \
+            shiboken6==${{ env.PYSIDE6_VERSION }}
+          python scripts/ci/pip_install.py --wheelhouse "$WHEELHOUSE_DIR" -- .[dev]
 
       - name: Determine performance metrics mode
         env:
@@ -973,7 +1291,7 @@ jobs:
               echo "### Pushgateway availability"
               echo ":warning: Tryb fallback — metryki nie zostały wypchnięte do Pushgateway."
               echo "- Powód: ${METRICS_MODE_REASON:-brak informacji}"
-              echo "- Następstwa: artefakty z raportami JSON są dostępne, ale dashboardy Prometheus/Grafana nie otrzymają danych."
+              echo "- Następstwa: artefakty z raportami JSON są dostępne, ale dashboardy Prometheus/Grafana nie otrzymają danych z tego uruchomienia."
             } >> "${GITHUB_STEP_SUMMARY}"
             exit 0
           fi
@@ -1115,8 +1433,12 @@ jobs:
 
   marketplace-catalog:
     name: Marketplace Catalog Packaging
-    runs-on: self-hosted
+    runs-on: [self-hosted, windows]
     needs: lint-and-test
+    # Packages marketplace catalog metadata and presets for deployment consumers.
+    outputs:
+      packages_artifact_name: ${{ steps.marketplace-artifact-metadata.outputs.packages_artifact_name }}
+      packages_archive: ${{ steps.marketplace-artifact-metadata.outputs.packages_archive }}
 
     steps:
       - name: Check out repository
@@ -1131,6 +1453,12 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           python -m pip install .[dev]
+
+      - name: Define marketplace packaging artifacts
+        id: marketplace-artifact-metadata
+        run: |
+          echo "packages_artifact_name=marketplace-packages" >> "$GITHUB_OUTPUT"
+          echo "packages_archive=marketplace-packages.tar.gz" >> "$GITHUB_OUTPUT"
 
       - name: Build marketplace catalog
         run: |
@@ -1176,19 +1504,20 @@ jobs:
       - name: Upload marketplace packages
         if: always()
         run: |
-          tar -czf marketplace-packages.tar.gz -C config/marketplace packages
+          tar -czf "${{ steps.marketplace-artifact-metadata.outputs.packages_archive }}" -C config/marketplace packages
 
       - name: Publish marketplace packages artifact
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: marketplace-packages
-          path: marketplace-packages.tar.gz
+          name: ${{ steps.marketplace-artifact-metadata.outputs.packages_artifact_name }}
+          path: ${{ steps.marketplace-artifact-metadata.outputs.packages_archive }}
           if-no-files-found: error
           retention-days: 3
 
   ui-packaging:
     name: UI Packaging
+    needs: prepare-wheelhouse
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
@@ -1196,14 +1525,25 @@ jobs:
         include:
           - os: ubuntu-latest
             platform: linux
-          - os: windows-latest
-            platform: windows
-          - os: macos-latest
-            platform: macos
+    # Builds platform-specific UI bundles that the deploy job publishes.
+    env:
+      WHEELHOUSE_DIR: ${{ needs.prepare-wheelhouse.outputs.wheelhouse_dir }}
+      WHEELHOUSE_SOURCE: ${{ needs.prepare-wheelhouse.outputs.wheelhouse_source }}
+      WHEELHOUSE_ARTIFACT: ${{ needs.prepare-wheelhouse.outputs.wheelhouse_artifact }}
+      WHEELHOUSE_ENABLED: ${{ needs.prepare-wheelhouse.outputs.wheelhouse_enabled }}
 
     steps:
       - name: Check out repository
         uses: actions/checkout@v4
+
+      # Wheelhouse consumer: uses artifact produced in prepare-wheelhouse.
+      - name: Download wheelhouse
+        if: env.WHEELHOUSE_ENABLED == 'true'
+        uses: actions/download-artifact@v4
+        with:
+          name: ${{ env.WHEELHOUSE_ARTIFACT }}
+          path: ${{ env.WHEELHOUSE_DIR }}
+          if-no-artifact-found: error
 
       - name: Set up Python
         uses: actions/setup-python@v5
@@ -1220,15 +1560,23 @@ jobs:
       - name: Install Qt
         uses: jurplel/install-qt-action@v3
         with:
-          version: 6.5.3
-          # Windows runners frequently lack qtdeclarative/qtquickcontrols2 for 6.5.3;
-          # request only the known-available subset explicitly.
+          version: 6.7.0
+          # Windows runners frequently lack qtdeclarative/qtquickcontrols2; request
+          # only the known-available subset explicitly.
           modules: ${{ matrix.platform == 'windows' && env.QT_WINDOWS_MODULES || env.QT_DESKTOP_MODULES }}
+
+      - name: Install PySide6 runtime
+        run: |
+          python -m pip install --upgrade pip
+          python scripts/ci/pip_install.py --wheelhouse "$WHEELHOUSE_DIR" -- \
+            PySide6==${{ env.PYSIDE6_VERSION }} \
+            PySide6_Addons==${{ env.PYSIDE6_VERSION }} \
+            PySide6_Essentials==${{ env.PYSIDE6_VERSION }} \
+            shiboken6==${{ env.PYSIDE6_VERSION }}
 
       - name: Build Qt bundle
         shell: bash
         run: |
-          python -m pip install --upgrade pip
           python scripts/packaging/qt_bundle.py \
             --platform ${{ matrix.platform }} \
             --build-dir ui/build-${{ matrix.platform }} \
@@ -1238,17 +1586,24 @@ jobs:
       - name: Upload UI bundle
         uses: actions/upload-artifact@v4
         with:
-          name: ui-${{ matrix.platform }}
+          name: ui-bundle-${{ matrix.platform }}
           path: artifacts/ui/${{ matrix.platform }}
           retention-days: 3
 
   deploy:
     name: Release marketplace assets
-    runs-on: self-hosted
+    runs-on: [self-hosted, windows]
     needs:
       - marketplace-catalog
       - ui-packaging
     if: github.event_name != 'pull_request'
+    # Consumes marketplace catalog packages and UI bundle artifacts prepared upstream.
+    env:
+      MARKETPLACE_PACKAGES_ARTIFACT: ${{ needs.marketplace-catalog.outputs.packages_artifact_name || 'marketplace-packages' }}
+      MARKETPLACE_PACKAGES_ARCHIVE: ${{ needs.marketplace-catalog.outputs.packages_archive || 'marketplace-packages.tar.gz' }}
+      MARKETPLACE_PACKAGES_DIR: artifacts/marketplace
+      UI_BUNDLE_ARTIFACT: ui-bundle-linux
+      UI_BUNDLE_DIR: artifacts/ui/linux
 
     steps:
       - name: Check out repository
@@ -1263,6 +1618,42 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           python -m pip install .[dev]
+
+      - name: Download marketplace packages artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: ${{ env.MARKETPLACE_PACKAGES_ARTIFACT }}
+          path: ${{ env.MARKETPLACE_PACKAGES_DIR }}
+          if-no-artifact-found: error
+
+      - name: Verify marketplace packages artifact
+        shell: bash
+        run: |
+          archive="${MARKETPLACE_PACKAGES_DIR}/${MARKETPLACE_PACKAGES_ARCHIVE}"
+          if [[ ! -f "${archive}" ]]; then
+            echo "Expected marketplace package archive missing: ${archive}" >&2
+            echo "Directory listing for ${MARKETPLACE_PACKAGES_DIR}:"
+            ls -la "${MARKETPLACE_PACKAGES_DIR}" || true
+            exit 1
+          fi
+          echo "Marketplace packages archive located: ${archive}"
+
+      - name: Download UI bundle artifact (linux)
+        uses: actions/download-artifact@v4
+        with:
+          name: ${{ env.UI_BUNDLE_ARTIFACT }}
+          path: ${{ env.UI_BUNDLE_DIR }}
+          if-no-artifact-found: error
+
+      - name: Verify UI bundle contents
+        shell: bash
+        run: |
+          if [[ ! -d "${UI_BUNDLE_DIR}" || -z "$(ls -A "${UI_BUNDLE_DIR}" 2>/dev/null)" ]]; then
+            echo "UI bundle directory is missing or empty: ${UI_BUNDLE_DIR}" >&2
+            ls -la "${UI_BUNDLE_DIR}" || true
+            exit 1
+          fi
+          echo "UI bundle contents:" && ls -la "${UI_BUNDLE_DIR}"
 
       - name: Build signed marketplace catalog
         run: |

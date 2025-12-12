@@ -9,19 +9,24 @@ if TYPE_CHECKING:  # pragma: no cover - tylko dla wskazówek typów
     from bot_core.config.models import EnvironmentConfig
 else:  # pragma: no cover - środowiska bootstrapowe mogą mieć niepełne modele
     EnvironmentConfig = object  # type: ignore[assignment]
+from bot_core.data.backfill_scheduler import BackfillScheduler
 from bot_core.data.backtest_library import (
     BacktestDatasetLibrary,
     DataQualityReport,
     DataQualityValidator,
     DatasetDescriptor,
 )
-from bot_core.data.base import CacheStorage, DataSource, OHLCVRequest, OHLCVResponse
+from bot_core.data.data_sources import CacheStorage, DataSource, OHLCVRequest, OHLCVResponse
 from bot_core.data.intervals import interval_to_milliseconds
 from bot_core.data.migrations import ExchangeDataToolkit, prepare_exchange_data_toolkit
-from bot_core.data.ohlcv.cache import CachedOHLCVSource, OfflineOnlyDataSource, PublicAPIDataSource
-from bot_core.data.ohlcv.parquet_storage import ParquetCacheStorage
-from bot_core.data.ohlcv.sqlite_storage import SQLiteCacheStorage
-from bot_core.data.ohlcv.storage import DualCacheStorage
+from bot_core.data.sources import (
+    CachedOHLCVSource,
+    DualCacheStorage,
+    OfflineOnlyDataSource,
+    ParquetCacheStorage,
+    PublicAPIDataSource,
+    SQLiteCacheStorage,
+)
 from bot_core.exchanges.base import ExchangeAdapter
 
 
@@ -97,4 +102,5 @@ __all__ = [
     "DatasetDescriptor",
     "DataQualityValidator",
     "DataQualityReport",
+    "BackfillScheduler",
 ]

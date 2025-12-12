@@ -78,7 +78,8 @@ from .data_monitoring import (
 from .feature_engineering import FeatureDataset
 from .explainability import build_explainability_report, serialize_explainability
 from .health import ModelHealthMonitor, ModelHealthStatus
-from .inference import DecisionModelInference, ModelRepository
+from .inference import DecisionModelInference
+from .repository import FilesystemModelRepository, ModelRepository
 from .meta import select_meta_confidence
 from .models import (
     AIModels,
@@ -2163,7 +2164,7 @@ class AIManager:
             except ModelArtifactValidationError:
                 logger.exception("Artefakt modelu %s nie spełnia wymogów schematu JSON", name)
                 raise
-            destination = repository.save(enriched, filename)
+            destination = repository.save_model(enriched, filename=filename)
 
             inference = DecisionModelInference(repository)
             inference.load_weights(destination)
@@ -2252,7 +2253,7 @@ class AIManager:
 
         repository_path = Path(base_path).expanduser().resolve()
         repository_path.mkdir(parents=True, exist_ok=True)
-        repository = ModelRepository(repository_path)
+        repository = FilesystemModelRepository(repository_path)
         self._decision_model_repository = repository
         return repository
 
@@ -2261,7 +2262,7 @@ class AIManager:
 
         repository_path = Path(base_path).expanduser().resolve()
         repository_path.mkdir(parents=True, exist_ok=True)
-        repository = ModelRepository(repository_path)
+        repository = FilesystemModelRepository(repository_path)
         self._model_repository = repository
         return repository
 
@@ -2304,7 +2305,7 @@ class AIManager:
         if self._decision_model_repository is None:
             repository_path = self.model_dir / "decision_engine"
             repository_path.mkdir(parents=True, exist_ok=True)
-            self._decision_model_repository = ModelRepository(repository_path)
+            self._decision_model_repository = FilesystemModelRepository(repository_path)
         return self._decision_model_repository
 
     def load_decision_artifact(
@@ -2385,7 +2386,18 @@ class AIManager:
             repository = self._model_repository
 
         loaded = 0
-        for artifact_path in sorted(repository.base_path.glob(pattern)):
+        versions = tuple(repository.list_versions())
+        sources: list[Path] = []
+        if versions:
+            for version in versions:
+                try:
+                    sources.append(repository.resolve(version))
+                except Exception:
+                    logger.debug("Could not resolve version %s from manifest", version, exc_info=True)
+        else:
+            sources.extend(sorted(repository.base_path.glob(pattern)))
+
+        for artifact_path in sources:
             try:
                 inference = DecisionModelInference(repository)
                 inference.load_weights(artifact_path)

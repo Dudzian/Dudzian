@@ -4,21 +4,13 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any, Dict, List, Mapping, Sequence
 
-from bot_core.strategies.base import MarketSnapshot, StrategyEngine, StrategySignal
-
-
-def _clamp(value: float, *, field: str, lower: float, upper: float) -> float:
-    if not lower <= value <= upper:
-        raise ValueError(f"{field} must be between {lower} and {upper}")
-    return value
-
-
-def _ensure_positive_int(value: int, *, field: str) -> int:
-    if value < 1:
-        raise ValueError(f"{field} must be at least 1")
-    return value
-
-
+from bot_core.strategies.base import (
+    BaseStrategy,
+    MarketSnapshot,
+    StrategySignal,
+    clamp_range,
+    ensure_positive_int,
+)
 @dataclass(slots=True)
 class OptionsIncomeSettings:
     """Parametry strategii covered-call."""
@@ -29,10 +21,14 @@ class OptionsIncomeSettings:
     roll_threshold_iv: float = 0.25
 
     def __post_init__(self) -> None:
-        self.min_iv = _clamp(float(self.min_iv), field="min_iv", lower=0.0, upper=5.0)
-        self.max_delta = _clamp(float(self.max_delta), field="max_delta", lower=0.0, upper=1.0)
-        self.min_days_to_expiry = _ensure_positive_int(int(self.min_days_to_expiry), field="min_days_to_expiry")
-        self.roll_threshold_iv = _clamp(float(self.roll_threshold_iv), field="roll_threshold_iv", lower=0.0, upper=5.0)
+        self.min_iv = clamp_range(float(self.min_iv), field="min_iv", lower=0.0, upper=5.0)
+        self.max_delta = clamp_range(float(self.max_delta), field="max_delta", lower=0.0, upper=1.0)
+        self.min_days_to_expiry = ensure_positive_int(
+            int(self.min_days_to_expiry), field="min_days_to_expiry"
+        )
+        self.roll_threshold_iv = clamp_range(
+            float(self.roll_threshold_iv), field="roll_threshold_iv", lower=0.0, upper=5.0
+        )
 
     @classmethod
     def from_parameters(cls, parameters: Mapping[str, Any] | None = None) -> "OptionsIncomeSettings":
@@ -52,18 +48,22 @@ class _OptionsState:
     entry_iv: float = 0.0
 
 
-class OptionsIncomeStrategy(StrategyEngine):
+class OptionsIncomeStrategy(BaseStrategy):
     """Generuje sygnały sprzedaży covered-call na podstawie warunków rynkowych."""
 
     def __init__(self, settings: OptionsIncomeSettings | None = None) -> None:
+        super().__init__(
+            required_data=("options_chain", "ohlcv"),
+            metadata={"capability": "options_income", "tags": ("income", "volatility")},
+        )
         self._settings = settings or OptionsIncomeSettings()
         self._states: Dict[str, _OptionsState] = {}
 
-    def warm_up(self, history: Sequence[MarketSnapshot]) -> None:
+    def warmup(self, history: Sequence[MarketSnapshot]) -> None:
         for snapshot in history:
             self._ensure_state(snapshot.symbol)
 
-    def on_data(self, snapshot: MarketSnapshot) -> Sequence[StrategySignal]:
+    def decide(self, snapshot: MarketSnapshot) -> Sequence[StrategySignal]:
         state = self._ensure_state(snapshot.symbol)
         iv = float(snapshot.indicators.get("option_iv", 0.0))
         delta = abs(float(snapshot.indicators.get("option_delta", 0.0)))
@@ -107,6 +107,9 @@ class OptionsIncomeStrategy(StrategyEngine):
                 )
             )
         return signals
+
+    def teardown(self) -> None:
+        self._states.clear()
 
     # ------------------------------------------------------------------
     def _ensure_state(self, symbol: str) -> _OptionsState:

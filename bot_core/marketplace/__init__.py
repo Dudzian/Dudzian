@@ -24,14 +24,17 @@ from .presets import (
     PresetSignature,
     PresetSignatureVerification,
     canonical_preset_bytes,
-    decode_key_material,
-    load_private_key,
     parse_preset_document,
     serialize_preset_document,
+)
+from .signatures import (
+    decode_key_material,
+    load_private_key,
     sign_preset_payload,
     verify_preset_signature,
 )
 from .signed import MarketplaceSyncResult, SignedPresetMarketplace
+from .service import MarketplaceService
 
 __all__ = [
     "MarketplaceIndex",
@@ -54,6 +57,7 @@ __all__ = [
     "canonical_preset_bytes",
     "decode_key_material",
     "load_private_key",
+    "MarketplaceService",
     "parse_preset_document",
     "serialize_preset_document",
     "sign_preset_payload",

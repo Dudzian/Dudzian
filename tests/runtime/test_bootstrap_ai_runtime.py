@@ -13,7 +13,7 @@ import pytest
 import yaml
 
 from bot_core.decision.ai_connector import AIManagerDecisionConnector
-from bot_core.decision.models import RiskSnapshot
+from bot_core.decision.models import DecisionContext, RiskSnapshot
 from bot_core.execution.base import ExecutionContext
 from bot_core.execution.paper import MarketMetadata, PaperTradingExecutionService
 from bot_core.exchanges.base import AccountSnapshot, Environment, ExchangeCredentials, OrderRequest
@@ -204,15 +204,17 @@ def test_bootstrap_environment_loads_ai_and_executes(tmp_path: Path, temp_model_
     candidate = candidates[0]
     evaluation = context.decision_orchestrator.evaluate_candidate(
         candidate,
-        RiskSnapshot(
-            profile=context.risk_profile_name,
-            start_of_day_equity=200_000.0,
-            daily_realized_pnl=0.0,
-            peak_equity=200_000.0,
-            last_equity=200_000.0,
-            gross_notional=0.0,
-            active_positions=0,
-            symbols=(),
+        DecisionContext(
+            risk_snapshot=RiskSnapshot(
+                profile=context.risk_profile_name,
+                start_of_day_equity=200_000.0,
+                daily_realized_pnl=0.0,
+                peak_equity=200_000.0,
+                last_equity=200_000.0,
+                gross_notional=0.0,
+                active_positions=0,
+                symbols=(),
+            )
         ),
     )
     assert evaluation.accepted

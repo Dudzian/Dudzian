@@ -405,6 +405,40 @@ class WalkForwardWindow:
 
 
 @dataclass(slots=True)
+class WalkForwardPlan:
+    """Plan generujący okna walidacji walk-forward.
+
+    Dzięki wyodrębnieniu planu można go łatwo podmieniać lub mockować w testach
+    bez konieczności uruchamiania faktycznej walidacji.
+    """
+
+    train_window: int
+    test_window: int
+    step: int | None = None
+
+    def __post_init__(self) -> None:
+        if self.train_window <= 0:
+            raise ValueError("train_window musi być dodatni")
+        if self.test_window <= 0:
+            raise ValueError("test_window musi być dodatni")
+        if self.step is not None and self.step <= 0:
+            raise ValueError("step musi być dodatni")
+
+    def windows(self, total: int) -> Iterable[WalkForwardWindow]:
+        if total < self.train_window + self.test_window:
+            raise ValueError("Za mało danych do przeprowadzenia walidacji walk-forward")
+        step = self.step or self.test_window
+        start = 0
+        while start + self.train_window + self.test_window <= total:
+            train_indices = list(range(start, start + self.train_window))
+            test_indices = list(
+                range(start + self.train_window, start + self.train_window + self.test_window)
+            )
+            yield WalkForwardWindow(train_indices=train_indices, test_indices=test_indices)
+            start += step
+
+
+@dataclass(slots=True)
 class WalkForwardResult:
     """Zbiorcze metryki walidacji walk-forward."""
 
@@ -416,47 +450,26 @@ class WalkForwardResult:
 class WalkForwardValidator:
     """Realizuje walidację walk-forward na zbiorze cech."""
 
-    def __init__(
-        self,
-        dataset: FeatureDataset,
-        *,
-        train_window: int,
-        test_window: int,
-        step: int | None = None,
-    ) -> None:
-        if train_window <= 0:
-            raise ValueError("train_window musi być dodatni")
-        if test_window <= 0:
-            raise ValueError("test_window musi być dodatni")
-        if len(dataset.vectors) < train_window + test_window:
-            raise ValueError("Za mało danych do przeprowadzenia walidacji walk-forward")
+    def __init__(self, dataset: FeatureDataset, *, plan: WalkForwardPlan) -> None:
         self._dataset = dataset
-        self._train_window = train_window
-        self._test_window = test_window
-        self._step = step or test_window
+        self._plan = plan
+        # Walidacja następuje w momencie inicjalizacji, aby wcześniej wychwycić brak danych.
+        _ = tuple(self.windows())
 
     def windows(self) -> Iterable[WalkForwardWindow]:
-        total = len(self._dataset.vectors)
-        start = 0
-        while start + self._train_window + self._test_window <= total:
-            train_indices = list(range(start, start + self._train_window))
-            test_indices = list(
-                range(start + self._train_window, start + self._train_window + self._test_window)
-            )
-            yield WalkForwardWindow(train_indices=train_indices, test_indices=test_indices)
-            start += self._step
+        return self._plan.windows(len(self._dataset.vectors))
 
     @property
     def train_window(self) -> int:
-        return self._train_window
+        return self._plan.train_window
 
     @property
     def test_window(self) -> int:
-        return self._test_window
+        return self._plan.test_window
 
     @property
     def step(self) -> int:
-        return self._step
+        return self._plan.step or self._plan.test_window
 
     def validate(self, trainer_factory: Callable[[], ModelTrainer]) -> WalkForwardResult:
         windows_metrics: list[Mapping[str, float]] = []
@@ -1018,6 +1031,7 @@ __all__ = [
     "ScheduledTrainingJob",
     "TrainingRunRecord",
     "TrainingScheduler",
+    "WalkForwardPlan",
     "WalkForwardResult",
     "WalkForwardValidator",
 ]

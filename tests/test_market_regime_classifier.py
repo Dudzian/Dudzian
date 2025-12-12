@@ -6,11 +6,12 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from bot_core.ai.regime import (
+from bot_core.ai.regime import RegimeHistory
+from bot_core.market_intel.regime import (
     MarketRegime,
     MarketRegimeClassifier,
-    RegimeHistory,
     RiskLevel,
+    build_regime_features,
 )
 
 
@@ -26,6 +27,35 @@ def _build_dataframe(close: np.ndarray, *, noise: float = 0.0) -> pd.DataFrame:
         "close": base,
         "volume": volume,
     })
+
+
+def test_build_regime_features_produces_expected_contract() -> None:
+    prices = np.linspace(100, 120, 90)
+    df = _build_dataframe(prices)
+
+    features = build_regime_features(
+        df,
+        min_history=30,
+        trend_window=40,
+        daily_window=15,
+    )
+
+    expected_keys = {
+        "trend_strength",
+        "volatility",
+        "momentum",
+        "autocorr",
+        "intraday_vol",
+        "drawdown",
+        "volatility_ratio",
+        "volume_trend",
+        "return_skew",
+        "return_kurtosis",
+        "volume_imbalance",
+    }
+    assert expected_keys.issubset(features.metrics.keys())
+    assert features.price_column == "close"
+    assert features.symbol is None
 
 
 def test_market_regime_classifier_detects_trend() -> None:
@@ -201,9 +231,20 @@ def test_market_regime_classifier_assess_matches_manual_metrics() -> None:
         "volume_imbalance": volume_imbalance,
     }
 
+    feature_set = build_regime_features(
+        ohlcv,
+        min_history=30,
+        trend_window=classifier.trend_window,
+        daily_window=classifier.daily_window,
+        metrics_config=classifier._metrics_config(),
+    )
+
     for key, value in expected_metrics.items():
         assert key in assessment.metrics
         assert assessment.metrics[key] == pytest.approx(value, rel=1e-6, abs=1e-8)
+        assert feature_set.metrics[key] == pytest.approx(value, rel=1e-6, abs=1e-8)
+
+    assert assessment.metrics == feature_set.metrics
 
     score_cfg = classifier._thresholds["market_regime"]["risk_score"]
     volatility_component = min(1.0, expected_metrics["volatility"] / classifier.volatility_threshold)

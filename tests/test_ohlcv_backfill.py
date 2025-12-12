@@ -7,6 +7,8 @@ from typing import Iterable, Mapping, MutableMapping, Sequence
 
 import pytest
 
+from bot_core.observability.metrics import MetricsRegistry
+
 
 
 from bot_core.data.base import CacheStorage, DataSource, OHLCVRequest, OHLCVResponse
@@ -245,3 +247,37 @@ def test_backfill_raises_after_exhausting_retries() -> None:
 
     with pytest.raises(RuntimeError):
         service.synchronize(symbols=("BTCUSDT",), interval="1d", start=0, end=0)
+
+
+def test_cached_source_emits_feed_metrics(monkeypatch: pytest.MonkeyPatch) -> None:
+    registry = MetricsRegistry()
+    upstream = FixedSource(
+        rows=[
+            [0.0, 10.0, 20.0, 5.0, 15.0, 100.0],
+            [120_000.0, 11.0, 21.0, 6.0, 16.0, 110.0],
+        ]
+    )
+    cached = CachedOHLCVSource(
+        storage=InMemoryStorage(),
+        upstream=upstream,
+        metrics_registry=registry,
+    )
+
+    perf_values = iter([1.0, 1.25])
+    monkeypatch.setattr(
+        "bot_core.data.sources.ohlcv_cache.time.perf_counter", lambda: next(perf_values)
+    )
+
+    response = cached.fetch_ohlcv(
+        OHLCVRequest(symbol="BTCUSDT", interval="1m", start=0, end=120_000)
+    )
+
+    assert len(response.rows) == 2
+
+    missing_metric = registry.get("bot_data_feed_missing_candles_total")
+    assert missing_metric.value(labels={"symbol": "btcusdt", "interval": "1m"}) == 1
+
+    latency_metric = registry.get("bot_data_feed_fetch_latency_seconds")
+    sample = latency_metric.sample(labels={"symbol": "btcusdt", "interval": "1m", "source": "upstream"})
+    assert sample.count == 1
+    assert sample.sum == pytest.approx(0.25)

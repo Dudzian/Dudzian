@@ -7,7 +7,8 @@ import json
 import pandas as pd
 import pytest
 
-from bot_core.ai.inference import DecisionModelInference, ModelRepository
+from bot_core.ai.inference import DecisionModelInference
+from bot_core.ai.repository import FilesystemModelRepository, ModelRepository
 from bot_core.ai.pipeline import _load_frame_from_path, train_gradient_boosting_model
 
 
@@ -26,7 +27,7 @@ def test_train_gradient_boosting_model_emits_meta_labeling(tmp_path) -> None:
         model_name="demo",
     )
 
-    repository = ModelRepository(tmp_path)
+    repository = FilesystemModelRepository(tmp_path)
     inference = DecisionModelInference(repository)
     inference.load_weights(artifact_path.name)
 
@@ -61,7 +62,7 @@ def test_train_gradient_boosting_model_meta_payload_without_classifier(tmp_path)
         model_name="flat",
     )
 
-    repository = ModelRepository(tmp_path)
+    repository = FilesystemModelRepository(tmp_path)
     inference = DecisionModelInference(repository)
     inference.load_weights(artifact_path.name)
 

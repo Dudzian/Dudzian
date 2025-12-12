@@ -1,9 +1,6 @@
 """Workflow publikacji presetów Marketplace."""
 from __future__ import annotations
 
-import base64
-import hashlib
-import hmac
 import json
 from dataclasses import dataclass
 from pathlib import Path
@@ -14,7 +11,7 @@ from bot_core.config_marketplace.schema import (
     MarketplacePackageMetadata,
     load_catalog,
 )
-from bot_core.security.signing import canonical_json_bytes
+from bot_core.marketplace import verify_preset_signature
 
 
 def _load_json(path: Path) -> Mapping[str, Any]:
@@ -102,24 +99,12 @@ class PresetPublicationWorkflow:
         payload: Mapping[str, Any],
         signature: Mapping[str, Any] | None,
     ) -> bool:
-        if not signature:
-            return False
-        key_id = signature.get("key_id") or signature.get("keyId")
-        if not isinstance(key_id, str):
-            return False
-        key = self._signing_keys.get(key_id)
-        if key is None:
-            return False
-        algorithm = str(signature.get("algorithm", "HMAC-SHA256")).strip().lower()
-        if algorithm not in {"hmac-sha256", "sha256"}:
-            return False
-        serialized = canonical_json_bytes(payload)
-        digest = hmac.new(key, serialized, hashlib.sha256).digest()
-        expected = base64.b64encode(digest).decode("ascii")
-        value = signature.get("value")
-        if isinstance(value, str):
-            return hmac.compare_digest(expected, value)
-        return False
+        verification, _ = verify_preset_signature(
+            payload,
+            signature,
+            signing_keys=self._signing_keys,
+        )
+        return verification.verified
 
     def _collect_reviews(self, preset: MarketplacePackageMetadata) -> list[PresetReviewSummary]:
         entries = self._reviews.get(preset.package_id) or []

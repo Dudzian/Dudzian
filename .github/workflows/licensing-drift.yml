@@ -12,6 +12,9 @@ jobs:
     env:
       HWID_DRIFT_REPORT: reports/ci/licensing_drift/compatibility.json
       SECURITY_ALERTS_WEBHOOK: ${{ secrets.SECURITY_ALERTS_WEBHOOK }}
+      PYTHONHASHSEED: "0"
+      PYTEST_DISABLE_PLUGIN_AUTOLOAD: "1"
+      TZ: UTC
 
     steps:
       - name: Check out repository
@@ -35,7 +38,13 @@ jobs:
         continue-on-error: true
         run: |
           set -o pipefail
-          pytest tests/licensing/test_hwid_drift.py -q | tee reports/ci/licensing_drift/pytest.log
+          mkdir -p "$(dirname "${HWID_DRIFT_REPORT}")"
+          pytest tests/licensing/test_hwid_drift.py \
+            --maxfail=1 \
+            --disable-warnings \
+            --color=yes \
+            -q 2>&1 | tee reports/ci/licensing_drift/pytest.log
+          echo "exit_code=${PIPESTATUS[0]}" >> "$GITHUB_OUTPUT"
 
       - name: Generate licensing drift report
         run: python scripts/generate_hwid_drift_report.py --output "${HWID_DRIFT_REPORT}"
@@ -86,6 +95,9 @@ jobs:
       LICENSING_DRIFT_DASHBOARD_DIR: reports/ci/licensing_drift/dashboard
       LICENSING_DRIFT_PUSHGATEWAY: ${{ secrets.LICENSING_DRIFT_PUSHGATEWAY || vars.LICENSING_DRIFT_PUSHGATEWAY || vars.CI_PUSHGATEWAY_DEFAULT }}
       LICENSING_DRIFT_PUSHGATEWAY_AUTH: ${{ secrets.LICENSING_DRIFT_PUSHGATEWAY_AUTH }}
+      PYTHONHASHSEED: "0"
+      PYTEST_DISABLE_PLUGIN_AUTOLOAD: "1"
+      TZ: UTC
 
     steps:
       - name: Check out repository

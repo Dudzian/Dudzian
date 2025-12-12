@@ -7,7 +7,7 @@ import math
 from pathlib import Path
 from typing import Dict, List, Mapping
 
-from .engine import BacktestReport, PerformanceMetrics
+from .models import BacktestReport, PerformanceMetrics
 
 logger = logging.getLogger(__name__)
 

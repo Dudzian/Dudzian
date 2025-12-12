@@ -10,6 +10,7 @@ from bot_core.ai import MarketRegime, ModelScore
 from bot_core.config.models import DecisionEngineConfig, DecisionOrchestratorThresholds
 from bot_core.decision.models import (
     DecisionCandidate,
+    DecisionContext,
     ModelSelectionMetadata,
     RiskSnapshot,
 )
@@ -63,6 +64,10 @@ def _snapshot() -> RiskSnapshot:
     )
 
 
+def _context() -> DecisionContext:
+    return DecisionContext(risk_snapshot=_snapshot())
+
+
 def test_orchestrator_uses_inference_score() -> None:
     stub = StubInference(ModelScore(expected_return_bps=14.0, success_probability=0.75))
     orchestrator = DecisionOrchestrator(_config(), inference=stub)
@@ -79,7 +84,7 @@ def test_orchestrator_uses_inference_score() -> None:
         metadata={"model_features": {"momentum": 1.0, "ret_volatility": 0.2}},
     )
 
-    evaluation = orchestrator.evaluate_candidate(candidate, _snapshot())
+    evaluation = orchestrator.evaluate_candidate(candidate, _context())
 
     assert stub.called_with == {"momentum": 1.0, "ret_volatility": 0.2}
     assert evaluation.model_success_probability == pytest.approx(0.75)
@@ -129,7 +134,7 @@ def test_orchestrator_switches_models_based_on_history() -> None:
         metadata={"model_features": {"momentum": 1.2, "ret_volatility": 0.15}},
     )
 
-    evaluation = orchestrator.evaluate_candidate(candidate, _snapshot())
+    evaluation = orchestrator.evaluate_candidate(candidate, _context())
 
     assert fast.called_with == {"momentum": 1.2, "ret_volatility": 0.15}
     assert slow.called_with is None
@@ -189,7 +194,7 @@ def test_orchestrator_prefers_recent_performance() -> None:
         metadata={"model_features": {"momentum": 0.7, "ret_volatility": 0.25}},
     )
 
-    evaluation = orchestrator.evaluate_candidate(candidate, _snapshot())
+    evaluation = orchestrator.evaluate_candidate(candidate, _context())
 
     assert fresh.called_with == {"momentum": 0.7, "ret_volatility": 0.25}
     assert stale.called_with is None
@@ -238,7 +243,7 @@ def test_orchestrator_reports_missing_features_in_trace() -> None:
         metadata={},
     )
 
-    evaluation = orchestrator.evaluate_candidate(candidate, _snapshot())
+    evaluation = orchestrator.evaluate_candidate(candidate, _context())
 
     assert evaluation.model_name is None
     assert evaluation.model_selection is not None
@@ -286,7 +291,7 @@ def test_orchestrator_traces_unavailable_models() -> None:
         metadata={"model_features": {"momentum": 1.1}},
     )
 
-    evaluation = orchestrator.evaluate_candidate(candidate, _snapshot())
+    evaluation = orchestrator.evaluate_candidate(candidate, _context())
 
     assert evaluation.model_name == "fast"
     assert evaluation.model_selection is not None

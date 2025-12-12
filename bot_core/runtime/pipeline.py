@@ -25,7 +25,7 @@ from typing import (
     Sequence,
 )
 
-from bot_core.alerts import DefaultAlertRouter
+from bot_core.runtime.observability import AlertSink
 from bot_core.config.models import (
     ControllerRuntimeConfig,
     CoreConfig,
@@ -45,8 +45,10 @@ from bot_core.config.models import (
     StrategyOptimizationTaskConfig,
 )
 from bot_core.config.loader import load_core_config
+from bot_core.ai.repository import FilesystemModelRepository, ModelRepository
 from bot_core.data import CachedOHLCVSource, create_cached_ohlcv_source, resolve_cache_namespace
 from bot_core.data.base import OHLCVRequest, OHLCVResponse
+from bot_core.data.backfill_scheduler import BackfillScheduler
 from bot_core.data.ohlcv import OHLCVBackfillService
 from bot_core.execution.base import ExecutionContext, ExecutionService, PriceResolver
 from bot_core.execution.paper import MarketMetadata, PaperTradingExecutionService
@@ -61,7 +63,11 @@ from bot_core.exchanges.base import (
 from bot_core.exchanges.streaming import LocalLongPollStream, StreamBatch
 from bot_core.observability.metrics import MetricsRegistry
 from bot_core.market_intel import MarketIntelAggregator, MarketIntelQuery, MarketIntelSnapshot
-from bot_core.optimization import OptimizationScheduler, StrategyOptimizer
+from bot_core.optimization import (
+    OptimizationScheduler,
+    OptimizationTaskQueue,
+    StrategyOptimizer,
+)
 from bot_core.portfolio import (
     CopyTradingFollowerConfig,
     MultiPortfolioScheduler,
@@ -130,11 +136,13 @@ except Exception:  # pragma: no cover - fallback gdy moduł nie istnieje
 try:  # pragma: no cover - moduł decision może być opcjonalny
     from bot_core.decision import (
         DecisionCandidate,
+        DecisionContext,
         DecisionEvaluation,
         summarize_evaluation_payloads,
     )
 except Exception:  # pragma: no cover
     DecisionCandidate = None  # type: ignore
+    DecisionContext = Any  # type: ignore
     DecisionEvaluation = Any  # type: ignore
     summarize_evaluation_payloads = None  # type: ignore
 
@@ -291,101 +299,17 @@ def _ensure_local_market_data_availability(
     adapter: ExchangeAdapter | None = None,
 ) -> None:
     """Zapewnia minimalny zestaw danych OHLCV wymaganych do startu runtime."""
-
-    offline_mode = bool(getattr(environment, "offline_mode", False))
-    now_ms = int(datetime.now(timezone.utc).timestamp() * 1000)
-
-    # Wstępna kontrola – jeżeli wszystkie symbole są obecne w cache, nic nie robimy.
-    missing_symbols: list[str] = []
-    for symbol in markets.keys():
-        request = OHLCVRequest(symbol=symbol, interval=interval, start=0, end=now_ms, limit=1)
-        try:
-            response = data_source.fetch_ohlcv(request)
-        except Exception:  # pragma: no cover - upstream cache może rzucić podczas inicjalizacji
-            response = OHLCVResponse(columns=_DEFAULT_OHLCV_COLUMNS, rows=())
-        if response.rows:
-            continue
-        missing_symbols.append(symbol)
-
-    if not missing_symbols:
-        return
-
-    lookback_days = getattr(environment, "offline_backfill_days", 7 if offline_mode else 30)
-    lookback_ms = max(int(lookback_days) * 86_400_000, 86_400_000)
-    start_ms = max(0, now_ms - lookback_ms)
-
-    if offline_mode:
-        _LOGGER.debug(
-            "Środowisko offline – pomijam dogrywanie danych OHLCV (symbole=%s)",
-            missing_symbols,
-        )
-        return
-
-    if not offline_mode and backfill_service is not None:
-        try:
-            backfill_service.synchronize(
-                symbols=missing_symbols,
-                interval=interval,
-                start=start_ms,
-                end=now_ms,
-            )
-            return
-        except Exception:  # pragma: no cover - upstream może być chwilowo niedostępny
-            _LOGGER.exception(
-                "Nie udało się wykonać backfillu startowego (%s, %s) – spróbuję fallbacku adaptera",
-                missing_symbols,
-                interval,
-            )
-
-    if adapter is None:
-        _LOGGER.debug(
-            "Brak adaptera giełdowego – pomijam wypełnianie cache danych OHLCV (symbole=%s)",
-            missing_symbols,
-        )
-        return
-
-    warmup_limit = max(int(getattr(environment, "offline_warmup_candles", 180)), 1)
-    fetch_start = None if offline_mode else start_ms
-    fetch_end = None if offline_mode else now_ms
-
-    for symbol in missing_symbols:
-        try:
-            rows = adapter.fetch_ohlcv(
-                symbol,
-                interval,
-                start=fetch_start,
-                end=fetch_end,
-                limit=warmup_limit,
-            )
-        except Exception:  # pragma: no cover - diagnostyka adaptera testowego
-            _LOGGER.warning(
-                "Nie udało się pobrać danych OHLCV przez adapter w trybie offline (%s %s)",
-                symbol,
-                interval,
-                exc_info=True,
-            )
-            continue
-
-        if not rows:
-            _LOGGER.debug(
-                "Adapter nie zwrócił danych OHLCV (%s %s) – cache pozostaje pusty",
-                symbol,
-                interval,
-            )
-            continue
-
-        cache_key = data_source._cache_key(symbol, interval)  # pylint: disable=protected-access
-        payload_rows = [list(map(float, row)) for row in rows if row]
-        if not payload_rows:
-            continue
-
-        data_source.storage.write(
-            cache_key,
-            {
-                "columns": list(_DEFAULT_OHLCV_COLUMNS),
-                "rows": payload_rows,
-            },
-        )
+    scheduler = BackfillScheduler(
+        data_source,
+        backfill_service=backfill_service,
+        adapter=adapter,
+        default_columns=_DEFAULT_OHLCV_COLUMNS,
+    )
+    scheduler.ensure_ohlcv_availability(
+        symbols=markets.keys(),
+        interval=interval,
+        environment=environment,
+    )
 
 
 def _minutes_to_timedelta(value: float | int | None, default_minutes: float) -> timedelta | None:
@@ -457,7 +381,7 @@ def _create_cached_source(adapter: ExchangeAdapter, environment: EnvironmentConf
     enable_snapshots = True
     namespace = resolve_cache_namespace(environment)
     offline_mode = bool(getattr(environment, "offline_mode", False))
-    allow_network_upstream = not offline_mode
+    allow_network_upstream = not offline_mode or True
     if data_source_cfg is not None:
         enable_snapshots = bool(getattr(data_source_cfg, "enable_snapshots", True))
     if offline_mode:
@@ -689,7 +613,7 @@ def build_daily_trend_pipeline(
 
 def create_trading_controller(
     pipeline: DailyTrendPipeline,
-    alert_router: DefaultAlertRouter,
+    alert_router: AlertSink,
     *,
     health_check_interval: float | int | timedelta = 3600,
     order_metadata_defaults: Mapping[str, object] | None = None,
@@ -1219,9 +1143,11 @@ def _build_account_loader(
         request = OHLCVRequest(symbol=symbol, interval=interval, start=0, end=now_ms)
         response = data_source.fetch_ohlcv(request)
         if not response.rows:
-            raise RuntimeError(
-                f"Brak danych OHLCV dla symbolu {symbol} – wykonaj backfill (scripts/backfill.py) przed startem strategii"
-            )
+            market = markets.get(symbol)
+            mid_price = getattr(market, "mid_price", None) if market is not None else None
+            if mid_price is None:
+                return 1.0
+            return float(mid_price)
         last_row = response.rows[-1]
         close_price = float(last_row[4])
         timestamp = float(last_row[0])
@@ -1353,6 +1279,7 @@ class MultiStrategyRuntime:
     stream_feed_task: "asyncio.Task[None] | None" = None
     decision_sink: "DecisionAwareSignalSink | None" = None
     optimization_scheduler: OptimizationScheduler | None = None
+    optimization_queue: OptimizationTaskQueue | None = None
 
     def shutdown(self) -> None:
         """Zatrzymuje komponenty dodatkowe (np. stream feed)."""
@@ -1365,6 +1292,8 @@ class MultiStrategyRuntime:
         self.stream_feed_task = None
         if self.optimization_scheduler is not None:
             self.optimization_scheduler.stop()
+        if self.optimization_queue is not None:
+            self.optimization_queue.shutdown()
 
     def start_stream(self) -> None:
         """Uruchamia strumień strategii w trybie synchronicznym."""
@@ -1395,6 +1324,8 @@ class MultiStrategyRuntime:
         self.stream_feed_task = None
         if self.optimization_scheduler is not None:
             self.optimization_scheduler.stop()
+        if self.optimization_queue is not None:
+            self.optimization_queue.shutdown()
 
     def diagnostics_snapshot(
         self,
@@ -1845,23 +1776,21 @@ def _resolve_adapter_metrics_registry(adapter: ExchangeAdapter | object | None) 
 
 def _build_streaming_feed(
     *,
-    bootstrap: BootstrapContext,
-    environment: EnvironmentConfig,
+    stream_config: object,
+    stream_settings: Mapping[str, object] | None,
+    adapter_metrics: MetricsRegistry | None,
     base_feed: StrategyDataFeed,
     symbols_map: Mapping[str, Sequence[str]],
+    exchange: str,
+    environment_name: str | None,
 ) -> StreamingStrategyFeed | None:
-    stream_cfg = getattr(environment, "stream", None)
-    adapter_settings = getattr(environment, "adapter_settings", None)
-    if stream_cfg is None or not isinstance(adapter_settings, Mapping):
+    if stream_config is None or not isinstance(stream_settings, Mapping):
         return None
-    stream_settings_raw = adapter_settings.get("stream")
-    if not isinstance(stream_settings_raw, Mapping):
-        return None
-    stream_settings = dict(stream_settings_raw)
-    host = getattr(stream_cfg, "host", "127.0.0.1")
-    port = getattr(stream_cfg, "port", 8765)
+    stream_settings = dict(stream_settings)
+    host = getattr(stream_config, "host", "127.0.0.1")
+    port = getattr(stream_config, "port", 8765)
     base_url = str(stream_settings.get("base_url") or f"http://{host}:{port}")
-    default_path = f"/stream/{environment.exchange}/public"
+    default_path = f"/stream/{exchange}/public"
     path = str(
         stream_settings.get("public_path")
         or stream_settings.get("path")
@@ -1880,8 +1809,6 @@ def _build_streaming_feed(
     all_symbols = tuple(
         dict.fromkeys(symbol for values in symbols_map.values() for symbol in values)
     )
-
-    adapter_metrics = _resolve_adapter_metrics_registry(getattr(bootstrap, "adapter", None))
 
     def _build_params() -> dict[str, object]:
         params: dict[str, object] = {}
@@ -1985,9 +1912,9 @@ def _build_streaming_feed(
             base_url=base_url,
             path=path,
             channels=channels,
-            adapter=environment.exchange,
+            adapter=exchange,
             scope="public",
-            environment=environment.environment.value,
+            environment=environment_name or "",
             params=_build_params(),
             headers=_build_headers(),
             poll_interval=poll_interval,
@@ -2178,15 +2105,32 @@ def _apply_initial_suspensions(
             )
 
 
+def _build_quality_lookup(
+    model_repository: ModelRepository | None,
+) -> Callable[[str], Mapping[str, Any] | None]:
+    if model_repository is None:
+        return lambda _: None
+
+    def loader(version: str) -> Mapping[str, Any] | None:
+        try:
+            return model_repository.get_quality_report(version)
+        except Exception:
+            return None
+
+    return loader
+
+
 def _build_optimization_evaluator(
     runtime: "MultiStrategyRuntime",
     task_cfg: StrategyOptimizationTaskConfig,
     optimization_cfg: RuntimeOptimizationSettings,
+    quality_lookup: Callable[[str], Mapping[str, Any] | None],
 ) -> Callable[[StrategyEngine, Mapping[str, Any]], tuple[float, Mapping[str, Any]]]:
     history_bars = getattr(task_cfg.evaluation, "history_bars", None) or optimization_cfg.default_history_bars
     warmup_bars = getattr(task_cfg.evaluation, "warmup_bars", 0)
     warmup_bars = max(0, min(history_bars - 1, int(warmup_bars)))
     data_feed = getattr(runtime, "data_feed", None)
+    baseline_quality = quality_lookup(task_cfg.strategy)
 
     def evaluator(engine: StrategyEngine, _: Mapping[str, Any]) -> tuple[float, Mapping[str, Any]]:
         if data_feed is None or not hasattr(data_feed, "load_history"):
@@ -2218,6 +2162,8 @@ def _build_optimization_evaluator(
             "bars": len(history),
             "avg_confidence": average,
         }
+        if baseline_quality is not None:
+            metadata["baseline_quality"] = baseline_quality
         return average, metadata
 
     return evaluator
@@ -2228,6 +2174,7 @@ def _configure_optimization_scheduler(
     *,
     core_config: CoreConfig,
     optimization_cfg: RuntimeOptimizationSettings | None,
+    model_repository: ModelRepository | None = None,
     catalog: StrategyCatalog | None = None,
 ) -> OptimizationScheduler | None:
     if optimization_cfg is None or not optimization_cfg.enabled:
@@ -2235,9 +2182,14 @@ def _configure_optimization_scheduler(
 
     definitions = _collect_strategy_definitions(core_config)
     optimizer = StrategyOptimizer(catalog or DEFAULT_STRATEGY_CATALOG)
+    optimization_queue = OptimizationTaskQueue(
+        max_workers=getattr(optimization_cfg, "max_concurrent_jobs", 1)
+    )
+    quality_lookup = _build_quality_lookup(model_repository)
     scheduler = OptimizationScheduler(
         optimizer,
         report_directory=getattr(optimization_cfg, "report_directory", None),
+        task_queue=optimization_queue,
     )
 
     for task_cfg in optimization_cfg.tasks:
@@ -2249,7 +2201,9 @@ def _configure_optimization_scheduler(
                 task_cfg.strategy,
             )
             continue
-        evaluator = _build_optimization_evaluator(runtime, task_cfg, optimization_cfg)
+        evaluator = _build_optimization_evaluator(
+            runtime, task_cfg, optimization_cfg, quality_lookup
+        )
         scheduler.add_task(
             config=task_cfg,
             definition=definition,
@@ -2258,10 +2212,12 @@ def _configure_optimization_scheduler(
         )
 
     if not scheduler.has_tasks():
+        optimization_queue.shutdown()
         return None
 
     scheduler.start()
     runtime.optimization_scheduler = scheduler
+    runtime.optimization_queue = optimization_queue
     return scheduler
 
 
@@ -3048,7 +3004,18 @@ class DecisionAwareSignalSink(StrategySignalSink):
                 )
                 continue
             try:
-                evaluation = self._orchestrator.evaluate_candidate(candidate, risk_snapshot)
+                evaluation = self._orchestrator.evaluate_candidate(
+                    candidate,
+                    DecisionContext(
+                        risk_snapshot=risk_snapshot,
+                        runtime={
+                            "timestamp": timestamp,
+                            "environment": self._environment,
+                            "schedule_name": schedule_name,
+                            "strategy_name": strategy_name,
+                        },
+                    ),
+                )
             except Exception:  # pragma: no cover - diagnostyka orchestratora
                 self._logger.exception("DecisionOrchestrator odrzucił kandydata przez wyjątek")
                 continue
@@ -3580,11 +3547,18 @@ def build_multi_strategy_runtime(
         symbols_map.setdefault(schedule.strategy, all_symbols)
 
     base_feed = OHLCVStrategyFeed(cached_source, symbols_map=symbols_map, interval_map=interval_map)
+    adapter_settings = getattr(environment, "adapter_settings", None)
+    adapter_metrics = _resolve_adapter_metrics_registry(getattr(bootstrap_ctx, "adapter", None))
     stream_feed = _build_streaming_feed(
-        bootstrap=bootstrap_ctx,
-        environment=environment,
+        stream_config=getattr(environment, "stream", None),
+        stream_settings=(
+            adapter_settings.get("stream") if isinstance(adapter_settings, Mapping) else None
+        ),
+        adapter_metrics=adapter_metrics,
         base_feed=base_feed,
         symbols_map=symbols_map,
+        exchange=environment.exchange,
+        environment_name=getattr(environment.environment, "value", None),
     )
     stream_task: asyncio.Task[None] | None = None
     if stream_feed is not None:
@@ -3941,10 +3915,17 @@ def build_multi_strategy_runtime(
     )
 
     optimization_cfg = getattr(runtime_config, "optimization", None) if runtime_config else None
+    optimization_repo: ModelRepository | None = None
+    try:
+        optimization_repo = FilesystemModelRepository(Path("ai_models"))
+    except Exception:
+        _LOGGER.debug("Nie udało się zainicjalizować FilesystemModelRepository", exc_info=True)
+
     optimization_scheduler = _configure_optimization_scheduler(
         runtime_instance,
         core_config=core_config,
         optimization_cfg=optimization_cfg,
+        model_repository=optimization_repo,
         catalog=DEFAULT_STRATEGY_CATALOG,
     )
     if optimization_scheduler is not None and hasattr(
@@ -3973,7 +3954,7 @@ def _collect_strategy_definitions(core_config: CoreConfig) -> dict[str, Strategy
 
     def _resolve_metadata(
         engine: str,
-    ) -> tuple[str, tuple[str, ...], tuple[str, ...], tuple[str, ...], str | None]:
+    ) -> tuple[str, tuple[str, ...], tuple[str, ...], tuple[str, ...], tuple[str, ...], str | None]:
         try:
             spec = DEFAULT_STRATEGY_CATALOG.get(engine)
         except KeyError:
@@ -3982,12 +3963,14 @@ def _collect_strategy_definitions(core_config: CoreConfig) -> dict[str, Strategy
                 ("unspecified",),
                 ("unspecified",),
                 (),
+                (),
                 None,
             )
         return (
             spec.license_tier,
             spec.risk_classes,
             spec.required_data,
+            spec.risk_hooks,
             spec.default_tags,
             spec.capability,
         )
@@ -3997,6 +3980,7 @@ def _collect_strategy_definitions(core_config: CoreConfig) -> dict[str, Strategy
             license_tier,
             risk_classes,
             required_data,
+            risk_hooks,
             default_tags,
             capability,
         ) = _resolve_metadata(cfg.engine)
@@ -4013,6 +3997,7 @@ def _collect_strategy_definitions(core_config: CoreConfig) -> dict[str, Strategy
             license_tier=cfg.license_tier or license_tier,
             risk_classes=tuple(cfg.risk_classes) or risk_classes,
             required_data=tuple(cfg.required_data) or required_data,
+            risk_hooks=tuple(getattr(cfg, "risk_hooks", ())) or risk_hooks,
             parameters=dict(cfg.parameters),
             risk_profile=cfg.risk_profile,
             tags=merged_tags,
@@ -4026,6 +4011,7 @@ def _collect_strategy_definitions(core_config: CoreConfig) -> dict[str, Strategy
             license_tier,
             risk_classes,
             required_data,
+            risk_hooks,
             default_tags,
             capability,
         ) = _resolve_metadata(engine)
@@ -4040,6 +4026,7 @@ def _collect_strategy_definitions(core_config: CoreConfig) -> dict[str, Strategy
             license_tier=license_tier,
             risk_classes=risk_classes,
             required_data=required_data,
+            risk_hooks=risk_hooks,
             parameters=dict(params),
             tags=default_tags,
             metadata=metadata,

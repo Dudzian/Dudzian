@@ -3,18 +3,23 @@ from __future__ import annotations
 
 import math
 from collections import Counter
+import logging
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
-from typing import Any, Dict, Iterable, Mapping, Sequence
+from typing import TYPE_CHECKING, Any, Callable, Dict, Iterable, Mapping, Sequence
 
 from bot_core.backtest.engine import BacktestReport
 from bot_core.risk.base import RiskCheckResult, RiskProfile
+from bot_core.risk.events import RiskAlertLog
 from bot_core.observability.metrics import (
     CounterMetric,
     GaugeMetric,
     MetricsRegistry,
     get_global_metrics_registry,
 )
+
+if TYPE_CHECKING:
+    from bot_core.risk.state import RiskState
 
 _DEFAULT_ALLOWED_INTENTS = ("hedge", "neutral", "rebalance", "rebalance_delta")
 
@@ -487,6 +492,10 @@ __all__ = [
     "summarize_guardrail_results",
     "LossGuardrailConfig",
     "LossGuardrailDecision",
+    "GuardrailOrder",
+    "RiskDecision",
+    "GuardrailsEngine",
+    "RiskGuardrailsService",
     "RiskGuardrailMetricSet",
 ]
 @dataclass(slots=True)
@@ -646,3 +655,203 @@ class RiskGuardrailMetricSet:
 
     def record_state(self, profile: str, *, active: bool) -> None:
         self._hedge_mode.set(1 if active else 0, labels={"profile": profile})
+
+
+@dataclass(slots=True)
+class GuardrailOrder:
+    """Minimalny kontekst zlecenia na potrzeby guardraili."""
+
+    symbol: str
+    is_reducing: bool
+    metadata: Mapping[str, object] | None = None
+
+
+@dataclass(slots=True)
+class RiskDecision:
+    """Wynik oceny guardraili w runtime."""
+
+    should_trade: bool
+    hedge_mode: bool = False
+    reason: str | None = None
+    guardrail: str | None = None
+    value: float | None = None
+    threshold: float | None = None
+    cooldown_until: datetime | None = None
+    metadata: Mapping[str, object] = field(default_factory=dict)
+    changed_state: bool = False
+
+
+class RiskGuardrailsService:
+    """Serwis opakowujący logikę GuardrailsEngine na potrzeby RiskEngine."""
+
+    def __init__(
+        self,
+        guardrails_engine: GuardrailsEngine,
+        *,
+        metrics: RiskGuardrailMetricSet | None = None,
+    ) -> None:
+        self._engine = guardrails_engine
+        self._metrics = metrics
+
+    def evaluate(
+        self,
+        snapshot: "RiskState",
+        orders: Sequence[GuardrailOrder],
+        *,
+        profile_name: str | None,
+        drawdown_pct: float,
+        daily_loss_pct: float,
+        weekly_loss_pct: float,
+    ) -> RiskDecision:
+        return self._engine.evaluate(
+            snapshot,
+            orders,
+            profile_name=profile_name,
+            drawdown_pct=drawdown_pct,
+            daily_loss_pct=daily_loss_pct,
+            weekly_loss_pct=weekly_loss_pct,
+        )
+
+    def record_profile_state(self, profile_name: str, state: "RiskState") -> None:
+        if self._metrics is not None:
+            self._metrics.record_state(profile_name, active=state.hedge_mode)
+
+
+class GuardrailsEngine:
+    """Spójny moduł oceniający guardraile (loss + circuit-breaker)."""
+
+    def __init__(
+        self,
+        config: LossGuardrailConfig | None,
+        *,
+        metrics: RiskGuardrailMetricSet | None = None,
+        alert_log: RiskAlertLog | None = None,
+        clock: Callable[[], datetime] | None = None,
+        logger: logging.Logger | None = None,
+    ) -> None:
+        self._config = config
+        self._metrics = metrics
+        self._alert_log = alert_log
+        self._clock = clock or datetime.utcnow
+        self._logger = logger or logging.getLogger(__name__)
+
+    def evaluate(
+        self,
+        snapshot: "RiskState",
+        orders: Sequence[GuardrailOrder],
+        *,
+        profile_name: str | None,
+        drawdown_pct: float,
+        daily_loss_pct: float,
+        weekly_loss_pct: float,
+    ) -> RiskDecision:
+        now = self._clock()
+
+        if self._config is None:
+            return RiskDecision(should_trade=True, hedge_mode=snapshot.hedge_mode)
+
+        decision = self._config.evaluate(
+            state=snapshot,
+            drawdown_pct=drawdown_pct,
+            daily_loss_pct=daily_loss_pct,
+            weekly_loss_pct=weekly_loss_pct,
+            now=now,
+        )
+
+        changed_state = False
+        if decision.activate:
+            snapshot.activate_hedge(
+                reason=decision.reason,
+                timestamp=now,
+                cooldown_until=decision.cooldown_until,
+            )
+            changed_state = True
+            self._logger.warning(
+                "Guardrail hedge mode enabled for profile %s metric=%s value=%.4f threshold=%.4f",
+                profile_name or snapshot.profile,
+                decision.metric or "unknown",
+                decision.value or 0.0,
+                decision.threshold or 0.0,
+            )
+            if self._metrics is not None:
+                self._metrics.record_activation(profile_name or snapshot.profile, reason=decision.metric)
+            self._record_alert(
+                profile_name or snapshot.profile,
+                metric=decision.metric,
+                value=decision.value,
+                threshold=decision.threshold,
+                reason=decision.reason,
+                cooldown_until=decision.cooldown_until,
+            )
+        elif decision.deactivate and snapshot.hedge_mode:
+            snapshot.deactivate_hedge()
+            changed_state = True
+            self._logger.info("Guardrail hedge mode cleared for profile %s", profile_name or snapshot.profile)
+            if self._metrics is not None:
+                self._metrics.record_state(profile_name or snapshot.profile, active=False)
+        elif self._metrics is not None:
+            self._metrics.record_state(profile_name or snapshot.profile, active=snapshot.hedge_mode)
+
+        if snapshot.hedge_mode:
+            for order in orders:
+                if order.is_reducing:
+                    continue
+                if not self._config.is_allowed_intent(order.metadata):
+                    return RiskDecision(
+                        should_trade=False,
+                        hedge_mode=True,
+                        reason=(
+                            "Profil działa w trybie hedge – dopuszczalne są jedynie zlecenia redukujące "
+                            "lub oznaczone jako hedge."
+                        ),
+                        guardrail=decision.metric,
+                        value=decision.value,
+                        threshold=decision.threshold,
+                        cooldown_until=decision.cooldown_until,
+                        metadata={
+                            "hedge_mode": True,
+                            "hedge_reason": snapshot.hedge_reason,
+                            "hedge_activated_at": snapshot.hedge_activated_at.isoformat()
+                            if snapshot.hedge_activated_at
+                            else None,
+                        },
+                        changed_state=changed_state,
+                    )
+
+        return RiskDecision(
+            should_trade=True,
+            hedge_mode=snapshot.hedge_mode,
+            guardrail=decision.metric,
+            value=decision.value,
+            threshold=decision.threshold,
+            cooldown_until=decision.cooldown_until,
+            changed_state=changed_state,
+        )
+
+    def _record_alert(
+        self,
+        profile: str,
+        *,
+        metric: str | None,
+        value: float | None,
+        threshold: float | None,
+        reason: str | None,
+        cooldown_until: datetime | None,
+    ) -> None:
+        if self._alert_log is None:
+            return
+        try:
+            self._alert_log.record(
+                profile=profile,
+                limit=f"loss_guardrail_{metric or 'unknown'}",
+                value=float(value or 0.0),
+                threshold=float(threshold or 0.0),
+                severity="warning",
+                context={
+                    "reason": reason,
+                    "hedge_mode": True,
+                    "cooldown_until": cooldown_until.isoformat() if cooldown_until else None,
+                },
+            )
+        except Exception:  # pragma: no cover - alert log jest opcjonalny
+            self._logger.exception("Failed to record guardrail alert", exc_info=True)

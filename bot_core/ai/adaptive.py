@@ -8,7 +8,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Iterable, Mapping, MutableMapping, Sequence
 
-from .inference import ModelRepository
+from .repository import ModelRepository
 from .models import ModelArtifact
 
 try:  # pragma: no cover - DecisionOrchestrator may be absent in trimmed builds
@@ -191,7 +191,7 @@ class AdaptiveStrategyLearner:
         if not path.exists():
             return
         try:
-            artifact = self.repository.load(path)
+            artifact = self.repository.load_model(path)
         except Exception:  # pragma: no cover - corrupted state should not break runtime
             _LOGGER.exception("Nie udało się odczytać stanu adaptive learnera z %s", path)
             return
@@ -242,10 +242,10 @@ class AdaptiveStrategyLearner:
         artifact = self._build_artifact()
         timestamp = _now_utc().strftime("%Y%m%dT%H%M%S")
         try:
-            path = self.repository.save(
+            path = self.repository.save_model(
                 artifact,
-                self.model_name,
                 version=timestamp,
+                filename=self.model_name,
                 aliases=("latest",),
                 activate=True,
             )

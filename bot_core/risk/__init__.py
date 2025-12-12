@@ -10,11 +10,19 @@ from __future__ import annotations
 
 # --- Bazowe interfejsy / repo / silniki --------------------------------------
 from bot_core.risk.base import RiskCheckResult, RiskEngine, RiskProfile, RiskRepository
-from bot_core.risk.engine import InMemoryRiskRepository, ThresholdRiskEngine
+from bot_core.risk.engine import ThresholdRiskEngine
 from bot_core.risk.guardrails import (
     evaluate_backtest_guardrails,
     LossGuardrailConfig,
     RiskGuardrailMetricSet,
+)
+from bot_core.risk.state import (
+    PositionState,
+    RiskMetrics as RiskStateMetrics,
+    RiskSnapshot as RiskStateSnapshot,
+    RiskState,
+    build_risk_snapshot,
+    normalize_position_side,
 )
 from bot_core.risk.portfolio_stress import (
     PortfolioStressBaseline,
@@ -39,7 +47,7 @@ from bot_core.risk.portfolio import (
 )
 from bot_core.risk.events import RiskDecisionEvent, RiskDecisionLog
 from bot_core.risk.factory import build_risk_profile_from_config
-from bot_core.risk.repository import FileRiskRepository
+from bot_core.risk.repository import FileRiskRepository, InMemoryRiskRepository, RiskProfileRepository
 from bot_core.risk.simulation import (
     Candle,
     MarketDatasetLoader,
@@ -133,8 +141,17 @@ __all__ = [
     "RiskProfile",
     "RiskRepository",
     "ThresholdRiskEngine",
+    "RiskState",
+    "RiskStateMetrics",
+    "RiskStateSnapshot",
+    "PositionState",
+    "build_risk_snapshot",
+    "normalize_position_side",
     "evaluate_backtest_guardrails",
+    "GuardrailOrder",
+    "GuardrailsEngine",
     "LossGuardrailConfig",
+    "RiskDecision",
     "RiskGuardrailMetricSet",
     # zdarzenia/log
     "RiskDecisionEvent",

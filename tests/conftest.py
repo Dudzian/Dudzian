@@ -1,199 +1,58 @@
-"""Globalna konfiguracja testów."""
-from __future__ import annotations
-
-import os
-import sys
-import importlib.util
-from pathlib import Path
-from types import ModuleType
-from typing import Iterable
-
 import pytest
 
-
-from scripts import generate_trading_stubs
-
-
-os.environ.setdefault("DUDZIAN_SECURITY_SKIP", "1")
-
-_REQUIRE_QML_ENV = "PYTEST_REQUIRE_QML"
-_QML_REQUIRED = os.getenv(_REQUIRE_QML_ENV, "").lower() in {"1", "true", "yes", "on"}
+from bot_core.backtest.simulation import SimulationScenario
 
 
-if "nacl" not in sys.modules:
-    nacl_module = ModuleType("nacl")
-    nacl_exceptions = ModuleType("nacl.exceptions")
-    nacl_exceptions.BadSignatureError = Exception
-
-    class _VerifyKey:
-        def verify(self, *_args: object, **_kwargs: object) -> None:
-            return None
-
-    class _SigningKey:
-        def __init__(self) -> None:
-            self.verify_key = self
-
-        @classmethod
-        def generate(cls) -> "_SigningKey":
-            return cls()
-
-        def sign(self, payload: bytes) -> "_SignatureWrapper":
-            return _SignatureWrapper(b"stub-signature" + payload[:1])
-
-        def encode(self) -> bytes:
-            return b"stub-signing-key"
-
-    class _SignatureWrapper:
-        def __init__(self, signature: bytes) -> None:
-            self.signature = signature
-
-    nacl_signing = ModuleType("nacl.signing")
-    nacl_signing.VerifyKey = lambda *_args, **_kwargs: _VerifyKey()
-    nacl_signing.SigningKey = _SigningKey
-    nacl_module.exceptions = nacl_exceptions
-    nacl_module.signing = nacl_signing
-    sys.modules["nacl"] = nacl_module
-    sys.modules["nacl.exceptions"] = nacl_exceptions
-    sys.modules["nacl.signing"] = nacl_signing
-
-_FAST_ENV_VAR = "PYTEST_FAST"
-_FAST_MODE_ENABLED = False
-_TRADING_STUBS: tuple[Path, ...] = generate_trading_stubs.python_stub_targets()
-_HAS_TRADING_STUBS = all(path.exists() for path in _TRADING_STUBS)
-
-
-def pytest_addoption(parser: pytest.Parser) -> None:
-    parser.addoption(
-        "--fast",
-        action="store_true",
-        default=False,
-        help="Włącza tryb fast – testy integracyjne zewnętrznych usług są mockowane lub pomijane.",
+@pytest.fixture
+def latency_one_no_cost_scenario() -> SimulationScenario:
+    return SimulationScenario(
+        name="latency_one_no_cost",
+        latency_bars=1,
+        slippage_bps=0.0,
+        fee_bps=0.0,
+        liquidity_share=1.0,
     )
 
 
-def _interval_to_milliseconds(interval: str | None) -> float:
-    if not interval:
-        return 60_000.0
-    units = {"m": 60_000.0, "h": 3_600_000.0, "d": 86_400_000.0}
-    try:
-        value = int(interval[:-1])
-        unit = interval[-1].lower()
-    except (TypeError, ValueError, AttributeError):
-        return 60_000.0
-    base = units.get(unit, 60_000.0)
-    return max(float(value) * base, 60_000.0)
-
-
-def _enable_fast_mode() -> None:
-    from bot_core.data.base import OHLCVResponse
-    from bot_core.data.ohlcv.cache import PublicAPIDataSource
-
-    columns = ("open_time", "open", "high", "low", "close", "volume")
-
-    def _mock_fetch(
-        self: PublicAPIDataSource,
-        request,
-    ) -> OHLCVResponse:  # pragma: no cover - deterministyczny stub do testów
-        start = float(getattr(request, "start", 0.0) or 1_700_000_000_000)
-        end = getattr(request, "end", None)
-        limit = getattr(request, "limit", None)
-        interval = getattr(request, "interval", "1m")
-        step = _interval_to_milliseconds(interval)
-
-        if isinstance(limit, int) and limit > 0:
-            size = limit
-        else:
-            if end is not None:
-                try:
-                    size = int(max((float(end) - start) / step, 0.0)) + 1
-                except (TypeError, ValueError):
-                    size = 120
-            else:
-                size = 120
-        size = max(size, 1)
-
-        rows = []
-        for index in range(size):
-            timestamp = start + index * step
-            base_price = 100.0 + (index % 20) * 0.5
-            high = base_price * 1.01
-            low = base_price * 0.99
-            close = base_price * 1.005
-            volume = 10.0 + index
-            rows.append(
-                (
-                    float(timestamp),
-                    float(base_price),
-                    float(high),
-                    float(low),
-                    float(close),
-                    float(volume),
-                )
-            )
-
-        return OHLCVResponse(columns=columns, rows=tuple(rows))
-
-    def _mock_warm_cache(
-        self: PublicAPIDataSource, symbols: Iterable[str], intervals: Iterable[str]
-    ) -> None:  # pragma: no cover - stub
-        del self, symbols, intervals
-
-    PublicAPIDataSource.fetch_ohlcv = _mock_fetch  # type: ignore[assignment]
-    PublicAPIDataSource.warm_cache = _mock_warm_cache  # type: ignore[assignment]
-
-
-def pytest_configure(config: pytest.Config) -> None:
-    fast_from_cli = bool(config.getoption("--fast"))
-    fast_from_env = os.getenv(_FAST_ENV_VAR, "").lower() in {"1", "true", "yes", "on"}
-    fast_mode = fast_from_cli or fast_from_env
-    config.fast_mode = fast_mode  # type: ignore[attr-defined]
-
-    config.addinivalue_line(
-        "markers",
-        "requires_trading_stubs: test wymaga wygenerowanych stubów trading_pb2*.py",
+@pytest.fixture
+def instant_no_cost_scenario() -> SimulationScenario:
+    return SimulationScenario(
+        name="instant_no_cost",
+        latency_bars=0,
+        slippage_bps=0.0,
+        fee_bps=0.0,
+        liquidity_share=1.0,
     )
 
-    config.trading_stubs_available = _HAS_TRADING_STUBS  # type: ignore[attr-defined]
 
-    config._require_qml = _QML_REQUIRED  # type: ignore[attr-defined]
-    if _QML_REQUIRED and importlib.util.find_spec("PySide6") is None:
-        raise pytest.UsageError(
-            "Ustawiono PYTEST_REQUIRE_QML=1, ale moduł PySide6 nie jest dostępny w środowisku testowym.",
-        )
-
-    if fast_mode:
-        global _FAST_MODE_ENABLED
-        if not _FAST_MODE_ENABLED:
-            _enable_fast_mode()
-            _FAST_MODE_ENABLED = True
-        os.environ.setdefault(_FAST_ENV_VAR, "1")
-
-
-def pytest_collection_modifyitems(config: pytest.Config, items: list[pytest.Item]) -> None:
-    if getattr(config, "_require_qml", False):  # type: ignore[attr-defined]
-        qml_items = [item for item in items if "qml" in item.keywords]
-        if not qml_items:
-            raise pytest.UsageError(
-                "Brak zebranych testów oznaczonych markerem 'qml' przy włączonym wymaganiu PYTEST_REQUIRE_QML=1.",
-            )
-
-    if getattr(config, "fast_mode", False):  # type: ignore[attr-defined]
-        skip_marker = pytest.mark.skip(reason="pomijam test integracyjny w trybie fast")
-        for item in items:
-            if "integration" in item.keywords or "external" in item.keywords:
-                item.add_marker(skip_marker)
-
-    if _HAS_TRADING_STUBS:
-        return
-
-    missing = ", ".join(str(path) for path in _TRADING_STUBS if not path.exists())
-    reason = (
-        "Brak stubów trading_pb2*.py – uruchom 'python scripts/generate_trading_stubs.py --skip-cpp'"
+@pytest.fixture
+def partial_fill_scenario() -> SimulationScenario:
+    return SimulationScenario(
+        name="partial_fill_half_liquidity",
+        latency_bars=0,
+        slippage_bps=0.0,
+        fee_bps=0.0,
+        liquidity_share=0.5,
     )
-    if missing:
-        reason += f" ({missing})"
-    skip_trading = pytest.mark.skip(reason=reason)
-    for item in items:
-        if "requires_trading_stubs" in item.keywords:
-            item.add_marker(skip_trading)
 
+
+@pytest.fixture
+def slippage_fee_scenario() -> SimulationScenario:
+    return SimulationScenario(
+        name="slippage_and_fee",
+        latency_bars=0,
+        slippage_bps=10.0,
+        fee_bps=25.0,
+        liquidity_share=1.0,
+    )
+
+
+@pytest.fixture
+def heavy_slippage_scenario() -> SimulationScenario:
+    return SimulationScenario(
+        name="heavy_slippage_no_fee",
+        latency_bars=0,
+        slippage_bps=100.0,
+        fee_bps=0.0,
+        liquidity_share=1.0,
+    )

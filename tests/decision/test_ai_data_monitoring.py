@@ -16,6 +16,7 @@ from bot_core.ai import (
     DataQualityException,
     InferenceDataCompletenessWatcher,
     InferenceFeatureBoundsValidator,
+    FilesystemModelRepository,
     ModelArtifact,
     ModelRepository,
     collect_pending_compliance_sign_offs,
@@ -155,7 +156,7 @@ def test_feature_bounds_validator_detects_outliers(tmp_path: Path, monkeypatch: 
 def test_inference_monitoring_exports_reports(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     audit_root = tmp_path / "audit"
     monkeypatch.setenv("AI_DECISION_AUDIT_ROOT", str(audit_root))
-    repository = ModelRepository(tmp_path / "repo")
+    repository = FilesystemModelRepository(tmp_path / "repo")
     artifact = _make_artifact(
         drift_monitor={
             "threshold": 0.5,
@@ -206,7 +207,7 @@ def test_score_with_data_monitoring_passes_when_data_ok(
 ) -> None:
     audit_root = tmp_path / "audit"
     monkeypatch.setenv("AI_DECISION_AUDIT_ROOT", str(audit_root))
-    repository = ModelRepository(tmp_path / "repo")
+    repository = FilesystemModelRepository(tmp_path / "repo")
     artifact = _make_artifact(data_quality={"enforce": True})
     model_path = repository.save(artifact, "test_model_ok.json")
 
@@ -241,7 +242,7 @@ def test_score_with_data_monitoring_respects_category_policy(
 ) -> None:
     audit_root = tmp_path / "audit"
     monkeypatch.setenv("AI_DECISION_AUDIT_ROOT", str(audit_root))
-    repository = ModelRepository(tmp_path / "repo")
+    repository = FilesystemModelRepository(tmp_path / "repo")
     artifact = _make_artifact(
         feature_names=("alpha",),
         data_quality={
@@ -278,7 +279,7 @@ def test_update_sign_off_updates_exported_report(
 ) -> None:
     audit_root = tmp_path / "audit"
     monkeypatch.setenv("AI_DECISION_AUDIT_ROOT", str(audit_root))
-    repository = ModelRepository(tmp_path / "repo")
+    repository = FilesystemModelRepository(tmp_path / "repo")
     artifact = _make_artifact(feature_names=("alpha",))
     model_path = repository.save(artifact, "signoff_model.json")
 
@@ -320,7 +321,7 @@ def test_load_recent_reports_filters_and_limits(
 ) -> None:
     audit_root = tmp_path / "audit"
     monkeypatch.setenv("AI_DECISION_AUDIT_ROOT", str(audit_root))
-    repository = ModelRepository(tmp_path / "repo")
+    repository = FilesystemModelRepository(tmp_path / "repo")
     artifact = _make_artifact(
         drift_monitor={
             "threshold": 0.5,
@@ -383,7 +384,7 @@ def test_summarize_data_quality_reports_flags_pending_sign_off(
 ) -> None:
     audit_root = tmp_path / "audit"
     monkeypatch.setenv("AI_DECISION_AUDIT_ROOT", str(audit_root))
-    repository = ModelRepository(tmp_path / "repo")
+    repository = FilesystemModelRepository(tmp_path / "repo")
     artifact = _make_artifact()
     model_path = repository.save(artifact, "summary_model.json")
 

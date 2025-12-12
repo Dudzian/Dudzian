@@ -72,6 +72,7 @@ class StrategyParameterTester:
                 license_tier=spec.license_tier,
                 risk_classes=spec.risk_classes,
                 required_data=spec.required_data,
+                risk_hooks=spec.risk_hooks,
                 parameters=candidate_parameters,
                 tags=spec.default_tags,
                 metadata=metadata or {},

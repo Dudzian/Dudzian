@@ -1,25 +1,33 @@
 from __future__ import annotations
 
-import base64
 import json
 import logging
 import re
 import unicodedata
 from functools import lru_cache
-from dataclasses import dataclass, field
-from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Mapping, MutableMapping, Sequence
+from typing import TYPE_CHECKING, Any, Mapping, Sequence
 
 try:  # opcjonalna zależność
     import yaml
 except ImportError:  # pragma: no cover - środowiska bez PyYAML
     yaml = None  # type: ignore[assignment]
-from cryptography.exceptions import InvalidSignature
-from cryptography.hazmat.primitives import serialization
-from cryptography.hazmat.primitives.asymmetric import ed25519
+from bot_core.marketplace.models import (
+    PresetDocument,
+    PresetSignature,
+    PresetSignatureVerification,
+    canonical_preset_bytes,
+    normalize_preset_document,
+)
+from bot_core.marketplace.signatures import (
+    DEFAULT_SIGNATURE_ALGORITHM,
+    decode_key_material,
+    sign_preset_payload,
+    verify_preset_signature,
+)
 
-from bot_core.security.signing import canonical_json_bytes, verify_hmac_signature
+if TYPE_CHECKING:
+    from .signatures import SignatureProvider
 
 LOGGER = logging.getLogger(__name__)
 
@@ -46,97 +54,7 @@ _ROMAN_NUMERAL_PATTERN = re.compile(
     r"^M{0,4}(CM|CD|D?C{0,3})(XC|XL|L?X{0,3})(IX|IV|V?I{0,3})$",
     re.IGNORECASE,
 )
-_DEFAULT_SIGNATURE_ALGORITHM = "ed25519"
-
-
-@dataclass(slots=True)
-class PresetSignatureVerification:
-    """Informacje o wynikach weryfikacji podpisu presetu."""
-
-    verified: bool
-    issues: tuple[str, ...] = field(default_factory=tuple)
-    algorithm: str | None = None
-    key_id: str | None = None
-
-
-@dataclass(slots=True)
-class PresetSignature:
-    """Metadane podpisu presetu Marketplace."""
-
-    algorithm: str
-    value: str
-    key_id: str | None = None
-    public_key: str | None = None
-    signed_at: str | None = None
-    issuer: str | None = None
-
-    def as_dict(self) -> dict[str, Any]:
-        document: dict[str, Any] = {
-            "algorithm": self.algorithm,
-            "value": self.value,
-        }
-        if self.key_id:
-            document["key_id"] = self.key_id
-        if self.public_key:
-            document["public_key"] = self.public_key
-        if self.signed_at:
-            document["signed_at"] = self.signed_at
-        if self.issuer:
-            document["issuer"] = self.issuer
-        return document
-
-
-@dataclass(slots=True)
-class PresetDocument:
-    """Reprezentuje plik presetu Marketplace wraz z podpisem."""
-
-    payload: Mapping[str, Any]
-    signature: PresetSignature | None
-    verification: PresetSignatureVerification
-    fmt: str
-    path: Path | None = None
-    issues: tuple[str, ...] = field(default_factory=tuple)
-
-    @property
-    def metadata(self) -> Mapping[str, Any]:
-        raw = self.payload.get("metadata", {})
-        if isinstance(raw, Mapping):
-            return raw
-        return {}
-
-    @property
-    def preset_id(self) -> str:
-        meta = self.metadata
-        value = meta.get("id") if isinstance(meta, Mapping) else None
-        return str(value).strip() if value not in (None, "") else ""
-
-    @property
-    def version(self) -> str | None:
-        meta = self.metadata
-        value = meta.get("version") if isinstance(meta, Mapping) else None
-        if value in (None, ""):
-            return None
-        return str(value).strip()
-
-    @property
-    def name(self) -> str | None:
-        value = self.payload.get("name")
-        if value in (None, ""):
-            return None
-        return str(value)
-
-    @property
-    def tags(self) -> Sequence[str]:
-        tags = self.metadata.get("tags") if isinstance(self.metadata, Mapping) else None
-        if isinstance(tags, Sequence) and not isinstance(tags, (str, bytes)):
-            return tuple(str(tag) for tag in tags)
-        return ()
-
-
-def canonical_preset_bytes(payload: Mapping[str, Any]) -> bytes:
-    """Zwraca kanoniczną reprezentację JSON dla payloadu presetu."""
-
-    return canonical_json_bytes(payload)
+_DEFAULT_SIGNATURE_ALGORITHM = DEFAULT_SIGNATURE_ALGORITHM
 
 
 def _normalize_format(filename: str | None) -> str | None:
@@ -294,202 +212,6 @@ def _sorting_key(name: str) -> tuple[tuple[int, object], ...]:
     return tuple(result)
 
 
-def _to_text(value: bytes | str) -> str:
-    if isinstance(value, bytes):
-        try:
-            return value.decode("utf-8").strip()
-        except UnicodeDecodeError:
-            return base64.b64encode(value).decode("ascii")
-    return value.strip()
-
-
-def decode_key_material(value: bytes | str) -> bytes:
-    """Dekoduje materiał klucza zakodowany w base64/hex/UTF-8."""
-
-    text = _to_text(value)
-    if not text:
-        raise ValueError("pusty materiał klucza")
-
-    try:
-        return base64.b64decode(text, validate=True)
-    except Exception:
-        pass
-
-    try:
-        return bytes.fromhex(text)
-    except ValueError:
-        pass
-
-    return text.encode("utf-8")
-
-
-def _load_ed25519_public_key(payload: bytes) -> ed25519.Ed25519PublicKey:
-    try:
-        return ed25519.Ed25519PublicKey.from_public_bytes(payload)
-    except ValueError:
-        try:
-            public_key = serialization.load_pem_public_key(payload)
-        except ValueError as exc:  # pragma: no cover - defensywne logowanie
-            raise ValueError("niepoprawny klucz publiczny ed25519") from exc
-        if not isinstance(public_key, ed25519.Ed25519PublicKey):
-            raise ValueError("klucz publiczny nie jest typu Ed25519")
-        return public_key
-
-
-def _load_ed25519_private_key(data: bytes) -> ed25519.Ed25519PrivateKey:
-    try:
-        return ed25519.Ed25519PrivateKey.from_private_bytes(data)
-    except ValueError:
-        try:
-            key = serialization.load_pem_private_key(data, password=None)
-        except ValueError as exc:  # pragma: no cover - defensywne logowanie
-            raise ValueError("niepoprawny klucz prywatny Ed25519") from exc
-        if not isinstance(key, ed25519.Ed25519PrivateKey):
-            raise ValueError("klucz prywatny nie jest typu Ed25519")
-        return key
-
-
-def verify_preset_signature(
-    payload: Mapping[str, Any],
-    signature_doc: Mapping[str, Any] | None,
-    *,
-    signing_keys: Mapping[str, bytes | str] | None = None,
-) -> tuple[PresetSignatureVerification, PresetSignature | None]:
-    """Weryfikuje podpis i zwraca wynik wraz z obiektem podpisu."""
-
-    if not signature_doc:
-        return PresetSignatureVerification(False, ("missing-signature",)), None
-
-    algorithm = str(signature_doc.get("algorithm") or "").strip().lower()
-    key_id = signature_doc.get("key_id")
-    key_id_text = str(key_id).strip() if key_id not in (None, "") else None
-
-    signature_value = signature_doc.get("value") or signature_doc.get("signature")
-    if not isinstance(signature_value, str):
-        return PresetSignatureVerification(False, ("signature-missing",), algorithm or None, key_id_text), None
-
-    if algorithm in {"", "ed25519"}:
-        algorithm = _DEFAULT_SIGNATURE_ALGORITHM
-        try:
-            signature_bytes = decode_key_material(signature_value)
-        except ValueError as exc:
-            return PresetSignatureVerification(
-                False,
-                (f"signature-invalid:{exc}",),
-                algorithm,
-                key_id_text,
-            ), None
-
-        if len(signature_bytes) != 64:
-            return PresetSignatureVerification(
-                False,
-                ("signature-invalid-length",),
-                algorithm,
-                key_id_text,
-            ), None
-
-        public_key_bytes: bytes | None = None
-        raw_public_key = signature_doc.get("public_key")
-        if raw_public_key not in (None, ""):
-            try:
-                public_key_bytes = decode_key_material(raw_public_key)
-            except ValueError as exc:
-                return PresetSignatureVerification(
-                    False,
-                    (f"public-key-invalid:{exc}",),
-                    algorithm,
-                    key_id_text,
-                ), None
-        elif signing_keys and key_id_text:
-            candidate = signing_keys.get(key_id_text)
-            if candidate is not None:
-                try:
-                    public_key_bytes = decode_key_material(candidate)
-                except ValueError as exc:
-                    return PresetSignatureVerification(
-                        False,
-                        (f"signing-key-invalid:{exc}",),
-                        algorithm,
-                        key_id_text,
-                    ), None
-
-        if public_key_bytes is None:
-            return PresetSignatureVerification(
-                False,
-                ("missing-public-key",),
-                algorithm,
-                key_id_text,
-            ), None
-
-        try:
-            public_key = _load_ed25519_public_key(public_key_bytes)
-        except ValueError as exc:
-            return PresetSignatureVerification(
-                False,
-                (f"public-key-invalid:{exc}",),
-                algorithm,
-                key_id_text,
-            ), None
-
-        try:
-            public_key.verify(signature_bytes, canonical_preset_bytes(payload))
-        except InvalidSignature:
-            return PresetSignatureVerification(
-                False,
-                ("signature-mismatch",),
-                algorithm,
-                key_id_text,
-            ), None
-
-        signature = PresetSignature(
-            algorithm=algorithm,
-            value=base64.b64encode(signature_bytes).decode("ascii"),
-            key_id=key_id_text,
-            public_key=base64.b64encode(public_key_bytes).decode("ascii"),
-            signed_at=str(signature_doc.get("signed_at") or "").strip() or None,
-            issuer=str(signature_doc.get("issuer") or "").strip() or None,
-        )
-        return PresetSignatureVerification(True, (), algorithm, key_id_text), signature
-
-    if algorithm in {"hmac-sha256", "hmac_sha256"}:
-        key_bytes: bytes | None = None
-        if signing_keys and key_id_text:
-            candidate = signing_keys.get(key_id_text)
-            if candidate is not None:
-                try:
-                    key_bytes = decode_key_material(candidate)
-                except ValueError:
-                    key_bytes = None
-        verified = verify_hmac_signature(payload, signature_doc, key=key_bytes, algorithm="HMAC-SHA256")
-        signature = PresetSignature(
-            algorithm="HMAC-SHA256",
-            value=str(signature_value),
-            key_id=key_id_text,
-        )
-        issues: tuple[str, ...] = () if verified else ("signature-mismatch",)
-        return PresetSignatureVerification(verified, issues, "HMAC-SHA256", key_id_text), signature
-
-    return PresetSignatureVerification(
-        False,
-        (f"unsupported-algorithm:{algorithm}",),
-        algorithm,
-        key_id_text,
-    ), None
-
-
-def _normalize_payload(document: Mapping[str, Any]) -> tuple[Mapping[str, Any], Mapping[str, Any] | None]:
-    if "preset" in document:
-        payload = document.get("preset")
-        signature_doc = document.get("signature")
-    else:
-        payload = document
-        signature_doc = None
-    if not isinstance(payload, Mapping):
-        raise ValueError("Preset musi być obiektem JSON/YAML")
-    normalized_payload: MutableMapping[str, Any] = {}
-    for key, value in payload.items():
-        normalized_payload[str(key)] = value
-    return dict(normalized_payload), signature_doc if isinstance(signature_doc, Mapping) else None
 
 
 def parse_preset_document(
@@ -497,6 +219,7 @@ def parse_preset_document(
     *,
     source: Path | None = None,
     signing_keys: Mapping[str, bytes | str] | None = None,
+    providers: tuple["SignatureProvider", ...] | None = None,
 ) -> PresetDocument:
     """Parsuje dokument presetu z JSON lub YAML."""
 
@@ -516,8 +239,13 @@ def parse_preset_document(
     if not isinstance(document, Mapping):
         raise ValueError("Dokument presetu musi być obiektem JSON/YAML")
 
-    payload, signature_doc = _normalize_payload(document)
-    verification, signature = verify_preset_signature(payload, signature_doc, signing_keys=signing_keys)
+    payload, signature_doc = normalize_preset_document(document)
+    verification, signature = verify_preset_signature(
+        payload,
+        signature_doc,
+        signing_keys=signing_keys,
+        providers=providers,
+    )
     issues: list[str] = list(verification.issues)
     if not payload.get("metadata"):
         issues.append("missing-metadata")
@@ -549,41 +277,6 @@ def serialize_preset_document(document: PresetDocument, *, format: str = "json")
         _yaml = _require_yaml()
         return _yaml.safe_dump(payload, allow_unicode=True, sort_keys=False).encode("utf-8")
     raise ValueError(f"Nieobsługiwany format eksportu: {format}")
-
-
-def sign_preset_payload(
-    payload: Mapping[str, Any],
-    *,
-    private_key: ed25519.Ed25519PrivateKey,
-    key_id: str,
-    issuer: str | None = None,
-    include_public_key: bool = True,
-    signed_at: datetime | None = None,
-) -> PresetSignature:
-    """Buduje podpis Ed25519 dla payloadu presetu."""
-
-    canonical = canonical_preset_bytes(payload)
-    signature_bytes = private_key.sign(canonical)
-    public_key_bytes = (
-        private_key.public_key().public_bytes(
-            encoding=serialization.Encoding.Raw,
-            format=serialization.PublicFormat.Raw,
-        )
-        if include_public_key
-        else None
-    )
-    timestamp = signed_at or datetime.now(timezone.utc)
-    return PresetSignature(
-        algorithm=_DEFAULT_SIGNATURE_ALGORITHM,
-        value=base64.b64encode(signature_bytes).decode("ascii"),
-        key_id=str(key_id).strip() or None,
-        public_key=(
-            base64.b64encode(public_key_bytes).decode("ascii") if public_key_bytes else None
-        ),
-        signed_at=timestamp.replace(microsecond=0).isoformat().replace("+00:00", "Z"),
-        issuer=issuer.strip() if isinstance(issuer, str) and issuer.strip() else None,
-    )
-
 
 def _sanitize_filename(preset_id: str) -> str:
     sanitized = [ch if ch.isalnum() or ch in {"-", "_"} else "-" for ch in preset_id]
@@ -704,25 +397,14 @@ class PresetRepository:
             return False
 
 
-def load_private_key(path: Path) -> ed25519.Ed25519PrivateKey:
-    data = path.read_bytes()
-    try:
-        material = decode_key_material(data)
-    except ValueError:
-        material = data
-    return _load_ed25519_private_key(material)
-
-
 __all__ = [
     "PresetDocument",
     "PresetRepository",
     "PresetSignature",
     "PresetSignatureVerification",
     "canonical_preset_bytes",
-    "decode_key_material",
     "parse_preset_document",
     "serialize_preset_document",
     "sign_preset_payload",
     "verify_preset_signature",
-    "load_private_key",
 ]

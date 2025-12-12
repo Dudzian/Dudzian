@@ -690,7 +690,7 @@ def test_controller_skips_risk_when_orchestrator_rejects_signal() -> None:
         def __init__(self) -> None:
             self.invocations: list = []
 
-        def evaluate_candidate(self, candidate, _snapshot):
+        def evaluate_candidate(self, candidate, _context):
             self.invocations.append(candidate)
             return SimpleNamespace(
                 candidate=candidate,
@@ -746,7 +746,7 @@ def test_controller_attaches_decision_metadata_for_execution() -> None:
         def __init__(self) -> None:
             self.invocations: list = []
 
-        def evaluate_candidate(self, candidate, _snapshot):
+        def evaluate_candidate(self, candidate, _context):
             self.invocations.append(candidate)
             return SimpleNamespace(
                 candidate=candidate,

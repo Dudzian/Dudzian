@@ -7,6 +7,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Any, Callable, Mapping, MutableMapping
 
+from bot_core.decision.models import DecisionCandidate, DecisionEvaluation
 from bot_core.execution.base import ExecutionContext, ExecutionService, RetryPolicy
 from bot_core.execution.paper import MarketMetadata
 from bot_core.exchanges.base import ExchangeAdapter, OrderRequest, OrderResult
@@ -37,8 +38,15 @@ def _quantize(value: float, step: float | None) -> float:
 
 
 def _normalise_decision(decision: Any) -> MutableMapping[str, Any]:
+    if isinstance(decision, DecisionEvaluation):
+        decision = decision.candidate
+
+    if isinstance(decision, DecisionCandidate):
+        return dict(decision.to_mapping())
+
     if isinstance(decision, Mapping):
         return dict(decision)
+
     payload: MutableMapping[str, Any] = {}
     to_mapping = getattr(decision, "to_mapping", None)
     if callable(to_mapping):
@@ -58,7 +66,7 @@ def _normalise_decision(decision: Any) -> MutableMapping[str, Any]:
 
 
 def decision_to_order_request(
-    decision: Mapping[str, Any] | Any,
+    decision: Mapping[str, Any] | DecisionCandidate | DecisionEvaluation | Any,
     *,
     price: float | None = None,
     market: MarketMetadata | None = None,

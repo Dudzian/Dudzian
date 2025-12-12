@@ -411,7 +411,7 @@ def test_decision_aware_sink_filters_signals() -> None:
         def __init__(self) -> None:
             self.invocations: list = []
 
-        def evaluate_candidate(self, candidate, _snapshot):
+        def evaluate_candidate(self, candidate, _context):
             self.invocations.append(candidate)
             accepted_flag = candidate.expected_probability >= 0.6
             thresholds = {"max_cost_bps": 12.0, "min_net_edge_bps": 3.0}
@@ -483,7 +483,7 @@ def test_decision_aware_sink_handles_missing_metadata() -> None:
     base_sink = InMemoryStrategySignalSink()
 
     class _StubOrchestrator:
-        def evaluate_candidate(self, candidate, _snapshot):
+        def evaluate_candidate(self, candidate, _context):
             return SimpleNamespace(
                 candidate=candidate,
                 accepted=True,
@@ -527,7 +527,7 @@ def test_decision_aware_sink_respects_min_probability_threshold() -> None:
         def __init__(self) -> None:
             self.invocations: list = []
 
-        def evaluate_candidate(self, candidate, _snapshot):  # pragma: no cover - nie powinien zostać wywołany
+        def evaluate_candidate(self, candidate, _context):  # pragma: no cover - nie powinien zostać wywołany
             self.invocations.append(candidate)
             return SimpleNamespace(accepted=False, reasons=(), risk_flags=(), stress_failures=(), cost_bps=None, net_edge_bps=None)
 
@@ -576,7 +576,7 @@ def test_decision_aware_sink_limits_evaluation_history() -> None:
         def __init__(self) -> None:
             self.counter = 0
 
-        def evaluate_candidate(self, candidate, _snapshot):
+        def evaluate_candidate(self, candidate, _context):
             self.counter += 1
             return SimpleNamespace(
                 candidate=candidate,
@@ -631,7 +631,7 @@ def test_decision_aware_sink_handles_missing_confidence_for_expected_return() ->
         def __init__(self) -> None:
             self.invocations: list = []
 
-        def evaluate_candidate(self, candidate, _snapshot):
+        def evaluate_candidate(self, candidate, _context):
             self.invocations.append(candidate)
             return SimpleNamespace(
                 candidate=candidate,
@@ -686,7 +686,7 @@ def test_decision_aware_sink_exposes_history_and_summary() -> None:
             self._templates = list(templates)
             self.invocations: list = []
 
-        def evaluate_candidate(self, candidate, _snapshot):
+        def evaluate_candidate(self, candidate, _context):
             if not self._templates:
                 raise AssertionError("Brak szablonów ewaluacji")
             template = self._templates.pop(0)

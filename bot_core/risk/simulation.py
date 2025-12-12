@@ -32,16 +32,12 @@ except Exception:  # pragma: no cover
     load_core_config = None  # type: ignore[misc,assignment]
     build_risk_profile_from_config = None  # type: ignore[misc,assignment]
 
-# gotowe profile (gałąź "main")
+# gotowe profile + loader (gałąź "main")
 try:  # pragma: no cover
-    from bot_core.risk.profiles import (
-        AggressiveProfile,
-        BalancedProfile,
-        ConservativeProfile,
-        ManualProfile,
-    )
+    from bot_core.risk.profiles import DEFAULT_PROFILE_NAMES, RiskProfileLoader
 except Exception:  # pragma: no cover
-    AggressiveProfile = BalancedProfile = ConservativeProfile = ManualProfile = None  # type: ignore
+    DEFAULT_PROFILE_NAMES = ("conservative", "balanced", "aggressive", "manual")  # type: ignore
+    RiskProfileLoader = None  # type: ignore
 
 # API exchanges (gałąź "main")
 try:  # pragma: no cover
@@ -61,7 +57,7 @@ if TYPE_CHECKING:  # tylko dla typowania w IDE
 _LOGGER = logging.getLogger(__name__)
 
 # --- Stałe -------------------------------------------------------------------
-DEFAULT_PROFILES: Sequence[str] = ("conservative", "balanced", "aggressive", "manual")
+DEFAULT_PROFILES: Sequence[str] = DEFAULT_PROFILE_NAMES
 _BASE_EQUITY_DEFAULT = 100_000.0
 
 # PDF
@@ -1153,48 +1149,11 @@ def load_orders_from_parquet(path: str | Path) -> Sequence[SimulationOrder]:
 
 def build_profile(profile_name: str, *, manual_overrides: Mapping[str, object] | None = None) -> RiskProfile:
     """Buduje profil ryzyka z wbudowanych klas (aggressive/balanced/conservative/manual)."""
-    if RiskProfile is None:
+    if RiskProfile is None or RiskProfileLoader is None:
         raise RuntimeError("RiskProfile base class is not available in this build.")
-    normalized = profile_name.strip().lower()
-    if normalized == "manual":
-        if ManualProfile is None:
-            raise RuntimeError("ManualProfile is not available in this build.")
-        if not manual_overrides:
-            raise ValueError("Manual profile requires overrides with explicit limits")
-        required = {
-            "max_positions",
-            "max_leverage",
-            "drawdown_limit",
-            "daily_loss_limit",
-            "max_position_pct",
-            "target_volatility",
-            "stop_loss_atr_multiple",
-        }
-        missing = [key for key in required if key not in manual_overrides]
-        if missing:
-            raise ValueError(f"Missing manual profile overrides: {', '.join(missing)}")
-        return ManualProfile(
-            name=str(manual_overrides.get("name", "manual")),
-            max_positions=int(manual_overrides["max_positions"]),
-            max_leverage=float(manual_overrides["max_leverage"]),
-            drawdown_limit=float(manual_overrides["drawdown_limit"]),
-            daily_loss_limit=float(manual_overrides["daily_loss_limit"]),
-            max_position_pct=float(manual_overrides["max_position_pct"]),
-            target_volatility=float(manual_overrides["target_volatility"]),
-            stop_loss_atr_multiple=float(manual_overrides["stop_loss_atr_multiple"]),
-        )
-    mapping = {
-        "conservative": ConservativeProfile,
-        "balanced": BalancedProfile,
-        "aggressive": AggressiveProfile,
-    }
-    try:
-        factory = mapping[normalized]
-    except KeyError as exc:  # pragma: no cover
-        raise KeyError(f"Unsupported risk profile: {profile_name}") from exc
-    if factory is None:  # pragma: no cover
-        raise RuntimeError(f"Profile '{profile_name}' is not available in this build.")
-    return factory()  # type: ignore[call-arg]
+
+    loader = RiskProfileLoader()
+    return loader.build(profile_name, manual_overrides=manual_overrides)
 
 
 def run_profile_scenario(

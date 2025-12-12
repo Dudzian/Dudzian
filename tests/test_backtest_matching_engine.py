@@ -4,15 +4,16 @@ from datetime import datetime, timezone
 
 import pytest
 
-from bot_core.backtest.simulation import BacktestFill, MatchingConfig, MatchingEngine
+from bot_core.backtest.models import BacktestFill
+from bot_core.backtest.simulation import MatchingEngine
 
 
 def _ts() -> datetime:
     return datetime(2024, 1, 1, tzinfo=timezone.utc)
 
 
-def test_matching_engine_respects_latency() -> None:
-    engine = MatchingEngine(MatchingConfig(latency_bars=1, slippage_bps=0.0, fee_bps=0.0, liquidity_share=1.0))
+def test_matching_engine_respects_latency(latency_one_no_cost_scenario) -> None:
+    engine = MatchingEngine(latency_one_no_cost_scenario)
     engine.submit_market_order(side="buy", size=1.0, index=0, timestamp=_ts())
 
     assert engine.process_bar(index=0, timestamp=_ts(), bar={"close": 100.0}) == []
@@ -26,8 +27,8 @@ def test_matching_engine_respects_latency() -> None:
     assert fill.price == pytest.approx(101.0)
 
 
-def test_matching_engine_partial_fills_until_complete() -> None:
-    engine = MatchingEngine(MatchingConfig(latency_bars=0, slippage_bps=0.0, fee_bps=0.0, liquidity_share=0.5))
+def test_matching_engine_partial_fills_until_complete(partial_fill_scenario) -> None:
+    engine = MatchingEngine(partial_fill_scenario)
     engine.submit_market_order(side="sell", size=1.0, index=0, timestamp=_ts().replace(tzinfo=None))
 
     total_filled = 0.0
@@ -45,9 +46,9 @@ def test_matching_engine_partial_fills_until_complete() -> None:
     assert total_filled == pytest.approx(1.0)
 
 
-def test_matching_engine_applies_slippage_and_fees() -> None:
-    cfg = MatchingConfig(latency_bars=0, slippage_bps=10.0, fee_bps=25.0, liquidity_share=1.0)
-    engine = MatchingEngine(cfg)
+def test_matching_engine_applies_slippage_and_fees(slippage_fee_scenario) -> None:
+    cfg = slippage_fee_scenario.to_matching_config()
+    engine = MatchingEngine(slippage_fee_scenario)
     engine.submit_market_order(side="buy", size=2.0, index=5, timestamp=_ts())
 
     fills = engine.process_bar(index=5, timestamp=_ts(), bar={"close": 40.0})
@@ -56,7 +57,7 @@ def test_matching_engine_applies_slippage_and_fees() -> None:
     expected_slippage = 40.0 * (cfg.slippage_bps / 10_000.0)
     expected_price = 40.0 + expected_slippage
     expected_fee = abs(expected_price * 2.0) * (cfg.fee_bps / 10_000.0)
-    assert fill.slippage == pytest.approx(expected_slippage)
+    assert fill.slippage == pytest.approx(expected_slippage * fill.size)
     assert fill.price == pytest.approx(expected_price)
     assert fill.fee == pytest.approx(expected_fee)
     assert fill.timestamp.tzinfo is timezone.utc

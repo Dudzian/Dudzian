@@ -20,9 +20,9 @@ from bot_core.decision import DecisionCandidate, DecisionEvaluation, DecisionOrc
 from bot_core.decision.models import ModelSelectionDetail, ModelSelectionMetadata
 from bot_core.exchanges.base import AccountSnapshot, OrderRequest
 from bot_core.exchanges.manager import ExchangeManager
-from bot_core.risk.engine import InMemoryRiskRepository, ThresholdRiskEngine
+from bot_core.risk.engine import ThresholdRiskEngine
 from bot_core.risk.events import RiskDecisionLog
-from bot_core.risk.repository import FileRiskRepository
+from bot_core.risk.repository import FileRiskRepository, InMemoryRiskRepository
 from bot_core.risk.profiles.manual import ManualProfile
 
 
@@ -109,7 +109,7 @@ class _SequencedOrchestrator:
         self._evaluations = iter(evaluations)
 
     def evaluate_candidate(
-        self, candidate: DecisionCandidate, snapshot: Mapping[str, object]
+        self, candidate: DecisionCandidate, context: Mapping[str, object]
     ) -> DecisionEvaluation:
         try:
             return next(self._evaluations)
@@ -119,7 +119,7 @@ class _SequencedOrchestrator:
 
 class _FailingOrchestrator:
     def evaluate_candidate(
-        self, candidate: DecisionCandidate, snapshot: Mapping[str, object]
+        self, candidate: DecisionCandidate, context: Mapping[str, object]
     ) -> DecisionEvaluation:
         raise RuntimeError("evaluation failed")
 

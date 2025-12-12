@@ -24,10 +24,11 @@ import numpy as np
 from ._license import ensure_ai_signals_enabled
 from .backends import is_backend_available, require_backend
 from .feature_engineering import FeatureDataset
-from .inference import ModelRepository
 from .meta import MetaClassifierModel, build_meta_labeling_payload, train_meta_classifier
 from .models import ModelArtifact
+from .repository import FilesystemModelRepository, ModelRepository
 from .validation import (
+    CalibrationReport,
     ChampionDecision,
     ModelQualityMonitor,
     ModelQualityReport,
@@ -41,31 +42,6 @@ if TYPE_CHECKING:  # pragma: no cover - tylko dla statycznego typowania
 
 
 _LOGGER = logging.getLogger(__name__)
-
-
-def _linear_calibration(
-    targets: Sequence[float], predictions: Sequence[float]
-) -> tuple[float, float]:
-    if not targets or not predictions:
-        return 1.0, 0.0
-    if len(targets) != len(predictions):
-        raise ValueError("targets and predictions must have the same length")
-    y = [float(value) for value in targets]
-    x = [float(value) for value in predictions]
-    if all(abs(value - x[0]) < 1e-12 for value in x):
-        return 0.0, float(sum(y) / len(y))
-    sum_x = sum(x)
-    sum_y = sum(y)
-    sum_xx = sum(value * value for value in x)
-    sum_xy = sum(val_x * val_y for val_x, val_y in zip(x, y))
-    n = float(len(x))
-    denominator = n * sum_xx - sum_x * sum_x
-    if abs(denominator) < 1e-12:
-        return 0.0, float(sum_y / n)
-    slope = (n * sum_xy - sum_x * sum_y) / denominator
-    intercept = (sum_y - slope * sum_x) / n
-    return float(slope), float(intercept)
-
 
 @runtime_checkable
 class SupportsInference(Protocol):
@@ -515,8 +491,8 @@ class ModelTrainer:
         train_samples = self._rows_to_samples(train_matrix, feature_names)
         train_predictions = model.batch_predict(train_samples)
         train_metrics = self._compute_metrics(train_targets, train_predictions)
-        slope, intercept = _linear_calibration(train_targets, train_predictions)
-        metadata["calibration"] = {"slope": slope, "intercept": intercept}
+        calibration = CalibrationReport.fit(train_targets, train_predictions)
+        metadata["calibration"] = calibration.to_mapping()
         validation_metrics: Mapping[str, float] | None = None
         validation_predictions: Sequence[float] | None = None
         if validation_matrix:
@@ -604,8 +580,8 @@ class ModelTrainer:
         train_samples = self._rows_to_samples(train_matrix, feature_names)
         train_predictions = list(model.batch_predict(train_samples))
         train_metrics = self._compute_metrics(train_targets, train_predictions)
-        slope, intercept = _linear_calibration(train_targets, train_predictions)
-        metadata["calibration"] = {"slope": slope, "intercept": intercept}
+        calibration = CalibrationReport.fit(train_targets, train_predictions)
+        metadata["calibration"] = calibration.to_mapping()
         validation_metrics: Mapping[str, float] | None = None
         validation_predictions: Sequence[float] | None = None
         if validation_matrix:
@@ -1407,7 +1383,7 @@ class WalkForwardTrainingCoordinator:
         self._repository_root.mkdir(parents=True, exist_ok=True)
 
         if self.repository is None:
-            self.repository = ModelRepository(self._repository_root)
+            self.repository = FilesystemModelRepository(self._repository_root)
         else:
             Path(self.repository.base_path).mkdir(parents=True, exist_ok=True)
 
@@ -1448,7 +1424,7 @@ class WalkForwardTrainingCoordinator:
 
         version = self._resolve_version(artifact)
         filename = f"{self.job_name}-{version}.json"
-        artifact_path = self.repository.publish(
+        artifact_path = self.repository.save_model(
             artifact,
             version=version,
             filename=filename,
@@ -1479,6 +1455,11 @@ class WalkForwardTrainingCoordinator:
             dataset_rows=len(dataset.vectors),
             validation=validation_payload,
         )
+
+        try:
+            self.repository.attach_quality_report(version, report.to_dict())
+        except Exception:
+            _LOGGER.debug("Nie udało się podłączyć raportu jakości do repozytorium", exc_info=True)
 
         champion_decision = record_model_quality_report(
             report,
@@ -1549,11 +1530,13 @@ class WalkForwardTrainingCoordinator:
         if train_window <= 0 or test_window <= 0:
             return None
 
-        return WalkForwardValidator(
-            dataset,
+        from .scheduler import WalkForwardPlan
+
+        plan = WalkForwardPlan(
             train_window=train_window,
             test_window=test_window,
         )
+        return WalkForwardValidator(dataset, plan=plan)
 
     def _summarize_metrics(self, artifact: ModelArtifact) -> Mapping[str, float]:
         summary = getattr(artifact.metrics, "summary", None)

@@ -5,7 +5,8 @@ from typing import List
 
 import pandas as pd
 
-from bot_core.ai.inference import DecisionModelInference, ModelRepository
+from bot_core.ai.inference import DecisionModelInference
+from bot_core.ai.repository import FilesystemModelRepository, ModelRepository
 from bot_core.ai.pipeline import train_gradient_boosting_model
 
 
@@ -37,7 +38,7 @@ def _prepare_artifact(tmp_path: Path, threshold: float) -> Path:
 
 def test_drift_monitor_emits_alert(monkeypatch, tmp_path: Path) -> None:
     artifact_path = _prepare_artifact(tmp_path, threshold=0.1)
-    repository = ModelRepository(tmp_path)
+    repository = FilesystemModelRepository(tmp_path)
     inference = DecisionModelInference(repository)
     inference.model_label = "drift"
     captured: List[object] = []

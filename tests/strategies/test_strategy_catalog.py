@@ -1,9 +1,12 @@
 """Testy katalogu strategii Multi-Strategy."""
 from __future__ import annotations
 
+import os
 from datetime import date
+from typing import Any, Mapping
 
 import pytest
+from pydantic import BaseModel, Field
 
 from bot_core.security.capabilities import build_capabilities_from_payload
 import json
@@ -32,15 +35,16 @@ from bot_core.exchanges.base import Environment
 from bot_core.strategies.base import StrategyEngine
 from bot_core.strategies.catalog import (
     DEFAULT_STRATEGY_CATALOG,
-    PresetLicenseState,
     StrategyCatalog,
     StrategyDefinition,
-    StrategyPresetWizard,
+    StrategyEngineSpec,
 )
+from bot_core.strategies.presets import PresetLicenseState, StrategyPresetWizard
 from bot_core.runtime.pipeline import _collect_strategy_definitions
 
 
 def _activate_guard(strategies: dict[str, bool]) -> None:
+    os.environ.setdefault("DUDZIAN_SECURITY_SKIP", "1")
     capabilities = build_capabilities_from_payload(
         {
             "edition": "standard",
@@ -570,3 +574,73 @@ def test_catalog_rejects_invalid_options_parameters() -> None:
     )
     with pytest.raises(ValueError):
         DEFAULT_STRATEGY_CATALOG.create(definition)
+
+
+class _DummyEngine(StrategyEngine):
+    def __init__(self, *, parameters: Mapping[str, Any] | None = None, metadata: Mapping[str, Any] | None = None) -> None:
+        self.parameters = dict(parameters or {})
+        self.metadata = dict(metadata or {})
+
+    def decide(self, snapshot):  # type: ignore[override]
+        return []
+
+
+class _ConfigSchema(BaseModel):
+    threshold: float = Field(gt=0.0, lt=1.0)
+
+
+def test_catalog_validates_config_schema_and_metadata() -> None:
+    catalog = StrategyCatalog()
+
+    catalog.register(
+        StrategyEngineSpec(
+            key="dummy",
+            factory=lambda name, parameters, metadata=None: _DummyEngine(parameters=parameters, metadata=metadata),
+            license_tier="standard",
+            risk_classes=("core",),
+            required_data=("ohlcv",),
+            risk_hooks=("notional_limit",),
+            config_schema=_ConfigSchema,
+        )
+    )
+
+    definition = StrategyDefinition(
+        name="valid",
+        engine="dummy",
+        license_tier="standard",
+        risk_classes=("core",),
+        required_data=("ohlcv",),
+        risk_hooks=("drawdown_guard",),
+        parameters={"threshold": 0.4},
+    )
+
+    engine = catalog.create(definition)
+
+    assert engine.parameters["threshold"] == pytest.approx(0.4)
+    assert engine.metadata["risk_hooks"] == ("notional_limit", "drawdown_guard")
+
+
+def test_catalog_rejects_parameters_not_matching_schema() -> None:
+    catalog = StrategyCatalog()
+    catalog.register(
+        StrategyEngineSpec(
+            key="dummy_invalid",
+            factory=lambda name, parameters, metadata=None: _DummyEngine(parameters=parameters, metadata=metadata),
+            license_tier="standard",
+            risk_classes=("core",),
+            required_data=("ohlcv",),
+            config_schema=_ConfigSchema,
+        )
+    )
+
+    definition = StrategyDefinition(
+        name="invalid",
+        engine="dummy_invalid",
+        license_tier="standard",
+        risk_classes=("core",),
+        required_data=("ohlcv",),
+        parameters={"threshold": 2.0},
+    )
+
+    with pytest.raises(ValueError):
+        catalog.create(definition)

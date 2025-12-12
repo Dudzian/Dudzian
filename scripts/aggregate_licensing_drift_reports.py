@@ -1,3 +1,10 @@
+"""Konsoliduje wyniki testów dryfu licencyjnego w spójne artefakty.
+
+Skrypt jest wywoływany w workflow "Licensing drift consolidation" i musi
+obsługiwać brakujące lub uszkodzone artefakty (np. gdy etap kompatybilności
+zakończył się błędem). Dzięki temu kolejne kroki CI nie flakują, a diagnostyka
+jest jednoznaczna.
+"""
 from __future__ import annotations
 
 import argparse
@@ -261,6 +268,10 @@ def main(argv: list[str] | None = None) -> int:
 
     if pytest_status.get("status") == "missing":
         diagnostics.append(pytest_status.get("summary", "Brak logu pytest"))
+    elif pytest_status.get("status") == "failed":
+        diagnostics.append(
+            f"Testy kompatybilności HWID zakończone niepowodzeniem: {pytest_status.get('summary', '')}"
+        )
 
     if matrix is None:
         pytest_status = {"status": pytest_status.get("status", "unknown"), "summary": pytest_status.get("summary", "")}

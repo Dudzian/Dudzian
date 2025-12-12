@@ -12,12 +12,15 @@ from bot_core.portfolio.decision_log import PortfolioDecisionLog
 from bot_core.portfolio.governor import (
     AssetPortfolioGovernor,
     AssetPortfolioGovernorConfig,
+    PortfolioGovernor,
+    PortfolioGovernorVariant,
+    PortfolioGovernorBuildConfig,
+    build_portfolio_governor,
     PortfolioAdjustment,
     PortfolioAdvisory,
     PortfolioAssetConfig,
     PortfolioDecision,
     PortfolioDriftTolerance,
-    PortfolioGovernor,
     PortfolioRiskBudgetConfig,
     PortfolioSloOverrideConfig,
     PortfolioRebalanceDecision,
@@ -26,6 +29,7 @@ from bot_core.portfolio.governor import (
     StrategyPortfolioGovernor,
     StrategyPortfolioGovernorConfig,
 )
+from bot_core.portfolio.io_service import PortfolioIOService
 from bot_core.portfolio.hypercare import (
     PortfolioCycleConfig,
     PortfolioCycleInputs,
@@ -33,6 +37,7 @@ from bot_core.portfolio.hypercare import (
     PortfolioCycleResult,
     PortfolioHypercareCycle,
 )
+from bot_core.portfolio.models import PayoutRecord, RiskSyncPayload
 from bot_core.portfolio.io import (
     load_allocations_file,
     load_json_or_yaml,
@@ -45,6 +50,7 @@ from bot_core.portfolio.io import (
 from bot_core.portfolio.scheduler import (
     CopyTradeInstruction,
     CopyTradingFollowerConfig,
+    PortfolioScheduler,
     MultiPortfolioScheduler,
     PortfolioBinding,
     PortfolioScheduleResult,
@@ -52,6 +58,15 @@ from bot_core.portfolio.scheduler import (
     SchedulerEvent,
     StrategyHealthMonitor,
 )
+from bot_core.portfolio.scoring import (
+    AlphaScore,
+    CostScore,
+    RiskScore,
+    ScoreResult,
+    SLOScore,
+    StrategyScoreProvider,
+)
+from bot_core.portfolio.payouts import PayoutRequest, require_hardware_wallet_metadata
 
 __all__ = [
     "AssetPortfolioGovernor",
@@ -66,23 +81,38 @@ __all__ = [
     "PortfolioDecision",
     "PortfolioDecisionLog",
     "PortfolioDriftTolerance",
+    "PortfolioIOService",
     "PortfolioGovernor",
+    "PortfolioGovernorVariant",
+    "PortfolioGovernorBuildConfig",
+    "build_portfolio_governor",
     "PortfolioHypercareCycle",
     "PortfolioRebalanceDecision",
     "PortfolioRiskBudgetConfig",
     "PortfolioSloOverrideConfig",
+    "RiskSyncPayload",
     "StrategyAllocationDecision",
     "StrategyPortfolioGovernor",
     "StrategyPortfolioGovernorConfig",
     "StrategyMetricsSnapshot",
+    "PayoutRecord",
+    "PayoutRequest",
     "CopyTradeInstruction",
     "CopyTradingFollowerConfig",
+    "PortfolioScheduler",
     "MultiPortfolioScheduler",
     "PortfolioBinding",
     "PortfolioScheduleResult",
     "RebalanceInstruction",
     "SchedulerEvent",
     "StrategyHealthMonitor",
+    "AlphaScore",
+    "SLOScore",
+    "RiskScore",
+    "CostScore",
+    "ScoreResult",
+    "StrategyScoreProvider",
+    "require_hardware_wallet_metadata",
     "PortfolioAllocationDocument",
     "PortfolioAllocationExportError",
     "export_allocations_for_governor_config",

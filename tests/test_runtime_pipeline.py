@@ -21,7 +21,7 @@ from bot_core.exchanges.base import (
     OrderRequest,
     OrderResult,
 )
-from bot_core.decision.models import DecisionCandidate, RiskSnapshot
+from bot_core.decision.models import DecisionCandidate, DecisionContext, RiskSnapshot
 from bot_core.runtime.pipeline import (
     _build_account_loader,
     build_daily_trend_pipeline,
@@ -556,7 +556,9 @@ def test_pipeline_bootstrap_integrates_tco_reports(tmp_path: Path) -> None:
         force_liquidation=False,
     )
 
-    evaluation = pipeline.bootstrap.decision_orchestrator.evaluate_candidate(candidate, snapshot)
+    evaluation = pipeline.bootstrap.decision_orchestrator.evaluate_candidate(
+        candidate, DecisionContext(risk_snapshot=snapshot)
+    )
     assert evaluation.accepted is True
     assert evaluation.cost_bps == pytest.approx(7.2)
     assert evaluation.reasons == ()

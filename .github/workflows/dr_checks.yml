@@ -1,5 +1,11 @@
 name: DR Checks
 
+# Disaster Recovery workflow mapping to runbooks:
+# - dr-probes: Runbook step "Cloud DR synthetic probes" (pre-failover readiness)
+# - dr-failover-validation: Runbook step "Alerting DR failover validation" (targeted failover path)
+# - dr-weekly-failover-snapshots: Runbook step "Weekly DR failover snapshots" (evidence collection)
+# - dr-weekly-failover-runbook: Runbook step "DR weekly failover" (full procedural exercise)
+
 on:
   workflow_dispatch:
   schedule:
@@ -16,12 +22,12 @@ jobs:
       - name: Check out repository
         uses: actions/checkout@v4
 
-      - name: Set up Python
+      - name: Set up Python for DR probes
         uses: actions/setup-python@v5
         with:
           python-version: "3.11"
 
-      - name: Install dependencies
+      - name: Install DR probe dependencies
         run: |
           python -m pip install --upgrade pip setuptools wheel build
           # optional: ensure common problematic packages are up-to-date
@@ -29,7 +35,7 @@ jobs:
           # install the local package
           pip install .[dev]
 
-      - name: Run CloudOrchestrator DR probes
+      - name: Run Cloud DR synthetic probes (pre-failover readiness)
         env:
           PYTHONVERBOSE: "1"
           DR_GRPC_ENDPOINT: ${{ secrets.DR_GRPC_ENDPOINT }}
@@ -41,6 +47,60 @@ jobs:
             ${DR_ALERTMANAGER_URL:+--alertmanager-url "$DR_ALERTMANAGER_URL"} \
             ${DR_PROMETHEUS_URL:+--prometheus-url "$DR_PROMETHEUS_URL"} \
             --output-dir reports/ci/dr_probes
+
+      - name: Summarize Cloud DR probe results
+        if: always()
+        run: |
+          python - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+
+          output_dir = Path("reports/ci/dr_probes")
+          output_dir.mkdir(parents=True, exist_ok=True)
+          reports = sorted(output_dir.glob("cloud_orchestrator_probe_*.json"))
+
+          if not reports:
+              summary_lines = [
+                  "## Cloud DR probe summary",
+                  "- status: **fail**",
+                  "- reason: report missing (probe run likely failed before writing output)",
+              ]
+              status_payload = {"status": "fail", "reason": "report_missing"}
+          else:
+              latest = reports[-1]
+              data = json.loads(latest.read_text(encoding="utf-8"))
+              summary = data.get("summary", {})
+              health_ok = bool(summary.get("healthOk"))
+              alert_ok = bool(summary.get("alertmanagerOk"))
+              prom_ok = bool(summary.get("prometheusOk"))
+              overall_ok = health_ok and alert_ok and prom_ok
+              status_payload = {
+                  "status": "pass" if overall_ok else "fail",
+                  "healthOk": health_ok,
+                  "alertmanagerOk": alert_ok,
+                  "prometheusOk": prom_ok,
+                  "report": latest.name,
+              }
+              summary_lines = [
+                  "## Cloud DR probe summary",
+                  f"- status: **{'pass' if overall_ok else 'fail'}**",
+                  f"- health RPC ok: `{health_ok}`",
+                  f"- alertmanager ok: `{alert_ok}`",
+                  f"- prometheus ok: `{prom_ok}`",
+                  f"- latest report: `{latest}`",
+                  "- impact: probes must be green before DR failover exercises",
+              ]
+
+          (output_dir / "probe_status.json").write_text(
+              json.dumps(status_payload, ensure_ascii=False, indent=2), encoding="utf-8"
+          )
+          (output_dir / "summary.md").write_text("\n".join(summary_lines) + "\n", encoding="utf-8")
+
+          summary_path = Path(os.environ["GITHUB_STEP_SUMMARY"])
+          summary_path.write_text("\n".join(summary_lines) + "\n", encoding="utf-8")
+          print("\n".join(summary_lines))
+          PY
 
       - name: Publish DR probe report
         uses: actions/upload-artifact@v4
@@ -59,12 +119,12 @@ jobs:
       - name: Check out repository
         uses: actions/checkout@v4
 
-      - name: Set up Python
+      - name: Set up Python for failover validation
         uses: actions/setup-python@v5
         with:
           python-version: "3.11"
 
-      - name: Install dependencies
+      - name: Install DR validation dependencies
         run: |
           python -m pip install --upgrade pip setuptools wheel build
           # optional: ensure common problematic packages are up-to-date
@@ -72,7 +132,7 @@ jobs:
           # install the local package
           pip install .[dev]
 
-      - name: Run DR failover validation
+      - name: Run DR failover validation (alerting path)
         env:
           DR_GRPC_ENDPOINT: ${{ secrets.DR_GRPC_ENDPOINT }}
           DR_ALERTMANAGER_URL: ${{ secrets.DR_ALERTMANAGER_URL }}
@@ -89,6 +149,55 @@ jobs:
             ${DR_STANDBY_PROMETHEUS_URL:+--dr-prometheus-url "$DR_STANDBY_PROMETHEUS_URL"} \
             ${DR_FAILOVER_WEBHOOK:+--failover-webhook "$DR_FAILOVER_WEBHOOK"} \
             --output-dir reports/ci/dr_failover
+
+      - name: Summarize failover validation results
+        if: always()
+        run: |
+          python - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+
+          report_path = Path("reports/ci/dr_failover/dr_failover_report.json")
+          report_path.parent.mkdir(parents=True, exist_ok=True)
+
+          if not report_path.exists():
+              summary_lines = [
+                  "## Failover validation summary",
+                  "- status: **fail**",
+                  "- reason: report missing (validation did not complete)",
+              ]
+              status_payload = {"status": "fail", "reason": "report_missing"}
+          else:
+              data = json.loads(report_path.read_text(encoding="utf-8"))
+              summary = data.get("summary", {})
+              failure_reasons = summary.get("failureReasons") or []
+              status = summary.get("status", "unknown")
+              status_payload = {
+                  "status": status,
+                  "beforeOk": summary.get("beforeOk"),
+                  "afterOk": summary.get("afterOk"),
+                  "probeRegression": summary.get("probeRegression"),
+                  "failureReasons": failure_reasons,
+              }
+              summary_lines = [
+                  "## Failover validation summary",
+                  f"- status: **{status}**",
+                  f"- probes before failover ok: `{summary.get('beforeOk')}`",
+                  f"- probes after failover ok: `{summary.get('afterOk')}`",
+                  f"- probe regression detected: `{summary.get('probeRegression')}`",
+                  f"- failure reasons: `{', '.join(failure_reasons) if failure_reasons else 'none'}`",
+                  "- impact: alerts and probes must stay healthy after failover",
+              ]
+
+          status_path = report_path.parent / "failover_status.json"
+          status_path.write_text(json.dumps(status_payload, ensure_ascii=False, indent=2), encoding="utf-8")
+          (report_path.parent / "summary.md").write_text("\n".join(summary_lines) + "\n", encoding="utf-8")
+
+          summary_path = Path(os.environ["GITHUB_STEP_SUMMARY"])
+          summary_path.write_text("\n".join(summary_lines) + "\n", encoding="utf-8")
+          print("\n".join(summary_lines))
+          PY
 
       - name: Publish DR failover report
         uses: actions/upload-artifact@v4
@@ -107,12 +216,12 @@ jobs:
       - name: Check out repository
         uses: actions/checkout@v4
 
-      - name: Set up Python
+      - name: Set up Python for weekly snapshots
         uses: actions/setup-python@v5
         with:
           python-version: "3.11"
 
-      - name: Install dependencies
+      - name: Install DR snapshot dependencies
         run: |
           python -m pip install --upgrade pip setuptools wheel build
           # optional: ensure common problematic packages are up-to-date
@@ -120,7 +229,7 @@ jobs:
           # install the local package
           pip install .[dev]
 
-      - name: Run DR failover with snapshots
+      - name: Run DR failover with snapshots (evidence collection)
         env:
           DR_GRPC_ENDPOINT: ${{ secrets.DR_GRPC_ENDPOINT }}
           DR_ALERTMANAGER_URL: ${{ secrets.DR_ALERTMANAGER_URL }}
@@ -139,6 +248,57 @@ jobs:
             --output-dir reports/ci/dr_failover/weekly \
             --snapshot-prefix reports/ci/dr_failover/weekly/failover_snapshot
 
+      - name: Summarize weekly snapshot validation
+        if: always()
+        run: |
+          python - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+
+          report_path = Path("reports/ci/dr_failover/weekly/dr_failover_report.json")
+          report_path.parent.mkdir(parents=True, exist_ok=True)
+
+          if not report_path.exists():
+              summary_lines = [
+                  "## Weekly failover snapshot summary",
+                  "- status: **fail**",
+                  "- reason: report missing (snapshot run did not complete)",
+              ]
+              status_payload = {"status": "fail", "reason": "report_missing"}
+          else:
+              data = json.loads(report_path.read_text(encoding="utf-8"))
+              summary = data.get("summary", {})
+              failure_reasons = summary.get("failureReasons") or []
+              status = summary.get("status", "unknown")
+              status_payload = {
+                  "status": status,
+                  "beforeOk": summary.get("beforeOk"),
+                  "afterOk": summary.get("afterOk"),
+                  "probeRegression": summary.get("probeRegression"),
+                  "failureReasons": failure_reasons,
+                  "snapshotPaths": data.get("snapshots", {}),
+              }
+              summary_lines = [
+                  "## Weekly failover snapshot summary",
+                  f"- status: **{status}**",
+                  f"- probes before failover ok: `{summary.get('beforeOk')}`",
+                  f"- probes after failover ok: `{summary.get('afterOk')}`",
+                  f"- snapshot before: `{status_payload['snapshotPaths'].get('before', 'n/a')}`",
+                  f"- snapshot after: `{status_payload['snapshotPaths'].get('after', 'n/a')}`",
+                  f"- failure reasons: `{', '.join(failure_reasons) if failure_reasons else 'none'}`",
+                  "- impact: weekly snapshots feed DR evidence and trend analysis",
+              ]
+
+          status_path = report_path.parent / "failover_status.json"
+          status_path.write_text(json.dumps(status_payload, ensure_ascii=False, indent=2), encoding="utf-8")
+          (report_path.parent / "summary.md").write_text("\n".join(summary_lines) + "\n", encoding="utf-8")
+
+          summary_path = Path(os.environ["GITHUB_STEP_SUMMARY"])
+          summary_path.write_text("\n".join(summary_lines) + "\n", encoding="utf-8")
+          print("\n".join(summary_lines))
+          PY
+
       - name: Publish DR weekly snapshots
         uses: actions/upload-artifact@v4
         with:
@@ -156,12 +316,12 @@ jobs:
       - name: Check out repository
         uses: actions/checkout@v4
 
-      - name: Set up Python
+      - name: Set up Python for DR runbook
         uses: actions/setup-python@v5
         with:
           python-version: "3.11"
 
-      - name: Install dependencies
+      - name: Install DR runbook dependencies
         run: |
           python -m pip install --upgrade pip setuptools wheel build
           # optional: ensure common problematic packages are up-to-date
@@ -169,7 +329,7 @@ jobs:
           # install the local package
           pip install .[dev]
 
-      - name: Execute DR failover runbook
+      - name: Execute DR failover runbook (full exercise)
         env:
           DR_GRPC_ENDPOINT: ${{ secrets.DR_GRPC_ENDPOINT }}
           DR_ALERTMANAGER_URL: ${{ secrets.DR_ALERTMANAGER_URL }}
@@ -188,29 +348,42 @@ jobs:
             --output-dir reports/ci/dr_failover/runbook \
             --snapshot-prefix reports/ci/dr_failover/runbook/failover_snapshot
 
-      - name: Report synthetic probe regression
+      - name: Report synthetic probe regression (post-failover)
         run: |
           python - <<'PY'
           import json
           from pathlib import Path
 
           report_path = Path("reports/ci/dr_failover/runbook/dr_failover_report.json")
-          data = json.loads(report_path.read_text(encoding="utf-8"))
-          summary = data.get("summary", {})
-          regression_payload = {
-            "probeRegression": bool(summary.get("probeRegression")),
-            "beforeOk": summary.get("beforeOk"),
-            "afterOk": summary.get("afterOk"),
-            "failureReasons": summary.get("failureReasons"),
-          }
-          out = report_path.with_name("probe_regression.json")
-          out.write_text(json.dumps(regression_payload, ensure_ascii=False, indent=2), encoding="utf-8")
-          print(f"Synthetic probe regression report written to {out}")
-          if regression_payload["probeRegression"]:
-            print("Synthetic probes regressed after failover.")
+          if not report_path.exists():
+              placeholder = {
+                  "probeRegression": None,
+                  "beforeOk": None,
+                  "afterOk": None,
+                  "failureReasons": ["report_missing"],
+              }
+              out = report_path.with_name("probe_regression.json")
+              out.parent.mkdir(parents=True, exist_ok=True)
+              out.write_text(json.dumps(placeholder, ensure_ascii=False, indent=2), encoding="utf-8")
+              print("Regression report missing; wrote placeholder for diagnostics.")
+          else:
+              data = json.loads(report_path.read_text(encoding="utf-8"))
+              summary = data.get("summary", {})
+              regression_payload = {
+                "probeRegression": bool(summary.get("probeRegression")),
+                "beforeOk": summary.get("beforeOk"),
+                "afterOk": summary.get("afterOk"),
+                "failureReasons": summary.get("failureReasons"),
+              }
+              out = report_path.with_name("probe_regression.json")
+              out.write_text(json.dumps(regression_payload, ensure_ascii=False, indent=2), encoding="utf-8")
+              print(f"Synthetic probe regression report written to {out}")
+              if regression_payload["probeRegression"]:
+                print("Synthetic probes regressed after failover.")
           PY
 
-      - name: Summarize failover comparison
+      - name: Summarize failover comparison for runbook
+        if: always()
         run: |
           python - <<'PY'
           import json
@@ -218,30 +391,55 @@ jobs:
           from pathlib import Path
 
           report_path = Path("reports/ci/dr_failover/runbook/dr_failover_report.json")
-          data = json.loads(report_path.read_text(encoding="utf-8"))
-          summary = data.get("summary", {})
-          comparison = summary.get("comparison", {})
-          states = summary.get("states", {})
-          before_state = states.get("before", {})
-          after_state = states.get("after", {})
+          report_path.parent.mkdir(parents=True, exist_ok=True)
 
-          failure_reasons = summary.get("failureReasons") or []
+          if not report_path.exists():
+              lines = [
+                  "## DR failover comparison (runbook)",
+                  "- status: **fail**",
+                  "- reason: report missing (runbook execution likely failed)",
+              ]
+              status_payload = {"status": "fail", "reason": "report_missing"}
+          else:
+              data = json.loads(report_path.read_text(encoding="utf-8"))
+              summary = data.get("summary", {})
+              comparison = summary.get("comparison", {})
+              states = summary.get("states", {})
+              before_state = states.get("before", {})
+              after_state = states.get("after", {})
 
-          lines = [
-              "## DR failover comparison (runbook)",
-              f"- status: **{summary.get('status', 'unknown')}**",
-              f"- before `_lastError`: `{before_state.get('lastError')}`",
-              f"- after `_lastError`: `{after_state.get('lastError')}`",
-              f"- rehydrated: `{comparison.get('rehydrated')}`",
-              f"- rules in sync: `{comparison.get('rulesInSync')}`",
-              f"- alerts missing after rehydration: `{comparison.get('alertsMissing')}`",
-              f"- probe regression: `{summary.get('probeRegression')}`",
-              f"- failure reasons: `{', '.join(failure_reasons) if failure_reasons else 'none'}`",
-          ]
+              failure_reasons = summary.get("failureReasons") or []
+              status_payload = {
+                  "status": summary.get("status", "unknown"),
+                  "rehydrated": comparison.get("rehydrated"),
+                  "rulesInSync": comparison.get("rulesInSync"),
+                  "alertsMissing": comparison.get("alertsMissing"),
+                  "probeRegression": summary.get("probeRegression"),
+                  "failureReasons": failure_reasons,
+                  "beforeLastError": before_state.get("lastError"),
+                  "afterLastError": after_state.get("lastError"),
+              }
+
+              lines = [
+                  "## DR failover comparison (runbook)",
+                  f"- status: **{status_payload['status']}**",
+                  f"- before `_lastError`: `{status_payload['beforeLastError']}`",
+                  f"- after `_lastError`: `{status_payload['afterLastError']}`",
+                  f"- rehydrated: `{status_payload['rehydrated']}`",
+                  f"- rules in sync: `{status_payload['rulesInSync']}`",
+                  f"- alerts missing after rehydration: `{status_payload['alertsMissing']}`",
+                  f"- probe regression: `{status_payload['probeRegression']}`",
+                  f"- failure reasons: `{', '.join(failure_reasons) if failure_reasons else 'none'}`",
+                  "- impact: validates full failover runbook end-to-end",
+              ]
+
+          status_path = report_path.parent / "failover_status.json"
+          status_path.write_text(json.dumps(status_payload, ensure_ascii=False, indent=2), encoding="utf-8")
+          (report_path.parent / "summary.md").write_text("\n".join(lines) + "\n", encoding="utf-8")
 
           summary_path = Path(os.environ["GITHUB_STEP_SUMMARY"])
           summary_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
-          print(f"Failover comparison summary written to {summary_path}")
+          print("\n".join(lines))
           PY
 
       - name: Publish DR failover runbook artifacts

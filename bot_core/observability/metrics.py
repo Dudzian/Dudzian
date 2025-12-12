@@ -109,6 +109,14 @@ class GaugeMetric(Metric):
 
 
 @dataclass(slots=True)
+class HistogramSample:
+    """Pojedyncza próbka histogramu używana w testach."""
+
+    count: int
+    sum: float
+
+
+@dataclass(slots=True)
 class HistogramState:
     counts: MutableMapping[float, int] = field(default_factory=dict)
     sum: float = 0.0
@@ -177,6 +185,12 @@ class HistogramMetric(Metric):
                 maximum=state.maximum,
                 sum_of_squares=state.sum_of_squares,
             )
+
+    def sample(self, *, labels: Mapping[str, str] | None = None) -> HistogramSample:
+        """Zwraca uproszczoną próbkę histogramu (sumę i liczbę obserwacji)."""
+
+        snapshot = self.snapshot(labels=labels)
+        return HistogramSample(count=snapshot.count, sum=snapshot.sum)
 
     def samples(self) -> list[tuple[LabelTuple, HistogramState]]:
         with self._lock:
@@ -588,6 +602,49 @@ class ExchangeMetricSet:
 
 
 @dataclass(slots=True)
+class DataFeedMetricSet:
+    """Zestaw metryk jakości feedu danych (braki świec, opóźnienia)."""
+
+    registry: MetricsRegistry
+    _missing_candles: CounterMetric = field(init=False)
+    _fetch_latency: HistogramMetric = field(init=False)
+
+    def __post_init__(self) -> None:
+        self._missing_candles = self.registry.counter(
+            "bot_data_feed_missing_candles_total",
+            "Liczba brakujących świec wykryta podczas pobierania danych OHLCV",
+        )
+        self._fetch_latency = self.registry.histogram(
+            "bot_data_feed_fetch_latency_seconds",
+            "Rozkład opóźnień pozyskiwania danych OHLCV (cache + upstream)",
+            buckets=(0.01, 0.05, 0.1, 0.25, 0.5, 1.0, 2.0, 5.0, 10.0),
+        )
+
+    def report_missing_candles(self, *, symbol: str, interval: str, missing: int) -> None:
+        if missing <= 0:
+            return
+        self._missing_candles.inc(
+            missing,
+            labels={"symbol": symbol.lower(), "interval": interval},
+        )
+
+    def observe_fetch_latency(
+        self,
+        *,
+        symbol: str,
+        interval: str,
+        source: str,
+        latency_seconds: float,
+    ) -> None:
+        if latency_seconds < 0:
+            return
+        self._fetch_latency.observe(
+            latency_seconds,
+            labels={"symbol": symbol.lower(), "interval": interval, "source": source},
+        )
+
+
+@dataclass(slots=True)
 class StrategyMetricSet:
     """Zestaw metryk monitorujących strategie tradingowe."""
 
@@ -674,6 +731,7 @@ _exchange_sets: Dict[str, ExchangeMetricSet] = {}
 _strategy_sets: Dict[str, StrategyMetricSet] = {}
 _security_sets: Dict[str, SecurityMetricSet] = {}
 _pandas_metrics: Optional[PandasWarningMetricSet] = None
+_data_feed_metrics: dict[int, DataFeedMetricSet] = {}
 _metrics_lock = threading.Lock()
 _exchange_error_streak: dict[str, int] = defaultdict(int)
 _pandas_warning_streak: dict[str, int] = defaultdict(int)
@@ -740,6 +798,22 @@ def _get_pandas_warning_metrics(registry: MetricsRegistry | None = None) -> Pand
         if _pandas_metrics is None:
             _pandas_metrics = PandasWarningMetricSet(registry or get_global_metrics_registry())
         return _pandas_metrics
+
+
+def _get_data_feed_metrics(registry: MetricsRegistry | None = None) -> DataFeedMetricSet:
+    global _data_feed_metrics
+    with _metrics_lock:
+        resolved_registry = registry or get_global_metrics_registry()
+        registry_key = id(resolved_registry)
+        if registry_key not in _data_feed_metrics:
+            _data_feed_metrics[registry_key] = DataFeedMetricSet(resolved_registry)
+        return _data_feed_metrics[registry_key]
+
+
+def get_data_feed_metrics(registry: MetricsRegistry | None = None) -> DataFeedMetricSet:
+    """Publiczny dostęp do metryk jakości feedu danych."""
+
+    return _get_data_feed_metrics(registry)
 
 
 def observe_exchange_log_record(
@@ -946,6 +1020,9 @@ __all__ = [
     "CounterMetric",
     "GaugeMetric",
     "HistogramMetric",
+    "HistogramSample",
+    "DataFeedMetricSet",
+    "get_data_feed_metrics",
     "get_global_metrics_registry",
     "observe_pandas_warning",
     "reset_pandas_warning_tracking",

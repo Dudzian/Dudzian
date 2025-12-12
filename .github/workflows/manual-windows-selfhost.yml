@@ -1,0 +1,216 @@
+name: Manual Windows Self-Hosted
+
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+  workflow_dispatch:
+    inputs:
+      job:
+        description: "Job to run"
+        required: true
+        default: lint-and-test
+        type: choice
+        options:
+          - prepare-wheelhouse
+          - lint-and-test
+          - bot-core-fast-tests
+          - ui-packaging-windows
+          - ui-native-tests
+          - release-quality-gates
+      # wheelhouse_source options:
+      # - artifact: download the wheelhouse artifact produced by prepare-wheelhouse
+      # - local_path: reuse an existing directory on the self-hosted runner (set wheelhouse_local_path)
+      # - none: skip wheelhouse usage entirely
+      wheelhouse_source:
+        description: "Source for wheelhouse"
+        required: true
+        default: artifact
+        type: choice
+        options:
+          - artifact
+          - local_path
+          - none
+      wheelhouse_local_path:
+        description: "Local path to wheelhouse directory (used when wheelhouse_source=local_path)"
+        required: false
+        default: ""
+        type: string
+      upload_artifacts:
+        description: "Upload artifacts/local-ci and test-results"
+        required: false
+        default: true
+        type: boolean
+
+concurrency:
+  group: windows-selfhosted
+  cancel-in-progress: false
+
+env:
+  CI: "1"
+  # Non-dispatch triggers default to wheelhouse_source=none to avoid missing artifacts; set wheelhouse_source when manually dispatching.
+
+jobs:
+  # Postęp: 20% (ukończone kroki: 1)
+  prepare-wheelhouse-windows:
+    if: >
+      github.event_name != 'workflow_dispatch' ||
+      github.event.inputs.job == 'prepare-wheelhouse' ||
+      (
+        contains(fromJson('["lint-and-test","bot-core-fast-tests","ui-packaging-windows","ui-native-tests","release-quality-gates"]'), github.event.inputs.job)
+        && github.event.inputs.wheelhouse_source == 'artifact'
+      )
+    name: Prepare Wheelhouse (Windows self-hosted)
+    runs-on: [self-hosted, windows]
+    timeout-minutes: 240
+    env:
+      PREPARE_WHEELHOUSE_REQUESTED: ${{ github.event_name == 'workflow_dispatch' && (github.event.inputs.job == 'prepare-wheelhouse' || github.event.inputs.wheelhouse_source == 'artifact') }}
+      SELECTED_JOB: prepare-wheelhouse
+      WHEELHOUSE_SOURCE: ${{ github.event_name == 'workflow_dispatch' && inputs.wheelhouse_source || 'none' }}
+      WHEELHOUSE_LOCAL_PATH: ${{ github.event_name == 'workflow_dispatch' && inputs.wheelhouse_local_path || '' }}
+      UPLOAD_ARTIFACTS: ${{ inputs.upload_artifacts != 'false' }}
+
+    steps:
+      - name: Skip prepare when wheelhouse not requested for this run
+        if: env.PREPARE_WHEELHOUSE_REQUESTED != 'true'
+        run: echo "wheelhouse preparation skipped; add wheelhouse_source=artifact when dispatching to reuse wheelhouse"
+
+      - name: Run Windows job steps
+        uses: ./.github/actions/windows-job-runner
+        with:
+          selected_job: ${{ env.SELECTED_JOB }}
+          wheelhouse_source: ${{ env.WHEELHOUSE_SOURCE }}
+          wheelhouse_local_path: ${{ env.WHEELHOUSE_LOCAL_PATH }}
+          upload_artifacts: ${{ env.UPLOAD_ARTIFACTS }}
+          upload_wheelhouse_artifact: ${{ env.UPLOAD_ARTIFACTS }}
+          enabled: ${{ env.PREPARE_WHEELHOUSE_REQUESTED }}
+
+  # Postęp: 40% (ukończone kroki: 1, 2)
+  lint-and-test-windows:
+    if: >
+      github.event_name != 'workflow_dispatch' ||
+      github.event.inputs.job == 'lint-and-test'
+    name: Lint and Test (Windows self-hosted)
+    # Postęp: 60% (ukończone kroki: 1, 2, 3)
+    # Aby w jednej runce odpalić przygotowanie wheelhouse i linty: wybierz job=lint-and-test oraz wheelhouse_source=artifact.
+    needs: prepare-wheelhouse-windows
+    runs-on: [self-hosted, windows]
+    timeout-minutes: 240
+    env:
+      PREPARE_WHEELHOUSE_REQUESTED: ${{ github.event_name == 'workflow_dispatch' && inputs.wheelhouse_source != 'none' }}
+      SELECTED_JOB: lint-and-test
+      WHEELHOUSE_SOURCE: ${{ github.event_name == 'workflow_dispatch' && inputs.wheelhouse_source || 'none' }}
+      WHEELHOUSE_LOCAL_PATH: ${{ github.event_name == 'workflow_dispatch' && inputs.wheelhouse_local_path || '' }}
+      UPLOAD_ARTIFACTS: ${{ inputs.upload_artifacts != 'false' }}
+
+    steps:
+      - name: Run Windows job steps
+        uses: ./.github/actions/windows-job-runner
+        with:
+          selected_job: ${{ env.SELECTED_JOB }}
+          wheelhouse_source: ${{ env.WHEELHOUSE_SOURCE }}
+          wheelhouse_local_path: ${{ env.WHEELHOUSE_LOCAL_PATH }}
+          upload_artifacts: ${{ env.UPLOAD_ARTIFACTS }}
+
+  bot-core-fast-tests-windows:
+    if: >
+      github.event_name != 'workflow_dispatch' ||
+      github.event.inputs.job == 'bot-core-fast-tests'
+    name: Bot Core Fast Tests (Windows self-hosted)
+    # Postęp: 80% (ukończone kroki: 1, 2, 3, 4)
+    # Aby w jednej runce odpalić przygotowanie wheelhouse i Bot Core Fast Tests: wybierz job=bot-core-fast-tests oraz wheelhouse_source=artifact.
+    needs: prepare-wheelhouse-windows
+    runs-on: [self-hosted, windows]
+    timeout-minutes: 240
+    env:
+      PREPARE_WHEELHOUSE_REQUESTED: ${{ github.event_name == 'workflow_dispatch' && inputs.wheelhouse_source != 'none' }}
+      SELECTED_JOB: bot-core-fast-tests
+      WHEELHOUSE_SOURCE: ${{ github.event_name == 'workflow_dispatch' && inputs.wheelhouse_source || 'none' }}
+      WHEELHOUSE_LOCAL_PATH: ${{ github.event_name == 'workflow_dispatch' && inputs.wheelhouse_local_path || '' }}
+      UPLOAD_ARTIFACTS: ${{ inputs.upload_artifacts != 'false' }}
+
+    steps:
+      - name: Run Windows job steps
+        uses: ./.github/actions/windows-job-runner
+        with:
+          selected_job: ${{ env.SELECTED_JOB }}
+          wheelhouse_source: ${{ env.WHEELHOUSE_SOURCE }}
+          wheelhouse_local_path: ${{ env.WHEELHOUSE_LOCAL_PATH }}
+          upload_artifacts: ${{ env.UPLOAD_ARTIFACTS }}
+
+  ui-packaging-windows:
+    if: >
+      github.event_name != 'workflow_dispatch' ||
+      github.event.inputs.job == 'ui-packaging-windows'
+    name: UI Packaging (Windows self-hosted)
+    # Aby w jednej runce odpalić przygotowanie wheelhouse i UI Packaging: wybierz job=ui-packaging-windows oraz wheelhouse_source=artifact.
+    needs: prepare-wheelhouse-windows
+    runs-on: [self-hosted, windows]
+    timeout-minutes: 240
+    env:
+      PREPARE_WHEELHOUSE_REQUESTED: ${{ github.event_name == 'workflow_dispatch' && inputs.wheelhouse_source != 'none' }}
+      SELECTED_JOB: ui-packaging-windows
+      WHEELHOUSE_SOURCE: ${{ github.event_name == 'workflow_dispatch' && inputs.wheelhouse_source || 'none' }}
+      WHEELHOUSE_LOCAL_PATH: ${{ github.event_name == 'workflow_dispatch' && inputs.wheelhouse_local_path || '' }}
+      UPLOAD_ARTIFACTS: ${{ inputs.upload_artifacts != 'false' }}
+
+    steps:
+      - name: Run Windows job steps
+        uses: ./.github/actions/windows-job-runner
+        with:
+          selected_job: ${{ env.SELECTED_JOB }}
+          wheelhouse_source: ${{ env.WHEELHOUSE_SOURCE }}
+          wheelhouse_local_path: ${{ env.WHEELHOUSE_LOCAL_PATH }}
+          upload_artifacts: ${{ env.UPLOAD_ARTIFACTS }}
+
+  ui-native-tests-windows:
+    if: >
+      github.event_name != 'workflow_dispatch' ||
+      github.event.inputs.job == 'ui-native-tests'
+    name: UI Native Tests (Windows self-hosted)
+    # Aby w jednej runce odpalić przygotowanie wheelhouse i UI Native Tests: wybierz job=ui-native-tests oraz wheelhouse_source=artifact.
+    needs: prepare-wheelhouse-windows
+    runs-on: [self-hosted, windows]
+    timeout-minutes: 240
+    env:
+      PREPARE_WHEELHOUSE_REQUESTED: ${{ github.event_name == 'workflow_dispatch' && inputs.wheelhouse_source != 'none' }}
+      SELECTED_JOB: ui-native-tests
+      WHEELHOUSE_SOURCE: ${{ github.event_name == 'workflow_dispatch' && inputs.wheelhouse_source || 'none' }}
+      WHEELHOUSE_LOCAL_PATH: ${{ github.event_name == 'workflow_dispatch' && inputs.wheelhouse_local_path || '' }}
+      UPLOAD_ARTIFACTS: ${{ inputs.upload_artifacts != 'false' }}
+
+    steps:
+      - name: Run Windows job steps
+        uses: ./.github/actions/windows-job-runner
+        with:
+          selected_job: ${{ env.SELECTED_JOB }}
+          wheelhouse_source: ${{ env.WHEELHOUSE_SOURCE }}
+          wheelhouse_local_path: ${{ env.WHEELHOUSE_LOCAL_PATH }}
+          upload_artifacts: ${{ env.UPLOAD_ARTIFACTS }}
+
+  release-quality-gates-windows:
+    if: >
+      github.event_name != 'workflow_dispatch' ||
+      github.event.inputs.job == 'release-quality-gates'
+    name: Release Quality Gates (Windows self-hosted)
+    # Postęp: 100% (ukończone kroki: 1, 2, 3, 4, 5)
+    # Aby w jednej runce odpalić Prepare Wheelhouse, a następnie Release Quality Gates: wybierz job=release-quality-gates oraz wheelhouse_source=artifact.
+    needs: prepare-wheelhouse-windows
+    runs-on: [self-hosted, windows]
+    timeout-minutes: 240
+    env:
+      PREPARE_WHEELHOUSE_REQUESTED: ${{ github.event_name == 'workflow_dispatch' && inputs.wheelhouse_source != 'none' }}
+      SELECTED_JOB: release-quality-gates
+      WHEELHOUSE_SOURCE: ${{ github.event_name == 'workflow_dispatch' && inputs.wheelhouse_source || 'none' }}
+      WHEELHOUSE_LOCAL_PATH: ${{ github.event_name == 'workflow_dispatch' && inputs.wheelhouse_local_path || '' }}
+      UPLOAD_ARTIFACTS: ${{ inputs.upload_artifacts != 'false' }}
+
+    steps:
+      - name: Run Windows job steps
+        uses: ./.github/actions/windows-job-runner
+        with:
+          selected_job: ${{ env.SELECTED_JOB }}
+          wheelhouse_source: ${{ env.WHEELHOUSE_SOURCE }}
+          wheelhouse_local_path: ${{ env.WHEELHOUSE_LOCAL_PATH }}
+          upload_artifacts: ${{ env.UPLOAD_ARTIFACTS }}
+

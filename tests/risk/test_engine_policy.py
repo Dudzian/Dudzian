@@ -3,7 +3,8 @@ from datetime import datetime, timezone
 from types import SimpleNamespace
 
 from bot_core.exchanges.base import AccountSnapshot, OrderRequest
-from bot_core.risk.engine import InMemoryRiskRepository, ThresholdRiskEngine
+from bot_core.risk.engine import ThresholdRiskEngine
+from bot_core.risk.repository import InMemoryRiskRepository
 from bot_core.risk.events import RiskAlertLog
 from bot_core.risk.profiles import BalancedProfile
 

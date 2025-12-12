@@ -52,8 +52,9 @@ from .ai_governor_demo import build_demo_ai_governor_snapshot
 from .demo_data import load_demo_decisions
 
 try:  # pragma: no cover - moduł może nie być dostępny w wersjach light
-    from bot_core.ai import ModelRepository
+    from bot_core.ai import FilesystemModelRepository, ModelRepository
 except Exception:  # pragma: no cover - fallback dla dystrybucji bez komponentu AI
+    FilesystemModelRepository = None  # type: ignore[assignment]
     ModelRepository = None  # type: ignore[assignment]
 
 try:  # pragma: no cover - harmonogram retrainingu jest opcjonalny
@@ -4086,13 +4087,13 @@ class RuntimeService(QObject):
         return next_run.astimezone().isoformat(timespec="minutes")
 
     def _build_adaptive_snapshot(self) -> tuple[str, list[dict[str, object]]]:
-        if ModelRepository is None:
+        if FilesystemModelRepository is None:
             return "", []
         registry_path = self._resolve_model_registry_path()
         if registry_path is None:
             return "", []
         try:
-            repository = ModelRepository(registry_path)  # type: ignore[abstract]
+            repository = FilesystemModelRepository(registry_path)  # type: ignore[abstract]
         except Exception:  # pragma: no cover - repozytorium może być nieosiągalne
             _LOGGER.debug("Nie udało się zainicjalizować ModelRepository", exc_info=True)
             return "", []

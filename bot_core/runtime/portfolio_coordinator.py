@@ -3,14 +3,16 @@ from __future__ import annotations
 
 import json
 import logging
+import asyncio
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from datetime import datetime, timezone
 
 from bot_core.market_intel import MarketIntelSnapshot
 from bot_core.observability.slo import SLOStatus
-from bot_core.portfolio import PortfolioDecision, PortfolioGovernor
+from bot_core.portfolio import PortfolioDecision, PortfolioGovernor, PortfolioScheduler
 from bot_core.risk import StressOverrideRecommendation
+from bot_core.runtime.schedulers import RuntimeScheduler
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -27,8 +29,12 @@ def _default_clock() -> datetime:
 
 
 @dataclass(slots=True)
-class PortfolioRuntimeCoordinator:
-    """Odpowiada za cykliczną ewaluację PortfolioGovernora w runtime."""
+class PortfolioRuntimeCoordinator(RuntimeScheduler):
+    """Odpowiada za cykliczną ewaluację PortfolioGovernora w runtime.
+
+    Zgodny z kontraktem :class:`bot_core.portfolio.PortfolioScheduler` oraz
+    protokołem :class:`bot_core.runtime.schedulers.RuntimeScheduler`.
+    """
 
     governor: PortfolioGovernor
     allocation_provider: AllocationProvider
@@ -44,6 +50,7 @@ class PortfolioRuntimeCoordinator:
     _last_decision: PortfolioDecision | None = None
     _last_run: datetime | None = None
     _last_tco_signature: str | None = None
+    _stop_requested: bool = False
 
     def evaluate(self, *, force: bool = False) -> PortfolioDecision | None:
         """Uruchamia ewaluację governora jeżeli minął czas cool-down."""
@@ -161,6 +168,26 @@ class PortfolioRuntimeCoordinator:
             return float(value)
         except (TypeError, ValueError):  # pragma: no cover - diagnostyka konfiguracji
             return 300.0
+
+    async def start(self) -> None:
+        await self.run_forever()
+
+    async def run_forever(self) -> None:
+        self._stop_requested = False
+        cooldown = max(self.cooldown_seconds, 1.0)
+        try:
+            while not self._stop_requested:
+                self.evaluate(force=False)
+                await asyncio.sleep(cooldown)
+        except asyncio.CancelledError:
+            self._stop_requested = True
+            raise
+
+    async def run_once(self) -> None:
+        self.evaluate(force=True)
+
+    def stop(self) -> None:
+        self._stop_requested = True
 
 
 __all__ = ["PortfolioRuntimeCoordinator"]

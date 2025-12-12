@@ -39,7 +39,10 @@ from bot_core.exchanges.network_guard import (
     normalize_http_method,
     normalize_relative_api_path,
 )
-from bot_core.exchanges.error_mapping import raise_for_binance_error
+from bot_core.exchanges.error_mapping import (
+    raise_for_binance_error,
+    raise_for_http_status,
+)
 from bot_core.exchanges.health import Watchdog
 from bot_core.exchanges.rate_limiter import (
     RateLimitRule,
@@ -555,36 +558,36 @@ class BinanceFuturesAdapter(ExchangeAdapter):
     def _translate_http_error(self, exc: HTTPError) -> ExchangeAPIError:
         status = getattr(exc, "code", 500)
         raw_body = exc.read() or b""
-        parsed_payload: object | None = None
+        payload: object | None = raw_body
         message = exc.reason if hasattr(exc, "reason") else ""
+        default_message = message or "Binance Futures API zwróciło błąd"
         if raw_body:
             try:
                 parsed_payload = json.loads(raw_body)
             except json.JSONDecodeError:
-                parsed_payload = raw_body.decode("utf-8", "replace")
+                try:
+                    payload = raw_body.decode("utf-8", "replace")
+                except Exception:  # pragma: no cover - defensywne dekodowanie
+                    payload = raw_body
             else:
+                payload = parsed_payload
                 if isinstance(parsed_payload, Mapping):
-                    message = str(
-                        parsed_payload.get("msg")
-                        or parsed_payload.get("message")
-                        or parsed_payload.get("code")
-                        or message
-                        or "Binance Futures API zwróciło błąd"
-                    )
-                else:
-                    message = str(parsed_payload)
-        if not message:
-            message = "Binance Futures API zwróciło błąd"
-
-        error_cls: type[ExchangeAPIError]
-        if status in {401, 403}:
-            error_cls = ExchangeAuthError
-        elif status in _RETRYABLE_STATUS:
-            error_cls = ExchangeThrottlingError
-        else:
-            error_cls = ExchangeAPIError
-
-        return error_cls(message=message, status_code=status, payload=parsed_payload)
+                    try:
+                        raise_for_binance_error(
+                            status_code=status,
+                            payload=parsed_payload,
+                            default_message=default_message,
+                        )
+                    except ExchangeAPIError as api_exc:
+                        return api_exc
+        try:
+            raise_for_http_status(
+                status_code=status,
+                payload=payload,
+                default_message=default_message,
+            )
+        except ExchangeAPIError as api_exc:
+            return api_exc
 
     def _should_retry(self, status_code: int) -> bool:
         return status_code in _RETRYABLE_STATUS or status_code >= 500

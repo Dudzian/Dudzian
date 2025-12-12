@@ -201,6 +201,7 @@ class _PresetStrategySchema(BaseModel):
     license_tier: str | None = Field(default=None)
     risk_classes: tuple[str, ...] = Field(default_factory=tuple)
     required_data: tuple[str, ...] = Field(default_factory=tuple)
+    risk_hooks: tuple[str, ...] = Field(default_factory=tuple)
     tags: tuple[str, ...] = Field(default_factory=tuple)
     risk_profile: str | None = Field(default=None)
     metadata: Mapping[str, Any] = Field(default_factory=dict)
@@ -214,7 +215,7 @@ class _PresetStrategySchema(BaseModel):
             return {str(key): value[key] for key in value.keys()}
         raise TypeError("Sekcja strategii musi być słownikiem klucz→wartość")
 
-    @field_validator("risk_classes", "required_data", "tags", mode="before")
+    @field_validator("risk_classes", "required_data", "risk_hooks", "tags", mode="before")
     @classmethod
     def _normalize_sequences(cls, value: Any) -> tuple[str, ...]:
         return _normalize_optional_str_sequence(value)
@@ -381,6 +382,7 @@ class StrategyDefinition:
     license_tier: str
     risk_classes: Sequence[str]
     required_data: Sequence[str]
+    risk_hooks: Sequence[str] = field(default_factory=tuple)
     parameters: Mapping[str, Any] = field(default_factory=dict)
     risk_profile: str | None = None
     tags: Sequence[str] = field(default_factory=tuple)
@@ -392,6 +394,7 @@ class StrategyDefinition:
         object.__setattr__(self, "license_tier", _normalize_non_empty_str(self.license_tier, field_name="license_tier"))
         object.__setattr__(self, "risk_classes", _normalize_str_sequence(self.risk_classes, field_name="risk_classes"))
         object.__setattr__(self, "required_data", _normalize_str_sequence(self.required_data, field_name="required_data"))
+        object.__setattr__(self, "risk_hooks", tuple(_normalize_optional_str_sequence(self.risk_hooks)))
         object.__setattr__(
             self,
             "tags",
@@ -412,6 +415,8 @@ class StrategyEngineSpec:
     license_tier: str
     risk_classes: Sequence[str]
     required_data: Sequence[str]
+    risk_hooks: Sequence[str] = field(default_factory=tuple)
+    config_schema: type[BaseModel] | None = None
     capability: str | None = None
     default_tags: Sequence[str] = field(default_factory=tuple)
 
@@ -420,11 +425,16 @@ class StrategyEngineSpec:
         object.__setattr__(self, "license_tier", _normalize_non_empty_str(self.license_tier, field_name="license_tier"))
         object.__setattr__(self, "risk_classes", _normalize_str_sequence(self.risk_classes, field_name="risk_classes"))
         object.__setattr__(self, "required_data", _normalize_str_sequence(self.required_data, field_name="required_data"))
+        object.__setattr__(self, "risk_hooks", tuple(_normalize_optional_str_sequence(self.risk_hooks)))
         object.__setattr__(
             self,
             "default_tags",
             tuple(_normalize_optional_str_sequence(self.default_tags)),
         )
+        if self.config_schema is not None and not (
+            isinstance(self.config_schema, type) and issubclass(self.config_schema, BaseModel)
+        ):
+            raise TypeError("config_schema must be a pydantic BaseModel subclass")
 
     def build(
         self,
@@ -434,6 +444,17 @@ class StrategyEngineSpec:
         metadata: Mapping[str, Any] | None = None,
     ) -> StrategyEngine:
         return self.factory(name=name, parameters=parameters, metadata=metadata)
+
+    def validate_parameters(self, parameters: Mapping[str, Any]) -> Mapping[str, Any]:
+        """Waliduje parametry strategii względem podanego schematu konfiguracji."""
+
+        if self.config_schema is None:
+            return parameters
+        try:
+            model = self.config_schema.model_validate(parameters)
+        except ValidationError as exc:  # pragma: no cover - błędy raportowane w create()
+            raise exc
+        return model.model_dump()
 
 
 def _ensure_capability_allowed(spec: StrategyEngineSpec, *, strategy_name: str | None = None) -> None:
@@ -1173,9 +1194,23 @@ class StrategyCatalog:
                 f"Strategy '{definition.name}' requires license tier '{definition.license_tier}' "
                 f"but engine '{spec.key}' is registered for '{spec.license_tier}'"
             )
+        try:
+            validated_parameters = spec.validate_parameters(definition.parameters)
+        except ValidationError as exc:
+            details = [
+                ".".join(str(part) for part in error.get("loc", ())) + f": {error.get('msg', 'invalid')}"
+                if error.get("loc")
+                else error.get("msg", "invalid configuration")
+                for error in exc.errors()
+            ]
+            raise ValueError(
+                f"Invalid parameters for strategy '{definition.name}': " + "; ".join(details)
+            ) from exc
+
         tags = tuple(dict.fromkeys((*spec.default_tags, *definition.tags)))
         risk_classes = tuple(dict.fromkeys((*spec.risk_classes, *definition.risk_classes)))
         required_data = tuple(dict.fromkeys((*spec.required_data, *definition.required_data)))
+        risk_hooks = tuple(dict.fromkeys((*spec.risk_hooks, *definition.risk_hooks)))
         metadata = dict(definition.metadata)
         if tags and "tags" not in metadata:
             metadata["tags"] = tags
@@ -1184,9 +1219,11 @@ class StrategyCatalog:
         metadata.setdefault("license_tier", spec.license_tier)
         metadata.setdefault("risk_classes", risk_classes)
         metadata.setdefault("required_data", required_data)
+        if risk_hooks:
+            metadata.setdefault("risk_hooks", risk_hooks)
         engine = spec.build(
             name=definition.name,
-            parameters=definition.parameters,
+            parameters=validated_parameters,
             metadata=metadata,
         )
         try:
@@ -1217,6 +1254,7 @@ class StrategyCatalog:
                 "license_tier": spec.license_tier,
                 "risk_classes": list(spec.risk_classes),
                 "required_data": list(spec.required_data),
+                "risk_hooks": list(spec.risk_hooks),
             }
             summary.append(payload)
         return summary
@@ -1243,6 +1281,7 @@ class StrategyCatalog:
                 "license_tier": definition.license_tier,
                 "risk_classes": list(definition.risk_classes),
                 "required_data": list(definition.required_data),
+                "risk_hooks": list(definition.risk_hooks),
             }
             if definition.risk_profile:
                 payload["risk_profile"] = definition.risk_profile
@@ -1258,6 +1297,9 @@ class StrategyCatalog:
                 )
                 payload["required_data"] = list(
                     dict.fromkeys((*spec.required_data, *definition.required_data))
+                )
+                payload["risk_hooks"] = list(
+                    dict.fromkeys((*spec.risk_hooks, *definition.risk_hooks))
                 )
             except KeyError:
                 pass
@@ -1677,10 +1719,15 @@ class StrategyPresetWizard:
         required_data = tuple(
             dict.fromkeys((*spec.required_data, *_normalize_optional_str_sequence(entry.get("required_data"))))
         )
+        risk_hooks = tuple(
+            dict.fromkeys((*spec.risk_hooks, *_normalize_optional_str_sequence(entry.get("risk_hooks"))))
+        )
         metadata = dict(entry.get("metadata") or {})
         metadata.setdefault("license_tier", spec.license_tier)
         metadata.setdefault("risk_classes", risk_classes)
         metadata.setdefault("required_data", required_data)
+        if risk_hooks and "risk_hooks" not in metadata:
+            metadata["risk_hooks"] = risk_hooks
         if merged_tags and "tags" not in metadata:
             metadata["tags"] = merged_tags
         if spec.capability:
@@ -1694,6 +1741,7 @@ class StrategyPresetWizard:
             "license_tier": spec.license_tier,
             "risk_classes": list(risk_classes),
             "required_data": list(required_data),
+            "risk_hooks": list(risk_hooks),
         }
         if risk_profile:
             payload["risk_profile"] = str(risk_profile)

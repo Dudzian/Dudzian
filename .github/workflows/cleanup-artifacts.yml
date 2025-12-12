@@ -12,8 +12,69 @@ jobs:
   delete-old-artifacts:
     runs-on: ubuntu-latest
     steps:
-      - name: Delete artifacts older than 7 days
-        uses: c-hive/gha-remove-artifacts@v1
+      # Retention policy:
+      # - Keep all artifacts updated within the last 14 days to allow debugging.
+      # - Additionally keep the 20 most recently updated artifacts regardless of age
+      #   to prevent deleting still-relevant artifacts from older runs.
+      # - Remove anything older that does not fall into the "keep" buckets to
+      #   control storage usage.
+      - name: Enforce artifact retention policy
+        uses: actions/github-script@v7
         with:
-          age: '7 days'
-          skip-tags: true
+          script: |
+            const retentionDays = 14;
+            const keepRecentCount = 20;
+            const msInDay = 24 * 60 * 60 * 1000;
+            const cutoff = new Date(Date.now() - retentionDays * msInDay);
+
+            const artifacts = await github.paginate(
+              github.rest.actions.listArtifactsForRepo,
+              { owner: context.repo.owner, repo: context.repo.repo, per_page: 100 }
+            );
+
+            // Sort newest first so the first keepRecentCount entries are preserved.
+            artifacts.sort((a, b) => new Date(b.updated_at) - new Date(a.updated_at));
+            const keepSet = new Set(artifacts.slice(0, keepRecentCount).map((a) => a.id));
+
+            const kept = [];
+            const deleted = [];
+
+            for (const artifact of artifacts) {
+              const updatedAt = new Date(artifact.updated_at);
+              const ageDays = Math.floor((Date.now() - updatedAt.getTime()) / msInDay);
+
+              if (keepSet.has(artifact.id)) {
+                kept.push({
+                  name: artifact.name,
+                  id: artifact.id,
+                  reason: `within ${keepRecentCount} most recently updated artifacts`,
+                });
+                continue;
+              }
+
+              if (updatedAt >= cutoff) {
+                kept.push({
+                  name: artifact.name,
+                  id: artifact.id,
+                  reason: `updated ${ageDays} day(s) ago (< ${retentionDays} days)`,
+                });
+                continue;
+              }
+
+              await github.rest.actions.deleteArtifact({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                artifact_id: artifact.id,
+              });
+              deleted.push({ name: artifact.name, id: artifact.id, ageDays });
+            }
+
+            core.info(`Deleted ${deleted.length} artifact(s):`);
+            for (const item of deleted) {
+              core.info(`- ${item.name} (id: ${item.id}, age: ${item.ageDays} day(s))`);
+            }
+
+            core.info(`Kept ${kept.length} artifact(s):`);
+            for (const item of kept) {
+              core.info(`- ${item.name} (id: ${item.id}) reason: ${item.reason}`);
+            }

@@ -3,47 +3,42 @@ from __future__ import annotations
 
 import logging
 import math
-import random
 from dataclasses import dataclass, replace
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import Callable, Mapping, MutableMapping, Protocol, Sequence
+from typing import Callable, Mapping, MutableMapping, Sequence
 
 import numpy as np
 
 from bot_core.ai import DecisionModelInference, MarketRegime, ModelScore
-from bot_core.ai.inference import ModelRepository
-from bot_core.ai.validation import ModelQualityReport, load_latest_quality_report
+from bot_core.ai.repository import FilesystemModelRepository, ModelRepository
+from bot_core.decision.bandits import BanditRecommendation, StrategyAdvisor
+from bot_core.decision.bandit_advisors import DefaultStrategyBanditAdvisor
+from bot_core.decision.cost_resolvers import DecisionCostResolverProtocol
+from bot_core.decision.costs import DecisionCostResolver
+from bot_core.decision.evaluators import DecisionEvaluator
+from bot_core.decision.reports import ModelQualityReport, load_latest_quality_report
 from bot_core.reporting.model_quality import DEFAULT_QUALITY_DIR
 from bot_core.config.models import (
     DecisionEngineConfig,
     DecisionOrchestratorThresholds,
-    DecisionStressTestConfig,
 )
+from bot_core.decision.evaluator import DecisionEvaluationService
 from bot_core.decision.models import (
     DecisionCandidate,
+    DecisionContext,
     DecisionEvaluation,
     ModelSelectionDetail,
     ModelSelectionMetadata,
     RiskSnapshot,
 )
 from bot_core.decision.metrics import DecisionMetricSet
+from bot_core.decision.providers import DecisionProvider
 
-try:
-    from bot_core.tco.models import ProfileCostSummary, StrategyCostSummary, TCOReport
-except Exception:  # pragma: no cover - moduł TCO może nie być dostępny w niektórych gałęziach
-    ProfileCostSummary = None  # type: ignore
-    StrategyCostSummary = None  # type: ignore
-    TCOReport = None  # type: ignore
+from bot_core.tco.models import TCOReport
 
 
 _LOGGER = logging.getLogger(__name__)
-
-
-@dataclass(slots=True)
-class _CostIndex:
-    lookup: MutableMapping[tuple[str, str], float]
-    default_cost: float | None
 
 
 @dataclass(slots=True)
@@ -78,326 +73,7 @@ class StrategyRecalibrationSchedule:
     next_run: datetime
 
 
-@dataclass(slots=True)
-class _BanditRecommendation:
-    modes: tuple[str, ...]
-    position_size: float | None
-    risk_score: float
-
-
-class StrategyAdvisor(Protocol):
-    """Kontrakt dla doradcy wyboru strategii używanego przez orchestrator."""
-
-    def recommend(
-        self,
-        candidate: DecisionCandidate,
-        *,
-        regime: MarketRegime | str,
-        model_score: ModelScore | None,
-        selection: ModelSelectionMetadata | None,
-        cost_bps: float | None,
-        net_edge_bps: float,
-    ) -> _BanditRecommendation:
-        """Zwraca rekomendowane tryby wykonania i wielkość pozycji."""
-
-    def observe(self, candidate: DecisionCandidate, evaluation: DecisionEvaluation) -> None:
-        """Aktualizuje stan doradcy po zakończonej ewaluacji."""
-
-
-class _LinUCBArm:
-    """Minimalna implementacja ramienia LinUCB do eksploracji strategii."""
-
-    def __init__(self, dimension: int, alpha: float) -> None:
-        self.alpha = float(alpha)
-        self.dimension = int(max(1, dimension))
-        self.A = np.eye(self.dimension, dtype=float)
-        self.b = np.zeros(self.dimension, dtype=float)
-
-    def ensure_dimension(self, dimension: int) -> None:
-        if dimension <= self.dimension:
-            return
-        dimension = int(max(1, dimension))
-        new_A = np.eye(dimension, dtype=float)
-        new_A[: self.dimension, : self.dimension] = self.A
-        new_b = np.zeros(dimension, dtype=float)
-        new_b[: self.dimension] = self.b
-        self.A = new_A
-        self.b = new_b
-        self.dimension = dimension
-
-    def predict(self, context: np.ndarray) -> float:
-        self.ensure_dimension(context.size)
-        try:
-            theta = np.linalg.solve(self.A, self.b)
-        except np.linalg.LinAlgError:
-            theta = np.linalg.pinv(self.A) @ self.b
-        try:
-            inv_a = np.linalg.inv(self.A)
-        except np.linalg.LinAlgError:
-            inv_a = np.linalg.pinv(self.A)
-        mean = float(context @ theta)
-        exploration = float(np.sqrt(context @ inv_a @ context))
-        return mean + self.alpha * exploration
-
-    def update(self, context: np.ndarray, reward: float) -> None:
-        self.ensure_dimension(context.size)
-        context = context.reshape(-1, 1)
-        self.A += context @ context.T
-        self.b += reward * context.ravel()
-
-
-class _ThompsonArm:
-    """Beta-Bernoulli ramię używane do rekomendacji ryzyka."""
-
-    def __init__(self, alpha: float = 1.0, beta: float = 1.0) -> None:
-        self.alpha = float(max(alpha, 1e-3))
-        self.beta = float(max(beta, 1e-3))
-
-    def posterior_mean(self) -> float:
-        total = self.alpha + self.beta
-        if total <= 0:
-            return 0.5
-        return self.alpha / total
-
-    def update(self, outcome: float) -> None:
-        outcome = float(max(0.0, min(1.0, outcome)))
-        self.alpha += outcome
-        self.beta += 1.0 - outcome
-
-
-class _StrategyBanditAdvisor:
-    """Łączy LinUCB i Thompson sampling dla rekomendacji strategii oraz ryzyka."""
-
-    def __init__(self) -> None:
-        self._linucb: MutableMapping[tuple[str, str], _LinUCBArm] = {}
-        self._thompson: MutableMapping[tuple[str, str], _ThompsonArm] = {}
-        self._rng = random.Random(1729)
-        self._pending: MutableMapping[int, tuple[tuple[str, str], np.ndarray, float | None]] = {}
-
-    def recommend(
-        self,
-        candidate: DecisionCandidate,
-        *,
-        regime: MarketRegime | str,
-        model_score: ModelScore | None,
-        selection: ModelSelectionMetadata | None,
-        cost_bps: float | None,
-        net_edge_bps: float,
-    ) -> _BanditRecommendation:
-        regime_value = self._normalise_regime(regime)
-        key = (candidate.strategy.lower(), regime_value)
-        context = self._build_context(
-            candidate,
-            regime_value,
-            model_score,
-            selection,
-            cost_bps,
-            net_edge_bps,
-        )
-        arm = self._linucb.setdefault(key, _LinUCBArm(context.size, alpha=0.75))
-        score = arm.predict(context)
-        risk_score = self._risk_score(
-            key,
-            candidate,
-            regime_value,
-            model_score,
-            net_edge_bps,
-        )
-        modes = self._modes_from_scores(score, risk_score)
-        position_size = self._position_from_risk(candidate.notional, risk_score)
-        self._pending[id(candidate)] = (key, context, self._extract_meta_label(candidate))
-        return _BanditRecommendation(modes=modes, position_size=position_size, risk_score=risk_score)
-
-    def observe(
-        self,
-        candidate: DecisionCandidate,
-        evaluation: DecisionEvaluation,
-    ) -> None:
-        payload = self._pending.pop(id(candidate), None)
-        if payload is None:
-            return
-        key, context, meta_label = payload
-        arm = self._linucb.get(key)
-        if arm is None:
-            return
-        reward = self._reward_from_evaluation(evaluation.net_edge_bps, evaluation.accepted)
-        arm.update(context, reward)
-        thompson = self._thompson.setdefault(key, _ThompsonArm())
-        success = meta_label
-        if success is None:
-            success = 1.0 if evaluation.accepted else 0.0
-        else:
-            success = max(0.0, min(1.0, success))
-            if not evaluation.accepted and success > 0.5:
-                success *= 0.75
-        thompson.update(success)
-
-    def _reward_from_evaluation(self, net_edge_bps: float | None, accepted: bool) -> float:
-        if net_edge_bps is None:
-            net_edge_bps = 0.0
-        scaled = net_edge_bps / 25.0
-        if not accepted:
-            scaled *= 0.5
-        return float(max(-1.0, min(1.0, scaled)))
-
-    def _position_from_risk(self, notional: float, risk_score: float) -> float:
-        multiplier = 0.4 + 0.8 * max(0.0, min(1.0, risk_score))
-        return float(max(0.0, min(notional * 1.6, notional * multiplier)))
-
-    def _modes_from_scores(self, score: float, risk_score: float) -> tuple[str, ...]:
-        if score >= 1.6 and risk_score >= 0.65:
-            return ("live", "aggressive")
-        if score >= 1.1 and risk_score >= 0.5:
-            return ("live", "balanced")
-        if score >= 0.6 and risk_score >= 0.3:
-            return ("shadow", "defensive")
-        return ("disabled", "monitor")
-
-    def _risk_score(
-        self,
-        key: tuple[str, str],
-        candidate: DecisionCandidate,
-        regime: str,
-        model_score: ModelScore | None,
-        net_edge_bps: float,
-    ) -> float:
-        thompson = self._thompson.setdefault(key, _ThompsonArm())
-        base_mean = thompson.posterior_mean()
-        meta_label = self._extract_meta_label(candidate)
-        meta_component = base_mean if meta_label is None else float(max(0.0, min(1.0, meta_label)))
-        probability = (
-            model_score.success_probability
-            if model_score is not None and model_score.success_probability is not None
-            else candidate.expected_probability
-        )
-        probability = float(max(0.0, min(1.0, probability)))
-        net_component = 0.5 + 0.5 * max(-1.0, min(1.0, net_edge_bps / 20.0))
-        regime_bias = {
-            MarketRegime.TREND.value: 0.65,
-            MarketRegime.MEAN_REVERSION.value: 0.55,
-            MarketRegime.DAILY.value: 0.45,
-        }.get(regime, 0.5)
-        risk = (
-            0.35 * base_mean
-            + 0.25 * meta_component
-            + 0.2 * probability
-            + 0.2 * regime_bias
-        )
-        risk = 0.5 * risk + 0.5 * net_component
-        return max(0.0, min(1.0, risk))
-
-    def _build_context(
-        self,
-        candidate: DecisionCandidate,
-        regime: str,
-        model_score: ModelScore | None,
-        selection: ModelSelectionMetadata | None,
-        cost_bps: float | None,
-        net_edge_bps: float,
-    ) -> np.ndarray:
-        probability = (
-            model_score.success_probability
-            if model_score is not None and model_score.success_probability is not None
-            else candidate.expected_probability
-        )
-        expected_return = (
-            model_score.expected_return_bps
-            if model_score is not None and model_score.expected_return_bps is not None
-            else candidate.expected_return_bps
-        )
-        net_edge = net_edge_bps
-        if math.isfinite(net_edge) is False:
-            net_edge = expected_return - (cost_bps or 0.0)
-        model_weight = 0.0
-        if selection is not None and selection.selected:
-            detail = selection.find(selection.selected)
-            if detail is not None and detail.weight is not None and detail.weight > 0:
-                model_weight = float((detail.effective_score or 0.0) / detail.weight)
-        metadata_confidence = self._extract_confidence(candidate)
-        meta_label = self._extract_meta_label(candidate)
-        regime_vector = self._encode_regime(regime)
-        context = np.array(
-            [
-                1.0,
-                probability,
-                expected_return / 100.0,
-                net_edge / 100.0,
-                model_weight,
-                metadata_confidence,
-                meta_label if meta_label is not None else 0.5,
-            ]
-            + list(regime_vector),
-            dtype=float,
-        )
-        return np.nan_to_num(context, nan=0.0, posinf=1.0, neginf=-1.0)
-
-    def _encode_regime(self, regime: str) -> tuple[float, float, float]:
-        regime = regime or MarketRegime.TREND.value
-        return (
-            1.0 if regime == MarketRegime.TREND.value else 0.0,
-            1.0 if regime == MarketRegime.MEAN_REVERSION.value else 0.0,
-            1.0 if regime == MarketRegime.DAILY.value else 0.0,
-        )
-
-    def _normalise_regime(self, regime: MarketRegime | str) -> str:
-        if isinstance(regime, MarketRegime):
-            return regime.value
-        try:
-            return MarketRegime(regime).value
-        except (ValueError, TypeError):
-            return MarketRegime.TREND.value
-
-    def _extract_confidence(self, candidate: DecisionCandidate) -> float:
-        metadata = candidate.metadata or {}
-        if not isinstance(metadata, Mapping):
-            return 0.5
-        candidates = [
-            metadata.get("model_confidence"),
-            metadata.get("confidence"),
-            metadata.get("score"),
-        ]
-        model_meta = metadata.get("model_metadata")
-        if isinstance(model_meta, Mapping):
-            candidates.extend(
-                model_meta.get(key)
-                for key in ("confidence", "model_score", "quality")
-            )
-        for value in candidates:
-            try:
-                confidence = float(value)
-            except (TypeError, ValueError):
-                continue
-            return max(0.0, min(1.0, confidence))
-        return 0.5
-
-    def _extract_meta_label(self, candidate: DecisionCandidate) -> float | None:
-        metadata = candidate.metadata or {}
-        if not isinstance(metadata, Mapping):
-            return None
-        for key in ("meta_label", "meta_label_score", "meta_probability"):
-            value = metadata.get(key)
-            if value is None:
-                continue
-            try:
-                label = float(value)
-            except (TypeError, ValueError):
-                continue
-            return max(0.0, min(1.0, label))
-        meta_block = metadata.get("meta_labeling")
-        if isinstance(meta_block, Mapping):
-            for key in ("label", "probability", "score"):
-                value = meta_block.get(key)
-                if value is None:
-                    continue
-                try:
-                    label = float(value)
-                except (TypeError, ValueError):
-                    continue
-                return max(0.0, min(1.0, label))
-        return None
-
-
-class DecisionOrchestrator:
+class DecisionOrchestrator(DecisionProvider):
     """Klasa realizująca logikę DecisionOrchestratora Etapu 5."""
 
     def __init__(
@@ -409,10 +85,14 @@ class DecisionOrchestrator:
         performance_history_limit: int = 100,
         clock: Callable[[], datetime] | None = None,
         strategy_advisor: StrategyAdvisor | None = None,
+        cost_resolver: DecisionCostResolverProtocol | None = None,
+        evaluator: DecisionEvaluator | None = None,
         metrics: DecisionMetricSet | None = None,
     ) -> None:
         self._config = config
-        self._cost_index = _CostIndex(lookup={}, default_cost=None)
+        self._cost_resolver: DecisionCostResolverProtocol = cost_resolver or DecisionCostResolver(
+            penalty_cost_bps=self._config.penalty_cost_bps
+        )
         self._inference: DecisionModelInference | None = None
         self._inferences: MutableMapping[str, DecisionModelInference] = {}
         self._default_model_name: str | None = None
@@ -429,8 +109,14 @@ class DecisionOrchestrator:
         self._clock: Callable[[], datetime] = clock or (lambda: datetime.now(timezone.utc))
         self._strategy_performance: MutableMapping[str, StrategyPerformanceSummary] = {}
         self._strategy_schedules: MutableMapping[str, StrategyRecalibrationSchedule] = {}
-        self._strategy_advisor: StrategyAdvisor = strategy_advisor or _StrategyBanditAdvisor()
+        self._strategy_advisor: StrategyAdvisor = strategy_advisor or DefaultStrategyBanditAdvisor()
         self._metrics = metrics or DecisionMetricSet()
+        self._evaluation_service: DecisionEvaluator = evaluator or DecisionEvaluationService(
+            config=self._config,
+            provider=self,
+            strategy_advisor=self._strategy_advisor,
+            metrics=self._metrics,
+        )
         if inference is not None:
             self.attach_named_inference("__default__", inference, set_default=True)
 
@@ -624,196 +310,47 @@ class DecisionOrchestrator:
     ) -> None:
         """Buduje indeks kosztów (bps) na podstawie raportu TCO."""
 
-        index: MutableMapping[tuple[str, str], float] = {}
-        default_cost: float | None = None
-
-        if TCOReport is not None and isinstance(report, TCOReport):
-            strategies = report.strategies.values()
-            default_cost = float(report.total.cost_bps)
-            for summary in strategies:
-                self._ingest_strategy_summary(summary, index)
-        else:
-            data = dict(report)
-            strategies_data = data.get("strategies", {}) or {}
-            for strategy_name, summary_raw in strategies_data.items():
-                index[(str(strategy_name), "__total__")] = self._extract_cost_bps(
-                    summary_raw.get("total")
-                )
-                profiles = summary_raw.get("profiles", {}) or {}
-                for profile_name, profile_raw in profiles.items():
-                    index[(str(strategy_name), str(profile_name))] = self._extract_cost_bps(
-                        profile_raw
-                    )
-            total_raw = data.get("total")
-            if total_raw is not None:
-                default_cost = self._extract_cost_bps(total_raw)
-
-        self._cost_index = _CostIndex(lookup=index, default_cost=default_cost)
-
-    def _ingest_strategy_summary(
-        self,
-        summary: StrategyCostSummary,
-        index: MutableMapping[tuple[str, str], float],
-    ) -> None:
-        index[(summary.strategy, "__total__")] = float(summary.total.cost_bps)
-        for profile_name, profile_summary in summary.profiles.items():
-            index[(summary.strategy, profile_name)] = float(profile_summary.cost_bps)
-
-    def _extract_cost_bps(self, payload: object) -> float:
-        if payload is None:
-            return 0.0
-        if ProfileCostSummary is not None and isinstance(payload, ProfileCostSummary):
-            return float(payload.cost_bps)
-        if isinstance(payload, Mapping):
-            value = payload.get("cost_bps")
-            if value is None:
-                return 0.0
-            return float(value)
-        return float(payload)
+        self._cost_resolver.update_costs_from_report(report)
 
     # --------------------------------------------------------------- ewaluacja --
     def evaluate_candidate(
         self,
         candidate: DecisionCandidate,
-        risk_snapshot: Mapping[str, object] | RiskSnapshot,
+        context: DecisionContext,
     ) -> DecisionEvaluation:
-        thresholds = self._thresholds_for_profile(candidate.risk_profile)
-        thresholds_snapshot = self._threshold_snapshot(thresholds)
-        snapshot = self._ensure_snapshot(candidate.risk_profile, risk_snapshot)
-        model_name, model_score, selection_metadata = self._score_with_model(candidate)
-        if model_score is not None:
-            expected_probability = model_score.success_probability
-            expected_value_bps = (
-                model_score.expected_return_bps * model_score.success_probability
-            )
-            expected_return_bps = model_score.expected_return_bps
-        else:
-            expected_probability = candidate.expected_probability
-            expected_value_bps = candidate.expected_value_bps
-            expected_return_bps = candidate.expected_return_bps
-        reasons: list[str] = []
-        risk_flags: list[str] = []
-
-        if expected_probability < self._config.min_probability:
-            reasons.append(
-                (
-                    "prawdopodobieństwo {p:.3f} poniżej progu {threshold:.3f}"
-                ).format(p=expected_probability, threshold=self._config.min_probability)
-            )
-
-        cost_bps, missing_cost = self._resolve_cost(candidate)
-        if missing_cost and self._config.require_cost_data:
-            reasons.append("brak danych kosztowych dla strategii/profilu")
-        effective_cost = cost_bps or 0.0
-
-        if cost_bps is not None and cost_bps > thresholds.max_cost_bps:
-            reasons.append(
-                (
-                    "koszt {cost:.2f} bps przekracza limit {limit:.2f} bps"
-                ).format(cost=cost_bps, limit=thresholds.max_cost_bps)
-            )
-
-        net_edge = expected_value_bps - effective_cost
-        if net_edge < thresholds.min_net_edge_bps:
-            reasons.append(
-                (
-                    "net edge {edge:.2f} bps poniżej progu {limit:.2f} bps"
-                ).format(edge=net_edge, limit=thresholds.min_net_edge_bps)
-            )
-
-        if thresholds.max_latency_ms is not None and candidate.latency_ms is not None:
-            if candidate.latency_ms > thresholds.max_latency_ms:
-                reasons.append(
-                    (
-                        "latencja {lat:.1f} ms przekracza limit {limit:.1f} ms"
-                    ).format(lat=candidate.latency_ms, limit=thresholds.max_latency_ms)
-                )
-
-        self._check_risk_limits(candidate, snapshot, thresholds, reasons, risk_flags)
-
-        stress_failures = self._run_stress_tests(candidate, thresholds, cost_bps or 0.0)
-
-        recommendation = self._strategy_advisor.recommend(
-            candidate,
-            regime=self._resolve_regime(candidate),
-            model_score=model_score,
-            selection=selection_metadata,
-            cost_bps=cost_bps,
-            net_edge_bps=net_edge,
-        )
-        if selection_metadata is not None:
-            selection_metadata = replace(
-                selection_metadata,
-                recommended_modes=recommendation.modes,
-                recommended_position_size=recommendation.position_size,
-                recommended_risk_score=recommendation.risk_score,
-            )
-
-        accepted = not reasons and not stress_failures
-        evaluation = DecisionEvaluation(
-            candidate=candidate,
-            accepted=accepted,
-            cost_bps=cost_bps,
-            net_edge_bps=net_edge,
-            reasons=tuple(reasons),
-            risk_flags=tuple(risk_flags),
-            stress_failures=tuple(stress_failures),
-            model_expected_return_bps=(
-                model_score.expected_return_bps if model_score else None
-            ),
-            model_success_probability=(
-                model_score.success_probability if model_score else None
-            ),
-            model_name=model_name if model_score else None,
-            model_selection=selection_metadata,
-            thresholds_snapshot=thresholds_snapshot,
-            recommended_modes=recommendation.modes,
-            recommended_position_size=recommendation.position_size,
-            recommended_risk_score=recommendation.risk_score,
-        )
-        if not accepted:
-            _LOGGER.info(
-                "DecisionOrchestrator rejected candidate strategy=%s symbol=%s reasons=%s risk_flags=%s stress_failures=%s thresholds=%s",
-                candidate.strategy,
-                candidate.symbol or "<unknown>",
-                tuple(reasons),
-                tuple(risk_flags),
-                tuple(stress_failures),
-                thresholds_snapshot,
-            )
-        self._strategy_advisor.observe(candidate, evaluation)
-        try:
-            self._metrics.observe_evaluation(evaluation)
-        except Exception:  # pragma: no cover - metryki nie powinny blokować decyzji
-            _LOGGER.exception("Failed to record decision metrics", exc_info=True)
-        return evaluation
+        return self._evaluation_service.evaluate_candidate(candidate, context)
 
     def evaluate_candidates(
         self,
         candidates: Sequence[DecisionCandidate],
-        risk_snapshots: Mapping[str, Mapping[str, object] | RiskSnapshot],
+        contexts: Mapping[str, DecisionContext],
     ) -> Sequence[DecisionEvaluation]:
-        evaluations: list[DecisionEvaluation] = []
-        for candidate in candidates:
-            snapshot_raw = risk_snapshots.get(candidate.risk_profile)
-            if snapshot_raw is None:
-                evaluation = DecisionEvaluation(
-                    candidate=candidate,
-                    accepted=False,
-                    cost_bps=None,
-                    net_edge_bps=None,
-                    reasons=("brak snapshotu ryzyka dla profilu",),
-                    risk_flags=(),
-                    stress_failures=(),
-                )
-                evaluations.append(evaluation)
-                try:
-                    self._metrics.observe_evaluation(evaluation)
-                except Exception:  # pragma: no cover - metryki nie mogą zatrzymać orkiestracji
-                    _LOGGER.exception("Failed to record decision metrics", exc_info=True)
-                continue
-            evaluations.append(self.evaluate_candidate(candidate, snapshot_raw))
-        return evaluations
+        return self._evaluation_service.evaluate_candidates(candidates, contexts)
+
+    # ---------------------------------------- DecisionProvider interface --
+    def score_with_model(
+        self, candidate: DecisionCandidate
+    ) -> tuple[str | None, ModelScore | None, ModelSelectionMetadata | None]:
+        return self._score_with_model(candidate)
+
+    def thresholds_for_profile(self, profile: str) -> DecisionOrchestratorThresholds:
+        return self._thresholds_for_profile(profile)
+
+    def threshold_snapshot(
+        self, thresholds: DecisionOrchestratorThresholds
+    ) -> Mapping[str, float | None]:
+        return self._threshold_snapshot(thresholds)
+
+    def ensure_snapshot(
+        self, profile: str, snapshot: Mapping[str, object] | RiskSnapshot
+    ) -> RiskSnapshot:
+        return self._ensure_snapshot(profile, snapshot)
+
+    def resolve_cost(self, candidate: DecisionCandidate) -> tuple[float | None, bool]:
+        return self._resolve_cost(candidate)
+
+    def resolve_regime(self, candidate: DecisionCandidate) -> MarketRegime:
+        return self._resolve_regime(candidate)
 
     # ----------------------------------------------------------------- helpery --
     def _thresholds_for_profile(
@@ -852,17 +389,7 @@ class DecisionOrchestrator:
         raise TypeError("Nieobsługiwany typ snapshotu ryzyka")
 
     def _resolve_cost(self, candidate: DecisionCandidate) -> tuple[float | None, bool]:
-        if candidate.cost_bps_override is not None:
-            return candidate.cost_bps_override, False
-        cost = self._cost_index.lookup.get((candidate.strategy, candidate.risk_profile))
-        if cost is None:
-            cost = self._cost_index.lookup.get((candidate.strategy, "__total__"))
-        if cost is None:
-            cost = self._cost_index.default_cost
-        missing = cost is None
-        if cost is None and self._config.penalty_cost_bps > 0:
-            cost = self._config.penalty_cost_bps
-        return cost, missing
+        return self._cost_resolver.resolve_cost(candidate)
 
     def _resolve_regime(self, candidate: DecisionCandidate) -> MarketRegime:
         metadata = candidate.metadata or {}
@@ -1196,106 +723,6 @@ class DecisionOrchestrator:
 
     def _now(self) -> datetime:
         return self._clock()
-
-    def _check_risk_limits(
-        self,
-        candidate: DecisionCandidate,
-        snapshot: RiskSnapshot,
-        thresholds: DecisionOrchestratorThresholds,
-        reasons: list[str],
-        risk_flags: list[str],
-    ) -> None:
-        if snapshot.force_liquidation:
-            risk_flags.append("force_liquidation_active")
-            reasons.append("profil w stanie force_liquidation")
-
-        if snapshot.daily_loss_pct > thresholds.max_daily_loss_pct:
-            risk_flags.append("daily_loss_limit")
-            reasons.append(
-                (
-                    "przekroczony dzienny limit straty: {value:.4f} > {limit:.4f}"
-                ).format(value=snapshot.daily_loss_pct, limit=thresholds.max_daily_loss_pct)
-            )
-
-        if snapshot.drawdown_pct > thresholds.max_drawdown_pct:
-            risk_flags.append("drawdown_limit")
-            reasons.append(
-                (
-                    "przekroczony limit obsunięcia: {value:.4f} > {limit:.4f}"
-                ).format(value=snapshot.drawdown_pct, limit=thresholds.max_drawdown_pct)
-            )
-
-        equity = max(snapshot.start_of_day_equity, 1.0)
-        future_gross = snapshot.gross_notional + max(candidate.notional, 0.0)
-        position_ratio = future_gross / equity
-        if position_ratio > thresholds.max_position_ratio:
-            risk_flags.append("gross_notional_limit")
-            reasons.append(
-                (
-                    "ekspozycja {ratio:.4f} przekracza limit {limit:.4f}"
-                ).format(ratio=position_ratio, limit=thresholds.max_position_ratio)
-            )
-
-        new_positions = snapshot.active_positions
-        if not snapshot.contains_symbol(candidate.symbol):
-            new_positions += 1
-        if new_positions > thresholds.max_open_positions:
-            risk_flags.append("open_positions_limit")
-            reasons.append(
-                (
-                    "liczba pozycji {count} przekracza limit {limit}"
-                ).format(count=new_positions, limit=thresholds.max_open_positions)
-            )
-
-        if (
-            thresholds.max_trade_notional is not None
-            and candidate.notional > thresholds.max_trade_notional
-        ):
-            risk_flags.append("trade_notional_limit")
-            reasons.append(
-                (
-                    "wartość zlecenia {notional:.2f} przekracza limit {limit:.2f}"
-                ).format(
-                    notional=candidate.notional,
-                    limit=thresholds.max_trade_notional,
-                )
-            )
-
-    def _run_stress_tests(
-        self,
-        candidate: DecisionCandidate,
-        thresholds: DecisionOrchestratorThresholds,
-        base_cost_bps: float,
-    ) -> Sequence[str]:
-        stress_config: DecisionStressTestConfig | None = self._config.stress_tests
-        if stress_config is None:
-            return ()
-        failures: list[str] = []
-        stressed_cost = (base_cost_bps + stress_config.cost_shock_bps) * max(
-            stress_config.slippage_multiplier, 0.0
-        )
-        stressed_net_edge = candidate.expected_value_bps - stressed_cost
-        if stressed_net_edge < thresholds.min_net_edge_bps:
-            failures.append(
-                (
-                    "stress cost edge {edge:.2f} bps poniżej progu {limit:.2f} bps"
-                ).format(edge=stressed_net_edge, limit=thresholds.min_net_edge_bps)
-            )
-        if (
-            thresholds.max_latency_ms is not None
-            and candidate.latency_ms is not None
-            and candidate.latency_ms + stress_config.latency_spike_ms
-            > thresholds.max_latency_ms
-        ):
-            failures.append(
-                (
-                    "latency stress {lat:.1f} ms przekracza limit {limit:.1f} ms"
-                ).format(
-                    lat=candidate.latency_ms + stress_config.latency_spike_ms,
-                    limit=thresholds.max_latency_ms,
-                )
-            )
-        return failures
 
 
 __all__ = ["DecisionOrchestrator", "ModelPerformanceSummary", "StrategyAdvisor"]

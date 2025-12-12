@@ -22,7 +22,6 @@ from pydantic import BaseModel, Field
 from bot_core.database.manager import DatabaseManager
 from bot_core.exchanges.core import (
     BaseBackend,
-    Event,
     EventBus,
     MarketRules,
     Mode,
@@ -52,9 +51,14 @@ from bot_core.exchanges.health import (
 )
 from bot_core.exchanges.errors import ExchangeError, ExchangeNetworkError, ExchangeThrottlingError
 from bot_core.exchanges.paper_simulator import PaperFuturesSimulator, PaperMarginSimulator
+from bot_core.exchanges.io import ExchangeIOLayer
 from bot_core.strategies.catalog import StrategyCatalog, StrategyPresetDescriptor
 from bot_core.observability.metrics import get_global_metrics_registry
 from bot_core.exchanges.rate_limiter import RateLimitRule, normalize_rate_limit_rules
+from bot_core.exchanges.network_guard import (
+    ExchangeNetworkGuard,
+    build_exchange_network_guard,
+)
 from bot_core.exchanges.signal_quality import SignalQualityReporter
 
 try:  # pragma: no cover
@@ -1372,7 +1376,7 @@ class ExchangeManager:
         self._secret: Optional[str] = None
         self._passphrase: Optional[str] = None
 
-        self._event_bus = EventBus()
+        self._io = ExchangeIOLayer()
         self._public: Optional[_CCXTPublicFeed] = None
         self._private: Optional[_CCXTPrivateBackend] = None
         self._paper: Optional[PaperBackend] = None
@@ -1389,6 +1393,7 @@ class ExchangeManager:
         self._watchdog: Watchdog | None = None
         self._watchdog_config: Dict[str, Any] = {}
         self._shared_rate_limit_rules: tuple[RateLimitRule, ...] | None = None
+        self._network_guard: ExchangeNetworkGuard | None = None
         self._signal_reporter = SignalQualityReporter(exchange_id=self.exchange_id)
         self._failover_enabled: bool = False
         self._failover_threshold: int = 2
@@ -1418,13 +1423,12 @@ class ExchangeManager:
     def event_bus(self) -> EventBus:
         """Udostępnia magistralę zdarzeń giełdy dla modułów runtime."""
 
-        return self._event_bus
+        return self._io.event_bus
 
     def publish_event(self, event_type: str, payload: Mapping[str, Any] | None = None) -> None:
         """Publikuje zdarzenie w wewnętrznej magistrali ExchangeManagera."""
 
-        event_payload = dict(payload or {})
-        self._event_bus.publish(Event(type=event_type, payload=event_payload))
+        self._io.publish_event(event_type, payload)
 
     def set_mode(
         self,
@@ -1525,12 +1529,9 @@ class ExchangeManager:
         api_key_length = len(self._api_key or "")
         secret_length = len(self._secret or "")
         passphrase_length = len(self._passphrase or "")
-        log.info(
-            "Credentials set (lengths): key_id=%d, secret=%d, passphrase=%d",
-            api_key_length,
-            secret_length,
-            passphrase_length,
-        )
+        message = "Credentials set (lengths): api_key=%d, secret=%d, passphrase=%d"
+        log.info(message, api_key_length, secret_length, passphrase_length)
+        logging.getLogger().info(message, api_key_length, secret_length, passphrase_length)
         self._native_adapter = None
         self._private = None
 
@@ -2080,6 +2081,21 @@ class ExchangeManager:
             self._watchdog = Watchdog()
         return self._watchdog
 
+    def _ensure_network_guard(
+        self, *, adapter_name: str, environment: Environment, rate_limit_rules: Sequence[RateLimitRule] | None
+    ) -> ExchangeNetworkGuard:
+        labels = {"exchange": adapter_name, "environment": environment.value}
+        defaults = tuple(rate_limit_rules or (RateLimitRule(rate=60, per=60.0),))
+        self._network_guard = build_exchange_network_guard(
+            adapter_name=adapter_name,
+            environment=environment.value,
+            rate_limit_rules=rate_limit_rules,
+            default_rules=defaults,
+            watchdog=self._ensure_watchdog(),
+            metric_labels=labels,
+        )
+        return self._network_guard
+
     def _record_network_error(self, operation: str, exc: Exception) -> None:
         self._network_error_counts[operation] += 1
         log.warning("Network error during %s: %s", operation, exc)
@@ -2123,7 +2139,12 @@ class ExchangeManager:
             kwargs: Dict[str, object] = {"environment": environment}
             if settings:
                 kwargs["settings"] = settings
-            kwargs["watchdog"] = self._ensure_watchdog()
+            guard = self._ensure_network_guard(
+                adapter_name=self.exchange_id,
+                environment=environment,
+                rate_limit_rules=settings.get("rate_limit_rules"),
+            )
+            kwargs["network_guard"] = guard
             self._native_adapter = registration.factory(credentials, **kwargs)
 
         return self._native_adapter
@@ -2161,7 +2182,7 @@ class ExchangeManager:
                 defaults.update(settings)
                 simulator = PaperMarginSimulator(
                     public,
-                    event_bus=self._event_bus,
+                    event_bus=self._io.event_bus,
                     initial_cash=self._paper_initial_cash,
                     cash_asset=self._paper_cash_asset,
                     fee_rate=self._paper_fee_rate,
@@ -2178,7 +2199,7 @@ class ExchangeManager:
                 defaults.update(settings)
                 simulator = PaperFuturesSimulator(
                     public,
-                    event_bus=self._event_bus,
+                    event_bus=self._io.event_bus,
                     initial_cash=self._paper_initial_cash,
                     cash_asset=self._paper_cash_asset,
                     fee_rate=self._paper_fee_rate,
@@ -2193,7 +2214,7 @@ class ExchangeManager:
             else:
                 simulator = PaperBackend(
                     price_feed_backend=public,
-                    event_bus=self._event_bus,
+                    event_bus=self._io.event_bus,
                     initial_cash=self._paper_initial_cash,
                     cash_asset=self._paper_cash_asset,
                     fee_rate=self._paper_fee_rate,
@@ -3022,7 +3043,7 @@ class ExchangeManager:
         return None
 
     def on(self, event_type: str, callback) -> None:
-        self._event_bus.subscribe(event_type, callback)
+        self._io.subscribe(event_type, callback)
 
 
 __all__ = [

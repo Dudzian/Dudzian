@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from datetime import datetime
-from typing import Mapping
+from typing import Any, Mapping
 
 
 @dataclass(slots=True)
@@ -58,8 +58,44 @@ class PortfolioRebalanceDecision:
         }
 
 
+@dataclass(slots=True)
+class RiskSyncPayload:
+    """Dane synchronizacji z risk engine przekazywane do governora strategii."""
+
+    timestamp: datetime
+    risk_profile: str | None = None
+    drawdown_pct: float = 0.0
+    risk_penalty: float | None = None
+    metrics: Mapping[str, float] = field(default_factory=dict)
+
+    def to_strategy_snapshot(self) -> StrategyMetricsSnapshot:
+        penalty = self.risk_penalty
+        if penalty is None:
+            penalty = self.drawdown_pct
+        return StrategyMetricsSnapshot(
+            timestamp=self.timestamp,
+            alpha_score=0.0,
+            slo_violation_rate=0.0,
+            risk_penalty=max(0.0, float(penalty)),
+            metrics=self.metrics,
+        )
+
+
+@dataclass(slots=True)
+class PayoutRecord:
+    """Ustandaryzowana reprezentacja wypłaty do synchronizacji i logowania."""
+
+    account_id: str
+    asset: str
+    amount: float
+    destination: str
+    metadata: Mapping[str, Any] = field(default_factory=dict)
+
+
 __all__ = [
     "StrategyMetricsSnapshot",
     "StrategyAllocationDecision",
     "PortfolioRebalanceDecision",
+    "RiskSyncPayload",
+    "PayoutRecord",
 ]

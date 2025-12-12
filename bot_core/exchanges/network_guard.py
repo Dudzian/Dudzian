@@ -1,16 +1,25 @@
-"""Nadzorca egzekwujący politykę sieciową adapterów REST."""
+"""Nadzorca egzekwujący politykę sieciową adapterów REST i limiterów."""
 from __future__ import annotations
 
 from dataclasses import dataclass
 import logging
 import os
 import socket
-from typing import Mapping, Sequence
+from typing import Callable, Mapping, Sequence
 from urllib.parse import urlsplit
 
 from bot_core.alerts.base import AlertMessage, AlertRouter
+from bot_core.exchanges.health import RetryPolicy, Watchdog
+from bot_core.exchanges.rate_limiter import (
+    RateLimitRule,
+    RateLimiter,
+    get_global_rate_limiter_registry,
+    normalize_rate_limit_rules,
+)
 
 _ALLOWED_METHODS = ("GET", "POST", "PUT", "DELETE")
+
+_LOGGER = logging.getLogger(__name__)
 
 
 @dataclass(slots=True)
@@ -238,10 +247,54 @@ def normalize_http_method(method: str, *, allowed: Sequence[str] | None = None) 
     return normalized
 
 
+@dataclass(slots=True)
+class ExchangeNetworkGuard:
+    """Wspólna ochrona adaptera przed błędami sieci i limitami."""
+
+    network_access: NetworkAccessGuard
+    rate_limiter: RateLimiter
+    watchdog: Watchdog
+
+    def ensure_network(self, *, url: str | None = None) -> None:
+        self.network_access.ensure_allowed(url or "", check_source_ip=False)
+
+    def acquire_rate_limit(self, weight: float = 1.0) -> None:
+        self.rate_limiter.acquire(weight=weight)
+
+    def execute(self, operation: str, func: Callable[[], object]):
+        return self.watchdog.execute(operation, func)
+
+    def attach_alert_router(self, alert_router: AlertRouter | None) -> None:
+        self.network_access.attach_alert_router(alert_router)
+
+
+def build_exchange_network_guard(
+    *,
+    adapter_name: str,
+    environment: str,
+    rate_limit_rules: Sequence[RateLimitRule] | None,
+    default_rules: Sequence[RateLimitRule],
+    watchdog: Watchdog | None = None,
+    metric_labels: Mapping[str, str] | None = None,
+) -> ExchangeNetworkGuard:
+    """Buduje wspólny strażnik z limiterem i watchdogiem dla adaptera."""
+
+    base_guard = NetworkAccessGuard(logger=_LOGGER)
+    limiter = get_global_rate_limiter_registry().configure(
+        f"{adapter_name}:{environment}",
+        normalize_rate_limit_rules(rate_limit_rules, tuple(default_rules)),
+        metric_labels=dict(metric_labels or {"exchange": adapter_name, "environment": environment}),
+    )
+    guard_watchdog = watchdog or Watchdog(retry_policy=RetryPolicy())
+    return ExchangeNetworkGuard(base_guard, limiter, guard_watchdog)
+
+
 __all__ = [
     "NetworkAccessGuard",
     "NetworkAccessViolation",
     "normalize_relative_api_path",
     "normalize_http_method",
+    "ExchangeNetworkGuard",
+    "build_exchange_network_guard",
 ]
 

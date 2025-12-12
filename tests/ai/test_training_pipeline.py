@@ -6,7 +6,7 @@ from pathlib import Path
 import pytest
 
 from bot_core.ai.feature_engineering import FeatureDataset, FeatureVector
-from bot_core.ai.scheduler import RetrainingScheduler, WalkForwardValidator
+from bot_core.ai.scheduler import RetrainingScheduler, WalkForwardPlan, WalkForwardValidator
 from bot_core.ai.training import ModelTrainer, WalkForwardTrainingCoordinator
 from bot_core.ai.validation import (
     ModelQualityMonitor,
@@ -62,8 +62,7 @@ def test_walk_forward_coordinator_runs_and_publishes(tmp_path: Path, dataset: Fe
         scheduler=scheduler,
         validator_factory=lambda data: WalkForwardValidator(
             data,
-            train_window=24,
-            test_window=12,
+            plan=WalkForwardPlan(train_window=24, test_window=12),
         ),
         quality_monitor=monitor,
         aliases=("latest",),

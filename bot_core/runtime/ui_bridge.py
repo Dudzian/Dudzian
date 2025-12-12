@@ -7,7 +7,7 @@ import sys
 from pathlib import Path
 from typing import Mapping, MutableMapping, Sequence
 
-from bot_core.ai.inference import ModelRepository
+from bot_core.ai.repository import FilesystemModelRepository, ModelRepository
 from bot_core.reporting.model_quality import DEFAULT_QUALITY_DIR, load_champion_overview
 
 
@@ -62,7 +62,7 @@ def build_auto_mode_snapshot(
         repo_path = _default_repository(model)
     repo_path = repo_path.expanduser().resolve()
 
-    repository_obj = ModelRepository(repo_path)
+    repository_obj = FilesystemModelRepository(repo_path)
     active_version = repository_obj.get_active_version()
 
     quality_override = os.environ.get("BOT_CORE_UI_MODEL_QUALITY_DIR")

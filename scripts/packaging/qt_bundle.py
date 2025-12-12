@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import importlib.metadata
 import logging
 import os
 import shutil
@@ -46,6 +47,36 @@ def _detect_qt_prefix(candidate: str | None) -> str | None:
         if value:
             return value
     return None
+
+
+def _read_qt_version(qt_prefix: Path) -> str | None:
+    version_file = qt_prefix / "lib" / "cmake" / "Qt6" / "Qt6ConfigVersion.cmake"
+    if not version_file.exists():
+        return None
+
+    for line in version_file.read_text().splitlines():
+        if "QT_VERSION" in line:
+            tokens = line.replace("(", " ").replace(")", " ").split()
+            if len(tokens) >= 2 and tokens[0].startswith("set"):
+                return tokens[1].strip('"')
+    return None
+
+
+def _major_minor(version: str | None) -> tuple[int, int] | None:
+    if not version:
+        return None
+    parts = version.split(".")
+    try:
+        return int(parts[0]), int(parts[1])
+    except (ValueError, IndexError):
+        return None
+
+
+def _gather_available_modules(qt_prefix: Path) -> set[str]:
+    cmake_dir = qt_prefix / "lib" / "cmake"
+    if not cmake_dir.is_dir():
+        return set()
+    return {path.name.lower() for path in cmake_dir.iterdir() if path.is_dir()}
 
 
 def _probe_protobuf_dir(base: Path | str | None) -> str | None:
@@ -95,6 +126,51 @@ def _detect_protobuf_dir() -> str | None:
             return detected
 
     return None
+
+
+def preflight(qt_prefix: str | None, required_modules: Sequence[str]) -> Path:
+    detected_qt_prefix = _detect_qt_prefix(qt_prefix)
+    if not detected_qt_prefix:
+        raise RuntimeError("Nie wykryto instalacji Qt (brak zmiennych QT_ROOT_DIR/Qt6_DIR/Qt_DIR/QTDIR ani parametru --qt-prefix)")
+
+    qt_prefix_path = Path(detected_qt_prefix)
+    if not qt_prefix_path.exists():
+        raise RuntimeError(f"Ścieżka do Qt nie istnieje: {qt_prefix_path}")
+
+    qt_version = _read_qt_version(qt_prefix_path)
+    logger.info("Wykryta instalacja Qt: %s (wersja: %s)", qt_prefix_path, qt_version or "nieznana")
+
+    try:
+        pyside_version = importlib.metadata.version("PySide6")
+    except importlib.metadata.PackageNotFoundError as exc:
+        raise RuntimeError("PySide6 nie jest zainstalowany w środowisku") from exc
+
+    logger.info("Wykryta wersja PySide6: %s", pyside_version)
+
+    qt_major_minor = _major_minor(qt_version)
+    pyside_major_minor = _major_minor(pyside_version)
+    if qt_major_minor and pyside_major_minor and qt_major_minor != pyside_major_minor:
+        raise RuntimeError(
+            "Niezgodne wersje Qt/PySide6: Qt="
+            f"{qt_version or 'unknown'} vs PySide6={pyside_version}. Ustaw PYSIDE6_VERSION zgodnie z instalacją Qt"
+        )
+
+    available_modules = _gather_available_modules(qt_prefix_path)
+    missing_modules = []
+    for module in required_modules:
+        normalized = module.strip().lower()
+        if not normalized:
+            continue
+        if not any(normalized in candidate for candidate in available_modules):
+            missing_modules.append(module)
+
+    if missing_modules:
+        raise RuntimeError(
+            "Brakuje modułów Qt w instalacji: " + ", ".join(sorted(missing_modules)) +
+            f". Dostępne katalogi cmake: {', '.join(sorted(available_modules))}"
+        )
+
+    return qt_prefix_path
 
 
 def configure_and_build(
@@ -196,11 +272,16 @@ def main(argv: Sequence[str] | None = None) -> int:
     install_dir = args.install_dir.resolve() if args.install_dir else build_dir / "install"
     platform_id = _detect_platform(args.platform)
 
+    modules_env = os.environ.get("QT_WINDOWS_MODULES" if platform_id == "windows" else "QT_DESKTOP_MODULES", "")
+    required_modules = modules_env.split()
+
+    qt_prefix_path = preflight(args.qt_prefix, required_modules)
+
     configure_and_build(
         source_dir,
         build_dir,
         build_type=args.build_type,
-        qt_prefix=args.qt_prefix,
+        qt_prefix=str(qt_prefix_path),
         install_prefix=install_dir,
         extra_cmake_args=args.extra_cmake,
     )

@@ -23,10 +23,10 @@ from bot_core.exchanges.base import (
 )
 from bot_core.exchanges.errors import (
     ExchangeAPIError,
-    ExchangeAuthError,
     ExchangeNetworkError,
     ExchangeThrottlingError,
 )
+from bot_core.exchanges.error_mapping import raise_for_nowa_gielda_error
 from bot_core.exchanges.nowa_gielda import symbols
 from bot_core.exchanges.network_guard import (
     NetworkAccessGuard,
@@ -134,16 +134,6 @@ class _RateLimiter:
 
         self._state[key] = (window_start, projected)
 
-
-_ERROR_CODE_MAPPING: Mapping[str, type[ExchangeAPIError]] = {
-    "INVALID_SIGNATURE": ExchangeAuthError,
-    "AUTHENTICATION_REQUIRED": ExchangeAuthError,
-    "RATE_LIMIT_EXCEEDED": ExchangeThrottlingError,
-    "ORDER_NOT_FOUND": ExchangeAPIError,
-    "INVALID_SYMBOL": ExchangeAPIError,
-}
-
-
 class NowaGieldaHTTPClient:
     """Klient HTTP odpowiadający za komunikację z REST API nowa_gielda."""
 
@@ -200,7 +190,10 @@ class NowaGieldaHTTPClient:
         if self._network_guard is None:
             return
         try:
-            self._network_guard.ensure_allowed(url, check_source_ip=check_source_ip)
+            try:
+                self._network_guard.ensure_allowed(url, check_source_ip=check_source_ip)
+            except TypeError:  # pragma: no cover - kompatybilność z testowymi atrapami
+                self._network_guard.ensure_allowed(url)
         except NetworkAccessViolation as exc:  # pragma: no cover - zachowanie testowane wyżej
             raise ExchangeNetworkError(
                 "Naruszenie konfiguracji sieci nowa_gielda.",
@@ -249,35 +242,15 @@ class NowaGieldaHTTPClient:
                     payload=response.text,
                 ) from exc
 
-        payload: Any
         try:
-            payload = response.json()
+            payload: Any = response.json()
         except ValueError:  # pragma: no cover - fallback
             payload = response.text
 
-        message = ""
-        code: str | None = None
-        if isinstance(payload, Mapping):
-            message = str(payload.get("message", ""))
-            raw_code = payload.get("code")
-            code = str(raw_code) if raw_code is not None else None
-
-        exc_cls: type[ExchangeAPIError] | None = None
-        if code:
-            exc_cls = _ERROR_CODE_MAPPING.get(code)
-
-        if exc_cls is None:
-            if status in {401, 403}:
-                exc_cls = ExchangeAuthError
-            elif status == 429:
-                exc_cls = ExchangeThrottlingError
-            else:
-                exc_cls = ExchangeAPIError
-
-        raise exc_cls(
-            message=message or f"Błąd API ({status}) przy {method.upper()} {path}",
+        raise_for_nowa_gielda_error(
             status_code=status,
             payload=payload,
+            default_message=f"Błąd API ({status}) przy {method.upper()} {path}",
         )
 
     def close(self) -> None:

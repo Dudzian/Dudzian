@@ -7,7 +7,7 @@ from types import SimpleNamespace
 
 import pandas as pd
 
-from bot_core.ai.inference import ModelRepository
+from bot_core.ai.repository import FilesystemModelRepository, ModelRepository
 from bot_core.ai.models import ModelArtifact
 from bot_core.ai.regime import MarketRegime, MarketRegimeAssessment
 from bot_core.ai.validation import ModelQualityReport, record_model_quality_report
@@ -181,7 +181,7 @@ def _publish(repository: ModelRepository, version: str) -> None:
 def test_autotrader_synchronises_champion_and_fallback(tmp_path: Path) -> None:
     repo_root = tmp_path / "var" / "models"
     model_dir = repo_root / "decision_engine"
-    repository = ModelRepository(model_dir)
+    repository = FilesystemModelRepository(model_dir)
 
     _publish(repository, "v1")
 

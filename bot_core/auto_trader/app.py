@@ -70,7 +70,7 @@ from bot_core.auto_trader.schedule import (
     ScheduleState,
     TradingSchedule,
 )
-from bot_core.ai.inference import ModelRepository
+from bot_core.ai.repository import FilesystemModelRepository, ModelRepository
 from bot_core.ai.regime import (
     MarketRegime,
     MarketRegimeAssessment,
@@ -86,7 +86,12 @@ from bot_core.config.models import (
     DecisionOrchestratorThresholds,
     RuntimeAutoTraderSettings,
 )
-from bot_core.decision import DecisionCandidate, DecisionEvaluation, DecisionOrchestrator
+from bot_core.decision import (
+    DecisionCandidate,
+    DecisionContext,
+    DecisionEvaluation,
+    DecisionOrchestrator,
+)
 from bot_core.execution import (
     ExecutionContext,
     ExecutionService,
@@ -2292,7 +2297,7 @@ class AutoTrader:
                     base,
                     exc_info=True,
                 )
-            repository = ModelRepository(base)
+            repository = FilesystemModelRepository(base)
             self._model_repositories[model_name] = repository
         return repository
 
@@ -6811,11 +6816,29 @@ class AutoTrader:
         try:
             if self._profiling_enabled:
                 with self._profile_section("decision.evaluate") as profiler:
-                    evaluation = orchestrator.evaluate_candidate(candidate, snapshot)
+                    evaluation = orchestrator.evaluate_candidate(
+                        candidate,
+                        DecisionContext(
+                            risk_snapshot=snapshot,
+                            runtime={
+                                "environment": self._environment,
+                                "strategy": self._strategy_name,
+                            },
+                        ),
+                    )
                 if profiler is not None:
                     self._store_profile(profiler.report)
             else:
-                evaluation = orchestrator.evaluate_candidate(candidate, snapshot)
+                evaluation = orchestrator.evaluate_candidate(
+                    candidate,
+                    DecisionContext(
+                        risk_snapshot=snapshot,
+                        runtime={
+                            "environment": self._environment,
+                            "strategy": self._strategy_name,
+                        },
+                    ),
+                )
         except Exception as exc:  # pragma: no cover - defensywne logowanie
             self._log(
                 f"DecisionOrchestrator evaluation failed: {exc!r}",

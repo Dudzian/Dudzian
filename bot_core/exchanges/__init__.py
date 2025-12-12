@@ -8,10 +8,12 @@ from bot_core.exchanges.base import (
     AccountSnapshot,
     Environment,
     ExchangeAdapter,
+    ExchangeBackend,
     ExchangeCredentials,
     OrderRequest,
     OrderResult,
 )
+from bot_core.exchanges.factory import ExchangeAdapterConfig, build_exchange_adapter
 from bot_core.exchanges.core import (
     BaseBackend,
     Event,
@@ -25,6 +27,7 @@ from bot_core.exchanges.core import (
     PaperBackend,
     PositionDTO,
 )
+from bot_core.exchanges.io import ExchangeIOLayer
 try:  # pragma: no cover - środowisko testowe może nie zawierać pełnej konfiguracji managera
     from bot_core.exchanges.manager import (
         ExchangeManager,
@@ -94,8 +97,12 @@ from . import streaming
 __all__ = [
     "AccountSnapshot",
     "Environment",
-    "ExchangeAdapter",
-    "ExchangeCredentials",
+    "ExchangeAdapter", 
+    "ExchangeBackend", 
+    "ExchangeAdapterConfig", 
+    "build_exchange_adapter", 
+    "ExchangeIOLayer", 
+    "ExchangeCredentials", 
     "OrderRequest",
     "OrderResult",
     "ExchangeError",

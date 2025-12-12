@@ -7,13 +7,13 @@ from bot_core.portfolio import (
     AssetPortfolioGovernorConfig,
     PortfolioAssetConfig,
     PortfolioDecisionLog,
-    PortfolioGovernor,
+    AssetPortfolioGovernor,
 )
 from bot_core.risk import StressOverrideRecommendation
 from bot_core.runtime.portfolio_coordinator import PortfolioRuntimeCoordinator
 
 
-def _governor() -> PortfolioGovernor:
+def _governor() -> AssetPortfolioGovernor:
     config = AssetPortfolioGovernorConfig(
         name="core",
         portfolio_id="core",
@@ -28,7 +28,7 @@ def _governor() -> PortfolioGovernor:
         market_intel_interval="1h",
         market_intel_lookback_bars=48,
     )
-    return PortfolioGovernor(config, decision_log=PortfolioDecisionLog())
+    return AssetPortfolioGovernor(config, decision_log=PortfolioDecisionLog())
 
 
 def test_portfolio_runtime_coordinator_evaluates_and_logs() -> None:

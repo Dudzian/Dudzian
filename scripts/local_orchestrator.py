@@ -94,6 +94,7 @@ def _definition_from_config(cfg: Any) -> StrategyDefinition:
     required_data = tuple(
         getattr(cfg, "required_data", ()) or (spec.required_data if spec else ("unspecified",))
     )
+    risk_hooks = tuple(getattr(cfg, "risk_hooks", ()) or (spec.risk_hooks if spec else ()))
 
     if spec and spec.capability and "capability" not in metadata:
         metadata.setdefault("capability", spec.capability)
@@ -104,6 +105,7 @@ def _definition_from_config(cfg: Any) -> StrategyDefinition:
         license_tier=license_tier,
         risk_classes=risk_classes,
         required_data=required_data,
+        risk_hooks=risk_hooks,
         parameters=dict(getattr(cfg, "parameters", {}) or {}),
         risk_profile=getattr(cfg, "risk_profile", None),
         tags=tuple(getattr(cfg, "tags", ()) or ()),

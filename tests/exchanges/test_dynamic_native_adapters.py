@@ -72,12 +72,14 @@ class FakeNativeAdapter(ExchangeAdapter):
         environment,
         settings: Mapping[str, Any] | None = None,
         watchdog: Any | None = None,
+        network_guard: Any | None = None,
     ) -> None:
         super().__init__(credentials)
         self.factory_path = factory_path
         self.environment = environment
         self.settings = dict(settings or {})
-        self.watchdog = watchdog
+        self.network_guard = network_guard
+        self.watchdog = getattr(network_guard, "watchdog", watchdog)
         self.calls: list[tuple[str, Any]] = []
         self._orders: list[FakeNativeOrder] = []
         self._positions: list[FakeNativePosition] = [

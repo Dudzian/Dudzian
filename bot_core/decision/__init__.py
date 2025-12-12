@@ -35,6 +35,7 @@ if _MINIMAL_MODE:
 else:
     _LAZY_EXPORTS = {
         "DecisionCandidate": (".models", "DecisionCandidate"),
+        "DecisionContext": (".models", "DecisionContext"),
         "DecisionEvaluation": (".models", "DecisionEvaluation"),
         "RiskSnapshot": (".models", "RiskSnapshot"),
         "DecisionOrchestrator": (".orchestrator", "DecisionOrchestrator"),

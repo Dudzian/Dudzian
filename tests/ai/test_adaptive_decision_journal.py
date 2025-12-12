@@ -5,7 +5,7 @@ from datetime import datetime, timezone
 
 import pytest
 
-from bot_core.ai import AdaptiveStrategyLearner, ModelRepository
+from bot_core.ai import AdaptiveStrategyLearner, FilesystemModelRepository, ModelRepository
 from bot_core.runtime.journal import (
     AdaptiveDecisionJournal,
     InMemoryTradingDecisionJournal,
@@ -33,7 +33,7 @@ class _StubOrchestrator:
 
 def test_adaptive_journal_updates_learner(tmp_path) -> None:
     registry = tmp_path / "models"
-    repository = ModelRepository(registry)
+    repository = FilesystemModelRepository(registry)
     orchestrator = _StubOrchestrator()
     learner = AdaptiveStrategyLearner(repository=repository, orchestrator=orchestrator)
     learner.register_strategies("trend", ["trend_following"])
@@ -77,7 +77,7 @@ def test_adaptive_journal_updates_learner(tmp_path) -> None:
 
 def test_adaptive_learner_build_dynamic_preset_uses_metrics(tmp_path) -> None:
     registry = tmp_path / "models"
-    repository = ModelRepository(registry)
+    repository = FilesystemModelRepository(registry)
     learner = AdaptiveStrategyLearner(repository=repository, orchestrator=None)
     learner.register_strategies(
         "trend",

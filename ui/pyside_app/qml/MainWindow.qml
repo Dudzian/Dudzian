@@ -14,6 +14,9 @@ ApplicationWindow {
     visible: true
     title: qsTr("Stage6 PySide UI")
     color: designSystem.color("background")
+    property var grpcBridge: (typeof grpcBridge !== "undefined" ? grpcBridge : null)
+    property var runtimeService: grpcBridge && grpcBridge.runtimeService ? grpcBridge.runtimeService : null
+    property var runtimeState: (typeof runtimeState !== "undefined" ? runtimeState : null)
 
     property var panelMetadata: [
         ({ panelId: "sidePanel", title: qsTr("Panel statusu"), icon: "fingerprint", defaultColumn: 0, defaultOrder: 0 }),
@@ -165,13 +168,7 @@ ApplicationWindow {
             Rectangle { width: 1; height: parent.height * 0.6; color: designSystem.color("border"); opacity: 0.4 }
 
             Label {
-                readonly property var cloudStatus: runtimeService ? runtimeService.cloudRuntimeStatus : ({})
-                readonly property var handshake: cloudStatus.handshake || ({})
-                text: cloudRuntimeEnabled
-                      ? qsTr("Cloud: %1 • handshake: %2")
-                            .arg(cloudStatus.target || "client.yaml")
-                            .arg(handshake.status || qsTr("oczekuje"))
-                      : qsTr("Cloud runtime: wyłączony")
+                text: runtimeState ? runtimeState.cloudStatusLabel : qsTr("Cloud runtime: wyłączony")
                 color: designSystem.color("textSecondary")
                 Layout.alignment: Qt.AlignVCenter
             }
@@ -269,23 +266,21 @@ ApplicationWindow {
             ColumnLayout {
                 visible: cloudRuntimeEnabled
                 spacing: 4
-                readonly property var cloudStatus: runtimeService ? runtimeService.cloudRuntimeStatus : ({})
-                readonly property var handshake: cloudStatus.handshake || ({})
                 Label {
-                    text: qsTr("Cloud endpoint: %1").arg(cloudStatus.target || "client.yaml")
+                    text: qsTr("Cloud endpoint: %1").arg(runtimeState ? runtimeState.cloudTarget : "client.yaml")
                     color: designSystem.color("textSecondary")
                     wrapMode: Text.WordWrap
                 }
                 Label {
                     text: qsTr("Licencja: %1 • HWID: %2")
-                          .arg(handshake.licenseId || "?")
-                          .arg(handshake.fingerprint || "?")
+                          .arg(runtimeState ? runtimeState.handshakeLicenseId : "?")
+                          .arg(runtimeState ? runtimeState.handshakeFingerprint : "?")
                     color: designSystem.color("textSecondary")
                     wrapMode: Text.WordWrap
                 }
                 Label {
-                    text: qsTr("Status handshake: %1").arg(handshake.status || qsTr("oczekuje"))
-                    color: designSystem.color(handshake.status === "ok" ? "success" : "warning")
+                    text: qsTr("Status handshake: %1").arg(runtimeState ? runtimeState.handshakeStatus : qsTr("oczekuje"))
+                    color: designSystem.color(runtimeState && runtimeState.handshakeOk ? "success" : "warning")
                 }
                 Components.IconButton {
                     designSystem: designSystem
@@ -307,19 +302,19 @@ ApplicationWindow {
         ColumnLayout {
             spacing: 8
             Label {
-                text: qsTr("Status feedu: %1").arg(runtimeService.feedHealth.status || qsTr("inicjalizacja"))
+                text: qsTr("Status feedu: %1").arg(runtimeState ? runtimeState.feedHealth.status || qsTr("inicjalizacja") : qsTr("inicjalizacja"))
                 font.bold: true
                 color: designSystem.color("textPrimary")
             }
             Label {
-                text: qsTr("Ostatni błąd: %1").arg(runtimeService.feedHealth.lastError || "-")
+                text: qsTr("Ostatni błąd: %1").arg(runtimeState ? runtimeState.feedHealth.lastError || "-" : "-")
                 wrapMode: Text.WordWrap
                 color: designSystem.color("textSecondary")
             }
             Label {
                 text: qsTr("Reconnects: %1  •  Downtime: %2 ms")
-                      .arg(runtimeService.feedHealth.reconnects || 0)
-                      .arg(Math.round(runtimeService.feedHealth.downtimeMs || 0))
+                      .arg(runtimeState ? runtimeState.feedHealth.reconnects || 0 : 0)
+                      .arg(Math.round(runtimeState ? runtimeState.feedHealth.downtimeMs || 0 : 0))
                 color: designSystem.color("textSecondary")
             }
             Components.IconButton {

@@ -17,7 +17,7 @@ if str(REPO_ROOT) not in sys.path:
 os.environ["BOT_CORE_MINIMAL_DECISION"] = "0"
 
 from bot_core.config.loader import load_core_config
-from bot_core.decision import DecisionCandidate, DecisionOrchestrator
+from bot_core.decision import DecisionCandidate, DecisionContext, DecisionOrchestrator
 from bot_core.security.signing import build_hmac_signature
 
 DEFAULT_CONFIG = REPO_ROOT / "config/core.yaml"
@@ -284,9 +284,13 @@ def main(argv: Sequence[str] | None = None) -> int:
         orchestrator.update_costs_from_report(_load_json(resolved.tco_report))
 
     risk_snapshots = _load_risk_snapshots(resolved.risk_snapshot)
+    contexts = {
+        profile: DecisionContext(risk_snapshot=snapshot)
+        for profile, snapshot in risk_snapshots.items()
+    }
     candidates = _load_candidates(resolved.candidates)
 
-    evaluations = orchestrator.evaluate_candidates(candidates, risk_snapshots)
+    evaluations = orchestrator.evaluate_candidates(candidates, contexts)
     accepted = [evaluation for evaluation in evaluations if evaluation.accepted]
     stress_failures = sum(1 for evaluation in evaluations if evaluation.stress_failures)
 

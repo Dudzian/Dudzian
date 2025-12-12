@@ -3,7 +3,6 @@ from __future__ import annotations
 
 import logging
 from pathlib import Path
-from dataclasses import dataclass, field
 from datetime import date, datetime, timezone, timedelta
 from time import perf_counter
 from typing import Any, Callable, Dict, Iterable, Mapping, MutableMapping, Sequence
@@ -12,9 +11,19 @@ from bot_core.exchanges.base import AccountSnapshot, OrderRequest
 from bot_core.risk.base import RiskCheckResult, RiskEngine, RiskProfile, RiskRepository
 from bot_core.risk.events import RiskDecisionLog, RiskAlertLog
 from bot_core.risk.guardrails import (
+    GuardrailOrder,
+    GuardrailsEngine,
     LossGuardrailConfig,
-    LossGuardrailDecision,
     RiskGuardrailMetricSet,
+    RiskGuardrailsService,
+)
+from bot_core.risk.adapters import DecisionOrchestratorAdapter
+from bot_core.risk.repository import InMemoryRiskRepository, RiskProfileRepository
+from bot_core.risk.state import (
+    PositionState,
+    RiskState,
+    build_risk_snapshot,
+    normalize_position_side,
 )
 from bot_core.risk.simulation import (
     DEFAULT_PROFILES,
@@ -23,39 +32,13 @@ from bot_core.risk.simulation import (
     load_orders_from_parquet,
     run_profile_scenario,
 )
-
-try:  # pragma: no cover - moduły decision/tco mogą być opcjonalne w innych gałęziach
-    from bot_core.decision import DecisionOrchestrator
-    from bot_core.decision.models import (
-        DecisionCandidate,
-        DecisionEvaluation,
-        ModelSelectionDetail,
-        ModelSelectionMetadata,
-        RiskSnapshot,
-    )
-except Exception:  # pragma: no cover - decyzje mogą nie być dostępne
-    DecisionOrchestrator = None  # type: ignore
-    DecisionCandidate = None  # type: ignore
-    DecisionEvaluation = None  # type: ignore
-    ModelSelectionDetail = None  # type: ignore
-    ModelSelectionMetadata = None  # type: ignore
-    RiskSnapshot = None  # type: ignore
+from bot_core.decision.models import ModelSelectionDetail, ModelSelectionMetadata
+from bot_core.observability.risk import RiskObservabilitySink, RiskAlertSink
 
 _LOGGER = logging.getLogger(__name__)
 
 ORDER_FILLED_EVENT = "ORDER_FILLED"
 ACCOUNT_MARK_EVENT = "ACCOUNT_MARK"
-
-
-def _normalize_position_side(side: str, *, default: str = "long") -> str:
-    """Sprowadza oznaczenie strony pozycji do wartości "long"/"short"."""
-
-    normalized = str(side or "").strip().lower()
-    if normalized in {"long", "buy"}:
-        return "long"
-    if normalized in {"short", "sell"}:
-        return "short"
-    return default
 
 
 def _coerce_float(value: object) -> float | None:
@@ -65,221 +48,42 @@ def _coerce_float(value: object) -> float | None:
         return None
 
 
-@dataclass(slots=True)
-class PositionState:
-    """Stan pojedynczej pozycji wykorzystywany przez silnik ryzyka."""
-
-    side: str
-    notional: float
-
-    def __post_init__(self) -> None:
-        self.side = _normalize_position_side(self.side)
-        self.notional = max(0.0, float(self.notional))
-
-    def to_mapping(self) -> Mapping[str, object]:
-        return {"side": self.side, "notional": self.notional}
-
-    @classmethod
-    def from_mapping(cls, data: Mapping[str, object]) -> "PositionState":
-        side = str(data.get("side", "long"))
-        notional = float(data.get("notional", 0.0))
-        return cls(side=side, notional=notional)
-
-
-@dataclass(slots=True)
-class RiskState:
-    """Stan profilu wykorzystywany do egzekwowania limitów."""
-
-    profile: str
-    current_day: date
-    start_of_week: date | None = None
-    start_of_day_equity: float = 0.0
-    last_equity: float = 0.0
-    daily_realized_pnl: float = 0.0
-    weekly_realized_pnl: float = 0.0
-    peak_equity: float = 0.0
-    force_liquidation: bool = False
-    positions: Dict[str, PositionState] = field(default_factory=dict)
-    start_of_week_equity: float = 0.0
-    rolling_profit_30d: float = 0.0
-    rolling_costs_30d: float = 0.0
-    hedge_mode: bool = False
-    hedge_reason: str | None = None
-    hedge_activated_at: datetime | None = None
-    hedge_cooldown_until: datetime | None = None
-
-    def gross_notional(self) -> float:
-        return sum(position.notional for position in self.positions.values())
-
-    def active_positions(self) -> int:
-        return sum(1 for position in self.positions.values() if position.notional > 0.0)
-
-    def to_mapping(self) -> Mapping[str, object]:
-        return {
-            "profile": self.profile,
-            "current_day": self.current_day.isoformat(),
-            "start_of_week": self.start_of_week.isoformat() if self.start_of_week else None,
-            "start_of_day_equity": self.start_of_day_equity,
-            "daily_realized_pnl": self.daily_realized_pnl,
-            "weekly_realized_pnl": self.weekly_realized_pnl,
-            "peak_equity": self.peak_equity,
-            "force_liquidation": self.force_liquidation,
-            "last_equity": self.last_equity,
-            "positions": {symbol: position.to_mapping() for symbol, position in self.positions.items()},
-            "start_of_week_equity": self.start_of_week_equity,
-            "rolling_profit_30d": self.rolling_profit_30d,
-            "rolling_costs_30d": self.rolling_costs_30d,
-            "hedge_mode": self.hedge_mode,
-            "hedge_reason": self.hedge_reason,
-            "hedge_activated_at": self.hedge_activated_at.isoformat() if self.hedge_activated_at else None,
-            "hedge_cooldown_until": self.hedge_cooldown_until.isoformat() if self.hedge_cooldown_until else None,
-        }
-
-    @classmethod
-    def from_mapping(cls, profile: str, data: Mapping[str, object]) -> "RiskState":
-        day_str = str(data.get("current_day", date.today().isoformat()))
-        parsed_day = datetime.fromisoformat(day_str).date()
-        start_of_week_str = data.get("start_of_week")
-        start_of_week = (
-            datetime.fromisoformat(str(start_of_week_str)).date()
-            if start_of_week_str
-            else None
-        )
-        positions_raw = data.get("positions", {})
-        positions: Dict[str, PositionState] = {}
-        if isinstance(positions_raw, Mapping):
-            for symbol, raw in positions_raw.items():
-                if isinstance(raw, Mapping):
-                    positions[str(symbol)] = PositionState.from_mapping(raw)
-        hedge_activated_at_raw = data.get("hedge_activated_at")
-        hedge_activated_at: datetime | None = None
-        if hedge_activated_at_raw:
-            try:
-                hedge_activated_at = datetime.fromisoformat(str(hedge_activated_at_raw))
-            except ValueError:
-                hedge_activated_at = None
-
-        hedge_cooldown_raw = data.get("hedge_cooldown_until")
-        hedge_cooldown_until: datetime | None = None
-        if hedge_cooldown_raw:
-            try:
-                hedge_cooldown_until = datetime.fromisoformat(str(hedge_cooldown_raw))
-            except ValueError:
-                hedge_cooldown_until = None
-
-        return cls(
-            profile=profile,
-            current_day=parsed_day,
-            start_of_week=start_of_week,
-            start_of_day_equity=float(data.get("start_of_day_equity", 0.0)),
-            daily_realized_pnl=float(data.get("daily_realized_pnl", 0.0)),
-            weekly_realized_pnl=float(data.get("weekly_realized_pnl", 0.0)),
-            peak_equity=float(data.get("peak_equity", 0.0)),
-            force_liquidation=bool(data.get("force_liquidation", False)),
-            last_equity=float(data.get("last_equity", 0.0)),
-            positions=positions,
-            start_of_week_equity=float(data.get("start_of_week_equity", 0.0)),
-            rolling_profit_30d=float(data.get("rolling_profit_30d", 0.0)),
-            rolling_costs_30d=float(data.get("rolling_costs_30d", 0.0)),
-            hedge_mode=bool(data.get("hedge_mode", False)),
-            hedge_reason=str(data.get("hedge_reason")) if data.get("hedge_reason") not in (None, "") else None,
-            hedge_activated_at=hedge_activated_at,
-            hedge_cooldown_until=hedge_cooldown_until,
-        )
-
-    def reset_for_new_day(self, *, equity: float, day: date) -> None:
-        self.current_day = day
-        self.start_of_day_equity = equity
-        self.daily_realized_pnl = 0.0
-        self.force_liquidation = False
-        self.last_equity = equity
-
-    def reset_for_new_week(self, *, equity: float, week_start: date) -> None:
-        self.start_of_week = week_start
-        self.start_of_week_equity = equity
-        self.weekly_realized_pnl = 0.0
-
-    def ensure_week_alignment(self, *, day: date, equity: float) -> None:
-        week_start = day - timedelta(days=day.weekday())
-        if self.start_of_week is None or self.start_of_week != week_start:
-            self.reset_for_new_week(equity=equity, week_start=week_start)
-
-    def update_peak_equity(self, equity: float) -> None:
-        self.peak_equity = max(self.peak_equity, equity)
-        self.last_equity = equity
-
-    def daily_loss_pct(self) -> float:
-        if self.start_of_day_equity <= 0:
-            return 0.0
-        loss = min(0.0, self.daily_realized_pnl)
-        return abs(loss) / self.start_of_day_equity
-
-    def drawdown_pct(self, current_equity: float) -> float:
-        if self.peak_equity <= 0:
-            return 0.0
-        drawdown_value = self.peak_equity - current_equity
-        if drawdown_value <= 0:
-            return 0.0
-        return drawdown_value / self.peak_equity
-
-    def update_position(self, symbol: str, side: str, notional: float) -> None:
-        if notional <= 0:
-            self.positions.pop(symbol, None)
-            return
-        self.positions[symbol] = PositionState(side=side, notional=notional)
-
-    def activate_hedge(
-        self,
-        *,
-        reason: str | None,
-        timestamp: datetime,
-        cooldown_until: datetime | None,
-    ) -> None:
-        self.hedge_mode = True
-        self.hedge_reason = reason
-        self.hedge_activated_at = timestamp
-        self.hedge_cooldown_until = cooldown_until
-
-    def deactivate_hedge(self) -> None:
-        self.hedge_mode = False
-        self.hedge_reason = None
-        self.hedge_cooldown_until = None
-
-
-class InMemoryRiskRepository(RiskRepository):
-    """Najprostsze repozytorium używane do testów i trybu offline."""
-
-    def __init__(self) -> None:
-        self._storage: Dict[str, MutableMapping[str, object]] = {}
-
-    def load(self, profile: str) -> Mapping[str, object] | None:
-        return self._storage.get(profile)
-
-    def store(self, profile: str, state: Mapping[str, object]) -> None:
-        self._storage[profile] = dict(state)
-
-
 class ThresholdRiskEngine(RiskEngine):
     """Silnik egzekwujący limity dzienne, ekspozycji i dźwigni."""
 
     def __init__(
         self,
-        repository: RiskRepository | None = None,
+        profile_repository: RiskProfileRepository | None = None,
         *,
+        repository: RiskRepository | None = None,
         clock: Callable[[], datetime] | None = None,
         decision_log: RiskDecisionLog | None = None,
         alert_log: RiskAlertLog | None = None,
         decision_orchestrator: Any | None = None,
+        decision_adapter: DecisionOrchestratorAdapter | None = None,
         guardrail_config: LossGuardrailConfig | None = None,
         guardrail_metrics: RiskGuardrailMetricSet | None = None,
+        guardrails_service: RiskGuardrailsService | None = None,
+        observability_sink: RiskObservabilitySink | None = None,
     ) -> None:
-        self._repository = repository or InMemoryRiskRepository()
         self._clock = clock or datetime.utcnow
-        self._profiles: Dict[str, RiskProfile] = {}
-        self._states: Dict[str, RiskState] = {}
+        self._observability_sink = observability_sink or RiskObservabilitySink()
+        if profile_repository is not None:
+            self._profile_repository = profile_repository
+        else:
+            storage = repository or InMemoryRiskRepository()
+            self._profile_repository = RiskProfileRepository(storage, clock=self._clock)
+        self._profiles = self._profile_repository.profiles
+        self._states = self._profile_repository.states
         self._decision_log = decision_log
-        self._alert_log = alert_log or RiskAlertLog()
-        self._decision_orchestrator: Any | None = decision_orchestrator
+        if alert_log is not None:
+            self._alert_log = alert_log
+            self._observability_sink.alerts = RiskAlertSink(alert_log)
+        else:
+            self._alert_log = self._observability_sink.alert_log
+        self._decision_adapter: DecisionOrchestratorAdapter | None = decision_adapter
+        if self._decision_adapter is None and decision_orchestrator is not None:
+            self._decision_adapter = DecisionOrchestratorAdapter(decision_orchestrator)
         self._decision_model_outcomes: MutableMapping[str, MutableMapping[str, int]] = {}
         self._decision_model_rejections: MutableMapping[
             str, MutableMapping[str, int]
@@ -301,31 +105,32 @@ class ThresholdRiskEngine(RiskEngine):
         self._default_profile: str | None = None
         self._loss_guardrails = guardrail_config
         self._guardrail_metrics = guardrail_metrics
-        if self._loss_guardrails is not None and self._guardrail_metrics is None:
-            self._guardrail_metrics = RiskGuardrailMetricSet()
+        if guardrails_service is not None:
+            self._guardrails_service = guardrails_service
+            if self._guardrail_metrics is None:
+                self._guardrail_metrics = getattr(guardrails_service, "_metrics", None)
+        else:
+            if self._loss_guardrails is not None and self._guardrail_metrics is None:
+                self._guardrail_metrics = RiskGuardrailMetricSet()
+            guardrails_engine = GuardrailsEngine(
+                self._loss_guardrails,
+                metrics=self._guardrail_metrics,
+                alert_log=self._alert_log,
+                clock=self._clock,
+                logger=_LOGGER,
+            )
+            self._guardrails_service = RiskGuardrailsService(
+                guardrails_engine, metrics=self._guardrail_metrics
+            )
 
     def register_profile(self, profile: RiskProfile) -> None:
-        self._profiles[profile.name] = profile
-        state = self._repository.load(profile.name)
-        if state is None:
-            today = self._clock().date()
-            new_state = RiskState(profile=profile.name, current_day=today)
-            new_state.ensure_week_alignment(day=today, equity=0.0)
-            self._states[profile.name] = new_state
-            self._repository.store(profile.name, new_state.to_mapping())
-        else:
-            restored_state = RiskState.from_mapping(profile.name, state)
-            restored_state.ensure_week_alignment(
-                day=restored_state.current_day,
-                equity=restored_state.start_of_day_equity or restored_state.last_equity,
-            )
-            self._states[profile.name] = restored_state
+        stored_state = self._profile_repository.register(profile)
         _LOGGER.info("Zarejestrowano profil ryzyka %s", profile.name)
         if self._default_profile is None:
             self._default_profile = profile.name
-        if self._guardrail_metrics is not None:
-            stored_state = self._states[profile.name]
-            self._guardrail_metrics.record_state(profile.name, active=stored_state.hedge_mode)
+        self._guardrails_service.record_profile_state(
+            profile.name, stored_state
+        )
 
     def attach_exchange_manager(
         self,
@@ -391,7 +196,7 @@ class ThresholdRiskEngine(RiskEngine):
     def attach_decision_orchestrator(self, orchestrator: Any | None) -> None:
         """Podłącza DecisionOrchestrator do dodatkowych kontroli kosztowych."""
 
-        self._decision_orchestrator = orchestrator
+        self._decision_adapter = DecisionOrchestratorAdapter(orchestrator) if orchestrator else None
 
     def apply_pre_trade_checks(
         self,
@@ -425,16 +230,14 @@ class ThresholdRiskEngine(RiskEngine):
 
         state.update_peak_equity(account.total_equity)
 
-        drawdown = state.drawdown_pct(account.total_equity)
-        daily_loss = state.daily_loss_pct()
+        metrics = state.metrics(
+            equity=account.total_equity,
+            gross_notional=state.gross_notional(),
+            active_positions=state.active_positions(),
+        )
         start_equity = state.start_of_day_equity or account.total_equity
         min_trade_risk_pct, max_trade_risk_pct = profile.trade_risk_pct_range()
         max_trade_risk_pct = max(max_trade_risk_pct, min_trade_risk_pct, 0.0)
-        weekly_equity = state.start_of_week_equity or account.total_equity
-        weekly_loss_value = -min(0.0, state.weekly_realized_pnl)
-        weekly_loss_pct = (
-            weekly_loss_value / weekly_equity if weekly_equity > 0 else 0.0
-        )
         cost_ratio_limit = profile.max_cost_to_profit_ratio()
         cost_ratio = 0.0
         if state.rolling_profit_30d > 0:
@@ -442,66 +245,12 @@ class ThresholdRiskEngine(RiskEngine):
         elif state.rolling_costs_30d > 0:
             cost_ratio = float("inf")
 
-        guardrail_decision: LossGuardrailDecision | None = None
-        if self._loss_guardrails is not None:
-            guardrail_decision = self._loss_guardrails.evaluate(
-                state=state,
-                drawdown_pct=drawdown,
-                daily_loss_pct=daily_loss,
-                weekly_loss_pct=weekly_loss_pct,
-                now=now,
-            )
-            if guardrail_decision.activate:
-                state.activate_hedge(
-                    reason=guardrail_decision.reason,
-                    timestamp=now,
-                    cooldown_until=guardrail_decision.cooldown_until,
-                )
-                _LOGGER.warning(
-                    "Guardrail hedge mode enabled for profile %s metric=%s value=%.4f threshold=%.4f",
-                    profile_name,
-                    guardrail_decision.metric or "unknown",
-                    guardrail_decision.value or 0.0,
-                    guardrail_decision.threshold or 0.0,
-                )
-                if self._guardrail_metrics is not None:
-                    self._guardrail_metrics.record_activation(
-                        profile_name,
-                        reason=guardrail_decision.metric,
-                    )
-                try:
-                    self._alert_log.record(
-                        profile=profile_name,
-                        limit=f"loss_guardrail_{guardrail_decision.metric or 'unknown'}",
-                        value=float(guardrail_decision.value or 0.0),
-                        threshold=float(guardrail_decision.threshold or 0.0),
-                        severity="warning",
-                        context={
-                            "reason": guardrail_decision.reason,
-                            "hedge_mode": True,
-                            "cooldown_until": guardrail_decision.cooldown_until.isoformat()
-                            if guardrail_decision.cooldown_until
-                            else None,
-                        },
-                    )
-                except Exception:  # pragma: no cover - alert log jest opcjonalny
-                    _LOGGER.exception("Failed to record guardrail alert", exc_info=True)
-                self._persist_state(profile_name)
-            elif guardrail_decision.deactivate and state.hedge_mode:
-                state.deactivate_hedge()
-                _LOGGER.info("Guardrail hedge mode cleared for profile %s", profile_name)
-                if self._guardrail_metrics is not None:
-                    self._guardrail_metrics.record_state(profile_name, active=False)
-                self._persist_state(profile_name)
-            elif self._guardrail_metrics is not None:
-                self._guardrail_metrics.record_state(profile_name, active=state.hedge_mode)
-
         force_reason: str | None = None
-        if profile.drawdown_limit() > 0 and drawdown >= profile.drawdown_limit():
+        if profile.drawdown_limit() > 0 and metrics.drawdown_pct >= profile.drawdown_limit():
             state.force_liquidation = True
             force_reason = "Przekroczono limit obsunięcia portfela."
 
-        if profile.daily_loss_limit() > 0 and daily_loss >= profile.daily_loss_limit():
+        if profile.daily_loss_limit() > 0 and metrics.daily_loss_pct >= profile.daily_loss_limit():
             state.force_liquidation = True
             force_reason = "Przekroczono dzienny limit straty."
 
@@ -516,11 +265,11 @@ class ThresholdRiskEngine(RiskEngine):
             kill_switch_reason = "Aktywowano dzienny kill-switch (-2R)."
 
         daily_kill_pct = profile.daily_kill_switch_loss_pct()
-        if daily_kill_pct > 0 and daily_loss >= daily_kill_pct:
+        if daily_kill_pct > 0 and metrics.daily_loss_pct >= daily_kill_pct:
             kill_switch_reason = "Aktywowano dzienny kill-switch (-4%)."
 
         weekly_kill_pct = profile.weekly_kill_switch_loss_pct()
-        if weekly_kill_pct > 0 and weekly_loss_pct >= weekly_kill_pct:
+        if weekly_kill_pct > 0 and metrics.weekly_loss_pct >= weekly_kill_pct:
             kill_switch_reason = "Aktywowano tygodniowy kill-switch."
 
         if kill_switch_reason:
@@ -535,8 +284,8 @@ class ThresholdRiskEngine(RiskEngine):
                 context={
                     "daily_realized_pnl": state.daily_realized_pnl,
                     "weekly_realized_pnl": state.weekly_realized_pnl,
-                    "daily_loss_pct": daily_loss,
-                    "weekly_loss_pct": weekly_loss_pct,
+                    "daily_loss_pct": metrics.daily_loss_pct,
+                    "weekly_loss_pct": metrics.weekly_loss_pct,
                     "trigger": kill_switch_reason,
                 },
             )
@@ -594,13 +343,13 @@ class ThresholdRiskEngine(RiskEngine):
         notional = abs(request.quantity) * price
         current_notional = position.notional if position else 0.0
         current_side = (
-            _normalize_position_side(position.side)
+            normalize_position_side(position.side)
             if position
             else ("long" if is_buy else "short")
         )
 
         if position:
-            position_side = _normalize_position_side(position.side)
+            position_side = normalize_position_side(position.side)
             if position_side == "long" and not is_buy and notional > current_notional:
                 return deny(
                     "Zlecenie sprzedaży przekracza wielkość istniejącej pozycji. Zamknij pozycję przed odwróceniem kierunku."
@@ -627,21 +376,26 @@ class ThresholdRiskEngine(RiskEngine):
 
         is_new_position = current_notional == 0.0 and new_notional > 0.0 and not is_reducing
 
-        if (
-            self._loss_guardrails is not None
-            and state.hedge_mode
-            and not is_reducing
-            and not self._loss_guardrails.is_allowed_intent(metadata)
-        ):
+        guardrail_order = GuardrailOrder(
+            symbol=request.symbol,
+            is_reducing=is_reducing,
+            metadata=metadata,
+        )
+        guardrail_decision = self._guardrails_service.evaluate(
+            state,
+            (guardrail_order,),
+            profile_name=profile_name,
+            drawdown_pct=metrics.drawdown_pct,
+            daily_loss_pct=metrics.daily_loss_pct,
+            weekly_loss_pct=metrics.weekly_loss_pct,
+        )
+        if guardrail_decision.changed_state:
+            self._persist_state(profile_name)
+        if not guardrail_decision.should_trade:
             return deny(
-                "Profil działa w trybie hedge – dopuszczalne są jedynie zlecenia redukujące lub oznaczone jako hedge.",
-                metadata={
-                    "hedge_mode": True,
-                    "hedge_reason": state.hedge_reason,
-                    "hedge_activated_at": state.hedge_activated_at.isoformat()
-                    if state.hedge_activated_at
-                    else None,
-                },
+                guardrail_decision.reason
+                or "Profil działa w trybie hedge – dopuszczalne są jedynie zlecenia redukujące lub oznaczone jako hedge.",
+                metadata=guardrail_decision.metadata,
             )
 
         current_quantity = current_notional / price if price > 0 else 0.0
@@ -901,7 +655,7 @@ class ThresholdRiskEngine(RiskEngine):
                     )
 
         evaluation_metadata: Mapping[str, object] | None = None
-        if self._decision_orchestrator is not None:
+        if self._decision_adapter is not None:
             (
                 evaluation,
                 evaluation_payload,
@@ -950,7 +704,7 @@ class ThresholdRiskEngine(RiskEngine):
                     self._record_decision_model_rejection(
                         normalized_model, evaluation
                     )
-                    reason = self._format_decision_denial_reason(evaluation)
+                    reason = self._decision_adapter.format_denial_reason(evaluation)
                     return deny(reason, metadata=evaluation_metadata)
 
         self._persist_state(profile_name)
@@ -989,7 +743,7 @@ class ThresholdRiskEngine(RiskEngine):
         state.ensure_week_alignment(day=current_day, equity=state.last_equity)
         state.daily_realized_pnl += pnl
         state.weekly_realized_pnl += pnl
-        normalized_side = _normalize_position_side(side, default="long")
+        normalized_side = normalize_position_side(side, default="long")
         state.update_position(symbol, side=normalized_side, notional=max(0.0, position_value))
         self._persist_state(profile_name)
 
@@ -1056,12 +810,15 @@ class ThresholdRiskEngine(RiskEngine):
                 except (TypeError, ValueError):  # pragma: no cover - defensywnie
                     _LOGGER.debug("Nie można sparsować rolling_costs_30d z metadanych", exc_info=True)
 
-        drawdown = state.drawdown_pct(equity)
-        daily_loss = state.daily_loss_pct()
+        metrics = state.metrics(
+            equity=equity,
+            gross_notional=state.gross_notional(),
+            active_positions=state.active_positions(),
+        )
         previous_liquidation = state.force_liquidation
-        if profile.drawdown_limit() > 0 and drawdown >= profile.drawdown_limit():
+        if profile.drawdown_limit() > 0 and metrics.drawdown_pct >= profile.drawdown_limit():
             state.force_liquidation = True
-        elif profile.daily_loss_limit() > 0 and daily_loss >= profile.daily_loss_limit():
+        elif profile.daily_loss_limit() > 0 and metrics.daily_loss_pct >= profile.daily_loss_limit():
             state.force_liquidation = True
         elif not previous_liquidation:
             state.force_liquidation = False
@@ -1073,28 +830,17 @@ class ThresholdRiskEngine(RiskEngine):
         if state is None:
             return None
 
-        snapshot: MutableMapping[str, object] = dict(state.to_mapping())
-        snapshot["gross_notional"] = state.gross_notional()
-        snapshot["active_positions"] = state.active_positions()
-        snapshot["daily_loss_pct"] = state.daily_loss_pct()
         current_equity = state.last_equity or state.start_of_day_equity
-        snapshot["drawdown_pct"] = state.drawdown_pct(current_equity)
-        if state.start_of_week:
-            snapshot["start_of_week"] = state.start_of_week.isoformat()
-        snapshot["start_of_week_equity"] = state.start_of_week_equity
-        snapshot["weekly_realized_pnl"] = state.weekly_realized_pnl
-        snapshot["rolling_profit_30d"] = state.rolling_profit_30d
-        snapshot["rolling_costs_30d"] = state.rolling_costs_30d
-        weekly_equity = state.start_of_week_equity or current_equity
-        snapshot["weekly_loss_pct"] = (
-            (-min(0.0, state.weekly_realized_pnl) / weekly_equity)
-            if weekly_equity > 0
-            else 0.0
+        metrics = state.metrics(
+            equity=float(current_equity or 0.0),
+            gross_notional=state.gross_notional(),
+            active_positions=state.active_positions(),
         )
 
         profile = self._profiles.get(profile_name)
+        limits: Mapping[str, float] | None = None
         if profile is not None:
-            snapshot["limits"] = {
+            limits = {
                 "max_positions": profile.max_positions(),
                 "max_leverage": profile.max_leverage(),
                 "daily_loss_limit": profile.daily_loss_limit(),
@@ -1113,26 +859,26 @@ class ThresholdRiskEngine(RiskEngine):
                 "max_cost_to_profit_ratio": profile.max_cost_to_profit_ratio(),
             }
 
-        gross_notional = float(snapshot.get("gross_notional", 0.0) or 0.0)
-        equity = float(current_equity or 0.0)
-        used_leverage = gross_notional / equity if equity > 0 else 0.0
-        snapshot["used_leverage"] = used_leverage
-
-        statistics_payload: dict[str, object] = {
-            "dailyRealizedPnl": float(state.daily_realized_pnl),
-            "grossNotional": gross_notional,
-            "activePositions": int(snapshot.get("active_positions", 0)),
-            "dailyLossPct": float(snapshot.get("daily_loss_pct", 0.0) or 0.0),
-            "drawdownPct": float(snapshot.get("drawdown_pct", 0.0) or 0.0),
-            "usedLeverage": used_leverage,
-        }
-        snapshot["statistics"] = statistics_payload
-
-        snapshot["cost_breakdown"] = self._build_cost_breakdown(
-            state, gross_notional, equity
+        snapshot = build_risk_snapshot(
+            state,
+            equity=float(current_equity or 0.0),
+            limits=limits,
+            gross_notional=metrics.gross_notional,
+            active_positions=metrics.active_positions,
+            cost_breakdown=self._build_cost_breakdown(
+                state, metrics.gross_notional, float(current_equity or 0.0)
+            ),
         )
-
-        return snapshot
+        snapshot_mapping = snapshot.to_mapping()
+        try:
+            self._observability_sink.publish_snapshot(
+                profile_name,
+                snapshot_mapping,
+                metadata={"limits": dict(limits)} if limits is not None else None,
+            )
+        except Exception:  # pragma: no cover - obserwowalność nie może blokować silnika
+            _LOGGER.debug("Nie udało się opublikować snapshotu ryzyka", exc_info=True)
+        return snapshot_mapping
 
     def _build_cost_breakdown(
         self,
@@ -1523,14 +1269,11 @@ class ThresholdRiskEngine(RiskEngine):
         Mapping[str, object] | None,
         Mapping[str, object] | None,
     ]:
-        if self._decision_orchestrator is None:
+        adapter = self._decision_adapter
+        if adapter is None:
             return None, None, None
-        if not _ensure_decision_models():
-            return None, None, {
-                "status": "skipped",
-                "attempted": False,
-                "duration_ms": 0.0,
-            }
+        if not adapter.available:
+            return None, None, {"status": "skipped", "attempted": False, "duration_ms": 0.0}
 
         start = perf_counter()
 
@@ -1568,7 +1311,7 @@ class ThresholdRiskEngine(RiskEngine):
                 payload["notional"] = abs(request.quantity) * price_value
 
         try:
-            candidate = DecisionCandidate.from_mapping(payload)
+            candidate = adapter.build_candidate(payload)
         except Exception:
             _LOGGER.warning(
                 "DecisionOrchestrator: nieprawidłowe dane kandydata", exc_info=True
@@ -1579,11 +1322,11 @@ class ThresholdRiskEngine(RiskEngine):
                 build_stats("error", attempted=True, error="invalid_candidate"),
             )
 
-        snapshot = self._build_decision_snapshot(profile_name, state, account)
+        snapshot = adapter.build_snapshot(profile_name, state, account)
         try:
-            evaluation = self._decision_orchestrator.evaluate_candidate(  # type: ignore[union-attr]
+            evaluation = adapter.evaluate(
                 candidate,
-                snapshot,
+                adapter.build_context(snapshot=snapshot, account_id=account.account_id),
             )
         except Exception:
             _LOGGER.exception("DecisionOrchestrator: błąd ewaluacji")
@@ -1595,7 +1338,7 @@ class ThresholdRiskEngine(RiskEngine):
 
         return (
             evaluation,
-            self._serialize_decision_evaluation(evaluation),
+            adapter.serialize_evaluation(evaluation),
             build_stats("evaluated", attempted=True),
         )
 
@@ -1623,85 +1366,6 @@ class ThresholdRiskEngine(RiskEngine):
 
         return dict(candidate_raw), None
 
-    def _build_decision_snapshot(
-        self,
-        profile_name: str,
-        state: RiskState,
-        account: AccountSnapshot,
-    ) -> Mapping[str, object] | Any:
-        snapshot_payload: MutableMapping[str, object] = dict(state.to_mapping())
-        last_equity = state.last_equity or account.total_equity
-        snapshot_payload["last_equity"] = last_equity
-        snapshot_payload["start_of_day_equity"] = (
-            state.start_of_day_equity or account.total_equity
-        )
-        snapshot_payload["daily_realized_pnl"] = state.daily_realized_pnl
-        snapshot_payload["gross_notional"] = state.gross_notional()
-        snapshot_payload["active_positions"] = state.active_positions()
-        snapshot_payload["daily_loss_pct"] = state.daily_loss_pct()
-        snapshot_payload["drawdown_pct"] = state.drawdown_pct(last_equity)
-        snapshot_payload["force_liquidation"] = state.force_liquidation
-
-        if RiskSnapshot is not None:
-            try:
-                return RiskSnapshot.from_mapping(profile_name, snapshot_payload)
-            except Exception:  # pragma: no cover - diagnostyka snapshotu
-                _LOGGER.debug(
-                    "DecisionOrchestrator: nie udało się zbudować RiskSnapshot",
-                    exc_info=True,
-                )
-
-        snapshot_payload["profile"] = profile_name
-        return snapshot_payload
-
-    def _serialize_decision_evaluation(
-        self, evaluation: Any
-    ) -> Mapping[str, object]:
-        if DecisionEvaluation is not None and isinstance(evaluation, DecisionEvaluation):
-            payload: dict[str, object] = {
-                "status": "evaluated",
-                "accepted": evaluation.accepted,
-                "cost_bps": evaluation.cost_bps,
-                "net_edge_bps": evaluation.net_edge_bps,
-                "reasons": list(evaluation.reasons),
-                "risk_flags": list(evaluation.risk_flags),
-                "stress_failures": list(evaluation.stress_failures),
-                "candidate": evaluation.candidate.to_mapping(),
-                "model_expected_return_bps": evaluation.model_expected_return_bps,
-                "model_success_probability": evaluation.model_success_probability,
-                "model_name": evaluation.model_name,
-                "model_selection": (
-                    evaluation.model_selection.to_mapping()
-                    if evaluation.model_selection is not None
-                    else None
-                ),
-            }
-            if evaluation.thresholds_snapshot is not None:
-                payload["thresholds"] = dict(evaluation.thresholds_snapshot)
-            return payload
-        if isinstance(evaluation, Mapping):
-            return dict(evaluation)
-        return {"status": "evaluated", "accepted": bool(getattr(evaluation, "accepted", False))}
-
-    def _format_decision_denial_reason(self, evaluation: Any) -> str:
-        if DecisionEvaluation is not None and isinstance(evaluation, DecisionEvaluation):
-            reasons = list(evaluation.reasons)
-            reasons.extend(str(flag) for flag in evaluation.risk_flags)
-            reasons.extend(str(flag) for flag in evaluation.stress_failures)
-        else:
-            reasons = []
-            if isinstance(evaluation, Mapping):
-                reasons = [
-                    *(str(reason) for reason in evaluation.get("reasons", []) or []),
-                    *(str(reason) for reason in evaluation.get("risk_flags", []) or []),
-                    *(str(reason) for reason in evaluation.get("stress_failures", []) or []),
-                ]
-
-        reasons = [reason for reason in reasons if reason]
-        if not reasons:
-            return "DecisionOrchestrator odrzucił decyzję bez szczegółów."
-        return "DecisionOrchestrator odrzucił decyzję: " + "; ".join(reasons)
-
     def _format_decision_error(self, payload: Mapping[str, object]) -> str:
         detail = str(payload.get("error", "unknown_error"))
         return f"DecisionOrchestrator nie mógł ocenić kandydata ({detail})."
@@ -1722,6 +1386,14 @@ class ThresholdRiskEngine(RiskEngine):
             if price_value and price_value > 0:
                 notional = abs(quantity_value) * price_value
 
+            metrics = state.metrics(
+                equity=state.last_equity
+                or state.start_of_day_equity
+                or account.total_equity,
+                gross_notional=state.gross_notional(),
+                active_positions=state.active_positions(),
+            )
+
             metadata: dict[str, object] = {
                 "account": {
                     "total_equity": float(account.total_equity),
@@ -1730,10 +1402,10 @@ class ThresholdRiskEngine(RiskEngine):
                 },
                 "state": {
                     "force_liquidation": state.force_liquidation,
-                    "gross_notional": state.gross_notional(),
-                    "active_positions": state.active_positions(),
-                    "daily_loss_pct": state.daily_loss_pct(),
-                    "drawdown_pct": state.drawdown_pct(state.last_equity or state.start_of_day_equity),
+                    "gross_notional": metrics.gross_notional,
+                    "active_positions": metrics.active_positions,
+                    "daily_loss_pct": metrics.daily_loss_pct,
+                    "drawdown_pct": metrics.drawdown_pct,
                     "current_day": state.current_day.isoformat(),
                 },
             }
@@ -1771,8 +1443,7 @@ class ThresholdRiskEngine(RiskEngine):
         return result
 
     def _persist_state(self, profile_name: str) -> None:
-        state = self._states[profile_name]
-        self._repository.store(profile_name, state.to_mapping())
+        self._profile_repository.persist(profile_name)
 
     def _record_decision_model_outcome(
         self,
@@ -2192,29 +1863,4 @@ class ThresholdRiskEngine(RiskEngine):
             "json_path": str(json_path),
             "pdf_path": str(pdf_path),
         }
-
-
-def _ensure_decision_models() -> bool:
-    """Gwarantuje, że zależności modułu decision są załadowane."""
-
-    global DecisionCandidate, DecisionEvaluation, RiskSnapshot
-
-    if all(dependency is not None for dependency in (DecisionCandidate, DecisionEvaluation, RiskSnapshot)):
-        return True
-
-    try:  # pragma: no cover - fallback ładowania w środowiskach z modułem decision
-        from bot_core.decision.models import (  # type: ignore[import-not-found]
-            DecisionCandidate as _DecisionCandidate,
-            DecisionEvaluation as _DecisionEvaluation,
-            RiskSnapshot as _RiskSnapshot,
-        )
-    except Exception:  # pragma: no cover - środowiska bez modułu decision
-        return False
-
-    DecisionCandidate = _DecisionCandidate  # type: ignore[assignment]
-    DecisionEvaluation = _DecisionEvaluation  # type: ignore[assignment]
-    RiskSnapshot = _RiskSnapshot  # type: ignore[assignment]
-    return True
-
-
-__all__ = ["InMemoryRiskRepository", "ThresholdRiskEngine", "RiskState", "PositionState"]
+__all__ = ["ThresholdRiskEngine", "RiskState", "PositionState"]

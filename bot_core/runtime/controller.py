@@ -38,7 +38,8 @@ from bot_core.ai.health import ModelHealthMonitor, ModelHealthStatus
 # --- elastyczne importy (różne gałęzie mogą mieć różne ścieżki modułów) -----
 
 # Alerts
-from bot_core.alerts import AlertMessage, DefaultAlertRouter  # dostępne w obu gałęziach
+from bot_core.alerts import AlertMessage  # dostępne w obu gałęziach
+from bot_core.runtime.observability import AlertSink
 
 # Execution
 try:
@@ -65,11 +66,25 @@ except Exception:  # pragma: no cover
 
 # Decision Engine (opcjonalnie)
 try:  # pragma: no cover
-    from bot_core.decision import DecisionCandidate, DecisionEvaluation, DecisionOrchestrator  # type: ignore
+    from bot_core.decision import (
+        DecisionCandidate,
+        DecisionContext,
+        DecisionEvaluation,
+    )  # type: ignore
+    from bot_core.decision.evaluators import DecisionEvaluator
+    from bot_core.decision.providers import DecisionProvider
 except Exception:  # pragma: no cover
     DecisionCandidate = None  # type: ignore
+    DecisionContext = Any  # type: ignore
     DecisionEvaluation = Any  # type: ignore
-    DecisionOrchestrator = None  # type: ignore
+
+    class DecisionEvaluator(Protocol):  # type: ignore[misc]
+        def evaluate_candidate(self, candidate: Any, context: Any) -> Any:
+            ...
+
+    class DecisionProvider(Protocol):  # type: ignore[misc]
+        def ensure_snapshot(self, profile: str, snapshot: Mapping[str, object] | Any) -> Any:
+            ...
 
 # Dane OHLCV – w zależności od gałęzi
 try:
@@ -236,7 +251,7 @@ class TradingController:
 
     risk_engine: RiskEngine
     execution_service: ExecutionService
-    alert_router: DefaultAlertRouter
+    alert_router: "AlertSink"
     account_snapshot_provider: Callable[[], AccountSnapshot]
     portfolio_id: str
     environment: str
@@ -251,7 +266,7 @@ class TradingController:
     exchange_name: str | None = None
     tco_reporter: RuntimeTCOReporter | None = None
     tco_metadata: Mapping[str, object] | None = None
-    decision_orchestrator: Any | None = None
+    decision_orchestrator: DecisionEvaluator | DecisionProvider | None = None
     decision_min_probability: float | None = None
     decision_default_notional: float = 1_000.0
     ai_health_monitor: ModelHealthMonitor | None = None
@@ -276,7 +291,9 @@ class TradingController:
     _exchange_name: str | None = field(init=False, repr=False, default=None)
     _tco_reporter: RuntimeTCOReporter | None = field(init=False, repr=False, default=None)
     _tco_metadata: Mapping[str, object] = field(init=False, repr=False, default_factory=dict)
-    _decision_orchestrator: Any | None = field(init=False, repr=False, default=None)
+    _decision_orchestrator: DecisionEvaluator | DecisionProvider | None = field(
+        init=False, repr=False, default=None
+    )
     _decision_min_probability: float = field(init=False, repr=False, default=0.0)
     _decision_default_notional: float = field(init=False, repr=False, default=1_000.0)
     _signal_mode_priorities: Mapping[str, int] = field(init=False, repr=False, default_factory=dict)
@@ -1257,7 +1274,16 @@ class TradingController:
             return None
         snapshot = self._decision_risk_snapshot(candidate.risk_profile)
         try:
-            return orchestrator.evaluate_candidate(candidate, snapshot)
+            return orchestrator.evaluate_candidate(
+                candidate,
+                DecisionContext(
+                    risk_snapshot=snapshot,
+                    runtime={
+                        "portfolio": self._portfolio,
+                        "environment": self._environment,
+                    },
+                ),
+            )
         except Exception:  # pragma: no cover - diagnostyka orchestratora
             _LOGGER.exception("DecisionOrchestrator: błąd ewaluacji")
             return None
@@ -1946,7 +1972,10 @@ class AIDecisionLoop:
             if snapshot is None:
                 snapshot = self.risk_snapshot_provider(self.risk_profile)
                 snapshots_cache[self.risk_profile] = snapshot
-            evaluation = self.orchestrator.evaluate_candidate(candidate, snapshot)
+            evaluation = self.orchestrator.evaluate_candidate(
+                candidate,
+                DecisionContext(risk_snapshot=snapshot, runtime={"vector_timestamp": vector.timestamp}),
+            )
             evaluations.append(evaluation)
         return evaluations
 
