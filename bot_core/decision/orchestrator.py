@@ -19,6 +19,13 @@ from bot_core.decision.costs import DecisionCostResolver
 from bot_core.decision.evaluators import DecisionEvaluator
 from bot_core.decision.reports import ModelQualityReport, load_latest_quality_report
 from bot_core.reporting.model_quality import DEFAULT_QUALITY_DIR
+
+# ---------------------------------------------------------------------
+# Backward compatibility for legacy tests (pre-refactor)
+# Tests expect a private alias that was removed during refactor
+_BanditRecommendation = BanditRecommendation
+# ---------------------------------------------------------------------
+
 from bot_core.config.models import (
     DecisionEngineConfig,
     DecisionOrchestratorThresholds,
