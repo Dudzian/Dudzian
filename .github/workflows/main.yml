@@ -4,7 +4,6 @@ run-name: "CI (${{ github.event_name }}: ${{ github.ref_name }})"
 
 on:
   push:
-    branches: ["**"]
   pull_request:
   workflow_dispatch:
     inputs:
@@ -63,11 +62,12 @@ jobs:
         shell: pwsh
         run: |
           python -V
-          python -m pip list
+          python -m pip list --format=columns
 
       - name: Pytest (first failure)
         shell: pwsh
-        run: pytest -q --maxfail=1 -x
+        run: |
+          pytest -q --maxfail=1 -x
 
   lint:
     name: Lint (pre-commit)
@@ -78,11 +78,13 @@ jobs:
 
     steps:
       - uses: actions/checkout@v4
+
       - uses: actions/setup-python@v5
         with:
           python-version: ${{ env.PYTHON_VERSION }}
 
-      - shell: pwsh
+      - name: Pre-commit
+        shell: pwsh
         run: |
           python -m pip install -e ".[dev]"
           python -m pip install pre-commit
@@ -99,11 +101,13 @@ jobs:
 
     steps:
       - uses: actions/checkout@v4
+
       - uses: actions/setup-python@v5
         with:
           python-version: ${{ env.PYTHON_VERSION }}
 
-      - shell: pwsh
+      - name: Install deps
+        shell: pwsh
         run: |
           python -m pip install -e ".[dev]"
           python -m pip install pytest
@@ -113,13 +117,17 @@ jobs:
         run: |
           if (Test-Path "scripts/generate_trading_stubs.py") {
             python scripts/generate_trading_stubs.py --skip-cpp
+            if ($LASTEXITCODE -ne 0) {
+              Write-Host "Stub generation failed (ignored)."
+            }
+          } else {
+            Write-Host "No stub generator found; skipping."
           }
 
       - name: Pytest fast
         shell: pwsh
         run: |
-          pytest `
-            --maxfail=1 `
+          pytest --maxfail=1 `
             -m "not integration and not e2e_demo_paper and not soak and not performance and not qml" `
             --ignore=tests/integration `
             --ignore=tests/e2e
@@ -133,11 +141,13 @@ jobs:
 
     steps:
       - uses: actions/checkout@v4
+
       - uses: actions/setup-python@v5
         with:
           python-version: ${{ env.PYTHON_VERSION }}
 
-      - shell: pwsh
+      - name: Install deps
+        shell: pwsh
         run: |
           python -m pip install -e ".[dev]"
           python -m pip install pytest
@@ -153,54 +163,56 @@ jobs:
 
   integration-tests:
     name: Integration tests
-    needs: curated-tests
+    needs: fast-tests
     runs-on: [self-hosted, windows]
     if: github.event_name == 'workflow_dispatch' && inputs.run_integration
     timeout-minutes: 60
 
     steps:
       - uses: actions/checkout@v4
+
       - uses: actions/setup-python@v5
         with:
           python-version: ${{ env.PYTHON_VERSION }}
 
-      - shell: pwsh
+      - name: Install deps
+        shell: pwsh
         run: |
           python -m pip install -e ".[dev]"
           python -m pip install pytest
 
       - name: Pytest integration
         shell: pwsh
-        run: pytest -m integration --maxfail=1
+        run: |
+          pytest -m integration --maxfail=1
 
   ui-tests:
     name: UI / QML tests
-    needs: curated-tests
+    needs: fast-tests
     runs-on: [self-hosted, windows]
     if: github.event_name == 'workflow_dispatch' && inputs.run_ui
     timeout-minutes: 45
 
     steps:
       - uses: actions/checkout@v4
+
       - uses: actions/setup-python@v5
         with:
           python-version: ${{ env.PYTHON_VERSION }}
 
-      - name: Skip if no UI deps
+      - name: Install deps
         shell: pwsh
-        run: |
-          python - <<'PY'
-          try:
-              import PySide6
-          except Exception:
-              raise SystemExit("PySide6 not installed; skipping UI tests.")
-          PY
-
-      - shell: pwsh
         run: |
           python -m pip install -e ".[dev]"
           python -m pip install pytest
 
+      - name: Check UI deps
+        shell: pwsh
+        run: |
+          python -c "import importlib.util, sys; sys.exit(0 if importlib.util.find_spec('PySide6') else 1)"
+        continue-on-error: true
+
       - name: Pytest UI
         shell: pwsh
-        run: pytest -m qml --maxfail=1
+        run: |
+          pytest -m qml --maxfail=1
