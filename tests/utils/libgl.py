@@ -10,7 +10,12 @@ from pathlib import Path
 from typing import Final
 from urllib.request import urlopen
 
-import hashlib
+import pytest
+
+
+def ensure_libgl_available() -> None:
+    if os.name == "nt":
+        pytest.skip("libGL check uses dpkg-deb (Linux-only); skipping on Windows runners.")
 
 _CACHE_DIRNAME: Final[str] = ".libgl-cache"
 _PACKAGES: Final[tuple[tuple[str, str, str, tuple[str, ...]], ...]] = (
