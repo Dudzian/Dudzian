@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import ctypes
 import ctypes.util
+import hashlib
 import os
 import shutil
 import subprocess
@@ -11,11 +12,6 @@ from typing import Final
 from urllib.request import urlopen
 
 import pytest
-
-
-def ensure_libgl_available() -> None:
-    if os.name == "nt":
-        pytest.skip("libGL check uses dpkg-deb (Linux-only); skipping on Windows runners.")
 
 _CACHE_DIRNAME: Final[str] = ".libgl-cache"
 _PACKAGES: Final[tuple[tuple[str, str, str, tuple[str, ...]], ...]] = (
@@ -90,6 +86,14 @@ def ensure_libgl_available(cache_root: Path | None = None) -> Path | None:
     jeśli biblioteka była już dostępna.
     """
 
+    # Windows runners don't have dpkg-deb; this bootstrap is Linux-only.
+    if os.name == "nt":
+        pytest.skip("libGL check uses dpkg-deb (Linux-only); skipping on Windows runners.")
+
+    # Some Linux images may not have dpkg-deb available.
+    if shutil.which("dpkg-deb") is None:
+        pytest.skip("dpkg-deb not available; skipping libGL bootstrap.")
+
     if _has_libgl():
         return None
 
@@ -140,8 +144,6 @@ def ensure_libgl_available(cache_root: Path | None = None) -> Path | None:
         ):
             ctypes.CDLL(str(lib_dir / dependency), mode=ctypes.RTLD_GLOBAL)
     except OSError as exc:  # pragma: no cover - środowisko bez wsparcia ELF
-        raise RuntimeError(
-            f"Nie udało się załadować bibliotek GL z {lib_dir}: {exc}"
-        ) from exc
+        raise RuntimeError(f"Nie udało się załadować bibliotek GL z {lib_dir}: {exc}") from exc
 
     return lib_dir
