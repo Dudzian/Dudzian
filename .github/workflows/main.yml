@@ -1,0 +1,201 @@
+name: CI (Windows self-hosted)
+
+run-name: "CI (${{ github.event_name }}: ${{ github.ref_name }})"
+
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+  workflow_dispatch:
+    inputs:
+      run_lint:
+        description: "Run lint (pre-commit)"
+        type: boolean
+        default: false
+      run_fast:
+        description: "Run fast deterministic tests"
+        type: boolean
+        default: true
+      run_curated:
+        description: "Run curated unit test list"
+        type: boolean
+        default: false
+      run_integration:
+        description: "Run integration tests"
+        type: boolean
+        default: false
+      run_ui:
+        description: "Run UI / QML tests"
+        type: boolean
+        default: false
+
+env:
+  PYTHON_VERSION: "3.11"
+  PYTHONHASHSEED: "0"
+  PIP_DISABLE_PIP_VERSION_CHECK: "1"
+  PYTEST_DISABLE_PLUGIN_AUTOLOAD: "1"
+
+  # Secrets presence flags (safe: only checks existence)
+  HAS_MARKETPLACE_KEYS: ${{ secrets.MARKETPLACE_HMAC_KEY != '' }}
+  HAS_LICENSING_KEYS:   ${{ secrets.LICENSING_PRIVATE_KEY != '' }}
+
+jobs:
+  smoke-harness:
+    name: Smoke harness (env + first failure)
+    runs-on: [self-hosted, windows]
+    timeout-minutes: 25
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: Install deps
+        shell: bash
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -e ".[dev]"
+          python -m pip install pytest
+
+      - name: Environment snapshot
+        shell: bash
+        run: |
+          python -V
+          python -m pip list --format=columns | sed -n '1,120p'
+
+      - name: Pytest (first failure)
+        shell: bash
+        run: pytest -q --maxfail=1 -x
+
+  lint:
+    name: Lint (pre-commit)
+    needs: smoke-harness
+    runs-on: [self-hosted, windows]
+    if: github.event_name == 'workflow_dispatch' && inputs.run_lint
+    timeout-minutes: 25
+
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - run: |
+          python -m pip install -e ".[dev]"
+          python -m pip install pre-commit
+          pre-commit run --all-files --show-diff-on-failure
+
+  fast-tests:
+    name: Fast tests (neutral)
+    needs: smoke-harness
+    runs-on: [self-hosted, windows]
+    if: |
+      github.event_name != 'workflow_dispatch' ||
+      inputs.run_fast
+    timeout-minutes: 30
+
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - run: |
+          python -m pip install -e ".[dev]"
+          python -m pip install pytest
+
+      - name: Generate stubs (optional)
+        shell: bash
+        run: |
+          if [ -f scripts/generate_trading_stubs.py ]; then
+            python scripts/generate_trading_stubs.py --skip-cpp || true
+          fi
+
+      - name: Pytest fast
+        shell: bash
+        run: |
+          pytest \
+            --maxfail=1 \
+            -m "not integration and not e2e_demo_paper and not soak and not performance and not qml" \
+            --ignore=tests/integration \
+            --ignore=tests/e2e
+
+  curated-tests:
+    name: Curated unit suite
+    needs: fast-tests
+    runs-on: [self-hosted, windows]
+    if: github.event_name == 'workflow_dispatch' && inputs.run_curated
+    timeout-minutes: 40
+
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - run: |
+          python -m pip install -e ".[dev]"
+          python -m pip install pytest
+
+      - name: Pytest curated
+        shell: bash
+        run: |
+          pytest \
+            tests/test_pipeline_paper.py \
+            tests/test_risk_profiles.py \
+            tests/test_multi_strategy_scheduler.py \
+            tests/test_trading_decision_journal.py
+
+  integration-tests:
+    name: Integration tests
+    needs: curated-tests
+    runs-on: [self-hosted, windows]
+    if: github.event_name == 'workflow_dispatch' && inputs.run_integration
+    timeout-minutes: 60
+
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - run: |
+          python -m pip install -e ".[dev]"
+          python -m pip install pytest
+
+      - name: Pytest integration
+        shell: bash
+        run: pytest -m integration --maxfail=1
+
+  ui-tests:
+    name: UI / QML tests
+    needs: curated-tests
+    runs-on: [self-hosted, windows]
+    if: github.event_name == 'workflow_dispatch' && inputs.run_ui
+    timeout-minutes: 45
+
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: Skip if no UI deps
+        shell: bash
+        run: |
+          python - <<'PY'
+          try:
+              import PySide6
+          except Exception:
+              raise SystemExit("PySide6 not installed; skipping UI tests.")
+          PY
+
+      - run: |
+          python -m pip install -e ".[dev]"
+          python -m pip install pytest
+
+      - name: Pytest UI
+        shell: bash
+        run: pytest -m qml --maxfail=1
