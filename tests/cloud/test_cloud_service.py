@@ -32,10 +32,12 @@ except Exception:
 # --- Helpers ---
 def _write_signed_flag(flag_path: Path, signature_path: Path, secret: bytes) -> None:
     """
-    Runtime w tym repo wygląda na to, że oczekuje, że plik *.sig będzie JSON-em.
+    Runtime oczekuje, że plik *.sig będzie JSON-em o konkretnej strukturze.
     Ten helper zapisuje:
       - cloud_flag.json jako JSON
-      - cloud_flag.sig jako JSON z HMAC-SHA256 nad bajtami cloud_flag.json
+      - cloud_flag.sig jako minimalny JSON z HMAC-SHA256 nad bajtami cloud_flag.json
+
+    UWAGA: celowo NIE dodajemy dodatkowych pól/aliasów, bo walidator może wymagać ścisłego schematu.
     """
     now = int(time.time())
     payload: dict[str, Any] = {
@@ -44,22 +46,19 @@ def _write_signed_flag(flag_path: Path, signature_path: Path, secret: bytes) -> 
         "expires_at": now + 3600,
         "version": 1,
     }
+
+    # Stała serializacja (żeby podpis był deterministyczny)
     raw = json.dumps(payload, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
     flag_path.write_bytes(raw)
 
-    digest = hmac.new(secret, raw, hashlib.sha256).hexdigest()
+    mac = hmac.new(secret, raw, hashlib.sha256).digest()
+    sig_b64 = base64.b64encode(mac).decode("ascii")
 
-    sig_obj: dict[str, Any] = {
-        # najbardziej typowe pola
-        "algo": "HMAC-SHA256",
-        "encoding": "hex",
-        "signature": digest,
-        # dodatkowe aliasy (na wypadek gdy walidator szuka innej nazwy)
-        "sig": digest,
-        "hmac": digest,
-        # czasem walidatory chcą też hash samego payloadu
-        "payload_sha256": hashlib.sha256(raw).hexdigest(),
-        "ts": now,
+    # Minimalny format, który często bywa oczekiwany:
+    #   {"alg":"HMAC-SHA256","sig":"base64:<...>"}
+    sig_obj = {
+        "alg": "HMAC-SHA256",
+        "sig": f"base64:{sig_b64}",
     }
     signature_path.write_text(json.dumps(sig_obj, ensure_ascii=False), encoding="utf-8")
 
@@ -121,7 +120,6 @@ def test_cloud_cli_serves_core_services(tmp_path: Path) -> None:
     _write_signed_flag(flag_path, signature_path, secret)
 
     env = os.environ.copy()
-    # nadal ustawiamy secret w env (bo runtime może go potrzebować do weryfikacji HMAC)
     env["CLOUD_RUNTIME_FLAG_SECRET"] = f"base64:{base64.b64encode(secret).decode('ascii')}"
 
     # config cloud dla uruchomienia
@@ -167,8 +165,7 @@ def test_cloud_cli_serves_core_services(tmp_path: Path) -> None:
     )
 
     try:
-        # czekamy maks 30s (120 * 0.25)
-        for _ in range(120):
+        for _ in range(120):  # 30s
             if ready_file.exists():
                 break
             if proc.poll() is not None:
