@@ -88,11 +88,17 @@ def ensure_libgl_available(cache_root: Path | None = None) -> Path | None:
 
     # Windows runners don't have dpkg-deb; this bootstrap is Linux-only.
     if os.name == "nt":
-        pytest.skip("libGL check uses dpkg-deb (Linux-only); skipping on Windows runners.")
+        pytest.skip(
+            "libGL check uses dpkg-deb (Linux-only); skipping on Windows runners.",
+            allow_module_level=True,
+        )
 
     # Some Linux images may not have dpkg-deb available.
     if shutil.which("dpkg-deb") is None:
-        pytest.skip("dpkg-deb not available; skipping libGL bootstrap.")
+        pytest.skip(
+            "dpkg-deb not available; skipping libGL bootstrap.",
+            allow_module_level=True,
+        )
 
     if _has_libgl():
         return None
@@ -108,7 +114,9 @@ def ensure_libgl_available(cache_root: Path | None = None) -> Path | None:
 
         should_extract = not marker.exists()
         if not should_extract:
-            if not lib_dir.exists() or any(not (lib_dir / name).exists() for name in expected_files):
+            if not lib_dir.exists() or any(
+                not (lib_dir / name).exists() for name in expected_files
+            ):
                 should_extract = True
 
         if should_extract:
@@ -132,7 +140,9 @@ def ensure_libgl_available(cache_root: Path | None = None) -> Path | None:
     lib_dir_str = str(lib_dir)
     paths = [p for p in current.split(":") if p]
     if lib_dir_str not in paths:
-        os.environ["LD_LIBRARY_PATH"] = ":".join([lib_dir_str, *paths]) if paths else lib_dir_str
+        os.environ["LD_LIBRARY_PATH"] = (
+            ":".join([lib_dir_str, *paths]) if paths else lib_dir_str
+        )
 
     try:
         for dependency in (
