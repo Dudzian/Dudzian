@@ -2,8 +2,6 @@
 from __future__ import annotations
 
 import base64
-import hashlib
-import hmac
 import json
 import os
 import signal
@@ -15,6 +13,8 @@ from pathlib import Path
 from typing import Any
 
 import pytest
+
+from bot_core.security.signing import build_hmac_signature, canonical_json_bytes
 
 # --- Importy z bot_core.cloud (z fallbackiem na CloudRuntimeState) ---
 try:
@@ -48,19 +48,11 @@ def _write_signed_flag(flag_path: Path, signature_path: Path, secret: bytes) -> 
     }
 
     # Stała serializacja (żeby podpis był deterministyczny)
-    raw = json.dumps(payload, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
+    raw = canonical_json_bytes(payload)
     flag_path.write_bytes(raw)
 
-    mac = hmac.new(secret, raw, hashlib.sha256).digest()
-    sig_b64 = base64.b64encode(mac).decode("ascii")
-
-    # Minimalny format, który często bywa oczekiwany:
-    #   {"alg":"HMAC-SHA256","sig":"base64:<...>"}
-    sig_obj = {
-        "alg": "HMAC-SHA256",
-        "sig": f"base64:{sig_b64}",
-    }
-    signature_path.write_text(json.dumps(sig_obj, ensure_ascii=False), encoding="utf-8")
+    signature = build_hmac_signature(payload, key=secret)
+    signature_path.write_text(json.dumps(signature, ensure_ascii=False), encoding="utf-8")
 
 
 def _terminate_process(proc: subprocess.Popen[str], timeout_s: float = 10.0) -> None:
