@@ -113,6 +113,7 @@ def test_cloud_cli_serves_core_services(tmp_path: Path) -> None:
 
     env = os.environ.copy()
     env["CLOUD_RUNTIME_FLAG_SECRET"] = f"base64:{base64.b64encode(secret).decode('ascii')}"
+    env.setdefault("BOT_CORE_LICENSE_PUBLIC_KEY", "11" * 32)
 
     # config cloud dla uruchomienia
     config_path = tmp_path / "cloud.yaml"
@@ -165,6 +166,7 @@ def test_cloud_cli_serves_core_services(tmp_path: Path) -> None:
             time.sleep(0.25)
 
         if not ready_file.exists():
+            _terminate_process(proc)
             output = _read_available_stdout(proc)
             raise AssertionError(
                 f"Serwer cloud nie zasygnalizował gotowości (brak {ready_file}):\n{output}"
