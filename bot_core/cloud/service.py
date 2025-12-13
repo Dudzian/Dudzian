@@ -4,6 +4,11 @@ from __future__ import annotations
 
 import json
 import logging
+import os
+import platform
+import sys
+import time
+from importlib import metadata
 import threading
 from datetime import datetime, timezone
 from pathlib import Path
@@ -231,12 +236,18 @@ class CloudRuntimeService:
 
     def _build_ready_payload(self) -> dict[str, object]:
         security_cfg = self._config.security
+        try:
+            pkg_version = metadata.version("dudzian-bot")
+        except metadata.PackageNotFoundError:  # pragma: no cover - środowiska deweloperskie
+            pkg_version = "unknown"
+
         return {
             "event": "ready",
             "address": self._address,
             "runtime": {
                 "config": str(self._config.runtime.config_path),
                 "entrypoint": self._config.runtime.entrypoint,
+                "mode": "active",
             },
             "security": {
                 "handshakeRequired": bool(security_cfg.require_handshake),
@@ -245,6 +256,13 @@ class CloudRuntimeService:
             "marketplace": {
                 "autoReload": bool(self._config.marketplace.auto_reload),
                 "refreshInterval": int(self._config.marketplace.refresh_interval_seconds),
+            },
+            "meta": {
+                "pid": os.getpid(),
+                "platform": platform.platform(),
+                "python_version": sys.version,
+                "timestamp": int(time.time()),
+                "package_version": pkg_version,
             },
         }
 

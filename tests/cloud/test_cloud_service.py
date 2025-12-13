@@ -97,11 +97,15 @@ def _read_available_stdout(proc: subprocess.Popen[str]) -> str:
 
 
 # --- Tests ---
-@pytest.mark.integration
-@pytest.mark.requires_trading_stubs
-def test_cloud_cli_serves_core_services(tmp_path: Path) -> None:
+def _invoke_cloud_cli(
+    tmp_path: Path, *, ci_smoke: bool, expect_mode: str
+) -> dict[str, Any]:
     """
-    Uruchamia scripts/run_cloud_service.py i czeka aż zapisze ready-file.
+    Startuje scripts/run_cloud_service.py i czeka aż zapisze ready-file.
+
+    Tryb smoke jest używany na Windows, żeby CI nie blokowało się na środowiskach,
+    które wymagają pełnego GUI/giełdy. Nadal weryfikujemy parsowanie flag, ładowanie
+    configu, walidację podpisanej flagi i emiter gotowości.
     """
     # flag + podpis
     flag_path = Path("var/runtime/cloud_flag.json")
@@ -144,16 +148,21 @@ def test_cloud_cli_serves_core_services(tmp_path: Path) -> None:
     if os.name == "nt":
         creationflags = subprocess.CREATE_NEW_PROCESS_GROUP  # type: ignore[attr-defined]
 
+    cmd = [
+        sys.executable,
+        "-u",
+        "scripts/run_cloud_service.py",
+        "--config",
+        str(config_path),
+        "--ready-file",
+        str(ready_file),
+        "--emit-stdout",
+    ]
+    if ci_smoke:
+        cmd.append("--ci-smoke")
+
     proc = subprocess.Popen(
-        [
-            sys.executable,
-            "scripts/run_cloud_service.py",
-            "--config",
-            str(config_path),
-            "--ready-file",
-            str(ready_file),
-            "--ci-smoke",
-        ],
+        cmd,
         stdout=subprocess.PIPE,
         stderr=subprocess.STDOUT,
         text=True,
@@ -178,9 +187,37 @@ def test_cloud_cli_serves_core_services(tmp_path: Path) -> None:
 
         data = json.loads(ready_file.read_text(encoding="utf-8"))
         assert isinstance(data, dict)
+        assert data.get("event") == "ready"
+        runtime_cfg = data.get("runtime", {})
+        assert runtime_cfg.get("mode") == expect_mode
+        assert runtime_cfg.get("config") == str(Path("config/runtime.yaml").resolve())
+        assert runtime_cfg.get("entrypoint") == "trading_gui"
+        meta = data.get("meta", {})
+        assert isinstance(meta.get("pid"), int)
+        assert isinstance(meta.get("timestamp"), int)
+        assert meta.get("platform")
+        assert meta.get("python_version")
+        assert meta.get("package_version")
+
+        return data
 
     finally:
         _terminate_process(proc)
+
+
+@pytest.mark.integration
+@pytest.mark.requires_trading_stubs
+def test_cloud_cli_smoke_ready(tmp_path: Path) -> None:
+    data = _invoke_cloud_cli(tmp_path, ci_smoke=True, expect_mode="smoke")
+    assert data["address"] == "ci-smoke"
+
+
+@pytest.mark.integration
+@pytest.mark.requires_trading_stubs
+@pytest.mark.skipif(os.name == "nt", reason="Pełne uruchomienie jest niestabilne na Windows CI")
+def test_cloud_cli_serves_core_services(tmp_path: Path) -> None:
+    data = _invoke_cloud_cli(tmp_path, ci_smoke=False, expect_mode="active")
+    assert data["event"] == "ready"
 
 
 def test_cloud_runtime_state_importable() -> None:
