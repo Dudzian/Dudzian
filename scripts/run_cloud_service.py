@@ -6,8 +6,11 @@ import argparse
 import json
 import logging
 import os
+import platform
 import signal
 import sys
+import time
+from importlib import metadata
 from pathlib import Path
 from typing import Iterable, Mapping, Sequence
 
@@ -78,7 +81,11 @@ def _parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
 def _emit_ready(payload: Mapping[str, object], *, ready_file: str | None, emit_stdout: bool) -> None:
     serialized = json.dumps(payload, ensure_ascii=False)
     if ready_file:
-        Path(ready_file).expanduser().write_text(serialized, encoding="utf-8")
+        path = Path(ready_file).expanduser()
+        path.parent.mkdir(parents=True, exist_ok=True)
+        tmp_path = path.with_name(f"{path.name}.tmp")
+        tmp_path.write_text(serialized, encoding="utf-8")
+        tmp_path.replace(path)
     if emit_stdout:
         print(serialized, flush=True)
 
@@ -111,6 +118,11 @@ def main(argv: Sequence[str] | None = None) -> int:
         # wymagające pełnej konfiguracji giełd/GUI. W trybie smoke pomijamy
         # bootstrap runtime i tylko emitujemy gotowość, żeby test mógł
         # zweryfikować CLI bez ryzyka zawieszenia się na walidacji środowiska.
+        try:
+            pkg_version = metadata.version("dudzian-bot")
+        except metadata.PackageNotFoundError:  # pragma: no cover - środowiska deweloperskie
+            pkg_version = "unknown"
+
         payload = {
             "event": "ready",
             "address": "ci-smoke",
@@ -118,6 +130,13 @@ def main(argv: Sequence[str] | None = None) -> int:
                 "config": str(config.runtime.config_path),
                 "entrypoint": config.runtime.entrypoint,
                 "mode": "smoke",
+            },
+            "meta": {
+                "timestamp": int(time.time()),
+                "pid": os.getpid(),
+                "platform": platform.platform(),
+                "python_version": sys.version,
+                "package_version": pkg_version,
             },
         }
         _emit_ready(payload, ready_file=args.ready_file, emit_stdout=args.emit_stdout)
