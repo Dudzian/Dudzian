@@ -114,6 +114,9 @@ def test_cloud_cli_serves_core_services(tmp_path: Path) -> None:
     env = os.environ.copy()
     env["CLOUD_RUNTIME_FLAG_SECRET"] = f"base64:{base64.b64encode(secret).decode('ascii')}"
     env.setdefault("BOT_CORE_LICENSE_PUBLIC_KEY", "11" * 32)
+    # Windows runners w GitHub Actions potrafią buforować stdout pythonowego
+    # subprocessu, co utrudnia diagnostykę przy ewentualnym błędzie startu.
+    env.setdefault("PYTHONUNBUFFERED", "1")
 
     # config cloud dla uruchomienia
     config_path = tmp_path / "cloud.yaml"
@@ -149,6 +152,7 @@ def test_cloud_cli_serves_core_services(tmp_path: Path) -> None:
             str(config_path),
             "--ready-file",
             str(ready_file),
+            "--ci-smoke",
         ],
         stdout=subprocess.PIPE,
         stderr=subprocess.STDOUT,
