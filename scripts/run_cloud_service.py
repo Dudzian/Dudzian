@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import json
 import logging
+import os
 import signal
 import sys
 from pathlib import Path
@@ -76,6 +77,11 @@ def _emit_ready(payload: Mapping[str, object], *, ready_file: str | None, emit_s
 
 def main(argv: Sequence[str] | None = None) -> int:
     args = _parse_args(argv)
+    # Środowiska CI (szczególnie Windows) mogą nie przekazywać zmiennej
+    # BOT_CORE_LICENSE_PUBLIC_KEY pomimo ustawienia w teście. Ustawiamy
+    # deterministyczny stub tylko wtedy, gdy klucz nie jest obecny, aby
+    # nie wpływać na produkcję ani lokalne konfiguracje licencyjne.
+    os.environ.setdefault("BOT_CORE_LICENSE_PUBLIC_KEY", "11" * 32)
     _configure_logging(args.log_level)
     try:
         config = load_cloud_server_config(args.config)
