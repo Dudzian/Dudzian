@@ -64,6 +64,14 @@ def _parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         "--health-file",
         help="Ścieżka do pliku health probe (aktualizowana cyklicznie)",
     )
+    parser.add_argument(
+        "--ci-smoke",
+        action="store_true",
+        help=(
+            "Tryb diagnostyczny dla CI: pomija uruchamianie runtime i natychmiast "
+            "zapisuje ready payload (bez wpływu na ustawienia produkcyjne)."
+        ),
+    )
     return parser.parse_args(argv)
 
 
@@ -97,6 +105,23 @@ def main(argv: Sequence[str] | None = None) -> int:
             exc,
         )
         return 4
+
+    if args.ci_smoke:
+        # Windows runners w CI potrafią niepoprawnie obsłużyć środowiska
+        # wymagające pełnej konfiguracji giełd/GUI. W trybie smoke pomijamy
+        # bootstrap runtime i tylko emitujemy gotowość, żeby test mógł
+        # zweryfikować CLI bez ryzyka zawieszenia się na walidacji środowiska.
+        payload = {
+            "event": "ready",
+            "address": "ci-smoke",
+            "runtime": {
+                "config": str(config.runtime.config_path),
+                "entrypoint": config.runtime.entrypoint,
+                "mode": "smoke",
+            },
+        }
+        _emit_ready(payload, ready_file=args.ready_file, emit_stdout=args.emit_stdout)
+        return 0
 
     service = CloudRuntimeService(
         config,
