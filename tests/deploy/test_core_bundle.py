@@ -6,6 +6,8 @@ import os
 import subprocess
 import sys
 import tarfile
+import time
+import uuid
 from pathlib import Path
 from typing import Dict, List
 
@@ -313,16 +315,86 @@ def _base_cli_args(env: Dict[str, Path]) -> List[str]:
 
 
 def _is_case_sensitive_filesystem(base_dir: Path) -> bool:
-    probe_dir = base_dir / "casecheck"
-    probe_dir.mkdir(exist_ok=True)
-    first = probe_dir / "a"
-    second = probe_dir / "A"
-    first.write_text("one", encoding="utf-8")
+    probe_dir = base_dir / f"casecheck_{uuid.uuid4().hex}"
+    probe_dir.mkdir()
+
+    first = probe_dir / "case_sensitivity_probe"
+    second = probe_dir / "CASE_SENSITIVITY_PROBE"
+
     try:
-        second.write_text("two", encoding="utf-8")
-    except FileExistsError:
-        return False
-    return True
+        first.write_text("one", encoding="utf-8")
+        try:
+            with second.open("x", encoding="utf-8") as handle:
+                handle.write("two")
+        except FileExistsError:
+            return False
+
+        return (
+            first.read_text(encoding="utf-8") == "one"
+            and second.read_text(encoding="utf-8") == "two"
+        )
+    finally:
+        def _retry_remove(path: Path, *, is_dir: bool = False) -> None:
+            attempts = 5
+            for attempt in range(attempts):
+                try:
+                    if is_dir:
+                        path.rmdir()
+                    else:
+                        path.unlink()
+                    return
+                except FileNotFoundError:
+                    return
+                except OSError:
+                    if attempt == attempts - 1:
+                        raise
+                    time.sleep(0.05)
+
+        for path in (second, first):
+            _retry_remove(path)
+
+        _retry_remove(probe_dir, is_dir=True)
+
+
+def test_is_case_sensitive_filesystem_cleans_up(tmp_path):
+    _is_case_sensitive_filesystem(tmp_path)
+
+    assert not list(tmp_path.glob("casecheck_*"))
+
+
+def test_is_case_sensitive_filesystem_matches_filesystem_behavior(tmp_path):
+    case_sensitive = _is_case_sensitive_filesystem(tmp_path)
+
+    probe_dir = tmp_path / "casecheck_behavior"
+    probe_dir.mkdir()
+    first = probe_dir / "casefile"
+    second = probe_dir / "CASEFILE"
+
+    try:
+        first.write_text("one", encoding="utf-8")
+        try:
+            with second.open("x", encoding="utf-8") as handle:
+                handle.write("two")
+            created_second = True
+        except FileExistsError:
+            created_second = False
+
+        if case_sensitive:
+            assert created_second is True
+            assert first.read_text(encoding="utf-8") == "one"
+            assert second.read_text(encoding="utf-8") == "two"
+        else:
+            assert created_second is False
+    finally:
+        for path in (second, first):
+            try:
+                path.unlink()
+            except FileNotFoundError:
+                pass
+        try:
+            probe_dir.rmdir()
+        except OSError:
+            pass
 
 
 def test_build_from_cli_rejects_config_path_traversal(tmp_path):
