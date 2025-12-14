@@ -3,6 +3,7 @@ import hashlib
 import hmac
 import json
 import os
+import re
 import subprocess
 import sys
 import tarfile
@@ -1553,6 +1554,8 @@ def test_build_from_cli_rejects_resource_directory_casefold_contents(tmp_path):
     (nested / "Guide.txt").write_text("one", encoding="utf-8")
     (nested / "guide.TXT").write_text("two", encoding="utf-8")
 
+    case_sensitive = _is_case_sensitive_filesystem(extras_dir)
+
     config_file = tmp_path / "core.yaml"
     config_file.write_text("risk: manual", encoding="utf-8")
 
@@ -1563,7 +1566,16 @@ def test_build_from_cli_rejects_resource_directory_casefold_contents(tmp_path):
         f"extras={extras_dir}",
     ]
 
-    with pytest.raises(ValueError, match="case-insensitive filesystem"):
+    if case_sensitive:
+        with pytest.raises(ValueError) as excinfo:
+            build_core_bundle_from_cli(args)
+
+        assert re.search(
+            r"(case[- ]?insensitive|casefold|case[- ]?collision|collid(e|ing))",
+            str(excinfo.value),
+            re.IGNORECASE,
+        )
+    else:
         build_core_bundle_from_cli(args)
 
 def test_build_from_cli_rejects_empty_fingerprint_placeholder(tmp_path):
