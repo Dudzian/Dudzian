@@ -381,7 +381,7 @@ def _create_cached_source(adapter: ExchangeAdapter, environment: EnvironmentConf
     enable_snapshots = True
     namespace = resolve_cache_namespace(environment)
     offline_mode = bool(getattr(environment, "offline_mode", False))
-    allow_network_upstream = not offline_mode or True
+    allow_network_upstream = not offline_mode
     if data_source_cfg is not None:
         enable_snapshots = bool(getattr(data_source_cfg, "enable_snapshots", True))
     if offline_mode:
