@@ -6813,6 +6813,10 @@ class AutoTrader:
         if candidate is None:
             return None
         snapshot = self._build_risk_snapshot(candidate.risk_profile)
+        runtime_metadata = {
+            "environment": self._resolve_runtime_environment_name(),
+            "strategy": self._resolve_runtime_strategy_name(),
+        }
         try:
             if self._profiling_enabled:
                 with self._profile_section("decision.evaluate") as profiler:
@@ -6820,10 +6824,7 @@ class AutoTrader:
                         candidate,
                         DecisionContext(
                             risk_snapshot=snapshot,
-                            runtime={
-                                "environment": self._environment,
-                                "strategy": self._strategy_name,
-                            },
+                            runtime=runtime_metadata,
                         ),
                     )
                 if profiler is not None:
@@ -6833,10 +6834,7 @@ class AutoTrader:
                     candidate,
                     DecisionContext(
                         risk_snapshot=snapshot,
-                        runtime={
-                            "environment": self._environment,
-                            "strategy": self._strategy_name,
-                        },
+                        runtime=runtime_metadata,
                     ),
                 )
         except Exception as exc:  # pragma: no cover - defensywne logowanie
@@ -6846,6 +6844,47 @@ class AutoTrader:
             )
             return None
         return evaluation
+
+    def _resolve_runtime_environment_name(self) -> str:
+        """Return a string environment identifier resilient to missing attributes.
+
+        The decision orchestrator expects a human-readable string.  In trimmed
+        or test setups some runtime attributes are not initialised, so we
+        cascade through known sources, coercing any present value to ``str`` and
+        falling back to a neutral placeholder when nothing is available.
+        """
+
+        for candidate in (
+            lambda: getattr(self, "_environment", None),
+            lambda: getattr(self, "_environment_name", None),
+        ):
+            try:
+                value = candidate()
+            except AttributeError:
+                continue
+            except Exception:
+                # Avoid surprising errors from exotic descriptor accessors.
+                continue
+            if value is not None:
+                return str(value)
+        return "unknown"
+
+    def _resolve_runtime_strategy_name(self) -> str:
+        """Return a string strategy identifier resilient to missing attributes."""
+
+        for candidate in (
+            lambda: getattr(self, "_strategy_name", None),
+            lambda: getattr(self, "current_strategy", None),
+        ):
+            try:
+                value = candidate()
+            except AttributeError:
+                continue
+            except Exception:
+                continue
+            if value is not None:
+                return str(value)
+        return "unknown"
 
     def _map_regime_to_signal(
         self,
