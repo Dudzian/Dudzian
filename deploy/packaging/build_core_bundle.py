@@ -821,6 +821,7 @@ def _parse_config_arguments(values: Iterable[str]) -> Dict[str, Path]:
 def _resolve_paths(values: Iterable[str], *, label: str) -> List[Path]:
     result: List[Path] = []
     seen: set[Path] = set()
+    seen_casefold_paths: Dict[str, tuple[Path, str, str]] = {}
     seen_names: Dict[str, Path] = {}
     for raw in values:
         source_path = Path(raw).expanduser()
@@ -829,9 +830,25 @@ def _resolve_paths(values: Iterable[str], *, label: str) -> List[Path]:
         _ensure_no_symlinks(source_path, label=label)
         path = source_path.resolve()
         _ensure_windows_safe_tree(path, label=label)
+        casefold_key = str(path).casefold()
+        existing_casefold = seen_casefold_paths.get(casefold_key)
+        if existing_casefold is not None:
+            existing_path, existing_raw, existing_raw_casefold = existing_casefold
+            raw_path = str(source_path)
+            if (
+                raw_path.casefold() == existing_raw_casefold
+                and raw_path != existing_raw
+                and path.samefile(existing_path)
+            ):
+                raise ValueError(
+                    f"{label} names would conflict on a case-insensitive filesystem: "
+                    f"{existing_raw} vs {source_path}"
+                )
         if path in seen:
             raise ValueError(f"Duplicate {label} entry: {path}")
         seen.add(path)
+        raw_path = str(source_path)
+        seen_casefold_paths[casefold_key] = (path, raw_path, raw_path.casefold())
         name_key = path.name.casefold()
         existing = seen_names.get(name_key)
         if existing is not None:
