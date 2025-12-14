@@ -32,7 +32,11 @@ from bot_core.risk.simulation import (
     load_orders_from_parquet,
     run_profile_scenario,
 )
-from bot_core.decision.models import ModelSelectionDetail, ModelSelectionMetadata
+from bot_core.decision.models import (
+    DecisionEvaluation,
+    ModelSelectionDetail,
+    ModelSelectionMetadata,
+)
 from bot_core.observability.risk import RiskObservabilitySink, RiskAlertSink
 
 _LOGGER = logging.getLogger(__name__)
@@ -1326,7 +1330,10 @@ class ThresholdRiskEngine(RiskEngine):
         try:
             evaluation = adapter.evaluate(
                 candidate,
-                adapter.build_context(snapshot=snapshot, account_id=account.account_id),
+                adapter.build_context(
+                    snapshot=snapshot,
+                    account_id=self._resolve_runtime_account_id(account),
+                ),
             )
         except Exception:
             _LOGGER.exception("DecisionOrchestrator: błąd ewaluacji")
@@ -1341,6 +1348,72 @@ class ThresholdRiskEngine(RiskEngine):
             adapter.serialize_evaluation(evaluation),
             build_stats("evaluated", attempted=True),
         )
+
+    @staticmethod
+    def _resolve_runtime_account_id(account: object) -> str | None:
+        """Próbuje defensywnie wyznaczyć identyfikator konta do runtime decyzji.
+
+        Zwraca tekstowy identyfikator, jeśli uda się go odczytać z popularnych pól,
+        w przeciwnym razie ``None`` (brak pola "account" w runtime
+        DecisionOrchestratora). Podejście best-effort jest spójne z resolverami
+        środowiska/strategii w AutoTrader – brak wartości nie powinien blokować
+        ewaluacji biznesowej.
+        """
+
+        candidate_fields: tuple[str, ...] = (
+            "account_id",
+            "id",
+            "account",
+            "account_ref",
+            "account_key",
+        )
+
+        def _safe_getattr(obj: object, name: str) -> object | None:
+            try:
+                return getattr(obj, name)
+            except AttributeError:
+                return None
+            except Exception:
+                return None
+
+        def _coerce(value: object | None) -> str | None:
+            if value is None:
+                return None
+            try:
+                return str(value)
+            except Exception:
+                return None
+
+        # Preferowane pola na obiekcie (np. AccountSnapshot, SimpleNamespace)
+        for attr in candidate_fields:
+            resolved = _coerce(_safe_getattr(account, attr))
+            if resolved:
+                return resolved
+
+        # Obiekty typu Mapping mogą przechowywać identyfikator jako klucz
+        if isinstance(account, Mapping):
+            for key in candidate_fields:
+                try:
+                    resolved = _coerce(account.get(key))
+                except Exception:
+                    resolved = None
+                if resolved:
+                    return resolved
+
+        metadata = _safe_getattr(account, "metadata")
+        if isinstance(metadata, Mapping):
+            try:
+                resolved = _coerce(metadata.get("account_id"))
+            except Exception:
+                resolved = None
+            if resolved:
+                return resolved
+
+        _LOGGER.debug(
+            "DecisionOrchestrator: nie udało się wyznaczyć account_id z obiektu %s",
+            type(account).__name__,
+        )
+        return None
 
     def _extract_candidate_payload(
         self, metadata: Mapping[str, object] | None
