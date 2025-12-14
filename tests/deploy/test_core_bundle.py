@@ -1111,8 +1111,20 @@ def test_build_from_cli_rejects_casefold_daemon_directory_contents(tmp_path):
 
     colliding = tmp_path / "daemon-colliding"
     colliding.mkdir()
-    (colliding / "Botd").write_text("primary", encoding="utf-8")
-    (colliding / "botd").write_text("secondary", encoding="utf-8")
+    botd_primary = colliding / "Botd"
+    botd_secondary = colliding / "botd"
+    botd_primary.write_text("primary", encoding="utf-8")
+    botd_secondary.write_text("secondary", encoding="utf-8")
+
+    if hasattr(botd_primary, "samefile"):
+        try:
+            same_file = botd_primary.samefile(botd_secondary)
+        except FileNotFoundError:
+            same_file = False
+        if same_file:
+            pytest.skip(
+                "filesystem is case-insensitive; cannot create case-colliding directory entries"
+            )
 
     args = _base_cli_args(env) + ["--config", f"core.yaml={config_file}"]
     args[args.index("--daemon") + 1] = str(colliding)
