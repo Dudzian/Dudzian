@@ -74,16 +74,6 @@ def _build_accept_encoding_values() -> list[str]:
     return values
 
 
-def _build_default_headers() -> dict[str, str]:
-    return {
-        "User-Agent": "bot-core/stream/1.0",
-        "Accept-Encoding": ", ".join(_build_accept_encoding_values()),
-    }
-
-
-_DEFAULT_HEADERS = _build_default_headers()
-
-
 def _iter_header_entries(value: object) -> Iterable[str]:
     if value is None:
         return ()
@@ -110,6 +100,42 @@ def _iter_header_entries(value: object) -> Iterable[str]:
             items.extend(_iter_header_entries(item))
         return tuple(items)
     return (str(value),)
+
+
+def _normalize_accept_encoding(value: object | None) -> str:
+    tokens: list[str] = []
+    seen: set[str] = set()
+    entries = _iter_header_entries(value) if value is not None else _build_accept_encoding_values()
+    for entry in entries:
+        for raw_item in str(entry).split(","):
+            token = raw_item.split(";", 1)[0].strip()
+            if not token:
+                continue
+            lowered = token.lower()
+            if lowered in seen:
+                continue
+            seen.add(lowered)
+            tokens.append(token)
+
+    if not tokens:
+        for token in _build_accept_encoding_values():
+            lowered = token.lower()
+            if lowered in seen:
+                continue
+            seen.add(lowered)
+            tokens.append(token)
+
+    return ", ".join(tokens)
+
+
+def _build_default_headers() -> dict[str, str]:
+    return {
+        "User-Agent": "bot-core/stream/1.0",
+        "Accept-Encoding": _normalize_accept_encoding(None),
+    }
+
+
+_DEFAULT_HEADERS = _build_default_headers()
 _DEFAULT_POLL_INTERVAL = 0.5
 _DEFAULT_TIMEOUT = 10.0
 _DEFAULT_MAX_RETRIES = 3
@@ -537,7 +563,7 @@ class LocalLongPollStream(Iterable[StreamBatch]):
                     continue
                 self._params[str(key)] = value
 
-        self._headers: MutableMapping[str, str] = _build_default_headers()
+        self._headers: MutableMapping[str, str] = dict(_DEFAULT_HEADERS)
         if headers:
             for key, value in headers.items():
                 self._headers[str(key)] = str(value)
@@ -1040,6 +1066,7 @@ class LocalLongPollStream(Iterable[StreamBatch]):
         if body_payload:
             data, content_type = self._encode_body_payload(body_payload)
         headers = dict(self._headers)
+        headers["Accept-Encoding"] = _normalize_accept_encoding(headers.get("Accept-Encoding"))
         if content_type and "Content-Type" not in headers:
             headers["Content-Type"] = content_type
         return Request(url, headers=headers, data=data, method=self._http_method)
