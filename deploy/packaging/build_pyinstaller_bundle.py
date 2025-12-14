@@ -1244,7 +1244,14 @@ def _load_metadata_from_dotenv(paths: Iterable[str] | None) -> dict[str, object]
     return metadata
 
 
-def _run_pyinstaller(entrypoint: Path, workdir: Path, binary_name: str, *, hidden_imports: Iterable[str]) -> Path:
+def _run_pyinstaller(
+    entrypoint: Path,
+    workdir: Path,
+    binary_name: str,
+    *,
+    hidden_imports: Iterable[str],
+    platform: str,
+) -> Path:
     output_dir = workdir / "pyinstaller"
     build_dir = output_dir / "build"
     dist_dir = output_dir / "dist"
@@ -1267,7 +1274,8 @@ def _run_pyinstaller(entrypoint: Path, workdir: Path, binary_name: str, *, hidde
 
     subprocess.run(args, check=True)
 
-    extension = ".exe" if sys.platform.startswith("win") else ""
+    platform = platform.lower()
+    extension = ".exe" if platform.startswith("win") else ""
     candidate = dist_dir / binary_name
     if candidate.is_dir():
         executable = candidate / f"{binary_name}{extension}"
@@ -1332,7 +1340,13 @@ def build_bundle(args: argparse.Namespace) -> Path:
 
     hidden_imports = args.hidden_import or []
     binary_name = args.runtime_name or "bot_core_runtime"
-    runtime_executable = _run_pyinstaller(entrypoint, workdir, binary_name, hidden_imports=hidden_imports)
+    runtime_executable = _run_pyinstaller(
+        entrypoint,
+        workdir,
+        binary_name,
+        hidden_imports=hidden_imports,
+        platform=args.platform,
+    )
     runtime_dest = layout.daemon_dir / runtime_executable.name
     artifacts.append(_copy_file(runtime_executable, runtime_dest))
 
