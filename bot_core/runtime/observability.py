@@ -229,7 +229,12 @@ def build_alert_channels(
             continue
 
         channels[channel.name] = channel
-        router.register_channel(channel)
+        # Kompatybilność: starsze routery miały register(), nowsze integracje mogły wołać register_channel().
+        register_fn = getattr(router, "register_channel", None)
+        if callable(register_fn):
+            register_fn(channel)
+        else:
+            router.register(channel)
 
     if skipped_offline:
         _LOGGER.info(
