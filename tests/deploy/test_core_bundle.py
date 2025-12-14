@@ -312,6 +312,19 @@ def _base_cli_args(env: Dict[str, Path]) -> List[str]:
     ]
 
 
+def _is_case_sensitive_filesystem(base_dir: Path) -> bool:
+    probe_dir = base_dir / "casecheck"
+    probe_dir.mkdir(exist_ok=True)
+    first = probe_dir / "a"
+    second = probe_dir / "A"
+    first.write_text("one", encoding="utf-8")
+    try:
+        second.write_text("two", encoding="utf-8")
+    except FileExistsError:
+        return False
+    return True
+
+
 def test_build_from_cli_rejects_config_path_traversal(tmp_path):
     env = _create_basic_cli_environment(tmp_path)
     config_file = tmp_path / "core.yaml"
@@ -1382,13 +1395,16 @@ def test_build_from_cli_rejects_duplicate_resources(tmp_path):
 def test_build_from_cli_rejects_resource_directory_casefold_collision(tmp_path):
     env = _create_basic_cli_environment(tmp_path)
 
+    case_sensitive = _is_case_sensitive_filesystem(tmp_path)
+
     extras_dir = tmp_path / "extras"
     extras_dir.mkdir()
     (extras_dir / "notes.txt").write_text("one", encoding="utf-8")
 
     extras_dir_alt = tmp_path / "Extras"
-    extras_dir_alt.mkdir()
-    (extras_dir_alt / "notes.txt").write_text("two", encoding="utf-8")
+    if case_sensitive:
+        extras_dir_alt.mkdir()
+        (extras_dir_alt / "notes.txt").write_text("two", encoding="utf-8")
 
     config_file = tmp_path / "core.yaml"
     config_file.write_text("risk: manual", encoding="utf-8")
