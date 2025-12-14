@@ -995,12 +995,23 @@ def test_build_from_cli_rejects_config_file_with_control_character(tmp_path):
     env = _create_basic_cli_environment(tmp_path)
     bad_name = f"core\x1f.yaml"
     config_file = tmp_path / bad_name
-    config_file.write_text("risk: balanced", encoding="utf-8")
 
     args = _base_cli_args(env) + ["--config", f"core.yaml={config_file}"]
 
     with pytest.raises(ValueError, match="control character"):
         build_core_bundle_from_cli(args)
+
+
+@pytest.mark.skipif(sys.platform.startswith("win"), reason="'|' is invalid on Windows but accepted on POSIX")
+def test_build_from_cli_accepts_posix_config_file_with_windows_invalid_character(tmp_path):
+    env = _create_basic_cli_environment(tmp_path)
+    config_file = tmp_path / "core|ok.yaml"
+    config_file.write_text("risk: balanced", encoding="utf-8")
+
+    args = _base_cli_args(env) + ["--config", f"core.yaml={config_file}"]
+
+    destination = build_core_bundle_from_cli(args)
+    assert destination.exists()
 
 
 def test_build_from_cli_rejects_nested_config_entries(tmp_path):
