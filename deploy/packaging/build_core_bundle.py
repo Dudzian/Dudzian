@@ -731,6 +731,29 @@ def _normalize_bundle_relative(value: str) -> str:
     return normalized_path.as_posix()
 
 
+def _ensure_path_string_has_no_control_chars(path: Path, *, label: str) -> None:
+    """Reject control characters in any path component without filesystem access."""
+
+    ignored = {path.anchor, path.root, path.drive, "", os.sep, os.altsep}
+    for component in path.parts:
+        if component in ignored:
+            continue
+        control_char = next((ch for ch in component if ord(ch) < 32 or ord(ch) == 127), None)
+        if control_char is not None:
+            codepoint = ord(control_char)
+            raise ValueError(f"{label} contains control character U+{codepoint:04X}: {path}")
+
+
+def _ensure_windows_safe_path_string(path: Path, *, label: str) -> None:
+    """Validate path components for Windows compatibility without filesystem access."""
+
+    ignored = {path.anchor, path.root, path.drive, "", os.sep, os.altsep}
+    for component in path.parts:
+        if component in ignored:
+            continue
+        _ensure_windows_safe_component(component=component, label=label, context=str(path))
+
+
 def _parse_config_arguments(values: Iterable[str]) -> Dict[str, Path]:
     resolved: Dict[str, Path] = {}
     resolved_casefold: Dict[str, str] = {}
@@ -766,11 +789,15 @@ def _parse_config_arguments(values: Iterable[str]) -> Dict[str, Path]:
             raise ValueError("Config entry conflicts with auto-generated signature file: " f"{normalized_name}")
 
         source_path = Path(path_str).expanduser()
+        _ensure_path_string_has_no_control_chars(source_path, label=f"Config entry '{normalized_name}'")
+        if sys.platform.startswith("win"):
+            _ensure_windows_safe_path_string(source_path, label=f"Config entry '{normalized_name}'")
         if not source_path.exists():
             raise FileNotFoundError(source_path)
         _ensure_no_symlinks(source_path, label=f"Config entry '{normalized_name}'")
         path = source_path.resolve()
-        _ensure_windows_safe_tree(path, label=f"Config entry '{normalized_name}'")
+        if sys.platform.startswith("win"):
+            _ensure_windows_safe_tree(path, label=f"Config entry '{normalized_name}'")
         if not path.is_file():
             raise ValueError(f"Config entry '{normalized_name}' must reference a file: {path}")
         signature_name = f"{normalized_name}.sig"
