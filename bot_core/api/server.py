@@ -391,6 +391,9 @@ class DefaultAlertRouterStub:
     def register(self, channel: Any) -> None:  # pragma: no cover - brak kanałów w stubie
         del channel
 
+    def register_channel(self, channel: Any) -> None:  # pragma: no cover - alias zgodności
+        self.register(channel)
+
     def dispatch(self, message: AlertMessage) -> None:  # pragma: no cover - stub
         del message
 

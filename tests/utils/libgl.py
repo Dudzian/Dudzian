@@ -108,6 +108,8 @@ def ensure_libgl_available(cache_root: Path | None = None) -> Path | None:
 
     lib_dir = cache_root / "usr" / "lib" / "x86_64-linux-gnu"
 
+    allow_network = os.environ.get("ALLOW_NETWORK_TESTS") == "1"
+
     for url, filename, checksum, expected_files in _PACKAGES:
         deb_path = cache_root / filename
         marker = cache_root / f"{filename}.ok"
@@ -120,6 +122,28 @@ def ensure_libgl_available(cache_root: Path | None = None) -> Path | None:
                 should_extract = True
 
         if should_extract:
+            if deb_path.exists():
+                cached_digest = hashlib.sha256(deb_path.read_bytes()).hexdigest()
+                if cached_digest != checksum:
+                    deb_path.unlink(missing_ok=True)
+                    if not allow_network:
+                        pytest.skip(
+                            "libGL bootstrap wymaga pobrania paczek z internetu; "
+                            "tryb offline w CI celowo pomija download.",
+                            allow_module_level=True,
+                        )
+                else:
+                    lib_dir = _extract_deb(deb_path, cache_root)
+                    marker.write_text(str(lib_dir))
+                    continue
+
+            if not allow_network:
+                pytest.skip(
+                    "libGL bootstrap wymaga pobrania paczek z internetu; "
+                    "tryb offline w CI celowo pomija download.",
+                    allow_module_level=True,
+                )
+
             _download_deb(url, deb_path, checksum)
             lib_dir = _extract_deb(deb_path, cache_root)
             marker.write_text(str(lib_dir))
