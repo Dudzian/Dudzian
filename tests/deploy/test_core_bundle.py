@@ -1267,8 +1267,21 @@ def test_build_from_cli_rejects_casefold_ui_directory_contents(tmp_path):
 
     colliding = tmp_path / "ui-colliding"
     colliding.mkdir()
-    (colliding / "QtApp").write_text("primary", encoding="utf-8")
-    (colliding / "qtapp").write_text("secondary", encoding="utf-8")
+    primary = colliding / "QtApp"
+    secondary = colliding / "qtapp"
+    primary.write_text("primary", encoding="utf-8")
+    secondary.write_text("secondary", encoding="utf-8")
+
+    # On case-insensitive filesystems (e.g. Windows), these names can resolve to the same entry,
+    # so we cannot create the intended collision test fixture.
+    try:
+        if primary.exists() and secondary.exists() and primary.samefile(secondary):
+            pytest.skip(
+                "filesystem is case-insensitive; cannot create case-colliding UI filenames"
+            )
+    except OSError:
+        # If the FS/OS cannot determine sameness, fall through to the normal assertion.
+        pass
 
     args = _base_cli_args(env) + ["--config", f"core.yaml={config_file}"]
     args[args.index("--ui") + 1] = str(colliding)
