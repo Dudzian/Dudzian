@@ -1,23 +1,70 @@
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
 
 import pytest
 import yaml
 
 from bot_core.exchanges.base import Environment
+from bot_core.runtime import bootstrap as bootstrap_module
 from bot_core.runtime.bootstrap import bootstrap_environment
+from bot_core.security.signing import build_hmac_signature
 
 from tests.test_runtime_bootstrap import (
     _BASE_CONFIG,
     _apply_license_stub,
-    _create_signed_document,
     _prepare_manager,
     _prepare_signed_license_bundle,
     _disable_exchange_health,
     _stub_license_validation,
 )
+
+
+def _sign_environment_for_test(
+    root: Path,
+    *,
+    doc_relative: str,
+    signature_relative: str,
+    key_id: str,
+    signed_by: tuple[str, ...],
+) -> dict[str, str]:
+    """Build a signed document using the same path and hashing logic as runtime."""
+
+    normalized_key = bootstrap_module._normalize_signature_identifier(key_id)
+    key_path = root / "secrets" / "hmac" / f"{normalized_key}.key"
+    key_path.parent.mkdir(parents=True, exist_ok=True)
+    key_bytes = os.urandom(48)
+    key_path.write_bytes(key_bytes)
+
+    document_path = root / doc_relative
+    document_path.parent.mkdir(parents=True, exist_ok=True)
+    content = f"{doc_relative}:{key_id}".encode("utf-8")
+    document_path.write_bytes(content)
+    sha_value = bootstrap_module._compute_file_sha256(document_path)
+
+    payload = {
+        "document": {
+            "name": Path(doc_relative).name,
+            "path": doc_relative,
+            "sha256": sha_value,
+            "signed_by": list(signed_by),
+            "signed_at": "2024-06-01T10:00:00Z",
+        },
+        "hashes": {"sha256": sha_value},
+        "generated_at": "2024-06-01T10:00:00Z",
+    }
+    signature = build_hmac_signature(payload, key=key_bytes, key_id=key_id)
+
+    signature_path = root / signature_relative
+    signature_path.parent.mkdir(parents=True, exist_ok=True)
+    signature_path.write_text(
+        json.dumps({"payload": payload, "signature": signature}, ensure_ascii=False, indent=2),
+        encoding="utf-8",
+    )
+
+    return {"sha256": sha_value, "signature_path": signature_relative}
 
 
 def _write_live_config(tmp_path: Path, *, remove_penetration_signature: bool = False) -> Path:
@@ -34,24 +81,24 @@ def _write_live_config(tmp_path: Path, *, remove_penetration_signature: bool = F
         }
     )
 
-    compliance_doc = _create_signed_document(
+    compliance_doc = _sign_environment_for_test(
         tmp_path,
-        "compliance/live/binance/kyc_packet.pdf",
-        "compliance/live/binance/kyc_packet.sig",
+        doc_relative="compliance/live/binance/kyc_packet.pdf",
+        signature_relative="compliance/live/binance/kyc_packet.sig",
         key_id="compliance-key",
         signed_by=("compliance",),
     )
-    risk_doc = _create_signed_document(
+    risk_doc = _sign_environment_for_test(
         tmp_path,
-        "risk/live/binance/risk_profile_alignment.pdf",
-        "risk/live/binance/risk_profile_alignment.sig",
+        doc_relative="risk/live/binance/risk_profile_alignment.pdf",
+        signature_relative="risk/live/binance/risk_profile_alignment.sig",
         key_id="risk-key",
         signed_by=("risk",),
     )
-    penetration_doc = _create_signed_document(
+    penetration_doc = _sign_environment_for_test(
         tmp_path,
-        "security/live/binance/penetration_report.pdf",
-        "security/live/binance/penetration_report.sig",
+        doc_relative="security/live/binance/penetration_report.pdf",
+        signature_relative="security/live/binance/penetration_report.sig",
         key_id="security-key",
         signed_by=("security",),
     )
