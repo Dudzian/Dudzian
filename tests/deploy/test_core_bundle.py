@@ -1231,7 +1231,21 @@ def test_build_from_cli_rejects_casefold_ui_name_collision(tmp_path):
     config_file = tmp_path / "core.yaml"
     config_file.write_text("risk: balanced", encoding="utf-8")
 
+    ui_dir = tmp_path / "ui"
     alt_ui = tmp_path / "UI"
+
+    same_entry = False
+    if ui_dir.exists() and alt_ui.exists():
+        try:
+            same_entry = ui_dir.samefile(alt_ui)
+        except OSError:
+            same_entry = False
+
+    if ui_dir.exists() and (alt_ui.exists() or same_entry):
+        pytest.skip(
+            "filesystem is case-insensitive; cannot create case-colliding UI directory names"
+        )
+
     alt_ui.mkdir()
     (alt_ui / "qtapp-alt").write_text("ui", encoding="utf-8")
 
