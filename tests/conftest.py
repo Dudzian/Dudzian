@@ -1,3 +1,7 @@
+import os
+import socket
+from contextlib import contextmanager
+
 import pytest
 
 from bot_core.backtest.simulation import SimulationScenario
@@ -56,3 +60,68 @@ def heavy_slippage_scenario() -> SimulationScenario:
         fee_bps=0.0,
         liquidity_share=1.0,
     )
+
+
+@contextmanager
+def _guard_network_connections() -> None:
+    """Block outbound network during tests to keep the suite hermetic."""
+
+    allowed_hosts = {"127.0.0.1", "::1", "localhost"}
+    real_create_connection = socket.create_connection
+    real_connect = socket.socket.connect
+
+    def _is_unix_socket(address: tuple[object, ...] | object) -> bool:
+        if isinstance(address, str):
+            return address.startswith("/")
+        if isinstance(address, tuple) and address and isinstance(address[0], str):
+            return address[0].startswith("/")
+        return False
+
+    def _check_address(address: tuple[object, ...] | object) -> None:
+        host = address[0] if isinstance(address, tuple) and address else address
+        if _is_unix_socket(address):
+            # Unix domain sockets are local-only; allow them.
+            return
+        if host is None:
+            raise RuntimeError(
+                "External network access is blocked during tests; mock with responses/respx "
+                "or set ALLOW_NETWORK_TESTS=1 (host=None)."
+            )
+        if isinstance(host, str):
+            if host in allowed_hosts or host.startswith("127."):
+                return
+            raise RuntimeError(
+                "External network access is blocked during tests; mock with responses/respx "
+                f"or set ALLOW_NETWORK_TESTS=1 (host={host!r})."
+            )
+        raise RuntimeError(
+            "External network access is blocked during tests; mock with responses/respx "
+            f"or set ALLOW_NETWORK_TESTS=1 (host={host!r})."
+        )
+
+    def _guarded_create_connection(address, *args, **kwargs):  # type: ignore[override]
+        _check_address(address)
+        return real_create_connection(address, *args, **kwargs)
+
+    def _guarded_connect(self, address):  # type: ignore[override]
+        _check_address(address)
+        return real_connect(self, address)
+
+    socket.create_connection = _guarded_create_connection  # type: ignore[assignment]
+    socket.socket.connect = _guarded_connect  # type: ignore[assignment]
+    try:
+        yield
+    finally:
+        socket.create_connection = real_create_connection  # type: ignore[assignment]
+        socket.socket.connect = real_connect  # type: ignore[assignment]
+
+
+@pytest.fixture(autouse=True)
+def block_external_network() -> None:
+    if os.environ.get("ALLOW_NETWORK_TESTS") == "1":
+        # Explicit opt-in for integration runs.
+        yield
+        return
+
+    with _guard_network_connections():
+        yield

@@ -78,6 +78,10 @@ class DefaultAlertRouter(AlertRouter):
             raise ValueError(f"Kanał o nazwie '{channel.name}' został już zarejestrowany")
         self.channels.append(channel)
 
+    def register_channel(self, channel: AlertChannel) -> None:
+        """Zachowuje zgodność z poprzednim API poprzez delegację do :meth:`register`."""
+        self.register(channel)
+
     def dispatch(self, message: AlertMessage) -> None:
         if self.throttle and not self.throttle.allow(message):
             remaining = self.throttle.remaining_seconds(message)

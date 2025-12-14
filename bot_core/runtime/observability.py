@@ -6,6 +6,7 @@ import json
 import logging
 import re
 import sys
+import inspect
 from datetime import timedelta
 from dataclasses import dataclass
 from functools import lru_cache
@@ -365,7 +366,9 @@ def _build_sms_channel(
             )
         )
 
-    sender = settings.sender_id or getattr(provider_config, "default_sender", None)
+    sender = settings.sender_id or getattr(settings, "from_number", None) or getattr(
+        provider_config, "default_sender", None
+    )
     if wants_alphanumeric and sender:
         if not _ALPHANUMERIC_SENDER_PATTERN.match(sender):
             raise SecretStorageError(
@@ -383,21 +386,35 @@ def _build_sms_channel(
                 )
             )
 
-    _validate_e164_number(settings.to, channel_key, field="to")
-    if settings.status_callback_url:
-        _validate_e164_number(settings.status_callback_number, channel_key, field="status_callback_number")
+    raw_recipients = getattr(settings, "to", None) or getattr(settings, "recipients", None)
+    if not raw_recipients:
+        raise SecretStorageError(
+            f"Konfiguracja dostawcy SMS '{channel_key}' wymaga pola 'to' lub 'recipients'."
+        )
 
-    sms_channel = SMSChannelCls(
-        provider=provider_config,
-        credential_key=settings.credential_key,
-        secret_manager=secret_manager,
-        sender=sender,
-        to=settings.to,
-        status_callback_url=settings.status_callback_url,
-        status_callback_number=settings.status_callback_number,
-        use_short_url=bool(settings.use_short_url),
-        name=f"sms:{channel_key}",
-    )
+    recipients = list(raw_recipients) if isinstance(raw_recipients, (list, tuple, set)) else [raw_recipients]
+    for recipient in recipients:
+        _validate_e164_number(recipient, channel_key, field="to")
+
+    init_params = inspect.signature(SMSChannelCls).parameters
+    sms_kwargs: dict[str, Any] = {
+        "provider": provider_config,
+        "name": f"sms:{channel_key}",
+        "account_sid": account_sid,
+        "auth_token": auth_token,
+    }
+
+    if "recipients" in init_params:
+        sms_kwargs["recipients"] = recipients
+    elif "to" in init_params:
+        sms_kwargs["to"] = recipients[0] if len(recipients) == 1 else recipients
+
+    if "from_number" in init_params:
+        sms_kwargs["from_number"] = sender
+    elif "sender" in init_params:
+        sms_kwargs["sender"] = sender
+
+    sms_channel = SMSChannelCls(**sms_kwargs)
 
     return sms_channel
 
