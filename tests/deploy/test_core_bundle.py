@@ -1090,7 +1090,7 @@ def test_build_from_cli_rejects_casefold_daemon_name_collision(tmp_path):
     config_file.write_text("risk: balanced", encoding="utf-8")
 
     alt_daemon = tmp_path / "Daemon"
-    alt_daemon.mkdir()
+    alt_daemon.mkdir(exist_ok=True)
     (alt_daemon / "botd-alt").write_text("daemon", encoding="utf-8")
 
     args = _base_cli_args(env) + [
