@@ -499,6 +499,43 @@ class TradingController:
 
         return candidate or "default"
 
+    def _update_ai_failover_state(self) -> bool:
+        monitor = self._ai_health_monitor
+        if monitor is None:
+            if self._ai_failover_active:
+                self._ai_failover_active = False
+                self._ai_failover_reason = None
+            return False
+
+        status = monitor.snapshot()
+        self._ai_health_status = status
+        degraded = bool(status.degraded or status.backend_degraded or status.quality_failures > 0)
+        reason = status.reason or ("backend_degraded" if status.backend_degraded else None)
+
+        if degraded:
+            if not self._ai_failover_active:
+                self._ai_failover_active = True
+                self._ai_failover_reason = reason
+                metadata = {"reason": reason or "ai_backend_degraded"}
+                if status.details:
+                    metadata["details"] = ",".join(status.details)
+                self._record_decision_event(
+                    "ai_failover",
+                    status="activated",
+                    metadata=metadata,
+                )
+        elif self._ai_failover_active:
+            self._ai_failover_active = False
+            self._ai_failover_reason = None
+            metadata = {"reason": reason or (status.reason or "")}
+            self._record_decision_event(
+                "ai_failover",
+                status="cleared",
+                metadata=metadata,
+            )
+
+        return self._ai_failover_active
+
     def _record_tco_execution(
         self,
         *,
@@ -558,7 +595,10 @@ class TradingController:
     def process_signals(self, signals: Sequence[StrategySignal]) -> list[OrderResult]:
         """Przetwarza listę sygnałów strategii i zarządza alertami."""
         results: list[OrderResult] = []
-        for signal in signals:
+        ai_blocked = self._update_ai_failover_state()
+
+        prioritized: list[tuple[int, int, StrategySignal, str]] = []
+        for index, signal in enumerate(signals):
             metric_labels = dict(self._metric_labels)
             metric_labels["symbol"] = signal.symbol
             self._metric_signals_total.inc(labels={**metric_labels, "status": "received"})
@@ -572,6 +612,19 @@ class TradingController:
                     "leg_count": str(len(getattr(signal, "legs", ()) or ())),
                 },
             )
+            if ai_blocked and mode in self._ai_signal_modes:
+                self._record_decision_event(
+                    "signal_skipped",
+                    signal=signal,
+                    status="skipped",
+                    metadata={"reason": "ai_failover_active", "mode": mode},
+                )
+                continue
+            priority = self._signal_mode_priorities.get(mode, self._default_signal_priority)
+            prioritized.append((priority, index, signal, mode))
+
+        prioritized.sort(key=lambda item: (-item[0], item[1]))
+        for _priority, _index, signal, _mode in prioritized:
             expanded_signals = self._expand_signal(signal)
             if not expanded_signals:
                 continue

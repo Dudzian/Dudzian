@@ -375,8 +375,22 @@ class LicenseValidationResult:
         if self.subscription_grace_expires_at:
             context["subscription_grace_expires_at"] = self.subscription_grace_expires_at
         if self.errors:
-            context["errors"] = [entry.to_dict() for entry in self.errors]
-            context["error_messages"] = [entry.message for entry in self.errors]
+            context["errors"] = [
+                entry.message
+                if hasattr(entry, "message")
+                else str(entry)
+                for entry in self.errors
+            ]
+            context["error_details"] = [
+                entry.to_dict() if hasattr(entry, "to_dict") else str(entry)
+                for entry in self.errors
+            ]
+            context["error_messages"] = [
+                entry.message
+                if hasattr(entry, "message")
+                else str(entry)
+                for entry in self.errors
+            ]
         if self.warnings:
             context["warnings"] = [entry.to_dict() for entry in self.warnings]
             context["warning_messages"] = [entry.message for entry in self.warnings]

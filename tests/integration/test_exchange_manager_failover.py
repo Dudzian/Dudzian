@@ -197,6 +197,7 @@ def test_exchange_manager_stays_on_ccxt_after_rate_limit(
     assert manager._active_backend == "ccxt"
 
 
+@pytest.mark.network  # requires RUN_NETWORK_TESTS=1 or --run-network-tests
 @pytest.mark.integration
 def test_exchange_adapter_listing_includes_futures(tmp_path: Path) -> None:
     output = tmp_path / "adapters.csv"

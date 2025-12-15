@@ -290,7 +290,7 @@ def test_local_long_poll_stream_backpressure_metrics(monkeypatch: pytest.MonkeyP
     assert isinstance(lag_metric, HistogramMetric)
     lag_state = lag_metric.snapshot(labels=expected_labels)
     assert lag_state.count == 2
-    assert lag_state.sum == pytest.approx(2.2, rel=1e-6)
+    assert lag_state.sum == pytest.approx(1.0, rel=1e-6)
 
     lag_gauge = registry.get("bot_exchange_stream_last_delivery_lag_seconds")
     assert isinstance(lag_gauge, GaugeMetric)
@@ -463,6 +463,7 @@ def test_local_long_poll_stream_prefetches_in_background(
         jitter=(0.0, 0.0),
     )
 
+    stream.start()
     first = next(stream)
     assert [event.get("seq") for event in first.events] == [1]
 
@@ -1004,6 +1005,91 @@ def test_local_long_poll_stream_sets_accept_encoding(monkeypatch: pytest.MonkeyP
 
     expected_header = streaming_module._build_default_headers()["Accept-Encoding"]
     assert captured_headers == [expected_header]
+
+    stream.close()
+
+
+def test_local_long_poll_stream_single_request_on_success(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls = 0
+
+    def fake_urlopen(request, timeout=0.0):  # noqa: D401
+        nonlocal calls
+        calls += 1
+        payload = json.dumps(
+            {
+                "batches": [
+                    {"channel": "ticker", "events": [{"price": 12.0}], "cursor": "abc"}
+                ],
+            }
+        ).encode("utf-8")
+        return _FakeResponse(payload)
+
+    monkeypatch.setattr("bot_core.exchanges.streaming.urlopen", fake_urlopen)
+
+    stream = LocalLongPollStream(
+        base_url="http://127.0.0.1:9003",
+        path="/single",
+        channels=["ticker"],
+        adapter="test",
+        scope="public",
+        environment="paper",
+        poll_interval=0.0,
+        timeout=0.1,
+        max_retries=1,
+        backoff_base=0.0,
+        backoff_cap=0.0,
+        jitter=(0.0, 0.0),
+    )
+
+    batch = next(stream)
+    assert calls == 1
+    assert batch.cursor == "abc"
+
+    stream.close()
+
+
+def test_local_long_poll_stream_does_not_poll_in_background_without_request(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls = 0
+
+    def fake_urlopen(request, timeout=0.0):  # noqa: D401
+        nonlocal calls
+        calls += 1
+        payload = json.dumps(
+            {
+                "batches": [
+                    {"channel": "ticker", "events": [{"price": 33.0}]},
+                ],
+            }
+        ).encode("utf-8")
+        return _FakeResponse(payload)
+
+    monkeypatch.setattr("bot_core.exchanges.streaming.urlopen", fake_urlopen)
+
+    stream = LocalLongPollStream(
+        base_url="http://127.0.0.1:9013",
+        path="/sleepy",
+        channels=["ticker"],
+        adapter="test",
+        scope="public",
+        environment="paper",
+        poll_interval=0.0,
+        timeout=0.1,
+        max_retries=1,
+        backoff_base=0.0,
+        backoff_cap=0.0,
+        jitter=(0.0, 0.0),
+    )
+
+    batch = next(stream)
+    assert calls == 1
+    assert batch.events and batch.events[0]["price"] == 33.0
+
+    time.sleep(0.2)
+    assert calls == 1
 
     stream.close()
 
