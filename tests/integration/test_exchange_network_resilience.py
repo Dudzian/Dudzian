@@ -67,6 +67,9 @@ def test_exchange_manager_network_error_monitor(monkeypatch: pytest.MonkeyPatch)
     assert counts.get("fetch_order_book") == 1
 
 
+# Networked Binance adapter coverage; gated to avoid outbound calls in CI.
+@pytest.mark.network  # requires RUN_NETWORK_TESTS=1 or --run-network-tests
+@pytest.mark.integration
 def test_binance_spot_adapter_reports_network_errors(monkeypatch: pytest.MonkeyPatch) -> None:
     events: list[str] = []
 

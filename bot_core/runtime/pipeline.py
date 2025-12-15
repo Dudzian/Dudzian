@@ -1776,15 +1776,39 @@ def _resolve_adapter_metrics_registry(adapter: ExchangeAdapter | object | None) 
 
 def _build_streaming_feed(
     *,
-    stream_config: object,
-    stream_settings: Mapping[str, object] | None,
-    adapter_metrics: MetricsRegistry | None,
-    base_feed: StrategyDataFeed,
-    symbols_map: Mapping[str, Sequence[str]],
-    exchange: str,
-    environment_name: str | None,
+    stream_config: object | None = None,
+    stream_settings: Mapping[str, object] | None = None,
+    adapter_metrics: MetricsRegistry | None = None,
+    base_feed: StrategyDataFeed | None = None,
+    symbols_map: Mapping[str, Sequence[str]] | None = None,
+    exchange: str | None = None,
+    environment_name: str | None = None,
+    environment: EnvironmentConfig | None = None,
+    bootstrap: bool = False,
+    **_: Any,
 ) -> StreamingStrategyFeed | None:
-    if stream_config is None or not isinstance(stream_settings, Mapping):
+    if environment is not None:
+        if stream_config is None:
+            stream_config = getattr(environment, "stream", None)
+        if stream_settings is None:
+            adapter_settings = getattr(environment, "adapter_settings", None)
+            if isinstance(adapter_settings, Mapping):
+                stream_settings = adapter_settings.get("stream")
+        if exchange is None:
+            exchange = getattr(environment, "exchange", None)
+        if environment_name is None:
+            environment_name = getattr(getattr(environment, "environment", None), "value", None)
+
+    if adapter_metrics is None and bootstrap is not None:
+        adapter_metrics = _resolve_adapter_metrics_registry(getattr(bootstrap, "adapter", None))
+
+    if (
+        stream_config is None
+        or not isinstance(stream_settings, Mapping)
+        or base_feed is None
+        or symbols_map is None
+        or exchange is None
+    ):
         return None
     stream_settings = dict(stream_settings)
     host = getattr(stream_config, "host", "127.0.0.1")
@@ -1942,7 +1966,7 @@ def _build_streaming_feed(
     idle_timeout = None if idle_timeout_raw in (None, "") else float(idle_timeout_raw)
     restart_delay = float(stream_settings.get("restart_delay", 5.0))
 
-    return StreamingStrategyFeed(
+    feed = StreamingStrategyFeed(
         history_feed=base_feed,
         stream_factory=_factory,
         symbols_map=symbols_map,
@@ -1952,6 +1976,13 @@ def _build_streaming_feed(
         restart_delay=restart_delay,
         logger=_LOGGER,
     )
+
+    if bootstrap:
+        starter = getattr(feed, "start", None)
+        if callable(starter):
+            starter()
+
+    return feed
 
 
 def _estimate_default_notional(paper_settings: Mapping[str, object]) -> float:
