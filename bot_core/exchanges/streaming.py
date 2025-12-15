@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import functools
 import gzip
 import json
@@ -587,7 +588,7 @@ class LocalLongPollStream(Iterable[StreamBatch]):
         self._pending_condition = threading.Condition(self._pending_lock)
         self._prefill_enabled = False
         self._prefill_drained_once = False
-        self._poll_request = threading.Event()
+        self._poll_tokens = threading.Semaphore(0)
         self._channel_param = (channel_param or "").strip()
         self._cursor_param = (cursor_param or "").strip()
         self._cursor: str | None = (
@@ -671,7 +672,7 @@ class LocalLongPollStream(Iterable[StreamBatch]):
             if self._closed:
                 return self
             self._prefill_enabled = True
-            self._poll_request.set()
+            self._request_poll(0.0)
         self._ensure_worker()
         return self
 
@@ -823,15 +824,19 @@ class LocalLongPollStream(Iterable[StreamBatch]):
         if self._closed:
             return
         target = self._clock() + max(0.0, delay)
-        if self._pending_condition.acquire(blocking=False):
-            try:
+        acquired = self._pending_condition.acquire(blocking=False)
+        try:
+            if acquired:
                 self._next_poll_at = target
                 self._pending_condition.notify_all()
-            finally:
+            else:
+                self._next_poll_at = target
+        finally:
+            if acquired:
                 self._pending_condition.release()
-        else:
-            self._next_poll_at = target
-        self._poll_request.set()
+        # Token-counted wakeup: dokładnie jeden poll na jeden request w trybie non-prefill.
+        with contextlib.suppress(ValueError):
+            self._poll_tokens.release()
 
     async def aclose(self) -> None:
         """Asynchroniczna wersja zamykania strumienia."""
@@ -846,7 +851,9 @@ class LocalLongPollStream(Iterable[StreamBatch]):
             return
         self._closed = True
         self._stop_event.set()
-        self._poll_request.set()
+        # Odblokuj worker jeśli czeka na token.
+        with contextlib.suppress(ValueError):
+            self._poll_tokens.release()
         with self._pending_condition:
             self._pending.clear()
             self._update_queue_metric_locked()
@@ -904,16 +911,19 @@ class LocalLongPollStream(Iterable[StreamBatch]):
                     candidate = next_poll_at if next_poll_at is not None else now
                     wait_until = max(candidate, self._last_poll + min_interval)
                     timeout = max(0.0, wait_until - now)
-                    self._poll_request.wait(timeout=timeout)
-                    self._poll_request.clear()
+                    acquired = self._poll_tokens.acquire(timeout=timeout)
+                    if acquired:
+                        remaining = wait_until - self._clock()
+                        if remaining > 0:
+                            self._sleep(remaining)
                 else:
                     wait_until = next_poll_at if next_poll_at is not None else None
                     timeout = None
                     if wait_until is not None:
                         timeout = max(0.0, wait_until - self._clock())
-                    if not self._poll_request.wait(timeout=timeout):
+                    # W trybie non-prefill NIE robimy poll'a bez tokena.
+                    if not self._poll_tokens.acquire(timeout=timeout):
                         continue
-                    self._poll_request.clear()
                     if wait_until is not None:
                         remaining = wait_until - self._clock()
                         if remaining > 0:
