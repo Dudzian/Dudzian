@@ -125,3 +125,29 @@ def block_external_network() -> None:
 
     with _guard_network_connections():
         yield
+
+
+def pytest_addoption(parser: pytest.Parser) -> None:
+    parser.addoption(
+        "--run-network-tests",
+        action="store_true",
+        default=False,
+        help="Run tests marked as requiring external network access",
+    )
+
+
+def pytest_collection_modifyitems(config: pytest.Config, items: list[pytest.Item]) -> None:
+    run_network = (
+        config.getoption("--run-network-tests")
+        or os.environ.get("RUN_NETWORK_TESTS") == "1"
+        or os.environ.get("ALLOW_NETWORK_TESTS") == "1"
+    )
+    if run_network:
+        return
+
+    skip_network = pytest.mark.skip(
+        reason="Network tests require RUN_NETWORK_TESTS=1 or --run-network-tests",
+    )
+    for item in items:
+        if "network" in item.keywords:
+            item.add_marker(skip_network)

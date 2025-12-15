@@ -2,7 +2,9 @@ from __future__ import annotations
 
 import argparse
 import json
+import signal
 import sys
+import time
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -44,13 +46,23 @@ def _service_for(
     )
 
 
-def _build_record(rotation_path: Path, *, cpu: str, mac: str, disk: str, tpm: str | None, now: datetime) -> dict[str, Any]:
+def _build_record(
+    rotation_path: Path,
+    *,
+    cpu: str,
+    mac: str,
+    disk: str,
+    tpm: str | None,
+    now: datetime,
+    deadline: float | None,
+) -> dict[str, Any]:
+    _check_deadline(deadline)
     service = _service_for(rotation_path, cpu=cpu, mac=mac, disk=disk, tpm=tpm, now=now)
     record = service.build()
     return record.payload
 
 
-def _build_matrix(now: datetime, output_root: Path) -> dict[str, Any]:
+def _build_matrix(now: datetime, output_root: Path, *, deadline: float | None) -> dict[str, Any]:
     rotation_path = output_root / "rotation.json"
     baseline = _build_record(
         rotation_path,
@@ -59,6 +71,7 @@ def _build_matrix(now: datetime, output_root: Path) -> dict[str, Any]:
         disk="nvme-SN-001",
         tpm="IFX TPM2.0",
         now=now,
+        deadline=deadline,
     )
 
     scenarios = {
@@ -69,6 +82,7 @@ def _build_matrix(now: datetime, output_root: Path) -> dict[str, Any]:
             disk="nvme-SN-001",
             tpm="IFX TPM2.0",
             now=now,
+            deadline=deadline,
         ),
         "disk_drift": _build_record(
             rotation_path,
@@ -77,6 +91,7 @@ def _build_matrix(now: datetime, output_root: Path) -> dict[str, Any]:
             disk="nvme-SN-099",
             tpm="IFX TPM2.0",
             now=now,
+            deadline=deadline,
         ),
         "cpu_drift": _build_record(
             rotation_path,
@@ -85,6 +100,7 @@ def _build_matrix(now: datetime, output_root: Path) -> dict[str, Any]:
             disk="nvme-SN-001",
             tpm="IFX TPM2.0",
             now=now,
+            deadline=deadline,
         ),
         "tpm_drift": _build_record(
             rotation_path,
@@ -93,6 +109,7 @@ def _build_matrix(now: datetime, output_root: Path) -> dict[str, Any]:
             disk="nvme-SN-001",
             tpm="IFX TPM2.0 patched",
             now=now,
+            deadline=deadline,
         ),
     }
 
@@ -104,6 +121,7 @@ def _build_matrix(now: datetime, output_root: Path) -> dict[str, Any]:
     }
 
     for name, payload in scenarios.items():
+        _check_deadline(deadline)
         evaluation = evaluate_hwid_drift(baseline, payload)
         evaluation["name"] = name
         matrix["scenarios"].append(evaluation)
@@ -111,12 +129,40 @@ def _build_matrix(now: datetime, output_root: Path) -> dict[str, Any]:
     return matrix
 
 
-def write_report(output_path: Path) -> dict[str, Any]:
+def _check_deadline(deadline: float | None) -> None:
+    if deadline is not None and time.monotonic() >= deadline:
+        raise TimeoutError("HWID drift report generation exceeded deadline")
+
+
+def write_report(output_path: Path, *, timeout_seconds: float | None = None) -> dict[str, Any]:
     now = datetime.now(timezone.utc)
     output_path.parent.mkdir(parents=True, exist_ok=True)
-    matrix = _build_matrix(now, output_path.parent)
-    output_path.write_text(json.dumps(matrix, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
-    return matrix
+
+    deadline = time.monotonic() + timeout_seconds if timeout_seconds else None
+    timed_out = False
+
+    def _sigterm_handler(signum: int, frame: Any) -> None:  # pragma: no cover - signal-only
+        nonlocal timed_out, deadline
+        timed_out = True
+        deadline = time.monotonic()
+
+    previous_handler = signal.signal(signal.SIGTERM, _sigterm_handler)
+    try:
+        try:
+            matrix = _build_matrix(now, output_path.parent, deadline=deadline)
+        except TimeoutError:
+            timed_out = True
+            matrix = {
+                "generated_at": now.replace(microsecond=0).isoformat().replace("+00:00", "Z"),
+                "baseline": {"status": "timeout"},
+                "baseline_components": {},
+                "scenarios": [],
+            }
+        matrix["timed_out"] = timed_out
+        output_path.write_text(json.dumps(matrix, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+        return matrix
+    finally:
+        signal.signal(signal.SIGTERM, previous_handler)
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -126,9 +172,15 @@ def main(argv: list[str] | None = None) -> int:
         default="reports/ci/licensing_drift/compatibility.json",
         help="Ścieżka pliku raportu (domyślnie reports/ci/licensing_drift/compatibility.json)",
     )
+    parser.add_argument(
+        "--timeout-seconds",
+        type=float,
+        default=10.0,
+        help="Maksymalny czas generowania raportu; po przekroczeniu zwraca częściowy wynik z flagą timed_out.",
+    )
     args = parser.parse_args(argv)
 
-    write_report(Path(args.output))
+    write_report(Path(args.output), timeout_seconds=args.timeout_seconds)
     return 0
 
 
