@@ -7,7 +7,7 @@ from __future__ import annotations
 
 import argparse
 import json
-from dataclasses import asdict
+from dataclasses import asdict, is_dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Iterable, Mapping, Sequence
@@ -64,7 +64,29 @@ def _parse_modes(values: Sequence[str] | None) -> Iterable[MarketRegime]:
 
 
 def _serialize(decisions: Sequence[Any]) -> str:
-    payload = [asdict(decision) for decision in decisions]
+    def _to_mapping(decision: Any) -> Any:
+        if decision is None:
+            return None
+        if hasattr(decision, "model_dump"):
+            try:
+                return decision.model_dump()
+            except Exception:
+                pass
+        if hasattr(decision, "to_mapping"):
+            try:
+                return decision.to_mapping()  # type: ignore[no-any-return]
+            except Exception:
+                pass
+        if is_dataclass(decision):
+            return asdict(decision)
+        if isinstance(decision, Mapping):
+            return dict(decision)
+        plain = getattr(decision, "__dict__", None)
+        if isinstance(plain, Mapping):
+            return dict(plain)
+        return str(decision)
+
+    payload = [_to_mapping(decision) for decision in decisions]
     return json.dumps(payload, ensure_ascii=False, indent=2)
 
 

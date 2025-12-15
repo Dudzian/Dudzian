@@ -563,6 +563,8 @@ def _build_streaming_feed(
     symbols_map: Mapping[str, Sequence[str]],
     exchange: str,
     environment_name: str | None = None,
+    bootstrap: bool = False,
+    **_: Any,
 ) -> "StreamingStrategyFeed | None":
     if stream_config is None and stream_settings is None:
         return None
@@ -726,7 +728,7 @@ def _build_streaming_feed(
     idle_timeout = None if idle_timeout_raw in (None, "") else float(idle_timeout_raw)
     restart_delay = float(stream_settings.get("restart_delay", 5.0))
 
-    return StreamingStrategyFeed(
+    feed = StreamingStrategyFeed(
         history_feed=base_feed,
         stream_factory=_factory,
         symbols_map=symbols_map,
@@ -736,6 +738,13 @@ def _build_streaming_feed(
         restart_delay=restart_delay,
         logger=_LOGGER,
     )
+
+    if bootstrap:
+        starter = getattr(feed, "start", None)
+        if callable(starter):
+            starter()
+
+    return feed
 
 
 def _ensure_local_market_data_availability(

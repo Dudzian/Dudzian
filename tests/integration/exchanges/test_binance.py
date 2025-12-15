@@ -6,12 +6,17 @@ from io import BytesIO
 from urllib.error import HTTPError
 from urllib.parse import urlsplit
 
+import pytest
+
 from bot_core.exchanges.base import Environment, ExchangeCredentials
 from bot_core.exchanges.binance import BinanceSpotAdapter
 
 from tests.integration.exchanges.helpers import make_order_request
 
 
+
+@pytest.mark.network  # requires RUN_NETWORK_TESTS=1 or --run-network-tests
+@pytest.mark.integration
 def test_binance_spot_rate_limit_and_retry(monkeypatch, rate_limiter_registry):
     sleep_calls: list[float] = []
 

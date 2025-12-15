@@ -120,6 +120,7 @@ filterwarnings = [
 markers = [
   "timeout: oznaczenie testów z ograniczeniem czasu wykonywania",
   "integration: testy wymagające środowisk demo/sandbox lub zewnętrznych zasobów",
+  "network: testy wymagające dostępu do sieci lub jawnej zgody",
   "requires_trading_stubs: test wymaga wygenerowanych stubów trading_pb2",
   "e2e_demo_paper: scenariusz demo→paper wykonywany lokalnie",
   "e2e_retraining: scenariusz E2E walidujący retrening i fallback backendów",

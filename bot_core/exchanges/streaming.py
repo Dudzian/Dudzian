@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import functools
 import gzip
 import json
@@ -563,7 +564,7 @@ class LocalLongPollStream(Iterable[StreamBatch]):
                     continue
                 self._params[str(key)] = value
 
-        self._headers: MutableMapping[str, str] = dict(_DEFAULT_HEADERS)
+        self._headers: MutableMapping[str, str] = _build_default_headers()
         if headers:
             for key, value in headers.items():
                 self._headers[str(key)] = str(value)
@@ -587,6 +588,7 @@ class LocalLongPollStream(Iterable[StreamBatch]):
         self._pending_condition = threading.Condition(self._pending_lock)
         self._prefill_enabled = False
         self._prefill_drained_once = False
+        self._poll_tokens = threading.Semaphore(0)
         self._channel_param = (channel_param or "").strip()
         self._cursor_param = (cursor_param or "").strip()
         self._cursor: str | None = (
@@ -595,6 +597,7 @@ class LocalLongPollStream(Iterable[StreamBatch]):
         self._channel_serializer = channel_serializer
         self._closed = False
         self._last_poll = 0.0
+        self._next_poll_at: float | None = None
         self._stop_event = threading.Event()
         self._worker_thread: threading.Thread | None = None
         self._worker_error: Exception | None = None
@@ -669,6 +672,7 @@ class LocalLongPollStream(Iterable[StreamBatch]):
             if self._closed:
                 return self
             self._prefill_enabled = True
+            self._request_poll(0.0)
         self._ensure_worker()
         return self
 
@@ -789,9 +793,12 @@ class LocalLongPollStream(Iterable[StreamBatch]):
                     self._prefill_drained_once = True
                     self._update_queue_metric_locked()
                     self._pending_condition.notify_all()
+                    if self._prefill_enabled:
+                        self._request_poll(self._poll_interval)
                     break
                 if self._closed:
                     break
+                self._request_poll()
                 self._pending_condition.wait()
 
         if error is not None:
@@ -813,6 +820,24 @@ class LocalLongPollStream(Iterable[StreamBatch]):
         except StopIteration as exc:
             raise StopAsyncIteration from exc
 
+    def _request_poll(self, delay: float = 0.0) -> None:
+        if self._closed:
+            return
+        target = self._clock() + max(0.0, delay)
+        acquired = self._pending_condition.acquire(blocking=False)
+        try:
+            if acquired:
+                self._next_poll_at = target
+                self._pending_condition.notify_all()
+            else:
+                self._next_poll_at = target
+        finally:
+            if acquired:
+                self._pending_condition.release()
+        # Token-counted wakeup: dokładnie jeden poll na jeden request w trybie non-prefill.
+        with contextlib.suppress(ValueError):
+            self._poll_tokens.release()
+
     async def aclose(self) -> None:
         """Asynchroniczna wersja zamykania strumienia."""
 
@@ -826,6 +851,9 @@ class LocalLongPollStream(Iterable[StreamBatch]):
             return
         self._closed = True
         self._stop_event.set()
+        # Odblokuj worker jeśli czeka na token.
+        with contextlib.suppress(ValueError):
+            self._poll_tokens.release()
         with self._pending_condition:
             self._pending.clear()
             self._update_queue_metric_locked()
@@ -873,10 +901,53 @@ class LocalLongPollStream(Iterable[StreamBatch]):
                         )
                     ):
                         self._pending_condition.wait()
+                    next_poll_at = self._next_poll_at
                 if self._stop_event.is_set() or self._closed:
                     break
+
+                min_interval = self._poll_interval if self._poll_interval > 0 else 0.01
+                if self._prefill_enabled:
+                    now = self._clock()
+                    candidate = next_poll_at if next_poll_at is not None else now
+                    wait_until = max(candidate, self._last_poll + min_interval)
+                    timeout = max(0.0, wait_until - now)
+                    acquired = self._poll_tokens.acquire(timeout=timeout)
+                    if acquired:
+                        remaining = wait_until - self._clock()
+                        if remaining > 0:
+                            self._sleep(remaining)
+                else:
+                    wait_until = next_poll_at if next_poll_at is not None else None
+                    timeout = None
+                    if wait_until is not None:
+                        timeout = max(0.0, wait_until - self._clock())
+                    # W trybie non-prefill NIE robimy poll'a bez tokena.
+                    if not self._poll_tokens.acquire(timeout=timeout):
+                        continue
+                    if wait_until is not None:
+                        remaining = wait_until - self._clock()
+                        if remaining > 0:
+                            self._sleep(remaining)
+
+                if self._stop_event.is_set() or self._closed:
+                    break
+                with self._pending_condition:
+                    if len(self._pending) >= (
+                        self._buffer_size
+                        if self._prefill_enabled and self._prefill_drained_once
+                        else 1
+                    ):
+                        continue
                 try:
                     self._poll_once()
+                    with self._pending_condition:
+                        if self._prefill_enabled:
+                            next_interval = (
+                                self._poll_interval if self._poll_interval > 0 else 0.01
+                            )
+                            self._next_poll_at = self._clock() + next_interval
+                        else:
+                            self._next_poll_at = None
                 except Exception as exc:  # pragma: no cover - delegujemy do wątku głównego
                     with self._pending_condition:
                         self._worker_error = exc
@@ -889,8 +960,8 @@ class LocalLongPollStream(Iterable[StreamBatch]):
                 self._pending_condition.notify_all()
 
     def _poll_once(self) -> None:
-        now = self._clock()
-        elapsed = now - self._last_poll
+        poll_started = self._clock()
+        elapsed = poll_started - self._last_poll
         if elapsed < self._poll_interval:
             self._sleep(self._poll_interval - elapsed)
 
@@ -903,7 +974,6 @@ class LocalLongPollStream(Iterable[StreamBatch]):
             request = self._build_request()
             should_backoff = True
             headers = None
-            poll_started = self._clock()
             retryable = False
             try:
                 with urlopen(request, timeout=self._timeout) as response:
@@ -976,8 +1046,8 @@ class LocalLongPollStream(Iterable[StreamBatch]):
                 retryable = True
             else:
                 payload = self._parse_payload(raw_payload, headers)
-                retry_after = self._enqueue_batches(payload)
                 finished = self._clock()
+                retry_after = self._enqueue_batches(payload, received_at=finished)
                 self._record_poll_latency(max(0.0, finished - poll_started))
                 self._last_poll = finished
                 if reconnect_attempts > 0 and reconnect_started_at is not None:
@@ -1275,7 +1345,7 @@ class LocalLongPollStream(Iterable[StreamBatch]):
             return json.dumps(value, ensure_ascii=False)[:120]
         return str(value)
 
-    def _enqueue_batches(self, payload: Mapping[str, Any]) -> float:
+    def _enqueue_batches(self, payload: Mapping[str, Any], *, received_at: float | None = None) -> float:
         cursor = self._extract_cursor(payload)
         if cursor is not None:
             self._cursor = cursor
@@ -1290,7 +1360,7 @@ class LocalLongPollStream(Iterable[StreamBatch]):
         else:
             batches_iterable = ()
 
-        now = self._clock()
+        now = received_at if received_at is not None else self._clock()
         prepared_batches: list[StreamBatch] = []
         for entry in batches_iterable:
             channel = str(entry.get("channel") or self._channels[0])
