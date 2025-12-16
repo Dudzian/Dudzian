@@ -76,15 +76,31 @@ def _looks_like_numpy_source_tree(path: Path) -> bool:
     if _looks_like_site_packages(resolved):
         return False
 
-    numpy_dir = resolved / "numpy"
-    if not numpy_dir.is_dir():
-        return False
+    markers = ("setup.py", "pyproject.toml", "meson.build")
+    candidates: list[tuple[Path, Path]] = []
 
-    init_file = numpy_dir / "__init__.py"
-    if not init_file.exists():
-        return False
+    # Standard przypadek: wpis sys.path wskazuje na katalog repozytorium,
+    # który zawiera podkatalog ``numpy``.
+    candidates.append((resolved, resolved / "numpy"))
 
-    return any((resolved / marker).exists() for marker in ("setup.py", "pyproject.toml", "meson.build"))
+    # Dodatkowy przypadek: wpis sys.path wskazuje bezpośrednio na katalog
+    # pakietu ``numpy`` w checkoutcie źródeł.
+    if resolved.name.lower() == "numpy":
+        candidates.append((resolved.parent, resolved))
+
+    for repo_root, numpy_dir in candidates:
+        try:
+            if not numpy_dir.is_dir():
+                continue
+            init_file = numpy_dir / "__init__.py"
+            if not init_file.exists():
+                continue
+            if any((repo_root / marker).exists() for marker in markers):
+                return True
+        except Exception:
+            continue
+
+    return False
 
 
 def _demote_numpy_source_shadows() -> None:
