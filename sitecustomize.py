@@ -166,6 +166,31 @@ def _find_repo_root(start: Path, sentinels: Iterable[str]) -> Path | None:
         current = current.parent
 
 
+def _iter_repo_root_candidates() -> Iterator[Path]:
+    """Podaj możliwe miejsca startu do wyszukania repozytorium.
+
+    Podczas importu z ``site-packages`` bardziej wiarygodnym wskaźnikiem
+    dostępności źródeł bywa bieżący katalog roboczy, dlatego sprawdzamy zarówno
+    lokalizację pliku, jak i ``Path.cwd()`` (jeśli jest dostępne).
+    """
+
+    yield Path(__file__).resolve().parent
+    try:
+        cwd = Path.cwd()
+    except Exception:
+        return
+
+    try:
+        repo_file_dir = Path(__file__).resolve().parent
+        # Nie dubluj tej samej ścieżki, jeśli np. importujemy z repo.
+        if cwd.resolve() == repo_file_dir:
+            return
+    except Exception:
+        pass
+
+    yield cwd
+
+
 # Repozytorium musi być widoczne na ścieżce importu nawet wtedy, gdy
 # skrypty są uruchamiane spoza katalogu głównego.  Jednocześnie chcemy, by
 # standardowe pakiety (np. `packaging`) pozostawały nadrzędne względem
@@ -179,7 +204,17 @@ def _bootstrap_repo_path() -> None:
     """Spróbuj dodać repozytorium na ``sys.path`` bez blokowania startu Pythona."""
 
     try:
-        repo_root = _find_repo_root(Path(__file__).resolve().parent, sentinels=("pyproject.toml",))
+        repo_root = next(
+            (
+                root
+                for root in (
+                    _find_repo_root(candidate, sentinels=("pyproject.toml",))
+                    for candidate in _iter_repo_root_candidates()
+                )
+                if root is not None
+            ),
+            None,
+        )
     except FileNotFoundError:
         # W niefortunnym scenariuszu, gdy `_find_repo_root` sam podniesie wyjątek,
         # przechodzimy do trybu degradacji i nie modyfikujemy ``sys.path``.
