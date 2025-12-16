@@ -46,7 +46,10 @@ class ExchangeAdapterConfig:
 def build_exchange_adapter(config: ExchangeAdapterConfig) -> ExchangeBackend:
     """Tworzy adapter skonfigurowany wspólnym obiektem konfiguracji."""
 
-    kwargs: dict[str, Any] = {"settings": config.merged_settings()}
+    merged_settings = config.merged_settings()
+    kwargs: dict[str, Any] = {"settings": merged_settings}
+    if "client" in merged_settings:
+        kwargs["client"] = merged_settings.pop("client")
     if config.environment is not None:
         kwargs["environment"] = config.environment
 
