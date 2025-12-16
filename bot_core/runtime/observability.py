@@ -123,10 +123,13 @@ def build_ui_alert_audit_metadata(
 
     audit_log = getattr(router, "audit_log", None)
 
+    backend: str
+    note: str | None = None
+
     if isinstance(audit_log, FileAlertAuditLogCls):
+        backend = "file"
         metadata.update(
             {
-                "backend": "file",
                 "directory": str(getattr(audit_log, "directory", "")) or None,
                 "pattern": getattr(audit_log, "filename_pattern", None),
                 "retention_days": getattr(audit_log, "retention_days", None),
@@ -134,9 +137,21 @@ def build_ui_alert_audit_metadata(
             }
         )
     elif isinstance(audit_log, InMemoryAlertAuditLogCls):
-        metadata.update({"backend": "memory"})
+        backend = "memory"
     else:
-        metadata.update({"backend": "unknown"})
+        # Brak skonfigurowanego backendu traktujemy jako degradację do pamięci.
+        backend = "memory"
+
+    if normalized_request == "file" and backend != "file":
+        note = "file_backend_unavailable"
+    elif normalized_request == "memory" and backend != "memory":
+        note = "memory_backend_not_selected"
+    elif normalized_request == "inherit":
+        note = "inherited_environment_router"
+
+    metadata["backend"] = backend
+    if note:
+        metadata["note"] = note
 
     return metadata
 
@@ -367,27 +382,48 @@ def _build_sms_channel(
         raise SecretStorageError(
             (
                 f"Konfiguracja dostawcy SMS '{channel_key}' ma włączone pole "
-                "'allow_alphanumeric_sender', ale wybrany operator nie wspiera nadawców alfanumerycznych."
+                "'allow_alphanumeric_sender', ale wybrany operator go nie obsługuje (brak wsparcia "
+                "nadawców alfanumerycznych)."
             )
         )
 
     sender = settings.sender_id or getattr(settings, "from_number", None) or getattr(
         provider_config, "default_sender", None
     )
+    if not wants_alphanumeric:
+        if not sender:
+            raise SecretStorageError(
+                f"Konfiguracja dostawcy SMS '{channel_key}' wymaga numeru nadawcy w formacie E.164."
+            )
+        _validate_e164_number(str(sender).strip(), channel_key, field="from_number")
     if wants_alphanumeric and sender:
         if not _ALPHANUMERIC_SENDER_PATTERN.match(sender):
             raise SecretStorageError(
                 (
                     f"Identyfikator nadawcy '{sender}' dostawcy SMS '{channel_key}' może "
-                    "zawierać tylko litery, cyfry, spacje oraz znaki '- _'."
+                    "zawierać wyłącznie litery A-Z, cyfry 0-9, spacje oraz znaki '- _'."
+                )
+            )
+        if len(sender) < 3:
+            raise SecretStorageError(
+                (
+                    f"Identyfikator nadawcy '{sender}' dostawcy SMS '{channel_key}' "
+                    "musi mieć co najmniej trzy znaki."
+                )
+            )
+        if not re.search(r"[A-Za-z]", sender):
+            raise SecretStorageError(
+                (
+                    f"Identyfikator nadawcy '{sender}' dostawcy SMS '{channel_key}' "
+                    "musi zawierać co najmniej jedną literę."
                 )
             )
         max_length = getattr(provider_config, "max_sender_length", 11) or 11
         if len(sender) > max_length:
             raise SecretStorageError(
                 (
-                    f"Identyfikator nadawcy '{sender}' dostawcy SMS '{channel_key}' jest zbyt długi. "
-                    f"Maksymalna długość: {max_length} znaków."
+                    f"Identyfikator nadawcy '{sender}' dostawcy SMS '{channel_key}' "
+                    f"przekracza dopuszczalny limit: maksymalna długość to {max_length} znaków."
                 )
             )
 
@@ -397,8 +433,15 @@ def _build_sms_channel(
             f"Konfiguracja dostawcy SMS '{channel_key}' wymaga pola 'to' lub 'recipients'."
         )
 
-    recipients = list(raw_recipients) if isinstance(raw_recipients, (list, tuple, set)) else [raw_recipients]
-    for recipient in recipients:
+    recipients = (
+        list(raw_recipients) if isinstance(raw_recipients, (list, tuple, set)) else [raw_recipients]
+    )
+    normalized_recipients = [str(recipient).strip() for recipient in recipients]
+    if len(set(normalized_recipients)) != len(normalized_recipients):
+        raise SecretStorageError(
+            f"Konfiguracja dostawcy SMS '{channel_key}' zawiera zduplikowane numery odbiorców."
+        )
+    for recipient in normalized_recipients:
         _validate_e164_number(recipient, channel_key, field="to")
 
     init_params = inspect.signature(SMSChannelCls).parameters
@@ -410,9 +453,13 @@ def _build_sms_channel(
     }
 
     if "recipients" in init_params:
-        sms_kwargs["recipients"] = recipients
+        sms_kwargs["recipients"] = normalized_recipients
     elif "to" in init_params:
-        sms_kwargs["to"] = recipients[0] if len(recipients) == 1 else recipients
+        sms_kwargs["to"] = (
+            normalized_recipients[0]
+            if len(normalized_recipients) == 1
+            else normalized_recipients
+        )
 
     if "from_number" in init_params:
         sms_kwargs["from_number"] = sender
