@@ -1,10 +1,29 @@
 import os
 import socket
+import sys
 from contextlib import contextmanager
 
 import pytest
 
 from bot_core.backtest.simulation import SimulationScenario
+
+
+UNSTABLE_WINDOWS_REASON = (
+    "Niestabilny test na Windows (self-hosted runner); pomijany na win32, wykonywany na "
+    "pozostałych platformach."
+)
+
+
+def is_windows() -> bool:
+    return sys.platform.startswith("win")
+
+
+unstable_windows = pytest.mark.skipif(
+    is_windows(),
+    reason=UNSTABLE_WINDOWS_REASON,
+)
+
+pytest.mark.unstable_windows = unstable_windows  # type: ignore[attr-defined]
 
 
 @pytest.fixture

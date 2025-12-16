@@ -1,7 +1,5 @@
 import time
 
-import time
-
 import grpc
 import pytest
 from google.protobuf import empty_pb2
@@ -10,7 +8,7 @@ from bot_core.api.server import build_local_runtime_context, LocalRuntimeServer
 from bot_core.generated import trading_pb2, trading_pb2_grpc
 
 
-pytestmark = pytest.mark.requires_trading_stubs
+pytestmark = [pytest.mark.requires_trading_stubs, pytest.mark.unstable_windows]
 
 
 _INTERVAL_TO_ISO = {

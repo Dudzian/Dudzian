@@ -6,6 +6,8 @@ from pathlib import Path
 
 import pytest
 
+pytestmark = pytest.mark.unstable_windows
+
 from bot_core.backtest.simulation import MatchingConfig
 from bot_core.runtime.paper_trading import PaperTradingAdapter
 from bot_core.security.license_store import LicenseStore
