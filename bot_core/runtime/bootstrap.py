@@ -2509,6 +2509,10 @@ def bootstrap_environment(
         "yes",
     )
     adapter_is_local = _is_local_adapter_endpoint(getattr(environment, "adapter_settings", None))
+    # Adapter loopback jest zawsze lokalny – może nie mieć jawnego base_url w konfiguracji,
+    # ale komunikuje się wyłącznie z serwerem HTTP działającym na localhost.
+    if isinstance(adapter, LoopbackExchangeAdapter):
+        adapter_is_local = True
     # Środowiska loopback/testnet korzystają z lokalnego serwera HTTP nawet jeśli
     # konfiguracja adaptera nie zawiera jawnego `base_url` w `adapter_settings`.
     # W takich przypadkach rozpoznajemy je po nazwie giełdy, żeby health-check

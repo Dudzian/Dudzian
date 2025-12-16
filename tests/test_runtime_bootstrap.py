@@ -696,6 +696,55 @@ def test_bootstrap_environment_runs_local_health_checks_without_network_flag(
     assert any(entry[0] == "run" for entry in calls)
 
 
+def test_bootstrap_environment_runs_loopback_health_checks_without_base_url(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _stub_license_validation(monkeypatch, tmp_path)
+    monkeypatch.delenv("ALLOW_NETWORK_TESTS", raising=False)
+
+    calls: list[tuple[str, object]] = []
+
+    def _fake_checks(adapter: object):
+        calls.append(("checks", adapter))
+        return ("loopback-health",)
+
+    class _FakeMonitor:
+        def __init__(self, checks: Sequence[object]) -> None:
+            calls.append(("monitor", tuple(checks)))
+
+        def run(self) -> Sequence[object]:
+            calls.append(("run", ()))
+            return (SimpleNamespace(status="ok"),)
+
+        @staticmethod
+        def overall_status(_results: Sequence[object]) -> str:
+            return "ok"
+
+    monkeypatch.setattr(bootstrap_module, "build_standard_health_checks", _fake_checks)
+    monkeypatch.setattr(bootstrap_module, "HealthMonitor", _FakeMonitor)
+
+    config_path = _write_config_custom(
+        tmp_path,
+        environment_overrides={
+            "exchange": "loopback_spot",
+            "environment": "testnet",
+            "keychain_key": "loopback_testnet_key",
+            "adapter_settings": {},
+        },
+    )
+    storage, manager = _prepare_manager()
+
+    context = bootstrap_environment(
+        "binance_paper",
+        config_path=config_path,
+        secret_manager=manager,
+    )
+
+    assert context.environment.environment is Environment.TESTNET
+    assert any(entry[0] == "checks" for entry in calls)
+    assert any(entry[0] == "run" for entry in calls)
+
+
 def test_bootstrap_environment_live_exposes_checklist(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
