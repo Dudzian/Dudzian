@@ -2509,11 +2509,19 @@ def bootstrap_environment(
         "yes",
     )
     adapter_is_local = _is_local_adapter_endpoint(getattr(environment, "adapter_settings", None))
-    # W CI środowiska loopback/testnet używają lokalnego serwera HTTP. Po zmianie
-    # blokującej testy sieciowe bez ALLOW_NETWORK_TESTS health-check został
-    # pomijany, co powodowało brak zapytań /account i fałszywą porażkę smoke
-    # harnessu około 11% postępu. Dla lokalnych endpointów nadal uruchamiamy
-    # sprawdzenie zdrowia, mimo globalnej blokady sieci.
+    # Środowiska loopback/testnet korzystają z lokalnego serwera HTTP nawet jeśli
+    # konfiguracja adaptera nie zawiera jawnego `base_url` w `adapter_settings`.
+    # W takich przypadkach rozpoznajemy je po nazwie giełdy, żeby health-check
+    # mógł wykonać zapytania `/account` i inne lokalne sondy mimo globalnej
+    # blokady sieci w testach (ALLOW_NETWORK_TESTS unset).
+    if not adapter_is_local:
+        exchange_name = str(getattr(environment, "exchange", "")).lower()
+        if "loopback" in exchange_name:
+            _LOGGER.debug(
+                "Traktuję giełdę %s jako lokalną (loopback_*); health-check będzie wykonywany mimo ALLOW_NETWORK_TESTS.",
+                environment.exchange,
+            )
+            adapter_is_local = True
     if not offline_mode and not (network_tests_allowed or adapter_is_local):
         _LOGGER.warning(
             "Pominięto health-check giełdy %s – testy sieci zablokowane (ALLOW_NETWORK_TESTS unset).",
