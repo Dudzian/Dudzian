@@ -58,6 +58,72 @@ def _ensure_stdlib_packaging() -> None:
             return
 
 
+def _looks_like_site_packages(path: Path) -> bool:
+    """Sprawdź, czy ścieżka należy do katalogu site-packages/dist-packages."""
+
+    lowered_parts = {part.lower() for part in path.parts}
+    return "site-packages" in lowered_parts or "dist-packages" in lowered_parts
+
+
+def _looks_like_numpy_source_tree(path: Path) -> bool:
+    """Wykryj lokalne checkouty NumPy, które mogą zacieniać zainstalowane koło."""
+
+    try:
+        resolved = path if path.is_absolute() else path.resolve(strict=False)
+    except Exception:
+        return False
+
+    if _looks_like_site_packages(resolved):
+        return False
+
+    numpy_dir = resolved / "numpy"
+    if not numpy_dir.is_dir():
+        return False
+
+    init_file = numpy_dir / "__init__.py"
+    if not init_file.exists():
+        return False
+
+    return any((resolved / marker).exists() for marker in ("setup.py", "pyproject.toml", "meson.build"))
+
+
+def _demote_numpy_source_shadows() -> None:
+    """Przenieś lokalne checkouty NumPy na koniec sys.path, by nie zasłaniały wheel'a."""
+
+    original = list(sys.path)
+    sanitized: list[str] = []
+    demoted: list[str] = []
+
+    for entry in original:
+        if not entry:
+            # Aktualny katalog powinien pozostać na początku, nawet jeśli to repo NumPy.
+            sanitized.append(entry)
+            continue
+
+        try:
+            entry_path = Path(entry)
+        except Exception:
+            sanitized.append(entry)
+            continue
+
+        if _looks_like_numpy_source_tree(entry_path):
+            demoted.append(entry)
+        else:
+            sanitized.append(entry)
+
+    if not demoted:
+        return
+
+    seen: set[str] = set()
+    reordered: list[str] = []
+    for entry in (*sanitized, *demoted):
+        if entry in seen:
+            continue
+        reordered.append(entry)
+        seen.add(entry)
+    sys.path = reordered
+
+
 def _stabilize_numpy_no_value() -> None:
     """Zapewnij spójność sentinela NumPy `_NoValue` po ewentualnych przeładowaniach."""
 
@@ -131,6 +197,7 @@ def _bootstrap_repo_path() -> None:
 
 
 _bootstrap_repo_path()
+_demote_numpy_source_shadows()
 _ensure_stdlib_packaging()
 _stabilize_numpy_no_value()
 
