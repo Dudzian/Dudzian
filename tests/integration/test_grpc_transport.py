@@ -356,8 +356,16 @@ def test_runtime_service_consumes_grpc_stream(
             assert registry.get("bot_ui_feed_reconnects_total").value(labels=sla_labels) >= 0.0
             assert registry.get("bot_ui_feed_downtime_seconds").value(labels=sla_labels) >= 0.0
         finally:
-            service.shutdown()
+            # Prefer the new RuntimeService.shutdown() API when available,
+            # but keep backwards compatibility with older implementations
+            # that only expose _stop_grpc_stream().
+            shutdown = getattr(service, "shutdown", None)
+            if callable(shutdown):
+                shutdown()
+            else:
+                service._stop_grpc_stream()
             app.quit()
+        monkeypatch.delenv("BOT_CORE_UI_GRPC_ENDPOINT", raising=False)
 
 
 def test_runtime_service_handles_grpc_connection_error(monkeypatch) -> None:

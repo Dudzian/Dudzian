@@ -95,9 +95,24 @@ def _demote_numpy_source_shadows() -> None:
     demoted: list[str] = []
 
     for entry in original:
-        if not entry:
-            # Aktualny katalog powinien pozostać na początku, nawet jeśli to repo NumPy.
-            sanitized.append(entry)
+        if entry == "":
+            # Pusty wpis odpowiada bieżącemu katalogowi roboczemu.
+            # Jeżeli cwd wygląda jak checkout NumPy, traktujemy go tak samo jak
+            # inne ścieżki źródłowe i przenosimy na koniec sys.path, żeby nie
+            # zasłaniał zainstalowanego koła w site-packages.
+            try:
+                cwd = Path.cwd()
+            except Exception:
+                sanitized.append(entry)
+                continue
+
+            try:
+                if _looks_like_numpy_source_tree(cwd):
+                    demoted.append(entry)
+                else:
+                    sanitized.append(entry)
+            except Exception:
+                sanitized.append(entry)
             continue
 
         try:

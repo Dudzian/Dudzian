@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import sitecustomize
+from pathlib import Path
 
 
 def test_demotes_numpy_checkout_out_of_sys_path(tmp_path, monkeypatch) -> None:
@@ -29,3 +30,26 @@ def test_keeps_site_packages_numpy(tmp_path, monkeypatch) -> None:
     sitecustomize._demote_numpy_source_shadows()  # type: ignore[attr-defined]
 
     assert sitecustomize.sys.path == sys_path
+
+
+def test_demotes_cwd_when_it_is_numpy_checkout(tmp_path, monkeypatch) -> None:
+    """Jeżeli bieżący katalog jest checkoutem NumPy, pusty wpis sys.path też jest demotowany."""
+
+    # Przygotuj atrapę drzewa źródłowego NumPy:
+    numpy_checkout = tmp_path / "numpy"
+    numpy_checkout.mkdir()
+    (numpy_checkout / "__init__.py").write_text("# numpy stub", encoding="utf-8")
+    (tmp_path / "pyproject.toml").write_text("[build-system]", encoding="utf-8")
+
+    # Udajemy, że test uruchamiany jest z katalogu checkoutu NumPy.
+    monkeypatch.chdir(tmp_path)
+
+    # Pusty wpis odpowiada cwd; drugi wpis reprezentuje site-packages.
+    sys_path = ["", "/safe/site-packages"]
+    monkeypatch.setattr(sitecustomize.sys, "path", list(sys_path))
+
+    sitecustomize._demote_numpy_source_shadows()  # type: ignore[attr-defined]
+
+    # Oczekujemy, że site-packages pozostanie przed checkoutem NumPy.
+    assert sitecustomize.sys.path[0] == "/safe/site-packages"
+    assert sitecustomize.sys.path[-1] == ""
