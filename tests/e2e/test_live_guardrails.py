@@ -7,6 +7,8 @@ from pathlib import Path
 import pytest
 import yaml
 
+pytestmark = pytest.mark.unstable_windows
+
 from bot_core.exchanges.base import Environment
 from bot_core.runtime import bootstrap as bootstrap_module
 from bot_core.runtime.bootstrap import bootstrap_environment

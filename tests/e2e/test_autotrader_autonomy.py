@@ -9,6 +9,8 @@ from typing import Mapping, cast
 import pandas as pd
 import pytest
 
+pytestmark = pytest.mark.unstable_windows
+
 from bot_core.ai.regime import MarketRegime, MarketRegimeAssessment
 from bot_core.auto_trader import (
     AutoTrader,
