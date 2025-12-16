@@ -1661,7 +1661,18 @@ def _resolve_signature_key(key_id: str, *, document_root: Path | None) -> bytes:
             raise LiveSignatureVerificationError(
                 f"Plik klucza HMAC {candidate} jest pusty."  # pragma: no cover - niepoprawna konfiguracja
             )
-        return data
+
+        # Większość kluczy jest przechowywana jako tekst z końcową nową linią
+        # (np. ``echo key > file``). Weryfikacja podpisów musi ignorować
+        # znak końca linii, ponieważ podpisy w repozytorium są liczone bez
+        # tego znakowania. Zrywamy jedynie standardowe sekwencje nowej linii,
+        # zachowując ewentualne inne znaczące białe znaki w środku klucza.
+        normalized = data.rstrip(b"\r\n")
+        if not normalized:
+            raise LiveSignatureVerificationError(
+                f"Plik klucza HMAC {candidate} jest pusty."  # pragma: no cover - niepoprawna konfiguracja
+            )
+        return normalized
 
     raise LiveSignatureVerificationError(
         f"Nie znaleziono klucza HMAC dla key_id='{key_id}'. Umieść plik secrets/hmac/{normalized}.key."
