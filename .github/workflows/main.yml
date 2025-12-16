@@ -70,17 +70,6 @@ jobs:
           New-Item -ItemType Directory -Force var/ci | Out-Null
           pytest -vv --maxfail=1 -x --junitxml=var/ci/smoke_harness_first.xml
 
-      - name: Upload smoke harness artifacts
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: smoke-harness-first
-          path: |
-            var/ci/smoke_harness_first.xml
-            var/**/*.log
-            logs/**/*.log
-          if-no-files-found: ignore
-
   smoke-harness-all:
     name: Smoke harness (env + all failures)
     runs-on: [self-hosted, windows]
@@ -113,17 +102,6 @@ jobs:
         run: |
           New-Item -ItemType Directory -Force var/ci | Out-Null
           pytest -vv --junitxml=var/ci/smoke_harness_all.xml
-
-      - name: Upload smoke harness artifacts (all)
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: smoke-harness-all
-          path: |
-            var/ci/smoke_harness_all.xml
-            var/**/*.log
-            logs/**/*.log
-          if-no-files-found: ignore
 
   lint:
     name: Lint (pre-commit)
