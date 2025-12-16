@@ -8,6 +8,7 @@ import re
 import logging
 import os
 import stat
+from urllib.parse import urlparse
 import sys
 import hashlib
 from contextlib import contextmanager
@@ -1636,6 +1637,35 @@ def _extract_payload_sha256(payload: Mapping[str, Any]) -> str | None:
     return None
 
 
+def _is_local_adapter_endpoint(settings: Mapping[str, Any] | None) -> bool:
+    """Sprawdza, czy adapter jest skonfigurowany na połączenie lokalne."""
+
+    if not isinstance(settings, Mapping):
+        return False
+
+    live_settings = settings.get("live_trading") if "live_trading" in settings else settings
+    base_url_candidate = None
+    if isinstance(live_settings, Mapping):
+        candidate = live_settings.get("base_url")
+        if isinstance(candidate, str):
+            base_url_candidate = candidate.strip()
+
+    if not base_url_candidate:
+        return False
+
+    try:
+        parsed = urlparse(base_url_candidate)
+    except Exception:
+        return False
+
+    host = (parsed.hostname or "").lower()
+    if host in {"localhost", "::1"}:
+        return True
+    if host.startswith("127."):
+        return True
+    return False
+
+
 def _resolve_signature_key(key_id: str, *, document_root: Path | None) -> bytes:
     if not key_id:
         raise LiveSignatureVerificationError("Plik podpisu nie zawiera identyfikatora key_id.")
@@ -2478,7 +2508,13 @@ def bootstrap_environment(
         "true",
         "yes",
     )
-    if not offline_mode and not network_tests_allowed:
+    adapter_is_local = _is_local_adapter_endpoint(getattr(environment, "adapter_settings", None))
+    # W CI środowiska loopback/testnet używają lokalnego serwera HTTP. Po zmianie
+    # blokującej testy sieciowe bez ALLOW_NETWORK_TESTS health-check został
+    # pomijany, co powodowało brak zapytań /account i fałszywą porażkę smoke
+    # harnessu około 11% postępu. Dla lokalnych endpointów nadal uruchamiamy
+    # sprawdzenie zdrowia, mimo globalnej blokady sieci.
+    if not offline_mode and not (network_tests_allowed or adapter_is_local):
         _LOGGER.warning(
             "Pominięto health-check giełdy %s – testy sieci zablokowane (ALLOW_NETWORK_TESTS unset).",
             environment.exchange,
