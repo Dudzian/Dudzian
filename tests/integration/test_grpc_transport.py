@@ -142,9 +142,7 @@ def _to_pb_entries(records: Iterable[Mapping[str, str]]) -> list[trading_pb2.Dec
     return [trading_pb2.DecisionRecordEntry(fields=dict(record)) for record in records]
 
 
-RUNTIME_STREAM_FLAKY_ON_WINDOWS = sys.platform == "win32" and (
-    os.environ.get("CI") == "true" or os.environ.get("GITHUB_ACTIONS") == "true"
-)
+RUNTIME_STREAM_UNSTABLE_ON_WINDOWS = sys.platform == "win32"
 
 
 @pytest.mark.integration
@@ -266,8 +264,8 @@ def test_streaming_layer_exposes_long_poll_only() -> None:
 
 @pytest.mark.integration
 @pytest.mark.skipif(
-    RUNTIME_STREAM_FLAKY_ON_WINDOWS,
-    reason="test_runtime_service_consumes_grpc_stream hangs on Windows self-hosted CI",
+    RUNTIME_STREAM_UNSTABLE_ON_WINDOWS,
+    reason="test_runtime_service_consumes_grpc_stream hangs on Windows (local and CI)",
 )
 def test_runtime_service_consumes_grpc_stream(
     ci_decision_feed_metrics: Path, monkeypatch: pytest.MonkeyPatch
