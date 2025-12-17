@@ -12,6 +12,9 @@ from bot_core.generated import trading_pb2, trading_pb2_grpc
 from bot_core.security.fingerprint import sign_license_payload
 
 
+pytestmark = [pytest.mark.integration, pytest.mark.requires_trading_stubs, pytest.mark.unstable_windows]
+
+
 class _RuntimeStub(trading_pb2_grpc.RuntimeServiceServicer):
     def ListDecisions(self, request, context):  # type: ignore[override]
         del request, context

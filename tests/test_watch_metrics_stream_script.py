@@ -35,7 +35,7 @@ from scripts.watch_metrics_stream import (
 )
 
 
-pytestmark = pytest.mark.requires_trading_stubs
+pytestmark = [pytest.mark.requires_trading_stubs, pytest.mark.unstable_windows]
 
 
 def _write_risk_profile_file(tmp_path: Path, name: str = "ops", severity: str = "warning") -> Path:

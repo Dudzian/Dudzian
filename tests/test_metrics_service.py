@@ -18,7 +18,7 @@ trading_pb2_grpc = pytest.importorskip(
     reason="Brak wygenerowanych stubów trading_pb2_grpc",
 )
 
-pytestmark = pytest.mark.requires_trading_stubs
+pytestmark = [pytest.mark.requires_trading_stubs, pytest.mark.unstable_windows]
 
 from bot_core.config.models import ServiceTokenConfig
 from bot_core.security.tokens import build_service_token_validator

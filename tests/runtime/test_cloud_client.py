@@ -15,6 +15,9 @@ from bot_core.runtime.cloud_client import (
 )
 
 
+pytestmark = pytest.mark.unstable_windows
+
+
 class _RuntimeStub(trading_pb2_grpc.RuntimeServiceServicer):
     def ListDecisions(self, request, context):  # type: ignore[override]
         del request, context

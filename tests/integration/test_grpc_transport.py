@@ -32,6 +32,9 @@ from ui.backend.runtime_service import RuntimeService
 from bot_core.runtime.journal import InMemoryTradingDecisionJournal, TradingDecisionEvent
 
 
+pytestmark = pytest.mark.unstable_windows
+
+
 def _build_stub_context(*, preset_dir: Path | None = None):
     markets = {
         "BTC/USDT": MarketMetadata(

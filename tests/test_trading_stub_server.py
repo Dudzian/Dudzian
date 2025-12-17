@@ -20,7 +20,7 @@ from bot_core.testing import (
 )
 
 
-pytestmark = pytest.mark.requires_trading_stubs
+pytestmark = [pytest.mark.requires_trading_stubs, pytest.mark.unstable_windows]
 
 
 @pytest.fixture(scope="module", autouse=True)
