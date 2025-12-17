@@ -22,3 +22,6 @@ tests/utils/.libgl-cache/
 ui/desktop/node_modules/
 ui/desktop/dist/
 ui/desktop/test-results/
+logs/ui/support/support.log
+logs/ui/updates/offline_update.log
+logs/ui_telemetry_alerts.jsonl
