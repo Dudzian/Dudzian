@@ -43,8 +43,9 @@ Item {
         blurMax: root.blurRadius
         brightness: 0.05
         saturation: 1.05
-        colorization: Qt.rgba(1, 1, 1, 0.08)
-        colorizationStrength: 0.35
+        // colorizationStrength is not available in QtQuick.Effects MultiEffect on some Qt versions.
+        // Approximate the intended subtle tint by baking the strength into the alpha channel.
+        colorization: Qt.rgba(1, 1, 1, 0.028)
     }
 
     DropShadow {
