@@ -1017,8 +1017,14 @@ def _load_exchange_profile(path: str | Path | None, exchange: str) -> dict[str, 
 
 
 def _extract_adapter_settings(profile: Mapping[str, object]) -> dict[str, object]:
+    # Sanitizes native adapter payload (e.g. tests/test_cli_health_check.py::{
+    #   test_health_check_cli_uses_profile_configuration,
+    #   test_health_check_cli_prefers_cli_credentials,
+    #   test_health_check_cli_overrides_native_adapter_from_cli
+    # }).
     skip_keys = {
         "key",
+        "key_id",
         "secret",
         "mode",
         "passphrase",
