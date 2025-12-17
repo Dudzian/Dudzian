@@ -316,7 +316,12 @@ def sign_with_rotating_keys(
         return (2 - p, st.last_rotated.timestamp() if st.last_rotated else 0.0)
 
     selected = sorted(statuses.items(), key=lambda kv: _prio(kv[1]))[-1][0]
-    signature = build_hmac_signature(payload, key=keys[selected], key_id=selected)
+    signature = build_hmac_signature(
+        payload,
+        key=keys[selected],
+        key_id=selected,
+        algorithm=LICENSE_SIGNATURE_ALGORITHM,
+    )
     if mark_rotation:
         registry.mark_rotated(selected, purpose, timestamp=now)
     return {"payload": dict(payload), "signature": signature}

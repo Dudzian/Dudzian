@@ -45,11 +45,24 @@ def build_hmac_signature(
     algorithm: str = "HMAC-SHA256",
     key_id: str | None = None,
 ) -> dict[str, str]:
-    """Buduje podpis HMAC dla ładunku JSON."""
+    """Buduje podpis HMAC dla ładunku JSON.
 
-    digest = hmac.new(key, canonical_json_bytes(payload), hashlib.sha256).digest()
+    Algorytm jest interpretowany w sposób niewrażliwy na wielkość liter i
+    determinuję funkcję skrótu HMAC. Zgłaszamy ``ValueError`` dla
+    nieobsługiwanych wartości, aby uniknąć cichego podpisywania słabszym
+    algorytmem.
+    """
+
+    normalized_algorithm = algorithm.upper()
+    if normalized_algorithm == "HMAC-SHA256":
+        digest = hmac.new(key, canonical_json_bytes(payload), hashlib.sha256).digest()
+    elif normalized_algorithm == "HMAC-SHA384":
+        digest = hmac.new(key, canonical_json_bytes(payload), hashlib.sha384).digest()
+    else:
+        raise ValueError(f"Unsupported HMAC algorithm: {algorithm}")
+
     signature = {
-        "algorithm": algorithm,
+        "algorithm": normalized_algorithm,
         "value": base64.b64encode(digest).decode("ascii"),
     }
     if key_id:
