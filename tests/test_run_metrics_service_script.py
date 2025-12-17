@@ -38,7 +38,7 @@ from tests._metrics_service_helpers import (
 )
 
 
-pytestmark = pytest.mark.requires_trading_stubs
+pytestmark = [pytest.mark.requires_trading_stubs, pytest.mark.unstable_windows]
 
 
 def _make_dummy_server(
