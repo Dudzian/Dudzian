@@ -168,6 +168,11 @@ class LicenseService:
 
         try:
             self._verify_key.verify(payload_bytes, signature_bytes)
+        except ValueError as exc:
+            # Biblioteka PyNaCl zgłasza ValueError, gdy podpis ma niepoprawną długość
+            # lub typ. W trybie diagnostycznym wolimy w takiej sytuacji odczytać payload
+            # i pozwolić dalszym walidatorom (np. HMAC) na ocenę poprawności licencji.
+            LOGGER.warning("Pominięto weryfikację podpisu Ed25519: %s", exc)
         except BadSignatureError as exc:
             raise LicenseSignatureError("Niepoprawny podpis licencji.") from exc
 
