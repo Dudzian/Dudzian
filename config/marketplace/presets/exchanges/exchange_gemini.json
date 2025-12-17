@@ -1,156 +1,11 @@
 {
-  "preset": {
-    "name": "Gemini Connectivity",
-    "strategies": [
-      {
-        "name": "gemini_connectivity",
-        "engine": "grid_trading",
-        "parameters": {
-          "exchange": "GEMINI",
-          "default_environment": "paper",
-          "available_environments": [
-            "paper",
-            "testnet",
-            "live"
-          ]
-        },
-        "license_tier": "community",
-        "risk_classes": [
-          "infrastructure"
-        ],
-        "required_data": [
-          "ohlcv"
-        ],
-        "tags": [
-          "exchange",
-          "gemini"
-        ],
-        "metadata": {
-          "description": "Automatycznie wygenerowany preset środowisk dla giełdy Gemini.",
-          "environments": [
-            {
-              "name": "paper",
-              "description": "Paper trading dla Gemini (spot, fee 35 bps).",
-              "config": {
-                "description": "Paper trading dla Gemini (spot, fee 35 bps).",
-                "exchange_manager": {
-                  "mode": "paper",
-                  "paper_variant": "spot",
-                  "paper_initial_cash": 15000,
-                  "paper_cash_asset": "USD",
-                  "paper_fee_rate": 0.0035
-                },
-                "credentials": {
-                  "key_id": null,
-                  "secret": null
-                }
-              }
-            },
-            {
-              "name": "testnet",
-              "description": "Gemini sandbox API.",
-              "config": {
-                "description": "Gemini sandbox API.",
-                "exchange_manager": {
-                  "mode": "spot",
-                  "testnet": true,
-                  "failover": {
-                    "enabled": true,
-                    "failure_threshold": 1,
-                    "cooldown_seconds": 60
-                  },
-                  "rate_limit_rules": [
-                    {
-                      "rate": 15,
-                      "per": 1.0
-                    },
-                    {
-                      "rate": 1200,
-                      "per": 60.0
-                    }
-                  ]
-                },
-                "credentials": {
-                  "key_id": "${GEMINI_SANDBOX_KEY}",
-                  "secret": "${GEMINI_SANDBOX_SECRET}"
-                }
-              }
-            },
-            {
-              "name": "live",
-              "description": "Produkcyjny handel na Gemini.",
-              "config": {
-                "description": "Produkcyjny handel na Gemini.",
-                "exchange_manager": {
-                  "mode": "spot",
-                  "testnet": false,
-                  "watchdog": {
-                    "retry_policy": {
-                      "max_attempts": 3,
-                      "base_delay": 1.2
-                    }
-                  },
-                  "failover": {
-                    "enabled": true,
-                    "failure_threshold": 1,
-                    "cooldown_seconds": 75
-                  },
-                  "rate_limit_rules": [
-                    {
-                      "rate": 15,
-                      "per": 1.0
-                    },
-                    {
-                      "rate": 1200,
-                      "per": 60.0
-                    }
-                  ]
-                },
-                "credentials": {
-                  "key_id": "${GEMINI_LIVE_KEY}",
-                  "secret": "${GEMINI_LIVE_SECRET}"
-                }
-              }
-            }
-          ]
-        }
-      }
-    ],
-    "metadata": {
-      "id": "exchange_gemini",
-      "version": "1.1.0+adapter-rollout",
-      "summary": "Preset Gemini spot z failoverem CCXT i odświeżonym paper tradingiem",
-      "tags": [
-        "exchange",
-        "gemini"
-      ],
-      "profile": "grid",
-      "required_exchanges": [
-        "GEMINI"
-      ],
-      "source_file": "config/exchanges/gemini.yaml",
-      "environments": [
-        "paper",
-        "testnet",
-        "live"
-      ]
-    }
-  },
-  "signature": {
-    "algorithm": "ed25519",
-    "value": "tUrRz3WKMMzeswqI9aLGKRvUOp9AqEm6HZwrGnfxD7dWGTX8mRXbKt2mIH5jfyuum0RVgQ8kMteGxgeouPPADQ==",
-    "key_id": "dev-presets",
-    "public_key": "wnD5eTEGDB3CPb6r3oMOmRjFtjCxHISZXHlHX0TIKhY=",
-    "signed_at": "2025-11-01T22:38:01Z",
-    "issuer": "Dudzian"
-  },
   "catalog": {
     "schema_version": "1.1",
     "package_id": "exchange_gemini.v1",
     "display_name": "Gemini Exchange Environments",
     "summary": "Preset środowisk paper/testnet/live dla giełdy Gemini.",
     "description": "Pakiet udostępnia kompletny zestaw środowisk i guardraili dla integracji Gemini.",
-    "version": "1.0.0+community",
+    "version": "1.1.0+00fe7eff6ee5ab4a",
     "revision": "2025.01",
     "release_date": "2025-01-15T09:30:00Z",
     "maintainers": [
@@ -264,5 +119,150 @@
       "migration_required": false,
       "source": "exchanges/exchange_gemini.json"
     }
+  },
+  "preset": {
+    "name": "Gemini Connectivity",
+    "strategies": [
+      {
+        "name": "gemini_connectivity",
+        "engine": "grid_trading",
+        "parameters": {
+          "exchange": "GEMINI",
+          "default_environment": "paper",
+          "available_environments": [
+            "paper",
+            "testnet",
+            "live"
+          ]
+        },
+        "license_tier": "community",
+        "risk_classes": [
+          "infrastructure"
+        ],
+        "required_data": [
+          "ohlcv"
+        ],
+        "tags": [
+          "exchange",
+          "gemini"
+        ],
+        "metadata": {
+          "description": "Automatycznie wygenerowany preset środowisk dla giełdy Gemini.",
+          "environments": [
+            {
+              "name": "paper",
+              "description": "Paper trading dla Gemini w oparciu o symulator.",
+              "config": {
+                "description": "Paper trading dla Gemini w oparciu o symulator.",
+                "exchange_manager": {
+                  "mode": "paper",
+                  "paper_variant": "spot",
+                  "paper_initial_cash": 15000,
+                  "paper_cash_asset": "USD",
+                  "paper_fee_rate": 0.0035
+                },
+                "credentials": {
+                  "key_id": null,
+                  "secret": null
+                }
+              }
+            },
+            {
+              "name": "testnet",
+              "description": "Gemini sandbox API.",
+              "config": {
+                "description": "Gemini sandbox API.",
+                "exchange_manager": {
+                  "mode": "spot",
+                  "testnet": true,
+                  "failover": {
+                    "enabled": true,
+                    "failure_threshold": 1,
+                    "cooldown_seconds": 60
+                  },
+                  "rate_limit_rules": [
+                    {
+                      "rate": 15,
+                      "per": 1.0
+                    },
+                    {
+                      "rate": 1200,
+                      "per": 60.0
+                    }
+                  ]
+                },
+                "credentials": {
+                  "key_id": "${GEMINI_SANDBOX_KEY}",
+                  "secret": "${GEMINI_SANDBOX_SECRET}"
+                }
+              }
+            },
+            {
+              "name": "live",
+              "description": "Produkcyjny handel na Gemini.",
+              "config": {
+                "description": "Produkcyjny handel na Gemini.",
+                "exchange_manager": {
+                  "mode": "spot",
+                  "testnet": false,
+                  "watchdog": {
+                    "retry_policy": {
+                      "max_attempts": 3,
+                      "base_delay": 1.2
+                    }
+                  },
+                  "failover": {
+                    "enabled": true,
+                    "failure_threshold": 1,
+                    "cooldown_seconds": 75
+                  },
+                  "rate_limit_rules": [
+                    {
+                      "rate": 15,
+                      "per": 1.0
+                    },
+                    {
+                      "rate": 1200,
+                      "per": 60.0
+                    }
+                  ]
+                },
+                "credentials": {
+                  "key_id": "${GEMINI_LIVE_KEY}",
+                  "secret": "${GEMINI_LIVE_SECRET}"
+                }
+              }
+            }
+          ]
+        }
+      }
+    ],
+    "metadata": {
+      "id": "exchange_gemini",
+      "version": "1.1.0+00fe7eff6ee5ab4a",
+      "summary": "Autogenerated preset dla giełdy Gemini",
+      "tags": [
+        "exchange",
+        "gemini"
+      ],
+      "profile": "grid",
+      "required_exchanges": [
+        "GEMINI"
+      ],
+      "source_file": "config/exchanges/gemini.yaml",
+      "environments": [
+        "paper",
+        "testnet",
+        "live"
+      ]
+    }
+  },
+  "signature": {
+    "algorithm": "ed25519",
+    "value": "SnHr3nmzk250mQ6bNOmYDGv3gJkcRuszT95UoBlwVT6FlRiOYo/R7kB/yu5bLoF4Q/bOYeiOxlzc3pKphOrvBA==",
+    "key_id": "dev-presets",
+    "public_key": "wnD5eTEGDB3CPb6r3oMOmRjFtjCxHISZXHlHX0TIKhY=",
+    "signed_at": "2025-12-17T20:40:46Z",
+    "issuer": "marketplace-ci"
   }
 }

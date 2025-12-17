@@ -1,184 +1,11 @@
 {
-  "preset": {
-    "name": "Deribit Connectivity",
-    "strategies": [
-      {
-        "name": "deribit_connectivity",
-        "engine": "grid_trading",
-        "parameters": {
-          "exchange": "DERIBIT",
-          "default_environment": "paper",
-          "available_environments": [
-            "paper",
-            "testnet",
-            "live"
-          ]
-        },
-        "license_tier": "community",
-        "risk_classes": [
-          "infrastructure"
-        ],
-        "required_data": [
-          "ohlcv"
-        ],
-        "tags": [
-          "exchange",
-          "deribit"
-        ],
-        "metadata": {
-          "description": "Automatycznie wygenerowany preset środowisk dla giełdy Deribit.",
-          "environments": [
-            {
-              "name": "paper",
-              "description": "Papierowy symulator kontraktów perpetual Deribit.",
-              "config": {
-                "description": "Papierowy symulator kontraktów perpetual Deribit.",
-                "exchange_manager": {
-                  "mode": "paper",
-                  "paper_variant": "futures",
-                  "paper_initial_cash": 100000,
-                  "paper_cash_asset": "USDC",
-                  "simulator": {
-                    "leverage_limit": 10.0,
-                    "maintenance_margin_ratio": 0.05,
-                    "funding_rate": 0.0001,
-                    "funding_interval_seconds": 28800
-                  },
-                  "rate_limit_rules": [
-                    {
-                      "rate": 40,
-                      "per": 1
-                    },
-                    {
-                      "rate": 1200,
-                      "per": 60
-                    }
-                  ]
-                },
-                "credentials": {
-                  "key_id": null,
-                  "secret": null
-                }
-              }
-            },
-            {
-              "name": "testnet",
-              "description": "Deribit testnet futures API.",
-              "config": {
-                "description": "Deribit testnet futures API.",
-                "exchange_manager": {
-                  "mode": "futures",
-                  "testnet": true,
-                  "watchdog": {
-                    "retry_policy": {
-                      "max_attempts": 5,
-                      "base_delay": 0.4,
-                      "max_delay": 3.0,
-                      "jitter": 0.3
-                    }
-                  },
-                  "rate_limit_rules": [
-                    {
-                      "rate": 40,
-                      "per": 1
-                    },
-                    {
-                      "rate": 1200,
-                      "per": 60
-                    }
-                  ],
-                  "native_adapter": {
-                    "settings": {
-                      "stream": {
-                        "base_url": "https://stream.sandbox.dudzian.ai/exchanges",
-                        "public_path": "/deribit/futures/public",
-                        "private_path": "/deribit/futures/private"
-                      }
-                    }
-                  },
-                  "failover": {
-                    "enabled": true,
-                    "failure_threshold": 2,
-                    "cooldown_seconds": 45
-                  }
-                },
-                "decision_journal": {
-                  "filename": "deribit-futures-testnet-%Y%m%d.jsonl",
-                  "signed": true
-                },
-                "credentials": {
-                  "key_id": "${DERIBIT_TESTNET_KEY}",
-                  "secret": "${DERIBIT_TESTNET_SECRET}"
-                }
-              }
-            },
-            {
-              "name": "live",
-              "description": "Produkcyjne środowisko Deribit futures.",
-              "config": {
-                "description": "Produkcyjne środowisko Deribit futures.",
-                "exchange_manager": {
-                  "mode": "futures",
-                  "testnet": false,
-                  "watchdog": {
-                    "retry_policy": {
-                      "max_attempts": 3,
-                      "base_delay": 0.6,
-                      "max_delay": 3.5,
-                      "jitter": 0.35
-                    },
-                    "circuit_breaker": {
-                      "failure_threshold": 4,
-                      "recovery_time_seconds": 90
-                    }
-                  },
-                  "rate_limit_rules": [
-                    {
-                      "rate": 40,
-                      "per": 1
-                    },
-                    {
-                      "rate": 1200,
-                      "per": 60
-                    }
-                  ],
-                  "native_adapter": {
-                    "settings": {
-                      "stream": {
-                        "base_url": "https://stream.hyperion.dudzian.ai/exchanges",
-                        "public_path": "/deribit/futures/public",
-                        "private_path": "/deribit/futures/private"
-                      }
-                    }
-                  },
-                  "failover": {
-                    "enabled": true,
-                    "failure_threshold": 3,
-                    "cooldown_seconds": 60
-                  }
-                },
-                "decision_journal": {
-                  "filename": "deribit-futures-live-%Y%m%d.jsonl",
-                  "signed": true
-                },
-                "credentials": {
-                  "key_id": "${DERIBIT_LIVE_KEY}",
-                  "secret": "${DERIBIT_LIVE_SECRET}"
-                }
-              }
-            }
-          ]
-        }
-      }
-    ]
-  },
   "catalog": {
     "schema_version": "1.1",
     "package_id": "exchange_deribit.v1",
     "display_name": "Deribit Exchange Environments",
     "summary": "Preset środowisk paper/testnet/live dla giełdy Deribit.",
     "description": "Pakiet udostępnia kompletny zestaw środowisk i guardraili dla integracji Deribit.",
-    "version": "1.0.0+community",
+    "version": "1.0.0+6481b2a84ec62f81",
     "revision": "2025.01",
     "release_date": "2025-01-15T09:30:00Z",
     "maintainers": [
@@ -293,5 +120,197 @@
       "migration_required": false,
       "source": "exchanges/exchange_deribit.json"
     }
+  },
+  "preset": {
+    "name": "Deribit Connectivity",
+    "strategies": [
+      {
+        "name": "deribit_connectivity",
+        "engine": "grid_trading",
+        "parameters": {
+          "exchange": "DERIBIT",
+          "default_environment": "paper",
+          "available_environments": [
+            "paper",
+            "testnet",
+            "live"
+          ]
+        },
+        "license_tier": "community",
+        "risk_classes": [
+          "infrastructure"
+        ],
+        "required_data": [
+          "ohlcv"
+        ],
+        "tags": [
+          "exchange",
+          "deribit"
+        ],
+        "metadata": {
+          "description": "Automatycznie wygenerowany preset środowisk dla giełdy Deribit.",
+          "environments": [
+            {
+              "name": "paper",
+              "description": "Papierowy symulator kontraktów perpetual Deribit.",
+              "config": {
+                "description": "Papierowy symulator kontraktów perpetual Deribit.",
+                "exchange_manager": {
+                  "mode": "paper",
+                  "paper_variant": "futures",
+                  "paper_initial_cash": 100000,
+                  "paper_cash_asset": "USDC",
+                  "simulator": {
+                    "leverage_limit": 10.0,
+                    "maintenance_margin_ratio": 0.05,
+                    "funding_rate": 0.0001,
+                    "funding_interval_seconds": 28800
+                  },
+                  "rate_limit_rules": [
+                    {
+                      "rate": 40,
+                      "per": 1
+                    },
+                    {
+                      "rate": 1200,
+                      "per": 60
+                    }
+                  ]
+                },
+                "credentials": {
+                  "key_id": null,
+                  "secret": null
+                }
+              }
+            },
+            {
+              "name": "testnet",
+              "description": "Deribit testnet futures API.",
+              "config": {
+                "description": "Deribit testnet futures API.",
+                "exchange_manager": {
+                  "mode": "futures",
+                  "testnet": true,
+                  "watchdog": {
+                    "retry_policy": {
+                      "max_attempts": 5,
+                      "base_delay": 0.4,
+                      "max_delay": 3.0,
+                      "jitter": 0.3
+                    }
+                  },
+                  "rate_limit_rules": [
+                    {
+                      "rate": 40,
+                      "per": 1
+                    },
+                    {
+                      "rate": 1200,
+                      "per": 60
+                    }
+                  ],
+                  "native_adapter": {
+                    "settings": {
+                      "stream": {
+                        "base_url": "https://stream.sandbox.dudzian.ai/exchanges",
+                        "public_path": "/deribit/futures/public",
+                        "private_path": "/deribit/futures/private"
+                      }
+                    }
+                  },
+                  "failover": {
+                    "enabled": true,
+                    "failure_threshold": 2,
+                    "cooldown_seconds": 45
+                  }
+                },
+                "credentials": {
+                  "key_id": "${DERIBIT_TESTNET_KEY}",
+                  "secret": "${DERIBIT_TESTNET_SECRET}"
+                }
+              }
+            },
+            {
+              "name": "live",
+              "description": "Produkcyjne środowisko Deribit futures.",
+              "config": {
+                "description": "Produkcyjne środowisko Deribit futures.",
+                "exchange_manager": {
+                  "mode": "futures",
+                  "testnet": false,
+                  "watchdog": {
+                    "retry_policy": {
+                      "max_attempts": 3,
+                      "base_delay": 0.6,
+                      "max_delay": 3.5,
+                      "jitter": 0.35
+                    },
+                    "circuit_breaker": {
+                      "failure_threshold": 4,
+                      "recovery_time_seconds": 90
+                    }
+                  },
+                  "native_adapter": {
+                    "settings": {
+                      "stream": {
+                        "base_url": "https://stream.hyperion.dudzian.ai/exchanges",
+                        "public_path": "/deribit/futures/public",
+                        "private_path": "/deribit/futures/private"
+                      }
+                    }
+                  },
+                  "rate_limit_rules": [
+                    {
+                      "rate": 40,
+                      "per": 1
+                    },
+                    {
+                      "rate": 1200,
+                      "per": 60
+                    }
+                  ],
+                  "failover": {
+                    "enabled": true,
+                    "failure_threshold": 3,
+                    "cooldown_seconds": 60
+                  }
+                },
+                "credentials": {
+                  "key_id": "${DERIBIT_LIVE_KEY}",
+                  "secret": "${DERIBIT_LIVE_SECRET}"
+                }
+              }
+            }
+          ]
+        }
+      }
+    ],
+    "metadata": {
+      "id": "exchange_deribit",
+      "version": "1.0.0+6481b2a84ec62f81",
+      "summary": "Autogenerated preset dla giełdy Deribit",
+      "tags": [
+        "exchange",
+        "deribit"
+      ],
+      "profile": "grid",
+      "required_exchanges": [
+        "DERIBIT"
+      ],
+      "source_file": "config/exchanges/deribit.yaml",
+      "environments": [
+        "paper",
+        "testnet",
+        "live"
+      ]
+    }
+  },
+  "signature": {
+    "algorithm": "ed25519",
+    "value": "vxcixZMkHjwan2G3wAdHdfeoOplhW4N+ryJsMhJM3U3sglHhZ4awbOxkwZO1VkFeqBW/o+rBZM64v4juzowwAw==",
+    "key_id": "dev-presets",
+    "public_key": "wnD5eTEGDB3CPb6r3oMOmRjFtjCxHISZXHlHX0TIKhY=",
+    "signed_at": "2025-12-17T20:40:46Z",
+    "issuer": "marketplace-ci"
   }
 }

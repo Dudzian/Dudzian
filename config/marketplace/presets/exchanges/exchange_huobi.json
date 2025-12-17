@@ -1,156 +1,11 @@
 {
-  "preset": {
-    "name": "Huobi Connectivity",
-    "strategies": [
-      {
-        "name": "huobi_connectivity",
-        "engine": "grid_trading",
-        "parameters": {
-          "exchange": "HUOBI",
-          "default_environment": "paper",
-          "available_environments": [
-            "paper",
-            "testnet",
-            "live"
-          ]
-        },
-        "license_tier": "community",
-        "risk_classes": [
-          "infrastructure"
-        ],
-        "required_data": [
-          "ohlcv"
-        ],
-        "tags": [
-          "exchange",
-          "huobi"
-        ],
-        "metadata": {
-          "description": "Automatycznie wygenerowany preset środowisk dla giełdy Huobi.",
-          "environments": [
-            {
-              "name": "paper",
-              "description": "Symulator paper Huobi (spot).",
-              "config": {
-                "description": "Symulator paper Huobi (spot).",
-                "exchange_manager": {
-                  "mode": "paper",
-                  "paper_variant": "spot",
-                  "paper_initial_cash": 20000,
-                  "paper_cash_asset": "USDT",
-                  "paper_fee_rate": 0.0015
-                },
-                "credentials": {
-                  "key_id": null,
-                  "secret": null
-                }
-              }
-            },
-            {
-              "name": "testnet",
-              "description": "Huobi testnet API.",
-              "config": {
-                "description": "Huobi testnet API.",
-                "exchange_manager": {
-                  "mode": "spot",
-                  "testnet": true,
-                  "failover": {
-                    "enabled": true,
-                    "failure_threshold": 2,
-                    "cooldown_seconds": 45
-                  },
-                  "rate_limit_rules": [
-                    {
-                      "rate": 90,
-                      "per": 3.0
-                    },
-                    {
-                      "rate": 900,
-                      "per": 60.0
-                    }
-                  ]
-                },
-                "credentials": {
-                  "key_id": "${HUOBI_TESTNET_KEY}",
-                  "secret": "${HUOBI_TESTNET_SECRET}"
-                }
-              }
-            },
-            {
-              "name": "live",
-              "description": "Handel spot Huobi.",
-              "config": {
-                "description": "Handel spot Huobi.",
-                "exchange_manager": {
-                  "mode": "spot",
-                  "testnet": false,
-                  "watchdog": {
-                    "retry_policy": {
-                      "max_attempts": 4,
-                      "base_delay": 1.0
-                    }
-                  },
-                  "failover": {
-                    "enabled": true,
-                    "failure_threshold": 2,
-                    "cooldown_seconds": 60
-                  },
-                  "rate_limit_rules": [
-                    {
-                      "rate": 90,
-                      "per": 3.0
-                    },
-                    {
-                      "rate": 900,
-                      "per": 60.0
-                    }
-                  ]
-                },
-                "credentials": {
-                  "key_id": "${HUOBI_LIVE_KEY}",
-                  "secret": "${HUOBI_LIVE_SECRET}"
-                }
-              }
-            }
-          ]
-        }
-      }
-    ],
-    "metadata": {
-      "id": "exchange_huobi",
-      "version": "1.1.0+adapter-rollout",
-      "summary": "Preset Huobi spot z failoverem i zaktualizowanym symulatorem paper",
-      "tags": [
-        "exchange",
-        "huobi"
-      ],
-      "profile": "grid",
-      "required_exchanges": [
-        "HUOBI"
-      ],
-      "source_file": "config/exchanges/huobi.yaml",
-      "environments": [
-        "paper",
-        "testnet",
-        "live"
-      ]
-    }
-  },
-  "signature": {
-    "algorithm": "ed25519",
-    "value": "iGPjBPj+ArTWeKeuAO34vsGrhcx5aIt+ohgEj/tJk6t5CMjYeTNo6vgX62+exk9pqiVr+WgJbPNzrceviwm/Cw==",
-    "key_id": "dev-presets",
-    "public_key": "wnD5eTEGDB3CPb6r3oMOmRjFtjCxHISZXHlHX0TIKhY=",
-    "signed_at": "2025-11-01T22:38:01Z",
-    "issuer": "Dudzian"
-  },
   "catalog": {
     "schema_version": "1.1",
     "package_id": "exchange_huobi.v1",
     "display_name": "Huobi Exchange Environments",
     "summary": "Preset środowisk paper/testnet/live dla giełdy Huobi.",
     "description": "Pakiet udostępnia kompletny zestaw środowisk i guardraili dla integracji Huobi.",
-    "version": "1.0.0+community",
+    "version": "1.1.0+27e8a7ba0898caa6",
     "revision": "2025.01",
     "release_date": "2025-01-15T09:30:00Z",
     "maintainers": [
@@ -264,5 +119,150 @@
       "migration_required": false,
       "source": "exchanges/exchange_huobi.json"
     }
+  },
+  "preset": {
+    "name": "Huobi Connectivity",
+    "strategies": [
+      {
+        "name": "huobi_connectivity",
+        "engine": "grid_trading",
+        "parameters": {
+          "exchange": "HUOBI",
+          "default_environment": "paper",
+          "available_environments": [
+            "paper",
+            "testnet",
+            "live"
+          ]
+        },
+        "license_tier": "community",
+        "risk_classes": [
+          "infrastructure"
+        ],
+        "required_data": [
+          "ohlcv"
+        ],
+        "tags": [
+          "exchange",
+          "huobi"
+        ],
+        "metadata": {
+          "description": "Automatycznie wygenerowany preset środowisk dla giełdy Huobi.",
+          "environments": [
+            {
+              "name": "paper",
+              "description": "Symulator paper Huobi.",
+              "config": {
+                "description": "Symulator paper Huobi.",
+                "exchange_manager": {
+                  "mode": "paper",
+                  "paper_variant": "spot",
+                  "paper_initial_cash": 20000,
+                  "paper_cash_asset": "USDT",
+                  "paper_fee_rate": 0.0015
+                },
+                "credentials": {
+                  "key_id": null,
+                  "secret": null
+                }
+              }
+            },
+            {
+              "name": "testnet",
+              "description": "Huobi testnet API.",
+              "config": {
+                "description": "Huobi testnet API.",
+                "exchange_manager": {
+                  "mode": "spot",
+                  "testnet": true,
+                  "failover": {
+                    "enabled": true,
+                    "failure_threshold": 2,
+                    "cooldown_seconds": 45
+                  },
+                  "rate_limit_rules": [
+                    {
+                      "rate": 90,
+                      "per": 3.0
+                    },
+                    {
+                      "rate": 900,
+                      "per": 60.0
+                    }
+                  ]
+                },
+                "credentials": {
+                  "key_id": "${HUOBI_TESTNET_KEY}",
+                  "secret": "${HUOBI_TESTNET_SECRET}"
+                }
+              }
+            },
+            {
+              "name": "live",
+              "description": "Handel spot Huobi.",
+              "config": {
+                "description": "Handel spot Huobi.",
+                "exchange_manager": {
+                  "mode": "spot",
+                  "testnet": false,
+                  "watchdog": {
+                    "retry_policy": {
+                      "max_attempts": 4,
+                      "base_delay": 1.0
+                    }
+                  },
+                  "failover": {
+                    "enabled": true,
+                    "failure_threshold": 2,
+                    "cooldown_seconds": 60
+                  },
+                  "rate_limit_rules": [
+                    {
+                      "rate": 90,
+                      "per": 3.0
+                    },
+                    {
+                      "rate": 900,
+                      "per": 60.0
+                    }
+                  ]
+                },
+                "credentials": {
+                  "key_id": "${HUOBI_LIVE_KEY}",
+                  "secret": "${HUOBI_LIVE_SECRET}"
+                }
+              }
+            }
+          ]
+        }
+      }
+    ],
+    "metadata": {
+      "id": "exchange_huobi",
+      "version": "1.1.0+27e8a7ba0898caa6",
+      "summary": "Autogenerated preset dla giełdy Huobi",
+      "tags": [
+        "exchange",
+        "huobi"
+      ],
+      "profile": "grid",
+      "required_exchanges": [
+        "HUOBI"
+      ],
+      "source_file": "config/exchanges/huobi.yaml",
+      "environments": [
+        "paper",
+        "testnet",
+        "live"
+      ]
+    }
+  },
+  "signature": {
+    "algorithm": "ed25519",
+    "value": "d31tjoS0ZMfNRki8ZagWQQ3NwP9egvmhalck5eGUbTF4B19mkMGhdx47lLCAHhwnO7swZOxPj/gfUsFgVBB0Dw==",
+    "key_id": "dev-presets",
+    "public_key": "wnD5eTEGDB3CPb6r3oMOmRjFtjCxHISZXHlHX0TIKhY=",
+    "signed_at": "2025-12-17T20:40:46Z",
+    "issuer": "marketplace-ci"
   }
 }
