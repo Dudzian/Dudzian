@@ -170,7 +170,26 @@ def setup_app_logging(
         handlers.append(vector_handler)
 
     queue_handler = _ensure_queue_listener(handlers)
+
+    # Preserve pytest's log-capture handler so ``caplog`` continues to work even
+    # when application logging is (re)configured during tests.
+    preserved_handlers: list[logging.Handler] = []
+    try:  # pragma: no cover - type guard only exercised in test environments
+        from _pytest.logging import LogCaptureHandler
+
+        preserved_handlers = [
+            handler for handler in root.handlers if isinstance(handler, LogCaptureHandler)
+        ]
+
+        for handler in logging.getLogger().handlers:
+            if isinstance(handler, LogCaptureHandler) and handler not in preserved_handlers:
+                preserved_handlers.append(handler)
+    except Exception:
+        preserved_handlers = []
+
     root.handlers.clear()
+    for handler in preserved_handlers:
+        root.addHandler(handler)
     root.addHandler(queue_handler)
     root.setLevel(resolved_level)
     root.propagate = False
