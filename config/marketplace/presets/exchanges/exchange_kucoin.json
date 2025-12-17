@@ -1,174 +1,11 @@
 {
-  "preset": {
-    "name": "Kucoin Connectivity",
-    "strategies": [
-      {
-        "name": "kucoin_connectivity",
-        "engine": "grid_trading",
-        "parameters": {
-          "exchange": "KUCOIN",
-          "default_environment": "paper",
-          "available_environments": [
-            "paper",
-            "testnet",
-            "live"
-          ]
-        },
-        "license_tier": "community",
-        "risk_classes": [
-          "infrastructure"
-        ],
-        "required_data": [
-          "ohlcv"
-        ],
-        "tags": [
-          "exchange",
-          "kucoin"
-        ],
-        "metadata": {
-          "description": "Automatycznie wygenerowany preset środowisk dla giełdy Kucoin.",
-          "environments": [
-            {
-              "name": "paper",
-              "description": "Paper trading dla KuCoin margin z symulatorem.",
-              "config": {
-                "description": "Paper trading dla KuCoin margin z symulatorem.",
-                "exchange_manager": {
-                  "mode": "paper",
-                  "paper_variant": "margin",
-                  "paper_initial_cash": 25000,
-                  "paper_cash_asset": "USDT",
-                  "simulator": {
-                    "leverage_limit": 3.0,
-                    "maintenance_margin_ratio": 0.12,
-                    "funding_rate": 0.0002,
-                    "funding_interval_seconds": 14400
-                  }
-                },
-                "credentials": {
-                  "key_id": null,
-                  "secret": null
-                }
-              }
-            },
-            {
-              "name": "testnet",
-              "description": "KuCoin sandbox (futures API wspiera margin/testnet).",
-              "config": {
-                "description": "KuCoin sandbox (futures API wspiera margin/testnet).",
-                "exchange_manager": {
-                  "mode": "margin",
-                  "testnet": true,
-                  "watchdog": {
-                    "retry_policy": {
-                      "max_attempts": 5,
-                      "base_delay": 0.5
-                    }
-                  },
-                  "failover": {
-                    "enabled": true,
-                    "failure_threshold": 1,
-                    "cooldown_seconds": 30
-                  },
-                  "rate_limit_rules": [
-                    {
-                      "rate": 30,
-                      "per": 3.0
-                    },
-                    {
-                      "rate": 1800,
-                      "per": 60.0
-                    }
-                  ]
-                },
-                "credentials": {
-                  "key_id": "${KUCOIN_TESTNET_KEY}",
-                  "secret": "${KUCOIN_TESTNET_SECRET}",
-                  "passphrase": "${KUCOIN_TESTNET_PASSPHRASE}"
-                }
-              }
-            },
-            {
-              "name": "live",
-              "description": "Produkcyjna konfiguracja KuCoin margin.",
-              "config": {
-                "description": "Produkcyjna konfiguracja KuCoin margin.",
-                "exchange_manager": {
-                  "mode": "margin",
-                  "testnet": false,
-                  "watchdog": {
-                    "retry_policy": {
-                      "max_attempts": 3,
-                      "base_delay": 1.0
-                    }
-                  },
-                  "failover": {
-                    "enabled": true,
-                    "failure_threshold": 2,
-                    "cooldown_seconds": 45
-                  },
-                  "rate_limit_rules": [
-                    {
-                      "rate": 30,
-                      "per": 3.0
-                    },
-                    {
-                      "rate": 1800,
-                      "per": 60.0
-                    }
-                  ],
-                  "native_adapter": {
-                    "settings": {
-                      "margin_mode": "cross"
-                    }
-                  }
-                },
-                "credentials": {
-                  "key_id": "${KUCOIN_LIVE_KEY}",
-                  "secret": "${KUCOIN_LIVE_SECRET}",
-                  "passphrase": "${KUCOIN_LIVE_PASSPHRASE}"
-                }
-              }
-            }
-          ]
-        }
-      }
-    ],
-    "metadata": {
-      "id": "exchange_kucoin",
-      "version": "1.1.0+adapter-rollout",
-      "summary": "Preset KuCoin margin z testnetowym failoverem i symulatorem paper",
-      "tags": [
-        "exchange",
-        "kucoin"
-      ],
-      "profile": "grid",
-      "required_exchanges": [
-        "KUCOIN"
-      ],
-      "source_file": "config/exchanges/kucoin.yaml",
-      "environments": [
-        "paper",
-        "testnet",
-        "live"
-      ]
-    }
-  },
-  "signature": {
-    "algorithm": "ed25519",
-    "value": "/f25oYV8LFd1y8ZaYDsS7OY6RzaxI1JiXFFP+t72Yh9JGSJRQR9eAvAg1/2TNJbkJwjFD9ioBmqGrZWLpJZlBQ==",
-    "key_id": "dev-presets",
-    "public_key": "wnD5eTEGDB3CPb6r3oMOmRjFtjCxHISZXHlHX0TIKhY=",
-    "signed_at": "2025-11-01T22:38:01Z",
-    "issuer": "Dudzian"
-  },
   "catalog": {
     "schema_version": "1.1",
     "package_id": "exchange_kucoin.v1",
     "display_name": "KuCoin Exchange Environments",
     "summary": "Preset środowisk paper/testnet/live dla giełdy KuCoin.",
     "description": "Pakiet udostępnia kompletny zestaw środowisk i guardraili dla integracji KuCoin.",
-    "version": "1.0.0+community",
+    "version": "1.1.0+a496adb6374abe64",
     "revision": "2025.01",
     "release_date": "2025-01-15T09:30:00Z",
     "maintainers": [
@@ -283,5 +120,168 @@
       "migration_required": false,
       "source": "exchanges/exchange_kucoin.json"
     }
+  },
+  "preset": {
+    "name": "Kucoin Connectivity",
+    "strategies": [
+      {
+        "name": "kucoin_connectivity",
+        "engine": "grid_trading",
+        "parameters": {
+          "exchange": "KUCOIN",
+          "default_environment": "paper",
+          "available_environments": [
+            "paper",
+            "testnet",
+            "live"
+          ]
+        },
+        "license_tier": "community",
+        "risk_classes": [
+          "infrastructure"
+        ],
+        "required_data": [
+          "ohlcv"
+        ],
+        "tags": [
+          "exchange",
+          "kucoin"
+        ],
+        "metadata": {
+          "description": "Automatycznie wygenerowany preset środowisk dla giełdy Kucoin.",
+          "environments": [
+            {
+              "name": "paper",
+              "description": "Paper trading dla KuCoin spot.",
+              "config": {
+                "description": "Paper trading dla KuCoin spot.",
+                "exchange_manager": {
+                  "mode": "paper",
+                  "paper_variant": "margin",
+                  "paper_initial_cash": 25000,
+                  "paper_cash_asset": "USDT",
+                  "simulator": {
+                    "leverage_limit": 3.0,
+                    "maintenance_margin_ratio": 0.12,
+                    "funding_rate": 0.0002,
+                    "funding_interval_seconds": 14400
+                  }
+                },
+                "credentials": {
+                  "key_id": null,
+                  "secret": null
+                }
+              }
+            },
+            {
+              "name": "testnet",
+              "description": "KuCoin sandbox (futures API wspiera margin/testnet).",
+              "config": {
+                "description": "KuCoin sandbox (futures API wspiera margin/testnet).",
+                "exchange_manager": {
+                  "mode": "margin",
+                  "testnet": true,
+                  "watchdog": {
+                    "retry_policy": {
+                      "max_attempts": 5,
+                      "base_delay": 0.5
+                    }
+                  },
+                  "failover": {
+                    "enabled": true,
+                    "failure_threshold": 1,
+                    "cooldown_seconds": 30
+                  },
+                  "rate_limit_rules": [
+                    {
+                      "rate": 30,
+                      "per": 3.0
+                    },
+                    {
+                      "rate": 1800,
+                      "per": 60.0
+                    }
+                  ]
+                },
+                "credentials": {
+                  "key_id": "${KUCOIN_TESTNET_KEY}",
+                  "secret": "${KUCOIN_TESTNET_SECRET}",
+                  "passphrase": "${KUCOIN_TESTNET_PASSPHRASE}"
+                }
+              }
+            },
+            {
+              "name": "live",
+              "description": "Produkcyjna konfiguracja KuCoin margin.",
+              "config": {
+                "description": "Produkcyjna konfiguracja KuCoin margin.",
+                "exchange_manager": {
+                  "mode": "margin",
+                  "testnet": false,
+                  "watchdog": {
+                    "retry_policy": {
+                      "max_attempts": 3,
+                      "base_delay": 1.0
+                    }
+                  },
+                  "failover": {
+                    "enabled": true,
+                    "failure_threshold": 2,
+                    "cooldown_seconds": 45
+                  },
+                  "rate_limit_rules": [
+                    {
+                      "rate": 30,
+                      "per": 3.0
+                    },
+                    {
+                      "rate": 1800,
+                      "per": 60.0
+                    }
+                  ],
+                  "native_adapter": {
+                    "settings": {
+                      "margin_mode": "cross"
+                    }
+                  }
+                },
+                "credentials": {
+                  "key_id": "${KUCOIN_LIVE_KEY}",
+                  "secret": "${KUCOIN_LIVE_SECRET}",
+                  "passphrase": "${KUCOIN_LIVE_PASSPHRASE}"
+                }
+              }
+            }
+          ]
+        }
+      }
+    ],
+    "metadata": {
+      "id": "exchange_kucoin",
+      "version": "1.1.0+a496adb6374abe64",
+      "summary": "Autogenerated preset dla giełdy Kucoin",
+      "tags": [
+        "exchange",
+        "kucoin"
+      ],
+      "profile": "grid",
+      "required_exchanges": [
+        "KUCOIN"
+      ],
+      "source_file": "config/exchanges/kucoin.yaml",
+      "environments": [
+        "paper",
+        "testnet",
+        "live"
+      ]
+    }
+  },
+  "signature": {
+    "algorithm": "ed25519",
+    "value": "CkDyNwCSCjUhLAHCTtJwq6jLP7WFUrQP1qdhmYp6PMS9Bro+pl+lAFpxoqE3L/rEsy/KWTvrmVr/kgF/35hABw==",
+    "key_id": "dev-presets",
+    "public_key": "wnD5eTEGDB3CPb6r3oMOmRjFtjCxHISZXHlHX0TIKhY=",
+    "signed_at": "2025-12-17T20:40:46Z",
+    "issuer": "marketplace-ci"
   }
 }

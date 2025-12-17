@@ -11,6 +11,11 @@ _PRESETS_DIR = REPO_ROOT / "config" / "marketplace" / "presets" / "exchanges"
 
 
 def test_committed_exchange_presets_are_signed_and_current() -> None:
+    # This integration-style test guards the committed repository assets: every exchange
+    # preset stored under ``config/marketplace/presets/exchanges`` must exist, match the
+    # current YAML specification from ``config/exchanges`` (using the spec-hash versioning
+    # strategy), and carry a verifiable signature. Any drift between definitions and the
+    # checked-in payloads should be detected here.
     results = validate_exchange_presets(
         exchanges_dir=_EXCHANGES_DIR,
         output_dir=_PRESETS_DIR,

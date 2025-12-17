@@ -298,6 +298,7 @@ def _emit_signed_preset(
     issuer: str | None,
     output_dir: Path,
     service: MarketplaceService,
+    extra_fields: Mapping[str, object] | None = None,
 ) -> PresetDocument:
     payload = _build_preset_payload(spec, version=version)
     signature = service.sign(
@@ -306,15 +307,42 @@ def _emit_signed_preset(
         key_id=key_id,
         issuer=issuer,
     )
-    document = {
-        "preset": payload,
-        "signature": signature.as_dict(),
-    }
+    document: dict[str, object] = {}
+    if extra_fields:
+        preserved = dict(extra_fields)
+        catalog = preserved.get("catalog")
+        if isinstance(catalog, MutableMapping):
+            catalog = dict(catalog)
+            catalog["version"] = version
+            preserved["catalog"] = catalog
+        document.update(preserved)
+    document["preset"] = payload
+    document["signature"] = signature.as_dict()
     target_path = output_dir / f"{spec.preset_id}.json"
     serialized = json.dumps(document, ensure_ascii=False, indent=2)
     target_path.write_text(serialized, encoding="utf-8")
     parsed = service.load(serialized.encode("utf-8"), source=target_path)
     return parsed
+
+
+def _load_existing_extra_fields(preset_path: Path) -> Mapping[str, object]:
+    if not preset_path.exists():
+        return {}
+    try:
+        raw = preset_path.read_text(encoding="utf-8")
+        try:
+            data = json.loads(raw)
+        except json.JSONDecodeError:
+            _yaml = _require_yaml()
+            data = _yaml.safe_load(raw)
+        if not isinstance(data, Mapping):
+            return {}
+        return {
+            key: value for key, value in data.items() if key not in {"preset", "signature"}
+        }
+    except Exception:  # pragma: no cover - defensywna ścieżka podczas zachowywania katalgu
+        LOGGER.debug("Nie udało się odczytać dodatkowych pól z %s", preset_path)
+        return {}
 
 
 def generate_exchange_presets(
@@ -391,11 +419,28 @@ def reconcile_exchange_presets(
         )
     )
 
+    preserved_extras: dict[str, Mapping[str, object]] = {}
+    catalog_mismatch: set[str] = set()
+    for result in initial_results:
+        if result.exists and result.preset_path.exists():
+            extras = _load_existing_extra_fields(result.preset_path)
+            preserved_extras[result.exchange_id] = extras
+            catalog = extras.get("catalog")
+            if isinstance(catalog, Mapping):
+                catalog_version = str(catalog.get("version") or "").strip() or None
+                if catalog_version and catalog_version != result.expected_version:
+                    catalog_mismatch.add(result.exchange_id)
+
     to_regenerate = [
         result
         for result in initial_results
         if result.spec_path is not None
-        and (not result.exists or not result.verified or not result.up_to_date)
+        and (
+            not result.exists
+            or not result.verified
+            or not result.up_to_date
+            or result.exchange_id in catalog_mismatch
+        )
     ]
     orphans = [result for result in initial_results if result.spec_path is None]
 
@@ -425,6 +470,7 @@ def reconcile_exchange_presets(
                 issuer=issuer,
                 output_dir=output_dir,
                 service=service,
+                extra_fields=preserved_extras.get(result.exchange_id),
             )
 
     if remove_orphans and orphans:
@@ -459,6 +505,16 @@ def validate_exchange_presets(
 ) -> Sequence[ExchangePresetValidationResult]:
     """Porównuje wygenerowane presety z aktualnymi plikami na dysku."""
 
+    # Issue semantics:
+    # - signature-mismatch: the embedded Ed25519 signature no longer matches the canonical
+    #   payload (e.g. the YAML spec changed or the signing key rotated).
+    # - payload-mismatch: the canonicalized payload diverges from what would be generated
+    #   from the current YAML spec/versioning strategy.
+    # - missing-signature / missing-metadata: the file is missing required sections (often
+    #   happens when a preset was manually edited instead of regenerated).
+    # When every preset in the repository reports these issues it almost always means the
+    # committed artifacts were not refreshed after changing the generator, the YAML specs,
+    # or the signing keys.
     selected_ids, selected_stems = _normalize_exchange_selection(selected_exchanges)
     service = MarketplaceService(signing_keys=signing_keys)
     results: list[ExchangePresetValidationResult] = []
@@ -475,6 +531,7 @@ def validate_exchange_presets(
         verified = False
         up_to_date = False
         current_version: str | None = None
+        digest_verified = False
 
         document = None
         if exists:
@@ -496,10 +553,8 @@ def validate_exchange_presets(
                         expected_hash = str(sig_doc.get("sha256") or "")
                         actual_hash = hashlib.sha256(preset_path.read_bytes()).hexdigest()
                         if expected_hash and expected_hash == actual_hash:
-                            verified = True
-                            issues = []
+                            digest_verified = True
                             current_version = document.version or current_version
-                            up_to_date = True
                     except Exception:
                         LOGGER.debug("Nie udało się zweryfikować pliku %s na podstawie .sig", sig_path)
         else:
@@ -536,7 +591,7 @@ def validate_exchange_presets(
                 spec_path=spec.file_path,
                 preset_path=preset_path,
                 exists=exists,
-                verified=verified,
+                verified=verified or digest_verified,
                 up_to_date=up_to_date,
                 current_version=current_version,
                 expected_version=expected_version,
@@ -605,4 +660,3 @@ __all__ = [
     "load_exchange_specs",
     "validate_exchange_presets",
 ]
-

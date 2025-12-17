@@ -98,3 +98,15 @@ Ten dokument opisuje kompletny przepływ dodawania nowych presetów do katalogu 
 
 ---
 W razie pytań kontakt: `marketplace@example.com` (Marketplace Guild).
+
+## Utrzymanie presetów giełdowych (spec-hash)
+
+Przed commitem (lub po zmianach w `config/exchanges` / logice generatora) zregeneruj podpisane presety giełdowe:
+
+1. Zainstaluj zależności (jeśli nie są dostępne): `pip install -r requirements.txt`.
+2. Uruchom rekonsyliację z domyślnymi ścieżkami repozytorium:  
+   `python scripts/reconcile_exchange_presets.py`
+3. Przejrzyj zmiany: `git status` (katalog `config/marketplace/presets/exchanges` powinien zostać zaktualizowany).
+4. Zweryfikuj tylko ten test:  
+   `pytest tests/marketplace/test_exchange_presets_repository.py::test_committed_exchange_presets_are_signed_and_current`
+5. Jeśli test przejdzie, dołącz wygenerowane presety do commita/PR.
