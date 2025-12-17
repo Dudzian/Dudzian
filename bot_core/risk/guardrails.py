@@ -702,6 +702,7 @@ class RiskGuardrailsService:
         drawdown_pct: float,
         daily_loss_pct: float,
         weekly_loss_pct: float,
+        now: datetime | None = None,
     ) -> RiskDecision:
         return self._engine.evaluate(
             snapshot,
@@ -710,6 +711,7 @@ class RiskGuardrailsService:
             drawdown_pct=drawdown_pct,
             daily_loss_pct=daily_loss_pct,
             weekly_loss_pct=weekly_loss_pct,
+            now=now,
         )
 
     def record_profile_state(self, profile_name: str, state: "RiskState") -> None:
@@ -744,8 +746,10 @@ class GuardrailsEngine:
         drawdown_pct: float,
         daily_loss_pct: float,
         weekly_loss_pct: float,
+        now: datetime | None = None,
     ) -> RiskDecision:
-        now = self._clock()
+        if now is None:
+            now = self._clock()
 
         if self._config is None:
             return RiskDecision(should_trade=True, hedge_mode=snapshot.hedge_mode)

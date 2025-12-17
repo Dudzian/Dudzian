@@ -416,11 +416,20 @@ def _validate_live_router(
 
 
 
+    key_rotation = raw.get("observability", {}).get("key_rotation")
+    if not isinstance(key_rotation, Mapping):
+        _record(
+            issues,
+            check="observability.key_rotation",
+            message="Brak konfiguracji rotacji kluczy (observability.key_rotation).",
+        )
+        return
+
     registry_path_value = getattr(key_rotation, "registry_path", "")
     registry_path = _resolve_path(base_dir, str(registry_path_value))
     if not registry_path or not registry_path.exists():
         _record(
-            issues,
+            warnings,
             check="observability.key_rotation.registry_path",
             message=f"Rejestr rotacji historycznego Stage 5 nie istnieje: {registry_path_value}",
         )

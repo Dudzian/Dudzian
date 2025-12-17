@@ -392,6 +392,7 @@ class ThresholdRiskEngine(RiskEngine):
             drawdown_pct=metrics.drawdown_pct,
             daily_loss_pct=metrics.daily_loss_pct,
             weekly_loss_pct=metrics.weekly_loss_pct,
+            now=now,
         )
         if guardrail_decision.changed_state:
             self._persist_state(profile_name)
@@ -425,6 +426,13 @@ class ThresholdRiskEngine(RiskEngine):
                 stop_price_value = _coerce_float(getattr(request, "stop_price", None))
             target_vol = profile.target_volatility()
             atr_multiple = profile.stop_loss_atr_multiple()
+
+            # Jeżeli profil posiada zdefiniowane target volatility, traktujemy
+            # je jako nadrzędny limit ryzyka na transakcję. Zapobiega to
+            # sytuacji, w której konserwatywne ``trade_risk_pct_range``
+            # blokuje pozycje dopuszczalne w ramach budżetu zmienności.
+            if target_vol > 0:
+                max_trade_risk_pct = max(max_trade_risk_pct, target_vol)
 
             if target_vol > 0 and account.total_equity > 0:
                 if atr_value is None or atr_value <= 0:
@@ -529,7 +537,10 @@ class ThresholdRiskEngine(RiskEngine):
                 )
 
         instrument_alert_pct = profile.instrument_alert_pct()
-        instrument_limit_pct = profile.instrument_limit_pct() or profile.max_position_exposure()
+        instrument_limit_pct = max(
+            profile.instrument_limit_pct(),
+            profile.max_position_exposure(),
+        )
         if not is_reducing and account.total_equity > 0:
             instrument_exposure = new_notional / account.total_equity
             if instrument_alert_pct > 0 and instrument_exposure >= instrument_alert_pct:
@@ -562,7 +573,10 @@ class ThresholdRiskEngine(RiskEngine):
             new_gross = gross_without_symbol + new_notional
             if account.total_equity > 0:
                 portfolio_alert_pct = profile.portfolio_alert_pct()
-                portfolio_limit_pct = profile.portfolio_limit_pct()
+                portfolio_limit_pct = max(
+                    profile.portfolio_limit_pct(),
+                    profile.max_position_exposure(),
+                )
                 portfolio_exposure = new_gross / account.total_equity
                 if portfolio_alert_pct > 0 and portfolio_exposure >= portfolio_alert_pct:
                     self._alert_log.record(
