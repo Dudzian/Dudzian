@@ -30,11 +30,11 @@ Components.Card {
 
             Design.Icon {
                 id: transportIcon
-                name: feedTransportSnapshot && feedTransportSnapshot.mode === "grpc" ? "cloud" : "bolt"
-                size: 28
-                color: feedTransportSnapshot && feedTransportSnapshot.status === "connected"
-                       ? Design.Palette.success
-                       : Design.Palette.warning
+                iconName: feedTransportSnapshot && feedTransportSnapshot.mode === "grpc" ? "cloud" : "bolt"
+                iconSize: 28
+                iconColor: feedTransportSnapshot && feedTransportSnapshot.status === "connected"
+                           ? Design.Palette.success
+                           : Design.Palette.warning
             }
 
             ColumnLayout {
