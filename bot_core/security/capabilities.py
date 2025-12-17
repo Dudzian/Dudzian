@@ -132,7 +132,9 @@ class LicenseCapabilities:
     license_id: str | None
     hwid: str | None
     raw_payload: Mapping[str, Any]
-    require_hardware_wallet_for_outgoing: bool
+    # Niektóre historyczne zrzuty licencji nie zawierają sekcji security,
+    # traktujemy brak wymagania jako wartość domyślną "False".
+    require_hardware_wallet_for_outgoing: bool = False
 
     def is_module_enabled(self, name: str) -> bool:
         return bool(self.modules.get(name))
