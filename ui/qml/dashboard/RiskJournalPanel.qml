@@ -360,7 +360,7 @@ Item {
                 Label {
                     text: qsTr("Ostatnie stress failures: %1").arg(
                               (root.metricValue("latestStressFailures", []).length
-                              ? root.metricValue("latestStressFailures", []).join(", ") : qsTr("brak"))
+                              ? root.metricValue("latestStressFailures", []).join(", ") : qsTr("brak")))
                     color: Styles.AppTheme.textSecondary
                     font.pointSize: Styles.AppTheme.fontSizeCaption
                 }
