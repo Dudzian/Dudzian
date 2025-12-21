@@ -427,13 +427,6 @@ class ThresholdRiskEngine(RiskEngine):
             target_vol = profile.target_volatility()
             atr_multiple = profile.stop_loss_atr_multiple()
 
-            # Jeżeli profil posiada zdefiniowane target volatility, traktujemy
-            # je jako nadrzędny limit ryzyka na transakcję. Zapobiega to
-            # sytuacji, w której konserwatywne ``trade_risk_pct_range``
-            # blokuje pozycje dopuszczalne w ramach budżetu zmienności.
-            if target_vol > 0:
-                max_trade_risk_pct = max(max_trade_risk_pct, target_vol)
-
             if target_vol > 0 and account.total_equity > 0:
                 if atr_value is None or atr_value <= 0:
                     return deny(
