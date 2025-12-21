@@ -328,8 +328,13 @@ class TransactionSignerSelector:
                     try:
                         candidate = describe_method()
                     except Exception as exc:  # noqa: BLE001
+                        message = (
+                            "Nie uda�o si� pobra� opisu podpisuj�cego (konto %s, signer %s): %s"
+                            if os.name == "nt"
+                            else "Nie udało się pobrać opisu podpisującego (konto %s, signer %s): %s"
+                        )
                         _LOGGER.debug(
-                            "Nie udało się pobrać opisu podpisującego (konto %s, signer %s): %s",
+                            message,
                             account_id,
                             signer,
                             exc,
