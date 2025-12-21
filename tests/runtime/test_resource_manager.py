@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import os
 from typing import Any
 
 import pytest
@@ -52,6 +53,10 @@ def test_parse_feed_throttle_specs_supports_burst() -> None:
     ]
 
 
+@pytest.mark.skipif(
+    not hasattr(os, "sched_setaffinity"),
+    reason="os.sched_setaffinity not available on this platform",
+)
 def test_pin_strategies_uses_sched_setaffinity(monkeypatch: pytest.MonkeyPatch) -> None:
     runtime = _DummyRuntime()
     runtime.strategy_workers["alpha"] = _DummyWorker(pid=3210)
