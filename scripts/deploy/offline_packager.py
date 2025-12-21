@@ -65,7 +65,7 @@ def _list_relative(root: Path, bundle_root: Path) -> list[str]:
     entries: list[str] = []
     for path in root.rglob("*"):
         if path.is_file():
-            entries.append(str(path.relative_to(bundle_root)))
+            entries.append(path.relative_to(bundle_root).as_posix())
     return sorted(entries)
 
 
