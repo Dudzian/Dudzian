@@ -139,7 +139,7 @@ class RetrainingScheduler:
                 events.append(delay_event)
                 self._publish_event(delay_event)
                 self._logger.warning("Retraining opóźniony o %.3fs z powodu chaosu", delay_seconds)
-                await asyncio.sleep(delay_seconds)
+                await self._sleep_for(delay_seconds)
 
         if self._chaos.should_trigger(self._chaos.missing_data_frequency, self._rng):
             missing_event = MissingDataDetected(
@@ -207,6 +207,22 @@ class RetrainingScheduler:
         except RuntimeError:
             return time.monotonic()
         return loop.time()
+
+    @staticmethod
+    async def _sleep_for(delay_seconds: float) -> None:
+        if delay_seconds <= 0:
+            return
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            await asyncio.sleep(delay_seconds)
+            return
+        deadline = loop.time() + delay_seconds
+        while True:
+            remaining = deadline - loop.time()
+            if remaining <= 0:
+                return
+            await asyncio.sleep(remaining)
 
 
 __all__ = [
