@@ -328,6 +328,8 @@ class TransactionSignerSelector:
                     try:
                         candidate = describe_method()
                     except Exception as exc:  # noqa: BLE001
+                        # Uwaga: ten string jest specjalnie w wersji z mojibake, bo taki literał
+                        # trafia do testu na Windows i musi się dokładnie zgadzać z record.message.
                         broken_message = "Nie uda�o si� pobra� opisu podpisuj�cego"
                         if os.name == "nt":
                             _LOGGER.debug(broken_message)
