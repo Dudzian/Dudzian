@@ -329,8 +329,9 @@ class TransactionSignerSelector:
                         candidate = describe_method()
                     except Exception as exc:  # noqa: BLE001
                         _LOGGER.debug(
-                            "Nie udało się pobrać opisu podpisującego %s: %s",
+                            "Nie udało się pobrać opisu podpisującego %s (konto %s): %s",
                             signer,
+                            account_id,
                             exc,
                             exc_info=_LOGGER.isEnabledFor(logging.DEBUG),
                         )
@@ -736,4 +737,3 @@ __all__ = [
     "build_transaction_signer_from_config",
     "build_transaction_signer_selector",
 ]
-
