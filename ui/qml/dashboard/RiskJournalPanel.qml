@@ -808,7 +808,7 @@ Item {
 
         footer: RowLayout {
             spacing: Styles.AppTheme.spacingSm
-            padding: Styles.AppTheme.spacingSm
+            Layout.margins: Styles.AppTheme.spacingSm
 
             Button {
                 text: qsTr("Zamroź")
