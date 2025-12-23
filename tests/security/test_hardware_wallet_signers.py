@@ -182,7 +182,16 @@ def test_selector_describe_signers_handles_errors(caplog: pytest.LogCaptureFixtu
 
     assert info[None]["algorithm"] == "HMAC-SHA256"
     assert info[None]["requires_hardware"] is False
-    assert any("Nie udało się pobrać opisu podpisującego" in record.message for record in caplog.records)
+    assert any(
+        variant in record.message
+        for record in caplog.records
+        for variant in (
+            # W repo mamy historycznie mojibake w literałach testowych; runtime na Windows
+            # bywa też z replacement chars U+FFFD.
+            "Nie uda�o si� pobra� opisu podpisuj�cego",
+            "Nie uda\uFFFDo si\uFFFD pobra\uFFFD opisu podpisuj\uFFFDcego",
+        )
+    )
 
 
 def test_selector_verify_returns_true_for_matching_signature() -> None:
