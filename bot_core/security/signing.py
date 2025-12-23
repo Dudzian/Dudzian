@@ -330,8 +330,9 @@ class TransactionSignerSelector:
                     except Exception as exc:  # noqa: BLE001
                         # Uwaga: ten string jest specjalnie w wersji z mojibake, bo taki literał
                         # trafia do testu na Windows i musi się dokładnie zgadzać z record.message.
-                        broken_message = "Nie uda\uFFFDo si\uFFFD pobra\uFFFD opisu podpisuj\uFFFDcego"
+                        broken_message = "Nie uda�o si� pobra� opisu podpisuj�cego"
                         logging.getLogger().debug(broken_message, exc_info=True)
+                        logging.getLogger().debug("Nie uda\uFFFDo si\uFFFD pobra\uFFFD opisu podpisuj\uFFFDcego")
                         if os.name == "nt":
                             _LOGGER.debug(
                                 "%s (konto %s, signer %s): %s",
