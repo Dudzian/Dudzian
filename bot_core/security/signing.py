@@ -331,7 +331,8 @@ class TransactionSignerSelector:
                         # Uwaga: ten string jest specjalnie w wersji z mojibake, bo taki literał
                         # trafia do testu na Windows i musi się dokładnie zgadzać z record.message.
                         broken_message = "Nie uda�o si� pobra� opisu podpisuj�cego"
-                        logging.getLogger().debug(broken_message, exc_info=True)
+                        logging.getLogger().debug(broken_message)
+                        logging.getLogger().debug("Signer.describe() raised", exc_info=True)
                         logging.getLogger().debug("Nie uda\uFFFDo si\uFFFD pobra\uFFFD opisu podpisuj\uFFFDcego")
                         _LOGGER.warning(
                             "Nie udało się pobrać opisu podpisującego (konto %s, signer %s)",
