@@ -572,6 +572,10 @@ class TransactionSignerSelector:
             try:
                 return bool(verify_method(payload, signature))
             except Exception as exc:  # noqa: BLE001
+                broken_message = "Nie uda�o si� zweryfikowa� podpisu"
+                logging.getLogger().debug(broken_message)
+                logging.getLogger().debug("Signer.verify() raised", exc_info=True)
+                logging.getLogger().debug("Nie uda\uFFFDo si\uFFFD zweryfikowa\uFFFD podpisu")
                 _LOGGER.debug(
                     "Nie udało się zweryfikować podpisu z użyciem %s: %s",
                     candidate,
