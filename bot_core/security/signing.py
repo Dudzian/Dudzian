@@ -333,6 +333,7 @@ class TransactionSignerSelector:
                         broken_message = "Nie uda�o si� pobra� opisu podpisuj�cego"
                         logging.getLogger().debug(broken_message, exc_info=True)
                         logging.getLogger().debug("Nie uda\uFFFDo si\uFFFD pobra\uFFFD opisu podpisuj\uFFFDcego")
+                        _LOGGER.warning("Nie udało się pobrać opisu podpisującego", exc_info=False)
                         if os.name == "nt":
                             _LOGGER.debug(
                                 "%s (konto %s, signer %s): %s",
