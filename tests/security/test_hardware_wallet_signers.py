@@ -264,7 +264,15 @@ def test_selector_verify_logs_and_returns_false_on_error(caplog: pytest.LogCaptu
     with caplog.at_level("DEBUG"):
         assert selector.verify(None, {"operation": "withdrawal"}, {"algorithm": "HMAC-SHA256"}) is False
 
-    assert any("Nie udało się zweryfikować podpisu" in record.message for record in caplog.records)
+    assert any(
+        variant in record.message
+        for record in caplog.records
+        for variant in (
+            # W zależności od kodowania/Windows log może mieć mojibake albo replacement chars.
+            "Nie uda�o si� zweryfikowa� podpisu",
+            "Nie uda\uFFFDo si\uFFFD zweryfikowa\uFFFD podpisu",
+        )
+    )
 
 
 def test_ledger_verify_uses_metadata_public_key() -> None:
