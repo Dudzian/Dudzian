@@ -136,6 +136,9 @@ class ThresholdRiskEngine(RiskEngine):
             profile.name, stored_state
         )
 
+    def get_profile(self, profile_name: str) -> RiskProfile | None:  # pragma: no cover - prosta ekspozycja profilu
+        return self._profiles.get(profile_name)
+
     def attach_exchange_manager(
         self,
         manager: Any,

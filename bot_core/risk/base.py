@@ -168,6 +168,10 @@ class StaticRiskProfile(RiskProfile):
 class RiskEngine(abc.ABC):
     """Silnik ryzyka odpowiada za enforce limitów i pre-trade checks."""
 
+    def get_profile(self, profile_name: str) -> RiskProfile | None:  # pragma: no cover - domyślna implementacja
+        """Zwraca zarejestrowany profil lub None jeśli silnik nie udostępnia profili."""
+        return None
+
     @abc.abstractmethod
     def register_profile(self, profile: RiskProfile) -> None:
         ...
