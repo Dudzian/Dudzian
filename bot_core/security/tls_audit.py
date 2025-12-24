@@ -61,6 +61,22 @@ def _is_auth_token_configured(config: object, env: Mapping[str, str]) -> bool:
     return False
 
 
+def _has_rbac_tokens(config: object) -> bool:
+    """Określa, czy usługa ma skonfigurowane tokeny RBAC.
+
+    Wspiera zarówno flagę ``rbac_tokens_configured``, jak i bezpośrednią listę
+    ``rbac_tokens``, aby nie traktować braku statycznego ``auth_token`` jako
+    ostrzeżenia, gdy RBAC jest już włączone.
+    """
+
+    if config is None:
+        return False
+    return bool(
+        getattr(config, "rbac_tokens_configured", False)
+        or getattr(config, "rbac_tokens", ())
+    )
+
+
 def verify_certificate_key_pair(
     certificate_path: str | Path,
     private_key_path: str | Path,
@@ -344,11 +360,7 @@ def audit_tls_assets(
 
     metrics_config = getattr(core_config, "metrics_service", None)
     if metrics_config is not None:
-        rbac_tokens_configured = bool(
-            getattr(metrics_config, "rbac_tokens_configured", False)
-            or getattr(metrics_config, "rbac_tokens", ())
-            or ()
-        )
+        rbac_tokens_configured = _has_rbac_tokens(metrics_config)
         service_report = {
             "enabled": bool(getattr(metrics_config, "enabled", False)),
             "auth_token_configured": _is_auth_token_configured(
@@ -386,11 +398,7 @@ def audit_tls_assets(
 
     risk_config = getattr(core_config, "risk_service", None)
     if risk_config is not None:
-        rbac_tokens_configured = bool(
-            getattr(risk_config, "rbac_tokens_configured", False)
-            or getattr(risk_config, "rbac_tokens", ())
-            or ()
-        )
+        rbac_tokens_configured = _has_rbac_tokens(risk_config)
         service_report = {
             "enabled": bool(getattr(risk_config, "enabled", False)),
             "auth_token_configured": _is_auth_token_configured(

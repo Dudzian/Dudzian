@@ -89,20 +89,17 @@ def generate_security_baseline_report(
     ).as_dict()
 
     combined_warnings = _deduplicate(
-        list(tls_report.get("warnings", ()))
-        + list(token_report.get("warnings", ()))
+        list(tls_report.get("warnings", ())) + list(token_report.get("warnings", ()))
     )
     combined_errors = _deduplicate(
-        list(tls_report.get("errors", ()))
-        + list(token_report.get("errors", ()))
+        list(tls_report.get("errors", ())) + list(token_report.get("errors", ()))
     )
 
+    status = "ok"
     if combined_errors:
         status = "error"
     elif combined_warnings:
         status = "warning"
-    else:
-        status = "ok"
 
     return SecurityBaselineReport(
         tls=tls_report,
@@ -111,4 +108,3 @@ def generate_security_baseline_report(
         errors=combined_errors,
         status=status,
     )
-

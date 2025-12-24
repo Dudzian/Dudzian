@@ -7,6 +7,7 @@ from types import SimpleNamespace
 import pytest
 
 
+from bot_core.security.baseline import generate_security_baseline_report
 from scripts import audit_security_baseline as audit_security_baseline_script
 from tests.test_audit_tls_assets_script import _CERT, _KEY
 
@@ -55,6 +56,23 @@ def _stub_config_error() -> SimpleNamespace:
         risk_service=risk_service,
         multi_strategy_schedulers={"core_multi": scheduler},
     )
+
+
+def test_stub_config_secure_produces_clean_baseline(tmp_path: Path) -> None:
+    cert_path = _write(tmp_path / "cert.pem", _CERT)
+    key_path = _write(tmp_path / "key.pem", _KEY)
+    os.chmod(cert_path, 0o600)
+    os.chmod(key_path, 0o600)
+
+    report = generate_security_baseline_report(
+        _stub_config_secure(cert_path, key_path),
+        env={},
+        scheduler_required_scopes={"*": ("runtime.schedule.read", "runtime.schedule.write")},
+    )
+
+    assert report.warnings == ()
+    assert report.errors == ()
+    assert report.status == "ok"
 
 
 def _stub_config_secure(cert: Path, key: Path) -> SimpleNamespace:
@@ -262,4 +280,3 @@ def test_audit_security_baseline_script_requires_signature_without_key(
         )
 
     assert excinfo.value.code == 2
-
