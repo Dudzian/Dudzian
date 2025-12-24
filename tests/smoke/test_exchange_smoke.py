@@ -8,11 +8,21 @@ from bot_core.exchanges.manager import ExchangeManager, Mode, register_native_ad
 
 
 class _SmokeAdapter:
-    def __init__(self, credentials, *, environment, settings=None, watchdog=None):
+    def __init__(
+        self,
+        credentials,
+        *,
+        environment,
+        settings=None,
+        watchdog=None,
+        network_guard=None,
+        **kwargs,
+    ):
         self.credentials = credentials
         self.environment = environment
         self.settings = dict(settings or {})
         self.watchdog = watchdog
+        self.network_guard = network_guard
 
     def fetch_account_snapshot(self) -> AccountSnapshot:
         return AccountSnapshot(
