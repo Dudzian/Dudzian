@@ -438,7 +438,7 @@ def _parse_args(argv: list[str] | None) -> argparse.Namespace:
         "--mode",
         choices=("demo", "paper", "live"),
         default="paper",
-        help="Tryb uruchomienia runtime (demo → paper → live).",
+        help="Tryb uruchomienia runtime (demo -> paper -> live).",
     )
     parser.add_argument(
         "--state-dir",
