@@ -118,6 +118,17 @@ def _create_secret_manager(args: argparse.Namespace) -> SecretManager:
     )
 
 
+def _set_path_context(
+    context: MutableMapping[str, str], key: str, value: object | None
+) -> None:
+    if value is None:
+        return
+    try:
+        context[key] = Path(value).as_posix()
+    except Exception:  # pragma: no cover - defensywne
+        context[key] = str(value)
+
+
 def _append_publish_context(
     context: MutableMapping[str, str], publish_payload: Mapping[str, Any] | None
 ) -> None:
@@ -194,9 +205,14 @@ def _append_telemetry_context(
             return
         context[key] = "true" if bool(value) else "false"
 
-    _set("paper_smoke_telemetry_summary_path", telemetry_payload.get("summary_path"))
-    _set("paper_smoke_telemetry_decision_log_path", telemetry_payload.get("decision_log_path"))
-    _set(
+    _set_path_context(context, "paper_smoke_telemetry_summary_path", telemetry_payload.get("summary_path"))
+    _set_path_context(
+        context,
+        "paper_smoke_telemetry_decision_log_path",
+        telemetry_payload.get("decision_log_path"),
+    )
+    _set_path_context(
+        context,
         "paper_smoke_telemetry_metrics_source_path",
         telemetry_payload.get("metrics_source_path"),
     )
@@ -209,20 +225,28 @@ def _append_telemetry_context(
             "paper_smoke_risk_profile_environment_fallback",
             risk_profile.get("environment_fallback"),
         )
-        _set("paper_smoke_risk_profile_profiles_file", risk_profile.get("profiles_file"))
+        _set_path_context(
+            context,
+            "paper_smoke_risk_profile_profiles_file",
+            risk_profile.get("profiles_file"),
+        )
 
     decision_report = telemetry_payload.get("decision_log_report")
     if isinstance(decision_report, Mapping):
         _set("paper_smoke_decision_log_status", decision_report.get("status"))
-        _set("paper_smoke_decision_log_report_path", decision_report.get("path"))
+        _set_path_context(
+            context,
+            "paper_smoke_decision_log_report_path",
+            decision_report.get("path"),
+        )
         exit_code = decision_report.get("exit_code")
         if exit_code is not None:
             context["paper_smoke_decision_log_exit_code"] = str(exit_code)
 
     snippets = telemetry_payload.get("snippets")
     if isinstance(snippets, Mapping):
-        _set("paper_smoke_snippet_env_path", snippets.get("env_path"))
-        _set("paper_smoke_snippet_yaml_path", snippets.get("yaml_path"))
+        _set_path_context(context, "paper_smoke_snippet_env_path", snippets.get("env_path"))
+        _set_path_context(context, "paper_smoke_snippet_yaml_path", snippets.get("yaml_path"))
 
     required_scopes = telemetry_payload.get("required_auth_scopes")
     if isinstance(required_scopes, (list, tuple, set)) and required_scopes:
@@ -317,14 +341,12 @@ def _build_alert_payload(
     if not isinstance(report_section, Mapping):
         raise ValueError("Brak sekcji 'report' w summary.json")
     summary_sha256 = str(report_section.get("summary_sha256", ""))
-    report_dir = str(report_section.get("directory", ""))
 
     context: MutableMapping[str, str] = {
         "environment": environment,
         "summary_sha256": summary_sha256,
     }
-    if report_dir:
-        context["summary_directory"] = report_dir
+    _set_path_context(context, "summary_directory", report_section.get("directory"))
 
     window_section = summary.get("window")
     if isinstance(window_section, Mapping):
@@ -356,8 +378,7 @@ def _build_alert_payload(
     json_section = summary.get(_SUMMARY_KEY_JSON)
     if isinstance(json_section, Mapping):
         json_path = json_section.get("path")
-        if json_path:
-            context["paper_smoke_json_path"] = str(json_path)
+        _set_path_context(context, "paper_smoke_json_path", json_path)
         record_id = json_section.get("record_id")
         if record_id:
             context["paper_smoke_json_record_id"] = str(record_id)
@@ -373,8 +394,7 @@ def _build_alert_payload(
     archive_section = summary.get(_SUMMARY_KEY_ARCHIVE)
     if isinstance(archive_section, Mapping):
         archive_path = archive_section.get("path")
-        if archive_path:
-            context["paper_smoke_archive_path"] = str(archive_path)
+        _set_path_context(context, "paper_smoke_archive_path", archive_path)
         upload_info = archive_section.get("upload")
         if isinstance(upload_info, Mapping):
             context["paper_smoke_archive_backend"] = str(upload_info.get("backend", ""))
@@ -387,14 +407,11 @@ def _build_alert_payload(
     manifest_section = summary.get(_SUMMARY_KEY_MANIFEST)
     if isinstance(manifest_section, Mapping):
         manifest_path = manifest_section.get("manifest_path")
-        if manifest_path:
-            context["paper_smoke_manifest_path"] = str(manifest_path)
+        _set_path_context(context, "paper_smoke_manifest_path", manifest_path)
         metrics_path = manifest_section.get("metrics_path")
-        if metrics_path:
-            context["paper_smoke_manifest_metrics_path"] = str(metrics_path)
+        _set_path_context(context, "paper_smoke_manifest_metrics_path", metrics_path)
         summary_path = manifest_section.get("summary_path")
-        if summary_path:
-            context["paper_smoke_manifest_summary_path"] = str(summary_path)
+        _set_path_context(context, "paper_smoke_manifest_summary_path", summary_path)
         worst_status = manifest_section.get("worst_status")
         if worst_status:
             context["paper_smoke_manifest_status"] = str(worst_status)
@@ -447,8 +464,7 @@ def _build_alert_payload(
         exit_code = tls_section.get("exit_code")
         warnings_payload = tls_section.get("warnings")
         errors_payload = tls_section.get("errors")
-        if report_path:
-            context["paper_smoke_tls_audit_path"] = str(report_path)
+        _set_path_context(context, "paper_smoke_tls_audit_path", report_path)
         if status_value:
             context["paper_smoke_tls_audit_status"] = str(status_value)
         if exit_code is not None:
@@ -480,8 +496,7 @@ def _build_alert_payload(
         exit_code = token_section.get("exit_code")
         warnings_payload = token_section.get("warnings")
         errors_payload = token_section.get("errors")
-        if report_path:
-            context["paper_smoke_token_audit_path"] = str(report_path)
+        _set_path_context(context, "paper_smoke_token_audit_path", report_path)
         if status_value:
             context["paper_smoke_token_audit_status"] = str(status_value)
         if exit_code is not None:
@@ -514,8 +529,7 @@ def _build_alert_payload(
         exit_code = security_baseline_section.get("exit_code")
         warnings_payload = security_baseline_section.get("warnings")
         errors_payload = security_baseline_section.get("errors")
-        if report_path:
-            context["paper_smoke_security_baseline_path"] = str(report_path)
+        _set_path_context(context, "paper_smoke_security_baseline_path", report_path)
         if status_value:
             context["paper_smoke_security_baseline_status"] = str(status_value)
         baseline_status_value = security_baseline_section.get("baseline_status")

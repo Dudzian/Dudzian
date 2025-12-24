@@ -2232,14 +2232,14 @@ def _normalize_runtime_path(
 
     candidate = Path(str(raw_value)).expanduser()
     if candidate.is_absolute() or base_dir is None:
-        return str(candidate)
+        return candidate.as_posix()
 
     try:
         normalized_base = base_dir.expanduser().resolve(strict=False)
     except Exception:  # noqa: BLE001 - zachowujemy najlepsze możliwe przybliżenie
         normalized_base = base_dir.expanduser().absolute()
 
-    return str(normalized_base / candidate)
+    return (normalized_base / candidate).as_posix()
 
 
 def _normalize_env_var(value: Any) -> str | None:
