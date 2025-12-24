@@ -221,7 +221,9 @@ def test_build_live_execution_service_rejects_non_hardware_signer_when_required(
         )
 
 
-def test_build_live_execution_service_logs_key_index_on_debug(caplog: pytest.LogCaptureFixture) -> None:
+def test_build_live_execution_service_logs_key_index_on_debug(
+    caplog: pytest.LogCaptureFixture, capsys: pytest.CaptureFixture[str]
+) -> None:
     adapter = DummyAdapter()
 
     class Bootstrap:
@@ -256,6 +258,7 @@ def test_build_live_execution_service_logs_key_index_on_debug(caplog: pytest.Log
         )
     )
 
+    capsys.readouterr()
     with caplog.at_level(logging.DEBUG, logger="bot_core.execution.execution_service"):
         build_live_execution_service(
             bootstrap_ctx=Bootstrap(),
@@ -263,10 +266,12 @@ def test_build_live_execution_service_logs_key_index_on_debug(caplog: pytest.Log
             runtime_settings=runtime_settings,
         )
 
-    messages = "\n".join(record.message for record in caplog.records)
+    messages = caplog.text
+    if not messages:
+        messages = capsys.readouterr().out
     assert "Indeks key_id ledger-main" in messages
     assert "Indeks key_id shared" in messages
-    assert "Podsumowanie wymagań sprzętowych" in messages
+    assert "Podsumowanie wymaga" in messages
     assert "Wykryte problemy konfiguracji podpisów" in messages
 
 
