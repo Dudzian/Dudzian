@@ -242,8 +242,13 @@ class KeyringSecretStorage(SecretStorage):
             "macos": ("keyring.backends.macOS", "Keyring"),
             "linux": ("keyring.backends.SecretService", "SecretServiceKeyring"),
         }[platform_id]
-        module = importlib.import_module(module_name)
-        backend_cls = getattr(module, class_name)
+        try:
+            module = importlib.import_module(module_name)
+            backend_cls = getattr(module, class_name)
+        except (ImportError, AttributeError) as exc:
+            raise SecretStorageError(
+                "Brak natywnego backendu keyring dla tej platformy (SecretService/Keychain/Credential Manager)."
+            ) from exc
         return backend_cls()
 
     def _is_native_backend(self, backend: Any, platform_id: str) -> bool:
