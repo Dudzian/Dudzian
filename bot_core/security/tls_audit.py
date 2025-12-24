@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import os
 import ssl
+import stat
 from pathlib import Path
 from typing import Any, Mapping, MutableSequence
 
@@ -28,8 +29,14 @@ def _is_auth_token_configured(config: object, env: Mapping[str, str]) -> bool:
         return True
 
     token_env = getattr(config, "auth_token_env", None)
-    if token_env and str(env.get(str(token_env), "")).strip():
-        return True
+    if token_env:
+        env_value = None
+        if env:
+            env_value = env.get(str(token_env))
+        if env_value is None:
+            env_value = os.getenv(str(token_env))
+        if str(env_value or "").strip():
+            return True
 
     token_file = getattr(config, "auth_token_file", None)
     if token_file:
@@ -40,6 +47,13 @@ def _is_auth_token_configured(config: object, env: Mapping[str, str]) -> bool:
         if token_path is not None:
             try:
                 if token_path.is_file():
+                    if os.name != "nt":
+                        try:
+                            file_mode = stat.S_IMODE(token_path.stat().st_mode)
+                        except OSError:
+                            file_mode = None
+                        if file_mode is not None and file_mode & 0o077:
+                            return False
                     return True
             except OSError:
                 pass
