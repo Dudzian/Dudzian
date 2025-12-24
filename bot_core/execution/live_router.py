@@ -932,6 +932,7 @@ class LiveExecutionRouter(ExecutionService):
                     "symbol": request.symbol,
                     "portfolio": context.portfolio_id,
                     "route": route_label,
+                    **self._queue_labels(queue_wait),
                 }
                 attempts_counter += 1
                 try:
@@ -1017,30 +1018,33 @@ class LiveExecutionRouter(ExecutionService):
                 elapsed = max(0.0, current_time - start)
                 self._m_latency.observe(elapsed, labels={**labels, "result": "success"})
                 self._m_attempts.inc(labels={**labels, "result": "success"})
-                common_labels = {
+                success_labels = {
                     "exchange": exchange_name,
                     "symbol": request.symbol,
                     "portfolio": context.portfolio_id,
                     "route": route_label,
                 }
-                self._m_success.inc(labels=common_labels)
-                self._m_orders_total.inc(labels=common_labels)
+                self._m_success.inc(labels=success_labels)
+                self._m_orders_total.inc(labels={"exchange": exchange_name, "route": route_label})
                 filled_qty = float(result.filled_quantity or 0.0)
                 requested_qty = float(request.quantity or 0.0)
                 ratio = 0.0
                 if requested_qty > 0:
                     ratio = max(0.0, min(1.0, filled_qty / requested_qty))
-                self._m_fill_ratio.observe(ratio, labels=common_labels)
+                self._m_fill_ratio.observe(ratio, labels=success_labels)
                 if breaker:
                     breaker.record_success()
                     self._set_breaker_metric(exchange_name, open_=False)
                 if attempts_counter > 1:
-                    self._m_fallbacks.inc(labels=common_labels)
-                    self._m_router_fallbacks.inc(labels=common_labels)
-                    slim_labels = {k: v for k, v in common_labels.items() if k != "route"}
-                    if slim_labels:
-                        self._m_fallbacks.inc(labels=slim_labels)
-                        self._m_router_fallbacks.inc(labels=slim_labels)
+                    fallback_labels = {"route": route_label}
+                    self._m_fallbacks.inc(labels=fallback_labels)
+                    self._m_router_fallbacks.inc(
+                        labels={
+                            "exchange": exchange_name,
+                            "symbol": request.symbol,
+                            "portfolio": context.portfolio_id,
+                        }
+                    )
                     fallback_used = True
 
                 self._remember_binding(result.order_id, exchange_name)
@@ -1068,24 +1072,14 @@ class LiveExecutionRouter(ExecutionService):
         if failure_exchange is None and exchanges_and_retries:
             failure_exchange = str(exchanges_and_retries[0][0])
 
-        failure_labels = {
-            "route": route_label,
-            "symbol": request.symbol,
-            "portfolio": context.portfolio_id,
-        }
-        if failure_exchange is not None:
-            failure_labels["exchange"] = failure_exchange
-
+        failure_labels = {"route": route_label}
         self._m_failures.inc(labels=failure_labels)
-        self._m_router_failures.inc(labels=failure_labels)
-        slim_failure_labels = {k: v for k, v in failure_labels.items() if k != "route"}
-        if slim_failure_labels:
-            self._m_failures.inc(labels=slim_failure_labels)
-            self._m_router_failures.inc(labels=slim_failure_labels)
-        minimal_failure_labels = {k: v for k, v in failure_labels.items() if k not in {"route", "exchange"}}
-        if minimal_failure_labels:
-            self._m_failures.inc(labels=minimal_failure_labels)
-            self._m_router_failures.inc(labels=minimal_failure_labels)
+        self._m_router_failures.inc(
+            labels={
+                "symbol": request.symbol,
+                "portfolio": context.portfolio_id,
+            }
+        )
         self._m_errors.inc(
             labels={
                 "exchange": exchanges_and_retries[0][0] if exchanges_and_retries else "unknown",
