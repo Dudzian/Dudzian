@@ -1,5 +1,6 @@
 import QtQuick
 import QtQuick.Controls
+import Qt5Compat.GraphicalEffects
 import ".." as Design
 import "fonts/FontAwesomeData.js" as FontAwesomeData
 
@@ -13,6 +14,8 @@ Item {
     property color color: Design.Palette.textPrimary
     property real size: 20
     property url source: ""
+
+    readonly property bool showsImage: resolvedGlyph.length === 0 && source.toString().length > 0
 
     readonly property string resolvedGlyph: glyph.length > 0
                                          ? glyph
@@ -37,6 +40,7 @@ Item {
     }
 
     Text {
+        id: glyphText
         anchors.centerIn: parent
         text: root.resolvedGlyph
         visible: root.resolvedGlyph.length > 0
@@ -48,12 +52,21 @@ Item {
     }
 
     Image {
+        id: iconImage
         anchors.centerIn: parent
-        visible: root.resolvedGlyph.length === 0 && root.source.length > 0
-        source: root.source
+        visible: false
+        source: root.showsImage ? root.source : ""
         width: root.size
         height: root.size
         fillMode: Image.PreserveAspectFit
+    }
+
+    ColorOverlay {
+        anchors.centerIn: parent
+        width: root.size
+        height: root.size
+        source: iconImage
+        visible: root.showsImage
         color: root.color
     }
 }
