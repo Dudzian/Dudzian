@@ -344,7 +344,11 @@ def audit_tls_assets(
 
     metrics_config = getattr(core_config, "metrics_service", None)
     if metrics_config is not None:
-        rbac_tokens_configured = bool(getattr(metrics_config, "rbac_tokens", ()) or ())
+        rbac_tokens_configured = bool(
+            getattr(metrics_config, "rbac_tokens_configured", False)
+            or getattr(metrics_config, "rbac_tokens", ())
+            or ()
+        )
         service_report = {
             "enabled": bool(getattr(metrics_config, "enabled", False)),
             "auth_token_configured": _is_auth_token_configured(
@@ -382,7 +386,11 @@ def audit_tls_assets(
 
     risk_config = getattr(core_config, "risk_service", None)
     if risk_config is not None:
-        rbac_tokens_configured = bool(getattr(risk_config, "rbac_tokens", ()) or ())
+        rbac_tokens_configured = bool(
+            getattr(risk_config, "rbac_tokens_configured", False)
+            or getattr(risk_config, "rbac_tokens", ())
+            or ()
+        )
         service_report = {
             "enabled": bool(getattr(risk_config, "enabled", False)),
             "auth_token_configured": _is_auth_token_configured(
