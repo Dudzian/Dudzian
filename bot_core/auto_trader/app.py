@@ -16119,6 +16119,52 @@ class AutoTrader:
             decision_lookup=decision_lookup,
         )
 
+        def _normalize_guardrail_trace_ids(
+            trace: Sequence[Mapping[str, Any]] | None,
+        ) -> list[dict[str, Any]]:
+            normalized: list[dict[str, Any]] = []
+            if not trace:
+                return normalized
+            for entry in trace:
+                if not isinstance(entry, Mapping):
+                    continue
+                record = dict(entry)
+                decision_id_value = record.get("decision_id")
+                if isinstance(decision_id_value, str):
+                    record["decision_id"] = decision_id_value.strip()
+                timestamp_value = record.get("timestamp")
+                if isinstance(timestamp_value, datetime):
+                    record["timestamp"] = timestamp_value.astimezone(timezone.utc).isoformat()
+                elif hasattr(timestamp_value, "isoformat") and not isinstance(timestamp_value, str):
+                    try:
+                        record["timestamp"] = timestamp_value.isoformat()
+                    except Exception:  # pragma: no cover - defensywne formatowanie
+                        pass
+                decision_value = record.get("decision")
+                decision_record: dict[str, Any] | None
+                if isinstance(decision_value, Mapping):
+                    decision_record = {
+                        str(key): copy.deepcopy(value) for key, value in decision_value.items()
+                    }
+                elif hasattr(decision_value, "__dict__"):
+                    decision_record = {
+                        str(key): copy.deepcopy(value) for key, value in vars(decision_value).items()
+                    }
+                else:
+                    decision_record = None
+                if decision_record is not None:
+                    decision_timestamp = decision_record.get("timestamp")
+                    if isinstance(decision_timestamp, datetime):
+                        decision_record["timestamp"] = decision_timestamp.astimezone(timezone.utc).isoformat()
+                    elif hasattr(decision_timestamp, "isoformat") and not isinstance(decision_timestamp, str):
+                        try:
+                            decision_record["timestamp"] = decision_timestamp.isoformat()
+                        except Exception:  # pragma: no cover - defensywne formatowanie
+                            pass
+                    record["decision"] = decision_record
+                normalized.append(record)
+            return normalized
+
         normalized_guardrail_trace: list[dict[str, Any]] = []
         for entry in guardrail_trace_raw:
             if not isinstance(entry, Mapping):
@@ -16165,7 +16211,7 @@ class AutoTrader:
         if include_history:
             result["guardrail_trace"] = normalized_guardrail_trace
         else:
-            result["guardrail_trace"] = guardrail_trace_raw
+            result["guardrail_trace"] = _normalize_guardrail_trace_ids(guardrail_trace_raw)
         result["risk_alerts"] = risk_alerts
         result["signal_quality"] = signal_quality_snapshot
         result["failover"] = failover_snapshot
