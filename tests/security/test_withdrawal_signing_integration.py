@@ -1,3 +1,5 @@
+import logging
+
 import pytest
 
 from bot_core.config.models import RuntimeExecutionLiveSettings, RuntimeExecutionSettings
@@ -254,7 +256,7 @@ def test_build_live_execution_service_logs_key_index_on_debug(caplog: pytest.Log
         )
     )
 
-    with caplog.at_level("DEBUG"):
+    with caplog.at_level(logging.DEBUG, logger="bot_core.execution.execution_service"):
         build_live_execution_service(
             bootstrap_ctx=Bootstrap(),
             environment=Environment(),
