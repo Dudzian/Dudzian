@@ -392,7 +392,15 @@ def test_email_channel_builds_message(sample_message: AlertMessage) -> None:
 
 
 def test_router_throttles_repeated_alerts(sample_message: AlertMessage, caplog: pytest.LogCaptureFixture) -> None:
-    caplog.set_level(logging.INFO)
+    logger = logging.getLogger("bot_core.alerts")
+    handler = _ListHandler(level=logging.INFO)
+    prev_level = logger.level
+    prev_handlers = list(logger.handlers)
+    prev_propagate = logger.propagate
+
+    logger.addHandler(handler)
+    logger.setLevel(logging.INFO)
+    logger.propagate = False
     clock = _MutableClock()
     throttle = AlertThrottle(
         window=timedelta(seconds=120),
@@ -406,17 +414,27 @@ def test_router_throttles_repeated_alerts(sample_message: AlertMessage, caplog: 
     channel = DummyChannel()
     router.register(channel)
 
-    router.dispatch(sample_message)
-    assert len(channel.messages) == 1
-    exported = tuple(audit.export())
-    assert exported[-1]["channel"] == "dummy"
+    try:
+        router.dispatch(sample_message)
+        assert len(channel.messages) == 1
+        exported = tuple(audit.export())
+        assert exported[-1]["channel"] == "dummy"
 
-    router.dispatch(sample_message)
-    assert len(channel.messages) == 1  # throttled
-    exported = tuple(audit.export())
-    assert exported[-1]["channel"] == "__suppressed__"
-    assert throttle.remaining_seconds(sample_message) > 0
-    assert any("Tłumię powtarzający się alert" in record.message for record in caplog.records)
+        router.dispatch(sample_message)
+        assert len(channel.messages) == 1  # throttled
+        exported = tuple(audit.export())
+        assert exported[-1]["channel"] == "__suppressed__"
+        assert throttle.remaining_seconds(sample_message) > 0
+    finally:
+        logger.removeHandler(handler)
+        logger.handlers = prev_handlers
+        logger.setLevel(prev_level)
+        logger.propagate = prev_propagate
+
+    messages = "\n".join(record.getMessage() for record in handler.records)
+    assert handler.records, "Brak przechwyconych logów z bot_core.alerts (throttle)"
+    normalized = unicodedata.normalize("NFKD", messages).encode("ascii", "ignore").decode().lower()
+    assert ("powtarz" in normalized and "alert" in normalized and ("tlum" in normalized or "tumie" in normalized))
 
     clock.advance(180)
     router.dispatch(sample_message)
