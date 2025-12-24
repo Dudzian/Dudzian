@@ -137,6 +137,22 @@ class BotPysideApplication:
         }
         for import_path in qml_paths:
             engine.addImportPath(import_path.as_posix())
+        collected_warnings: list[str] = []
+
+        def _on_warnings(warnings: list) -> None:
+            for warning in warnings:
+                try:
+                    location = warning.url().toString() if warning.url().isValid() else qml_file.as_uri()
+                    collected_warnings.append(
+                        f"{location}:{warning.line()}:{warning.column()}: {warning.description()}"
+                    )
+                except Exception:  # pragma: no cover - zabezpieczenie na wypadek zmian API
+                    collected_warnings.append(str(warning))
+
+        try:
+            engine.warnings.connect(_on_warnings)
+        except Exception:  # pragma: no cover - defensywnie w razie nietypowych środowisk
+            pass
         bridge = QmlContextBridge(
             engine,
             self._config,
@@ -144,20 +160,10 @@ class BotPysideApplication:
         )
         bridge.install()
         engine.load(QUrl.fromLocalFile(qml_file.as_posix()))
-        warnings = engine.warnings()
-        formatted_warnings: list[str] = []
-        for warning in warnings:
-            try:
-                location = warning.url().toString() if warning.url().isValid() else qml_file.as_uri()
-                formatted_warnings.append(
-                    f"{location}:{warning.line()}:{warning.column()}: {warning.description()}"
-                )
-            except Exception:  # pragma: no cover - zabezpieczenie na przypadek zmian API
-                formatted_warnings.append(str(warning))
-        for message in formatted_warnings:
+        for message in collected_warnings:
             _LOGGER.error("QML warning: %s", message)
         if not engine.rootObjects():  # pragma: no cover - informacyjne
-            details = "; ".join(formatted_warnings) if formatted_warnings else "brak szczegółów"
+            details = "; ".join(collected_warnings) if collected_warnings else "brak szczegółów"
             raise RuntimeError(f"Nie udało się załadować QML z {qml_file}: {details}")
         self._engine = engine
         return engine
