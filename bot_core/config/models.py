@@ -1664,6 +1664,30 @@ class RuntimeExecutionLiveSettings:
     decision_log_keep: int = 3
     latency_histogram_buckets: Sequence[float] = field(default_factory=tuple)
     qos: "RuntimeExecutionLiveQoSSettings | None" = None
+    # --- podpisy transakcji / hardware wallet ---
+    signers: Mapping[str, Any] | None = None
+    transaction_signers: Mapping[str, Any] | None = None  # alias
+    transaction_signer_selector: Mapping[str, Any] | None = None  # alias
+    require_hardware_wallet_for_withdrawals: bool = False
+
+    def __post_init__(self) -> None:
+        provided = [
+            name
+            for name, value in (
+                ("signers", self.signers),
+                ("transaction_signers", self.transaction_signers),
+                ("transaction_signer_selector", self.transaction_signer_selector),
+            )
+            if value is not None
+        ]
+        if len(provided) > 1:
+            raise TypeError(
+                "Tylko jedno z pól signers/transaction_signers/transaction_signer_selector może być ustawione"
+            )
+
+        # Normalizujemy do pola signers, aby dalsze etapy korzystały z jednego źródła prawdy.
+        if self.signers is None:
+            self.signers = self.transaction_signers or self.transaction_signer_selector
 
 
 @dataclass(slots=True)

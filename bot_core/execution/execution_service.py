@@ -11,6 +11,7 @@ from bot_core.execution.base import ExecutionContext, ExecutionService
 from bot_core.execution.mode_policy import DEFAULT_MODE_SELECTOR
 from bot_core.execution.live_router import LiveExecutionRouter, QoSConfig
 from bot_core.exchanges.base import ExchangeAdapter, OrderRequest
+from bot_core.security import build_transaction_signer_selector
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -224,6 +225,46 @@ def build_live_execution_service(
                 if qos_cfg.max_queue_wait_seconds is not None
                 else None
             ),
+        )
+
+    signer_selector = build_transaction_signer_selector(getattr(live_cfg, "signers", None))
+    license_caps = getattr(bootstrap_ctx, "license_capabilities", None)
+    require_hw = bool(
+        getattr(license_caps, "require_hardware_wallet_for_outgoing", False)
+        or getattr(live_cfg, "require_hardware_wallet_for_withdrawals", False)
+    )
+
+    if signer_selector is not None:
+        router_kwargs["transaction_signer_selector"] = signer_selector
+
+    if require_hw:
+        router_kwargs["require_hardware_wallet_for_withdrawals"] = True
+
+    if signer_selector is not None:
+        audit_bundle = signer_selector.describe_audit_bundle()
+        key_index = audit_bundle.get("key_index", {})
+        hardware_requirements = audit_bundle.get("hardware_requirements", {})
+        issues = tuple(audit_bundle.get("issues", ()))
+
+        for key_id, summary in key_index.items():
+            _LOGGER.debug("Indeks key_id %s: %s", key_id, summary)
+
+        _LOGGER.debug("Podsumowanie wymagań sprzętowych: %s", hardware_requirements)
+
+        if issues:
+            _LOGGER.warning("Wykryte problemy konfiguracji podpisów: %s", issues)
+
+        if require_hw:
+            software_accounts = ()
+            if isinstance(hardware_requirements, Mapping):
+                software_accounts = tuple(hardware_requirements.get("software_accounts", ()))
+            if software_accounts:
+                raise RuntimeError(
+                    "Licencja wymaga podpisu z portfela sprzętowego, jednak konfiguracja zawiera podpisującego softwarowego"
+                )
+    elif require_hw:
+        raise RuntimeError(
+            "Licencja wymaga podpisu z portfela sprzętowego dla wypłat, ale nie skonfigurowano żadnego podpisującego."
         )
 
     io_dispatcher = getattr(bootstrap_ctx, "io_dispatcher", None)

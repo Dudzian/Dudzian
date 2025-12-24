@@ -277,6 +277,10 @@ class LiveExecutionRouter(ExecutionService):
         bindings_capacity: int = 10_000,
         # --- błędy / retry ---
         error_policy: ExecutionErrorPolicy | None = None,
+        # --- podpisy transakcji / hardware wallet ---
+        transaction_signer_selector: TransactionSignerSelector | None = None,
+        transaction_signers: TransactionSignerSelector | None = None,
+        require_hardware_wallet_for_withdrawals: bool = False,
         # --- współbieżność / QoS ---
         qos: QoSConfig | None = None,
         io_dispatcher: AsyncIOTaskQueue | None = None,
@@ -284,6 +288,12 @@ class LiveExecutionRouter(ExecutionService):
         if not adapters:
             raise ValueError("LiveExecutionRouter wymaga co najmniej jednego adaptera giełdowego")
         self._adapters: dict[str, ExchangeAdapter] = {str(k): v for k, v in adapters.items()}
+
+        if transaction_signer_selector is not None and transaction_signers is not None:
+            raise TypeError("transaction_signer_selector i transaction_signers nie mogą być podane jednocześnie")
+
+        self._transaction_signer_selector = transaction_signer_selector or transaction_signers
+        self._require_hardware_wallet_for_withdrawals = bool(require_hardware_wallet_for_withdrawals)
 
         # Tryb trasowania
         self._mode: str
@@ -488,7 +498,7 @@ class LiveExecutionRouter(ExecutionService):
         normalized.pop("hardware_wallet_account", None)
 
         context_meta = context.metadata if isinstance(context.metadata, Mapping) else {}
-        operation = str(normalized.get("operation") or context_meta.get("operation") or "").lower()
+        operation = str(normalized.get("operation") or context_meta.get("operation") or "").strip().lower()
         requires_hw = bool(normalized.get("requires_hardware_wallet") or context_meta.get("requires_hardware_wallet"))
         if operation in {"withdrawal", "payout"}:
             requires_hw = True
@@ -498,22 +508,22 @@ class LiveExecutionRouter(ExecutionService):
                 request.metadata = normalized
             return
 
-        if self._transaction_signers is None:
-            if self._require_hardware_wallet:
+        if self._transaction_signer_selector is None:
+            if self._require_hardware_wallet_for_withdrawals:
                 raise RuntimeError(
-                    "Licencja wymaga portfela sprzętowego dla wypłat, ale nie skonfigurowano podpisującego."
+                    "Licencja wymaga podpisu z portfela sprzętowego dla wypłat, ale nie skonfigurowano żadnego podpisującego."
                 )
             if normalized != metadata:
                 request.metadata = normalized
             return
 
         account_id = self._resolve_account_identifier(request, context, exchange_name)
-        signer = self._transaction_signers.resolve(account_id)
+        signer = self._transaction_signer_selector.resolve(account_id)
         if signer is None:
             raise RuntimeError(
                 f"Brak podpisującego transakcje dla konta '{account_id or 'default'}' wymagającego portfela sprzętowego."
             )
-        if self._require_hardware_wallet and not getattr(signer, "requires_hardware", False):
+        if self._require_hardware_wallet_for_withdrawals and not getattr(signer, "requires_hardware", False):
             raise RuntimeError(
                 "Licencja wymaga podpisu z portfela sprzętowego dla wypłat, jednak wybrany podpisujący nie korzysta z urządzenia."
             )
@@ -551,7 +561,7 @@ class LiveExecutionRouter(ExecutionService):
             }
             if request.client_order_id:
                 payload["client_order_id"] = request.client_order_id
-            if self._transaction_signers.verify(
+            if self._transaction_signer_selector.verify(
                 existing_account or account_id,
                 payload,
                 signature_for_verification,
@@ -864,6 +874,25 @@ class LiveExecutionRouter(ExecutionService):
         exchanges_and_retries = list(plan.exchanges_and_retries)
         request = order.request
         context = order.context
+        maybe_prepare = getattr(self, "_maybe_prepare_withdrawal_signature", None)
+        if (
+            callable(maybe_prepare)
+            and exchanges_and_retries
+            and (
+                self._transaction_signer_selector is not None
+                or self._require_hardware_wallet_for_withdrawals
+            )
+        ):
+            metadata = request.metadata if isinstance(request.metadata, Mapping) else {}
+            context_meta = context.metadata if isinstance(context.metadata, Mapping) else {}
+            requires_hw = self._require_hardware_wallet_for_withdrawals or bool(
+                metadata.get("requires_hardware_wallet") or context_meta.get("requires_hardware_wallet")
+            )
+            operation = str(metadata.get("operation") or context_meta.get("operation") or "").strip().lower()
+            is_withdrawal = operation in {"withdrawal", "payout"}
+            if requires_hw or is_withdrawal:
+                primary_exchange, _ = exchanges_and_retries[0]
+                maybe_prepare(request, context, primary_exchange)
         allowed_fallback_categories = self._resolve_allowed_fallback_categories(context)
 
         attempts_rec: list[dict[str, str]] = []
