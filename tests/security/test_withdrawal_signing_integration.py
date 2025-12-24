@@ -109,6 +109,54 @@ def test_withdrawal_requires_hardware_signature() -> None:
     )
 
 
+def test_withdrawal_operation_whitespace_requires_signature() -> None:
+    adapter = DummyAdapter()
+    signer = LedgerSigner(seed=b"integration-test", key_id="ledger")
+    selector = TransactionSignerSelector(default=signer)
+    router = LiveExecutionRouter(
+        adapters={"primary": adapter},
+        default_route=("primary",),
+        transaction_signers=selector,
+    )
+
+    metadata = {"operation": " withdrawal ", "account": "primary"}
+    request = OrderRequest(
+        symbol="WITHDRAWAL",
+        side="withdraw",
+        quantity=1.0,
+        order_type="market",
+        metadata=metadata,
+    )
+    context = ExecutionContext(
+        portfolio_id="portfolio-1",
+        risk_profile="default",
+        environment="live",
+        metadata={"account": "primary"},
+    )
+
+    result = router.execute(request, context)
+    assert result.status == "accepted"
+    assert adapter.last_request is not None
+    signed_metadata = dict(adapter.last_request.metadata or {})
+    signature_doc = signed_metadata["hardware_wallet_signature"]
+    assert signed_metadata["requires_hardware_wallet"] is True
+    assert signed_metadata["operation"] == "withdrawal"
+    assert signer.verify(
+        {
+            "exchange": "primary",
+            "account": "primary",
+            "portfolio": "portfolio-1",
+            "risk_profile": "default",
+            "symbol": "WITHDRAWAL",
+            "side": "withdraw",
+            "quantity": 1.0,
+            "operation": "withdrawal",
+            "timestamp": signed_metadata["hardware_wallet_signed_at"],
+        },
+        signature_doc,
+    )
+
+
 def test_missing_signer_with_required_wallet_raises() -> None:
     adapter = DummyAdapter()
     router = LiveExecutionRouter(
