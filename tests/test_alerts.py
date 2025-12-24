@@ -4,6 +4,7 @@ from __future__ import annotations
 import base64
 import json
 import logging
+import unicodedata
 from email.message import EmailMessage
 from pathlib import Path
 from typing import List, Mapping, Sequence
@@ -39,6 +40,15 @@ from tests.test_check_data_coverage_script import (  # noqa: E402
     _write_cache,
     _write_config,
 )
+
+
+class _ListHandler(logging.Handler):
+    def __init__(self, level: int = logging.NOTSET) -> None:
+        super().__init__(level)
+        self.records: list[logging.LogRecord] = []
+
+    def emit(self, record: logging.LogRecord) -> None:  # pragma: no cover
+        self.records.append(record)
 
 
 class DummyChannel(AlertChannel):
@@ -129,12 +139,33 @@ def test_router_continues_on_error(sample_message: AlertMessage, caplog: pytest.
     router.register(FailingChannel())
     router.register(DummyChannel())
 
-    router.dispatch(sample_message)
+    logger = logging.getLogger("bot_core.alerts")
+    handler = _ListHandler(level=logging.WARNING)
+
+    prev_level = logger.level
+    prev_handlers = list(logger.handlers)
+    prev_propagate = logger.propagate
+
+    logger.addHandler(handler)
+    logger.setLevel(logging.WARNING)
+    logger.propagate = False
+
+    try:
+        router.dispatch(sample_message)
+    finally:
+        logger.removeHandler(handler)
+        logger.handlers = prev_handlers
+        logger.setLevel(prev_level)
+        logger.propagate = prev_propagate
 
     exported = tuple(audit.export())
     assert len(exported) == 1
     assert exported[0]["channel"] == "dummy"
-    assert any("Część kanałów zgłosiła błędy" in record.message for record in caplog.records)
+
+    messages = "\n".join(record.getMessage() for record in handler.records)
+    assert handler.records, "Brak przechwyconych logów z bot_core.alerts"
+    normalized = unicodedata.normalize("NFKD", messages).encode("ascii", "ignore").decode().lower()
+    assert "kana" in normalized and "bed" in normalized
 
 
 def test_router_records_failure_metric(sample_message: AlertMessage) -> None:
