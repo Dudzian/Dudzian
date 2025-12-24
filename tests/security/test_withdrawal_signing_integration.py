@@ -222,7 +222,7 @@ def test_build_live_execution_service_rejects_non_hardware_signer_when_required(
 
 
 def test_build_live_execution_service_logs_key_index_on_debug(
-    caplog: pytest.LogCaptureFixture, capfd: pytest.CaptureFixture[str]
+    caplog: pytest.LogCaptureFixture,
 ) -> None:
     adapter = DummyAdapter()
 
@@ -258,17 +258,24 @@ def test_build_live_execution_service_logs_key_index_on_debug(
         )
     )
 
-    capfd.readouterr()
-    with caplog.at_level(logging.DEBUG, logger="bot_core.execution.execution_service"):
+    logger = logging.getLogger("bot_core.execution.execution_service")
+    previous_propagate = logger.propagate
+    caplog.set_level(logging.DEBUG, logger=logger.name)
+
+    try:
+        logger.propagate = True
         build_live_execution_service(
             bootstrap_ctx=Bootstrap(),
             environment=Environment(),
             runtime_settings=runtime_settings,
         )
+    finally:
+        logger.propagate = previous_propagate
 
-    out, err = capfd.readouterr()
-    messages = "\n".join([caplog.text, out, err])
-    assert "bot_core.execution.execution_service" in messages
+    records = [record for record in caplog.records if record.name == logger.name]
+    messages = "\n".join(record.getMessage() for record in records)
+
+    assert records, "Brak przechwyconych logów z execution_service"
     assert "Indeks key_id ledger-main" in messages
     assert "Indeks key_id shared" in messages
     assert "Podsumowanie wymaga" in messages
