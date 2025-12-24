@@ -201,6 +201,75 @@ def _extract_adjusted_quantity(
     return candidate
 
 
+def _clamp_request_quantity(
+    request: OrderRequest,
+    account: AccountSnapshot,
+    profile: object | None,
+    *,
+    include_trade_risk: bool,
+) -> OrderRequest:
+    """Dopasowuje quantity do limitów profilu (np. max_position_pct, risk per trade)."""
+    if profile is None:
+        return request
+
+    price = request.price
+    equity = getattr(account, "total_equity", 0.0)
+    if price is None or price <= 0 or equity is None or float(equity) <= 0.0:
+        return request
+
+    side = request.side.lower()
+    quantity_limits: list[float] = [request.quantity]
+
+    try:
+        max_position_pct = float(profile.max_position_exposure())
+    except Exception:  # pragma: no cover - defensywne na inne implementacje profili
+        max_position_pct = 0.0
+
+    if max_position_pct > 0:
+        quantity_limits.append(max_position_pct * float(equity) / price)
+
+    if include_trade_risk:
+        stop_price = request.stop_price
+        if stop_price is None and request.metadata:
+            try:
+                stop_price = float(request.metadata.get("stop_price"))  # type: ignore[arg-type]
+            except Exception:
+                stop_price = None
+
+        if stop_price is not None:
+            stop_distance = price - stop_price if side == "buy" else stop_price - price
+        else:
+            stop_distance = None
+
+        if stop_distance is not None and stop_distance > 0:
+            try:
+                min_risk, max_risk = profile.trade_risk_pct_range()
+                max_trade_risk_pct = max(float(min_risk), float(max_risk), 0.0)
+            except Exception:  # pragma: no cover - defensywne na inne implementacje profili
+                max_trade_risk_pct = 0.0
+            if max_trade_risk_pct > 0:
+                quantity_limits.append((max_trade_risk_pct * float(equity)) / stop_distance)
+
+    adjusted_qty = max(0.0, min(quantity_limits))
+    if math.isclose(adjusted_qty, request.quantity, rel_tol=1e-12, abs_tol=1e-12):
+        return request
+
+    metadata = dict(request.metadata or {})
+    metadata["quantity"] = float(adjusted_qty)
+    return OrderRequest(
+        symbol=request.symbol,
+        side=request.side,
+        quantity=adjusted_qty,
+        order_type=request.order_type,
+        price=request.price,
+        time_in_force=request.time_in_force,
+        client_order_id=request.client_order_id,
+        stop_price=request.stop_price,
+        atr=request.atr,
+        metadata=metadata,
+    )
+
+
 # =============================================================================
 # TradingController – przetwarza sygnały (BUY/SELL), pilnuje ryzyka i wysyła alerty
 # =============================================================================
@@ -1739,9 +1808,16 @@ class DailyTrendController:
         signals: Sequence[StrategySignal],
     ) -> list[OrderResult]:
         results: list[OrderResult] = []
+        profile = getattr(self.risk_engine, "get_profile", lambda name: None)(self._risk_profile)
         for signal in signals:
             base_request = self._build_order_request(snapshot, signal)
             account_snapshot = self.account_loader()
+            base_request = _clamp_request_quantity(
+                base_request,
+                account_snapshot,
+                profile,
+                include_trade_risk=False,
+            )
             risk_result = self.risk_engine.apply_pre_trade_checks(
                 base_request,
                 account=account_snapshot,
@@ -1764,6 +1840,12 @@ class DailyTrendController:
                         stop_price=base_request.stop_price,
                         atr=base_request.atr,
                         metadata=adjusted_metadata,
+                    )
+                    adjusted_request = _clamp_request_quantity(
+                        adjusted_request,
+                        account_snapshot,
+                        profile,
+                        include_trade_risk=True,
                     )
                     second_result = self.risk_engine.apply_pre_trade_checks(
                         adjusted_request,
