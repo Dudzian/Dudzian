@@ -1,4 +1,5 @@
 import json
+import os
 import sys
 from pathlib import Path
 from types import SimpleNamespace
@@ -139,3 +140,58 @@ def test_audit_tls_assets_script_env_configuration(tmp_path: Path, monkeypatch: 
     assert "metrics_service" in stdout
     payload = json.loads(output_path.read_text(encoding="utf-8"))
     assert not payload["errors"]
+
+
+def test_audit_tls_assets_accepts_env_auth_token(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    cert_path = _write(tmp_path / "cert.pem", _CERT)
+    key_path = _write(tmp_path / "key.pem", _KEY)
+    os.chmod(cert_path, 0o600)
+    os.chmod(key_path, 0o600)
+
+    config_path = tmp_path / "core.yaml"
+    config_path.write_text("runtime: {}\n", encoding="utf-8")
+
+    metrics_tls = SimpleNamespace(
+        enabled=True,
+        certificate_path=str(cert_path),
+        private_key_path=str(key_path),
+        client_ca_path=None,
+        require_client_auth=False,
+        private_key_password_env=None,
+        pinned_fingerprints=(),
+    )
+
+    metrics_service = SimpleNamespace(
+        enabled=True,
+        auth_token=None,
+        auth_token_env="METRICS_AUTH_TOKEN",
+        auth_token_file=None,
+        rbac_tokens=(),
+        tls=metrics_tls,
+    )
+    risk_service = SimpleNamespace(enabled=False, tls=SimpleNamespace(enabled=False))
+
+    monkeypatch.setattr(
+        audit_tls_assets_script,
+        "load_core_config",
+        lambda path: SimpleNamespace(metrics_service=metrics_service, risk_service=risk_service),
+    )
+
+    monkeypatch.setenv("METRICS_AUTH_TOKEN", "from-env")
+    output_path = tmp_path / "report.json"
+
+    exit_code = audit_tls_assets_script.main(
+        [
+            "--config",
+            str(config_path),
+            "--json-output",
+            str(output_path),
+            "--fail-on-warning",
+        ]
+    )
+
+    assert exit_code == 0
+    payload = json.loads(output_path.read_text(encoding="utf-8"))
+    metrics = payload["services"]["metrics_service"]
+    assert metrics["auth_token_configured"] is True
+    assert not metrics["warnings"]

@@ -59,6 +59,40 @@ def test_audit_service_tokens_success_with_rbac():
     assert risk["coverage"]["risk.read"] == ["risk-reader"]
 
 
+def test_audit_does_not_mark_shared_secret_for_rbac_only() -> None:
+    core_config = _base_core_config(
+        metrics_service=MetricsServiceConfig(
+            enabled=True,
+            auth_token_env="METRICS_AUTH_TOKEN",
+            rbac_tokens=(
+                ServiceTokenConfig(
+                    token_id="metrics-reader",
+                    token_value="secret",
+                    scopes=("metrics.read",),
+                ),
+            ),
+        ),
+        risk_service=RiskServiceConfig(
+            enabled=True,
+            rbac_tokens=(
+                ServiceTokenConfig(
+                    token_id="risk-reader",
+                    token_value="secret",
+                    scopes=("risk.read",),
+                ),
+            ),
+        ),
+    )
+
+    report = audit_service_tokens(core_config, env={})
+    payload = report.as_dict()
+
+    assert not payload["warnings"]
+    services = {service["service"]: service for service in payload["services"]}
+    assert services["metrics_service"]["shared_secret_token"] is False
+    assert services["risk_service"]["shared_secret_token"] is False
+
+
 def test_audit_warns_when_env_missing_and_shared_secret_only():
     token_config = ServiceTokenConfig(
         token_id="metrics-env",
