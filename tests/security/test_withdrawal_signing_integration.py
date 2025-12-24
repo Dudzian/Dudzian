@@ -18,6 +18,15 @@ from bot_core.security.hardware_wallets import LedgerSigner
 from bot_core.security.signing import TransactionSignerSelector
 
 
+class _ListHandler(logging.Handler):
+    def __init__(self, level: int = logging.NOTSET) -> None:
+        super().__init__(level)
+        self.records: list[logging.LogRecord] = []
+
+    def emit(self, record: logging.LogRecord) -> None:  # pragma: no cover - trivial collector
+        self.records.append(record)
+
+
 class DummyAdapter(ExchangeAdapter):
     name = "dummy"
 
@@ -221,9 +230,7 @@ def test_build_live_execution_service_rejects_non_hardware_signer_when_required(
         )
 
 
-def test_build_live_execution_service_logs_key_index_on_debug(
-    caplog: pytest.LogCaptureFixture,
-) -> None:
+def test_build_live_execution_service_logs_key_index_on_debug() -> None:
     adapter = DummyAdapter()
 
     class Bootstrap:
@@ -259,23 +266,31 @@ def test_build_live_execution_service_logs_key_index_on_debug(
     )
 
     logger = logging.getLogger("bot_core.execution.execution_service")
+    handler = _ListHandler(level=logging.DEBUG)
+
+    previous_level = logger.level
+    previous_handlers = list(logger.handlers)
     previous_propagate = logger.propagate
-    caplog.set_level(logging.DEBUG, logger=logger.name)
+
+    logger.addHandler(handler)
+    logger.setLevel(logging.DEBUG)
+    logger.propagate = False
 
     try:
-        logger.propagate = True
         build_live_execution_service(
             bootstrap_ctx=Bootstrap(),
             environment=Environment(),
             runtime_settings=runtime_settings,
         )
     finally:
+        logger.removeHandler(handler)
+        logger.handlers = previous_handlers
+        logger.setLevel(previous_level)
         logger.propagate = previous_propagate
 
-    records = [record for record in caplog.records if record.name == logger.name]
-    messages = "\n".join(record.getMessage() for record in records)
+    messages = "\n".join(record.getMessage() for record in handler.records)
 
-    assert records, "Brak przechwyconych logów z execution_service"
+    assert handler.records, "Brak przechwyconych logów z execution_service"
     assert "Indeks key_id ledger-main" in messages
     assert "Indeks key_id shared" in messages
     assert "Podsumowanie wymaga" in messages
