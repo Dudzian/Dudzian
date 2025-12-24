@@ -3830,10 +3830,19 @@ class AutoTrader:
             else:
                 strategy = self.current_strategy
         self.current_strategy = strategy
+        if (
+            strategy == "capital_preservation"
+            or getattr(self, "_cooldown_until", 0.0) > time.time()
+        ):
+            self.current_leverage = 0.0
+            return
         try:
             leverage_value = float(getattr(self, "current_leverage", 0.0))
         except (TypeError, ValueError):
             leverage_value = profile.leverage.default or profile.leverage.min
+        if leverage_value <= 0.0:
+            self.current_leverage = 0.0
+            return
         self.current_leverage = profile.leverage.clamp(leverage_value)
         current_size = getattr(self, "current_position_size", None)
         if current_size is None and profile.position_size.default is not None:
@@ -8639,11 +8648,15 @@ class AutoTrader:
         decision_engine: Any | None = None,
         ai_context: Mapping[str, object] | None = None,
     ) -> RiskDecision:
-        should_trade = signal in {"buy", "sell"} and self.current_leverage > 0 and not cooldown_active
         if cooldown_active:
             state = "halted"
         else:
             state = "risk_off" if effective_risk >= 0.75 else "ready"
+
+        if signal not in {"buy", "sell"} or state == "halted" or self.current_strategy == "capital_preservation":
+            self.current_leverage = 0.0
+
+        should_trade = signal in {"buy", "sell"} and self.current_leverage > 0 and not cooldown_active
         reason = f"Regime {assessment.regime.value}"
         details = {
             "symbol": symbol,
@@ -16149,7 +16162,10 @@ class AutoTrader:
         result["retraining_cycles"] = retraining_cycles
 
         result["guardrail_state"] = guardrail_state
-        result["guardrail_trace"] = normalized_guardrail_trace
+        if include_history:
+            result["guardrail_trace"] = normalized_guardrail_trace
+        else:
+            result["guardrail_trace"] = guardrail_trace_raw
         result["risk_alerts"] = risk_alerts
         result["signal_quality"] = signal_quality_snapshot
         result["failover"] = failover_snapshot
