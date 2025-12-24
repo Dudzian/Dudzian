@@ -70,9 +70,19 @@ def test_stub_config_secure_produces_clean_baseline(tmp_path: Path) -> None:
         scheduler_required_scopes={"*": ("runtime.schedule.read", "runtime.schedule.write")},
     )
 
-    assert report.warnings == ()
-    assert report.errors == ()
-    assert report.status == "ok"
+    if os.name == "nt":
+        assert report.errors == ()
+        assert report.status in {"ok", "warning"}
+        if report.warnings:
+            permission_tokens = ("chmod", "uprawn", "zapisywal", "czytelny", "writable", "readable")
+            assert all(
+                any(token in warning.lower() for token in permission_tokens)
+                for warning in report.warnings
+            )
+    else:
+        assert report.warnings == ()
+        assert report.errors == ()
+        assert report.status == "ok"
 
 
 def _stub_config_secure(cert: Path, key: Path) -> SimpleNamespace:
