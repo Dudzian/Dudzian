@@ -293,7 +293,7 @@ def audit_service_token_configs(
         or bool(auth_token)
         or auth_token_env_present
         or auth_token_file_exists,
-        shared_secret_token=bool(auth_token or auth_token_env or auth_token_file),
+        shared_secret_token=bool(auth_token or auth_token_env_present or auth_token_file_exists),
         token_count=len(tokens_cfg),
         required_scopes=normalized_required,
         coverage={scope: tuple(ids) for scope, ids in coverage.items()},

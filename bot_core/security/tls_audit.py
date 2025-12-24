@@ -20,6 +20,33 @@ __all__ = [
 ]
 
 
+def _is_auth_token_configured(config: object, env: Mapping[str, str]) -> bool:
+    """Checks whether a service has a usable shared-secret token configured."""
+
+    auth_token = getattr(config, "auth_token", None)
+    if str(auth_token or "").strip():
+        return True
+
+    token_env = getattr(config, "auth_token_env", None)
+    if token_env and str(env.get(str(token_env), "")).strip():
+        return True
+
+    token_file = getattr(config, "auth_token_file", None)
+    if token_file:
+        try:
+            token_path = Path(str(token_file)).expanduser()
+        except (OSError, TypeError, ValueError):
+            token_path = None
+        if token_path is not None:
+            try:
+                if token_path.is_file():
+                    return True
+            except OSError:
+                pass
+
+    return False
+
+
 def verify_certificate_key_pair(
     certificate_path: str | Path,
     private_key_path: str | Path,
@@ -306,8 +333,8 @@ def audit_tls_assets(
         rbac_tokens_configured = bool(getattr(metrics_config, "rbac_tokens", ()) or ())
         service_report = {
             "enabled": bool(getattr(metrics_config, "enabled", False)),
-            "auth_token_configured": bool(
-                str(getattr(metrics_config, "auth_token", "") or "").strip()
+            "auth_token_configured": _is_auth_token_configured(
+                metrics_config, env_map
             ),
             "rbac_tokens_configured": rbac_tokens_configured,
             "tls": audit_tls_entry(
@@ -344,8 +371,8 @@ def audit_tls_assets(
         rbac_tokens_configured = bool(getattr(risk_config, "rbac_tokens", ()) or ())
         service_report = {
             "enabled": bool(getattr(risk_config, "enabled", False)),
-            "auth_token_configured": bool(
-                str(getattr(risk_config, "auth_token", "") or "").strip()
+            "auth_token_configured": _is_auth_token_configured(
+                risk_config, env_map
             ),
             "rbac_tokens_configured": rbac_tokens_configured,
             "tls": audit_tls_entry(

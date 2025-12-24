@@ -188,6 +188,9 @@ def test_audit_security_baseline_script_env_configuration(
     assert payload["status"] == "ok"
     assert not payload["warnings"]
     assert not payload["errors"]
+    token_reports = {service["service"]: service for service in payload["tokens"]["services"]}
+    assert token_reports["metrics_service"]["shared_secret_token"] is False
+    assert token_reports["risk_service"]["shared_secret_token"] is False
 
 
 def test_audit_security_baseline_script_generates_signature(
