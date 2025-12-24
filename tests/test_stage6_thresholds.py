@@ -88,7 +88,7 @@ def test_stage6_threshold_verifier_cli() -> None:
     stderr = result.stderr.strip()
 
     assert result.returncode == 0, f"Skrypt zwrócił {result.returncode}:\nSTDOUT: {stdout}\nSTDERR: {stderr}"
-    assert "✅" in stdout
+    assert "[OK]" in stdout
 
 
 def test_stage6_threshold_verifier_cli_json_report(tmp_path: Path) -> None:
@@ -154,7 +154,7 @@ def test_stage6_threshold_verifier_cli_json_report_mismatch(tmp_path: Path) -> N
     stderr = result.stderr.strip()
 
     assert result.returncode == 1, f"Skrypt zwrócił {result.returncode}:\nSTDOUT: {stdout}\nSTDERR: {stderr}"
-    assert "❌" in stdout
+    assert "[FAIL]" in stdout
     assert report_path.exists()
 
     payload = json.loads(report_path.read_text(encoding="utf-8"))

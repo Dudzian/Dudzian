@@ -62,12 +62,12 @@ def _print_result(differences: Iterable[str], config_path: Path) -> int:
     diffs = list(differences)
     if not diffs:
         print(
-            f"✅ Konfiguracja Stage6 w {_format_path(config_path)} jest zgodna z ustaleniami warsztatowymi."
+            f"[OK] Konfiguracja Stage6 w {_format_path(config_path)} jest zgodna z ustaleniami warsztatowymi."
         )
         return 0
 
     print(
-        f"❌ Wykryto {len(diffs)} rozbieżności w {_format_path(config_path)} względem warsztatowych progów Stage6:"
+        f"[FAIL] Wykryto {len(diffs)} rozbieżności w {_format_path(config_path)} względem warsztatowych progów Stage6:"
     )
     for diff in diffs:
         print(f"  - {diff}")
@@ -102,7 +102,10 @@ def main(argv: list[str] | None = None) -> int:
     config_path = Path(config_value).expanduser().resolve()
 
     if not config_path.exists():
-        print(f"❌ Nie znaleziono pliku konfiguracyjnego: {_format_path(config_path)}", file=sys.stderr)
+        print(
+            f"[FAIL] Nie znaleziono pliku konfiguracyjnego: {_format_path(config_path)}",
+            file=sys.stderr,
+        )
         return 1
 
     differences = _collect_differences(config_path)
@@ -114,7 +117,7 @@ def main(argv: list[str] | None = None) -> int:
             report_path = (Path.cwd() / report_path).resolve()
         payload = _build_report(differences, config_path)
         _write_json_report(report_path, payload)
-        print(f"ℹ️ Raport JSON zapisany w {_format_path(report_path)}")
+        print(f"[INFO] Raport JSON zapisany w {_format_path(report_path)}")
 
     return exit_code
 

@@ -3597,7 +3597,8 @@ def show_ai_compliance(args: argparse.Namespace) -> int:
         return exit_code
 
     if audit_root is not None:
-        print(f"Katalog audytu: {audit_root}")
+        audit_path = Path(audit_root).as_posix()
+        print(f"Katalog audytu: {audit_path}")
     if since_cutoff is not None:
         print(
             "Minimalny znacznik czasu: "
@@ -5790,7 +5791,8 @@ def show_ai_compliance(args: argparse.Namespace) -> int:
         return exit_code
 
     if audit_root is not None:
-        print(f"Katalog audytu: {audit_root}")
+        audit_path = Path(audit_root).as_posix()
+        print(f"Katalog audytu: {audit_path}")
     if since_cutoff is not None:
         print(
             "Minimalny znacznik czasu: "

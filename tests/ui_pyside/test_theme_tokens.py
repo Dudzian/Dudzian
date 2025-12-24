@@ -35,7 +35,10 @@ REQUIRED_ICONS = [
 
 def _path_from_uri(uri: str) -> Path:
     parsed = urlparse(uri)
-    return Path(parsed.path)
+    parsed_path = parsed.path
+    if parsed_path.startswith("/") and len(parsed_path) > 2 and parsed_path[2] == ":":
+        parsed_path = parsed_path[1:]
+    return Path(parsed_path)
 
 
 def test_theme_contains_expected_colors() -> None:
