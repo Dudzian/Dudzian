@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import io
+import itertools
 import json
 from pathlib import Path
 from typing import Any, Mapping, Sequence
@@ -435,7 +436,9 @@ def test_fetch_positions_resets_closed_metrics(monkeypatch: pytest.MonkeyPatch) 
         assert responses, "Zbyt wiele wywołań positionRisk"
         return responses.pop(0)
 
-    time_values = iter([1_700_000_020.0, 1_700_000_021.0])
+    time_values = itertools.chain(
+        [1_700_000_020.0, 1_700_000_021.0], itertools.repeat(1_700_000_021.0)
+    )
     monkeypatch.setattr("bot_core.exchanges.binance.futures.urlopen", fake_urlopen)
     monkeypatch.setattr("bot_core.exchanges.binance.futures.time.time", lambda: next(time_values))
 
