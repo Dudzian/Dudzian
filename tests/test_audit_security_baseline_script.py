@@ -72,6 +72,7 @@ def _stub_config_secure(cert: Path, key: Path) -> SimpleNamespace:
     metrics_service = SimpleNamespace(
         enabled=True,
         auth_token=None,
+        auth_token_env="METRICS_AUTH_TOKEN",
         rbac_tokens=(
             SimpleNamespace(
                 token_id="metrics-reader",
@@ -86,6 +87,7 @@ def _stub_config_secure(cert: Path, key: Path) -> SimpleNamespace:
     risk_service = SimpleNamespace(
         enabled=True,
         auth_token=None,
+        auth_token_env="RISK_AUTH_TOKEN",
         rbac_tokens=(
             SimpleNamespace(
                 token_id="risk-reader",

@@ -148,6 +148,7 @@ def audit_service_token_configs(
 
     enabled = bool(getattr(config, "enabled", True))
     tokens_cfg = tuple(getattr(config, "rbac_tokens", ()) or ())
+    rbac_tokens_present = bool(tokens_cfg)
     auth_token = getattr(config, "auth_token", None)
     auth_token_env = getattr(config, "auth_token_env", None)
     auth_token_env_present = bool(
@@ -214,15 +215,18 @@ def audit_service_token_configs(
                     )
                 )
     else:
+        has_static_auth = bool(
+            auth_token or auth_token_env_present or auth_token_file_exists
+        )
         if enabled:
             findings.append(
                 TokenAuditFinding(
-                    level="warning" if auth_token else "error",
+                    level="warning" if has_static_auth else "error",
                     message="Brak skonfigurowanych tokenów RBAC dla włączonej usługi",
                     details={"service": service_name},
                 )
             )
-    if auth_token_env and not auth_token_env_present:
+    if auth_token_env and not auth_token_env_present and not rbac_tokens_present:
         findings.append(
             TokenAuditFinding(
                 level="error" if enabled and not tokens_cfg else "warning",
@@ -233,7 +237,7 @@ def audit_service_token_configs(
                 },
             )
         )
-    if auth_token_file and not auth_token_file_exists:
+    if auth_token_file and not auth_token_file_exists and not rbac_tokens_present:
         findings.append(
             TokenAuditFinding(
                 level="warning",
@@ -285,7 +289,10 @@ def audit_service_token_configs(
     return TokenAuditServiceReport(
         service=service_name,
         enabled=enabled,
-        configured=bool(tokens_cfg) or bool(auth_token) or auth_token_env_present or auth_token_file_exists,
+        configured=bool(tokens_cfg)
+        or bool(auth_token)
+        or auth_token_env_present
+        or auth_token_file_exists,
         shared_secret_token=bool(auth_token or auth_token_env or auth_token_file),
         token_count=len(tokens_cfg),
         required_scopes=normalized_required,
