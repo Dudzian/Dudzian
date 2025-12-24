@@ -16129,9 +16129,11 @@ class AutoTrader:
                 if not isinstance(entry, Mapping):
                     continue
                 record = dict(entry)
-                decision_id_value = record.get("decision_id")
-                if isinstance(decision_id_value, str):
-                    record["decision_id"] = decision_id_value.strip()
+                normalized_id = self._normalize_decision_id(record.get("decision_id"))
+                if normalized_id:
+                    record["decision_id"] = normalized_id
+                else:
+                    record.pop("decision_id", None)
                 timestamp_value = record.get("timestamp")
                 if isinstance(timestamp_value, datetime):
                     record["timestamp"] = timestamp_value.astimezone(timezone.utc).isoformat()
