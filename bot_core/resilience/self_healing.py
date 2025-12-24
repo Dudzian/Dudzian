@@ -60,7 +60,7 @@ def _ensure_tags(raw: object, *, field: str) -> tuple[str, ...]:
 
 def _ensure_statuses(raw: object, *, field: str) -> tuple[str, ...]:
     if raw is None:
-        return ("failed",)
+        return ("failed", "critical")
     sequence = _ensure_sequence(raw, context=field)
     statuses: list[str] = []
     for item in sequence:
@@ -339,6 +339,7 @@ class SelfHealingReport:
     mode: str
     status: str
     actions: tuple[SelfHealingExecution, ...]
+    actions_executed: int
     metadata: Mapping[str, object]
 
     def to_dict(self) -> Mapping[str, object]:
@@ -350,6 +351,7 @@ class SelfHealingReport:
             "mode": self.mode,
             "status": self.status,
             "actions": [entry.to_dict() for entry in self.actions],
+            "actions_executed": self.actions_executed,
             "metadata": dict(self.metadata),
         }
 
@@ -387,6 +389,7 @@ def summarize_self_healing_plan(plan: SelfHealingPlan) -> SelfHealingReport:
         mode="plan",
         status=status,
         actions=entries,
+        actions_executed=len(entries),
         metadata=dict(plan.metadata),
     )
 
@@ -587,9 +590,7 @@ def execute_self_healing_plan(
     """Uruchamia plan self-healing używając dostarczonego wykonawcy."""
 
     entries: list[SelfHealingExecution] = []
-    overall_status = "noop"
-    if plan.actions:
-        overall_status = "success"
+    overall_status = "success"
 
     for action in plan.actions:
         if action.delay_seconds > 0:
@@ -606,6 +607,7 @@ def execute_self_healing_plan(
         mode="execute",
         status=overall_status,
         actions=tuple(entries),
+        actions_executed=len(entries),
         metadata=dict(plan.metadata),
     )
 
@@ -666,4 +668,3 @@ __all__ = [
     "write_self_healing_report",
     "write_self_healing_signature",
 ]
-

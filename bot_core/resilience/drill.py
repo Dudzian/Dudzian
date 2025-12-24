@@ -333,15 +333,17 @@ def evaluate_failover_drill(
         _evaluate_service(service, files, defaults=plan.metadata)
         for service in plan.services
     )
+    critical_count = sum(1 for service in services if service.status == "critical")
     counts = {
         "total": len(services),
         "ok": sum(1 for service in services if service.status == "ok"),
         "warning": sum(1 for service in services if service.status == "warning"),
         "failed": sum(1 for service in services if service.status == "failed"),
-        "critical": sum(1 for service in services if service.status == "critical"),
     }
+    if critical_count:
+        counts["critical"] = critical_count
     status = "ok"
-    if counts.get("critical"):
+    if critical_count:
         status = "critical"
     elif counts["failed"]:
         status = "failed"
