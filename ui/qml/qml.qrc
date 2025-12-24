@@ -4,6 +4,7 @@
         <file>Icon.qml</file>
         <file>components/BotAppWindow.qml</file>
         <file>components/ActivationDialog.qml</file>
+        <file>components/IconButton.qml</file>
         <file>components/SidePanel.qml</file>
         <file>components/CandlestickChartView.qml</file>
         <file>components/MarketMultiStreamView.qml</file>

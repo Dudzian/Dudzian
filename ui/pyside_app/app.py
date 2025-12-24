@@ -144,8 +144,21 @@ class BotPysideApplication:
         )
         bridge.install()
         engine.load(QUrl.fromLocalFile(qml_file.as_posix()))
+        warnings = engine.warnings()
+        formatted_warnings: list[str] = []
+        for warning in warnings:
+            try:
+                location = warning.url().toString() if warning.url().isValid() else qml_file.as_uri()
+                formatted_warnings.append(
+                    f"{location}:{warning.line()}:{warning.column()}: {warning.description()}"
+                )
+            except Exception:  # pragma: no cover - zabezpieczenie na przypadek zmian API
+                formatted_warnings.append(str(warning))
+        for message in formatted_warnings:
+            _LOGGER.error("QML warning: %s", message)
         if not engine.rootObjects():  # pragma: no cover - informacyjne
-            raise RuntimeError(f"Nie udało się załadować QML z {qml_file}")
+            details = "; ".join(formatted_warnings) if formatted_warnings else "brak szczegółów"
+            raise RuntimeError(f"Nie udało się załadować QML z {qml_file}: {details}")
         self._engine = engine
         return engine
 
