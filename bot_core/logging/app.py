@@ -36,6 +36,11 @@ _LISTENER: Optional[QueueListener] = None
 _QUEUE_LOCK = threading.Lock()
 _ATEEXIT_REGISTERED = False
 
+_BASE_LOGGER = logging.getLogger("bot_core")
+_BASE_LOGGER.propagate = True
+if not _BASE_LOGGER.handlers:
+    _BASE_LOGGER.addHandler(logging.NullHandler())
+
 
 def _stop_queue_listener() -> None:
     """Safely stop the background QueueListener (used in tests/atexit)."""
@@ -158,10 +163,7 @@ def setup_app_logging(
     )
     file_handler.setFormatter(formatter)
 
-    stream_handler = logging.StreamHandler(stream=sys.stdout)
-    stream_handler.setFormatter(formatter)
-
-    handlers: list[logging.Handler] = [file_handler, stream_handler]
+    handlers: list[logging.Handler] = [file_handler]
 
     vector_endpoint = _env("BOT_CORE_LOG_SHIP_VECTOR")
     if vector_endpoint:
@@ -192,7 +194,7 @@ def setup_app_logging(
         root.addHandler(handler)
     root.addHandler(queue_handler)
     root.setLevel(resolved_level)
-    root.propagate = False
+    root.propagate = True
     setattr(root, "_bot_core_logging_configured", True)
     return root
 
