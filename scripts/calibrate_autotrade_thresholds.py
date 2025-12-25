@@ -360,9 +360,11 @@ class _JSONStreamEntriesParser:
         current = self._buffer[self._position]
         if current == "[":
             yield from self._consume_array("entries")
+            self.drain_to_eof()
             return
         if current == "{":
             yield from self._consume_object(emit_self=True)
+            self.drain_to_eof()
             return
         raise SystemExit(
             f"Niepoprawny JSON w eksporcie autotradera {self._path}: oczekiwano obiektu lub tablicy"
