@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 import sys
 from pathlib import Path
 
@@ -26,8 +27,9 @@ def _ensure_app() -> QGuiApplication:
             app = QGuiApplication([])
         return app
     except Exception as exc:  # pragma: no cover - środowisko bez backendu GL/Qt
+        qt_qpa_platform = os.getenv("QT_QPA_PLATFORM", "<unset>")
         pytest.skip(
-            f"Qt runtime unavailable on {sys.platform}: {exc}",
+            f"Qt runtime unavailable on {sys.platform} (QT_QPA_PLATFORM={qt_qpa_platform}): {exc}",
             allow_module_level=True,
         )
 

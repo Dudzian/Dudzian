@@ -1,6 +1,7 @@
 """Testy weryfikujące bootstrap PySide6 w trybie offscreen."""
 from __future__ import annotations
 
+import os
 import sys
 from pathlib import Path
 
@@ -26,13 +27,15 @@ def _ensure_qt_application() -> QGuiApplication:
             app = QGuiApplication([])
         return app
     except Exception as exc:  # pragma: no cover - środowiska bez backendu GL/Qt
+        qt_qpa_platform = os.getenv("QT_QPA_PLATFORM", "<unset>")
         pytest.skip(
-            f"Qt runtime unavailable on {sys.platform}: {exc}",
+            f"Qt runtime unavailable on {sys.platform} (QT_QPA_PLATFORM={qt_qpa_platform}): {exc}",
             allow_module_level=True,
         )
 
 
 def test_pyside_app_bootstrap_loads_qml(tmp_path: Path) -> None:
+    _ensure_qt_application()
     options = AppOptions(config_path=Path("ui/config/example.yaml"))
     app = BotPysideApplication(options)
     engine = app.load()
