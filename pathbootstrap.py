@@ -53,7 +53,7 @@ _PROFILE_ONLY_KEYS = {"extends"}
 SET_ENV_FORMATS: Tuple[str, ...] = ("plain", "posix", "powershell", "cmd")
 PATH_STYLES: Tuple[str, ...] = ("auto", "posix", "windows")
 PATH_STYLE_SEPARATORS = {
-    "auto": os.pathsep,
+    "auto": ":",
     "posix": ":",
     "windows": ";",
 }
@@ -334,6 +334,7 @@ def _normalize_config_mapping(
 
     base_dir = source.parent
     normalized: dict[str, object] = {}
+    path_style_value: Optional[str] = None
 
     if not allow_profiles:
         if "profiles" in mapping:
@@ -357,6 +358,19 @@ def _normalize_config_mapping(
     if "sentinels" in mapping:
         normalized["sentinels"] = _coerce_str_sequence(mapping["sentinels"], key="sentinels")
 
+    if "path_style" in mapping:
+        path_style = mapping["path_style"]
+        if not isinstance(path_style, str):
+            raise TypeError("Wartość 'path_style' w konfiguracji musi być łańcuchem znaków.")
+        style_normalized = path_style.strip()
+        if style_normalized not in PATH_STYLES:
+            allowed = ", ".join(PATH_STYLES)
+            raise ValueError(
+                f"Wartość 'path_style' w konfiguracji musi być jedną z: {allowed}."
+            )
+        normalized["path_style"] = style_normalized
+        path_style_value = style_normalized
+
     if "additional_paths" in mapping:
         normalized["additional_paths"] = _coerce_str_sequence(
             mapping["additional_paths"], key="additional_paths"
@@ -364,10 +378,13 @@ def _normalize_config_mapping(
 
     if "additional_path_files" in mapping:
         files = _coerce_str_sequence(mapping["additional_path_files"], key="additional_path_files")
-        normalized["additional_path_files"] = tuple(
-            _coerce_optional_path(entry, key="additional_path_files", base_dir=base_dir)
-            for entry in files
-        )
+        normalized_files: list[str] = []
+        for entry in files:
+            resolved = _coerce_optional_path(entry, key="additional_path_files", base_dir=base_dir)
+            if path_style_value == "posix":
+                resolved = Path(resolved).as_posix()
+            normalized_files.append(resolved)
+        normalized["additional_path_files"] = tuple(normalized_files)
 
     if "allow_git" in mapping:
         normalized["allow_git"] = _coerce_optional_bool(
@@ -392,18 +409,6 @@ def _normalize_config_mapping(
         if position_normalized not in {"prepend", "append"}:
             raise ValueError("Wartość 'position' w konfiguracji musi być 'prepend' lub 'append'.")
         normalized["position"] = position_normalized
-
-    if "path_style" in mapping:
-        path_style = mapping["path_style"]
-        if not isinstance(path_style, str):
-            raise TypeError("Wartość 'path_style' w konfiguracji musi być łańcuchem znaków.")
-        style_normalized = path_style.strip()
-        if style_normalized not in PATH_STYLES:
-            allowed = ", ".join(PATH_STYLES)
-            raise ValueError(
-                f"Wartość 'path_style' w konfiguracji musi być jedną z: {allowed}."
-            )
-        normalized["path_style"] = style_normalized
 
     if "pythonpath_var" in mapping:
         pythonpath_var = mapping["pythonpath_var"]
@@ -765,9 +770,10 @@ def _detect_shell_kind(shell_path: str) -> str:
     """Rozpoznaj typ powłoki, aby dobrać sposób uruchomienia poleceń."""
 
     lowered = shell_path.lower()
-    if "powershell" in lowered or lowered.endswith("pwsh"):
+    name = Path(shell_path).name.lower()
+    if "powershell" in lowered or name.startswith("pwsh"):
         return SHELL_KIND_POWERSHELL
-    if os.name == "nt":
+    if name in {"cmd", "cmd.exe"}:
         return SHELL_KIND_CMD
     return SHELL_KIND_POSIX
 
