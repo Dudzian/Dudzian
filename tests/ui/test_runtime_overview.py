@@ -49,7 +49,10 @@ from core.monitoring.metrics_api import (
 )
 from ui.backend import runtime_service as runtime_service_module
 from bot_core.observability.metrics import MetricsRegistry
-from bot_core.observability.ui_metrics import FeedHealthMetricsExporter
+from bot_core.observability.ui_metrics import (
+    FeedHealthMetricsExporter,
+    RiskJournalMetricsExporter,
+)
 from ui.backend.runtime_service import RuntimeService
 from ui.backend.telemetry_provider import TelemetryProvider
 
