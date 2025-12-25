@@ -1197,13 +1197,28 @@ def _load_autotrade_entries(
                 yield normalized
 
     def _iter_json_stream(handle: TextIO, path: Path) -> Iterator[Mapping[str, object]]:
+        chunk_size = _JSON_STREAM_CHUNK_SIZE
+
+        def _drain_remaining() -> None:
+            while handle.read(chunk_size):
+                pass
+
         parser = _JSONStreamEntriesParser(
             handle,
             path,
-            chunk_size=_JSON_STREAM_CHUNK_SIZE,
+            chunk_size=chunk_size,
             normalizer=_normalize_entry,
         )
-        yield from parser.iter_entries()
+        completed = False
+        try:
+            try:
+                yield from parser.iter_entries()
+                completed = True
+            except GeneratorExit:
+                raise
+        finally:
+            if completed:
+                _drain_remaining()
 
     def _iter_path(path: Path) -> Iterator[Mapping[str, object]]:
         try:
