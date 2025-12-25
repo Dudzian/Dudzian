@@ -112,7 +112,7 @@ def file_reference_metadata(path: Path | str, *, role: str | None = None) -> Map
     warnings: list[str] = []
     parent_flags = parent_meta.get("security_flags")
 
-    if parent_flags:
+    if parent_flags and os.name != "nt":
         if parent_flags.get("world_writable"):
             warnings.append(
                 "Katalog nadrzędny jest zapisywalny dla wszystkich użytkowników – ogranicz prawa zapisu."
@@ -166,34 +166,36 @@ def file_reference_metadata(path: Path | str, *, role: str | None = None) -> Map
             exc_info=True,
         )
 
-    if metadata["security_flags"].get("world_readable"):
-        warnings.append(
-            "Plik jest dostępny do odczytu dla wszystkich użytkowników – sprawdź polityki RBAC."
-        )
-    if metadata["security_flags"].get("world_writable"):
-        warnings.append(
-            "Plik jest zapisywalny dla wszystkich użytkowników – potencjalne ryzyko bezpieczeństwa."
-        )
-
-    if role == "tls_key":
-        if metadata["security_flags"].get("group_readable"):
-            warnings.append(
-                "Klucz prywatny TLS jest czytelny dla grupy – rozważ zaostrzenie chmod."
-            )
+    if os.name != "nt":
         if metadata["security_flags"].get("world_readable"):
             warnings.append(
-                "Klucz prywatny TLS jest czytelny dla innych użytkowników – wysokie ryzyko bezpieczeństwa."
+                "Plik jest dostępny do odczytu dla wszystkich użytkowników – sprawdź polityki RBAC."
             )
-        if metadata["security_flags"].get("group_writable") or metadata["security_flags"].get(
-            "world_writable"
-        ):
+        if metadata["security_flags"].get("world_writable"):
             warnings.append(
-                "Klucz prywatny TLS można nadpisać bez uprawnień administratora – ogranicz prawa zapisu."
+                "Plik jest zapisywalny dla wszystkich użytkowników – potencjalne ryzyko bezpieczeństwa."
             )
-        if metadata.get("is_symlink"):
-            warnings.append(
-                "Klucz prywatny TLS jest dowiązaniem symbolicznym – upewnij się, że ścieżka jest zaufana."
-            )
+
+        if role == "tls_key":
+            if metadata["security_flags"].get("group_readable"):
+                warnings.append(
+                    "Klucz prywatny TLS jest czytelny dla grupy – rozważ zaostrzenie chmod."
+                )
+            if metadata["security_flags"].get("world_readable"):
+                warnings.append(
+                    "Klucz prywatny TLS jest czytelny dla innych użytkowników – wysokie ryzyko bezpieczeństwa."
+                )
+            if metadata["security_flags"].get("group_writable") or metadata["security_flags"].get(
+                "world_writable"
+            ):
+                warnings.append(
+                    "Klucz prywatny TLS można nadpisać bez uprawnień administratora – ogranicz prawa zapisu."
+                )
+
+    if role == "tls_key" and metadata.get("is_symlink"):
+        warnings.append(
+            "Klucz prywatny TLS jest dowiązaniem symbolicznym – upewnij się, że ścieżka jest zaufana."
+        )
 
     if role in {"jsonl", "ui_alerts_jsonl"} and not metadata["exists"]:
         warnings.append(
