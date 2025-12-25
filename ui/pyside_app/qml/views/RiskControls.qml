@@ -28,10 +28,13 @@ ColumnLayout {
             }
             SpinBox {
                 id: tpSpin
+                property real percentValue: value / 10.0
                 from: 0
-                to: 20
-                value: runtimeService ? runtimeService.riskControls.takeProfitPct : 0
-                stepSize: 0.1
+                to: 200
+                value: runtimeService ? Math.round((runtimeService.riskControls.takeProfitPct || 0) * 10) : 0
+                stepSize: 1
+                textFromValue: function(value, locale) { return Number(value / 10).toLocaleString(locale, 'f', 1) }
+                valueFromText: function(text, locale) { return Math.round(Number.fromLocaleString(locale, text) * 10) }
             }
         }
         RowLayout {
@@ -39,10 +42,13 @@ ColumnLayout {
             Label { text: qsTr("Stop loss [%]"); color: designSystem.color("textSecondary"); Layout.preferredWidth: 200 }
             SpinBox {
                 id: slSpin
+                property real percentValue: value / 10.0
                 from: 0
-                to: 20
-                value: runtimeService ? runtimeService.riskControls.stopLossPct : 0
-                stepSize: 0.1
+                to: 200
+                value: runtimeService ? Math.round((runtimeService.riskControls.stopLossPct || 0) * 10) : 0
+                stepSize: 1
+                textFromValue: function(value, locale) { return Number(value / 10).toLocaleString(locale, 'f', 1) }
+                valueFromText: function(text, locale) { return Math.round(Number.fromLocaleString(locale, text) * 10) }
             }
         }
         RowLayout {
@@ -77,10 +83,13 @@ ColumnLayout {
             Label { text: qsTr("Maks. slippage [%]"); color: designSystem.color("textSecondary"); Layout.preferredWidth: 200 }
             SpinBox {
                 id: slippageSpin
+                property real percentValue: value / 10.0
                 from: 0
-                to: 5
-                value: runtimeService ? runtimeService.riskControls.maxSlippagePct : 0
-                stepSize: 0.1
+                to: 50
+                value: runtimeService ? Math.round((runtimeService.riskControls.maxSlippagePct || 0) * 10) : 0
+                stepSize: 1
+                textFromValue: function(value, locale) { return Number(value / 10).toLocaleString(locale, 'f', 1) }
+                valueFromText: function(text, locale) { return Math.round(Number.fromLocaleString(locale, text) * 10) }
             }
         }
         RowLayout {
@@ -99,11 +108,11 @@ ColumnLayout {
             if (!runtimeService)
                 return
             const rc = runtimeService.riskControls || {}
-            tpSpin.value = rc.takeProfitPct || 0
-            slSpin.value = rc.stopLossPct || 0
+            tpSpin.value = Math.round((rc.takeProfitPct || 0) * 10)
+            slSpin.value = Math.round((rc.stopLossPct || 0) * 10)
             positionsSpin.value = rc.maxOpenPositions || 0
             positionLimit.text = String(rc.maxPositionUsd || 0)
-            slippageSpin.value = rc.maxSlippagePct || 0
+            slippageSpin.value = Math.round((rc.maxSlippagePct || 0) * 10)
             killSwitchToggle.checked = rc.killSwitch || false
         }
     }
@@ -118,11 +127,11 @@ ColumnLayout {
                 if (!runtimeService || !runtimeService.saveRiskControls)
                     return
                 const result = runtimeService.saveRiskControls({
-                    takeProfitPct: tpSpin.value,
-                    stopLossPct: slSpin.value,
+                    takeProfitPct: tpSpin.percentValue,
+                    stopLossPct: slSpin.percentValue,
                     maxOpenPositions: positionsSpin.value,
                     maxPositionUsd: Number(positionLimit.text),
-                    maxSlippagePct: slippageSpin.value,
+                    maxSlippagePct: slippageSpin.percentValue,
                     killSwitch: killSwitchToggle.checked
                 })
                 statusLabel.text = result && result.message ? result.message : qsTr("Zapisano")

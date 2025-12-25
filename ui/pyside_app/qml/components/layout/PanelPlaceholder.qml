@@ -35,7 +35,7 @@ Rectangle {
 
         RowLayout {
             spacing: 8
-            Image {
+            IconImage {
                 source: designSystem ? designSystem.iconSource(iconName) : ""
                 width: 20
                 height: 20

@@ -135,7 +135,8 @@ Rectangle {
         anchors.fill: frostLayer
         source: frostLayer
         blurEnabled: true
-        blurRadius: 28
+        blur: 1.0
+        blurMax: 28
         saturation: 0.9
         brightness: 0.08
         z: -1
@@ -252,15 +253,17 @@ Rectangle {
                     required property var modelData
                     readonly property string modeName: modelData && modelData.mode ? String(modelData.mode) : String(modelData)
                     visible: modeName.length > 0
+                    implicitWidth: modeRow.implicitWidth + 20
+                    implicitHeight: modeRow.implicitHeight + 20
                     radius: 14
                     color: Qt.rgba(0, 0, 0, selectedModeFilter === modeToken(modeName) ? 0.55 : 0.3)
                     border.width: selectedModeFilter === modeToken(modeName) ? 2 : 1
                     border.color: modeColor(modeName)
-                    padding: 10
 
                     RowLayout {
+                        id: modeRow
                         anchors.fill: parent
-                        anchors.margins: 6
+                        anchors.margins: 10
                         spacing: 6
                         Text {
                             text: modeGlyph(modeName)
