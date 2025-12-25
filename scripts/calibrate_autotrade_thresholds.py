@@ -976,9 +976,13 @@ def _is_json_lines_path(path: Path) -> bool:
 
 
 def _open_text_file(path: Path) -> TextIO:
+    # Use newline="" to prevent CRLF -> LF translation that would shrink the logical chunk
+    # sizes compared to on-disk bytes. JSON parsing is unchanged because Python still
+    # normalizes newlines when iterating lines, but read(size) now reflects the exact
+    # byte length of the file content on all platforms.
     if path.suffix.lower() == ".gz":
-        return gzip.open(path, "rt", encoding="utf-8")
-    return path.open("r", encoding="utf-8")
+        return gzip.open(path, "rt", encoding="utf-8", newline="")
+    return path.open("r", encoding="utf-8", newline="")
 
 
 def _normalize_risk_threshold_paths(sources: Iterable[str] | None) -> list[Path]:
