@@ -21,11 +21,7 @@ from bot_core.decision.providers import DecisionProvider
 
 
 _LOGGER = logging.getLogger(__name__)
-_LOGGER.propagate = True
-# Library code should not attach its own StreamHandlers.
-# Remove any stray StreamHandlers so pytest caplog/root handlers can capture records,
-# and to avoid "I/O operation on closed file" when stdout/stderr are replaced by pytest.
-_LOGGER.handlers = [h for h in _LOGGER.handlers if not isinstance(h, logging.StreamHandler)]
+_LOGGER.addHandler(logging.NullHandler())
 
 
 class DecisionEvaluationService(DecisionEvaluator):
