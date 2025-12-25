@@ -3904,7 +3904,9 @@ def main(argv: list[str] | None = None) -> int:
         raise SystemExit("Parametr --max-raw-freeze-events musi być nieujemny")
 
     if raw_freeze_events_limit is not None and raw_freeze_events_limit < 0:
-        raise SystemExit("Parametr --raw-freeze-events-limit musi być nieujemny")
+        raise SystemExit(
+            "Parametr --raw-freeze-events-limit/--max-freeze-events musi być nieujemny"
+        )
 
     freeze_events_limit_arg = getattr(args, "freeze_events_limit", None)
     max_freeze_events = raw_freeze_events_limit if raw_freeze_events_limit is not None else None
