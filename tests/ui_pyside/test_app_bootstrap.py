@@ -1,6 +1,7 @@
 """Testy weryfikujące bootstrap PySide6 w trybie offscreen."""
 from __future__ import annotations
 
+import sys
 from pathlib import Path
 
 import pytest
@@ -10,6 +11,7 @@ except ImportError as exc:  # pragma: no cover - środowiska bez wsparcia GL
     pytest.skip(f"PySide6 unavailable: {exc}", allow_module_level=True)
 
 from ui.pyside_app import AppOptions, BotPysideApplication
+from tests.ui_pyside.qml_test_helpers import assert_engine_loaded, collect_engine_warnings
 
 
 @pytest.fixture(autouse=True)
@@ -18,17 +20,24 @@ def _force_offscreen(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 def _ensure_qt_application() -> QGuiApplication:
-    app = QGuiApplication.instance()
-    if app is None:  # pragma: no cover - w praktyce tworzy się przy pierwszym bootstrapie
-        app = QGuiApplication([])
-    return app
+    try:
+        app = QGuiApplication.instance()
+        if app is None:  # pragma: no cover - w praktyce tworzy się przy pierwszym bootstrapie
+            app = QGuiApplication([])
+        return app
+    except Exception as exc:  # pragma: no cover - środowiska bez backendu GL/Qt
+        pytest.skip(
+            f"Qt runtime unavailable on {sys.platform}: {exc}",
+            allow_module_level=True,
+        )
 
 
 def test_pyside_app_bootstrap_loads_qml(tmp_path: Path) -> None:
     options = AppOptions(config_path=Path("ui/config/example.yaml"))
     app = BotPysideApplication(options)
     engine = app.load()
-    assert engine.rootObjects(), "QML nie został załadowany"
+    warnings = collect_engine_warnings(engine)
+    assert_engine_loaded(engine, warnings, "QML nie został załadowany")
     ctx = engine.rootContext()
     grpc_bridge = ctx.contextProperty("grpcBridge")
     runtime_service = grpc_bridge.runtimeService if grpc_bridge else None
