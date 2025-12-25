@@ -140,21 +140,22 @@ class _JSONStreamEntriesParser:
             self._buffer = self._buffer[self._position :]
             self._position = 0
 
-    def drain_to_eof(self) -> None:
-        """Consume any remaining buffered data and read the handle to EOF in chunked reads."""
-
-        while True:
-            if self._buffer:
-                self._position = len(self._buffer)
-                self._shrink_buffer()
-            if not self._read_more():
-                return
-
-    def read_to_eof(self) -> None:
-        """Deprecated alias for draining the stream after parsing completes."""
+    def _consume_to_eof(self) -> None:
+        """Consume the underlying stream to EOF in fixed chunks (no buffering)."""
 
         self._buffer = ""
         self._position = 0
+        while self._handle.read(self._chunk_size):
+            continue
+
+    def drain_to_eof(self) -> None:
+        """Alias for consuming the stream to EOF after parsing completes."""
+
+        self._consume_to_eof()
+
+    def read_to_eof(self) -> None:
+        """Deprecated alias for drain_to_eof()."""
+
         self.drain_to_eof()
 
     def _skip_whitespace(self) -> bool:
@@ -359,15 +360,14 @@ class _JSONStreamEntriesParser:
         current = self._buffer[self._position]
         if current == "[":
             yield from self._consume_array("entries")
-            self.drain_to_eof()
-            return
-        if current == "{":
+        elif current == "{":
             yield from self._consume_object(emit_self=True)
-            self.drain_to_eof()
-            return
-        raise SystemExit(
-            f"Niepoprawny JSON w eksporcie autotradera {self._path}: oczekiwano obiektu lub tablicy"
-        )
+        else:
+            raise SystemExit(
+                f"Niepoprawny JSON w eksporcie autotradera {self._path}: oczekiwano obiektu lub tablicy"
+            )
+
+        self._consume_to_eof()
 
     def _iter_nested_entries(self, value: object) -> Iterator[Mapping[str, object]]:
         stack: list[object] = [value]
@@ -1228,17 +1228,7 @@ def _load_autotrade_entries(
             chunk_size=chunk_size,
             normalizer=_normalize_entry,
         )
-        iterator = parser.iter_entries()
-        try:
-            while True:
-                try:
-                    yield next(iterator)
-                except StopIteration:
-                    break
-        finally:
-            # Ensure the underlying stream is fully consumed (in streaming chunks) so callers
-            # that track read sizes see the complete file size once iteration ends or is closed.
-            parser.drain_to_eof()
+        yield from parser.iter_entries()
 
     def _iter_path(path: Path) -> Iterator[Mapping[str, object]]:
         try:
