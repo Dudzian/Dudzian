@@ -140,6 +140,14 @@ def main(argv: list[str] | None = None) -> int:
     if print_stdout or not json_output:
         print(serialized)
 
+    LOGGER.warning(
+        "TLS audit summary: warnings=%s errors=%s metrics_warnings=%s risk_warnings=%s",
+        len(report.get("warnings") or ()),
+        len(report.get("errors") or ()),
+        (report.get("services") or {}).get("metrics_service", {}).get("warnings"),
+        (report.get("services") or {}).get("risk_service", {}).get("warnings"),
+    )
+
     exit_code = 0
     if fail_on_error and report.get("errors"):
         exit_code = 2
