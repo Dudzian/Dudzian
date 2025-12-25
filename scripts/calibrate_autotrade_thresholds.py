@@ -1200,8 +1200,10 @@ def _load_autotrade_entries(
         chunk_size = _JSON_STREAM_CHUNK_SIZE
 
         def _drain_remaining() -> None:
-            while handle.read(chunk_size):
-                pass
+            while True:
+                chunk = handle.read(chunk_size)
+                if not chunk:
+                    break
 
         parser = _JSONStreamEntriesParser(
             handle,
@@ -1211,11 +1213,13 @@ def _load_autotrade_entries(
         )
         completed = False
         try:
-            try:
-                yield from parser.iter_entries()
-                completed = True
-            except GeneratorExit:
-                raise
+            iterator = parser.iter_entries()
+            while True:
+                try:
+                    yield next(iterator)
+                except StopIteration:
+                    completed = True
+                    break
         finally:
             if completed:
                 _drain_remaining()
