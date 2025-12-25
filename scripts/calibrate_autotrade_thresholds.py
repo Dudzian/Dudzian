@@ -140,6 +140,16 @@ class _JSONStreamEntriesParser:
             self._buffer = self._buffer[self._position :]
             self._position = 0
 
+    def drain_to_eof(self) -> None:
+        """Consume any remaining buffered data and read the handle to EOF."""
+
+        while True:
+            if self._buffer:
+                self._position = len(self._buffer)
+                self._shrink_buffer()
+            if not self._read_more():
+                return
+
     def _skip_whitespace(self) -> bool:
         while True:
             while self._position < len(self._buffer) and self._buffer[self._position].isspace():
@@ -1199,12 +1209,6 @@ def _load_autotrade_entries(
     def _iter_json_stream(handle: TextIO, path: Path) -> Iterator[Mapping[str, object]]:
         chunk_size = _JSON_STREAM_CHUNK_SIZE
 
-        def _drain_remaining() -> None:
-            while True:
-                chunk = handle.read(chunk_size)
-                if not chunk:
-                    break
-
         parser = _JSONStreamEntriesParser(
             handle,
             path,
@@ -1222,7 +1226,7 @@ def _load_autotrade_entries(
                     break
         finally:
             if completed:
-                _drain_remaining()
+                parser.drain_to_eof()
 
     def _iter_path(path: Path) -> Iterator[Mapping[str, object]]:
         try:
