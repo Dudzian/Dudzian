@@ -39,7 +39,7 @@ def permissions_from_mode(mode: int) -> Mapping[str, Mapping[str, bool]]:
 def security_flags_from_mode(mode: int) -> Mapping[str, bool]:
     """Zwraca uproszczone flagi bezpieczeństwa wynikające z maski chmod."""
 
-    return {
+    flags = {
         "world_readable": bool(mode & stat.S_IROTH),
         "world_writable": bool(mode & stat.S_IWOTH),
         "world_executable": bool(mode & stat.S_IXOTH),
@@ -50,6 +50,19 @@ def security_flags_from_mode(mode: int) -> Mapping[str, bool]:
         "owner_writable": bool(mode & stat.S_IWUSR),
         "owner_executable": bool(mode & stat.S_IXUSR),
     }
+
+    # Windows nie mapuje poprawnie masek chmod na uprawnienia NTFS, więc
+    # heurystyczne flagi group/world potrafią być fałszywie dodatnie.
+    # Zamiast generować ostrzeżenia, oznaczamy brak wsparcia.
+    if os.name == "nt":
+        flags = dict(flags)
+        flags["group_writable"] = False
+        flags["world_writable"] = False
+        flags["permissions_supported"] = False
+    else:
+        flags["permissions_supported"] = True
+
+    return flags
 
 
 def directory_metadata(path: Path | str) -> dict[str, object]:
