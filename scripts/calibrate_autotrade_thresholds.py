@@ -150,6 +150,14 @@ class _JSONStreamEntriesParser:
             if not self._read_more():
                 return
 
+    def read_to_eof(self) -> None:
+        """Read from the handle until EOF using the configured chunk size."""
+
+        self._buffer = ""
+        self._position = 0
+        while self._handle.read(self._chunk_size):
+            continue
+
     def _skip_whitespace(self) -> bool:
         while True:
             while self._position < len(self._buffer) and self._buffer[self._position].isspace():
@@ -1226,7 +1234,7 @@ def _load_autotrade_entries(
                     break
         finally:
             if completed:
-                parser.drain_to_eof()
+                parser.read_to_eof()
 
     def _iter_path(path: Path) -> Iterator[Mapping[str, object]]:
         try:
