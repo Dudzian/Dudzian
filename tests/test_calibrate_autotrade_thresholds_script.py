@@ -52,7 +52,8 @@ class _TrackingReadHandle:
         opener: Callable[[Path], TextIO] | None = None,
     ) -> None:
         if opener is None:
-            self._handle = path.open("r", encoding="utf-8")
+            # newline="" prevents CRLF -> LF translation so chunk sizes match on-disk bytes
+            self._handle = path.open("r", encoding="utf-8", newline="")
         else:
             self._handle = opener(path)
         self.read_requests: list[int] = []
