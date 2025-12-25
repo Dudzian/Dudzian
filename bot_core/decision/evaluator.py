@@ -21,6 +21,7 @@ from bot_core.decision.providers import DecisionProvider
 
 
 _LOGGER = logging.getLogger(__name__)
+_LOGGER.propagate = True
 
 
 class DecisionEvaluationService(DecisionEvaluator):
@@ -290,4 +291,3 @@ class DecisionEvaluationService(DecisionEvaluator):
 __all__ = [
     "DecisionEvaluationService",
 ]
-
