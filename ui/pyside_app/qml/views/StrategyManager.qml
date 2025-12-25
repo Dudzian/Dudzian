@@ -146,7 +146,8 @@ Item {
                             anchors.fill: personaFrame
                             source: personaFrame
                             blurEnabled: true
-                            blurRadius: 18
+                            blur: 1.0
+                            blurMax: 18
                             saturation: 0.9
                             brightness: 0.04
                         }

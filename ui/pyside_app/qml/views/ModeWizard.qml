@@ -134,7 +134,8 @@ Item {
                 anchors.fill: summaryBackground
                 source: summaryBackground
                 blurEnabled: true
-                blurRadius: 30
+                blur: 1.0
+                blurMax: 30
                 saturation: 0.9
                 brightness: 0.05
             }
@@ -269,7 +270,8 @@ Item {
                                 anchors.fill: personaBackdrop
                                 source: personaBackdrop
                                 blurEnabled: true
-                                blurRadius: 16
+                                blur: 1.0
+                                blurMax: 16
                                 saturation: 0.95
                                 brightness: 0.03
                             }
@@ -408,7 +410,7 @@ Item {
                                 spacing: 4
                                 RowLayout {
                                     spacing: 6
-                                    Image {
+                                    IconImage {
                                         source: designSystem.iconSource(modelData.icon || "mode_wizard")
                                         width: 18
                                         height: 18
@@ -441,12 +443,14 @@ Item {
                 }
             }
 
-            Stepper {
+            SpinBox {
                 id: wizardStepper
                 visible: currentMode && currentMode.steps && currentMode.steps.length > 0
                 from: 0
                 to: currentMode && currentMode.steps ? Math.max(0, currentMode.steps.length - 1) : 0
                 value: stepIndex
+                stepSize: 1
+                editable: false
                 onValueChanged: stepIndex = value
             }
 

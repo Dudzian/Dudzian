@@ -4,7 +4,7 @@ import QtQuick.Layouts
 import QtQuick.Effects
 import "components" as Components
 import "components/layout" as LayoutComponents
-import Styles 1.0 as Styles
+import Styles 1.0 as StylesModule
 import "views" as Views
 
 ApplicationWindow {
@@ -14,9 +14,9 @@ ApplicationWindow {
     visible: true
     title: qsTr("Stage6 PySide UI")
     color: designSystem.color("background")
-    property var grpcBridge: (typeof grpcBridge !== "undefined" ? grpcBridge : null)
-    property var runtimeService: grpcBridge && grpcBridge.runtimeService ? grpcBridge.runtimeService : null
-    property var runtimeState: (typeof runtimeState !== "undefined" ? runtimeState : null)
+    property var contextGrpcBridge: (typeof grpcBridge !== "undefined" ? grpcBridge : null)
+    property var runtimeService: contextGrpcBridge && contextGrpcBridge.runtimeService ? contextGrpcBridge.runtimeService : null
+    property var contextRuntimeState: (typeof runtimeState !== "undefined" ? runtimeState : null)
 
     property var panelMetadata: [
         ({ panelId: "sidePanel", title: qsTr("Panel statusu"), icon: "fingerprint", defaultColumn: 0, defaultOrder: 0 }),
@@ -44,7 +44,7 @@ ApplicationWindow {
         "aiDecisionsPanel": { title: qsTr("Decyzje AI"), icon: "mode_wizard", component: aiDecisionsPanelComponent }
     })
 
-    Styles.DesignSystem {
+    StylesModule.DesignSystem {
         id: designSystem
         themeBridge: theme
     }
@@ -59,8 +59,9 @@ ApplicationWindow {
         onAccepted: visible = false
 
         contentItem: ColumnLayout {
+            anchors.fill: parent
+            anchors.margins: 16
             spacing: 12
-            padding: 16
 
             Label {
                 id: statusBody
@@ -149,7 +150,8 @@ ApplicationWindow {
                 anchors.fill: parent
                 source: toolbarGradient
                 blurEnabled: true
-                blurRadius: 24
+                blur: 1.0
+                blurMax: 24
                 saturation: 0.95
                 brightness: 0.05
             }
@@ -168,7 +170,7 @@ ApplicationWindow {
             Rectangle { width: 1; height: parent.height * 0.6; color: designSystem.color("border"); opacity: 0.4 }
 
             Label {
-                text: runtimeState ? runtimeState.cloudStatusLabel : qsTr("Cloud runtime: wyłączony")
+                text: contextRuntimeState ? contextRuntimeState.cloudStatusLabel : qsTr("Cloud runtime: wyłączony")
                 color: designSystem.color("textSecondary")
                 Layout.alignment: Qt.AlignVCenter
             }
@@ -267,20 +269,20 @@ ApplicationWindow {
                 visible: cloudRuntimeEnabled
                 spacing: 4
                 Label {
-                    text: qsTr("Cloud endpoint: %1").arg(runtimeState ? runtimeState.cloudTarget : "client.yaml")
+                    text: qsTr("Cloud endpoint: %1").arg(contextRuntimeState ? contextRuntimeState.cloudTarget : "client.yaml")
                     color: designSystem.color("textSecondary")
                     wrapMode: Text.WordWrap
                 }
                 Label {
                     text: qsTr("Licencja: %1 • HWID: %2")
-                          .arg(runtimeState ? runtimeState.handshakeLicenseId : "?")
-                          .arg(runtimeState ? runtimeState.handshakeFingerprint : "?")
+                          .arg(contextRuntimeState ? contextRuntimeState.handshakeLicenseId : "?")
+                          .arg(contextRuntimeState ? contextRuntimeState.handshakeFingerprint : "?")
                     color: designSystem.color("textSecondary")
                     wrapMode: Text.WordWrap
                 }
                 Label {
-                    text: qsTr("Status handshake: %1").arg(runtimeState ? runtimeState.handshakeStatus : qsTr("oczekuje"))
-                    color: designSystem.color(runtimeState && runtimeState.handshakeOk ? "success" : "warning")
+                    text: qsTr("Status handshake: %1").arg(contextRuntimeState ? contextRuntimeState.handshakeStatus : qsTr("oczekuje"))
+                    color: designSystem.color(contextRuntimeState && contextRuntimeState.handshakeOk ? "success" : "warning")
                 }
                 Components.IconButton {
                     designSystem: designSystem
@@ -299,24 +301,24 @@ ApplicationWindow {
 
     Component {
         id: telemetryPanelComponent
-        ColumnLayout {
-            spacing: 8
-            Label {
-                text: qsTr("Status feedu: %1").arg(runtimeState ? runtimeState.feedHealth.status || qsTr("inicjalizacja") : qsTr("inicjalizacja"))
-                font.bold: true
-                color: designSystem.color("textPrimary")
-            }
-            Label {
-                text: qsTr("Ostatni błąd: %1").arg(runtimeState ? runtimeState.feedHealth.lastError || "-" : "-")
-                wrapMode: Text.WordWrap
-                color: designSystem.color("textSecondary")
-            }
-            Label {
-                text: qsTr("Reconnects: %1  •  Downtime: %2 ms")
-                      .arg(runtimeState ? runtimeState.feedHealth.reconnects || 0 : 0)
-                      .arg(Math.round(runtimeState ? runtimeState.feedHealth.downtimeMs || 0 : 0))
-                color: designSystem.color("textSecondary")
-            }
+            ColumnLayout {
+                spacing: 8
+                Label {
+                    text: qsTr("Status feedu: %1").arg(contextRuntimeState ? contextRuntimeState.feedHealth.status || qsTr("inicjalizacja") : qsTr("inicjalizacja"))
+                    font.bold: true
+                    color: designSystem.color("textPrimary")
+                }
+                Label {
+                    text: qsTr("Ostatni błąd: %1").arg(contextRuntimeState ? contextRuntimeState.feedHealth.lastError || "-" : "-")
+                    wrapMode: Text.WordWrap
+                    color: designSystem.color("textSecondary")
+                }
+                Label {
+                    text: qsTr("Reconnects: %1  •  Downtime: %2 ms")
+                          .arg(contextRuntimeState ? contextRuntimeState.feedHealth.reconnects || 0 : 0)
+                          .arg(Math.round(contextRuntimeState ? contextRuntimeState.feedHealth.downtimeMs || 0 : 0))
+                    color: designSystem.color("textSecondary")
+                }
             Components.IconButton {
                 designSystem: designSystem
                 text: qsTr("Ping feed")

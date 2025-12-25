@@ -106,6 +106,7 @@ class BotPysideApplication:
         self._qt_app: QGuiApplication | None = None
         self._engine: QQmlApplicationEngine | None = None
         self._config: UiAppConfig | None = None
+        self._bridge: QmlContextBridge | None = None
 
     @property
     def engine(self) -> QQmlApplicationEngine | None:
@@ -129,19 +130,30 @@ class BotPysideApplication:
             default_qml=self._options.qml_path,
         )
         qml_file = (self._options.qml_path or self._config.qml_entrypoint).resolve()
+        qml_root = Path(__file__).resolve().parent / "qml"
         engine = QQmlApplicationEngine()
         qml_paths = [
-            Path(__file__).resolve().parent / "qml",
+            qml_root,
             Path(__file__).resolve().parent.parent / "qml",
             qml_file.parent,
         ]
         seen_paths: set[str] = set()
         for import_path in qml_paths:
-            import_path_str = import_path.resolve().as_posix()
+            import_path_resolved = import_path.resolve()
+            import_path_str = import_path_resolved.as_posix()
             if import_path_str in seen_paths:
                 continue
+            if not import_path.exists():
+                _LOGGER.debug("Pomijam nieistniejący importPath %s", import_path_str)
+                continue
             engine.addImportPath(import_path_str)
+            _LOGGER.debug("Dodano QML importPath: %s", import_path_str)
             seen_paths.add(import_path_str)
+        qml_root_resolved = qml_root.resolve()
+        qml_root_str = qml_root_resolved.as_posix()
+        if qml_root_str not in seen_paths and qml_root_resolved.exists():
+            engine.addImportPath(qml_root_str)
+            _LOGGER.debug("Wymuszono importPath z modułami QML (Styles): %s", qml_root_str)
         collected_warnings: list[str] = []
 
         def _on_warnings(warnings: list) -> None:
@@ -158,12 +170,12 @@ class BotPysideApplication:
             engine.warnings.connect(_on_warnings)
         except Exception:  # pragma: no cover - defensywnie w razie nietypowych środowisk
             pass
-        bridge = QmlContextBridge(
+        self._bridge = QmlContextBridge(
             engine,
             self._config,
             enable_cloud_runtime=self._options.enable_cloud_runtime,
         )
-        bridge.install()
+        self._bridge.install()
         engine.load(QUrl.fromLocalFile(qml_file.as_posix()))
         for message in collected_warnings:
             _LOGGER.error("QML warning: %s", message)
