@@ -33,13 +33,7 @@ __all__ = [
 
 
 _LOGGER = logging.getLogger(__name__)
-if not _LOGGER.handlers:
-    _handler = logging.StreamHandler()
-    _handler.setFormatter(
-        logging.Formatter("[%(asctime)s] %(name)s - %(levelname)s - %(message)s")
-    )
-    _LOGGER.addHandler(_handler)
-_LOGGER.setLevel(logging.INFO)
+_LOGGER.propagate = True
 
 
 class RiskLevel(Enum):

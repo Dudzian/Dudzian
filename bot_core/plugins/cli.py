@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import logging
 import sys
 from pathlib import Path
 
@@ -84,7 +85,17 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
+def _configure_logging() -> None:
+    root = logging.getLogger()
+    if not root.handlers:
+        logging.basicConfig(
+            level=logging.INFO,
+            format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
+        )
+
+
 def main(argv: list[str] | None = None) -> None:
+    _configure_logging()
     parser = build_parser()
     args = parser.parse_args(argv)
     exit_code = args.func(args)
@@ -93,4 +104,3 @@ def main(argv: list[str] | None = None) -> None:
 
 if __name__ == "__main__":  # pragma: no cover - CLI entrypoint
     main()
-

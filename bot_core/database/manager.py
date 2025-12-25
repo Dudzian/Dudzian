@@ -39,15 +39,7 @@ from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, sessionmaker
 
 # --- Logowanie strukturalne ---
 logger = logging.getLogger("bot_core.database.manager")
-if not logger.handlers:
-    _h = logging.StreamHandler()
-    _h.setFormatter(
-        logging.Formatter(
-            fmt='[%(asctime)s] %(levelname)s bot_core.database.manager %(message)s'
-        )
-    )
-    logger.addHandler(_h)
-logger.setLevel(logging.INFO)
+logger.propagate = True
 
 # --- SQLAlchemy Base ---
 class Base(DeclarativeBase):

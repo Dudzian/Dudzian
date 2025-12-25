@@ -15,11 +15,7 @@ import requests
 from bot_core.alerts import AlertEvent, AlertSeverity, get_alert_dispatcher
 
 logger = logging.getLogger(__name__)
-if not logger.handlers:
-    handler = logging.StreamHandler()
-    handler.setFormatter(logging.Formatter("%(asctime)s [%(levelname)s] %(name)s: %(message)s"))
-    logger.addHandler(handler)
-logger.setLevel(logging.INFO)
+logger.propagate = True
 
 
 class AlertSink(Protocol):
@@ -255,4 +251,3 @@ __all__ = [
     "SlackWebhookSink",
     "WebhookAlertSink",
 ]
-

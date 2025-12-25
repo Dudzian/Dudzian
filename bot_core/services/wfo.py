@@ -12,11 +12,7 @@ import pandas as pd
 from bot_core.ai.manager import AIManager
 
 logger = logging.getLogger(__name__)
-if not logger.handlers:
-    handler = logging.StreamHandler()
-    handler.setFormatter(logging.Formatter("%(asctime)s [%(levelname)s] %(name)s: %(message)s"))
-    logger.addHandler(handler)
-logger.setLevel(logging.INFO)
+logger.propagate = True
 
 
 @dataclass(slots=True)
