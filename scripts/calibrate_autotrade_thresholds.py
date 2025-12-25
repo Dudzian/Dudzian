@@ -3859,11 +3859,14 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument(
         "--raw-freeze-events-limit",
+        "--max-freeze-events",
+        dest="raw_freeze_events_limit",
         type=int,
-        default=25,
+        default=None,
         help=(
             "[Przestarzałe] Maksymalna liczba zdarzeń blokad zapisywana w próbce dla każdej "
-            "kombinacji giełda/strategia. Zastąpione przez --limit-freeze-events."
+            "kombinacji giełda/strategia. Zastąpione przez --limit-freeze-events. "
+            "Alias: --max-freeze-events."
         ),
     )
     return parser
@@ -3877,10 +3880,6 @@ def main(argv: list[str] | None = None) -> int:
     if not (0.0 < args.suggestion_percentile < 1.0):
         raise SystemExit("Percentyl sugerowanego progu musi być w przedziale (0, 1)")
 
-    max_freeze_events = getattr(args, "max_freeze_events", None)
-    if max_freeze_events is not None and max_freeze_events < 0:
-        raise SystemExit("Parametr --max-freeze-events musi być nieujemny")
-
     max_raw_values = getattr(args, "max_raw_values", None)
     if max_raw_values is not None and max_raw_values < 0:
         raise SystemExit("Parametr --max-raw-values musi być nieujemny")
@@ -3893,6 +3892,7 @@ def main(argv: list[str] | None = None) -> int:
     if limit_freeze_events_arg is not None and limit_freeze_events_arg < 0:
         raise SystemExit("Parametr --limit-freeze-events musi być nieujemny")
 
+    raw_freeze_events_limit = args.raw_freeze_events_limit
     raw_freeze_events_sample_limit = getattr(
         args, "raw_freeze_events_sample_limit", None
     )
@@ -3903,9 +3903,13 @@ def main(argv: list[str] | None = None) -> int:
     if max_raw_freeze_events_arg is not None and max_raw_freeze_events_arg < 0:
         raise SystemExit("Parametr --max-raw-freeze-events musi być nieujemny")
 
-    raw_freeze_events_limit_arg = getattr(args, "raw_freeze_events_limit", None)
-    if raw_freeze_events_limit_arg is not None and raw_freeze_events_limit_arg < 0:
+    if raw_freeze_events_limit is not None and raw_freeze_events_limit < 0:
         raise SystemExit("Parametr --raw-freeze-events-limit musi być nieujemny")
+
+    freeze_events_limit_arg = getattr(args, "freeze_events_limit", None)
+    max_freeze_events = raw_freeze_events_limit if raw_freeze_events_limit is not None else None
+    if max_freeze_events is None:
+        max_freeze_events = freeze_events_limit_arg
 
     since = _parse_cli_datetime(args.since)
     until = _parse_cli_datetime(args.until)
@@ -3939,22 +3943,10 @@ def main(argv: list[str] | None = None) -> int:
                 existing["risk_score"] = provided_risk_score
                 signal_thresholds_payload = existing
 
-    limit_freeze_events_arg = getattr(args, "limit_freeze_events", None)
-    if limit_freeze_events_arg is not None and limit_freeze_events_arg < 0:
-        raise SystemExit("Parametr --limit-freeze-events musi być nieujemny")
-    raw_freeze_events_sample_limit = getattr(args, "raw_freeze_events_sample_limit", None)
-    if raw_freeze_events_sample_limit is not None and raw_freeze_events_sample_limit < 0:
-        raise SystemExit("Parametr --raw-freeze-events-sample-limit musi być nieujemny")
-    max_raw_freeze_events_arg = getattr(args, "max_raw_freeze_events", None)
-    if max_raw_freeze_events_arg is not None and max_raw_freeze_events_arg < 0:
-        raise SystemExit("Parametr --max-raw-freeze-events musi być nieujemny")
-    raw_freeze_events_limit_arg = getattr(args, "raw_freeze_events_limit", None)
-    if raw_freeze_events_limit_arg is not None and raw_freeze_events_limit_arg < 0:
-        raise SystemExit("Parametr --raw-freeze-events-limit musi być nieujemny")
     limit_freeze_events = _resolve_freeze_event_limit(
         limit_freeze_events=limit_freeze_events_arg,
         raw_freeze_events_mode=getattr(args, "raw_freeze_events", None),
-        raw_freeze_events_limit=raw_freeze_events_limit_arg,
+        raw_freeze_events_limit=raw_freeze_events_limit,
     )
 
     explicit_raw_freeze_mode = getattr(args, "raw_freeze_events", None)
@@ -3997,11 +3989,6 @@ def main(argv: list[str] | None = None) -> int:
         "max_raw_values": max_raw_values,
         "max_global_samples": max_global_samples,
     }
-    freeze_events_limit_arg = getattr(args, "freeze_events_limit", None)
-    if max_freeze_events is not None:
-        report_kwargs["max_freeze_events"] = max_freeze_events
-    elif freeze_events_limit_arg is not None:
-        report_kwargs["max_freeze_events"] = freeze_events_limit_arg
     if max_freeze_events is not None:
         report_kwargs["max_freeze_events"] = max_freeze_events
     if max_raw_values is not None:
