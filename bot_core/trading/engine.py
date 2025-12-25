@@ -1786,14 +1786,8 @@ class TradingEngine:
     def _setup_logger(self) -> logging.Logger:
         """Setup enhanced logger with configuration."""
         logger = logging.getLogger(__name__)
-        if not logger.handlers:
-            handler = logging.StreamHandler()
-            formatter = logging.Formatter(
-                '%(asctime)s - %(name)s - %(levelname)s - %(message)s'
-            )
-            handler.setFormatter(formatter)
-            logger.addHandler(handler)
-            logger.setLevel(getattr(logging, self._config.log_level.upper()))
+        logger.propagate = True
+        logger.setLevel(getattr(logging, self._config.log_level.upper()))
         return logger
 
 # =================== Performance Monitoring ===================

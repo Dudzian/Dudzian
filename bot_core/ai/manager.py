@@ -119,11 +119,7 @@ if TYPE_CHECKING:  # pragma: no cover - tylko dla typowania
     from .monitoring import DataQualityAssessment, FeatureDriftAssessment
 
 logger = logging.getLogger(__name__)
-if not logger.handlers:
-    handler = logging.StreamHandler()
-    handler.setFormatter(logging.Formatter("%(asctime)s [%(levelname)s] %(name)s: %(message)s"))
-    logger.addHandler(handler)
-logger.setLevel(logging.INFO)
+logger.propagate = True
 _history_logger = logger.getChild("history")
 
 
