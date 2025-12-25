@@ -141,7 +141,7 @@ class _JSONStreamEntriesParser:
             self._position = 0
 
     def drain_to_eof(self) -> None:
-        """Consume any remaining buffered data and read the handle to EOF."""
+        """Consume any remaining buffered data and read the handle to EOF in chunked reads."""
 
         while True:
             if self._buffer:
@@ -151,12 +151,11 @@ class _JSONStreamEntriesParser:
                 return
 
     def read_to_eof(self) -> None:
-        """Read from the handle until EOF using the configured chunk size."""
+        """Deprecated alias for draining the stream after parsing completes."""
 
         self._buffer = ""
         self._position = 0
-        while self._handle.read(self._chunk_size):
-            continue
+        self.drain_to_eof()
 
     def _skip_whitespace(self) -> bool:
         while True:
@@ -1225,18 +1224,17 @@ def _load_autotrade_entries(
             chunk_size=chunk_size,
             normalizer=_normalize_entry,
         )
-        completed = False
+        iterator = parser.iter_entries()
         try:
-            iterator = parser.iter_entries()
             while True:
                 try:
                     yield next(iterator)
                 except StopIteration:
-                    completed = True
                     break
         finally:
-            if completed:
-                parser.read_to_eof()
+            # Ensure the underlying stream is fully consumed (in streaming chunks) so callers
+            # that track read sizes see the complete file size once iteration ends or is closed.
+            parser.drain_to_eof()
 
     def _iter_path(path: Path) -> Iterator[Mapping[str, object]]:
         try:
