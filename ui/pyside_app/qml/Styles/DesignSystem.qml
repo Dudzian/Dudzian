@@ -1,32 +1,35 @@
 import QtQuick
-import "../../../qml/design-system/fonts/FontAwesomeData.js" as FontAwesomeData
+import Styles 1.0 as StylesModule
 
+// Wrapper to allow path-based imports ("import \"styles\" as Styles") while
+// delegating all behaviour to the module-backed implementation. This keeps the
+// interface identical, including the themeBridge property and helper methods.
 QtObject {
     id: designSystem
 
     property var themeBridge
-    property FontLoader fontAwesomeLoader: FontLoader {
-        id: fontAwesomeLoader
-        source: FontAwesomeData.solidDataUrl()
+    // Keep a single underlying implementation that receives the same bridge.
+    property QtObject _impl: StylesModule.DesignSystem {
+        themeBridge: designSystem.themeBridge
     }
 
     function color(token) {
-        return themeBridge ? themeBridge.color(token) : "#FFFFFF";
+        return _impl.color(token)
     }
 
     function iconSource(token) {
-        return themeBridge ? themeBridge.iconUrl(token) : "";
+        return _impl.iconSource(token)
     }
 
     function iconGlyph(token) {
-        return themeBridge && themeBridge.iconGlyph ? themeBridge.iconGlyph(token) : "";
+        return _impl.iconGlyph(token)
     }
 
     function fontAwesomeFamily() {
-        return fontAwesomeLoader.name && fontAwesomeLoader.name.length > 0 ? fontAwesomeLoader.name : "Font Awesome 6 Free";
+        return _impl.fontAwesomeFamily()
     }
 
     function gradientColors(token) {
-        return themeBridge ? themeBridge.gradient(token) : [];
+        return _impl.gradientColors(token)
     }
 }
