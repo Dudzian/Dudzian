@@ -15,6 +15,7 @@ from core.monitoring.metrics_api import (
     RuntimeTelemetrySnapshot,
     load_runtime_snapshot,
 )
+from ui.backend.qml_bridge import to_plain_dict, to_plain_list, to_plain_text
 
 SnapshotLoader = Callable[[], RuntimeTelemetrySnapshot]
 
@@ -102,27 +103,27 @@ class TelemetryProvider(QObject):
     # ------------------------------------------------------------------
     @Property("QVariantList", notify=ioQueuesChanged)
     def ioQueues(self) -> list[dict[str, object]]:  # type: ignore[override]
-        return list(self._io_queues)
+        return to_plain_list(self._io_queues)
 
     @Property("QVariantMap", notify=guardrailSummaryChanged)
     def guardrailSummary(self) -> dict[str, object]:  # type: ignore[override]
-        return dict(self._guardrail_summary)
+        return to_plain_dict(self._guardrail_summary)
 
     @Property("QVariantList", notify=retrainingChanged)
     def retraining(self) -> list[dict[str, object]]:  # type: ignore[override]
-        return list(self._retraining)
+        return to_plain_list(self._retraining)
 
     @Property("QVariantMap", notify=complianceSummaryChanged)
     def complianceSummary(self) -> dict[str, object]:  # type: ignore[override]
-        return dict(self._compliance_summary)
+        return to_plain_dict(self._compliance_summary)
 
     @Property(str, notify=lastUpdatedChanged)
     def lastUpdated(self) -> str:  # type: ignore[override]
-        return self._last_updated
+        return to_plain_text(self._last_updated)
 
     @Property(str, notify=errorMessageChanged)
     def errorMessage(self) -> str:  # type: ignore[override]
-        return self._error_message
+        return to_plain_text(self._error_message)
 
     # ------------------------------------------------------------------
     @Slot(result=bool)
@@ -159,7 +160,7 @@ class TelemetryProvider(QObject):
     def updateComplianceSummary(self, payload: Mapping[str, object] | None = None) -> None:
         """Umożliwia kontrolerom UI aktualizację danych zgodności."""
 
-        summary = dict(payload or {})
+        summary = to_plain_dict(payload)
         self._compliance_summary = summary or self._default_compliance_payload()
         self.complianceSummaryChanged.emit()
 

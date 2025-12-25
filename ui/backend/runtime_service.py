@@ -50,6 +50,7 @@ from bot_core.runtime.cloud_client import (
 from bot_core.runtime.journal import TradingDecisionJournal
 from .ai_governor_demo import build_demo_ai_governor_snapshot
 from .demo_data import load_demo_decisions
+from .qml_bridge import to_plain_dict, to_plain_list, to_plain_text, to_plain_value
 
 try:  # pragma: no cover - moduł może nie być dostępny w wersjach light
     from bot_core.ai import FilesystemModelRepository, ModelRepository
@@ -739,11 +740,7 @@ def _camelize_mapping(payload: Mapping[str, object] | None) -> dict[str, object]
 
 
 def _clone_variant(value: object) -> object:
-    if isinstance(value, Mapping):
-        return {str(key): _clone_variant(item) for key, item in value.items()}
-    if isinstance(value, list):
-        return [_clone_variant(item) for item in value]
-    return value
+    return to_plain_value(value)
 
 
 def _normalize_ai_snapshot(snapshot: Mapping[str, object] | None) -> dict[str, object]:
@@ -1318,81 +1315,81 @@ class RuntimeService(QObject):
     # ------------------------------------------------------------------
     @Property("QVariantList", notify=decisionsChanged)
     def decisions(self) -> list[dict[str, object]]:  # type: ignore[override]
-        return list(self._decisions)
+        return to_plain_list(self._decisions)
 
     @Property(str, notify=errorMessageChanged)
     def errorMessage(self) -> str:  # type: ignore[override]
-        return self._error_message
+        return to_plain_text(self._error_message)
 
     @Property(str, notify=retrainNextRunChanged)
     def retrainNextRun(self) -> str:  # type: ignore[override]
-        return self._retrain_next_run
+        return to_plain_text(self._retrain_next_run)
 
     @Property(str, notify=adaptiveStrategySummaryChanged)
     def adaptiveStrategySummary(self) -> str:  # type: ignore[override]
-        return self._adaptive_summary
+        return to_plain_text(self._adaptive_summary)
 
     @Property("QVariantList", notify=aiRegimeBreakdownChanged)
     def aiRegimeBreakdown(self) -> list[dict[str, object]]:  # type: ignore[override]
-        return [dict(entry) for entry in self._ai_regime_breakdown]
+        return to_plain_list(self._ai_regime_breakdown)
 
     @Property(str, notify=regimeActivationSummaryChanged)
     def regimeActivationSummary(self) -> str:  # type: ignore[override]
-        return self._regime_activation_summary
+        return to_plain_text(self._regime_activation_summary)
 
     @Property("QVariantMap", notify=riskMetricsChanged)
     def riskMetrics(self) -> dict[str, object]:  # type: ignore[override]
-        return dict(self._risk_metrics)
+        return to_plain_dict(self._risk_metrics)
 
     @Property("QVariantList", notify=riskTimelineChanged)
     def riskTimeline(self) -> list[dict[str, object]]:  # type: ignore[override]
-        return list(self._risk_timeline)
+        return to_plain_list(self._risk_timeline)
 
     @Property("QVariantMap", notify=cycleMetricsChanged)
     def cycleMetrics(self) -> dict[str, object]:  # type: ignore[override]
-        return {key: float(value) for key, value in self._cycle_metrics.items()}
+        return to_plain_dict({key: float(value) for key, value in self._cycle_metrics.items()})
 
     @Property(str, notify=executionModeChanged)
     def executionMode(self) -> str:  # type: ignore[override]
-        return self._execution_mode
+        return to_plain_text(self._execution_mode)
 
     @Property("QVariantMap", notify=guardrailsChanged)
     def guardrails(self) -> dict[str, object]:  # type: ignore[override]
-        return dict(self._guardrails)
+        return to_plain_dict(self._guardrails)
 
     @Property("QVariantList", notify=strategyConfigsChanged)
     def strategyConfigs(self) -> list[dict[str, object]]:  # type: ignore[override]
-        return [deepcopy(entry) for entry in self._strategy_configs]
+        return to_plain_list(self._strategy_configs)
 
     @Property("QVariantMap", notify=riskControlsChanged)
     def riskControls(self) -> dict[str, object]:  # type: ignore[override]
-        return deepcopy(self._risk_controls)
+        return to_plain_dict(self._risk_controls)
 
     @Property("QVariantMap", notify=operatorActionChanged)
     def lastOperatorAction(self) -> dict[str, object]:  # type: ignore[override]
         if self._last_operator_action is None:
             return {}
-        return dict(self._last_operator_action)
+        return to_plain_dict(self._last_operator_action)
 
     @Property("QVariantMap", notify=feedHealthChanged)
     def feedHealth(self) -> dict[str, object]:  # type: ignore[override]
-        return dict(self._feed_health)
+        return to_plain_dict(self._feed_health)
 
     @Property("QVariantMap", notify=feedSlaReportChanged)
     def feedSlaReport(self) -> dict[str, object]:  # type: ignore[override]
-        return dict(self._feed_sla_report)
+        return to_plain_dict(self._feed_sla_report)
 
     @Property("QVariantList", notify=feedAlertHistoryChanged)
     def feedAlertHistory(self) -> list[dict[str, object]]:  # type: ignore[override]
-        return [dict(entry) for entry in self._feed_alert_history]
+        return to_plain_list(self._feed_alert_history)
 
     @Property("QVariantList", notify=feedAlertChannelsChanged)
     def feedAlertChannels(self) -> list[dict[str, object]]:  # type: ignore[override]
-        return [dict(entry) for entry in self._feed_alert_channels]
+        return to_plain_list(self._feed_alert_channels)
 
     @Property("QVariantMap", notify=feedTransportSnapshotChanged)
     def feedTransportSnapshot(self) -> dict[str, object]:  # type: ignore[override]
-        return dict(self._feed_transport_snapshot)
+        return to_plain_dict(self._feed_transport_snapshot)
 
     @Property("QVariantMap", notify=aiGovernorSnapshotChanged)
     def aiGovernorSnapshot(self) -> dict[str, object]:  # type: ignore[override]
@@ -1403,11 +1400,11 @@ class RuntimeService(QObject):
 
     @Property("QVariantList", notify=longPollMetricsChanged)
     def longPollMetrics(self) -> list[dict[str, object]]:  # type: ignore[override]
-        return [dict(entry) for entry in self._longpoll_metrics]
+        return to_plain_list(self._longpoll_metrics)
 
     @Property("QVariantMap", notify=cloudRuntimeStatusChanged)
     def cloudRuntimeStatus(self) -> dict[str, object]:  # type: ignore[override]
-        return dict(self._cloud_runtime_status)
+        return to_plain_dict(self._cloud_runtime_status)
 
     @Slot(result=bool)
     def refreshCloudHandshake(self) -> bool:
@@ -1423,6 +1420,7 @@ class RuntimeService(QObject):
 
     @Slot(str, "QVariantMap", result="QVariantMap")
     def saveStrategyConfig(self, strategy_id: str, payload: Mapping[str, object]) -> dict[str, object]:
+        payload = to_plain_dict(payload)
         result = self._sanitize_strategy_config(strategy_id, payload)
         if not result["success"]:
             return result
@@ -1452,7 +1450,7 @@ class RuntimeService(QObject):
 
     @Slot("QVariantMap", result="QVariantMap")
     def saveRiskControls(self, payload: Mapping[str, object]) -> dict[str, object]:
-        sanitized = self._sanitize_risk_controls(payload)
+        sanitized = self._sanitize_risk_controls(to_plain_dict(payload))
         self._risk_controls = sanitized
         self._persist_risk_controls()
         self.riskControlsChanged.emit()
@@ -2300,10 +2298,11 @@ class RuntimeService(QObject):
         self.aiGovernorSnapshotChanged.emit()
 
     def _coerce_metadata_mapping(self, value: object) -> dict[str, object] | None:
-        if isinstance(value, Mapping):
-            return {str(key): value[key] for key in value.keys()}
-        if isinstance(value, str):
-            text = value.strip()
+        plain = to_plain_value(value)
+        if isinstance(plain, Mapping):
+            return {str(key): plain[key] for key in plain.keys()}
+        if isinstance(plain, str):
+            text = plain.strip()
             if not text:
                 return None
             try:
@@ -2393,7 +2392,7 @@ class RuntimeService(QObject):
         self._apply_risk_context(parsed)
         self._update_runtime_metadata(invalidate_cache=False)
         self._update_cycle_metrics({})
-        return list(self._decisions)
+        return to_plain_list(self._decisions)
 
     @Slot(result="QVariantMap")
     def reloadAiGovernorSnapshot(self) -> dict[str, object]:
@@ -2413,7 +2412,7 @@ class RuntimeService(QObject):
     @Property(str, notify=liveSourceChanged)
     def activeDecisionLogPath(self) -> str:  # type: ignore[override]
         if self._active_stream_label:
-            return self._active_stream_label
+            return to_plain_text(self._active_stream_label)
         if self._active_log_path is None:
             return ""
         return str(self._active_log_path)
@@ -3924,7 +3923,7 @@ class RuntimeService(QObject):
     def _record_operator_action(
         self, action: str, entry: Mapping[str, object] | None
     ) -> bool:
-        sanitized = dict(_to_mapping(entry)) if entry is not None else {}
+        sanitized = to_plain_dict(entry) if entry is not None else {}
         timestamp = datetime.now(timezone.utc).astimezone().isoformat(timespec="seconds")
         self._last_operator_action = {
             "action": action,
