@@ -6,7 +6,8 @@ import re
 from datetime import datetime, timezone
 import base64
 from pathlib import Path
-from typing import Any, Mapping
+from typing import Any, Mapping, Iterator
+import sys
 
 import pytest
 
@@ -33,12 +34,22 @@ from PySide6.QtQml import QQmlApplicationEngine  # type: ignore[attr-defined]
 try:  # pragma: no cover - zależne od bibliotek systemowych
     from PySide6.QtGui import QImage  # type: ignore[attr-defined]
 except ImportError as exc:  # pragma: no cover - brak bibliotek systemowych
-    pytest.skip(f"Brak zależności QtGui: {exc}", allow_module_level=True)
+    qt_qpa_platform = os.getenv("QT_QPA_PLATFORM", "<unset>")
+    pytest.skip(
+        f"Brak zależności QtGui na {sys.platform} (QT_QPA_PLATFORM={qt_qpa_platform}): {exc}",
+        allow_module_level=True,
+    )
+
+_QIMAGE_TYPE: type | None = QImage if "QImage" in globals() else None
 
 try:  # pragma: no cover - zależne od środowiska CI
     from PySide6.QtWidgets import QApplication  # type: ignore[attr-defined]
 except ImportError as exc:  # pragma: no cover - brak bibliotek systemowych
-    pytest.skip(f"Brak zależności QtWidgets: {exc}", allow_module_level=True)
+    qt_qpa_platform = os.getenv("QT_QPA_PLATFORM", "<unset>")
+    pytest.skip(
+        f"Brak zależności QtWidgets na {sys.platform} (QT_QPA_PLATFORM={qt_qpa_platform}): {exc}",
+        allow_module_level=True,
+    )
 
 from core.monitoring.metrics_api import (
     ComplianceTelemetry,
@@ -55,6 +66,25 @@ from bot_core.observability.ui_metrics import (
 )
 from ui.backend.runtime_service import RuntimeService
 from ui.backend.telemetry_provider import TelemetryProvider
+from ui.backend.qml_bridge import to_plain_value
+
+
+@pytest.fixture(scope="module", autouse=True)
+def qml_prop(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
+    """Zapewnia, że property() z QML zwraca plain Python w ramach tego modułu."""
+
+    original_property = QObject.property
+
+    def _plain_property(self: QObject, name: str) -> object:
+        value = original_property(self, name)
+        if isinstance(value, QObject):
+            return value
+        if _QIMAGE_TYPE is not None and isinstance(value, _QIMAGE_TYPE):
+            return value
+        return to_plain_value(value)
+
+    monkeypatch.setattr(QObject, "property", _plain_property, raising=True)
+    yield
 
 
 @pytest.fixture
