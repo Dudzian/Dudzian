@@ -130,13 +130,18 @@ class BotPysideApplication:
         )
         qml_file = (self._options.qml_path or self._config.qml_entrypoint).resolve()
         engine = QQmlApplicationEngine()
-        qml_paths = {
+        qml_paths = [
             Path(__file__).resolve().parent / "qml",
             Path(__file__).resolve().parent.parent / "qml",
             qml_file.parent,
-        }
+        ]
+        seen_paths: set[str] = set()
         for import_path in qml_paths:
-            engine.addImportPath(import_path.as_posix())
+            import_path_str = import_path.resolve().as_posix()
+            if import_path_str in seen_paths:
+                continue
+            engine.addImportPath(import_path_str)
+            seen_paths.add(import_path_str)
         collected_warnings: list[str] = []
 
         def _on_warnings(warnings: list) -> None:

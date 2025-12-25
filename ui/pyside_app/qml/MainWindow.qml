@@ -4,7 +4,7 @@ import QtQuick.Layouts
 import QtQuick.Effects
 import "components" as Components
 import "components/layout" as LayoutComponents
-import "styles" as Styles
+import Styles 1.0 as Styles
 import "views" as Views
 
 ApplicationWindow {
