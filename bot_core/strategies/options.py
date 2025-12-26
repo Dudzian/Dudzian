@@ -74,10 +74,11 @@ class OptionsIncomeStrategy(BaseStrategy):
             if self._should_open(iv, delta, days_to_expiry):
                 state.in_position = True
                 state.entry_iv = iv
+                option_side = "sell_call"
                 signals.append(
                     StrategySignal(
                         symbol=snapshot.symbol,
-                        side="SELL",
+                        side=option_side,
                         confidence=self._entry_confidence(iv, delta),
                         metadata=self._build_metadata(
                             snapshot,
@@ -85,6 +86,8 @@ class OptionsIncomeStrategy(BaseStrategy):
                             delta=delta,
                             days_to_expiry=days_to_expiry,
                             action="enter",
+                            option_side=option_side,
+                            legacy_side="SELL",
                         ),
                     )
                 )
@@ -92,10 +95,11 @@ class OptionsIncomeStrategy(BaseStrategy):
 
         if self._should_close(state, iv, days_to_expiry):
             state.in_position = False
+            option_side = "buy_to_close"
             signals.append(
                 StrategySignal(
                     symbol=snapshot.symbol,
-                    side="BUY",
+                    side=option_side,
                     confidence=1.0,
                     metadata=self._build_metadata(
                         snapshot,
@@ -103,6 +107,8 @@ class OptionsIncomeStrategy(BaseStrategy):
                         delta=delta,
                         days_to_expiry=days_to_expiry,
                         action="exit",
+                        option_side=option_side,
+                        legacy_side="BUY",
                     ),
                 )
             )
@@ -138,8 +144,10 @@ class OptionsIncomeStrategy(BaseStrategy):
         delta: float,
         days_to_expiry: int,
         action: str,
+        option_side: str,
+        legacy_side: str | None = None,
     ) -> Dict[str, object]:
-        return {
+        metadata: Dict[str, object] = {
             "strategy": {
                 "type": "options_income",
                 "profile": "options_income_conservative",
@@ -150,7 +158,11 @@ class OptionsIncomeStrategy(BaseStrategy):
             "days_to_expiry": days_to_expiry,
             "action": action,
             "underlying_price": snapshot.close,
+            "option_side": option_side,
         }
+        if legacy_side:
+            metadata["legacy_side"] = legacy_side
+        return metadata
 
 
 __all__ = ["OptionsIncomeSettings", "OptionsIncomeStrategy"]
