@@ -253,6 +253,19 @@ def _parse_reports(raw_reports: Iterable[str]) -> list[tuple[str, Optional[str]]
 def pytest_configure(config: Any) -> None:  # pragma: no cover - hook wywoływany przez pytest
     if _pytest_cov_active(config):
         return
+
+    for stream_name in ("stdout", "stderr"):
+        stream = getattr(sys, stream_name, None)
+        if stream is None:
+            continue
+        reconfigure = getattr(stream, "reconfigure", None)
+        if reconfigure is None:
+            continue
+        try:
+            reconfigure(encoding="utf-8")
+        except Exception:
+            pass
+
     options = config.option
     _reset_state()
     if getattr(options, "no_cov", False):
