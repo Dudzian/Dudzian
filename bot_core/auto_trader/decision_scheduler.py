@@ -41,6 +41,14 @@ class AutoTraderDecisionScheduler:
     _stop_event: asyncio.Event | None = field(init=False, default=None, repr=False)
     _thread: threading.Thread | None = field(init=False, default=None, repr=False)
     _thread_stop: threading.Event | None = field(init=False, default=None, repr=False)
+    _idle_event: threading.Event = field(init=False, repr=False, default_factory=threading.Event)
+    _inflight_lock: threading.Lock = field(init=False, repr=False, default_factory=threading.Lock)
+    _inflight: int = field(init=False, repr=False, default=0)
+    _bootstrapped: bool = field(init=False, repr=False, default=False)
+    _bootstrap_lock: threading.Lock = field(init=False, repr=False, default_factory=threading.Lock)
+
+    def __post_init__(self) -> None:
+        self._idle_event.set()
 
     def _build_request(self) -> "DecisionCycleRequest":
         from bot_core.auto_trader.app import DecisionCycleRequest
@@ -80,7 +88,7 @@ class AutoTraderDecisionScheduler:
         self._thread_stop = stop_event
 
         def _worker() -> None:
-            self._invoke_bootstrap_hook()
+            self._ensure_bootstrap()
             retry_delay = 0.0
             base_backoff = max(0.0, float(self.restart_backoff_s) or 0.0)
             max_backoff = max(base_backoff or 1.0, float(self.restart_backoff_max_s) or 1.0)
@@ -89,6 +97,7 @@ class AutoTraderDecisionScheduler:
                     if stop_event.wait(retry_delay):
                         break
                     retry_delay = 0.0
+                self._mark_cycle_start()
                 try:
                     run_cycle = getattr(self.trader, "run_cycle", None)
                     if not callable(run_cycle):
@@ -99,10 +108,13 @@ class AutoTraderDecisionScheduler:
                     retry_delay = self._handle_failure(exc, max_backoff=max_backoff)
                     if retry_delay <= 0.0:
                         retry_delay = min(max_backoff, base_backoff or 1.0)
-                    continue
                 else:
                     self._handle_success(report)
                     self._drain_model_change_events()
+                finally:
+                    self._mark_cycle_end()
+                if retry_delay > 0.0:
+                    continue
                 if stop_event.wait(max(0.0, float(self.interval_s))):
                     break
 
@@ -120,9 +132,10 @@ class AutoTraderDecisionScheduler:
         stop_event = self._thread_stop
         if stop_event is not None:
             stop_event.set()
+        self._idle_event.wait(timeout=max(1.0, float(self.interval_s) * 5.0))
         thread = self._thread
         if thread is not None and thread.is_alive():
-            thread.join(timeout=max(1.0, float(self.interval_s)))
+            thread.join(timeout=max(1.0, float(self.interval_s) * 10.0))
         self._thread = None
         self._thread_stop = None
 
@@ -153,7 +166,7 @@ class AutoTraderDecisionScheduler:
         retry_delay = 0.0
         base_backoff = max(0.0, float(self.restart_backoff_s) or 0.0)
         max_backoff = max(base_backoff or 1.0, float(self.restart_backoff_max_s) or 1.0)
-        self._invoke_bootstrap_hook()
+        self._ensure_bootstrap()
         while not stop_event.is_set():
             if retry_delay > 0.0:
                 try:
@@ -163,6 +176,7 @@ class AutoTraderDecisionScheduler:
                 else:
                     break
                 retry_delay = 0.0
+            self._mark_cycle_start()
             try:
                 run_cycle = getattr(self.trader, "run_cycle", None)
                 if not callable(run_cycle):
@@ -178,10 +192,33 @@ class AutoTraderDecisionScheduler:
             else:
                 self._handle_success(report)
                 self._drain_model_change_events()
+            finally:
+                self._mark_cycle_end()
             try:
                 await asyncio.wait_for(stop_event.wait(), timeout=interval)
             except asyncio.TimeoutError:
                 continue
+
+    def tick_once(self) -> None:
+        """Execute a single synchronous cycle, respecting lifecycle hooks."""
+
+        base_backoff = max(0.0, float(self.restart_backoff_s) or 0.0)
+        max_backoff = max(base_backoff or 1.0, float(self.restart_backoff_max_s) or 1.0)
+        self._ensure_bootstrap()
+        self._mark_cycle_start()
+        try:
+            run_cycle = getattr(self.trader, "run_cycle", None)
+            if not callable(run_cycle):
+                raise TypeError("AutoTrader.run_cycle is not callable")
+            report = run_cycle(self._build_request())
+        except Exception as exc:  # pragma: no cover - defensive guard
+            LOGGER.exception("AutoTraderDecisionScheduler cycle failed")
+            self._handle_failure(exc, max_backoff=max_backoff)
+        else:
+            self._handle_success(report)
+            self._drain_model_change_events()
+        finally:
+            self._mark_cycle_end()
 
 
     def _invoke_bootstrap_hook(self) -> None:
@@ -221,6 +258,26 @@ class AutoTraderDecisionScheduler:
         if resolved <= 0.0:
             return min(max_backoff, delay or max_backoff)
         return min(resolved, max_backoff)
+
+    def _ensure_bootstrap(self) -> None:
+        if self._bootstrapped:
+            return
+        with self._bootstrap_lock:
+            if self._bootstrapped:
+                return
+            self._invoke_bootstrap_hook()
+            self._bootstrapped = True
+
+    def _mark_cycle_start(self) -> None:
+        with self._inflight_lock:
+            self._inflight += 1
+            self._idle_event.clear()
+
+    def _mark_cycle_end(self) -> None:
+        with self._inflight_lock:
+            self._inflight = max(0, self._inflight - 1)
+            if self._inflight == 0:
+                self._idle_event.set()
 
 
 __all__ = ["AutoTraderDecisionScheduler", "AutoTraderSchedulerHooks"]
