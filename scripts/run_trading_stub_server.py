@@ -92,10 +92,6 @@ _DEFAULT_UI_ALERT_AUDIT_PATTERN = "metrics-ui-alerts-%Y%m%d.jsonl"
 _DEFAULT_UI_ALERT_AUDIT_RETENTION_DAYS = 90
 
 
-def _posix(path: Path | str) -> str:
-    return Path(str(path)).as_posix()
-
-
 def _configure_logging(level: str) -> None:
     numeric = getattr(logging, level.upper(), logging.INFO)
     logging.basicConfig(
@@ -1701,7 +1697,7 @@ def _build_metrics_plan(args) -> Mapping[str, object]:
         "configured": not bool(args.disable_metrics_ui_alerts),
         "available": ui_alert_deps,
         "expected_active": bool(args.enable_metrics and not args.disable_metrics_ui_alerts and metrics_available and ui_alert_deps and sink_expected),
-        "path": _posix(ui_alert_path),
+        "path": str(ui_alert_path),
         "metadata": file_reference_metadata(ui_alert_path, role="ui_alerts_jsonl"),
         "source": "cli" if args.metrics_ui_alerts_jsonl else "default",
         "reduce_mode": reduce_mode_value,
