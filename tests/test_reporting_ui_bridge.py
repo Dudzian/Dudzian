@@ -215,7 +215,9 @@ def test_cmd_overview_detects_directories_without_summary(tmp_path, capsys):
     assert report_entry["relative_path"] == "diagnostics/2024-03-10"
     assert report_entry["summary_path"] is None
     assert report_entry["display_name"] == "diagnostics/2024-03-10"
-    assert report_entry["absolute_path"].endswith("diagnostics/2024-03-10/metrics.jsonl")
+    assert Path(report_entry["absolute_path"]).as_posix().endswith(
+        "diagnostics/2024-03-10/metrics.jsonl"
+    )
     assert category_entry["latest_updated_at"] == report_entry["updated_at"]
     assert report_entry["total_size"] == len(metrics_content.encode("utf-8"))
     assert report_entry["export_count"] == 1
