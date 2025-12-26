@@ -2877,10 +2877,12 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
                 assert pythonpath_display_entries is not None
                 assert pythonpath_display_value is not None
                 if args.format == "json":
+                    # Używamy display value (separator ":") dla zgodności z istniejącym
+                    # API i testami, zamiast natywnego os.pathsep.
                     payload = {
                         "repo_root": repo_display,
                         "additional_paths": list(normalized_additional_display),
-                        "pythonpath": pythonpath_value,
+                        "pythonpath": pythonpath_display_value,
                         "pythonpath_entries": list(pythonpath_display_entries),
                     }
                     output_text = json.dumps(payload, **json_kwargs)
