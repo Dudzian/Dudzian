@@ -1,18 +1,18 @@
 {
-  "target": "config/marketplace/catalog.json",
-  "sha256": "a74af9c6b6cf4c883076dca2dcabf6fdebfa0deab747ea19340850cdb274829a",
+  "target": "/workspace/Dudzian/config/marketplace/catalog.json",
+  "sha256": "15f53a7a1cef66a7b998a2c754cdb122e24867adc434642479d1cf2fdc692d3a",
   "hmac": {
     "algorithm": "HMAC-SHA256",
     "key_id": "dev-hmac",
-    "signed_at": "2025-11-23T13:19:54Z",
-    "value": "vPK50GpEPq6U9pvc7mflFPLat07W7VEHrRTY54Nc/R8="
+    "signed_at": "2025-12-26T12:57:27Z",
+    "value": "O5nMp+Yv6eSXkRO3k00DHPrbTG8RCRb/oFnbogGjmQo="
   },
   "ed25519": {
     "algorithm": "ed25519",
     "key_id": "dev-presets-ed25519",
     "issuer": "marketplace-ci",
-    "signed_at": "2025-11-23T13:19:54Z",
-    "value": "L5ySXhUyC3kSE7TEXeWroFuXYiPBzLsjX4RMSxylJHEdWmUEw6QgxlHO+ua2TD+V0OBleHAlmMZVZgrdP6f0DQ==",
+    "signed_at": "2025-12-26T12:57:27Z",
+    "value": "czP8tScW2IlKLg/HUie/9XaELROMOEg4rJkQHu7VTDEjy6rfWew4Z333wJPJiVwGdLcbwtE2G/+FLyDax9LyCA==",
     "public_key": "wnD5eTEGDB3CPb6r3oMOmRjFtjCxHISZXHlHX0TIKhY="
   }
 }

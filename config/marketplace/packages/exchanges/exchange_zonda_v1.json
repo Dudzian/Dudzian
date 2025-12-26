@@ -17,7 +17,7 @@
         "exchange",
         "zonda"
       ],
-      "version": "1.0.0+fc06a452d8f249ef"
+      "version": "1.0.0+6bec733c61e9256c"
     },
     "name": "Zonda Connectivity",
     "strategies": [
@@ -110,7 +110,7 @@
     "issuer": "marketplace-ci",
     "key_id": "dev-presets-ed25519",
     "public_key": "wnD5eTEGDB3CPb6r3oMOmRjFtjCxHISZXHlHX0TIKhY=",
-    "signed_at": "2025-11-23T12:53:35Z",
-    "value": "OqoUwgXggp1nmemegBt0E70zH/HSu5pgsoh+0kPfl3PZm4batNlOdanKzjmxYLVpYvN7XduyO29eV8o3Hq2UDg=="
+    "signed_at": "2025-12-26T12:56:49Z",
+    "value": "XPwDc7mZjYTCkr5YIXjdHBzm69YtbOnsjRylvLCY7apWogEsbzBJrWa2RU3/geeuRCX9Q1BGqdGzljk9VmtFBA=="
   }
 }

@@ -17,7 +17,7 @@
         "exchange",
         "bitstamp"
       ],
-      "version": "1.0.0+536d6df24a691f55"
+      "version": "1.0.0+53a40836a1fcda9d"
     },
     "name": "Bitstamp Connectivity",
     "strategies": [
@@ -110,7 +110,7 @@
     "issuer": "marketplace-ci",
     "key_id": "dev-presets-ed25519",
     "public_key": "wnD5eTEGDB3CPb6r3oMOmRjFtjCxHISZXHlHX0TIKhY=",
-    "signed_at": "2025-11-23T12:53:09Z",
-    "value": "w2ngjQ4ZS9piwd1V6JyB9YGS6qdvMxyPOkHh++qWGbACMF2d6fvpsAuRYOkBwMgdOvfqa8+JgAGG9TaaGpfxBg=="
+    "signed_at": "2025-12-26T12:56:19Z",
+    "value": "sdBV97kR7GPi29LY+fyAcs2om6e9MvtOQ9Kmg+NMxb5KFdQDPNWk7Ue4Krro19OPhbNcLqSbr12gXuCAfNguBg=="
   }
 }

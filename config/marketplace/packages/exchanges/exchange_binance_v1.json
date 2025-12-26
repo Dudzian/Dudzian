@@ -3,6 +3,8 @@
     "metadata": {
       "environments": [
         "paper",
+        "paper_margin",
+        "paper_futures",
         "testnet",
         "live"
       ],
@@ -17,7 +19,7 @@
         "exchange",
         "binance"
       ],
-      "version": "1.0.0+3f04577c8d9eef4d"
+      "version": "1.0.0+729d5b277f4fc823"
     },
     "name": "Binance Connectivity",
     "strategies": [
@@ -39,11 +41,83 @@
                   "paper_cash_asset": "USDT",
                   "paper_fee_rate": 0.001,
                   "paper_initial_cash": 10000,
-                  "paper_variant": "spot"
+                  "paper_variant": "spot",
+                  "rate_limit_rules": [
+                    {
+                      "per": 1,
+                      "rate": 50
+                    },
+                    {
+                      "per": 60,
+                      "rate": 1200
+                    }
+                  ]
                 }
               },
               "description": "Paper trading symulujący rynek spot Binance.",
               "name": "paper"
+            },
+            {
+              "config": {
+                "credentials": {
+                  "key_id": null,
+                  "secret": null
+                },
+                "description": "Symulator papierowy z logiką margin Binance.",
+                "exchange_manager": {
+                  "mode": "paper",
+                  "paper_variant": "margin",
+                  "rate_limit_rules": [
+                    {
+                      "per": 1,
+                      "rate": 50
+                    },
+                    {
+                      "per": 60,
+                      "rate": 1200
+                    }
+                  ],
+                  "simulator": {
+                    "funding_interval_seconds": 28800,
+                    "funding_rate": 5e-05,
+                    "leverage_limit": 5.0,
+                    "maintenance_margin_ratio": 0.12
+                  }
+                }
+              },
+              "description": "Symulator papierowy z logiką margin Binance.",
+              "name": "paper_margin"
+            },
+            {
+              "config": {
+                "credentials": {
+                  "key_id": null,
+                  "secret": null
+                },
+                "description": "Papierowy symulator futures Binance (mark price, funding).",
+                "exchange_manager": {
+                  "mode": "paper",
+                  "paper_variant": "futures",
+                  "rate_limit_rules": [
+                    {
+                      "per": 1,
+                      "rate": 50
+                    },
+                    {
+                      "per": 60,
+                      "rate": 1200
+                    }
+                  ],
+                  "simulator": {
+                    "funding_interval_seconds": 28800,
+                    "funding_rate": 0.0001,
+                    "leverage_limit": 12.0,
+                    "maintenance_margin_ratio": 0.04
+                  }
+                }
+              },
+              "description": "Papierowy symulator futures Binance (mark price, funding).",
+              "name": "paper_futures"
             },
             {
               "config": {
@@ -53,7 +127,22 @@
                 },
                 "description": "Testnet CCXT z włączonym sandbox mode.",
                 "exchange_manager": {
+                  "failover": {
+                    "cooldown_seconds": 45,
+                    "enabled": true,
+                    "failure_threshold": 2
+                  },
                   "mode": "margin",
+                  "rate_limit_rules": [
+                    {
+                      "per": 1,
+                      "rate": 50
+                    },
+                    {
+                      "per": 60,
+                      "rate": 1200
+                    }
+                  ],
                   "testnet": true,
                   "watchdog": {
                     "retry_policy": {
@@ -74,12 +163,27 @@
                 },
                 "description": "Konfiguracja produkcyjna Binance margin.",
                 "exchange_manager": {
+                  "failover": {
+                    "cooldown_seconds": 60,
+                    "enabled": true,
+                    "failure_threshold": 3
+                  },
                   "mode": "margin",
                   "native_adapter": {
                     "settings": {
                       "margin_type": "cross"
                     }
                   },
+                  "rate_limit_rules": [
+                    {
+                      "per": 1,
+                      "rate": 50
+                    },
+                    {
+                      "per": 60,
+                      "rate": 1200
+                    }
+                  ],
                   "testnet": false,
                   "watchdog": {
                     "circuit_breaker": {
@@ -102,6 +206,8 @@
         "parameters": {
           "available_environments": [
             "paper",
+            "paper_margin",
+            "paper_futures",
             "testnet",
             "live"
           ],
@@ -126,7 +232,7 @@
     "issuer": "marketplace-ci",
     "key_id": "dev-presets-ed25519",
     "public_key": "wnD5eTEGDB3CPb6r3oMOmRjFtjCxHISZXHlHX0TIKhY=",
-    "signed_at": "2025-11-23T12:53:00Z",
-    "value": "FaXHEEa0jFCubWUjkxKXxDicTuyZgvGFSeMO7tQWbfbGmR8UVNpPIRMIwDsxkbv2abR+snFSQ7E9ztA+1xt/Ag=="
+    "signed_at": "2025-12-26T12:56:09Z",
+    "value": "s6WQmC6pOx61KpPhYGq6tREU9TfUHPYEe3r1eCXGhTq9EkuhLz+TLYPfECaE7hYTenWpHKTQ/n+YHEitjgBlAg=="
   }
 }
