@@ -874,6 +874,7 @@ class LiveExecutionRouter(ExecutionService):
         exchanges_and_retries = list(plan.exchanges_and_retries)
         request = order.request
         context = order.context
+        allowed_fallback_categories = self._resolve_allowed_fallback_categories(context)
         maybe_prepare = getattr(self, "_maybe_prepare_withdrawal_signature", None)
         if (
             callable(maybe_prepare)
@@ -893,7 +894,6 @@ class LiveExecutionRouter(ExecutionService):
             if requires_hw or is_withdrawal:
                 primary_exchange, _ = exchanges_and_retries[0]
                 maybe_prepare(request, context, primary_exchange)
-        allowed_fallback_categories = self._resolve_allowed_fallback_categories(context)
 
         attempts_rec: list[dict[str, str]] = []
         attempts_counter = 0
@@ -938,7 +938,10 @@ class LiveExecutionRouter(ExecutionService):
                 try:
                     result = await self._perform_attempt(adapter, order.request, exchange_name)
                 except Exception as exc:  # noqa: BLE001
-                    category = self._error_policy.classify(exc)
+                    category = self._classify_exception(exc)
+                    fallback_allowed = self._is_fallback_allowed(
+                        category, allowed_fallback_categories
+                    )
                     current_time = self._time()
                     elapsed = max(0.0, current_time - start)
                     if category in {"network", "throttling"}:
@@ -956,6 +959,8 @@ class LiveExecutionRouter(ExecutionService):
                         last_error = exc
                         if breaker:
                             breaker.record_failure(current_time)
+                        if not fallback_allowed:
+                            raise
                         if attempt < max_retries:
                             await asyncio.sleep(
                                 self._error_policy.backoff(attempt, exc)
@@ -1003,7 +1008,7 @@ class LiveExecutionRouter(ExecutionService):
                     last_error = exc
                     if breaker:
                         breaker.record_failure(current_time)
-                    if not self._is_fallback_allowed("unknown", allowed_fallback_categories):
+                    if not fallback_allowed:
                         raise
                     if attempt < max_retries:
                         await asyncio.sleep(
@@ -1355,6 +1360,18 @@ class LiveExecutionRouter(ExecutionService):
         if not allowed:
             return False
         return category.lower() in allowed
+
+    @staticmethod
+    def _classify_exception(exc: Exception) -> str:
+        if isinstance(exc, ExchangeAuthError):
+            return "auth"
+        if isinstance(exc, ExchangeThrottlingError):
+            return "throttling"
+        if isinstance(exc, ExchangeNetworkError):
+            return "network"
+        if isinstance(exc, ExchangeAPIError):
+            return "api"
+        return "unknown"
 
     def _validate_adapter_result(
         self, result: OrderResult, exchange: str, request: OrderRequest
