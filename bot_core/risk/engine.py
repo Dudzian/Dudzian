@@ -455,6 +455,24 @@ class ThresholdRiskEngine(RiskEngine):
                 if minimum_distance > 0 and stop_distance + 1e-9 < minimum_distance:
                     return deny("Stop loss jest ciaśniejszy niż wymaga tego polityka profilu ryzyka.")
 
+                max_risk_capital = target_vol * account.total_equity
+                if max_risk_capital <= 0:
+                    return deny("Kapitał lub target volatility profilu uniemożliwia otwarcie pozycji.")
+
+                allowed_total_quantity = max_risk_capital / max(stop_distance, 1e-12)
+
+                if allowed_total_quantity <= 0:
+                    return deny(
+                        "Target volatility profilu blokuje otwarcie pozycji przy zadanych parametrach ATR/stop."
+                    )
+
+                if new_quantity > allowed_total_quantity:
+                    allowed_increment = max(0.0, allowed_total_quantity - current_quantity)
+                    return deny(
+                        "Zlecenie przekracza limit wynikający z target volatility profilu ryzyka.",
+                        adjustments={"max_quantity": max(0.0, allowed_increment)},
+                    )
+
                 if (
                     stop_distance > 0
                     and account.total_equity > 0
@@ -493,24 +511,6 @@ class ThresholdRiskEngine(RiskEngine):
                                 "incremental_quantity": incremental_quantity,
                             },
                         )
-
-                max_risk_capital = target_vol * account.total_equity
-                if max_risk_capital <= 0:
-                    return deny("Kapitał lub target volatility profilu uniemożliwia otwarcie pozycji.")
-
-                allowed_total_quantity = max_risk_capital / max(stop_distance, 1e-12)
-
-                if allowed_total_quantity <= 0:
-                    return deny(
-                        "Target volatility profilu blokuje otwarcie pozycji przy zadanych parametrach ATR/stop."
-                    )
-
-                if new_quantity > allowed_total_quantity:
-                    allowed_increment = max(0.0, allowed_total_quantity - current_quantity)
-                    return deny(
-                        "Zlecenie przekracza limit wynikający z target volatility profilu ryzyka.",
-                        adjustments={"max_quantity": max(0.0, allowed_increment)},
-                    )
 
         if is_new_position:
             if state.active_positions() >= profile.max_positions():

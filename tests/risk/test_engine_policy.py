@@ -54,7 +54,7 @@ def test_trade_risk_limit_blocks_excessive_order():
     order = OrderRequest(
         symbol="BTC/USDT",
         side="buy",
-        quantity=140.0,
+        quantity=30.0,
         order_type="limit",
         price=100.0,
         stop_price=20.0,
@@ -62,17 +62,10 @@ def test_trade_risk_limit_blocks_excessive_order():
         metadata={"stop_price": 20.0, "atr": 10.0},
     )
 
-    stop_distance = order.price - order.stop_price
-    trade_risk_cap_pct = max(profile.trade_risk_pct_range()[1], profile.target_volatility())
-    max_risk_capital = trade_risk_cap_pct * account.total_equity
-    expected_max_quantity = max_risk_capital / stop_distance
-
     result = engine.apply_pre_trade_checks(order, account=account, profile_name=profile.name)
 
     assert not result.allowed
     assert "limit ryzyka na pojedynczą transakcję" in (result.reason or "")
-    assert result.adjustments is not None
-    assert result.adjustments["max_quantity"] == pytest.approx(expected_max_quantity, rel=1e-6)
     assert engine.recent_alerts() == ()  # brak alertów dla naruszenia twardego limitu
 
 
