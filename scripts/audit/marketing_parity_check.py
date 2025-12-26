@@ -27,12 +27,13 @@ import json
 import time
 from dataclasses import dataclass
 from pathlib import Path
+from pathlib import PurePosixPath
 from typing import Dict, Iterable, List, Tuple
 
 
 @dataclass
 class FileHash:
-    key: Path
+    key: str
     path: Path
     sha256: str
 
@@ -49,8 +50,16 @@ def compute_sha256(path: Path) -> str:
     return digest.hexdigest()
 
 
-def collect_files(stress_lab_dir: Path | None, signal_quality_index: Path) -> List[Tuple[Path, Path]]:
-    files: List[Tuple[Path, Path]] = []
+def _relative_posix(path: Path, root: Path) -> str:
+    try:
+        rel = path.resolve().relative_to(root)
+    except ValueError:
+        rel = Path(path.name)
+    return PurePosixPath(rel).as_posix()
+
+
+def collect_files(stress_lab_dir: Path | None, signal_quality_index: Path, root: Path) -> List[Tuple[str, Path]]:
+    files: List[Tuple[str, Path]] = []
 
     if stress_lab_dir:
         if not stress_lab_dir.exists():
@@ -59,19 +68,18 @@ def collect_files(stress_lab_dir: Path | None, signal_quality_index: Path) -> Li
             raise ParityError(f"Stress Lab path is not a directory: {stress_lab_dir}")
         for file_path in sorted(stress_lab_dir.rglob("*")):
             if file_path.is_file():
-                relative = Path("stress_lab") / file_path.relative_to(stress_lab_dir)
-                files.append((relative, file_path))
+                files.append((_relative_posix(file_path, root), file_path))
 
     if not signal_quality_index.exists():
         raise ParityError(f"Signal quality index missing: {signal_quality_index}")
     if not signal_quality_index.is_file():
         raise ParityError(f"Signal quality index is not a file: {signal_quality_index}")
-    files.append((Path("signal_quality") / signal_quality_index.name, signal_quality_index))
+    files.append((_relative_posix(signal_quality_index, root), signal_quality_index))
 
     return files
 
 
-def hash_files(files: Iterable[Tuple[Path, Path]]) -> List[FileHash]:
+def hash_files(files: Iterable[Tuple[str, Path]]) -> List[FileHash]:
     hashed: List[FileHash] = []
     for key, path in files:
         hashed.append(FileHash(key=key, path=path, sha256=compute_sha256(path)))
@@ -155,7 +163,7 @@ def render_json_report(
         "missing_in_mirror": missing,
         "mismatched": mismatched,
         "local_hashes": [
-            {"file": str(entry.key), "sha256": entry.sha256, "source": str(entry.path)} for entry in local_hashes
+            {"file": entry.key, "sha256": entry.sha256, "source": str(entry.path)} for entry in local_hashes
         ],
     }
 
@@ -176,7 +184,12 @@ def run_parity_check(
         raise ParityError(f"Mirror directory not found: {mirror_dir}")
     if not mirror_dir.is_dir():
         raise ParityError(f"Mirror path is not a directory: {mirror_dir}")
-    files = collect_files(stress_lab_dir, signal_quality_index)
+    root = (
+        Path(stress_lab_dir).resolve().parent
+        if stress_lab_dir
+        else signal_quality_index.resolve().parent.parent
+    )
+    files = collect_files(stress_lab_dir, signal_quality_index, root)
     local_hashes = hash_files(files)
     parity = compare_against_mirror(local_hashes, mirror_dir)
     report = render_report(local_hashes, mirror_dir, parity)
