@@ -12,6 +12,7 @@ import time
 from pathlib import Path
 from typing import Any, Iterable, MutableMapping, Optional
 from xml.etree import ElementTree as ET
+import warnings
 
 import trace
 
@@ -148,52 +149,74 @@ def _load_executable_lines(file: _CoverageFile) -> set[int]:
     return stmt_lines
 
 
+def _safe_addoption(group: Any, *args: Any, **kwargs: Any) -> None:
+    """Próbuj zarejestrować opcję, pomijając duplikaty z innych pluginów."""
+
+    try:
+        group.addoption(*args, **kwargs)
+    except ValueError:
+        # Pytest sygnalizuje duplikaty opcji przez ValueError; opcja mogła już
+        # zostać zdefiniowana przez inny plugin, więc pomijamy ją, aby uniknąć
+        # konfliktu.
+        return
+
+
 def pytest_addoption(parser: Any) -> None:  # pragma: no cover - hook wywoływany przez pytest
     if _pytest_cov_available():
         return
-    group = parser.getgroup("cov_stub")
-    group.addoption(
+    group = parser.getgroup("cov", "coverage reporting (stub)")
+    _safe_addoption(
+        group,
         "--cov",
         action="append",
+        dest="cov_sources",
         default=[],
-        metavar="MODULE",
-        help="nazwy modułów/pakietów objętych pomiarem pokrycia",
+        metavar="SOURCE",
+        help="Measure coverage for given package/path (stub).",
     )
-    group.addoption(
+    _safe_addoption(
+        group,
         "--cov-report",
         action="append",
+        dest="cov_reports",
         default=[],
         metavar="TYPE",
-        help="typ raportu (obsługiwane: term, term-missing, xml[:ścieżka])",
+        help="Coverage report type (e.g. term, xml) (stub).",
     )
-    group.addoption(
+    _safe_addoption(
+        group,
+        "--cov-fail-under",
+        action="store",
+        dest="cov_fail_under",
+        type=float,
+        default=None,
+        metavar="MIN",
+        help="Fail if coverage percentage is below MIN (stub).",
+    )
+    _safe_addoption(
+        group,
         "--cov-config",
         action="store",
         default=None,
         metavar="PATH",
         help="zachowane dla zgodności, ignorowane",
     )
-    group.addoption(
+    _safe_addoption(
+        group,
         "--cov-append",
         action="store_true",
         default=False,
         help="zachowane dla zgodności, ignorowane",
     )
-    group.addoption(
+    _safe_addoption(
+        group,
         "--cov-branch",
         action="store_true",
         default=False,
         help="zachowane dla zgodności, ignorowane",
     )
-    group.addoption(
-        "--cov-fail-under",
-        action="store",
-        default=None,
-        type=float,
-        metavar="MIN",
-        help="minimalne pokrycie wymagane do uznania testów",
-    )
-    group.addoption(
+    _safe_addoption(
+        group,
         "--no-cov",
         action="store_true",
         default=False,
@@ -222,13 +245,35 @@ def pytest_configure(config: Any) -> None:  # pragma: no cover - hook wywoływan
     if getattr(options, "no_cov", False):
         _reset_state(keep_tracer=False)
         return
-    modules = [mod for mod in getattr(options, "cov", []) if mod]
+    modules = [
+        mod
+        for mod in (getattr(options, "cov_sources", None) or getattr(options, "cov", []))
+        if mod
+    ]
     if not modules:
         _reset_state(keep_tracer=False)
         return
     _STATE.files_by_module = {mod: _collect_module_files(mod) for mod in modules}
-    _STATE.reports = _parse_reports(getattr(options, "cov_report", []))
-    _STATE.fail_under = getattr(options, "cov_fail_under", None)
+    reports_raw = getattr(options, "cov_reports", None) or getattr(options, "cov_report", [])
+    _STATE.reports = _parse_reports(reports_raw)
+    raw_fail_under = getattr(options, "cov_fail_under", None)
+    fail_under_source = "cov_fail_under"
+    if raw_fail_under is None:
+        raw_fail_under = getattr(options, "cov_fail_under_percent", None)
+        fail_under_source = "cov_fail_under_percent"
+    if raw_fail_under is None:
+        _STATE.fail_under = None
+    else:
+        try:
+            _STATE.fail_under = float(raw_fail_under)
+        except (TypeError, ValueError):
+            warnings.warn(
+                "Ignoruję nieprawidłową wartość progu --cov-fail-under "
+                f"(odczytaną z config.option.{fail_under_source}): {raw_fail_under!r}",
+                UserWarning,
+                stacklevel=3,
+            )
+            _STATE.fail_under = None
     _STATE.term_missing = any(kind == "term-missing" for kind, _ in _STATE.reports)
     if _STATE.tracer is None:
         tracer = trace.Trace(count=True, trace=False, ignoredirs=[str(Path(sys.prefix).resolve())])
