@@ -199,9 +199,9 @@ def _resolve_sentinels(sentinels: Iterable[str]) -> Tuple[str, ...]:
     env_sentinels = os.environ.get(ENV_SENTINELS)
     if env_sentinels is not None:
         candidates: list[str] = []
-        for part in env_sentinels.split(os.pathsep):
+        for part in env_sentinels.replace(";", ":").split(":"):
             normalized = part.strip()
-            if not normalized or normalized == os.pathsep:
+            if not normalized or normalized in {":", ";"}:
                 continue
             candidates.append(normalized)
         sentinel_list = tuple(candidates)
