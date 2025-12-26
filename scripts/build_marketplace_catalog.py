@@ -100,6 +100,8 @@ def _package_spec(
     private_key: Path,
     key_id: str,
     issuer: str | None,
+    signed_at: datetime | None,
+    ensure_ascii: bool = True,
 ) -> None:
     output_path.parent.mkdir(parents=True, exist_ok=True)
     format_arg = output_path.suffix.lower().lstrip(".")
@@ -121,6 +123,10 @@ def _package_spec(
     ]
     if issuer:
         cli_args.extend(["--issuer", issuer])
+    if signed_at:
+        cli_args.extend(["--signed-at", signed_at.isoformat().replace("+00:00", "Z")])
+    if ensure_ascii:
+        cli_args.append("--ensure-ascii")
     subprocess.run([sys.executable, *cli_args], check=True)
 
 
@@ -279,6 +285,11 @@ def build_catalog(
         if not distributions:
             raise ValueError(f"Spec {spec_path} nie zawiera sekcji distribution")
 
+        release_meta = metadata_dict.get("release") or {}
+        signed_at = _normalize_timestamp(
+            str(release_meta.get("approved_at") or metadata_dict.get("release_date") or "")
+        )
+
         for artifact in distributions:
             uri = artifact.get("uri")
             if not isinstance(uri, str):
@@ -290,6 +301,8 @@ def build_catalog(
                 private_key=private_key,
                 key_id=key_id,
                 issuer=issuer,
+                signed_at=signed_at,
+                ensure_ascii=True,
             )
             blob = artifact_path.read_bytes()
             artifact["size_bytes"] = len(blob)
@@ -357,7 +370,8 @@ def build_catalog(
         packages=packages,
     )
     catalog_path.parent.mkdir(parents=True, exist_ok=True)
-    catalog_json = catalog.model_dump_json(indent=2, by_alias=False)
+    catalog_dump = catalog.model_dump(mode="json", by_alias=False)
+    catalog_json = json.dumps(catalog_dump, ensure_ascii=True, indent=2)
     catalog_path.write_text(catalog_json, encoding="utf-8")
     _write_signature(
         catalog_path,

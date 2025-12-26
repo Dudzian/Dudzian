@@ -45,6 +45,18 @@ _PACKAGE_VERSION_REF_PATTERN = re.compile(
 _MARKETPLACE_DIR = REPO_ROOT / "config" / "marketplace"
 
 
+def _parse_signed_at(value: str | None) -> datetime | None:
+    if not value:
+        return None
+    text = value.strip().replace("Z", "+00:00")
+    try:
+        return datetime.fromisoformat(text)
+    except ValueError as exc:  # pragma: no cover - defensywne logowanie
+        raise MarketplaceVerificationError(
+            f"Niepoprawny format czasu podpisu: {value}. Użyj ISO-8601."
+        ) from exc
+
+
 class MarketplaceRepository:
     """Obsługa lokalnego repozytorium Marketplace."""
 
@@ -277,6 +289,7 @@ def _cmd_package(repo: MarketplaceRepository, args: argparse.Namespace) -> int:
     del repo
     spec_path = Path(args.input).expanduser()
     payload = _load_preset_spec(spec_path)
+    signed_at = _parse_signed_at(args.signed_at)
     private_key = load_private_key(Path(args.private_key).expanduser())
     service = MarketplaceService()
     signature = service.sign(
@@ -284,13 +297,16 @@ def _cmd_package(repo: MarketplaceRepository, args: argparse.Namespace) -> int:
         private_key=private_key,
         key_id=args.key_id,
         issuer=args.issuer,
+        signed_at=signed_at,
         include_public_key=not args.omit_public_key,
     )
     document = service.validate(
         {"preset": payload, "signature": signature.as_dict()},
         require_signature=True,
     )
-    serialized = service.export(document, format=args.format)
+    serialized = service.export(
+        document, format=args.format, ensure_ascii=args.ensure_ascii
+    )
     ext = "yaml" if args.format == "yaml" else "json"
     metadata = payload.get("metadata") if isinstance(payload.get("metadata"), Mapping) else {}
     preset_id = str(metadata.get("id") or "").strip() or spec_path.stem
@@ -477,6 +493,10 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     cmd_package.add_argument("--issuer", help="Opcjonalny identyfikator wystawcy podpisu.")
     cmd_package.add_argument(
+        "--signed-at",
+        help="Wymuś znacznik czasu podpisu (ISO-8601, domyślnie bieżący czas).",
+    )
+    cmd_package.add_argument(
         "--format",
         choices=["json", "yaml"],
         default="json",
@@ -486,6 +506,19 @@ def _build_parser() -> argparse.ArgumentParser:
         "--omit-public-key",
         action="store_true",
         help="Nie dołączaj klucza publicznego do podpisu.",
+    )
+    cmd_package.add_argument(
+        "--ensure-ascii",
+        dest="ensure_ascii",
+        action="store_true",
+        default=True,
+        help="Zapisz JSON z sekwencjami \\uXXXX dla deterministycznych digestów.",
+    )
+    cmd_package.add_argument(
+        "--allow-unicode",
+        dest="ensure_ascii",
+        action="store_false",
+        help="Pozostaw znaki UTF-8 w wygenerowanym pliku presetu.",
     )
     cmd_package.set_defaults(func=_cmd_package)
 

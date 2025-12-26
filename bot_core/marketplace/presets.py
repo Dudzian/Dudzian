@@ -261,8 +261,15 @@ def parse_preset_document(
     return preset
 
 
-def serialize_preset_document(document: PresetDocument, *, format: str = "json") -> bytes:
-    """Serializuje dokument presetu do formatu JSON lub YAML."""
+def serialize_preset_document(
+    document: PresetDocument, *, format: str = "json", ensure_ascii: bool = False
+) -> bytes:
+    """Serializuje dokument presetu do formatu JSON lub YAML.
+
+    Parametr ``ensure_ascii`` pozwala wymusić reprezentację U+XXXX, co
+    stabilizuje podpisy/digest przy ponownym generowaniu artefaktów
+    Marketplace.
+    """
 
     payload = {"preset": document.payload}
     if document.signature is not None:
@@ -271,7 +278,8 @@ def serialize_preset_document(document: PresetDocument, *, format: str = "json")
     fmt = format.lower().strip()
     if fmt == "json":
         return (
-            json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True) + "\n"
+            json.dumps(payload, ensure_ascii=ensure_ascii, indent=2, sort_keys=True)
+            + "\n"
         ).encode("utf-8")
     if fmt in {"yaml", "yml"}:
         _yaml = _require_yaml()
