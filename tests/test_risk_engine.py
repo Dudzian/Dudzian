@@ -582,6 +582,7 @@ def test_stop_loss_wider_than_minimum_limits_position_size() -> None:
         max_position_pct=2.0,
         target_volatility=0.03,
         stop_loss_atr_multiple=2.0,
+        trade_risk_pct_range=(1.0, 1.0),
     )
 
     engine = ThresholdRiskEngine(clock=lambda: datetime(2024, 1, 1, 12, 0, 0))
