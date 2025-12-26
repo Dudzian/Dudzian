@@ -191,8 +191,8 @@ def test_margin_check_blocks_when_available_margin_is_too_low() -> None:
         quantity=0.05,
         order_type="limit",
         price=20_000.0,
-        stop_price=20_000.0 - 2.0 * 200.0,
-        atr=200.0,
+        stop_price=20_000.0 - 2.0 * 50.0,
+        atr=50.0,
     )
 
     result = engine.apply_pre_trade_checks(
