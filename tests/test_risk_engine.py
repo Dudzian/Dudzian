@@ -460,6 +460,7 @@ def test_target_volatility_limits_position_size(
         max_position_pct=5.0,
         target_volatility=target_vol,
         stop_loss_atr_multiple=2.0,
+        trade_risk_pct_range=(1.0, 1.0),
     )
 
     engine = ThresholdRiskEngine(clock=lambda: datetime(2024, 1, 1, 12, 0, 0))
@@ -467,14 +468,20 @@ def test_target_volatility_limits_position_size(
 
     snapshot = _snapshot(equity)
     risk_budget = target_vol * equity
-    expected_quantity = risk_budget / (atr * profile.stop_loss_atr_multiple())
+    oversized_quantity = risk_budget / (atr * profile.stop_loss_atr_multiple()) * 1.5
 
     oversized_order = _order(
         price,
         atr=atr,
-        quantity=expected_quantity * 1.5,
+        quantity=oversized_quantity,
         stop_multiple=profile.stop_loss_atr_multiple(),
     )
+    stop_distance = (
+        oversized_order.price - oversized_order.stop_price
+        if oversized_order.side == "buy"
+        else oversized_order.stop_price - oversized_order.price
+    )
+    expected_quantity = risk_budget / stop_distance
     result = engine.apply_pre_trade_checks(
         oversized_order,
         account=snapshot,
