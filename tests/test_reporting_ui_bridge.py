@@ -171,7 +171,7 @@ def test_cmd_overview_detects_directories_without_summary(tmp_path, capsys):
 
     metrics_path = orphan_dir / "metrics.jsonl"
     metrics_content = "{}\n"
-    metrics_path.write_text(metrics_content, encoding="utf-8")
+    metrics_path.write_text(metrics_content, encoding="utf-8", newline="\n")
     fixed_timestamp = 1_700_100_000
     os.utime(metrics_path, (fixed_timestamp, fixed_timestamp))
 
