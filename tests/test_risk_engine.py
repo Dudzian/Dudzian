@@ -220,6 +220,7 @@ def test_margin_check_passes_when_leverage_covers_notional() -> None:
         max_position_pct=1.0,
         target_volatility=0.2,
         stop_loss_atr_multiple=2.0,
+        trade_risk_pct_range=(0.05, 0.05),
     )
 
     engine = ThresholdRiskEngine(clock=lambda: datetime(2024, 1, 1, 12, 0, 0))
