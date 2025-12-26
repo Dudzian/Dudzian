@@ -120,8 +120,14 @@ class MarketplaceService:
         )
         return marketplace.sync(catalog, hwid_provider=hwid_provider)
 
-    def export(self, document: PresetDocument, *, format: str = "json") -> bytes:
-        return serialize_preset_document(document, format=format)
+    def export(
+        self,
+        document: PresetDocument,
+        *,
+        format: str = "json",
+        ensure_ascii: bool = False,
+    ) -> bytes:
+        return serialize_preset_document(document, format=format, ensure_ascii=ensure_ascii)
 
 
 __all__ = ["MarketplaceService"]
