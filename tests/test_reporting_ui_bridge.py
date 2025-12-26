@@ -91,7 +91,7 @@ def test_cmd_overview_lists_reports_with_exports(tmp_path, capsys):
 
     export_path = report_dir / "result.csv"
     export_content = "timestamp,profit\n2024-01-01T00:00:00Z,42.5\n"
-    export_path.write_text(export_content, encoding="utf-8")
+    export_path.write_text(export_content, encoding="utf-8", newline="\n")
 
     # deterministyczne czasy modyfikacji
     fixed_timestamp = 1_700_000_000
