@@ -67,6 +67,7 @@ class AutoTraderLifecycleManager(AutoTraderSchedulerHooks):
     def start(self) -> None:
         """Start the associated scheduler in background mode."""
 
+        self.scheduler.tick_once()
         self.scheduler.start_in_background()
 
     def stop(self) -> None:
