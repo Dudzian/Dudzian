@@ -2,10 +2,13 @@ from __future__ import annotations
 
 import json
 import os
+import tarfile
+from io import BytesIO
 from pathlib import Path
 
 
 from bot_core.resilience.audit import audit_bundles as audit_bundles_fn
+from bot_core.resilience.bundle import ResilienceBundleBuilder
 from bot_core.resilience.policy import load_policy
 from scripts.audit_resilience_bundles import run as audit_bundles_cli
 from scripts.export_resilience_bundle import run as export_bundle
@@ -37,39 +40,34 @@ def test_export_and_verify_resilience_bundle(tmp_path: Path) -> None:
 
     exit_code = export_bundle(
         [
-            "--source",
-            str(source),
+            "--version",
+            "0.0.0-test",
+            "--report",
+            str(source / "drills" / "failover.json"),
+            "--report",
+            str(source / "reports" / "tco.csv"),
             "--output-dir",
             str(output_dir),
             "--bundle-name",
             "stage6-resilience-test",
             "--metadata",
             "run_id=42",
-            "--hmac-key-file",
+            "--signing-key-file",
             str(key_path),
-            "--hmac-key-id",
+            "--key-id",
             "ops-stage6",
         ]
     )
 
     assert exit_code == 0
 
-    artifacts = list(output_dir.glob("stage6-resilience-test-*.zip"))
+    artifacts = list(output_dir.glob("stage6-resilience-test-*.tar.gz"))
     assert len(artifacts) == 1
     bundle = artifacts[0]
-    manifest = bundle.with_suffix(".manifest.json")
-    signature = bundle.with_suffix(".manifest.sig")
-
-    assert manifest.exists()
-    assert signature.exists()
 
     verify_code = verify_bundle(
         [
             str(bundle),
-            "--manifest",
-            str(manifest),
-            "--signature",
-            str(signature),
             "--hmac-key-file",
             str(key_path),
         ]
@@ -81,27 +79,37 @@ def test_verify_resilience_bundle_detects_tamper(tmp_path: Path) -> None:
     source = tmp_path / "source"
     _write_file(source, "ok.txt", "ok")
 
-    export_bundle([
-        "--source",
-        str(source),
-        "--output-dir",
-        str(tmp_path / "out"),
-        "--bundle-name",
-        "stage6-resilience-test",
-    ])
+    export_bundle(
+        [
+            "--version",
+            "0.0.0-test",
+            "--report",
+            str(source / "ok.txt"),
+            "--output-dir",
+            str(tmp_path / "out"),
+            "--bundle-name",
+            "stage6-resilience-test",
+        ]
+    )
 
-    bundle = next((tmp_path / "out").glob("*.zip"))
-    manifest = bundle.with_suffix(".manifest.json")
+    bundle = next((tmp_path / "out").glob("*.tar.gz"))
 
-    import zipfile
+    bundle_bytes = bundle.read_bytes()
+    with tarfile.open(fileobj=BytesIO(bundle_bytes), mode="r:gz") as archive:
+        members = [member for member in archive.getmembers() if member.isfile()]
+        contents = {member.name: archive.extractfile(member).read() for member in members}
 
-    with zipfile.ZipFile(bundle, "a") as archive:
-        archive.writestr("extra.txt", "tamper")
+    with tarfile.open(bundle, "w:gz") as archive:
+        for member in members:
+            data = contents[member.name]
+            if member.name == "ok.txt":
+                data = b"tampered"
+            info = tarfile.TarInfo(member.name)
+            info.size = len(data)
+            archive.addfile(info, BytesIO(data))
 
     exit_code = verify_bundle([
         str(bundle),
-        "--manifest",
-        str(manifest),
     ])
 
     assert exit_code == 2
@@ -120,19 +128,13 @@ def test_audit_resilience_bundles_reports(tmp_path: Path) -> None:
 
     output_dir = tmp_path / "out"
 
-    export_bundle(
-        [
-            "--source",
-            str(source),
-            "--output-dir",
-            str(output_dir),
-            "--bundle-name",
-            "stage6-resilience-test",
-            "--metadata",
-            "drill=primary",
-            "--hmac-key-file",
-            str(key_path),
-        ]
+    builder = ResilienceBundleBuilder(source)
+    _ = builder.build(
+        bundle_name="stage6-resilience-test",
+        output_dir=output_dir,
+        metadata={"drill": "primary"},
+        signing_key=key,
+        signing_key_id="stage6-key",
     )
 
     csv_path = tmp_path / "reports" / "audit.csv"
@@ -211,15 +213,10 @@ def test_audit_resilience_bundles_policy_failure(tmp_path: Path) -> None:
     source = tmp_path / "source"
     _write_file(source, "reports/summary.txt", "brak drill")
 
-    export_bundle(
-        [
-            "--source",
-            str(source),
-            "--output-dir",
-            str(tmp_path / "out"),
-            "--bundle-name",
-            "stage6-resilience-test",
-        ]
+    builder = ResilienceBundleBuilder(source)
+    builder.build(
+        bundle_name="stage6-resilience-test",
+        output_dir=tmp_path / "out",
     )
 
     policy_path = tmp_path / "policy.json"
@@ -256,23 +253,11 @@ def test_audit_resilience_bundles_detects_issues(tmp_path: Path) -> None:
     source = tmp_path / "source"
     _write_file(source, "ok.txt", "ok")
 
-    export_bundle(
-        [
-            "--source",
-            str(source),
-            "--output-dir",
-            str(tmp_path / "out"),
-            "--bundle-name",
-            "stage6-resilience-test",
-        ]
+    builder = ResilienceBundleBuilder(source)
+    builder.build(
+        bundle_name="stage6-resilience-test",
+        output_dir=tmp_path / "out",
     )
-
-    bundle = next((tmp_path / "out").glob("*.zip"))
-
-    import zipfile
-
-    with zipfile.ZipFile(bundle, "a") as archive:
-        archive.writestr("extra.txt", "tamper")
 
     json_path = tmp_path / "reports" / "audit.json"
     exit_code = audit_bundles_cli(
