@@ -198,8 +198,13 @@ def _normalize_hint(root_hint: Optional[PathLike[str] | str]) -> Path:
 def _resolve_sentinels(sentinels: Iterable[str]) -> Tuple[str, ...]:
     env_sentinels = os.environ.get(ENV_SENTINELS)
     if env_sentinels is not None:
-        candidates = [part.strip() for part in env_sentinels.split(os.pathsep)]
-        sentinel_list = tuple(filter(None, candidates))
+        candidates: list[str] = []
+        for part in env_sentinels.split(os.pathsep):
+            normalized = part.strip()
+            if not normalized or normalized == os.pathsep:
+                continue
+            candidates.append(normalized)
+        sentinel_list = tuple(candidates)
         if not sentinel_list:
             raise ValueError(
                 "Zmiennej środowiskowej PATHBOOTSTRAP_SENTINELS nie można ustawiać na pustą wartość."
