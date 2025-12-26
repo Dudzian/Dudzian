@@ -82,11 +82,30 @@ class RepoDiscovery(NamedTuple):
     start: Path
 
 
+def _expand_user_path(value: str) -> str:
+    """Rozwiń prefiks ``~`` z uwzględnieniem zmiennej ``HOME`` na Windows."""
+
+    if not value.startswith("~"):
+        return os.path.expanduser(value)
+
+    if os.name == "nt":
+        home = os.environ.get("HOME")
+        if home:
+            remainder = value[1:]
+            if not remainder:
+                return home
+            if remainder.startswith(("/", "\\")):
+                trimmed = remainder.lstrip("/\\")
+                return str(Path(home) / trimmed)
+
+    return os.path.expanduser(value)
+
+
 def _expand_pathlike(value: PathLike[str] | str) -> Path:
     """Znormalizuj wartość ścieżki, obsługując ``~`` oraz zmienne środowiskowe."""
 
     raw = os.fspath(value)
-    expanded_user = os.path.expanduser(raw)
+    expanded_user = _expand_user_path(raw)
     expanded_env = os.path.expandvars(expanded_user)
     return Path(expanded_env)
 
@@ -851,7 +870,7 @@ def _apply_entries(
                 container.insert(0, entry)
                 inserted.insert(0, entry)
     else:  # pragma: no cover - zabezpieczenie przed błędami wywołań
-        raise ValueError(f"Nieznana pozycja wstawiania: {position}")
+    raise ValueError(f"Nieznana pozycja wstawiania: {position}")
     return inserted
 
 
