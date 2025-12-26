@@ -70,10 +70,11 @@ from ui.backend.qml_bridge import to_plain_value
 
 
 @pytest.fixture(scope="module", autouse=True)
-def qml_prop(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
+def qml_prop() -> Iterator[None]:
     """Zapewnia, że property() z QML zwraca plain Python w ramach tego modułu."""
 
     original_property = QObject.property
+    monkeypatch = pytest.MonkeyPatch()
 
     def _plain_property(self: QObject, name: str) -> object:
         value = original_property(self, name)
@@ -84,7 +85,10 @@ def qml_prop(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
         return to_plain_value(value)
 
     monkeypatch.setattr(QObject, "property", _plain_property, raising=True)
-    yield
+    try:
+        yield
+    finally:
+        monkeypatch.undo()
 
 
 @pytest.fixture

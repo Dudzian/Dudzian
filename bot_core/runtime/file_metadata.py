@@ -150,6 +150,10 @@ def file_reference_metadata(path: Path | str, *, role: str | None = None) -> Map
         metadata["stat_error"] = str(exc)
         if role in {"tls_cert", "tls_key", "tls_client_ca"}:
             warnings.append("Plik materiału TLS jest niedostępny – konfiguracja nie będzie kompletna.")
+        if role in {"jsonl", "ui_alerts_jsonl"}:
+            warnings.append(
+                "Plik logu nie istnieje – zostanie utworzony przy pierwszym zapisie, upewnij się, że katalog jest poprawny."
+            )
         metadata["security_warnings"] = warnings
         return metadata
 

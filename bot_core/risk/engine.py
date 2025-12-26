@@ -479,7 +479,8 @@ class ThresholdRiskEngine(RiskEngine):
                     and max_trade_risk_pct > 0
                     and incremental_quantity > 0
                 ):
-                    max_risk_capital = max_trade_risk_pct * account.total_equity
+                    trade_risk_cap_pct = max(max_trade_risk_pct, target_vol)
+                    max_risk_capital = trade_risk_cap_pct * account.total_equity
                     risk_capital = stop_distance * incremental_quantity
                     if risk_capital > max_risk_capital + 1e-9:
                         allowed_increment = max_risk_capital / max(stop_distance, 1e-12)
