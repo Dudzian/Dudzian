@@ -333,9 +333,9 @@ def pytest_sessionfinish(session: Any, exitstatus: int) -> None:  # pragma: no c
 
 def _relative_path(path: Path) -> str:
     try:
-        return str(path.resolve().relative_to(_REPO_ROOT))
+        return path.resolve().relative_to(_REPO_ROOT).as_posix()
     except ValueError:
-        return str(path.resolve())
+        return path.resolve().as_posix()
 
 
 def _summaries() -> tuple[float, list[tuple[str, float, int, int, list[tuple[_CoverageFile, int, int]]]]]:
