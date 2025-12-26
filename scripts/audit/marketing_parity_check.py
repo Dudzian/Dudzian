@@ -112,8 +112,15 @@ def compare_against_mirror(local_hashes: List[FileHash], mirror_root: Path) -> D
     return {"missing_in_mirror": missing_in_mirror, "mismatched": mismatched}
 
 
-def render_report(local_hashes: List[FileHash], mirror_root: Path, parity: Dict[str, List[str]]) -> str:
+def render_report(
+    local_hashes: List[FileHash], mirror_root: Path, parity: Dict[str, List[str]], error: str | None = None
+) -> str:
     lines = ["# Marketing bundle parity report", ""]
+
+    if error:
+        lines.append("## Błąd walidacji")
+        lines.append(error)
+        lines.append("")
     lines.append(f"Mirror root: `{mirror_root}`")
     lines.append("")
 
@@ -192,13 +199,23 @@ def run_parity_check(
     files = collect_files(stress_lab_dir, signal_quality_index, root)
     local_hashes = hash_files(files)
     parity = compare_against_mirror(local_hashes, mirror_dir)
-    report = render_report(local_hashes, mirror_dir, parity)
+    parity_error = None
+    if parity["missing_in_mirror"] or parity["mismatched"]:
+        details: List[str] = []
+        if parity["missing_in_mirror"]:
+            details.append(f"missing in mirror ({len(parity['missing_in_mirror'])})")
+        if parity["mismatched"]:
+            details.append(f"mismatched hashes ({len(parity['mismatched'])})")
+        suffix = f": {', '.join(details)}" if details else ""
+        parity_error = f"Mirror parity check failed{suffix}"
+
+    report = render_report(local_hashes, mirror_dir, parity, error=parity_error)
     write_report(report_output, report)
     if json_output:
-        write_json_report(json_output, render_json_report(local_hashes, mirror_dir, parity))
+        write_json_report(json_output, render_json_report(local_hashes, mirror_dir, parity, error=parity_error))
 
-    if parity["missing_in_mirror"] or parity["mismatched"]:
-        raise ParityError("Mirror parity check failed")
+    if parity_error:
+        raise ParityError(parity_error)
 
 
 def build_parser() -> argparse.ArgumentParser:
