@@ -1431,6 +1431,41 @@ jobs:
           if-no-files-found: warn
           retention-days: 14
 
+  marketplace-catalog-validation:
+    name: Marketplace catalog validation
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install .[dev]
+
+      - name: Run marketplace catalog validation tests
+        run: |
+          mkdir -p test-results/marketplace
+          python -m pytest \
+            tests/test_marketplace_catalog.py \
+            tests/test_build_marketplace_catalog_backfill.py \
+            --maxfail=1 --disable-warnings \
+            --junitxml=test-results/marketplace/pytest.xml
+
+      - name: Upload pytest results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: marketplace-catalog-pytest-results
+          path: test-results/marketplace/pytest.xml
+          if-no-files-found: warn
+
   marketplace-catalog:
     name: Marketplace Catalog Packaging
     runs-on: [self-hosted, windows]
@@ -1472,7 +1507,11 @@ jobs:
         run: python scripts/marketplace_cli.py validate --key dev-hmac:config/marketplace/keys/dev-hmac.key
 
       - name: Run marketplace catalog tests
-        run: pytest tests/test_marketplace_catalog.py --maxfail=1 --disable-warnings
+        run: |
+          python -m pytest \
+            tests/test_marketplace_catalog.py \
+            tests/test_build_marketplace_catalog_backfill.py \
+            --maxfail=1 --disable-warnings
 
       - name: Sync community reviews and client catalog
         run: |
