@@ -1,6 +1,6 @@
 {
   "schema_version": "1.1",
-  "generated_at": "2025-02-11T12:00:00Z",
+  "generated_at": "2025-11-01T22:38:01Z",
   "packages": [
     {
       "schema_version": "1.1",
@@ -24,7 +24,7 @@
         "name": "Marketplace Evaluation License",
         "spdx_id": "Proprietary",
         "url": "https://configs.example.com/licenses/marketplace-eval",
-        "terms_summary": "Do u\u017cytku ewaluacyjnego w \u015brodowiskach demo.",
+        "terms_summary": "Do użytku ewaluacyjnego w środowiskach demo.",
         "redistributable": false,
         "commercial_use": false
       },
@@ -57,12 +57,12 @@
           "size_bytes": 1787,
           "integrity": {
             "algorithm": "sha256",
-            "digest": "55ec6285e0bf0bed1c421a50a661800918a6836a812ad3bbde56c27b5c5d2dc6"
+            "digest": "f5228e18b42e251ae618246f59abbcc28d84aa3cb50516982137ba2610323d41"
           },
           "signature": {
             "algorithm": "HMAC-SHA256",
             "key_id": "dev-hmac",
-            "value": "6Kl98cFmSj+vojQIhQuLzGpBkGr3dXskSahjQ56OWaA=",
+            "value": "iySOz5BVt6kRWOSnR+1qXEzjFLZJWPMxnuTpu4oADH0=",
             "signed_fields": [
               "package_id",
               "version",
@@ -102,7 +102,7 @@
       "documentation_url": "https://configs.example.com/marketplace/ai_macro_multi_horizon",
       "release_notes": [
         "Pierwsza publikacja AI Macro Multi-Horizon",
-        "Dodano checklist\u0119 HyperCare."
+        "Dodano checklistę HyperCare."
       ],
       "security": {
         "mode": "allowlist",
@@ -110,7 +110,7 @@
           "OEM-1234567890ABCDEF"
         ],
         "require_strict_match": false,
-        "audit_message": "Preset dost\u0119pny tylko dla licencjonowanych instalacji OEM."
+        "audit_message": "Preset dostępny tylko dla licencjonowanych instalacji OEM."
       },
       "release": {
         "channel": "public",
@@ -188,7 +188,7 @@
           "recommended_budget": 70000.0,
           "max_positions": 5,
           "holding_period": "swing",
-          "automation": "pe\u0142na",
+          "automation": "pełna",
           "notes": "Preset AI Macro Multi-Horizon preferuje ai scenariusze."
         }
       ]
@@ -197,9 +197,9 @@
       "schema_version": "1.1",
       "package_id": "exchange_binance.v1",
       "display_name": "Binance Exchange Environments",
-      "summary": "Preset \u015brodowisk paper/testnet/live dla gie\u0142dy Binance.",
-      "description": "Pakiet udost\u0119pnia kompletny zestaw \u015brodowisk i guardraili dla integracji Binance wraz z podpisanym presetem.",
-      "version": "1.0.0+3f04577c8d9eef4d",
+      "summary": "Preset środowisk paper/testnet/live dla giełdy Binance.",
+      "description": "Pakiet udostępnia kompletny zestaw środowisk i guardraili dla integracji Binance wraz z podpisanym presetem.",
+      "version": "1.0.0+729d5b277f4fc823",
       "revision": "2025.01",
       "release_date": "2025-11-01T22:38:01Z",
       "maintainers": [
@@ -215,7 +215,7 @@
         "name": "Marketplace Evaluation License",
         "spdx_id": "Proprietary",
         "url": "https://configs.example.com/licenses/marketplace-eval",
-        "terms_summary": "Do u\u017cytku ewaluacyjnego.",
+        "terms_summary": "Do użytku ewaluacyjnego.",
         "redistributable": false,
         "commercial_use": false
       },
@@ -245,16 +245,16 @@
           "name": "preset-document",
           "uri": "packages/exchanges/exchange_binance_v1.json",
           "kind": "preset",
-          "description": "Podpisany preset \u015brodowisk Binance.",
-          "size_bytes": 3991,
+          "description": "Podpisany preset środowisk Binance.",
+          "size_bytes": 7434,
           "integrity": {
             "algorithm": "sha256",
-            "digest": "72178d09324da6fee531df5486ae121dc462480b01002d9800ba37a38bf35430"
+            "digest": "7bddbf8b02f0af355db1476e7151b66d96965ddc474c8c0ae080d5c5a66e4ed2"
           },
           "signature": {
             "algorithm": "HMAC-SHA256",
             "key_id": "dev-hmac",
-            "value": "zvIxbjmmIKL4tdVhc4GVVbfhUl83WFwiFnjmQcyvu/M=",
+            "value": "BJhTg5hZOLXwEhPxA/bVPTzWmqTEQFsXYxuVrnrbEvU=",
             "signed_fields": [
               "package_id",
               "version",
@@ -277,14 +277,14 @@
       ],
       "documentation_url": "https://configs.example.com/marketplace/exchanges/binance",
       "release_notes": [
-        "Pierwsze publiczne wydanie preset\u00f3w \u015brodowisk Binance.",
+        "Pierwsze publiczne wydanie presetów środowisk Binance.",
         "Dodano guardraile watchdog i ustawienia margin."
       ],
       "security": {
         "mode": "none",
         "allowed_fingerprints": [],
         "require_strict_match": false,
-        "audit_message": "Brak ogranicze\u0144 fingerprint dla preset\u00f3w exchange."
+        "audit_message": "Brak ograniczeń fingerprint dla presetów exchange."
       },
       "release": {
         "channel": "beta",
@@ -298,7 +298,7 @@
         ],
         "ticket": "https://jira.example.com/browse/MKT-1107",
         "approved_at": "2025-01-12T11:45:00Z",
-        "notes": "Beta \u2013 monitoruj wp\u0142yw zmian limit\u00f3w API."
+        "notes": "Beta – monitoruj wpływ zmian limitów API."
       },
       "exchange_compatibility": [
         {
@@ -331,9 +331,9 @@
       "schema_version": "1.1",
       "package_id": "exchange_bitfinex.v1",
       "display_name": "Bitfinex Exchange Environments",
-      "summary": "Preset \u015brodowisk paper/testnet/live dla gie\u0142dy Bitfinex.",
-      "description": "Pakiet udost\u0119pnia kompletny zestaw \u015brodowisk i guardraili dla integracji Bitfinex.",
-      "version": "1.0.0+community",
+      "summary": "Preset środowisk paper/testnet/live dla giełdy Bitfinex.",
+      "description": "Pakiet udostępnia kompletny zestaw środowisk i guardraili dla integracji Bitfinex.",
+      "version": "1.0.0+b3574f2b0195fc90",
       "revision": "2025.01",
       "release_date": "2025-01-15T09:30:00Z",
       "maintainers": [
@@ -349,7 +349,7 @@
         "name": "Marketplace Evaluation License",
         "spdx_id": "Proprietary",
         "url": "https://configs.example.com/licenses/marketplace-eval",
-        "terms_summary": "Do u\u017cytku ewaluacyjnego.",
+        "terms_summary": "Do użytku ewaluacyjnego.",
         "redistributable": false,
         "commercial_use": false
       },
@@ -378,16 +378,16 @@
           "name": "preset-document",
           "uri": "packages/exchanges/exchange_bitfinex_v1.json",
           "kind": "preset",
-          "description": "Podpisany preset \u015brodowisk Bitfinex.",
+          "description": "Podpisany preset środowisk Bitfinex.",
           "size_bytes": 3462,
           "integrity": {
             "algorithm": "sha256",
-            "digest": "24045ad23ee2a7f6795a8cfc338f9f29f495413e9ebcf43bfc9df668036b34b8"
+            "digest": "90e1e77f2f5630e40aad4be9918e1a6b5f960641712fa51aedc33cfc04d14698"
           },
           "signature": {
             "algorithm": "HMAC-SHA256",
             "key_id": "dev-hmac",
-            "value": "h21pmtkKPb3F4kKQ25GwU17Mn2sHzHArCQQJ5QdwMjo=",
+            "value": "+DIzVtgGvoMvvDod/+NK8UViTfiAEGnOU0eUEzOmOX0=",
             "signed_fields": [
               "package_id",
               "version",
@@ -410,14 +410,14 @@
       ],
       "documentation_url": "https://configs.example.com/marketplace/exchanges/bitfinex",
       "release_notes": [
-        "Pierwsze publiczne wydanie preset\u00f3w \u015brodowisk Bitfinex.",
+        "Pierwsze publiczne wydanie presetów środowisk Bitfinex.",
         "Dodano guardraile watchdog i monitoring API."
       ],
       "security": {
         "mode": "none",
         "allowed_fingerprints": [],
         "require_strict_match": false,
-        "audit_message": "Brak ogranicze\u0144 fingerprint dla preset\u00f3w exchange."
+        "audit_message": "Brak ograniczeń fingerprint dla presetów exchange."
       },
       "release": {
         "channel": "beta",
@@ -431,7 +431,7 @@
         ],
         "ticket": "https://jira.example.com/browse/MKT-1450",
         "approved_at": "2025-01-15T09:30:00Z",
-        "notes": "Publiczna certyfikacja preset\u00f3w \u015brodowiskowych."
+        "notes": "Publiczna certyfikacja presetów środowiskowych."
       },
       "exchange_compatibility": [
         {
@@ -463,9 +463,9 @@
       "schema_version": "1.1",
       "package_id": "exchange_bitget.v1",
       "display_name": "Bitget Exchange Environments",
-      "summary": "Preset \u015brodowisk paper/testnet/live dla gie\u0142dy Bitget.",
-      "description": "Pakiet udost\u0119pnia kompletny zestaw \u015brodowisk i guardraili dla integracji Bitget.",
-      "version": "1.0.0+community",
+      "summary": "Preset środowisk paper/testnet/live dla giełdy Bitget.",
+      "description": "Pakiet udostępnia kompletny zestaw środowisk i guardraili dla integracji Bitget.",
+      "version": "1.0.0+c4b547f978177f1f",
       "revision": "2025.01",
       "release_date": "2025-01-15T09:30:00Z",
       "maintainers": [
@@ -481,7 +481,7 @@
         "name": "Marketplace Evaluation License",
         "spdx_id": "Proprietary",
         "url": "https://configs.example.com/licenses/marketplace-eval",
-        "terms_summary": "Do u\u017cytku ewaluacyjnego.",
+        "terms_summary": "Do użytku ewaluacyjnego.",
         "redistributable": false,
         "commercial_use": false
       },
@@ -510,16 +510,16 @@
           "name": "preset-document",
           "uri": "packages/exchanges/exchange_bitget_v1.json",
           "kind": "preset",
-          "description": "Podpisany preset \u015brodowisk Bitget.",
+          "description": "Podpisany preset środowisk Bitget.",
           "size_bytes": 3881,
           "integrity": {
             "algorithm": "sha256",
-            "digest": "a31acacbe8dce76f05962db1bc83ea2ca9feb7aa0f2a23d0120b1b67e065b57e"
+            "digest": "03ff66af5198f065b1f9dc74721024e75f3b8562a20e0ea18bc397838cc19d88"
           },
           "signature": {
             "algorithm": "HMAC-SHA256",
             "key_id": "dev-hmac",
-            "value": "AidTlNlSuFD7OJpTfawjXHPsTA2nUynshP6JBWvEbaY=",
+            "value": "T45RcKcoZ/+WLQo70pfY+KceP++5UfuP8pQUv7NbH0w=",
             "signed_fields": [
               "package_id",
               "version",
@@ -542,14 +542,14 @@
       ],
       "documentation_url": "https://configs.example.com/marketplace/exchanges/bitget",
       "release_notes": [
-        "Pierwsze publiczne wydanie preset\u00f3w \u015brodowisk Bitget.",
+        "Pierwsze publiczne wydanie presetów środowisk Bitget.",
         "Dodano guardraile watchdog i monitoring API."
       ],
       "security": {
         "mode": "none",
         "allowed_fingerprints": [],
         "require_strict_match": false,
-        "audit_message": "Brak ogranicze\u0144 fingerprint dla preset\u00f3w exchange."
+        "audit_message": "Brak ograniczeń fingerprint dla presetów exchange."
       },
       "release": {
         "channel": "beta",
@@ -563,7 +563,7 @@
         ],
         "ticket": "https://jira.example.com/browse/MKT-1450",
         "approved_at": "2025-01-15T09:30:00Z",
-        "notes": "Publiczna certyfikacja preset\u00f3w \u015brodowiskowych."
+        "notes": "Publiczna certyfikacja presetów środowiskowych."
       },
       "exchange_compatibility": [
         {
@@ -596,9 +596,9 @@
       "schema_version": "1.1",
       "package_id": "exchange_bitmex.v1",
       "display_name": "BitMEX Exchange Environments",
-      "summary": "Preset \u015brodowisk paper/testnet/live dla gie\u0142dy BitMEX.",
-      "description": "Pakiet udost\u0119pnia kompletny zestaw \u015brodowisk i guardraili dla integracji BitMEX.",
-      "version": "1.0.0+community",
+      "summary": "Preset środowisk paper/testnet/live dla giełdy BitMEX.",
+      "description": "Pakiet udostępnia kompletny zestaw środowisk i guardraili dla integracji BitMEX.",
+      "version": "1.0.0+547e7f9a694ed240",
       "revision": "2025.01",
       "release_date": "2025-01-15T09:30:00Z",
       "maintainers": [
@@ -614,7 +614,7 @@
         "name": "Marketplace Evaluation License",
         "spdx_id": "Proprietary",
         "url": "https://configs.example.com/licenses/marketplace-eval",
-        "terms_summary": "Do u\u017cytku ewaluacyjnego.",
+        "terms_summary": "Do użytku ewaluacyjnego.",
         "redistributable": false,
         "commercial_use": false
       },
@@ -643,16 +643,16 @@
           "name": "preset-document",
           "uri": "packages/exchanges/exchange_bitmex_v1.json",
           "kind": "preset",
-          "description": "Podpisany preset \u015brodowisk BitMEX.",
-          "size_bytes": 5989,
+          "description": "Podpisany preset środowisk BitMEX.",
+          "size_bytes": 6112,
           "integrity": {
             "algorithm": "sha256",
-            "digest": "fc14d2cdca9855df213397dfcb48b73bf1ca71e94bc892f08c91b1d3a1eee7a8"
+            "digest": "5b452e0e330079643a53b23b5852ffab61b0e941f4e23621ab452f4c5a5980f4"
           },
           "signature": {
             "algorithm": "HMAC-SHA256",
             "key_id": "dev-hmac",
-            "value": "9VU4aUoN5EhIEb+8lcXpc0qeDgAYWCHFsZj/4dQp4Io=",
+            "value": "b/EvwBr57R7Y2RBUpZRZ1K5tpyvW2QpaNEVh7mQocR4=",
             "signed_fields": [
               "package_id",
               "version",
@@ -675,14 +675,14 @@
       ],
       "documentation_url": "https://configs.example.com/marketplace/exchanges/bitmex",
       "release_notes": [
-        "Pierwsze publiczne wydanie preset\u00f3w \u015brodowisk BitMEX.",
+        "Pierwsze publiczne wydanie presetów środowisk BitMEX.",
         "Dodano guardraile watchdog i monitoring API."
       ],
       "security": {
         "mode": "none",
         "allowed_fingerprints": [],
         "require_strict_match": false,
-        "audit_message": "Brak ogranicze\u0144 fingerprint dla preset\u00f3w exchange."
+        "audit_message": "Brak ograniczeń fingerprint dla presetów exchange."
       },
       "release": {
         "channel": "beta",
@@ -696,7 +696,7 @@
         ],
         "ticket": "https://jira.example.com/browse/MKT-1450",
         "approved_at": "2025-01-15T09:30:00Z",
-        "notes": "Publiczna certyfikacja preset\u00f3w \u015brodowiskowych."
+        "notes": "Publiczna certyfikacja presetów środowiskowych."
       },
       "exchange_compatibility": [
         {
@@ -728,9 +728,9 @@
       "schema_version": "1.1",
       "package_id": "exchange_bitstamp.v1",
       "display_name": "Bitstamp Exchange Environments",
-      "summary": "Preset \u015brodowisk paper/testnet/live dla gie\u0142dy Bitstamp.",
-      "description": "Pakiet udost\u0119pnia kompletny zestaw \u015brodowisk i guardraili dla integracji Bitstamp.",
-      "version": "1.0.0+community",
+      "summary": "Preset środowisk paper/testnet/live dla giełdy Bitstamp.",
+      "description": "Pakiet udostępnia kompletny zestaw środowisk i guardraili dla integracji Bitstamp.",
+      "version": "1.0.0+53a40836a1fcda9d",
       "revision": "2025.01",
       "release_date": "2025-01-15T09:30:00Z",
       "maintainers": [
@@ -746,7 +746,7 @@
         "name": "Marketplace Evaluation License",
         "spdx_id": "Proprietary",
         "url": "https://configs.example.com/licenses/marketplace-eval",
-        "terms_summary": "Do u\u017cytku ewaluacyjnego.",
+        "terms_summary": "Do użytku ewaluacyjnego.",
         "redistributable": false,
         "commercial_use": false
       },
@@ -775,16 +775,16 @@
           "name": "preset-document",
           "uri": "packages/exchanges/exchange_bitstamp_v1.json",
           "kind": "preset",
-          "description": "Podpisany preset \u015brodowisk Bitstamp.",
+          "description": "Podpisany preset środowisk Bitstamp.",
           "size_bytes": 3385,
           "integrity": {
             "algorithm": "sha256",
-            "digest": "03f456f7bd6eaaa220a77debafe001b6c53cb8c07345b4d04ac5372f3ebb146d"
+            "digest": "c3075639c57f3e442ea4a3fb166f08245175185c3a1bd679ee168d37bf4c8537"
           },
           "signature": {
             "algorithm": "HMAC-SHA256",
             "key_id": "dev-hmac",
-            "value": "NJA4XYaoY3emXKKEWT/+bJXDV/DvXu+fPunHGhTWUfM=",
+            "value": "7mkDSd8g8O+pVBLiNO/TzRjdJ6vClBWR6/oQCUmYKz8=",
             "signed_fields": [
               "package_id",
               "version",
@@ -807,14 +807,14 @@
       ],
       "documentation_url": "https://configs.example.com/marketplace/exchanges/bitstamp",
       "release_notes": [
-        "Pierwsze publiczne wydanie preset\u00f3w \u015brodowisk Bitstamp.",
+        "Pierwsze publiczne wydanie presetów środowisk Bitstamp.",
         "Dodano guardraile watchdog i monitoring API."
       ],
       "security": {
         "mode": "none",
         "allowed_fingerprints": [],
         "require_strict_match": false,
-        "audit_message": "Brak ogranicze\u0144 fingerprint dla preset\u00f3w exchange."
+        "audit_message": "Brak ograniczeń fingerprint dla presetów exchange."
       },
       "release": {
         "channel": "beta",
@@ -828,7 +828,7 @@
         ],
         "ticket": "https://jira.example.com/browse/MKT-1450",
         "approved_at": "2025-01-15T09:30:00Z",
-        "notes": "Publiczna certyfikacja preset\u00f3w \u015brodowiskowych."
+        "notes": "Publiczna certyfikacja presetów środowiskowych."
       },
       "exchange_compatibility": [
         {
@@ -860,9 +860,9 @@
       "schema_version": "1.1",
       "package_id": "exchange_bybit.v1",
       "display_name": "Bybit Exchange Environments",
-      "summary": "Preset \u015brodowisk paper/testnet/live dla gie\u0142dy Bybit.",
-      "description": "Pakiet udost\u0119pnia kompletny zestaw \u015brodowisk i guardraili dla integracji Bybit.",
-      "version": "1.0.0+community",
+      "summary": "Preset środowisk paper/testnet/live dla giełdy Bybit.",
+      "description": "Pakiet udostępnia kompletny zestaw środowisk i guardraili dla integracji Bybit.",
+      "version": "1.0.0+a3df49a569b97eac",
       "revision": "2025.01",
       "release_date": "2025-01-15T09:30:00Z",
       "maintainers": [
@@ -878,7 +878,7 @@
         "name": "Marketplace Evaluation License",
         "spdx_id": "Proprietary",
         "url": "https://configs.example.com/licenses/marketplace-eval",
-        "terms_summary": "Do u\u017cytku ewaluacyjnego.",
+        "terms_summary": "Do użytku ewaluacyjnego.",
         "redistributable": false,
         "commercial_use": false
       },
@@ -907,16 +907,16 @@
           "name": "preset-document",
           "uri": "packages/exchanges/exchange_bybit_v1.json",
           "kind": "preset",
-          "description": "Podpisany preset \u015brodowisk Bybit.",
-          "size_bytes": 3868,
+          "description": "Podpisany preset środowisk Bybit.",
+          "size_bytes": 5068,
           "integrity": {
             "algorithm": "sha256",
-            "digest": "77f665170aaa54efe435a0db6d5169b89f5a8cfd843ed65117ec9b38e1be6760"
+            "digest": "4e6abf36208d43cd5db9a81f99f7f882244559d4b3e76adbdc46542e169477f2"
           },
           "signature": {
             "algorithm": "HMAC-SHA256",
             "key_id": "dev-hmac",
-            "value": "YfNViFM0aQXdQeEHQS1m2Ewwlj84K0xguyIy6syEpSQ=",
+            "value": "up5qjzfSTqKj3azBPRiyoJnIaeERkQGO7XXxmtPXmlw=",
             "signed_fields": [
               "package_id",
               "version",
@@ -939,14 +939,14 @@
       ],
       "documentation_url": "https://configs.example.com/marketplace/exchanges/bybit",
       "release_notes": [
-        "Pierwsze publiczne wydanie preset\u00f3w \u015brodowisk Bybit.",
+        "Pierwsze publiczne wydanie presetów środowisk Bybit.",
         "Dodano guardraile watchdog i monitoring API."
       ],
       "security": {
         "mode": "none",
         "allowed_fingerprints": [],
         "require_strict_match": false,
-        "audit_message": "Brak ogranicze\u0144 fingerprint dla preset\u00f3w exchange."
+        "audit_message": "Brak ograniczeń fingerprint dla presetów exchange."
       },
       "release": {
         "channel": "beta",
@@ -960,7 +960,7 @@
         ],
         "ticket": "https://jira.example.com/browse/MKT-1450",
         "approved_at": "2025-01-15T09:30:00Z",
-        "notes": "Publiczna certyfikacja preset\u00f3w \u015brodowiskowych."
+        "notes": "Publiczna certyfikacja presetów środowiskowych."
       },
       "exchange_compatibility": [
         {
@@ -993,9 +993,9 @@
       "schema_version": "1.1",
       "package_id": "exchange_coinbase.v1",
       "display_name": "Coinbase Exchange Environments",
-      "summary": "Preset \u015brodowisk paper/testnet/live dla gie\u0142dy Coinbase.",
-      "description": "Pakiet udost\u0119pnia kompletny zestaw \u015brodowisk i guardraili dla integracji Coinbase.",
-      "version": "1.0.0+community",
+      "summary": "Preset środowisk paper/testnet/live dla giełdy Coinbase.",
+      "description": "Pakiet udostępnia kompletny zestaw środowisk i guardraili dla integracji Coinbase.",
+      "version": "1.0.0+ee517d28ab3a420b",
       "revision": "2025.01",
       "release_date": "2025-01-15T09:30:00Z",
       "maintainers": [
@@ -1011,7 +1011,7 @@
         "name": "Marketplace Evaluation License",
         "spdx_id": "Proprietary",
         "url": "https://configs.example.com/licenses/marketplace-eval",
-        "terms_summary": "Do u\u017cytku ewaluacyjnego.",
+        "terms_summary": "Do użytku ewaluacyjnego.",
         "redistributable": false,
         "commercial_use": false
       },
@@ -1040,16 +1040,16 @@
           "name": "preset-document",
           "uri": "packages/exchanges/exchange_coinbase_v1.json",
           "kind": "preset",
-          "description": "Podpisany preset \u015brodowisk Coinbase.",
+          "description": "Podpisany preset środowisk Coinbase.",
           "size_bytes": 4080,
           "integrity": {
             "algorithm": "sha256",
-            "digest": "3e66cb2c525cd305ebf018ba96bd78c8c55ae2b9180b360b3599b356cedcf9a0"
+            "digest": "5c98e8b7ae5f500d7a6af9bd1d57232c2d94c570a5b91b1594651fe6b697f757"
           },
           "signature": {
             "algorithm": "HMAC-SHA256",
             "key_id": "dev-hmac",
-            "value": "JuXAmWAtW4irnwGyT2llOnCXMG8nSGxP0g2f4kyPs0I=",
+            "value": "axiTaB2aDHj/nU2yGno27hrpBPy2zBalJg2oIRw2zQs=",
             "signed_fields": [
               "package_id",
               "version",
@@ -1072,14 +1072,14 @@
       ],
       "documentation_url": "https://configs.example.com/marketplace/exchanges/coinbase",
       "release_notes": [
-        "Pierwsze publiczne wydanie preset\u00f3w \u015brodowisk Coinbase.",
+        "Pierwsze publiczne wydanie presetów środowisk Coinbase.",
         "Dodano guardraile watchdog i monitoring API."
       ],
       "security": {
         "mode": "none",
         "allowed_fingerprints": [],
         "require_strict_match": false,
-        "audit_message": "Brak ogranicze\u0144 fingerprint dla preset\u00f3w exchange."
+        "audit_message": "Brak ograniczeń fingerprint dla presetów exchange."
       },
       "release": {
         "channel": "beta",
@@ -1093,7 +1093,7 @@
         ],
         "ticket": "https://jira.example.com/browse/MKT-1450",
         "approved_at": "2025-01-15T09:30:00Z",
-        "notes": "Publiczna certyfikacja preset\u00f3w \u015brodowiskowych."
+        "notes": "Publiczna certyfikacja presetów środowiskowych."
       },
       "exchange_compatibility": [
         {
@@ -1125,9 +1125,9 @@
       "schema_version": "1.1",
       "package_id": "exchange_deribit.v1",
       "display_name": "Deribit Exchange Environments",
-      "summary": "Preset \u015brodowisk paper/testnet/live dla gie\u0142dy Deribit.",
-      "description": "Pakiet udost\u0119pnia kompletny zestaw \u015brodowisk i guardraili dla integracji Deribit.",
-      "version": "1.0.0+community",
+      "summary": "Preset środowisk paper/testnet/live dla giełdy Deribit.",
+      "description": "Pakiet udostępnia kompletny zestaw środowisk i guardraili dla integracji Deribit.",
+      "version": "1.0.0+6481b2a84ec62f81",
       "revision": "2025.01",
       "release_date": "2025-01-15T09:30:00Z",
       "maintainers": [
@@ -1143,7 +1143,7 @@
         "name": "Marketplace Evaluation License",
         "spdx_id": "Proprietary",
         "url": "https://configs.example.com/licenses/marketplace-eval",
-        "terms_summary": "Do u\u017cytku ewaluacyjnego.",
+        "terms_summary": "Do użytku ewaluacyjnego.",
         "redistributable": false,
         "commercial_use": false
       },
@@ -1172,16 +1172,16 @@
           "name": "preset-document",
           "uri": "packages/exchanges/exchange_deribit_v1.json",
           "kind": "preset",
-          "description": "Podpisany preset \u015brodowisk Deribit.",
-          "size_bytes": 6041,
+          "description": "Podpisany preset środowisk Deribit.",
+          "size_bytes": 6167,
           "integrity": {
             "algorithm": "sha256",
-            "digest": "94f087916ad175ec29d19c1f0e08f79442b536b3c234cf4f67a5aaff565b08fa"
+            "digest": "e35ed8577c0221f371aa1e6ec66a370afe19d42fe602f82f4a69a7648152ed0f"
           },
           "signature": {
             "algorithm": "HMAC-SHA256",
             "key_id": "dev-hmac",
-            "value": "4T/2vtqlW5VLIKolgSyxWrbOFZDRTTMNjK/rOO971YM=",
+            "value": "j+1ErHDVyGL1n85AHjEX282iZiuEwI8ltpOxXNG6BsE=",
             "signed_fields": [
               "package_id",
               "version",
@@ -1204,14 +1204,14 @@
       ],
       "documentation_url": "https://configs.example.com/marketplace/exchanges/deribit",
       "release_notes": [
-        "Pierwsze publiczne wydanie preset\u00f3w \u015brodowisk Deribit.",
+        "Pierwsze publiczne wydanie presetów środowisk Deribit.",
         "Dodano guardraile watchdog i monitoring API."
       ],
       "security": {
         "mode": "none",
         "allowed_fingerprints": [],
         "require_strict_match": false,
-        "audit_message": "Brak ogranicze\u0144 fingerprint dla preset\u00f3w exchange."
+        "audit_message": "Brak ograniczeń fingerprint dla presetów exchange."
       },
       "release": {
         "channel": "beta",
@@ -1225,7 +1225,7 @@
         ],
         "ticket": "https://jira.example.com/browse/MKT-1450",
         "approved_at": "2025-01-15T09:30:00Z",
-        "notes": "Publiczna certyfikacja preset\u00f3w \u015brodowiskowych."
+        "notes": "Publiczna certyfikacja presetów środowiskowych."
       },
       "exchange_compatibility": [
         {
@@ -1258,9 +1258,9 @@
       "schema_version": "1.1",
       "package_id": "exchange_gateio.v1",
       "display_name": "Gate.io Exchange Environments",
-      "summary": "Preset \u015brodowisk paper/testnet/live dla gie\u0142dy Gate.io.",
-      "description": "Pakiet udost\u0119pnia kompletny zestaw \u015brodowisk i guardraili dla integracji Gate.io.",
-      "version": "1.0.0+community",
+      "summary": "Preset środowisk paper/testnet/live dla giełdy Gate.io.",
+      "description": "Pakiet udostępnia kompletny zestaw środowisk i guardraili dla integracji Gate.io.",
+      "version": "1.0.0+7fca42a6558058b1",
       "revision": "2025.01",
       "release_date": "2025-01-15T09:30:00Z",
       "maintainers": [
@@ -1276,7 +1276,7 @@
         "name": "Marketplace Evaluation License",
         "spdx_id": "Proprietary",
         "url": "https://configs.example.com/licenses/marketplace-eval",
-        "terms_summary": "Do u\u017cytku ewaluacyjnego.",
+        "terms_summary": "Do użytku ewaluacyjnego.",
         "redistributable": false,
         "commercial_use": false
       },
@@ -1306,16 +1306,16 @@
           "name": "preset-document",
           "uri": "packages/exchanges/exchange_gateio_v1.json",
           "kind": "preset",
-          "description": "Podpisany preset \u015brodowisk Gate.io.",
+          "description": "Podpisany preset środowisk Gate.io.",
           "size_bytes": 3768,
           "integrity": {
             "algorithm": "sha256",
-            "digest": "421785bc4922722439ad9225dc5521bb14c51fe2255061c7a8fda4622ff28d30"
+            "digest": "03448f022bfe256db4a723ba06c57cf0f38ac7689149fd4029c2b15c71672961"
           },
           "signature": {
             "algorithm": "HMAC-SHA256",
             "key_id": "dev-hmac",
-            "value": "v/wdA/+CfrsiECtKmznCB5a94yNHBZk9e076VPRnq8E=",
+            "value": "ITfhJq8+P6mzDPO1DiI01cNp7fmc2Wo5PpNzbDJdNqI=",
             "signed_fields": [
               "package_id",
               "version",
@@ -1338,14 +1338,14 @@
       ],
       "documentation_url": "https://configs.example.com/marketplace/exchanges/gateio",
       "release_notes": [
-        "Pierwsze publiczne wydanie preset\u00f3w \u015brodowisk Gate.io.",
+        "Pierwsze publiczne wydanie presetów środowisk Gate.io.",
         "Dodano guardraile watchdog i monitoring API."
       ],
       "security": {
         "mode": "none",
         "allowed_fingerprints": [],
         "require_strict_match": false,
-        "audit_message": "Brak ogranicze\u0144 fingerprint dla preset\u00f3w exchange."
+        "audit_message": "Brak ograniczeń fingerprint dla presetów exchange."
       },
       "release": {
         "channel": "beta",
@@ -1359,7 +1359,7 @@
         ],
         "ticket": "https://jira.example.com/browse/MKT-1450",
         "approved_at": "2025-01-15T09:30:00Z",
-        "notes": "Publiczna certyfikacja preset\u00f3w \u015brodowiskowych."
+        "notes": "Publiczna certyfikacja presetów środowiskowych."
       },
       "exchange_compatibility": [
         {
@@ -1392,9 +1392,9 @@
       "schema_version": "1.1",
       "package_id": "exchange_gemini.v1",
       "display_name": "Gemini Exchange Environments",
-      "summary": "Preset \u015brodowisk paper/testnet/live dla gie\u0142dy Gemini.",
-      "description": "Pakiet udost\u0119pnia kompletny zestaw \u015brodowisk i guardraili dla integracji Gemini.",
-      "version": "1.0.0+community",
+      "summary": "Preset środowisk paper/testnet/live dla giełdy Gemini.",
+      "description": "Pakiet udostępnia kompletny zestaw środowisk i guardraili dla integracji Gemini.",
+      "version": "1.1.0+00fe7eff6ee5ab4a",
       "revision": "2025.01",
       "release_date": "2025-01-15T09:30:00Z",
       "maintainers": [
@@ -1410,7 +1410,7 @@
         "name": "Marketplace Evaluation License",
         "spdx_id": "Proprietary",
         "url": "https://configs.example.com/licenses/marketplace-eval",
-        "terms_summary": "Do u\u017cytku ewaluacyjnego.",
+        "terms_summary": "Do użytku ewaluacyjnego.",
         "redistributable": false,
         "commercial_use": false
       },
@@ -1439,16 +1439,16 @@
           "name": "preset-document",
           "uri": "packages/exchanges/exchange_gemini_v1.json",
           "kind": "preset",
-          "description": "Podpisany preset \u015brodowisk Gemini.",
-          "size_bytes": 4350,
+          "description": "Podpisany preset środowisk Gemini.",
+          "size_bytes": 4327,
           "integrity": {
             "algorithm": "sha256",
-            "digest": "3df7744c186904771685fc72a3a31cdfde10c52d521a2d9dc2de79a0f1107884"
+            "digest": "7fda9ae8bd4887a17745dd143bcc820d6c5fbc78543f4d760a700c2daf018a15"
           },
           "signature": {
             "algorithm": "HMAC-SHA256",
             "key_id": "dev-hmac",
-            "value": "F+v9c2wPkrebG/MpM1DkFxp+ZMPuHe4Pc5Et+jot1+Y=",
+            "value": "dbYTu29+8vjXaofAZaZ2w9Mru3Z65g23kv0b2nKCRro=",
             "signed_fields": [
               "package_id",
               "version",
@@ -1471,14 +1471,14 @@
       ],
       "documentation_url": "https://configs.example.com/marketplace/exchanges/gemini",
       "release_notes": [
-        "Pierwsze publiczne wydanie preset\u00f3w \u015brodowisk Gemini.",
+        "Pierwsze publiczne wydanie presetów środowisk Gemini.",
         "Dodano guardraile watchdog i monitoring API."
       ],
       "security": {
         "mode": "none",
         "allowed_fingerprints": [],
         "require_strict_match": false,
-        "audit_message": "Brak ogranicze\u0144 fingerprint dla preset\u00f3w exchange."
+        "audit_message": "Brak ograniczeń fingerprint dla presetów exchange."
       },
       "release": {
         "channel": "beta",
@@ -1492,7 +1492,7 @@
         ],
         "ticket": "https://jira.example.com/browse/MKT-1450",
         "approved_at": "2025-01-15T09:30:00Z",
-        "notes": "Publiczna certyfikacja preset\u00f3w \u015brodowiskowych."
+        "notes": "Publiczna certyfikacja presetów środowiskowych."
       },
       "exchange_compatibility": [
         {
@@ -1524,9 +1524,9 @@
       "schema_version": "1.1",
       "package_id": "exchange_huobi.v1",
       "display_name": "Huobi Exchange Environments",
-      "summary": "Preset \u015brodowisk paper/testnet/live dla gie\u0142dy Huobi.",
-      "description": "Pakiet udost\u0119pnia kompletny zestaw \u015brodowisk i guardraili dla integracji Huobi.",
-      "version": "1.0.0+community",
+      "summary": "Preset środowisk paper/testnet/live dla giełdy Huobi.",
+      "description": "Pakiet udostępnia kompletny zestaw środowisk i guardraili dla integracji Huobi.",
+      "version": "1.1.0+27e8a7ba0898caa6",
       "revision": "2025.01",
       "release_date": "2025-01-15T09:30:00Z",
       "maintainers": [
@@ -1542,7 +1542,7 @@
         "name": "Marketplace Evaluation License",
         "spdx_id": "Proprietary",
         "url": "https://configs.example.com/licenses/marketplace-eval",
-        "terms_summary": "Do u\u017cytku ewaluacyjnego.",
+        "terms_summary": "Do użytku ewaluacyjnego.",
         "redistributable": false,
         "commercial_use": false
       },
@@ -1571,16 +1571,16 @@
           "name": "preset-document",
           "uri": "packages/exchanges/exchange_huobi_v1.json",
           "kind": "preset",
-          "description": "Podpisany preset \u015brodowisk Huobi.",
-          "size_bytes": 4279,
+          "description": "Podpisany preset środowisk Huobi.",
+          "size_bytes": 4238,
           "integrity": {
             "algorithm": "sha256",
-            "digest": "765a3781340b6e8341fc78922524bbe4adc7bc49dbfdfd1e6cf507d700d98d49"
+            "digest": "f540fe51107b99d02ae2fc25d04d1d177b638b9180fd82bb44def90a42a2935f"
           },
           "signature": {
             "algorithm": "HMAC-SHA256",
             "key_id": "dev-hmac",
-            "value": "A8aRbs0yl/ZbrJcN9rW/W+jBXM1HnKh9/gOEb0riNbQ=",
+            "value": "sGyUsBdMmMzM00AM2JpoR2LtYe2QIrFFLCbOlUXircw=",
             "signed_fields": [
               "package_id",
               "version",
@@ -1603,14 +1603,14 @@
       ],
       "documentation_url": "https://configs.example.com/marketplace/exchanges/huobi",
       "release_notes": [
-        "Pierwsze publiczne wydanie preset\u00f3w \u015brodowisk Huobi.",
+        "Pierwsze publiczne wydanie presetów środowisk Huobi.",
         "Dodano guardraile watchdog i monitoring API."
       ],
       "security": {
         "mode": "none",
         "allowed_fingerprints": [],
         "require_strict_match": false,
-        "audit_message": "Brak ogranicze\u0144 fingerprint dla preset\u00f3w exchange."
+        "audit_message": "Brak ograniczeń fingerprint dla presetów exchange."
       },
       "release": {
         "channel": "beta",
@@ -1624,7 +1624,7 @@
         ],
         "ticket": "https://jira.example.com/browse/MKT-1450",
         "approved_at": "2025-01-15T09:30:00Z",
-        "notes": "Publiczna certyfikacja preset\u00f3w \u015brodowiskowych."
+        "notes": "Publiczna certyfikacja presetów środowiskowych."
       },
       "exchange_compatibility": [
         {
@@ -1656,9 +1656,9 @@
       "schema_version": "1.1",
       "package_id": "exchange_kraken.v1",
       "display_name": "Kraken Exchange Environments",
-      "summary": "Preset \u015brodowisk paper/testnet/live dla gie\u0142dy Kraken.",
-      "description": "Pakiet udost\u0119pnia kompletny zestaw \u015brodowisk i guardraili dla integracji Kraken.",
-      "version": "1.0.0+community",
+      "summary": "Preset środowisk paper/testnet/live dla giełdy Kraken.",
+      "description": "Pakiet udostępnia kompletny zestaw środowisk i guardraili dla integracji Kraken.",
+      "version": "1.0.0+d729016f39e32363",
       "revision": "2025.01",
       "release_date": "2025-01-15T09:30:00Z",
       "maintainers": [
@@ -1674,7 +1674,7 @@
         "name": "Marketplace Evaluation License",
         "spdx_id": "Proprietary",
         "url": "https://configs.example.com/licenses/marketplace-eval",
-        "terms_summary": "Do u\u017cytku ewaluacyjnego.",
+        "terms_summary": "Do użytku ewaluacyjnego.",
         "redistributable": false,
         "commercial_use": false
       },
@@ -1703,16 +1703,16 @@
           "name": "preset-document",
           "uri": "packages/exchanges/exchange_kraken_v1.json",
           "kind": "preset",
-          "description": "Podpisany preset \u015brodowisk Kraken.",
-          "size_bytes": 3843,
+          "description": "Podpisany preset środowisk Kraken.",
+          "size_bytes": 5043,
           "integrity": {
             "algorithm": "sha256",
-            "digest": "d98de3b5d486dbb06e01fed4c2fc34b1d6619b8a3030cc392dd4920e2fb3a29f"
+            "digest": "bd131270c3cd4624ce43945250d3924739a0ba68ab666e53b07d70e91f319ca4"
           },
           "signature": {
             "algorithm": "HMAC-SHA256",
             "key_id": "dev-hmac",
-            "value": "UVdDQZPSXj5c46cz3sFNNmUedrBu4j4eGf/f8dODa3E=",
+            "value": "KLyOZbX9z1VYjPuX9NVhKPdgA1B5dab1yhFNKGALchg=",
             "signed_fields": [
               "package_id",
               "version",
@@ -1735,14 +1735,14 @@
       ],
       "documentation_url": "https://configs.example.com/marketplace/exchanges/kraken",
       "release_notes": [
-        "Pierwsze publiczne wydanie preset\u00f3w \u015brodowisk Kraken.",
+        "Pierwsze publiczne wydanie presetów środowisk Kraken.",
         "Dodano guardraile watchdog i monitoring API."
       ],
       "security": {
         "mode": "none",
         "allowed_fingerprints": [],
         "require_strict_match": false,
-        "audit_message": "Brak ogranicze\u0144 fingerprint dla preset\u00f3w exchange."
+        "audit_message": "Brak ograniczeń fingerprint dla presetów exchange."
       },
       "release": {
         "channel": "beta",
@@ -1756,7 +1756,7 @@
         ],
         "ticket": "https://jira.example.com/browse/MKT-1450",
         "approved_at": "2025-01-15T09:30:00Z",
-        "notes": "Publiczna certyfikacja preset\u00f3w \u015brodowiskowych."
+        "notes": "Publiczna certyfikacja presetów środowiskowych."
       },
       "exchange_compatibility": [
         {
@@ -1789,9 +1789,9 @@
       "schema_version": "1.1",
       "package_id": "exchange_kucoin.v1",
       "display_name": "KuCoin Exchange Environments",
-      "summary": "Preset \u015brodowisk paper/testnet/live dla gie\u0142dy KuCoin.",
-      "description": "Pakiet udost\u0119pnia kompletny zestaw \u015brodowisk i guardraili dla integracji KuCoin.",
-      "version": "1.0.0+community",
+      "summary": "Preset środowisk paper/testnet/live dla giełdy KuCoin.",
+      "description": "Pakiet udostępnia kompletny zestaw środowisk i guardraili dla integracji KuCoin.",
+      "version": "1.1.0+a496adb6374abe64",
       "revision": "2025.01",
       "release_date": "2025-01-15T09:30:00Z",
       "maintainers": [
@@ -1807,7 +1807,7 @@
         "name": "Marketplace Evaluation License",
         "spdx_id": "Proprietary",
         "url": "https://configs.example.com/licenses/marketplace-eval",
-        "terms_summary": "Do u\u017cytku ewaluacyjnego.",
+        "terms_summary": "Do użytku ewaluacyjnego.",
         "redistributable": false,
         "commercial_use": false
       },
@@ -1836,16 +1836,16 @@
           "name": "preset-document",
           "uri": "packages/exchanges/exchange_kucoin_v1.json",
           "kind": "preset",
-          "description": "Podpisany preset \u015brodowisk KuCoin.",
-          "size_bytes": 5127,
+          "description": "Podpisany preset środowisk KuCoin.",
+          "size_bytes": 5070,
           "integrity": {
             "algorithm": "sha256",
-            "digest": "9f5606f3459652f16c05b045c88bf981b65138f22c3151267b83fcb9b50c4b0a"
+            "digest": "197fcc2a8f1f5988142aff9c9cfbe0742ff1cc4d5503a1a6423ad300bf4a8eb7"
           },
           "signature": {
             "algorithm": "HMAC-SHA256",
             "key_id": "dev-hmac",
-            "value": "GKkqrpCeDK7QuQbgROC9cJZOIHYpkVfeJnsrqRmxKm8=",
+            "value": "fY85ubrSHkltGUqIwu0i3ynoWJ6uM2hvUqYS8nm3SDc=",
             "signed_fields": [
               "package_id",
               "version",
@@ -1868,14 +1868,14 @@
       ],
       "documentation_url": "https://configs.example.com/marketplace/exchanges/kucoin",
       "release_notes": [
-        "Pierwsze publiczne wydanie preset\u00f3w \u015brodowisk KuCoin.",
+        "Pierwsze publiczne wydanie presetów środowisk KuCoin.",
         "Dodano guardraile watchdog i monitoring API."
       ],
       "security": {
         "mode": "none",
         "allowed_fingerprints": [],
         "require_strict_match": false,
-        "audit_message": "Brak ogranicze\u0144 fingerprint dla preset\u00f3w exchange."
+        "audit_message": "Brak ograniczeń fingerprint dla presetów exchange."
       },
       "release": {
         "channel": "beta",
@@ -1889,7 +1889,7 @@
         ],
         "ticket": "https://jira.example.com/browse/MKT-1450",
         "approved_at": "2025-01-15T09:30:00Z",
-        "notes": "Publiczna certyfikacja preset\u00f3w \u015brodowiskowych."
+        "notes": "Publiczna certyfikacja presetów środowiskowych."
       },
       "exchange_compatibility": [
         {
@@ -1922,9 +1922,9 @@
       "schema_version": "1.1",
       "package_id": "exchange_mexc.v1",
       "display_name": "MEXC Exchange Environments",
-      "summary": "Preset \u015brodowisk paper/testnet/live dla gie\u0142dy MEXC.",
-      "description": "Pakiet udost\u0119pnia kompletny zestaw \u015brodowisk i guardraili dla integracji MEXC.",
-      "version": "1.0.0+community",
+      "summary": "Preset środowisk paper/testnet/live dla giełdy MEXC.",
+      "description": "Pakiet udostępnia kompletny zestaw środowisk i guardraili dla integracji MEXC.",
+      "version": "1.0.0+a2d4b25642dec184",
       "revision": "2025.01",
       "release_date": "2025-01-15T09:30:00Z",
       "maintainers": [
@@ -1940,7 +1940,7 @@
         "name": "Marketplace Evaluation License",
         "spdx_id": "Proprietary",
         "url": "https://configs.example.com/licenses/marketplace-eval",
-        "terms_summary": "Do u\u017cytku ewaluacyjnego.",
+        "terms_summary": "Do użytku ewaluacyjnego.",
         "redistributable": false,
         "commercial_use": false
       },
@@ -1969,16 +1969,16 @@
           "name": "preset-document",
           "uri": "packages/exchanges/exchange_mexc_v1.json",
           "kind": "preset",
-          "description": "Podpisany preset \u015brodowisk MEXC.",
+          "description": "Podpisany preset środowisk MEXC.",
           "size_bytes": 3722,
           "integrity": {
             "algorithm": "sha256",
-            "digest": "51e8b21acbda2d1fd3f02a383d5343a7701b4c5a2aea06cccddd5fc109824ef9"
+            "digest": "247f4173a657d03b71d1c8f1453e44d7367e507183fb7a9676f735c204ab52b2"
           },
           "signature": {
             "algorithm": "HMAC-SHA256",
             "key_id": "dev-hmac",
-            "value": "sDaMpTT5Bcv4BP85iLzIUy2dzXcG83IWofGq/pZCrhU=",
+            "value": "ypgcmdCtswE7rBg8p1eT+Mxg5nZkMCg8ot5tLjmS6Ew=",
             "signed_fields": [
               "package_id",
               "version",
@@ -2001,14 +2001,14 @@
       ],
       "documentation_url": "https://configs.example.com/marketplace/exchanges/mexc",
       "release_notes": [
-        "Pierwsze publiczne wydanie preset\u00f3w \u015brodowisk MEXC.",
+        "Pierwsze publiczne wydanie presetów środowisk MEXC.",
         "Dodano guardraile watchdog i monitoring API."
       ],
       "security": {
         "mode": "none",
         "allowed_fingerprints": [],
         "require_strict_match": false,
-        "audit_message": "Brak ogranicze\u0144 fingerprint dla preset\u00f3w exchange."
+        "audit_message": "Brak ograniczeń fingerprint dla presetów exchange."
       },
       "release": {
         "channel": "beta",
@@ -2022,7 +2022,7 @@
         ],
         "ticket": "https://jira.example.com/browse/MKT-1450",
         "approved_at": "2025-01-15T09:30:00Z",
-        "notes": "Publiczna certyfikacja preset\u00f3w \u015brodowiskowych."
+        "notes": "Publiczna certyfikacja presetów środowiskowych."
       },
       "exchange_compatibility": [
         {
@@ -2054,9 +2054,9 @@
       "schema_version": "1.1",
       "package_id": "exchange_okx.v1",
       "display_name": "OKX Exchange Environments",
-      "summary": "Preset \u015brodowisk paper/testnet/live dla gie\u0142dy OKX.",
-      "description": "Pakiet udost\u0119pnia kompletny zestaw \u015brodowisk i guardraili dla integracji OKX.",
-      "version": "1.0.0+community",
+      "summary": "Preset środowisk paper/testnet/live dla giełdy OKX.",
+      "description": "Pakiet udostępnia kompletny zestaw środowisk i guardraili dla integracji OKX.",
+      "version": "1.0.0+8119bf7372d64509",
       "revision": "2025.01",
       "release_date": "2025-01-15T09:30:00Z",
       "maintainers": [
@@ -2072,7 +2072,7 @@
         "name": "Marketplace Evaluation License",
         "spdx_id": "Proprietary",
         "url": "https://configs.example.com/licenses/marketplace-eval",
-        "terms_summary": "Do u\u017cytku ewaluacyjnego.",
+        "terms_summary": "Do użytku ewaluacyjnego.",
         "redistributable": false,
         "commercial_use": false
       },
@@ -2101,16 +2101,16 @@
           "name": "preset-document",
           "uri": "packages/exchanges/exchange_okx_v1.json",
           "kind": "preset",
-          "description": "Podpisany preset \u015brodowisk OKX.",
-          "size_bytes": 4195,
+          "description": "Podpisany preset środowisk OKX.",
+          "size_bytes": 5395,
           "integrity": {
             "algorithm": "sha256",
-            "digest": "3e76d158dc114dc305532440d05802852dc03e6480bce15ef0a8a2f93dbe3382"
+            "digest": "4b2d47a930f6432bcd2c1885f6af2ec6aecfc612d8685efc84498a8e49ec7554"
           },
           "signature": {
             "algorithm": "HMAC-SHA256",
             "key_id": "dev-hmac",
-            "value": "vLEVRQnKj/pYshGOoAwr+ROKTQS67LRLhJ98J6hYEx0=",
+            "value": "ZYwR3jwRRxgYbcHVF5VhEGI2BNeS5cVO7TjBrg+iqBw=",
             "signed_fields": [
               "package_id",
               "version",
@@ -2133,14 +2133,14 @@
       ],
       "documentation_url": "https://configs.example.com/marketplace/exchanges/okx",
       "release_notes": [
-        "Pierwsze publiczne wydanie preset\u00f3w \u015brodowisk OKX.",
+        "Pierwsze publiczne wydanie presetów środowisk OKX.",
         "Dodano guardraile watchdog i monitoring API."
       ],
       "security": {
         "mode": "none",
         "allowed_fingerprints": [],
         "require_strict_match": false,
-        "audit_message": "Brak ogranicze\u0144 fingerprint dla preset\u00f3w exchange."
+        "audit_message": "Brak ograniczeń fingerprint dla presetów exchange."
       },
       "release": {
         "channel": "beta",
@@ -2154,7 +2154,7 @@
         ],
         "ticket": "https://jira.example.com/browse/MKT-1450",
         "approved_at": "2025-01-15T09:30:00Z",
-        "notes": "Publiczna certyfikacja preset\u00f3w \u015brodowiskowych."
+        "notes": "Publiczna certyfikacja presetów środowiskowych."
       },
       "exchange_compatibility": [
         {
@@ -2187,9 +2187,9 @@
       "schema_version": "1.1",
       "package_id": "exchange_zonda.v1",
       "display_name": "Zonda Exchange Environments",
-      "summary": "Preset \u015brodowisk paper/testnet/live dla gie\u0142dy Zonda.",
-      "description": "Pakiet udost\u0119pnia kompletny zestaw \u015brodowisk i guardraili dla integracji Zonda.",
-      "version": "1.0.0+community",
+      "summary": "Preset środowisk paper/testnet/live dla giełdy Zonda.",
+      "description": "Pakiet udostępnia kompletny zestaw środowisk i guardraili dla integracji Zonda.",
+      "version": "1.0.0+6bec733c61e9256c",
       "revision": "2025.01",
       "release_date": "2025-01-15T09:30:00Z",
       "maintainers": [
@@ -2205,7 +2205,7 @@
         "name": "Marketplace Evaluation License",
         "spdx_id": "Proprietary",
         "url": "https://configs.example.com/licenses/marketplace-eval",
-        "terms_summary": "Do u\u017cytku ewaluacyjnego.",
+        "terms_summary": "Do użytku ewaluacyjnego.",
         "redistributable": false,
         "commercial_use": false
       },
@@ -2234,16 +2234,16 @@
           "name": "preset-document",
           "uri": "packages/exchanges/exchange_zonda_v1.json",
           "kind": "preset",
-          "description": "Podpisany preset \u015brodowisk Zonda.",
+          "description": "Podpisany preset środowisk Zonda.",
           "size_bytes": 3329,
           "integrity": {
             "algorithm": "sha256",
-            "digest": "566e245db62da62fb0dbbaa15a13505f16b4b1229176b5043ba6a6b65d25619a"
+            "digest": "4e57e17a33dae51a19e958820cbe3c0bf79910e1cb7e767e47cbd7a6b6429134"
           },
           "signature": {
             "algorithm": "HMAC-SHA256",
             "key_id": "dev-hmac",
-            "value": "bSA8J5y2I5gGbac94miUt3tww6fsp5+daRwVEcbHnhs=",
+            "value": "HrecND3coCkfgfAPbPEInrByiriWxPxM6eTGXYA0fps=",
             "signed_fields": [
               "package_id",
               "version",
@@ -2266,14 +2266,14 @@
       ],
       "documentation_url": "https://configs.example.com/marketplace/exchanges/zonda",
       "release_notes": [
-        "Pierwsze publiczne wydanie preset\u00f3w \u015brodowisk Zonda.",
+        "Pierwsze publiczne wydanie presetów środowisk Zonda.",
         "Dodano guardraile watchdog i monitoring API."
       ],
       "security": {
         "mode": "none",
         "allowed_fingerprints": [],
         "require_strict_match": false,
-        "audit_message": "Brak ogranicze\u0144 fingerprint dla preset\u00f3w exchange."
+        "audit_message": "Brak ograniczeń fingerprint dla presetów exchange."
       },
       "release": {
         "channel": "beta",
@@ -2287,7 +2287,7 @@
         ],
         "ticket": "https://jira.example.com/browse/MKT-1450",
         "approved_at": "2025-01-15T09:30:00Z",
-        "notes": "Publiczna certyfikacja preset\u00f3w \u015brodowiskowych."
+        "notes": "Publiczna certyfikacja presetów środowiskowych."
       },
       "exchange_compatibility": [
         {
@@ -2337,7 +2337,7 @@
         "name": "Marketplace Evaluation License",
         "spdx_id": "Proprietary",
         "url": "https://configs.example.com/licenses/marketplace-eval",
-        "terms_summary": "Do u\u017cytku ewaluacyjnego w \u015brodowiskach demo.",
+        "terms_summary": "Do użytku ewaluacyjnego w środowiskach demo.",
         "redistributable": false,
         "commercial_use": false
       },
@@ -2370,12 +2370,12 @@
           "size_bytes": 1784,
           "integrity": {
             "algorithm": "sha256",
-            "digest": "0d59058ce15a6f9c2e28961641438f654a5e81970558f26f75866f7af88cfe14"
+            "digest": "9551577d43887b833d5d8bfc3ea1ad89b2e8a778e087c87a92f30f64ad966632"
           },
           "signature": {
             "algorithm": "HMAC-SHA256",
             "key_id": "dev-hmac",
-            "value": "8Ws3CErZN9Eq+8Ia70qVX5kC17ACeR3nNCOW9sxkwUU=",
+            "value": "qtNIfPtnQDl82tUv2S5OIjQEO1Am0tgQBPOmBLguOxA=",
             "signed_fields": [
               "package_id",
               "version",
@@ -2407,7 +2407,7 @@
       "documentation_url": "https://configs.example.com/marketplace/futures_basis_shield",
       "release_notes": [
         "Pierwsza publikacja Futures Basis Shield",
-        "Dodano checklist\u0119 HyperCare."
+        "Dodano checklistę HyperCare."
       ],
       "security": {
         "mode": "allowlist",
@@ -2415,7 +2415,7 @@
           "OEM-1234567890ABCDEF"
         ],
         "require_strict_match": false,
-        "audit_message": "Preset dost\u0119pny tylko dla licencjonowanych instalacji OEM."
+        "audit_message": "Preset dostępny tylko dla licencjonowanych instalacji OEM."
       },
       "release": {
         "channel": "public",
@@ -2479,7 +2479,7 @@
           "recommended_budget": 35000.0,
           "max_positions": 5,
           "holding_period": "swing",
-          "automation": "pe\u0142na",
+          "automation": "pełna",
           "notes": "Preset Futures Basis Shield preferuje futures scenariusze."
         }
       ]
@@ -2488,8 +2488,8 @@
       "schema_version": "1.1",
       "package_id": "grid_balance_pro.v1",
       "display_name": "Grid Balance Pro",
-      "summary": "Dynamiczny grid z kontrol\u0105 koszt\u00f3w",
-      "description": "Dynamiczny grid z kontrol\u0105 koszt\u00f3w zgodny z guardrailami Stage6.",
+      "summary": "Dynamiczny grid z kontrolą kosztów",
+      "description": "Dynamiczny grid z kontrolą kosztów zgodny z guardrailami Stage6.",
       "version": "1.0.0",
       "revision": "2025.01",
       "release_date": "2025-01-15T12:00:00Z",
@@ -2506,7 +2506,7 @@
         "name": "Marketplace Evaluation License",
         "spdx_id": "Proprietary",
         "url": "https://configs.example.com/licenses/marketplace-eval",
-        "terms_summary": "Do u\u017cytku ewaluacyjnego w \u015brodowiskach demo.",
+        "terms_summary": "Do użytku ewaluacyjnego w środowiskach demo.",
         "redistributable": false,
         "commercial_use": false
       },
@@ -2539,12 +2539,12 @@
           "size_bytes": 1758,
           "integrity": {
             "algorithm": "sha256",
-            "digest": "0877f1f0cda71c71b40c36e858d90df2dfb1ce7bae7ae24487f1452c9d854b2b"
+            "digest": "7c4d936a4f2ef3fb27dbb111f55ab3411f4d8ebb712685049b82ca84f1db6ad9"
           },
           "signature": {
             "algorithm": "HMAC-SHA256",
             "key_id": "dev-hmac",
-            "value": "Gap63P5tI9EPG8nol27vfo1EZl6Swc88y8kpp+bgnG8=",
+            "value": "ZpeiBjFaIydI+hdm5yj7qD0f8ubgPqtN3U2sADmiwLM=",
             "signed_fields": [
               "package_id",
               "version",
@@ -2568,7 +2568,7 @@
       "documentation_url": "https://configs.example.com/marketplace/grid_balance_pro",
       "release_notes": [
         "Pierwsza publikacja Grid Balance Pro",
-        "Dodano checklist\u0119 HyperCare."
+        "Dodano checklistę HyperCare."
       ],
       "security": {
         "mode": "allowlist",
@@ -2576,7 +2576,7 @@
           "OEM-1234567890ABCDEF"
         ],
         "require_strict_match": false,
-        "audit_message": "Preset dost\u0119pny tylko dla licencjonowanych instalacji OEM."
+        "audit_message": "Preset dostępny tylko dla licencjonowanych instalacji OEM."
       },
       "release": {
         "channel": "public",
@@ -2628,7 +2628,7 @@
           "recommended_budget": 8000.0,
           "max_positions": 5,
           "holding_period": "swing",
-          "automation": "pe\u0142na",
+          "automation": "pełna",
           "notes": "Preset Grid Balance Pro preferuje grid scenariusze."
         }
       ]
@@ -2637,8 +2637,8 @@
       "schema_version": "1.1",
       "package_id": "liquidity_rebalance_core.v1",
       "display_name": "Liquidity Rebalance Core",
-      "summary": "Rebalans p\u0142ynno\u015bci multi-exchange",
-      "description": "Rebalans p\u0142ynno\u015bci multi-exchange zgodny z guardrailami Stage6.",
+      "summary": "Rebalans płynności multi-exchange",
+      "description": "Rebalans płynności multi-exchange zgodny z guardrailami Stage6.",
       "version": "1.0.0",
       "revision": "2025.01",
       "release_date": "2025-01-15T12:00:00Z",
@@ -2655,7 +2655,7 @@
         "name": "Marketplace Evaluation License",
         "spdx_id": "Proprietary",
         "url": "https://configs.example.com/licenses/marketplace-eval",
-        "terms_summary": "Do u\u017cytku ewaluacyjnego w \u015brodowiskach demo.",
+        "terms_summary": "Do użytku ewaluacyjnego w środowiskach demo.",
         "redistributable": false,
         "commercial_use": false
       },
@@ -2688,12 +2688,12 @@
           "size_bytes": 1842,
           "integrity": {
             "algorithm": "sha256",
-            "digest": "d0c1c2a06d6b3b728d39426776941c839d3b15890d393d3b75e83816cfce78ea"
+            "digest": "0b0b6b59b6ee16fed5e6312e525eb76087e15dc0677fe6db3c1f60cbdc9a84f0"
           },
           "signature": {
             "algorithm": "HMAC-SHA256",
             "key_id": "dev-hmac",
-            "value": "y8Ox1A5hvVID/hjelJ8OvQGcCNoUrR993LSvOk2GOHs=",
+            "value": "7ZRFgXkLnJgrXOS+V4lTa8JBIP78DIvFufjXHLFtYQk=",
             "signed_fields": [
               "package_id",
               "version",
@@ -2733,7 +2733,7 @@
       "documentation_url": "https://configs.example.com/marketplace/liquidity_rebalance_core",
       "release_notes": [
         "Pierwsza publikacja Liquidity Rebalance Core",
-        "Dodano checklist\u0119 HyperCare."
+        "Dodano checklistę HyperCare."
       ],
       "security": {
         "mode": "allowlist",
@@ -2741,7 +2741,7 @@
           "OEM-1234567890ABCDEF"
         ],
         "require_strict_match": false,
-        "audit_message": "Preset dost\u0119pny tylko dla licencjonowanych instalacji OEM."
+        "audit_message": "Preset dostępny tylko dla licencjonowanych instalacji OEM."
       },
       "release": {
         "channel": "public",
@@ -2819,7 +2819,7 @@
           "recommended_budget": 40000.0,
           "max_positions": 5,
           "holding_period": "swing",
-          "automation": "pe\u0142na",
+          "automation": "pełna",
           "notes": "Preset Liquidity Rebalance Core preferuje liquidity scenariusze."
         }
       ]
@@ -2846,7 +2846,7 @@
         "name": "Marketplace Evaluation License",
         "spdx_id": "Proprietary",
         "url": "https://configs.example.com/licenses/marketplace-eval",
-        "terms_summary": "Do u\u017cytku ewaluacyjnego w \u015brodowiskach demo.",
+        "terms_summary": "Do użytku ewaluacyjnego w środowiskach demo.",
         "redistributable": false,
         "commercial_use": false
       },
@@ -2879,12 +2879,12 @@
           "size_bytes": 1824,
           "integrity": {
             "algorithm": "sha256",
-            "digest": "4493bea9bc095296be8802db84db220a8dd681bc3eaf3ed9d9fd0cc6e4750d28"
+            "digest": "05147f09ff97c62390ad1c9855763a69b90864974da45fd93e890a86c6f15ae4"
           },
           "signature": {
             "algorithm": "HMAC-SHA256",
             "key_id": "dev-hmac",
-            "value": "Rgr+3oAa+BEWiXST7sEgKoQG6LEk21JFvwPyxSJWUmg=",
+            "value": "Jex80+Ldo2QMDd53pQwuYjUID/IPlzOJ7ol9EWi52uQ=",
             "signed_fields": [
               "package_id",
               "version",
@@ -2916,7 +2916,7 @@
       "documentation_url": "https://configs.example.com/marketplace/market_making_microalpha",
       "release_notes": [
         "Pierwsza publikacja Market Making MicroAlpha",
-        "Dodano checklist\u0119 HyperCare."
+        "Dodano checklistę HyperCare."
       ],
       "security": {
         "mode": "allowlist",
@@ -2924,7 +2924,7 @@
           "OEM-1234567890ABCDEF"
         ],
         "require_strict_match": false,
-        "audit_message": "Preset dost\u0119pny tylko dla licencjonowanych instalacji OEM."
+        "audit_message": "Preset dostępny tylko dla licencjonowanych instalacji OEM."
       },
       "release": {
         "channel": "public",
@@ -2989,7 +2989,7 @@
           "recommended_budget": 25000.0,
           "max_positions": 5,
           "holding_period": "swing",
-          "automation": "pe\u0142na",
+          "automation": "pełna",
           "notes": "Preset Market Making MicroAlpha preferuje market-making scenariusze."
         }
       ]
@@ -2998,8 +2998,8 @@
       "schema_version": "1.1",
       "package_id": "mean_reversion.v1",
       "display_name": "Mean Reversion Starter",
-      "summary": "Konfiguracja mean-reversion z guardrailami Stage6 do szybkiego wdro\u017cenia.",
-      "description": "Pakiet obejmuje parametry strategii mean-reversion, profil ryzyka oraz rekomendowane guardraile Stage6. Zaprojektowany do pe\u0142nej automatyzacji decyzji handlowych na rynku spot.",
+      "summary": "Konfiguracja mean-reversion z guardrailami Stage6 do szybkiego wdrożenia.",
+      "description": "Pakiet obejmuje parametry strategii mean-reversion, profil ryzyka oraz rekomendowane guardraile Stage6. Zaprojektowany do pełnej automatyzacji decyzji handlowych na rynku spot.",
       "version": "1.0.0",
       "revision": "2025.01",
       "release_date": "2025-01-15T12:00:00Z",
@@ -3016,7 +3016,7 @@
         "name": "Marketplace Evaluation License",
         "spdx_id": "Proprietary",
         "url": "https://configs.example.com/licenses/marketplace-eval",
-        "terms_summary": "Do u\u017cytku ewaluacyjnego w \u015brodowiskach demo.",
+        "terms_summary": "Do użytku ewaluacyjnego w środowiskach demo.",
         "redistributable": false,
         "commercial_use": false
       },
@@ -3039,7 +3039,7 @@
         ],
         "requires_personal_data": false,
         "requires_realtime_access": true,
-        "pii_handling_notes": "Preset nie przetwarza danych wra\u017cliwych."
+        "pii_handling_notes": "Preset nie przetwarza danych wrażliwych."
       },
       "distribution": [
         {
@@ -3050,12 +3050,12 @@
           "size_bytes": 1944,
           "integrity": {
             "algorithm": "sha256",
-            "digest": "ccee3aee7dc275e2669f9b68893fe76ae2530f305ab1f5468e005b9847a42e73"
+            "digest": "4253b9f08e50ddf58c99ad0d01bb520b9f57956f41cfb0f29b3b72c21bb061e3"
           },
           "signature": {
             "algorithm": "HMAC-SHA256",
             "key_id": "dev-hmac",
-            "value": "FqIbyL33VWzUf7MoucyWjQBurAttwtGWOCtL6DtH6A4=",
+            "value": "kUyX7kUMjCTZHd56A5rmdNDHek68IIWHxmSdMnxqwGk=",
             "signed_fields": [
               "package_id",
               "version",
@@ -3086,7 +3086,7 @@
       ],
       "documentation_url": "https://configs.example.com/marketplace/mean-reversion",
       "release_notes": [
-        "Pocz\u0105tkowa publikacja preset\u00f3w mean-reversion.",
+        "Początkowa publikacja presetów mean-reversion.",
         "Dodano guardraile Stage6 i profil danych Binance/COINBASE."
       ],
       "security": {
@@ -3095,7 +3095,7 @@
           "OEM-1234567890ABCDEF"
         ],
         "require_strict_match": false,
-        "audit_message": "Preset dost\u0119pny tylko dla licencjonowanych instalacji OEM."
+        "audit_message": "Preset dostępny tylko dla licencjonowanych instalacji OEM."
       },
       "release": {
         "channel": "public",
@@ -3141,7 +3141,7 @@
           ],
           "status": "beta",
           "last_verified_at": null,
-          "notes": "Wersja beta \u2013 wymagany follow-up telemetryczny"
+          "notes": "Wersja beta – wymagany follow-up telemetryczny"
         }
       ],
       "versioning": {
@@ -3159,8 +3159,8 @@
           "recommended_budget": 15000.0,
           "max_positions": 4,
           "holding_period": "intra-day",
-          "automation": "pe\u0142na",
-          "notes": "Preferuje rynek spot z ograniczon\u0105 ekspozycj\u0105 overnight."
+          "automation": "pełna",
+          "notes": "Preferuje rynek spot z ograniczoną ekspozycją overnight."
         }
       ]
     },
@@ -3186,7 +3186,7 @@
         "name": "Marketplace Evaluation License",
         "spdx_id": "Proprietary",
         "url": "https://configs.example.com/licenses/marketplace-eval",
-        "terms_summary": "Do u\u017cytku ewaluacyjnego w \u015brodowiskach demo.",
+        "terms_summary": "Do użytku ewaluacyjnego w środowiskach demo.",
         "redistributable": false,
         "commercial_use": false
       },
@@ -3219,12 +3219,12 @@
           "size_bytes": 1792,
           "integrity": {
             "algorithm": "sha256",
-            "digest": "f69debe81ba75a46508f91f444038183f2386897e7c9bd3ac0ecbbdd342f8955"
+            "digest": "9cab97eccd4d6d6f47b65160bb3257188daa769da97c019801a78d022be42591"
           },
           "signature": {
             "algorithm": "HMAC-SHA256",
             "key_id": "dev-hmac",
-            "value": "1OFICQx7dN3qQ6/oOWG4Zop/93+3RMBW4qnMjZw/864=",
+            "value": "DaT6xPYH1oyyd0Pot+aA6RBKFErmDVHJGMZFLO1WHnM=",
             "signed_fields": [
               "package_id",
               "version",
@@ -3256,7 +3256,7 @@
       "documentation_url": "https://configs.example.com/marketplace/momentum_scalper_x",
       "release_notes": [
         "Pierwsza publikacja Momentum Scalper X",
-        "Dodano checklist\u0119 HyperCare."
+        "Dodano checklistę HyperCare."
       ],
       "security": {
         "mode": "allowlist",
@@ -3264,7 +3264,7 @@
           "OEM-1234567890ABCDEF"
         ],
         "require_strict_match": false,
-        "audit_message": "Preset dost\u0119pny tylko dla licencjonowanych instalacji OEM."
+        "audit_message": "Preset dostępny tylko dla licencjonowanych instalacji OEM."
       },
       "release": {
         "channel": "public",
@@ -3328,7 +3328,7 @@
           "recommended_budget": 12000.0,
           "max_positions": 5,
           "holding_period": "intraday",
-          "automation": "pe\u0142na",
+          "automation": "pełna",
           "notes": "Preset Momentum Scalper X preferuje scalping scenariusze."
         }
       ]
@@ -3355,7 +3355,7 @@
         "name": "Marketplace Evaluation License",
         "spdx_id": "Proprietary",
         "url": "https://configs.example.com/licenses/marketplace-eval",
-        "terms_summary": "Do u\u017cytku ewaluacyjnego w \u015brodowiskach demo.",
+        "terms_summary": "Do użytku ewaluacyjnego w środowiskach demo.",
         "redistributable": false,
         "commercial_use": false
       },
@@ -3388,12 +3388,12 @@
           "size_bytes": 1871,
           "integrity": {
             "algorithm": "sha256",
-            "digest": "814ecdb266165848baef164e782a14b463e7e1408efb77e0ed9ea9c385ffd61a"
+            "digest": "4938dbbb4dd8a029be9dfe9aabe423d86bcf90e9b789aa005ab3854472ba05a1"
           },
           "signature": {
             "algorithm": "HMAC-SHA256",
             "key_id": "dev-hmac",
-            "value": "BChDfqpLvJIw3xqRcISFVWXtX+VH5KS9sb2iOFK635k=",
+            "value": "CAe5ORzf7PYuL5ZNmtsBBjzKuCJRVuqqrwFJeRWMGN4=",
             "signed_fields": [
               "package_id",
               "version",
@@ -3433,7 +3433,7 @@
       "documentation_url": "https://configs.example.com/marketplace/multi_strategy_scheduler_v2",
       "release_notes": [
         "Pierwsza publikacja Multi Strategy Scheduler v2",
-        "Dodano checklist\u0119 HyperCare."
+        "Dodano checklistę HyperCare."
       ],
       "security": {
         "mode": "allowlist",
@@ -3441,7 +3441,7 @@
           "OEM-1234567890ABCDEF"
         ],
         "require_strict_match": false,
-        "audit_message": "Preset dost\u0119pny tylko dla licencjonowanych instalacji OEM."
+        "audit_message": "Preset dostępny tylko dla licencjonowanych instalacji OEM."
       },
       "release": {
         "channel": "public",
@@ -3519,7 +3519,7 @@
           "recommended_budget": 60000.0,
           "max_positions": 5,
           "holding_period": "swing",
-          "automation": "pe\u0142na",
+          "automation": "pełna",
           "notes": "Preset Multi Strategy Scheduler v2 preferuje multi-strategy scenariusze."
         }
       ]
@@ -3546,7 +3546,7 @@
         "name": "Marketplace Evaluation License",
         "spdx_id": "Proprietary",
         "url": "https://configs.example.com/licenses/marketplace-eval",
-        "terms_summary": "Do u\u017cytku ewaluacyjnego w \u015brodowiskach demo.",
+        "terms_summary": "Do użytku ewaluacyjnego w środowiskach demo.",
         "redistributable": false,
         "commercial_use": false
       },
@@ -3579,12 +3579,12 @@
           "size_bytes": 1767,
           "integrity": {
             "algorithm": "sha256",
-            "digest": "199d4762c19fbf6daedf10341615f402042188d31fe1907d74ddb458fecba1e4"
+            "digest": "c9c4b3c9911c47369a6f95042913c31c17eff1b65179b908eb8d6897acd398ef"
           },
           "signature": {
             "algorithm": "HMAC-SHA256",
             "key_id": "dev-hmac",
-            "value": "OJ7v3YJMunxFAll6xQVWJ0qYddKg/OgpFzbZcpraezQ=",
+            "value": "vkKeOoRCaVf6p4m8CENegUz68VlfeGNGUIShq0suCZI=",
             "signed_fields": [
               "package_id",
               "version",
@@ -3608,7 +3608,7 @@
       "documentation_url": "https://configs.example.com/marketplace/news_sentiment_pulse",
       "release_notes": [
         "Pierwsza publikacja News Sentiment Pulse",
-        "Dodano checklist\u0119 HyperCare."
+        "Dodano checklistę HyperCare."
       ],
       "security": {
         "mode": "allowlist",
@@ -3616,7 +3616,7 @@
           "OEM-1234567890ABCDEF"
         ],
         "require_strict_match": false,
-        "audit_message": "Preset dost\u0119pny tylko dla licencjonowanych instalacji OEM."
+        "audit_message": "Preset dostępny tylko dla licencjonowanych instalacji OEM."
       },
       "release": {
         "channel": "public",
@@ -3668,7 +3668,7 @@
           "recommended_budget": 15000.0,
           "max_positions": 5,
           "holding_period": "intraday",
-          "automation": "pe\u0142na",
+          "automation": "pełna",
           "notes": "Preset News Sentiment Pulse preferuje sentiment scenariusze."
         }
       ]
@@ -3695,7 +3695,7 @@
         "name": "Marketplace Evaluation License",
         "spdx_id": "Proprietary",
         "url": "https://configs.example.com/licenses/marketplace-eval",
-        "terms_summary": "Do u\u017cytku ewaluacyjnego w \u015brodowiskach demo.",
+        "terms_summary": "Do użytku ewaluacyjnego w środowiskach demo.",
         "redistributable": false,
         "commercial_use": false
       },
@@ -3728,12 +3728,12 @@
           "size_bytes": 1766,
           "integrity": {
             "algorithm": "sha256",
-            "digest": "4dac03ec117db0aa3011b3303688e11b7b9dd87d18ad00b9d5fc9a190c4737c3"
+            "digest": "4d639ddf39e0bff671bb27c5e8e807bc69864773a4d392f6448d3db846531ff8"
           },
           "signature": {
             "algorithm": "HMAC-SHA256",
             "key_id": "dev-hmac",
-            "value": "TqyZb/nmf3uhpgztzVxW/w+M8sUgTsMHTCS7Fq2pZn0=",
+            "value": "zxjYR0a8C2zXzAIVYLjI7wNWQlO+KmxChBfVUv1Ab6Q=",
             "signed_fields": [
               "package_id",
               "version",
@@ -3757,7 +3757,7 @@
       "documentation_url": "https://configs.example.com/marketplace/options_income_guard",
       "release_notes": [
         "Pierwsza publikacja Options Income Guard",
-        "Dodano checklist\u0119 HyperCare."
+        "Dodano checklistę HyperCare."
       ],
       "security": {
         "mode": "allowlist",
@@ -3765,7 +3765,7 @@
           "OEM-1234567890ABCDEF"
         ],
         "require_strict_match": false,
-        "audit_message": "Preset dost\u0119pny tylko dla licencjonowanych instalacji OEM."
+        "audit_message": "Preset dostępny tylko dla licencjonowanych instalacji OEM."
       },
       "release": {
         "channel": "public",
@@ -3816,7 +3816,7 @@
           "recommended_budget": 20000.0,
           "max_positions": 5,
           "holding_period": "swing",
-          "automation": "pe\u0142na",
+          "automation": "pełna",
           "notes": "Preset Options Income Guard preferuje options scenariusze."
         }
       ]
@@ -3843,7 +3843,7 @@
         "name": "Marketplace Evaluation License",
         "spdx_id": "Proprietary",
         "url": "https://configs.example.com/licenses/marketplace-eval",
-        "terms_summary": "Do u\u017cytku ewaluacyjnego w \u015brodowiskach demo.",
+        "terms_summary": "Do użytku ewaluacyjnego w środowiskach demo.",
         "redistributable": false,
         "commercial_use": false
       },
@@ -3876,12 +3876,12 @@
           "size_bytes": 1821,
           "integrity": {
             "algorithm": "sha256",
-            "digest": "ee0f67d4c2954a70085e3c93cf1774808e8b19553e64156c536fb9ef41da9aad"
+            "digest": "69dcea037fe843e68a43a5a6b78e6cdbc5654ca24a9c7476032aa8e5817299c8"
           },
           "signature": {
             "algorithm": "HMAC-SHA256",
             "key_id": "dev-hmac",
-            "value": "R53cF78f+2qjbVu1g1nPMAae3k7ARaSQltJwMRF8DGM=",
+            "value": "vJTqAQhoSQwerY8rlmcAu0vFIymfdd7W71mXLman1T8=",
             "signed_fields": [
               "package_id",
               "version",
@@ -3913,7 +3913,7 @@
       "documentation_url": "https://configs.example.com/marketplace/risk_parity_multi_asset",
       "release_notes": [
         "Pierwsza publikacja Risk Parity Multi-Asset",
-        "Dodano checklist\u0119 HyperCare."
+        "Dodano checklistę HyperCare."
       ],
       "security": {
         "mode": "allowlist",
@@ -3921,7 +3921,7 @@
           "OEM-1234567890ABCDEF"
         ],
         "require_strict_match": false,
-        "audit_message": "Preset dost\u0119pny tylko dla licencjonowanych instalacji OEM."
+        "audit_message": "Preset dostępny tylko dla licencjonowanych instalacji OEM."
       },
       "release": {
         "channel": "public",
@@ -3986,7 +3986,7 @@
           "recommended_budget": 50000.0,
           "max_positions": 5,
           "holding_period": "swing",
-          "automation": "pe\u0142na",
+          "automation": "pełna",
           "notes": "Preset Risk Parity Multi-Asset preferuje risk-parity scenariusze."
         }
       ]
@@ -3995,8 +3995,8 @@
       "schema_version": "1.1",
       "package_id": "stat_arb_pairs_v1.v1",
       "display_name": "Stat Arb Pairs v1",
-      "summary": "Arbitra\u017c statystyczny par",
-      "description": "Arbitra\u017c statystyczny par zgodny z guardrailami Stage6.",
+      "summary": "Arbitraż statystyczny par",
+      "description": "Arbitraż statystyczny par zgodny z guardrailami Stage6.",
       "version": "1.0.0",
       "revision": "2025.01",
       "release_date": "2025-01-15T12:00:00Z",
@@ -4013,7 +4013,7 @@
         "name": "Marketplace Evaluation License",
         "spdx_id": "Proprietary",
         "url": "https://configs.example.com/licenses/marketplace-eval",
-        "terms_summary": "Do u\u017cytku ewaluacyjnego w \u015brodowiskach demo.",
+        "terms_summary": "Do użytku ewaluacyjnego w środowiskach demo.",
         "redistributable": false,
         "commercial_use": false
       },
@@ -4046,12 +4046,12 @@
           "size_bytes": 1756,
           "integrity": {
             "algorithm": "sha256",
-            "digest": "f8a9291cf4931a207b007a8be4ed676d1550e3c4658c4ee49256bb6eabf5fbaa"
+            "digest": "e78a6ef3e878cb7398f39fc88c8ef62552f4c02057e1665dba365d10356f3dcb"
           },
           "signature": {
             "algorithm": "HMAC-SHA256",
             "key_id": "dev-hmac",
-            "value": "f5nFJWyDX3PZnNh7rfFcDGnA9EulkOqweoH4OSiH+yY=",
+            "value": "xX34IATW1V8iKkDNWzZgINW+F2fwumOs1brACzzMDjI=",
             "signed_fields": [
               "package_id",
               "version",
@@ -4083,7 +4083,7 @@
       "documentation_url": "https://configs.example.com/marketplace/stat_arb_pairs_v1",
       "release_notes": [
         "Pierwsza publikacja Stat Arb Pairs v1",
-        "Dodano checklist\u0119 HyperCare."
+        "Dodano checklistę HyperCare."
       ],
       "security": {
         "mode": "allowlist",
@@ -4091,7 +4091,7 @@
           "OEM-1234567890ABCDEF"
         ],
         "require_strict_match": false,
-        "audit_message": "Preset dost\u0119pny tylko dla licencjonowanych instalacji OEM."
+        "audit_message": "Preset dostępny tylko dla licencjonowanych instalacji OEM."
       },
       "release": {
         "channel": "public",
@@ -4156,7 +4156,7 @@
           "recommended_budget": 22000.0,
           "max_positions": 5,
           "holding_period": "swing",
-          "automation": "pe\u0142na",
+          "automation": "pełna",
           "notes": "Preset Stat Arb Pairs v1 preferuje stat-arb scenariusze."
         }
       ]
@@ -4183,7 +4183,7 @@
         "name": "Marketplace Evaluation License",
         "spdx_id": "Proprietary",
         "url": "https://configs.example.com/licenses/marketplace-eval",
-        "terms_summary": "Do u\u017cytku ewaluacyjnego w \u015brodowiskach demo.",
+        "terms_summary": "Do użytku ewaluacyjnego w środowiskach demo.",
         "redistributable": false,
         "commercial_use": false
       },
@@ -4216,12 +4216,12 @@
           "size_bytes": 1770,
           "integrity": {
             "algorithm": "sha256",
-            "digest": "52c6ee5b24f390c5d9ac9acac611885487ee6956e441aa54d0f52f169f946d9c"
+            "digest": "02319df922f994f87f27cff05cb539ca5916a0ad9e40109d27d7fa7f663dbea4"
           },
           "signature": {
             "algorithm": "HMAC-SHA256",
             "key_id": "dev-hmac",
-            "value": "+oHZMMdqnQT1JXphXnR90c2jbkWDTqsWrg9j5LxgUkM=",
+            "value": "WaebUDAVPgQ2VUBVrEnwD+LyzPWgrtnS+1A1itBejrU=",
             "signed_fields": [
               "package_id",
               "version",
@@ -4253,7 +4253,7 @@
       "documentation_url": "https://configs.example.com/marketplace/swing_hedge_blend",
       "release_notes": [
         "Pierwsza publikacja Swing Hedge Blend",
-        "Dodano checklist\u0119 HyperCare."
+        "Dodano checklistę HyperCare."
       ],
       "security": {
         "mode": "allowlist",
@@ -4261,7 +4261,7 @@
           "OEM-1234567890ABCDEF"
         ],
         "require_strict_match": false,
-        "audit_message": "Preset dost\u0119pny tylko dla licencjonowanych instalacji OEM."
+        "audit_message": "Preset dostępny tylko dla licencjonowanych instalacji OEM."
       },
       "release": {
         "channel": "public",
@@ -4326,7 +4326,7 @@
           "recommended_budget": 30000.0,
           "max_positions": 5,
           "holding_period": "swing",
-          "automation": "pe\u0142na",
+          "automation": "pełna",
           "notes": "Preset Swing Hedge Blend preferuje swing scenariusze."
         }
       ]
@@ -4336,7 +4336,7 @@
       "package_id": "trend_following_alpha.v1",
       "display_name": "Trend Alpha Pursuit",
       "summary": "Preset trend-following dla portfeli swingowych.",
-      "description": "Trend Alpha Pursuit \u0142\u0105czy breakout i momentum, aby utrzymywa\u0107 pozycje swingowe zgodnie z guardrailami Stage6.",
+      "description": "Trend Alpha Pursuit łączy breakout i momentum, aby utrzymywać pozycje swingowe zgodnie z guardrailami Stage6.",
       "version": "1.0.0",
       "revision": "2025.01",
       "release_date": "2025-01-15T12:00:00Z",
@@ -4353,7 +4353,7 @@
         "name": "Marketplace Evaluation License",
         "spdx_id": "Proprietary",
         "url": "https://configs.example.com/licenses/marketplace-eval",
-        "terms_summary": "Do u\u017cytku ewaluacyjnego w \u015brodowiskach demo.",
+        "terms_summary": "Do użytku ewaluacyjnego w środowiskach demo.",
         "redistributable": false,
         "commercial_use": false
       },
@@ -4387,12 +4387,12 @@
           "size_bytes": 1955,
           "integrity": {
             "algorithm": "sha256",
-            "digest": "184d96a05a39355e359ce762387a23893cf17234c2a263a89b7b499fc13a5fc2"
+            "digest": "cf4cd78547505b796ed812708fbfe98b121e0c93995727cc7684f49f1a346a2c"
           },
           "signature": {
             "algorithm": "HMAC-SHA256",
             "key_id": "dev-hmac",
-            "value": "fo+q953J1IOrEyYN4DANoX+hKIhrc18wnTiHj5xz4MI=",
+            "value": "stKRbweueUZHXcX6TeEAFeAgJ49HZiYmbdxqkh5TGcE=",
             "signed_fields": [
               "package_id",
               "version",
@@ -4423,7 +4423,7 @@
       ],
       "documentation_url": "https://configs.example.com/marketplace/trend_following_alpha",
       "release_notes": [
-        "Wersja 1.0 \u2013 pipeline swingowy",
+        "Wersja 1.0 – pipeline swingowy",
         "Dodano guardraile momentum i ATR."
       ],
       "security": {
@@ -4432,7 +4432,7 @@
           "OEM-1234567890ABCDEF"
         ],
         "require_strict_match": false,
-        "audit_message": "Preset dost\u0119pny tylko dla licencjonowanych instalacji OEM."
+        "audit_message": "Preset dostępny tylko dla licencjonowanych instalacji OEM."
       },
       "release": {
         "channel": "public",
@@ -4496,8 +4496,8 @@
           "recommended_budget": 25000.0,
           "max_positions": 6,
           "holding_period": "1-5 dni",
-          "automation": "pe\u0142na",
-          "notes": "Preferuje instrumenty z wysokim wolumenem i wska\u017anikami momentum."
+          "automation": "pełna",
+          "notes": "Preferuje instrumenty z wysokim wolumenem i wskaźnikami momentum."
         }
       ]
     },
@@ -4505,8 +4505,8 @@
       "schema_version": "1.1",
       "package_id": "volatility_breakout_guard.v1",
       "display_name": "Volatility Breakout Guard",
-      "summary": "Breakout na zmienno\u015bci",
-      "description": "Breakout na zmienno\u015bci zgodny z guardrailami Stage6.",
+      "summary": "Breakout na zmienności",
+      "description": "Breakout na zmienności zgodny z guardrailami Stage6.",
       "version": "1.0.0",
       "revision": "2025.01",
       "release_date": "2025-01-15T12:00:00Z",
@@ -4523,7 +4523,7 @@
         "name": "Marketplace Evaluation License",
         "spdx_id": "Proprietary",
         "url": "https://configs.example.com/licenses/marketplace-eval",
-        "terms_summary": "Do u\u017cytku ewaluacyjnego w \u015brodowiskach demo.",
+        "terms_summary": "Do użytku ewaluacyjnego w środowiskach demo.",
         "redistributable": false,
         "commercial_use": false
       },
@@ -4556,12 +4556,12 @@
           "size_bytes": 1820,
           "integrity": {
             "algorithm": "sha256",
-            "digest": "37535b9e31693cc4656129ab70cb49b66b4fe3d71d039f2f239ee918dbba9c83"
+            "digest": "a1af6a3f6eeec4da05ac10fd9d9477c5ab087adc627196892c53df42e02c3f50"
           },
           "signature": {
             "algorithm": "HMAC-SHA256",
             "key_id": "dev-hmac",
-            "value": "AK4Xsuec3GS93rpHXJqKB6ZQOmNVmXkHuDw+cxkit9w=",
+            "value": "+p2BSO4dXVgW1lykTaEIUCY2bPTUyDMLWOkQ/orHljE=",
             "signed_fields": [
               "package_id",
               "version",
@@ -4593,7 +4593,7 @@
       "documentation_url": "https://configs.example.com/marketplace/volatility_breakout_guard",
       "release_notes": [
         "Pierwsza publikacja Volatility Breakout Guard",
-        "Dodano checklist\u0119 HyperCare."
+        "Dodano checklistę HyperCare."
       ],
       "security": {
         "mode": "allowlist",
@@ -4601,7 +4601,7 @@
           "OEM-1234567890ABCDEF"
         ],
         "require_strict_match": false,
-        "audit_message": "Preset dost\u0119pny tylko dla licencjonowanych instalacji OEM."
+        "audit_message": "Preset dostępny tylko dla licencjonowanych instalacji OEM."
       },
       "release": {
         "channel": "public",
@@ -4666,7 +4666,7 @@
           "recommended_budget": 18000.0,
           "max_positions": 5,
           "holding_period": "swing",
-          "automation": "pe\u0142na",
+          "automation": "pełna",
           "notes": "Preset Volatility Breakout Guard preferuje volatility scenariusze."
         }
       ]

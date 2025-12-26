@@ -17,7 +17,7 @@
         "exchange",
         "bitget"
       ],
-      "version": "1.0.0+20217984d8c8215d"
+      "version": "1.0.0+c4b547f978177f1f"
     },
     "name": "Bitget Connectivity",
     "strategies": [
@@ -123,7 +123,7 @@
     "issuer": "marketplace-ci",
     "key_id": "dev-presets-ed25519",
     "public_key": "wnD5eTEGDB3CPb6r3oMOmRjFtjCxHISZXHlHX0TIKhY=",
-    "signed_at": "2025-11-23T12:53:05Z",
-    "value": "pO+/h9dsrwDypgxslSHSfXRRv5BDcu0cMLySruTn7wN3JijGHDpwIr/IUacU6LxQa2mio8lSC10x5fsTO+PEBQ=="
+    "signed_at": "2025-12-26T12:56:14Z",
+    "value": "zzM8GmYMvRciCTha9pDGUu1cRPk8KN68Ps36NGDK8YtSGcHbGbiKMhaz4OBoCUFQ0aqNoxNbU+JyGoov+042BQ=="
   }
 }
