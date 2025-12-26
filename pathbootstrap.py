@@ -870,7 +870,7 @@ def _apply_entries(
                 container.insert(0, entry)
                 inserted.insert(0, entry)
     else:  # pragma: no cover - zabezpieczenie przed błędami wywołań
-    raise ValueError(f"Nieznana pozycja wstawiania: {position}")
+        raise ValueError(f"Nieznana pozycja wstawiania: {position}")
     return inserted
 
 
