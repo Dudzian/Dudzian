@@ -21,7 +21,22 @@ _REPO_ROOT = Path(__file__).resolve().parent
 
 
 def _pytest_cov_available() -> bool:
+    """Czy paczka pytest-cov jest **zainstalowana** (niezależnie od ładowania)."""
+
     return importlib.util.find_spec("pytest_cov") is not None
+
+
+def _pytest_cov_active(config: Any) -> bool:
+    """Czy realny plugin pytest-cov jest faktycznie załadowany przez pytest."""
+
+    pm = getattr(config, "pluginmanager", None)
+    if pm is None:
+        return False
+    return bool(
+        pm.hasplugin("pytest_cov")
+        or pm.hasplugin("pytest_cov.plugin")
+        or pm.hasplugin("cov")
+    )
 
 
 @dataclass
@@ -162,8 +177,6 @@ def _safe_addoption(group: Any, *args: Any, **kwargs: Any) -> None:
 
 
 def pytest_addoption(parser: Any) -> None:  # pragma: no cover - hook wywoływany przez pytest
-    if _pytest_cov_available():
-        return
     group = parser.getgroup("cov", "coverage reporting (stub)")
     _safe_addoption(
         group,
@@ -238,7 +251,7 @@ def _parse_reports(raw_reports: Iterable[str]) -> list[tuple[str, Optional[str]]
 
 
 def pytest_configure(config: Any) -> None:  # pragma: no cover - hook wywoływany przez pytest
-    if _pytest_cov_available():
+    if _pytest_cov_active(config):
         return
     options = config.option
     _reset_state()
@@ -283,7 +296,7 @@ def pytest_configure(config: Any) -> None:  # pragma: no cover - hook wywoływan
 
 
 def pytest_sessionfinish(session: Any, exitstatus: int) -> None:  # pragma: no cover - hook
-    if _pytest_cov_available():
+    if _pytest_cov_active(session.config):
         return
     tracer = _STATE.tracer
     if tracer is None:
@@ -419,7 +432,7 @@ def _write_xml(overall: float, module_summaries: list[tuple[str, float, int, int
 
 
 def pytest_terminal_summary(terminalreporter: Any, exitstatus: int, config: Any) -> None:  # pragma: no cover
-    if _pytest_cov_available():
+    if _pytest_cov_active(config):
         return
     if not _STATE.files_by_module:
         return
