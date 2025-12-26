@@ -596,31 +596,8 @@ def _run_mtls_step(args: argparse.Namespace) -> dict[str, Any]:
     }
 
 
-def _write_stub_tco_report(output_dir: Path, basename: str) -> dict[str, str]:
-    output_dir.mkdir(parents=True, exist_ok=True)
-    csv_path = output_dir / f"{basename}.csv"
-    pdf_path = output_dir / f"{basename}.pdf"
-    json_path = output_dir / f"{basename}.json"
-    csv_path.write_text("strategy,cost_bps\n<stub>,0.0\n", encoding="utf-8")
-    pdf_path.write_text("TCO report stub – moduł TCO niedostępny.\n", encoding="utf-8")
-    json_path.write_text(
-        json.dumps(
-            {
-                "status": "stubbed",
-                "reason": "run_tco_analysis unavailable",
-                "generated_at": now_iso(),
-                "entries": [],
-            },
-            ensure_ascii=False,
-            indent=2,
-        )
-        + "\n",
-        encoding="utf-8",
-    )
-    return {"csv": str(csv_path), "pdf": str(pdf_path), "json": str(json_path)}
-
-
 def _run_tco_step(args: argparse.Namespace) -> dict[str, Any]:
+    _require("tco", run_tco_analysis)
     if not args.tco_fills:
         raise AcceptanceError("Należy wskazać co najmniej jeden plik z transakcjami (--tco-fill)")
     if not args.tco_signing_key:
@@ -643,17 +620,11 @@ def _run_tco_step(args: argparse.Namespace) -> dict[str, Any]:
     for metadata in args.tco_metadata:
         cli_args.extend(["--metadata", metadata])
 
-    output_dir = Path(args.tco_output_dir).expanduser().resolve()
-    if run_tco_analysis is None:
-        LOGGER.warning("Moduł TCO nie jest dostępny – generuję zastępczy raport.")
-        details = _write_stub_tco_report(output_dir, basename)
-        args._tco_report_path = details["json"]
-        return details
-
     exit_code = run_tco_analysis(cli_args)  # type: ignore
     if exit_code != 0:
         raise AcceptanceError(f"Analiza TCO zakończyła się kodem {exit_code}")
 
+    output_dir = Path(args.tco_output_dir).expanduser().resolve()
     csv_path = output_dir / f"{basename}.csv"
     pdf_path = output_dir / f"{basename}.pdf"
     json_path = output_dir / f"{basename}.json"
