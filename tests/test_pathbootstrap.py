@@ -23,6 +23,9 @@ from pathbootstrap import (
 )
 
 
+PYTHONPATH_DISPLAY_SEPARATOR = pathbootstrap.PATH_STYLE_SEPARATORS["posix"]
+
+
 def test_ensure_repo_root_on_sys_path_inserts_repo_root(monkeypatch: pytest.MonkeyPatch) -> None:
     repo_root = Path(__file__).resolve().parents[1]
     cleaned_path = [entry for entry in sys.path if entry != str(repo_root)]
@@ -932,7 +935,9 @@ def test_main_prints_pythonpath_value_json(
     payload = json.loads(captured.out)
     assert payload["repo_root"] == str(repo_root)
     assert payload["pythonpath_entries"] == [str(repo_root), expected_tests]
-    assert payload["pythonpath"] == ":".join([str(repo_root), expected_tests])
+    assert payload["pythonpath"] == PYTHONPATH_DISPLAY_SEPARATOR.join(
+        [str(repo_root), expected_tests]
+    )
 
 
 def test_main_with_set_env_and_export_prints_export_command(
@@ -986,6 +991,8 @@ def test_main_prints_pythonpath_json(
     assert payload == {
         "repo_root": expected_repo,
         "additional_paths": [expected_tests],
-        "pythonpath": os.pathsep.join([expected_repo, expected_tests]),
+        "pythonpath": PYTHONPATH_DISPLAY_SEPARATOR.join(
+            [expected_repo, expected_tests]
+        ),
         "pythonpath_entries": [expected_repo, expected_tests],
     }
