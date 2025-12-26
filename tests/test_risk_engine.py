@@ -751,6 +751,7 @@ def test_target_volatility_caps_position_size() -> None:
         max_position_pct=1.0,
         target_volatility=0.02,
         stop_loss_atr_multiple=2.0,
+        trade_risk_pct_range=(1.0, 1.0),
     )
 
     engine = ThresholdRiskEngine(clock=lambda: datetime(2024, 1, 1, 12, 0, 0))
