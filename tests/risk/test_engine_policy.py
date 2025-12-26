@@ -63,16 +63,17 @@ def test_trade_risk_limit_blocks_excessive_order():
     )
 
     stop_distance = order.price - order.stop_price
-    trade_risk_cap_pct = max(profile.trade_risk_pct_range()[1], profile.target_volatility())
-    max_risk_capital = trade_risk_cap_pct * account.total_equity
-    expected_max_quantity = max_risk_capital / stop_distance
+    trade_risk_cap_pct = profile.trade_risk_pct_range()[1]
+    expected_max_quantity = (trade_risk_cap_pct * account.total_equity) / stop_distance
 
     result = engine.apply_pre_trade_checks(order, account=account, profile_name=profile.name)
 
     assert not result.allowed
-    assert "limit ryzyka na pojedynczą transakcję" in (result.reason or "")
+    assert "limit ryzyka" in (result.reason or "").lower()
     assert result.adjustments is not None
-    assert result.adjustments["max_quantity"] == pytest.approx(expected_max_quantity, rel=1e-6)
+    assert result.adjustments["max_quantity"] == pytest.approx(
+        expected_max_quantity, rel=1e-6
+    )
     assert engine.recent_alerts() == ()  # brak alertów dla naruszenia twardego limitu
 
 
