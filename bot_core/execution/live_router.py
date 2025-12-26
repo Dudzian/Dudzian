@@ -937,6 +937,7 @@ class LiveExecutionRouter(ExecutionService):
                 attempts_counter += 1
                 try:
                     result = await self._perform_attempt(adapter, order.request, exchange_name)
+                    self._validate_adapter_result(result, exchange_name, request)
                 except Exception as exc:  # noqa: BLE001
                     category = self._classify_exception(exc)
                     fallback_allowed = self._is_fallback_allowed(
