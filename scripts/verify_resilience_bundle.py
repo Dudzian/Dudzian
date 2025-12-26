@@ -24,6 +24,7 @@ from bot_core.resilience.bundle import (
     load_signature,
     verify_signature,
 )
+from bot_core.runtime.file_metadata import security_flags_from_mode
 from bot_core.security.signing import canonical_json_bytes
 
 _LOGGER = logging.getLogger("verify_resilience_bundle")
@@ -238,9 +239,14 @@ def _load_signing_key_merged(
             raise ValueError("Plik klucza nie może być katalogiem")
         if path.is_symlink():
             raise ValueError("Plik klucza nie może być symlinkiem")
-        if os.name != "nt":
-            mode = stat.S_IMODE(path.stat().st_mode)
+        mode = stat.S_IMODE(path.stat().st_mode)
+        flags = security_flags_from_mode(mode)
+        permissions_supported = bool(flags.get("permissions_supported", True))
+        if permissions_supported:
             if mode & 0o077:
+                raise ValueError("Plik klucza powinien mieć uprawnienia maks. 600")
+        else:
+            if mode & 0o022:
                 raise ValueError("Plik klucza powinien mieć uprawnienia maks. 600")
         data = path.read_bytes().strip()
         if len(data) < 16:
