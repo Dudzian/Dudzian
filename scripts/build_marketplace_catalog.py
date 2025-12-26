@@ -124,6 +124,29 @@ def _package_spec(
     subprocess.run([sys.executable, *cli_args], check=True)
 
 
+def _backfill_exchange_last_verified_at(metadata: dict[str, Any]) -> None:
+    """Ensure certified/production exchange entries have last_verified_at.
+
+    Uses the package approved_at timestamp (when present) so generated
+    catalogs do not regress to null values when specs omit the field.
+    """
+
+    release = metadata.get("release") or {}
+    approved_at = release.get("approved_at")
+    if not approved_at:
+        return
+    entries = metadata.get("exchange_compatibility") or []
+    if not isinstance(entries, list):
+        return
+
+    for entry in entries:
+        if not isinstance(entry, dict):
+            continue
+        status = str(entry.get("status") or "").strip().lower()
+        if status in {"certified", "production"} and not entry.get("last_verified_at"):
+            entry["last_verified_at"] = approved_at
+
+
 def _format_budget_range(values: Sequence[float]) -> str:
     if not values:
         return "—"
@@ -295,6 +318,7 @@ def build_catalog(
                 )
                 artifact["signature"] = signature
 
+        _backfill_exchange_last_verified_at(metadata_dict)
         metadata_dict = _ensure_json_serializable(metadata_dict)
         package = MarketplacePackageMetadata.model_validate(metadata_dict)
         packages.append(package)
