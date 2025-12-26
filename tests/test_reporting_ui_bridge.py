@@ -17,6 +17,12 @@ from bot_core.reporting import ui_bridge
 from bot_core.reporting.model_quality import load_champion_overview
 
 
+def write_fixture_text(path: str | os.PathLike[str], content: str) -> None:
+    """Zapisuje deterministyczne treści fixture z wymuszonymi końcami linii LF."""
+
+    Path(path).write_text(content, encoding="utf-8", newline="\n")
+
+
 def test_package_exports_ui_bridge():
     import bot_core.reporting as reporting
 
@@ -87,11 +93,11 @@ def test_cmd_overview_lists_reports_with_exports(tmp_path, capsys):
 
     summary_path = report_dir / "summary.json"
     summary_payload = {"report_date": "2024-01-01", "trades": 15}
-    summary_path.write_text(json.dumps(summary_payload), encoding="utf-8")
+    write_fixture_text(summary_path, json.dumps(summary_payload))
 
     export_path = report_dir / "result.csv"
     export_content = "timestamp,profit\n2024-01-01T00:00:00Z,42.5\n"
-    export_path.write_text(export_content, encoding="utf-8", newline="\n")
+    write_fixture_text(export_path, export_content)
 
     # deterministyczne czasy modyfikacji
     fixed_timestamp = 1_700_000_000
@@ -171,7 +177,7 @@ def test_cmd_overview_detects_directories_without_summary(tmp_path, capsys):
 
     metrics_path = orphan_dir / "metrics.jsonl"
     metrics_content = "{}\n"
-    metrics_path.write_text(metrics_content, encoding="utf-8", newline="\n")
+    write_fixture_text(metrics_path, metrics_content)
     fixed_timestamp = 1_700_100_000
     os.utime(metrics_path, (fixed_timestamp, fixed_timestamp))
 
@@ -250,12 +256,14 @@ def test_cmd_delete_removes_report_directory(tmp_path, capsys):
     export_dir.mkdir(parents=True)
 
     summary_path = report_dir / "summary.json"
-    summary_path.write_text("{}", encoding="utf-8")
+    summary_content = "{}"
+    write_fixture_text(summary_path, summary_content)
 
     export_path = export_dir / "result.csv"
-    export_path.write_text("id,value\n1,2\n", encoding="utf-8")
+    export_content = "id,value\n1,2\n"
+    write_fixture_text(export_path, export_content)
 
-    expected_size = summary_path.stat().st_size + export_path.stat().st_size
+    expected_size = len(summary_content.encode("utf-8")) + len(export_content.encode("utf-8"))
 
     args = SimpleNamespace(base_dir=str(base_dir), path="audit/2024-01-01")
 
@@ -282,12 +290,14 @@ def test_cmd_delete_dry_run_returns_preview(tmp_path, capsys):
     export_dir.mkdir(parents=True)
 
     summary_path = report_dir / "summary.json"
-    summary_path.write_text("{}", encoding="utf-8")
+    summary_content = "{}"
+    write_fixture_text(summary_path, summary_content)
 
     export_path = export_dir / "result.csv"
-    export_path.write_text("id,value\n1,2\n", encoding="utf-8")
+    export_content = "id,value\n1,2\n"
+    write_fixture_text(export_path, export_content)
 
-    expected_size = summary_path.stat().st_size + export_path.stat().st_size
+    expected_size = len(summary_content.encode("utf-8")) + len(export_content.encode("utf-8"))
 
     args = SimpleNamespace(base_dir=str(base_dir), path="audit/2024-01-01", dry_run=True)
 
@@ -346,9 +356,10 @@ def test_cmd_delete_supports_absolute_paths(tmp_path, capsys):
     base_dir = tmp_path / "reports"
     report_file = base_dir / "standalone.json"
     report_file.parent.mkdir(parents=True)
-    report_file.write_text("{}", encoding="utf-8")
+    report_content = "{}"
+    write_fixture_text(report_file, report_content)
 
-    expected_size = report_file.stat().st_size
+    expected_size = len(report_content.encode("utf-8"))
 
     args = SimpleNamespace(base_dir=str(base_dir), path=str(report_file))
 
@@ -429,29 +440,38 @@ def test_cmd_purge_dry_run_collects_metrics(tmp_path, capsys):
     first_exports = first_report / "exports"
     first_exports.mkdir(parents=True)
     first_summary = first_report / "summary.json"
-    first_summary.write_text("{}", encoding="utf-8")
+    first_summary_content = "{}"
+    write_fixture_text(first_summary, first_summary_content)
     first_export = first_exports / "result.csv"
-    first_export.write_text("id,value\n1,2\n", encoding="utf-8")
+    first_export_content = "id,value\n1,2\n"
+    write_fixture_text(first_export, first_export_content)
 
     second_report = base_dir / "diagnostics" / "2024-01-02"
     second_exports = second_report / "exports"
     second_exports.mkdir(parents=True)
     second_summary = second_report / "summary.json"
-    second_summary.write_text("{}", encoding="utf-8")
+    second_summary_content = "{}"
+    write_fixture_text(second_summary, second_summary_content)
     second_export = second_exports / "data.json"
-    second_export.write_text("{\"ok\": true}", encoding="utf-8")
+    second_export_content = "{\"ok\": true}"
+    write_fixture_text(second_export, second_export_content)
 
-    expected_size = (
-        first_summary.stat().st_size
-        + first_export.stat().st_size
-        + second_summary.stat().st_size
-        + second_export.stat().st_size
+    # removed_size dotyczy wyłącznie celów raportowych; signal_quality_cleanup
+    # raportuje swój rozmiar osobno
+    expected_size = sum(
+        len(content.encode("utf-8"))
+        for content in (
+            first_summary_content,
+            first_export_content,
+            second_summary_content,
+            second_export_content,
+        )
     )
 
     signal_quality_dir = tmp_path / "signal_quality"
     signal_quality_dir.mkdir(parents=True)
     stale_quality = signal_quality_dir / "binance.json"
-    stale_quality.write_text("{}", encoding="utf-8")
+    write_fixture_text(stale_quality, "{}")
     old_ts = (datetime.now(timezone.utc) - timedelta(days=60)).timestamp()
     os.utime(stale_quality, (old_ts, old_ts))
 
@@ -487,19 +507,19 @@ def test_cmd_purge_deletes_reports(tmp_path, capsys):
     report_a = base_dir / "audit" / "2024-01-01"
     report_a_exports = report_a / "exports"
     report_a_exports.mkdir(parents=True)
-    (report_a / "summary.json").write_text("{}", encoding="utf-8")
-    (report_a_exports / "data.csv").write_text("id,value\n1,2\n", encoding="utf-8")
+    write_fixture_text((report_a / "summary.json"), "{}")
+    write_fixture_text((report_a_exports / "data.csv"), "id,value\n1,2\n")
 
     report_b = base_dir / "audit" / "2024-01-02"
     report_b_exports = report_b / "exports"
     report_b_exports.mkdir(parents=True)
-    (report_b / "summary.json").write_text("{}", encoding="utf-8")
-    (report_b_exports / "data.csv").write_text("id,value\n1,3\n", encoding="utf-8")
+    write_fixture_text((report_b / "summary.json"), "{}")
+    write_fixture_text((report_b_exports / "data.csv"), "id,value\n1,3\n")
 
     signal_quality_dir = tmp_path / "signal_quality"
     signal_quality_dir.mkdir(parents=True)
     stale_quality = signal_quality_dir / "binance.json"
-    stale_quality.write_text("{}", encoding="utf-8")
+    write_fixture_text(stale_quality, "{}")
     old_ts = (datetime.now(timezone.utc) - timedelta(days=90)).timestamp()
     os.utime(stale_quality, (old_ts, old_ts))
 
@@ -531,19 +551,19 @@ def test_cmd_purge_honors_limit_and_filters(tmp_path, capsys):
     report_a = base_dir / "audit" / "2024-01-01"
     report_a_exports = report_a / "exports"
     report_a_exports.mkdir(parents=True)
-    (report_a / "summary.json").write_text("{}", encoding="utf-8")
-    (report_a_exports / "data.csv").write_text("1", encoding="utf-8")
+    write_fixture_text((report_a / "summary.json"), "{}")
+    write_fixture_text((report_a_exports / "data.csv"), "1")
 
     report_b = base_dir / "audit" / "2024-01-02"
     report_b_exports = report_b / "exports"
     report_b_exports.mkdir(parents=True)
-    (report_b / "summary.json").write_text("{}", encoding="utf-8")
-    (report_b_exports / "data.csv").write_text("1", encoding="utf-8")
+    write_fixture_text((report_b / "summary.json"), "{}")
+    write_fixture_text((report_b_exports / "data.csv"), "1")
 
     report_c = base_dir / "diagnostics" / "2024-01-03"
     report_c_exports = report_c / "exports"
     report_c_exports.mkdir(parents=True)
-    (report_c_exports / "data.csv").write_text("1", encoding="utf-8")
+    write_fixture_text((report_c_exports / "data.csv"), "1")
 
     signal_quality_dir = tmp_path / "signal_quality"
     signal_quality_dir.mkdir(parents=True)
@@ -604,15 +624,16 @@ def test_cmd_archive_dry_run_collects_metrics(tmp_path, capsys):
     report_dir = base_dir / "audit" / "2024-01-01"
     report_dir.mkdir(parents=True)
     summary_path = report_dir / "summary.json"
-    summary_path.write_text("{}", encoding="utf-8")
+    summary_content = "{}"
+    write_fixture_text(summary_path, summary_content)
     export_path = report_dir / "exports" / "data.csv"
     export_path.parent.mkdir(parents=True)
     export_content = "timestamp,value\n2024-01-01T00:00:00Z,1\n"
-    export_path.write_text(export_content, encoding="utf-8")
+    write_fixture_text(export_path, export_content)
 
     expected_files = 2
     expected_directories = 2
-    expected_size = summary_path.stat().st_size + export_path.stat().st_size
+    expected_size = len(summary_content.encode("utf-8")) + len(export_content.encode("utf-8"))
 
     destination = tmp_path / "archives"
     args = _build_archive_args(base_dir, destination=destination, dry_run=True)
@@ -639,11 +660,11 @@ def test_cmd_archive_copies_reports(tmp_path, capsys):
     report_dir = base_dir / "daily" / "2024-02-01"
     report_dir.mkdir(parents=True)
     summary_path = report_dir / "summary.json"
-    summary_path.write_text("{}", encoding="utf-8")
+    write_fixture_text(summary_path, "{}")
     export_path = report_dir / "exports" / "result.json"
     export_path.parent.mkdir(parents=True)
     export_payload = {"profit": 42}
-    export_path.write_text(json.dumps(export_payload), encoding="utf-8")
+    write_fixture_text(export_path, json.dumps(export_payload))
 
     destination = tmp_path / "archives"
     args = _build_archive_args(base_dir, destination=destination)
@@ -672,12 +693,12 @@ def test_cmd_archive_creates_zip_package(tmp_path, capsys):
     report_dir = base_dir / "daily" / "2024-02-02"
     report_dir.mkdir(parents=True)
     summary_path = report_dir / "summary.json"
-    summary_path.write_text("{}", encoding="utf-8")
+    write_fixture_text(summary_path, "{}")
     export_dir = report_dir / "exports"
     export_dir.mkdir()
     export_path = export_dir / "result.json"
     export_payload = {"value": 123}
-    export_path.write_text(json.dumps(export_payload), encoding="utf-8")
+    write_fixture_text(export_path, json.dumps(export_payload))
 
     destination = tmp_path / "archives"
     args = _build_archive_args(base_dir, destination=destination, archive_format="zip")
@@ -712,10 +733,10 @@ def test_cmd_archive_creates_tar_package(tmp_path, capsys):
     report_dir = base_dir / "daily" / "2024-02-03"
     report_dir.mkdir(parents=True)
     summary_path = report_dir / "summary.json"
-    summary_path.write_text("{}", encoding="utf-8")
+    write_fixture_text(summary_path, "{}")
     export_path = report_dir / "exports" / "data.csv"
     export_path.parent.mkdir(parents=True)
-    export_path.write_text("id,value\n1,2\n", encoding="utf-8")
+    write_fixture_text(export_path, "id,value\n1,2\n")
 
     destination = tmp_path / "archives"
     args = _build_archive_args(base_dir, destination=destination, archive_format="tar")
@@ -750,12 +771,12 @@ def test_cmd_archive_requires_overwrite_for_existing_targets(tmp_path, capsys):
 
     report_dir = base_dir / "audit" / "2024-03-01"
     report_dir.mkdir(parents=True)
-    (report_dir / "summary.json").write_text("{}", encoding="utf-8")
+    write_fixture_text((report_dir / "summary.json"), "{}")
 
     destination = tmp_path / "archives"
     existing_copy = destination / "audit" / "2024-03-01"
     existing_copy.mkdir(parents=True)
-    (existing_copy / "summary.json").write_text("{\"existing\": true}", encoding="utf-8")
+    write_fixture_text((existing_copy / "summary.json"), "{\"existing\": true}")
 
     args = _build_archive_args(base_dir, destination=destination)
 
@@ -799,11 +820,11 @@ def test_cmd_overview_marks_invalid_summary(tmp_path, capsys):
     report_dir.mkdir(parents=True)
 
     summary_path = report_dir / "summary.json"
-    summary_path.write_text("{\"report_date\": }", encoding="utf-8")
+    write_fixture_text(summary_path, "{\"report_date\": }")
 
     export_path = report_dir / "snapshot.csv"
     export_content = "timestamp,value\n2024-05-07T00:00:00Z,1\n"
-    export_path.write_text(export_content, encoding="utf-8")
+    write_fixture_text(export_path, export_content)
 
     fixed_timestamp = 1_700_200_000
     os.utime(summary_path, (fixed_timestamp, fixed_timestamp))
@@ -855,16 +876,16 @@ def test_cmd_overview_filters_by_since(tmp_path, capsys):
     old_report_dir = base_dir / "daily" / "2024-01-01"
     old_report_dir.mkdir(parents=True)
     old_summary = old_report_dir / "summary.json"
-    old_summary.write_text(json.dumps({"report_date": "2024-01-01"}), encoding="utf-8")
+    write_fixture_text(old_summary, json.dumps({"report_date": "2024-01-01"}))
     old_export = old_report_dir / "data.csv"
-    old_export.write_text("a,b\n1,2\n", encoding="utf-8")
+    write_fixture_text(old_export, "a,b\n1,2\n")
 
     recent_report_dir = base_dir / "daily" / "2024-01-20"
     recent_report_dir.mkdir(parents=True)
     recent_summary = recent_report_dir / "summary.json"
-    recent_summary.write_text(json.dumps({"report_date": "2024-01-20"}), encoding="utf-8")
+    write_fixture_text(recent_summary, json.dumps({"report_date": "2024-01-20"}))
     recent_export = recent_report_dir / "data.csv"
-    recent_export.write_text("a,b\n3,4\n", encoding="utf-8")
+    write_fixture_text(recent_export, "a,b\n3,4\n")
 
     old_dt = datetime(2024, 1, 1, tzinfo=timezone.utc)
     recent_dt = datetime(2024, 1, 20, tzinfo=timezone.utc)
@@ -906,13 +927,13 @@ def test_cmd_overview_filters_by_until(tmp_path, capsys):
 
     early_dir = base_dir / "daily" / "2024-01-01"
     early_dir.mkdir(parents=True)
-    (early_dir / "summary.json").write_text(json.dumps({"report_date": "2024-01-01"}), encoding="utf-8")
-    (early_dir / "data.csv").write_text("a,b\n1,2\n", encoding="utf-8")
+    write_fixture_text((early_dir / "summary.json"), json.dumps({"report_date": "2024-01-01"}))
+    write_fixture_text((early_dir / "data.csv"), "a,b\n1,2\n")
 
     late_dir = base_dir / "daily" / "2024-01-20"
     late_dir.mkdir(parents=True)
-    (late_dir / "summary.json").write_text(json.dumps({"report_date": "2024-01-20"}), encoding="utf-8")
-    (late_dir / "data.csv").write_text("a,b\n3,4\n", encoding="utf-8")
+    write_fixture_text((late_dir / "summary.json"), json.dumps({"report_date": "2024-01-20"}))
+    write_fixture_text((late_dir / "data.csv"), "a,b\n3,4\n")
 
     early_dt = datetime(2024, 1, 1, tzinfo=timezone.utc)
     late_dt = datetime(2024, 1, 20, tzinfo=timezone.utc)
@@ -965,13 +986,13 @@ def test_cmd_overview_category_filter(tmp_path, capsys):
 
     audit_dir = base_dir / "audit" / "2024-02-01"
     audit_dir.mkdir(parents=True)
-    (audit_dir / "summary.json").write_text(json.dumps({"report_date": "2024-02-01"}), encoding="utf-8")
-    (audit_dir / "export.csv").write_text("row\n", encoding="utf-8")
+    write_fixture_text((audit_dir / "summary.json"), json.dumps({"report_date": "2024-02-01"}))
+    write_fixture_text((audit_dir / "export.csv"), "row\n")
 
     diagnostics_dir = base_dir / "diagnostics" / "2024-02-02"
     diagnostics_dir.mkdir(parents=True)
-    (diagnostics_dir / "summary.json").write_text(json.dumps({"report_date": "2024-02-02"}), encoding="utf-8")
-    (diagnostics_dir / "export.csv").write_text("row\n", encoding="utf-8")
+    write_fixture_text((diagnostics_dir / "summary.json"), json.dumps({"report_date": "2024-02-02"}))
+    write_fixture_text((diagnostics_dir / "export.csv"), "row\n")
 
     args = SimpleNamespace(base_dir=str(base_dir), categories=["audit"])
 
@@ -1005,11 +1026,11 @@ def test_cmd_overview_query_filter(tmp_path, capsys):
 
     audit_dir = base_dir / "audit" / "2024-05-01"
     audit_dir.mkdir(parents=True)
-    (audit_dir / "summary.json").write_text(json.dumps({"report_date": "2024-05-01"}), encoding="utf-8")
+    write_fixture_text((audit_dir / "summary.json"), json.dumps({"report_date": "2024-05-01"}))
 
     diagnostics_dir = base_dir / "diagnostics" / "2024-05-02"
     diagnostics_dir.mkdir(parents=True)
-    (diagnostics_dir / "summary.json").write_text(json.dumps({"report_date": "2024-05-02"}), encoding="utf-8")
+    write_fixture_text((diagnostics_dir / "summary.json"), json.dumps({"report_date": "2024-05-02"}))
 
     args = SimpleNamespace(base_dir=str(base_dir), query="diag")
 
@@ -1029,7 +1050,7 @@ def test_cmd_overview_query_filter_casefold(tmp_path, capsys):
 
     report_dir = base_dir / "audit" / "2024-05-03"
     report_dir.mkdir(parents=True)
-    (report_dir / "summary.json").write_text(json.dumps({"report_date": "2024-05-03"}), encoding="utf-8")
+    write_fixture_text((report_dir / "summary.json"), json.dumps({"report_date": "2024-05-03"}))
 
     args = SimpleNamespace(base_dir=str(base_dir), query="AUDIT")
 
@@ -1092,20 +1113,20 @@ def test_cmd_overview_summary_status_filters(tmp_path, capsys):
 
     valid_dir = base_dir / "audit" / "2024-04-01"
     valid_dir.mkdir(parents=True)
-    (valid_dir / "summary.json").write_text(
+    write_fixture_text(
+        (valid_dir / "summary.json"),
         json.dumps({"report_date": "2024-04-01", "status": "ok"}),
-        encoding="utf-8",
     )
-    (valid_dir / "export.csv").write_text("row\n", encoding="utf-8")
+    write_fixture_text((valid_dir / "export.csv"), "row\n")
 
     missing_dir = base_dir / "diagnostics" / "2024-04-02"
     missing_dir.mkdir(parents=True)
-    (missing_dir / "metrics.json").write_text("{}", encoding="utf-8")
+    write_fixture_text((missing_dir / "metrics.json"), "{}")
 
     invalid_dir = base_dir / "audit" / "2024-04-03"
     invalid_dir.mkdir(parents=True)
-    (invalid_dir / "summary.json").write_text("{\n", encoding="utf-8")
-    (invalid_dir / "export.csv").write_text("row\n", encoding="utf-8")
+    write_fixture_text((invalid_dir / "summary.json"), "{\n")
+    write_fixture_text((invalid_dir / "export.csv"), "row\n")
 
     args = SimpleNamespace(base_dir=str(base_dir), summary_status="valid")
 
@@ -1165,12 +1186,12 @@ def test_cmd_overview_has_exports_filter(tmp_path, capsys):
 
     with_exports = base_dir / "audit" / "2024-06-01"
     with_exports.mkdir(parents=True)
-    (with_exports / "summary.json").write_text(json.dumps({"report_date": "2024-06-01"}), encoding="utf-8")
-    (with_exports / "export.csv").write_text("row\n", encoding="utf-8")
+    write_fixture_text((with_exports / "summary.json"), json.dumps({"report_date": "2024-06-01"}))
+    write_fixture_text((with_exports / "export.csv"), "row\n")
 
     without_exports = base_dir / "diagnostics" / "2024-06-02"
     without_exports.mkdir(parents=True)
-    (without_exports / "summary.json").write_text(json.dumps({"report_date": "2024-06-02"}), encoding="utf-8")
+    write_fixture_text((without_exports / "summary.json"), json.dumps({"report_date": "2024-06-02"}))
 
     args = SimpleNamespace(base_dir=str(base_dir), has_exports="yes")
 
@@ -1211,18 +1232,18 @@ def test_cmd_overview_limits_number_of_reports(tmp_path, capsys):
 
     first_dir = base_dir / "daily" / "2024-05-01"
     first_dir.mkdir(parents=True)
-    (first_dir / "summary.json").write_text(json.dumps({"report_date": "2024-05-01"}), encoding="utf-8")
-    (first_dir / "export.csv").write_text("row\n", encoding="utf-8")
+    write_fixture_text((first_dir / "summary.json"), json.dumps({"report_date": "2024-05-01"}))
+    write_fixture_text((first_dir / "export.csv"), "row\n")
 
     second_dir = base_dir / "daily" / "2024-05-02"
     second_dir.mkdir(parents=True)
-    (second_dir / "summary.json").write_text(json.dumps({"report_date": "2024-05-02"}), encoding="utf-8")
-    (second_dir / "export.csv").write_text("row\n", encoding="utf-8")
+    write_fixture_text((second_dir / "summary.json"), json.dumps({"report_date": "2024-05-02"}))
+    write_fixture_text((second_dir / "export.csv"), "row\n")
 
     third_dir = base_dir / "daily" / "2024-05-03"
     third_dir.mkdir(parents=True)
-    (third_dir / "summary.json").write_text(json.dumps({"report_date": "2024-05-03"}), encoding="utf-8")
-    (third_dir / "export.csv").write_text("row\n", encoding="utf-8")
+    write_fixture_text((third_dir / "summary.json"), json.dumps({"report_date": "2024-05-03"}))
+    write_fixture_text((third_dir / "export.csv"), "row\n")
 
     timestamps = [
         datetime(2024, 5, 1, 12, tzinfo=timezone.utc),
@@ -1279,8 +1300,8 @@ def test_cmd_overview_skips_reports_with_offset(tmp_path, capsys):
     for index, day in enumerate(["2024-06-01", "2024-06-02", "2024-06-03"], start=1):
         report_dir = base_dir / "daily" / day
         report_dir.mkdir(parents=True)
-        (report_dir / "summary.json").write_text(json.dumps({"report_date": day}), encoding="utf-8")
-        (report_dir / "export.csv").write_text("row\n", encoding="utf-8")
+        write_fixture_text((report_dir / "summary.json"), json.dumps({"report_date": day}))
+        write_fixture_text((report_dir / "export.csv"), "row\n")
         timestamp = datetime(2024, 6, index, 12, tzinfo=timezone.utc)
         ts = int(timestamp.timestamp())
         os.utime(report_dir / "summary.json", (ts, ts))
@@ -1352,15 +1373,15 @@ def test_cmd_overview_sorts_by_name(tmp_path, capsys):
     first_dir.mkdir(parents=True)
     second_dir.mkdir(parents=True)
 
-    (first_dir / "summary.json").write_text(
-        json.dumps({"report_date": "2024-02-01"}), encoding="utf-8"
+    write_fixture_text(
+        (first_dir / "summary.json"), json.dumps({"report_date": "2024-02-01"})
     )
-    (second_dir / "summary.json").write_text(
-        json.dumps({"report_date": "2024-02-02"}), encoding="utf-8"
+    write_fixture_text(
+        (second_dir / "summary.json"), json.dumps({"report_date": "2024-02-02"})
     )
 
-    (first_dir / "export.csv").write_text("row\n", encoding="utf-8")
-    (second_dir / "export.csv").write_text("row\n", encoding="utf-8")
+    write_fixture_text((first_dir / "export.csv"), "row\n")
+    write_fixture_text((second_dir / "export.csv"), "row\n")
 
     # ustawiamy identyczne znaczniki czasu, aby kolejność zależała tylko od sortowania
     fixed_timestamp = 1_700_500_000
@@ -1393,15 +1414,15 @@ def test_cmd_overview_sorts_by_size_descending(tmp_path, capsys):
     small_dir.mkdir(parents=True)
     large_dir.mkdir(parents=True)
 
-    (small_dir / "summary.json").write_text(
-        json.dumps({"report_date": "2024-03-01"}), encoding="utf-8"
+    write_fixture_text(
+        (small_dir / "summary.json"), json.dumps({"report_date": "2024-03-01"})
     )
-    (large_dir / "summary.json").write_text(
-        json.dumps({"report_date": "2024-03-02"}), encoding="utf-8"
+    write_fixture_text(
+        (large_dir / "summary.json"), json.dumps({"report_date": "2024-03-02"})
     )
 
-    (small_dir / "export.csv").write_text("a\n", encoding="utf-8")
-    (large_dir / "export.csv").write_text("a\n" * 100, encoding="utf-8")
+    write_fixture_text((small_dir / "export.csv"), "a\n")
+    write_fixture_text((large_dir / "export.csv"), "a\n" * 100)
 
     ts_small = 1_700_600_000
     ts_large = 1_700_700_000
@@ -1446,19 +1467,13 @@ def test_cmd_overview_rejects_invalid_sort_options(tmp_path, capsys):
     assert return_code == 2
     assert captured.out == ""
     assert "Unsupported sort direction" in captured.err
-import json
-from pathlib import Path
-
-import pytest
-
-from bot_core.reporting import ui_bridge
 
 
 def _write_report(tmp_path: Path, name: str) -> Path:
     report_dir = tmp_path / name
     report_dir.mkdir()
-    (report_dir / "summary.json").write_text("{}", encoding="utf-8")
-    (report_dir / "details.txt").write_text("details", encoding="utf-8")
+    write_fixture_text((report_dir / "summary.json"), "{}")
+    write_fixture_text((report_dir / "details.txt"), "details")
     return report_dir
 
 
