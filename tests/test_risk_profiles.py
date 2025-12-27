@@ -51,6 +51,14 @@ def test_profiles_scale_position_sizes_with_risk(btc_daily_atr_series: list[floa
         max_notional = profile.max_position_exposure() * equity
         assert qty * price <= max_notional + 1e-6
 
+    exposure_caps = [profile.max_position_exposure() for profile in (conservative, balanced, aggressive)]
+    assert exposure_caps[0] >= exposure_caps[1] >= exposure_caps[2]
+
+    conservative_cap_qty = conservative.max_position_exposure() * equity / price
+    assert quantities[0] == pytest.approx(conservative_cap_qty)
+    assert quantities[1] < balanced.max_position_exposure() * equity / price
+    assert quantities[2] < aggressive.max_position_exposure() * equity / price
+
     stop_distances = [atr * profile.stop_loss_atr_multiple() for profile in (conservative, balanced, aggressive)]
     assert stop_distances[0] < stop_distances[1] < stop_distances[2]
 

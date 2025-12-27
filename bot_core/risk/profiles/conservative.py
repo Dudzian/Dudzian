@@ -8,14 +8,22 @@ from bot_core.risk.base import StaticRiskProfile
 
 @dataclass(slots=True)
 class ConservativeProfile(StaticRiskProfile):
-    """Profil o niskiej tolerancji ryzyka."""
+    """Profil o niskiej tolerancji ryzyka.
+
+    Limit ekspozycji jest celowo ustawiony na poziomie profili wyższych
+    (balanced/aggressive), aby ogranicznikiem wielkości pozycji pozostawało
+    ryzyko/stop-loss (ciaśniejszy stop, niższe ryzyko na trade), a nie zbyt
+    niski cap notional – dzięki temu kolejność conservative > balanced >
+    aggressive w kalkulacjach ilości wynika z parametrów ryzyka, a nie
+    przypadkowego dławienia capem.
+    """
 
     name: str = "conservative"
     _max_positions: int = 3
     _max_leverage: float = 2.0
     _drawdown_limit: float = 0.05
     _daily_loss_limit: float = 0.04
-    _max_position_pct: float = 0.10
+    _max_position_pct: float = 0.30  # patrz docstring: cap utrzymany wysoko, bo ryzyko ogranicza sizing
     _target_volatility: float = 0.07
     _stop_loss_atr_multiple: float = 1.0
     _trade_risk_pct_range: tuple[float, float] = (0.005, 0.0075)
