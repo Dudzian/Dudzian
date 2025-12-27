@@ -432,10 +432,11 @@ class RiskManagement:
                 self.current_positions = dict(portfolio) if portfolio else {}
 
                 for symbol, returns in (returns_map or {}).items():
+                    cleaned_returns = returns.astype(float, copy=False)
                     if symbol not in self.historical_returns:
-                        self.historical_returns[symbol] = returns.dropna().tail(252)
+                        self.historical_returns[symbol] = cleaned_returns.dropna().tail(252)
                     else:
-                        combined = pd.concat([self.historical_returns[symbol], returns]).dropna()
+                        combined = pd.concat([self.historical_returns[symbol], cleaned_returns]).dropna()
                         self.historical_returns[symbol] = combined.tail(252)
 
                 self.logger.debug(
@@ -461,6 +462,291 @@ class RiskManagement:
             f"RiskParity: {risk_parity_size:.3f}, Heat: {heat_adjusted_size:.3f}, "
             f"CorrAdj: {correlation_adjustment:.3f}, Heat: {portfolio_heat:.3f}"
         )
+
+    # ------------------------------------------------------------------
+    # Limity pozycji i trailing stopy
+    # ------------------------------------------------------------------
+    def calculate_stop_loss(
+        self, entry_price: float, atr: float, *, direction: str = "long"
+    ) -> float:
+        try:
+            atr_component = atr if atr > 0 else entry_price * 0.01
+            multiplier = 2.0 if self.use_dynamic_stops else 1.0
+            raw_sl = entry_price - multiplier * atr_component
+            if direction.lower() == "short":
+                raw_sl = entry_price + multiplier * atr_component
+            sl_distance = abs(raw_sl - entry_price) / max(entry_price, 1e-9)
+            if sl_distance < self.min_stop_loss:
+                sl_distance = self.min_stop_loss
+            elif sl_distance > self.max_stop_loss:
+                sl_distance = self.max_stop_loss
+            if direction.lower() == "short":
+                return entry_price + sl_distance * entry_price
+            return entry_price - sl_distance * entry_price
+        except Exception as exc:  # pragma: no cover - log i fallback
+            self.logger.error("Error calculating stop loss: %s", exc)
+            return entry_price * (0.98 if direction.lower() == "long" else 1.02)
+
+    def update_trailing_stop(
+        self, position: Dict[str, Any], current_price: float
+    ) -> Dict[str, Any]:
+        try:
+            trailing_params = position.get("trailing_params")
+            if not trailing_params:
+                return position
+
+            current_stop = float(position.get("stop_loss", current_price))
+            position_side = str(position.get("side", "long")).lower()
+            atr_multiplier = float(trailing_params.get("atr_multiplier", 2.0))
+            update_threshold = float(trailing_params.get("update_threshold", 0.01))
+
+            if position_side == "long":
+                new_stop = current_price - (atr_multiplier * update_threshold)
+                if new_stop > current_stop:
+                    position["stop_loss"] = float(new_stop)
+                    position["trailing_updated"] = True
+                    self.logger.info(
+                        "Trailing stop LONG: %.4f -> %.4f", current_stop, new_stop
+                    )
+            else:
+                new_stop = current_price + (atr_multiplier * update_threshold)
+                if new_stop < current_stop:
+                    position["stop_loss"] = float(new_stop)
+                    position["trailing_updated"] = True
+                    self.logger.info(
+                        "Trailing stop SHORT: %.4f -> %.4f", current_stop, new_stop
+                    )
+
+            return position
+        except Exception as exc:  # pragma: no cover - log i fallback
+            self.logger.error("Error updating trailing stop: %s", exc)
+            return position
+
+    # ------------------------------------------------------------------
+    # Awaryjne kontrole i raportowanie
+    # ------------------------------------------------------------------
+    def emergency_risk_check(
+        self,
+        portfolio_value: float,
+        initial_value: float,
+        current_positions: Mapping[str, Mapping[str, Any]],
+    ) -> Dict[str, Any]:
+        try:
+            current_drawdown = (
+                (initial_value - portfolio_value) / initial_value
+                if initial_value > 0
+                else 0.0
+            )
+            actions: List[str] = []
+            alerts: List[str] = []
+
+            if current_drawdown > self.emergency_stop_drawdown:
+                actions.append("EMERGENCY_STOP")
+                alerts.append(
+                    f"Emergency drawdown exceeded: {current_drawdown:.2%} > "
+                    f"{self.emergency_stop_drawdown:.2%}"
+                )
+                self._emit_alert(
+                    f"Drawdown {current_drawdown:.2%} przekracza limit awaryjny",
+                    severity=AlertSeverity.CRITICAL,
+                    context={"drawdown": float(current_drawdown)},
+                )
+
+            portfolio_heat = self._calculate_portfolio_heat(current_positions)
+            if portfolio_heat > 0.8:
+                actions.append("REDUCE_POSITIONS")
+                alerts.append(f"Portfolio heat too high: {portfolio_heat:.2%}")
+                self._emit_alert(
+                    f"Przegrzanie portfela: heat {portfolio_heat:.2%}",
+                    severity=AlertSeverity.WARNING,
+                    context={"portfolio_heat": float(portfolio_heat)},
+                )
+
+            position_sizes = [
+                float(pos.get("size", 0.0)) for pos in current_positions.values()
+            ] if current_positions else []
+            max_position = float(max(position_sizes)) if position_sizes else 0.0
+            if max_position > 0.15:
+                actions.append("REDUCE_LARGEST_POSITION")
+                alerts.append(f"Position too large: {max_position:.2%}")
+                self._emit_alert(
+                    f"Pojedyncza pozycja {max_position:.2%} przekracza limit",
+                    severity=AlertSeverity.WARNING,
+                    context={"max_position": float(max_position)},
+                )
+
+            correlation_risk = self._calculate_correlation_risk(current_positions, {})
+            if correlation_risk > 0.8:
+                actions.append("DIVERSIFY_PORTFOLIO")
+                alerts.append(f"High correlation risk: {correlation_risk:.2%}")
+                self._emit_alert(
+                    f"Wysoka korelacja portfela ({correlation_risk:.2%})",
+                    severity=AlertSeverity.WARNING,
+                    context={"correlation_risk": float(correlation_risk)},
+                )
+
+            return {
+                "emergency_stop_required": "EMERGENCY_STOP" in actions,
+                "actions_required": actions,
+                "risk_alerts": alerts,
+                "current_drawdown": float(current_drawdown),
+                "portfolio_heat": float(portfolio_heat),
+                "max_position_size": float(max_position),
+                "correlation_risk": float(correlation_risk),
+            }
+        except Exception as exc:  # pragma: no cover - log i fallback
+            self.logger.error("Error in emergency risk check: %s", exc)
+            self._emit_alert(
+                f"Błąd awaryjnej kontroli ryzyka: {exc}",
+                severity=AlertSeverity.ERROR,
+                context={"error": str(exc)},
+            )
+            return {
+                "emergency_stop_required": True,
+                "actions_required": ["EMERGENCY_STOP"],
+                "risk_alerts": [f"Error in risk calculation: {exc}"],
+                "current_drawdown": 0.5,
+                "portfolio_heat": 1.0,
+                "max_position_size": 1.0,
+                "correlation_risk": 1.0,
+            }
+
+    def generate_risk_report(
+        self,
+        portfolio_data: Mapping[str, Mapping[str, Any]],
+        market_data: Mapping[str, pd.DataFrame],
+    ) -> str:
+        try:
+            metrics = self.calculate_risk_metrics(portfolio_data, market_data)
+            report: List[str] = []
+            report.append("=== RISK MANAGEMENT REPORT ===\n")
+            report.append(f"🎯 Overall Risk Level: {metrics.risk_level.name}\n")
+            report.append(f"📊 Risk Score: {metrics.overall_risk_score:.3f}\n\n")
+            report.append("📈 Risk Metrics:\n")
+            report.append(f"  • Value at Risk (95%): {metrics.var_95:.3f}\n")
+            report.append(f"  • Expected Shortfall: {metrics.expected_shortfall:.3f}\n")
+            report.append(f"  • Max Drawdown Risk: {metrics.max_drawdown_risk:.3f}\n")
+            report.append(f"  • Correlation Risk: {metrics.correlation_risk:.3f}\n")
+            report.append(f"  • Liquidity Risk: {metrics.liquidity_risk:.3f}\n\n")
+
+            if portfolio_data:
+                num_positions = len(portfolio_data)
+                total_exposure = float(
+                    sum(pos.get("size", 0.0) for pos in portfolio_data.values())
+                )
+                report.append("📋 Portfolio Overview:\n")
+                report.append(f"  • Number of Positions: {num_positions}\n")
+                report.append(f"  • Total Exposure: {total_exposure:.2%}\n")
+                report.append(
+                    f"  • Portfolio Heat: {self._calculate_portfolio_heat(portfolio_data):.3f}\n\n"
+                )
+
+            report.append("💡 Risk Recommendations:\n")
+            if metrics.risk_level.value >= RiskLevel.HIGH.value:
+                report.append("  ⚠️  REDUCE RISK: Consider closing some positions\n")
+                report.append("  ⚠️  INCREASE DIVERSIFICATION: Add uncorrelated assets\n")
+                report.append("  ⚠️  TIGHTEN STOPS: Reduce stop-loss distances\n")
+            elif metrics.risk_level.value <= RiskLevel.LOW.value:
+                report.append("  ✅ CURRENT RISK ACCEPTABLE: Monitor and maintain\n")
+                report.append("  🔍 OPPORTUNITY: Consider increasing position sizes\n")
+            else:
+                report.append("  ⚖️  BALANCED RISK: Current approach appropriate\n")
+                report.append("  👀 MONITOR: Watch for regime changes\n")
+
+            if len(portfolio_data) > 1:
+                report.append("\n🔗 Correlation Analysis:\n")
+                report.append(
+                    f"  • Average Correlation: {metrics.correlation_risk:.3f}\n"
+                )
+                if metrics.correlation_risk > 0.7:
+                    report.append(
+                        "  ⚠️  HIGH CORRELATION: Positions may move together\n"
+                    )
+                elif metrics.correlation_risk < 0.3:
+                    report.append(
+                        "  ✅ GOOD DIVERSIFICATION: Low correlation between positions\n"
+                    )
+
+            return "".join(report)
+        except Exception as exc:  # pragma: no cover - log i fallback
+            self.logger.error("Error generating risk report: %s", exc)
+            return f"Error generating risk report: {exc}"
+
+    def optimize_portfolio_risk(
+        self,
+        current_portfolio: Mapping[str, Mapping[str, Any]],
+        target_risk: Optional[float] = None,
+    ) -> Dict[str, Any]:
+        try:
+            if not current_portfolio:
+                return {"optimization_needed": False, "suggestions": []}
+
+            target = float(target_risk or (self.max_portfolio_risk * 0.8))
+            current_risk = float(self._calculate_portfolio_heat(current_portfolio))
+            suggestions: List[Dict[str, Any]] = []
+
+            if current_risk > target:
+                excess = current_risk - target
+                positions_by_risk: List[Tuple[str, float, Mapping[str, Any]]] = []
+                for symbol, pos in current_portfolio.items():
+                    prisk = float(pos.get("size", 0.0)) * float(pos.get("volatility", 0.2))
+                    positions_by_risk.append((symbol, prisk, pos))
+                positions_by_risk.sort(key=lambda item: item[1], reverse=True)
+
+                risk_to_reduce = float(excess)
+                for symbol, prisk, pos in positions_by_risk:
+                    if risk_to_reduce <= 0:
+                        break
+                    max_reduction = prisk * 0.5
+                    reduction = min(risk_to_reduce, max_reduction)
+                    suggested_size = max(
+                        0.0,
+                        float(pos.get("size", 0.0))
+                        - reduction / float(pos.get("volatility", 0.2)),
+                    )
+                    suggestions.append(
+                        {
+                            "action": "reduce_position",
+                            "symbol": symbol,
+                            "current_size": float(pos.get("size", 0.0)),
+                            "suggested_size": suggested_size,
+                            "risk_reduction": float(reduction),
+                            "reason": "Portfolio risk too high",
+                        }
+                    )
+                    risk_to_reduce -= reduction
+
+            elif current_risk < target * 0.5:
+                available_risk = target - current_risk
+                for symbol, pos in current_portfolio.items():
+                    if available_risk <= 0:
+                        break
+                    cur_size = float(pos.get("size", 0.0))
+                    volatility = float(pos.get("volatility", 0.2))
+                    max_increase = float(available_risk / max(volatility, 1e-9))
+                    suggested_increase = min(max_increase, cur_size * 0.5)
+                    if suggested_increase > 0.01:
+                        suggestions.append(
+                            {
+                                "action": "increase_position",
+                                "symbol": symbol,
+                                "current_size": cur_size,
+                                "suggested_size": cur_size + suggested_increase,
+                                "risk_increase": suggested_increase * volatility,
+                                "reason": "Portfolio risk below target",
+                            }
+                        )
+                        available_risk -= suggested_increase * volatility
+
+            return {
+                "optimization_needed": len(suggestions) > 0,
+                "current_risk": current_risk,
+                "target_risk": target,
+                "suggestions": suggestions,
+            }
+        except Exception as exc:  # pragma: no cover - log i fallback
+            self.logger.error("Error optimizing portfolio risk: %s", exc)
+            return {"optimization_needed": False, "error": str(exc)}
 
     def _calculate_kelly_criterion(
         self, returns: pd.Series, signal_confidence: float
