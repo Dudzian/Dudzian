@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import math
 import os
+import logging
 from copy import deepcopy
 from functools import lru_cache
 from importlib import resources
@@ -23,6 +24,39 @@ _DEFAULTS_RESOURCE = "risk_thresholds.yaml"
 _ROOT = Path(__file__).resolve().parents[2]
 _DEFAULT_OVERRIDE_PATH = _ROOT / "config" / "risk_thresholds.yaml"
 _ENV_OVERRIDE_VAR = "BOT_CORE_RISK_THRESHOLDS_PATH"
+
+_LOGGER = logging.getLogger(__name__)
+
+
+_FALLBACK_THRESHOLDS: dict[str, Any] = {
+    "market_regime": {
+        "metrics": {
+            "short_span_min": 5,
+            "short_span_divisor": 3,
+            "long_span_min": 10,
+        },
+        "risk_score": {
+            "volatility_weight": 0.35,
+            "intraday_weight": 0.25,
+            "drawdown_weight": 0.2,
+            "volatility_mix_weight": 0.2,
+        },
+    },
+    "auto_trader": {
+        "map_regime_to_signal": {
+            "assessment_confidence": 0.5,
+            "summary_confidence": 0.5,
+            "summary_stability": 0.5,
+            "risk_trend": 0.5,
+            "risk_volatility": 0.5,
+            "regime_persistence": 0.5,
+            "transition_rate": 0.5,
+        },
+        "adjust_strategy_parameters": {},
+        "signal_guardrails": {},
+        "cooldown": {"release": {"cooldown_score": 0.0, "recovery_potential": 0.0}},
+    },
+}
 
 
 def _coerce_path(path: str | Path) -> Path:
@@ -52,8 +86,17 @@ def _deep_update(target: MutableMapping[str, Any], source: Mapping[str, Any]) ->
 
 
 def _load_default_thresholds() -> dict[str, Any]:
-    with resources.files(_DEFAULTS_PACKAGE).joinpath(_DEFAULTS_RESOURCE).open("r", encoding="utf8") as stream:
-        data = yaml.safe_load(stream) or {}
+    try:
+        with resources.files(_DEFAULTS_PACKAGE).joinpath(_DEFAULTS_RESOURCE).open(
+            "r", encoding="utf8"
+        ) as stream:
+            data = yaml.safe_load(stream) or {}
+    except (FileNotFoundError, OSError, ModuleNotFoundError, AttributeError) as exc:
+        _LOGGER.warning(
+            "Default risk thresholds resource missing; using minimal built-in defaults (%s)",
+            exc,
+        )
+        data = deepcopy(_FALLBACK_THRESHOLDS)
     return deepcopy(_ensure_mapping(data, context="Default risk thresholds configuration"))
 
 
