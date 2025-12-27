@@ -2,3 +2,4 @@
 # Includes pinned desktop requirements and project extras.
 -r deploy/packaging/requirements-desktop.txt
 .[desktop]
+reportlab==4.2.5
