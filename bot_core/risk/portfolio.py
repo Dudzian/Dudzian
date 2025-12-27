@@ -432,7 +432,7 @@ class RiskManagement:
                 self.current_positions = dict(portfolio) if portfolio else {}
 
                 for symbol, returns in (returns_map or {}).items():
-                    cleaned_returns = returns.astype(float, copy=False)
+                    cleaned_returns = pd.to_numeric(returns, errors="coerce")
                     if symbol not in self.historical_returns:
                         self.historical_returns[symbol] = cleaned_returns.dropna().tail(252)
                     else:
@@ -466,6 +466,43 @@ class RiskManagement:
     # ------------------------------------------------------------------
     # Limity pozycji i trailing stopy
     # ------------------------------------------------------------------
+    def check_position_limits(
+        self,
+        position: Mapping[str, Any],
+        current_portfolio: Mapping[str, Mapping[str, Any]],
+    ) -> Tuple[bool, str]:
+        try:
+            size = float(position.get("size", 0.0))
+            if size <= 0:
+                return False, "Position size must be positive"
+
+            symbol = str(position.get("symbol", ""))
+            sector = str(position.get("sector", ""))
+
+            if size > self.max_risk_per_trade:
+                return False, "Exceeds max risk per trade"
+
+            total_portfolio_risk = float(self._calculate_portfolio_heat(current_portfolio)) + size
+            if total_portfolio_risk > self.max_portfolio_risk:
+                return False, "Portfolio risk limit reached"
+
+            if sector and current_portfolio:
+                sector_exposure = sum(
+                    float(pos.get("size", 0.0))
+                    for pos in current_portfolio.values()
+                    if pos.get("sector") == sector
+                )
+                if sector_exposure + size > self.max_sector_concentration:
+                    return False, "Sector concentration limit"
+
+            if len(current_portfolio) >= self.max_positions and symbol not in current_portfolio:
+                return False, "Maximum number of positions reached"
+
+            return True, "OK"
+        except Exception as exc:  # pragma: no cover - log i fallback
+            self.logger.error("Error checking position limits: %s", exc)
+            return False, "Risk check error"
+
     def calculate_stop_loss(
         self, entry_price: float, atr: float, *, direction: str = "long"
     ) -> float:
@@ -1292,48 +1329,6 @@ class MultiAccountRiskManager:
         except Exception as exc:  # pragma: no cover - log i fallback
             self.logger.error("Error calculating liquidity risk: %s", exc)
             return 0.3
-
-    # ------------------------------------------------------------------
-    # Limity pozycji i alerty
-    # ------------------------------------------------------------------
-    def check_position_limits(
-        self,
-        position: Mapping[str, Any],
-        current_portfolio: Mapping[str, Mapping[str, Any]],
-    ) -> Tuple[bool, str]:
-        try:
-            size = float(position.get("size", 0.0))
-            if size <= 0:
-                return False, "Position size must be positive"
-
-            symbol = str(position.get("symbol", ""))
-            sector = str(position.get("sector", ""))
-
-            if size > self.max_risk_per_trade:
-                return False, "Exceeds max risk per trade"
-
-            total_portfolio_risk = float(
-                self._calculate_portfolio_heat(current_portfolio)
-            ) + size
-            if total_portfolio_risk > self.max_portfolio_risk:
-                return False, "Portfolio risk limit reached"
-
-            if sector and current_portfolio:
-                sector_exposure = sum(
-                    float(pos.get("size", 0.0))
-                    for pos in current_portfolio.values()
-                    if pos.get("sector") == sector
-                )
-                if sector_exposure + size > self.max_sector_concentration:
-                    return False, "Sector concentration limit"
-
-            if len(current_portfolio) >= self.max_positions and symbol not in current_portfolio:
-                return False, "Maximum number of positions reached"
-
-            return True, "OK"
-        except Exception as exc:  # pragma: no cover - log i fallback
-            self.logger.error("Error checking position limits: %s", exc)
-            return False, "Risk check error"
 
     def calculate_stop_loss(
         self, entry_price: float, atr: float, *, direction: str = "long"
