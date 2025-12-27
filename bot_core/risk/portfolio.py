@@ -417,6 +417,51 @@ class RiskManagement:
                 reasoning=f"Error in calculation: {exc}",
             )
 
+    def update_portfolio_state(
+        self,
+        total_equity: float,
+        portfolio: Mapping[str, Mapping[str, Any]],
+        returns_map: Mapping[str, pd.Series],
+    ) -> None:
+        try:
+            with capture_pandas_warnings(self.logger, component="risk.portfolio_state"):
+                self.portfolio_value_history.append(float(total_equity))
+                if len(self.portfolio_value_history) > 252:
+                    self.portfolio_value_history = self.portfolio_value_history[-252:]
+
+                self.current_positions = dict(portfolio) if portfolio else {}
+
+                for symbol, returns in (returns_map or {}).items():
+                    if symbol not in self.historical_returns:
+                        self.historical_returns[symbol] = returns
+                    else:
+                        combined = pd.concat([self.historical_returns[symbol], returns]).dropna()
+                        self.historical_returns[symbol] = combined.tail(252)
+
+                self.logger.debug(
+                    "Updated portfolio state: value=%.2f, positions=%d",
+                    float(total_equity),
+                    len(self.current_positions),
+                )
+        except Exception as exc:  # pragma: no cover - log i fallback
+            self.logger.error("Error updating portfolio state: %s", exc)
+
+    def _generate_sizing_reasoning(
+        self,
+        kelly_size: float,
+        vol_adjusted_size: float,
+        risk_parity_size: float,
+        heat_adjusted_size: float,
+        correlation_adjustment: float,
+        portfolio_heat: float,
+    ) -> str:
+        return (
+            "Sizing components -> "
+            f"Kelly: {kelly_size:.3f}, Vol: {vol_adjusted_size:.3f}, "
+            f"RiskParity: {risk_parity_size:.3f}, Heat: {heat_adjusted_size:.3f}, "
+            f"CorrAdj: {correlation_adjustment:.3f}, Heat: {portfolio_heat:.3f}"
+        )
+
     def _calculate_kelly_criterion(
         self, returns: pd.Series, signal_confidence: float
     ) -> float:
@@ -1285,53 +1330,6 @@ class MultiAccountRiskManager:
         except Exception as exc:  # pragma: no cover - log i fallback
             self.logger.error("Error optimizing portfolio risk: %s", exc)
             return {"optimization_needed": False, "error": str(exc)}
-
-    def update_portfolio_state(
-        self,
-        portfolio_value: float,
-        positions: Mapping[str, Mapping[str, Any]],
-        market_returns: Mapping[str, pd.Series],
-    ) -> None:
-        try:
-            with capture_pandas_warnings(
-                self.logger, component="risk.portfolio_state"
-            ):
-                self.portfolio_value_history.append(float(portfolio_value))
-                if len(self.portfolio_value_history) > 252:
-                    self.portfolio_value_history = self.portfolio_value_history[-252:]
-
-                self.current_positions = dict(positions) if positions else {}
-
-                for symbol, returns in (market_returns or {}).items():
-                    if symbol not in self.historical_returns:
-                        self.historical_returns[symbol] = returns
-                    else:
-                        combined = pd.concat([self.historical_returns[symbol], returns]).dropna()
-                        self.historical_returns[symbol] = combined.tail(252)
-                self.logger.debug(
-                    "Updated portfolio state: value=%.2f, positions=%d",
-                    portfolio_value,
-                    len(self.current_positions),
-                )
-        except Exception as exc:  # pragma: no cover - log i fallback
-            self.logger.error("Error updating portfolio state: %s", exc)
-
-    def _generate_sizing_reasoning(
-        self,
-        kelly_size: float,
-        vol_adjusted_size: float,
-        risk_parity_size: float,
-        heat_adjusted_size: float,
-        correlation_adjustment: float,
-        portfolio_heat: float,
-    ) -> str:
-        return (
-            "Sizing components -> "
-            f"Kelly: {kelly_size:.3f}, Vol: {vol_adjusted_size:.3f}, "
-            f"RiskParity: {risk_parity_size:.3f}, Heat: {heat_adjusted_size:.3f}, "
-            f"CorrAdj: {correlation_adjustment:.3f}, Heat: {portfolio_heat:.3f}"
-        )
-
 
 def create_risk_manager(config: Mapping[str, Any]) -> RiskManagement:
     try:
