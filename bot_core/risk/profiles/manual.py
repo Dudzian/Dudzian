@@ -45,7 +45,7 @@ class ManualProfile(StaticRiskProfile):
         stop_loss_atr_multiple: float,
         trade_risk_pct_range: tuple[float, float] = (0.005, 0.01),
         instrument_alert_pct: float = 0.25,
-        instrument_limit_pct: float = 0.30,
+        instrument_limit_pct: float | None = None,
         portfolio_alert_pct: float = 0.55,
         portfolio_limit_pct: float = 0.65,
         daily_kill_switch_r_multiple: float = 2.0,
@@ -67,7 +67,7 @@ class ManualProfile(StaticRiskProfile):
         self._stop_loss_atr_multiple = stop_loss_atr_multiple
         self._trade_risk_pct_range = trade_risk_pct_range
         self._instrument_alert_pct = instrument_alert_pct
-        self._instrument_limit_pct = instrument_limit_pct
+        self._instrument_limit_pct = max_position_pct if instrument_limit_pct is None else instrument_limit_pct
         self._portfolio_alert_pct = portfolio_alert_pct
         self._portfolio_limit_pct = portfolio_limit_pct
         self._daily_kill_switch_r_multiple = daily_kill_switch_r_multiple
