@@ -125,7 +125,10 @@ def test_run_simulations_from_parquet(tmp_path):
     assert conservative.total_orders == 2
     assert conservative.accepted_orders == 1
     assert conservative.rejected_orders == 1
-    assert any("ekspozycji" in reason for reason in conservative.rejection_reasons)
+    assert any(
+        "ekspozycji" in reason.lower() or "exposure cap" in reason.lower()
+        for reason in conservative.rejection_reasons
+    )
 
     balanced = suite.scenarios[1]
     assert balanced.total_orders == 1

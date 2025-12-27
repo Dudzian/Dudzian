@@ -51,6 +51,8 @@ try:  # pragma: no cover
 except Exception:  # pragma: no cover
     RiskEngine = RiskProfile = None  # type: ignore
 
+from bot_core.risk.state import PositionState, normalize_position_side
+
 if TYPE_CHECKING:  # tylko dla typowania w IDE
     from bot_core.risk.base import RiskProfile as _RiskProfileT  # noqa: F401
 
@@ -1168,6 +1170,7 @@ def run_profile_scenario(
     rejected = 0
     rejection_reasons: list[str] = []
     decisions: list[Mapping[str, object]] = []
+    exposures: MutableMapping[str, PositionState] = {}
     for order in orders:
         if order.profile != profile.name:
             continue
@@ -1184,7 +1187,34 @@ def run_profile_scenario(
         decisions.append(decision_payload)
         if result.allowed:
             accepted += 1
-            fill_args = order.to_fill_arguments()
+            order_notional = (
+                float(order.position_value)
+                if order.position_value is not None
+                else abs(float(order.price) * float(order.quantity))
+            )
+            current_state = exposures.get(order.symbol)
+            current_side = (
+                normalize_position_side(current_state.side) if current_state else ("long" if order.side.lower() == "buy" else "short")
+            )
+            current_notional = current_state.notional if current_state else 0.0
+            is_buy = order.side.lower() == "buy"
+            if is_buy:
+                new_notional = current_notional + order_notional if current_side == "long" else max(
+                    current_notional - order_notional, 0.0
+                )
+                new_side = "long" if new_notional > 0 else current_side
+            else:
+                new_notional = current_notional + order_notional if current_side == "short" else max(
+                    current_notional - order_notional, 0.0
+                )
+                new_side = "short" if new_notional > 0 else current_side
+            if new_notional > 0:
+                exposures[order.symbol] = PositionState(side=new_side, notional=new_notional)
+            else:
+                exposures.pop(order.symbol, None)
+            fill_args = dict(order.to_fill_arguments())
+            fill_args["position_value"] = new_notional
+            fill_args["side"] = new_side
             engine.on_fill(
                 profile_name=profile.name,
                 symbol=str(fill_args["symbol"]),

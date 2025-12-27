@@ -381,6 +381,30 @@ class ThresholdRiskEngine(RiskEngine):
 
         is_reducing = new_notional < current_notional
 
+        projected_exposure = new_notional
+        exposure_caps = {
+            "max_position_exposure": profile.max_position_exposure(),
+            "instrument_limit_pct": profile.instrument_limit_pct(),
+        }
+        exposure_caps = {name: value for name, value in exposure_caps.items() if value > 0}
+        if exposure_caps and account.total_equity > 0:
+            cap_source, exposure_cap_pct = min(exposure_caps.items(), key=lambda item: item[1])
+            exposure_cap = exposure_cap_pct * account.total_equity
+            if projected_exposure > exposure_cap + 1e-9:
+                allowed_notional = max(0.0, exposure_cap - current_notional)
+                allowed_quantity = allowed_notional / price if price > 0 else 0.0
+                return deny(
+                    "Position exposure cap exceeded (limit ekspozycji na pozycję).",
+                    adjustments={"max_quantity": max(0.0, allowed_quantity)} if allowed_quantity > 0 else None,
+                    metadata={
+                        "projected_exposure": projected_exposure,
+                        "exposure_cap": exposure_cap,
+                        "exposure_cap_pct": exposure_cap_pct,
+                        "cap_source": cap_source,
+                        "current_exposure": current_notional,
+                    },
+                )
+
         is_new_position = current_notional == 0.0 and new_notional > 0.0 and not is_reducing
 
         guardrail_order = GuardrailOrder(
