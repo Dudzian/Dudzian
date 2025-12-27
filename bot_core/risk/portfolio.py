@@ -433,7 +433,7 @@ class RiskManagement:
 
                 for symbol, returns in (returns_map or {}).items():
                     if symbol not in self.historical_returns:
-                        self.historical_returns[symbol] = returns
+                        self.historical_returns[symbol] = returns.dropna().tail(252)
                     else:
                         combined = pd.concat([self.historical_returns[symbol], returns]).dropna()
                         self.historical_returns[symbol] = combined.tail(252)
