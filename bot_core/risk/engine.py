@@ -381,46 +381,6 @@ class ThresholdRiskEngine(RiskEngine):
 
         is_reducing = new_notional < current_notional
 
-        projected_exposure = new_notional
-        if account.total_equity > 0:
-            def _deny_exposure_cap(*, cap_source: str, cap_pct: float, reason: str) -> RiskCheckResult | None:
-                exposure_cap = cap_pct * account.total_equity
-                if projected_exposure > exposure_cap + 1e-9:
-                    allowed_notional = max(0.0, exposure_cap - current_notional)
-                    allowed_quantity = allowed_notional / price if price > 0 else 0.0
-                    return deny(
-                        reason,
-                        adjustments={"max_quantity": max(0.0, allowed_quantity)} if allowed_quantity > 0 else None,
-                        metadata={
-                            "projected_exposure": projected_exposure,
-                            "exposure_cap": exposure_cap,
-                            "exposure_cap_pct": cap_pct,
-                            "cap_source": cap_source,
-                            "current_exposure": current_notional,
-                        },
-                    )
-                return None
-
-            instrument_limit_pct = profile.instrument_limit_pct()
-            if instrument_limit_pct > 0:
-                denied = _deny_exposure_cap(
-                    cap_source="instrument_limit_pct",
-                    cap_pct=instrument_limit_pct,
-                    reason="Przekroczono limit ekspozycji na instrument.",
-                )
-                if denied:
-                    return denied
-
-            max_position_exposure = profile.max_position_exposure()
-            if max_position_exposure > 0:
-                denied = _deny_exposure_cap(
-                    cap_source="max_position_exposure",
-                    cap_pct=max_position_exposure,
-                    reason="Przekroczono limit ekspozycji na pozycję.",
-                )
-                if denied:
-                    return denied
-
         is_new_position = current_notional == 0.0 and new_notional > 0.0 and not is_reducing
 
         guardrail_order = GuardrailOrder(
@@ -446,17 +406,74 @@ class ThresholdRiskEngine(RiskEngine):
                 metadata=guardrail_decision.metadata,
             )
 
-        current_quantity = current_notional / price if price > 0 else 0.0
-        new_quantity = new_notional / price if price > 0 else 0.0
-        incremental_quantity = max(0.0, new_quantity - current_quantity)
-
         if state.force_liquidation and not is_reducing:
             force_block_message = (
                 force_reason + " Dozwolone są wyłącznie transakcje redukujące ekspozycję."
             ) if force_reason else "Profil w trybie awaryjnym – dozwolone są wyłącznie transakcje redukujące ekspozycję."
-
-        if force_block_message:
             return deny(force_block_message)
+
+        exposure_denial: tuple[str, Mapping[str, float] | None, Mapping[str, object] | None] | None = None
+
+        projected_exposure = new_notional
+        if account.total_equity > 0:
+            def _maybe_set_denial(*, cap_source: str, cap_pct: float, reason: str) -> None:
+                nonlocal exposure_denial
+                if cap_pct <= 0:
+                    return
+                exposure_cap = cap_pct * account.total_equity
+                if projected_exposure <= exposure_cap + 1e-9:
+                    return
+
+                allowed_notional = max(0.0, exposure_cap - current_notional)
+                allowed_quantity = allowed_notional / price if price > 0 else 0.0
+
+                if exposure_denial is not None:
+                    _, _, meta = exposure_denial
+                    prev_cap = float(meta["exposure_cap"]) if meta and "exposure_cap" in meta else float("inf")
+                    if exposure_cap >= prev_cap - 1e-12:
+                        return
+
+                exposure_denial = (
+                    reason,
+                    {"max_quantity": max(0.0, allowed_quantity)} if allowed_quantity > 0 else None,
+                    {
+                        "projected_exposure": projected_exposure,
+                        "exposure_cap": exposure_cap,
+                        "exposure_cap_pct": cap_pct,
+                        "cap_source": cap_source,
+                        "current_exposure": current_notional,
+                    },
+                )
+
+            instrument_limit_pct = profile.instrument_limit_pct()
+            max_position_exposure = profile.max_position_exposure()
+
+            _maybe_set_denial(
+                cap_source="instrument_limit_pct",
+                cap_pct=instrument_limit_pct,
+                reason="Przekroczono limit ekspozycji na instrument.",
+            )
+            _maybe_set_denial(
+                cap_source="max_position_exposure",
+                cap_pct=max_position_exposure,
+                reason="Przekroczono limit ekspozycji na pozycję.",
+            )
+
+            if (
+                exposure_denial is not None
+                and instrument_limit_pct > 0
+                and max_position_exposure > 0
+                and abs(instrument_limit_pct - max_position_exposure) < 1e-12
+            ):
+                reason, adj, meta = exposure_denial
+                meta = dict(meta or {})
+                meta["cap_source"] = "instrument_limit_pct"
+                meta["exposure_cap_pct"] = instrument_limit_pct
+                exposure_denial = ("Przekroczono limit ekspozycji na instrument.", adj, meta)
+
+        current_quantity = current_notional / price if price > 0 else 0.0
+        new_quantity = new_notional / price if price > 0 else 0.0
+        incremental_quantity = max(0.0, new_quantity - current_quantity)
 
         stop_distance: float | None = None
 
@@ -707,6 +724,10 @@ class ThresholdRiskEngine(RiskEngine):
                         "Wielkość zlecenia przekracza limit wynikający z docelowej zmienności profilu.",
                         adjustments={"max_quantity": max(0.0, allowed_additional_quantity)},
                     )
+
+        if exposure_denial is not None:
+            reason, adjustments, metadata = exposure_denial
+            return deny(reason, adjustments=adjustments, metadata=metadata)
 
         evaluation_metadata: Mapping[str, object] | None = None
         if self._decision_adapter is not None:
