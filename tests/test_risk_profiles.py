@@ -41,7 +41,7 @@ def test_profiles_scale_position_sizes_with_risk(btc_daily_atr_series: list[floa
     aggressive = AggressiveProfile()
 
     quantities = [
-        _recommended_quantity(profile=profile, atr=atr, equity=equity, price=price, risk_pct=0.01)
+        _recommended_quantity(profile=profile, atr=atr, equity=equity, price=price, risk_pct=0.003)
         for profile in (conservative, balanced, aggressive)
     ]
 
@@ -50,6 +50,9 @@ def test_profiles_scale_position_sizes_with_risk(btc_daily_atr_series: list[floa
     for profile, qty in zip((conservative, balanced, aggressive), quantities, strict=True):
         max_notional = profile.max_position_exposure() * equity
         assert qty * price <= max_notional + 1e-6
+
+    exposure_caps = [profile.max_position_exposure() for profile in (conservative, balanced, aggressive)]
+    assert exposure_caps[0] <= exposure_caps[1] <= exposure_caps[2]
 
     stop_distances = [atr * profile.stop_loss_atr_multiple() for profile in (conservative, balanced, aggressive)]
     assert stop_distances[0] < stop_distances[1] < stop_distances[2]

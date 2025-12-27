@@ -8,7 +8,12 @@ from bot_core.risk.base import StaticRiskProfile
 
 @dataclass(slots=True)
 class ConservativeProfile(StaticRiskProfile):
-    """Profil o niskiej tolerancji ryzyka."""
+    """Profil o niskiej tolerancji ryzyka.
+
+    Konserwatywność wynika z ciaśniejszego stopa i mniejszego ryzyka na trade,
+    a dodatkowo niższy cap ekspozycji ogranicza koncentrację względem profili
+    zbalansowanego i agresywnego.
+    """
 
     name: str = "conservative"
     _max_positions: int = 3
