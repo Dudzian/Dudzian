@@ -470,7 +470,7 @@ class RiskManagement:
         self,
         position: Mapping[str, Any],
         current_portfolio: Mapping[str, Mapping[str, Any]],
-    ) -> Tuple[bool, str]:
+    ) -> tuple[bool, str]:
         try:
             size = float(position.get("size", 0.0))
             if size <= 0:
