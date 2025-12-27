@@ -10,12 +10,9 @@ from bot_core.risk.base import StaticRiskProfile
 class ConservativeProfile(StaticRiskProfile):
     """Profil o niskiej tolerancji ryzyka.
 
-    Limit ekspozycji jest celowo ustawiony na poziomie profili wyższych
-    (balanced/aggressive), aby ogranicznikiem wielkości pozycji pozostawało
-    ryzyko/stop-loss (ciaśniejszy stop, niższe ryzyko na trade), a nie zbyt
-    niski cap notional – dzięki temu kolejność conservative > balanced >
-    aggressive w kalkulacjach ilości wynika z parametrów ryzyka, a nie
-    przypadkowego dławienia capem.
+    Konserwatywność wynika z ciaśniejszego stopa i mniejszego ryzyka na trade,
+    a dodatkowo niższy cap ekspozycji ogranicza koncentrację względem profili
+    zbalansowanego i agresywnego.
     """
 
     name: str = "conservative"
