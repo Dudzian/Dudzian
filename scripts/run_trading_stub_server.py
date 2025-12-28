@@ -1179,8 +1179,10 @@ def _build_ui_alert_sink(
         if jank_threshold is not None:
             sink_kwargs["jank_critical_over_ms"] = jank_threshold
 
+        raw_path = path if path is not None else DEFAULT_UI_ALERTS_JSONL_PATH
+        normalized_path = raw_path.expanduser() if isinstance(raw_path, Path) else Path(str(raw_path)).expanduser()
         sink_settings: dict[str, object] = {
-            "path": str(path),
+            "path": normalized_path.as_posix(),
             "reduce_mode": reduce_mode,
             "overlay_mode": overlay_mode,
             "jank_mode": jank_mode,
@@ -1578,7 +1580,7 @@ def _build_dataset_plan(dataset: InMemoryTradingDataset, dataset_paths: Iterable
         sources.append({"type": "default", "description": "build_default_dataset"})
     for raw_path in dataset_paths:
         path = Path(str(raw_path)).expanduser()
-        sources.append({"type": "file", "path": str(path), "metadata": file_reference_metadata(path, role="stub_dataset")})
+        sources.append({"type": "file", "path": path.as_posix(), "metadata": file_reference_metadata(path, role="stub_dataset")})
     return {"include_default": include_default, "sources": sources, "summary": _dataset_summary(dataset)}
 
 
@@ -1589,7 +1591,7 @@ def _build_metrics_plan(args) -> Mapping[str, object]:
         jsonl_path = Path(str(args.metrics_jsonl)).expanduser()
         jsonl_info: Mapping[str, object] = {
             "configured": True,
-            "path": str(jsonl_path),
+            "path": jsonl_path.as_posix(),
             "metadata": file_reference_metadata(jsonl_path, role="jsonl"),
             "fsync_enabled": bool(args.metrics_jsonl_fsync),
         }
@@ -1679,7 +1681,7 @@ def _build_metrics_plan(args) -> Mapping[str, object]:
         audit_info = {
             "requested": requested_backend,
             "backend": "file",
-            "directory": str(audit_dir),
+            "directory": audit_dir.as_posix(),
             "pattern": audit_pattern,
             "retention_days": audit_retention,
             "fsync": bool(getattr(args, "metrics_ui_alerts_audit_fsync", False)),
@@ -1697,7 +1699,7 @@ def _build_metrics_plan(args) -> Mapping[str, object]:
         "configured": not bool(args.disable_metrics_ui_alerts),
         "available": ui_alert_deps,
         "expected_active": bool(args.enable_metrics and not args.disable_metrics_ui_alerts and metrics_available and ui_alert_deps and sink_expected),
-        "path": str(ui_alert_path),
+        "path": ui_alert_path.as_posix(),
         "metadata": file_reference_metadata(ui_alert_path, role="ui_alerts_jsonl"),
         "source": "cli" if args.metrics_ui_alerts_jsonl else "default",
         "reduce_mode": reduce_mode_value,
