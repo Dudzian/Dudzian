@@ -118,6 +118,12 @@ _DEFAULT_REALTIME_ORIGIN = "domyślne moduły realtime (bot_core.runtime.realtim
 _INTERNAL_OVERRIDE_ORIGIN = "wewnętrzne wywołanie _apply_runtime_overrides"
 
 
+def _posix_path(value: Path | str) -> str:
+    """Normalizuje ścieżkę do formatu POSIX niezależnie od platformy."""
+
+    return value.expanduser().as_posix() if isinstance(value, Path) else Path(value).expanduser().as_posix()
+
+
 @dataclass(frozen=True)
 class RuntimeModuleSnapshot:
     """Stan modułów runtime wykorzystywanych przez CLI Daily Trend."""
@@ -709,29 +715,29 @@ def _metrics_service_details_from_config(
     runtime_payload: dict[str, object] = {}
     if runtime_jsonl_metadata is not None:
         runtime_payload["jsonl_file"] = runtime_jsonl_metadata
-        runtime_payload["jsonl_path"] = str(
+        path_value = (
             runtime_jsonl_metadata.get("path")
             or runtime_jsonl_metadata.get("absolute_path")
             or runtime_jsonl_path
-            or ""
         )
+        runtime_payload["jsonl_path"] = _posix_path(path_value) if path_value else ""
     elif runtime_jsonl_path:
         runtime_jsonl = Path(runtime_jsonl_path).expanduser()
-        runtime_payload["jsonl_path"] = str(runtime_jsonl)
+        runtime_payload["jsonl_path"] = _posix_path(runtime_jsonl)
         runtime_payload["jsonl_file"] = _file_reference_metadata(
             runtime_jsonl, role="jsonl"
         )
     if runtime_ui_alert_metadata is not None:
         runtime_payload["ui_alerts_file"] = runtime_ui_alert_metadata
-        runtime_payload["ui_alerts_jsonl_path"] = str(
+        ui_path_value = (
             runtime_ui_alert_metadata.get("path")
             or runtime_ui_alert_metadata.get("absolute_path")
             or runtime_ui_alert_path
-            or ""
         )
+        runtime_payload["ui_alerts_jsonl_path"] = _posix_path(ui_path_value) if ui_path_value else ""
     elif runtime_ui_alert_path:
         runtime_ui_alert = Path(runtime_ui_alert_path).expanduser()
-        runtime_payload["ui_alerts_jsonl_path"] = str(runtime_ui_alert)
+        runtime_payload["ui_alerts_jsonl_path"] = _posix_path(runtime_ui_alert)
         runtime_payload["ui_alerts_file"] = _file_reference_metadata(
             runtime_ui_alert, role="ui_alerts_jsonl"
         )
@@ -976,19 +982,19 @@ def _build_runtime_plan_payload(
         if config_source_value
         else config_path_arg
     )
-    config_file_section: dict[str, object] = {"path": str(config_path_arg)}
+    config_file_section: dict[str, object] = {"path": _posix_path(config_path_arg)}
     config_file_metadata = _config_file_metadata(config_source_path)
     if config_file_metadata:
         config_file_section.update(config_file_metadata)
     elif config_source_value:
-        config_file_section["absolute_path"] = str(config_source_path)
+        config_file_section["absolute_path"] = _posix_path(config_source_path)
     else:
         try:
-            config_file_section["absolute_path"] = str(
+            config_file_section["absolute_path"] = _posix_path(
                 config_path_arg.resolve(strict=False)
             )
         except Exception:  # noqa: BLE001 - zachowujemy najlepsze przybliżenie
-            config_file_section["absolute_path"] = str(config_path_arg.absolute())
+            config_file_section["absolute_path"] = _posix_path(config_path_arg.absolute())
 
     config_base_dir = config_source_path.parent
 
@@ -1045,7 +1051,7 @@ def _build_runtime_plan_payload(
 
     plan: dict[str, object] = {
         "timestamp": datetime.now(timezone.utc).isoformat(),
-        "config_path": str(Path(args.config)),
+        "config_path": _posix_path(Path(args.config)),
         "config_file": config_file_section,
         "environment": environment_name,
         "environment_type": environment_type,
