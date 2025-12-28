@@ -12,14 +12,6 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Iterable, Mapping
 
-from scripts.telemetry_risk_profiles import (
-    get_metrics_service_overrides,
-    list_risk_profile_names,
-    load_risk_profiles_with_metadata,
-    risk_profile_metadata,
-    summarize_risk_profile,
-)
-
 from bot_core.testing import (
     InMemoryTradingDataset,
     TradingStubServer,
@@ -28,6 +20,14 @@ from bot_core.testing import (
     merge_datasets,
 )
 
+from scripts.path_utils import native_path
+from scripts.telemetry_risk_profiles import (
+    get_metrics_service_overrides,
+    list_risk_profile_names,
+    load_risk_profiles_with_metadata,
+    risk_profile_metadata,
+    summarize_risk_profile,
+)
 from bot_core.runtime.file_metadata import (
     file_reference_metadata,
     log_security_warnings as _log_security_warnings,
@@ -1580,7 +1580,7 @@ def _build_dataset_plan(dataset: InMemoryTradingDataset, dataset_paths: Iterable
         sources.append({"type": "default", "description": "build_default_dataset"})
     for raw_path in dataset_paths:
         path = Path(str(raw_path)).expanduser()
-        sources.append({"type": "file", "path": path.as_posix(), "metadata": file_reference_metadata(path, role="stub_dataset")})
+        sources.append({"type": "file", "path": native_path(path), "metadata": file_reference_metadata(path, role="stub_dataset")})
     return {"include_default": include_default, "sources": sources, "summary": _dataset_summary(dataset)}
 
 
@@ -1591,7 +1591,7 @@ def _build_metrics_plan(args) -> Mapping[str, object]:
         jsonl_path = Path(str(args.metrics_jsonl)).expanduser()
         jsonl_info: Mapping[str, object] = {
             "configured": True,
-            "path": jsonl_path.as_posix(),
+            "path": native_path(jsonl_path),
             "metadata": file_reference_metadata(jsonl_path, role="jsonl"),
             "fsync_enabled": bool(args.metrics_jsonl_fsync),
         }
@@ -1681,7 +1681,7 @@ def _build_metrics_plan(args) -> Mapping[str, object]:
         audit_info = {
             "requested": requested_backend,
             "backend": "file",
-            "directory": audit_dir.as_posix(),
+            "directory": native_path(audit_dir),
             "pattern": audit_pattern,
             "retention_days": audit_retention,
             "fsync": bool(getattr(args, "metrics_ui_alerts_audit_fsync", False)),
@@ -1699,7 +1699,7 @@ def _build_metrics_plan(args) -> Mapping[str, object]:
         "configured": not bool(args.disable_metrics_ui_alerts),
         "available": ui_alert_deps,
         "expected_active": bool(args.enable_metrics and not args.disable_metrics_ui_alerts and metrics_available and ui_alert_deps and sink_expected),
-        "path": ui_alert_path.as_posix(),
+        "path": native_path(ui_alert_path),
         "metadata": file_reference_metadata(ui_alert_path, role="ui_alerts_jsonl"),
         "source": "cli" if args.metrics_ui_alerts_jsonl else "default",
         "reduce_mode": reduce_mode_value,
