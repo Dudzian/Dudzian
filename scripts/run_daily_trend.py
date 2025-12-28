@@ -60,6 +60,7 @@ from bot_core.runtime.file_metadata import (
 )
 from scripts import paper_precheck as paper_precheck_cli
 from scripts._cli_common import create_secret_manager
+from scripts.path_utils import native_path
 
 if TYPE_CHECKING:
     from bot_core.config.models import CoreConfig, EnvironmentConfig, RiskProfileConfig
@@ -122,12 +123,6 @@ def _posix_path(value: Path | str) -> str:
     """Normalizuje ścieżkę do formatu POSIX niezależnie od platformy."""
 
     return value.expanduser().as_posix() if isinstance(value, Path) else Path(value).expanduser().as_posix()
-
-
-def _native_path(value: Path | str) -> str:
-    """Zwraca ścieżkę w natywnym formacie platformy (Windows: backslash)."""
-
-    return str(value.expanduser()) if isinstance(value, Path) else str(Path(value).expanduser())
 
 
 @dataclass(frozen=True)
@@ -726,7 +721,7 @@ def _metrics_service_details_from_config(
             or runtime_jsonl_metadata.get("absolute_path")
             or runtime_jsonl_path
         )
-        runtime_payload["jsonl_path"] = _native_path(path_value) if path_value else ""
+        runtime_payload["jsonl_path"] = native_path(path_value) if path_value else ""
     elif runtime_jsonl_path:
         runtime_jsonl = Path(runtime_jsonl_path).expanduser()
         runtime_payload["jsonl_path"] = str(runtime_jsonl)
@@ -740,7 +735,7 @@ def _metrics_service_details_from_config(
             or runtime_ui_alert_metadata.get("absolute_path")
             or runtime_ui_alert_path
         )
-        runtime_payload["ui_alerts_jsonl_path"] = _native_path(ui_path_value) if ui_path_value else ""
+        runtime_payload["ui_alerts_jsonl_path"] = native_path(ui_path_value) if ui_path_value else ""
     elif runtime_ui_alert_path:
         runtime_ui_alert = Path(runtime_ui_alert_path).expanduser()
         runtime_payload["ui_alerts_jsonl_path"] = str(runtime_ui_alert)
