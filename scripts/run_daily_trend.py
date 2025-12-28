@@ -982,7 +982,7 @@ def _build_runtime_plan_payload(
         if config_source_value
         else config_path_arg
     )
-    config_file_section: dict[str, object] = {"path": _posix_path(config_path_arg)}
+    config_file_section: dict[str, object] = {"path": str(config_path_arg)}
     config_file_metadata = _config_file_metadata(config_source_path)
     if config_file_metadata:
         config_file_section.update(config_file_metadata)
@@ -1051,7 +1051,7 @@ def _build_runtime_plan_payload(
 
     plan: dict[str, object] = {
         "timestamp": datetime.now(timezone.utc).isoformat(),
-        "config_path": _posix_path(Path(args.config)),
+        "config_path": str(Path(args.config)),
         "config_file": config_file_section,
         "environment": environment_name,
         "environment_type": environment_type,
