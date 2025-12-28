@@ -69,11 +69,13 @@ def directory_metadata(path: Path | str) -> dict[str, object]:
     """Zwraca metadane katalogu nadrzędnego wykorzystywane przy audycie."""
 
     candidate = Path(path).expanduser()
-    info: dict[str, object] = {"path": candidate.as_posix()}
+    info: dict[str, object] = {"path": str(candidate)}
     try:
-        info["absolute_path"] = candidate.resolve(strict=False).as_posix()
+        # absolute_path może zostać POSIX albo native — testy DailyTrend
+        # sprawdzają tylko, że jest absolutna. Zostawimy spójnie native.
+        info["absolute_path"] = str(candidate.resolve(strict=False))
     except Exception:  # noqa: BLE001 - fallback dla nietypowych FS
-        info["absolute_path"] = candidate.absolute().as_posix()
+        info["absolute_path"] = str(candidate.absolute())
 
     exists = candidate.exists()
     info["exists"] = exists
@@ -100,7 +102,7 @@ def file_reference_metadata(path: Path | str, *, role: str | None = None) -> Map
     """Buduje metadane audytowe wskazanego pliku z dodatkowymi ostrzeżeniami."""
 
     candidate = Path(path).expanduser()
-    metadata: dict[str, object] = {"path": candidate.as_posix()}
+    metadata: dict[str, object] = {"path": str(candidate)}
     if role is not None:
         metadata["role"] = role
 
@@ -108,7 +110,7 @@ def file_reference_metadata(path: Path | str, *, role: str | None = None) -> Map
     parent_meta = directory_metadata(parent)
     metadata["parent"] = parent_meta
     metadata["parent_directory"] = parent_meta["path"]
-    metadata["parent_absolute_path"] = parent_meta.get("absolute_path", parent.as_posix())
+    metadata["parent_absolute_path"] = parent_meta.get("absolute_path", str(parent))
     metadata["parent_exists"] = bool(parent_meta.get("exists"))
     metadata["parent_is_dir"] = bool(parent_meta.get("is_dir"))
     metadata["parent_writable"] = bool(parent_meta.get("writable"))
@@ -118,9 +120,9 @@ def file_reference_metadata(path: Path | str, *, role: str | None = None) -> Map
         metadata["parent_security_flags"] = parent_meta["security_flags"]
 
     try:
-        metadata["absolute_path"] = candidate.resolve(strict=False).as_posix()
+        metadata["absolute_path"] = str(candidate.resolve(strict=False))
     except Exception:  # noqa: BLE001 - fallback dla nietypowych FS
-        metadata["absolute_path"] = candidate.absolute().as_posix()
+        metadata["absolute_path"] = str(candidate.absolute())
 
     warnings: list[str] = []
     parent_flags = parent_meta.get("security_flags")
