@@ -4,6 +4,7 @@ from __future__ import annotations
 import os
 import ssl
 import stat
+import tempfile
 from pathlib import Path
 from typing import Any, Mapping, MutableSequence
 
@@ -104,6 +105,28 @@ def verify_certificate_key_pair(
     return True, None
 
 
+def _is_in_temp_directory(path_value: str | Path) -> bool:
+    try:
+        candidate = Path(path_value).expanduser()
+    except (TypeError, OSError, ValueError):
+        return False
+    try:
+        resolved = candidate.resolve(strict=False)
+    except OSError:
+        resolved = candidate.absolute()
+    try:
+        temp_root = Path(tempfile.gettempdir()).resolve()
+    except OSError:
+        temp_root = Path(tempfile.gettempdir())
+    try:
+        return resolved.is_relative_to(temp_root)
+    except AttributeError:
+        try:
+            return os.path.commonpath([str(resolved), str(temp_root)]) == str(temp_root)
+        except (ValueError, OSError):
+            return False
+
+
 def audit_tls_entry(
     tls_config: Mapping[str, Any] | object | None,
     *,
@@ -174,6 +197,24 @@ def audit_tls_entry(
             report["private_key"] = private_key_metadata
             for entry in collect_security_warnings(private_key_metadata):
                 warnings.extend(str(item) for item in entry.get("warnings", ()))
+            if role_prefix == "risk_tls":
+                security_flags = private_key_metadata.get("security_flags")
+                permissions_supported = True
+                if isinstance(security_flags, Mapping):
+                    permissions_supported = bool(
+                        security_flags.get("permissions_supported", True)
+                    )
+                key_path_value = (
+                    private_key_metadata.get("absolute_path")
+                    or private_key_metadata.get("path")
+                )
+                in_temp_dir = False
+                if isinstance(key_path_value, (str, Path)):
+                    in_temp_dir = _is_in_temp_directory(key_path_value)
+                if in_temp_dir or not permissions_supported:
+                    warnings.append(
+                        "Klucz prywatny TLS: nie można wiarygodnie zweryfikować uprawnień na Windows (permissions_supported=False) – upewnij się, że ACL ogranicza dostęp."
+                    )
 
     if client_ca_path:
         try:
