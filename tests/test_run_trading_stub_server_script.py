@@ -603,7 +603,7 @@ def test_print_runtime_plan(monkeypatch: pytest.MonkeyPatch, tmp_path: Path, cap
     metrics_plan = plan["metrics"]
     assert metrics_plan["enabled"] is True
     assert metrics_plan["jsonl"]["configured"] is True
-    assert metrics_plan["jsonl"]["path"] == str(metrics_jsonl)
+    assert metrics_plan["jsonl"]["path"] == metrics_jsonl.as_posix()
     assert metrics_plan["ui_alerts"]["path"].endswith("logs/ui_telemetry_alerts.jsonl")
     assert metrics_plan["tls"]["configured"] is True
     assert metrics_plan["tls"]["certificate"]["role"] == "tls_cert"
@@ -701,7 +701,7 @@ def test_runtime_plan_risk_profiles_file(tmp_path: Path, capsys) -> None:
     assert ui_section["overlay_critical_threshold"] == 4
     assert ui_section["jank_severity_spike"] == "notice"
     file_meta = ui_section["risk_profiles_file"]
-    assert file_meta["path"] == str(profiles_path)
+    assert file_meta["path"] == profiles_path.as_posix()
     assert "custom" in file_meta["registered_profiles"]
 
 
@@ -745,7 +745,7 @@ def test_runtime_plan_risk_profiles_directory(tmp_path: Path, capsys) -> None:
     ui_section = plan["metrics"]["ui_alerts"]
     file_meta = ui_section["risk_profiles_file"]
     assert file_meta["type"] == "directory"
-    assert file_meta["path"] == str(profiles_dir)
+    assert file_meta["path"] == profiles_dir.as_posix()
     assert "ops_dir" in file_meta["registered_profiles"]
     assert any(entry["path"].endswith("lab.yaml") for entry in file_meta["files"])
     assert ui_section["risk_profile"]["name"] == "ops_dir"
@@ -889,7 +889,7 @@ def test_environment_overrides_apply(monkeypatch: pytest.MonkeyPatch, tmp_path: 
     captured = capsys.readouterr()
     plan = json.loads(captured.out)
     assert plan["metrics"]["enabled"] is True
-    assert plan["metrics"]["jsonl"]["path"] == str(metrics_jsonl)
+    assert plan["metrics"]["jsonl"]["path"] == metrics_jsonl.as_posix()
     environment_overrides = plan["environment"]["overrides"]
     assert any(
         entry["option"] == "metrics_jsonl_path" and entry["applied"] is True

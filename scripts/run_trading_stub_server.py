@@ -1767,6 +1767,22 @@ def _build_metrics_plan(args) -> Mapping[str, object]:
     }
 
 
+def _normalize_runtime_plan_paths_for_print(value: object) -> object:
+    if isinstance(value, Mapping):
+        normalized: dict[object, object] = {}
+        for key, item in value.items():
+            if key == "path" and isinstance(item, str):
+                normalized[key] = item.replace("\\", "/")
+            else:
+                normalized[key] = _normalize_runtime_plan_paths_for_print(item)
+        return normalized
+    if isinstance(value, list):
+        return [_normalize_runtime_plan_paths_for_print(item) for item in value]
+    if isinstance(value, tuple):
+        return [_normalize_runtime_plan_paths_for_print(item) for item in value]
+    return value
+
+
 def _build_runtime_plan_payload(
     *,
     args,
@@ -1912,7 +1928,8 @@ def main(argv: list[str] | None = None) -> int:
             return 2
 
     if args.print_runtime_plan and runtime_plan_payload is not None:
-        json.dump(runtime_plan_payload, sys.stdout, ensure_ascii=False, indent=2)
+        printable_payload = _normalize_runtime_plan_paths_for_print(runtime_plan_payload)
+        json.dump(printable_payload, sys.stdout, ensure_ascii=False, indent=2)
         sys.stdout.write("\n")
         if args.fail_on_security_warnings and security_warnings_detected:
             return 3
