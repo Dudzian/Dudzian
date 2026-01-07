@@ -2007,7 +2007,7 @@ class BootstrapContext:
     risk_snapshot_publisher: Any | None = None
     risk_service_enabled: bool | None = None
     risk_security_metadata: Mapping[str, Any] | None = None
-    risk_security_warnings: tuple[str, ...] | None = None
+    risk_security_warnings: list[str] | None = None
     risk_token_validator: ServiceTokenValidator | None = None
     ai_manager: Any | None = None
     ai_models_loaded: Sequence[str] | None = None
@@ -2649,6 +2649,7 @@ def bootstrap_environment(
     risk_security_warnings: list[str] = []
     risk_auth_metadata: Mapping[str, Any] | None = None
     risk_tls_enabled: bool | None = None
+    risk_tls_configured = False
     risk_token_validator: ServiceTokenValidator | None = None
 
     if RiskSnapshotBuilder is not None:
@@ -3305,6 +3306,7 @@ def bootstrap_environment(
         if tls_config is not None:
             from bot_core.security import tls_audit as _tls_audit
 
+            risk_tls_configured = True
             tls_report = _tls_audit.audit_tls_entry(
                 tls_config,
                 role_prefix="risk_tls",
@@ -3469,6 +3471,10 @@ def bootstrap_environment(
 
     if risk_security_warnings:
         risk_security_warnings = list(dict.fromkeys(risk_security_warnings))
+    elif risk_security_payload or risk_tls_configured:
+        risk_security_warnings = []
+    else:
+        risk_security_warnings = None
 
     execution_service: CoreExecutionService | None = None
     if env_enum in {Environment.PAPER, Environment.TESTNET}:
@@ -3561,7 +3567,7 @@ def bootstrap_environment(
         risk_snapshot_publisher=risk_snapshot_publisher,
         risk_service_enabled=risk_service_enabled,
         risk_security_metadata=risk_security_payload if risk_security_payload else None,
-        risk_security_warnings=tuple(risk_security_warnings) if risk_security_warnings else None,
+        risk_security_warnings=risk_security_warnings,
         risk_token_validator=risk_token_validator,
         portfolio_decision_log=portfolio_decision_log,
         ai_manager=ai_manager_instance,
