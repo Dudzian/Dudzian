@@ -214,17 +214,18 @@ def file_reference_metadata(path: Path | str, *, role: str | None = None) -> Map
                     "Klucz prywatny TLS można nadpisać bez uprawnień administratora – ogranicz prawa zapisu."
                 )
     elif role == "tls_key":
-        permissions = metadata.get("permissions", {})
-        group_permissions = permissions.get("group", {})
-        others_permissions = permissions.get("others", {})
-        if group_permissions.get("read") or others_permissions.get("read"):
-            warnings.append(
-                "Klucz prywatny TLS jest czytelny dla innych użytkowników – wysokie ryzyko bezpieczeństwa."
-            )
-        if group_permissions.get("write") or others_permissions.get("write"):
-            warnings.append(
-                "Klucz prywatny TLS można nadpisać bez uprawnień administratora – ogranicz prawa zapisu."
-            )
+        if metadata["security_flags"].get("permissions_supported", True):
+            permissions = metadata.get("permissions", {})
+            group_permissions = permissions.get("group", {})
+            others_permissions = permissions.get("others", {})
+            if group_permissions.get("read") or others_permissions.get("read"):
+                warnings.append(
+                    "Klucz prywatny TLS jest czytelny dla innych użytkowników – wysokie ryzyko bezpieczeństwa."
+                )
+            if group_permissions.get("write") or others_permissions.get("write"):
+                warnings.append(
+                    "Klucz prywatny TLS można nadpisać bez uprawnień administratora – ogranicz prawa zapisu."
+                )
 
     if role == "tls_key" and metadata.get("is_symlink"):
         warnings.append(
