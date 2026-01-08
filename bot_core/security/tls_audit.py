@@ -2,8 +2,8 @@
 from __future__ import annotations
 
 import os
-import ssl
 import stat
+import ssl
 import tempfile
 from pathlib import Path
 from typing import Any, Mapping, MutableSequence
@@ -253,7 +253,31 @@ def audit_tls_entry(
                 has_strict_mode = False
                 if isinstance(mode_value, int):
                     has_strict_mode = (mode_value & 0o077) == 0
-                permissions_confirmed_secure = (permissions_secure is True) or has_strict_mode
+                # Windows: chmod(0o600) często mapuje się na READONLY, a st_mode bywa mało wiarygodne.
+                file_attrs = None
+                if isinstance(security_flags, Mapping):
+                    for key in ("st_file_attributes", "file_attributes"):
+                        if key in security_flags and isinstance(security_flags.get(key), int):
+                            file_attrs = int(security_flags[key])
+                            break
+                if file_attrs is None:
+                    for key in ("st_file_attributes", "file_attributes"):
+                        if key in private_key_metadata and isinstance(
+                            private_key_metadata.get(key), int
+                        ):
+                            file_attrs = int(private_key_metadata[key])
+                            break
+                has_readonly_attr = False
+                if (
+                    os.name == "nt"
+                    and isinstance(file_attrs, int)
+                    and hasattr(stat, "FILE_ATTRIBUTE_READONLY")
+                ):
+                    has_readonly_attr = bool(file_attrs & stat.FILE_ATTRIBUTE_READONLY)
+
+                permissions_confirmed_secure = (
+                    (permissions_secure is True) or has_strict_mode or has_readonly_attr
+                )
                 if in_temp_dir and (
                     (permissions_secure is False)
                     or has_perm_warning
