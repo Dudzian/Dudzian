@@ -229,10 +229,11 @@ def audit_tls_entry(
                             permissions_secure = bool(security_flags.get(key))
                             if permissions_secure:
                                 break
+                key_local_warnings = private_key_metadata.get("security_warnings", ()) or ()
                 has_perm_warning = has_perm_warning or any(
-                    (("uprawn" in text) or ("permission" in text))
-                    and (("klucz" in text) or ("tls_key" in text) or ("risk_tls" in text))
-                    for text in (str(warning).lower() for warning in warnings)
+                    ("uprawn" in str(warning).lower())
+                    or ("permission" in str(warning).lower())
+                    for warning in key_local_warnings
                 )
 
                 mode_value = None
@@ -250,6 +251,9 @@ def audit_tls_entry(
                         mode_value = None
 
                 has_strict_mode = isinstance(mode_value, int) and (mode_value & 0o077) == 0
+                perms_too_open_by_mode = (
+                    isinstance(mode_value, int) and (mode_value & 0o077) != 0
+                )
 
                 file_attrs = None
                 for key in ("st_file_attributes", "file_attributes"):
@@ -273,7 +277,7 @@ def audit_tls_entry(
                 ) or has_strict_mode or has_readonly_attr
 
                 if in_temp_dir:
-                    if has_perm_warning or (
+                    if has_perm_warning or perms_too_open_by_mode or (
                         (not permissions_confirmed_secure)
                         and permissions_supported
                     ):
