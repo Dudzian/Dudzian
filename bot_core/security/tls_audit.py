@@ -202,6 +202,7 @@ def audit_tls_entry(
                 permissions_supported = True
                 permissions_secure: bool | None = None
                 has_perm_warning = False
+                key_exists = bool(private_key_metadata.get("exists"))
                 if isinstance(security_flags, Mapping):
                     permissions_supported = bool(
                         security_flags.get("permissions_supported", True)
@@ -274,15 +275,18 @@ def audit_tls_entry(
                 if in_temp_dir:
                     if has_perm_warning or (
                         (not permissions_confirmed_secure)
-                        and (os.name == "nt")
-                        and (not permissions_supported)
+                        and permissions_supported
                     ):
                         warnings.append(
                             "Klucz prywatny TLS znajduje się w katalogu tymczasowym i nie ma potwierdzonych bezpiecznych uprawnień – upewnij się, że dostęp jest ograniczony."
                         )
-                elif os.name == "nt" and (not permissions_supported):
+                elif (
+                    os.name == "nt"
+                    and (not permissions_supported)
+                    and (not key_exists)
+                ):
                     warnings.append(
-                        "Klucz prywatny TLS: nie można wiarygodnie zweryfikować uprawnień na Windows (permissions_supported=False) – upewnij się, że ACL ogranicza dostęp."
+                        "Klucz prywatny TLS jest niedostępny – nie można zweryfikować uprawnień."
                     )
 
     if client_ca_path:
