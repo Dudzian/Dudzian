@@ -33,6 +33,13 @@ def _labels_to_dict(labels: LabelTuple) -> dict[str, str]:
     return {key: value for key, value in labels}
 
 
+def _labels_match(sample_labels: LabelTuple, filter_set: set[tuple[str, str]]) -> bool:
+    if not filter_set:
+        return True
+    sample_set = set(sample_labels)
+    return filter_set.issubset(sample_set)
+
+
 @dataclass(slots=True, kw_only=True)
 class Metric:
     """Bazowy typ metryki przechowujący opis i nazwę."""
@@ -72,7 +79,14 @@ class CounterMetric(Metric):
     def value(self, *, labels: Mapping[str, str] | None = None) -> float:
         key = _normalize_labels(labels)
         with self._lock:
-            return self._values.get(key, 0.0)
+            if not key:
+                return sum(self._values.values())
+            if key in self._values:
+                return self._values[key]
+            filter_set = set(key)
+            return sum(
+                value for labels_tuple, value in self._values.items() if _labels_match(labels_tuple, filter_set)
+            )
 
     def samples(self) -> list[tuple[LabelTuple, float]]:
         with self._lock:
