@@ -354,16 +354,22 @@ class LiveExecutionRouter(ExecutionService):
             "live_orders_attempts_total", "Liczba prób egzekucji zleceń (łącznie z fallbackami)."
         )
         self._m_failures = self._metrics.counter(
-            "live_orders_failed_total", "Liczba zleceń nieudanych po wszystkich próbach."
+            "live_orders_failed_total",
+            "Liczba zleceń nieudanych po wszystkich próbach.",
+            labels=("exchange", "symbol", "portfolio", "route"),
         )
         self._m_fallbacks = self._metrics.counter(
             "live_orders_fallback_total", "Liczba zleceń wymagających fallbacku."
         )
         self._m_success = self._metrics.counter(
-            "live_orders_success_total", "Liczba zleceń zrealizowanych."
+            "live_orders_success_total",
+            "Liczba zleceń zrealizowanych.",
+            labels=("exchange", "symbol", "portfolio", "route"),
         )
         self._m_orders_total = self._metrics.counter(
-            "live_orders_total", "Łączna liczba zleceń obsłużonych przez router live."
+            "live_orders_total",
+            "Łączna liczba zleceń obsłużonych przez router live.",
+            labels=("exchange", "symbol", "portfolio", "route"),
         )
         self._m_router_fallbacks = self._metrics.counter(
             "live_router_fallbacks_total",
@@ -927,15 +933,16 @@ class LiveExecutionRouter(ExecutionService):
                         last_error = last_error or TimeoutError("Przekroczono budżet opóźnień trasy")
                         break
 
-                labels = {
+                common_labels = {
                     "exchange": exchange_name,
                     "symbol": request.symbol,
                     "portfolio": context.portfolio_id,
                     "route": route_label,
-                    **self._queue_labels(queue_wait),
                 }
+                labels = {**common_labels, **self._queue_labels(queue_wait)}
                 attempts_counter += 1
                 try:
+                    self._m_orders_total.inc(labels=common_labels)
                     result = await self._perform_attempt(adapter, order.request, exchange_name)
                     self._validate_adapter_result(result, exchange_name, request)
                 except Exception as exc:  # noqa: BLE001
@@ -1024,20 +1031,13 @@ class LiveExecutionRouter(ExecutionService):
                 elapsed = max(0.0, current_time - start)
                 self._m_latency.observe(elapsed, labels={**labels, "result": "success"})
                 self._m_attempts.inc(labels={**labels, "result": "success"})
-                success_labels = {
-                    "exchange": exchange_name,
-                    "symbol": request.symbol,
-                    "portfolio": context.portfolio_id,
-                    "route": route_label,
-                }
-                self._m_success.inc(labels=success_labels)
-                self._m_orders_total.inc(labels={"exchange": exchange_name, "route": route_label})
+                self._m_success.inc(labels=common_labels)
                 filled_qty = float(result.filled_quantity or 0.0)
                 requested_qty = float(request.quantity or 0.0)
                 ratio = 0.0
                 if requested_qty > 0:
                     ratio = max(0.0, min(1.0, filled_qty / requested_qty))
-                self._m_fill_ratio.observe(ratio, labels=success_labels)
+                self._m_fill_ratio.observe(ratio, labels=common_labels)
                 if breaker:
                     breaker.record_success()
                     self._set_breaker_metric(exchange_name, open_=False)
@@ -1070,15 +1070,28 @@ class LiveExecutionRouter(ExecutionService):
         elapsed = max(0.0, self._time() - start)
         attempts_rec.append({"status": "failed", "latency_s": f"{elapsed:.6f}"})
         failure_exchange = None
-        for attempt in reversed(attempts_rec):
-            exchange = attempt.get("exchange")
-            if exchange:
-                failure_exchange = str(exchange)
-                break
-        if failure_exchange is None and exchanges_and_retries:
-            failure_exchange = str(exchanges_and_retries[0][0])
+        attempted_exchanges = {
+            str(attempt.get("exchange"))
+            for attempt in attempts_rec
+            if attempt.get("exchange") and str(attempt.get("exchange")) not in {"queue"}
+        }
+        if len(attempted_exchanges) > 1:
+            failure_exchange = "multiple"
+        else:
+            for attempt in reversed(attempts_rec):
+                exchange = attempt.get("exchange")
+                if exchange:
+                    failure_exchange = str(exchange)
+                    break
+            if failure_exchange is None and exchanges_and_retries:
+                failure_exchange = str(exchanges_and_retries[0][0])
 
-        failure_labels = {"route": route_label}
+        failure_labels = {
+            "exchange": failure_exchange or "unknown",
+            "symbol": request.symbol,
+            "portfolio": context.portfolio_id,
+            "route": route_label,
+        }
         self._m_failures.inc(labels=failure_labels)
         self._m_router_failures.inc(
             labels={
@@ -1235,7 +1248,14 @@ class LiveExecutionRouter(ExecutionService):
         result_label = "queue_timeout" if reason == "timeout" else "queue_overflow"
         self._m_latency.observe(queue_wait, labels={**labels_base, "result": result_label})
         self._m_attempts.inc(labels={**labels_base, "result": result_label})
-        self._m_failures.inc(labels={"route": route_name})
+        self._m_failures.inc(
+            labels={
+                "exchange": "queue",
+                "symbol": order.request.symbol,
+                "portfolio": order.context.portfolio_id,
+                "route": route_name,
+            }
+        )
         self._m_router_failures.inc(
             labels={"symbol": order.request.symbol, "portfolio": order.context.portfolio_id}
         )
