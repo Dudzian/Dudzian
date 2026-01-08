@@ -180,6 +180,11 @@ def file_reference_metadata(path: Path | str, *, role: str | None = None) -> Map
     metadata["mode_octal"] = format(mode, "04o")
     metadata["permissions"] = permissions_from_mode(mode)
     metadata["security_flags"] = security_flags_from_mode(mode)
+    file_attributes = getattr(stat_result, "st_file_attributes", None)
+    if isinstance(file_attributes, int):
+        metadata["st_file_attributes"] = int(file_attributes)
+        metadata["security_flags"] = dict(metadata["security_flags"])
+        metadata["security_flags"]["st_file_attributes"] = int(file_attributes)
     if (
         synthesized_permissions
         and os.name == "nt"
