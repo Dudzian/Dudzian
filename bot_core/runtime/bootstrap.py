@@ -2742,8 +2742,14 @@ def bootstrap_environment(
                         if isinstance(mode_octal, str):
                             file_mode = int(mode_octal, 8)
                             token_file_permissions = f"0o{file_mode:03o}"
-                            if os.name != "nt" and file_mode & 0o077:
+                            if file_mode & 0o077:
                                 token_file_over_permissive = True
+                                metrics_security_warnings.append(
+                                    (
+                                        "Plik tokenu MetricsService ma zbyt szerokie uprawnienia "
+                                        f"({token_file_permissions}); ustaw 0o600."
+                                    )
+                                )
                     except OSError:
                         token_file_permissions = None
         rbac_entries = tuple(getattr(metrics_config, "rbac_tokens", ()) or ())
@@ -2787,13 +2793,6 @@ def bootstrap_environment(
                     (
                         "Wskazany plik statycznego tokenu MetricsService nie istnieje "
                         "(runtime.metrics_service.auth_token_file)."
-                    )
-                )
-            elif token_file_over_permissive:
-                metrics_security_warnings.append(
-                    (
-                        "Plik tokenu MetricsService ma zbyt szerokie uprawnienia "
-                        f"({token_file_permissions or '<unknown>'}); ustaw chmod 600."
                     )
                 )
         if metrics_token_validator is not None:
