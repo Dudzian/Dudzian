@@ -39,6 +39,7 @@ class Metric:
 
     name: str
     description: str
+    label_names: Tuple[str, ...] = ()
 
     def render(self) -> Iterable[str]:  # pragma: no cover - implementowane w klasach potomnych
         raise NotImplementedError
@@ -54,6 +55,16 @@ class CounterMetric(Metric):
     def inc(self, amount: float = 1.0, *, labels: Mapping[str, str] | None = None) -> None:
         if amount < 0:
             raise ValueError("Liczniki można zwiększać wyłącznie o wartości nieujemne.")
+        if self.label_names:
+            if not labels:
+                raise ValueError(f"Metryka {self.name} wymaga etykiet: {self.label_names}.")
+            label_keys = set(labels.keys())
+            expected_keys = set(self.label_names)
+            if not expected_keys.issubset(label_keys):
+                missing = tuple(sorted(expected_keys.difference(label_keys)))
+                raise ValueError(
+                    f"Metryka {self.name} wymaga etykiet {self.label_names}, brakujące: {missing}."
+                )
         key = _normalize_labels(labels)
         with self._lock:
             self._values[key] = self._values.get(key, 0.0) + amount
@@ -496,14 +507,32 @@ class MetricsRegistry:
         self._metrics: Dict[str, Metric] = {}
         self._lock = threading.Lock()
 
-    def counter(self, name: str, description: str) -> CounterMetric:
+    def counter(
+        self,
+        name: str,
+        description: str,
+        *,
+        labels: Sequence[str] | None = None,
+    ) -> CounterMetric:
         with self._lock:
             metric = self._metrics.get(name)
             if metric is None:
-                metric = CounterMetric(name=name, description=description)
+                metric = CounterMetric(
+                    name=name,
+                    description=description,
+                    label_names=tuple(labels or ()),
+                )
                 self._metrics[name] = metric
             elif not isinstance(metric, CounterMetric):
                 raise TypeError(f"Metryka {name} istnieje, ale nie jest licznikiem.")
+            elif labels:
+                normalized_labels = tuple(labels)
+                if metric.label_names and metric.label_names != normalized_labels:
+                    raise ValueError(
+                        f"Metryka {name} ma etykiety {metric.label_names}, niezgodne z {normalized_labels}."
+                    )
+                if not metric.label_names and not metric._values:
+                    metric.label_names = normalized_labels
             return metric
 
     def gauge(self, name: str, description: str) -> GaugeMetric:
