@@ -168,9 +168,25 @@ def file_reference_metadata(path: Path | str, *, role: str | None = None) -> Map
     ).isoformat()
 
     mode = stat.S_IMODE(stat_result.st_mode)
+    synthesized_permissions = False
+    if os.name == "nt" and role == "token":
+        try:
+            writable = bool(os.access(candidate, os.W_OK))
+        except OSError:
+            writable = None
+        if writable is not None:
+            mode = 0o644 if writable else 0o444
+            synthesized_permissions = True
     metadata["mode_octal"] = format(mode, "04o")
     metadata["permissions"] = permissions_from_mode(mode)
     metadata["security_flags"] = security_flags_from_mode(mode)
+    if (
+        synthesized_permissions
+        and os.name == "nt"
+        and metadata["security_flags"].get("permissions_supported") is False
+    ):
+        metadata["security_flags"] = dict(metadata["security_flags"])
+        metadata["security_flags"]["permissions_supported"] = True
     metadata["owner_uid"] = getattr(stat_result, "st_uid", None)
     metadata["owner_gid"] = getattr(stat_result, "st_gid", None)
 
