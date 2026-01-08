@@ -200,10 +200,27 @@ def audit_tls_entry(
             if role_prefix == "risk_tls":
                 security_flags = private_key_metadata.get("security_flags")
                 permissions_supported = True
+                permissions_secure: bool | None = None
+                has_perm_warning = False
                 if isinstance(security_flags, Mapping):
                     permissions_supported = bool(
                         security_flags.get("permissions_supported", True)
                     )
+                    secure_keys = (
+                        "permissions_secure",
+                        "permissions_ok",
+                        "permissions_restricted",
+                        "permissions_strict",
+                    )
+                    secure_values = [
+                        security_flags.get(key)
+                        for key in secure_keys
+                        if key in security_flags
+                    ]
+                    if secure_values:
+                        permissions_secure = any(bool(value) for value in secure_values)
+                    if security_flags.get("permissions_too_open"):
+                        has_perm_warning = True
                 key_path_value = (
                     private_key_metadata.get("absolute_path")
                     or private_key_metadata.get("path")
@@ -211,7 +228,20 @@ def audit_tls_entry(
                 in_temp_dir = False
                 if isinstance(key_path_value, (str, Path)):
                     in_temp_dir = _is_in_temp_directory(key_path_value)
-                if os.name == "nt" and (not permissions_supported) and (not in_temp_dir):
+                if not has_perm_warning:
+                    has_perm_warning = any(
+                        "uprawn" in warning.lower() or "permission" in warning.lower()
+                        for warning in warnings
+                    )
+                if in_temp_dir and (
+                    (not permissions_supported)
+                    or (permissions_secure is False)
+                    or (permissions_secure is None and has_perm_warning)
+                ):
+                    warnings.append(
+                        "Klucz prywatny TLS znajduje się w katalogu tymczasowym i nie ma potwierdzonych bezpiecznych uprawnień – upewnij się, że dostęp jest ograniczony."
+                    )
+                elif os.name == "nt" and (not permissions_supported) and (not in_temp_dir):
                     warnings.append(
                         "Klucz prywatny TLS: nie można wiarygodnie zweryfikować uprawnień na Windows (permissions_supported=False) – upewnij się, że ACL ogranicza dostęp."
                     )
