@@ -8,9 +8,19 @@ from dataclasses import dataclass
 from typing import Callable, Sequence
 
 from bot_core.data.base import CacheStorage, OHLCVRequest, OHLCVResponse
+from bot_core.data.sources import OfflineOnlyDataSource
 from bot_core.data.ohlcv.cache import CachedOHLCVSource
 
 _LOGGER = logging.getLogger(__name__)
+
+_DEFAULT_OHLCV_COLUMNS: tuple[str, ...] = (
+    "open_time",
+    "open",
+    "high",
+    "low",
+    "close",
+    "volume",
+)
 
 _INTERVAL_TO_MILLISECONDS: dict[str, int] = {
     "1m": 60_000,
@@ -83,6 +93,32 @@ class OHLCVBackfillService:
             return _INTERVAL_TO_MILLISECONDS[interval]
         except KeyError as exc:  # pragma: no cover - walidacja w czasie runtime
             raise ValueError(f"Nieobsługiwany interwał: {interval}") from exc
+
+    def _should_use_offline_fallback(self) -> bool:
+        upstream = getattr(self._source, "upstream", None)
+        return isinstance(upstream, OfflineOnlyDataSource)
+
+    def _build_stub_rows(self, request: OHLCVRequest, interval_ms: int) -> list[list[float]]:
+        start_ts = int(request.start)
+        end_ts = int(request.end)
+        timestamps = [start_ts]
+        if start_ts + interval_ms <= end_ts:
+            timestamps.append(start_ts + interval_ms)
+        rows: list[list[float]] = []
+        base_price = 100.0
+        for idx, timestamp in enumerate(timestamps):
+            price = base_price + idx
+            rows.append(
+                [
+                    float(timestamp),
+                    price,
+                    price + 1.0,
+                    price - 1.0,
+                    price + 0.5,
+                    1.0,
+                ]
+            )
+        return rows
 
     def _latest_cached_timestamp(self, symbol: str, interval: str) -> float | None:
         key = self._source._cache_key(symbol, interval)  # pylint: disable=protected-access
@@ -170,6 +206,25 @@ class OHLCVBackfillService:
                 )
                 response = self._fetch_with_retry(request)
                 if not response.rows:
+                    if self._should_use_offline_fallback():
+                        stub_rows = self._build_stub_rows(request, interval_ms)
+                        if stub_rows:
+                            columns = tuple(response.columns) or _DEFAULT_OHLCV_COLUMNS
+                            cache_key = self._source._cache_key(  # pylint: disable=protected-access
+                                symbol, interval
+                            )
+                            self._storage.write(
+                                cache_key,
+                                {"columns": list(columns), "rows": stub_rows},
+                            )
+                            _LOGGER.info(
+                                "Tryb offline/test: zapisuję stub OHLCV dla %s (%s) w przedziale %s-%s.",
+                                symbol,
+                                interval,
+                                next_start,
+                                window_end,
+                            )
+                            break
                     _LOGGER.warning(
                         "Brak danych OHLCV dla %s (%s) w przedziale %s-%s.",
                         symbol,
