@@ -233,9 +233,26 @@ def audit_tls_entry(
                         "uprawn" in warning.lower() or "permission" in warning.lower()
                         for warning in warnings
                     )
+                mode_value = None
+                if isinstance(security_flags, Mapping):
+                    for key in ("mode", "st_mode", "permissions_mode", "mode_int"):
+                        if key in security_flags and isinstance(security_flags.get(key), int):
+                            mode_value = int(security_flags[key])
+                            break
+                if mode_value is None:
+                    for key in ("mode", "st_mode"):
+                        if key in private_key_metadata and isinstance(
+                            private_key_metadata.get(key), int
+                        ):
+                            mode_value = int(private_key_metadata[key])
+                            break
+                perms_too_open_by_mode = False
+                if isinstance(mode_value, int):
+                    perms_too_open_by_mode = (mode_value & 0o077) != 0
                 if in_temp_dir and (
                     (permissions_secure is False)
-                    or (permissions_secure is None and has_perm_warning)
+                    or has_perm_warning
+                    or perms_too_open_by_mode
                 ):
                     warnings.append(
                         "Klucz prywatny TLS znajduje się w katalogu tymczasowym i nie ma potwierdzonych bezpiecznych uprawnień – upewnij się, że dostęp jest ograniczony."
