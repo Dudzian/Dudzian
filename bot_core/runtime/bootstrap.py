@@ -1637,6 +1637,30 @@ def _extract_payload_sha256(payload: Mapping[str, Any]) -> str | None:
     return None
 
 
+def _canonicalize_signature_payload(payload: Mapping[str, Any]) -> dict[str, Any]:
+    out: dict[str, Any] = dict(payload)
+    for key, value in list(out.items()):
+        if isinstance(value, str) and (key == "path" or key == "document_path" or key.endswith("_path")):
+            normalized = value.replace("\\", "/")
+            while "//" in normalized:
+                normalized = normalized.replace("//", "/")
+            out[key] = normalized
+    return out
+
+
+def _strip_signature_payload_hashes(payload: Mapping[str, Any]) -> dict[str, Any]:
+    out: dict[str, Any] = dict(payload)
+    out.pop("sha256", None)
+    out.pop("hashes", None)
+    document = out.get("document")
+    if isinstance(document, Mapping):
+        document_out = dict(document)
+        document_out.pop("sha256", None)
+        document_out.pop("hashes", None)
+        out["document"] = document_out
+    return out
+
+
 def _is_local_adapter_endpoint(settings: Mapping[str, Any] | None) -> bool:
     """Sprawdza, czy adapter jest skonfigurowany na połączenie lokalne."""
 
@@ -1772,6 +1796,7 @@ def _verify_live_document_signature(
         payload = payload_candidate
     else:
         payload = {key: value for key, value in signature_doc.items() if key != "signature"}
+    canonical_payload = _canonicalize_signature_payload(payload)
 
     signature_entry = signature_doc.get("signature")
     if not isinstance(signature_entry, Mapping):
@@ -1781,12 +1806,20 @@ def _verify_live_document_signature(
 
     key_id = str(signature_entry.get("key_id") or "").strip()
     key_bytes = _resolve_signature_key(key_id, document_root=document_root)
-    if not verify_hmac_signature(payload, signature_entry, key=key_bytes):
+    payload_used = canonical_payload
+    signature_valid = verify_hmac_signature(payload_used, signature_entry, key=key_bytes)
+    if not signature_valid:
+        legacy_payload = _strip_signature_payload_hashes(canonical_payload)
+        if legacy_payload != canonical_payload:
+            payload_used = legacy_payload
+            signature_valid = verify_hmac_signature(payload_used, signature_entry, key=key_bytes)
+
+    if not signature_valid:
         raise LiveSignatureVerificationError(
             f"Niepoprawny podpis HMAC dokumentu '{document.name}'."
         )
 
-    payload_sha = _extract_payload_sha256(payload)
+    payload_sha = _extract_payload_sha256(payload_used)
     if payload_sha and payload_sha != actual_sha:
         raise LiveSignatureVerificationError(
             f"Suma kontrolna w podpisie dokumentu '{document.name}' nie zgadza się z plikiem źródłowym."
