@@ -169,6 +169,13 @@ def file_reference_metadata(path: Path | str, *, role: str | None = None) -> Map
 
     mode = stat.S_IMODE(stat_result.st_mode)
     synthesized_permissions = False
+    file_attributes = getattr(stat_result, "st_file_attributes", None)
+    if os.name == "nt" and role == "tls_key":
+        if isinstance(file_attributes, int):
+            readonly_flag = getattr(stat, "FILE_ATTRIBUTE_READONLY", 0)
+            if readonly_flag and (file_attributes & readonly_flag):
+                mode = 0o400
+                synthesized_permissions = True
     if os.name == "nt" and role == "token":
         try:
             writable = bool(os.access(candidate, os.W_OK))
@@ -180,7 +187,6 @@ def file_reference_metadata(path: Path | str, *, role: str | None = None) -> Map
     metadata["mode_octal"] = format(mode, "04o")
     metadata["permissions"] = permissions_from_mode(mode)
     metadata["security_flags"] = security_flags_from_mode(mode)
-    file_attributes = getattr(stat_result, "st_file_attributes", None)
     if isinstance(file_attributes, int):
         metadata["st_file_attributes"] = int(file_attributes)
         metadata["security_flags"] = dict(metadata["security_flags"])
