@@ -2224,7 +2224,7 @@ def _load_coverage_monitoring(
 
 
 def _normalize_runtime_path(
-    raw_value: Any, *, base_dir: Path | None
+    raw_value: Any, *, base_dir: Path | None, posix: bool = True
 ) -> str | None:
     """Zwraca ścieżkę pliku znormalizowaną względem katalogu konfiguracji."""
     if raw_value in (None, "", False):
@@ -2232,14 +2232,15 @@ def _normalize_runtime_path(
 
     candidate = Path(str(raw_value)).expanduser()
     if candidate.is_absolute() or base_dir is None:
-        return candidate.as_posix()
+        return candidate.as_posix() if posix else str(candidate)
 
     try:
         normalized_base = base_dir.expanduser().resolve(strict=False)
     except Exception:  # noqa: BLE001 - zachowujemy najlepsze możliwe przybliżenie
         normalized_base = base_dir.expanduser().absolute()
 
-    return (normalized_base / candidate).as_posix()
+    combined = normalized_base / candidate
+    return combined.as_posix() if posix else str(combined)
 
 
 def _normalize_env_var(value: Any) -> str | None:
@@ -2691,7 +2692,11 @@ def _load_metrics_service(
         token_env_value = _normalize_env_var(metrics_raw.get("auth_token_env"))
         kwargs["auth_token_env"] = token_env_value
     if "auth_token_file" in available_fields:
-        token_file_path = _normalize_runtime_path(metrics_raw.get("auth_token_file"), base_dir=base_dir)
+        token_file_path = _normalize_runtime_path(
+            metrics_raw.get("auth_token_file"),
+            base_dir=base_dir,
+            posix=False,
+        )
         kwargs["auth_token_file"] = token_file_path
     if kwargs.get("auth_token") is None and token_env_value:
         env_token = os.environ.get(token_env_value)
