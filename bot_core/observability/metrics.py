@@ -33,7 +33,7 @@ def _labels_to_dict(labels: LabelTuple) -> dict[str, str]:
     return {key: value for key, value in labels}
 
 
-@dataclass(slots=True)
+@dataclass(slots=True, kw_only=True)
 class Metric:
     """Bazowy typ metryki przechowujący opis i nazwę."""
 
