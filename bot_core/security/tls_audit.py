@@ -234,8 +234,7 @@ def audit_tls_entry(
                         for warning in warnings
                     )
                 if in_temp_dir and (
-                    (not permissions_supported)
-                    or (permissions_secure is False)
+                    (permissions_secure is False)
                     or (permissions_secure is None and has_perm_warning)
                 ):
                     warnings.append(
