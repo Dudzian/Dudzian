@@ -211,7 +211,7 @@ def audit_tls_entry(
                 in_temp_dir = False
                 if isinstance(key_path_value, (str, Path)):
                     in_temp_dir = _is_in_temp_directory(key_path_value)
-                if in_temp_dir or not permissions_supported:
+                if os.name == "nt" and (not permissions_supported) and (not in_temp_dir):
                     warnings.append(
                         "Klucz prywatny TLS: nie można wiarygodnie zweryfikować uprawnień na Windows (permissions_supported=False) – upewnij się, że ACL ogranicza dostęp."
                     )
