@@ -2735,10 +2735,15 @@ def bootstrap_environment(
                     token_file_exists = False
                 if token_file_exists:
                     try:
-                        file_mode = stat.S_IMODE(token_file_path.stat().st_mode)
-                        token_file_permissions = format(file_mode, "#04o")
-                        if os.name != "nt" and file_mode & 0o077:
-                            token_file_over_permissive = True
+                        token_file_meta = file_reference_metadata(
+                            token_file_path, role="token"
+                        )
+                        mode_octal = token_file_meta.get("mode_octal")
+                        if isinstance(mode_octal, str):
+                            file_mode = int(mode_octal, 8)
+                            token_file_permissions = f"0o{file_mode:03o}"
+                            if os.name != "nt" and file_mode & 0o077:
+                                token_file_over_permissive = True
                     except OSError:
                         token_file_permissions = None
         rbac_entries = tuple(getattr(metrics_config, "rbac_tokens", ()) or ())
