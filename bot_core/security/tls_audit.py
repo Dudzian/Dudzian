@@ -228,60 +228,50 @@ def audit_tls_entry(
                 in_temp_dir = False
                 if isinstance(key_path_value, (str, Path)):
                     in_temp_dir = _is_in_temp_directory(key_path_value)
-                if not has_perm_warning:
-                    has_perm_warning = any(
-                        "uprawn" in warning.lower() or "permission" in warning.lower()
-                        for warning in warnings
-                    )
+                # Uwaga: na Windows permissions_supported bywa False mimo chmod(0o600),
+                # więc ostrzegamy tylko jeśli nie mamy *żadnego* pozytywnego dowodu.
+                has_perm_warning = has_perm_warning or any(
+                    "uprawn" in str(warning).lower() or "permission" in str(warning).lower()
+                    for warning in warnings
+                )
+
                 mode_value = None
                 if isinstance(security_flags, Mapping):
                     for key in ("mode", "st_mode", "permissions_mode", "mode_int"):
-                        if key in security_flags and isinstance(security_flags.get(key), int):
+                        if isinstance(security_flags.get(key), int):
                             mode_value = int(security_flags[key])
                             break
-                if mode_value is None:
-                    for key in ("mode", "st_mode"):
-                        if key in private_key_metadata and isinstance(
-                            private_key_metadata.get(key), int
-                        ):
-                            mode_value = int(private_key_metadata[key])
-                            break
-                perms_too_open_by_mode = False
-                if isinstance(mode_value, int):
-                    perms_too_open_by_mode = (mode_value & 0o077) != 0
+                if mode_value is None and isinstance(
+                    private_key_metadata.get("mode_octal"), str
+                ):
+                    try:
+                        mode_value = int(str(private_key_metadata["mode_octal"]), 8)
+                    except ValueError:
+                        mode_value = None
 
-                has_strict_mode = False
-                if isinstance(mode_value, int):
-                    has_strict_mode = (mode_value & 0o077) == 0
-                # Windows: chmod(0o600) często mapuje się na READONLY, a st_mode bywa mało wiarygodne.
+                has_strict_mode = isinstance(mode_value, int) and (mode_value & 0o077) == 0
+
                 file_attrs = None
-                if isinstance(security_flags, Mapping):
-                    for key in ("st_file_attributes", "file_attributes"):
-                        if key in security_flags and isinstance(security_flags.get(key), int):
-                            file_attrs = int(security_flags[key])
-                            break
-                if file_attrs is None:
-                    for key in ("st_file_attributes", "file_attributes"):
-                        if key in private_key_metadata and isinstance(
-                            private_key_metadata.get(key), int
-                        ):
-                            file_attrs = int(private_key_metadata[key])
-                            break
-                has_readonly_attr = False
-                if (
+                for key in ("st_file_attributes", "file_attributes"):
+                    if isinstance(security_flags, Mapping) and isinstance(
+                        security_flags.get(key), int
+                    ):
+                        file_attrs = int(security_flags[key])
+                        break
+                    if isinstance(private_key_metadata.get(key), int):
+                        file_attrs = int(private_key_metadata[key])
+                        break
+                has_readonly_attr = (
                     os.name == "nt"
                     and isinstance(file_attrs, int)
                     and hasattr(stat, "FILE_ATTRIBUTE_READONLY")
-                ):
-                    has_readonly_attr = bool(file_attrs & stat.FILE_ATTRIBUTE_READONLY)
-
-                permissions_confirmed_secure = (
-                    (permissions_secure is True) or has_strict_mode or has_readonly_attr
+                    and bool(file_attrs & stat.FILE_ATTRIBUTE_READONLY)
                 )
+
+                permissions_confirmed_secure = has_strict_mode or has_readonly_attr
+
                 if in_temp_dir and (
-                    (permissions_secure is False)
-                    or has_perm_warning
-                    or perms_too_open_by_mode
+                    has_perm_warning
                     or (
                         os.name == "nt"
                         and (not permissions_supported)
