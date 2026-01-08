@@ -4686,6 +4686,14 @@ def load_runtime_app_config(path: str | Path) -> RuntimeAppConfig:
             return None
         return str(normalized)
 
+    def _normalize_native_path(value: object | None) -> str | None:
+        normalized = _normalize_runtime_path(
+            value, base_dir=config_base_dir, posix=False
+        )
+        if normalized is None:
+            return None
+        return str(normalized)
+
     def _as_tuple(value: object | None) -> tuple[str, ...]:
         if value in (None, "", False):
             return ()
@@ -4765,7 +4773,7 @@ def load_runtime_app_config(path: str | Path) -> RuntimeAppConfig:
     core_path_value = core_section.get("path", "core.yaml")
     core_reference = RuntimeCoreReference(
         path=str(core_path_value),
-        resolved_path=_normalize_path(core_path_value),
+        resolved_path=_normalize_native_path(core_path_value),
     )
 
     ai_section = raw.get("ai") or {}
