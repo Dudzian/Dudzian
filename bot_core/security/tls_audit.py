@@ -206,19 +206,6 @@ def audit_tls_entry(
                     permissions_supported = bool(
                         security_flags.get("permissions_supported", True)
                     )
-                    secure_keys = (
-                        "permissions_secure",
-                        "permissions_ok",
-                        "permissions_restricted",
-                        "permissions_strict",
-                    )
-                    secure_values = [
-                        security_flags.get(key)
-                        for key in secure_keys
-                        if key in security_flags
-                    ]
-                    if secure_values:
-                        permissions_secure = any(bool(value) for value in secure_values)
                     if security_flags.get("permissions_too_open"):
                         has_perm_warning = True
                 key_path_value = (
@@ -228,11 +215,23 @@ def audit_tls_entry(
                 in_temp_dir = False
                 if isinstance(key_path_value, (str, Path)):
                     in_temp_dir = _is_in_temp_directory(key_path_value)
-                # Uwaga: na Windows permissions_supported bywa False mimo chmod(0o600),
-                # więc ostrzegamy tylko jeśli nie mamy *żadnego* pozytywnego dowodu.
+                # Windows: permissions_supported bywa False mimo chmod(0o600),
+                # więc w temp ostrzegamy tylko gdy nie mamy *żadnego* pozytywnego sygnału.
+                if isinstance(security_flags, Mapping):
+                    for key in (
+                        "permissions_secure",
+                        "permissions_ok",
+                        "permissions_restricted",
+                        "permissions_strict",
+                    ):
+                        if key in security_flags:
+                            permissions_secure = bool(security_flags.get(key))
+                            if permissions_secure:
+                                break
                 has_perm_warning = has_perm_warning or any(
-                    "uprawn" in str(warning).lower() or "permission" in str(warning).lower()
-                    for warning in warnings
+                    (("uprawn" in text) or ("permission" in text))
+                    and (("klucz" in text) or ("tls_key" in text) or ("risk_tls" in text))
+                    for text in (str(warning).lower() for warning in warnings)
                 )
 
                 mode_value = None
@@ -268,20 +267,20 @@ def audit_tls_entry(
                     and bool(file_attrs & stat.FILE_ATTRIBUTE_READONLY)
                 )
 
-                permissions_confirmed_secure = has_strict_mode or has_readonly_attr
+                permissions_confirmed_secure = (
+                    permissions_secure is True
+                ) or has_strict_mode or has_readonly_attr
 
-                if in_temp_dir and (
-                    has_perm_warning
-                    or (
-                        os.name == "nt"
+                if in_temp_dir:
+                    if has_perm_warning or (
+                        (not permissions_confirmed_secure)
+                        and (os.name == "nt")
                         and (not permissions_supported)
-                        and (not permissions_confirmed_secure)
-                    )
-                ):
-                    warnings.append(
-                        "Klucz prywatny TLS znajduje się w katalogu tymczasowym i nie ma potwierdzonych bezpiecznych uprawnień – upewnij się, że dostęp jest ograniczony."
-                    )
-                elif os.name == "nt" and (not permissions_supported) and (not in_temp_dir):
+                    ):
+                        warnings.append(
+                            "Klucz prywatny TLS znajduje się w katalogu tymczasowym i nie ma potwierdzonych bezpiecznych uprawnień – upewnij się, że dostęp jest ograniczony."
+                        )
+                elif os.name == "nt" and (not permissions_supported):
                     warnings.append(
                         "Klucz prywatny TLS: nie można wiarygodnie zweryfikować uprawnień na Windows (permissions_supported=False) – upewnij się, że ACL ogranicza dostęp."
                     )
