@@ -96,7 +96,13 @@ class OHLCVBackfillService:
 
     def _should_use_offline_fallback(self) -> bool:
         upstream = getattr(self._source, "upstream", None)
-        return isinstance(upstream, OfflineOnlyDataSource)
+        if not isinstance(upstream, OfflineOnlyDataSource):
+            return False
+        primary = getattr(self._storage, "_primary", None)
+        namespace = getattr(primary, "_namespace", None) if primary is not None else None
+        # "offline_cache" jest trybem tylko do odczytu (testy/pipeline offline),
+        # więc nie zapisujemy tam stubów podczas backfillu.
+        return namespace != "offline_cache"
 
     def _build_stub_rows(self, request: OHLCVRequest, interval_ms: int) -> list[list[float]]:
         start_ts = int(request.start)
