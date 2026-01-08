@@ -249,10 +249,20 @@ def audit_tls_entry(
                 perms_too_open_by_mode = False
                 if isinstance(mode_value, int):
                     perms_too_open_by_mode = (mode_value & 0o077) != 0
+
+                has_strict_mode = False
+                if isinstance(mode_value, int):
+                    has_strict_mode = (mode_value & 0o077) == 0
+                permissions_confirmed_secure = (permissions_secure is True) or has_strict_mode
                 if in_temp_dir and (
                     (permissions_secure is False)
                     or has_perm_warning
                     or perms_too_open_by_mode
+                    or (
+                        os.name == "nt"
+                        and (not permissions_supported)
+                        and (not permissions_confirmed_secure)
+                    )
                 ):
                     warnings.append(
                         "Klucz prywatny TLS znajduje się w katalogu tymczasowym i nie ma potwierdzonych bezpiecznych uprawnień – upewnij się, że dostęp jest ograniczony."
