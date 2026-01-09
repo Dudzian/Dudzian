@@ -128,12 +128,13 @@ def file_reference_metadata(path: Path | str, *, role: str | None = None) -> Map
     parent_flags = parent_meta.get("security_flags")
 
     if parent_flags:
+        permissions_supported = bool(parent_flags.get("permissions_supported", os.name != "nt"))
         try:
-            if bool(parent_flags.get("world_writable")):
+            if permissions_supported and bool(parent_flags.get("world_writable")):
                 warnings.append(
                     "Katalog nadrzędny jest zapisywalny dla wszystkich użytkowników – ogranicz prawa zapisu."
                 )
-            if role == "tls_key" and bool(parent_flags.get("group_writable")):
+            if permissions_supported and role == "tls_key" and bool(parent_flags.get("group_writable")):
                 warnings.append(
                     "Katalog z materiałem TLS ma uprawnienia zapisu dla grupy – rozważ zaostrzenie chmod."
                 )
