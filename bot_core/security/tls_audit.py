@@ -272,9 +272,17 @@ def audit_tls_entry(
                     and bool(file_attrs & stat.FILE_ATTRIBUTE_READONLY)
                 )
 
+                windows_hardened_mode = (
+                    os.name == "nt"
+                    and not in_temp_dir
+                    and isinstance(mode_value, int)
+                    and mode_value in (0o400, 0o600)
+                    and permissions_supported is False
+                )
+
                 permissions_confirmed_secure = (
                     permissions_secure is True
-                ) or has_strict_mode or has_readonly_attr
+                ) or has_strict_mode or has_readonly_attr or windows_hardened_mode
 
                 if in_temp_dir:
                     if has_perm_warning or perms_too_open_by_mode or (
