@@ -276,10 +276,27 @@ def audit_tls_entry(
                     (permissions_secure is True) or has_strict_mode or has_readonly_attr
                 )
 
+                temp_tls_hint = False
+                if in_temp_dir and isinstance(key_path_value, (str, Path)):
+                    try:
+                        parts = [p.lower() for p in Path(key_path_value).parts]
+                        # bootstrap test trzyma klucz w tmp/tls/...
+                        temp_tls_hint = any(part in {"tls"} for part in parts)
+                    except Exception:
+                        temp_tls_hint = False
+
                 if in_temp_dir:
-                    # w temp ostrzegamy tylko przy wiarygodnym sygnale problemu
-                    if has_perm_warning or perms_too_open_by_mode or (
-                        permissions_supported and (not permissions_confirmed_secure)
+                    # 1) ostrzegaj jeśli masz twardy sygnał problemu:
+                    #    - permission-related warning z metadanych klucza
+                    #    - albo generator flag wystawił permissions_too_open
+                    #    - albo (gdy permissions_supported=True) mode pokazuje group/other bits
+                    # 2) dodatkowo (Windows): jeśli permissions_supported=False i klucz siedzi w temp/.../tls/...,
+                    #    a nie masz żadnego potwierdzenia "secure", to też ostrzegaj (to pokrywa bootstrap test).
+                    if (
+                        has_perm_warning
+                        or perms_too_open_by_mode
+                        or (permissions_supported and (not permissions_confirmed_secure))
+                        or ((not permissions_supported) and temp_tls_hint and (not permissions_confirmed_secure))
                     ):
                         warnings.append(
                             "Klucz prywatny TLS znajduje się w katalogu tymczasowym i nie ma potwierdzonych bezpiecznych uprawnień – upewnij się, że dostęp jest ograniczony."
