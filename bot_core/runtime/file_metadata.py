@@ -191,13 +191,6 @@ def file_reference_metadata(path: Path | str, *, role: str | None = None) -> Map
     metadata["mode_octal"] = format(mode, "04o")
     metadata["permissions"] = permissions_from_mode(mode)
     metadata["security_flags"] = security_flags_from_mode(mode)
-    if os.name == "nt" and role in {"tls_key", "tls_cert", "tls_client_ca"}:
-        if mode in (0o400, 0o600):
-            metadata["security_flags"] = dict(metadata["security_flags"])
-            metadata["security_flags"]["permissions_supported"] = True
-            metadata["security_flags"]["permissions_strict"] = True
-            metadata["security_flags"]["permissions_secure"] = True
-            metadata["security_flags"]["permissions_ok"] = True
     if isinstance(file_attributes, int):
         metadata["st_file_attributes"] = int(file_attributes)
         metadata["security_flags"] = dict(metadata["security_flags"])
