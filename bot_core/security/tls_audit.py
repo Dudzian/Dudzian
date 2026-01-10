@@ -202,13 +202,24 @@ def audit_tls_entry(
                 permissions_supported = True
                 permissions_secure: bool | None = None
                 has_perm_warning = False
-                key_exists = bool(private_key_metadata.get("exists"))
+
                 if isinstance(security_flags, Mapping):
                     permissions_supported = bool(
                         security_flags.get("permissions_supported", True)
                     )
                     if security_flags.get("permissions_too_open"):
                         has_perm_warning = True
+                    # pozytywne sygnały, jeśli generator je wystawił
+                    for key in (
+                        "permissions_secure",
+                        "permissions_ok",
+                        "permissions_restricted",
+                        "permissions_strict",
+                    ):
+                        if key in security_flags and bool(security_flags.get(key)):
+                            permissions_secure = True
+                            break
+
                 key_path_value = (
                     private_key_metadata.get("absolute_path")
                     or private_key_metadata.get("path")
@@ -216,25 +227,14 @@ def audit_tls_entry(
                 in_temp_dir = False
                 if isinstance(key_path_value, (str, Path)):
                     in_temp_dir = _is_in_temp_directory(key_path_value)
-                # Windows: permissions_supported bywa False mimo chmod(0o600),
-                # więc w temp ostrzegamy tylko gdy nie mamy *żadnego* pozytywnego sygnału.
-                if isinstance(security_flags, Mapping):
-                    for key in (
-                        "permissions_secure",
-                        "permissions_ok",
-                        "permissions_restricted",
-                        "permissions_strict",
-                    ):
-                        if key in security_flags:
-                            permissions_secure = bool(security_flags.get(key))
-                            if permissions_secure:
-                                break
+
+                # tylko warningi lokalne dla pliku klucza
                 key_local_warnings = private_key_metadata.get("security_warnings", ()) or ()
-                has_perm_warning = has_perm_warning or any(
-                    ("uprawn" in str(warning).lower())
-                    or ("permission" in str(warning).lower())
-                    for warning in key_local_warnings
-                )
+                if any(
+                    ("uprawn" in str(w).lower()) or ("permission" in str(w).lower())
+                    for w in key_local_warnings
+                ):
+                    has_perm_warning = True
 
                 mode_value = None
                 if isinstance(security_flags, Mapping):
@@ -242,29 +242,29 @@ def audit_tls_entry(
                         if isinstance(security_flags.get(key), int):
                             mode_value = int(security_flags[key])
                             break
-                if mode_value is None and isinstance(
-                    private_key_metadata.get("mode_octal"), str
-                ):
+                if mode_value is None and isinstance(private_key_metadata.get("mode_octal"), str):
                     try:
                         mode_value = int(str(private_key_metadata["mode_octal"]), 8)
                     except ValueError:
                         mode_value = None
 
                 has_strict_mode = isinstance(mode_value, int) and (mode_value & 0o077) == 0
-                perms_too_open_by_mode = (
-                    isinstance(mode_value, int) and (mode_value & 0o077) != 0
-                )
+
+                # UWAGA: mode bits traktujemy jako dowód "too open" tylko wtedy,
+                # gdy permissions_supported=True (inaczej Windows false-positive 0666).
+                perms_too_open_by_mode = False
+                if permissions_supported and isinstance(mode_value, int):
+                    perms_too_open_by_mode = (mode_value & 0o077) != 0
 
                 file_attrs = None
                 for key in ("st_file_attributes", "file_attributes"):
-                    if isinstance(security_flags, Mapping) and isinstance(
-                        security_flags.get(key), int
-                    ):
+                    if isinstance(security_flags, Mapping) and isinstance(security_flags.get(key), int):
                         file_attrs = int(security_flags[key])
                         break
                     if isinstance(private_key_metadata.get(key), int):
                         file_attrs = int(private_key_metadata[key])
                         break
+
                 has_readonly_attr = (
                     os.name == "nt"
                     and isinstance(file_attrs, int)
@@ -272,22 +272,14 @@ def audit_tls_entry(
                     and bool(file_attrs & stat.FILE_ATTRIBUTE_READONLY)
                 )
 
-                windows_hardened_mode = (
-                    os.name == "nt"
-                    and not in_temp_dir
-                    and isinstance(mode_value, int)
-                    and mode_value in (0o400, 0o600)
-                    and permissions_supported is False
+                permissions_confirmed_secure = (
+                    (permissions_secure is True) or has_strict_mode or has_readonly_attr
                 )
 
-                permissions_confirmed_secure = (
-                    permissions_secure is True
-                ) or has_strict_mode or has_readonly_attr or windows_hardened_mode
-
                 if in_temp_dir:
+                    # w temp ostrzegamy tylko przy wiarygodnym sygnale problemu
                     if has_perm_warning or perms_too_open_by_mode or (
-                        (not permissions_confirmed_secure)
-                        and permissions_supported
+                        permissions_supported and (not permissions_confirmed_secure)
                     ):
                         warnings.append(
                             "Klucz prywatny TLS znajduje się w katalogu tymczasowym i nie ma potwierdzonych bezpiecznych uprawnień – upewnij się, że dostęp jest ograniczony."
@@ -295,7 +287,7 @@ def audit_tls_entry(
                 elif (
                     os.name == "nt"
                     and (not permissions_supported)
-                    and (not key_exists)
+                    and (not bool(private_key_metadata.get("exists")))
                 ):
                     warnings.append(
                         "Klucz prywatny TLS jest niedostępny – nie można zweryfikować uprawnień."
