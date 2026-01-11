@@ -13,6 +13,7 @@ from dataclasses import dataclass, asdict
 from datetime import datetime, timezone
 import json
 import logging
+import os
 from pathlib import Path
 from typing import Iterable, Mapping, MutableMapping
 
@@ -55,7 +56,8 @@ class UserProfile:
 
 
 def load_profiles(path: str | Path) -> list[UserProfile]:
-    storage = Path(path).expanduser()
+    expanded = os.path.expanduser(path)
+    storage = Path(expanded)
     if not storage.exists():
         LOGGER.debug("Brak pliku profili użytkowników %s – zwracam pustą listę.", storage)
         return []
@@ -152,4 +154,3 @@ __all__ = [
     "log_admin_event",
     "remove_profile",
 ]
-
