@@ -55,9 +55,22 @@ class UserProfile:
         return payload
 
 
+def _resolve_profiles_path(path: str | Path) -> Path:
+    path_str = str(path)
+    if path_str.startswith("~"):
+        if len(path_str) > 1 and path_str[1] not in ("/", "\\"):
+            raise ValueError("Nieobsługiwany prefiks ~user w ścieżce profili.")
+        home = os.environ.get("HOME") or os.path.expanduser("~")
+        suffix = path_str[1:]
+        if suffix in ("", "/", "\\"):
+            return Path(home)
+        return Path(home) / suffix.lstrip("/\\")
+    return Path(path)
+
+
 def load_profiles(path: str | Path) -> list[UserProfile]:
-    expanded = os.path.expanduser(path)
-    storage = Path(expanded)
+    storage = _resolve_profiles_path(path)
+    LOGGER.debug("Ładowanie profili użytkowników z %s", storage)
     if not storage.exists():
         LOGGER.debug("Brak pliku profili użytkowników %s – zwracam pustą listę.", storage)
         return []
