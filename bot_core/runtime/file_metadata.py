@@ -180,14 +180,37 @@ def file_reference_metadata(path: Path | str, *, role: str | None = None) -> Map
             if readonly_flag and (file_attributes & readonly_flag):
                 mode = 0o400
                 synthesized_permissions = True
-    if os.name == "nt" and role == "token":
-        try:
-            writable = bool(os.access(candidate, os.W_OK))
-        except OSError:
-            writable = None
-        if writable is not None:
-            mode = 0o644 if writable else 0o444
-            synthesized_permissions = True
+    # --- Windows: token files (auth_token_file etc.) ---
+    # Na NT st_mode bywa niewiarygodne (często wygląda jak 0666),
+    # więc dla plików-tokenów syntetyzujemy "sensowny" tryb na podstawie W_OK:
+    # - writable => 0644
+    # - read-only => 0444
+    #
+    # Uwaga: testy token_audit oczekują dokładnie 0o644 po chmod(0o644),
+    # więc musimy łapać nie tylko role == "token", ale też role związane z auth_token.
+    if os.name == "nt":
+        role_value = str(role or "").lower()
+
+        # Rozpoznanie ról tokenowych:
+        # - "token" (ogólna)
+        # - role zawierające "auth_token" (np. metrics_auth_token / *_auth_token_file)
+        # - role kończące się na "_token" albo "_token_file"
+        is_token_role = (
+            role_value == "token"
+            or "auth_token" in role_value
+            or role_value.endswith("_token")
+            or role_value.endswith("_token_file")
+        )
+
+        if is_token_role:
+            try:
+                writable = bool(os.access(candidate, os.W_OK))
+            except OSError:
+                writable = None
+
+            if writable is not None:
+                mode = 0o644 if writable else 0o444
+                synthesized_permissions = True
     metadata["mode_octal"] = format(mode, "04o")
     metadata["permissions"] = permissions_from_mode(mode)
     metadata["security_flags"] = security_flags_from_mode(mode)
