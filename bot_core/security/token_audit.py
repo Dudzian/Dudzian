@@ -172,7 +172,7 @@ def audit_service_token_configs(
                 try:
                     file_mode = stat.S_IMODE(auth_token_path.stat().st_mode)
                     auth_token_file_mode = format(file_mode, "#04o")
-                    if os.name != "nt" and file_mode & 0o077:
+                    if file_mode & 0o077:
                         auth_token_file_over_permissive = True
                 except OSError:
                     auth_token_file_mode = None
