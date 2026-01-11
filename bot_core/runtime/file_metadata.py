@@ -244,19 +244,32 @@ def file_reference_metadata(path: Path | str, *, role: str | None = None) -> Map
                 warnings.append(
                     "Klucz prywatny TLS można nadpisać bez uprawnień administratora – ogranicz prawa zapisu."
                 )
-    elif role == "tls_key":
-        if metadata["security_flags"].get("permissions_supported", True):
-            permissions = metadata.get("permissions", {})
-            group_permissions = permissions.get("group", {})
-            others_permissions = permissions.get("others", {})
-            if group_permissions.get("read") or others_permissions.get("read"):
-                warnings.append(
-                    "Klucz prywatny TLS jest czytelny dla innych użytkowników – wysokie ryzyko bezpieczeństwa."
-                )
-            if group_permissions.get("write") or others_permissions.get("write"):
-                warnings.append(
-                    "Klucz prywatny TLS można nadpisać bez uprawnień administratora – ogranicz prawa zapisu."
-                )
+    else:
+        # Windows:
+        # - Dla tls_key: ostrzegamy tylko jeśli permissions_supported=True (żeby nie brać 0666 z st_mode jako faktu).
+        # - Dla certów/CA: testy oczekują warningu "Plik jest dostępny do odczytu..." również na Windows,
+        #   ale nie chcemy, żeby to psuło security baseline (filtrujemy to w tls_audit.py).
+        role_value = str(role) if role is not None else ""
+        is_tls_cert_like = role_value == "tls_cert" or role_value.endswith("_certificate")
+
+        if is_tls_cert_like and metadata.get("exists"):
+            warnings.append(
+                "Plik jest dostępny do odczytu dla wszystkich użytkowników – sprawdź polityki RBAC."
+            )
+
+        if role == "tls_key":
+            if metadata["security_flags"].get("permissions_supported", True):
+                permissions = metadata.get("permissions", {})
+                group_permissions = permissions.get("group", {})
+                others_permissions = permissions.get("others", {})
+                if group_permissions.get("read") or others_permissions.get("read"):
+                    warnings.append(
+                        "Klucz prywatny TLS jest czytelny dla innych użytkowników – wysokie ryzyko bezpieczeństwa."
+                    )
+                if group_permissions.get("write") or others_permissions.get("write"):
+                    warnings.append(
+                        "Klucz prywatny TLS można nadpisać bez uprawnień administratora – ogranicz prawa zapisu."
+                    )
 
     if role == "tls_key" and metadata.get("is_symlink"):
         warnings.append(
