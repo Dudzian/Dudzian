@@ -1,4 +1,5 @@
 import json
+import sys
 
 import pytest
 
@@ -96,3 +97,27 @@ def test_load_profiles_with_tilde(tmp_path, monkeypatch):
     monkeypatch.setenv("HOME", str(fake_home))
     profiles = load_profiles("~/profiles.json")
     assert profiles == []
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason="Testuje priorytet HOME na Windows.")
+def test_load_profiles_with_tilde_prefers_home_over_userprofile_on_windows(tmp_path, monkeypatch):
+    fake_home = tmp_path / "fake-home"
+    fake_home.mkdir()
+    fake_storage = fake_home / "profiles.json"
+    fake_storage.write_text("[]", encoding="utf-8")
+
+    real_home = tmp_path / "real-home"
+    real_home.mkdir()
+    real_storage = real_home / "profiles.json"
+    real_storage.write_text(
+        json.dumps([{"user_id": "bob", "display_name": "Bob", "roles": []}]),
+        encoding="utf-8",
+    )
+
+    monkeypatch.setenv("HOME", str(fake_home))
+    monkeypatch.setenv("USERPROFILE", str(real_home))
+
+    profiles = load_profiles("~/profiles.json")
+
+    assert profiles == []
+    assert load_profiles(str(real_storage))[0].user_id == "bob"
