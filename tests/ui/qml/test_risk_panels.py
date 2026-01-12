@@ -208,13 +208,13 @@ class EngineCostModel(QAbstractListModel):
 
 
 class ControllerStub(QObject):
-    killSwitchChanged = Signal()
+    riskKillSwitchChanged = Signal()
 
     def __init__(self, engaged: bool) -> None:
         super().__init__()
         self._kill_switch = engaged
 
-    @Property(bool, notify=killSwitchChanged)
+    @Property(bool, notify=riskKillSwitchChanged)
     def riskKillSwitchEngaged(self) -> bool:  # type: ignore[override]
         return self._kill_switch
 
@@ -223,7 +223,7 @@ class ControllerStub(QObject):
         if self._kill_switch == engaged:
             return True
         self._kill_switch = engaged
-        self.killSwitchChanged.emit()
+        self.riskKillSwitchChanged.emit()
         return True
 
 
