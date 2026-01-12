@@ -45,7 +45,7 @@ def _build_report(differences: list[str], config_path: Path) -> dict[str, object
     )
     return {
         "timestamp": timestamp,
-        "config_path": str(config_path),
+        "config_path": config_path.as_posix(),
         "status": status,
         "differences": differences,
     }
