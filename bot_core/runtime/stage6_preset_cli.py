@@ -734,8 +734,13 @@ def _run_stage6_migration(argv: Sequence[str]) -> int:
     core_path = Path(args.core_config)
     if not core_path.exists():
         raise SystemExit(f"Plik core.yaml nie istnieje: {core_path}")
-    core_original_bytes = core_path.read_bytes()
-    core_original_checksum = hashlib.sha256(core_original_bytes).hexdigest()
+    destination = Path(args.output).expanduser() if args.output else core_path
+    destination_existed = destination.exists()
+    if destination_existed:
+        original_bytes = destination.read_bytes()
+        core_original_checksum = hashlib.sha256(original_bytes).hexdigest()
+    else:
+        core_original_checksum = None
 
     sanitised_invocation = _sanitise_stage6_invocation(provided_args)
 
@@ -753,11 +758,9 @@ def _run_stage6_migration(argv: Sequence[str]) -> int:
         runtime_entrypoint=args.runtime_entrypoint,
     )
 
-    destination = Path(args.output).expanduser() if args.output else core_path
-
     original_text: str | None = None
     try:
-        if destination.exists():
+        if destination_existed:
             original_text = destination.read_text(encoding="utf-8")
     except OSError:
         original_text = None
@@ -768,7 +771,7 @@ def _run_stage6_migration(argv: Sequence[str]) -> int:
         if args.dry_run:
             print("Tryb dry-run: pominięto utworzenie kopii zapasowej (--core-backup).")
         else:
-            backup_source = destination if destination.exists() else core_path
+            backup_source = destination if destination_existed else core_path
             backup_path = _resolve_backup_path(
                 backup_source,
                 None if backup_request == "" else backup_request,
