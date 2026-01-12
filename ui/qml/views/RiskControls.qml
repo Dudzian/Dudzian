@@ -87,8 +87,8 @@ Item {
 
     ColumnLayout {
         anchors.fill: parent
+        anchors.margins: 14
         spacing: 14
-        padding: 14
 
         Label {
             text: qsTr("Zarządzanie ryzykiem")
@@ -330,4 +330,3 @@ Item {
         }
     }
 }
-
