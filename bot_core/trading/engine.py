@@ -1362,6 +1362,7 @@ class TradingEngine:
     
     def run_strategy(
         self,
+        # Mapping is supported only for new-style multi-session runs; legacy path expects DataFrame.
         data: Union[pd.DataFrame, Mapping[str, pd.DataFrame]],
         params: Union[TradingParameters, Mapping[str, TradingParameters]],
         initial_capital: float = 10000.0,
@@ -2911,15 +2912,130 @@ class TradingStrategies:
 
     def run_strategy(
         self,
-        data: pd.DataFrame,
-        initial_capital: float = 10000.0,
-        fee: float = 0.0004,
-        slippage: float = 0.0002,
-        fraction: float = 0.05,
-        allow_short: bool = False,
+        data: Union[pd.DataFrame, Mapping[str, pd.DataFrame]],
+        *args,
         **kwargs,
     ) -> Tuple[Dict, pd.DataFrame, pd.Series]:
         """Uruchom strategię w trybie zgodnym z historycznym API TradingGUI."""
+        print("TradingStrategies.run_strategy invoked")
+        try:
+            params = None
+            if args:
+                candidate = args[0]
+                if self._is_new_style_params(candidate):
+                    params = candidate
+                    if len(args) > 1:
+                        raise TypeError("run_strategy() received unexpected positional arguments for new-style call")
+            elif "params" in kwargs and self._is_new_style_params(kwargs["params"]):
+                params = kwargs.pop("params")
+
+            if params is not None:
+                return self._run_new_style(data, params, **kwargs)
+
+            return self._run_legacy(data, *args, **kwargs)
+        finally:
+            print("TradingStrategies.run_strategy completed")
+
+    @staticmethod
+    def _is_new_style_params(value: object) -> bool:
+        if isinstance(value, TradingParameters):
+            return True
+        if isinstance(value, Mapping):
+            return all(isinstance(item, TradingParameters) for item in value.values())
+        return False
+
+    def _build_metrics(self, result: BacktestResult) -> Dict[str, Any]:
+        return {
+            "total_return": result.total_return,
+            "volatility": result.volatility,
+            "sharpe_ratio": result.sharpe_ratio,
+            "total_trades": int(result.total_trades),
+            "trades": int(result.total_trades),
+        }
+
+    def _run_new_style(
+        self,
+        data: Union[pd.DataFrame, Mapping[str, pd.DataFrame]],
+        params: Union[TradingParameters, Mapping[str, TradingParameters]],
+        **kwargs,
+    ) -> Tuple[Dict, pd.DataFrame, pd.Series]:
+        initial_capital = float(kwargs.pop("initial_capital", 10000.0))
+        fee_bps = float(kwargs.pop("fee_bps", 5.0))
+        session_weights = kwargs.pop("session_weights", None)
+        risk_profile = kwargs.pop("risk_profile", None)
+        metadata = kwargs.pop("metadata", None) or {}
+
+        if kwargs:
+            self._logger.debug("Nieobsługiwane argumenty run_strategy zostały zignorowane: %s", sorted(kwargs))
+
+        result = self._base_engine.run_strategy(
+            data=data,
+            params=params,
+            initial_capital=initial_capital,
+            fee_bps=fee_bps,
+            session_weights=session_weights,
+        )
+
+        if isinstance(result, MultiSessionBacktestResult):
+            metrics = self._build_metrics(result.aggregate)
+            metrics.update(
+                {
+                    "risk_profile": risk_profile,
+                    "metadata": metadata,
+                    "session_count": len(result.sessions),
+                    "initial_capital": initial_capital,
+                    "fee_bps": fee_bps,
+                    "sessions": {
+                        name: self._build_metrics(session_result)
+                        for name, session_result in result.sessions.items()
+                    },
+                    "weights": dict(result.weights),
+                }
+            )
+            trades = result.aggregate.trades.copy()
+            if "symbol" in trades.columns:
+                trades = trades.rename(columns={"symbol": "session"})
+            equity = result.aggregate.equity_curve
+        else:
+            metrics = self._build_metrics(result)
+            metrics.update(
+                {
+                    "risk_profile": risk_profile,
+                    "metadata": metadata,
+                    "session_count": 1,
+                    "initial_capital": initial_capital,
+                    "fee_bps": fee_bps,
+                }
+            )
+            trades = result.trades
+            equity = result.equity_curve
+
+        return metrics, trades, equity
+
+    def _run_legacy(
+        self,
+        data: pd.DataFrame,
+        *args,
+        **kwargs,
+    ) -> Tuple[Dict, pd.DataFrame, pd.Series]:
+        initial_capital = kwargs.pop("initial_capital", 10000.0)
+        fee = kwargs.pop("fee", 0.0004)
+        slippage = kwargs.pop("slippage", 0.0002)
+        fraction = kwargs.pop("fraction", 0.05)
+        allow_short = kwargs.pop("allow_short", False)
+
+        if len(args) > 5:
+            raise TypeError("run_strategy() takes at most 6 positional arguments (including data)")
+        if len(args) > 0:
+            initial_capital = args[0]
+        if len(args) > 1:
+            fee = args[1]
+        if len(args) > 2:
+            slippage = args[2]
+        if len(args) > 3:
+            fraction = args[3]
+        if len(args) > 4:
+            allow_short = args[4]
 
         ai_model = kwargs.pop("ai_model", None)
         ai_weight = float(kwargs.pop("ai_weight", 0.0) or 0.0)
