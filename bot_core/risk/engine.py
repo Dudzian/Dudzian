@@ -915,7 +915,7 @@ class ThresholdRiskEngine(RiskEngine):
         profile = self._profiles.get(profile_name)
         limits: Mapping[str, float] | None = None
         if profile is not None:
-            limits = {
+            limits_raw: Mapping[str, object] = {
                 "max_positions": profile.max_positions(),
                 "max_leverage": profile.max_leverage(),
                 "daily_loss_limit": profile.daily_loss_limit(),
@@ -933,6 +933,7 @@ class ThresholdRiskEngine(RiskEngine):
                 "weekly_kill_switch_loss_pct": profile.weekly_kill_switch_loss_pct(),
                 "max_cost_to_profit_ratio": profile.max_cost_to_profit_ratio(),
             }
+            limits = self._normalize_snapshot_limits(limits_raw)
 
         snapshot = build_risk_snapshot(
             state,
@@ -954,6 +955,44 @@ class ThresholdRiskEngine(RiskEngine):
         except Exception:  # pragma: no cover - obserwowalność nie może blokować silnika
             _LOGGER.debug("Nie udało się opublikować snapshotu ryzyka", exc_info=True)
         return snapshot_mapping
+
+    @staticmethod
+    def _normalize_snapshot_limits(limits_raw: Mapping[str, object]) -> Mapping[str, float]:
+        limits: dict[str, float] = {}
+        for key, value in limits_raw.items():
+            numeric_value = ThresholdRiskEngine._coerce_limit_value(value)
+            if numeric_value is not None:
+                limits[str(key)] = numeric_value
+                continue
+            if isinstance(value, (tuple, list)) and len(value) == 2:
+                min_value = ThresholdRiskEngine._coerce_range_value(value[0])
+                max_value = ThresholdRiskEngine._coerce_range_value(value[1])
+                if min_value is None or max_value is None:
+                    continue
+                limits[f"{key}_min"] = min_value
+                limits[f"{key}_max"] = max_value
+        return limits
+
+    @staticmethod
+    def _coerce_limit_value(value: object) -> float | None:
+        if isinstance(value, bool):
+            return float(value)
+        if isinstance(value, (int, float)):
+            return float(value)
+        if isinstance(value, str):
+            try:
+                return float(value)
+            except ValueError:
+                return None
+        return None
+
+    @staticmethod
+    def _coerce_range_value(value: object) -> float | None:
+        if isinstance(value, bool):
+            return None
+        if isinstance(value, (int, float)):
+            return float(value)
+        return None
 
     def _build_cost_breakdown(
         self,
