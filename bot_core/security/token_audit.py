@@ -2,7 +2,6 @@
 from __future__ import annotations
 
 import os
-import stat
 from collections import Counter, defaultdict
 from pathlib import Path
 from types import SimpleNamespace
@@ -15,6 +14,7 @@ from bot_core.config.models import (
     RiskServiceConfig,
     ServiceTokenConfig,
 )
+from bot_core.runtime.file_metadata import file_reference_metadata
 from bot_core.security.tokens import ServiceToken
 
 __all__ = [
@@ -170,10 +170,13 @@ def audit_service_token_configs(
                 auth_token_file_exists = False
             if auth_token_file_exists:
                 try:
-                    file_mode = stat.S_IMODE(auth_token_path.stat().st_mode)
-                    auth_token_file_mode = format(file_mode, "#04o")
-                    if file_mode & 0o077:
-                        auth_token_file_over_permissive = True
+                    role = f"{service_name}_auth_token_file"
+                    meta = file_reference_metadata(auth_token_path, role=role)
+                    mode_octal = meta.get("mode_octal")
+                    if isinstance(mode_octal, str):
+                        file_mode = int(mode_octal, 8)
+                        auth_token_file_mode = f"0o{file_mode:03o}"
+                        auth_token_file_over_permissive = bool(file_mode & 0o077)
                 except OSError:
                     auth_token_file_mode = None
 
