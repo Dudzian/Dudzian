@@ -227,7 +227,7 @@ class ControllerStub(QObject):
 
 
 @pytest.mark.timeout(30)
-def test_risk_controls_panel_handles_engine_snapshot(tmp_path):
+def test_risk_controls_panel_handles_engine_snapshot():
     app = QApplication.instance() or QApplication([])
 
     engine = ThresholdRiskEngine()
@@ -276,11 +276,40 @@ def test_risk_controls_panel_handles_engine_snapshot(tmp_path):
             f"Sprawdzona ścieżka: {source_path}. "
             f"Kandydaci na root: {checked}"
         )
-    temp_view = tmp_path / "RiskControls.qml"
-    temp_view.write_text(source_path.read_text(encoding="utf-8"), encoding="utf-8")
+    engine_qml.addImportPath(str(repo_root / "ui" / "qml"))
+    engine_qml.addImportPath(str(repo_root / "ui"))
+    qml_warnings: list[str] = []
+    engine_qml.warnings.connect(
+        lambda warns: qml_warnings.extend(
+            f"{warning.url().toString()}:{warning.line()}:{warning.column()} {warning.description()}"
+            for warning in warns
+        )
+    )
+    clear_cache = getattr(engine_qml, "clearComponentCache", None)
+    if callable(clear_cache):
+        clear_cache()
 
-    engine_qml.load(QUrl.fromLocalFile(str(temp_view)))
-    assert engine_qml.rootObjects(), "Nie udało się załadować panelu ryzyka"
+    source_url = QUrl.fromLocalFile(str(source_path))
+    engine_qml.load(source_url)
+    if not engine_qml.rootObjects():
+        warnings_summary = "\n".join(qml_warnings) if qml_warnings else "(brak warnings)"
+        errors_provider = getattr(engine_qml, "errors", None)
+        if callable(errors_provider):
+            qml_errors = [
+                f"{error.url().toString()}:{error.line()}:{error.column()} {error.description()}"
+                for error in errors_provider()
+            ]
+        else:
+            qml_errors = []
+        errors_summary = "\n".join(qml_errors) if qml_errors else "(brak errors)"
+        raise AssertionError(
+            "Nie udało się załadować panelu ryzyka.\n"
+            f"Źródło: {source_path}\n"
+            f"QML source URL: {source_url.toString()}\n"
+            f"Importy QML: {engine_qml.importPathList()}\n"
+            f"Ostrzeżenia QML:\n{warnings_summary}\n"
+            f"Błędy QML:\n{errors_summary}"
+        )
 
     root = engine_qml.rootObjects()[0]
     limits_view = root.findChild(QObject, "limitsListView")
