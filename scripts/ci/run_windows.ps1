@@ -88,6 +88,19 @@ function Release-Quality-Gates {
     Run "pytest tests/integration/test_execution_router_failover.py"
 }
 
+function Qml-Collect-Only {
+    Install-DevDeps
+    $output = & python -m pytest --collect-only -q tests/ui/qml/test_risk_panels.py 2>&1
+    $status = $LASTEXITCODE
+    $output | Tee-Object -FilePath $logFile -Append | Out-Null
+    if ($output -match "found no collectors") {
+        throw "QML collect-only failed: found no collectors"
+    }
+    if ($status -ne 0 -and $status -ne 5) {
+        throw "QML collect-only failed with status $status"
+    }
+}
+
 function Ui-Native-Tests {
     Install-DevDeps
     $qtPrefix = $env:Qt6_DIR
@@ -114,6 +127,7 @@ switch ($Job) {
     "lint-and-test" { Lint-And-Test }
     "bot-core-fast-tests" { Bot-Core-Fast-Tests }
     "release-quality-gates" { Release-Quality-Gates }
+    "qml-collect-only" { Qml-Collect-Only }
     "prepare-wheelhouse" { Prepare-Wheelhouse }
     default { Write-Log "Unknown job: $Job"; exit 1 }
 }

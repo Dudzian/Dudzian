@@ -175,7 +175,7 @@ Item {
                         anchors.centerIn: parent
                         text: qsTr("Brak zdefiniowanych limitów ryzyka")
                         color: palette.mid
-                        mouseTransparent: true
+                        enabled: false
                         visible: !limitsView.model || limitsView.count === 0
                     }
                 }
@@ -229,7 +229,7 @@ Item {
                         anchors.centerIn: parent
                         text: qsTr("Brak zagregowanych metryk kosztów")
                         color: palette.mid
-                        mouseTransparent: true
+                        enabled: false
                         visible: !costView.model || costView.count === 0
                     }
                 }
