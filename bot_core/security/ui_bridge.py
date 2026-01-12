@@ -27,6 +27,7 @@ from bot_core.security.fingerprint import (
     _normalize_binding_fingerprint,
 )
 from bot_core.security.logs import export_security_bundle, export_signed_audit_log, read_audit_entries
+from bot_core.security.path_utils import resolve_tilde_path
 from bot_core.security.license import validate_license
 from bot_core.security.license_service import (
     LicenseBundleError,
@@ -55,7 +56,7 @@ def _resolve_license_path(path: str | None) -> Path:
 
 def _resolve_profiles_path(path: str | None) -> Path:
     if path:
-        return Path(path).expanduser()
+        return resolve_tilde_path(path)
     return Path("config/user_profiles.json")
 
 
@@ -601,6 +602,7 @@ def assign_profile(
     actor: str | None,
 ) -> dict[str, Any]:
     storage = _resolve_profiles_path(profiles_path)
+    storage.parent.mkdir(parents=True, exist_ok=True)
     profiles = load_profiles(storage)
     updated = upsert_profile(
         profiles,
@@ -611,7 +613,8 @@ def assign_profile(
     save_profiles(profiles, storage)
     actor_label = actor or "ui"
     message = f"{actor_label} updated profile {updated.user_id} -> roles={list(updated.roles)}"
-    log_destination = Path(log_path).expanduser() if log_path else Path("logs/security_admin.log")
+    log_destination = resolve_tilde_path(log_path) if log_path else Path("logs/security_admin.log")
+    log_destination.parent.mkdir(parents=True, exist_ok=True)
     log_admin_event(message, log_path=log_destination)
     LOGGER.info(message)
     return {
@@ -639,7 +642,7 @@ def remove_profile_entry(
     save_profiles(profiles, storage)
     actor_label = actor or "ui"
     message = f"{actor_label} removed profile {removed.user_id}"
-    log_destination = Path(log_path).expanduser() if log_path else Path("logs/security_admin.log")
+    log_destination = resolve_tilde_path(log_path) if log_path else Path("logs/security_admin.log")
     log_admin_event(message, log_path=log_destination)
     LOGGER.info(message)
     return {
@@ -895,4 +898,3 @@ def main(argv: list[str] | None = None) -> int:
 
 if __name__ == "__main__":  # pragma: no cover - CLI
     raise SystemExit(main())
-

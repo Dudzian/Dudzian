@@ -13,9 +13,10 @@ from dataclasses import dataclass, asdict
 from datetime import datetime, timezone
 import json
 import logging
-import os
 from pathlib import Path
 from typing import Iterable, Mapping, MutableMapping
+
+from bot_core.security.path_utils import resolve_tilde_path
 
 LOGGER = logging.getLogger(__name__)
 
@@ -55,21 +56,8 @@ class UserProfile:
         return payload
 
 
-def _resolve_profiles_path(path: str | Path) -> Path:
-    path_str = str(path)
-    if path_str.startswith("~"):
-        if len(path_str) > 1 and path_str[1] not in ("/", "\\"):
-            raise ValueError("Nieobsługiwany prefiks ~user w ścieżce profili.")
-        home = os.environ.get("HOME") or os.path.expanduser("~")
-        suffix = path_str[1:]
-        if suffix in ("", "/", "\\"):
-            return Path(home)
-        return Path(home) / suffix.lstrip("/\\")
-    return Path(path)
-
-
 def load_profiles(path: str | Path) -> list[UserProfile]:
-    storage = _resolve_profiles_path(path)
+    storage = resolve_tilde_path(path)
     LOGGER.debug("Ładowanie profili użytkowników z %s", storage)
     if not storage.exists():
         LOGGER.debug("Brak pliku profili użytkowników %s – zwracam pustą listę.", storage)
@@ -96,7 +84,7 @@ def load_profiles(path: str | Path) -> list[UserProfile]:
 
 
 def save_profiles(profiles: Iterable[UserProfile], path: str | Path) -> None:
-    storage = Path(path).expanduser()
+    storage = resolve_tilde_path(path)
     storage.parent.mkdir(parents=True, exist_ok=True)
     serialized = [profile.to_dict() for profile in profiles]
     payload = json.dumps(serialized, ensure_ascii=False, indent=2)
@@ -136,7 +124,7 @@ def upsert_profile(
 
 
 def log_admin_event(message: str, *, log_path: str | Path) -> None:
-    log_file = Path(log_path).expanduser()
+    log_file = resolve_tilde_path(log_path)
     log_file.parent.mkdir(parents=True, exist_ok=True)
     payload = {
         "timestamp": _utcnow_iso(),
