@@ -27,6 +27,30 @@ from bot_core.risk.engine import ThresholdRiskEngine
 from bot_core.risk.simulation import build_profile
 
 
+def _repo_root_candidates(start: Path) -> list[Path]:
+    resolved = start.resolve()
+    return [resolved, *resolved.parents]
+
+
+def find_repo_root(start: Path) -> Path:
+    candidates = _repo_root_candidates(start)
+    marker_root: Path | None = None
+    for candidate in candidates:
+        if (candidate / "ui" / "qml" / "views").is_dir():
+            return candidate
+        if marker_root is None and (candidate / "pyproject.toml").is_file():
+            marker_root = candidate
+        if marker_root is None and (candidate / ".git").exists():
+            marker_root = candidate
+    if marker_root is not None:
+        return marker_root
+    checked = ", ".join(str(path) for path in candidates)
+    raise AssertionError(
+        "Nie udało się odnaleźć katalogu repozytorium. "
+        f"Sprawdzone lokalizacje: {checked}"
+    )
+
+
 class EngineLimitsModel(QAbstractListModel):
     KEY_ROLE = Qt.UserRole + 1
     LABEL_ROLE = Qt.UserRole + 2
@@ -243,7 +267,15 @@ def test_risk_controls_panel_handles_engine_snapshot(tmp_path):
     context.setContextProperty("costModel", cost_model)
     context.setContextProperty("appController", controller)
 
-    source_path = Path(__file__).resolve().parents[2] / "ui" / "qml" / "views" / "RiskControls.qml"
+    repo_root = find_repo_root(Path(__file__))
+    source_path = repo_root / "ui" / "qml" / "views" / "RiskControls.qml"
+    if not source_path.is_file():
+        checked = ", ".join(str(path) for path in _repo_root_candidates(Path(__file__)))
+        raise AssertionError(
+            "Nie znaleziono pliku RiskControls.qml. "
+            f"Sprawdzona ścieżka: {source_path}. "
+            f"Kandydaci na root: {checked}"
+        )
     temp_view = tmp_path / "RiskControls.qml"
     temp_view.write_text(source_path.read_text(encoding="utf-8"), encoding="utf-8")
 
@@ -270,4 +302,3 @@ def test_risk_controls_panel_handles_engine_snapshot(tmp_path):
         obj.deleteLater()
     engine_qml.deleteLater()
     app.processEvents()
-

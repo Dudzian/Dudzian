@@ -773,11 +773,22 @@ jobs:
             shiboken6==${{ env.PYSIDE6_VERSION }}
           python scripts/ci/pip_install.py --wheelhouse "$WHEELHOUSE_DIR" -- .[dev]
 
+      - name: Collect/import QML risk panel test module (smoke)
+        run: |
+          set -o pipefail
+          # "no tests collected" is acceptable when module-level skip fires (missing QtWidgets),
+          # but "found no collectors" indicates a bad path/import and must fail.
+          output=$(python -m pytest --collect-only -q tests/ui/qml/test_risk_panels.py | tee /dev/stderr)
+          if echo "$output" | grep -Fq "found no collectors"; then
+            echo "Detected pytest collection error: found no collectors"
+            exit 1
+          fi
+
       - name: Run QML pytest suite
         run: |
           set -o pipefail
           mkdir -p test-results/qml
-          pytest -m qml --maxfail=1 --disable-warnings \
+          python -m pytest -m qml --maxfail=1 --disable-warnings \
             --junitxml=test-results/qml/pytest.xml --durations=15 \
             --log-file=test-results/qml/pytest.log --log-file-level=INFO | tee test-results/qml/pytest-console.log
 
