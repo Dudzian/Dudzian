@@ -345,14 +345,15 @@ def test_load_signing_key_merged_sources(tmp_path: Path, monkeypatch: pytest.Mon
 
     key_file = tmp_path / "key.bin"
     key_file.write_bytes(b"B" * 32)
-    os.chmod(key_file, 0o600)
-    from_file = vrb._load_signing_key_merged(
-        inline_value=None,
-        file_path=str(key_file),
-        env_name_primary=None,
-        env_name_alt=None,
-    )
-    assert from_file == b"B" * 32
+    if os.name != "nt":
+        os.chmod(key_file, 0o600)
+        from_file = vrb._load_signing_key_merged(
+            inline_value=None,
+            file_path=str(key_file),
+            env_name_primary=None,
+            env_name_alt=None,
+        )
+        assert from_file == b"B" * 32
 
     monkeypatch.setenv("VRB_KEY", "C" * 24)
     from_env = vrb._load_signing_key_merged(
