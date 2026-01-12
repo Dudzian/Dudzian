@@ -128,16 +128,15 @@ class ComplianceController(QObject):
         self._set_busy(True)
         try:
             result = self._execute_audit()
+            self._apply_result(result)
+            self._set_error("")
+            self.auditCompleted.emit()
+            return True
         except Exception as exc:  # pragma: no cover - diagnostyka środowiska
             self._set_error(str(exc))
-            self._set_busy(False)
             return False
-
-        self._apply_result(result)
-        self._set_error("")
-        self._set_busy(False)
-        self.auditCompleted.emit()
-        return True
+        finally:
+            self._set_busy(False, force=True)
 
     # ------------------------------------------------------------------
     def _execute_audit(self) -> ComplianceAuditResult:
@@ -239,8 +238,8 @@ class ComplianceController(QObject):
             return "ok"
         return best_name
 
-    def _set_busy(self, value: bool) -> None:
-        if self._busy == value:
+    def _set_busy(self, value: bool, *, force: bool = False) -> None:
+        if self._busy == value and not force:
             return
         self._busy = value
         self.busyChanged.emit()
