@@ -1239,20 +1239,60 @@ class TradingController:
             return {}
         return {str(k): v for k, v in candidate.items()}
 
+    def _collect_explainability_payloads(self, metadata: Mapping[str, object]) -> list[object]:
+        candidates: list[object] = []
+        seen_strings: set[str] = set()
+        for key in ("explainability", "explainability_json"):
+            payload = metadata.get(key)
+            if payload is not None:
+                if isinstance(payload, str):
+                    if payload in seen_strings:
+                        continue
+                    seen_strings.add(payload)
+                candidates.append(payload)
+        for section in ("decision_engine", "ai_manager", "ai"):
+            section_payload = metadata.get(section)
+            if not isinstance(section_payload, Mapping):
+                continue
+            for key in ("explainability", "explainability_json"):
+                payload = section_payload.get(key)
+                if payload is not None:
+                    if isinstance(payload, str):
+                        if payload in seen_strings:
+                            continue
+                        seen_strings.add(payload)
+                    candidates.append(payload)
+        return candidates
+
     def _inject_explainability_metadata(
         self, metadata: MutableMapping[str, object] | None
     ) -> None:
         if not metadata:
             return
-        report = metadata.get("explainability")
-        if report is None:
-            return
-        try:
-            flattened = flatten_explainability(report)
-        except Exception:  # pragma: no cover - zależy od struktury raportu
-            return
-        for key, value in flattened.items():
-            metadata.setdefault(str(key), value)
+        for report in self._collect_explainability_payloads(metadata):
+            try:
+                flattened = flatten_explainability(report)
+            except Exception:  # pragma: no cover - zależy od struktury raportu
+                continue
+            for key, value in flattened.items():
+                metadata.setdefault(str(key), value)
+            if "ai_explainability_json" in metadata:
+                return
+            try:
+                payload_json = None
+                if isinstance(report, str):
+                    payload_json = report
+                elif isinstance(report, Mapping):
+                    payload_json = json.dumps(
+                        dict(report),
+                        ensure_ascii=False,
+                        sort_keys=True,
+                    )
+                if payload_json is not None:
+                    metadata.setdefault("ai_explainability_json", payload_json)
+                    return
+            except Exception:  # pragma: no cover - defensywnie
+                continue
 
     def _normalize_signal_metadata(self, signal: StrategySignal) -> Mapping[str, object]:
         raw_metadata = getattr(signal, "metadata", None)
