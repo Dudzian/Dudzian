@@ -829,6 +829,40 @@ def test_stage6_cli_summary_records_original_checksum(tmp_path: Path) -> None:
     ).hexdigest()
 
 
+def test_stage6_cli_summary_records_original_checksum_windows_newlines(tmp_path: Path) -> None:
+    source = Path("config/core.yaml")
+    windows_text = source.read_text(encoding="utf-8") + "\n# zażółć gęślą jaźń\n"
+    windows_payload = windows_text.replace("\n", "\r\n").encode("utf-8")
+    core_copy = tmp_path / "core_windows.yaml"
+    core_copy.write_bytes(windows_payload)
+
+    preset_path = tmp_path / "preset.json"
+    preset_path.write_text(json.dumps({"fraction": 0.35}), encoding="utf-8")
+
+    original_bytes = core_copy.read_bytes()
+
+    exit_code = preset_editor_cli.main(
+        [
+            "--core-config",
+            str(core_copy),
+            "--preset",
+            str(preset_path),
+            "--profile-name",
+            "checksum-crlf-profile",
+            "--summary-json",
+            str(tmp_path / "summary.json"),
+        ]
+    )
+
+    assert exit_code == 0
+
+    summary = json.loads((tmp_path / "summary.json").read_text(encoding="utf-8"))
+    assert summary["core_original_checksum"] == hashlib.sha256(original_bytes).hexdigest()
+    assert summary["core_original_checksum"] != hashlib.sha256(
+        core_copy.read_text(encoding="utf-8").encode("utf-8")
+    ).hexdigest()
+
+
 def test_stage6_cli_summary_records_security_source_checksums(tmp_path: Path) -> None:
     core_copy = _copy_core_config(tmp_path)
     preset_path = tmp_path / "preset.json"

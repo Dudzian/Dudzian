@@ -734,6 +734,8 @@ def _run_stage6_migration(argv: Sequence[str]) -> int:
     core_path = Path(args.core_config)
     if not core_path.exists():
         raise SystemExit(f"Plik core.yaml nie istnieje: {core_path}")
+    core_original_bytes = core_path.read_bytes()
+    core_original_checksum = hashlib.sha256(core_original_bytes).hexdigest()
 
     sanitised_invocation = _sanitise_stage6_invocation(provided_args)
 
@@ -806,10 +808,6 @@ def _run_stage6_migration(argv: Sequence[str]) -> int:
 
     if args.core_diff:
         _print_core_diff(destination, original_text, rendered)
-
-    original_checksum: str | None = None
-    if original_text is not None:
-        original_checksum = _compute_text_checksum(original_text)
 
     secrets_input_path = Path(args.secrets_input).expanduser() if args.secrets_input else None
     secrets_output_path: Path | None = None
@@ -1137,7 +1135,7 @@ def _run_stage6_migration(argv: Sequence[str]) -> int:
             "dry_run": bool(args.dry_run),
             "desktop_root": args.desktop_root or None,
             "timestamp": datetime.now(timezone.utc).isoformat(),
-            "core_original_checksum": original_checksum,
+            "core_original_checksum": core_original_checksum,
             "core_rendered_checksum": rendered_checksum,
             "cli_invocation": sanitised_invocation,
             "warnings": warnings,
