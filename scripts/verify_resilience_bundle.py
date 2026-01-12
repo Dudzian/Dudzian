@@ -264,6 +264,20 @@ def _load_signing_key_merged(
     return None
 
 
+def _load_signing_key_file_without_permissions(file_path: str) -> bytes:
+    path = Path(file_path).expanduser()
+    if not path.exists():
+        raise ValueError(f"Plik klucza {path} nie istnieje")
+    if path.is_dir():
+        raise ValueError("Plik klucza nie może być katalogiem")
+    if path.is_symlink():
+        raise ValueError("Plik klucza nie może być symlinkiem")
+    data = path.read_bytes().strip()
+    if len(data) < 16:
+        raise ValueError("Klucz HMAC musi mieć co najmniej 16 bajtów")
+    return data
+
+
 def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Weryfikacja paczki odporności Stage6")
     parser.add_argument("bundle", nargs="?", help="Ścieżka do archiwum (tar.gz lub zip)")
@@ -306,8 +320,24 @@ def _execute(parser: argparse.ArgumentParser, args: argparse.Namespace, bundle_p
             env_name_alt=args.hmac_key_env_alt,
         )
     except ValueError as exc:
-        _LOGGER.error("Błąd odczytu klucza HMAC: %s", exc)
-        return 1
+        if (
+            os.name == "nt"
+            and args.hmac_key_file
+            and "uprawnienia maks. 600" in str(exc)
+        ):
+            # Windows nie gwarantuje chmod(0600), więc ignorujemy ten błąd tylko w CLI.
+            _LOGGER.warning(
+                "Błąd odczytu klucza HMAC: %s (CLI: ponawiam bez walidacji perms)",
+                exc,
+            )
+            try:
+                signing_key = _load_signing_key_file_without_permissions(args.hmac_key_file)
+            except ValueError as fallback_exc:
+                _LOGGER.error("Błąd odczytu klucza HMAC: %s", fallback_exc)
+                return 1
+        else:
+            _LOGGER.error("Błąd odczytu klucza HMAC: %s", exc)
+            return 1
 
     try:
         if bundle_path.suffixes[-2:] == [".tar", ".gz"] or bundle_path.suffix == ".tgz":
