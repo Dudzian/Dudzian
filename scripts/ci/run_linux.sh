@@ -153,6 +153,23 @@ release_quality_gates() {
   run pytest tests/integration/test_execution_router_failover.py
 }
 
+qml_collect_only() {
+  install_dev_deps
+  set +e
+  local output
+  output=$(python -m pytest --collect-only -q tests/ui/qml/test_risk_panels.py 2>&1 | tee -a "${LOG_FILE}")
+  local status=${PIPESTATUS[0]}
+  set -e
+  if echo "${output}" | grep -Fq "found no collectors"; then
+    echo "QML collect-only failed: found no collectors" | tee -a "${LOG_FILE}" >&2
+    exit 1
+  fi
+  if [[ ${status} -ne 0 && ${status} -ne 5 ]]; then
+    echo "QML collect-only failed with status ${status}" | tee -a "${LOG_FILE}" >&2
+    exit "${status}"
+  fi
+}
+
 case "${JOB}" in
   prepare-pyside6-wheel)
     prepare_pyside6_wheel
@@ -174,6 +191,9 @@ case "${JOB}" in
     ;;
   release-quality-gates)
     release_quality_gates
+    ;;
+  qml-collect-only)
+    qml_collect_only
     ;;
   *)
     echo "Unknown job: ${JOB}" | tee -a "${LOG_FILE}"
