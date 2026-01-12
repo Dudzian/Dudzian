@@ -238,10 +238,11 @@ def _load_signing_key_merged(
             raise ValueError("Plik klucza nie może być katalogiem")
         if path.is_symlink():
             raise ValueError("Plik klucza nie może być symlinkiem")
-        if os.name != "nt":
-            mode = stat.S_IMODE(path.stat().st_mode)
-            if mode & 0o077:
-                raise ValueError("Plik klucza powinien mieć uprawnienia maks. 600")
+        mode = stat.S_IMODE(path.stat().st_mode)
+        if mode & 0o077:
+            raise ValueError(
+                f"Plik klucza powinien mieć uprawnienia maks. 600 (wykryto {mode:04o})"
+            )
         data = path.read_bytes().strip()
         if len(data) < 16:
             raise ValueError("Klucz HMAC musi mieć co najmniej 16 bajtów")
