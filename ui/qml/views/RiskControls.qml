@@ -113,60 +113,71 @@ Item {
                     font.bold: true
                 }
 
-                ListView {
-                    id: limitsView
-                    objectName: "limitsListView"
+                Item {
                     Layout.fillWidth: true
                     Layout.fillHeight: true
-                    clip: true
-                    boundsBehavior: Flickable.StopAtBounds
-                    model: root.limitsModel
-                    delegate: Frame {
-                        width: ListView.view.width
-                        padding: 8
-                        background: Rectangle { radius: 6; color: Qt.darker(palette.base, 1.02) }
 
-                        RowLayout {
-                            anchors.fill: parent
-                            spacing: 10
+                    ListView {
+                        id: limitsView
+                        objectName: "limitsListView"
+                        anchors.fill: parent
+                        clip: true
+                        boundsBehavior: Flickable.StopAtBounds
+                        model: root.limitsModel
+                        delegate: Frame {
+                            width: ListView.view.width
+                            padding: 8
+                            background: Rectangle { radius: 6; color: Qt.darker(palette.base, 1.02) }
 
-                            Label {
-                                Layout.fillWidth: true
-                                text: model.label || model.key
-                            }
+                            RowLayout {
+                                anchors.fill: parent
+                                spacing: 10
 
-                            TextField {
-                                id: valueField
-                                Layout.preferredWidth: 120
-                                text: root.formatLimitValue(model.value, model.isPercent)
-                                inputMethodHints: Qt.ImhFormattedNumbersOnly
-                                validator: DoubleValidator {
-                                    bottom: model.isPercent ? model.minimum * 100.0 : model.minimum
-                                    top: model.isPercent ? model.maximum * 100.0 : model.maximum
-                                    decimals: 4
+                                Label {
+                                    Layout.fillWidth: true
+                                    text: model.label || model.key
                                 }
 
-                                onActiveFocusChanged: {
-                                    if (!activeFocus)
-                                        text = root.formatLimitValue(model.value, model.isPercent)
-                                }
-
-                                onEditingFinished: {
-                                    var locale = Qt.locale()
-                                    var parsed = Number.fromLocaleString(locale, text)
-                                    if (isNaN(parsed)) {
-                                        text = root.formatLimitValue(model.value, model.isPercent)
-                                        return
+                                TextField {
+                                    id: valueField
+                                    Layout.preferredWidth: 120
+                                    text: root.formatLimitValue(model.value, model.isPercent)
+                                    inputMethodHints: Qt.ImhFormattedNumbersOnly
+                                    validator: DoubleValidator {
+                                        bottom: model.isPercent ? model.minimum * 100.0 : model.minimum
+                                        top: model.isPercent ? model.maximum * 100.0 : model.maximum
+                                        decimals: 4
                                     }
-                                    var normalized = model.isPercent ? parsed / 100.0 : parsed
-                                    root.commitLimitValue(model.key, normalized)
-                                    text = root.formatLimitValue(model.value, model.isPercent)
+
+                                    onActiveFocusChanged: {
+                                        if (!activeFocus)
+                                            text = root.formatLimitValue(model.value, model.isPercent)
+                                    }
+
+                                    onEditingFinished: {
+                                        var locale = Qt.locale()
+                                        var parsed = Number.fromLocaleString(locale, text)
+                                        if (isNaN(parsed)) {
+                                            text = root.formatLimitValue(model.value, model.isPercent)
+                                            return
+                                        }
+                                        var normalized = model.isPercent ? parsed / 100.0 : parsed
+                                        root.commitLimitValue(model.key, normalized)
+                                        text = root.formatLimitValue(model.value, model.isPercent)
+                                    }
                                 }
                             }
                         }
+                        ScrollBar.vertical: ScrollBar {}
                     }
-                    ScrollBar.vertical: ScrollBar {}
-                    placeholderText: qsTr("Brak zdefiniowanych limitów ryzyka")
+
+                    Label {
+                        anchors.centerIn: parent
+                        text: qsTr("Brak zdefiniowanych limitów ryzyka")
+                        color: palette.mid
+                        mouseTransparent: true
+                        visible: !limitsView.model || limitsView.count === 0
+                    }
                 }
             }
         }
@@ -186,30 +197,41 @@ Item {
                     font.bold: true
                 }
 
-                ListView {
-                    id: costView
-                    objectName: "costListView"
+                Item {
                     Layout.fillWidth: true
                     Layout.preferredHeight: 160
-                    clip: true
-                    boundsBehavior: Flickable.StopAtBounds
-                    model: root.costModel
-                    delegate: RowLayout {
-                        width: ListView.view.width
-                        spacing: 10
 
-                        Label {
-                            Layout.fillWidth: true
-                            text: model.label || model.key
-                        }
+                    ListView {
+                        id: costView
+                        objectName: "costListView"
+                        anchors.fill: parent
+                        clip: true
+                        boundsBehavior: Flickable.StopAtBounds
+                        model: root.costModel
+                        delegate: RowLayout {
+                            width: ListView.view.width
+                            spacing: 10
 
-                        Label {
-                            text: model.formatted !== undefined ? model.formatted : root.formatNumber(model.value, 2)
-                            font.bold: true
+                            Label {
+                                Layout.fillWidth: true
+                                text: model.label || model.key
+                            }
+
+                            Label {
+                                text: model.formatted !== undefined ? model.formatted : root.formatNumber(model.value, 2)
+                                font.bold: true
+                            }
                         }
+                        ScrollBar.vertical: ScrollBar {}
                     }
-                    ScrollBar.vertical: ScrollBar {}
-                    placeholderText: qsTr("Brak zagregowanych metryk kosztów")
+
+                    Label {
+                        anchors.centerIn: parent
+                        text: qsTr("Brak zagregowanych metryk kosztów")
+                        color: palette.mid
+                        mouseTransparent: true
+                        visible: !costView.model || costView.count === 0
+                    }
                 }
             }
         }
