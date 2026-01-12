@@ -901,15 +901,22 @@ class TradingController:
                 self._metric_signals_total.inc(labels={**metric_labels, "status": "rejected"})
                 return None
             evaluation = self._evaluate_decision_candidate(candidate)
-            if evaluation is not None:
-                decision_metadata = self._serialize_decision_evaluation(evaluation)
-                self._record_decision_evaluation_event(signal, evaluation)
-                if not getattr(evaluation, "accepted", False):
-                    self._handle_decision_rejection(signal, evaluation)
-                    self._metric_signals_total.inc(
-                        labels={**metric_labels, "status": "rejected"}
-                    )
-                    return None
+            if evaluation is None:
+                _LOGGER.warning(
+                    "DecisionOrchestrator nie zwrócił poprawnej ewaluacji dla %s %s",
+                    signal.side.upper(),
+                    signal.symbol,
+                )
+                self._metric_signals_total.inc(labels={**metric_labels, "status": "rejected"})
+                return None
+            decision_metadata = self._serialize_decision_evaluation(evaluation)
+            self._record_decision_evaluation_event(signal, evaluation)
+            if not getattr(evaluation, "accepted", False):
+                self._handle_decision_rejection(signal, evaluation)
+                self._metric_signals_total.inc(
+                    labels={**metric_labels, "status": "rejected"}
+                )
+                return None
 
         request = self._build_order_request(signal, extra_metadata=decision_metadata)
         account = self.account_snapshot_provider()
@@ -1436,19 +1443,26 @@ class TradingController:
             return None
         snapshot = self._decision_risk_snapshot(candidate.risk_profile)
         try:
-            return orchestrator.evaluate_candidate(
+            evaluation = orchestrator.evaluate_candidate(
                 candidate,
                 DecisionContext(
                     risk_snapshot=snapshot,
                     runtime={
-                        "portfolio": self._portfolio,
-                        "environment": self._environment,
+                        "portfolio": self.portfolio_id,
+                        "environment": self.environment,
                     },
                 ),
             )
         except Exception:  # pragma: no cover - diagnostyka orchestratora
             _LOGGER.exception("DecisionOrchestrator: błąd ewaluacji")
             return None
+        if evaluation is None or not hasattr(evaluation, "accepted"):
+            _LOGGER.warning(
+                "DecisionOrchestrator: niepoprawny wynik ewaluacji (%s)",
+                type(evaluation).__name__ if evaluation is not None else "None",
+            )
+            return None
+        return evaluation
 
     def _serialize_decision_evaluation(
         self, evaluation: DecisionEvaluation
