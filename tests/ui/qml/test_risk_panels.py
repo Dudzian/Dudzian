@@ -321,6 +321,10 @@ def test_risk_controls_panel_handles_engine_snapshot():
         )
 
     root = engine_qml.rootObjects()[0]
+    root.setProperty("limitsModel", limits_model)
+    root.setProperty("costModel", cost_model)
+    root.setProperty("appController", controller)
+    app.processEvents()
     limits_view = root.findChild(QObject, "limitsListView")
     assert limits_view is not None
     assert limits_view.property("count") > 0
