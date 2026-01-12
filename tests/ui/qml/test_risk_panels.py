@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+from collections.abc import Mapping
 from datetime import datetime
 from pathlib import Path
 
@@ -226,6 +227,21 @@ class ControllerStub(QObject):
         return True
 
 
+def _get_limits_dict(model: object) -> dict[str, float]:
+    """
+    EngineLimitsModel exposes limits either as:
+      - a method: limits() -> dict
+      - a dict-like attribute: limits
+    Keep the test compatible across variants.
+    """
+    limits_attr = getattr(model, "limits", None)
+    if callable(limits_attr):
+        return limits_attr()
+    if isinstance(limits_attr, Mapping):
+        return dict(limits_attr)
+    raise AssertionError(f"Nieobsługiwany typ model.limits: {type(limits_attr)!r}")
+
+
 @pytest.mark.timeout(30)
 def test_risk_controls_panel_handles_engine_snapshot():
     app = QApplication.instance() or QApplication([])
@@ -334,7 +350,9 @@ def test_risk_controls_panel_handles_engine_snapshot():
     assert kill_switch.property("checked") == controller.riskKillSwitchEngaged
 
     limits_model.setLimitValue("max_positions", 15.0)
-    assert pytest.approx(limits_model.limits()["max_positions"], rel=1e-6) == 15.0
+    limits_after = _get_limits_dict(limits_model)
+    assert "max_positions" in limits_after
+    assert pytest.approx(limits_after["max_positions"], rel=1e-6) == 15.0
 
     controller.setRiskKillSwitchEngaged(not controller.riskKillSwitchEngaged)
     app.processEvents()
