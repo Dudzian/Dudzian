@@ -377,13 +377,23 @@ def test_load_signing_key_merged_validates_inputs(tmp_path: Path, monkeypatch: p
     key_file = tmp_path / "short.key"
     key_file.write_bytes(b"too-short")
     os.chmod(key_file, 0o600)
-    with pytest.raises(ValueError, match="co najmniej 16"):
-        vrb._load_signing_key_merged(
-            inline_value=None,
-            file_path=str(key_file),
-            env_name_primary=None,
-            env_name_alt=None,
-        )
+    if os.name != "nt":
+        with pytest.raises(ValueError, match="co najmniej 16"):
+            vrb._load_signing_key_merged(
+                inline_value=None,
+                file_path=str(key_file),
+                env_name_primary=None,
+                env_name_alt=None,
+            )
+    else:
+        monkeypatch.setenv("VRB_KEY_SHORT", "short-key")
+        with pytest.raises(ValueError, match="co najmniej 16"):
+            vrb._load_signing_key_merged(
+                inline_value=None,
+                file_path=None,
+                env_name_primary="VRB_KEY_SHORT",
+                env_name_alt=None,
+            )
 
     monkeypatch.setenv("VRB_EMPTY", "")
     with pytest.raises(ValueError, match="jest pusta"):
