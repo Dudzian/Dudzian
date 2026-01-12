@@ -291,6 +291,15 @@ def test_risk_controls_panel_handles_engine_snapshot():
 
     source_url = QUrl.fromLocalFile(str(source_path))
     engine_qml.load(source_url)
+    missing_property_warning = next(
+        (warning for warning in qml_warnings if "Cannot assign to non-existent property" in warning),
+        None,
+    )
+    if missing_property_warning:
+        raise AssertionError(
+            "Wykryto ostrzeżenie QML o nieistniejącej właściwości:\n"
+            f"{missing_property_warning}"
+        )
     if not engine_qml.rootObjects():
         warnings_summary = "\n".join(qml_warnings) if qml_warnings else "(brak warnings)"
         errors_provider = getattr(engine_qml, "errors", None)
