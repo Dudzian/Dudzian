@@ -12,12 +12,18 @@ Rectangle {
     border.color: Styles.AppTheme.surfaceSubtle
     border.width: 1
 
-    property var _telemetryProvider: null
-    property var _complianceController: null
-    property alias telemetryProvider: _telemetryProvider
-    property alias complianceController: _complianceController
-    readonly property var provider: _telemetryProvider
-    readonly property var controller: _complianceController
+    Item {
+        id: wiring
+        property var telemetryProvider: null
+        property var complianceController: null
+    }
+
+    property alias telemetryProvider: wiring.telemetryProvider
+    property alias complianceController: wiring.complianceController
+    property var telemetryProviderOverride: null
+    property var complianceControllerOverride: null
+    readonly property var provider: telemetryProviderOverride !== null ? telemetryProviderOverride : wiring.telemetryProvider
+    readonly property var controller: complianceControllerOverride !== null ? complianceControllerOverride : wiring.complianceController
     readonly property bool hasController: controller !== null
     readonly property bool busy: controller ? controller.busy : false
 
