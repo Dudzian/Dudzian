@@ -12,18 +12,10 @@ Rectangle {
     border.color: Styles.AppTheme.surfaceSubtle
     border.width: 1
 
-    property var provider: null
-    property var controller: null
-    property var telemetryProvider: null
-    property var complianceController: null
+    readonly property var provider: (typeof telemetryProvider !== "undefined" ? telemetryProvider : null)
+    readonly property var controller: (typeof complianceController !== "undefined" ? complianceController : null)
+    readonly property bool hasController: controller !== null
     readonly property bool busy: controller ? controller.busy : false
-    readonly property bool hasController: !!controller
-
-    function ensureBindings() {
-        if (root.controller && root.provider) {
-            root.controller.telemetryProvider = root.provider
-        }
-    }
 
     function statusLabel(value) {
         if (!value)
@@ -52,31 +44,6 @@ Rectangle {
         if (value === "critical" || value === "high" || value === "error")
             return Qt.rgba(0.9, 0.25, 0.3, 1)
         return Styles.AppTheme.textSecondary
-    }
-
-    Component.onCompleted: {
-        ensureBindings()
-        if (root.controller)
-            root.controller.refreshAudit()
-    }
-
-    onProviderChanged: {
-        if (root.provider !== root.telemetryProvider)
-            root.telemetryProvider = root.provider
-        ensureBindings()
-    }
-    onControllerChanged: {
-        if (root.controller !== root.complianceController)
-            root.complianceController = root.controller
-        ensureBindings()
-    }
-    onTelemetryProviderChanged: {
-        if (root.telemetryProvider !== root.provider)
-            root.provider = root.telemetryProvider
-    }
-    onComplianceControllerChanged: {
-        if (root.complianceController !== root.controller)
-            root.controller = root.complianceController
     }
 
     ColumnLayout {
@@ -109,7 +76,7 @@ Rectangle {
                 id: auditButton
                 objectName: "complianceAuditButton"
                 text: qsTr("Przeprowadź audyt")
-                enabled: root.hasController
+                enabled: root.hasController && (parent ? parent.enabled : true)
                 onClicked: root.controller ? root.controller.refreshAudit() : null
             }
         }
