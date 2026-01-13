@@ -124,19 +124,23 @@ Rectangle {
         }
 
         GridLayout {
+            id: complianceStatusGrid
             Layout.fillWidth: true
             columns: width > 700 ? 3 : 1
             columnSpacing: 12
             rowSpacing: 8
 
+            ListModel {
+                id: complianceStatusModel
+                ListElement { title: qsTr("KYC"); key: "kycStatus" }
+                ListElement { title: qsTr("AML"); key: "amlStatus" }
+                ListElement { title: qsTr("Limity transakcji"); key: "transactionStatus" }
+            }
+
             Repeater {
-                model: [
-                    { title: qsTr("KYC"), key: "kycStatus" },
-                    { title: qsTr("AML"), key: "amlStatus" },
-                    { title: qsTr("Limity transakcji"), key: "transactionStatus" }
-                ]
+                model: complianceStatusModel
                 delegate: Frame {
-                    objectName: "complianceStatusFrame_" + modelData.key
+                    objectName: "complianceStatusFrame_" + key
                     Layout.fillWidth: true
                     background: Rectangle {
                         radius: 6
@@ -149,16 +153,16 @@ Rectangle {
                         spacing: 6
 
                         Text {
-                            objectName: "complianceStatusLabel_" + modelData.key
-                            text: modelData.title
+                            objectName: "complianceStatusLabel_" + key
+                            text: title
                             font.bold: true
                             color: Styles.AppTheme.textPrimary
                         }
 
                         Text {
-                            objectName: "complianceStatusValue_" + modelData.key
-                            text: root.controller ? statusLabel(root.controller.summary[modelData.key]) : qsTr("n/d")
-                            color: root.controller ? statusColor(root.controller.summary[modelData.key]) : Styles.AppTheme.textSecondary
+                            objectName: "complianceStatusValue_" + key
+                            text: root.controller ? statusLabel(root.controller.summary[key]) : qsTr("n/d")
+                            color: root.controller ? statusColor(root.controller.summary[key]) : Styles.AppTheme.textSecondary
                         }
                     }
                 }
