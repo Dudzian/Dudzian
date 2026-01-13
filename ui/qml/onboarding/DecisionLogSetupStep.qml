@@ -75,7 +75,7 @@ Item {
     ColumnLayout {
         anchors.fill: parent
         spacing: Styles.AppTheme.spacingMd
-        padding: Styles.AppTheme.spacingXl
+        anchors.margins: Styles.AppTheme.spacingXl
 
         Label {
             text: trId("licenseWizard.step.decisionLogTitle", "Krok 3 – konfiguracja decision logu")
@@ -185,4 +185,3 @@ Item {
         }
     }
 }
-
