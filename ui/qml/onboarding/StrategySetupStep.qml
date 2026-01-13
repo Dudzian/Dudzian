@@ -9,9 +9,13 @@ Item {
     width: parent ? parent.width : 960
     height: parent ? parent.height : 640
 
-    property var onboardingService: null
     property var onboarding: null
-    readonly property var service: onboarding !== null ? onboarding : onboardingService
+    property var onboardingServiceOverride: null
+    readonly property var service: (
+        onboarding !== null ? onboarding
+        : (onboardingServiceOverride !== null ? onboardingServiceOverride
+           : (typeof onboardingService !== "undefined" && onboardingService ? onboardingService : null))
+    )
     property string selectedStrategyName: ""
     property string statusMessageId: ""
     property string statusDetails: ""
