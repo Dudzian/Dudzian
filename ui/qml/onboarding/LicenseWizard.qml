@@ -460,6 +460,7 @@ Item {
                     Layout.fillWidth: true
                     Layout.fillHeight: true
                     onboarding: root.onboarding
+                    onboardingService: root.onboarding
                     onCompletionStateChanged: function(ready) {
                         strategySetupReady = ready
                         updateSummaryState()

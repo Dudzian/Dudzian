@@ -150,7 +150,13 @@ def _load_wizard(
         engine.rootContext().setContextProperty("onboardingService", onboarding_service)
     qml_path = Path(__file__).resolve().parents[2] / "ui" / "qml" / "onboarding" / "LicenseWizard.qml"
     engine.load(QUrl.fromLocalFile(str(qml_path)))
-    assert engine.rootObjects(), "Nie udało się załadować LicenseWizard.qml"
+    warnings = []
+    try:
+        warnings = engine.warnings()
+    except Exception:
+        warnings = []
+    details = "\n".join(getattr(w, "toString", lambda: str(w))() for w in warnings)
+    assert engine.rootObjects(), f"Nie udało się załadować LicenseWizard.qml\n{details}"
     root = engine.rootObjects()[0]
     return root, engine, app, onboarding_service  # type: ignore[return-value]
 
