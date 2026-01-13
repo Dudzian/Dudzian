@@ -9,7 +9,12 @@ Item {
     width: parent ? parent.width : 960
     height: parent ? parent.height : 640
 
-    property var onboardingService: (typeof onboardingService !== "undefined" ? onboardingService : null)
+    property var onboardingService: null
+    property var onboardingServiceOverride: null
+    property var onboarding: null
+    readonly property var service: onboarding !== null
+                                   ? onboarding
+                                   : (onboardingServiceOverride !== null ? onboardingServiceOverride : onboardingService)
     property string selectedStrategyName: ""
     property string statusMessageId: ""
     property string statusDetails: ""
@@ -23,11 +28,11 @@ Item {
     }
 
     function _updateSelectionFromService() {
-        if (!onboardingService)
+        if (!root.service)
             return
-        selectedStrategyName = onboardingService.selectedStrategyTitle || onboardingService.selectedStrategy || ""
-        const strategies = onboardingService.strategies || []
-        const name = onboardingService.selectedStrategy || ""
+        selectedStrategyName = root.service.selectedStrategyTitle || root.service.selectedStrategy || ""
+        const strategies = root.service.strategies || []
+        const name = root.service.selectedStrategy || ""
         var index = -1
         for (var i = 0; i < strategies.length; ++i) {
             const candidate = strategies[i]
@@ -40,31 +45,31 @@ Item {
     }
 
     function _syncStatus() {
-        if (!onboardingService)
+        if (!root.service)
             return
-        statusMessageId = onboardingService.statusMessageId || ""
-        statusDetails = onboardingService.statusDetails || ""
-        lastSavedExchange = onboardingService.lastSavedExchange || ""
+        statusMessageId = root.service.statusMessageId || ""
+        statusDetails = root.service.statusDetails || ""
+        lastSavedExchange = root.service.lastSavedExchange || ""
     }
 
     function _emitCompletion() {
-        const ready = onboardingService && onboardingService.configurationReady
+        const ready = root.service && root.service.configurationReady
         completionStateChanged(!!ready)
     }
 
     Component.onCompleted: {
-        if (onboardingService && onboardingService.refreshStrategies)
-            onboardingService.refreshStrategies()
+        if (root.service && root.service.refreshStrategies)
+            root.service.refreshStrategies()
         _updateSelectionFromService()
         _syncStatus()
         _emitCompletion()
     }
 
     Connections {
-        target: onboardingService
+        target: root.service
         ignoreUnknownSignals: true
         function onStrategiesChanged() {
-            strategyListView.model = onboardingService ? onboardingService.strategies : []
+            strategyListView.model = root.service ? root.service.strategies : []
             _updateSelectionFromService()
         }
         function onSelectedStrategyChanged() {
@@ -132,10 +137,10 @@ Item {
                     Button {
                         objectName: "strategySetupRefreshButton"
                         text: root.trId("licenseWizard.strategy.action.refresh", "Odśwież")
-                        enabled: onboardingService
+                        enabled: root.service
                         onClicked: {
-                            if (onboardingService && onboardingService.refreshStrategies)
-                                onboardingService.refreshStrategies()
+                            if (root.service && root.service.refreshStrategies)
+                                root.service.refreshStrategies()
                         }
                     }
                 }
@@ -147,16 +152,16 @@ Item {
                     Layout.fillHeight: true
                     clip: true
                     spacing: Styles.AppTheme.spacingSm
-                    model: onboardingService ? onboardingService.strategies : []
+                    model: root.service ? root.service.strategies : []
                     onCurrentIndexChanged: {
-                        if (!onboardingService || currentIndex < 0)
+                        if (!root.service || currentIndex < 0)
                             return
-                        const items = onboardingService.strategies || []
+                        const items = root.service.strategies || []
                         if (currentIndex >= items.length)
                             return
                         const entry = items[currentIndex]
-                        if (entry && onboardingService.selectStrategy)
-                            onboardingService.selectStrategy(entry.name || entry.engine)
+                        if (entry && root.service.selectStrategy)
+                            root.service.selectStrategy(entry.name || entry.engine)
                     }
                     delegate: Frame {
                         required property var modelData
@@ -221,8 +226,8 @@ Item {
                             cursorShape: Qt.PointingHandCursor
                             onClicked: {
                                 strategyListView.currentIndex = index
-                                if (onboardingService && onboardingService.selectStrategy)
-                                    onboardingService.selectStrategy(modelData.name || modelData.engine)
+                                if (root.service && root.service.selectStrategy)
+                                    root.service.selectStrategy(modelData.name || modelData.engine)
                             }
                         }
                     }
@@ -261,7 +266,7 @@ Item {
                         id: exchangeSelector
                         objectName: "strategySetupExchangeCombo"
                         Layout.fillWidth: true
-                        model: onboardingService ? onboardingService.availableExchanges : []
+                        model: root.service ? root.service.availableExchanges : []
                         editable: false
                         currentIndex: model.length > 0 ? 0 : -1
                         textRole: ""
@@ -298,12 +303,12 @@ Item {
                             objectName: "strategySetupSaveButton"
                             Layout.fillWidth: true
                             text: root.trId("licenseWizard.strategy.action.saveCredentials", "Zapisz klucze API")
-                            enabled: onboardingService && apiKeyInput.text.length > 0 && apiSecretInput.text.length > 0 && exchangeSelector.currentIndex >= 0
+                            enabled: root.service && apiKeyInput.text.length > 0 && apiSecretInput.text.length > 0 && exchangeSelector.currentIndex >= 0
                             onClicked: {
-                                if (!onboardingService)
+                                if (!root.service)
                                     return
-                                const exchangeId = exchangeSelector.currentText || onboardingService.availableExchanges[exchangeSelector.currentIndex]
-                                onboardingService.importApiKey(exchangeId, apiKeyInput.text, apiSecretInput.text, passphraseInput.text)
+                                const exchangeId = exchangeSelector.currentText || root.service.availableExchanges[exchangeSelector.currentIndex]
+                                root.service.importApiKey(exchangeId, apiKeyInput.text, apiSecretInput.text, passphraseInput.text)
                                 apiSecretInput.text = ""
                                 passphraseInput.text = ""
                             }
