@@ -10,11 +10,8 @@ Item {
     height: parent ? parent.height : 640
 
     property var onboardingService: null
-    property var onboardingServiceOverride: null
     property var onboarding: null
-    readonly property var service: onboarding !== null
-                                   ? onboarding
-                                   : (onboardingServiceOverride !== null ? onboardingServiceOverride : onboardingService)
+    readonly property var service: onboarding !== null ? onboarding : onboardingService
     property string selectedStrategyName: ""
     property string statusMessageId: ""
     property string statusDetails: ""
