@@ -27,7 +27,14 @@ Item {
     property bool suppressCloudToggle: false
 
     function controller() {
-        return appController ? appController : marketplaceControllerRef
+        // 1) explicit override via root property (if set by host)
+        if (root.appController)
+            return root.appController
+        // 2) context property injected by QQmlContext (used by tests)
+        if (typeof appController !== "undefined" && appController)
+            return appController
+        // 3) legacy/global singleton
+        return marketplaceControllerRef
     }
 
     function resolvedController() {
@@ -391,7 +398,7 @@ Item {
     Component.onCompleted: refreshPresets()
 
     Connections {
-        target: appController ? appController : marketplaceControllerRef
+        target: controller()
         ignoreUnknownSignals: true
         function onPresetsChanged() { updatePresetList() }
         function onCategoriesChanged() {
