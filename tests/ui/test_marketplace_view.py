@@ -191,7 +191,7 @@ def test_marketplace_view_refresh_and_actions(tmp_path: Path) -> None:
 
     QMetaObject.invokeMethod(root, "refreshPresets", Qt.DirectConnection)
     ok = _wait_for(
-        lambda: _has_presets_at_least(1) and controller.list_calls >= 1,
+        lambda: _has_presets_at_least(1),
         app,
         steps=60,
     )
@@ -213,6 +213,16 @@ def test_marketplace_view_refresh_and_actions(tmp_path: Path) -> None:
         Qt.DirectConnection,
         Q_ARG(QUrl, import_url),
     )
+    ok = _wait_for(lambda: len(controller.import_calls) >= 1, app, steps=60)
+    if not ok:
+        status_error = _as_py(root.property("statusError"))
+        presets_after = _get_presets(root)
+        raise AssertionError(
+            "Marketplace import did not call controller.marketplaceImportPreset(). "
+            f"import_calls={controller.import_calls!r}, "
+            f"list_calls={controller.list_calls}, "
+            f"statusError={status_error!r}, presets={presets_after!r}"
+        )
     assert controller.import_calls[-1] == import_url.toString()
     ok = _wait_for(
         lambda: _has_presets_at_least(2),
