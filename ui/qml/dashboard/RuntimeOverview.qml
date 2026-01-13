@@ -837,8 +837,8 @@ Item {
         id: complianceCardComponent
         CompliancePanel {
             objectName: "runtimeOverviewCompliancePanel"
-            telemetryProvider: root.telemetryProvider
-            complianceController: root.complianceController
+            telemetryProviderOverride: root.telemetryProvider
+            complianceControllerOverride: root.complianceController
         }
     }
 
