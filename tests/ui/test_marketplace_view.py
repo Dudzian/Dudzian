@@ -101,6 +101,21 @@ def _as_py(value: object) -> object:
     return value
 
 
+def _wait_for(predicate, app: QApplication, *, steps: int = 60) -> bool:
+    for _ in range(steps):
+        app.processEvents()
+        if predicate():
+            return True
+    return False
+
+
+def _get_presets(root: QObject) -> object:
+    value = _as_py(root.property("presets"))
+    if isinstance(value, list):
+        return [_as_py(item) for item in value]
+    return value
+
+
 @pytest.mark.timeout(20)
 def test_marketplace_view_refresh_and_actions(tmp_path: Path) -> None:
     app = QApplication.instance() or QApplication([])
@@ -170,16 +185,26 @@ def test_marketplace_view_refresh_and_actions(tmp_path: Path) -> None:
     root = engine.rootObjects()[0]
     assert isinstance(root, QObject)
 
-    QMetaObject.invokeMethod(root, "refreshPresets", Qt.DirectConnection)
-    app.processEvents()
+    def _has_presets_at_least(n: int) -> bool:
+        presets = _get_presets(root)
+        return isinstance(presets, list) and len(presets) >= n
 
-    presets_variant = _as_py(root.property("presets"))
-    assert isinstance(
-        presets_variant, list
-    ), f"presets type={type(presets_variant)!r} value={presets_variant!r}"
-    presets_variant = [_as_py(item) for item in presets_variant]
-    assert len(presets_variant) == 1
-    assert controller.list_calls >= 1
+    QMetaObject.invokeMethod(root, "refreshPresets", Qt.DirectConnection)
+    ok = _wait_for(
+        lambda: _has_presets_at_least(1) and controller.list_calls >= 1,
+        app,
+        steps=60,
+    )
+    presets_variant = _get_presets(root)
+    if not ok:
+        status_error = _as_py(root.property("statusError"))
+        raise AssertionError(
+            "Marketplace presets did not load after refreshPresets(). "
+            f"presets={presets_variant!r} (type={type(presets_variant)!r}), "
+            f"list_calls={controller.list_calls}, statusError={status_error!r}"
+        )
+    assert isinstance(presets_variant, list)
+    assert len(presets_variant) >= 1
 
     import_url = QUrl.fromLocalFile(str(tmp_path / "preset.yaml"))
     QMetaObject.invokeMethod(
@@ -188,14 +213,22 @@ def test_marketplace_view_refresh_and_actions(tmp_path: Path) -> None:
         Qt.DirectConnection,
         Q_ARG(QUrl, import_url),
     )
-    app.processEvents()
     assert controller.import_calls[-1] == import_url.toString()
-    presets_variant = _as_py(root.property("presets"))
-    assert isinstance(
-        presets_variant, list
-    ), f"presets type={type(presets_variant)!r} value={presets_variant!r}"
-    presets_variant = [_as_py(item) for item in presets_variant]
-    assert len(presets_variant) == 2
+    ok = _wait_for(
+        lambda: _has_presets_at_least(2),
+        app,
+        steps=60,
+    )
+    presets_variant = _get_presets(root)
+    if not ok:
+        status_error = _as_py(root.property("statusError"))
+        raise AssertionError(
+            "Marketplace presets did not update after importPresetFromUrl(). "
+            f"presets={presets_variant!r} (type={type(presets_variant)!r}), "
+            f"import_calls={controller.import_calls!r}, statusError={status_error!r}"
+        )
+    assert isinstance(presets_variant, list)
+    assert len(presets_variant) >= 2
 
     first_preset = _as_py(presets_variant[0])
     assert isinstance(
