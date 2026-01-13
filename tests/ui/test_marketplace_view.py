@@ -207,12 +207,13 @@ def test_marketplace_view_refresh_and_actions(tmp_path: Path) -> None:
     assert len(presets_variant) >= 1
 
     import_url = QUrl.fromLocalFile(str(tmp_path / "preset.yaml"))
-    QMetaObject.invokeMethod(
+    invoked = QMetaObject.invokeMethod(
         root,
         "importPresetFromUrl",
         Qt.DirectConnection,
-        Q_ARG(QUrl, import_url),
+        Q_ARG("QVariant", import_url),
     )
+    assert invoked, "invokeMethod(importPresetFromUrl) returned False (method not invoked)"
     ok = _wait_for(lambda: len(controller.import_calls) >= 1, app, steps=60)
     if not ok:
         status_error = _as_py(root.property("statusError"))
@@ -245,14 +246,24 @@ def test_marketplace_view_refresh_and_actions(tmp_path: Path) -> None:
         first_preset, dict
     ), f"first_preset type={type(first_preset)!r} value={first_preset!r}"
     export_url = QUrl.fromLocalFile(str(tmp_path / "out.yaml"))
-    QMetaObject.invokeMethod(
+    invoked = QMetaObject.invokeMethod(
         root,
         "exportPreset",
         Qt.DirectConnection,
         Q_ARG("QVariant", first_preset),
-        Q_ARG(QUrl, export_url),
+        Q_ARG("QVariant", export_url),
     )
-    app.processEvents()
+    assert invoked, "invokeMethod(exportPreset) returned False (method not invoked)"
+    ok = _wait_for(lambda: len(controller.export_calls) >= 1, app, steps=60)
+    if not ok:
+        status_error = _as_py(root.property("statusError"))
+        presets_after = _get_presets(root)
+        raise AssertionError(
+            "Marketplace export did not call controller.marketplaceExportPreset(). "
+            f"export_calls={controller.export_calls!r}, "
+            f"list_calls={controller.list_calls}, "
+            f"statusError={status_error!r}, presets={presets_after!r}"
+        )
     export_format = _as_py(root.property("exportFormat"))
     assert controller.export_calls[-1] == (
         first_preset.get("presetId"),
