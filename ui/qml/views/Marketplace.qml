@@ -26,18 +26,16 @@ Item {
     property bool bundleCloudEnabled: strategyController && strategyController.cloudRuntimeEnabled
     property bool suppressCloudToggle: false
 
+    function controller() {
+        return appController ? appController : marketplaceControllerRef
+    }
+
     function resolvedController() {
-        if (marketplaceControllerRef)
-            return marketplaceControllerRef
-        if (root.appController)
-            return root.appController
-        if (typeof appController !== "undefined")
-            return appController
-        return null
+        return controller()
     }
 
     function refreshPresets() {
-        const ctrl = marketplaceControllerRef
+        const ctrl = controller()
         if (!ctrl) {
             statusError = qsTr("Brak połączenia z usługą marketplace.")
             statusMessage = ""
@@ -48,8 +46,10 @@ Item {
         if (ctrl.refreshPresets)
             ctrl.refreshPresets()
         categories = buildCategoryList(ctrl.categories || [])
-        if (categories.length > 0)
-            selectedCategory = categories[Math.max(0, categorySelector.currentIndex)].value
+        if (categories.length > 0) {
+            // nie polegaj na UI do ustawienia stanu danych
+            selectedCategory = categories[0].value
+        }
         updatePresetList()
         statusError = ctrl.lastError || ""
         if (!statusError || statusError.length === 0)
@@ -60,7 +60,7 @@ Item {
     }
 
     function updatePresetList() {
-        const ctrl = marketplaceControllerRef
+        const ctrl = controller()
         if (!ctrl) {
             presets = []
             return
@@ -391,15 +391,19 @@ Item {
     Component.onCompleted: refreshPresets()
 
     Connections {
-        target: marketplaceControllerRef
+        target: appController ? appController : marketplaceControllerRef
         ignoreUnknownSignals: true
         function onPresetsChanged() { updatePresetList() }
         function onCategoriesChanged() {
-            categories = marketplaceControllerRef ? buildCategoryList(marketplaceControllerRef.categories || []) : buildCategoryList([])
-            if (categorySelector.currentIndex < 0)
+            const ctrl = target
+            categories = ctrl ? buildCategoryList(ctrl.categories || []) : buildCategoryList([])
+            if (categories.length > 0 && (!selectedCategory || selectedCategory.length === 0))
+                selectedCategory = categories[0].value
+            if (typeof categorySelector !== "undefined" && categorySelector && categorySelector.currentIndex < 0)
                 categorySelector.currentIndex = 0
+            updatePresetList()
         }
-        function onLastErrorChanged() { statusError = marketplaceControllerRef && marketplaceControllerRef.lastError ? marketplaceControllerRef.lastError : "" }
+        function onLastErrorChanged() { statusError = target && target.lastError ? target.lastError : "" }
     }
 
     Connections {
