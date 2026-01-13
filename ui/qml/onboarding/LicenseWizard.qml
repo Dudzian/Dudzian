@@ -10,8 +10,10 @@ Item {
     width: parent ? parent.width : 960
     height: parent ? parent.height : 640
 
-    readonly property var controller: (typeof licensingController !== "undefined" ? licensingController : null)
-    readonly property var onboarding: (typeof onboardingService !== "undefined" ? onboardingService : null)
+    property var licensingController: null
+    property var onboardingService: null
+    readonly property var controller: licensingController
+    readonly property var onboarding: onboardingService
     property int currentStep: 0
     readonly property int totalSteps: 6
     property bool summarySuccess: false
@@ -99,6 +101,8 @@ Item {
         target: root.controller
         ignoreUnknownSignals: true
         function onLicenseAcceptedChanged() {
+            if (!root.controller)
+                return
             applySummaryFromController()
             if (root.controller.licenseAccepted) {
                 currentStep = Math.min(totalSteps - 1, 3)
