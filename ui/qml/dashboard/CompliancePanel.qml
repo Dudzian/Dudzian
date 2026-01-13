@@ -12,14 +12,14 @@ Rectangle {
     border.color: Styles.AppTheme.surfaceSubtle
     border.width: 1
 
-    property var telemetryProvider: (typeof telemetryProvider !== "undefined" ? telemetryProvider : null)
-    property var complianceController: (typeof complianceController !== "undefined" ? complianceController : null)
-    readonly property bool busy: complianceController ? complianceController.busy : false
-    readonly property bool hasController: !!complianceController
+    property var provider: (typeof telemetryProvider !== "undefined" ? telemetryProvider : null)
+    property var controller: (typeof complianceController !== "undefined" ? complianceController : null)
+    readonly property bool busy: controller ? controller.busy : false
+    readonly property bool hasController: !!controller
 
     function ensureBindings() {
-        if (root.complianceController && root.telemetryProvider) {
-            root.complianceController.telemetryProvider = root.telemetryProvider
+        if (root.controller && root.provider) {
+            root.controller.telemetryProvider = root.provider
         }
     }
 
@@ -54,12 +54,12 @@ Rectangle {
 
     Component.onCompleted: {
         ensureBindings()
-        if (root.complianceController)
-            root.complianceController.refreshAudit()
+        if (root.controller)
+            root.controller.refreshAudit()
     }
 
-    onTelemetryProviderChanged: ensureBindings()
-    onComplianceControllerChanged: ensureBindings()
+    onProviderChanged: ensureBindings()
+    onControllerChanged: ensureBindings()
 
     ColumnLayout {
         anchors.fill: parent
@@ -92,7 +92,7 @@ Rectangle {
                 objectName: "complianceAuditButton"
                 text: qsTr("Przeprowadź audyt")
                 enabled: root.hasController
-                onClicked: root.complianceController ? root.complianceController.refreshAudit() : null
+                onClicked: root.controller ? root.controller.refreshAudit() : null
             }
         }
 
@@ -100,7 +100,7 @@ Rectangle {
             id: errorBanner
             objectName: "complianceErrorBanner"
             Layout.fillWidth: true
-            visible: root.complianceController && root.complianceController.errorMessage.length > 0
+            visible: root.controller && root.controller.errorMessage.length > 0
             implicitHeight: visible ? 32 : 0
             radius: 6
             color: Qt.rgba(0.75, 0.25, 0.28, 0.9)
@@ -109,7 +109,7 @@ Rectangle {
                 anchors.centerIn: parent
                 color: "white"
                 font.pointSize: 11
-                text: root.complianceController ? root.complianceController.errorMessage : ""
+                text: root.controller ? root.controller.errorMessage : ""
             }
         }
 
@@ -147,8 +147,8 @@ Rectangle {
 
                         Text {
                             objectName: "complianceStatusValue_" + modelData.key
-                            text: root.complianceController ? statusLabel(root.complianceController.summary[modelData.key]) : qsTr("n/d")
-                            color: root.complianceController ? statusColor(root.complianceController.summary[modelData.key]) : Styles.AppTheme.textSecondary
+                            text: root.controller ? statusLabel(root.controller.summary[modelData.key]) : qsTr("n/d")
+                            color: root.controller ? statusColor(root.controller.summary[modelData.key]) : Styles.AppTheme.textSecondary
                         }
                     }
                 }
@@ -161,7 +161,7 @@ Rectangle {
 
             Text {
                 objectName: "complianceTotalViolations"
-                text: qsTr("Łączna liczba naruszeń: %1").arg(root.telemetryProvider ? Number(root.telemetryProvider.complianceSummary.totalViolations || 0).toFixed(0) : "0")
+                text: qsTr("Łączna liczba naruszeń: %1").arg(root.provider ? Number(root.provider.complianceSummary.totalViolations || 0).toFixed(0) : "0")
                 color: Styles.AppTheme.textSecondary
             }
 
@@ -171,7 +171,7 @@ Rectangle {
 
                 Text {
                     objectName: "complianceFrequentViolations"
-                    text: qsTr("Najczęstsze naruszenia: %1").arg(root.telemetryProvider && root.telemetryProvider.complianceSummary.byRule ? Object.keys(root.telemetryProvider.complianceSummary.byRule).slice(0, 2).join(", ") : qsTr("brak"))
+                    text: qsTr("Najczęstsze naruszenia: %1").arg(root.provider && root.provider.complianceSummary.byRule ? Object.keys(root.provider.complianceSummary.byRule).slice(0, 2).join(", ") : qsTr("brak"))
                     color: Styles.AppTheme.textSecondary
                     wrapMode: Text.WordWrap
                 }
@@ -181,8 +181,8 @@ Rectangle {
         Text {
             objectName: "complianceLastAudit"
             Layout.fillWidth: true
-            text: root.complianceController && root.complianceController.lastUpdated.length > 0
-                  ? qsTr("Ostatni audyt: %1").arg(root.complianceController.lastUpdated)
+            text: root.controller && root.controller.lastUpdated.length > 0
+                  ? qsTr("Ostatni audyt: %1").arg(root.controller.lastUpdated)
                   : qsTr("Ostatni audyt: n/d")
             color: Styles.AppTheme.textSecondary
             font.pointSize: 11
@@ -204,7 +204,7 @@ Rectangle {
                 }
 
                 Repeater {
-                    model: root.complianceController ? root.complianceController.findings : []
+                    model: root.controller ? root.controller.findings : []
                     delegate: Frame {
                         objectName: "complianceFindingFrame"
                         Layout.fillWidth: true
@@ -251,7 +251,7 @@ Rectangle {
 
                 Label {
                     objectName: "complianceNoFindings"
-                    visible: !root.complianceController || root.complianceController.findings.length === 0
+                    visible: !root.controller || root.controller.findings.length === 0
                     text: qsTr("Brak wykrytych naruszeń")
                     color: Styles.AppTheme.textSecondary
                 }
@@ -264,7 +264,7 @@ Rectangle {
                 }
 
                 Repeater {
-                    model: root.complianceController ? root.complianceController.recommendations : []
+                    model: root.controller ? root.controller.recommendations : []
                     delegate: Text {
                         objectName: "complianceRecommendation"
                         Layout.fillWidth: true
