@@ -251,24 +251,30 @@ def test_license_wizard_shows_error_on_invalid_payload(tmp_path: Path) -> None:
     license_input = root.findChild(QObject, "licenseWizardInput")
     apply_button = root.findChild(QObject, "licenseWizardApplyButton")
     status_label = root.findChild(QObject, "licenseWizardStatusLabel")
-    assert license_input is not None and apply_button is not None and status_label is not None
+    assert license_input is not None and apply_button is not None
 
     license_input.setProperty("text", "BŁĘDNA LICENCJA")
     QMetaObject.invokeMethod(apply_button, "click", Qt.DirectConnection)
 
-    assert controller.licenseAccepted is False
-    assert root.property("currentStep") == 2
-    status_text = status_label.property("text")
+    pending_status_id = "licenseWizard.status.pending"
     for _ in range(30):
         app.processEvents()
-        status_text = status_label.property("text")
-        if (
-            status_text
-            and "Oczekiwanie na weryfikację" not in status_text
-            and "Podpis licencji jest niepoprawny" in status_text
-        ):
+        current_status_id = controller.statusMessageId or pending_status_id
+        if current_status_id != pending_status_id:
             break
-    assert "Podpis licencji jest niepoprawny" in status_text
+
+    assert controller.licenseAccepted is False
+    assert root.property("currentStep") == 2
+    status_label_text = status_label.property("text") if status_label is not None else None
+    assert controller.statusMessageId == "licenseWizard.error.invalidSignature", (
+        "Unexpected license verification status. "
+        f"statusMessageId={controller.statusMessageId!r}, "
+        f"statusDetails={controller.statusDetails!r}, "
+        f"statusLabel={status_label_text!r}"
+    )
+    assert "signature mismatch" in controller.statusDetails.lower()
+    if status_label is not None:
+        assert status_label_text
 
     engine.deleteLater()
     app.quit()
