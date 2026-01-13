@@ -12,8 +12,10 @@ Rectangle {
     border.color: Styles.AppTheme.surfaceSubtle
     border.width: 1
 
-    readonly property var provider: (typeof telemetryProvider !== "undefined" ? telemetryProvider : null)
-    readonly property var controller: (typeof complianceController !== "undefined" ? complianceController : null)
+    property var telemetryProvider: null
+    property var complianceController: null
+    readonly property var provider: telemetryProvider
+    readonly property var controller: complianceController
     readonly property bool hasController: controller !== null
     readonly property bool busy: controller ? controller.busy : false
 
