@@ -91,7 +91,7 @@ Rectangle {
                 id: auditButton
                 objectName: "complianceAuditButton"
                 text: qsTr("Przeprowadź audyt")
-                enabled: root.hasController && !root.busy
+                enabled: root.hasController
                 onClicked: root.complianceController ? root.complianceController.refreshAudit() : null
             }
         }
