@@ -249,22 +249,52 @@ Item {
     }
 
     function importPresetFromUrl(url) {
-        const ctrl = resolvedController()
-        if (!ctrl || !ctrl.marketplaceImportPreset) {
-            statusError = qsTr("Backend marketplace nie obsługuje importu.")
+        const ctrl = controller()
+        if (!ctrl) {
+            statusError = qsTr("Brak połączenia z usługą marketplace.")
             statusMessage = ""
-            return
+            return false
+        }
+        if (!url) {
+            statusError = qsTr("Nieprawidłowy plik do importu.")
+            statusMessage = ""
+            return false
         }
         busy = true
+        var result = null
         try {
-            const result = ctrl.marketplaceImportPreset(url)
-            const name = result && result.preset ? (result.preset.name || result.preset.presetId || "") : ""
-            applyBackendResult(result, qsTr("Zaimportowano preset %1.").arg(name), true)
+            if (ctrl.marketplaceImportPreset) {
+                try {
+                    result = ctrl.marketplaceImportPreset(url)
+                } catch (error) {
+                    result = ctrl.marketplaceImportPreset(url.toString())
+                }
+            } else if (ctrl.importPresetFromUrl) {
+                result = ctrl.importPresetFromUrl(url)
+            } else if (ctrl.importPreset) {
+                result = ctrl.importPreset(url)
+            } else {
+                statusError = qsTr("Import presetów nie jest dostępny.")
+                statusMessage = ""
+                busy = false
+                return false
+            }
         } catch (error) {
-            statusError = error ? error.toString() : qsTr("Import nie powiódł się.")
+            statusError = error && error.toString ? error.toString() : "" + error
             statusMessage = ""
+            busy = false
+            return false
         }
         busy = false
+        if (result && result.success) {
+            const name = result.preset ? (result.preset.name || result.preset.presetId || result.preset.preset_id || "") : ""
+            applyBackendResult(result, qsTr("Zaimportowano preset %1.").arg(name), true)
+            return true
+        }
+        if (!statusError || statusError.length === 0)
+            statusError = (result && result.error) ? result.error : (ctrl.lastError || qsTr("Import presetu nie powiódł się."))
+        statusMessage = ""
+        return false
     }
 
     function activatePreset(preset) {
