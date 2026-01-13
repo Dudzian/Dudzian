@@ -8,7 +8,7 @@ Item {
     id: root
     objectName: "marketplaceView"
 
-    property var appController: null
+    property var controllerOverride: null
     property var presets: []
     property bool busy: false
     property string statusMessage: ""
@@ -28,8 +28,8 @@ Item {
 
     function controller() {
         // 1) explicit override via root property (if set by host)
-        if (root.appController)
-            return root.appController
+        if (root.controllerOverride)
+            return root.controllerOverride
         // 2) context property injected by QQmlContext (used by tests)
         if (typeof appController !== "undefined" && appController)
             return appController
