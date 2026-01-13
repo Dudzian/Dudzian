@@ -10,14 +10,20 @@ Item {
     width: parent ? parent.width : 960
     height: parent ? parent.height : 640
 
+    Item {
+        id: wiring
+        property var controller: null
+        property var onboarding: null
+    }
+
     property var licensingControllerOverride: null
     property var onboardingServiceOverride: null
     readonly property var controller: licensingControllerOverride !== null
                                    ? licensingControllerOverride
-                                   : (typeof licensingController !== "undefined" ? licensingController : null)
+                                   : wiring.controller
     readonly property var onboarding: onboardingServiceOverride !== null
                                     ? onboardingServiceOverride
-                                    : (typeof onboardingService !== "undefined" ? onboardingService : null)
+                                    : wiring.onboarding
     property int currentStep: 0
     readonly property int totalSteps: 6
     property bool summarySuccess: false
@@ -158,6 +164,16 @@ Item {
     }
 
     Component.onCompleted: {
+        if (wiring.controller === null
+                && licensingControllerOverride === null
+                && typeof licensingController !== "undefined") {
+            wiring.controller = licensingController
+        }
+        if (wiring.onboarding === null
+                && onboardingServiceOverride === null
+                && typeof onboardingService !== "undefined") {
+            wiring.onboarding = onboardingService
+        }
         resetSummary()
         applySummaryFromController()
         if (root.controller && root.controller.refreshFingerprint)

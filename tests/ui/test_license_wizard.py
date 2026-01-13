@@ -12,7 +12,7 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 PySide6 = require_pyside6()
 
 from PySide6.QtCore import QObject, Property, Qt, QMetaObject, QUrl, Signal, Slot  # type: ignore[attr-defined]
-from PySide6.QtQml import QQmlApplicationEngine  # type: ignore[attr-defined]
+from PySide6.QtQml import QQmlApplicationEngine, QQmlComponent  # type: ignore[attr-defined]
 
 try:  # pragma: no cover - zależne od środowiska CI
     from PySide6.QtWidgets import QApplication  # type: ignore[attr-defined]
@@ -149,15 +149,44 @@ def _load_wizard(
     if onboarding_service is not None:
         engine.rootContext().setContextProperty("onboardingService", onboarding_service)
     qml_path = Path(__file__).resolve().parents[2] / "ui" / "qml" / "onboarding" / "LicenseWizard.qml"
-    engine.load(QUrl.fromLocalFile(str(qml_path)))
-    warnings = []
+    qml_url = QUrl.fromLocalFile(str(qml_path))
+    engine.load(qml_url)
+    roots = engine.rootObjects()
+    warnings: list[object] = []
     try:
         warnings = engine.warnings()
     except Exception:
         warnings = []
-    details = "\n".join(getattr(w, "toString", lambda: str(w))() for w in warnings)
-    assert engine.rootObjects(), f"Nie udało się załadować LicenseWizard.qml\n{details}"
-    root = engine.rootObjects()[0]
+    warning_details = "\n".join(getattr(w, "toString", lambda: str(w))() for w in warnings) or "(none)"
+
+    component = QQmlComponent(engine)
+    component.loadUrl(qml_url)
+    component_errors: list[object] = []
+    try:
+        if getattr(component, "isError", None) and component.isError():
+            component_errors = component.errors()
+        elif component.status() == QQmlComponent.Error:
+            component_errors = component.errors()
+    except Exception:
+        component_errors = []
+    component_error_details = "\n".join(
+        getattr(error, "toString", lambda: str(error))() for error in component_errors
+    ) or "(none)"
+    component_error_string = component.errorString() or "(none)"
+
+    if not roots:
+        details = "\n".join([
+            "Nie udało się załadować LicenseWizard.qml",
+            "=== Engine warnings ===",
+            warning_details,
+            "=== Component errors ===",
+            component_error_details,
+            "=== Component errorString ===",
+            component_error_string,
+        ])
+        raise AssertionError(details)
+
+    root = roots[0]
     return root, engine, app, onboarding_service  # type: ignore[return-value]
 
 
