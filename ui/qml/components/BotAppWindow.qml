@@ -421,7 +421,7 @@ ApplicationWindow {
 
                     Views.Marketplace {
                         anchors.fill: parent
-                        appController: appController
+                        controllerOverride: appController
                     }
                 }
             }
