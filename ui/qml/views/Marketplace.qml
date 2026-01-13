@@ -50,14 +50,25 @@ Item {
             return
         }
         busy = true
-        if (ctrl.refreshPresets)
+        // test stub + kontroler backendowy: listowanie presetów
+        if (ctrl.marketplaceListPresets) {
+            const listed = ctrl.marketplaceListPresets()
+            presets = listed || []
+        } else if (ctrl.refreshPresets) {
+            // legacy
             ctrl.refreshPresets()
+            presets = ctrl.presets || presets || []
+        } else {
+            presets = ctrl.presets || []
+        }
         categories = buildCategoryList(ctrl.categories || [])
         if (categories.length > 0) {
             // nie polegaj na UI do ustawienia stanu danych
             selectedCategory = categories[0].value
         }
-        updatePresetList()
+        // jeśli kontroler wspiera filtrowanie po kategorii, dopiero wtedy nadpisuj
+        if (ctrl.presetsForCategory)
+            updatePresetList()
         statusError = ctrl.lastError || ""
         if (!statusError || statusError.length === 0)
             statusMessage = qsTr("Załadowano %1 presetów").arg(presets.length)
@@ -73,7 +84,13 @@ Item {
             return
         }
         if (!selectedCategory || selectedCategory.length === 0 || !ctrl.presetsForCategory) {
-            presets = ctrl.presets || []
+            if (ctrl.presets) {
+                presets = ctrl.presets
+            } else if (ctrl.marketplaceListPresets) {
+                presets = ctrl.marketplaceListPresets() || presets || []
+            } else {
+                presets = presets || []
+            }
         } else {
             presets = ctrl.presetsForCategory(selectedCategory)
         }
