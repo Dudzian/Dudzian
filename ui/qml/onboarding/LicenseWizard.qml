@@ -209,8 +209,8 @@ Item {
 
     ColumnLayout {
         anchors.fill: parent
+        anchors.margins: Styles.AppTheme.spacingLg
         spacing: Styles.AppTheme.spacingLg
-        padding: Styles.AppTheme.spacingLg
 
         Label {
             objectName: "licenseWizardTitle"
@@ -261,9 +261,11 @@ Item {
 
                     ColumnLayout {
                         id: welcomeColumn
-                        width: parent.width
+                        anchors.left: parent.left
+                        anchors.right: parent.right
+                        anchors.top: parent.top
+                        anchors.margins: Styles.AppTheme.spacingXl
                         spacing: Styles.AppTheme.spacingMd
-                        padding: Styles.AppTheme.spacingXl
 
                         Label {
                             text: root.trId("licenseWizard.step.welcomeTitle", "Witamy w kreatorze licencji")
@@ -292,9 +294,11 @@ Item {
 
                     ColumnLayout {
                         id: hardwareColumn
-                        width: parent.width
+                        anchors.left: parent.left
+                        anchors.right: parent.right
+                        anchors.top: parent.top
+                        anchors.margins: Styles.AppTheme.spacingXl
                         spacing: Styles.AppTheme.spacingMd
-                        padding: Styles.AppTheme.spacingXl
 
                         Label {
                             text: root.trId("licenseWizard.step.hardwareTitle", "Krok 1 – sprawdzenie fingerprintu")
@@ -369,9 +373,11 @@ Item {
 
                     ColumnLayout {
                         id: licenseColumn
-                        width: parent.width
+                        anchors.left: parent.left
+                        anchors.right: parent.right
+                        anchors.top: parent.top
+                        anchors.margins: Styles.AppTheme.spacingXl
                         spacing: Styles.AppTheme.spacingMd
-                        padding: Styles.AppTheme.spacingXl
 
                         Label {
                             text: root.trId("licenseWizard.step.licenseTitle", "Krok 2 – wprowadzenie licencji")
@@ -491,9 +497,11 @@ Item {
 
                     ColumnLayout {
                         id: summaryColumn
-                        width: parent.width
+                        anchors.left: parent.left
+                        anchors.right: parent.right
+                        anchors.top: parent.top
+                        anchors.margins: Styles.AppTheme.spacingXl
                         spacing: Styles.AppTheme.spacingMd
-                        padding: Styles.AppTheme.spacingXl
 
                         Label {
                             text: root.trId("licenseWizard.step.summaryTitle", "Podsumowanie aktywacji")
