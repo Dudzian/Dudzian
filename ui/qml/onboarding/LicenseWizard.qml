@@ -10,8 +10,8 @@ Item {
     width: parent ? parent.width : 960
     height: parent ? parent.height : 640
 
-    property var licensingController: (typeof licensingController !== "undefined" ? licensingController : null)
-    property var onboardingService: (typeof onboardingService !== "undefined" ? onboardingService : null)
+    readonly property var controller: (typeof licensingController !== "undefined" ? licensingController : null)
+    readonly property var onboarding: (typeof onboardingService !== "undefined" ? onboardingService : null)
     property int currentStep: 0
     readonly property int totalSteps: 6
     property bool summarySuccess: false
@@ -34,7 +34,7 @@ Item {
 
     function canProceed(step) {
         if (step === 2)
-            return licensingController && licensingController.licenseAccepted
+            return root.controller && root.controller.licenseAccepted
         if (step === 3)
             return decisionLogReady
         if (step === 4)
@@ -61,18 +61,18 @@ Item {
     }
 
     function applySummaryFromController() {
-        if (!licensingController)
+        if (!root.controller)
             return
-        summaryDetails = licensingController.statusDetails || ""
+        summaryDetails = root.controller.statusDetails || ""
         updateSummaryState()
     }
 
     function updateSummaryState() {
-        const licenseAccepted = licensingController && licensingController.licenseAccepted
+        const licenseAccepted = root.controller && root.controller.licenseAccepted
         if (!licenseAccepted) {
             summarySuccess = false
-            summaryStatusId = licensingController
-                ? (licensingController.statusMessageId || "licenseWizard.status.pending")
+            summaryStatusId = root.controller
+                ? (root.controller.statusMessageId || "licenseWizard.status.pending")
                 : "licenseWizard.status.pending"
             return
         }
@@ -90,17 +90,17 @@ Item {
         summaryStatusId = "licenseWizard.status.ok"
     }
 
-    onLicensingControllerChanged: {
-        if (licensingController && licensingController.refreshFingerprint)
-            licensingController.refreshFingerprint()
+    onControllerChanged: {
+        if (root.controller && root.controller.refreshFingerprint)
+            root.controller.refreshFingerprint()
     }
 
     Connections {
-        target: licensingController
+        target: root.controller
         ignoreUnknownSignals: true
         function onLicenseAcceptedChanged() {
             applySummaryFromController()
-            if (licensingController.licenseAccepted) {
+            if (root.controller.licenseAccepted) {
                 currentStep = Math.min(totalSteps - 1, 3)
             }
         }
@@ -116,23 +116,23 @@ Item {
     }
 
     Connections {
-        target: onboardingService
+        target: root.onboarding
         ignoreUnknownSignals: true
         function onConfigurationReadyChanged() {
-            strategySetupReady = onboardingService ? onboardingService.configurationReady : false
+            strategySetupReady = root.onboarding ? root.onboarding.configurationReady : false
             updateSummaryState()
         }
         function onSelectedStrategyChanged() {
-            selectedStrategyTitle = onboardingService ? onboardingService.selectedStrategyTitle : ""
+            selectedStrategyTitle = root.onboarding ? root.onboarding.selectedStrategyTitle : ""
         }
         function onStatusMessageIdChanged() {
-            onboardingStatusMessageId = onboardingService ? onboardingService.statusMessageId : ""
+            onboardingStatusMessageId = root.onboarding ? root.onboarding.statusMessageId : ""
         }
         function onStatusDetailsChanged() {
-            onboardingStatusDetails = onboardingService ? onboardingService.statusDetails : ""
+            onboardingStatusDetails = root.onboarding ? root.onboarding.statusDetails : ""
         }
         function onLastSavedExchangeChanged() {
-            lastConfiguredExchangeId = onboardingService ? onboardingService.lastSavedExchange : ""
+            lastConfiguredExchangeId = root.onboarding ? root.onboarding.lastSavedExchange : ""
         }
         function onStrategiesChanged() {
             updateSummaryState()
@@ -142,15 +142,15 @@ Item {
     Component.onCompleted: {
         resetSummary()
         applySummaryFromController()
-        if (licensingController && licensingController.refreshFingerprint)
-            licensingController.refreshFingerprint()
-        if (onboardingService && onboardingService.refreshStrategies)
-            onboardingService.refreshStrategies()
-        strategySetupReady = onboardingService ? onboardingService.configurationReady : false
-        selectedStrategyTitle = onboardingService ? onboardingService.selectedStrategyTitle : ""
-        onboardingStatusMessageId = onboardingService ? onboardingService.statusMessageId : ""
-        onboardingStatusDetails = onboardingService ? onboardingService.statusDetails : ""
-        lastConfiguredExchangeId = onboardingService ? onboardingService.lastSavedExchange : ""
+        if (root.controller && root.controller.refreshFingerprint)
+            root.controller.refreshFingerprint()
+        if (root.onboarding && root.onboarding.refreshStrategies)
+            root.onboarding.refreshStrategies()
+        strategySetupReady = root.onboarding ? root.onboarding.configurationReady : false
+        selectedStrategyTitle = root.onboarding ? root.onboarding.selectedStrategyTitle : ""
+        onboardingStatusMessageId = root.onboarding ? root.onboarding.statusMessageId : ""
+        onboardingStatusDetails = root.onboarding ? root.onboarding.statusDetails : ""
+        lastConfiguredExchangeId = root.onboarding ? root.onboarding.lastSavedExchange : ""
         decisionLogReady = decisionLogStep ? decisionLogStep.ready : false
         decisionLogPath = decisionLogStep ? decisionLogStep.selectedPath : ""
         updateSummaryState()
@@ -161,10 +161,10 @@ Item {
         title: root.trId("licenseWizard.dialog.selectFile", "Wybierz plik licencji")
         nameFilters: ["JSON (*.json)"]
         onAccepted: {
-            if (!licensingController)
+            if (!root.controller)
                 return
             if (selectedFile && selectedFile !== "") {
-                const ok = licensingController.applyLicenseFile(selectedFile)
+                const ok = root.controller.applyLicenseFile(selectedFile)
                 applySummaryFromController()
                 if (ok) {
                     currentStep = Math.min(totalSteps - 1, currentStep + 1)
@@ -302,12 +302,12 @@ Item {
                                     Layout.fillWidth: true
                                     wrapMode: Text.WrapAnywhere
                                     text: {
-                                        if (!licensingController)
+                                        if (!root.controller)
                                             return root.trId("licenseWizard.label.fingerprintUnavailable", "Brak danych o fingerprintcie")
-                                        const value = licensingController.fingerprint
+                                        const value = root.controller.fingerprint
                                         if (value)
                                             return value
-                                        const errorId = licensingController.fingerprintErrorMessageId || "licenseWizard.error.fingerprintUnavailable"
+                                        const errorId = root.controller.fingerprintErrorMessageId || "licenseWizard.error.fingerprintUnavailable"
                                         return root.trId(errorId, "Nie udało się odczytać fingerprintu.")
                                     }
                                     color: Styles.AppTheme.textPrimary
@@ -316,10 +316,10 @@ Item {
                                 Button {
                                     objectName: "licenseWizardRefreshButton"
                                     text: root.trId("licenseWizard.action.refreshFingerprint", "Odśwież fingerprint")
-                                    enabled: licensingController
+                                    enabled: root.controller
                                     onClicked: {
-                                        if (licensingController && licensingController.refreshFingerprint)
-                                            licensingController.refreshFingerprint()
+                                        if (root.controller && root.controller.refreshFingerprint)
+                                            root.controller.refreshFingerprint()
                                     }
                                 }
                             }
@@ -375,18 +375,18 @@ Item {
                             Button {
                                 objectName: "licenseWizardFileButton"
                                 text: root.trId("licenseWizard.action.loadFromFile", "Wybierz plik…")
-                                enabled: licensingController
+                                enabled: root.controller
                                 onClicked: licenseFileDialog.open()
                             }
 
                             Button {
                                 objectName: "licenseWizardApplyButton"
                                 text: root.trId("licenseWizard.action.applyLicense", "Zastosuj licencję")
-                                enabled: licensingController && licenseInput.text.length > 0
+                                enabled: root.controller && licenseInput.text.length > 0
                                 onClicked: {
-                                    if (!licensingController)
+                                    if (!root.controller)
                                         return
-                                    const ok = licensingController.applyLicenseText(licenseInput.text)
+                                    const ok = root.controller.applyLicenseText(licenseInput.text)
                                     applySummaryFromController()
                                     if (ok) {
                                         currentStep = Math.min(totalSteps - 1, currentStep + 1)
@@ -399,24 +399,24 @@ Item {
                             objectName: "licenseWizardStatusLabel"
                             Layout.fillWidth: true
                             wrapMode: Text.WordWrap
-                            color: (licensingController && licensingController.licenseAccepted)
+                            color: (root.controller && root.controller.licenseAccepted)
                                    ? Styles.AppTheme.success
                                    : Styles.AppTheme.textSecondary
                             text: {
-                                if (!licensingController)
+                                if (!root.controller)
                                     return root.trId("licenseWizard.status.pending", "Oczekiwanie na weryfikację licencji")
-                                const id = licensingController.statusMessageId || "licenseWizard.status.pending"
+                                const id = root.controller.statusMessageId || "licenseWizard.status.pending"
                                 return root.trId(id, "Oczekiwanie na weryfikację licencji")
                             }
                         }
 
                         Label {
                             objectName: "licenseWizardStatusDetails"
-                            visible: licensingController && licensingController.statusDetails.length > 0
+                            visible: root.controller && root.controller.statusDetails.length > 0
                             Layout.fillWidth: true
                             wrapMode: Text.WordWrap
                             color: Styles.AppTheme.textSecondary
-                            text: licensingController ? licensingController.statusDetails : ""
+                            text: root.controller ? root.controller.statusDetails : ""
                         }
                     }
                 }
@@ -441,7 +441,7 @@ Item {
                     objectName: "licenseWizardStrategyStep"
                     Layout.fillWidth: true
                     Layout.fillHeight: true
-                    onboardingService: root.onboardingService
+                    onboardingService: root.onboarding
                     onCompletionStateChanged: function(ready) {
                         strategySetupReady = ready
                         updateSummaryState()
@@ -522,11 +522,11 @@ Item {
 
                                 Label {
                                     objectName: "licenseWizardSummaryLicenseId"
-                                    visible: licensingController && licensingController.licenseId.length > 0
+                                    visible: root.controller && root.controller.licenseId.length > 0
                                     Layout.fillWidth: true
                                     wrapMode: Text.WordWrap
-                                    text: licensingController
-                                          ? root.trId("licenseWizard.summary.licenseId", "Identyfikator licencji: %1").arg(licensingController.licenseId)
+                                    text: root.controller
+                                          ? root.trId("licenseWizard.summary.licenseId", "Identyfikator licencji: %1").arg(root.controller.licenseId)
                                           : ""
                                     color: Styles.AppTheme.textSecondary
                                 }
@@ -619,11 +619,11 @@ Item {
                 visible: currentStep < totalSteps - 1
                 enabled: currentStep === 0
                          || currentStep === 1
-                         || (currentStep === 2 && licensingController && licensingController.licenseAccepted)
+                         || (currentStep === 2 && root.controller && root.controller.licenseAccepted)
                          || (currentStep === 3 && strategySetupReady)
                 text: root.trId("licenseWizard.action.next", "Dalej")
                 onClicked: {
-                    if (currentStep === 2 && (!licensingController || !licensingController.licenseAccepted))
+                    if (currentStep === 2 && (!root.controller || !root.controller.licenseAccepted))
                         return
                     if (currentStep === 3 && !strategySetupReady)
                         return
@@ -638,8 +638,8 @@ Item {
                 text: root.trId("licenseWizard.action.finish", "Zakończ")
                 onClicked: {
                     wizardCompleted(summarySuccess)
-                    if (licensingController && licensingController.finalizeOnboarding)
-                        licensingController.finalizeOnboarding(
+                    if (root.controller && root.controller.finalizeOnboarding)
+                        root.controller.finalizeOnboarding(
                             summarySuccess,
                             selectedStrategyTitle,
                             lastConfiguredExchangeId,
