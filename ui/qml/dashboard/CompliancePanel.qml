@@ -12,10 +12,12 @@ Rectangle {
     border.color: Styles.AppTheme.surfaceSubtle
     border.width: 1
 
-    property var telemetryProvider: null
-    property var complianceController: null
-    readonly property var provider: telemetryProvider
-    readonly property var controller: complianceController
+    property var _telemetryProvider: null
+    property var _complianceController: null
+    property alias telemetryProvider: _telemetryProvider
+    property alias complianceController: _complianceController
+    readonly property var provider: _telemetryProvider
+    readonly property var controller: _complianceController
     readonly property bool hasController: controller !== null
     readonly property bool busy: controller ? controller.busy : false
 
@@ -78,7 +80,7 @@ Rectangle {
                 id: auditButton
                 objectName: "complianceAuditButton"
                 text: qsTr("Przeprowadź audyt")
-                enabled: root.hasController && (parent ? parent.enabled : true)
+                enabled: root.hasController
                 onClicked: root.controller ? root.controller.refreshAudit() : null
             }
         }
