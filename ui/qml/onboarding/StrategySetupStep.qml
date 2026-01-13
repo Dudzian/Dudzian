@@ -88,8 +88,8 @@ Item {
 
     ColumnLayout {
         anchors.fill: parent
+        anchors.margins: Styles.AppTheme.spacingXl
         spacing: Styles.AppTheme.spacingLg
-        padding: Styles.AppTheme.spacingXl
 
         Label {
             text: root.trId("licenseWizard.step.strategyTitle", "Krok 3 – konfiguracja strategii")
