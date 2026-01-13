@@ -463,7 +463,9 @@ Item {
                 model: ["yaml", "json"]
                 currentIndex: exportFormat === "json" ? 1 : 0
                 onCurrentIndexChanged: exportFormat = model[currentIndex]
-                toolTip: qsTr("Format eksportu presetu")
+                HoverHandler { id: formatSelectorHover }
+                ToolTip.visible: formatSelectorHover.hovered
+                ToolTip.text: qsTr("Format eksportu presetu")
             }
 
             ToolButton {
