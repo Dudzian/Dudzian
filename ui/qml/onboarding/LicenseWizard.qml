@@ -10,10 +10,14 @@ Item {
     width: parent ? parent.width : 960
     height: parent ? parent.height : 640
 
-    property var licensingController: null
-    property var onboardingService: null
-    readonly property var controller: licensingController
-    readonly property var onboarding: onboardingService
+    property var licensingControllerOverride: null
+    property var onboardingServiceOverride: null
+    readonly property var controller: licensingControllerOverride !== null
+                                   ? licensingControllerOverride
+                                   : (typeof licensingController !== "undefined" ? licensingController : null)
+    readonly property var onboarding: onboardingServiceOverride !== null
+                                    ? onboardingServiceOverride
+                                    : (typeof onboardingService !== "undefined" ? onboardingService : null)
     property int currentStep: 0
     readonly property int totalSteps: 6
     property bool summarySuccess: false
@@ -123,20 +127,30 @@ Item {
         target: root.onboarding
         ignoreUnknownSignals: true
         function onConfigurationReadyChanged() {
-            strategySetupReady = root.onboarding ? root.onboarding.configurationReady : false
+            if (!root.onboarding)
+                return
+            strategySetupReady = root.onboarding.configurationReady
             updateSummaryState()
         }
         function onSelectedStrategyChanged() {
-            selectedStrategyTitle = root.onboarding ? root.onboarding.selectedStrategyTitle : ""
+            if (!root.onboarding)
+                return
+            selectedStrategyTitle = root.onboarding.selectedStrategyTitle
         }
         function onStatusMessageIdChanged() {
-            onboardingStatusMessageId = root.onboarding ? root.onboarding.statusMessageId : ""
+            if (!root.onboarding)
+                return
+            onboardingStatusMessageId = root.onboarding.statusMessageId
         }
         function onStatusDetailsChanged() {
-            onboardingStatusDetails = root.onboarding ? root.onboarding.statusDetails : ""
+            if (!root.onboarding)
+                return
+            onboardingStatusDetails = root.onboarding.statusDetails
         }
         function onLastSavedExchangeChanged() {
-            lastConfiguredExchangeId = root.onboarding ? root.onboarding.lastSavedExchange : ""
+            if (!root.onboarding)
+                return
+            lastConfiguredExchangeId = root.onboarding.lastSavedExchange
         }
         function onStrategiesChanged() {
             updateSummaryState()
@@ -445,7 +459,7 @@ Item {
                     objectName: "licenseWizardStrategyStep"
                     Layout.fillWidth: true
                     Layout.fillHeight: true
-                    onboardingService: root.onboarding
+                    onboarding: root.onboarding
                     onCompletionStateChanged: function(ready) {
                         strategySetupReady = ready
                         updateSummaryState()
