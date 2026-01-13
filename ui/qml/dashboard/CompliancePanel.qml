@@ -12,8 +12,10 @@ Rectangle {
     border.color: Styles.AppTheme.surfaceSubtle
     border.width: 1
 
-    property var provider: (typeof telemetryProvider !== "undefined" ? telemetryProvider : null)
-    property var controller: (typeof complianceController !== "undefined" ? complianceController : null)
+    property var provider: null
+    property var controller: null
+    property var telemetryProvider: null
+    property var complianceController: null
     readonly property bool busy: controller ? controller.busy : false
     readonly property bool hasController: !!controller
 
@@ -58,8 +60,24 @@ Rectangle {
             root.controller.refreshAudit()
     }
 
-    onProviderChanged: ensureBindings()
-    onControllerChanged: ensureBindings()
+    onProviderChanged: {
+        if (root.provider !== root.telemetryProvider)
+            root.telemetryProvider = root.provider
+        ensureBindings()
+    }
+    onControllerChanged: {
+        if (root.controller !== root.complianceController)
+            root.complianceController = root.controller
+        ensureBindings()
+    }
+    onTelemetryProviderChanged: {
+        if (root.telemetryProvider !== root.provider)
+            root.provider = root.telemetryProvider
+    }
+    onComplianceControllerChanged: {
+        if (root.complianceController !== root.controller)
+            root.controller = root.complianceController
+    }
 
     ColumnLayout {
         anchors.fill: parent
