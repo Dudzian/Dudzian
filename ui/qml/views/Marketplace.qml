@@ -662,22 +662,19 @@ Item {
                                 model: preset.tags || []
                                 delegate: Rectangle {
                                     radius: 4
-                                    height: 20
                                     color: Qt.darker(palette.base, 1.05)
                                     border.color: palette.mid
+                                    implicitWidth: tagText.implicitWidth + 8
+                                    implicitHeight: tagText.implicitHeight + 6
                                     Text {
+                                        id: tagText
                                         anchors.centerIn: parent
                                         text: modelData
                                         font.pixelSize: 12
-            }
-        }
-
-        Components.UpdateManagerPanel {
-            Layout.fillWidth: true
-            manager: updateController
-        }
-    }
-}
+                                    }
+                                }
+                            }
+                        }
 
                         Label {
                             visible: preset.signatureVerified === false
@@ -754,9 +751,6 @@ Item {
                             }
 
                             Item { Layout.fillWidth: true }
-                                    }
-                                }
-                            }
                         }
 
                         ColumnLayout {
@@ -822,9 +816,10 @@ Item {
                                                 radius: 4
                                                 border.color: palette.mid
                                                 color: Qt.darker(palette.base, 1.05)
-                                                height: 22
-                                                width: implicitWidth
+                                                implicitWidth: assignmentText.implicitWidth + 8
+                                                implicitHeight: assignmentText.implicitHeight + 6
                                                 Text {
+                                                    id: assignmentText
                                                     anchors.centerIn: parent
                                                     text: modelData
                                                     font.pixelSize: 12
@@ -919,12 +914,14 @@ Item {
                                                 radius: 4
                                                 border.color: palette.mid
                                                 color: Qt.darker(palette.base, 1.05)
-                                                height: 28
+                                                implicitWidth: portfolioText.implicitWidth + 22
+                                                implicitHeight: portfolioText.implicitHeight + 12
                                                 RowLayout {
                                                     anchors.fill: parent
                                                     anchors.margins: 6
                                                     spacing: 6
                                                     Label {
+                                                        id: portfolioText
                                                         text: modelData
                                                         font.pixelSize: 12
                                                     }
@@ -942,17 +939,17 @@ Item {
                                             color: palette.mid
                                             font.pixelSize: 12
                                         }
-                        }
+                                    }
 
-                        CheckBox {
-                            text: qsTr("Dodaj do eksportu")
-                            checked: bundleSelectionIndexForSlug(bundleSlug(preset)) >= 0
-                            onToggled: updateBundleSelection(preset, checked)
-                        }
+                                    CheckBox {
+                                        text: qsTr("Dodaj do eksportu")
+                                        checked: bundleSelectionIndexForSlug(bundleSlug(preset)) >= 0
+                                        onToggled: updateBundleSelection(preset, checked)
+                                    }
 
-                        RowLayout {
-                            Layout.fillWidth: true
-                            spacing: 6
+                                    RowLayout {
+                                        Layout.fillWidth: true
+                                        spacing: 6
                                         TextField {
                                             id: portfolioInput
                                             Layout.fillWidth: true
@@ -974,6 +971,14 @@ Item {
                                 }
                             }
                         }
+                    }
+                }
+            }
+        }
+
+        Components.UpdateManagerPanel {
+            Layout.fillWidth: true
+            manager: updateController
         }
     }
 
