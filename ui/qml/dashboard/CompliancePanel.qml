@@ -130,40 +130,86 @@ Rectangle {
             columnSpacing: 12
             rowSpacing: 8
 
-            ListModel {
-                id: complianceStatusModel
-                ListElement { title: qsTr("KYC"); key: "kycStatus" }
-                ListElement { title: qsTr("AML"); key: "amlStatus" }
-                ListElement { title: qsTr("Limity transakcji"); key: "transactionStatus" }
-            }
+            Frame {
+                objectName: "complianceStatusFrame_kycStatus"
+                Layout.fillWidth: true
+                background: Rectangle {
+                    radius: 6
+                    color: Qt.rgba(0.12, 0.14, 0.18, 0.85)
+                }
 
-            Repeater {
-                model: complianceStatusModel
-                delegate: Frame {
-                    objectName: "complianceStatusFrame_" + key
-                    Layout.fillWidth: true
-                    background: Rectangle {
-                        radius: 6
-                        color: Qt.rgba(0.12, 0.14, 0.18, 0.85)
+                ColumnLayout {
+                    anchors.fill: parent
+                    anchors.margins: 12
+                    spacing: 6
+
+                    Text {
+                        objectName: "complianceStatusLabel_kycStatus"
+                        text: qsTr("KYC")
+                        font.bold: true
+                        color: Styles.AppTheme.textPrimary
                     }
 
-                    ColumnLayout {
-                        anchors.fill: parent
-                        anchors.margins: 12
-                        spacing: 6
+                    Text {
+                        objectName: "complianceStatusValue_kycStatus"
+                        text: root.controller ? statusLabel(root.controller.summary["kycStatus"]) : qsTr("n/d")
+                        color: root.controller ? statusColor(root.controller.summary["kycStatus"]) : Styles.AppTheme.textSecondary
+                    }
+                }
+            }
 
-                        Text {
-                            objectName: "complianceStatusLabel_" + key
-                            text: title
-                            font.bold: true
-                            color: Styles.AppTheme.textPrimary
-                        }
+            Frame {
+                objectName: "complianceStatusFrame_amlStatus"
+                Layout.fillWidth: true
+                background: Rectangle {
+                    radius: 6
+                    color: Qt.rgba(0.12, 0.14, 0.18, 0.85)
+                }
 
-                        Text {
-                            objectName: "complianceStatusValue_" + key
-                            text: root.controller ? statusLabel(root.controller.summary[key]) : qsTr("n/d")
-                            color: root.controller ? statusColor(root.controller.summary[key]) : Styles.AppTheme.textSecondary
-                        }
+                ColumnLayout {
+                    anchors.fill: parent
+                    anchors.margins: 12
+                    spacing: 6
+
+                    Text {
+                        objectName: "complianceStatusLabel_amlStatus"
+                        text: qsTr("AML")
+                        font.bold: true
+                        color: Styles.AppTheme.textPrimary
+                    }
+
+                    Text {
+                        objectName: "complianceStatusValue_amlStatus"
+                        text: root.controller ? statusLabel(root.controller.summary["amlStatus"]) : qsTr("n/d")
+                        color: root.controller ? statusColor(root.controller.summary["amlStatus"]) : Styles.AppTheme.textSecondary
+                    }
+                }
+            }
+
+            Frame {
+                objectName: "complianceStatusFrame_transactionStatus"
+                Layout.fillWidth: true
+                background: Rectangle {
+                    radius: 6
+                    color: Qt.rgba(0.12, 0.14, 0.18, 0.85)
+                }
+
+                ColumnLayout {
+                    anchors.fill: parent
+                    anchors.margins: 12
+                    spacing: 6
+
+                    Text {
+                        objectName: "complianceStatusLabel_transactionStatus"
+                        text: qsTr("Limity transakcji")
+                        font.bold: true
+                        color: Styles.AppTheme.textPrimary
+                    }
+
+                    Text {
+                        objectName: "complianceStatusValue_transactionStatus"
+                        text: root.controller ? statusLabel(root.controller.summary["transactionStatus"]) : qsTr("n/d")
+                        color: root.controller ? statusColor(root.controller.summary["transactionStatus"]) : Styles.AppTheme.textSecondary
                     }
                 }
             }
