@@ -14,7 +14,7 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 require_pyside6()
 
 from PySide6.QtCore import QObject, QMetaObject, Qt, QUrl, Slot, Q_ARG
-from PySide6.QtQml import QQmlApplicationEngine, QQmlComponent
+from PySide6.QtQml import QQmlApplicationEngine, QQmlComponent, QJSValue
 
 try:  # pragma: no cover - zależy od środowiska wykonawczego
     from PySide6.QtWidgets import QApplication
@@ -95,6 +95,12 @@ class StubMarketplaceController(QObject):
         }
 
 
+def _as_py(value: object) -> object:
+    if isinstance(value, QJSValue):
+        return value.toVariant()
+    return value
+
+
 @pytest.mark.timeout(20)
 def test_marketplace_view_refresh_and_actions(tmp_path: Path) -> None:
     app = QApplication.instance() or QApplication([])
@@ -167,8 +173,11 @@ def test_marketplace_view_refresh_and_actions(tmp_path: Path) -> None:
     QMetaObject.invokeMethod(root, "refreshPresets", Qt.DirectConnection)
     app.processEvents()
 
-    presets_variant = root.property("presets")
-    assert isinstance(presets_variant, list)
+    presets_variant = _as_py(root.property("presets"))
+    assert isinstance(
+        presets_variant, list
+    ), f"presets type={type(presets_variant)!r} value={presets_variant!r}"
+    presets_variant = [_as_py(item) for item in presets_variant]
     assert len(presets_variant) == 1
     assert controller.list_calls >= 1
 
@@ -181,10 +190,17 @@ def test_marketplace_view_refresh_and_actions(tmp_path: Path) -> None:
     )
     app.processEvents()
     assert controller.import_calls[-1] == import_url.toString()
-    presets_variant = root.property("presets")
+    presets_variant = _as_py(root.property("presets"))
+    assert isinstance(
+        presets_variant, list
+    ), f"presets type={type(presets_variant)!r} value={presets_variant!r}"
+    presets_variant = [_as_py(item) for item in presets_variant]
     assert len(presets_variant) == 2
 
-    first_preset = presets_variant[0]
+    first_preset = _as_py(presets_variant[0])
+    assert isinstance(
+        first_preset, dict
+    ), f"first_preset type={type(first_preset)!r} value={first_preset!r}"
     export_url = QUrl.fromLocalFile(str(tmp_path / "out.yaml"))
     QMetaObject.invokeMethod(
         root,
@@ -194,9 +210,10 @@ def test_marketplace_view_refresh_and_actions(tmp_path: Path) -> None:
         Q_ARG(QUrl, export_url),
     )
     app.processEvents()
+    export_format = _as_py(root.property("exportFormat"))
     assert controller.export_calls[-1] == (
         first_preset.get("presetId"),
-        root.property("exportFormat"),
+        export_format,
         export_url.toString(),
     )
 
