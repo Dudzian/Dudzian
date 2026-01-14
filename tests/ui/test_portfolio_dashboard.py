@@ -16,7 +16,7 @@ require_pyside6()
 
 from PySide6.QtCore import (QAbstractListModel, QModelIndex, QObject, Property,
                             Qt, QUrl, Slot, QMetaObject)
-from PySide6.QtQml import QQmlApplicationEngine
+from PySide6.QtQml import QQmlApplicationEngine, QQmlComponent
 
 try:  # pragma: no cover - zależy od środowiska CI
     from PySide6.QtWidgets import QApplication
@@ -138,8 +138,62 @@ def test_portfolio_dashboard_builds_exposures_and_history(tmp_path: Path) -> Non
     context.setContextProperty("alertsModel", alerts_model)
 
     view_path = Path(__file__).resolve().parents[2] / "ui" / "qml" / "views" / "PortfolioDashboard.qml"
+    qml_warnings = []
+
+    def collect_warnings(warnings: list[object]) -> None:
+        qml_warnings.extend(warnings)
+
+    engine.warnings.connect(collect_warnings)
     engine.load(QUrl.fromLocalFile(str(view_path)))
-    assert engine.rootObjects(), "Nie udało się załadować dashboardu portfela"
+    if not engine.rootObjects():
+        warning_lines = []
+        for warning in qml_warnings:
+            try:
+                line = warning.line()
+                column = warning.column()
+                location = f" (line {line}, column {column})" if line or column else ""
+            except Exception:
+                location = ""
+            warning_lines.append(f"- {warning}{location}")
+        try:
+            engine_warnings = engine.warnings()
+        except Exception:
+            engine_warnings = []
+        if engine_warnings:
+            warning_lines.extend(f"- {warning}" for warning in engine_warnings)
+        warnings_message = "\n".join(warning_lines) if warning_lines else "Brak zarejestrowanych ostrzeżeń QML."
+
+        component = QQmlComponent(engine)
+        component.loadUrl(QUrl.fromLocalFile(str(view_path)))
+        component_errors = []
+        try:
+            if getattr(component, "isError", None) and component.isError():
+                component_errors = component.errors()
+            elif component.status() == QQmlComponent.Error:
+                component_errors = component.errors()
+        except Exception:
+            component_errors = []
+        component_error_details = "\n".join(
+            getattr(error, "toString", lambda: str(error))() for error in component_errors
+        ) or "(none)"
+        component_error_string = component.errorString() or "(none)"
+
+        exists_message = f"Path exists: {os.path.exists(view_path)}"
+        pytest.fail(
+            "\n".join(
+                [
+                    "Nie udało się załadować dashboardu portfela.",
+                    f"view_path: {view_path}",
+                    exists_message,
+                    "QML warnings:",
+                    warnings_message,
+                    "=== Component errors ===",
+                    component_error_details,
+                    "=== Component errorString ===",
+                    component_error_string,
+                ]
+            )
+        )
 
     root = engine.rootObjects()[0]
     assert isinstance(root, QObject)

@@ -16,20 +16,40 @@ Item {
         ? root.controllerOverride
         : (typeof appController !== "undefined" && appController ? appController : null)
     )
-    property var riskModel: resolvedController ? resolvedController.riskModel : (typeof riskModel !== "undefined" ? riskModel : null)
-    property var riskHistoryModel: resolvedController ? resolvedController.riskHistoryModel : (typeof riskHistoryModel !== "undefined" ? riskHistoryModel : null)
-    property var alertsModel: (typeof alertsModel !== "undefined" ? alertsModel : null)
+    property var riskModelOverride: null
+    property var riskHistoryModelOverride: null
+    property var alertsModelOverride: null
+
+    readonly property var resolvedRiskModel: (
+        root.riskModelOverride
+        ? root.riskModelOverride
+        : (resolvedController && resolvedController.riskModel ? resolvedController.riskModel
+           : (typeof riskModel !== "undefined" && riskModel ? riskModel : null))
+    )
+    readonly property var resolvedRiskHistoryModel: (
+        root.riskHistoryModelOverride
+        ? root.riskHistoryModelOverride
+        : (resolvedController && resolvedController.riskHistoryModel ? resolvedController.riskHistoryModel
+           : (typeof riskHistoryModel !== "undefined" && riskHistoryModel ? riskHistoryModel : null))
+    )
+    readonly property var resolvedAlertsModel: (
+        root.alertsModelOverride
+        ? root.alertsModelOverride
+        : (resolvedController && resolvedController.alertsModel ? resolvedController.alertsModel
+           : (typeof alertsModel !== "undefined" && alertsModel ? alertsModel : null))
+    )
 
     property var exchangeExposureItems: []
     property var strategyExposureItems: []
     property var historyPoints: []
+    property bool alertsLayoutRefreshScheduled: false
 
     function rebuildHistoryPoints() {
-        if (!riskHistoryModel || riskHistoryModel.count === undefined)
+        if (!resolvedRiskHistoryModel || resolvedRiskHistoryModel.count === undefined)
             return
         var points = []
-        for (var i = 0; i < riskHistoryModel.count; ++i) {
-            var entry = riskHistoryModel.get(i)
+        for (var i = 0; i < resolvedRiskHistoryModel.count; ++i) {
+            var entry = resolvedRiskHistoryModel.get(i)
             if (!entry)
                 continue
             points.push({ timestamp: entry.timestamp, value: entry.portfolioValue })
@@ -38,12 +58,12 @@ Item {
     }
 
     function rebuildExposureTables() {
-        if (!riskModel || riskModel.count === undefined)
+        if (!resolvedRiskModel || resolvedRiskModel.count === undefined)
             return
         var exchanges = []
         var strategies = []
-        for (var i = 0; i < riskModel.count; ++i) {
-            var row = riskModel.get(i)
+        for (var i = 0; i < resolvedRiskModel.count; ++i) {
+            var row = resolvedRiskModel.get(i)
             if (!row || !row.code)
                 continue
             var code = row.code
@@ -73,16 +93,47 @@ Item {
     }
 
     Connections {
-        target: riskHistoryModel
+        target: resolvedRiskHistoryModel
         ignoreUnknownSignals: true
         function onHistoryChanged() { rebuildHistoryPoints() }
         function onSnapshotRecorded() { rebuildHistoryPoints() }
     }
 
     Connections {
-        target: riskModel
+        target: resolvedRiskModel
         ignoreUnknownSignals: true
         function onRiskStateChanged() { rebuildExposureTables() }
+    }
+
+    function refreshAlertsLayout() {
+        if (!alertsListView)
+            return
+        if (alertsListView.forceLayout)
+            alertsListView.forceLayout()
+        else if (alertsListView.requestLayout)
+            alertsListView.requestLayout()
+    }
+
+    function scheduleAlertsLayoutRefresh() {
+        if (alertsLayoutRefreshScheduled)
+            return
+        alertsLayoutRefreshScheduled = true
+        Qt.callLater(function() {
+            alertsLayoutRefreshScheduled = false
+            refreshAlertsLayout()
+        })
+    }
+
+    onResolvedAlertsModelChanged: scheduleAlertsLayoutRefresh()
+
+    Connections {
+        target: resolvedAlertsModel ? resolvedAlertsModel : null
+        ignoreUnknownSignals: true
+        function onAlertsChanged() { scheduleAlertsLayoutRefresh() }
+        function onCountChanged() { scheduleAlertsLayoutRefresh() }
+        function onModelReset() { scheduleAlertsLayoutRefresh() }
+        function onRowsInserted() { scheduleAlertsLayoutRefresh() }
+        function onRowsRemoved() { scheduleAlertsLayoutRefresh() }
     }
 
     ColumnLayout {
@@ -127,6 +178,7 @@ Item {
                     }
 
                     ListView {
+                        id: exchangeExposureList
                         objectName: "exchangeExposureList"
                         Layout.fillWidth: true
                         Layout.fillHeight: true
@@ -152,7 +204,12 @@ Item {
                                 }
                             }
                         }
-                        placeholderText: qsTr("Brak danych ekspozycji")
+                        Label {
+                            anchors.centerIn: parent
+                            color: palette.mid
+                            text: qsTr("Brak danych ekspozycji")
+                            visible: exchangeExposureList.count === 0
+                        }
                     }
                 }
             }
@@ -180,6 +237,7 @@ Item {
                     }
 
                     ListView {
+                        id: strategyExposureList
                         objectName: "strategyExposureList"
                         Layout.fillWidth: true
                         Layout.fillHeight: true
@@ -205,7 +263,12 @@ Item {
                                 }
                             }
                         }
-                        placeholderText: qsTr("Brak danych o strategiach")
+                        Label {
+                            anchors.centerIn: parent
+                            color: palette.mid
+                            text: qsTr("Brak danych o strategiach")
+                            visible: strategyExposureList.count === 0
+                        }
                     }
                 }
             }
@@ -227,29 +290,35 @@ Item {
                     }
 
                     ListView {
+                        id: alertsListView
                         objectName: "alertsListView"
                         Layout.fillWidth: true
                         Layout.fillHeight: true
                         clip: true
-                        model: alertsModel ? alertsModel : []
+                        model: resolvedAlertsModel ? resolvedAlertsModel : []
                         delegate: Frame {
                             width: ListView.view.width
                             padding: 10
                             background: Rectangle {
                                 radius: 8
-                                color: model.severity === 2 ? Qt.rgba(0.58, 0.16, 0.2, 0.45)
-                                                           : (model.severity === 1 ? Qt.rgba(0.96, 0.67, 0.17, 0.35)
+                                color: severity === 2 ? Qt.rgba(0.58, 0.16, 0.2, 0.45)
+                                                     : (severity === 1 ? Qt.rgba(0.96, 0.67, 0.17, 0.35)
                                                                                 : Qt.darker(palette.base, 1.02))
                             }
                             ColumnLayout {
                                 anchors.fill: parent
                                 spacing: 4
-                                Label { text: model.title || qsTr("Alert"); font.bold: true }
-                                Label { Layout.fillWidth: true; wrapMode: Text.WordWrap; text: model.description || "" }
-                                Label { text: Qt.formatDateTime(model.timestamp || new Date(), Qt.DefaultLocaleShortDate); color: palette.mid; font.pixelSize: 12 }
+                                Label { text: title || qsTr("Alert"); font.bold: true }
+                                Label { Layout.fillWidth: true; wrapMode: Text.WordWrap; text: description || "" }
+                                Label { text: Qt.formatDateTime(timestamp || new Date(), Qt.DefaultLocaleShortDate); color: palette.mid; font.pixelSize: 12 }
                             }
                         }
-                        placeholderText: qsTr("Brak alertów")
+                        Label {
+                            anchors.centerIn: parent
+                            color: palette.mid
+                            text: qsTr("Brak alertów")
+                            visible: alertsListView.count === 0
+                        }
                     }
 
                     RowLayout {
@@ -257,13 +326,16 @@ Item {
                         spacing: 8
                         Button {
                             text: qsTr("Potwierdź wszystkie")
-                            enabled: alertsModel && alertsModel.unacknowledgedCount > 0
-                            onClicked: { if (alertsModel) alertsModel.acknowledgeAll() }
+                            enabled: resolvedAlertsModel && (
+                                (resolvedAlertsModel.unacknowledgedCount !== undefined && resolvedAlertsModel.unacknowledgedCount > 0)
+                                || (resolvedAlertsModel.count !== undefined && resolvedAlertsModel.count > 0)
+                            )
+                            onClicked: { if (resolvedAlertsModel) resolvedAlertsModel.acknowledgeAll() }
                         }
                         Item { Layout.fillWidth: true }
                         Label {
                             color: palette.mid
-                            text: alertsModel ? qsTr("Łącznie: %1").arg(alertsModel.count || alertsModel.rowCount()) : ""
+                            text: resolvedAlertsModel ? qsTr("Łącznie: %1").arg(resolvedAlertsModel.count || resolvedAlertsModel.rowCount()) : ""
                         }
                     }
                 }
