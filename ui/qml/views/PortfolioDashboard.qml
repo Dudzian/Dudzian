@@ -8,9 +8,16 @@ Item {
     implicitWidth: 960
     implicitHeight: 600
 
-    property var appController: (typeof appController !== "undefined" ? appController : null)
-    property var riskModel: appController ? appController.riskModel : (typeof riskModel !== "undefined" ? riskModel : null)
-    property var riskHistoryModel: appController ? appController.riskHistoryModel : (typeof riskHistoryModel !== "undefined" ? riskHistoryModel : null)
+    // Nie shadowuj context property "appController" – inaczej robisz self-binding i QML potrafi nie wstać.
+    property var controllerOverride: null
+
+    readonly property var resolvedController: (
+        root.controllerOverride
+        ? root.controllerOverride
+        : (typeof appController !== "undefined" && appController ? appController : null)
+    )
+    property var riskModel: resolvedController ? resolvedController.riskModel : (typeof riskModel !== "undefined" ? riskModel : null)
+    property var riskHistoryModel: resolvedController ? resolvedController.riskHistoryModel : (typeof riskHistoryModel !== "undefined" ? riskHistoryModel : null)
     property var alertsModel: (typeof alertsModel !== "undefined" ? alertsModel : null)
 
     property var exchangeExposureItems: []
