@@ -170,3 +170,15 @@ def pytest_collection_modifyitems(config: pytest.Config, items: list[pytest.Item
     for item in items:
         if "network" in item.keywords:
             item.add_marker(skip_network)
+
+
+@pytest.fixture(autouse=True, scope="session")
+def shutdown_background_components() -> None:
+    yield
+    try:
+        from bot_core.exchanges.streaming import LocalLongPollStream
+        from bot_core.execution.live_router import LiveExecutionRouter
+    except Exception:
+        return
+    LocalLongPollStream.close_all_active()
+    LiveExecutionRouter.close_all_active()

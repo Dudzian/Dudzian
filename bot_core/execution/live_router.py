@@ -14,9 +14,10 @@ import math
 import os
 import threading
 import time
+import weakref
 from datetime import datetime, timezone
 from collections import OrderedDict
-from contextlib import asynccontextmanager
+from contextlib import asynccontextmanager, suppress
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable, Iterable, Mapping, MutableMapping, Sequence
@@ -102,6 +103,16 @@ except Exception:  # pragma: no cover
 
 
 _LOGGER = logging.getLogger(__name__)
+_TEST_MODE_ENV = "DUDZIAN_TEST_MODE"
+_ALLOW_TEST_LIVE_ROUTER_ENV = "DUDZIAN_ALLOW_LIVE_ROUTER"
+
+
+def _is_test_mode_enabled() -> bool:
+    return os.getenv(_TEST_MODE_ENV, "").strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _allow_live_router_in_test_mode() -> bool:
+    return os.getenv(_ALLOW_TEST_LIVE_ROUTER_ENV, "").strip().lower() in {"1", "true", "yes", "on"}
 
 
 def _build_api_error(message: str, *, status: int = 422, payload: Mapping[str, object] | None = None) -> ExchangeAPIError:
@@ -434,10 +445,15 @@ class LiveExecutionRouter(ExecutionService):
             name="LiveExecutionRouterLoop",
             daemon=True,
         )
-        self._loop_thread.start()
-        self._loop_ready.wait()
-
         self._closed = False
+        self._disabled_for_tests = _is_test_mode_enabled() and not _allow_live_router_in_test_mode()
+        if self._disabled_for_tests:
+            _LOGGER.info("LiveExecutionRouter wyłączony w trybie testowym.")
+            self._loop_ready.set()
+            self._closed = True
+        else:
+            self._loop_thread.start()
+            self._loop_ready.wait()
 
         if AsyncIOTaskQueue is not None and isinstance(io_dispatcher, AsyncIOTaskQueue):
             self._io_dispatcher: AsyncIOTaskQueue | None = io_dispatcher
@@ -445,6 +461,9 @@ class LiveExecutionRouter(ExecutionService):
             self._io_dispatcher = None
 
         self._inflight_by_exchange: dict[str, int] = {}
+
+        if not self._disabled_for_tests:
+            self._register_instance()
 
         if self._g_queue_depth is not None:
             try:
@@ -691,15 +710,19 @@ class LiveExecutionRouter(ExecutionService):
 
     def close(self) -> None:
         if not self._mark_closed():
+            self._unregister_instance()
             return
         self._shutdown_loop_sync()
         self._finalize_shutdown_sync()
+        self._unregister_instance()
 
     async def close_async(self) -> None:
         if not self._mark_closed():
+            self._unregister_instance()
             return
         await self._shutdown_loop_async()
         await self._finalize_shutdown_async()
+        self._unregister_instance()
 
     def get_runtime_stats(self) -> RouterRuntimeStats:
         """Zwraca bieżące statystyki kolejki i limiterów routera."""
@@ -728,6 +751,28 @@ class LiveExecutionRouter(ExecutionService):
             self.close()
         except Exception:
             pass
+
+    _active_lock = threading.Lock()
+    _active_instances: "weakref.WeakSet[LiveExecutionRouter]" = weakref.WeakSet()
+
+    def _register_instance(self) -> None:
+        with self._active_lock:
+            self._active_instances.add(self)
+
+    def _unregister_instance(self) -> None:
+        with self._active_lock:
+            with suppress(KeyError):
+                self._active_instances.remove(self)
+
+    @classmethod
+    def close_all_active(cls) -> None:
+        with cls._active_lock:
+            active = list(cls._active_instances)
+        for router in active:
+            try:
+                router.close()
+            except Exception:  # pragma: no cover - defensywnie w teardownie
+                _LOGGER.debug("Nie udało się zamknąć LiveExecutionRouter", exc_info=True)
 
     def _mark_closed(self) -> bool:
         if self._closed:
