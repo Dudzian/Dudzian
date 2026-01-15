@@ -138,8 +138,8 @@ Item {
 
     ColumnLayout {
         anchors.fill: parent
+        anchors.margins: 18
         spacing: 18
-        padding: 18
 
         Label {
             text: qsTr("Dashboard portfela")
@@ -168,8 +168,8 @@ Item {
 
                 ColumnLayout {
                     anchors.fill: parent
+                    anchors.margins: 14
                     spacing: 10
-                    padding: 14
 
                     Label {
                         text: qsTr("Ekspozycja per giełda")
@@ -227,8 +227,8 @@ Item {
 
                 ColumnLayout {
                     anchors.fill: parent
+                    anchors.margins: 14
                     spacing: 10
-                    padding: 14
 
                     Label {
                         text: qsTr("Ekspozycja per strategia")
@@ -280,8 +280,8 @@ Item {
 
                 ColumnLayout {
                     anchors.fill: parent
+                    anchors.margins: 14
                     spacing: 10
-                    padding: 14
 
                     Label {
                         text: qsTr("Aktywne alerty")
