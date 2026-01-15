@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import logging
+import os
 from dataclasses import dataclass
 from functools import lru_cache
 from pathlib import Path
@@ -421,6 +422,9 @@ def _bootstrap_execution_runtime(
     *,
     environment: str | None,
 ) -> _ExecutionBootstrap:
+    if os.getenv("DUDZIAN_TEST_MODE", "").strip().lower() in {"1", "true", "yes", "on"}:
+        logger.info("Pomijam LiveExecutionRouter w trybie testowym.")
+        return _ExecutionBootstrap(None, None)
     if manager is None or LiveExecutionRouter is None or ExchangeAdapter is None:
         return _ExecutionBootstrap(None, None)
 

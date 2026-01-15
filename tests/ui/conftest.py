@@ -7,6 +7,8 @@ import logging
 import os
 import subprocess
 import sys
+import threading
+import time
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Generator, List
@@ -103,6 +105,57 @@ def configure_qt_environment(
     finally:
         for name in applied:
             os.environ.pop(name, None)
+
+
+@pytest.fixture(autouse=True)
+def enforce_test_mode_for_qml(request: pytest.FixtureRequest) -> Generator[None, None, None]:
+    if "qml" not in request.node.keywords:
+        yield
+        return
+    previous = os.environ.get("DUDZIAN_TEST_MODE")
+    os.environ["DUDZIAN_TEST_MODE"] = "1"
+    try:
+        yield
+    finally:
+        if previous is None:
+            os.environ.pop("DUDZIAN_TEST_MODE", None)
+        else:
+            os.environ["DUDZIAN_TEST_MODE"] = previous
+
+
+@pytest.fixture(autouse=True)
+def shutdown_live_threads_after_qml(request: pytest.FixtureRequest) -> Generator[None, None, None]:
+    if "qml" not in request.node.keywords:
+        yield
+        return
+    yield
+    try:
+        from bot_core.exchanges.streaming import LocalLongPollStream
+        from bot_core.execution.live_router import LiveExecutionRouter
+    except Exception:
+        return
+    LocalLongPollStream.close_all_active()
+    LiveExecutionRouter.close_all_active()
+    prefixes = ("LocalLongPollStream[", "LiveExecutionRouterLoop", "LiveExecutionRouterWorker-")
+    deadline = time.monotonic() + 2.0
+    active: list[threading.Thread] = []
+    while True:
+        active = [
+            thread
+            for thread in threading.enumerate()
+            if thread.is_alive() and thread.name.startswith(prefixes)
+        ]
+        if not active or time.monotonic() >= deadline:
+            break
+        time.sleep(0.05)
+    LocalLongPollStream.close_all_active()
+    LiveExecutionRouter.close_all_active()
+    active = [
+        thread
+        for thread in threading.enumerate()
+        if thread.is_alive() and thread.name.startswith(prefixes)
+    ]
+    assert not active, f"Pozostały aktywne wątki live: {[t.name for t in active]}"
 
 
 @pytest.fixture(autouse=True)

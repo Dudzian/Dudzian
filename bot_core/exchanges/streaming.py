@@ -8,10 +8,12 @@ import gzip
 import json
 import logging
 import math
+import os
 import random
 import socket
 import threading
 import time
+import weakref
 import zlib
 from collections import deque
 from datetime import timezone
@@ -56,6 +58,8 @@ except ModuleNotFoundError:  # pragma: no cover - brak biblioteki zstd
 _LOGGER = logging.getLogger(__name__)
 
 _BASE_ACCEPT_ENCODING_VALUES = ("gzip", "deflate")
+_TEST_MODE_ENV = "DUDZIAN_TEST_MODE"
+_ALLOW_TEST_LONG_POLL_ENV = "DUDZIAN_ALLOW_LONG_POLL"
 
 _CONTENT_ENCODING_ALIASES: Mapping[str, str] = {
     "x-gzip": "gzip",
@@ -73,6 +77,14 @@ def _build_accept_encoding_values() -> list[str]:
     if zstandard is not None:
         values.append("zstd")
     return values
+
+
+def _is_test_mode_enabled() -> bool:
+    return os.getenv(_TEST_MODE_ENV, "").strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _allow_long_poll_in_test_mode() -> bool:
+    return os.getenv(_ALLOW_TEST_LONG_POLL_ENV, "").strip().lower() in {"1", "true", "yes", "on"}
 
 
 def _iter_header_entries(value: object) -> Iterable[str]:
@@ -503,6 +515,9 @@ class StreamBatch:
 class LocalLongPollStream(Iterable[StreamBatch]):
     """Iterator korzystający z lokalnego endpointu REST/gRPC opartego o long-polle."""
 
+    _active_lock = threading.Lock()
+    _active_instances: "weakref.WeakSet[LocalLongPollStream]" = weakref.WeakSet()
+
     def __init__(
         self,
         *,
@@ -664,6 +679,26 @@ class LocalLongPollStream(Iterable[StreamBatch]):
         self._metric_reconnect_state.set(0.0, labels=self._metric_labels)
         self._metric_delivery_lag_latest.set(0.0, labels=self._metric_labels)
         self._update_queue_metric()
+        self._register_instance()
+
+    def _register_instance(self) -> None:
+        with self._active_lock:
+            self._active_instances.add(self)
+
+    def _unregister_instance(self) -> None:
+        with self._active_lock:
+            with contextlib.suppress(KeyError):
+                self._active_instances.remove(self)
+
+    @classmethod
+    def close_all_active(cls) -> None:
+        with cls._active_lock:
+            active = list(cls._active_instances)
+        for stream in active:
+            try:
+                stream.close()
+            except Exception:  # pragma: no cover - defensywnie w teardownie
+                _LOGGER.debug("Nie udało się zamknąć LocalLongPollStream", exc_info=True)
 
     def start(self) -> "LocalLongPollStream":
         """Uruchamia wątek odpowiedzialny za polling long-pollowy."""
@@ -863,12 +898,21 @@ class LocalLongPollStream(Iterable[StreamBatch]):
         if worker and worker.is_alive() and worker is not threading.current_thread():
             worker.join(timeout=1.0)
         self._worker_thread = None
+        self._unregister_instance()
 
     # ------------------------------------------------------------------
     # Wewnętrzne operacje long-polla
     # ------------------------------------------------------------------
     def _ensure_worker(self) -> None:
         if self._closed:
+            return
+        if _is_test_mode_enabled() and not _allow_long_poll_in_test_mode():
+            with self._pending_condition:
+                if self._worker_error is None:
+                    self._worker_error = RuntimeError(
+                        "LocalLongPollStream jest wyłączony w trybie testowym."
+                    )
+                    self._pending_condition.notify_all()
             return
         with self._pending_condition:
             worker = self._worker_thread
