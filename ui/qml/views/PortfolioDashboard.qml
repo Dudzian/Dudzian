@@ -44,6 +44,19 @@ Item {
     property var historyPoints: []
     property bool alertsLayoutRefreshScheduled: false
 
+    Timer {
+        id: alertsLayoutRefreshTimer
+        interval: 0
+        repeat: false
+        running: false
+        onTriggered: {
+            alertsLayoutRefreshScheduled = false
+            if (!root || !alertsListView)
+                return
+            refreshAlertsLayout()
+        }
+    }
+
     function rebuildHistoryPoints() {
         if (!resolvedRiskHistoryModel || resolvedRiskHistoryModel.count === undefined)
             return
@@ -118,10 +131,7 @@ Item {
         if (alertsLayoutRefreshScheduled)
             return
         alertsLayoutRefreshScheduled = true
-        Qt.callLater(function() {
-            alertsLayoutRefreshScheduled = false
-            refreshAlertsLayout()
-        })
+        alertsLayoutRefreshTimer.start()
     }
 
     onResolvedAlertsModelChanged: scheduleAlertsLayoutRefresh()
