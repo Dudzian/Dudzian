@@ -4,8 +4,10 @@ from __future__ import annotations
 import asyncio
 import inspect
 import logging
+import os
 import threading
 import time
+import weakref
 from collections import deque
 from datetime import datetime, timezone
 from pathlib import Path
@@ -35,6 +37,12 @@ _DEFAULT_OHLCV_COLUMNS: tuple[str, ...] = (
     "volume",
 )
 _LOGGER = logging.getLogger(__name__)
+_TEST_MODE_ENV = "DUDZIAN_TEST_MODE"
+_PIPELINE_THREAD_NAME = "PipelineStream"
+
+
+def _is_test_mode_enabled() -> bool:
+    return os.getenv(_TEST_MODE_ENV, "").strip().lower() in {"1", "true", "yes", "on"}
 
 
 def consume_stream(
@@ -247,6 +255,9 @@ class OHLCVStrategyFeed(StrategyDataFeed):
 class StreamingStrategyFeed(StrategyDataFeed):
     """Łączy `LocalLongPollStream` z interfejsem StrategyDataFeed."""
 
+    _active_lock = threading.Lock()
+    _active_instances: "weakref.WeakSet[StreamingStrategyFeed]" = weakref.WeakSet()
+
     def __init__(
         self,
         *,
@@ -271,6 +282,7 @@ class StreamingStrategyFeed(StrategyDataFeed):
         self._stop_event = threading.Event()
         self._thread: threading.Thread | None = None
         self._async_task: asyncio.Task[None] | None = None
+        self._disabled = False
         self._buffers: dict[str, deque[MarketSnapshot]] = {}
         self._known_symbols = {
             symbol
@@ -282,13 +294,20 @@ class StreamingStrategyFeed(StrategyDataFeed):
         self._last_event_at: float | None = None
 
     def start(self) -> None:
+        if _is_test_mode_enabled():
+            self._disabled = True
+            self._stop_event.set()
+            return
+        if self._disabled:
+            return
         if self._async_task and not self._async_task.done():
             raise RuntimeError("StreamingStrategyFeed jest już uruchomiony w trybie asynchronicznym.")
         if self._thread and self._thread.is_alive():
             return
         self._stop_event.clear()
-        self._thread = threading.Thread(target=self._run_loop, name="strategy-stream", daemon=True)
+        self._thread = threading.Thread(target=self._run_loop, name=_PIPELINE_THREAD_NAME, daemon=True)
         self._thread.start()
+        self._register_instance()
 
     def stop(self) -> None:
         self._stop_event.set()
@@ -298,6 +317,7 @@ class StreamingStrategyFeed(StrategyDataFeed):
         task = self._async_task
         if task and not task.done():
             task.cancel()
+        self._unregister_instance()
 
     def ingest_batch(self, batch: StreamBatch) -> None:
         if not batch.events:
@@ -327,6 +347,26 @@ class StreamingStrategyFeed(StrategyDataFeed):
         *,
         loop: asyncio.AbstractEventLoop | None = None,
     ) -> asyncio.Task[None]:
+        if _is_test_mode_enabled():
+            self._disabled = True
+            self._stop_event.set()
+            if loop is None:
+                try:
+                    loop = asyncio.get_running_loop()
+                except RuntimeError:  # pragma: no cover
+                    loop = asyncio.get_event_loop()
+            task = loop.create_task(asyncio.sleep(0))
+            self._async_task = task
+            return task
+        if self._disabled:
+            if self._async_task is None:
+                if loop is None:
+                    try:
+                        loop = asyncio.get_running_loop()
+                    except RuntimeError:  # pragma: no cover
+                        loop = asyncio.get_event_loop()
+                self._async_task = loop.create_task(asyncio.sleep(0))
+            return self._async_task
         if self._thread and self._thread.is_alive():
             raise RuntimeError("StreamingStrategyFeed jest już uruchomiony w trybie synchronicznym.")
         if self._async_task and not self._async_task.done():
@@ -340,6 +380,7 @@ class StreamingStrategyFeed(StrategyDataFeed):
 
         self._stop_event.clear()
         self._async_task = loop.create_task(self._run_loop_async())
+        self._register_instance()
         return self._async_task
 
     async def stop_async(self) -> None:
@@ -356,6 +397,7 @@ class StreamingStrategyFeed(StrategyDataFeed):
             await task
         except asyncio.CancelledError:  # pragma: no cover
             pass
+        self._unregister_instance()
 
     def load_history(self, strategy_name: str, bars: int) -> Sequence[MarketSnapshot]:
         return self._history_feed.load_history(strategy_name, bars)
@@ -423,6 +465,7 @@ class StreamingStrategyFeed(StrategyDataFeed):
             raise
         finally:
             self._async_task = None
+            self._unregister_instance()
 
     def _handle_heartbeat(self, timestamp: float) -> None:
         if self._last_event_at is None:
@@ -430,6 +473,27 @@ class StreamingStrategyFeed(StrategyDataFeed):
         drift = timestamp - self._last_event_at
         if drift > max(self._heartbeat_interval, 1.0):
             self._logger.debug("Opóźnienie streamu strategii %.2f s", drift)
+
+    def _register_instance(self) -> None:
+        with self._active_lock:
+            self._active_instances.add(self)
+
+    def _unregister_instance(self) -> None:
+        with self._active_lock:
+            try:
+                self._active_instances.remove(self)
+            except KeyError:
+                pass
+
+    @classmethod
+    def close_all_active(cls) -> None:
+        with cls._active_lock:
+            active = list(cls._active_instances)
+        for pipeline in active:
+            try:
+                pipeline.stop()
+            except Exception:  # pragma: no cover
+                _LOGGER.debug("Nie udało się zamknąć StreamingStrategyFeed", exc_info=True)
 
     @staticmethod
     def _float(value: object) -> float | None:
@@ -769,4 +833,3 @@ def _ensure_local_market_data_availability(
         environment=environment,
         now_ms=now_ms,
     )
-

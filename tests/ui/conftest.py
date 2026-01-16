@@ -130,13 +130,23 @@ def shutdown_live_threads_after_qml(request: pytest.FixtureRequest) -> Generator
         return
     yield
     try:
+        from bot_core.events.emitter import EventEmitter
         from bot_core.exchanges.streaming import LocalLongPollStream
         from bot_core.execution.live_router import LiveExecutionRouter
+        from bot_core.runtime.pipeline import Pipeline
     except Exception:
         return
     LocalLongPollStream.close_all_active()
     LiveExecutionRouter.close_all_active()
-    prefixes = ("LocalLongPollStream[", "LiveExecutionRouterLoop", "LiveExecutionRouterWorker-")
+    EventEmitter.close_all_active()
+    Pipeline.close_all_active()
+    prefixes = (
+        "LocalLongPollStream[",
+        "LiveExecutionRouterLoop",
+        "LiveExecutionRouterWorker-",
+        "EventEmitter",
+        "PipelineStream",
+    )
     deadline = time.monotonic() + 2.0
     active: list[threading.Thread] = []
     while True:
@@ -150,6 +160,8 @@ def shutdown_live_threads_after_qml(request: pytest.FixtureRequest) -> Generator
         time.sleep(0.05)
     LocalLongPollStream.close_all_active()
     LiveExecutionRouter.close_all_active()
+    EventEmitter.close_all_active()
+    Pipeline.close_all_active()
     active = [
         thread
         for thread in threading.enumerate()
