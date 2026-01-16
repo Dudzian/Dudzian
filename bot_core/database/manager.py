@@ -14,6 +14,8 @@ import csv
 import datetime as dt
 import json
 import logging
+import threading
+import weakref
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, AsyncIterator, Callable, Dict, List, Optional, Union
@@ -40,6 +42,79 @@ from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, sessionmaker
 # --- Logowanie strukturalne ---
 logger = logging.getLogger("bot_core.database.manager")
 logger.propagate = True
+
+_active_lock = threading.Lock()
+_active_instances: "weakref.WeakSet[DatabaseManager]" = weakref.WeakSet()
+
+
+def _register_instance(instance: "DatabaseManager") -> None:
+    with _active_lock:
+        _active_instances.add(instance)
+
+
+def _discard_instance(instance: "DatabaseManager") -> None:
+    with _active_lock:
+        _active_instances.discard(instance)
+
+
+async def _close_with_timeout(coro: Any, *, timeout: float) -> None:
+    await asyncio.wait_for(coro, timeout=timeout)
+
+
+def _run_async_close(
+    factory: Callable[[], Any],
+    *,
+    blocking: bool,
+    name: str,
+    timeout: float,
+) -> None:
+    try:
+        loop = asyncio.get_running_loop()
+    except RuntimeError:
+        loop = None
+
+    if loop and loop.is_running() and not blocking:
+        try:
+            task = loop.create_task(factory())
+        except Exception as exc:  # pragma: no cover - defensywne
+            logger.debug("close_all_active: failed to schedule close: %s", exc)
+            return
+
+        def _done_callback(done_task: asyncio.Task) -> None:
+            try:
+                done_task.result()
+            except Exception as exc:  # pragma: no cover - defensywne
+                logger.debug("close_all_active: async close failed: %s", exc)
+
+        task.add_done_callback(_done_callback)
+        return
+
+    done = threading.Event()
+    error: Exception | None = None
+
+    def _runner() -> None:
+        nonlocal error
+        try:
+            asyncio.run(_close_with_timeout(factory(), timeout=timeout))
+        except Exception as exc:  # pragma: no cover - defensywne
+            error = exc
+        finally:
+            done.set()
+
+    thread = threading.Thread(target=_runner, name=name, daemon=True)
+    thread.start()
+    if not blocking:
+        return
+    if not done.wait(timeout=timeout):
+        logger.debug("close_all_active: sync close timed out (%s)", name)
+        return
+    if error is not None:  # pragma: no cover - defensywne
+        logger.debug("close_all_active: sync close failed: %s", error)
+
+
+def _snapshot_active_instances() -> List["DatabaseManager"]:
+    with _active_lock:
+        return list(_active_instances)
 
 # --- SQLAlchemy Base ---
 class Base(DeclarativeBase):
@@ -529,6 +604,10 @@ class DatabaseManager:
         self.db_url = db_url
         self._state = _EngineState()
         self._lock = asyncio.Lock()
+        _register_instance(self)
+
+    def __del__(self) -> None:  # pragma: no cover - sprzątanie defensywne
+        _discard_instance(self)
 
     # ---------- Inicjalizacja ----------
     async def init_db(self, *, create: bool = True) -> None:
@@ -555,6 +634,21 @@ class DatabaseManager:
 
         if create:
             logger.info("Database initialized (url=%s)", self.db_url)
+
+    async def close(self) -> None:
+        engine = self._state.engine
+        self._state.engine = None
+        self._state.session_factory = None
+        _discard_instance(self)
+        if engine is None:
+            return
+        try:
+            await engine.dispose()
+        except Exception as exc:  # pragma: no cover - defensywne
+            logger.debug("Error while disposing database engine: %s", exc)
+
+    async def aclose(self) -> None:
+        await self.close()
 
     async def _apply_migrations(self) -> None:
         if self._state.session_factory is None:
@@ -1227,6 +1321,9 @@ class DatabaseManager:
         def init_db(self, *, create: bool = True) -> None:
             return self._run(self._outer.init_db(create=create))
 
+        def close(self) -> None:
+            return self._run(self._outer.close())
+
         def ensure_user(self, email: str) -> int:
             return self._run(self._outer.ensure_user(email))
 
@@ -1381,6 +1478,31 @@ class DatabaseManager:
     @property
     def sync(self) -> "DatabaseManager._SyncWrapper":
         return DatabaseManager._SyncWrapper(self)
+
+    @classmethod
+    def active_instances(cls) -> List["DatabaseManager"]:
+        return _snapshot_active_instances()
+
+    @classmethod
+    def close_all_active(cls, *, blocking: bool = False, timeout: float = 1.5) -> None:
+        # Runtime: fire-and-forget. Tests/teardown: blocking=True for deterministic shutdown.
+        instances = _snapshot_active_instances()
+        for instance in instances:
+            _run_async_close(
+                lambda inst=instance: inst.close(),
+                blocking=blocking,
+                name=f"DatabaseManagerClose[{id(instance)}]",
+                timeout=timeout,
+            )
+
+    @classmethod
+    async def close_all_active_async(cls, *, timeout: float = 1.5) -> None:
+        instances = _snapshot_active_instances()
+        for instance in instances:
+            try:
+                await asyncio.wait_for(instance.close(), timeout=timeout)
+            except Exception as exc:  # pragma: no cover - defensywne
+                logger.debug("close_all_active_async: close failed: %s", exc)
 
 
 async def _migration_initial(session: AsyncSession, manager: "DatabaseManager") -> None:
