@@ -120,24 +120,6 @@ def _background_diagnostics() -> dict[str, Any]:
         "suspicious_threads": suspicious_threads,
     }
 
-
-async def _drain_background_loop(
-    loop: asyncio.AbstractEventLoop,
-    *,
-    timeout: float = 0.5,
-) -> None:
-    current = asyncio.current_task()
-    tasks = [task for task in asyncio.all_tasks(loop) if task is not current]
-    if not tasks:
-        return
-    for task in tasks:
-        task.cancel()
-    try:
-        await asyncio.wait_for(asyncio.gather(*tasks, return_exceptions=True), timeout=timeout)
-    except asyncio.TimeoutError:  # pragma: no cover - defensywne
-        logger.debug("DatabaseManager background loop drain timed out.")
-
-
 def shutdown_background_loop(timeout: float = 2.0) -> None:
     global _background_loop, _background_thread, _background_ready
     with _background_lock:
@@ -152,13 +134,16 @@ def shutdown_background_loop(timeout: float = 2.0) -> None:
     if loop and not closed:
         try:
             if loop.is_running():
-                drain_timeout = min(0.5, timeout)
-                future = asyncio.run_coroutine_threadsafe(
-                    _drain_background_loop(loop, timeout=drain_timeout),
-                    loop,
-                )
-                future.result(timeout=drain_timeout + 0.2)
-            if loop.is_running():
+                try:
+                    pending = [task for task in asyncio.all_tasks(loop) if not task.done()]
+                except Exception as exc:  # pragma: no cover - defensywne
+                    logger.debug("DatabaseManager background loop pending tasks check failed: %s", exc)
+                else:
+                    if pending:
+                        logger.debug(
+                            "DatabaseManager background loop pending tasks before stop: count=%s",
+                            len(pending),
+                        )
                 loop.call_soon_threadsafe(loop.stop)
         except Exception as exc:  # pragma: no cover - defensywne
             logger.debug("DatabaseManager background loop stop failed: %s", exc)
@@ -174,16 +159,16 @@ def shutdown_background_loop(timeout: float = 2.0) -> None:
             diagnostics["suspicious_threads"],
         )
         raise RuntimeError("DatabaseManager background loop thread failed to shut down.")
+    with _background_lock:
+        _background_loop = None
+        _background_thread = None
+        _background_ready.clear()
     logger.debug(
         "DatabaseManager background loop shutdown: joined=%s active_instances=%s suspicious_threads=%s",
         joined,
         diagnostics["active_instances"],
         diagnostics["suspicious_threads"],
     )
-    with _background_lock:
-        _background_loop = None
-        _background_thread = None
-        _background_ready.clear()
 
 
 def _loop_name(loop: asyncio.AbstractEventLoop | None) -> str | None:
