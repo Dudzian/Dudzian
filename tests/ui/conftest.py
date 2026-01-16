@@ -141,6 +141,11 @@ def shutdown_live_threads_after_qml(request: pytest.FixtureRequest) -> Generator
     except Exception:
         return
     DatabaseManager.close_all_active(blocking=True, timeout=2.5)
+    DatabaseManager.shutdown_background_loop(timeout=2.0)
+    assert not any(
+        thread.is_alive() and thread.name == "DatabaseManagerBackgroundLoopThread"
+        for thread in threading.enumerate()
+    ), "DatabaseManager background loop thread still alive after shutdown"
     EventBus.close_all_active()
     EventEmitter.close_all_active()
     Pipeline.close_all_active()
@@ -165,6 +170,11 @@ def shutdown_live_threads_after_qml(request: pytest.FixtureRequest) -> Generator
             break
         time.sleep(0.05)
     DatabaseManager.close_all_active(blocking=True, timeout=2.5)
+    DatabaseManager.shutdown_background_loop(timeout=2.0)
+    assert not any(
+        thread.is_alive() and thread.name == "DatabaseManagerBackgroundLoopThread"
+        for thread in threading.enumerate()
+    ), "DatabaseManager background loop thread still alive after shutdown"
     EventBus.close_all_active()
     EventEmitter.close_all_active()
     Pipeline.close_all_active()
