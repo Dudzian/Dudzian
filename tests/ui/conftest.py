@@ -141,11 +141,6 @@ def shutdown_live_threads_after_qml(request: pytest.FixtureRequest) -> Generator
     except Exception:
         return
     DatabaseManager.close_all_active(blocking=True, timeout=2.5)
-    DatabaseManager.shutdown_background_loop(timeout=2.0)
-    assert not any(
-        thread.is_alive() and thread.name == "DatabaseManagerBackgroundLoopThread"
-        for thread in threading.enumerate()
-    ), "DatabaseManager background loop thread still alive after shutdown"
     EventBus.close_all_active()
     EventEmitter.close_all_active()
     Pipeline.close_all_active()
@@ -170,11 +165,6 @@ def shutdown_live_threads_after_qml(request: pytest.FixtureRequest) -> Generator
             break
         time.sleep(0.05)
     DatabaseManager.close_all_active(blocking=True, timeout=2.5)
-    DatabaseManager.shutdown_background_loop(timeout=2.0)
-    assert not any(
-        thread.is_alive() and thread.name == "DatabaseManagerBackgroundLoopThread"
-        for thread in threading.enumerate()
-    ), "DatabaseManager background loop thread still alive after shutdown"
     EventBus.close_all_active()
     EventEmitter.close_all_active()
     Pipeline.close_all_active()
@@ -199,6 +189,17 @@ def shutdown_live_threads_after_qml(request: pytest.FixtureRequest) -> Generator
         logger.debug("Suspicious background threads after QML cleanup: %s", suspicious_threads)
     assert not active, f"Pozostały aktywne wątki live: {[t.name for t in active]}"
     assert not DatabaseManager.active_instances(), "Pozostały aktywne instancje DatabaseManager"
+
+
+@pytest.fixture(scope="session", autouse=True)
+def shutdown_database_background_loop_after_session() -> Generator[None, None, None]:
+    yield
+    DatabaseManager.close_all_active(blocking=True, timeout=5.0)
+    DatabaseManager.shutdown_background_loop(timeout=5.0)
+    assert not any(
+        thread.is_alive() and thread.name == "DatabaseManagerBackgroundLoopThread"
+        for thread in threading.enumerate()
+    ), "DatabaseManager background loop thread still alive after session shutdown"
 
 
 @pytest.fixture(autouse=True)
