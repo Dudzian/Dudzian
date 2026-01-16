@@ -2,11 +2,13 @@
 from __future__ import annotations
 
 import logging
+import os
 import queue
 import random
 import threading
 import time
 import traceback
+import weakref
 from collections import defaultdict
 from dataclasses import dataclass, field
 from typing import Any, Callable, DefaultDict, Dict, List, Optional, Tuple, Union
@@ -85,12 +87,18 @@ class EventBus:
         self._async_mode = False
 
     def start(self) -> None:
+        if _is_test_mode_enabled():
+            with self._lock:
+                self._closed = True
+                self._async_mode = False
+                self._thread = None
+            return
         with self._lock:
             if self._thread and self._thread.is_alive():
                 return
             self._closed = False
             self._async_mode = True
-            self._thread = threading.Thread(target=self._run, name="EventBus", daemon=True)
+            self._thread = threading.Thread(target=self._run, name="EventEmitter", daemon=True)
             self._thread.start()
 
     def stop(self) -> None:
@@ -98,15 +106,23 @@ class EventBus:
             self._closed = True
             if not self._async_mode:
                 return
-        self._queue.put(None)
-        if self._thread:
+        try:
+            self._queue.put_nowait(None)
+        except Exception:  # pragma: no cover - defensywnie
+            self._queue.put(None)
+        thread = self._thread
+        if thread:
             try:
-                self._thread.join(timeout=1.0)
+                thread.join(timeout=1.0)
             except Exception:  # pragma: no cover - defensywny cleanup
                 pass
         with self._lock:
             self._async_mode = False
             self._thread = None
+
+    def is_running(self) -> bool:
+        with self._lock:
+            return bool(self._thread and self._thread.is_alive())
 
     def subscribe(
         self,
@@ -239,12 +255,16 @@ class EmitterConfig:
 class EventEmitter:
     """Wrapper dodający tagi i logowanie nad EventBusem."""
 
+    _active_lock = threading.Lock()
+    _active_instances: "weakref.WeakSet[EventEmitter]" = weakref.WeakSet()
+
     def __init__(self, bus: Optional[EventBus] = None) -> None:
         self.bus = bus or EventBus()
         self._logger = logging.getLogger("event-emitter")
         self._tag_map: DefaultDict[Tuple[str, str], List[Callable[[Any], None]]] = defaultdict(list)
         self._lock = threading.Lock()
         self._log_lock = threading.Lock()
+        self._register_instance_if_running()
 
     def on(
         self,
@@ -335,12 +355,42 @@ class EventEmitter:
         finally:
             with self._lock:
                 self._tag_map.clear()
+            self._unregister_instance()
 
     @staticmethod
     def _key(event_type: Union[str, Any]) -> str:
         if isinstance(event_type, str):
             return event_type
         return f"{event_type}"
+
+    def _register_instance_if_running(self) -> None:
+        if not self.bus.is_running():
+            return
+        with self._active_lock:
+            self._active_instances.add(self)
+
+    def _unregister_instance(self) -> None:
+        with self._active_lock:
+            try:
+                self._active_instances.remove(self)
+            except KeyError:
+                pass
+
+    @classmethod
+    def close_all_active(cls) -> None:
+        with cls._active_lock:
+            active = list(cls._active_instances)
+        for emitter in active:
+            try:
+                emitter.close()
+            except Exception:  # pragma: no cover - defensywnie w teardownie
+                logging.getLogger("event-emitter").debug(
+                    "Nie udało się zamknąć EventEmitter", exc_info=True
+                )
+
+
+def _is_test_mode_enabled() -> bool:
+    return os.getenv("DUDZIAN_TEST_MODE", "").strip().lower() in {"1", "true", "yes", "on"}
 
 
 class EmitterAdapter:
