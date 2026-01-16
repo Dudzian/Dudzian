@@ -69,6 +69,8 @@ class EventBus:
     """Wielokrotne publikowanie i subskrybowanie zdarzeń z obsługą batchy."""
 
     _Callback = Callable[[Any], None]
+    _active_lock = threading.Lock()
+    _active_instances: "weakref.WeakSet[EventBus]" = weakref.WeakSet()
 
     @dataclass
     class _Sub:
@@ -92,6 +94,7 @@ class EventBus:
                 self._closed = True
                 self._async_mode = False
                 self._thread = None
+            self._unregister_instance()
             return
         with self._lock:
             if self._thread and self._thread.is_alive():
@@ -100,25 +103,48 @@ class EventBus:
             self._async_mode = True
             self._thread = threading.Thread(target=self._run, name="EventEmitter", daemon=True)
             self._thread.start()
+            self._register_instance()
 
     def stop(self) -> None:
         with self._lock:
             self._closed = True
-            if not self._async_mode:
-                return
+            async_mode = self._async_mode
+            thread = self._thread
+            closed = self._closed
+            if not async_mode:
+                self._async_mode = False
+                self._thread = None
+        if not async_mode:
+            self._unregister_instance()
+            return
         try:
             self._queue.put_nowait(None)
         except Exception:  # pragma: no cover - defensywnie
             self._queue.put(None)
-        thread = self._thread
         if thread:
             try:
                 thread.join(timeout=1.0)
             except Exception:  # pragma: no cover - defensywny cleanup
                 pass
+            if thread.is_alive():
+                try:
+                    self._queue.put_nowait(None)
+                except Exception:  # pragma: no cover - defensywnie
+                    self._queue.put(None)
+                try:
+                    thread.join(timeout=0.5)
+                except Exception:  # pragma: no cover - defensywny cleanup
+                    pass
+                if thread.is_alive():
+                    logging.getLogger("event-bus").debug(
+                        "Wątek EventBusa nadal aktywny po stop (closed=%s): %s",
+                        closed,
+                        thread.name,
+                    )
         with self._lock:
             self._async_mode = False
             self._thread = None
+        self._unregister_instance()
 
     def is_running(self) -> bool:
         with self._lock:
@@ -161,7 +187,10 @@ class EventBus:
         self.publish(event_type, payload)
 
     def close(self) -> None:
-        self.stop()
+        try:
+            self.stop()
+        except Exception:  # pragma: no cover - defensywnie w teardownie
+            logging.getLogger("event-bus").debug("Nie udało się zatrzymać EventBusa", exc_info=True)
         with self._lock:
             for subs in self._subs.values():
                 for s in subs:
@@ -240,6 +269,29 @@ class EventBus:
             if evt is None:
                 break
             self._dispatch(evt)
+
+    def _register_instance(self) -> None:
+        with self._active_lock:
+            self._active_instances.add(self)
+
+    def _unregister_instance(self) -> None:
+        with self._active_lock:
+            try:
+                self._active_instances.remove(self)
+            except KeyError:
+                pass
+
+    @classmethod
+    def close_all_active(cls) -> None:
+        with cls._active_lock:
+            active = list(cls._active_instances)
+        for bus in active:
+            try:
+                bus.close()
+            except Exception:  # pragma: no cover - defensywnie w teardownie
+                logging.getLogger("event-bus").debug(
+                    "Nie udało się zamknąć EventBusa", exc_info=True
+                )
 
 
 @dataclass
