@@ -15,6 +15,10 @@ from typing import Generator, List
 
 import pytest
 
+from bot_core.database.manager import DatabaseManager
+
+logger = logging.getLogger(__name__)
+
 
 def _sanitize_nodeid(nodeid: str) -> str:
     sanitized = nodeid.replace("::", "__").replace("/", "_").replace("\\", "_")
@@ -136,11 +140,12 @@ def shutdown_live_threads_after_qml(request: pytest.FixtureRequest) -> Generator
         from bot_core.runtime.pipeline import Pipeline
     except Exception:
         return
-    LocalLongPollStream.close_all_active()
-    LiveExecutionRouter.close_all_active()
-    Pipeline.close_all_active()
+    DatabaseManager.close_all_active(blocking=True, timeout=2.5)
     EventBus.close_all_active()
     EventEmitter.close_all_active()
+    Pipeline.close_all_active()
+    LocalLongPollStream.close_all_active()
+    LiveExecutionRouter.close_all_active()
     prefixes = (
         "LocalLongPollStream[",
         "LiveExecutionRouterLoop",
@@ -159,17 +164,31 @@ def shutdown_live_threads_after_qml(request: pytest.FixtureRequest) -> Generator
         if not active or time.monotonic() >= deadline:
             break
         time.sleep(0.05)
-    LocalLongPollStream.close_all_active()
-    LiveExecutionRouter.close_all_active()
-    Pipeline.close_all_active()
+    DatabaseManager.close_all_active(blocking=True, timeout=2.5)
     EventBus.close_all_active()
     EventEmitter.close_all_active()
+    Pipeline.close_all_active()
+    LocalLongPollStream.close_all_active()
+    LiveExecutionRouter.close_all_active()
     active = [
         thread
         for thread in threading.enumerate()
         if thread.is_alive() and thread.name.startswith(prefixes)
     ]
+    if DatabaseManager.active_instances():
+        logger.debug(
+            "DatabaseManager.close_all_active left instances: %s",
+            [id(instance) for instance in DatabaseManager.active_instances()],
+        )
+    suspicious_threads = [
+        thread.name
+        for thread in threading.enumerate()
+        if thread.is_alive() and ("aiosqlite" in thread.name or "AnyIO" in thread.name)
+    ]
+    if suspicious_threads:
+        logger.debug("Suspicious background threads after QML cleanup: %s", suspicious_threads)
     assert not active, f"Pozostały aktywne wątki live: {[t.name for t in active]}"
+    assert not DatabaseManager.active_instances(), "Pozostały aktywne instancje DatabaseManager"
 
 
 @pytest.fixture(autouse=True)

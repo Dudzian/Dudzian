@@ -6,6 +6,7 @@ from pathlib import Path
 
 import pytest
 
+from bot_core.database.manager import DatabaseManager
 from tests.ui._qt import require_pyside6
 
 pytestmark = pytest.mark.qml
@@ -222,6 +223,11 @@ def test_portfolio_dashboard_builds_exposures_and_history(tmp_path: Path) -> Non
     alerts_model.acknowledgeAll()
     app.processEvents()
     assert alerts_model.rowCount() == 0
+
+    try:
+        DatabaseManager.close_all_active()
+    except Exception:
+        pass
 
     for obj in engine.rootObjects():
         obj.deleteLater()
