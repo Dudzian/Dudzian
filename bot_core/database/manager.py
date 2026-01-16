@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import concurrent.futures
 import csv
 import datetime as dt
 import json
@@ -45,6 +46,9 @@ logger.propagate = True
 
 _active_lock = threading.Lock()
 _active_instances: "weakref.WeakSet[DatabaseManager]" = weakref.WeakSet()
+_background_lock = threading.Lock()
+_background_loop: asyncio.AbstractEventLoop | None = None
+_background_thread: threading.Thread | None = None
 
 
 def _register_instance(instance: "DatabaseManager") -> None:
@@ -57,27 +61,83 @@ def _discard_instance(instance: "DatabaseManager") -> None:
         _active_instances.discard(instance)
 
 
-async def _close_with_timeout(coro: Any, *, timeout: float) -> None:
-    await asyncio.wait_for(coro, timeout=timeout)
+def _ensure_background_loop() -> asyncio.AbstractEventLoop | None:
+    global _background_loop, _background_thread
+    with _background_lock:
+        if _background_loop:
+            try:
+                if _background_loop.is_running() and not _background_loop.is_closed():
+                    return _background_loop
+            except Exception:
+                pass
+        ready = threading.Event()
+
+        def _runner() -> None:
+            global _background_loop
+            loop = asyncio.new_event_loop()
+            try:
+                loop.set_name("DatabaseManagerBackgroundLoop")
+            except Exception:
+                pass
+            asyncio.set_event_loop(loop)
+            with _background_lock:
+                _background_loop = loop
+            ready.set()
+            loop.run_forever()
+            loop.close()
+
+        thread = threading.Thread(
+            target=_runner,
+            name="DatabaseManagerBackgroundLoopThread",
+            daemon=True,
+        )
+        _background_thread = thread
+        thread.start()
+    if not ready.wait(timeout=1.0):
+        logger.debug("DatabaseManager background loop failed to start.")
+        return None
+    with _background_lock:
+        return _background_loop
 
 
-def _run_async_close(
-    factory: Callable[[], Any],
-    *,
-    blocking: bool,
-    name: str,
-    timeout: float,
-) -> None:
+def _loop_name(loop: asyncio.AbstractEventLoop | None) -> str | None:
+    if loop is None:
+        return None
     try:
-        loop = asyncio.get_running_loop()
-    except RuntimeError:
-        loop = None
+        return loop.get_name()
+    except Exception:
+        return None
 
-    if loop and loop.is_running() and not blocking:
+
+def _log_close_timeout(instance: "DatabaseManager", loop: asyncio.AbstractEventLoop | None) -> None:
+    logger.debug(
+        "DatabaseManager close timeout (instance=%s thread=%s loop=%s running=%s)",
+        id(instance),
+        threading.current_thread().name,
+        _loop_name(loop) or loop,
+        loop.is_running() if loop else False,
+    )
+
+
+def _log_background_timeout(instance: "DatabaseManager", loop: asyncio.AbstractEventLoop | None) -> None:
+    logger.debug(
+        "DatabaseManager background close timeout (instance=%s thread=%s loop=%s running=%s closed=%s)",
+        id(instance),
+        threading.current_thread().name,
+        _loop_name(loop) or loop,
+        loop.is_running() if loop else False,
+        loop.is_closed() if loop else False,
+    )
+
+
+def _schedule_close(instance: "DatabaseManager", *, blocking: bool, timeout: float) -> None:
+    loop = instance._loop
+
+    def _spawn_close() -> None:
         try:
-            task = loop.create_task(factory())
+            task = asyncio.create_task(instance.close())
         except Exception as exc:  # pragma: no cover - defensywne
-            logger.debug("close_all_active: failed to schedule close: %s", exc)
+            logger.debug("close_all_active: failed to spawn close task: %s", exc)
             return
 
         def _done_callback(done_task: asyncio.Task) -> None:
@@ -87,29 +147,67 @@ def _run_async_close(
                 logger.debug("close_all_active: async close failed: %s", exc)
 
         task.add_done_callback(_done_callback)
-        return
 
-    done = threading.Event()
-    error: Exception | None = None
-
-    def _runner() -> None:
-        nonlocal error
+    closed = False
+    if loop:
         try:
-            asyncio.run(_close_with_timeout(factory(), timeout=timeout))
+            closed = loop.is_closed()
+        except Exception:
+            closed = False
+    if loop and loop.is_running() and not closed:
+        if blocking:
+            future = asyncio.run_coroutine_threadsafe(instance.close(), loop)
+            try:
+                future.result(timeout=timeout)
+            except concurrent.futures.TimeoutError:
+                _log_close_timeout(instance, loop)
+                future.cancel()
+            except Exception as exc:  # pragma: no cover - defensywne
+                logger.debug("close_all_active: close failed: %s", exc)
+            return
+        try:
+            loop.call_soon_threadsafe(_spawn_close)
+            return
         except Exception as exc:  # pragma: no cover - defensywne
-            error = exc
-        finally:
-            done.set()
+            logger.debug(
+                "close_all_active: failed to schedule close on loop, using background loop: %s",
+                exc,
+            )
 
-    thread = threading.Thread(target=_runner, name=name, daemon=True)
-    thread.start()
-    if not blocking:
+    background_loop = _ensure_background_loop()
+    if background_loop and background_loop.is_running() and not background_loop.is_closed():
+        try:
+            future = asyncio.run_coroutine_threadsafe(instance.close(), background_loop)
+        except Exception as exc:  # pragma: no cover - defensywne
+            logger.debug(
+                "close_all_active: failed to schedule close on background loop: %s",
+                exc,
+            )
+            if blocking:
+                try:
+                    asyncio.run(instance.close())
+                except Exception:  # pragma: no cover - defensywne
+                    logger.debug("close_all_active: fallback close failed.")
+            return
+        if not blocking:
+            return
+        try:
+            future.result(timeout=timeout)
+        except concurrent.futures.TimeoutError:
+            _log_background_timeout(instance, background_loop)
+            future.cancel()
+        except Exception as exc:  # pragma: no cover - defensywne
+            logger.debug("close_all_active: close failed: %s", exc)
+            try:
+                asyncio.run(instance.close())
+            except Exception:  # pragma: no cover - defensywne
+                logger.debug("close_all_active: fallback close failed.")
         return
-    if not done.wait(timeout=timeout):
-        logger.debug("close_all_active: sync close timed out (%s)", name)
-        return
-    if error is not None:  # pragma: no cover - defensywne
-        logger.debug("close_all_active: sync close failed: %s", error)
+    try:
+        # Ostateczny fallback, gdy brak działającego loopa w tle.
+        asyncio.run(instance.close())
+    except Exception:  # pragma: no cover - defensywne
+        logger.debug("close_all_active: fallback close failed.")
 
 
 def _snapshot_active_instances() -> List["DatabaseManager"]:
@@ -604,6 +702,7 @@ class DatabaseManager:
         self.db_url = db_url
         self._state = _EngineState()
         self._lock = asyncio.Lock()
+        self._loop: asyncio.AbstractEventLoop | None = None
         _register_instance(self)
 
     def __del__(self) -> None:  # pragma: no cover - sprzątanie defensywne
@@ -615,6 +714,7 @@ class DatabaseManager:
         Tworzy silnik, sesję i (opcjonalnie) schemat bazy, jeśli nie istnieje.
         DDL (create_all) wykonujemy na połączeniu engine, NIE na sesji.
         """
+        self._capture_loop_if_missing()
         async with self._lock:
             if self._state.engine is None:
                 self._state.engine = create_async_engine(self.db_url, future=True)
@@ -639,13 +739,15 @@ class DatabaseManager:
         engine = self._state.engine
         self._state.engine = None
         self._state.session_factory = None
-        _discard_instance(self)
         if engine is None:
+            _discard_instance(self)
             return
         try:
             await engine.dispose()
         except Exception as exc:  # pragma: no cover - defensywne
             logger.debug("Error while disposing database engine: %s", exc)
+        finally:
+            _discard_instance(self)
 
     async def aclose(self) -> None:
         await self.close()
@@ -686,6 +788,7 @@ class DatabaseManager:
 
     @contextlib.asynccontextmanager
     async def session(self) -> AsyncIterator[AsyncSession]:
+        self._capture_loop_if_missing()
         if self._state.session_factory is None:
             raise RuntimeError("Call init_db() first.")
         session: AsyncSession = self._state.session_factory()
@@ -693,6 +796,36 @@ class DatabaseManager:
             yield session
         finally:
             await session.close()
+
+    def _capture_loop_if_missing(self) -> None:
+        try:
+            running = asyncio.get_running_loop()
+        except RuntimeError:
+            return
+        if self._loop is None:
+            self._loop = running
+            return
+        if self._loop == running:
+            return
+        old_running = False
+        old_closed = True
+        try:
+            old_running = self._loop.is_running()
+        except Exception:
+            old_running = False
+        try:
+            old_closed = self._loop.is_closed()
+        except Exception:
+            old_closed = True
+        logger.debug(
+            "DatabaseManager loop changed (instance=%s old=%s new=%s running=%s closed=%s)",
+            id(self),
+            _loop_name(self._loop) or self._loop,
+            _loop_name(running) or running,
+            old_running,
+            old_closed,
+        )
+        self._loop = running
 
     @contextlib.asynccontextmanager
     async def transaction(self) -> AsyncIterator[AsyncSession]:
@@ -1488,12 +1621,7 @@ class DatabaseManager:
         # Runtime: fire-and-forget. Tests/teardown: blocking=True for deterministic shutdown.
         instances = _snapshot_active_instances()
         for instance in instances:
-            _run_async_close(
-                lambda inst=instance: inst.close(),
-                blocking=blocking,
-                name=f"DatabaseManagerClose[{id(instance)}]",
-                timeout=timeout,
-            )
+            _schedule_close(instance, blocking=blocking, timeout=timeout)
 
     @classmethod
     async def close_all_active_async(cls, *, timeout: float = 1.5) -> None:
