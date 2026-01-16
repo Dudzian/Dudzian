@@ -217,6 +217,55 @@ def _log_background_timeout(instance: "DatabaseManager", loop: asyncio.AbstractE
 
 
 def _schedule_close(instance: "DatabaseManager", *, blocking: bool, timeout: float) -> None:
+    instance_loop = instance._loop
+    if instance_loop is not None:
+        try:
+            loop_running = instance_loop.is_running()
+        except Exception:
+            loop_running = False
+        try:
+            loop_closed = instance_loop.is_closed()
+        except Exception:
+            loop_closed = True
+        if loop_running and not loop_closed:
+            if blocking:
+                try:
+                    future = asyncio.run_coroutine_threadsafe(instance.close(), instance_loop)
+                except Exception as exc:  # pragma: no cover - defensywne
+                    logger.debug(
+                        "close_all_active: failed to schedule close on instance loop: %s",
+                        exc,
+                    )
+                else:
+                    try:
+                        future.result(timeout=timeout)
+                        return
+                    except concurrent.futures.TimeoutError:
+                        _log_close_timeout(instance, instance_loop)
+                        future.cancel()
+                    except Exception as exc:  # pragma: no cover - defensywne
+                        logger.debug("close_all_active: close failed: %s", exc)
+                        return
+            else:
+                try:
+                    def _schedule_on_loop() -> None:
+                        task = asyncio.create_task(instance.close())
+
+                        def _log_task_exception(done_task: asyncio.Task[None]) -> None:
+                            try:
+                                done_task.result()
+                            except Exception as exc:  # pragma: no cover - defensywne
+                                logger.debug("close_all_active: close failed: %s", exc)
+
+                        task.add_done_callback(_log_task_exception)
+
+                    instance_loop.call_soon_threadsafe(_schedule_on_loop)
+                    return
+                except Exception as exc:  # pragma: no cover - defensywne
+                    logger.debug(
+                        "close_all_active: failed to schedule close on instance loop: %s",
+                        exc,
+                    )
     background_loop = _ensure_background_loop()
     if not background_loop:
         logger.error("close_all_active: background loop unavailable for instance=%s", id(instance))
