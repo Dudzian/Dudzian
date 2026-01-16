@@ -224,11 +224,8 @@ def test_portfolio_dashboard_builds_exposures_and_history(tmp_path: Path) -> Non
     app.processEvents()
     assert alerts_model.rowCount() == 0
 
-    DatabaseManager.close_all_active(blocking=True, timeout=2.5)
-
     for obj in engine.rootObjects():
         obj.deleteLater()
     engine.deleteLater()
     app.processEvents()
-    DatabaseManager.close_all_active(blocking=True, timeout=2.5)
     app.processEvents()
