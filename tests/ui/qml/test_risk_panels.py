@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import os
+import threading
+import time
 from collections.abc import Mapping
 from datetime import datetime
 from pathlib import Path
@@ -26,6 +28,7 @@ except ImportError as exc:  # pragma: no cover
 
 from bot_core.risk.engine import ThresholdRiskEngine
 from bot_core.risk.simulation import build_profile
+from bot_core.exchanges.streaming import LocalLongPollStream
 
 
 def _repo_root_candidates(start: Path) -> list[Path]:
@@ -242,6 +245,30 @@ def _get_limits_dict(model: object) -> dict[str, float]:
     raise AssertionError(f"Nieobsługiwany typ model.limits: {type(limits_attr)!r}")
 
 
+def _shutdown_local_long_poll_streams(timeout: float = 2.0) -> None:
+    LocalLongPollStream.close_all_active()
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        active = [
+            thread
+            for thread in threading.enumerate()
+            if thread.is_alive() and thread.name.startswith("LocalLongPollStream[")
+        ]
+        if not active:
+            break
+        time.sleep(0.05)
+    LocalLongPollStream.close_all_active()
+    active = [
+        thread
+        for thread in threading.enumerate()
+        if thread.is_alive() and thread.name.startswith("LocalLongPollStream[")
+    ]
+    assert not active, (
+        "Pozostały aktywne wątki LocalLongPollStream: "
+        f"{[thread.name for thread in active]}"
+    )
+
+
 @pytest.mark.timeout(30)
 def test_risk_controls_panel_handles_engine_snapshot():
     app = QApplication.instance() or QApplication([])
@@ -362,3 +389,4 @@ def test_risk_controls_panel_handles_engine_snapshot():
         obj.deleteLater()
     engine_qml.deleteLater()
     app.processEvents()
+    _shutdown_local_long_poll_streams()
