@@ -1,6 +1,10 @@
 from __future__ import annotations
 
+import contextlib
+import logging
 import os
+import threading
+import time
 from datetime import datetime
 from pathlib import Path
 
@@ -8,6 +12,8 @@ import pytest
 
 from bot_core.database.manager import DatabaseManager
 from tests.ui._qt import require_pyside6
+
+logger = logging.getLogger(__name__)
 
 pytestmark = pytest.mark.qml
 
@@ -144,88 +150,121 @@ def test_portfolio_dashboard_builds_exposures_and_history(tmp_path: Path) -> Non
     def collect_warnings(warnings: list[object]) -> None:
         qml_warnings.extend(warnings)
 
-    engine.warnings.connect(collect_warnings)
-    engine.load(QUrl.fromLocalFile(str(view_path)))
-    if not engine.rootObjects():
-        warning_lines = []
-        for warning in qml_warnings:
-            try:
-                line = warning.line()
-                column = warning.column()
-                location = f" (line {line}, column {column})" if line or column else ""
-            except Exception:
-                location = ""
-            warning_lines.append(f"- {warning}{location}")
-        try:
-            engine_warnings = engine.warnings()
-        except Exception:
-            engine_warnings = []
-        if engine_warnings:
-            warning_lines.extend(f"- {warning}" for warning in engine_warnings)
-        warnings_message = "\n".join(warning_lines) if warning_lines else "Brak zarejestrowanych ostrzeżeń QML."
-
-        component = QQmlComponent(engine)
-        component.loadUrl(QUrl.fromLocalFile(str(view_path)))
-        component_errors = []
-        try:
-            if getattr(component, "isError", None) and component.isError():
-                component_errors = component.errors()
-            elif component.status() == QQmlComponent.Error:
-                component_errors = component.errors()
-        except Exception:
-            component_errors = []
-        component_error_details = "\n".join(
-            getattr(error, "toString", lambda: str(error))() for error in component_errors
-        ) or "(none)"
-        component_error_string = component.errorString() or "(none)"
-
-        exists_message = f"Path exists: {os.path.exists(view_path)}"
-        pytest.fail(
-            "\n".join(
-                [
-                    "Nie udało się załadować dashboardu portfela.",
-                    f"view_path: {view_path}",
-                    exists_message,
-                    "QML warnings:",
-                    warnings_message,
-                    "=== Component errors ===",
-                    component_error_details,
-                    "=== Component errorString ===",
-                    component_error_string,
+    def wait_for_aiosqlite_threads(timeout: float = 5.0, poll_interval: float = 0.1) -> None:
+        deadline = time.monotonic() + timeout
+        while True:
+            threads = [t for t in threading.enumerate() if t.is_alive() and "aiosqlite" in t.name]
+            if not threads:
+                return
+            if time.monotonic() >= deadline:
+                thread_details = [
+                    f"{t.name} (ident={t.ident}, daemon={t.daemon})" for t in threads
                 ]
+                logger.error("Lingering aiosqlite threads: %s", "; ".join(thread_details))
+                pytest.fail(
+                    "Pozostały aktywne wątki aiosqlite po sprzątaniu: "
+                    + "; ".join(thread_details)
+                )
+            time.sleep(poll_interval)
+
+    engine.warnings.connect(collect_warnings)
+    roots_snapshot: list[QObject] = []
+    try:
+        engine.load(QUrl.fromLocalFile(str(view_path)))
+        if not engine.rootObjects():
+            warning_lines = []
+            for warning in qml_warnings:
+                try:
+                    line = warning.line()
+                    column = warning.column()
+                    location = f" (line {line}, column {column})" if line or column else ""
+                except Exception:
+                    location = ""
+                warning_lines.append(f"- {warning}{location}")
+            try:
+                engine_warnings = engine.warnings()
+            except Exception:
+                engine_warnings = []
+            if engine_warnings:
+                warning_lines.extend(f"- {warning}" for warning in engine_warnings)
+            warnings_message = (
+                "\n".join(warning_lines) if warning_lines else "Brak zarejestrowanych ostrzeżeń QML."
             )
-        )
 
-    root = engine.rootObjects()[0]
-    assert isinstance(root, QObject)
+            component = QQmlComponent(engine)
+            component.loadUrl(QUrl.fromLocalFile(str(view_path)))
+            component_errors = []
+            try:
+                if getattr(component, "isError", None) and component.isError():
+                    component_errors = component.errors()
+                elif component.status() == QQmlComponent.Error:
+                    component_errors = component.errors()
+            except Exception:
+                component_errors = []
+            component_error_details = "\n".join(
+                getattr(error, "toString", lambda: str(error))() for error in component_errors
+            ) or "(none)"
+            component_error_string = component.errorString() or "(none)"
 
-    # Wymuś przebudowanie danych
-    for method in ("rebuildHistoryPoints", "rebuildExposureTables"):
-        QMetaObject.invokeMethod(root, method, Qt.DirectConnection)
-    app.processEvents()
+            exists_message = f"Path exists: {os.path.exists(view_path)}"
+            pytest.fail(
+                "\n".join(
+                    [
+                        "Nie udało się załadować dashboardu portfela.",
+                        f"view_path: {view_path}",
+                        exists_message,
+                        "QML warnings:",
+                        warnings_message,
+                        "=== Component errors ===",
+                        component_error_details,
+                        "=== Component errorString ===",
+                        component_error_string,
+                    ]
+                )
+            )
 
-    history_points = root.property("historyPoints")
-    assert isinstance(history_points, list)
-    assert len(history_points) == 2
-    assert history_points[0]["value"] == 100000.0
+        root = engine.rootObjects()[0]
+        assert isinstance(root, QObject)
 
-    exchange_items = root.property("exchangeExposureItems")
-    strategy_items = root.property("strategyExposureItems")
-    assert isinstance(exchange_items, list) and isinstance(strategy_items, list)
-    assert exchange_items[0]["name"].upper() == "BINANCE"
-    assert strategy_items[0]["name"].startswith("theta_income")
+        # Wymuś przebudowanie danych
+        for method in ("rebuildHistoryPoints", "rebuildExposureTables"):
+            QMetaObject.invokeMethod(root, method, Qt.DirectConnection)
+        app.processEvents()
 
-    alerts_view = root.findChild(QObject, "alertsListView")
-    assert alerts_view is not None
-    assert alerts_view.property("count") == 1
+        history_points = root.property("historyPoints")
+        assert isinstance(history_points, list)
+        assert len(history_points) == 2
+        assert history_points[0]["value"] == 100000.0
 
-    # Potwierdzenie alertów powinno wyczyścić model
-    alerts_model.acknowledgeAll()
-    app.processEvents()
-    assert alerts_model.rowCount() == 0
+        exchange_items = root.property("exchangeExposureItems")
+        strategy_items = root.property("strategyExposureItems")
+        assert isinstance(exchange_items, list) and isinstance(strategy_items, list)
+        assert exchange_items[0]["name"].upper() == "BINANCE"
+        assert strategy_items[0]["name"].startswith("theta_income")
 
-    for obj in engine.rootObjects():
-        obj.deleteLater()
-    engine.deleteLater()
-    app.processEvents()
-    app.processEvents()
+        alerts_view = root.findChild(QObject, "alertsListView")
+        assert alerts_view is not None
+        assert alerts_view.property("count") == 1
+
+        # Potwierdzenie alertów powinno wyczyścić model
+        alerts_model.acknowledgeAll()
+        app.processEvents()
+        assert alerts_model.rowCount() == 0
+    finally:
+        # Snapshot przed teardownem Qt
+        try:
+            roots_snapshot = list(engine.rootObjects())
+        except Exception:
+            roots_snapshot = []
+
+        # Odłącz callback, żeby Qt nie wołał Pythona podczas niszczenia engine
+        with contextlib.suppress(Exception):
+            engine.warnings.disconnect(collect_warnings)
+
+        for obj in roots_snapshot:
+            obj.deleteLater()
+        engine.deleteLater()
+        for _ in range(3):
+            app.processEvents()
+        DatabaseManager.close_all_active(blocking=True, timeout=5.0)
+        wait_for_aiosqlite_threads(timeout=5.0)
