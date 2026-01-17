@@ -201,6 +201,16 @@ def _log_background_timeout(instance: "DatabaseManager", loop: asyncio.AbstractE
     )
 
 
+def _log_close_request_inflight(instance: "DatabaseManager", where: str) -> None:
+    # Pure diagnostics: informs that close is still running somewhere; we do NOT cancel.
+    logger.debug(
+        "DatabaseManager close still in-flight (instance=%s where=%s thread=%s)",
+        id(instance),
+        where,
+        threading.current_thread().name,
+    )
+
+
 def _schedule_close(instance: "DatabaseManager", *, blocking: bool, timeout: float) -> None:
     instance_loop = instance._loop
     if instance_loop is not None:
@@ -227,7 +237,10 @@ def _schedule_close(instance: "DatabaseManager", *, blocking: bool, timeout: flo
                         return
                     except concurrent.futures.TimeoutError:
                         _log_close_timeout(instance, instance_loop)
-                        future.cancel()
+                        _log_close_request_inflight(instance, "instance_loop")
+                        # Deterministycznie NIE anulujemy coroutine.
+                        # Jeśli blocking=True, timeout jest twardym błędem (teardown ma być przewidywalny).
+                        raise RuntimeError("DatabaseManager close timed out on instance loop.") from None
                     except Exception as exc:  # pragma: no cover - defensywne
                         logger.debug("close_all_active: close failed: %s", exc)
                         return
@@ -273,8 +286,10 @@ def _schedule_close(instance: "DatabaseManager", *, blocking: bool, timeout: flo
         future.result(timeout=timeout)
     except concurrent.futures.TimeoutError:
         _log_background_timeout(instance, background_loop)
-        future.cancel()
-        raise RuntimeError("DatabaseManager close timed out.") from None
+        _log_close_request_inflight(instance, "background_loop")
+        # Deterministycznie NIE anulujemy coroutine.
+        # W trybie blocking timeout ma failować test/teardown zamiast zostawiać UB.
+        raise RuntimeError("DatabaseManager close timed out on background loop.") from None
     except Exception as exc:  # pragma: no cover - defensywne
         logger.debug("close_all_active: close failed: %s", exc)
 
@@ -1699,12 +1714,39 @@ class DatabaseManager:
 
     @classmethod
     async def close_all_active_async(cls, *, timeout: float = 1.5) -> None:
+        # UWAGA: asyncio.wait_for() anuluje coroutine na timeout -> zakazane w tym projekcie.
         instances = _snapshot_active_instances()
         for instance in instances:
-            try:
-                await asyncio.wait_for(instance.close(), timeout=timeout)
-            except Exception as exc:  # pragma: no cover - defensywne
-                logger.debug("close_all_active_async: close failed: %s", exc)
+            task = asyncio.create_task(instance.close())
+            done, pending = await asyncio.wait({task}, timeout=timeout)
+            if task in done:
+                try:
+                    task.result()
+                except Exception as exc:  # pragma: no cover - defensywne
+                    logger.debug("close_all_active_async: close failed: %s", exc)
+            else:
+                # Bez cancel: zostawiamy task w toku, ale logujemy twardo.
+                logger.debug(
+                    "close_all_active_async: close timed out (instance=%s); leaving in-flight",
+                    id(instance),
+                )
+                instance_id = id(instance)
+
+                def _consume_task_result(
+                    done_task: asyncio.Task[None],
+                    *,
+                    _instance_id: int = instance_id,
+                ) -> None:
+                    try:
+                        done_task.result()
+                    except Exception as exc:  # pragma: no cover - defensywne
+                        logger.debug(
+                            "close_all_active_async: close failed (late) instance=%s: %s",
+                            _instance_id,
+                            exc,
+                        )
+
+                task.add_done_callback(_consume_task_result)
 
 
 async def _migration_initial(session: AsyncSession, manager: "DatabaseManager") -> None:

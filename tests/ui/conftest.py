@@ -15,8 +15,6 @@ from typing import Generator, List
 
 import pytest
 
-from bot_core.database.manager import DatabaseManager
-
 logger = logging.getLogger(__name__)
 
 
@@ -111,6 +109,43 @@ def configure_qt_environment(
             os.environ.pop(name, None)
 
 
+@pytest.fixture(scope="session", autouse=True)
+def shutdown_db_background_loop_at_session_end() -> Generator[None, None, None]:
+    """
+    Background loop DB NIE jest zamykany per-test (Windows UB / aiosqlite thread lifecycle).
+    Zamykamy go raz na końcu sesji.
+    """
+    yield
+    try:
+        from bot_core.database.manager import DatabaseManager
+    except Exception as exc:
+        logger.debug(
+            "Skipping DatabaseManager session shutdown fixture (import failed): %r", exc
+        )
+        return
+
+    # deterministycznie domknij instancje zanim zatrzymasz loop/thread
+    DatabaseManager.close_all_active(blocking=True, timeout=5.0)
+    DatabaseManager.shutdown_background_loop(timeout=5.0)
+
+    still_alive = [
+        thread.name
+        for thread in threading.enumerate()
+        if thread.is_alive() and thread.name == "DatabaseManagerBackgroundLoopThread"
+    ]
+    if still_alive:
+        logger.debug(
+            "DatabaseManager background loop thread still alive at session end; threads=%s",
+            [
+                (thread.name, thread.ident, thread.daemon)
+                for thread in threading.enumerate()
+                if thread.is_alive()
+            ],
+        )
+
+    assert not still_alive, "DatabaseManager background loop thread still alive after session shutdown"
+
+
 @pytest.fixture(autouse=True)
 def enforce_test_mode_for_qml(request: pytest.FixtureRequest) -> Generator[None, None, None]:
     if "qml" not in request.node.keywords:
@@ -138,9 +173,10 @@ def shutdown_live_threads_after_qml(request: pytest.FixtureRequest) -> Generator
         from bot_core.exchanges.streaming import LocalLongPollStream
         from bot_core.execution.live_router import LiveExecutionRouter
         from bot_core.runtime.pipeline import Pipeline
+        from bot_core.database.manager import DatabaseManager
     except Exception:
         return
-    DatabaseManager.close_all_active(blocking=True, timeout=2.5)
+
     EventBus.close_all_active()
     EventEmitter.close_all_active()
     Pipeline.close_all_active()
@@ -164,17 +200,9 @@ def shutdown_live_threads_after_qml(request: pytest.FixtureRequest) -> Generator
         if not active or time.monotonic() >= deadline:
             break
         time.sleep(0.05)
+
+    # Po domknięciu komponentów jeszcze raz domknij DB (w razie late teardown).
     DatabaseManager.close_all_active(blocking=True, timeout=2.5)
-    EventBus.close_all_active()
-    EventEmitter.close_all_active()
-    Pipeline.close_all_active()
-    LocalLongPollStream.close_all_active()
-    LiveExecutionRouter.close_all_active()
-    active = [
-        thread
-        for thread in threading.enumerate()
-        if thread.is_alive() and thread.name.startswith(prefixes)
-    ]
     if DatabaseManager.active_instances():
         logger.debug(
             "DatabaseManager.close_all_active left instances: %s",
@@ -187,19 +215,13 @@ def shutdown_live_threads_after_qml(request: pytest.FixtureRequest) -> Generator
     ]
     if suspicious_threads:
         logger.debug("Suspicious background threads after QML cleanup: %s", suspicious_threads)
+    active = [
+        thread
+        for thread in threading.enumerate()
+        if thread.is_alive() and thread.name.startswith(prefixes)
+    ]
     assert not active, f"Pozostały aktywne wątki live: {[t.name for t in active]}"
     assert not DatabaseManager.active_instances(), "Pozostały aktywne instancje DatabaseManager"
-
-
-@pytest.fixture(scope="session", autouse=True)
-def shutdown_database_background_loop_after_session() -> Generator[None, None, None]:
-    yield
-    DatabaseManager.close_all_active(blocking=True, timeout=5.0)
-    DatabaseManager.shutdown_background_loop(timeout=5.0)
-    assert not any(
-        thread.is_alive() and thread.name == "DatabaseManagerBackgroundLoopThread"
-        for thread in threading.enumerate()
-    ), "DatabaseManager background loop thread still alive after session shutdown"
 
 
 @pytest.fixture(autouse=True)
