@@ -43,6 +43,7 @@ from sqlalchemy import (
 )
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, create_async_engine
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, sessionmaker
+from sqlalchemy.pool import NullPool
 
 
 # --- Logowanie strukturalne ---
@@ -105,17 +106,36 @@ def _ensure_background_loop() -> asyncio.AbstractEventLoop | None:
 
         def _runner() -> None:
             global _background_loop
-            loop = asyncio.new_event_loop()
+            if sys.platform == "win32":
+                try:
+                    loop = asyncio.SelectorEventLoop()
+                except Exception:
+                    loop = asyncio.new_event_loop()
+            else:
+                loop = asyncio.new_event_loop()
             try:
                 loop.set_name("DatabaseManagerBackgroundLoop")
             except Exception:
                 pass
             asyncio.set_event_loop(loop)
+            logger.debug(
+                "DatabaseManager background loop started (loop_type=%s loop_module=%s loop_repr=%s thread=%s platform=%s)",
+                _loop_type(loop),
+                _loop_module(loop),
+                _loop_repr(loop),
+                threading.current_thread().name,
+                sys.platform,
+            )
             with _background_lock:
                 _background_loop = loop
                 ready.set()
-            loop.run_forever()
-            loop.close()
+            try:
+                loop.run_forever()
+            finally:
+                try:
+                    loop.close()
+                except Exception as exc:  # pragma: no cover - defensywne
+                    logger.debug("DatabaseManager background loop close failed: %s", exc)
 
         if _background_thread and _background_thread.is_alive():
             pass
@@ -145,6 +165,34 @@ def _background_diagnostics() -> dict[str, Any]:
         "active_instances": len(active_instances),
         "suspicious_threads": suspicious_threads,
     }
+
+
+def _aiosqlite_thread_snapshot(*, limit: int = 20) -> dict[str, Any]:
+    threads = [
+        thread
+        for thread in threading.enumerate()
+        if thread.is_alive() and "aiosqlite" in thread.name
+    ]
+    details = [
+        f"{thread.name} (ident={thread.ident}, daemon={thread.daemon})"
+        for thread in threads[:limit]
+    ]
+    if len(threads) > limit:
+        details.append(f"... +{len(threads) - limit} more")
+    return {
+        "count": len(threads),
+        "details": details,
+    }
+
+
+def _log_aiosqlite_threads(phase: str) -> None:
+    snapshot = _aiosqlite_thread_snapshot()
+    logger.debug(
+        "DatabaseManager aiosqlite threads %s: count=%s details=%s",
+        phase,
+        snapshot["count"],
+        snapshot["details"] or "<none>",
+    )
 
 
 def wait_for_aiosqlite_threads(timeout: float = 5.0, poll_interval: float = 0.05) -> None:
@@ -234,12 +282,25 @@ def shutdown_background_loop(timeout: float | None = None) -> None:
     with _background_lock:
         loop = _background_loop
         thread = _background_thread
+    _log_aiosqlite_threads("before background loop shutdown")
     closed = False
     if loop:
         try:
             closed = loop.is_closed()
         except Exception:
             closed = False
+        try:
+            running = loop.is_running()
+        except Exception:
+            running = False
+        logger.debug(
+            "DatabaseManager background loop shutdown start (loop_type=%s loop_module=%s running=%s closed=%s thread=%s)",
+            _loop_type(loop),
+            _loop_module(loop),
+            running,
+            closed,
+            thread.name if thread else None,
+        )
     if loop and not closed:
         try:
             if loop.is_running():
@@ -263,6 +324,10 @@ def shutdown_background_loop(timeout: float | None = None) -> None:
                             "DatabaseManager background loop pending tasks before stop: count=%s",
                             len(pending),
                         )
+                        logger.debug(
+                            "DatabaseManager background loop pending task snapshot: %s",
+                            _format_task_snapshot(pending),
+                        )
                 loop.call_soon_threadsafe(loop.stop)
         except Exception as exc:  # pragma: no cover - defensywne
             logger.debug("DatabaseManager background loop stop failed: %s", exc)
@@ -271,6 +336,7 @@ def shutdown_background_loop(timeout: float | None = None) -> None:
         thread.join(timeout=timeout)
         joined = not thread.is_alive()
     diagnostics = _background_diagnostics()
+    _log_aiosqlite_threads("after background loop shutdown")
     if not joined:
         logger.error(
             "DatabaseManager background loop thread still alive after shutdown: active_instances=%s suspicious_threads=%s",
@@ -278,6 +344,15 @@ def shutdown_background_loop(timeout: float | None = None) -> None:
             diagnostics["suspicious_threads"],
         )
         if _is_test_mode():
+            thread_details = [
+                f"{thr.name} (ident={thr.ident}, daemon={thr.daemon})"
+                for thr in threading.enumerate()
+                if thr.is_alive()
+            ]
+            logger.error(
+                "DatabaseManager background loop shutdown thread snapshot: %s",
+                thread_details or "<none>",
+            )
             if loop and not closed:
                 try:
                     loop_tasks = list(asyncio.all_tasks(loop))
@@ -329,6 +404,34 @@ def _loop_name(loop: asyncio.AbstractEventLoop | None) -> str | None:
         return loop.get_name()
     except Exception:
         return None
+
+
+def _loop_type(loop: asyncio.AbstractEventLoop | None) -> str | None:
+    if loop is None:
+        return None
+    return type(loop).__name__
+
+
+def _loop_module(loop: asyncio.AbstractEventLoop | None) -> str | None:
+    if loop is None:
+        return None
+    try:
+        return type(loop).__module__
+    except Exception:
+        return None
+
+
+def _loop_repr(loop: asyncio.AbstractEventLoop | None, *, limit: int = 300) -> str | None:
+    if loop is None:
+        return None
+    try:
+        value = repr(loop)
+    except Exception:
+        return None
+    if len(value) > limit:
+        truncated = value[: max(0, limit - 3)]
+        return f"{truncated}..."
+    return value
 
 
 def _log_close_timeout(instance: "DatabaseManager", loop: asyncio.AbstractEventLoop | None) -> None:
@@ -1026,6 +1129,10 @@ class DatabaseManager:
         with self._inflight_lock:
             return list(self._inflight_tasks)
 
+    async def _drain_db_loop(self, *, ticks: int = 3) -> None:
+        for _ in range(max(1, ticks)):
+            await asyncio.sleep(0)
+
     async def _dispatch(
         self,
         coro: Coroutine[Any, Any, _DispatchT],
@@ -1087,7 +1194,18 @@ class DatabaseManager:
         self._ensure_db_loop()
         async with self._lock:
             if self._state.engine is None:
-                self._state.engine = create_async_engine(self.db_url, future=True)
+                engine_kwargs: dict[str, Any] = {"future": True}
+                if self.db_url.startswith("sqlite+aiosqlite://") and (
+                    sys.platform == "win32" or _is_test_mode()
+                ):
+                    engine_kwargs["poolclass"] = NullPool
+                    logger.debug(
+                        "DatabaseManager using NullPool for sqlite+aiosqlite (url=%s platform=%s test_mode=%s)",
+                        self.db_url,
+                        sys.platform,
+                        _is_test_mode(),
+                    )
+                self._state.engine = create_async_engine(self.db_url, **engine_kwargs)
                 self._state.session_factory = sessionmaker(
                     bind=self._state.engine,
                     expire_on_commit=False,
@@ -1166,9 +1284,11 @@ class DatabaseManager:
         self._state.engine = None
         self._state.session_factory = None
         try:
-            await engine.dispose()
-        except Exception as exc:  # pragma: no cover - defensywne
-            logger.debug("Error while disposing database engine: %s", exc)
+            try:
+                await engine.dispose()
+            except Exception as exc:  # pragma: no cover - defensywne
+                logger.debug("Error while disposing database engine: %s", exc)
+            await self._drain_db_loop()
         finally:
             self._loop = None
             _discard_instance(self)
@@ -1201,13 +1321,15 @@ class DatabaseManager:
             self._state.engine = None
             self._state.session_factory = None
             try:
-                await engine.dispose()
-                logger.debug(
-                    "DatabaseManager deferred close disposed engine (instance=%s)",
-                    id(self),
-                )
-            except Exception as exc:  # pragma: no cover - defensywne
-                logger.debug("Error while disposing database engine (deferred): %s", exc)
+                try:
+                    await engine.dispose()
+                    logger.debug(
+                        "DatabaseManager deferred close disposed engine (instance=%s)",
+                        id(self),
+                    )
+                except Exception as exc:  # pragma: no cover - defensywne
+                    logger.debug("Error while disposing database engine (deferred): %s", exc)
+                await self._drain_db_loop()
         finally:
             self._loop = None
             _discard_instance(self)
@@ -2130,6 +2252,7 @@ class DatabaseManager:
     @classmethod
     def close_all_active(cls, *, blocking: bool = False, timeout: float = 1.5) -> None:
         # Runtime: fire-and-forget. Tests/teardown: blocking=True for deterministic shutdown.
+        _log_aiosqlite_threads("before close_all_active")
         instances = _snapshot_active_instances()
         for instance in instances:
             _schedule_close(instance, blocking=blocking, timeout=timeout)
@@ -2163,6 +2286,7 @@ class DatabaseManager:
                     break
                 time.sleep(0.05)
             wait_for_aiosqlite_threads(timeout=max(timeout, 1.0), poll_interval=0.05)
+            _log_aiosqlite_threads("after close_all_active")
 
     @classmethod
     def shutdown_background_loop(cls, *, timeout: float | None = None) -> None:
