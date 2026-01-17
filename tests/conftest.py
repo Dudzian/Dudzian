@@ -1,12 +1,18 @@
+from __future__ import annotations
+
+import asyncio
+import logging
 import os
 import socket
 import sys
 from contextlib import contextmanager
+from typing import Generator
 
 import pytest
 
 from bot_core.backtest.simulation import SimulationScenario
 
+logger = logging.getLogger(__name__)
 
 UNSTABLE_WINDOWS_REASON = (
     "Niestabilny test na Windows (self-hosted runner); pomijany na win32, wykonywany na "
@@ -24,6 +30,29 @@ unstable_windows = pytest.mark.skipif(
 )
 
 pytest.mark.unstable_windows = unstable_windows  # type: ignore[attr-defined]
+
+
+def _force_windows_selector_event_loop_policy() -> None:
+    if sys.platform != "win32":
+        return
+    try:
+        policy = asyncio.WindowsSelectorEventLoopPolicy()
+    except Exception as exc:
+        logger.debug("Unable to create WindowsSelectorEventLoopPolicy: %s", exc)
+        return
+    asyncio.set_event_loop_policy(policy)
+
+
+_force_windows_selector_event_loop_policy()
+
+
+@pytest.fixture(scope="session", autouse=True)
+def enforce_windows_selector_event_loop_policy() -> Generator[None, None, None]:
+    if sys.platform != "win32":
+        yield
+        return
+    _force_windows_selector_event_loop_policy()
+    yield
 
 
 @pytest.fixture
@@ -179,6 +208,57 @@ def shutdown_background_components() -> None:
         from bot_core.exchanges.streaming import LocalLongPollStream
         from bot_core.execution.live_router import LiveExecutionRouter
     except Exception:
+        logger.debug(
+            "teardown/background_components_import_failed: "
+            "Background component shutdown skipped. (platform=%s pid=%s)",
+            sys.platform,
+            os.getpid(),
+            exc_info=True,
+        )
         return
     LocalLongPollStream.close_all_active()
     LiveExecutionRouter.close_all_active()
+
+
+@pytest.fixture(scope="session", autouse=True)
+def shutdown_db_background_loop_at_session_end() -> Generator[None, None, None]:
+    yield
+    if sys.platform != "win32":
+        return
+    logger.debug(
+        "teardown/db_manager_shutdown_begin: "
+        "DatabaseManager session shutdown begin. (platform=%s pid=%s)",
+        sys.platform,
+        os.getpid(),
+    )
+    try:
+        from bot_core.database.manager import DatabaseManager
+    except Exception:
+        logger.debug(
+            "teardown/db_manager_import_failed: "
+            "Skipping DatabaseManager session shutdown fixture (import failed). "
+            "(platform=%s pid=%s)",
+            sys.platform,
+            os.getpid(),
+            exc_info=True,
+        )
+        return
+
+    try:
+        DatabaseManager.close_all_active(blocking=True, timeout=5.0)
+        DatabaseManager.wait_for_aiosqlite_threads(timeout=5.0, poll_interval=0.05)
+        DatabaseManager.shutdown_background_loop(timeout=5.0)
+        logger.debug(
+            "teardown/db_manager_shutdown_done: "
+            "DatabaseManager session shutdown done. (platform=%s pid=%s)",
+            sys.platform,
+            os.getpid(),
+        )
+    except Exception:
+        logger.debug(
+            "teardown/db_manager_shutdown_failed: "
+            "DatabaseManager session shutdown failed. (platform=%s pid=%s)",
+            sys.platform,
+            os.getpid(),
+            exc_info=True,
+        )
