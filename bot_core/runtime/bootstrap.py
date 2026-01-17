@@ -8,6 +8,7 @@ import re
 import logging
 import os
 import stat
+import unicodedata
 from urllib.parse import urlparse
 import sys
 import hashlib
@@ -226,17 +227,35 @@ def _clear_alert_component_cache() -> None:
 _get_alert_components.cache_clear = _clear_alert_component_cache  # type: ignore[attr-defined]
 
 
-def _is_test_mode() -> bool:
-    return (
-        bool(os.getenv("PYTEST_CURRENT_TEST"))
-        or bool(os.getenv("PYTEST_ADDOPTS"))
-        or bool(os.getenv("CI"))
-    )
-
-
 def _allow_invalid_live_signatures() -> bool:
     value = os.getenv("BOT_CORE_ALLOW_INVALID_LIVE_SIGNATURES", "")
     return value.lower() in {"1", "true", "yes"}
+
+
+def _live_signature_error_is_missing_document(exc: Exception) -> bool:
+    message = str(exc).lower()
+
+    def _strip_diacritics(value: str) -> str:
+        normalized = unicodedata.normalize("NFKD", value)
+        return "".join(ch for ch in normalized if not unicodedata.combining(ch))
+
+    candidates = (
+        "nie istnieje",
+        "nie istnieje w ścieżce",
+        "nie istnieje pod ścieżką",
+        "nie znaleziono",
+        "does not exist",
+        "brak pliku",
+        "file not found",
+        "no such file",
+        "no such file or directory",
+    )
+    normalized_candidates = tuple(_strip_diacritics(fragment) for fragment in candidates)
+    normalized_message = _strip_diacritics(message)
+    return any(
+        fragment in message or normalized_fragment in normalized_message
+        for fragment, normalized_fragment in zip(candidates, normalized_candidates)
+    )
 
 
 # --- Metrics service (opcjonalny – w niektórych gałęziach może nie istnieć) ---
@@ -3564,10 +3583,14 @@ def bootstrap_environment(
                     environment.name,
                 )
                 live_signature_verification = None
-            elif _is_test_mode() or _allow_invalid_live_signatures():
+            elif _allow_invalid_live_signatures():
+                if _live_signature_error_is_missing_document(exc):
+                    raise RuntimeError(
+                        f"Nie można aktywować środowiska live '{environment.name}': {exc}"
+                    ) from exc
                 _LOGGER.warning(
                     "Nieudana weryfikacja podpisów live dla %s: %s. "
-                    "Kontynuacja w trybie testowym/CI lub na podstawie override.",
+                    "Kontynuacja na podstawie override.",
                     environment.name,
                     exc,
                 )
