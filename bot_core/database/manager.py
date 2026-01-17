@@ -9,6 +9,7 @@ eksporty i logowanie metryk/zdarzeń.
 from __future__ import annotations
 
 import asyncio
+import atexit
 import contextlib
 import concurrent.futures
 import csv
@@ -164,7 +165,19 @@ def wait_for_aiosqlite_threads(timeout: float = 5.0, poll_interval: float = 0.05
             )
         time.sleep(poll_interval)
 
-def shutdown_background_loop(timeout: float = 2.0) -> None:
+
+def _format_loop_tasks(tasks: List[asyncio.Task[Any]]) -> str:
+    details: List[str] = []
+    for task in tasks:
+        try:
+            name = task.get_name()
+        except Exception:  # pragma: no cover - defensywne
+            name = None
+        details.append(f"{task!r} name={name} done={task.done()}")
+    return "; ".join(details)
+
+
+def shutdown_background_loop(timeout: float = 5.0) -> None:
     global _background_loop, _background_thread, _background_ready
     with _background_lock:
         loop = _background_loop
@@ -178,6 +191,16 @@ def shutdown_background_loop(timeout: float = 2.0) -> None:
     if loop and not closed:
         try:
             if loop.is_running():
+                try:
+                    all_tasks = list(asyncio.all_tasks(loop))
+                except Exception as exc:  # pragma: no cover - defensywne
+                    logger.debug("DatabaseManager background loop task snapshot failed: %s", exc)
+                else:
+                    if all_tasks:
+                        logger.debug(
+                            "DatabaseManager background loop tasks before stop: %s",
+                            _format_loop_tasks(all_tasks),
+                        )
                 try:
                     pending = [task for task in asyncio.all_tasks(loop) if not task.done()]
                 except Exception as exc:  # pragma: no cover - defensywne
@@ -202,7 +225,18 @@ def shutdown_background_loop(timeout: float = 2.0) -> None:
             diagnostics["active_instances"],
             diagnostics["suspicious_threads"],
         )
-        raise RuntimeError("DatabaseManager background loop thread failed to shut down.")
+        if diagnostics["active_instances"] == 0:
+            raise RuntimeError("DatabaseManager background loop thread failed to shut down.")
+        logger.error(
+            "DatabaseManager background loop shutdown incomplete; deferring to best-effort cleanup."
+        )
+        logger.debug(
+            "DatabaseManager skipping wait_for_aiosqlite_threads (joined=False, active_instances=%s) "
+            "during best-effort shutdown.",
+            diagnostics["active_instances"],
+        )
+        return
+    wait_for_aiosqlite_threads(timeout=max(timeout, 1.0), poll_interval=0.05)
     with _background_lock:
         _background_loop = None
         _background_thread = None
@@ -821,6 +855,13 @@ class _EngineState:
     session_factory: Optional[sessionmaker] = None
 
 
+def _allow_when_closing(
+    method: Callable[..., Coroutine[Any, Any, Any]]
+) -> Callable[..., Coroutine[Any, Any, Any]]:
+    setattr(method, "_allow_when_closing", True)
+    return method
+
+
 class DatabaseManager:
     """
     Główna klasa obsługująca bazę danych (async) + sync wrapper.
@@ -828,12 +869,21 @@ class DatabaseManager:
 
     _ASYNC_DISPATCH_TIMEOUT = 5.0
     _DispatchT = TypeVar("_DispatchT")
+    _TrackT = TypeVar("_TrackT")
+    _CLOSE_INFLIGHT_TIMEOUT = 5.0
+    _CLOSE_INFLIGHT_GRACE_PERIOD = 0.5
+    _CLOSE_INFLIGHT_POLL_INTERVAL = 0.05
+    _FINALIZE_CLOSE_DEADLINE = 30.0
 
     def __init__(self, db_url: str = "sqlite+aiosqlite:///trading.db") -> None:
         self.db_url = db_url
         self._state = _EngineState()
         self._lock = asyncio.Lock()
         self._loop: asyncio.AbstractEventLoop | None = None
+        self._inflight_tasks: set[asyncio.Task[Any]] = set()
+        self._closing = False
+        self._finalize_close_task: asyncio.Task[None] | None = None
+        self._closing_started_at: float | None = None
         _register_instance(self)
 
     def __del__(self) -> None:  # pragma: no cover - sprzątanie defensywne
@@ -848,7 +898,11 @@ class DatabaseManager:
         async def _wrapper(
             self: "DatabaseManager", *args: Any, **kwargs: Any
         ) -> _DispatchT:
-            return await self._dispatch(method(self, *args, **kwargs))
+            allow_when_closing = bool(getattr(method, "_allow_when_closing", False))
+            return await self._dispatch(
+                method(self, *args, **kwargs),
+                allow_when_closing=allow_when_closing,
+            )
 
         return _wrapper
 
@@ -882,18 +936,36 @@ class DatabaseManager:
         self._loop = background_loop
         return background_loop
 
-    async def _dispatch(self, coro: Coroutine[Any, Any, _DispatchT], *, timeout: float | None = None) -> _DispatchT:
+    async def _track(self, coro: Coroutine[Any, Any, _TrackT]) -> _TrackT:
+        task = asyncio.current_task()
+        if task is not None:
+            self._inflight_tasks.add(task)
+        try:
+            return await coro
+        finally:
+            if task is not None:
+                self._inflight_tasks.discard(task)
+
+    async def _dispatch(
+        self,
+        coro: Coroutine[Any, Any, _DispatchT],
+        *,
+        timeout: float | None = None,
+        allow_when_closing: bool = False,
+    ) -> _DispatchT:
+        if self._closing and not allow_when_closing:
+            raise RuntimeError("DatabaseManager is closing; refusing new work.")
         db_loop = self._ensure_db_loop()
         try:
             running = asyncio.get_running_loop()
         except RuntimeError:
             running = None
         if running is db_loop:
-            return await coro
+            return await self._track(coro)
         if timeout is None:
             timeout = self._ASYNC_DISPATCH_TIMEOUT
         try:
-            future = asyncio.run_coroutine_threadsafe(coro, db_loop)
+            future = asyncio.run_coroutine_threadsafe(self._track(coro), db_loop)
         except Exception as exc:  # pragma: no cover - defensywne
             raise RuntimeError("DatabaseManager failed to schedule async call on background loop.") from exc
         instance_id = id(self)
@@ -950,13 +1022,63 @@ class DatabaseManager:
             logger.info("Database initialized (url=%s)", self.db_url)
 
     @_dispatch_to_db_loop
+    @_allow_when_closing
     async def close(self) -> None:
+        self._closing = True
+        if self._closing_started_at is None:
+            self._closing_started_at = time.monotonic()
         engine = self._state.engine
-        self._state.engine = None
-        self._state.session_factory = None
         if engine is None:
+            self._loop = None
             _discard_instance(self)
             return
+        current_task = asyncio.current_task()
+        deadline = time.monotonic() + self._CLOSE_INFLIGHT_TIMEOUT
+
+        def _pending_inflight() -> List[asyncio.Task[Any]]:
+            if current_task is None:
+                return list(self._inflight_tasks)
+            return [task for task in self._inflight_tasks if task is not current_task]
+
+        async def _wait_for_inflight(*, until: float) -> bool:
+            while True:
+                pending = _pending_inflight()
+                if not pending:
+                    return True
+                if time.monotonic() >= until:
+                    return False
+                await asyncio.sleep(self._CLOSE_INFLIGHT_POLL_INTERVAL)
+
+        inflight_cleared = await _wait_for_inflight(until=deadline)
+        if not inflight_cleared:
+            pending = _pending_inflight()
+            logger.error(
+                "DatabaseManager close timed out waiting for in-flight tasks (instance=%s tasks=%s)",
+                id(self),
+                _format_loop_tasks(pending),
+            )
+            grace_deadline = time.monotonic() + self._CLOSE_INFLIGHT_GRACE_PERIOD
+            inflight_cleared = await _wait_for_inflight(until=grace_deadline)
+            if not inflight_cleared:
+                pending = _pending_inflight()
+                logger.error(
+                    "DatabaseManager close entering deferred finalize due to in-flight tasks (instance=%s loop=%s tasks=%s)",
+                    id(self),
+                    _loop_name(self._loop) or self._loop,
+                    _format_loop_tasks(pending),
+                )
+                finalize_task = self._finalize_close_task
+                if finalize_task is None or finalize_task.done():
+                    finalize_task = asyncio.create_task(self._finalize_close(engine))
+                    try:
+                        finalize_task.set_name(f"DatabaseManagerFinalizeClose-{id(self)}")
+                    except Exception:  # pragma: no cover - defensywne
+                        pass
+                    self._finalize_close_task = finalize_task
+                return
+
+        self._state.engine = None
+        self._state.session_factory = None
         try:
             await engine.dispose()
         except Exception as exc:  # pragma: no cover - defensywne
@@ -966,8 +1088,49 @@ class DatabaseManager:
             _discard_instance(self)
 
     @_dispatch_to_db_loop
+    @_allow_when_closing
     async def aclose(self) -> None:
         await self.close()
+
+    async def _finalize_close(self, engine: AsyncEngine) -> None:
+        current_task = asyncio.current_task()
+        deadline = time.monotonic() + self._FINALIZE_CLOSE_DEADLINE
+        timed_out = False
+        try:
+            while True:
+                pending = [
+                    task for task in self._inflight_tasks
+                    if current_task is None or task is not current_task
+                ]
+                if not pending:
+                    break
+                if time.monotonic() >= deadline and not timed_out:
+                    timed_out = True
+                    logger.error(
+                        "DatabaseManager finalize close deadline exceeded; pending tasks remain (instance=%s tasks=%s)",
+                        id(self),
+                        _format_loop_tasks(pending),
+                    )
+                await asyncio.sleep(self._CLOSE_INFLIGHT_POLL_INTERVAL)
+            self._state.engine = None
+            self._state.session_factory = None
+            try:
+                await engine.dispose()
+                logger.debug(
+                    "DatabaseManager deferred close disposed engine (instance=%s)",
+                    id(self),
+                )
+            except Exception as exc:  # pragma: no cover - defensywne
+                logger.debug("Error while disposing database engine (deferred): %s", exc)
+        finally:
+            self._loop = None
+            _discard_instance(self)
+            if self._finalize_close_task is current_task:
+                self._finalize_close_task = None
+            logger.debug(
+                "DatabaseManager deferred close finalized (instance=%s)",
+                id(self),
+            )
 
     async def _apply_migrations(self) -> None:
         if self._state.session_factory is None:
@@ -1005,7 +1168,9 @@ class DatabaseManager:
             return int(version or 0)
 
     @contextlib.asynccontextmanager
-    async def session(self) -> AsyncIterator[AsyncSession]:
+    async def session(self, *, allow_when_closing: bool = False) -> AsyncIterator[AsyncSession]:
+        if self._closing and not allow_when_closing:
+            raise RuntimeError("DatabaseManager is closing; refusing new work.")
         db_loop = self._ensure_db_loop()
         running = asyncio.get_running_loop()
         if running is not db_loop:
@@ -1668,6 +1833,8 @@ class DatabaseManager:
                 loop = None
             if loop and loop.is_running():
                 raise RuntimeError("Use async methods inside running event loop.")
+            if self._outer._closing:
+                raise RuntimeError("DatabaseManager is closing; refusing new work.")
 
             if timeout is None:
                 timeout = self._DEFAULT_TIMEOUT
@@ -1686,7 +1853,10 @@ class DatabaseManager:
             except Exception:  # pragma: no cover - defensywne
                 pass
             try:
-                future = asyncio.run_coroutine_threadsafe(coro, background_loop)
+                future = asyncio.run_coroutine_threadsafe(
+                    self._outer._track(coro),
+                    background_loop,
+                )
             except Exception as exc:  # pragma: no cover - defensywne
                 raise RuntimeError("DatabaseManager failed to schedule sync call on background loop.") from exc
 
@@ -1883,10 +2053,26 @@ class DatabaseManager:
         for instance in instances:
             _schedule_close(instance, blocking=blocking, timeout=timeout)
         if blocking:
+            deadline = time.monotonic() + max(timeout, 1.0) + 1.0
+            while True:
+                pending_finalize = []
+                for instance in _snapshot_active_instances():
+                    task = instance._finalize_close_task
+                    if task is not None and not task.done():
+                        pending_finalize.append(task)
+                if not pending_finalize:
+                    break
+                if time.monotonic() >= deadline:
+                    logger.error(
+                        "DatabaseManager finalize close tasks still running after timeout: %s",
+                        _format_loop_tasks(pending_finalize),
+                    )
+                    break
+                time.sleep(0.05)
             wait_for_aiosqlite_threads(timeout=max(timeout, 1.0), poll_interval=0.05)
 
     @classmethod
-    def shutdown_background_loop(cls, *, timeout: float = 2.0) -> None:
+    def shutdown_background_loop(cls, *, timeout: float = 5.0) -> None:
         shutdown_background_loop(timeout=timeout)
 
     @classmethod
@@ -2019,3 +2205,30 @@ MIGRATIONS: Dict[int, Callable[[AsyncSession, "DatabaseManager"], Any]] = {
 }
 
 CURRENT_SCHEMA_VERSION = max(MIGRATIONS)
+
+
+def _atexit_cleanup() -> None:
+    try:
+        DatabaseManager.close_all_active(blocking=True, timeout=5.0)
+    except Exception as exc:  # pragma: no cover - defensywne
+        try:
+            logger.debug("DatabaseManager atexit close_all_active failed: %s", exc)
+        except Exception:
+            pass
+    try:
+        DatabaseManager.shutdown_background_loop(timeout=5.0)
+    except Exception as exc:  # pragma: no cover - defensywne
+        try:
+            logger.debug("DatabaseManager atexit shutdown background loop failed: %s", exc)
+        except Exception:
+            pass
+    try:
+        wait_for_aiosqlite_threads(timeout=5.0, poll_interval=0.05)
+    except Exception as exc:  # pragma: no cover - defensywne
+        try:
+            logger.debug("DatabaseManager atexit wait_for_aiosqlite_threads failed: %s", exc)
+        except Exception:
+            pass
+
+
+atexit.register(_atexit_cleanup)
