@@ -1524,17 +1524,62 @@ class DatabaseManager:
 
     # ---------- Sync wrapper ----------
     class _SyncWrapper:
+        _DEFAULT_TIMEOUT = 5.0
+
         def __init__(self, outer: "DatabaseManager") -> None:
             self._outer = outer
 
-        def _run(self, coro):
+        def _run(self, coro, *, timeout: float | None = None):
             try:
                 loop = asyncio.get_running_loop()
             except RuntimeError:
                 loop = None
             if loop and loop.is_running():
                 raise RuntimeError("Use async methods inside running event loop.")
-            return asyncio.run(coro)
+
+            if timeout is None:
+                timeout = self._DEFAULT_TIMEOUT
+
+            background_loop = _ensure_background_loop()
+            if not background_loop:
+                raise RuntimeError("DatabaseManager background loop unavailable for sync call.")
+            try:
+                running = background_loop.is_running()
+                closed = background_loop.is_closed()
+                if closed or not running:
+                    logger.debug(
+                        "DatabaseManager background loop state for sync call (loop=%s running=%s closed=%s)",
+                        _loop_name(background_loop) or background_loop,
+                        running,
+                        closed,
+                    )
+            except Exception:  # pragma: no cover - defensywne
+                pass
+            try:
+                future = asyncio.run_coroutine_threadsafe(coro, background_loop)
+            except Exception as exc:  # pragma: no cover - defensywne
+                raise RuntimeError("DatabaseManager failed to schedule sync call on background loop.") from exc
+
+            try:
+                return future.result(timeout=timeout)
+            except concurrent.futures.TimeoutError:
+                try:
+                    coro_name = getattr(coro, "__qualname__", None) or getattr(coro, "__name__", None)
+                except Exception:  # pragma: no cover - defensywne
+                    coro_name = None
+                if not coro_name:
+                    try:
+                        coro_name = getattr(getattr(coro, "cr_code", None), "co_qualname", None)
+                    except Exception:  # pragma: no cover - defensywne
+                        coro_name = None
+                logger.debug(
+                    "DatabaseManager sync call timed out (instance=%s thread=%s coro=%s)",
+                    id(self._outer),
+                    threading.current_thread().name,
+                    coro_name or type(coro).__name__,
+                )
+                # Deterministycznie NIE anulujemy coroutine.
+                raise RuntimeError("DatabaseManager sync call timed out.") from None
 
         def init_db(self, *, create: bool = True) -> None:
             return self._run(self._outer.init_db(create=create))
