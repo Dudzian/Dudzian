@@ -13,13 +13,15 @@ import contextlib
 import concurrent.futures
 import csv
 import datetime as dt
+import functools
 import json
 import logging
 import threading
+import time
 import weakref
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, AsyncIterator, Callable, Dict, List, Optional, Union
+from typing import Any, AsyncIterator, Callable, Coroutine, Dict, List, Optional, TypeVar, Union
 
 from pydantic import BaseModel, ValidationError, field_validator
 
@@ -119,6 +121,48 @@ def _background_diagnostics() -> dict[str, Any]:
         "active_instances": len(active_instances),
         "suspicious_threads": suspicious_threads,
     }
+
+
+def wait_for_aiosqlite_threads(timeout: float = 5.0, poll_interval: float = 0.05) -> None:
+    deadline = time.monotonic() + timeout
+    while True:
+        threads = [
+            thread
+            for thread in threading.enumerate()
+            if thread.is_alive() and "aiosqlite" in thread.name
+        ]
+        if not threads:
+            return
+        if time.monotonic() >= deadline:
+            details = "; ".join(
+                f"{thread.name} (ident={thread.ident}, daemon={thread.daemon})"
+                for thread in threads
+            )
+            if not details:
+                details = "<unknown>"
+            suspicious = [
+                thread
+                for thread in threading.enumerate()
+                if thread.is_alive() and ("aiosqlite" in thread.name or "AnyIO" in thread.name)
+            ]
+            suspicious_details = "; ".join(
+                f"{thread.name} (ident={thread.ident}, daemon={thread.daemon})"
+                for thread in suspicious
+            )
+            if suspicious and not suspicious_details:
+                suspicious_details = "<unknown>"
+            suspicious_suffix = f"; suspicious={suspicious_details}" if suspicious_details else ""
+            logger.error(
+                "Lingering aiosqlite threads after shutdown: %s%s",
+                details,
+                suspicious_suffix,
+            )
+            raise RuntimeError(
+                "Lingering aiosqlite threads after shutdown: "
+                + details
+                + suspicious_suffix
+            )
+        time.sleep(poll_interval)
 
 def shutdown_background_loop(timeout: float = 2.0) -> None:
     global _background_loop, _background_thread, _background_ready
@@ -782,6 +826,9 @@ class DatabaseManager:
     Główna klasa obsługująca bazę danych (async) + sync wrapper.
     """
 
+    _ASYNC_DISPATCH_TIMEOUT = 5.0
+    _DispatchT = TypeVar("_DispatchT")
+
     def __init__(self, db_url: str = "sqlite+aiosqlite:///trading.db") -> None:
         self.db_url = db_url
         self._state = _EngineState()
@@ -793,12 +840,95 @@ class DatabaseManager:
         _discard_instance(self)
 
     # ---------- Inicjalizacja ----------
+    @staticmethod
+    def _dispatch_to_db_loop(
+        method: Callable[..., Coroutine[Any, Any, _DispatchT]]
+    ) -> Callable[..., Coroutine[Any, Any, _DispatchT]]:
+        @functools.wraps(method)
+        async def _wrapper(
+            self: "DatabaseManager", *args: Any, **kwargs: Any
+        ) -> _DispatchT:
+            return await self._dispatch(method(self, *args, **kwargs))
+
+        return _wrapper
+
+    def _ensure_db_loop(self) -> asyncio.AbstractEventLoop:
+        background_loop = _ensure_background_loop()
+        if not background_loop:
+            raise RuntimeError("DatabaseManager background loop unavailable.")
+        if self._loop is None:
+            self._loop = background_loop
+            return background_loop
+        if self._loop is background_loop:
+            return background_loop
+        old_running = False
+        old_closed = True
+        try:
+            old_running = self._loop.is_running()
+        except Exception:
+            old_running = False
+        try:
+            old_closed = self._loop.is_closed()
+        except Exception:
+            old_closed = True
+        logger.debug(
+            "DatabaseManager loop reassigned to background loop (instance=%s old=%s new=%s running=%s closed=%s)",
+            id(self),
+            _loop_name(self._loop) or self._loop,
+            _loop_name(background_loop) or background_loop,
+            old_running,
+            old_closed,
+        )
+        self._loop = background_loop
+        return background_loop
+
+    async def _dispatch(self, coro: Coroutine[Any, Any, _DispatchT], *, timeout: float | None = None) -> _DispatchT:
+        db_loop = self._ensure_db_loop()
+        try:
+            running = asyncio.get_running_loop()
+        except RuntimeError:
+            running = None
+        if running is db_loop:
+            return await coro
+        if timeout is None:
+            timeout = self._ASYNC_DISPATCH_TIMEOUT
+        try:
+            future = asyncio.run_coroutine_threadsafe(coro, db_loop)
+        except Exception as exc:  # pragma: no cover - defensywne
+            raise RuntimeError("DatabaseManager failed to schedule async call on background loop.") from exc
+        instance_id = id(self)
+
+        def _consume_future_result(done_future: concurrent.futures.Future[Any]) -> None:
+            try:
+                done_future.result()
+            except Exception as exc:  # pragma: no cover - defensywne
+                logger.debug(
+                    "DatabaseManager async call failed (late) instance=%s: %s",
+                    instance_id,
+                    exc,
+                    exc_info=True,
+                )
+
+        future.add_done_callback(_consume_future_result)
+        wrapped = asyncio.wrap_future(future)
+        done, _pending = await asyncio.wait({wrapped}, timeout=timeout)
+        if wrapped in done:
+            return wrapped.result()
+        logger.debug(
+            "DatabaseManager async call timed out; leaving in-flight (instance=%s thread=%s loop=%s)",
+            id(self),
+            threading.current_thread().name,
+            _loop_name(db_loop) or db_loop,
+        )
+        raise RuntimeError("DatabaseManager async call timed out on background loop.") from None
+
+    @_dispatch_to_db_loop
     async def init_db(self, *, create: bool = True) -> None:
         """
         Tworzy silnik, sesję i (opcjonalnie) schemat bazy, jeśli nie istnieje.
         DDL (create_all) wykonujemy na połączeniu engine, NIE na sesji.
         """
-        self._capture_loop_if_missing()
+        self._ensure_db_loop()
         async with self._lock:
             if self._state.engine is None:
                 self._state.engine = create_async_engine(self.db_url, future=True)
@@ -819,6 +949,7 @@ class DatabaseManager:
         if create:
             logger.info("Database initialized (url=%s)", self.db_url)
 
+    @_dispatch_to_db_loop
     async def close(self) -> None:
         engine = self._state.engine
         self._state.engine = None
@@ -834,6 +965,7 @@ class DatabaseManager:
             self._loop = None
             _discard_instance(self)
 
+    @_dispatch_to_db_loop
     async def aclose(self) -> None:
         await self.close()
 
@@ -862,6 +994,7 @@ class DatabaseManager:
             if updated:
                 await session.commit()
 
+    @_dispatch_to_db_loop
     async def get_schema_version(self) -> int:
         if self._state.session_factory is None:
             return 0
@@ -873,7 +1006,10 @@ class DatabaseManager:
 
     @contextlib.asynccontextmanager
     async def session(self) -> AsyncIterator[AsyncSession]:
-        self._capture_loop_if_missing()
+        db_loop = self._ensure_db_loop()
+        running = asyncio.get_running_loop()
+        if running is not db_loop:
+            raise RuntimeError("DatabaseManager session must be used on the background loop.")
         if self._state.session_factory is None:
             raise RuntimeError("Call init_db() first.")
         session: AsyncSession = self._state.session_factory()
@@ -881,36 +1017,6 @@ class DatabaseManager:
             yield session
         finally:
             await session.close()
-
-    def _capture_loop_if_missing(self) -> None:
-        try:
-            running = asyncio.get_running_loop()
-        except RuntimeError:
-            return
-        if self._loop is None:
-            self._loop = running
-            return
-        if self._loop == running:
-            return
-        old_running = False
-        old_closed = True
-        try:
-            old_running = self._loop.is_running()
-        except Exception:
-            old_running = False
-        try:
-            old_closed = self._loop.is_closed()
-        except Exception:
-            old_closed = True
-        logger.debug(
-            "DatabaseManager loop changed (instance=%s old=%s new=%s running=%s closed=%s)",
-            id(self),
-            _loop_name(self._loop) or self._loop,
-            _loop_name(running) or running,
-            old_running,
-            old_closed,
-        )
-        self._loop = running
 
     @contextlib.asynccontextmanager
     async def transaction(self) -> AsyncIterator[AsyncSession]:
@@ -930,6 +1036,7 @@ class DatabaseManager:
                 raise
 
     # ---------- USERS / LOGGING BRIDGE ----------
+    @_dispatch_to_db_loop
     async def ensure_user(self, email: str) -> int:
         email_norm = (email or "").strip().lower()
         if not email_norm:
@@ -946,6 +1053,7 @@ class DatabaseManager:
             await s.flush()
             return rec.id
 
+    @_dispatch_to_db_loop
     async def log(
         self,
         user_id: Optional[int],
@@ -978,6 +1086,7 @@ class DatabaseManager:
             await s.flush()
             return rec.id
 
+    @_dispatch_to_db_loop
     async def get_positions(self, user_id: Optional[int], *, mode: Optional[str] = None) -> List[Dict[str, Any]]:
         """Compatibility helper used by TradingEngine/GUI."""
         rows = await self.get_open_positions(mode=mode)
@@ -993,6 +1102,7 @@ class DatabaseManager:
         return out
 
     # ---------- OPERACJE: Orders ----------
+    @_dispatch_to_db_loop
     async def record_order(self, order: Union[OrderIn, Dict[str, Any]]) -> int:
         """Zapisuje zlecenie (idempotencja po client_order_id). Zwraca ID rekordu."""
         try:
@@ -1032,6 +1142,7 @@ class DatabaseManager:
             await s.flush()
             return rec.id
 
+    @_dispatch_to_db_loop
     async def update_order_status(
         self,
         *,
@@ -1066,6 +1177,7 @@ class DatabaseManager:
             await s.flush()
 
     # ---------- OPERACJE: Trades ----------
+    @_dispatch_to_db_loop
     async def record_trade(self, trade: Union[TradeIn, Dict[str, Any]]) -> int:
         """Zapisuje trade. Zwraca ID."""
         try:
@@ -1090,6 +1202,7 @@ class DatabaseManager:
             await s.flush()
             return rec.id
 
+    @_dispatch_to_db_loop
     async def fetch_trades(
         self,
         *,
@@ -1110,6 +1223,7 @@ class DatabaseManager:
             return [self._row_to_dict(r) for r in rows]
 
     # ---------- OPERACJE: Positions ----------
+    @_dispatch_to_db_loop
     async def upsert_position(self, pos: Union[PositionIn, Dict[str, Any]]) -> int:
         """Wstawia/aktualizuje po symbolu (unique), zwraca id."""
         try:
@@ -1142,6 +1256,7 @@ class DatabaseManager:
             await s.flush()
             return rec.id
 
+    @_dispatch_to_db_loop
     async def close_position(self, symbol: str) -> None:
         async with self.transaction() as s:
             q = await s.execute(select(Position).where(Position.symbol == symbol))
@@ -1149,6 +1264,7 @@ class DatabaseManager:
             if existing:
                 await s.delete(existing)
 
+    @_dispatch_to_db_loop
     async def get_open_positions(self, *, mode: Optional[str] = None) -> List[Dict[str, Any]]:
         async with self.session() as s:
             stmt = select(Position)
@@ -1158,6 +1274,7 @@ class DatabaseManager:
             return [self._row_to_dict(r) for r in rows]
 
     # ---------- OPERACJE: Equity ----------
+    @_dispatch_to_db_loop
     async def log_equity(self, equity: Union[EquityIn, Dict[str, Any]]) -> int:
         try:
             e = equity if isinstance(equity, EquityIn) else EquityIn(**equity)
@@ -1176,6 +1293,7 @@ class DatabaseManager:
             await s.flush()
             return rec.id
 
+    @_dispatch_to_db_loop
     async def fetch_equity_curve(self, *, limit: int = 1000, mode: Optional[str] = None) -> List[Dict[str, Any]]:
         async with self.session() as s:
             stmt = select(EquityCurve).order_by(EquityCurve.ts.asc()).limit(limit)
@@ -1185,6 +1303,7 @@ class DatabaseManager:
             return [self._row_to_dict(r) for r in rows]
 
     # ---------- OPERACJE: Performance metrics ----------
+    @_dispatch_to_db_loop
     async def log_performance_metric(
         self, metric: Union[PerformanceMetricIn, Dict[str, Any]]
     ) -> int:
@@ -1207,6 +1326,7 @@ class DatabaseManager:
             await session.flush()
             return rec.id
 
+    @_dispatch_to_db_loop
     async def fetch_performance_metrics(
         self,
         *,
@@ -1224,6 +1344,7 @@ class DatabaseManager:
             return [self._row_to_dict(row) for row in rows]
 
     # ---------- OPERACJE: Risk limits ----------
+    @_dispatch_to_db_loop
     async def log_risk_limit(
         self, snapshot: Union[RiskLimitIn, Dict[str, Any]]
     ) -> int:
@@ -1245,6 +1366,7 @@ class DatabaseManager:
             await session.flush()
             return rec.id
 
+    @_dispatch_to_db_loop
     async def fetch_risk_limits(
         self,
         *,
@@ -1259,6 +1381,7 @@ class DatabaseManager:
             return [self._row_to_dict(row) for row in rows]
 
     # ---------- OPERACJE: Risk audit logs ----------
+    @_dispatch_to_db_loop
     async def log_risk_audit(
         self,
         event: Union[RiskAuditIn, Dict[str, Any]],
@@ -1296,6 +1419,7 @@ class DatabaseManager:
             await session.flush()
             return rec.id
 
+    @_dispatch_to_db_loop
     async def fetch_risk_audits(
         self,
         *,
@@ -1334,6 +1458,7 @@ class DatabaseManager:
         return result
 
     # ---------- OPERACJE: API rate limits ----------
+    @_dispatch_to_db_loop
     async def log_rate_limit_snapshot(
         self,
         snapshot: Union[RateLimitSnapshotIn, Dict[str, Any]],
@@ -1365,6 +1490,7 @@ class DatabaseManager:
             await session.flush()
             return rec.id
 
+    @_dispatch_to_db_loop
     async def fetch_rate_limit_snapshots(
         self,
         *,
@@ -1382,6 +1508,7 @@ class DatabaseManager:
             return [self._row_to_dict(row) for row in rows]
 
     # ---------- OPERACJE: Security audit ----------
+    @_dispatch_to_db_loop
     async def log_security_audit(
         self,
         event: Union[SecurityAuditEventIn, Dict[str, Any]],
@@ -1407,6 +1534,7 @@ class DatabaseManager:
             await session.flush()
             return rec.id
 
+    @_dispatch_to_db_loop
     async def fetch_security_audit(
         self,
         *,
@@ -1424,6 +1552,7 @@ class DatabaseManager:
             return [self._row_to_dict(row) for row in rows]
 
     # ---------- OPERACJE: Logi ----------
+    @_dispatch_to_db_loop
     async def add_log(self, *, level: str, source: str, message: str, extra: Optional[Dict[str, Any]] = None) -> int:
         payload = extra or {}
         async with self.transaction() as s:
@@ -1439,6 +1568,7 @@ class DatabaseManager:
             await s.flush()
             return rec.id
 
+    @_dispatch_to_db_loop
     async def fetch_logs(
         self, *, level: Optional[str] = None, source: Optional[str] = None, limit: int = 1000
     ) -> List[Dict[str, Any]]:
@@ -1452,6 +1582,7 @@ class DatabaseManager:
             return [self._row_to_dict(r) for r in rows]
 
     # ---------- Eksport / Backup ----------
+    @_dispatch_to_db_loop
     async def export_trades_csv(self, *, path: Union[str, Path]) -> Path:
         rows = await self.fetch_trades(limit=10_000)
         p = Path(path)
@@ -1467,6 +1598,7 @@ class DatabaseManager:
                 w.writerow(r)
         return p
 
+    @_dispatch_to_db_loop
     async def export_table_json(self, *, table: str, path: Union[str, Path]) -> Path:
         mapper = {
             "orders": Order,
@@ -1540,9 +1672,7 @@ class DatabaseManager:
             if timeout is None:
                 timeout = self._DEFAULT_TIMEOUT
 
-            background_loop = _ensure_background_loop()
-            if not background_loop:
-                raise RuntimeError("DatabaseManager background loop unavailable for sync call.")
+            background_loop = self._outer._ensure_db_loop()
             try:
                 running = background_loop.is_running()
                 closed = background_loop.is_closed()
@@ -1752,10 +1882,18 @@ class DatabaseManager:
         instances = _snapshot_active_instances()
         for instance in instances:
             _schedule_close(instance, blocking=blocking, timeout=timeout)
+        if blocking:
+            wait_for_aiosqlite_threads(timeout=max(timeout, 1.0), poll_interval=0.05)
 
     @classmethod
     def shutdown_background_loop(cls, *, timeout: float = 2.0) -> None:
         shutdown_background_loop(timeout=timeout)
+
+    @classmethod
+    def wait_for_aiosqlite_threads(
+        cls, *, timeout: float = 5.0, poll_interval: float = 0.05
+    ) -> None:
+        wait_for_aiosqlite_threads(timeout=timeout, poll_interval=poll_interval)
 
     @classmethod
     async def close_all_active_async(cls, *, timeout: float = 1.5) -> None:
