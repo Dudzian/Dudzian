@@ -1287,8 +1287,19 @@ class DatabaseManager:
             try:
                 await engine.dispose()
             except Exception as exc:  # pragma: no cover - defensywne
-                logger.debug("Error while disposing database engine: %s", exc)
-            await self._drain_db_loop()
+                logger.debug(
+                    "Error while disposing database engine (instance=%s): %s",
+                    id(self),
+                    exc,
+                )
+            try:
+                await self._drain_db_loop()
+            except Exception as exc:  # pragma: no cover - defensywne
+                logger.debug(
+                    "Error while draining database loop (instance=%s): %s",
+                    id(self),
+                    exc,
+                )
         finally:
             self._loop = None
             _discard_instance(self)
@@ -1321,15 +1332,25 @@ class DatabaseManager:
             self._state.engine = None
             self._state.session_factory = None
             try:
-                try:
-                    await engine.dispose()
-                    logger.debug(
-                        "DatabaseManager deferred close disposed engine (instance=%s)",
-                        id(self),
-                    )
-                except Exception as exc:  # pragma: no cover - defensywne
-                    logger.debug("Error while disposing database engine (deferred): %s", exc)
+                await engine.dispose()
+                logger.debug(
+                    "DatabaseManager deferred close disposed engine (instance=%s)",
+                    id(self),
+                )
+            except Exception as exc:  # pragma: no cover - defensywne
+                logger.debug(
+                    "Error while disposing database engine (deferred, instance=%s): %s",
+                    id(self),
+                    exc,
+                )
+            try:
                 await self._drain_db_loop()
+            except Exception as exc:  # pragma: no cover - defensywne
+                logger.debug(
+                    "Error while draining database loop (deferred, instance=%s): %s",
+                    id(self),
+                    exc,
+                )
         finally:
             self._loop = None
             _discard_instance(self)
