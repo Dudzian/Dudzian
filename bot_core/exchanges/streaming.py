@@ -616,6 +616,10 @@ class LocalLongPollStream(Iterable[StreamBatch]):
         self._stop_event = threading.Event()
         self._worker_thread: threading.Thread | None = None
         self._worker_error: Exception | None = None
+        # Worker może blokować się na response.read() (long-poll). Trzymamy uchwyt,
+        # żeby close() mogło przerwać blokadę przez response.close().
+        self._active_response: Any | None = None
+        self._active_response_lock = threading.Lock()
         self._http_method = (http_method or "GET").upper()
         self._params_in_body = bool(params_in_body)
         self._channels_in_body = bool(channels_in_body)
@@ -894,9 +898,21 @@ class LocalLongPollStream(Iterable[StreamBatch]):
             self._update_queue_metric_locked()
             self._pending_condition.notify_all()
 
+        # Jeśli worker jest aktualnie zablokowany na response.read() (long-poll),
+        # spróbuj zamknąć response, żeby odblokować wątek deterministycznie.
+        try:
+            with self._active_response_lock:
+                response = self._active_response
+            if response is not None:
+                with contextlib.suppress(Exception):
+                    response.close()
+        except Exception:  # pragma: no cover - defensywne
+            pass
+
         worker = self._worker_thread
         if worker and worker.is_alive() and worker is not threading.current_thread():
-            worker.join(timeout=1.0)
+            join_timeout = max(1.0, min(5.0, float(getattr(self, "_timeout", 1.0)) + 0.5))
+            worker.join(timeout=join_timeout)
         self._worker_thread = None
         self._unregister_instance()
 
@@ -1021,8 +1037,16 @@ class LocalLongPollStream(Iterable[StreamBatch]):
             retryable = False
             try:
                 with urlopen(request, timeout=self._timeout) as response:
-                    raw_payload = response.read()
-                    headers = getattr(response, "headers", None)
+                    # Umożliw close() przerwanie blokującego read() poprzez response.close().
+                    try:
+                        with self._active_response_lock:
+                            self._active_response = response
+                        raw_payload = response.read()
+                        headers = getattr(response, "headers", None)
+                    finally:
+                        with self._active_response_lock:
+                            if self._active_response is response:
+                                self._active_response = None
             except HTTPError as exc:
                 server_retry_after = self._retry_after(exc.headers)
                 error_duration = max(0.0, self._clock() - poll_started)
