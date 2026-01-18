@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import io
+import importlib.util
 import json
 import logging
 import os
@@ -378,6 +379,29 @@ def capture_qml_artifacts(
             placeholder.write_text(
                 "Brak widocznych okien do zrzutu ekranu." "\n", encoding="utf-8"
             )
+
+
+@pytest.fixture(autouse=True)
+def flush_qt_deletes_after_qml(request: pytest.FixtureRequest) -> Generator[None, None, None]:
+    if "qml" not in request.node.keywords:
+        yield
+        return
+    yield
+    if importlib.util.find_spec("PySide6") is None:
+        return
+    from PySide6.QtCore import QCoreApplication, QEvent, QEventLoop
+    from PySide6.QtQml import QQmlEngine
+
+    app = QCoreApplication.instance()
+    if app is None:
+        return
+    for _ in range(3):
+        QCoreApplication.sendPostedEvents(None, QEvent.DeferredDelete)
+        app.processEvents(QEventLoop.AllEvents, 50)
+    QQmlEngine.collectGarbage()
+    import gc
+
+    gc.collect()
 
 
 @pytest.hookimpl(hookwrapper=True)

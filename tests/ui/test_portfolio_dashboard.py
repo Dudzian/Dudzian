@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import contextlib
+import gc
 import logging
 import os
 import sys
@@ -325,3 +326,4 @@ def test_portfolio_dashboard_builds_exposures_and_history(tmp_path: Path) -> Non
             app.processEvents()
         DatabaseManager.close_all_active(blocking=True, timeout=5.0)
         wait_for_aiosqlite_threads(timeout=5.0)
+        gc.collect()
