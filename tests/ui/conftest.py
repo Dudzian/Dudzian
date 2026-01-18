@@ -386,19 +386,37 @@ def flush_qt_deletes_after_qml(request: pytest.FixtureRequest) -> Generator[None
     if "qml" not in request.node.keywords:
         yield
         return
+
     yield
+
     if importlib.util.find_spec("PySide6") is None:
         return
+
     from PySide6.QtCore import QCoreApplication, QEvent, QEventLoop
     from PySide6.QtQml import QQmlEngine
 
     app = QCoreApplication.instance()
     if app is None:
         return
+
+    # Flush DeferredDelete + events
     for _ in range(3):
         QCoreApplication.sendPostedEvents(None, QEvent.DeferredDelete)
         app.processEvents(QEventLoop.AllEvents, 50)
-    QQmlEngine.collectGarbage()
+
+    # PySide6: collectGarbage jest metodą instancji (QJSEngine), nie statyczną.
+    # Tworzymy tymczasowy engine i prosimy o GC QML/JS bez ryzyka wyjątku.
+    try:
+        tmp_engine = QQmlEngine()
+        tmp_engine.collectGarbage()
+        tmp_engine.deleteLater()
+        for _ in range(2):
+            QCoreApplication.sendPostedEvents(None, QEvent.DeferredDelete)
+            app.processEvents(QEventLoop.AllEvents, 50)
+    except Exception:
+        # Teardown ma nie wysadzać test runa.
+        pass
+
     import gc
 
     gc.collect()
