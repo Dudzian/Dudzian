@@ -3,6 +3,7 @@ from __future__ import annotations
 import contextlib
 import logging
 import os
+import sys
 import threading
 import time
 from datetime import datetime
@@ -21,6 +22,7 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 require_pyside6()
 
+import PySide6
 from PySide6.QtCore import (QAbstractListModel, QModelIndex, QObject, Property,
                             Qt, QUrl, Slot, QMetaObject)
 from PySide6.QtQml import QQmlApplicationEngine, QQmlComponent
@@ -191,28 +193,83 @@ def test_portfolio_dashboard_builds_exposures_and_history(tmp_path: Path) -> Non
                 "\n".join(warning_lines) if warning_lines else "Brak zarejestrowanych ostrzeżeń QML."
             )
 
-            component = QQmlComponent(engine)
-            component.loadUrl(QUrl.fromLocalFile(str(view_path)))
-            component_errors = []
-            try:
-                if getattr(component, "isError", None) and component.isError():
-                    component_errors = component.errors()
-                elif component.status() == QQmlComponent.Error:
-                    component_errors = component.errors()
-            except Exception:
-                component_errors = []
-            component_error_details = "\n".join(
-                getattr(error, "toString", lambda: str(error))() for error in component_errors
-            ) or "(none)"
-            component_error_string = component.errorString() or "(none)"
+            if sys.platform == "win32":
+                component_error_details = (
+                    "(skipped on win32: QQmlComponent diagnostics can trigger access violation)"
+                )
+                component_error_string = (
+                    "(skipped on win32: QQmlComponent diagnostics can trigger access violation)"
+                )
+            else:
+                component_error_details = "(unavailable)"
+                component_error_string = "(unavailable)"
+                try:
+                    component = QQmlComponent(engine)
+                    component.loadUrl(QUrl.fromLocalFile(str(view_path)))
+                    component_errors = []
+                    try:
+                        is_error = False
+                        is_error_method = getattr(component, "isError", None)
+                        if callable(is_error_method):
+                            try:
+                                is_error = bool(is_error_method())
+                            except Exception:
+                                is_error = False
+                        status_method = getattr(component, "status", None)
+                        if not is_error and callable(status_method):
+                            try:
+                                is_error = status_method() == getattr(QQmlComponent, "Error", None)
+                            except Exception:
+                                is_error = False
+                        if is_error:
+                            errors_method = getattr(component, "errors", None)
+                            if callable(errors_method):
+                                try:
+                                    component_errors = errors_method()
+                                except Exception:
+                                    component_errors = []
+                    except Exception:
+                        component_errors = []
+                    component_error_details = "\n".join(
+                        getattr(error, "toString", lambda: str(error))() for error in component_errors
+                    ) or "(none)"
+                    error_string_method = getattr(component, "errorString", None)
+                    if callable(error_string_method):
+                        try:
+                            component_error_string = error_string_method() or "(none)"
+                        except Exception:
+                            component_error_string = "(errorString failed)"
+                    else:
+                        component_error_string = "(unavailable)"
+                except Exception as exc:
+                    component_error_details = f"(QQmlComponent diagnostics failed: {exc})"
+                    component_error_string = "(QQmlComponent diagnostics failed)"
 
             exists_message = f"Path exists: {os.path.exists(view_path)}"
+            env_context_message = (
+                "Env context: QT_QPA_PLATFORM="
+                f"{os.environ.get('QT_QPA_PLATFORM', '(unset)')}, "
+                "QT_PLUGIN_PATH="
+                f"{os.environ.get('QT_PLUGIN_PATH', '(unset)')}, "
+                "QML2_IMPORT_PATH="
+                f"{os.environ.get('QML2_IMPORT_PATH', '(unset)')}, "
+                "QML_IMPORT_TRACE="
+                f"{os.environ.get('QML_IMPORT_TRACE', '(unset)')}, "
+                "QT_DEBUG_PLUGINS="
+                f"{os.environ.get('QT_DEBUG_PLUGINS', '(unset)')}"
+            )
+            python_message = f"Python: {sys.executable}"
+            pyside_version = getattr(PySide6, "__version__", None) or "(unknown)"
+            pyside_message = f"PySide6: {pyside_version}"
             pytest.fail(
                 "\n".join(
                     [
-                        "Nie udało się załadować dashboardu portfela.",
+                        "qml_load_failed/portfolio_dashboard: Nie udało się załadować dashboardu portfela.",
                         f"view_path: {view_path}",
                         exists_message,
+                        env_context_message,
+                        python_message,
+                        pyside_message,
                         "QML warnings:",
                         warnings_message,
                         "=== Component errors ===",
