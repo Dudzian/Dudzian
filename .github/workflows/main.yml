@@ -36,7 +36,7 @@ env:
 
   # Secrets presence flags (safe: only checks existence)
   HAS_MARKETPLACE_KEYS: ${{ secrets.MARKETPLACE_HMAC_KEY != '' }}
-  HAS_LICENSING_KEYS:   ${{ secrets.LICENSING_PRIVATE_KEY != '' }}
+  HAS_LICENSING_KEYS: ${{ secrets.LICENSING_PRIVATE_KEY != '' }}
 
 jobs:
   smoke-harness:
@@ -224,15 +224,12 @@ jobs:
     name: UI / QML tests (${{ matrix.qt_qpa_platform }})
     needs: fast-tests
     runs-on: [self-hosted, windows]
-    if: >
-      github.event_name == 'workflow_dispatch' &&
-      inputs.run_ui &&
-      (matrix.qt_qpa_platform != 'windows' || vars.RUN_QT_WINDOWS_PLATFORM == '1')
+    if: github.event_name == 'workflow_dispatch' && inputs.run_ui
     timeout-minutes: 45
     strategy:
       fail-fast: false
       matrix:
-        qt_qpa_platform: [offscreen, windows]
+        qt_qpa_platform: ${{ fromJSON(vars.RUN_QT_WINDOWS_PLATFORM == '1' && '["offscreen","windows"]' || '["offscreen"]') }}
     env:
       RUN_QT_WINDOWS_PLATFORM: ${{ vars.RUN_QT_WINDOWS_PLATFORM }}
       QT_OPENGL: software
