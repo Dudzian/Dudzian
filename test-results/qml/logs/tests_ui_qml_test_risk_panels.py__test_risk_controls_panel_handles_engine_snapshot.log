@@ -1,0 +1,526 @@
+[QtDebugMsg] None:0 qt.qml.import addImportPath: "C:/Users/kamil/Documents/GitHub/Dudzian/.venv/Lib/site-packages/PySide6/qml"
+[QtDebugMsg] None:0 qt.qml.import addImportPath: "qrc:/qt/qml"
+[QtDebugMsg] None:0 qt.qml.import addImportPath: "qrc:/qt-project.org/imports"
+[QtDebugMsg] None:0 qt.qml.import addImportPath: "C:/Users/kamil/actions-runner/_work/_tool/Python/3.11.9/x64"
+[QtDebugMsg] None:0 qt.qml.import addImportPath: "C:\\Users\\kamil\\Documents\\GitHub\\Dudzian\\ui\\qml"
+[QtDebugMsg] None:0 qt.qml.import addImportPath: "C:\\Users\\kamil\\Documents\\GitHub\\Dudzian\\ui"
+[QtDebugMsg] None:0 qt.qml.import addLibraryImport: file:///C:/Users/kamil/Documents/GitHub/Dudzian/ui/qml/views/RiskControls.qml "QtQuick" version "(latest)" as ""
+[QtDebugMsg] None:0 qt.qml.import importExtension: file:///C:/Users/kamil/Documents/GitHub/Dudzian/ui/qml/views/RiskControls.qml loaded "C:/Users/kamil/Documents/GitHub/Dudzian/.venv/Lib/site-packages/PySide6/qml/QtQuick/qmldir"
+[QtDebugMsg] None:0 qt.qml.import loading dependent import "QtQml" version 6.10 as ""
+[QtDebugMsg] None:0 qt.qml.import addLibraryImport: file:///C:/Users/kamil/Documents/GitHub/Dudzian/ui/qml/views/RiskControls.qml "QtQml" version "6.10" as ""
+[QtDebugMsg] None:0 qt.qml.import importExtension: file:///C:/Users/kamil/Documents/GitHub/Dudzian/ui/qml/views/RiskControls.qml loaded ":/qt-project.org/imports/QtQml/qmldir"
+[QtDebugMsg] None:0 qt.qml.import resolvePlugin Could not resolve dynamic plugin with base name "qmlplugin" in ":/qt-project.org/imports/QtQml"  file does not exist
+[QtDebugMsg] None:0 qt.qml.import loading dependent import "QML" version 1.0 as ""
+[QtDebugMsg] None:0 qt.qml.import addLibraryImport: file:///C:/Users/kamil/Documents/GitHub/Dudzian/ui/qml/views/RiskControls.qml "QML" version "1.0" as ""
+[QtDebugMsg] None:0 qt.qml.import loading dependent import "QtQml.Models" version 6.10 as ""
+[QtDebugMsg] None:0 qt.qml.import addLibraryImport: file:///C:/Users/kamil/Documents/GitHub/Dudzian/ui/qml/views/RiskControls.qml "QtQml.Models" version "6.10" as ""
+[QtDebugMsg] None:0 qt.qml.import importExtension: file:///C:/Users/kamil/Documents/GitHub/Dudzian/ui/qml/views/RiskControls.qml loaded ":/qt-project.org/imports/QtQml/Models/qmldir"
+[QtDebugMsg] None:0 qt.qml.import resolvePlugin Could not resolve dynamic plugin with base name "modelsplugin" in ":/qt-project.org/imports/QtQml/Models"  file does not exist
+[QtDebugMsg] None:0 qt.qml.import locateLocalQmldir: QtQml.Models module's qmldir found at "C:/Users/kamil/Documents/GitHub/Dudzian/.venv/Lib/site-packages/PySide6/qml/QtQml/Models/qmldir"
+[QtDebugMsg] None:0 qt.qml.import loading dependent import "QtQml.WorkerScript" version 6.10 as ""
+[QtDebugMsg] None:0 qt.qml.import addLibraryImport: file:///C:/Users/kamil/Documents/GitHub/Dudzian/ui/qml/views/RiskControls.qml "QtQml.WorkerScript" version "6.10" as ""
+[QtDebugMsg] None:0 qt.qml.import importExtension: file:///C:/Users/kamil/Documents/GitHub/Dudzian/ui/qml/views/RiskControls.qml loaded ":/qt-project.org/imports/QtQml/WorkerScript/qmldir"
+[QtDebugMsg] None:0 qt.qml.import resolvePlugin Could not resolve dynamic plugin with base name "workerscriptplugin" in ":/qt-project.org/imports/QtQml/WorkerScript"  file does not exist
+[QtDebugMsg] None:0 qt.qml.import locateLocalQmldir: QtQml.WorkerScript module's qmldir found at "C:/Users/kamil/Documents/GitHub/Dudzian/.venv/Lib/site-packages/PySide6/qml/QtQml/WorkerScript/qmldir"
+[QtDebugMsg] None:0 qt.qml.import locateLocalQmldir: QtQml module's qmldir found at "C:/Users/kamil/Documents/GitHub/Dudzian/.venv/Lib/site-packages/PySide6/qml/QtQml/qmldir"
+[QtDebugMsg] None:0 qt.qml.import locateLocalQmldir: QtQuick module's qmldir found at "C:/Users/kamil/Documents/GitHub/Dudzian/.venv/Lib/site-packages/PySide6/qml/QtQuick/qmldir"
+[QtDebugMsg] None:0 qt.qml.import addLibraryImport: file:///C:/Users/kamil/Documents/GitHub/Dudzian/ui/qml/views/RiskControls.qml "QtQuick.Controls" version "(latest)" as ""
+[QtDebugMsg] None:0 qt.qml.import importExtension: file:///C:/Users/kamil/Documents/GitHub/Dudzian/ui/qml/views/RiskControls.qml loaded "C:/Users/kamil/Documents/GitHub/Dudzian/.venv/Lib/site-packages/PySide6/qml/QtQuick/Controls/qmldir"
+[QtDebugMsg] None:0 qt.qml.import loading dependent import "QtQuick.Controls.Windows" version 6.10 as ""
+[QtDebugMsg] None:0 qt.qml.import addLibraryImport: file:///C:/Users/kamil/Documents/GitHub/Dudzian/ui/qml/views/RiskControls.qml "QtQuick.Controls.Windows" version "6.10" as ""
+[QtDebugMsg] None:0 qt.qml.import importExtension: file:///C:/Users/kamil/Documents/GitHub/Dudzian/ui/qml/views/RiskControls.qml loaded "C:/Users/kamil/Documents/GitHub/Dudzian/.venv/Lib/site-packages/PySide6/qml/QtQuick/Controls/Windows/qmldir"
+[QtDebugMsg] None:0 qt.qml.import loading dependent import "QtQuick.Controls.Basic" version 6.10 as ""
+[QtDebugMsg] None:0 qt.qml.import addLibraryImport: file:///C:/Users/kamil/Documents/GitHub/Dudzian/ui/qml/views/RiskControls.qml "QtQuick.Controls.Basic" version "6.10" as ""
+[QtDebugMsg] None:0 qt.qml.import importExtension: file:///C:/Users/kamil/Documents/GitHub/Dudzian/ui/qml/views/RiskControls.qml loaded "C:/Users/kamil/Documents/GitHub/Dudzian/.venv/Lib/site-packages/PySide6/qml/QtQuick/Controls/Basic/qmldir"
+[QtDebugMsg] None:0 qt.qml.import locateLocalQmldir: QtQuick.Controls.Basic module's qmldir found at "C:/Users/kamil/Documents/GitHub/Dudzian/.venv/Lib/site-packages/PySide6/qml/QtQuick/Controls/Basic/qmldir"
+[QtDebugMsg] None:0 qt.qml.import loading dependent import "QtQuick.Controls.Fusion" version 6.10 as ""
+[QtDebugMsg] None:0 qt.qml.import addLibraryImport: file:///C:/Users/kamil/Documents/GitHub/Dudzian/ui/qml/views/RiskControls.qml "QtQuick.Controls.Fusion" version "6.10" as ""
+[QtDebugMsg] None:0 qt.qml.import importExtension: file:///C:/Users/kamil/Documents/GitHub/Dudzian/ui/qml/views/RiskControls.qml loaded "C:/Users/kamil/Documents/GitHub/Dudzian/.venv/Lib/site-packages/PySide6/qml/QtQuick/Controls/Fusion/qmldir"
+[QtDebugMsg] None:0 qt.qml.import loading dependent import "QtQuick.Controls.Basic" version 6.10 as ""
+[QtDebugMsg] None:0 qt.qml.import addLibraryImport: file:///C:/Users/kamil/Documents/GitHub/Dudzian/ui/qml/views/RiskControls.qml "QtQuick.Controls.Basic" version "6.10" as ""
+[QtDebugMsg] None:0 qt.qml.import importExtension: file:///C:/Users/kamil/Documents/GitHub/Dudzian/ui/qml/views/RiskControls.qml loaded "C:/Users/kamil/Documents/GitHub/Dudzian/.venv/Lib/site-packages/PySide6/qml/QtQuick/Controls/Basic/qmldir"
+[QtDebugMsg] None:0 qt.qml.import locateLocalQmldir: QtQuick.Controls.Fusion module's qmldir found at "C:/Users/kamil/Documents/GitHub/Dudzian/.venv/Lib/site-packages/PySide6/qml/QtQuick/Controls/Fusion/qmldir"
+[QtDebugMsg] None:0 qt.qml.import locateLocalQmldir: QtQuick.Controls.Windows module's qmldir found at "C:/Users/kamil/Documents/GitHub/Dudzian/.venv/Lib/site-packages/PySide6/qml/QtQuick/Controls/Windows/qmldir"
+[QtDebugMsg] None:0 qt.qml.import locateLocalQmldir: QtQuick.Controls module's qmldir found at "C:/Users/kamil/Documents/GitHub/Dudzian/.venv/Lib/site-packages/PySide6/qml/QtQuick/Controls/qmldir"
+[QtDebugMsg] None:0 qt.qml.import addLibraryImport: file:///C:/Users/kamil/Documents/GitHub/Dudzian/ui/qml/views/RiskControls.qml "QtQuick.Layouts" version "(latest)" as ""
+[QtDebugMsg] None:0 qt.qml.import importExtension: file:///C:/Users/kamil/Documents/GitHub/Dudzian/ui/qml/views/RiskControls.qml loaded "C:/Users/kamil/Documents/GitHub/Dudzian/.venv/Lib/site-packages/PySide6/qml/QtQuick/Layouts/qmldir"
+[QtDebugMsg] None:0 qt.qml.import locateLocalQmldir: QtQuick.Layouts module's qmldir found at "C:/Users/kamil/Documents/GitHub/Dudzian/.venv/Lib/site-packages/PySide6/qml/QtQuick/Layouts/qmldir"
+[QtDebugMsg] None:0 qt.qml.import addImplicitImport: file:///C:/Users/kamil/Documents/GitHub/Dudzian/ui/qml/views/RiskControls.qml
+[QtDebugMsg] None:0 qt.qml.import addFileImport: file:///C:/Users/kamil/Documents/GitHub/Dudzian/ui/qml/views/RiskControls.qml "." version "(latest)" as ""
+[QtDebugMsg] None:0 qt.qml.import resolveType: file:///C:/Users/kamil/Documents/GitHub/Dudzian/ui/qml/views/RiskControls.qml "Calendar"  =>  "Calendar"   QUrl("qrc:/qt-project.org/imports/QtQuick/Controls/Basic/Calendar.qml")  TYPE/URL-SINGLETON
+[QtDebugMsg] None:0 qt.qml.import addLibraryImport: qrc:/qt-project.org/imports/QtQuick/Controls/Basic/Calendar.qml "QtQuick.Templates" version "(latest)" as "T"
+[QtDebugMsg] None:0 qt.qml.import importExtension: qrc:/qt-project.org/imports/QtQuick/Controls/Basic/Calendar.qml loaded ":/qt-project.org/imports/QtQuick/Templates/qmldir"
+[QtDebugMsg] None:0 qt.qml.import resolvePlugin Could not resolve dynamic plugin with base name "qtquicktemplates2plugin" in ":/qt-project.org/imports/QtQuick/Templates"  file does not exist
+[QtDebugMsg] None:0 qt.qml.import addLibraryImport: qrc:/qt-project.org/imports/QtQuick/Controls/Basic/Calendar.qml "QtQuick.Templates" version "(latest)" as "T"
+[QtDebugMsg] None:0 qt.qml.import importExtension: qrc:/qt-project.org/imports/QtQuick/Controls/Basic/Calendar.qml loaded "C:/Users/kamil/Documents/GitHub/Dudzian/.venv/Lib/site-packages/PySide6/qml/QtQuick/Templates/qmldir"
+[QtDebugMsg] None:0 qt.qml.import locateLocalQmldir: QtQuick.Templates module's qmldir found at "C:/Users/kamil/Documents/GitHub/Dudzian/.venv/Lib/site-packages/PySide6/qml/QtQuick/Templates/qmldir"
+[QtDebugMsg] None:0 qt.qml.import addImplicitImport: qrc:/qt-project.org/imports/QtQuick/Controls/Basic/Calendar.qml
+[QtDebugMsg] None:0 qt.qml.import addFileImport: qrc:/qt-project.org/imports/QtQuick/Controls/Basic/Calendar.qml "." version "(latest)" as ""
+[QtDebugMsg] None:0 qt.qml.import importExtension: qrc:/qt-project.org/imports/QtQuick/Controls/Basic/Calendar.qml loaded ":/qt-project.org/imports/QtQuick/Controls/Basic/qmldir"
+[QtDebugMsg] None:0 qt.qml.import resolveType: qrc:/qt-project.org/imports/QtQuick/Controls/Basic/Calendar.qml "T.Calendar"  =>  "QQuickCalendar"  TYPE
+[QtDebugMsg] None:0 qt.qml.import resolveType: file:///C:/Users/kamil/Documents/GitHub/Dudzian/ui/qml/views/RiskControls.qml "Layout"  =>  "QQuickLayout"  TYPE
+[QtDebugMsg] None:0 qt.qml.import resolveType: file:///C:/Users/kamil/Documents/GitHub/Dudzian/ui/qml/views/RiskControls.qml "Frame"  =>  ""   QUrl("qrc:/qt-project.org/imports/QtQuick/Controls/Windows/Frame.qml")  TYPE/URL
+[QtDebugMsg] None:0 qt.qml.import addLibraryImport: qrc:/qt-project.org/imports/QtQuick/Controls/Windows/Frame.qml "QtQuick" version "(latest)" as ""
+[QtDebugMsg] None:0 qt.qml.import importExtension: qrc:/qt-project.org/imports/QtQuick/Controls/Windows/Frame.qml loaded "C:/Users/kamil/Documents/GitHub/Dudzian/.venv/Lib/site-packages/PySide6/qml/QtQuick/qmldir"
+[QtDebugMsg] None:0 qt.qml.import loading dependent import "QtQml" version 6.10 as ""
+[QtDebugMsg] None:0 qt.qml.import addLibraryImport: qrc:/qt-project.org/imports/QtQuick/Controls/Windows/Frame.qml "QtQml" version "6.10" as ""
+[QtDebugMsg] None:0 qt.qml.import importExtension: qrc:/qt-project.org/imports/QtQuick/Controls/Windows/Frame.qml loaded ":/qt-project.org/imports/QtQml/qmldir"
+[QtDebugMsg] None:0 qt.qml.import loading dependent import "QML" version 1.0 as ""
+[QtDebugMsg] None:0 qt.qml.import addLibraryImport: qrc:/qt-project.org/imports/QtQuick/Controls/Windows/Frame.qml "QML" version "1.0" as ""
+[QtDebugMsg] None:0 qt.qml.import loading dependent import "QtQml.Models" version 6.10 as ""
+[QtDebugMsg] None:0 qt.qml.import addLibraryImport: qrc:/qt-project.org/imports/QtQuick/Controls/Windows/Frame.qml "QtQml.Models" version "6.10" as ""
+[QtDebugMsg] None:0 qt.qml.import importExtension: qrc:/qt-project.org/imports/QtQuick/Controls/Windows/Frame.qml loaded ":/qt-project.org/imports/QtQml/Models/qmldir"
+[QtDebugMsg] None:0 qt.qml.import loading dependent import "QtQml.WorkerScript" version 6.10 as ""
+[QtDebugMsg] None:0 qt.qml.import addLibraryImport: qrc:/qt-project.org/imports/QtQuick/Controls/Windows/Frame.qml "QtQml.WorkerScript" version "6.10" as ""
+[QtDebugMsg] None:0 qt.qml.import importExtension: qrc:/qt-project.org/imports/QtQuick/Controls/Windows/Frame.qml loaded ":/qt-project.org/imports/QtQml/WorkerScript/qmldir"
+[QtDebugMsg] None:0 qt.qml.import addLibraryImport: qrc:/qt-project.org/imports/QtQuick/Controls/Windows/Frame.qml "QtQuick.NativeStyle" version "(latest)" as "NativeStyle"
+[QtDebugMsg] None:0 qt.qml.import importExtension: qrc:/qt-project.org/imports/QtQuick/Controls/Windows/Frame.qml loaded "C:/Users/kamil/Documents/GitHub/Dudzian/.venv/Lib/site-packages/PySide6/qml/QtQuick/NativeStyle/qmldir"
+[QtDebugMsg] None:0 qt.qml.import locateLocalQmldir: QtQuick.NativeStyle module's qmldir found at "C:/Users/kamil/Documents/GitHub/Dudzian/.venv/Lib/site-packages/PySide6/qml/QtQuick/NativeStyle/qmldir"
+[QtDebugMsg] None:0 qt.qml.import addImplicitImport: qrc:/qt-project.org/imports/QtQuick/Controls/Windows/Frame.qml
+[QtDebugMsg] None:0 qt.qml.import addFileImport: qrc:/qt-project.org/imports/QtQuick/Controls/Windows/Frame.qml "." version "(latest)" as ""
+[QtDebugMsg] None:0 qt.qml.import importExtension: qrc:/qt-project.org/imports/QtQuick/Controls/Windows/Frame.qml loaded ":/qt-project.org/imports/QtQuick/Controls/Windows/qmldir"
+[QtDebugMsg] None:0 qt.qml.import loading dependent import "QtQuick.Controls.Basic" version invalid as ""
+[QtDebugMsg] None:0 qt.qml.import addLibraryImport: qrc:/qt-project.org/imports/QtQuick/Controls/Windows/Frame.qml "QtQuick.Controls.Basic" version "(latest)" as ""
+[QtDebugMsg] None:0 qt.qml.import importExtension: qrc:/qt-project.org/imports/QtQuick/Controls/Windows/Frame.qml loaded ":/qt-project.org/imports/QtQuick/Controls/Basic/qmldir"
+[QtDebugMsg] None:0 qt.qml.import locateLocalQmldir: QtQuick.Controls.Basic module's qmldir found at "C:/Users/kamil/Documents/GitHub/Dudzian/.venv/Lib/site-packages/PySide6/qml/QtQuick/Controls/Basic/qmldir"
+[QtDebugMsg] None:0 qt.qml.import loading dependent import "QtQuick.Controls.Fusion" version invalid as ""
+[QtDebugMsg] None:0 qt.qml.import addLibraryImport: qrc:/qt-project.org/imports/QtQuick/Controls/Windows/Frame.qml "QtQuick.Controls.Fusion" version "(latest)" as ""
+[QtDebugMsg] None:0 qt.qml.import importExtension: qrc:/qt-project.org/imports/QtQuick/Controls/Windows/Frame.qml loaded ":/qt-project.org/imports/QtQuick/Controls/Fusion/qmldir"
+[QtDebugMsg] None:0 qt.qml.import loading dependent import "QtQuick.Controls.Basic" version 6.10 as ""
+[QtDebugMsg] None:0 qt.qml.import addLibraryImport: qrc:/qt-project.org/imports/QtQuick/Controls/Windows/Frame.qml "QtQuick.Controls.Basic" version "6.10" as ""
+[QtDebugMsg] None:0 qt.qml.import importExtension: qrc:/qt-project.org/imports/QtQuick/Controls/Windows/Frame.qml loaded "C:/Users/kamil/Documents/GitHub/Dudzian/.venv/Lib/site-packages/PySide6/qml/QtQuick/Controls/Basic/qmldir"
+[QtDebugMsg] None:0 qt.qml.import locateLocalQmldir: QtQuick.Controls.Fusion module's qmldir found at "C:/Users/kamil/Documents/GitHub/Dudzian/.venv/Lib/site-packages/PySide6/qml/QtQuick/Controls/Fusion/qmldir"
+[QtDebugMsg] None:0 qt.qml.import resolveType: qrc:/qt-project.org/imports/QtQuick/Controls/Windows/Frame.qml "Calendar"  =>  "Calendar"   QUrl("qrc:/qt-project.org/imports/QtQuick/Controls/Basic/Calendar.qml")  TYPE/URL-SINGLETON
+[QtDebugMsg] None:0 qt.qml.import resolveType: qrc:/qt-project.org/imports/QtQuick/Controls/Windows/Frame.qml "Calendar"  =>  "Calendar"   QUrl("qrc:/qt-project.org/imports/QtQuick/Controls/Basic/Calendar.qml")  TYPE/URL-SINGLETON
+[QtDebugMsg] None:0 qt.qml.import resolveType: qrc:/qt-project.org/imports/QtQuick/Controls/Windows/Frame.qml "NativeStyle.DefaultFrame"  =>  ""   QUrl("qrc:/qt-project.org/imports/QtQuick/NativeStyle/controls/DefaultFrame.qml")  TYPE/URL
+[QtDebugMsg] None:0 qt.qml.import addLibraryImport: qrc:/qt-project.org/imports/QtQuick/NativeStyle/controls/DefaultFrame.qml "QtQuick" version "(latest)" as ""
+[QtDebugMsg] None:0 qt.qml.import importExtension: qrc:/qt-project.org/imports/QtQuick/NativeStyle/controls/DefaultFrame.qml loaded "C:/Users/kamil/Documents/GitHub/Dudzian/.venv/Lib/site-packages/PySide6/qml/QtQuick/qmldir"
+[QtDebugMsg] None:0 qt.qml.import loading dependent import "QtQml" version 6.10 as ""
+[QtDebugMsg] None:0 qt.qml.import addLibraryImport: qrc:/qt-project.org/imports/QtQuick/NativeStyle/controls/DefaultFrame.qml "QtQml" version "6.10" as ""
+[QtDebugMsg] None:0 qt.qml.import importExtension: qrc:/qt-project.org/imports/QtQuick/NativeStyle/controls/DefaultFrame.qml loaded ":/qt-project.org/imports/QtQml/qmldir"
+[QtDebugMsg] None:0 qt.qml.import loading dependent import "QML" version 1.0 as ""
+[QtDebugMsg] None:0 qt.qml.import addLibraryImport: qrc:/qt-project.org/imports/QtQuick/NativeStyle/controls/DefaultFrame.qml "QML" version "1.0" as ""
+[QtDebugMsg] None:0 qt.qml.import loading dependent import "QtQml.Models" version 6.10 as ""
+[QtDebugMsg] None:0 qt.qml.import addLibraryImport: qrc:/qt-project.org/imports/QtQuick/NativeStyle/controls/DefaultFrame.qml "QtQml.Models" version "6.10" as ""
+[QtDebugMsg] None:0 qt.qml.import importExtension: qrc:/qt-project.org/imports/QtQuick/NativeStyle/controls/DefaultFrame.qml loaded ":/qt-project.org/imports/QtQml/Models/qmldir"
+[QtDebugMsg] None:0 qt.qml.import loading dependent import "QtQml.WorkerScript" version 6.10 as ""
+[QtDebugMsg] None:0 qt.qml.import addLibraryImport: qrc:/qt-project.org/imports/QtQuick/NativeStyle/controls/DefaultFrame.qml "QtQml.WorkerScript" version "6.10" as ""
+[QtDebugMsg] None:0 qt.qml.import importExtension: qrc:/qt-project.org/imports/QtQuick/NativeStyle/controls/DefaultFrame.qml loaded ":/qt-project.org/imports/QtQml/WorkerScript/qmldir"
+[QtDebugMsg] None:0 qt.qml.import addLibraryImport: qrc:/qt-project.org/imports/QtQuick/NativeStyle/controls/DefaultFrame.qml "QtQuick.Controls" version "(latest)" as ""
+[QtDebugMsg] None:0 qt.qml.import importExtension: qrc:/qt-project.org/imports/QtQuick/NativeStyle/controls/DefaultFrame.qml loaded "C:/Users/kamil/Documents/GitHub/Dudzian/.venv/Lib/site-packages/PySide6/qml/QtQuick/Controls/qmldir"
+[QtDebugMsg] None:0 qt.qml.import loading dependent import "QtQuick.Controls.Windows" version 6.10 as ""
+[QtDebugMsg] None:0 qt.qml.import addLibraryImport: qrc:/qt-project.org/imports/QtQuick/NativeStyle/controls/DefaultFrame.qml "QtQuick.Controls.Windows" version "6.10" as ""
+[QtDebugMsg] None:0 qt.qml.import importExtension: qrc:/qt-project.org/imports/QtQuick/NativeStyle/controls/DefaultFrame.qml loaded "C:/Users/kamil/Documents/GitHub/Dudzian/.venv/Lib/site-packages/PySide6/qml/QtQuick/Controls/Windows/qmldir"
+[QtDebugMsg] None:0 qt.qml.import loading dependent import "QtQuick.Controls.Basic" version 6.10 as ""
+[QtDebugMsg] None:0 qt.qml.import addLibraryImport: qrc:/qt-project.org/imports/QtQuick/NativeStyle/controls/DefaultFrame.qml "QtQuick.Controls.Basic" version "6.10" as ""
+[QtDebugMsg] None:0 qt.qml.import importExtension: qrc:/qt-project.org/imports/QtQuick/NativeStyle/controls/DefaultFrame.qml loaded "C:/Users/kamil/Documents/GitHub/Dudzian/.venv/Lib/site-packages/PySide6/qml/QtQuick/Controls/Basic/qmldir"
+[QtDebugMsg] None:0 qt.qml.import loading dependent import "QtQuick.Controls.Fusion" version 6.10 as ""
+[QtDebugMsg] None:0 qt.qml.import addLibraryImport: qrc:/qt-project.org/imports/QtQuick/NativeStyle/controls/DefaultFrame.qml "QtQuick.Controls.Fusion" version "6.10" as ""
+[QtDebugMsg] None:0 qt.qml.import importExtension: qrc:/qt-project.org/imports/QtQuick/NativeStyle/controls/DefaultFrame.qml loaded "C:/Users/kamil/Documents/GitHub/Dudzian/.venv/Lib/site-packages/PySide6/qml/QtQuick/Controls/Fusion/qmldir"
+[QtDebugMsg] None:0 qt.qml.import loading dependent import "QtQuick.Controls.Basic" version 6.10 as ""
+[QtDebugMsg] None:0 qt.qml.import addLibraryImport: qrc:/qt-project.org/imports/QtQuick/NativeStyle/controls/DefaultFrame.qml "QtQuick.Controls.Basic" version "6.10" as ""
+[QtDebugMsg] None:0 qt.qml.import importExtension: qrc:/qt-project.org/imports/QtQuick/NativeStyle/controls/DefaultFrame.qml loaded "C:/Users/kamil/Documents/GitHub/Dudzian/.venv/Lib/site-packages/PySide6/qml/QtQuick/Controls/Basic/qmldir"
+[QtDebugMsg] None:0 qt.qml.import addLibraryImport: qrc:/qt-project.org/imports/QtQuick/NativeStyle/controls/DefaultFrame.qml "QtQuick.Templates" version "(latest)" as "T"
+[QtDebugMsg] None:0 qt.qml.import importExtension: qrc:/qt-project.org/imports/QtQuick/NativeStyle/controls/DefaultFrame.qml loaded ":/qt-project.org/imports/QtQuick/Templates/qmldir"
+[QtDebugMsg] None:0 qt.qml.import addLibraryImport: qrc:/qt-project.org/imports/QtQuick/NativeStyle/controls/DefaultFrame.qml "QtQuick.NativeStyle" version "(latest)" as "NativeStyle"
+[QtDebugMsg] None:0 qt.qml.import importExtension: qrc:/qt-project.org/imports/QtQuick/NativeStyle/controls/DefaultFrame.qml loaded "C:/Users/kamil/Documents/GitHub/Dudzian/.venv/Lib/site-packages/PySide6/qml/QtQuick/NativeStyle/qmldir"
+[QtDebugMsg] None:0 qt.qml.import addImplicitImport: qrc:/qt-project.org/imports/QtQuick/NativeStyle/controls/DefaultFrame.qml
+[QtDebugMsg] None:0 qt.qml.import addFileImport: qrc:/qt-project.org/imports/QtQuick/NativeStyle/controls/DefaultFrame.qml "." version "(latest)" as ""
+[QtDebugMsg] None:0 qt.qml.import importExtension: qrc:/qt-project.org/imports/QtQuick/NativeStyle/controls/DefaultFrame.qml loaded ":/qt-project.org/imports/QtQuick/NativeStyle/controls/qmldir"
+[QtDebugMsg] None:0 qt.qml.import resolveType: qrc:/qt-project.org/imports/QtQuick/NativeStyle/controls/DefaultFrame.qml "Calendar"  =>  "Calendar"   QUrl("qrc:/qt-project.org/imports/QtQuick/Controls/Basic/Calendar.qml")  TYPE/URL-SINGLETON
+[QtDebugMsg] None:0 qt.qml.import resolveType: qrc:/qt-project.org/imports/QtQuick/NativeStyle/controls/DefaultFrame.qml "NativeStyle.Frame"  =>  "QQuickStyleItemFrame"  TYPE
+[QtDebugMsg] None:0 qt.qml.import resolveType: qrc:/qt-project.org/imports/QtQuick/NativeStyle/controls/DefaultFrame.qml "T.Frame"  =>  "QQuickFrame"  TYPE
+[QtDebugMsg] None:0 qt.qml.import resolveType: file:///C:/Users/kamil/Documents/GitHub/Dudzian/ui/qml/views/RiskControls.qml "TextField"  =>  ""   QUrl("qrc:/qt-project.org/imports/QtQuick/Controls/Windows/TextField.qml")  TYPE/URL
+[QtDebugMsg] None:0 qt.qml.import addLibraryImport: qrc:/qt-project.org/imports/QtQuick/Controls/Windows/TextField.qml "QtQuick" version "(latest)" as ""
+[QtDebugMsg] None:0 qt.qml.import importExtension: qrc:/qt-project.org/imports/QtQuick/Controls/Windows/TextField.qml loaded "C:/Users/kamil/Documents/GitHub/Dudzian/.venv/Lib/site-packages/PySide6/qml/QtQuick/qmldir"
+[QtDebugMsg] None:0 qt.qml.import loading dependent import "QtQml" version 6.10 as ""
+[QtDebugMsg] None:0 qt.qml.import addLibraryImport: qrc:/qt-project.org/imports/QtQuick/Controls/Windows/TextField.qml "QtQml" version "6.10" as ""
+[QtDebugMsg] None:0 qt.qml.import importExtension: qrc:/qt-project.org/imports/QtQuick/Controls/Windows/TextField.qml loaded ":/qt-project.org/imports/QtQml/qmldir"
+[QtDebugMsg] None:0 qt.qml.import loading dependent import "QML" version 1.0 as ""
+[QtDebugMsg] None:0 qt.qml.import addLibraryImport: qrc:/qt-project.org/imports/QtQuick/Controls/Windows/TextField.qml "QML" version "1.0" as ""
+[QtDebugMsg] None:0 qt.qml.import loading dependent import "QtQml.Models" version 6.10 as ""
+[QtDebugMsg] None:0 qt.qml.import addLibraryImport: qrc:/qt-project.org/imports/QtQuick/Controls/Windows/TextField.qml "QtQml.Models" version "6.10" as ""
+[QtDebugMsg] None:0 qt.qml.import importExtension: qrc:/qt-project.org/imports/QtQuick/Controls/Windows/TextField.qml loaded ":/qt-project.org/imports/QtQml/Models/qmldir"
+[QtDebugMsg] None:0 qt.qml.import loading dependent import "QtQml.WorkerScript" version 6.10 as ""
+[QtDebugMsg] None:0 qt.qml.import addLibraryImport: qrc:/qt-project.org/imports/QtQuick/Controls/Windows/TextField.qml "QtQml.WorkerScript" version "6.10" as ""
+[QtDebugMsg] None:0 qt.qml.import importExtension: qrc:/qt-project.org/imports/QtQuick/Controls/Windows/TextField.qml loaded ":/qt-project.org/imports/QtQml/WorkerScript/qmldir"
+[QtDebugMsg] None:0 qt.qml.import addLibraryImport: qrc:/qt-project.org/imports/QtQuick/Controls/Windows/TextField.qml "QtQuick.NativeStyle" version "(latest)" as "NativeStyle"
+[QtDebugMsg] None:0 qt.qml.import importExtension: qrc:/qt-project.org/imports/QtQuick/Controls/Windows/TextField.qml loaded "C:/Users/kamil/Documents/GitHub/Dudzian/.venv/Lib/site-packages/PySide6/qml/QtQuick/NativeStyle/qmldir"
+[QtDebugMsg] None:0 qt.qml.import addImplicitImport: qrc:/qt-project.org/imports/QtQuick/Controls/Windows/TextField.qml
+[QtDebugMsg] None:0 qt.qml.import addFileImport: qrc:/qt-project.org/imports/QtQuick/Controls/Windows/TextField.qml "." version "(latest)" as ""
+[QtDebugMsg] None:0 qt.qml.import importExtension: qrc:/qt-project.org/imports/QtQuick/Controls/Windows/TextField.qml loaded ":/qt-project.org/imports/QtQuick/Controls/Windows/qmldir"
+[QtDebugMsg] None:0 qt.qml.import loading dependent import "QtQuick.Controls.Basic" version invalid as ""
+[QtDebugMsg] None:0 qt.qml.import addLibraryImport: qrc:/qt-project.org/imports/QtQuick/Controls/Windows/TextField.qml "QtQuick.Controls.Basic" version "(latest)" as ""
+[QtDebugMsg] None:0 qt.qml.import importExtension: qrc:/qt-project.org/imports/QtQuick/Controls/Windows/TextField.qml loaded ":/qt-project.org/imports/QtQuick/Controls/Basic/qmldir"
+[QtDebugMsg] None:0 qt.qml.import loading dependent import "QtQuick.Controls.Fusion" version invalid as ""
+[QtDebugMsg] None:0 qt.qml.import addLibraryImport: qrc:/qt-project.org/imports/QtQuick/Controls/Windows/TextField.qml "QtQuick.Controls.Fusion" version "(latest)" as ""
+[QtDebugMsg] None:0 qt.qml.import importExtension: qrc:/qt-project.org/imports/QtQuick/Controls/Windows/TextField.qml loaded ":/qt-project.org/imports/QtQuick/Controls/Fusion/qmldir"
+[QtDebugMsg] None:0 qt.qml.import loading dependent import "QtQuick.Controls.Basic" version 6.10 as ""
+[QtDebugMsg] None:0 qt.qml.import addLibraryImport: qrc:/qt-project.org/imports/QtQuick/Controls/Windows/TextField.qml "QtQuick.Controls.Basic" version "6.10" as ""
+[QtDebugMsg] None:0 qt.qml.import importExtension: qrc:/qt-project.org/imports/QtQuick/Controls/Windows/TextField.qml loaded "C:/Users/kamil/Documents/GitHub/Dudzian/.venv/Lib/site-packages/PySide6/qml/QtQuick/Controls/Basic/qmldir"
+[QtDebugMsg] None:0 qt.qml.import resolveType: qrc:/qt-project.org/imports/QtQuick/Controls/Windows/TextField.qml "Calendar"  =>  "Calendar"   QUrl("qrc:/qt-project.org/imports/QtQuick/Controls/Basic/Calendar.qml")  TYPE/URL-SINGLETON
+[QtDebugMsg] None:0 qt.qml.import resolveType: qrc:/qt-project.org/imports/QtQuick/Controls/Windows/TextField.qml "Calendar"  =>  "Calendar"   QUrl("qrc:/qt-project.org/imports/QtQuick/Controls/Basic/Calendar.qml")  TYPE/URL-SINGLETON
+[QtDebugMsg] None:0 qt.qml.import resolveType: qrc:/qt-project.org/imports/QtQuick/Controls/Windows/TextField.qml "NativeStyle.DefaultTextField"  =>  ""   QUrl("qrc:/qt-project.org/imports/QtQuick/NativeStyle/controls/DefaultTextField.qml")  TYPE/URL
+[QtDebugMsg] None:0 qt.qml.import addLibraryImport: qrc:/qt-project.org/imports/QtQuick/NativeStyle/controls/DefaultTextField.qml "QtQuick" version "(latest)" as ""
+[QtDebugMsg] None:0 qt.qml.import importExtension: qrc:/qt-project.org/imports/QtQuick/NativeStyle/controls/DefaultTextField.qml loaded "C:/Users/kamil/Documents/GitHub/Dudzian/.venv/Lib/site-packages/PySide6/qml/QtQuick/qmldir"
+[QtDebugMsg] None:0 qt.qml.import loading dependent import "QtQml" version 6.10 as ""
+[QtDebugMsg] None:0 qt.qml.import addLibraryImport: qrc:/qt-project.org/imports/QtQuick/NativeStyle/controls/DefaultTextField.qml "QtQml" version "6.10" as ""
+[QtDebugMsg] None:0 qt.qml.import importExtension: qrc:/qt-project.org/imports/QtQuick/NativeStyle/controls/DefaultTextField.qml loaded ":/qt-project.org/imports/QtQml/qmldir"
+[QtDebugMsg] None:0 qt.qml.import loading dependent import "QML" version 1.0 as ""
+[QtDebugMsg] None:0 qt.qml.import addLibraryImport: qrc:/qt-project.org/imports/QtQuick/NativeStyle/controls/DefaultTextField.qml "QML" version "1.0" as ""
+[QtDebugMsg] None:0 qt.qml.import loading dependent import "QtQml.Models" version 6.10 as ""
+[QtDebugMsg] None:0 qt.qml.import addLibraryImport: qrc:/qt-project.org/imports/QtQuick/NativeStyle/controls/DefaultTextField.qml "QtQml.Models" version "6.10" as ""
+[QtDebugMsg] None:0 qt.qml.import importExtension: qrc:/qt-project.org/imports/QtQuick/NativeStyle/controls/DefaultTextField.qml loaded ":/qt-project.org/imports/QtQml/Models/qmldir"
+[QtDebugMsg] None:0 qt.qml.import loading dependent import "QtQml.WorkerScript" version 6.10 as ""
+[QtDebugMsg] None:0 qt.qml.import addLibraryImport: qrc:/qt-project.org/imports/QtQuick/NativeStyle/controls/DefaultTextField.qml "QtQml.WorkerScript" version "6.10" as ""
+[QtDebugMsg] None:0 qt.qml.import importExtension: qrc:/qt-project.org/imports/QtQuick/NativeStyle/controls/DefaultTextField.qml loaded ":/qt-project.org/imports/QtQml/WorkerScript/qmldir"
+[QtDebugMsg] None:0 qt.qml.import addLibraryImport: qrc:/qt-project.org/imports/QtQuick/NativeStyle/controls/DefaultTextField.qml "QtQuick.Controls" version "(latest)" as ""
+[QtDebugMsg] None:0 qt.qml.import importExtension: qrc:/qt-project.org/imports/QtQuick/NativeStyle/controls/DefaultTextField.qml loaded "C:/Users/kamil/Documents/GitHub/Dudzian/.venv/Lib/site-packages/PySide6/qml/QtQuick/Controls/qmldir"
+[QtDebugMsg] None:0 qt.qml.import loading dependent import "QtQuick.Controls.Windows" version 6.10 as ""
+[QtDebugMsg] None:0 qt.qml.import addLibraryImport: qrc:/qt-project.org/imports/QtQuick/NativeStyle/controls/DefaultTextField.qml "QtQuick.Controls.Windows" version "6.10" as ""
+[QtDebugMsg] None:0 qt.qml.import importExtension: qrc:/qt-project.org/imports/QtQuick/NativeStyle/controls/DefaultTextField.qml loaded "C:/Users/kamil/Documents/GitHub/Dudzian/.venv/Lib/site-packages/PySide6/qml/QtQuick/Controls/Windows/qmldir"
+[QtDebugMsg] None:0 qt.qml.import loading dependent import "QtQuick.Controls.Basic" version 6.10 as ""
+[QtDebugMsg] None:0 qt.qml.import addLibraryImport: qrc:/qt-project.org/imports/QtQuick/NativeStyle/controls/DefaultTextField.qml "QtQuick.Controls.Basic" version "6.10" as ""
+[QtDebugMsg] None:0 qt.qml.import importExtension: qrc:/qt-project.org/imports/QtQuick/NativeStyle/controls/DefaultTextField.qml loaded "C:/Users/kamil/Documents/GitHub/Dudzian/.venv/Lib/site-packages/PySide6/qml/QtQuick/Controls/Basic/qmldir"
+[QtDebugMsg] None:0 qt.qml.import loading dependent import "QtQuick.Controls.Fusion" version 6.10 as ""
+[QtDebugMsg] None:0 qt.qml.import addLibraryImport: qrc:/qt-project.org/imports/QtQuick/NativeStyle/controls/DefaultTextField.qml "QtQuick.Controls.Fusion" version "6.10" as ""
+[QtDebugMsg] None:0 qt.qml.import importExtension: qrc:/qt-project.org/imports/QtQuick/NativeStyle/controls/DefaultTextField.qml loaded "C:/Users/kamil/Documents/GitHub/Dudzian/.venv/Lib/site-packages/PySide6/qml/QtQuick/Controls/Fusion/qmldir"
+[QtDebugMsg] None:0 qt.qml.import loading dependent import "QtQuick.Controls.Basic" version 6.10 as ""
+[QtDebugMsg] None:0 qt.qml.import addLibraryImport: qrc:/qt-project.org/imports/QtQuick/NativeStyle/controls/DefaultTextField.qml "QtQuick.Controls.Basic" version "6.10" as ""
+[QtDebugMsg] None:0 qt.qml.import importExtension: qrc:/qt-project.org/imports/QtQuick/NativeStyle/controls/DefaultTextField.qml loaded "C:/Users/kamil/Documents/GitHub/Dudzian/.venv/Lib/site-packages/PySide6/qml/QtQuick/Controls/Basic/qmldir"
+[QtDebugMsg] None:0 qt.qml.import addLibraryImport: qrc:/qt-project.org/imports/QtQuick/NativeStyle/controls/DefaultTextField.qml "QtQuick.Controls.impl" version "(latest)" as ""
+[QtDebugMsg] None:0 qt.qml.import importExtension: qrc:/qt-project.org/imports/QtQuick/NativeStyle/controls/DefaultTextField.qml loaded "C:/Users/kamil/Documents/GitHub/Dudzian/.venv/Lib/site-packages/PySide6/qml/QtQuick/Controls/impl/qmldir"
+[QtDebugMsg] None:0 qt.qml.import locateLocalQmldir: QtQuick.Controls.impl module's qmldir found at "C:/Users/kamil/Documents/GitHub/Dudzian/.venv/Lib/site-packages/PySide6/qml/QtQuick/Controls/impl/qmldir"
+[QtDebugMsg] None:0 qt.qml.import addLibraryImport: qrc:/qt-project.org/imports/QtQuick/NativeStyle/controls/DefaultTextField.qml "QtQuick.Templates" version "(latest)" as "T"
+[QtDebugMsg] None:0 qt.qml.import importExtension: qrc:/qt-project.org/imports/QtQuick/NativeStyle/controls/DefaultTextField.qml loaded ":/qt-project.org/imports/QtQuick/Templates/qmldir"
+[QtDebugMsg] None:0 qt.qml.import addLibraryImport: qrc:/qt-project.org/imports/QtQuick/NativeStyle/controls/DefaultTextField.qml "QtQuick.NativeStyle" version "(latest)" as "NativeStyle"
+[QtDebugMsg] None:0 qt.qml.import importExtension: qrc:/qt-project.org/imports/QtQuick/NativeStyle/controls/DefaultTextField.qml loaded "C:/Users/kamil/Documents/GitHub/Dudzian/.venv/Lib/site-packages/PySide6/qml/QtQuick/NativeStyle/qmldir"
+[QtDebugMsg] None:0 qt.qml.import addImplicitImport: qrc:/qt-project.org/imports/QtQuick/NativeStyle/controls/DefaultTextField.qml
+[QtDebugMsg] None:0 qt.qml.import addFileImport: qrc:/qt-project.org/imports/QtQuick/NativeStyle/controls/DefaultTextField.qml "." version "(latest)" as ""
+[QtDebugMsg] None:0 qt.qml.import importExtension: qrc:/qt-project.org/imports/QtQuick/NativeStyle/controls/DefaultTextField.qml loaded ":/qt-project.org/imports/QtQuick/NativeStyle/controls/qmldir"
+[QtDebugMsg] None:0 qt.qml.import resolveType: qrc:/qt-project.org/imports/QtQuick/NativeStyle/controls/DefaultTextField.qml "Calendar"  =>  "Calendar"   QUrl("qrc:/qt-project.org/imports/QtQuick/Controls/Basic/Calendar.qml")  TYPE/URL-SINGLETON
+[QtDebugMsg] None:0 qt.qml.import resolveType: qrc:/qt-project.org/imports/QtQuick/NativeStyle/controls/DefaultTextField.qml "T.TextField"  =>  "QQuickTextField"  TYPE
+[QtDebugMsg] None:0 qt.qml.import resolveType: qrc:/qt-project.org/imports/QtQuick/NativeStyle/controls/DefaultTextField.qml "NativeStyle.TextField"  =>  "QQuickStyleItemTextField"  TYPE
+[QtDebugMsg] None:0 qt.qml.import resolveType: qrc:/qt-project.org/imports/QtQuick/NativeStyle/controls/DefaultTextField.qml "PlaceholderText"  =>  "QQuickPlaceholderText"  TYPE
+[QtDebugMsg] None:0 qt.qml.import resolveType: file:///C:/Users/kamil/Documents/GitHub/Dudzian/ui/qml/views/RiskControls.qml "Button"  =>  ""   QUrl("qrc:/qt-project.org/imports/QtQuick/Controls/Windows/Button.qml")  TYPE/URL
+[QtDebugMsg] None:0 qt.qml.import addLibraryImport: qrc:/qt-project.org/imports/QtQuick/Controls/Windows/Button.qml "QtQuick" version "(latest)" as ""
+[QtDebugMsg] None:0 qt.qml.import importExtension: qrc:/qt-project.org/imports/QtQuick/Controls/Windows/Button.qml loaded "C:/Users/kamil/Documents/GitHub/Dudzian/.venv/Lib/site-packages/PySide6/qml/QtQuick/qmldir"
+[QtDebugMsg] None:0 qt.qml.import loading dependent import "QtQml" version 6.10 as ""
+[QtDebugMsg] None:0 qt.qml.import addLibraryImport: qrc:/qt-project.org/imports/QtQuick/Controls/Windows/Button.qml "QtQml" version "6.10" as ""
+[QtDebugMsg] None:0 qt.qml.import importExtension: qrc:/qt-project.org/imports/QtQuick/Controls/Windows/Button.qml loaded ":/qt-project.org/imports/QtQml/qmldir"
+[QtDebugMsg] None:0 qt.qml.import loading dependent import "QML" version 1.0 as ""
+[QtDebugMsg] None:0 qt.qml.import addLibraryImport: qrc:/qt-project.org/imports/QtQuick/Controls/Windows/Button.qml "QML" version "1.0" as ""
+[QtDebugMsg] None:0 qt.qml.import loading dependent import "QtQml.Models" version 6.10 as ""
+[QtDebugMsg] None:0 qt.qml.import addLibraryImport: qrc:/qt-project.org/imports/QtQuick/Controls/Windows/Button.qml "QtQml.Models" version "6.10" as ""
+[QtDebugMsg] None:0 qt.qml.import importExtension: qrc:/qt-project.org/imports/QtQuick/Controls/Windows/Button.qml loaded ":/qt-project.org/imports/QtQml/Models/qmldir"
+[QtDebugMsg] None:0 qt.qml.import loading dependent import "QtQml.WorkerScript" version 6.10 as ""
+[QtDebugMsg] None:0 qt.qml.import addLibraryImport: qrc:/qt-project.org/imports/QtQuick/Controls/Windows/Button.qml "QtQml.WorkerScript" version "6.10" as ""
+[QtDebugMsg] None:0 qt.qml.import importExtension: qrc:/qt-project.org/imports/QtQuick/Controls/Windows/Button.qml loaded ":/qt-project.org/imports/QtQml/WorkerScript/qmldir"
+[QtDebugMsg] None:0 qt.qml.import addLibraryImport: qrc:/qt-project.org/imports/QtQuick/Controls/Windows/Button.qml "QtQuick.Controls.impl" version "(latest)" as ""
+[QtDebugMsg] None:0 qt.qml.import importExtension: qrc:/qt-project.org/imports/QtQuick/Controls/Windows/Button.qml loaded "C:/Users/kamil/Documents/GitHub/Dudzian/.venv/Lib/site-packages/PySide6/qml/QtQuick/Controls/impl/qmldir"
+[QtDebugMsg] None:0 qt.qml.import addLibraryImport: qrc:/qt-project.org/imports/QtQuick/Controls/Windows/Button.qml "QtQuick.NativeStyle" version "(latest)" as "NativeStyle"
+[QtDebugMsg] None:0 qt.qml.import importExtension: qrc:/qt-project.org/imports/QtQuick/Controls/Windows/Button.qml loaded "C:/Users/kamil/Documents/GitHub/Dudzian/.venv/Lib/site-packages/PySide6/qml/QtQuick/NativeStyle/qmldir"
+[QtDebugMsg] None:0 qt.qml.import addImplicitImport: qrc:/qt-project.org/imports/QtQuick/Controls/Windows/Button.qml
+[QtDebugMsg] None:0 qt.qml.import addFileImport: qrc:/qt-project.org/imports/QtQuick/Controls/Windows/Button.qml "." version "(latest)" as ""
+[QtDebugMsg] None:0 qt.qml.import importExtension: qrc:/qt-project.org/imports/QtQuick/Controls/Windows/Button.qml loaded ":/qt-project.org/imports/QtQuick/Controls/Windows/qmldir"
+[QtDebugMsg] None:0 qt.qml.import loading dependent import "QtQuick.Controls.Basic" version invalid as ""
+[QtDebugMsg] None:0 qt.qml.import addLibraryImport: qrc:/qt-project.org/imports/QtQuick/Controls/Windows/Button.qml "QtQuick.Controls.Basic" version "(latest)" as ""
+[QtDebugMsg] None:0 qt.qml.import importExtension: qrc:/qt-project.org/imports/QtQuick/Controls/Windows/Button.qml loaded ":/qt-project.org/imports/QtQuick/Controls/Basic/qmldir"
+[QtDebugMsg] None:0 qt.qml.import loading dependent import "QtQuick.Controls.Fusion" version invalid as ""
+[QtDebugMsg] None:0 qt.qml.import addLibraryImport: qrc:/qt-project.org/imports/QtQuick/Controls/Windows/Button.qml "QtQuick.Controls.Fusion" version "(latest)" as ""
+[QtDebugMsg] None:0 qt.qml.import importExtension: qrc:/qt-project.org/imports/QtQuick/Controls/Windows/Button.qml loaded ":/qt-project.org/imports/QtQuick/Controls/Fusion/qmldir"
+[QtDebugMsg] None:0 qt.qml.import loading dependent import "QtQuick.Controls.Basic" version 6.10 as ""
+[QtDebugMsg] None:0 qt.qml.import addLibraryImport: qrc:/qt-project.org/imports/QtQuick/Controls/Windows/Button.qml "QtQuick.Controls.Basic" version "6.10" as ""
+[QtDebugMsg] None:0 qt.qml.import importExtension: qrc:/qt-project.org/imports/QtQuick/Controls/Windows/Button.qml loaded "C:/Users/kamil/Documents/GitHub/Dudzian/.venv/Lib/site-packages/PySide6/qml/QtQuick/Controls/Basic/qmldir"
+[QtDebugMsg] None:0 qt.qml.import resolveType: qrc:/qt-project.org/imports/QtQuick/Controls/Windows/Button.qml "Calendar"  =>  "Calendar"   QUrl("qrc:/qt-project.org/imports/QtQuick/Controls/Basic/Calendar.qml")  TYPE/URL-SINGLETON
+[QtDebugMsg] None:0 qt.qml.import resolveType: qrc:/qt-project.org/imports/QtQuick/Controls/Windows/Button.qml "Calendar"  =>  "Calendar"   QUrl("qrc:/qt-project.org/imports/QtQuick/Controls/Basic/Calendar.qml")  TYPE/URL-SINGLETON
+[QtDebugMsg] None:0 qt.qml.import resolveType: qrc:/qt-project.org/imports/QtQuick/Controls/Windows/Button.qml "NativeStyle.DefaultButton"  =>  ""   QUrl("qrc:/qt-project.org/imports/QtQuick/NativeStyle/controls/DefaultButton.qml")  TYPE/URL
+[QtDebugMsg] None:0 qt.qml.import addLibraryImport: qrc:/qt-project.org/imports/QtQuick/NativeStyle/controls/DefaultButton.qml "QtQuick" version "(latest)" as ""
+[QtDebugMsg] None:0 qt.qml.import importExtension: qrc:/qt-project.org/imports/QtQuick/NativeStyle/controls/DefaultButton.qml loaded "C:/Users/kamil/Documents/GitHub/Dudzian/.venv/Lib/site-packages/PySide6/qml/QtQuick/qmldir"
+[QtDebugMsg] None:0 qt.qml.import loading dependent import "QtQml" version 6.10 as ""
+[QtDebugMsg] None:0 qt.qml.import addLibraryImport: qrc:/qt-project.org/imports/QtQuick/NativeStyle/controls/DefaultButton.qml "QtQml" version "6.10" as ""
+[QtDebugMsg] None:0 qt.qml.import importExtension: qrc:/qt-project.org/imports/QtQuick/NativeStyle/controls/DefaultButton.qml loaded ":/qt-project.org/imports/QtQml/qmldir"
+[QtDebugMsg] None:0 qt.qml.import loading dependent import "QML" version 1.0 as ""
+[QtDebugMsg] None:0 qt.qml.import addLibraryImport: qrc:/qt-project.org/imports/QtQuick/NativeStyle/controls/DefaultButton.qml "QML" version "1.0" as ""
+[QtDebugMsg] None:0 qt.qml.import loading dependent import "QtQml.Models" version 6.10 as ""
+[QtDebugMsg] None:0 qt.qml.import addLibraryImport: qrc:/qt-project.org/imports/QtQuick/NativeStyle/controls/DefaultButton.qml "QtQml.Models" version "6.10" as ""
+[QtDebugMsg] None:0 qt.qml.import importExtension: qrc:/qt-project.org/imports/QtQuick/NativeStyle/controls/DefaultButton.qml loaded ":/qt-project.org/imports/QtQml/Models/qmldir"
+[QtDebugMsg] None:0 qt.qml.import loading dependent import "QtQml.WorkerScript" version 6.10 as ""
+[QtDebugMsg] None:0 qt.qml.import addLibraryImport: qrc:/qt-project.org/imports/QtQuick/NativeStyle/controls/DefaultButton.qml "QtQml.WorkerScript" version "6.10" as ""
+[QtDebugMsg] None:0 qt.qml.import importExtension: qrc:/qt-project.org/imports/QtQuick/NativeStyle/controls/DefaultButton.qml loaded ":/qt-project.org/imports/QtQml/WorkerScript/qmldir"
+[QtDebugMsg] None:0 qt.qml.import addLibraryImport: qrc:/qt-project.org/imports/QtQuick/NativeStyle/controls/DefaultButton.qml "QtQuick.Controls" version "(latest)" as ""
+[QtDebugMsg] None:0 qt.qml.import importExtension: qrc:/qt-project.org/imports/QtQuick/NativeStyle/controls/DefaultButton.qml loaded "C:/Users/kamil/Documents/GitHub/Dudzian/.venv/Lib/site-packages/PySide6/qml/QtQuick/Controls/qmldir"
+[QtDebugMsg] None:0 qt.qml.import loading dependent import "QtQuick.Controls.Windows" version 6.10 as ""
+[QtDebugMsg] None:0 qt.qml.import addLibraryImport: qrc:/qt-project.org/imports/QtQuick/NativeStyle/controls/DefaultButton.qml "QtQuick.Controls.Windows" version "6.10" as ""
+[QtDebugMsg] None:0 qt.qml.import importExtension: qrc:/qt-project.org/imports/QtQuick/NativeStyle/controls/DefaultButton.qml loaded "C:/Users/kamil/Documents/GitHub/Dudzian/.venv/Lib/site-packages/PySide6/qml/QtQuick/Controls/Windows/qmldir"
+[QtDebugMsg] None:0 qt.qml.import loading dependent import "QtQuick.Controls.Basic" version 6.10 as ""
+[QtDebugMsg] None:0 qt.qml.import addLibraryImport: qrc:/qt-project.org/imports/QtQuick/NativeStyle/controls/DefaultButton.qml "QtQuick.Controls.Basic" version "6.10" as ""
+[QtDebugMsg] None:0 qt.qml.import importExtension: qrc:/qt-project.org/imports/QtQuick/NativeStyle/controls/DefaultButton.qml loaded "C:/Users/kamil/Documents/GitHub/Dudzian/.venv/Lib/site-packages/PySide6/qml/QtQuick/Controls/Basic/qmldir"
+[QtDebugMsg] None:0 qt.qml.import loading dependent import "QtQuick.Controls.Fusion" version 6.10 as ""
+[QtDebugMsg] None:0 qt.qml.import addLibraryImport: qrc:/qt-project.org/imports/QtQuick/NativeStyle/controls/DefaultButton.qml "QtQuick.Controls.Fusion" version "6.10" as ""
+[QtDebugMsg] None:0 qt.qml.import importExtension: qrc:/qt-project.org/imports/QtQuick/NativeStyle/controls/DefaultButton.qml loaded "C:/Users/kamil/Documents/GitHub/Dudzian/.venv/Lib/site-packages/PySide6/qml/QtQuick/Controls/Fusion/qmldir"
+[QtDebugMsg] None:0 qt.qml.import loading dependent import "QtQuick.Controls.Basic" version 6.10 as ""
+[QtDebugMsg] None:0 qt.qml.import addLibraryImport: qrc:/qt-project.org/imports/QtQuick/NativeStyle/controls/DefaultButton.qml "QtQuick.Controls.Basic" version "6.10" as ""
+[QtDebugMsg] None:0 qt.qml.import importExtension: qrc:/qt-project.org/imports/QtQuick/NativeStyle/controls/DefaultButton.qml loaded "C:/Users/kamil/Documents/GitHub/Dudzian/.venv/Lib/site-packages/PySide6/qml/QtQuick/Controls/Basic/qmldir"
+[QtDebugMsg] None:0 qt.qml.import addLibraryImport: qrc:/qt-project.org/imports/QtQuick/NativeStyle/controls/DefaultButton.qml "QtQuick.Controls.impl" version "(latest)" as ""
+[QtDebugMsg] None:0 qt.qml.import importExtension: qrc:/qt-project.org/imports/QtQuick/NativeStyle/controls/DefaultButton.qml loaded "C:/Users/kamil/Documents/GitHub/Dudzian/.venv/Lib/site-packages/PySide6/qml/QtQuick/Controls/impl/qmldir"
+[QtDebugMsg] None:0 qt.qml.import addLibraryImport: qrc:/qt-project.org/imports/QtQuick/NativeStyle/controls/DefaultButton.qml "QtQuick.Templates" version "(latest)" as "T"
+[QtDebugMsg] None:0 qt.qml.import importExtension: qrc:/qt-project.org/imports/QtQuick/NativeStyle/controls/DefaultButton.qml loaded ":/qt-project.org/imports/QtQuick/Templates/qmldir"
+[QtDebugMsg] None:0 qt.qml.import addLibraryImport: qrc:/qt-project.org/imports/QtQuick/NativeStyle/controls/DefaultButton.qml "QtQuick.NativeStyle" version "(latest)" as "NativeStyle"
+[QtDebugMsg] None:0 qt.qml.import importExtension: qrc:/qt-project.org/imports/QtQuick/NativeStyle/controls/DefaultButton.qml loaded "C:/Users/kamil/Documents/GitHub/Dudzian/.venv/Lib/site-packages/PySide6/qml/QtQuick/NativeStyle/qmldir"
+[QtDebugMsg] None:0 qt.qml.import addImplicitImport: qrc:/qt-project.org/imports/QtQuick/NativeStyle/controls/DefaultButton.qml
+[QtDebugMsg] None:0 qt.qml.import addFileImport: qrc:/qt-project.org/imports/QtQuick/NativeStyle/controls/DefaultButton.qml "." version "(latest)" as ""
+[QtDebugMsg] None:0 qt.qml.import importExtension: qrc:/qt-project.org/imports/QtQuick/NativeStyle/controls/DefaultButton.qml loaded ":/qt-project.org/imports/QtQuick/NativeStyle/controls/qmldir"
+[QtDebugMsg] None:0 qt.qml.import resolveType: qrc:/qt-project.org/imports/QtQuick/NativeStyle/controls/DefaultButton.qml "Calendar"  =>  "Calendar"   QUrl("qrc:/qt-project.org/imports/QtQuick/Controls/Basic/Calendar.qml")  TYPE/URL-SINGLETON
+[QtDebugMsg] None:0 qt.qml.import resolveType: qrc:/qt-project.org/imports/QtQuick/NativeStyle/controls/DefaultButton.qml "T.Button"  =>  "QQuickButton"  TYPE
+[QtDebugMsg] None:0 qt.qml.import resolveType: qrc:/qt-project.org/imports/QtQuick/NativeStyle/controls/DefaultButton.qml "IconLabel"  =>  "QQuickIconLabel"  TYPE
+[QtDebugMsg] None:0 qt.qml.import resolveType: qrc:/qt-project.org/imports/QtQuick/NativeStyle/controls/DefaultButton.qml "NativeStyle.Button"  =>  "QQuickStyleItemButton"  TYPE
+[QtDebugMsg] None:0 qt.qml.import resolveType: qrc:/qt-project.org/imports/QtQuick/Controls/Windows/Button.qml "NumberAnimation"  =>  "QQuickNumberAnimation"  TYPE
+[QtDebugMsg] None:0 qt.qml.import resolveType: qrc:/qt-project.org/imports/QtQuick/Controls/Windows/Button.qml "IconLabel"  =>  "QQuickIconLabel"  TYPE
+[QtDebugMsg] None:0 qt.qml.import resolveType: qrc:/qt-project.org/imports/QtQuick/Controls/Windows/Button.qml "Behavior"  =>  "QQuickBehavior"  TYPE
+[QtDebugMsg] None:0 qt.qml.import resolveType: qrc:/qt-project.org/imports/QtQuick/Controls/Windows/Button.qml "NativeStyle.Button"  =>  "QQuickStyleItemButton"  TYPE
+[QtDebugMsg] None:0 qt.qml.import resolveType: file:///C:/Users/kamil/Documents/GitHub/Dudzian/ui/qml/views/RiskControls.qml "Switch"  =>  ""   QUrl("qrc:/qt-project.org/imports/QtQuick/Controls/Windows/Switch.qml")  TYPE/URL
+[QtDebugMsg] None:0 qt.qml.import addLibraryImport: qrc:/qt-project.org/imports/QtQuick/Controls/Windows/Switch.qml "QtQuick" version "(latest)" as ""
+[QtDebugMsg] None:0 qt.qml.import importExtension: qrc:/qt-project.org/imports/QtQuick/Controls/Windows/Switch.qml loaded "C:/Users/kamil/Documents/GitHub/Dudzian/.venv/Lib/site-packages/PySide6/qml/QtQuick/qmldir"
+[QtDebugMsg] None:0 qt.qml.import loading dependent import "QtQml" version 6.10 as ""
+[QtDebugMsg] None:0 qt.qml.import addLibraryImport: qrc:/qt-project.org/imports/QtQuick/Controls/Windows/Switch.qml "QtQml" version "6.10" as ""
+[QtDebugMsg] None:0 qt.qml.import importExtension: qrc:/qt-project.org/imports/QtQuick/Controls/Windows/Switch.qml loaded ":/qt-project.org/imports/QtQml/qmldir"
+[QtDebugMsg] None:0 qt.qml.import loading dependent import "QML" version 1.0 as ""
+[QtDebugMsg] None:0 qt.qml.import addLibraryImport: qrc:/qt-project.org/imports/QtQuick/Controls/Windows/Switch.qml "QML" version "1.0" as ""
+[QtDebugMsg] None:0 qt.qml.import loading dependent import "QtQml.Models" version 6.10 as ""
+[QtDebugMsg] None:0 qt.qml.import addLibraryImport: qrc:/qt-project.org/imports/QtQuick/Controls/Windows/Switch.qml "QtQml.Models" version "6.10" as ""
+[QtDebugMsg] None:0 qt.qml.import importExtension: qrc:/qt-project.org/imports/QtQuick/Controls/Windows/Switch.qml loaded ":/qt-project.org/imports/QtQml/Models/qmldir"
+[QtDebugMsg] None:0 qt.qml.import loading dependent import "QtQml.WorkerScript" version 6.10 as ""
+[QtDebugMsg] None:0 qt.qml.import addLibraryImport: qrc:/qt-project.org/imports/QtQuick/Controls/Windows/Switch.qml "QtQml.WorkerScript" version "6.10" as ""
+[QtDebugMsg] None:0 qt.qml.import importExtension: qrc:/qt-project.org/imports/QtQuick/Controls/Windows/Switch.qml loaded ":/qt-project.org/imports/QtQml/WorkerScript/qmldir"
+[QtDebugMsg] None:0 qt.qml.import addLibraryImport: qrc:/qt-project.org/imports/QtQuick/Controls/Windows/Switch.qml "QtQuick.Templates" version "(latest)" as "T"
+[QtDebugMsg] None:0 qt.qml.import importExtension: qrc:/qt-project.org/imports/QtQuick/Controls/Windows/Switch.qml loaded ":/qt-project.org/imports/QtQuick/Templates/qmldir"
+[QtDebugMsg] None:0 qt.qml.import addLibraryImport: qrc:/qt-project.org/imports/QtQuick/Controls/Windows/Switch.qml "QtQuick.Controls.Windows.impl" version "(latest)" as ""
+[QtDebugMsg] None:0 qt.qml.import importExtension: qrc:/qt-project.org/imports/QtQuick/Controls/Windows/Switch.qml loaded "C:/Users/kamil/Documents/GitHub/Dudzian/.venv/Lib/site-packages/PySide6/qml/QtQuick/Controls/Windows/impl/qmldir"
+[QtDebugMsg] None:0 qt.qml.import locateLocalQmldir: QtQuick.Controls.Windows.impl module's qmldir found at "C:/Users/kamil/Documents/GitHub/Dudzian/.venv/Lib/site-packages/PySide6/qml/QtQuick/Controls/Windows/impl/qmldir"
+[QtDebugMsg] None:0 qt.qml.import addImplicitImport: qrc:/qt-project.org/imports/QtQuick/Controls/Windows/Switch.qml
+[QtDebugMsg] None:0 qt.qml.import addFileImport: qrc:/qt-project.org/imports/QtQuick/Controls/Windows/Switch.qml "." version "(latest)" as ""
+[QtDebugMsg] None:0 qt.qml.import importExtension: qrc:/qt-project.org/imports/QtQuick/Controls/Windows/Switch.qml loaded ":/qt-project.org/imports/QtQuick/Controls/Windows/qmldir"
+[QtDebugMsg] None:0 qt.qml.import loading dependent import "QtQuick.Controls.Basic" version invalid as ""
+[QtDebugMsg] None:0 qt.qml.import addLibraryImport: qrc:/qt-project.org/imports/QtQuick/Controls/Windows/Switch.qml "QtQuick.Controls.Basic" version "(latest)" as ""
+[QtDebugMsg] None:0 qt.qml.import importExtension: qrc:/qt-project.org/imports/QtQuick/Controls/Windows/Switch.qml loaded ":/qt-project.org/imports/QtQuick/Controls/Basic/qmldir"
+[QtDebugMsg] None:0 qt.qml.import loading dependent import "QtQuick.Controls.Fusion" version invalid as ""
+[QtDebugMsg] None:0 qt.qml.import addLibraryImport: qrc:/qt-project.org/imports/QtQuick/Controls/Windows/Switch.qml "QtQuick.Controls.Fusion" version "(latest)" as ""
+[QtDebugMsg] None:0 qt.qml.import importExtension: qrc:/qt-project.org/imports/QtQuick/Controls/Windows/Switch.qml loaded ":/qt-project.org/imports/QtQuick/Controls/Fusion/qmldir"
+[QtDebugMsg] None:0 qt.qml.import loading dependent import "QtQuick.Controls.Basic" version 6.10 as ""
+[QtDebugMsg] None:0 qt.qml.import addLibraryImport: qrc:/qt-project.org/imports/QtQuick/Controls/Windows/Switch.qml "QtQuick.Controls.Basic" version "6.10" as ""
+[QtDebugMsg] None:0 qt.qml.import importExtension: qrc:/qt-project.org/imports/QtQuick/Controls/Windows/Switch.qml loaded "C:/Users/kamil/Documents/GitHub/Dudzian/.venv/Lib/site-packages/PySide6/qml/QtQuick/Controls/Basic/qmldir"
+[QtDebugMsg] None:0 qt.qml.import resolveType: qrc:/qt-project.org/imports/QtQuick/Controls/Windows/Switch.qml "Calendar"  =>  "Calendar"   QUrl("qrc:/qt-project.org/imports/QtQuick/Controls/Basic/Calendar.qml")  TYPE/URL-SINGLETON
+[QtDebugMsg] None:0 qt.qml.import resolveType: qrc:/qt-project.org/imports/QtQuick/Controls/Windows/Switch.qml "Calendar"  =>  "Calendar"   QUrl("qrc:/qt-project.org/imports/QtQuick/Controls/Basic/Calendar.qml")  TYPE/URL-SINGLETON
+[QtDebugMsg] None:0 qt.qml.import resolveType: qrc:/qt-project.org/imports/QtQuick/Controls/Windows/Switch.qml "T.Switch"  =>  "QQuickSwitch"  TYPE
+[QtDebugMsg] None:0 qt.qml.import resolveType: qrc:/qt-project.org/imports/QtQuick/Controls/Windows/Switch.qml "Item"  =>  "QQuickItem"  TYPE
+[QtDebugMsg] None:0 qt.qml.import resolveType: qrc:/qt-project.org/imports/QtQuick/Controls/Windows/Switch.qml "Text"  =>  "QQuickText"  TYPE
+[QtDebugMsg] None:0 qt.qml.import resolveType: qrc:/qt-project.org/imports/QtQuick/Controls/Windows/Switch.qml "SwitchIndicator"  =>  ""   QUrl("qrc:/qt-project.org/imports/QtQuick/Controls/Windows/impl/SwitchIndicator.qml")  TYPE/URL
+[QtDebugMsg] None:0 qt.qml.import addLibraryImport: qrc:/qt-project.org/imports/QtQuick/Controls/Windows/impl/SwitchIndicator.qml "QtQuick" version "(latest)" as ""
+[QtDebugMsg] None:0 qt.qml.import importExtension: qrc:/qt-project.org/imports/QtQuick/Controls/Windows/impl/SwitchIndicator.qml loaded "C:/Users/kamil/Documents/GitHub/Dudzian/.venv/Lib/site-packages/PySide6/qml/QtQuick/qmldir"
+[QtDebugMsg] None:0 qt.qml.import loading dependent import "QtQml" version 6.10 as ""
+[QtDebugMsg] None:0 qt.qml.import addLibraryImport: qrc:/qt-project.org/imports/QtQuick/Controls/Windows/impl/SwitchIndicator.qml "QtQml" version "6.10" as ""
+[QtDebugMsg] None:0 qt.qml.import importExtension: qrc:/qt-project.org/imports/QtQuick/Controls/Windows/impl/SwitchIndicator.qml loaded ":/qt-project.org/imports/QtQml/qmldir"
+[QtDebugMsg] None:0 qt.qml.import loading dependent import "QML" version 1.0 as ""
+[QtDebugMsg] None:0 qt.qml.import addLibraryImport: qrc:/qt-project.org/imports/QtQuick/Controls/Windows/impl/SwitchIndicator.qml "QML" version "1.0" as ""
+[QtDebugMsg] None:0 qt.qml.import loading dependent import "QtQml.Models" version 6.10 as ""
+[QtDebugMsg] None:0 qt.qml.import addLibraryImport: qrc:/qt-project.org/imports/QtQuick/Controls/Windows/impl/SwitchIndicator.qml "QtQml.Models" version "6.10" as ""
+[QtDebugMsg] None:0 qt.qml.import importExtension: qrc:/qt-project.org/imports/QtQuick/Controls/Windows/impl/SwitchIndicator.qml loaded ":/qt-project.org/imports/QtQml/Models/qmldir"
+[QtDebugMsg] None:0 qt.qml.import loading dependent import "QtQml.WorkerScript" version 6.10 as ""
+[QtDebugMsg] None:0 qt.qml.import addLibraryImport: qrc:/qt-project.org/imports/QtQuick/Controls/Windows/impl/SwitchIndicator.qml "QtQml.WorkerScript" version "6.10" as ""
+[QtDebugMsg] None:0 qt.qml.import importExtension: qrc:/qt-project.org/imports/QtQuick/Controls/Windows/impl/SwitchIndicator.qml loaded ":/qt-project.org/imports/QtQml/WorkerScript/qmldir"
+[QtDebugMsg] None:0 qt.qml.import addLibraryImport: qrc:/qt-project.org/imports/QtQuick/Controls/Windows/impl/SwitchIndicator.qml "QtQuick.Templates" version "(latest)" as "T"
+[QtDebugMsg] None:0 qt.qml.import importExtension: qrc:/qt-project.org/imports/QtQuick/Controls/Windows/impl/SwitchIndicator.qml loaded ":/qt-project.org/imports/QtQuick/Templates/qmldir"
+[QtDebugMsg] None:0 qt.qml.import addImplicitImport: qrc:/qt-project.org/imports/QtQuick/Controls/Windows/impl/SwitchIndicator.qml
+[QtDebugMsg] None:0 qt.qml.import addFileImport: qrc:/qt-project.org/imports/QtQuick/Controls/Windows/impl/SwitchIndicator.qml "." version "(latest)" as ""
+[QtDebugMsg] None:0 qt.qml.import importExtension: qrc:/qt-project.org/imports/QtQuick/Controls/Windows/impl/SwitchIndicator.qml loaded ":/qt-project.org/imports/QtQuick/Controls/Windows/impl/qmldir"
+[QtDebugMsg] None:0 qt.qml.import resolveType: qrc:/qt-project.org/imports/QtQuick/Controls/Windows/impl/SwitchIndicator.qml "Rectangle"  =>  "QQuickRectangle"  TYPE
+[QtDebugMsg] None:0 qt.qml.import resolveType: qrc:/qt-project.org/imports/QtQuick/Controls/Windows/impl/SwitchIndicator.qml "NumberAnimation"  =>  "QQuickNumberAnimation"  TYPE
+[QtDebugMsg] None:0 qt.qml.import resolveType: qrc:/qt-project.org/imports/QtQuick/Controls/Windows/impl/SwitchIndicator.qml "SmoothedAnimation"  =>  "QQuickSmoothedAnimation"  TYPE
+[QtDebugMsg] None:0 qt.qml.import resolveType: qrc:/qt-project.org/imports/QtQuick/Controls/Windows/impl/SwitchIndicator.qml "Behavior"  =>  "QQuickBehavior"  TYPE
+[QtDebugMsg] None:0 qt.qml.import resolveType: qrc:/qt-project.org/imports/QtQuick/Controls/Windows/impl/SwitchIndicator.qml "T.AbstractButton"  =>  "QQuickAbstractButton"  TYPE
+[QtDebugMsg] None:0 qt.qml.import resolveType: qrc:/qt-project.org/imports/QtQuick/Controls/Windows/impl/SwitchIndicator.qml "T.AbstractButton"  =>  "QQuickAbstractButton"  TYPE
+[QtDebugMsg] None:0 qt.qml.import resolveType: qrc:/qt-project.org/imports/QtQuick/Controls/Windows/Switch.qml "Item"  =>  "QQuickItem"  TYPE
+[QtDebugMsg] None:0 qt.qml.import resolveType: qrc:/qt-project.org/imports/QtQuick/Controls/Windows/Switch.qml "Item"  =>  "QQuickItem"  TYPE
+[QtDebugMsg] None:0 qt.qml.import resolveType: file:///C:/Users/kamil/Documents/GitHub/Dudzian/ui/qml/views/RiskControls.qml "ListView"  =>  "QQuickListView"  TYPE
+[QtDebugMsg] None:0 qt.qml.import resolveType: file:///C:/Users/kamil/Documents/GitHub/Dudzian/ui/qml/views/RiskControls.qml "Item"  =>  "QQuickItem"  TYPE
+[QtDebugMsg] None:0 qt.qml.import resolveType: file:///C:/Users/kamil/Documents/GitHub/Dudzian/ui/qml/views/RiskControls.qml "Label"  =>  ""   QUrl("qrc:/qt-project.org/imports/QtQuick/Controls/Basic/Label.qml")  TYPE/URL
+[QtDebugMsg] None:0 qt.qml.import addLibraryImport: qrc:/qt-project.org/imports/QtQuick/Controls/Basic/Label.qml "QtQuick" version "(latest)" as ""
+[QtDebugMsg] None:0 qt.qml.import importExtension: qrc:/qt-project.org/imports/QtQuick/Controls/Basic/Label.qml loaded "C:/Users/kamil/Documents/GitHub/Dudzian/.venv/Lib/site-packages/PySide6/qml/QtQuick/qmldir"
+[QtDebugMsg] None:0 qt.qml.import loading dependent import "QtQml" version 6.10 as ""
+[QtDebugMsg] None:0 qt.qml.import addLibraryImport: qrc:/qt-project.org/imports/QtQuick/Controls/Basic/Label.qml "QtQml" version "6.10" as ""
+[QtDebugMsg] None:0 qt.qml.import importExtension: qrc:/qt-project.org/imports/QtQuick/Controls/Basic/Label.qml loaded ":/qt-project.org/imports/QtQml/qmldir"
+[QtDebugMsg] None:0 qt.qml.import loading dependent import "QML" version 1.0 as ""
+[QtDebugMsg] None:0 qt.qml.import addLibraryImport: qrc:/qt-project.org/imports/QtQuick/Controls/Basic/Label.qml "QML" version "1.0" as ""
+[QtDebugMsg] None:0 qt.qml.import loading dependent import "QtQml.Models" version 6.10 as ""
+[QtDebugMsg] None:0 qt.qml.import addLibraryImport: qrc:/qt-project.org/imports/QtQuick/Controls/Basic/Label.qml "QtQml.Models" version "6.10" as ""
+[QtDebugMsg] None:0 qt.qml.import importExtension: qrc:/qt-project.org/imports/QtQuick/Controls/Basic/Label.qml loaded ":/qt-project.org/imports/QtQml/Models/qmldir"
+[QtDebugMsg] None:0 qt.qml.import loading dependent import "QtQml.WorkerScript" version 6.10 as ""
+[QtDebugMsg] None:0 qt.qml.import addLibraryImport: qrc:/qt-project.org/imports/QtQuick/Controls/Basic/Label.qml "QtQml.WorkerScript" version "6.10" as ""
+[QtDebugMsg] None:0 qt.qml.import importExtension: qrc:/qt-project.org/imports/QtQuick/Controls/Basic/Label.qml loaded ":/qt-project.org/imports/QtQml/WorkerScript/qmldir"
+[QtDebugMsg] None:0 qt.qml.import addLibraryImport: qrc:/qt-project.org/imports/QtQuick/Controls/Basic/Label.qml "QtQuick.Controls.impl" version "(latest)" as ""
+[QtDebugMsg] None:0 qt.qml.import importExtension: qrc:/qt-project.org/imports/QtQuick/Controls/Basic/Label.qml loaded "C:/Users/kamil/Documents/GitHub/Dudzian/.venv/Lib/site-packages/PySide6/qml/QtQuick/Controls/impl/qmldir"
+[QtDebugMsg] None:0 qt.qml.import addLibraryImport: qrc:/qt-project.org/imports/QtQuick/Controls/Basic/Label.qml "QtQuick.Templates" version "(latest)" as "T"
+[QtDebugMsg] None:0 qt.qml.import importExtension: qrc:/qt-project.org/imports/QtQuick/Controls/Basic/Label.qml loaded ":/qt-project.org/imports/QtQuick/Templates/qmldir"
+[QtDebugMsg] None:0 qt.qml.import addImplicitImport: qrc:/qt-project.org/imports/QtQuick/Controls/Basic/Label.qml
+[QtDebugMsg] None:0 qt.qml.import addFileImport: qrc:/qt-project.org/imports/QtQuick/Controls/Basic/Label.qml "." version "(latest)" as ""
+[QtDebugMsg] None:0 qt.qml.import importExtension: qrc:/qt-project.org/imports/QtQuick/Controls/Basic/Label.qml loaded ":/qt-project.org/imports/QtQuick/Controls/Basic/qmldir"
+[QtDebugMsg] None:0 qt.qml.import resolveType: qrc:/qt-project.org/imports/QtQuick/Controls/Basic/Label.qml "Calendar"  =>  "Calendar"   QUrl("qrc:/qt-project.org/imports/QtQuick/Controls/Basic/Calendar.qml")  TYPE/URL-SINGLETON
+[QtDebugMsg] None:0 qt.qml.import resolveType: qrc:/qt-project.org/imports/QtQuick/Controls/Basic/Label.qml "T.Label"  =>  "QQuickLabel"  TYPE
+[QtDebugMsg] None:0 qt.qml.import resolveType: file:///C:/Users/kamil/Documents/GitHub/Dudzian/ui/qml/views/RiskControls.qml "Component"  =>  "QQmlComponent"  TYPE
+[QtDebugMsg] None:0 qt.qml.import resolveType: file:///C:/Users/kamil/Documents/GitHub/Dudzian/ui/qml/views/RiskControls.qml "Connections"  =>  "QQmlConnections"  TYPE
+[QtDebugMsg] None:0 qt.qml.import resolveType: file:///C:/Users/kamil/Documents/GitHub/Dudzian/ui/qml/views/RiskControls.qml "ScrollBar"  =>  ""   QUrl("qrc:/qt-project.org/imports/QtQuick/Controls/Windows/ScrollBar.qml")  TYPE/URL
+[QtDebugMsg] None:0 qt.qml.import addLibraryImport: qrc:/qt-project.org/imports/QtQuick/Controls/Windows/ScrollBar.qml "QtQuick" version "(latest)" as ""
+[QtDebugMsg] None:0 qt.qml.import importExtension: qrc:/qt-project.org/imports/QtQuick/Controls/Windows/ScrollBar.qml loaded "C:/Users/kamil/Documents/GitHub/Dudzian/.venv/Lib/site-packages/PySide6/qml/QtQuick/qmldir"
+[QtDebugMsg] None:0 qt.qml.import loading dependent import "QtQml" version 6.10 as ""
+[QtDebugMsg] None:0 qt.qml.import addLibraryImport: qrc:/qt-project.org/imports/QtQuick/Controls/Windows/ScrollBar.qml "QtQml" version "6.10" as ""
+[QtDebugMsg] None:0 qt.qml.import importExtension: qrc:/qt-project.org/imports/QtQuick/Controls/Windows/ScrollBar.qml loaded ":/qt-project.org/imports/QtQml/qmldir"
+[QtDebugMsg] None:0 qt.qml.import loading dependent import "QML" version 1.0 as ""
+[QtDebugMsg] None:0 qt.qml.import addLibraryImport: qrc:/qt-project.org/imports/QtQuick/Controls/Windows/ScrollBar.qml "QML" version "1.0" as ""
+[QtDebugMsg] None:0 qt.qml.import loading dependent import "QtQml.Models" version 6.10 as ""
+[QtDebugMsg] None:0 qt.qml.import addLibraryImport: qrc:/qt-project.org/imports/QtQuick/Controls/Windows/ScrollBar.qml "QtQml.Models" version "6.10" as ""
+[QtDebugMsg] None:0 qt.qml.import importExtension: qrc:/qt-project.org/imports/QtQuick/Controls/Windows/ScrollBar.qml loaded ":/qt-project.org/imports/QtQml/Models/qmldir"
+[QtDebugMsg] None:0 qt.qml.import loading dependent import "QtQml.WorkerScript" version 6.10 as ""
+[QtDebugMsg] None:0 qt.qml.import addLibraryImport: qrc:/qt-project.org/imports/QtQuick/Controls/Windows/ScrollBar.qml "QtQml.WorkerScript" version "6.10" as ""
+[QtDebugMsg] None:0 qt.qml.import importExtension: qrc:/qt-project.org/imports/QtQuick/Controls/Windows/ScrollBar.qml loaded ":/qt-project.org/imports/QtQml/WorkerScript/qmldir"
+[QtDebugMsg] None:0 qt.qml.import addLibraryImport: qrc:/qt-project.org/imports/QtQuick/Controls/Windows/ScrollBar.qml "QtQuick.NativeStyle" version "(latest)" as "NativeStyle"
+[QtDebugMsg] None:0 qt.qml.import importExtension: qrc:/qt-project.org/imports/QtQuick/Controls/Windows/ScrollBar.qml loaded "C:/Users/kamil/Documents/GitHub/Dudzian/.venv/Lib/site-packages/PySide6/qml/QtQuick/NativeStyle/qmldir"
+[QtDebugMsg] None:0 qt.qml.import addImplicitImport: qrc:/qt-project.org/imports/QtQuick/Controls/Windows/ScrollBar.qml
+[QtDebugMsg] None:0 qt.qml.import addFileImport: qrc:/qt-project.org/imports/QtQuick/Controls/Windows/ScrollBar.qml "." version "(latest)" as ""
+[QtDebugMsg] None:0 qt.qml.import importExtension: qrc:/qt-project.org/imports/QtQuick/Controls/Windows/ScrollBar.qml loaded ":/qt-project.org/imports/QtQuick/Controls/Windows/qmldir"
+[QtDebugMsg] None:0 qt.qml.import loading dependent import "QtQuick.Controls.Basic" version invalid as ""
+[QtDebugMsg] None:0 qt.qml.import addLibraryImport: qrc:/qt-project.org/imports/QtQuick/Controls/Windows/ScrollBar.qml "QtQuick.Controls.Basic" version "(latest)" as ""
+[QtDebugMsg] None:0 qt.qml.import importExtension: qrc:/qt-project.org/imports/QtQuick/Controls/Windows/ScrollBar.qml loaded ":/qt-project.org/imports/QtQuick/Controls/Basic/qmldir"
+[QtDebugMsg] None:0 qt.qml.import loading dependent import "QtQuick.Controls.Fusion" version invalid as ""
+[QtDebugMsg] None:0 qt.qml.import addLibraryImport: qrc:/qt-project.org/imports/QtQuick/Controls/Windows/ScrollBar.qml "QtQuick.Controls.Fusion" version "(latest)" as ""
+[QtDebugMsg] None:0 qt.qml.import importExtension: qrc:/qt-project.org/imports/QtQuick/Controls/Windows/ScrollBar.qml loaded ":/qt-project.org/imports/QtQuick/Controls/Fusion/qmldir"
+[QtDebugMsg] None:0 qt.qml.import loading dependent import "QtQuick.Controls.Basic" version 6.10 as ""
+[QtDebugMsg] None:0 qt.qml.import addLibraryImport: qrc:/qt-project.org/imports/QtQuick/Controls/Windows/ScrollBar.qml "QtQuick.Controls.Basic" version "6.10" as ""
+[QtDebugMsg] None:0 qt.qml.import importExtension: qrc:/qt-project.org/imports/QtQuick/Controls/Windows/ScrollBar.qml loaded "C:/Users/kamil/Documents/GitHub/Dudzian/.venv/Lib/site-packages/PySide6/qml/QtQuick/Controls/Basic/qmldir"
+[QtDebugMsg] None:0 qt.qml.import resolveType: qrc:/qt-project.org/imports/QtQuick/Controls/Windows/ScrollBar.qml "Calendar"  =>  "Calendar"   QUrl("qrc:/qt-project.org/imports/QtQuick/Controls/Basic/Calendar.qml")  TYPE/URL-SINGLETON
+[QtDebugMsg] None:0 qt.qml.import resolveType: qrc:/qt-project.org/imports/QtQuick/Controls/Windows/ScrollBar.qml "Calendar"  =>  "Calendar"   QUrl("qrc:/qt-project.org/imports/QtQuick/Controls/Basic/Calendar.qml")  TYPE/URL-SINGLETON
+[QtDebugMsg] None:0 qt.qml.import resolveType: qrc:/qt-project.org/imports/QtQuick/Controls/Windows/ScrollBar.qml "NativeStyle.ScrollBar"  =>  "QQuickStyleItemScrollBar"  TYPE
+[QtDebugMsg] None:0 qt.qml.import resolveType: qrc:/qt-project.org/imports/QtQuick/Controls/Windows/ScrollBar.qml "NativeStyle.DefaultScrollBar"  =>  ""   QUrl("qrc:/qt-project.org/imports/QtQuick/NativeStyle/controls/DefaultScrollBar.qml")  TYPE/URL
+[QtDebugMsg] None:0 qt.qml.import addLibraryImport: qrc:/qt-project.org/imports/QtQuick/NativeStyle/controls/DefaultScrollBar.qml "QtQuick" version "(latest)" as ""
+[QtDebugMsg] None:0 qt.qml.import importExtension: qrc:/qt-project.org/imports/QtQuick/NativeStyle/controls/DefaultScrollBar.qml loaded "C:/Users/kamil/Documents/GitHub/Dudzian/.venv/Lib/site-packages/PySide6/qml/QtQuick/qmldir"
+[QtDebugMsg] None:0 qt.qml.import loading dependent import "QtQml" version 6.10 as ""
+[QtDebugMsg] None:0 qt.qml.import addLibraryImport: qrc:/qt-project.org/imports/QtQuick/NativeStyle/controls/DefaultScrollBar.qml "QtQml" version "6.10" as ""
+[QtDebugMsg] None:0 qt.qml.import importExtension: qrc:/qt-project.org/imports/QtQuick/NativeStyle/controls/DefaultScrollBar.qml loaded ":/qt-project.org/imports/QtQml/qmldir"
+[QtDebugMsg] None:0 qt.qml.import loading dependent import "QML" version 1.0 as ""
+[QtDebugMsg] None:0 qt.qml.import addLibraryImport: qrc:/qt-project.org/imports/QtQuick/NativeStyle/controls/DefaultScrollBar.qml "QML" version "1.0" as ""
+[QtDebugMsg] None:0 qt.qml.import loading dependent import "QtQml.Models" version 6.10 as ""
+[QtDebugMsg] None:0 qt.qml.import addLibraryImport: qrc:/qt-project.org/imports/QtQuick/NativeStyle/controls/DefaultScrollBar.qml "QtQml.Models" version "6.10" as ""
+[QtDebugMsg] None:0 qt.qml.import importExtension: qrc:/qt-project.org/imports/QtQuick/NativeStyle/controls/DefaultScrollBar.qml loaded ":/qt-project.org/imports/QtQml/Models/qmldir"
+[QtDebugMsg] None:0 qt.qml.import loading dependent import "QtQml.WorkerScript" version 6.10 as ""
+[QtDebugMsg] None:0 qt.qml.import addLibraryImport: qrc:/qt-project.org/imports/QtQuick/NativeStyle/controls/DefaultScrollBar.qml "QtQml.WorkerScript" version "6.10" as ""
+[QtDebugMsg] None:0 qt.qml.import importExtension: qrc:/qt-project.org/imports/QtQuick/NativeStyle/controls/DefaultScrollBar.qml loaded ":/qt-project.org/imports/QtQml/WorkerScript/qmldir"
+[QtDebugMsg] None:0 qt.qml.import addLibraryImport: qrc:/qt-project.org/imports/QtQuick/NativeStyle/controls/DefaultScrollBar.qml "QtQuick.Controls" version "(latest)" as ""
+[QtDebugMsg] None:0 qt.qml.import importExtension: qrc:/qt-project.org/imports/QtQuick/NativeStyle/controls/DefaultScrollBar.qml loaded "C:/Users/kamil/Documents/GitHub/Dudzian/.venv/Lib/site-packages/PySide6/qml/QtQuick/Controls/qmldir"
+[QtDebugMsg] None:0 qt.qml.import loading dependent import "QtQuick.Controls.Windows" version 6.10 as ""
+[QtDebugMsg] None:0 qt.qml.import addLibraryImport: qrc:/qt-project.org/imports/QtQuick/NativeStyle/controls/DefaultScrollBar.qml "QtQuick.Controls.Windows" version "6.10" as ""
+[QtDebugMsg] None:0 qt.qml.import importExtension: qrc:/qt-project.org/imports/QtQuick/NativeStyle/controls/DefaultScrollBar.qml loaded "C:/Users/kamil/Documents/GitHub/Dudzian/.venv/Lib/site-packages/PySide6/qml/QtQuick/Controls/Windows/qmldir"
+[QtDebugMsg] None:0 qt.qml.import loading dependent import "QtQuick.Controls.Basic" version 6.10 as ""
+[QtDebugMsg] None:0 qt.qml.import addLibraryImport: qrc:/qt-project.org/imports/QtQuick/NativeStyle/controls/DefaultScrollBar.qml "QtQuick.Controls.Basic" version "6.10" as ""
+[QtDebugMsg] None:0 qt.qml.import importExtension: qrc:/qt-project.org/imports/QtQuick/NativeStyle/controls/DefaultScrollBar.qml loaded "C:/Users/kamil/Documents/GitHub/Dudzian/.venv/Lib/site-packages/PySide6/qml/QtQuick/Controls/Basic/qmldir"
+[QtDebugMsg] None:0 qt.qml.import loading dependent import "QtQuick.Controls.Fusion" version 6.10 as ""
+[QtDebugMsg] None:0 qt.qml.import addLibraryImport: qrc:/qt-project.org/imports/QtQuick/NativeStyle/controls/DefaultScrollBar.qml "QtQuick.Controls.Fusion" version "6.10" as ""
+[QtDebugMsg] None:0 qt.qml.import importExtension: qrc:/qt-project.org/imports/QtQuick/NativeStyle/controls/DefaultScrollBar.qml loaded "C:/Users/kamil/Documents/GitHub/Dudzian/.venv/Lib/site-packages/PySide6/qml/QtQuick/Controls/Fusion/qmldir"
+[QtDebugMsg] None:0 qt.qml.import loading dependent import "QtQuick.Controls.Basic" version 6.10 as ""
+[QtDebugMsg] None:0 qt.qml.import addLibraryImport: qrc:/qt-project.org/imports/QtQuick/NativeStyle/controls/DefaultScrollBar.qml "QtQuick.Controls.Basic" version "6.10" as ""
+[QtDebugMsg] None:0 qt.qml.import importExtension: qrc:/qt-project.org/imports/QtQuick/NativeStyle/controls/DefaultScrollBar.qml loaded "C:/Users/kamil/Documents/GitHub/Dudzian/.venv/Lib/site-packages/PySide6/qml/QtQuick/Controls/Basic/qmldir"
+[QtDebugMsg] None:0 qt.qml.import addLibraryImport: qrc:/qt-project.org/imports/QtQuick/NativeStyle/controls/DefaultScrollBar.qml "QtQuick.Templates" version "(latest)" as "T"
+[QtDebugMsg] None:0 qt.qml.import importExtension: qrc:/qt-project.org/imports/QtQuick/NativeStyle/controls/DefaultScrollBar.qml loaded ":/qt-project.org/imports/QtQuick/Templates/qmldir"
+[QtDebugMsg] None:0 qt.qml.import addLibraryImport: qrc:/qt-project.org/imports/QtQuick/NativeStyle/controls/DefaultScrollBar.qml "QtQuick.NativeStyle" version "(latest)" as "NativeStyle"
+[QtDebugMsg] None:0 qt.qml.import importExtension: qrc:/qt-project.org/imports/QtQuick/NativeStyle/controls/DefaultScrollBar.qml loaded "C:/Users/kamil/Documents/GitHub/Dudzian/.venv/Lib/site-packages/PySide6/qml/QtQuick/NativeStyle/qmldir"
+[QtDebugMsg] None:0 qt.qml.import addImplicitImport: qrc:/qt-project.org/imports/QtQuick/NativeStyle/controls/DefaultScrollBar.qml
+[QtDebugMsg] None:0 qt.qml.import addFileImport: qrc:/qt-project.org/imports/QtQuick/NativeStyle/controls/DefaultScrollBar.qml "." version "(latest)" as ""
+[QtDebugMsg] None:0 qt.qml.import importExtension: qrc:/qt-project.org/imports/QtQuick/NativeStyle/controls/DefaultScrollBar.qml loaded ":/qt-project.org/imports/QtQuick/NativeStyle/controls/qmldir"
+[QtDebugMsg] None:0 qt.qml.import resolveType: qrc:/qt-project.org/imports/QtQuick/NativeStyle/controls/DefaultScrollBar.qml "Calendar"  =>  "Calendar"   QUrl("qrc:/qt-project.org/imports/QtQuick/Controls/Basic/Calendar.qml")  TYPE/URL-SINGLETON
+[QtDebugMsg] None:0 qt.qml.import resolveType: qrc:/qt-project.org/imports/QtQuick/NativeStyle/controls/DefaultScrollBar.qml "NativeStyle.ScrollBar"  =>  "QQuickStyleItemScrollBar"  TYPE
+[QtDebugMsg] None:0 qt.qml.import resolveType: qrc:/qt-project.org/imports/QtQuick/NativeStyle/controls/DefaultScrollBar.qml "T.ScrollBar"  =>  "QQuickScrollBar"  TYPE
+[QtDebugMsg] None:0 qt.qml.import resolveType: qrc:/qt-project.org/imports/QtQuick/Controls/Windows/ScrollBar.qml "Rectangle"  =>  "QQuickRectangle"  TYPE
+[QtDebugMsg] None:0 qt.qml.import resolveType: qrc:/qt-project.org/imports/QtQuick/Controls/Windows/ScrollBar.qml "Behavior"  =>  "QQuickBehavior"  TYPE
+[QtDebugMsg] None:0 qt.qml.import resolveType: qrc:/qt-project.org/imports/QtQuick/Controls/Windows/ScrollBar.qml "NumberAnimation"  =>  "QQuickNumberAnimation"  TYPE
+[QtDebugMsg] None:0 qt.qml.import resolveType: file:///C:/Users/kamil/Documents/GitHub/Dudzian/ui/qml/views/RiskControls.qml "DoubleValidator"  =>  "QQuickDoubleValidator"  TYPE
+[QtDebugMsg] None:0 qt.qml.import resolveType: file:///C:/Users/kamil/Documents/GitHub/Dudzian/ui/qml/views/RiskControls.qml "CheckBox"  =>  ""   QUrl("qrc:/qt-project.org/imports/QtQuick/Controls/Windows/CheckBox.qml")  TYPE/URL
+[QtDebugMsg] None:0 qt.qml.import addLibraryImport: qrc:/qt-project.org/imports/QtQuick/Controls/Windows/CheckBox.qml "QtQuick" version "(latest)" as ""
+[QtDebugMsg] None:0 qt.qml.import importExtension: qrc:/qt-project.org/imports/QtQuick/Controls/Windows/CheckBox.qml loaded "C:/Users/kamil/Documents/GitHub/Dudzian/.venv/Lib/site-packages/PySide6/qml/QtQuick/qmldir"
+[QtDebugMsg] None:0 qt.qml.import loading dependent import "QtQml" version 6.10 as ""
+[QtDebugMsg] None:0 qt.qml.import addLibraryImport: qrc:/qt-project.org/imports/QtQuick/Controls/Windows/CheckBox.qml "QtQml" version "6.10" as ""
+[QtDebugMsg] None:0 qt.qml.import importExtension: qrc:/qt-project.org/imports/QtQuick/Controls/Windows/CheckBox.qml loaded ":/qt-project.org/imports/QtQml/qmldir"
+[QtDebugMsg] None:0 qt.qml.import loading dependent import "QML" version 1.0 as ""
+[QtDebugMsg] None:0 qt.qml.import addLibraryImport: qrc:/qt-project.org/imports/QtQuick/Controls/Windows/CheckBox.qml "QML" version "1.0" as ""
+[QtDebugMsg] None:0 qt.qml.import loading dependent import "QtQml.Models" version 6.10 as ""
+[QtDebugMsg] None:0 qt.qml.import addLibraryImport: qrc:/qt-project.org/imports/QtQuick/Controls/Windows/CheckBox.qml "QtQml.Models" version "6.10" as ""
+[QtDebugMsg] None:0 qt.qml.import importExtension: qrc:/qt-project.org/imports/QtQuick/Controls/Windows/CheckBox.qml loaded ":/qt-project.org/imports/QtQml/Models/qmldir"
+[QtDebugMsg] None:0 qt.qml.import loading dependent import "QtQml.WorkerScript" version 6.10 as ""
+[QtDebugMsg] None:0 qt.qml.import addLibraryImport: qrc:/qt-project.org/imports/QtQuick/Controls/Windows/CheckBox.qml "QtQml.WorkerScript" version "6.10" as ""
+[QtDebugMsg] None:0 qt.qml.import importExtension: qrc:/qt-project.org/imports/QtQuick/Controls/Windows/CheckBox.qml loaded ":/qt-project.org/imports/QtQml/WorkerScript/qmldir"
+[QtDebugMsg] None:0 qt.qml.import addLibraryImport: qrc:/qt-project.org/imports/QtQuick/Controls/Windows/CheckBox.qml "QtQuick.Templates" version "(latest)" as "T"
+[QtDebugMsg] None:0 qt.qml.import importExtension: qrc:/qt-project.org/imports/QtQuick/Controls/Windows/CheckBox.qml loaded ":/qt-project.org/imports/QtQuick/Templates/qmldir"
+[QtDebugMsg] None:0 qt.qml.import addLibraryImport: qrc:/qt-project.org/imports/QtQuick/Controls/Windows/CheckBox.qml "QtQuick.Controls" version "(latest)" as ""
+[QtDebugMsg] None:0 qt.qml.import importExtension: qrc:/qt-project.org/imports/QtQuick/Controls/Windows/CheckBox.qml loaded "C:/Users/kamil/Documents/GitHub/Dudzian/.venv/Lib/site-packages/PySide6/qml/QtQuick/Controls/qmldir"
+[QtDebugMsg] None:0 qt.qml.import loading dependent import "QtQuick.Controls.Windows" version 6.10 as ""
+[QtDebugMsg] None:0 qt.qml.import addLibraryImport: qrc:/qt-project.org/imports/QtQuick/Controls/Windows/CheckBox.qml "QtQuick.Controls.Windows" version "6.10" as ""
+[QtDebugMsg] None:0 qt.qml.import importExtension: qrc:/qt-project.org/imports/QtQuick/Controls/Windows/CheckBox.qml loaded "C:/Users/kamil/Documents/GitHub/Dudzian/.venv/Lib/site-packages/PySide6/qml/QtQuick/Controls/Windows/qmldir"
+[QtDebugMsg] None:0 qt.qml.import loading dependent import "QtQuick.Controls.Basic" version 6.10 as ""
+[QtDebugMsg] None:0 qt.qml.import addLibraryImport: qrc:/qt-project.org/imports/QtQuick/Controls/Windows/CheckBox.qml "QtQuick.Controls.Basic" version "6.10" as ""
+[QtDebugMsg] None:0 qt.qml.import importExtension: qrc:/qt-project.org/imports/QtQuick/Controls/Windows/CheckBox.qml loaded "C:/Users/kamil/Documents/GitHub/Dudzian/.venv/Lib/site-packages/PySide6/qml/QtQuick/Controls/Basic/qmldir"
+[QtDebugMsg] None:0 qt.qml.import loading dependent import "QtQuick.Controls.Fusion" version 6.10 as ""
+[QtDebugMsg] None:0 qt.qml.import addLibraryImport: qrc:/qt-project.org/imports/QtQuick/Controls/Windows/CheckBox.qml "QtQuick.Controls.Fusion" version "6.10" as ""
+[QtDebugMsg] None:0 qt.qml.import importExtension: qrc:/qt-project.org/imports/QtQuick/Controls/Windows/CheckBox.qml loaded "C:/Users/kamil/Documents/GitHub/Dudzian/.venv/Lib/site-packages/PySide6/qml/QtQuick/Controls/Fusion/qmldir"
+[QtDebugMsg] None:0 qt.qml.import loading dependent import "QtQuick.Controls.Basic" version 6.10 as ""
+[QtDebugMsg] None:0 qt.qml.import addLibraryImport: qrc:/qt-project.org/imports/QtQuick/Controls/Windows/CheckBox.qml "QtQuick.Controls.Basic" version "6.10" as ""
+[QtDebugMsg] None:0 qt.qml.import importExtension: qrc:/qt-project.org/imports/QtQuick/Controls/Windows/CheckBox.qml loaded "C:/Users/kamil/Documents/GitHub/Dudzian/.venv/Lib/site-packages/PySide6/qml/QtQuick/Controls/Basic/qmldir"
+[QtDebugMsg] None:0 qt.qml.import addLibraryImport: qrc:/qt-project.org/imports/QtQuick/Controls/Windows/CheckBox.qml "QtQuick.Controls.impl" version "(latest)" as ""
+[QtDebugMsg] None:0 qt.qml.import importExtension: qrc:/qt-project.org/imports/QtQuick/Controls/Windows/CheckBox.qml loaded "C:/Users/kamil/Documents/GitHub/Dudzian/.venv/Lib/site-packages/PySide6/qml/QtQuick/Controls/impl/qmldir"
+[QtDebugMsg] None:0 qt.qml.import addLibraryImport: qrc:/qt-project.org/imports/QtQuick/Controls/Windows/CheckBox.qml "QtQuick.NativeStyle" version "(latest)" as "NativeStyle"
+[QtDebugMsg] None:0 qt.qml.import importExtension: qrc:/qt-project.org/imports/QtQuick/Controls/Windows/CheckBox.qml loaded "C:/Users/kamil/Documents/GitHub/Dudzian/.venv/Lib/site-packages/PySide6/qml/QtQuick/NativeStyle/qmldir"
+[QtDebugMsg] None:0 qt.qml.import addImplicitImport: qrc:/qt-project.org/imports/QtQuick/Controls/Windows/CheckBox.qml
+[QtDebugMsg] None:0 qt.qml.import addFileImport: qrc:/qt-project.org/imports/QtQuick/Controls/Windows/CheckBox.qml "." version "(latest)" as ""
+[QtDebugMsg] None:0 qt.qml.import loading dependent import "QtQuick.Controls.Basic" version invalid as ""
+[QtDebugMsg] None:0 qt.qml.import addLibraryImport: qrc:/qt-project.org/imports/QtQuick/Controls/Windows/CheckBox.qml "QtQuick.Controls.Basic" version "(latest)" as ""
+[QtDebugMsg] None:0 qt.qml.import importExtension: qrc:/qt-project.org/imports/QtQuick/Controls/Windows/CheckBox.qml loaded ":/qt-project.org/imports/QtQuick/Controls/Basic/qmldir"
+[QtDebugMsg] None:0 qt.qml.import loading dependent import "QtQuick.Controls.Fusion" version invalid as ""
+[QtDebugMsg] None:0 qt.qml.import addLibraryImport: qrc:/qt-project.org/imports/QtQuick/Controls/Windows/CheckBox.qml "QtQuick.Controls.Fusion" version "(latest)" as ""
+[QtDebugMsg] None:0 qt.qml.import importExtension: qrc:/qt-project.org/imports/QtQuick/Controls/Windows/CheckBox.qml loaded ":/qt-project.org/imports/QtQuick/Controls/Fusion/qmldir"
+[QtDebugMsg] None:0 qt.qml.import loading dependent import "QtQuick.Controls.Basic" version 6.10 as ""
+[QtDebugMsg] None:0 qt.qml.import addLibraryImport: qrc:/qt-project.org/imports/QtQuick/Controls/Windows/CheckBox.qml "QtQuick.Controls.Basic" version "6.10" as ""
+[QtDebugMsg] None:0 qt.qml.import importExtension: qrc:/qt-project.org/imports/QtQuick/Controls/Windows/CheckBox.qml loaded "C:/Users/kamil/Documents/GitHub/Dudzian/.venv/Lib/site-packages/PySide6/qml/QtQuick/Controls/Basic/qmldir"
+[QtDebugMsg] None:0 qt.qml.import resolveType: qrc:/qt-project.org/imports/QtQuick/Controls/Windows/CheckBox.qml "Calendar"  =>  "Calendar"   QUrl("qrc:/qt-project.org/imports/QtQuick/Controls/Basic/Calendar.qml")  TYPE/URL-SINGLETON
+[QtDebugMsg] None:0 qt.qml.import resolveType: qrc:/qt-project.org/imports/QtQuick/Controls/Windows/CheckBox.qml "Calendar"  =>  "Calendar"   QUrl("qrc:/qt-project.org/imports/QtQuick/Controls/Basic/Calendar.qml")  TYPE/URL-SINGLETON
+[QtDebugMsg] None:0 qt.qml.import resolveType: qrc:/qt-project.org/imports/QtQuick/Controls/Windows/CheckBox.qml "T.CheckBox"  =>  "QQuickCheckBox"  TYPE
+[QtDebugMsg] None:0 qt.qml.import resolveType: qrc:/qt-project.org/imports/QtQuick/Controls/Windows/CheckBox.qml "NativeStyle.CheckBox"  =>  "QQuickStyleItemCheckBox"  TYPE
+[QtDebugMsg] None:0 qt.qml.import resolveType: qrc:/qt-project.org/imports/QtQuick/Controls/Windows/CheckBox.qml "NumberAnimation"  =>  "QQuickNumberAnimation"  TYPE
+[QtDebugMsg] None:0 qt.qml.import resolveType: qrc:/qt-project.org/imports/QtQuick/Controls/Windows/CheckBox.qml "Behavior"  =>  "QQuickBehavior"  TYPE
+[QtDebugMsg] None:0 qt.qml.import resolveType: qrc:/qt-project.org/imports/QtQuick/Controls/Windows/CheckBox.qml "CheckLabel"  =>  "QQuickCheckLabel"  TYPE
+[QtDebugMsg] None:0 qt.qml.import resolveType: file:///C:/Users/kamil/Documents/GitHub/Dudzian/ui/qml/views/RiskControls.qml "ColumnLayout"  =>  "QQuickColumnLayout"  TYPE
+[QtDebugMsg] None:0 qt.qml.import resolveType: file:///C:/Users/kamil/Documents/GitHub/Dudzian/ui/qml/views/RiskControls.qml "Rectangle"  =>  "QQuickRectangle"  TYPE
+[QtDebugMsg] None:0 qt.qml.import resolveType: file:///C:/Users/kamil/Documents/GitHub/Dudzian/ui/qml/views/RiskControls.qml "RowLayout"  =>  "QQuickRowLayout"  TYPE
+[QtDebugMsg] None:0 qt.qml.import resolveType: file:///C:/Users/kamil/Documents/GitHub/Dudzian/ui/qml/views/RiskControls.qml "ScrollBar"  =>  ""   QUrl("qrc:/qt-project.org/imports/QtQuick/Controls/Windows/ScrollBar.qml")  TYPE/URL
+[QtDebugMsg] None:0 qt.qml.import resolveType: file:///C:/Users/kamil/Documents/GitHub/Dudzian/ui/qml/views/RiskControls.qml "ScrollBar"  =>  ""   QUrl("qrc:/qt-project.org/imports/QtQuick/Controls/Windows/ScrollBar.qml")  TYPE/URL
+[QtDebugMsg] None:0 qt.qml.import resolveType: file:///C:/Users/kamil/Documents/GitHub/Dudzian/ui/qml/views/RiskControls.qml "ScrollBar"  =>  ""   QUrl("qrc:/qt-project.org/imports/QtQuick/Controls/Windows/ScrollBar.qml")  TYPE/URL
+[QtDebugMsg] None:0 qt.qml.import resolveType: file:///C:/Users/kamil/Documents/GitHub/Dudzian/ui/qml/views/RiskControls.qml "ScrollBar"  =>  ""   QUrl("qrc:/qt-project.org/imports/QtQuick/Controls/Windows/ScrollBar.qml")  TYPE/URL
+[QtDebugMsg] None:0 qt.qml.import resolveType: file:///C:/Users/kamil/Documents/GitHub/Dudzian/ui/qml/views/RiskControls.qml "Flickable"  =>  "QQuickFlickable"  TYPE
+[QtDebugMsg] None:0 qt.qml.import resolveType: file:///C:/Users/kamil/Documents/GitHub/Dudzian/ui/qml/views/RiskControls.qml "Qt"  =>  "Qt"  TYPE
+[QtDebugMsg] None:0 qt.qml.import resolveType: file:///C:/Users/kamil/Documents/GitHub/Dudzian/ui/qml/views/RiskControls.qml "Flickable"  =>  "QQuickFlickable"  TYPE
+[QtDebugMsg] None:0 qt.qml.import resolveType: file:///C:/Users/kamil/Documents/GitHub/Dudzian/ui/qml/views/RiskControls.qml "ScrollBar"  =>  ""   QUrl("qrc:/qt-project.org/imports/QtQuick/Controls/Windows/ScrollBar.qml")  TYPE/URL
+[QtDebugMsg] None:0 qt.qml.import resolveType: file:///C:/Users/kamil/Documents/GitHub/Dudzian/ui/qml/views/RiskControls.qml "ScrollBar"  =>  ""   QUrl("qrc:/qt-project.org/imports/QtQuick/Controls/Windows/ScrollBar.qml")  TYPE/URL
+[QtWarningMsg] file:///C:/Users/kamil/Documents/GitHub/Dudzian/ui/qml/views/RiskControls.qml:324 default file:///C:/Users/kamil/Documents/GitHub/Dudzian/ui/qml/views/RiskControls.qml:324:25: QML QQuickRectangle: The current style does not support customization of this control (property: "background" item: QQuickRectangle(0x1cf6c0f8580, parent=0x0, geometry=0,0 0x0)). Please customize a non-native style (such as Basic, Fusion, Material, etc). For more information, see: https://doc.qt.io/qt-6/qtquickcontrols2-customize.html#customization-reference
+[QtWarningMsg] file:///C:/Users/kamil/Documents/GitHub/Dudzian/ui/qml/views/RiskControls.qml:5 default file:///C:/Users/kamil/Documents/GitHub/Dudzian/ui/qml/views/RiskControls.qml:5:1: QML RiskControls: Binding loop detected for property "runtimeService":
+file:///C:/Users/kamil/Documents/GitHub/Dudzian/ui/qml/views/RiskControls.qml:17:5
+[QtWarningMsg] file:///C:/Users/kamil/Documents/GitHub/Dudzian/ui/qml/views/RiskControls.qml:242 default file:///C:/Users/kamil/Documents/GitHub/Dudzian/ui/qml/views/RiskControls.qml:242:25: QML QQuickRectangle: The current style does not support customization of this control (property: "background" item: QQuickRectangle(0x1cf6c0f7160, parent=0x0, geometry=0,0 0x0)). Please customize a non-native style (such as Basic, Fusion, Material, etc). For more information, see: https://doc.qt.io/qt-6/qtquickcontrols2-customize.html#customization-reference
+[QtWarningMsg] file:///C:/Users/kamil/Documents/GitHub/Dudzian/ui/qml/views/RiskControls.qml:5 default file:///C:/Users/kamil/Documents/GitHub/Dudzian/ui/qml/views/RiskControls.qml:5:1: QML RiskControls: Binding loop detected for property "appController":
+file:///C:/Users/kamil/Documents/GitHub/Dudzian/ui/qml/views/RiskControls.qml:10:5
+[QtWarningMsg] file:///C:/Users/kamil/Documents/GitHub/Dudzian/ui/qml/views/RiskControls.qml:5 default file:///C:/Users/kamil/Documents/GitHub/Dudzian/ui/qml/views/RiskControls.qml:5:1: QML RiskControls: Binding loop detected for property "costModel":
+file:///C:/Users/kamil/Documents/GitHub/Dudzian/ui/qml/views/RiskControls.qml:13:5
+[QtWarningMsg] file:///C:/Users/kamil/Documents/GitHub/Dudzian/ui/qml/views/RiskControls.qml:188 default file:///C:/Users/kamil/Documents/GitHub/Dudzian/ui/qml/views/RiskControls.qml:188:25: QML QQuickRectangle: The current style does not support customization of this control (property: "background" item: QQuickRectangle(0x1cf6c0f7780, parent=0x0, geometry=0,0 0x0)). Please customize a non-native style (such as Basic, Fusion, Material, etc). For more information, see: https://doc.qt.io/qt-6/qtquickcontrols2-customize.html#customization-reference
+[QtWarningMsg] file:///C:/Users/kamil/Documents/GitHub/Dudzian/ui/qml/views/RiskControls.qml:5 default file:///C:/Users/kamil/Documents/GitHub/Dudzian/ui/qml/views/RiskControls.qml:5:1: QML RiskControls: Binding loop detected for property "limitsModel":
+file:///C:/Users/kamil/Documents/GitHub/Dudzian/ui/qml/views/RiskControls.qml:11:5
+[QtWarningMsg] file:///C:/Users/kamil/Documents/GitHub/Dudzian/ui/qml/views/RiskControls.qml:104 default file:///C:/Users/kamil/Documents/GitHub/Dudzian/ui/qml/views/RiskControls.qml:104:25: QML QQuickRectangle: The current style does not support customization of this control (property: "background" item: QQuickRectangle(0x1cf6c0f8740, parent=0x0, geometry=0,0 0x0)). Please customize a non-native style (such as Basic, Fusion, Material, etc). For more information, see: https://doc.qt.io/qt-6/qtquickcontrols2-customize.html#customization-reference
+[QtWarningMsg] None:0 default QFontDatabase: Cannot find font directory C:/Users/kamil/Documents/GitHub/Dudzian/.venv/Lib/site-packages/PySide6/lib/fonts.
+Note that Qt no longer ships fonts. Deploy some (from https://dejavu-fonts.github.io/ for example) or switch to fontconfig.
+[QtWarningMsg] file:///C:/Users/kamil/Documents/GitHub/Dudzian/ui/qml/views/RiskControls.qml:314 default file:///C:/Users/kamil/Documents/GitHub/Dudzian/ui/qml/views/RiskControls.qml:314:21: Unable to assign [undefined] to bool
+[QtWarningMsg] file:///C:/Users/kamil/Documents/GitHub/Dudzian/ui/qml/views/RiskControls.qml:130 default file:///C:/Users/kamil/Documents/GitHub/Dudzian/ui/qml/views/RiskControls.qml:130:41: QML QQuickRectangle: The current style does not support customization of this control (property: "background" item: QQuickRectangle(0x1cf6c0f83c0, parent=0x0, geometry=0,0 0x0)). Please customize a non-native style (such as Basic, Fusion, Material, etc). For more information, see: https://doc.qt.io/qt-6/qtquickcontrols2-customize.html#customization-reference
+[PYTEST] when=setup outcome=passed
+[PYTEST] when=call outcome=passed

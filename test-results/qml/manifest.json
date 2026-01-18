@@ -1,0 +1,17 @@
+[
+  {
+    "nodeid": "tests/ui/qml/test_risk_panels.py::test_risk_controls_panel_handles_engine_snapshot",
+    "log": "logs\\tests_ui_qml_test_risk_panels.py__test_risk_controls_panel_handles_engine_snapshot.log",
+    "reports": [
+      {
+        "when": "setup",
+        "outcome": "passed"
+      },
+      {
+        "when": "call",
+        "outcome": "passed"
+      }
+    ],
+    "status": "passed"
+  }
+]

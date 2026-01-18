@@ -1,0 +1,20 @@
+QT_QPA_PLATFORM=offscreen
+QT_PLUGIN_PATH=
+QT_QUICK_BACKEND=
+QML_IMPORT_TRACE=
+PySide6: 6.10.1
+Qt wersja: 6.10.1
+QLibraryInfo[PrefixPath]=C:/Users/kamil/Documents/GitHub/Dudzian/.venv/Lib/site-packages/PySide6/.
+QLibraryInfo[DocumentationPath]=C:/Users/kamil/Documents/GitHub/Dudzian/.venv/Lib/site-packages/PySide6/doc
+QLibraryInfo[HeadersPath]=C:/Users/kamil/Documents/GitHub/Dudzian/.venv/Lib/site-packages/PySide6/include
+QLibraryInfo[LibrariesPath]=C:/Users/kamil/Documents/GitHub/Dudzian/.venv/Lib/site-packages/PySide6/lib
+QLibraryInfo[LibraryExecutablesPath]=C:/Users/kamil/Documents/GitHub/Dudzian/.venv/Lib/site-packages/PySide6/.
+QLibraryInfo[BinariesPath]=C:/Users/kamil/Documents/GitHub/Dudzian/.venv/Lib/site-packages/PySide6/bin
+QLibraryInfo[PluginsPath]=C:/Users/kamil/Documents/GitHub/Dudzian/.venv/Lib/site-packages/PySide6/plugins
+QLibraryInfo[QmlImportsPath]=C:/Users/kamil/Documents/GitHub/Dudzian/.venv/Lib/site-packages/PySide6/qml
+QLibraryInfo[ArchDataPath]=C:/Users/kamil/Documents/GitHub/Dudzian/.venv/Lib/site-packages/PySide6
+QLibraryInfo[DataPath]=C:/Users/kamil/Documents/GitHub/Dudzian/.venv/Lib/site-packages/PySide6
+QLibraryInfo[TranslationsPath]=C:/Users/kamil/Documents/GitHub/Dudzian/.venv/Lib/site-packages/PySide6/translations
+QLibraryInfo[ExamplesPath]=C:/Users/kamil/Documents/GitHub/Dudzian/.venv/Lib/site-packages/PySide6/examples
+QLibraryInfo[TestsPath]=C:/Users/kamil/Documents/GitHub/Dudzian/.venv/Lib/site-packages/PySide6/tests
+QLibraryInfo[SettingsPath]=
