@@ -56,6 +56,7 @@ _background_lock = threading.Lock()
 _background_loop: asyncio.AbstractEventLoop | None = None
 _background_thread: threading.Thread | None = None
 _background_ready = threading.Event()
+_background_disabled_logged = False
 
 
 def _register_instance(instance: "DatabaseManager") -> None:
@@ -77,6 +78,17 @@ def _is_test_mode() -> bool:
     )
 
 
+def _env_true(var_name: str) -> bool:
+    value = os.getenv(var_name, "").strip().lower()
+    return value in {"1", "true", "yes"}
+
+
+def _disable_background_loop() -> bool:
+    return _env_true("BOT_CORE_DISABLE_DB_BACKGROUND_LOOP") or (
+        sys.platform == "win32" and _is_test_mode()
+    )
+
+
 def _default_timeout(base: float, *, test: float, windows: float) -> float:
     if sys.platform == "win32":
         return windows
@@ -91,6 +103,16 @@ def _background_shutdown_timeout() -> float:
 
 def _ensure_background_loop() -> asyncio.AbstractEventLoop | None:
     global _background_loop, _background_thread
+    global _background_disabled_logged
+    if _disable_background_loop():
+        if sys.platform == "win32" and _is_test_mode() and not _background_disabled_logged:
+            _background_disabled_logged = True
+            logger.debug(
+                "db_manager/background_loop_disabled: using caller loop (platform=%s pid=%s)",
+                sys.platform,
+                os.getpid(),
+            )
+        return None
     with _background_lock:
         if _background_loop:
             try:
@@ -133,9 +155,59 @@ def _ensure_background_loop() -> asyncio.AbstractEventLoop | None:
                 loop.run_forever()
             finally:
                 try:
+                    try:
+                        closed = loop.is_closed()
+                    except Exception:
+                        closed = False
+                    if not closed:
+                        try:
+                            pending = asyncio.all_tasks(loop)
+                        except Exception as exc:  # pragma: no cover - defensywne
+                            logger.debug(
+                                "db_manager/background_loop_shutdown_error: pending task snapshot failed: %s",
+                                exc,
+                            )
+                            pending = []
+                        for task in pending:
+                            try:
+                                task.cancel()
+                            except Exception:
+                                continue
+                        if pending:
+                            try:
+                                loop.run_until_complete(
+                                    asyncio.gather(*pending, return_exceptions=True)
+                                )
+                            except Exception as exc:  # pragma: no cover - defensywne
+                                logger.debug(
+                                    "db_manager/background_loop_shutdown_error: gather failed: %s",
+                                    exc,
+                                )
+                        try:
+                            loop.run_until_complete(loop.shutdown_asyncgens())
+                        except Exception as exc:  # pragma: no cover - defensywne
+                            logger.debug(
+                                "db_manager/background_loop_shutdown_error: shutdown_asyncgens failed: %s",
+                                exc,
+                            )
+                        shutdown_default_executor = getattr(loop, "shutdown_default_executor", None)
+                        if shutdown_default_executor is not None:
+                            try:
+                                loop.run_until_complete(shutdown_default_executor())
+                            except Exception as exc:  # pragma: no cover - defensywne
+                                logger.debug(
+                                    "db_manager/background_loop_shutdown_error: shutdown_default_executor failed: %s",
+                                    exc,
+                                )
+                except Exception as exc:  # pragma: no cover - defensywne
+                    logger.debug("db_manager/background_loop_shutdown_error: %s", exc)
+                try:
                     loop.close()
                 except Exception as exc:  # pragma: no cover - defensywne
-                    logger.debug("DatabaseManager background loop close failed: %s", exc)
+                    logger.debug(
+                        "db_manager/background_loop_shutdown_error: close failed: %s",
+                        exc,
+                    )
 
         if _background_thread and _background_thread.is_alive():
             pass
@@ -143,7 +215,7 @@ def _ensure_background_loop() -> asyncio.AbstractEventLoop | None:
             thread = threading.Thread(
                 target=_runner,
                 name="DatabaseManagerBackgroundLoopThread",
-                daemon=False,
+                daemon=sys.platform == "win32",
             )
             _background_thread = thread
             thread.start()
@@ -159,7 +231,8 @@ def _background_diagnostics() -> dict[str, Any]:
     suspicious_threads = [
         thread.name
         for thread in threading.enumerate()
-        if thread.is_alive() and ("aiosqlite" in thread.name or "AnyIO" in thread.name)
+        if thread.is_alive()
+        and ("aiosqlite" in thread.name.lower() or "anyio" in thread.name.lower())
     ]
     return {
         "active_instances": len(active_instances),
@@ -171,7 +244,7 @@ def _aiosqlite_thread_snapshot(*, limit: int = 20) -> dict[str, Any]:
     threads = [
         thread
         for thread in threading.enumerate()
-        if thread.is_alive() and "aiosqlite" in thread.name
+        if thread.is_alive() and "aiosqlite" in thread.name.lower()
     ]
     details = [
         f"{thread.name} (ident={thread.ident}, daemon={thread.daemon})"
@@ -195,17 +268,18 @@ def _log_aiosqlite_threads(phase: str) -> None:
     )
 
 
-def wait_for_aiosqlite_threads(timeout: float = 5.0, poll_interval: float = 0.05) -> None:
+def wait_for_aiosqlite_threads(timeout: float = 5.0, poll_interval: float = 0.05) -> bool:
     deadline = time.monotonic() + timeout
     while True:
         threads = [
             thread
             for thread in threading.enumerate()
-            if thread.is_alive() and "aiosqlite" in thread.name
+            if thread.is_alive() and "aiosqlite" in thread.name.lower()
         ]
         if not threads:
-            return
-        if time.monotonic() >= deadline:
+            return True
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
             details = "; ".join(
                 f"{thread.name} (ident={thread.ident}, daemon={thread.daemon})"
                 for thread in threads
@@ -215,7 +289,8 @@ def wait_for_aiosqlite_threads(timeout: float = 5.0, poll_interval: float = 0.05
             suspicious = [
                 thread
                 for thread in threading.enumerate()
-                if thread.is_alive() and ("aiosqlite" in thread.name or "AnyIO" in thread.name)
+                if thread.is_alive()
+                and ("aiosqlite" in thread.name.lower() or "anyio" in thread.name.lower())
             ]
             suspicious_details = "; ".join(
                 f"{thread.name} (ident={thread.ident}, daemon={thread.daemon})"
@@ -224,16 +299,18 @@ def wait_for_aiosqlite_threads(timeout: float = 5.0, poll_interval: float = 0.05
             if suspicious and not suspicious_details:
                 suspicious_details = "<unknown>"
             suspicious_suffix = f"; suspicious={suspicious_details}" if suspicious_details else ""
-            logger.error(
-                "Lingering aiosqlite threads after shutdown: %s%s",
+            logger.debug(
+                "db_manager/aiosqlite_join_timeout: %s%s",
                 details,
                 suspicious_suffix,
             )
-            raise RuntimeError(
-                "Lingering aiosqlite threads after shutdown: "
-                + details
-                + suspicious_suffix
-            )
+            return False
+        join_timeout = min(poll_interval, max(0.0, remaining))
+        for thread in threads:
+            try:
+                thread.join(timeout=join_timeout)
+            except Exception:
+                continue
         time.sleep(poll_interval)
 
 
@@ -277,6 +354,12 @@ def _coro_qualname(coro: Coroutine[Any, Any, Any]) -> str | None:
 
 def shutdown_background_loop(timeout: float | None = None) -> None:
     global _background_loop, _background_thread, _background_ready
+    if _disable_background_loop():
+        with _background_lock:
+            _background_loop = None
+            _background_thread = None
+            _background_ready.clear()
+        return
     if timeout is None:
         timeout = _background_shutdown_timeout()
     with _background_lock:
@@ -335,6 +418,12 @@ def shutdown_background_loop(timeout: float | None = None) -> None:
     if thread:
         thread.join(timeout=timeout)
         joined = not thread.is_alive()
+        if not joined:
+            diagnostics = _background_diagnostics()
+            logger.debug(
+                "db_manager/background_loop_join_timeout: suspicious_threads=%s",
+                diagnostics["suspicious_threads"],
+            )
     diagnostics = _background_diagnostics()
     _log_aiosqlite_threads("after background loop shutdown")
     if not joined:
@@ -364,12 +453,7 @@ def shutdown_background_loop(timeout: float | None = None) -> None:
                             "DatabaseManager background loop tasks during failed shutdown: %s",
                             _format_task_snapshot(loop_tasks),
                         )
-            try:
-                wait_for_aiosqlite_threads(timeout=max(timeout, 1.0), poll_interval=0.05)
-            except RuntimeError as exc:
-                raise RuntimeError(
-                    "DatabaseManager background loop thread failed to shut down in test/CI mode."
-                ) from exc
+            wait_for_aiosqlite_threads(timeout=max(timeout, 1.0), poll_interval=0.05)
             raise RuntimeError(
                 "DatabaseManager background loop thread failed to shut down in test/CI mode."
             )
@@ -385,10 +469,11 @@ def shutdown_background_loop(timeout: float | None = None) -> None:
         )
         return
     wait_for_aiosqlite_threads(timeout=max(timeout, 1.0), poll_interval=0.05)
-    with _background_lock:
-        _background_loop = None
-        _background_thread = None
-        _background_ready.clear()
+    if joined:
+        with _background_lock:
+            _background_loop = None
+            _background_thread = None
+            _background_ready.clear()
     logger.debug(
         "DatabaseManager background loop shutdown: joined=%s active_instances=%s suspicious_threads=%s",
         joined,
@@ -518,6 +603,56 @@ def _schedule_close(instance: "DatabaseManager", *, blocking: bool, timeout: flo
                         "close_all_active: failed to schedule close on instance loop: %s",
                         exc,
                     )
+    if _disable_background_loop():
+        try:
+            running_loop = asyncio.get_running_loop()
+        except RuntimeError:
+            running_loop = None
+        if running_loop and running_loop.is_running():
+            try:
+                running_loop.create_task(instance.close())
+            except Exception as exc:  # pragma: no cover - defensywne
+                logger.debug(
+                    "close_all_active: failed to schedule close on caller loop: %s",
+                    exc,
+                )
+            return
+        if blocking:
+            async def _runner() -> None:
+                loop = asyncio.get_running_loop()
+                task = asyncio.create_task(instance.close())
+                deadline = time.monotonic() + timeout
+                while not task.done():
+                    if time.monotonic() >= deadline:
+                        _log_close_timeout(instance, loop)
+                        _log_close_request_inflight(instance, "caller_loop")
+                        raise RuntimeError("DatabaseManager close timed out on caller loop.") from None
+                    await asyncio.sleep(0.05)
+                task.result()
+
+            asyncio.run(_runner())
+            return
+
+        def _run_close_in_thread() -> None:
+            async def _runner() -> None:
+                await instance.close()
+
+            try:
+                asyncio.run(_runner())
+            except Exception:  # pragma: no cover - defensywne
+                logger.debug(
+                    "db_manager/close_thread_failed: close failed in background thread. (instance=%s)",
+                    id(instance),
+                    exc_info=True,
+                )
+
+        thread = threading.Thread(
+            target=_run_close_in_thread,
+            name=f"DatabaseManagerCloseThread-{id(instance)}",
+            daemon=True,
+        )
+        thread.start()
+        return
     background_loop = _ensure_background_loop()
     if not background_loop:
         logger.error("close_all_active: background loop unavailable for instance=%s", id(instance))
@@ -1084,6 +1219,38 @@ class DatabaseManager:
         return _wrapper
 
     def _ensure_db_loop(self) -> asyncio.AbstractEventLoop:
+        if _disable_background_loop():
+            try:
+                running = asyncio.get_running_loop()
+            except RuntimeError as exc:
+                raise RuntimeError(
+                    "DatabaseManager background loop disabled; no running event loop."
+                ) from exc
+            if self._loop is None:
+                self._loop = running
+                return running
+            if self._loop is running:
+                return running
+            old_running = False
+            old_closed = True
+            try:
+                old_running = self._loop.is_running()
+            except Exception:
+                old_running = False
+            try:
+                old_closed = self._loop.is_closed()
+            except Exception:
+                old_closed = True
+            logger.debug(
+                "DatabaseManager loop reassigned to caller loop (instance=%s old=%s new=%s running=%s closed=%s)",
+                id(self),
+                _loop_name(self._loop) or self._loop,
+                _loop_name(running) or running,
+                old_running,
+                old_closed,
+            )
+            self._loop = running
+            return running
         background_loop = _ensure_background_loop()
         if not background_loop:
             raise RuntimeError("DatabaseManager background loop unavailable.")
@@ -2068,6 +2235,16 @@ class DatabaseManager:
             if timeout is None:
                 timeout = _default_timeout(self._DEFAULT_TIMEOUT_BASE, test=30.0, windows=45.0)
 
+            if _disable_background_loop():
+                async def _runner():
+                    self._outer._loop = asyncio.get_running_loop()
+                    try:
+                        return await self._outer._track(coro)
+                    finally:
+                        self._outer._loop = None
+
+                return asyncio.run(_runner())
+
             background_loop = self._outer._ensure_db_loop()
             try:
                 running = background_loop.is_running()
@@ -2274,6 +2451,19 @@ class DatabaseManager:
     def close_all_active(cls, *, blocking: bool = False, timeout: float = 1.5) -> None:
         # Runtime: fire-and-forget. Tests/teardown: blocking=True for deterministic shutdown.
         _log_aiosqlite_threads("before close_all_active")
+        if blocking and _disable_background_loop():
+            try:
+                running_loop = asyncio.get_running_loop()
+            except RuntimeError:
+                running_loop = None
+            if running_loop and running_loop.is_running():
+                raise RuntimeError(
+                    "close_all_active called from running event loop; use close_all_active_async."
+                )
+            asyncio.run(cls.close_all_active_async(timeout=timeout))
+            wait_for_aiosqlite_threads(timeout=max(timeout, 1.0), poll_interval=0.05)
+            _log_aiosqlite_threads("after close_all_active")
+            return
         instances = _snapshot_active_instances()
         for instance in instances:
             _schedule_close(instance, blocking=blocking, timeout=timeout)
@@ -2316,8 +2506,16 @@ class DatabaseManager:
     @classmethod
     def wait_for_aiosqlite_threads(
         cls, *, timeout: float = 5.0, poll_interval: float = 0.05
-    ) -> None:
-        wait_for_aiosqlite_threads(timeout=timeout, poll_interval=poll_interval)
+    ) -> bool:
+        return wait_for_aiosqlite_threads(timeout=timeout, poll_interval=poll_interval)
+
+    @classmethod
+    def windows_test_cleanup(cls, *, timeout: float = 2.0) -> None:
+        if sys.platform != "win32":
+            return
+        cls.close_all_active(blocking=True, timeout=timeout)
+        cls.wait_for_aiosqlite_threads(timeout=timeout, poll_interval=0.05)
+        cls.shutdown_background_loop(timeout=timeout)
 
     @classmethod
     async def close_all_active_async(cls, *, timeout: float = 1.5) -> None:

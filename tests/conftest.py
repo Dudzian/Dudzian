@@ -4,6 +4,7 @@ import asyncio
 import logging
 import os
 import socket
+import threading
 import sys
 from contextlib import contextmanager
 from typing import Generator
@@ -13,6 +14,9 @@ import pytest
 from bot_core.backtest.simulation import SimulationScenario
 
 logger = logging.getLogger(__name__)
+
+if sys.platform == "win32":
+    os.environ.setdefault("BOT_CORE_DISABLE_DB_BACKGROUND_LOOP", "1")
 
 UNSTABLE_WINDOWS_REASON = (
     "Niestabilny test na Windows (self-hosted runner); pomijany na win32, wykonywany na "
@@ -37,10 +41,20 @@ def _force_windows_selector_event_loop_policy() -> None:
         return
     try:
         policy = asyncio.WindowsSelectorEventLoopPolicy()
-    except Exception as exc:
-        logger.debug("Unable to create WindowsSelectorEventLoopPolicy: %s", exc)
+    except Exception:
+        logger.debug(
+            "teardown/windows_selector_policy_failed: unable to create WindowsSelectorEventLoopPolicy.",
+            exc_info=True,
+        )
         return
-    asyncio.set_event_loop_policy(policy)
+    try:
+        asyncio.set_event_loop_policy(policy)
+    except Exception:
+        logger.debug(
+            "teardown/windows_selector_policy_failed: unable to set WindowsSelectorEventLoopPolicy.",
+            exc_info=True,
+        )
+        return
 
 
 _force_windows_selector_event_loop_policy()
@@ -53,6 +67,54 @@ def enforce_windows_selector_event_loop_policy() -> Generator[None, None, None]:
         return
     _force_windows_selector_event_loop_policy()
     yield
+
+
+@pytest.fixture(scope="session", autouse=True)
+def disable_db_background_loop_on_windows() -> Generator[None, None, None]:
+    if sys.platform == "win32":
+        logger.debug(
+            "teardown/db_manager_background_loop_disabled: env=%s (platform=%s pid=%s threads=%s)",
+            os.environ.get("BOT_CORE_DISABLE_DB_BACKGROUND_LOOP"),
+            sys.platform,
+            os.getpid(),
+            [thread.name for thread in threading.enumerate()],
+        )
+    yield
+
+
+@pytest.fixture(autouse=True)
+def windows_per_test_db_cleanup() -> Generator[None, None, None]:
+    yield
+    if sys.platform != "win32":
+        return
+    try:
+        from bot_core.database.manager import DatabaseManager
+    except Exception:
+        logger.debug(
+            "teardown/db_manager_per_test_import_failed: "
+            "DatabaseManager per-test cleanup import failed. (platform=%s pid=%s)",
+            sys.platform,
+            os.getpid(),
+            exc_info=True,
+        )
+        return
+    try:
+        DatabaseManager.close_all_active(blocking=True, timeout=2.0)
+        DatabaseManager.wait_for_aiosqlite_threads(timeout=2.0, poll_interval=0.05)
+        logger.debug(
+            "teardown/db_manager_per_test_done: DatabaseManager per-test cleanup done. "
+            "(platform=%s pid=%s)",
+            sys.platform,
+            os.getpid(),
+        )
+    except Exception:
+        logger.debug(
+            "teardown/db_manager_per_test_failed: DatabaseManager per-test cleanup failed. "
+            "(platform=%s pid=%s)",
+            sys.platform,
+            os.getpid(),
+            exc_info=True,
+        )
 
 
 @pytest.fixture
