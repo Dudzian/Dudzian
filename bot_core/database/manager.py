@@ -618,40 +618,22 @@ def _schedule_close(instance: "DatabaseManager", *, blocking: bool, timeout: flo
                 )
             return
         if blocking:
-            async def _runner() -> None:
-                loop = asyncio.get_running_loop()
-                task = asyncio.create_task(instance.close())
-                deadline = time.monotonic() + timeout
-                while not task.done():
-                    if time.monotonic() >= deadline:
-                        _log_close_timeout(instance, loop)
-                        _log_close_request_inflight(instance, "caller_loop")
-                        raise RuntimeError("DatabaseManager close timed out on caller loop.") from None
-                    await asyncio.sleep(0.05)
-                task.result()
-
-            asyncio.run(_runner())
+            logger.debug(
+                "db_manager/blocking_close_no_running_loop: instance=%s thread=%s",
+                id(instance),
+                threading.current_thread().name,
+            )
+            if _is_test_mode() and _env_true("BOT_CORE_DB_TEARDOWN_STRICT"):
+                raise RuntimeError(
+                    "DatabaseManager close requested without running loop in test mode."
+                )
             return
 
-        def _run_close_in_thread() -> None:
-            async def _runner() -> None:
-                await instance.close()
-
-            try:
-                asyncio.run(_runner())
-            except Exception:  # pragma: no cover - defensywne
-                logger.debug(
-                    "db_manager/close_thread_failed: close failed in background thread. (instance=%s)",
-                    id(instance),
-                    exc_info=True,
-                )
-
-        thread = threading.Thread(
-            target=_run_close_in_thread,
-            name=f"DatabaseManagerCloseThread-{id(instance)}",
-            daemon=True,
+        logger.debug(
+            "db_manager/nonblocking_close_no_running_loop: instance=%s thread=%s",
+            id(instance),
+            threading.current_thread().name,
         )
-        thread.start()
         return
     background_loop = _ensure_background_loop()
     if not background_loop:
@@ -2460,7 +2442,53 @@ class DatabaseManager:
                 raise RuntimeError(
                     "close_all_active called from running event loop; use close_all_active_async."
                 )
-            asyncio.run(cls.close_all_active_async(timeout=timeout))
+            instances = _snapshot_active_instances()
+            for instance in instances:
+                instance_loop = instance._loop
+                if instance_loop is None:
+                    logger.debug(
+                        "db_manager/blocking_close_no_instance_loop: "
+                        "instance=%s thread=%s",
+                        id(instance),
+                        threading.current_thread().name,
+                    )
+                    if _is_test_mode() and _env_true("BOT_CORE_DB_TEARDOWN_STRICT"):
+                        raise RuntimeError(
+                            "DatabaseManager instance missing event loop during blocking close."
+                        )
+                    continue
+                try:
+                    loop_running = instance_loop.is_running()
+                except Exception:
+                    loop_running = False
+                try:
+                    loop_closed = instance_loop.is_closed()
+                except Exception:
+                    loop_closed = True
+                if loop_running and not loop_closed:
+                    future = asyncio.run_coroutine_threadsafe(instance.close(), instance_loop)
+                    try:
+                        future.result(timeout=timeout)
+                    except concurrent.futures.TimeoutError:
+                        _log_close_timeout(instance, instance_loop)
+                        _log_close_request_inflight(instance, "instance_loop")
+                        raise RuntimeError(
+                            "DatabaseManager close timed out on instance loop."
+                        ) from None
+                    except Exception as exc:  # pragma: no cover - defensywne
+                        logger.debug("close_all_active: close failed: %s", exc)
+                else:
+                    logger.debug(
+                        "db_manager/blocking_close_loop_not_running: "
+                        "instance=%s loop=%s closed=%s",
+                        id(instance),
+                        _loop_name(instance_loop) or instance_loop,
+                        loop_closed,
+                    )
+                    if _is_test_mode() and _env_true("BOT_CORE_DB_TEARDOWN_STRICT"):
+                        raise RuntimeError(
+                            "DatabaseManager instance loop not running during blocking close."
+                        )
             wait_for_aiosqlite_threads(timeout=max(timeout, 1.0), poll_interval=0.05)
             _log_aiosqlite_threads("after close_all_active")
             return
