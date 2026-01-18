@@ -36,7 +36,7 @@ env:
 
   # Secrets presence flags (safe: only checks existence)
   HAS_MARKETPLACE_KEYS: ${{ secrets.MARKETPLACE_HMAC_KEY != '' }}
-  HAS_LICENSING_KEYS:   ${{ secrets.LICENSING_PRIVATE_KEY != '' }}
+  HAS_LICENSING_KEYS: ${{ secrets.LICENSING_PRIVATE_KEY != '' }}
 
 jobs:
   smoke-harness:
@@ -70,6 +70,12 @@ jobs:
             Expand-Archive -Path $zipPath -DestinationPath $procdumpDir -Force
             Add-Content $env:GITHUB_PATH $procdumpDir
           }
+          $procdump = Get-Command procdump.exe -ErrorAction SilentlyContinue
+          if ($procdump) {
+            $ver = (Get-Item $procdump.Source).VersionInfo.FileVersion
+            Write-Host "ProcDump: $($procdump.Source)"
+            if ($ver) { Write-Host "ProcDump version: $ver" }
+          }
 
       - name: Environment snapshot
         shell: pwsh
@@ -77,25 +83,14 @@ jobs:
           python -V
           python -m pip list --format=columns
 
-      - name: Pytest (first failure) under ProcDump
+      - name: Pytest (first failure) + crash dump on AV
         shell: pwsh
         run: |
           New-Item -ItemType Directory -Force var/ci | Out-Null
           New-Item -ItemType Directory -Force var/crashdumps | Out-Null
 
-          $pytestArgs = @(
-            "-vv",
-            "--maxfail=1",
-            "-x",
-            "--junitxml=var/ci/smoke_harness_first.xml"
-          )
-
           $procdump = Get-Command procdump.exe -ErrorAction SilentlyContinue
           if ($procdump) {
-            Write-Host "Running smoke harness with ProcDump ($($procdump.Source))."
-            $procdumpVersion = (Get-Item $procdump.Source).VersionInfo.FileVersion
-            if ($procdumpVersion) { Write-Host "ProcDump version: $procdumpVersion" }
-
             & $procdump.Source `
               -accepteula `
               -ma `
@@ -103,14 +98,11 @@ jobs:
               -t `
               -n 1 `
               -x var/crashdumps `
-              python -m pytest @pytestArgs
-
+              python -m pytest -vv --maxfail=1 -x --junitxml=var/ci/smoke_harness_first.xml
             exit $LASTEXITCODE
           }
 
-          Write-Warning "ProcDump not found in PATH. Running without dump capture."
-          python -m pytest @pytestArgs
-          exit $LASTEXITCODE
+          pytest -vv --maxfail=1 -x --junitxml=var/ci/smoke_harness_first.xml
 
       - name: Upload smoke harness diagnostics
         if: always()
@@ -156,6 +148,16 @@ jobs:
         run: |
           New-Item -ItemType Directory -Force var/ci | Out-Null
           pytest -vv --junitxml=var/ci/smoke_harness_all.xml
+
+      - name: Upload smoke harness (all) report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: smoke-harness-all-report
+          path: |
+            var/ci/**
+          if-no-files-found: warn
+          retention-days: 5
 
   lint:
     name: Lint (pre-commit)
@@ -375,7 +377,7 @@ jobs:
       - name: Check UI deps
         shell: pwsh
         run: |
-          python -c "import importlib.util, sys; sys.exit(0 if 'PySide6' and importlib.util.find_spec('PySide6') else 1)"
+          python -c "import importlib.util, sys; sys.exit(0 if importlib.util.find_spec('PySide6') else 1)"
         continue-on-error: true
 
       - name: Pytest UI
