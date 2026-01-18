@@ -87,6 +87,21 @@ def windows_per_test_db_cleanup() -> Generator[None, None, None]:
     yield
     if sys.platform != "win32":
         return
+    anyio_loaded = "anyio" in sys.modules
+    try:
+        running_loop = asyncio.get_running_loop()
+    except RuntimeError:
+        running_loop = None
+    logger.debug(
+        "teardown/db_manager_per_test_begin: "
+        "platform=%s pid=%s thread=%s ident=%s anyio_loaded=%s running_loop=%s",
+        sys.platform,
+        os.getpid(),
+        threading.current_thread().name,
+        threading.current_thread().ident,
+        anyio_loaded,
+        bool(running_loop and running_loop.is_running()),
+    )
     try:
         from bot_core.database.manager import DatabaseManager
     except Exception:
@@ -99,20 +114,125 @@ def windows_per_test_db_cleanup() -> Generator[None, None, None]:
         )
         return
     try:
-        DatabaseManager.close_all_active(blocking=True, timeout=2.0)
-        DatabaseManager.wait_for_aiosqlite_threads(timeout=2.0, poll_interval=0.05)
+        DatabaseManager.close_all_active(blocking=False, timeout=2.0)
         logger.debug(
             "teardown/db_manager_per_test_done: DatabaseManager per-test cleanup done. "
-            "(platform=%s pid=%s)",
+            "(platform=%s pid=%s thread=%s ident=%s anyio_loaded=%s running_loop=%s)",
             sys.platform,
             os.getpid(),
+            threading.current_thread().name,
+            threading.current_thread().ident,
+            anyio_loaded,
+            bool(running_loop and running_loop.is_running()),
         )
     except Exception:
         logger.debug(
             "teardown/db_manager_per_test_failed: DatabaseManager per-test cleanup failed. "
+            "(platform=%s pid=%s thread=%s ident=%s anyio_loaded=%s running_loop=%s)",
+            sys.platform,
+            os.getpid(),
+            threading.current_thread().name,
+            threading.current_thread().ident,
+            anyio_loaded,
+            bool(running_loop and running_loop.is_running()),
+            exc_info=True,
+        )
+
+
+@pytest.fixture(scope="session", autouse=True)
+def windows_session_db_cleanup() -> Generator[None, None, None]:
+    yield
+    if sys.platform != "win32":
+        return
+    anyio_loaded = "anyio" in sys.modules
+    try:
+        running_loop = asyncio.get_running_loop()
+    except RuntimeError:
+        running_loop = None
+    running_loop_active = bool(running_loop and running_loop.is_running())
+    if running_loop_active:
+        logger.debug(
+            "teardown/db_manager_session_cleanup_skipped_running_loop: "
+            "platform=%s pid=%s thread=%s ident=%s anyio_loaded=%s running_loop=%s",
+            sys.platform,
+            os.getpid(),
+            threading.current_thread().name,
+            threading.current_thread().ident,
+            anyio_loaded,
+            running_loop_active,
+        )
+        try:
+            from bot_core.database.manager import DatabaseManager
+        except Exception:
+            logger.debug(
+                "teardown/db_manager_session_cleanup_skipped_running_loop_failed: "
+                "session cleanup import failed. "
+                "(platform=%s pid=%s)",
+                sys.platform,
+                os.getpid(),
+                exc_info=True,
+            )
+            return
+        try:
+            DatabaseManager.close_all_active(blocking=False, timeout=2.0)
+        except Exception:
+            logger.debug(
+                "teardown/db_manager_session_cleanup_skipped_running_loop_failed: "
+                "session cleanup failed. "
+                "(platform=%s pid=%s thread=%s ident=%s anyio_loaded=%s running_loop=%s)",
+                sys.platform,
+                os.getpid(),
+                threading.current_thread().name,
+                threading.current_thread().ident,
+                anyio_loaded,
+                running_loop_active,
+                exc_info=True,
+            )
+        return
+    logger.debug(
+        "teardown/db_manager_session_cleanup_begin: "
+        "platform=%s pid=%s thread=%s ident=%s anyio_loaded=%s running_loop=%s",
+        sys.platform,
+        os.getpid(),
+        threading.current_thread().name,
+        threading.current_thread().ident,
+        anyio_loaded,
+        running_loop_active,
+    )
+    try:
+        from bot_core.database.manager import DatabaseManager
+    except Exception:
+        logger.debug(
+            "teardown/db_manager_session_cleanup_failed: session cleanup import failed. "
             "(platform=%s pid=%s)",
             sys.platform,
             os.getpid(),
+            exc_info=True,
+        )
+        return
+    try:
+        DatabaseManager.close_all_active(blocking=True, timeout=5.0)
+        DatabaseManager.wait_for_aiosqlite_threads(timeout=5.0, poll_interval=0.05)
+        logger.debug(
+            "teardown/db_manager_session_cleanup_done: session cleanup done. "
+            "(platform=%s pid=%s thread=%s ident=%s anyio_loaded=%s running_loop=%s)",
+            sys.platform,
+            os.getpid(),
+            threading.current_thread().name,
+            threading.current_thread().ident,
+            anyio_loaded,
+            running_loop_active,
+        )
+    except Exception:
+        logger.debug(
+            "teardown/db_manager_session_cleanup_failed: session cleanup failed. "
+            "(platform=%s pid=%s thread=%s ident=%s anyio_loaded=%s running_loop=%s)",
+            sys.platform,
+            os.getpid(),
+            threading.current_thread().name,
+            threading.current_thread().ident,
+            anyio_loaded,
+            running_loop_active,
             exc_info=True,
         )
 
