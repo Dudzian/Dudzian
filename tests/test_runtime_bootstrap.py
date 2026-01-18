@@ -1184,30 +1184,49 @@ def test_live_checklist_blocks_on_missing_document_in_pytest(
         }
     )
 
+    compliance_doc_path = "compliance/live/binance/kyc_packet.pdf"
+    compliance_sig_path = "compliance/live/binance/kyc_packet.sig"
+    risk_doc_path = "risk/live/binance/risk_profile_alignment.pdf"
+    risk_sig_path = "risk/live/binance/risk_profile_alignment.sig"
+    penetration_doc_path = "security/live/binance/penetration_report.pdf"
+    penetration_sig_path = "security/live/binance/penetration_report.sig"
+
     compliance_doc = _create_signed_document(
         tmp_path,
-        "compliance/live/binance/kyc_packet.pdf",
-        "compliance/live/binance/kyc_packet.sig",
+        compliance_doc_path,
+        compliance_sig_path,
         key_id="compliance-key",
         signed_by=("compliance",),
     )
     risk_doc = _create_signed_document(
         tmp_path,
-        "risk/live/binance/risk_profile_alignment.pdf",
-        "risk/live/binance/risk_profile_alignment.sig",
+        risk_doc_path,
+        risk_sig_path,
         key_id="risk-key",
         signed_by=("risk",),
     )
     penetration_doc = _create_signed_document(
         tmp_path,
-        "security/live/binance/penetration_report.pdf",
-        "security/live/binance/penetration_report.sig",
+        penetration_doc_path,
+        penetration_sig_path,
         key_id="security-key",
         signed_by=("security",),
     )
 
-    missing_path = tmp_path / compliance_doc["path"]
-    missing_path.unlink()
+    missing_path = tmp_path / compliance_doc_path
+    try:
+        missing_path.unlink()
+    except FileNotFoundError:
+        pass
+    except OSError as exc:
+        try:
+            missing_path.rename(missing_path.with_suffix(".pdf.deleted"))
+        except OSError as rename_exc:
+            pytest.skip(
+                "Could not remove live document fixture: "
+                f"unlink={exc.__class__.__name__}: {exc}; "
+                f"rename={rename_exc.__class__.__name__}: {rename_exc}"
+            )
 
     live_env["live_readiness"] = {
         "checklist_id": "binance-q3",
@@ -1222,7 +1241,7 @@ def test_live_checklist_blocks_on_missing_document_in_pytest(
         "documents": [
             {
                 "name": "kyc_packet",
-                "path": "compliance/live/binance/kyc_packet.pdf",
+                "path": compliance_doc_path,
                 "sha256": compliance_doc["sha256"],
                 "signed": True,
                 "signed_by": ["compliance"],
@@ -1230,7 +1249,7 @@ def test_live_checklist_blocks_on_missing_document_in_pytest(
             },
             {
                 "name": "risk_profile_alignment",
-                "path": "risk/live/binance/risk_profile_alignment.pdf",
+                "path": risk_doc_path,
                 "sha256": risk_doc["sha256"],
                 "signed": True,
                 "signed_by": ["risk"],
@@ -1238,7 +1257,7 @@ def test_live_checklist_blocks_on_missing_document_in_pytest(
             },
             {
                 "name": "penetration_report",
-                "path": "security/live/binance/penetration_report.pdf",
+                "path": penetration_doc_path,
                 "sha256": penetration_doc["sha256"],
                 "signed": True,
                 "signed_by": ["security"],
