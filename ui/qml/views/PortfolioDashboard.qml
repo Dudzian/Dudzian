@@ -164,6 +164,7 @@ Item {
 
             Components.EquityCurveDashboard {
                 id: equityView
+                objectName: "equityCurveDashboard"
                 Layout.fillWidth: true
                 Layout.fillHeight: true
                 points: historyPoints

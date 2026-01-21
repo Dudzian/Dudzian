@@ -4,7 +4,7 @@ from pathlib import Path
 
 import pytest
 
-from tests.ui._qt import require_pyside6
+from tests.ui._qt import apply_qtcharts_context, require_pyside6
 
 pytestmark = pytest.mark.qml
 
@@ -53,6 +53,7 @@ def test_privacy_settings_qml_loads(tmp_path: Path, qapp: QApplication) -> None:
     controller = PrivacySettingsController(collector=collector)
 
     engine = QQmlApplicationEngine()
+    apply_qtcharts_context(engine)
     engine.rootContext().setContextProperty("privacySettingsController", controller)
     qml_path = Path(__file__).resolve().parents[2] / "ui" / "qml" / "settings" / "PrivacySettings.qml"
     engine.load(QUrl.fromLocalFile(str(qml_path)))

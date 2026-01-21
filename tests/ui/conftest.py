@@ -36,7 +36,13 @@ def qml_diagnostics_root(pytestconfig: pytest.Config) -> Path:
     info_path = root / "environment.txt"
     if not info_path.exists():
         lines: List[str] = []
-        for name in ("QT_QPA_PLATFORM", "QT_PLUGIN_PATH", "QT_QUICK_BACKEND", "QML_IMPORT_TRACE"):
+        for name in (
+            "QT_QPA_PLATFORM",
+            "QT_PLUGIN_PATH",
+            "QT_QUICK_BACKEND",
+            "QML_IMPORT_TRACE",
+            "DUDZIAN_DISABLE_QTCHARTS",
+        ):
             lines.append(f"{name}={os.getenv(name, '')}")
         try:
             import PySide6
@@ -393,7 +399,7 @@ def flush_qt_deletes_after_qml(request: pytest.FixtureRequest) -> Generator[None
         return
 
     from PySide6.QtCore import QCoreApplication, QEvent, QEventLoop
-    from PySide6.QtQml import QQmlEngine
+    from tests.ui._qt import tracked_qml_engines
 
     app = QCoreApplication.instance()
     if app is None:
@@ -405,17 +411,20 @@ def flush_qt_deletes_after_qml(request: pytest.FixtureRequest) -> Generator[None
         app.processEvents(QEventLoop.AllEvents, 50)
 
     # PySide6: collectGarbage jest metodą instancji (QJSEngine), nie statyczną.
-    # Tworzymy tymczasowy engine i prosimy o GC QML/JS bez ryzyka wyjątku.
+    # Nie tworzymy dodatkowych engine'ów, żeby nie mieszać stanu QML w teście.
     try:
-        tmp_engine = QQmlEngine()
-        tmp_engine.collectGarbage()
-        tmp_engine.deleteLater()
-        for _ in range(2):
-            QCoreApplication.sendPostedEvents(None, QEvent.DeferredDelete)
-            app.processEvents(QEventLoop.AllEvents, 50)
+        for engine in tracked_qml_engines():
+            try:
+                engine.collectGarbage()
+            except Exception:  # pragma: no cover - różnice API
+                continue
     except Exception:
         # Teardown ma nie wysadzać test runa.
         pass
+
+    for _ in range(2):
+        QCoreApplication.sendPostedEvents(None, QEvent.DeferredDelete)
+        app.processEvents(QEventLoop.AllEvents, 50)
 
     import gc
 

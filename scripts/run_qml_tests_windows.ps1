@@ -1,6 +1,7 @@
 param(
   [string]$QtQpaPlatform = "offscreen",
   [string]$QtOpenGL = "software",
+  [string]$QtQuickBackend = "software",
   [string]$CrashDumpDir = "var/crashdumps",
   [string]$ResultsDir = "test-results/qml"
 )
@@ -10,6 +11,12 @@ $ErrorActionPreference = "Stop"
 
 $env:QT_QPA_PLATFORM = $QtQpaPlatform
 $env:QT_OPENGL = $QtOpenGL
+$env:QT_QUICK_BACKEND = $QtQuickBackend
+if ($QtQpaPlatform -eq "offscreen") {
+  $env:DUDZIAN_DISABLE_QTCHARTS = "1"
+} else {
+  Remove-Item Env:DUDZIAN_DISABLE_QTCHARTS -ErrorAction SilentlyContinue
+}
 
 New-Item -ItemType Directory -Force $CrashDumpDir | Out-Null
 New-Item -ItemType Directory -Force $ResultsDir | Out-Null

@@ -4,7 +4,7 @@ from pathlib import Path
 import pytest
 import yaml
 
-from tests.ui._qt import require_pyside6
+from tests.ui._qt import apply_qtcharts_context, require_pyside6
 from ui.pyside_app.controllers.strategy import StrategyManagementController
 
 pytestmark = pytest.mark.qml
@@ -160,6 +160,7 @@ def test_strategy_management_clone_refreshes_presets(tmp_path: Path) -> None:
     app = QApplication.instance() or QApplication([])
 
     engine = QQmlApplicationEngine()
+    apply_qtcharts_context(engine)
     runtime_service = RuntimeServiceStub()
     report_controller = ReportControllerStub()
     runtime_config = tmp_path / "config" / "runtime.yaml"

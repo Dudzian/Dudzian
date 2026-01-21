@@ -5,7 +5,7 @@ from pathlib import Path
 
 import pytest
 
-from tests.ui._qt import require_pyside6
+from tests.ui._qt import apply_qtcharts_context, require_pyside6
 
 pytestmark = pytest.mark.qml
 
@@ -25,6 +25,7 @@ def test_workbench_demo_mode_roundtrip() -> None:
     app = QApplication.instance() or QApplication([])
 
     engine = QQmlApplicationEngine()
+    apply_qtcharts_context(engine)
     workbench_qml = (
         Path(__file__).resolve().parents[2]
         / "ui"

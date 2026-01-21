@@ -654,6 +654,7 @@ jobs:
     env:
       QT_QPA_PLATFORM: offscreen
       QT_QUICK_BACKEND: software
+      QT_OPENGL: software
       CTEST_OUTPUT_ON_FAILURE: 1
 
     steps:
@@ -722,6 +723,7 @@ jobs:
     env:
       QT_QPA_PLATFORM: offscreen
       QT_QUICK_BACKEND: software
+      QT_OPENGL: software
       PYTEST_REQUIRE_QML: "1"
       QML_DIAGNOSTICS_DIR: test-results/qml
       WHEELHOUSE_DIR: ${{ needs.prepare-wheelhouse.outputs.wheelhouse_dir }}
@@ -815,6 +817,7 @@ jobs:
     env:
       QT_QPA_PLATFORM: offscreen
       QT_QUICK_BACKEND: software
+      QT_OPENGL: software
       WHEELHOUSE_DIR: ${{ needs.prepare-wheelhouse.outputs.wheelhouse_dir }}
       WHEELHOUSE_SOURCE: ${{ needs.prepare-wheelhouse.outputs.wheelhouse_source }}
       WHEELHOUSE_ARTIFACT: ${{ needs.prepare-wheelhouse.outputs.wheelhouse_artifact }}
@@ -979,6 +982,7 @@ jobs:
     env:
       QT_QPA_PLATFORM: offscreen
       QT_QUICK_BACKEND: software
+      QT_OPENGL: software
       WHEELHOUSE_DIR: ${{ needs.prepare-wheelhouse.outputs.wheelhouse_dir }}
       WHEELHOUSE_SOURCE: ${{ needs.prepare-wheelhouse.outputs.wheelhouse_source }}
       WHEELHOUSE_ARTIFACT: ${{ needs.prepare-wheelhouse.outputs.wheelhouse_artifact }}
@@ -1095,6 +1099,8 @@ jobs:
       cancel-in-progress: true
     env:
       QT_QPA_PLATFORM: offscreen
+      QT_QUICK_BACKEND: software
+      QT_OPENGL: software
       WHEELHOUSE_DIR: ${{ needs.prepare-wheelhouse.outputs.wheelhouse_dir }}
       WHEELHOUSE_SOURCE: ${{ needs.prepare-wheelhouse.outputs.wheelhouse_source }}
       WHEELHOUSE_ARTIFACT: ${{ needs.prepare-wheelhouse.outputs.wheelhouse_artifact }}
