@@ -44,9 +44,9 @@ if ($LASTEXITCODE -eq 0) {
   }
 }
 if ($supportsBoxed) {
-  $pytestArgs += "--boxed"
+  $pytestArgs += @("-p", "xdist", "--boxed")
 } elseif ($supportsForked) {
-  $pytestArgs += "--forked"
+  $pytestArgs += @("-p", "pytest_forked", "--forked")
 } else {
   Write-Error "pytest isolation unavailable: install pytest-xdist (--boxed) or pytest-forked (--forked)."
   exit 1
