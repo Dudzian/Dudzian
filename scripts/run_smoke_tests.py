@@ -131,7 +131,15 @@ def main(argv: list[str] | None = None) -> int:
     if args.pytest_args:
         pytest_args.extend(args.pytest_args)
 
-    exit_code = pytest.main(pytest_args, plugins=[plugin])
+    prev_plugin_autoload = os.environ.get("PYTEST_DISABLE_PLUGIN_AUTOLOAD")
+    try:
+        os.environ.pop("PYTEST_DISABLE_PLUGIN_AUTOLOAD", None)
+        exit_code = pytest.main(pytest_args, plugins=[plugin])
+    finally:
+        if prev_plugin_autoload is not None:
+            os.environ["PYTEST_DISABLE_PLUGIN_AUTOLOAD"] = prev_plugin_autoload
+        else:
+            os.environ.pop("PYTEST_DISABLE_PLUGIN_AUTOLOAD", None)
     summary = plugin.summary or SmokeSummary(
         exit_status=exit_code,
         tests_collected=0,
