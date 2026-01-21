@@ -34,11 +34,11 @@ $pytestArgs = @(
 
 $supportsBoxed = $false
 $supportsForked = $false
-& python -c "import xdist" 2>$null
+& python -c "import importlib.metadata as md; md.version('pytest-xdist')" 2>$null
 if ($LASTEXITCODE -eq 0) {
   $supportsBoxed = $true
 } else {
-  & python -c "import pytest_forked" 2>$null
+  & python -c "import importlib.metadata as md; md.version('pytest-forked')" 2>$null
   if ($LASTEXITCODE -eq 0) {
     $supportsForked = $true
   }
@@ -52,29 +52,42 @@ if ($supportsBoxed) {
   exit 1
 }
 
-$procdump = Get-Command procdump.exe -ErrorAction SilentlyContinue
-if ($procdump) {
-  Write-Host "Running QML tests with ProcDump ($($procdump.Source))."
-  $procdumpVersion = (Get-Item $procdump.Source).VersionInfo.FileVersion
-  if ($procdumpVersion) {
-    Write-Host "ProcDump version: $procdumpVersion"
-  }
-  $procdumpArgs = @(
-    "-accepteula",
-    "-ma",
-    "-e",
-    "-n", "1",
-    "-x", $CrashDumpDir,
-    "--",
-    "python",
-    "-m",
-    "pytest"
-  ) + $pytestArgs
-  & $procdump.Source @procdumpArgs 2>&1 | Tee-Object -FilePath $consoleLog
-  exit $LASTEXITCODE
-}
+$prevPluginAutoload = $env:PYTEST_DISABLE_PLUGIN_AUTOLOAD
+$exitCode = 0
+try {
+  Remove-Item Env:PYTEST_DISABLE_PLUGIN_AUTOLOAD -ErrorAction SilentlyContinue
 
-Write-Warning "ProcDump not found in PATH. Install from https://learn.microsoft.com/sysinternals/downloads/procdump"
-Write-Host "Running QML tests without crash dump capture."
-& python -m pytest @pytestArgs 2>&1 | Tee-Object -FilePath $consoleLog
-exit $LASTEXITCODE
+  $procdump = Get-Command procdump.exe -ErrorAction SilentlyContinue
+  if ($procdump) {
+    Write-Host "Running QML tests with ProcDump ($($procdump.Source))."
+    $procdumpVersion = (Get-Item $procdump.Source).VersionInfo.FileVersion
+    if ($procdumpVersion) {
+      Write-Host "ProcDump version: $procdumpVersion"
+    }
+    $procdumpArgs = @(
+      "-accepteula",
+      "-ma",
+      "-e",
+      "-n", "1",
+      "-x", $CrashDumpDir,
+      "--",
+      "python",
+      "-m",
+      "pytest"
+    ) + $pytestArgs
+    & $procdump.Source @procdumpArgs 2>&1 | Tee-Object -FilePath $consoleLog
+    $exitCode = $LASTEXITCODE
+  } else {
+    Write-Warning "ProcDump not found in PATH. Install from https://learn.microsoft.com/sysinternals/downloads/procdump"
+    Write-Host "Running QML tests without crash dump capture."
+    & python -m pytest @pytestArgs 2>&1 | Tee-Object -FilePath $consoleLog
+    $exitCode = $LASTEXITCODE
+  }
+} finally {
+  if ($null -ne $prevPluginAutoload) {
+    $env:PYTEST_DISABLE_PLUGIN_AUTOLOAD = $prevPluginAutoload
+  } else {
+    Remove-Item Env:PYTEST_DISABLE_PLUGIN_AUTOLOAD -ErrorAction SilentlyContinue
+  }
+}
+exit $exitCode
