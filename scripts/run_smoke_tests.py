@@ -108,6 +108,39 @@ def _write_reports(summary: SmokeSummary, output_dir: Path) -> tuple[Path, Path]
     return json_path, md_path
 
 
+def _ensure_isolation_plugins(pytest_args: list[str]) -> None:
+    import importlib.util
+
+    def _has_plugin(name: str) -> bool:
+        for idx, arg in enumerate(pytest_args):
+            if arg == "-p" and idx + 1 < len(pytest_args) and pytest_args[idx + 1] == name:
+                return True
+            if arg.startswith("-p") and arg[2:] == name:
+                return True
+            if arg.startswith("-p=") and arg[3:] == name:
+                return True
+        return False
+
+    uses_boxed = "--boxed" in pytest_args
+    uses_forked = "--forked" in pytest_args
+    if uses_boxed and uses_forked:
+        raise RuntimeError("Pytest isolation flags conflict: choose --boxed or --forked, not both.")
+
+    required_plugins: list[str] = []
+    if uses_boxed:
+        if importlib.util.find_spec("xdist") is None:
+            raise RuntimeError("Pytest isolation requires pytest-xdist for --boxed.")
+        if not _has_plugin("xdist"):
+            required_plugins.append("xdist")
+    if uses_forked:
+        if importlib.util.find_spec("pytest_forked") is None:
+            raise RuntimeError("Pytest isolation requires pytest-forked for --forked.")
+        if not _has_plugin("pytest_forked"):
+            required_plugins.append("pytest_forked")
+    if required_plugins:
+        pytest_args[:0] = [item for name in required_plugins for item in ("-p", name)]
+
+
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Uruchom smoke testy i zapisz raporty")
     parser.add_argument(
@@ -130,6 +163,7 @@ def main(argv: list[str] | None = None) -> int:
     pytest_args = ["-m", "smoke", "--maxfail=1", "--disable-warnings", "tests/smoke"]
     if args.pytest_args:
         pytest_args.extend(args.pytest_args)
+    _ensure_isolation_plugins(pytest_args)
 
     prev_plugin_autoload = os.environ.get("PYTEST_DISABLE_PLUGIN_AUTOLOAD")
     try:
