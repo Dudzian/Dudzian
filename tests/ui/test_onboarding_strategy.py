@@ -3,7 +3,7 @@ from pathlib import Path
 
 import pytest
 
-from tests.ui._qt import require_pyside6
+from tests.ui._qt import apply_qtcharts_context, require_pyside6
 
 pytestmark = pytest.mark.qml
 
@@ -60,6 +60,7 @@ def _strategy_loader() -> tuple[StrategyDescriptor, ...]:
 def _load_strategy_step(service: OnboardingService):
     app = QApplication.instance() or QApplication([])
     engine = QQmlApplicationEngine()
+    apply_qtcharts_context(engine)
     engine.rootContext().setContextProperty("onboardingService", service)
     qml_path = Path(__file__).resolve().parents[2] / "ui" / "qml" / "onboarding" / "StrategySetupStep.qml"
     engine.load(QUrl.fromLocalFile(str(qml_path)))
@@ -127,4 +128,4 @@ def test_strategy_setup_step_updates_service() -> None:
     assert store.saved == [("binance", "APIKEY", "SECRET", None)]
 
     engine.deleteLater()
-    app.quit()
+    app.processEvents()

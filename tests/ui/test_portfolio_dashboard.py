@@ -13,7 +13,7 @@ from pathlib import Path
 import pytest
 
 from bot_core.database.manager import DatabaseManager
-from tests.ui._qt import require_pyside6
+from tests.ui._qt import apply_qtcharts_context, require_pyside6
 
 logger = logging.getLogger(__name__)
 
@@ -142,6 +142,7 @@ def test_portfolio_dashboard_builds_exposures_and_history(tmp_path: Path) -> Non
     )
 
     engine = QQmlApplicationEngine()
+    apply_qtcharts_context(engine)
     context = engine.rootContext()
     context.setContextProperty("riskHistoryModel", risk_history)
     context.setContextProperty("riskModel", risk_model)
@@ -293,6 +294,22 @@ def test_portfolio_dashboard_builds_exposures_and_history(tmp_path: Path) -> Non
         assert isinstance(history_points, list)
         assert len(history_points) == 2
         assert history_points[0]["value"] == 100000.0
+
+        if os.getenv("DUDZIAN_DISABLE_QTCHARTS", "").lower() not in {"1", "true", "yes", "on"}:
+            equity_view = root.findChild(QObject, "equityCurveDashboard")
+            assert equity_view is not None
+            assert equity_view.property("chartsDisabled") is False
+            for _ in range(20):
+                if equity_view.property("chartReady"):
+                    break
+                app.processEvents()
+            assert equity_view.property("chartReady") is True
+            assert equity_view.property("chartSeriesCount") > 0
+        else:
+            equity_view = root.findChild(QObject, "equityCurveDashboard")
+            assert equity_view is not None
+            assert equity_view.property("chartsDisabled") is True
+            assert equity_view.property("latestValueText") != "—"
 
         exchange_items = root.property("exchangeExposureItems")
         strategy_items = root.property("strategyExposureItems")
