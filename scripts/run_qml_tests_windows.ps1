@@ -84,7 +84,7 @@ try {
     $exitCode = $LASTEXITCODE
   }
 } finally {
-  if ($null -ne $prevPluginAutoload) {
+  if ($null -ne $prevPluginAutoload -and $prevPluginAutoload -ne "") {
     $env:PYTEST_DISABLE_PLUGIN_AUTOLOAD = $prevPluginAutoload
   } else {
     Remove-Item Env:PYTEST_DISABLE_PLUGIN_AUTOLOAD -ErrorAction SilentlyContinue
