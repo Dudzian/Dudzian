@@ -3,8 +3,6 @@ from pathlib import Path
 
 import pytest
 
-from tests.ui._qt import apply_qtcharts_context
-
 pytestmark = pytest.mark.qml
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
@@ -58,7 +56,6 @@ from pathlib import Path
 
     app = QApplication.instance() or QApplication([])
     engine = QQmlApplicationEngine()
-    apply_qtcharts_context(engine)
     engine.rootContext().setContextProperty("runbookController", controller)
     qml_path = Path(__file__).resolve().parents[2] / "ui" / "qml" / "dashboard" / "RunbookPanel.qml"
     engine.load(QUrl.fromLocalFile(str(qml_path)))

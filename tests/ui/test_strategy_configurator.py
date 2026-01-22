@@ -5,7 +5,7 @@ from pathlib import Path
 
 import pytest
 
-from tests.ui._qt import apply_qtcharts_context, require_pyside6
+from tests.ui._qt import require_pyside6
 
 pytestmark = pytest.mark.qml
 
@@ -30,7 +30,6 @@ def test_strategy_configurator_lists_new_strategies() -> None:
     app = QApplication.instance() or QApplication([])
 
     engine = QQmlApplicationEngine()
-    apply_qtcharts_context(engine)
     view_path = Path(__file__).resolve().parents[2] / "ui" / "qml" / "views" / "StrategyConfigurator.qml"
     qml_warnings: list = []
 

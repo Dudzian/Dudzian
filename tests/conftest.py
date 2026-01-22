@@ -1,18 +1,18 @@
 from __future__ import annotations
 
 import asyncio
-import importlib.util
 import logging
 import os
 import socket
 import threading
 import sys
 from contextlib import contextmanager
-from typing import Generator
+from typing import Generator, TYPE_CHECKING
 
 import pytest
 
-from bot_core.backtest.simulation import SimulationScenario
+if TYPE_CHECKING:
+    from bot_core.backtest.simulation import SimulationScenario
 
 logger = logging.getLogger(__name__)
 
@@ -35,40 +35,6 @@ unstable_windows = pytest.mark.skipif(
 )
 
 pytest.mark.unstable_windows = unstable_windows  # type: ignore[attr-defined]
-
-_QT_APP_SKIP_FLAG = "_qt_requires_qapplication_skip"
-_QT_APP_ERROR_FLAG = "_qt_qapplication_bootstrap_error"
-_QT_APP_SKIP_REASON = "_qt_qapplication_skip_reason"
-_QML_REQUIRE_ENV = {"1", "true", "yes", "on"}
-
-
-def _qml_required() -> bool:
-    return os.getenv("PYTEST_REQUIRE_QML", "").lower() in _QML_REQUIRE_ENV
-
-
-def _bootstrap_qt_app(config: pytest.Config) -> object | None:
-    if importlib.util.find_spec("PySide6") is None:
-        return None
-    try:
-        from PySide6.QtCore import QCoreApplication
-        from PySide6.QtWidgets import QApplication
-    except Exception as exc:  # pragma: no cover - brak Qt w środowisku
-        setattr(config, _QT_APP_ERROR_FLAG, exc)
-        return None
-
-    app = QCoreApplication.instance()
-    if app is None:
-        try:
-            # QApplication stabilizuje QtCharts/QtWidgets w QML na Windows.
-            app = QApplication([])
-        except Exception as exc:  # pragma: no cover - brak backendu
-            setattr(config, _QT_APP_ERROR_FLAG, exc)
-            return None
-    elif not isinstance(app, QApplication):
-        setattr(config, _QT_APP_SKIP_FLAG, True)
-        return None
-
-    return app
 
 
 def _force_windows_selector_event_loop_policy() -> None:
@@ -93,40 +59,6 @@ def _force_windows_selector_event_loop_policy() -> None:
 
 
 _force_windows_selector_event_loop_policy()
-
-
-@pytest.fixture(scope="session")
-def qt_app_session(request: pytest.FixtureRequest) -> Generator[object | None, None, None]:
-    app = _bootstrap_qt_app(request.config)
-    yield app
-
-
-def pytest_sessionstart(session: pytest.Session) -> None:
-    config = session.config
-    _bootstrap_qt_app(config)
-    error = getattr(config, _QT_APP_ERROR_FLAG, None)
-    if error:
-        reason = f"Brak QApplication dla testów QML/Charts: {error}"
-        setattr(config, _QT_APP_SKIP_REASON, reason)
-        if _qml_required():
-            raise pytest.UsageError(reason)
-    if getattr(config, _QT_APP_SKIP_FLAG, False):
-        reason = (
-            "Wykryto istniejące QCoreApplication inne niż QApplication; "
-            "uruchom testy QML/Charts w izolacji procesu."
-        )
-        setattr(config, _QT_APP_SKIP_REASON, reason)
-        if _qml_required():
-            raise pytest.UsageError(reason)
-
-
-def pytest_collection_modifyitems(config: pytest.Config, items: list[pytest.Item]) -> None:
-    reason = getattr(config, _QT_APP_SKIP_REASON, None)
-    if not reason:
-        return
-    for item in items:
-        if "qml" in item.keywords:
-            item.add_marker(pytest.mark.skip(reason=reason))
 
 
 @pytest.fixture(scope="session", autouse=True)
@@ -307,7 +239,9 @@ def windows_session_db_cleanup() -> Generator[None, None, None]:
 
 
 @pytest.fixture
-def latency_one_no_cost_scenario() -> SimulationScenario:
+def latency_one_no_cost_scenario() -> "SimulationScenario":
+    from bot_core.backtest.simulation import SimulationScenario
+
     return SimulationScenario(
         name="latency_one_no_cost",
         latency_bars=1,
@@ -318,7 +252,9 @@ def latency_one_no_cost_scenario() -> SimulationScenario:
 
 
 @pytest.fixture
-def instant_no_cost_scenario() -> SimulationScenario:
+def instant_no_cost_scenario() -> "SimulationScenario":
+    from bot_core.backtest.simulation import SimulationScenario
+
     return SimulationScenario(
         name="instant_no_cost",
         latency_bars=0,
@@ -329,7 +265,9 @@ def instant_no_cost_scenario() -> SimulationScenario:
 
 
 @pytest.fixture
-def partial_fill_scenario() -> SimulationScenario:
+def partial_fill_scenario() -> "SimulationScenario":
+    from bot_core.backtest.simulation import SimulationScenario
+
     return SimulationScenario(
         name="partial_fill_half_liquidity",
         latency_bars=0,
@@ -340,7 +278,9 @@ def partial_fill_scenario() -> SimulationScenario:
 
 
 @pytest.fixture
-def slippage_fee_scenario() -> SimulationScenario:
+def slippage_fee_scenario() -> "SimulationScenario":
+    from bot_core.backtest.simulation import SimulationScenario
+
     return SimulationScenario(
         name="slippage_and_fee",
         latency_bars=0,
@@ -351,7 +291,9 @@ def slippage_fee_scenario() -> SimulationScenario:
 
 
 @pytest.fixture
-def heavy_slippage_scenario() -> SimulationScenario:
+def heavy_slippage_scenario() -> "SimulationScenario":
+    from bot_core.backtest.simulation import SimulationScenario
+
     return SimulationScenario(
         name="heavy_slippage_no_fee",
         latency_bars=0,

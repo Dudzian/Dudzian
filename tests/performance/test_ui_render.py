@@ -10,7 +10,6 @@ from typing import Any, Iterable
 
 import pytest
 
-from tests.ui._qt import apply_qtcharts_context
 try:  # pragma: no cover - environment guard
     import PySide6  # type: ignore # noqa: F401
 except ImportError as exc:  # pragma: no cover - environment guard
@@ -18,7 +17,7 @@ except ImportError as exc:  # pragma: no cover - environment guard
 
 try:  # pragma: no cover - environment guard
     from PySide6.QtCore import QCoreApplication, QUrl  # type: ignore[attr-defined]
-    from PySide6.QtWidgets import QApplication  # type: ignore[attr-defined]
+    from PySide6.QtGui import QGuiApplication  # type: ignore[attr-defined]
     from PySide6.QtQml import QQmlComponent, QQmlEngine  # type: ignore[attr-defined]
 except ImportError as exc:  # pragma: no cover - environment guard
     pytest.skip(f"Qt runtime missing dependencies: {exc}", allow_module_level=True)
@@ -33,19 +32,16 @@ TELEMETRY_FIXTURE = REPO_ROOT / "tests/performance/telemetry_samples.json"
 
 
 @pytest.fixture(scope="session")
-def qt_app(qt_app_session: object | None) -> QApplication:  # pragma: no cover - infrastructure
-    if qt_app_session is None:
-        pytest.skip("Brak QApplication; uruchom test QML w izolowanym procesie.")
-    app = QApplication.instance()
+def qt_app() -> QGuiApplication:  # pragma: no cover - infrastructure
+    app = QGuiApplication.instance()
     if app is None:
-        pytest.skip("Brak QApplication; uruchom test QML w izolowanym procesie.")
+        app = QGuiApplication([])
     return app
 
 
 @pytest.fixture()
-def qml_engine(qt_app: QApplication) -> QQmlEngine:  # pragma: no cover - infrastructure
+def qml_engine(qt_app: QGuiApplication) -> QQmlEngine:  # pragma: no cover - infrastructure
     engine = QQmlEngine()
-    apply_qtcharts_context(engine)
     yield engine
     engine.collectGarbage()
 

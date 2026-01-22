@@ -1,7 +1,6 @@
 param(
   [string]$QtQpaPlatform = "offscreen",
   [string]$QtOpenGL = "software",
-  [string]$QtQuickBackend = "software",
   [string]$CrashDumpDir = "var/crashdumps",
   [string]$ResultsDir = "test-results/qml"
 )
@@ -13,11 +12,8 @@ $ciIni = Join-Path $PSScriptRoot "ci/pytest-ci.ini"
 
 $env:QT_QPA_PLATFORM = $QtQpaPlatform
 $env:QT_OPENGL = $QtOpenGL
-$env:QT_QUICK_BACKEND = $QtQuickBackend
 if ($QtQpaPlatform -eq "offscreen") {
   $env:DUDZIAN_DISABLE_QTCHARTS = "1"
-} else {
-  Remove-Item Env:DUDZIAN_DISABLE_QTCHARTS -ErrorAction SilentlyContinue
 }
 
 New-Item -ItemType Directory -Force $ResultsDir | Out-Null
@@ -93,6 +89,7 @@ try {
   Write-Host "  QT_QPA_PLATFORM=$env:QT_QPA_PLATFORM"
   Write-Host "  QT_OPENGL=$env:QT_OPENGL"
   Write-Host "  QT_QUICK_BACKEND=$env:QT_QUICK_BACKEND"
+  Write-Host "  DUDZIAN_DISABLE_QTCHARTS=$env:DUDZIAN_DISABLE_QTCHARTS"
   Write-Host "  QT_LOGGING_RULES=$env:QT_LOGGING_RULES"
   Write-Host "  QT_MESSAGE_PATTERN=$env:QT_MESSAGE_PATTERN"
   Write-Host "Python env:"

@@ -1,11 +1,13 @@
 """Testy weryfikujące bootstrap PySide6 w trybie offscreen."""
 from __future__ import annotations
 
+import os
+import sys
 from pathlib import Path
 
 import pytest
 try:
-    from PySide6.QtWidgets import QApplication
+    from PySide6.QtGui import QGuiApplication
 except ImportError as exc:  # pragma: no cover - środowiska bez wsparcia GL
     pytest.skip(f"PySide6 unavailable: {exc}", allow_module_level=True)
 
@@ -18,9 +20,22 @@ def _force_offscreen(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("QT_QPA_PLATFORM", "offscreen")
 
 
-def test_pyside_app_bootstrap_loads_qml(tmp_path: Path, qt_app_session: object | None) -> None:
-    if qt_app_session is None:
-        pytest.skip("Brak QApplication; uruchom test QML w izolowanym procesie.")
+def _ensure_qt_application() -> QGuiApplication:
+    try:
+        app = QGuiApplication.instance()
+        if app is None:  # pragma: no cover - w praktyce tworzy się przy pierwszym bootstrapie
+            app = QGuiApplication([])
+        return app
+    except Exception as exc:  # pragma: no cover - środowiska bez backendu GL/Qt
+        qt_qpa_platform = os.getenv("QT_QPA_PLATFORM", "<unset>")
+        pytest.skip(
+            f"Qt runtime unavailable on {sys.platform} (QT_QPA_PLATFORM={qt_qpa_platform}): {exc}",
+            allow_module_level=True,
+        )
+
+
+def test_pyside_app_bootstrap_loads_qml(tmp_path: Path) -> None:
+    _ensure_qt_application()
     options = AppOptions(config_path=Path("ui/config/example.yaml"))
     app = BotPysideApplication(options)
     engine = app.load()
@@ -41,9 +56,7 @@ def test_pyside_app_bootstrap_loads_qml(tmp_path: Path, qt_app_session: object |
     assert cloud_flag is False
 
 
-def test_cloud_flag_context_property(qt_app_session: object | None) -> None:
-    if qt_app_session is None:
-        pytest.skip("Brak QApplication; uruchom test QML w izolowanym procesie.")
+def test_cloud_flag_context_property() -> None:
     options = AppOptions(
         config_path=Path("ui/config/example.yaml"),
         enable_cloud_runtime=True,
@@ -56,6 +69,5 @@ def test_cloud_flag_context_property(qt_app_session: object | None) -> None:
     assert licensing_controller is not None
     licensing_controller.resetStatus()
 
-    qt_app = QApplication.instance()
-    if qt_app is not None:
-        qt_app.processEvents()
+    qt_app = _ensure_qt_application()
+    qt_app.processEvents()

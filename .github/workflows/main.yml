@@ -43,10 +43,6 @@ jobs:
     name: Smoke harness (env + first failure)
     runs-on: [self-hosted, windows]
     timeout-minutes: 25
-    env:
-      QT_QPA_PLATFORM: offscreen
-      QT_OPENGL: software
-      QT_QUICK_BACKEND: software
 
     steps:
       - uses: actions/checkout@v4
@@ -60,7 +56,7 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           python -m pip install -e ".[dev]"
-          python -m pip install pytest pytest-xdist pytest-forked
+          python -m pip install pytest
 
       - name: Ensure ProcDump is available
         shell: pwsh
@@ -93,58 +89,23 @@ jobs:
           New-Item -ItemType Directory -Force var/ci | Out-Null
           New-Item -ItemType Directory -Force var/crashdumps | Out-Null
 
-          if (Test-Path Env:PYTEST_ADDOPTS) {
-            Write-Host ("PYTEST_ADDOPTS before reset: {0}" -f $env:PYTEST_ADDOPTS)
-            Remove-Item Env:PYTEST_ADDOPTS -ErrorAction SilentlyContinue
+          if (-not $env:DUDZIAN_DISABLE_QTCHARTS) {
+            $env:DUDZIAN_DISABLE_QTCHARTS = "1"
           }
-          $env:PYTEST_ADDOPTS = ""
 
-          # Windows: prefer pytest-xdist (--boxed) for isolation. pytest-forked uses os.fork() and breaks on Windows.
-          $isolationArgs = @()
-          & python -c "import importlib.util, sys; sys.exit(0 if importlib.util.find_spec('xdist') else 1)"
-          if ($LASTEXITCODE -eq 0) {
-            # When plugin autoload is disabled or flaky, force-load the plugin explicitly.
-            $isolationArgs += @("-p", "xdist.plugin", "--boxed")
+          $procdump = Get-Command procdump.exe -ErrorAction SilentlyContinue
+          if ($procdump) {
+            & $procdump.Source `
+              -accepteula `
+              -ma `
+              -e `
+              -n 1 `
+              -x var/crashdumps `
+              python -m pytest -vv --maxfail=1 -x --junitxml=var/ci/smoke_harness_first.xml
+            exit $LASTEXITCODE
           }
-          Write-Host ("pytest isolation enabled: {0}; args: {1}" -f ([bool]$isolationArgs.Count), ($isolationArgs -join " "))
 
-          $baseArgs = @("-c", "scripts/ci/pytest-ci.ini")
-          $qmlArgs = $baseArgs + @("-m", "qml", "--maxfail=1", "-x", "--junitxml=var/ci/smoke_harness_first_qml.xml") + $isolationArgs
-          $otherArgs = $baseArgs + @("-m", "not qml", "--maxfail=1", "-x", "--junitxml=var/ci/smoke_harness_first.xml") + $isolationArgs
-
-          $prevPluginAutoload = $env:PYTEST_DISABLE_PLUGIN_AUTOLOAD
-          try {
-            $env:PYTEST_DISABLE_PLUGIN_AUTOLOAD = "0"
-            if ($env:QT_QPA_PLATFORM -eq "offscreen") {
-              $env:DUDZIAN_DISABLE_QTCHARTS = "1"
-            }
-            $procdump = Get-Command procdump.exe -ErrorAction SilentlyContinue
-            if ($procdump) {
-              & $procdump.Source `
-                -accepteula `
-                -ma `
-                -e `
-                -n 1 `
-                -x var/crashdumps `
-                python -m pytest -vv @qmlArgs
-              if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-              & $procdump.Source `
-                -accepteula `
-                -ma `
-                -e `
-                -n 1 `
-                -x var/crashdumps `
-                python -m pytest -vv @otherArgs
-              exit $LASTEXITCODE
-            }
-
-            python -m pytest -vv @qmlArgs
-            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-            python -m pytest -vv @otherArgs
-          } finally {
-            Remove-Item Env:DUDZIAN_DISABLE_QTCHARTS -ErrorAction SilentlyContinue
-            $env:PYTEST_DISABLE_PLUGIN_AUTOLOAD = $prevPluginAutoload
-          }
+          pytest -vv --maxfail=1 -x --junitxml=var/ci/smoke_harness_first.xml
 
       - name: Upload smoke harness diagnostics
         if: always()
@@ -327,7 +288,6 @@ jobs:
     env:
       QT_QPA_PLATFORM: offscreen
       QT_OPENGL: software
-      QT_QUICK_BACKEND: software
 
     steps:
       - uses: actions/checkout@v4
@@ -390,7 +350,6 @@ jobs:
     env:
       QT_QPA_PLATFORM: windows
       QT_OPENGL: software
-      QT_QUICK_BACKEND: software
 
     steps:
       - uses: actions/checkout@v4
