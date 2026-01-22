@@ -99,12 +99,12 @@ jobs:
           }
           $env:PYTEST_ADDOPTS = ""
 
-          # Prefer pytest-forked. Do NOT use deprecated/unsupported --boxed.
+          # Windows: prefer pytest-xdist (--boxed) for isolation. pytest-forked uses os.fork() and breaks on Windows.
           $isolationArgs = @()
-          & python -c "import importlib.util, sys; sys.exit(0 if importlib.util.find_spec('pytest_forked') else 1)"
+          & python -c "import importlib.util, sys; sys.exit(0 if importlib.util.find_spec('xdist') else 1)"
           if ($LASTEXITCODE -eq 0) {
             # When plugin autoload is disabled or flaky, force-load the plugin explicitly.
-            $isolationArgs += @("-p", "pytest_forked", "--forked")
+            $isolationArgs += @("-p", "xdist.plugin", "--boxed")
           }
           Write-Host ("pytest isolation enabled: {0}; args: {1}" -f ([bool]$isolationArgs.Count), ($isolationArgs -join " "))
 
