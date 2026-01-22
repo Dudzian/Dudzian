@@ -128,10 +128,10 @@ def _ensure_isolation_plugins(pytest_args: list[str]) -> None:
 
     required_plugins: list[str] = []
     if uses_boxed:
-        if importlib.util.find_spec("xdist") is None:
-            raise RuntimeError("Pytest isolation requires pytest-xdist for --boxed.")
-        if not _has_plugin("xdist"):
-            required_plugins.append("xdist")
+        raise RuntimeError(
+            "Pytest isolation with `--boxed` is no longer supported. Install pytest-forked and use `--forked`"
+            " (ensure `-p pytest_forked` if plugin autoload is disabled)."
+        )
     if uses_forked:
         if importlib.util.find_spec("pytest_forked") is None:
             raise RuntimeError("Pytest isolation requires pytest-forked for --forked.")

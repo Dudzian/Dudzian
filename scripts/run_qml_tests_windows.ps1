@@ -128,61 +128,40 @@ try {
     return ($outputText -replace "`r`n", "`n" -replace "`r", "`n")
   }
   $helpBase = & $getPytestHelp -ciIni $ciIni
-  $helpXdist = ""
   $helpForked = ""
+  $helpForkedExit = 0
   $probeErrorPreference = $ErrorActionPreference
   try {
     $ErrorActionPreference = "Continue"
     try {
-      $helpXdist = & $getPytestHelp -ciIni $ciIni -extraArgs @("-p", "xdist.plugin") -fullySilent
-    } catch {
-      $helpXdist = ""
-    }
-    try {
       $helpForked = & $getPytestHelp -ciIni $ciIni -extraArgs @("-p", "pytest_forked") -fullySilent
+      $helpForkedExit = $LASTEXITCODE
     } catch {
       $helpForked = ""
+      $helpForkedExit = 1
     }
   } finally {
     $ErrorActionPreference = $probeErrorPreference
   }
-  $boxedBase = $helpBase | Select-String -Quiet -Pattern "\-\-boxed"
-  $boxedXdist = $helpXdist | Select-String -Quiet -Pattern "\-\-boxed"
-  $forkedForked = $helpForked | Select-String -Quiet -Pattern "\-\-forked"
-  $autoloadAllowed = -not (Test-Path Env:PYTEST_DISABLE_PLUGIN_AUTOLOAD)
-  $xdistImportOk = $false
-  if ($boxedXdist -or $boxedBase) {
-    & python -c "import xdist.plugin" 2>$null
-    if ($LASTEXITCODE -eq 0) {
-      $xdistImportOk = $true
-    } else {
-      Write-Warning "Preflight: nie mogę zaimportować xdist.plugin."
-    }
-  }
-  $isolationAdded = $false
+  $forkedForked = $helpForked | Select-String -Quiet -Pattern "(?im)^\s*--forked\b"
   $isolationSelected = "none"
-  if ($boxedXdist -and $xdistImportOk) {
-    $pytestArgs += @("-p", "xdist.plugin", "--boxed")
-    $isolationAdded = $true
-    $isolationSelected = "xdist(-p)"
-  } elseif ($boxedBase) {
-    if ($autoloadAllowed -and $xdistImportOk) {
-      $pytestArgs += @("--boxed")
-      $isolationAdded = $true
-      $isolationSelected = "xdist(autoload)"
-    } elseif ($xdistImportOk) {
-      $pytestArgs += @("-p", "xdist.plugin", "--boxed")
-      $isolationAdded = $true
-      $isolationSelected = "xdist(-p)"
-    }
-  }
-  if (-not $isolationAdded) {
-    if ($forkedForked) {
-      $pytestArgs += @("-p", "pytest_forked", "--forked")
-      $isolationAdded = $true
-      $isolationSelected = "forked"
+  if ($forkedForked) {
+    $pytestArgs += @("-p", "pytest_forked", "--forked")
+    $isolationSelected = "forked(probed)"
+  } else {
+    if (($helpForkedExit -ne 0) -or (-not $helpForked)) {
+      if ($helpForkedExit -ne 0) {
+        Write-Warning ("pytest forked probe failed (exit={0}); pytest-forked may be missing or failing to load." -f $helpForkedExit)
+      } elseif (-not $helpForked) {
+        Write-Warning "pytest forked probe produced no output; pytest-forked may be missing or failing to load."
+      }
+      Write-Warning ("pytest forked probe summary: exit={0}, out_len={1}" -f $helpForkedExit, $helpForked.Length)
+      Write-Warning "pytest isolation unavailable: forked probe failed; running without isolation."
+      $isolationSelected = "none(probe_failed)"
     } else {
-      Write-Warning "pytest isolation unavailable: --boxed and --forked not detected; running without isolation."
+      Write-Warning "pytest isolation unavailable: --forked not detected; running without isolation."
+      Write-Warning 'pytest isolation hint: ensure pytest-forked is installed and add `-p pytest_forked` if plugin autoload is disabled.'
+      $isolationSelected = "none(flag_missing)"
     }
   }
   if ($env:CI) {
