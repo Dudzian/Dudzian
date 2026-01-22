@@ -3,7 +3,7 @@ from pathlib import Path
 
 import pytest
 
-from tests.ui._qt import apply_qtcharts_context, require_pyside6
+from tests.ui._qt import require_pyside6, teardown_qt_app
 
 pytestmark = pytest.mark.qml
 
@@ -145,7 +145,6 @@ def _load_wizard(
 ) -> tuple[object, QQmlApplicationEngine, QApplication, _StubOnboardingService | None]:
     app = QApplication.instance() or QApplication([])
     engine = QQmlApplicationEngine()
-    apply_qtcharts_context(engine)
     engine.rootContext().setContextProperty("licensingController", controller)
     if onboarding_service is not None:
         engine.rootContext().setContextProperty("onboardingService", onboarding_service)
@@ -237,7 +236,7 @@ def test_license_wizard_happy_path(tmp_path: Path) -> None:
     assert "demo-pro" in summary_license.property("text")
 
     engine.deleteLater()
-    app.processEvents()
+    teardown_qt_app(app)
 
 
 @pytest.mark.timeout(30)
@@ -278,4 +277,4 @@ def test_license_wizard_shows_error_on_invalid_payload(tmp_path: Path) -> None:
         assert status_label_text
 
     engine.deleteLater()
-    app.processEvents()
+    teardown_qt_app(app)

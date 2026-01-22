@@ -9,7 +9,7 @@ from pathlib import Path
 
 import pytest
 
-from tests.ui._qt import apply_qtcharts_context, require_pyside6
+from tests.ui._qt import require_pyside6
 
 pytestmark = pytest.mark.qml
 
@@ -305,7 +305,6 @@ def test_risk_controls_panel_handles_engine_snapshot():
     controller = ControllerStub(bool(snapshot.get("force_liquidation", False)))
 
     engine_qml = QQmlApplicationEngine()
-    apply_qtcharts_context(engine_qml)
     context = engine_qml.rootContext()
     context.setContextProperty("limitsModel", limits_model)
     context.setContextProperty("costModel", cost_model)

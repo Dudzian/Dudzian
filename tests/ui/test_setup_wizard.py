@@ -5,7 +5,7 @@ from pathlib import Path
 
 import pytest
 
-from tests.ui._qt import apply_qtcharts_context, require_pyside6
+from tests.ui._qt import require_pyside6
 
 pytestmark = pytest.mark.qml
 
@@ -134,7 +134,6 @@ def test_setup_wizard_configures_instrument_and_preferences(tmp_path: Path) -> N
     app = QApplication.instance() or QApplication([])
 
     engine = QQmlApplicationEngine()
-    apply_qtcharts_context(engine)
     stub_app = StubAppController()
     license_stub = StubLicenseController(active=True)
 

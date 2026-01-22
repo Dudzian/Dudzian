@@ -4,7 +4,7 @@ from pathlib import Path
 
 import pytest
 
-from tests.ui._qt import apply_qtcharts_context, require_pyside6
+from tests.ui._qt import require_pyside6
 
 pytestmark = pytest.mark.qml
 
@@ -64,7 +64,6 @@ def test_dashboard_settings_qml_loads(tmp_path: Path, qapp: QApplication) -> Non
     controller = DashboardSettingsController(store=store)
 
     engine = QQmlApplicationEngine()
-    apply_qtcharts_context(engine)
     engine.rootContext().setContextProperty("settingsController", controller)
     qml_path = Path(__file__).resolve().parents[2] / "ui" / "qml" / "settings" / "DashboardSettings.qml"
     engine.load(QUrl.fromLocalFile(str(qml_path)))
