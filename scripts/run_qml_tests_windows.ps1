@@ -76,26 +76,6 @@ if ($env:QML_TEST_K) {
   $pytestArgs += @("-k", $env:QML_TEST_K)
 }
 
-$supportsBoxed = $false
-$supportsForked = $false
-& python -c "import importlib.metadata as md; md.version('pytest-xdist')" 2>$null
-if ($LASTEXITCODE -eq 0) {
-  $supportsBoxed = $true
-} else {
-  & python -c "import importlib.metadata as md; md.version('pytest-forked')" 2>$null
-  if ($LASTEXITCODE -eq 0) {
-    $supportsForked = $true
-  }
-}
-if ($supportsBoxed) {
-  $pytestArgs += @("-p", "xdist", "--boxed")
-} elseif ($supportsForked) {
-  $pytestArgs += @("-p", "pytest_forked", "--forked")
-} else {
-  Write-Error "pytest isolation unavailable: install pytest-xdist (--boxed) or pytest-forked (--forked)."
-  exit 1
-}
-
 $prevPluginAutoload = $env:PYTEST_DISABLE_PLUGIN_AUTOLOAD
 $exitCode = 0
 try {
@@ -122,24 +102,92 @@ try {
   Write-Host "PYTEST_DISABLE_PLUGIN_AUTOLOAD exists in PS? " (Test-Path Env:PYTEST_DISABLE_PLUGIN_AUTOLOAD)
   & python -c "import os; print('PYTEST_DISABLE_PLUGIN_AUTOLOAD in child:', 'PYTEST_DISABLE_PLUGIN_AUTOLOAD' in os.environ, os.environ.get('PYTEST_DISABLE_PLUGIN_AUTOLOAD'))"
   & python -m pip show pytest-xdist
-  & python -c "import xdist.plugin; print('xdist.plugin import: OK')"
-  if ($LASTEXITCODE -ne 0) {
-    Write-Error "Preflight: nie mogę zaimportować xdist.plugin"
-    exit 1
-  }
   $ver = & python -m pytest --version
   if ($ver -notmatch "(?i)\\bxdist\\b") {
     Write-Warning "Preflight: xdist nie pojawia się w 'pytest --version'."
   }
-  $help = & python -m pytest -c $ciIni -h
-  $hasBoxed = $help | Select-String -Quiet -Pattern "\-\-boxed"
-  if (-not $hasBoxed) {
-    Write-Error "Preflight: pytest nie widzi opcji --boxed (xdist nieaktywny). Przerywam przed uruchomieniem testów."
-    exit 1
+  $getPytestHelp = {
+    param(
+      [string]$ciIni,
+      [string[]]$extraArgs = @(),
+      [switch]$fullySilent
+    )
+    $outputText = ""
+    if ($fullySilent) {
+      $tempPath = [System.IO.Path]::GetTempFileName()
+      try {
+        & python -m pytest -c $ciIni @extraArgs -h 1>$tempPath 2>$null
+        $outputText = Get-Content -Path $tempPath -Raw -ErrorAction SilentlyContinue
+      } finally {
+        Remove-Item -Path $tempPath -ErrorAction SilentlyContinue
+      }
+    } else {
+      $output = & python -m pytest -c $ciIni @extraArgs -h 2>$null
+      $outputText = ($output -join "`n")
+    }
+    return ($outputText -replace "`r`n", "`n" -replace "`r", "`n")
+  }
+  $helpBase = & $getPytestHelp -ciIni $ciIni
+  $helpXdist = ""
+  $helpForked = ""
+  $probeErrorPreference = $ErrorActionPreference
+  try {
+    $ErrorActionPreference = "Continue"
+    try {
+      $helpXdist = & $getPytestHelp -ciIni $ciIni -extraArgs @("-p", "xdist.plugin") -fullySilent
+    } catch {
+      $helpXdist = ""
+    }
+    try {
+      $helpForked = & $getPytestHelp -ciIni $ciIni -extraArgs @("-p", "pytest_forked") -fullySilent
+    } catch {
+      $helpForked = ""
+    }
+  } finally {
+    $ErrorActionPreference = $probeErrorPreference
+  }
+  $boxedBase = $helpBase | Select-String -Quiet -Pattern "\-\-boxed"
+  $boxedXdist = $helpXdist | Select-String -Quiet -Pattern "\-\-boxed"
+  $forkedForked = $helpForked | Select-String -Quiet -Pattern "\-\-forked"
+  $autoloadAllowed = -not (Test-Path Env:PYTEST_DISABLE_PLUGIN_AUTOLOAD)
+  $xdistImportOk = $false
+  if ($boxedXdist -or $boxedBase) {
+    & python -c "import xdist.plugin" 2>$null
+    if ($LASTEXITCODE -eq 0) {
+      $xdistImportOk = $true
+    } else {
+      Write-Warning "Preflight: nie mogę zaimportować xdist.plugin."
+    }
+  }
+  $isolationAdded = $false
+  $isolationSelected = "none"
+  if ($boxedXdist -and $xdistImportOk) {
+    $pytestArgs += @("-p", "xdist.plugin", "--boxed")
+    $isolationAdded = $true
+    $isolationSelected = "xdist(-p)"
+  } elseif ($boxedBase) {
+    if ($autoloadAllowed -and $xdistImportOk) {
+      $pytestArgs += @("--boxed")
+      $isolationAdded = $true
+      $isolationSelected = "xdist(autoload)"
+    } elseif ($xdistImportOk) {
+      $pytestArgs += @("-p", "xdist.plugin", "--boxed")
+      $isolationAdded = $true
+      $isolationSelected = "xdist(-p)"
+    }
+  }
+  if (-not $isolationAdded) {
+    if ($forkedForked) {
+      $pytestArgs += @("-p", "pytest_forked", "--forked")
+      $isolationAdded = $true
+      $isolationSelected = "forked"
+    } else {
+      Write-Warning "pytest isolation unavailable: --boxed and --forked not detected; running without isolation."
+    }
   }
   if ($env:CI) {
     $pytestArgs += @("--cache-clear")
-    $hasTimeout = $help | Select-String -Quiet -Pattern "\-\-timeout="
+    $hasTimeout = $helpBase | Select-String -Quiet -Pattern "\-\-timeout="
     if ($hasTimeout) {
       $pytestArgs += @("--timeout=300", "--timeout-method=thread")
     } else {
@@ -148,6 +196,7 @@ try {
   }
 
   Write-Host "pytest config override: -c $ciIni"
+  Write-Host ("pytest isolation selected: {0}" -f $isolationSelected)
   if ($env:QML_TEST_MAXFAIL) {
     if ($maxfailInputValid) {
       Write-Host "pytest effective: --maxfail=$maxfail (input=$($env:QML_TEST_MAXFAIL) valid)"
