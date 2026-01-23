@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import importlib.util
 import logging
 import os
 import socket
@@ -59,6 +60,29 @@ def _force_windows_selector_event_loop_policy() -> None:
 
 
 _force_windows_selector_event_loop_policy()
+
+
+@pytest.fixture(scope="session")
+def qt_app() -> object:
+    if importlib.util.find_spec("PySide6") is None:
+        pytest.skip("Pomijam testy Qt: PySide6 nie jest dostępne.", allow_module_level=True)
+
+    try:
+        from PySide6.QtCore import QCoreApplication  # type: ignore[attr-defined]
+        from PySide6.QtGui import QGuiApplication  # type: ignore[attr-defined]
+    except Exception as exc:  # pragma: no cover - zależne od środowiska CI
+        pytest.skip(f"Pomijam testy Qt: brak zależności runtime ({exc}).", allow_module_level=True)
+
+    app = QCoreApplication.instance()
+    if app is not None:
+        return app
+
+    try:
+        from PySide6.QtWidgets import QApplication  # type: ignore[attr-defined]
+    except Exception:
+        return QGuiApplication([])
+
+    return QApplication([])
 
 
 @pytest.fixture(scope="session", autouse=True)
