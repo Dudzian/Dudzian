@@ -59,6 +59,55 @@ def _load_component(engine: QQmlEngine) -> QQmlComponent:
     return component
 
 
+def _create_instance(component: QQmlComponent, properties: dict[str, Any]):
+    """
+    Prefer createWithInitialProperties (Qt6) to avoid N calls to setProperty()
+    and let QML bindings evaluate with initial state in one go.
+    Falls back to create()+setProperty() if the runtime doesn't support it.
+    """
+    create_with_props = getattr(component, "createWithInitialProperties", None)
+    if callable(create_with_props):
+        instance = create_with_props(properties)
+        assert instance is not None
+        return instance
+
+    instance = component.create()
+    assert instance is not None
+    for key, value in properties.items():
+        instance.setProperty(key, value)
+    return instance
+
+
+def _drain_events() -> None:
+    """
+    Drain event queue + DeferredDelete to keep measurements stable across iterations.
+    """
+    QCoreApplication.processEvents()
+    try:
+        from PySide6.QtCore import QEvent  # type: ignore[attr-defined]
+
+        QCoreApplication.sendPostedEvents(None, QEvent.DeferredDelete)
+    except Exception:
+        pass
+    QCoreApplication.processEvents()
+
+
+def _warm_up_component(
+    component: QQmlComponent,
+    properties: dict[str, Any],
+    *,
+    iterations: int = 2,
+) -> None:
+    """
+    Warm up QML/JS compilation + first paint so perf samples don't include cold-start noise.
+    """
+    for _ in range(max(1, iterations)):
+        instance = _create_instance(component, properties)
+        _drain_events()
+        instance.deleteLater()
+        _drain_events()
+
+
 def _p90(latencies_ms: Iterable[float]) -> float:
     samples = sorted(latencies_ms)
     if not samples:
@@ -69,13 +118,11 @@ def _p90(latencies_ms: Iterable[float]) -> float:
 
 def _render_component(component: QQmlComponent, properties: dict[str, Any]) -> float:
     start = time.perf_counter()
-    instance = component.create()
-    assert instance is not None
-    for key, value in properties.items():
-        instance.setProperty(key, value)
-    QCoreApplication.processEvents()
+    instance = _create_instance(component, properties)
+    _drain_events()
     elapsed_ms = (time.perf_counter() - start) * 1000.0
     instance.deleteLater()
+    _drain_events()
     return elapsed_ms
 
 
@@ -130,18 +177,14 @@ def test_feed_sla_panel_render_time_under_feed_spike(qml_engine: QQmlEngine, ale
         {"name": "slack", "status": "degraded"},
     ]
 
-    latencies = [
-        _render_component(
-            component,
-            {
-                "feedSlaReport": heavy_feed_report,
-                "feedHealth": {"lastError": "Rate limited"},
-                "feedAlertHistory": alert_history,
-                "feedAlertChannels": alert_channels,
-            },
-        )
-        for _ in range(6)
-    ]
+    props = {
+        "feedSlaReport": heavy_feed_report,
+        "feedHealth": {"lastError": "Rate limited"},
+        "feedAlertHistory": alert_history,
+        "feedAlertChannels": alert_channels,
+    }
+    _warm_up_component(component, props, iterations=2)
+    latencies = [_render_component(component, props) for _ in range(6)]
 
     p90_ms = _p90(latencies)
     _log_report(
@@ -172,26 +215,22 @@ def test_risk_panels_render_time_with_dense_timeline(qml_engine: QQmlEngine, tim
         "margin_buffer": 0.18,
     }
 
-    latencies = [
-        _render_component(
-            component,
-            {
-                "riskTimeline": risk_timeline,
-                "riskMetrics": risk_metrics,
-                "longPollMetrics": [{"name": "decision_lag_ms", "value": 12.0}] * 12,
-                "cycleMetrics": {"p50_ms": 35.0, "p95_ms": 70.0, "max_ms": 120.0},
-            },
-        )
-        for _ in range(6)
-    ]
+    props = {
+        "riskTimeline": risk_timeline,
+        "riskMetrics": risk_metrics,
+        "longPollMetrics": [{"name": "decision_lag_ms", "value": 12.0}] * 12,
+        "cycleMetrics": {"p50_ms": 35.0, "p95_ms": 70.0, "max_ms": 120.0},
+    }
+    _warm_up_component(component, props, iterations=2)
+    latencies = [_render_component(component, props) for _ in range(6)]
 
-    avg_ms = statistics.mean(latencies)
+    p90_ms = _p90(latencies)
     _log_report(
         "risk_panels_render",
         latencies,
         threshold_ms=180.0,
     )
-    assert avg_ms < 180.0, f"Risk panels rendering averaged {avg_ms:.2f} ms"
+    assert p90_ms < 180.0, f"Risk panels rendering p90 too slow: {p90_ms:.2f} ms"
 
 
 @pytest.mark.performance
@@ -210,6 +249,7 @@ def test_sla_panels_render_across_telemetry_samples(
 
     for sample in feed_samples:
         properties = {**baseline_properties, **sample.get("properties", {})}
+        _warm_up_component(component, properties, iterations=1)
         latencies.extend(_render_component(component, properties) for _ in range(3))
 
     p90_ms = _p90(latencies)
@@ -238,6 +278,7 @@ def test_risk_panels_render_across_telemetry_samples(
 
     for sample in risk_samples:
         properties = {**baseline_properties, **sample.get("properties", {})}
+        _warm_up_component(component, properties, iterations=1)
         latencies.extend(_render_component(component, properties) for _ in range(3))
 
     p90_ms = _p90(latencies)
