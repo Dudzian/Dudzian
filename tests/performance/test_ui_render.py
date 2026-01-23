@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import datetime
 import json
+import os
 import statistics
 import subprocess
 import time
@@ -17,7 +18,6 @@ except ImportError as exc:  # pragma: no cover - environment guard
 
 try:  # pragma: no cover - environment guard
     from PySide6.QtCore import QCoreApplication, QUrl  # type: ignore[attr-defined]
-    from PySide6.QtGui import QGuiApplication  # type: ignore[attr-defined]
     from PySide6.QtQml import QQmlComponent, QQmlEngine  # type: ignore[attr-defined]
 except ImportError as exc:  # pragma: no cover - environment guard
     pytest.skip(f"Qt runtime missing dependencies: {exc}", allow_module_level=True)
@@ -31,17 +31,13 @@ REPORT_DIR.mkdir(parents=True, exist_ok=True)
 TELEMETRY_FIXTURE = REPO_ROOT / "tests/performance/telemetry_samples.json"
 
 
-@pytest.fixture(scope="session")
-def qt_app() -> QGuiApplication:  # pragma: no cover - infrastructure
-    app = QGuiApplication.instance()
-    if app is None:
-        app = QGuiApplication([])
-    return app
-
-
 @pytest.fixture()
-def qml_engine(qt_app: QGuiApplication) -> QQmlEngine:  # pragma: no cover - infrastructure
+def qml_engine(qt_app: object) -> QQmlEngine:  # pragma: no cover - infrastructure
     engine = QQmlEngine()
+    engine.rootContext().setContextProperty(
+        "disableQtCharts",
+        os.environ.get("DUDZIAN_DISABLE_QTCHARTS", "0") == "1",
+    )
     yield engine
     engine.collectGarbage()
 
@@ -90,6 +86,7 @@ def _drain_events() -> None:
     except Exception:
         pass
     QCoreApplication.processEvents()
+    time.sleep(0.001)
 
 
 def _warm_up_component(
@@ -106,6 +103,7 @@ def _warm_up_component(
         _drain_events()
         instance.deleteLater()
         _drain_events()
+    _drain_events()
 
 
 def _p90(latencies_ms: Iterable[float]) -> float:
