@@ -26,12 +26,21 @@ require_pyside6()
 import PySide6
 from PySide6.QtCore import (QAbstractListModel, QModelIndex, QObject, Property,
                             Qt, QUrl, Slot, QMetaObject)
-from PySide6.QtQml import QQmlApplicationEngine, QQmlComponent
+from PySide6.QtQml import QQmlApplicationEngine, QQmlComponent, QJSValue
 
 try:  # pragma: no cover - zależy od środowiska CI
     from PySide6.QtWidgets import QApplication
 except ImportError as exc:  # brak bibliotek systemowych (np. libGL)
     pytest.skip(f"Brak zależności QtWidgets: {exc}", allow_module_level=True)
+
+def _as_py(value: object) -> object:
+    # Na części platform/buildów Qt właściwości QML (JS Array/Object) wracają jako QJSValue.
+    if isinstance(value, QJSValue):
+        try:
+            return value.toVariant()
+        except Exception:
+            return value
+    return value
 
 
 class StubRiskHistoryModel(QObject):
@@ -289,13 +298,13 @@ def test_portfolio_dashboard_builds_exposures_and_history(tmp_path: Path) -> Non
             QMetaObject.invokeMethod(root, method, Qt.DirectConnection)
         app.processEvents()
 
-        history_points = root.property("historyPoints")
+        history_points = _as_py(root.property("historyPoints"))
         assert isinstance(history_points, list)
         assert len(history_points) == 2
         assert history_points[0]["value"] == 100000.0
 
-        exchange_items = root.property("exchangeExposureItems")
-        strategy_items = root.property("strategyExposureItems")
+        exchange_items = _as_py(root.property("exchangeExposureItems"))
+        strategy_items = _as_py(root.property("strategyExposureItems"))
         assert isinstance(exchange_items, list) and isinstance(strategy_items, list)
         assert exchange_items[0]["name"].upper() == "BINANCE"
         assert strategy_items[0]["name"].startswith("theta_income")
