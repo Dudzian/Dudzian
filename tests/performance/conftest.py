@@ -1,14 +1,44 @@
+from __future__ import annotations
+
 import os
+import sys
+from typing import Generator
 
-def pytest_sessionstart(session) -> None:
-    """
-    Perf testy muszą ustawić backend/offscreen *zanim* powstanie Q(Core|Gui|)Application.
-    Fixture (function-scope) jest za późno, jeśli gdziekolwiek istnieje session-scope qt_app.
-    """
-    os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+import pytest
+
+# WAŻNE: te zmienne muszą być ustawione ZANIM Qt/PySide6 zainicjalizuje platform plugin / scenegraph.
+# conftest z katalogu tests/performance ładuje się przed importem modułów testów w tym katalogu,
+# więc jest to najbezpieczniejsze miejsce.
+#
+# Cel: stabilność (szczególnie na Windows runnerach) i eliminacja zależności od GPU/ANGLE/D3D.
+
+os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+
+# Windows jest najbardziej problematyczny (patrz WIL/AVResultException spam w logach).
+# Na innych platformach zostawiamy możliwość użycia domyślnego backendu, jeśli ktoś uruchamia lokalnie.
+if sys.platform == "win32":
     os.environ.setdefault("QT_QUICK_BACKEND", "software")
-    os.environ.setdefault("QT_OPENGL", "software")
     os.environ.setdefault("QSG_RHI_BACKEND", "software")
+    os.environ.setdefault("QT_OPENGL", "software")
+    os.environ.setdefault("QSG_RENDER_LOOP", "basic")
 
-    # QML ma killswitch na QtCharts (context property: disableQtCharts) – w perf/CI domyślnie wyłączamy.
-    os.environ.setdefault("DUDZIAN_DISABLE_QTCHARTS", "1")
+# Wydajność testów QML: wycinamy ciężkie komponenty i animacje, bo to benchmark SLA paneli,
+# a nie test QtCharts/animacji.
+os.environ.setdefault("DUDZIAN_DISABLE_QTCHARTS", "1")
+os.environ.setdefault("DUDZIAN_QML_DISABLE_ANIMATIONS", "1")
+
+# Mniej szumu w logach (zostawiamy ostrzeżenia krytyczne):
+os.environ.setdefault("QT_LOGGING_RULES", "*.debug=false;qt.qpa.*=false;qt.scenegraph.*=false")
+
+
+@pytest.fixture(scope="session")
+def qml_engine() -> Generator["QQmlEngine", None, None]:
+    # Importy PySide6 dopiero w środku, żeby środowisko było ustawione.
+    from PySide6.QtQml import QQmlEngine
+
+    engine = QQmlEngine()
+    try:
+        yield engine
+    finally:
+        # Dajemy Qt szansę posprzątać zaległe obiekty/GC po stronie C++.
+        engine.collectGarbage()
