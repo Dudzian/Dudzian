@@ -1,5 +1,6 @@
 import os
 import time
+from datetime import datetime, timezone
 from pathlib import Path
 
 import pytest
@@ -15,7 +16,7 @@ try:  # pragma: no cover - zależne od środowiska CI
 except Exception:  # pragma: no cover - brak Qt
     QObject = QMetaObject = QUrl = QQmlApplicationEngine = QApplication = None  # type: ignore[assignment]
 
-from bot_core.observability.guardrail_models import GuardrailLogRecord, GuardrailReport, GuardrailSummary
+from core.reporting.guardrails_reporter import GuardrailLogRecord, GuardrailQueueSummary, GuardrailReport
 from ui.backend.runbook_controller import RunbookController
 
 
@@ -62,22 +63,29 @@ from pathlib import Path
     )
 
     # Deterministyczny raport: ma wskazać runbook "strategy_incident_playbook"
+    generated_at = datetime(2024, 3, 1, 10, 0, tzinfo=timezone.utc)
     report = GuardrailReport(
-        summaries=[
-            GuardrailSummary(
-                severity="error",
-                title="Strategy incident",
-                description="Synthetic incident for UI test",
-                affected_components=["strategy"],
-            )
-        ],
-        log_records=[
+        generated_at=generated_at,
+        summaries=(
+            GuardrailQueueSummary(
+                environment="paper",
+                queue="strategy",
+                rate_limit_wait_total=0.0,
+                rate_limit_wait_avg_seconds=None,
+                timeout_total=1.0,
+                timeout_avg_seconds=2.0,
+            ),
+        ),
+        logs=(
             GuardrailLogRecord(
-                severity="error",
+                timestamp=generated_at,
+                level="ERROR",
                 message="Synthetic error",
-                timestamp="2024-03-01T10:00:00Z",
-            )
-        ],
+                event="TIMEOUT",
+                metadata={"queue": "strategy", "environment": "paper"},
+            ),
+        ),
+        recommendations=(),
     )
     controller = RunbookController(
         runbook_directory=runbook_dir, actions_directory=actions_dir, endpoint=_StaticEndpoint(report)
@@ -92,7 +100,8 @@ from pathlib import Path
     assert engine.rootObjects(), "Nie udało się załadować RunbookPanel.qml"
 
     root = engine.rootObjects()[0]
-    deadline = time.monotonic() + 5.0
+    timeout_seconds = 10.0 if os.environ.get("CI") else 5.0
+    deadline = time.monotonic() + timeout_seconds
     button = None
     while time.monotonic() < deadline:
         app.processEvents()
