@@ -182,7 +182,7 @@ def test_feed_sla_panel_render_time_under_feed_spike(qml_engine: QQmlEngine, ale
         "feedAlertChannels": alert_channels,
     }
     _warm_up_component(component, props, iterations=2)
-    latencies = [_render_component(component, props) for _ in range(6)]
+    latencies = [_render_component(component, props) for _ in range(10)]
 
     p90_ms = _p90(latencies)
     _log_report(
@@ -219,8 +219,8 @@ def test_risk_panels_render_time_with_dense_timeline(qml_engine: QQmlEngine, tim
         "longPollMetrics": [{"name": "decision_lag_ms", "value": 12.0}] * 12,
         "cycleMetrics": {"p50_ms": 35.0, "p95_ms": 70.0, "max_ms": 120.0},
     }
-    _warm_up_component(component, props, iterations=2)
-    latencies = [_render_component(component, props) for _ in range(6)]
+    _warm_up_component(component, props, iterations=3)
+    latencies = [_render_component(component, props) for _ in range(10)]
 
     p90_ms = _p90(latencies)
     _log_report(
