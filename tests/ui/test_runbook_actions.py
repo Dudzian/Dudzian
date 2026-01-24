@@ -1,4 +1,5 @@
 import os
+import time
 from pathlib import Path
 
 import pytest
@@ -14,7 +15,16 @@ try:  # pragma: no cover - zależne od środowiska CI
 except Exception:  # pragma: no cover - brak Qt
     QObject = QMetaObject = QUrl = QQmlApplicationEngine = QApplication = None  # type: ignore[assignment]
 
+from bot_core.observability.guardrail_models import GuardrailLogRecord, GuardrailReport, GuardrailSummary
 from ui.backend.runbook_controller import RunbookController
+
+
+class _StaticEndpoint:
+    def __init__(self, report: GuardrailReport) -> None:
+        self._report = report
+
+    def build_report(self) -> GuardrailReport:
+        return self._report
 
 
 @pytest.mark.skipif(QObject is None, reason="Wymagany PySide6 do testów UI")
@@ -51,7 +61,27 @@ from pathlib import Path
         encoding="utf-8",
     )
 
-    controller = RunbookController(runbook_directory=runbook_dir, actions_directory=actions_dir)
+    # Deterministyczny raport: ma wskazać runbook "strategy_incident_playbook"
+    report = GuardrailReport(
+        summaries=[
+            GuardrailSummary(
+                severity="error",
+                title="Strategy incident",
+                description="Synthetic incident for UI test",
+                affected_components=["strategy"],
+            )
+        ],
+        log_records=[
+            GuardrailLogRecord(
+                severity="error",
+                message="Synthetic error",
+                timestamp="2024-03-01T10:00:00Z",
+            )
+        ],
+    )
+    controller = RunbookController(
+        runbook_directory=runbook_dir, actions_directory=actions_dir, endpoint=_StaticEndpoint(report)
+    )
     assert controller.refreshAlerts()
 
     app = QApplication.instance() or QApplication([])
@@ -62,7 +92,14 @@ from pathlib import Path
     assert engine.rootObjects(), "Nie udało się załadować RunbookPanel.qml"
 
     root = engine.rootObjects()[0]
-    button = root.findChild(QObject, "runbookActionButton_restart_queue")
+    deadline = time.monotonic() + 5.0
+    button = None
+    while time.monotonic() < deadline:
+        app.processEvents()
+        button = root.findChild(QObject, "runbookActionButton_restart_queue")
+        if button is not None:
+            break
+        time.sleep(0.05)
     assert button is not None, "Przycisk akcji nie został wyrenderowany"
 
     QMetaObject.invokeMethod(button, "click")
