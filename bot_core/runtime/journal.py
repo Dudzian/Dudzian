@@ -13,10 +13,20 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Mapping, MutableMapping, Optional, Protocol
 
-try:  # pragma: no cover - adaptive learner jest opcjonalny
-    from bot_core.ai import AdaptiveStrategyLearner
-except Exception:  # pragma: no cover - fallback dla dystrybucji light
-    AdaptiveStrategyLearner = None  # type: ignore[assignment]
+
+class AdaptiveLearner(Protocol):
+    def register_strategies(self, regime: str, strategies: Iterable[str]) -> None: ...
+
+    def observe(
+        self,
+        *,
+        regime: str,
+        strategy: str,
+        metrics: Mapping[str, float],
+        timestamp: datetime,
+    ) -> None: ...
+
+    def persist(self) -> None: ...
 
 
 _LOGGER = logging.getLogger(__name__)
@@ -224,14 +234,12 @@ class AdaptiveDecisionJournal(TradingDecisionJournal):
     """Dekorator aktualizujący :class:`AdaptiveStrategyLearner` na podstawie dziennika."""
 
     journal: TradingDecisionJournal
-    learner: AdaptiveStrategyLearner  # type: ignore[misc]
+    learner: AdaptiveLearner
     persist_interval: int = 25
     _updates: int = field(default=0, init=False, repr=False)
 
     def record(self, event: TradingDecisionEvent) -> None:
         self.journal.record(event)
-        if AdaptiveStrategyLearner is None:
-            return
         try:
             self._process_event(event)
         except Exception:  # pragma: no cover - diagnostyka nie powinna blokować runtime
@@ -241,6 +249,11 @@ class AdaptiveDecisionJournal(TradingDecisionJournal):
         return self.journal.export()
 
     def _process_event(self, event: TradingDecisionEvent) -> None:
+        learner = self.learner
+        observe = getattr(learner, "observe", None)
+        register = getattr(learner, "register_strategies", None)
+        if not callable(observe) or not callable(register):
+            return
         strategy = getattr(event, "strategy", None)
         if not strategy:
             return
@@ -251,8 +264,8 @@ class AdaptiveDecisionJournal(TradingDecisionJournal):
         metrics = self._extract_metrics(metadata)
         if not metrics:
             return
-        self.learner.register_strategies(regime, (strategy,))
-        self.learner.observe(
+        register(regime, (strategy,))
+        observe(
             regime=regime,
             strategy=strategy,
             metrics=metrics,
@@ -260,7 +273,9 @@ class AdaptiveDecisionJournal(TradingDecisionJournal):
         )
         self._updates += 1
         if self._updates % max(1, int(self.persist_interval)) == 0:
-            self.learner.persist()
+            persist = getattr(learner, "persist", None)
+            if callable(persist):
+                persist()
 
     @staticmethod
     def _resolve_regime(
@@ -610,4 +625,3 @@ __all__ = [
     "log_model_change_event",
     "aggregate_decision_statistics",
 ]
-
