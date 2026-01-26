@@ -12,12 +12,13 @@ from urllib.error import HTTPError, URLError
 from urllib.parse import parse_qsl, urlsplit
 from urllib.request import Request
 
-import httpx
-
-from core.network import RateLimitedAsyncClient, get_rate_limited_client, run_sync
-
-
-__all__ = ["urlopen", "AsyncHTTPResponse", "configure_client_cache_ttl"]
+__all__ = [
+    "urlopen",
+    "AsyncHTTPResponse",
+    "configure_client_cache_ttl",
+    "get_rate_limited_client",
+    "run_sync",
+]
 
 
 _MAX_CONNECTIONS = 40
@@ -133,6 +134,36 @@ def _resolve_ttl(base_url: str) -> float:
     return float(ttl)
 
 
+def _require_httpx():
+    try:
+        import httpx
+    except (ModuleNotFoundError, ImportError) as exc:
+        dep = getattr(exc, "name", None) or "dependency"
+        message = f"Brak opcjonalnej zależności '{dep}' wymaganej dla bot_core.exchanges.http_client:httpx."
+        raise RuntimeError(message) from exc
+    return httpx
+
+
+def _require_core_network():
+    try:
+        from core.network import RateLimitedAsyncClient, get_rate_limited_client, run_sync
+    except (ModuleNotFoundError, ImportError) as exc:
+        dep = getattr(exc, "name", None) or "dependency"
+        message = f"Brak opcjonalnej zależności '{dep}' wymaganej dla core.network."
+        raise RuntimeError(message) from exc
+    return RateLimitedAsyncClient, get_rate_limited_client, run_sync
+
+
+def get_rate_limited_client(*args, **kwargs):
+    _, get_client, _ = _require_core_network()
+    return get_client(*args, **kwargs)
+
+
+def run_sync(*args, **kwargs):
+    _, _, run_sync_impl = _require_core_network()
+    return run_sync_impl(*args, **kwargs)
+
+
 def _purge_expired_clients(now: float) -> list[RateLimitedAsyncClient]:
     expired: list[RateLimitedAsyncClient] = []
     stale_keys: list[tuple[str, float]] = []
@@ -229,6 +260,7 @@ async def _async_open(request: Request | str, timeout: float | None = None) -> A
     if parts.query:
         params = tuple(parse_qsl(parts.query, keep_blank_values=True))
     client = _resolve_client(base_url, float(timeout or _DEFAULT_TIMEOUT))
+    httpx = _require_httpx()
     try:
         response = await client.request(
             method,

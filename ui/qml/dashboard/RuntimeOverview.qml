@@ -361,8 +361,16 @@ Item {
             property var report: root.feedSlaReport || ({})
             property var alertHistory: root.feedAlertHistory || []
             property var alertChannels: root.feedAlertChannels || []
+            property string alertChannelsText: ""
             property string severity: report && report.sla_state ? report.sla_state : "ok"
             readonly property bool latencyAlertActive: report && report.latency_state && report.latency_state !== "ok"
+
+            onAlertChannelsChanged: {
+                var channels = alertChannels || []
+                alertChannelsText = channels.map(function(channel) {
+                    return channel.name + " (" + (channel.status || channel.state || "n/a") + ")"
+                }).join(", ")
+            }
 
             ColumnLayout {
                 anchors.fill: parent
@@ -518,9 +526,7 @@ Item {
                         objectName: "runtimeOverviewSlaEscalationStatus"
                         text: alertChannels && alertChannels.length > 0
                               ? qsTr("Kanały eskalacji: %1")
-                                    .arg(alertChannels.map(function(channel) {
-                                        return channel.name + " (" + (channel.status || channel.state || "n/a") + ")"
-                                    }).join(", "))
+                                    .arg(feedSlaCard.alertChannelsText)
                               : qsTr("Kanały eskalacji nieaktywne")
                         color: Styles.AppTheme.textSecondary
                         wrapMode: Text.WordWrap
