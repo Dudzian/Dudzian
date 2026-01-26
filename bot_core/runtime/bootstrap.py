@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import asyncio
+import importlib
 import json
 import re
 import logging
@@ -11,7 +12,6 @@ import unicodedata
 from urllib.parse import urlparse
 import sys
 import hashlib
-import importlib
 from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
@@ -19,15 +19,25 @@ from pathlib import Path
 from types import ModuleType, SimpleNamespace
 from typing import TYPE_CHECKING, Any, Callable, Iterable, Iterator, Mapping, MutableMapping, Sequence
 
-_YAML_ERROR: Exception | None = None
-try:  # pragma: no cover - PyYAML może być opcjonalny w środowiskach light
-    yaml = importlib.import_module("yaml")
-except (ModuleNotFoundError, ImportError) as exc:  # pragma: no cover - brak PyYAML w light env
-    yaml = None  # type: ignore[assignment]
-    _YAML_ERROR = exc
+import yaml
 
 from bot_core.alerts import AlertSeverity, DefaultAlertRouter, emit_alert
 from bot_core.alerts.base import AlertAuditLog, AlertChannel
+from bot_core.config.loader import load_core_config
+from bot_core.config.models import (
+    CoreConfig,
+    DecisionJournalConfig,
+    EnvironmentAIConfig,
+    EnvironmentAIEnsembleConfig,
+    EnvironmentAIModelConfig,
+    EnvironmentAIPipelineScheduleConfig,
+    EnvironmentConfig,
+    LicenseValidationConfig,
+    LiveChecklistDocumentConfig,
+    LiveReadinessChecklistConfig,
+    RiskProfileConfig,
+)
+from bot_core.config.validation import assert_core_config_valid
 from bot_core.exchanges.base import (
     Environment,
     ExchangeAdapter,
@@ -35,31 +45,28 @@ from bot_core.exchanges.base import (
     ExchangeCredentials,
 )
 from bot_core.exchanges.factory import ExchangeAdapterConfig, build_exchange_adapter
-from bot_core.exchanges.health import HealthCheckResult, HealthMonitor, HealthStatus
-from bot_core.exchanges.health_checks import build_standard_health_checks
-
-
-from bot_core.exchanges import (
-    BinanceFuturesAdapter,
-    BinanceSpotAdapter,
-    BitfinexSpotAdapter,
-    BybitFuturesAdapter,
-    BybitMarginAdapter,
-    BybitSpotAdapter,
+from bot_core.exchanges.binance import BinanceFuturesAdapter, BinanceSpotAdapter
+from bot_core.exchanges.bitfinex import BitfinexSpotAdapter
+from bot_core.exchanges.bybit import BybitFuturesAdapter, BybitMarginAdapter, BybitSpotAdapter
+from bot_core.exchanges.coinbase import (
     CoinbaseFuturesAdapter,
     CoinbaseMarginAdapter,
     CoinbaseSpotAdapter,
-    KrakenFuturesAdapter,
-    KrakenSpotAdapter,
-    KuCoinSpotAdapter,
-    LoopbackExchangeAdapter,
-    NowaGieldaSpotAdapter,
-    OKXFuturesAdapter,
-    OKXMarginAdapter,
-    OKXSpotAdapter,
-    ZondaSpotAdapter,
 )
+from bot_core.exchanges.kraken import KrakenFuturesAdapter, KrakenSpotAdapter
+from bot_core.exchanges.nowa_gielda import NowaGieldaSpotAdapter
+from bot_core.exchanges.kucoin import KuCoinSpotAdapter
+from bot_core.exchanges.okx import OKXFuturesAdapter, OKXMarginAdapter, OKXSpotAdapter
+from bot_core.exchanges.testing.loopback import LoopbackExchangeAdapter
+from bot_core.exchanges.health import HealthCheckResult, HealthMonitor, HealthStatus
+from bot_core.exchanges.health_checks import build_standard_health_checks
+from bot_core.exchanges.zonda import ZondaSpotAdapter
+from bot_core.risk.base import RiskRepository
+from bot_core.risk.engine import ThresholdRiskEngine
 from bot_core.security.signing import verify_hmac_signature
+from bot_core.risk.events import RiskDecisionLog
+from bot_core.risk.factory import build_risk_profile_from_config
+from bot_core.risk.repository import FileRiskRepository
 from bot_core.security import SecretManager, SecretStorageError, build_service_token_validator
 from bot_core.security.fingerprint import DeviceFingerprintGenerator, FingerprintError
 from bot_core.security.fingerprint_lock import (
@@ -67,7 +74,13 @@ from bot_core.security.fingerprint_lock import (
     load_fingerprint_lock,
     verify_local_hardware,
 )
+from bot_core.security.license import (
+    LicenseValidationError,
+    LicenseValidationResult,
+    validate_license_from_config,
+)
 from bot_core.security.messages import make_warning
+from bot_core.security.license_service import LicenseService, LicenseServiceError
 from bot_core.security.guards import (
     LicenseCapabilityError,
     get_capability_guard,
@@ -75,11 +88,12 @@ from bot_core.security.guards import (
     reset_capability_guard,
 )
 from bot_core.security.runtime_integrity import RuntimeIntegrityError, verify_bundle_integrity
+from bot_core.security.tokens import ServiceTokenValidator
 from bot_core.runtime.tco_reporting import RuntimeTCOReporter
 
 try:  # pragma: no cover - ExecutionService może być niedostępny w niektórych dystrybucjach
     from bot_core.execution.base import ExecutionService as CoreExecutionService  # type: ignore[attr-defined]
-except (ModuleNotFoundError, ImportError):  # pragma: no cover - brak modułu execution
+except Exception:  # pragma: no cover - brak modułu execution
     CoreExecutionService = None  # type: ignore
 
 try:  # pragma: no cover - PaperTradingExecutionService zależy od modułów opcjonalnych
@@ -87,7 +101,7 @@ try:  # pragma: no cover - PaperTradingExecutionService zależy od modułów opc
         MarketMetadata as PaperMarketMetadata,
         PaperTradingExecutionService,
     )
-except (ModuleNotFoundError, ImportError):  # pragma: no cover - brak modułu paper execution
+except Exception:  # pragma: no cover - brak modułu paper execution
     PaperTradingExecutionService = None  # type: ignore
     PaperMarketMetadata = None  # type: ignore
 
@@ -116,21 +130,8 @@ if TYPE_CHECKING:  # pragma: no cover - tylko do typów
         WhatsAppChannelSettings,
         InstrumentUniverseConfig,
     )
-    from bot_core.risk.base import RiskRepository
-    from bot_core.risk.engine import ThresholdRiskEngine
-    from bot_core.risk.events import RiskDecisionLog
-    from bot_core.risk.factory import build_risk_profile_from_config
-    from bot_core.risk.repository import FileRiskRepository
-    from bot_core.portfolio import PortfolioDecisionLog
     from bot_core.security.capabilities import LicenseCapabilities
     from bot_core.security.guards import CapabilityGuard
-    from bot_core.security.license import (
-        LicenseValidationError,
-        LicenseValidationResult,
-        validate_license_from_config,
-    )
-    from bot_core.security.license_service import LicenseService, LicenseServiceError
-    from bot_core.security.tokens import ServiceTokenValidator
 else:  # pragma: no cover - w runtime typy nie są wymagane
     if "DefaultAlertRouter" not in globals():
         DefaultAlertRouter = Any  # type: ignore[misc,assignment]
@@ -176,30 +177,6 @@ else:  # pragma: no cover - w runtime typy nie są wymagane
         LicenseCapabilities = Any  # type: ignore[misc,assignment]
     if "CapabilityGuard" not in globals():
         CapabilityGuard = Any  # type: ignore[misc,assignment]
-    if "LicenseValidationError" not in globals():
-        LicenseValidationError = Any  # type: ignore[misc,assignment]
-    if "LicenseValidationResult" not in globals():
-        LicenseValidationResult = Any  # type: ignore[misc,assignment]
-    if "validate_license_from_config" not in globals():
-        validate_license_from_config = Any  # type: ignore[misc,assignment]
-    if "LicenseService" not in globals():
-        LicenseService = Any  # type: ignore[misc,assignment]
-    if "LicenseServiceError" not in globals():
-        LicenseServiceError = Any  # type: ignore[misc,assignment]
-    if "ServiceTokenValidator" not in globals():
-        ServiceTokenValidator = Any  # type: ignore[misc,assignment]
-    if "RiskRepository" not in globals():
-        RiskRepository = Any  # type: ignore[misc,assignment]
-    if "ThresholdRiskEngine" not in globals():
-        ThresholdRiskEngine = Any  # type: ignore[misc,assignment]
-    if "RiskDecisionLog" not in globals():
-        RiskDecisionLog = Any  # type: ignore[misc,assignment]
-    if "build_risk_profile_from_config" not in globals():
-        build_risk_profile_from_config = Any  # type: ignore[misc,assignment]
-    if "FileRiskRepository" not in globals():
-        FileRiskRepository = Any  # type: ignore[misc,assignment]
-    if "PortfolioDecisionLog" not in globals():
-        PortfolioDecisionLog = Any  # type: ignore[misc,assignment]
 
 from bot_core.runtime.journal import (
     InMemoryTradingDecisionJournal,
@@ -212,17 +189,23 @@ from bot_core.runtime.file_metadata import (
     log_security_warnings,
 )
 from bot_core.runtime.paths import RuntimePaths, resolve_core_config_path
+import bot_core.runtime.observability as _observability
+from bot_core.runtime.observability import (
+    RouterAlertSink,
+    build_alert_channels,
+    build_ui_alert_audit_metadata,
+)
 from bot_core.observability.metrics import get_global_metrics_registry
+from bot_core.portfolio import PortfolioDecisionLog
 
 try:  # pragma: no cover - DecisionOrchestrator może być opcjonalny
-    _decision_module = importlib.import_module("bot_core.decision.orchestrator")
-    DecisionOrchestrator = _decision_module.DecisionOrchestrator  # type: ignore[attr-defined]
-except (ModuleNotFoundError, ImportError):  # pragma: no cover
+    from bot_core.decision import DecisionOrchestrator  # type: ignore
+except Exception:  # pragma: no cover
     DecisionOrchestrator = None  # type: ignore
 
 try:  # pragma: no cover - integracja z AIManagerem jest opcjonalna
     from bot_core.ai.manager import AIManager
-except (ModuleNotFoundError, ImportError):  # pragma: no cover - środowiska bez modułu bot_core.ai.manager
+except Exception:  # pragma: no cover - środowiska bez modułu bot_core.ai.manager
     AIManager = None  # type: ignore[assignment]
 
 # --- Rejestr komponentów alertowych ---------------------------------------------------
@@ -230,13 +213,12 @@ except (ModuleNotFoundError, ImportError):  # pragma: no cover - środowiska bez
 
 def _get_alert_components() -> Mapping[str, Any]:
     """Zwraca komponenty alertowe z modułu observability (proxy z warstwy bootstrap)."""
-    return _require_observability()._get_alert_components()
+    return _observability._get_alert_components()
 
 
 def _clear_alert_component_cache() -> None:
     """Czyści cache komponentów alertów w module observability."""
-    observability = _require_observability()
-    cache_clear = getattr(observability._get_alert_components, "cache_clear", None)
+    cache_clear = getattr(_observability._get_alert_components, "cache_clear", None)
     if callable(cache_clear):  # pragma: no cover - defensywnie
         cache_clear()
 
@@ -289,7 +271,7 @@ try:  # pragma: no cover - środowiska bez grpcio lub wygenerowanych stubów
         MetricsServer,
         build_metrics_server_from_config,
     )
-except (ModuleNotFoundError, ImportError):  # pragma: no cover - brak zależności opcjonalnych
+except Exception:  # pragma: no cover - brak zależności opcjonalnych
     MetricsServer = None  # type: ignore
     build_metrics_server_from_config = None  # type: ignore
 
@@ -300,7 +282,7 @@ try:  # pragma: no cover - risk service jest opcjonalny
         RiskSnapshotPublisher,
         build_risk_server_from_config,
     )
-except (ModuleNotFoundError, ImportError):  # pragma: no cover
+except Exception:  # pragma: no cover
     RiskServer = None  # type: ignore
     RiskSnapshotBuilder = None  # type: ignore
     RiskSnapshotPublisher = None  # type: ignore
@@ -308,7 +290,7 @@ except (ModuleNotFoundError, ImportError):  # pragma: no cover
 
 try:  # pragma: no cover - eksporter metryk może być niedostępny
     from bot_core.runtime.risk_metrics import RiskMetricsExporter  # type: ignore
-except (ModuleNotFoundError, ImportError):  # pragma: no cover
+except Exception:  # pragma: no cover
     RiskMetricsExporter = None  # type: ignore
 
 if TYPE_CHECKING:  # pragma: no cover - tylko do typów
@@ -316,7 +298,7 @@ if TYPE_CHECKING:  # pragma: no cover - tylko do typów
 
 try:  # pragma: no cover - PortfolioGovernor może nie istnieć w tej gałęzi
     from bot_core.portfolio import PortfolioGovernor  # type: ignore
-except (ModuleNotFoundError, ImportError):
+except Exception:
     PortfolioGovernor = None  # type: ignore
 
 try:  # pragma: no cover - sink telemetrii może być pominięty
@@ -324,7 +306,7 @@ try:  # pragma: no cover - sink telemetrii może być pominięty
         DEFAULT_UI_ALERTS_JSONL_PATH,
         UiTelemetryAlertSink,
     )
-except (ModuleNotFoundError, ImportError):  # pragma: no cover - brak telemetrii UI
+except Exception:  # pragma: no cover - brak telemetrii UI
     UiTelemetryAlertSink = None  # type: ignore
     DEFAULT_UI_ALERTS_JSONL_PATH = Path("logs/ui_telemetry_alerts.jsonl")
 
@@ -335,7 +317,7 @@ try:  # pragma: no cover - presety profili ryzyka mogą nie istnieć
         reset_risk_profile_store,
         summarize_risk_profile,
     )
-except (ModuleNotFoundError, ImportError):  # pragma: no cover - brak presetów
+except Exception:  # pragma: no cover - brak presetów
     MetricsRiskProfileResolver = None  # type: ignore
     load_risk_profiles_with_metadata = None  # type: ignore
     reset_risk_profile_store = None  # type: ignore
@@ -703,110 +685,6 @@ def _load_callable_from_path(target: str) -> Callable[..., Any]:
 
 _LOGGER = logging.getLogger(__name__)
 
-
-def _require_yaml():
-    if yaml is None:
-        raise RuntimeError(
-            "PyYAML nie jest zainstalowany. Zainstaluj pakiet 'pyyaml' aby wczytać konfigurację."
-        ) from _YAML_ERROR
-    return yaml
-
-
-def _is_pydantic_error(exc: BaseException) -> bool:
-    name = getattr(exc, "name", None)
-    if name in {"pydantic", "pydantic_core"}:
-        return True
-    text = str(exc)
-    return "pydantic" in text or "pydantic_core" in text
-
-
-def _require_config_loader():
-    try:
-        from bot_core.config.loader import load_core_config
-        from bot_core.config import models as config_models
-        from bot_core.config.validation import assert_core_config_valid
-    except (ModuleNotFoundError, ImportError) as exc:
-        if _is_pydantic_error(exc):
-            raise RuntimeError(
-                "pydantic nie jest zainstalowany. Zainstaluj pakiet 'pydantic' aby użyć konfiguracji runtime."
-            ) from exc
-        raise
-    return load_core_config, config_models, assert_core_config_valid
-
-
-def _require_risk_modules():
-    try:
-        from bot_core.risk.base import RiskRepository
-        from bot_core.risk.engine import ThresholdRiskEngine
-        from bot_core.risk.events import RiskDecisionLog
-        from bot_core.risk.factory import build_risk_profile_from_config
-        from bot_core.risk.repository import FileRiskRepository
-    except (ModuleNotFoundError, ImportError) as exc:
-        if getattr(exc, "name", None) == "pandas":
-            raise RuntimeError(
-                "pandas nie jest zainstalowane. Zainstaluj pakiet 'pandas' aby użyć modułów ryzyka."
-            ) from exc
-        raise
-    return (
-        RiskRepository,
-        ThresholdRiskEngine,
-        RiskDecisionLog,
-        build_risk_profile_from_config,
-        FileRiskRepository,
-    )
-
-
-def _require_license_validation():
-    try:
-        from bot_core.security.license import (
-            LicenseValidationError,
-            LicenseValidationResult,
-            validate_license_from_config,
-        )
-    except (ModuleNotFoundError, ImportError) as exc:
-        if _is_pydantic_error(exc):
-            raise RuntimeError(
-                "pydantic nie jest zainstalowany. Zainstaluj pakiet 'pydantic' aby użyć walidacji licencji."
-            ) from exc
-        raise
-    return LicenseValidationError, LicenseValidationResult, validate_license_from_config
-
-
-def _require_license_service():
-    try:
-        from bot_core.security.license_service import LicenseService, LicenseServiceError
-    except ModuleNotFoundError as exc:
-        if exc.name == "nacl":
-            raise RuntimeError(
-                "PyNaCl nie jest zainstalowany. Zainstaluj pakiet 'pynacl' aby użyć licencji offline."
-            ) from exc
-        raise
-    return LicenseService, LicenseServiceError
-
-
-def _require_observability():
-    try:
-        import bot_core.runtime.observability as _observability
-    except (ModuleNotFoundError, ImportError) as exc:
-        if _is_pydantic_error(exc):
-            raise RuntimeError(
-                "pydantic nie jest zainstalowany. Zainstaluj pakiet 'pydantic' aby użyć obserwowalności runtime."
-            ) from exc
-        raise
-    return _observability
-
-
-def _require_portfolio_decision_log():
-    try:
-        from bot_core.portfolio import PortfolioDecisionLog
-    except (ModuleNotFoundError, ImportError) as exc:
-        if _is_pydantic_error(exc):
-            raise RuntimeError(
-                "pydantic nie jest zainstalowany. Zainstaluj pakiet 'pydantic' aby użyć PortfolioDecisionLog."
-            ) from exc
-        raise
-    return PortfolioDecisionLog
-
 try:  # pragma: no cover - w środowiskach developerskich manifest może nie istnieć
     verify_bundle_integrity()
 except RuntimeIntegrityError:
@@ -929,7 +807,6 @@ def resolve_runtime_entrypoint(
 ) -> tuple[RuntimeEntrypoint, BootstrapContext | None]:
     """Zwraca deklarację punktu wejścia i opcjonalnie inicjalizuje runtime."""
 
-    load_core_config, _, _ = _require_config_loader()
     core_config = load_core_config(config_path)
     entrypoints = catalog_runtime_entrypoints(core_config)
     if entrypoint_name not in entrypoints:
@@ -995,8 +872,9 @@ def _build_ui_alert_audit_metadata(
     *,
     requested_backend: str | None,
 ) -> dict[str, object]:
-    observability = _require_observability()
-    return observability.build_ui_alert_audit_metadata(
+    from bot_core.runtime import observability as _observability
+
+    return _observability.build_ui_alert_audit_metadata(
         router, requested_backend=requested_backend
     )
 
@@ -1439,8 +1317,7 @@ def _load_raw_runtime_entrypoints(core_config: CoreConfig) -> Mapping[str, Any]:
         )
         return {}
     try:
-        yaml_module = _require_yaml()
-        parsed = yaml_module.safe_load(raw_text)
+        parsed = yaml.safe_load(raw_text)
     except Exception:  # pragma: no cover - diagnostyka formatu YAML
         _LOGGER.debug(
             "Nie udało się sparsować YAML konfiguracji core (path=%s)",
@@ -2228,7 +2105,7 @@ def bootstrap_environment(
     runtime_paths: RuntimePaths | None = None,
 ) -> BootstrapContext:
     """Tworzy kompletny kontekst uruchomieniowy dla wskazanego środowiska."""
-    load_core_config, config_models, assert_core_config_valid = _require_config_loader()
+    from bot_core.config.validation import assert_core_config_valid
 
     bootstrap_config = prepare_runtime_bootstrap_config(
         config_path=config_path,
@@ -2248,8 +2125,8 @@ def bootstrap_environment(
         _LOGGER.warning("Walidacja konfiguracji: %s", warning)
 
     license_config = getattr(core_config, "license", None)
-    if not isinstance(license_config, config_models.LicenseValidationConfig):
-        license_config = config_models.LicenseValidationConfig()
+    if not isinstance(license_config, LicenseValidationConfig):
+        license_config = LicenseValidationConfig()
     reset_capability_guard()
 
     if environment_name not in core_config.environments:
@@ -2274,11 +2151,6 @@ def bootstrap_environment(
         getattr(license_config, "license_keys_path", None)
         and getattr(license_config, "fingerprint_keys_path", None)
     )
-    (
-        LicenseValidationError,
-        LicenseValidationResult,
-        validate_license_from_config,
-    ) = _require_license_validation()
     license_result: LicenseValidationResult | None = None
 
     if skip_license_validation:
@@ -2357,7 +2229,6 @@ def bootstrap_environment(
         offline_license_path = os.environ.get("BOT_CORE_LICENSE_PATH")
         offline_public_key = os.environ.get("BOT_CORE_LICENSE_PUBLIC_KEY")
         if offline_license_path and offline_public_key:
-            LicenseService, LicenseServiceError = _require_license_service()
             try:
                 offline_service = LicenseService(
                     verify_key_hex=offline_public_key,
@@ -2404,7 +2275,6 @@ def bootstrap_environment(
         )
 
     risk_repository_path = runtime_paths.data_cache_root / "risk_state"
-    _, ThresholdRiskEngine, _, build_risk_profile_from_config, FileRiskRepository = _require_risk_modules()
     risk_repository = FileRiskRepository(risk_repository_path)
     risk_decision_log = _build_risk_decision_log(core_config, environment, runtime_paths)
     risk_engine = ThresholdRiskEngine(
@@ -2426,9 +2296,6 @@ def bootstrap_environment(
     ai_ensembles_registered: list[str] = []
     ai_pipeline_schedules: list[str] = []
     ai_pipeline_pending: list[str] = []
-    # Profil ryzyka musi być zawsze dostępny (niezależnie od AI)
-    profile = build_risk_profile_from_config(risk_profile_config)
-    risk_engine.register_profile(profile)
     if portfolio_governor_config and PortfolioGovernor is not None:
         try:
             portfolio_governor = PortfolioGovernor(portfolio_governor_config)
@@ -2515,7 +2382,7 @@ def bootstrap_environment(
                 if reporter_candidate is not None:
                     tco_reporter = reporter_candidate
 
-    if isinstance(environment_ai, config_models.EnvironmentAIConfig) and environment_ai.enabled:
+    if isinstance(environment_ai, EnvironmentAIConfig) and environment_ai.enabled:
         ai_model_bindings = environment_ai.models
         ai_threshold_bps = float(environment_ai.threshold_bps)
         manager_cls = _resolve_ai_manager_class()
@@ -2665,6 +2532,8 @@ def bootstrap_environment(
                         registered_symbol = getattr(schedule_obj, "symbol", schedule.symbol)
                         ai_pipeline_schedules.append(str(registered_symbol))
 
+    profile = build_risk_profile_from_config(risk_profile_config)
+    risk_engine.register_profile(profile)
     # Aktualizujemy konfigurację środowiska, aby dalsze komponenty znały aktywny profil.
     try:
         environment.risk_profile = selected_profile
@@ -3928,7 +3797,6 @@ def _build_risk_decision_log(
     environment: EnvironmentConfig,
     runtime_paths: RuntimePaths,
 ) -> RiskDecisionLog | None:
-    _, _, RiskDecisionLog, _, _ = _require_risk_modules()
     config = getattr(core_config, "risk_decision_log", None)
     if config is None or not getattr(config, "enabled", True):
         return None
@@ -3999,8 +3867,9 @@ def build_alert_channels(
     secret_manager: SecretManager,
     runtime_paths: RuntimePaths | None = None,
 ) -> tuple[Mapping[str, AlertChannel], DefaultAlertRouter, AlertAuditLog]:
-    observability = _require_observability()
-    return observability.build_alert_channels(
+    from bot_core.runtime import observability as _observability
+
+    return _observability.build_alert_channels(
         core_config=core_config,
         environment=environment,
         secret_manager=secret_manager,
@@ -4032,7 +3901,6 @@ def _build_decision_journal(
 def _build_portfolio_decision_log(
     core_config: CoreConfig, environment: EnvironmentConfig, runtime_paths: RuntimePaths
 ) -> PortfolioDecisionLog | None:
-    PortfolioDecisionLog = _require_portfolio_decision_log()
     config = getattr(core_config, "portfolio_decision_log", None)
     if config is None or not getattr(config, "enabled", True):
         return None
@@ -4090,44 +3958,19 @@ def _load_portfolio_decision_log_key(config: object) -> bytes | None:
     return None
 
 
-def _build_telegram_channel(*args, **kwargs):
-    return _require_observability()._build_telegram_channel(*args, **kwargs)
-
-
-def _build_email_channel(*args, **kwargs):
-    return _require_observability()._build_email_channel(*args, **kwargs)
-
-
-def _build_sms_channel(*args, **kwargs):
-    return _require_observability()._build_sms_channel(*args, **kwargs)
-
-
-def _build_signal_channel(*args, **kwargs):
-    return _require_observability()._build_signal_channel(*args, **kwargs)
-
-
-def _build_whatsapp_channel(*args, **kwargs):
-    return _require_observability()._build_whatsapp_channel(*args, **kwargs)
-
-
-def _build_messenger_channel(*args, **kwargs):
-    return _require_observability()._build_messenger_channel(*args, **kwargs)
-
-
-def _resolve_sms_provider(*args, **kwargs):
-    return _require_observability()._resolve_sms_provider(*args, **kwargs)
-
-
-def _normalize_iso_country_code(*args, **kwargs):
-    return _require_observability()._normalize_iso_country_code(*args, **kwargs)
-
-
-def _validate_e164_number(*args, **kwargs):
-    return _require_observability()._validate_e164_number(*args, **kwargs)
+_build_telegram_channel = _observability._build_telegram_channel
+_build_email_channel = _observability._build_email_channel
+_build_sms_channel = _observability._build_sms_channel
+_build_signal_channel = _observability._build_signal_channel
+_build_whatsapp_channel = _observability._build_whatsapp_channel
+_build_messenger_channel = _observability._build_messenger_channel
+_resolve_sms_provider = _observability._resolve_sms_provider
+_normalize_iso_country_code = _observability._normalize_iso_country_code
+_validate_e164_number = _observability._validate_e164_number
 
 
 def _install_sms_provider_stub() -> None:
-    _require_observability()._install_sms_provider_stub()
+    _observability._install_sms_provider_stub()
 
 __all__ = [
     "BootstrapContext",

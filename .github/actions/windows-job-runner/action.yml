@@ -117,48 +117,6 @@ runs:
         if ($env:WHEELHOUSE_DIR) { $wheelArg = "-Wheelhouse `"$env:WHEELHOUSE_DIR`"" }
         pwsh -File scripts/ci/run_windows.ps1 -Job "${{ inputs.selected_job }}" $wheelArg
 
-    - name: Dump triage
-      if: ${{ always() && inputs.enabled == 'true' }}
-      shell: pwsh
-      run: |
-        $dumpDir = "var/crashdumps"
-        $resultsDirs = @("test-results/qml", "var/ci")
-        foreach ($resultsDir in $resultsDirs) {
-          if (Test-Path $resultsDir) {
-            $consoleLog = Get-ChildItem -Path $resultsDir -Filter "pytest-console*.log" -ErrorAction SilentlyContinue |
-              Sort-Object LastWriteTime -Descending | Select-Object -First 1
-            if ($consoleLog) {
-              Write-Host "Latest pytest console log: $($consoleLog.FullName) ($($consoleLog.LastWriteTime))"
-            } else {
-              Write-Host "No pytest console logs found in $resultsDir."
-            }
-            $pytestLog = Get-ChildItem -Path $resultsDir -Filter "pytest*.log" -ErrorAction SilentlyContinue |
-              Where-Object { $_.Name -notlike "pytest-console*" } |
-              Sort-Object LastWriteTime -Descending | Select-Object -First 1
-            if ($pytestLog) {
-              Write-Host "Latest pytest log: $($pytestLog.FullName) ($($pytestLog.LastWriteTime))"
-            } else {
-              Write-Host "No pytest logs found in $resultsDir."
-            }
-          } else {
-            Write-Host "Results directory not found: $resultsDir"
-          }
-        }
-        if (Test-Path $dumpDir) {
-          $dumps = Get-ChildItem -Path $dumpDir -Filter "*.dmp" -ErrorAction SilentlyContinue
-          if ($dumps) {
-            $latest = $dumps | Sort-Object LastWriteTime -Descending | Select-Object -First 1
-            Write-Host "Latest crash dump: $($latest.FullName) ($([Math]::Round($latest.Length/1MB, 2)) MB) $($latest.LastWriteTime)"
-            $dumps | Sort-Object LastWriteTime -Descending |
-              Select-Object -First 5 Name, Length, LastWriteTime |
-              Format-Table -AutoSize
-          } else {
-            Write-Host "No crash dumps found in $dumpDir."
-          }
-        } else {
-          Write-Host "Crash dump directory not found: $dumpDir"
-        }
-
     - name: Upload artifacts (logs/results)
       if: ${{ always() && inputs.enabled == 'true' && inputs.upload_artifacts == 'true' }}
       uses: actions/upload-artifact@v4
@@ -167,8 +125,6 @@ runs:
         path: |
           artifacts/local-ci/**
           test-results/**
-          var/crashdumps/**
-          var/ci/**
         if-no-files-found: warn
 
     - name: Upload wheelhouse artifact

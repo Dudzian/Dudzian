@@ -13,7 +13,7 @@ from pathlib import Path
 import pytest
 
 from bot_core.database.manager import DatabaseManager
-from tests.ui._qt import require_pyside6
+from tests.ui._qt import apply_qtcharts_context, require_pyside6
 
 logger = logging.getLogger(__name__)
 
@@ -26,21 +26,12 @@ require_pyside6()
 import PySide6
 from PySide6.QtCore import (QAbstractListModel, QModelIndex, QObject, Property,
                             Qt, QUrl, Slot, QMetaObject)
-from PySide6.QtQml import QQmlApplicationEngine, QQmlComponent, QJSValue
+from PySide6.QtQml import QQmlApplicationEngine, QQmlComponent
 
 try:  # pragma: no cover - zależy od środowiska CI
     from PySide6.QtWidgets import QApplication
 except ImportError as exc:  # brak bibliotek systemowych (np. libGL)
     pytest.skip(f"Brak zależności QtWidgets: {exc}", allow_module_level=True)
-
-def _as_py(value: object) -> object:
-    # Na części platform/buildów Qt właściwości QML (JS Array/Object) wracają jako QJSValue.
-    if isinstance(value, QJSValue):
-        try:
-            return value.toVariant()
-        except Exception:
-            return value
-    return value
 
 
 class StubRiskHistoryModel(QObject):
@@ -151,6 +142,7 @@ def test_portfolio_dashboard_builds_exposures_and_history(tmp_path: Path) -> Non
     )
 
     engine = QQmlApplicationEngine()
+    apply_qtcharts_context(engine)
     context = engine.rootContext()
     context.setContextProperty("riskHistoryModel", risk_history)
     context.setContextProperty("riskModel", risk_model)
@@ -298,13 +290,29 @@ def test_portfolio_dashboard_builds_exposures_and_history(tmp_path: Path) -> Non
             QMetaObject.invokeMethod(root, method, Qt.DirectConnection)
         app.processEvents()
 
-        history_points = _as_py(root.property("historyPoints"))
+        history_points = root.property("historyPoints")
         assert isinstance(history_points, list)
         assert len(history_points) == 2
         assert history_points[0]["value"] == 100000.0
 
-        exchange_items = _as_py(root.property("exchangeExposureItems"))
-        strategy_items = _as_py(root.property("strategyExposureItems"))
+        if os.getenv("DUDZIAN_DISABLE_QTCHARTS", "").lower() not in {"1", "true", "yes", "on"}:
+            equity_view = root.findChild(QObject, "equityCurveDashboard")
+            assert equity_view is not None
+            assert equity_view.property("chartsDisabled") is False
+            for _ in range(20):
+                if equity_view.property("chartReady"):
+                    break
+                app.processEvents()
+            assert equity_view.property("chartReady") is True
+            assert equity_view.property("chartSeriesCount") > 0
+        else:
+            equity_view = root.findChild(QObject, "equityCurveDashboard")
+            assert equity_view is not None
+            assert equity_view.property("chartsDisabled") is True
+            assert equity_view.property("latestValueText") != "—"
+
+        exchange_items = root.property("exchangeExposureItems")
+        strategy_items = root.property("strategyExposureItems")
         assert isinstance(exchange_items, list) and isinstance(strategy_items, list)
         assert exchange_items[0]["name"].upper() == "BINANCE"
         assert strategy_items[0]["name"].startswith("theta_income")

@@ -108,39 +108,6 @@ def _write_reports(summary: SmokeSummary, output_dir: Path) -> tuple[Path, Path]
     return json_path, md_path
 
 
-def _ensure_isolation_plugins(pytest_args: list[str]) -> None:
-    import importlib.util
-
-    def _has_plugin(name: str) -> bool:
-        for idx, arg in enumerate(pytest_args):
-            if arg == "-p" and idx + 1 < len(pytest_args) and pytest_args[idx + 1] == name:
-                return True
-            if arg.startswith("-p") and arg[2:] == name:
-                return True
-            if arg.startswith("-p=") and arg[3:] == name:
-                return True
-        return False
-
-    uses_boxed = "--boxed" in pytest_args
-    uses_forked = "--forked" in pytest_args
-    if uses_boxed and uses_forked:
-        raise RuntimeError("Pytest isolation flags conflict: choose --boxed or --forked, not both.")
-
-    required_plugins: list[str] = []
-    if uses_boxed:
-        raise RuntimeError(
-            "Pytest isolation with `--boxed` is no longer supported. Install pytest-forked and use `--forked`"
-            " (ensure `-p pytest_forked` if plugin autoload is disabled)."
-        )
-    if uses_forked:
-        if importlib.util.find_spec("pytest_forked") is None:
-            raise RuntimeError("Pytest isolation requires pytest-forked for --forked.")
-        if not _has_plugin("pytest_forked"):
-            required_plugins.append("pytest_forked")
-    if required_plugins:
-        pytest_args[:0] = [item for name in required_plugins for item in ("-p", name)]
-
-
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Uruchom smoke testy i zapisz raporty")
     parser.add_argument(
@@ -163,17 +130,8 @@ def main(argv: list[str] | None = None) -> int:
     pytest_args = ["-m", "smoke", "--maxfail=1", "--disable-warnings", "tests/smoke"]
     if args.pytest_args:
         pytest_args.extend(args.pytest_args)
-    _ensure_isolation_plugins(pytest_args)
 
-    prev_plugin_autoload = os.environ.get("PYTEST_DISABLE_PLUGIN_AUTOLOAD")
-    try:
-        os.environ.pop("PYTEST_DISABLE_PLUGIN_AUTOLOAD", None)
-        exit_code = pytest.main(pytest_args, plugins=[plugin])
-    finally:
-        if prev_plugin_autoload is not None:
-            os.environ["PYTEST_DISABLE_PLUGIN_AUTOLOAD"] = prev_plugin_autoload
-        else:
-            os.environ.pop("PYTEST_DISABLE_PLUGIN_AUTOLOAD", None)
+    exit_code = pytest.main(pytest_args, plugins=[plugin])
     summary = plugin.summary or SmokeSummary(
         exit_status=exit_code,
         tests_collected=0,

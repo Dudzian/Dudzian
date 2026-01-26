@@ -7,17 +7,14 @@ import logging
 import threading
 import time
 from dataclasses import dataclass
-from functools import lru_cache
-from typing import TYPE_CHECKING, Any, Iterable, Mapping, MutableMapping, Sequence
+from typing import Iterable, Mapping, MutableMapping, Sequence
 from urllib.error import HTTPError, URLError
 from urllib.parse import parse_qsl, urlsplit
 from urllib.request import Request
 
+import httpx
 
-if TYPE_CHECKING:
-    import httpx
-
-    from core.network import RateLimitedAsyncClient
+from core.network import RateLimitedAsyncClient, get_rate_limited_client, run_sync
 
 
 __all__ = ["urlopen", "AsyncHTTPResponse", "configure_client_cache_ttl"]
@@ -29,36 +26,6 @@ _DEFAULT_CLIENT_TTL = 300.0
 
 
 _LOGGER = logging.getLogger(__name__)
-
-
-@lru_cache(maxsize=1)
-def _require_httpx() -> Any:
-    try:
-        import httpx  # type: ignore[import]
-    except (ModuleNotFoundError, ImportError) as exc:
-        raise RuntimeError(
-            "Brak opcjonalnej zależności 'httpx' wymaganej przez bot_core.exchanges.http_client"
-        ) from exc
-    return httpx
-
-
-@lru_cache(maxsize=1)
-def _require_network() -> tuple[Any, Any, Any]:
-    from core.network import get_rate_limited_client, run_sync, RateLimitedAsyncClient  # type: ignore[import]
-
-    return get_rate_limited_client, run_sync, RateLimitedAsyncClient
-
-
-# --- Back-compat / test hooks ---
-# Testy monkeypatchują http_client.get_rate_limited_client, więc ten symbol musi istnieć.
-def get_rate_limited_client(**kwargs: Any) -> Any:
-    factory, _, _ = _require_network()
-    return factory(**kwargs)
-
-
-def run_sync(func: Any, *args: Any, **kwargs: Any) -> Any:
-    _, runner, _ = _require_network()
-    return runner(func, *args, **kwargs)
 
 
 def _now() -> float:
@@ -123,7 +90,7 @@ class AsyncHTTPResponse:
 
 @dataclass(slots=True)
 class _ClientCacheEntry:
-    client: "RateLimitedAsyncClient"
+    client: RateLimitedAsyncClient
     timeout: float
     last_access: float
     expires_at: float
@@ -166,8 +133,8 @@ def _resolve_ttl(base_url: str) -> float:
     return float(ttl)
 
 
-def _purge_expired_clients(now: float) -> list["RateLimitedAsyncClient"]:
-    expired: list["RateLimitedAsyncClient"] = []
+def _purge_expired_clients(now: float) -> list[RateLimitedAsyncClient]:
+    expired: list[RateLimitedAsyncClient] = []
     stale_keys: list[tuple[str, float]] = []
     for key, entry in list(_CLIENT_CACHE.items()):
         base_url = key[0]
@@ -186,7 +153,7 @@ def _purge_expired_clients(now: float) -> list["RateLimitedAsyncClient"]:
     return expired
 
 
-def _close_client(client: "RateLimitedAsyncClient") -> None:
+def _close_client(client: RateLimitedAsyncClient) -> None:
     try:
         run_sync(client.aclose)
     except Exception:  # pragma: no cover - logowanie diagnostyczne przy wychodzeniu
@@ -204,11 +171,11 @@ def _shutdown_client_cache() -> None:
 atexit.register(_shutdown_client_cache)
 
 
-def _resolve_client(base_url: str, timeout: float) -> "RateLimitedAsyncClient":
+def _resolve_client(base_url: str, timeout: float) -> RateLimitedAsyncClient:
     normalized_base = _normalize_base_url(base_url)
     key = (normalized_base, timeout)
     now = _now()
-    to_close: list["RateLimitedAsyncClient"] = []
+    to_close: list[RateLimitedAsyncClient] = []
     with _CLIENT_LOCK:
         to_close = _purge_expired_clients(now)
         entry = _CLIENT_CACHE.get(key)
@@ -252,7 +219,6 @@ def _extract_request_components(request: Request | str) -> tuple[str, str, Mappi
 
 
 async def _async_open(request: Request | str, timeout: float | None = None) -> AsyncHTTPResponse:
-    httpx = _require_httpx()
     method, url, headers, data = _extract_request_components(request)
     parts = urlsplit(url)
     if not parts.scheme or not parts.netloc:

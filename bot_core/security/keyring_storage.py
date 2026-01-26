@@ -11,25 +11,10 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Mapping, MutableMapping, Optional
 
-_CRYPTO_ERROR: Exception | None = None
-try:  # pragma: no cover - cryptography może być opcjonalne
-    AESGCM = importlib.import_module(
-        "cryptography.hazmat.primitives.ciphers.aead"
-    ).AESGCM
-except (ModuleNotFoundError, ImportError) as exc:  # pragma: no cover - brak cryptography w light env
-    AESGCM = None  # type: ignore[assignment]
-    _CRYPTO_ERROR = exc
+from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 
 from bot_core.security.base import SecretStorage, SecretStorageError
 from bot_core.security.hwid import HwIdProvider, HwIdProviderError
-
-
-def _require_cryptography():
-    if AESGCM is None:
-        raise SecretStorageError(
-            "cryptography nie jest zainstalowane. Zainstaluj pakiet 'cryptography' aby użyć keyring."
-        ) from _CRYPTO_ERROR
-    return AESGCM
 
 
 class KeyringSecretStorage(SecretStorage):
@@ -293,7 +278,7 @@ class KeyringSecretStorage(SecretStorage):
     def _encrypt_value(self, value: str, *, storage_key: str, master: bytes, hwid_digest: str) -> str:
         aes_key = self._derive_data_key(master, hwid_digest)
         nonce = os.urandom(12)
-        cipher = _require_cryptography()(aes_key)
+        cipher = AESGCM(aes_key)
         ciphertext = cipher.encrypt(nonce, value.encode("utf-8"), storage_key.encode("utf-8"))
         payload = {
             "version": self.SECRET_VERSION,
@@ -327,7 +312,7 @@ class KeyringSecretStorage(SecretStorage):
             raise SecretStorageError(f"Sekret '{storage_key}' ma uszkodzone dane szyfru.") from exc
 
         aes_key = self._derive_data_key(master, hwid_digest)
-        cipher = _require_cryptography()(aes_key)
+        cipher = AESGCM(aes_key)
         try:
             plaintext = cipher.decrypt(nonce, ciphertext, storage_key.encode("utf-8"))
         except Exception as exc:

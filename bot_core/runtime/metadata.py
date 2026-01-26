@@ -3,41 +3,27 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-import importlib
 from pathlib import Path
 from typing import Iterable, Mapping, Sequence, Tuple, Any
 import logging
 
-_YAML_ERROR: Exception | None = None
-try:  # pragma: no cover - PyYAML może być opcjonalny
-    yaml = importlib.import_module("yaml")
-except (ModuleNotFoundError, ImportError) as exc:  # pragma: no cover - brak PyYAML w light env
-    yaml = None  # type: ignore[assignment]
-    _YAML_ERROR = exc
+import yaml
 
 from bot_core.runtime.paths import resolve_core_config_path
 
 try:  # pragma: no cover - opcjonalny import w środowiskach bez pełnego runtime
     from bot_core.runtime.bootstrap import resolve_runtime_entrypoint as _resolve_runtime_entrypoint
-except (ModuleNotFoundError, ImportError):  # pragma: no cover - brak modułów bootstrapu w środowisku
+except Exception:  # pragma: no cover - brak modułów bootstrapu w środowisku
     _resolve_runtime_entrypoint = None  # type: ignore
 
 try:  # pragma: no cover - środowiska bez pełnego loadera configu
     from bot_core.config.loader import load_core_config as _load_core_config
-except (ModuleNotFoundError, ImportError):  # pragma: no cover - brak modułu loadera
+except Exception:  # pragma: no cover - brak modułu loadera
     _load_core_config = None  # type: ignore
 
 
 _RUNTIME_RESOLVER_ATTEMPTED = _resolve_runtime_entrypoint is not None
 _TYPED_LOADER_ATTEMPTED = _load_core_config is not None
-
-
-def _require_yaml() -> Any:
-    if yaml is None:
-        raise RuntimeError(
-            "PyYAML nie jest zainstalowany. Zainstaluj pakiet 'pyyaml' aby wczytać konfigurację."
-        ) from _YAML_ERROR
-    return yaml
 
 
 @dataclass(frozen=True, slots=True)
@@ -332,9 +318,8 @@ def _read_raw_core_config(
     logger: logging.Logger | None = None,
 ) -> Mapping[str, object] | None:
     try:
-        yaml_module = _require_yaml()
         with Path(path).open("r", encoding="utf-8") as handle:
-            payload = yaml_module.safe_load(handle) or {}
+            payload = yaml.safe_load(handle) or {}
     except Exception as exc:  # pragma: no cover - fallback diagnostyczny
         if logger is not None:
             logger.debug("Nie udało się wczytać surowego YAML %s: %r", path, exc)
