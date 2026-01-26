@@ -324,6 +324,9 @@ _LAZY_EXCHANGE_PACKAGES = {
     "okx",
     "testing",
     "zonda",
+    # moduły pomocnicze, do których odwołują się testy/monkeypatch przez bot_core.exchanges.*
+    "network_guard",
+    "http_client",
 }
 
 
