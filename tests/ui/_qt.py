@@ -7,11 +7,8 @@ import os
 import sys
 from importlib import import_module
 from types import ModuleType
-import weakref
 
 _REQUIRE_ENV = {"1", "true", "yes", "on"}
-_DISABLE_QTCHARTS_VALUES = {"1", "true", "yes", "on"}
-_QML_ENGINES: "weakref.WeakSet[object]" = weakref.WeakSet()
 
 
 def _qml_required() -> bool:
@@ -77,26 +74,3 @@ def require_libgl() -> None:
         + (f" ({failure_reason})" if failure_reason else ""),
         allow_module_level=True,
     )
-
-
-def qtcharts_disabled() -> bool:
-    return os.getenv("DUDZIAN_DISABLE_QTCHARTS", "").lower() in _DISABLE_QTCHARTS_VALUES
-
-
-def apply_qtcharts_context(engine: object) -> None:
-    try:
-        context = engine.rootContext()
-    except Exception:
-        return
-    try:
-        context.setContextProperty("disableQtCharts", qtcharts_disabled())
-    except Exception:
-        return
-    try:
-        _QML_ENGINES.add(engine)
-    except TypeError:
-        return
-
-
-def tracked_qml_engines() -> list[object]:
-    return [engine for engine in _QML_ENGINES]

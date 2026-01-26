@@ -3,7 +3,7 @@ from pathlib import Path
 
 import pytest
 
-from tests.ui._qt import apply_qtcharts_context, require_libgl, require_pyside6
+from tests.ui._qt import require_libgl, require_pyside6
 
 pytestmark = pytest.mark.qml
 
@@ -60,7 +60,6 @@ def test_ticket_dialog_generates_package(tmp_path: Path, project_with_data: Path
 
     app = QApplication.instance() or QApplication([])
     engine = QQmlApplicationEngine()
-    apply_qtcharts_context(engine)
     engine.rootContext().setContextProperty("diagnosticsController", controller)
 
     qml_path = Path(__file__).resolve().parents[2] / "ui" / "qml" / "support" / "TicketDialog.qml"
@@ -87,4 +86,4 @@ def test_ticket_dialog_generates_package(tmp_path: Path, project_with_data: Path
     assert Path(controller.lastArchivePath).exists()
 
     engine.deleteLater()
-    app.processEvents()
+    app.quit()

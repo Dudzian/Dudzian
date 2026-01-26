@@ -20,7 +20,6 @@
         <file>components/FirstRunWizard.qml</file>
         <file>components/RiskMonitorPanel.qml</file>
         <file>components/EquityCurveDashboard.qml</file>
-        <file>components/EquityCurveDashboardChart.qml</file>
         <file>components/AssetHeatmapDashboard.qml</file>
         <file>components/ModuleBrowser.qml</file>
         <file>components/PortfolioManagerView.qml</file>

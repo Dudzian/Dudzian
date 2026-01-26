@@ -6,7 +6,7 @@ from typing import Callable, Iterator, Tuple
 
 import pytest
 
-from tests.ui._qt import apply_qtcharts_context, require_pyside6
+from tests.ui._qt import require_pyside6
 
 pytestmark = pytest.mark.qml
 
@@ -40,10 +40,9 @@ try:
         Signal,
         Slot,
     )
-    from PySide6.QtGui import QSGRendererInterface
+    from PySide6.QtGui import QGuiApplication, QSGRendererInterface
     from PySide6.QtQml import QQmlApplicationEngine
     from PySide6.QtQuick import QQuickWindow
-    from PySide6.QtWidgets import QApplication
 except ImportError as exc:  # pragma: no cover - środowisko bez bibliotek systemowych Qt
     pytest.skip(
         f"Pomijam testy UI: środowisko nie udostępnia bibliotek Qt ({exc}).",
@@ -234,24 +233,19 @@ class _AppControllerStub(QObject):
 
 
 @pytest.fixture()
-def qt_app(qt_app_session: object | None) -> Iterator[QApplication]:
-    if qt_app_session is None:
-        pytest.skip("Brak QApplication; uruchom test QML w izolowanym procesie.")
-    app = QApplication.instance()
-    if app is None:
-        pytest.skip("Brak QApplication; uruchom test QML w izolowanym procesie.")
+def qt_app() -> Iterator[QGuiApplication]:
+    app = QGuiApplication.instance() or QGuiApplication([])
     yield app
     app.processEvents()
 
 
 @pytest.fixture()
-def load_security_view(qt_app: QApplication, tmp_path: Path) -> Iterator[RootLoader]:
+def load_security_view(qt_app: QGuiApplication, tmp_path: Path) -> Iterator[RootLoader]:
     os.environ["QT_QUICK_LOCAL_STORAGE_PATH"] = str(tmp_path)
     base_dir = Path(__file__).resolve().parents[2] / "ui" / "qml" / "components" / "security"
 
     def _loader(relative_name: str) -> Tuple[QQmlApplicationEngine, QObject]:
         engine = QQmlApplicationEngine()
-        apply_qtcharts_context(engine)
         engine.setOfflineStoragePath(str(tmp_path))
         qml_path = base_dir / relative_name
 
@@ -305,7 +299,7 @@ def _cleanup_engine(engine: QQmlApplicationEngine) -> None:
 
 
 def test_license_activation_view_exposes_audit_controls(
-    load_security_view: RootLoader, qt_app: QApplication
+    load_security_view: RootLoader, qt_app: QGuiApplication
 ) -> None:
     engine, root = load_security_view("LicenseActivationView.qml")
     try:
@@ -319,7 +313,7 @@ def test_license_activation_view_exposes_audit_controls(
 
 
 def test_hwid_management_view_exposes_schedule_api(
-    load_security_view: RootLoader, qt_app: QApplication
+    load_security_view: RootLoader, qt_app: QGuiApplication
 ) -> None:
     engine, root = load_security_view("HwidManagementView.qml")
     try:
@@ -332,7 +326,7 @@ def test_hwid_management_view_exposes_schedule_api(
 
 
 def test_license_history_view_initializes_model(
-    load_security_view: RootLoader, qt_app: QApplication
+    load_security_view: RootLoader, qt_app: QGuiApplication
 ) -> None:
     engine, root = load_security_view("LicenseHistoryView.qml")
     try:
