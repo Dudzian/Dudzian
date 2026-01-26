@@ -56,6 +56,7 @@ if ($procdump) {
     "-accepteula",
     "-ma",
     "-e",
+    "-t",
     "-n", "1",
     "-x", $CrashDumpDir,
     "--",
