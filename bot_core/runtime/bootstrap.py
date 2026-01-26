@@ -2404,7 +2404,7 @@ def bootstrap_environment(
         )
 
     risk_repository_path = runtime_paths.data_cache_root / "risk_state"
-    _, ThresholdRiskEngine, _, _, FileRiskRepository = _require_risk_modules()
+    _, ThresholdRiskEngine, _, build_risk_profile_from_config, FileRiskRepository = _require_risk_modules()
     risk_repository = FileRiskRepository(risk_repository_path)
     risk_decision_log = _build_risk_decision_log(core_config, environment, runtime_paths)
     risk_engine = ThresholdRiskEngine(
@@ -2426,6 +2426,9 @@ def bootstrap_environment(
     ai_ensembles_registered: list[str] = []
     ai_pipeline_schedules: list[str] = []
     ai_pipeline_pending: list[str] = []
+    # Profil ryzyka musi być zawsze dostępny (niezależnie od AI)
+    profile = build_risk_profile_from_config(risk_profile_config)
+    risk_engine.register_profile(profile)
     if portfolio_governor_config and PortfolioGovernor is not None:
         try:
             portfolio_governor = PortfolioGovernor(portfolio_governor_config)
@@ -2662,9 +2665,6 @@ def bootstrap_environment(
                         registered_symbol = getattr(schedule_obj, "symbol", schedule.symbol)
                         ai_pipeline_schedules.append(str(registered_symbol))
 
-        _, _, _, build_risk_profile_from_config, _ = _require_risk_modules()
-        profile = build_risk_profile_from_config(risk_profile_config)
-    risk_engine.register_profile(profile)
     # Aktualizujemy konfigurację środowiska, aby dalsze komponenty znały aktywny profil.
     try:
         environment.risk_profile = selected_profile
