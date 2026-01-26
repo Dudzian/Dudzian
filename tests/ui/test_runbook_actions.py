@@ -1,5 +1,6 @@
 import os
 import time
+from datetime import datetime, timezone
 from pathlib import Path
 
 import pytest
@@ -15,16 +16,17 @@ try:  # pragma: no cover - zależne od środowiska CI
 except Exception:  # pragma: no cover - brak Qt
     QObject = QMetaObject = QUrl = QQmlApplicationEngine = QApplication = None  # type: ignore[assignment]
 
-from bot_core.observability.guardrail_models import GuardrailLogRecord, GuardrailReport, GuardrailSummary
+from core.reporting.guardrails_reporter import (
+    GuardrailLogRecord,
+    GuardrailReport,
+    GuardrailReportEndpoint,
+)
 from ui.backend.runbook_controller import RunbookController
 
 
-class _StaticEndpoint:
+class _StaticEndpoint(GuardrailReportEndpoint):
     def __init__(self, report: GuardrailReport) -> None:
-        self._report = report
-
-    def build_report(self) -> GuardrailReport:
-        return self._report
+        super().__init__(report_factory=lambda: report)
 
 
 @pytest.mark.skipif(QObject is None, reason="Wymagany PySide6 do testów UI")
@@ -62,25 +64,25 @@ from pathlib import Path
     )
 
     # Deterministyczny raport: ma wskazać runbook "strategy_incident_playbook"
+    generated_at = datetime(2025, 1, 1, 12, 0, tzinfo=timezone.utc)
     report = GuardrailReport(
-        summaries=[
-            GuardrailSummary(
-                severity="error",
-                title="Strategy incident",
-                description="Synthetic incident for UI test",
-                affected_components=["strategy"],
-            )
-        ],
-        log_records=[
+        generated_at=generated_at,
+        summaries=(),
+        logs=(
             GuardrailLogRecord(
-                severity="error",
+                timestamp=generated_at,
+                level="ERROR",
                 message="Synthetic error",
-                timestamp="2024-03-01T10:00:00Z",
-            )
-        ],
+                event="TIMEOUT",
+                metadata={"queue": "binance_spot", "environment": "paper"},
+            ),
+        ),
+        recommendations=(),
     )
     controller = RunbookController(
-        runbook_directory=runbook_dir, actions_directory=actions_dir, endpoint=_StaticEndpoint(report)
+        report_endpoint=_StaticEndpoint(report),
+        runbook_directory=runbook_dir,
+        actions_directory=actions_dir,
     )
     assert controller.refreshAlerts()
 
