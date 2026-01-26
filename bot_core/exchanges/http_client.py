@@ -49,6 +49,18 @@ def _require_network() -> tuple[Any, Any, Any]:
     return get_rate_limited_client, run_sync, RateLimitedAsyncClient
 
 
+# --- Back-compat / test hooks ---
+# Testy monkeypatchują http_client.get_rate_limited_client, więc ten symbol musi istnieć.
+def get_rate_limited_client(**kwargs: Any) -> Any:
+    factory, _, _ = _require_network()
+    return factory(**kwargs)
+
+
+def run_sync(func: Any, *args: Any, **kwargs: Any) -> Any:
+    _, runner, _ = _require_network()
+    return runner(func, *args, **kwargs)
+
+
 def _now() -> float:
     return time.monotonic()
 
@@ -175,7 +187,6 @@ def _purge_expired_clients(now: float) -> list["RateLimitedAsyncClient"]:
 
 
 def _close_client(client: "RateLimitedAsyncClient") -> None:
-    _, run_sync, _ = _require_network()
     try:
         run_sync(client.aclose)
     except Exception:  # pragma: no cover - logowanie diagnostyczne przy wychodzeniu
@@ -194,7 +205,6 @@ atexit.register(_shutdown_client_cache)
 
 
 def _resolve_client(base_url: str, timeout: float) -> "RateLimitedAsyncClient":
-    get_rate_limited_client, _, _ = _require_network()
     normalized_base = _normalize_base_url(base_url)
     key = (normalized_base, timeout)
     now = _now()
@@ -286,5 +296,4 @@ async def _async_open(request: Request | str, timeout: float | None = None) -> A
 def urlopen(request: Request | str, timeout: float | None = None) -> AsyncHTTPResponse:
     """Blokujące API kompatybilne z ``urllib.request.urlopen``."""
 
-    _, run_sync, _ = _require_network()
     return run_sync(_async_open, request, timeout=timeout)
