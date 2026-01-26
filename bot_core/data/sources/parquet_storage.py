@@ -5,11 +5,18 @@ import json
 import threading
 from collections.abc import MutableMapping
 from datetime import datetime, timezone
+import importlib
 from pathlib import Path
 from typing import Mapping, Sequence
 
-import pyarrow as pa
-import pyarrow.parquet as pq
+_PYARROW_ERROR: Exception | None = None
+try:  # pragma: no cover - pyarrow może być opcjonalne
+    pa = importlib.import_module("pyarrow")
+    pq = importlib.import_module("pyarrow.parquet")
+except (ModuleNotFoundError, ImportError) as exc:  # pragma: no cover - brak pyarrow w light env
+    pa = None  # type: ignore[assignment]
+    pq = None  # type: ignore[assignment]
+    _PYARROW_ERROR = exc
 
 from bot_core.data.data_sources import CacheStorage
 
@@ -106,6 +113,10 @@ class ParquetCacheStorage(CacheStorage):
         return [float(row[mapping[column]]) for column in _COLUMNS]
 
     def read(self, key: str) -> Mapping[str, Sequence[Sequence[float]]]:
+        if pq is None:
+            raise RuntimeError(
+                "pyarrow nie jest zainstalowany. Zainstaluj pakiet 'pyarrow' aby użyć ParquetCacheStorage."
+            ) from _PYARROW_ERROR
         symbol, interval = key.split("::", maxsplit=1)
         base = self._symbol_dir(symbol, interval)
         if not base.exists():
@@ -136,6 +147,10 @@ class ParquetCacheStorage(CacheStorage):
         return {"columns": _COLUMNS, "rows": rows}
 
     def write(self, key: str, payload: Mapping[str, Sequence[Sequence[float]]]) -> None:
+        if pa is None or pq is None:
+            raise RuntimeError(
+                "pyarrow nie jest zainstalowany. Zainstaluj pakiet 'pyarrow' aby użyć ParquetCacheStorage."
+            ) from _PYARROW_ERROR
         symbol, interval = key.split("::", maxsplit=1)
         rows = payload.get("rows", [])
         if not rows:
@@ -181,6 +196,10 @@ class ParquetCacheStorage(CacheStorage):
         return _ParquetMetadata(self._root() / _METADATA_FILENAME)
 
     def latest_timestamp(self, key: str) -> float | None:
+        if pq is None:
+            raise RuntimeError(
+                "pyarrow nie jest zainstalowany. Zainstaluj pakiet 'pyarrow' aby użyć ParquetCacheStorage."
+            ) from _PYARROW_ERROR
         symbol, interval = key.split("::", maxsplit=1)
         base = self._symbol_dir(symbol, interval)
         if not base.exists():

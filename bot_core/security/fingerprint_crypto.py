@@ -9,9 +9,24 @@ import os
 from dataclasses import dataclass
 from typing import Callable, Mapping, Protocol
 
-from cryptography.hazmat.primitives.ciphers.aead import AESGCM
+_CRYPTO_ERROR: Exception | None = None
+try:  # pragma: no cover - cryptography może być opcjonalne
+    AESGCM = importlib.import_module(
+        "cryptography.hazmat.primitives.ciphers.aead"
+    ).AESGCM
+except (ModuleNotFoundError, ImportError) as exc:  # pragma: no cover - brak cryptography w light env
+    AESGCM = None  # type: ignore[assignment]
+    _CRYPTO_ERROR = exc
 
 LOGGER = logging.getLogger(__name__)
+
+
+def _require_cryptography() -> Callable[[bytes], object]:
+    if AESGCM is None:
+        raise RuntimeError(
+            "cryptography nie jest zainstalowane. Zainstaluj pakiet 'cryptography' aby użyć szyfrowania."
+        ) from _CRYPTO_ERROR
+    return AESGCM
 
 
 class _CryptoBackend(Protocol):
@@ -118,7 +133,7 @@ class _PythonCryptoBackend:
         salt = os.urandom(16)
         nonce = os.urandom(12)
         key = self.derive_encryption_key(normalized, salt)
-        cipher = AESGCM(key)
+        cipher = _require_cryptography()(key)
         ciphertext = cipher.encrypt(nonce, secret, normalized.encode("utf-8"))
         return {
             "version": file_version,
@@ -160,7 +175,7 @@ class _PythonCryptoBackend:
             raise ValueError("Sekret licencji zapisano dla innego urządzenia")
 
         key = self.derive_encryption_key(normalized, salt)
-        cipher = AESGCM(key)
+        cipher = _require_cryptography()(key)
         return cipher.decrypt(nonce, ciphertext, normalized.encode("utf-8"))
 
 
@@ -251,4 +266,3 @@ __all__ = [
     "encrypt_license_secret",
     "reset_backend",
 ]
-
