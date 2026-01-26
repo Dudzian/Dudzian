@@ -11,7 +11,7 @@ import sys
 
 import pytest
 
-from tests.ui._qt import apply_qtcharts_context, require_pyside6
+from tests.ui._qt import require_pyside6
 
 pytestmark = pytest.mark.qml
 
@@ -418,7 +418,6 @@ def test_runtime_overview_renders_snapshot(tmp_path: Path) -> None:
     runtime_service = RuntimeService(decision_loader=lambda limit: [])
     app = QApplication.instance() or QApplication([])
     engine = QQmlApplicationEngine()
-    apply_qtcharts_context(engine)
     engine.rootContext().setContextProperty("telemetryProvider", provider)
     engine.rootContext().setContextProperty("runtimeService", runtime_service)
     qml_path = Path(__file__).resolve().parents[2] / "ui" / "qml" / "dashboard" / "RuntimeOverview.qml"
@@ -443,7 +442,7 @@ def test_runtime_overview_renders_snapshot(tmp_path: Path) -> None:
     assert manual_button is not None and manual_button.property("enabled") is True
 
     engine.deleteLater()
-    app.processEvents()
+    app.quit()
 
 
 @pytest.mark.timeout(30)
@@ -457,7 +456,6 @@ def test_runtime_overview_ai_card_populates_decisions() -> None:
 
     app = QApplication.instance() or QApplication([])
     engine = QQmlApplicationEngine()
-    apply_qtcharts_context(engine)
     engine.rootContext().setContextProperty("telemetryProvider", provider)
     engine.rootContext().setContextProperty("runtimeService", runtime_service)
     qml_path = Path(__file__).resolve().parents[2] / "ui" / "qml" / "dashboard" / "RuntimeOverview.qml"
@@ -487,7 +485,7 @@ def test_runtime_overview_ai_card_populates_decisions() -> None:
     assert empty_label.property("visible") is False
 
     engine.deleteLater()
-    app.processEvents()
+    app.quit()
 
 
 @pytest.mark.timeout(30)
@@ -501,7 +499,6 @@ def test_runtime_overview_ai_card_handles_errors() -> None:
 
     app = QApplication.instance() or QApplication([])
     engine = QQmlApplicationEngine()
-    apply_qtcharts_context(engine)
     engine.rootContext().setContextProperty("telemetryProvider", provider)
     engine.rootContext().setContextProperty("runtimeService", runtime_service)
     qml_path = Path(__file__).resolve().parents[2] / "ui" / "qml" / "dashboard" / "RuntimeOverview.qml"
@@ -530,7 +527,6 @@ def test_runtime_overview_risk_panel_filters_and_actions() -> None:
 
     app = QApplication.instance() or QApplication([])
     engine = QQmlApplicationEngine()
-    apply_qtcharts_context(engine)
     engine.rootContext().setContextProperty("telemetryProvider", provider)
     engine.rootContext().setContextProperty("runtimeService", runtime_service)
     qml_path = Path(__file__).resolve().parents[2] / "ui" / "qml" / "dashboard" / "RuntimeOverview.qml"
@@ -669,7 +665,7 @@ def test_runtime_overview_risk_panel_filters_and_actions() -> None:
     assert "2025-01-02T09:15:00+00:00" in override_text
 
     engine.deleteLater()
-    app.processEvents()
+    app.quit()
 
 
 @pytest.mark.timeout(30)
@@ -679,7 +675,6 @@ def test_runtime_overview_cards_react_to_live_signals() -> None:
 
     app = QApplication.instance() or QApplication([])
     engine = QQmlApplicationEngine()
-    apply_qtcharts_context(engine)
     engine.rootContext().setContextProperty("telemetryProvider", provider)
     engine.rootContext().setContextProperty("runtimeService", runtime_service)
     qml_path = Path(__file__).resolve().parents[2] / "ui" / "qml" / "dashboard" / "RuntimeOverview.qml"
@@ -890,7 +885,7 @@ def test_runtime_overview_cards_react_to_live_signals() -> None:
     assert "próby 3" in reconnect_label.property("text")
 
     engine.deleteLater()
-    app.processEvents()
+    app.quit()
 
 
 def test_telemetry_provider_reports_errors() -> None:
@@ -1196,7 +1191,6 @@ def test_runtime_overview_strategy_ai_panel_tracks_transport() -> None:
 
     app = QApplication.instance() or QApplication([])
     engine = QQmlApplicationEngine()
-    apply_qtcharts_context(engine)
     engine.rootContext().setContextProperty("telemetryProvider", provider)
     engine.rootContext().setContextProperty("runtimeService", runtime_service)
     qml_path = Path(__file__).resolve().parents[2] / "ui" / "qml" / "dashboard" / "RuntimeOverview.qml"
@@ -1242,7 +1236,7 @@ def test_runtime_overview_strategy_ai_panel_tracks_transport() -> None:
     assert regime_model[0]["bestStrategy"] == "trend_following"
 
     engine.deleteLater()
-    app.processEvents()
+    app.quit()
 
 
 @pytest.mark.timeout(30)
@@ -1252,7 +1246,6 @@ def test_runtime_overview_feed_sla_exposes_anti_flap_counters() -> None:
 
     app = QApplication.instance() or QApplication([])
     engine = QQmlApplicationEngine()
-    apply_qtcharts_context(engine)
     engine.rootContext().setContextProperty("telemetryProvider", provider)
     engine.rootContext().setContextProperty("runtimeService", runtime_service)
     qml_path = Path(__file__).resolve().parents[2] / "ui" / "qml" / "dashboard" / "RuntimeOverview.qml"
