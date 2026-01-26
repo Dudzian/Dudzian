@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import os
 import importlib
+from types import ModuleType
+from typing import Any
 
 from bot_core.exchanges.base import (
     AccountSnapshot,
@@ -300,3 +302,38 @@ __all__ = [
     "iter_registered_native_adapters",
     "NativeAdapterInfo",
 ]
+
+# Subpakiety giełd ładowane leniwie (dla kompatybilności ścieżek typu
+# bot_core.exchanges.binance.futures.* używanych m.in. w testach/monkeypatch).
+_LAZY_EXCHANGE_PACKAGES = {
+    "binance",
+    "bitfinex",
+    "bitget",
+    "bitmex",
+    "bitstamp",
+    "coinbase",
+    "bybit",
+    "deribit",
+    "gateio",
+    "gemini",
+    "huobi",
+    "kraken",
+    "kucoin",
+    "mexc",
+    "nowa_gielda",
+    "okx",
+    "testing",
+    "zonda",
+}
+
+
+def __getattr__(name: str) -> Any:  # PEP 562
+    if name in _LAZY_EXCHANGE_PACKAGES:
+        mod: ModuleType = importlib.import_module(f"{__name__}.{name}")
+        globals()[name] = mod
+        return mod
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+
+
+def __dir__() -> list[str]:
+    return sorted(set(globals().keys()) | _LAZY_EXCHANGE_PACKAGES)
