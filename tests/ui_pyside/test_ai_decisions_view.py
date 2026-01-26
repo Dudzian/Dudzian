@@ -1,37 +1,22 @@
 from __future__ import annotations
 
-import os
-import sys
 from pathlib import Path
 
 import pytest
 try:
     from PySide6.QtCore import QObject, Property, QUrl, Signal, Slot
-    from PySide6.QtGui import QGuiApplication
     from PySide6.QtQml import QQmlApplicationEngine
+    from PySide6.QtWidgets import QApplication
 except ImportError as exc:  # pragma: no cover - środowisko bez GL/Qt
     pytest.skip(f"PySide6 unavailable: {exc}", allow_module_level=True)
 
+from tests.ui._qt import apply_qtcharts_context
 from tests.ui_pyside.qml_test_helpers import assert_engine_loaded, collect_engine_warnings
 
 
 @pytest.fixture(autouse=True)
 def _force_offscreen(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("QT_QPA_PLATFORM", "offscreen")
-
-
-def _ensure_app() -> QGuiApplication:
-    try:
-        app = QGuiApplication.instance()
-        if app is None:
-            app = QGuiApplication([])
-        return app
-    except Exception as exc:  # pragma: no cover - środowisko bez backendu GL/Qt
-        qt_qpa_platform = os.getenv("QT_QPA_PLATFORM", "<unset>")
-        pytest.skip(
-            f"Qt runtime unavailable on {sys.platform} (QT_QPA_PLATFORM={qt_qpa_platform}): {exc}",
-            allow_module_level=True,
-        )
 
 
 class _RuntimeStub(QObject):
@@ -72,8 +57,9 @@ class _DesignSystemStub(QObject):
         return "Font Awesome 6 Free"
 
 
-def test_ai_decisions_view_renders_without_live_runtime() -> None:
-    _ensure_app()
+def test_ai_decisions_view_renders_without_live_runtime(qt_app_session: object | None) -> None:
+    if qt_app_session is None:
+        pytest.skip("Brak QApplication; uruchom test QML w izolowanym procesie.")
     snapshot = {
         "lastDecision": {
             "mode": "scalping",
@@ -106,6 +92,7 @@ def test_ai_decisions_view_renders_without_live_runtime() -> None:
     design = _DesignSystemStub()
 
     engine = QQmlApplicationEngine()
+    apply_qtcharts_context(engine)
     warnings = collect_engine_warnings(engine)
     engine.rootContext().setContextProperty("runtimeService", runtime)
     engine.rootContext().setContextProperty("designSystem", design)
@@ -114,8 +101,9 @@ def test_ai_decisions_view_renders_without_live_runtime() -> None:
     assert_engine_loaded(engine, warnings, "QML view failed to load")
 
     view = engine.rootObjects()[0]
-    app = _ensure_app()
-    app.processEvents()
+    app = QApplication.instance()
+    if app is not None:
+        app.processEvents()
 
     assert int(view.property("timelineCount")) == len(snapshot["history"])
     assert int(view.property("recommendationCount")) == len(snapshot["lastDecision"]["recommendedModes"])

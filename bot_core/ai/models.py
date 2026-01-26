@@ -5,7 +5,6 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
-import importlib
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -22,23 +21,8 @@ from typing import (
     TYPE_CHECKING,
 )
 
-from bot_core.optional import missing_module_proxy
-
-try:  # pragma: no cover - numpy może być opcjonalne
-    np = importlib.import_module("numpy")
-except (ModuleNotFoundError, ImportError) as exc:  # pragma: no cover - brak numpy w light env
-    np = missing_module_proxy(
-        "numpy nie jest zainstalowane. Zainstaluj pakiet 'numpy' aby użyć modeli AI.",
-        cause=exc,
-    )
-
-try:  # pragma: no cover - pandas może być opcjonalne
-    pd = importlib.import_module("pandas")
-except (ModuleNotFoundError, ImportError) as exc:  # pragma: no cover - brak pandas w light env
-    pd = missing_module_proxy(
-        "pandas nie jest zainstalowane. Zainstaluj pakiet 'pandas' aby użyć modeli AI.",
-        cause=exc,
-    )
+import numpy as np
+import pandas as pd
 
 from bot_core.security.signing import build_hmac_signature, validate_hmac_signature
 from .feature_engineering import FeatureDataset, FeatureVector

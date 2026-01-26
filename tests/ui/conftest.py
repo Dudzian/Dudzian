@@ -116,42 +116,6 @@ def configure_qt_environment(
             os.environ.pop(name, None)
 
 
-@pytest.fixture(autouse=True)
-def apply_qtcharts_killswitch(
-    request: pytest.FixtureRequest,
-) -> Generator[None, None, None]:
-    if "qml" not in request.node.keywords:
-        yield
-        return
-
-    if importlib.util.find_spec("PySide6") is None:
-        yield
-        return
-
-    disable_raw = os.getenv("DUDZIAN_DISABLE_QTCHARTS", "").strip().lower()
-    if disable_raw in {"", "0", "false", "no", "off"}:
-        yield
-        return
-
-    from PySide6.QtQml import QQmlApplicationEngine
-
-    original_init = QQmlApplicationEngine.__init__
-
-    def _patched_init(self, *args, **kwargs):  # type: ignore[no-untyped-def]
-        original_init(self, *args, **kwargs)
-        try:
-            self.rootContext().setContextProperty("disableQtCharts", True)
-        except Exception:
-            pass
-
-    monkeypatch = pytest.MonkeyPatch()
-    monkeypatch.setattr(QQmlApplicationEngine, "__init__", _patched_init, raising=True)
-    try:
-        yield
-    finally:
-        monkeypatch.undo()
-
-
 @pytest.fixture(scope="session", autouse=True)
 def shutdown_db_background_loop_at_session_end() -> Generator[None, None, None]:
     """
@@ -435,7 +399,7 @@ def flush_qt_deletes_after_qml(request: pytest.FixtureRequest) -> Generator[None
         return
 
     from PySide6.QtCore import QCoreApplication, QEvent, QEventLoop
-    from PySide6.QtQml import QQmlEngine
+    from tests.ui._qt import tracked_qml_engines
 
     app = QCoreApplication.instance()
     if app is None:
@@ -447,17 +411,20 @@ def flush_qt_deletes_after_qml(request: pytest.FixtureRequest) -> Generator[None
         app.processEvents(QEventLoop.AllEvents, 50)
 
     # PySide6: collectGarbage jest metodą instancji (QJSEngine), nie statyczną.
-    # Tworzymy tymczasowy engine i prosimy o GC QML/JS bez ryzyka wyjątku.
+    # Nie tworzymy dodatkowych engine'ów, żeby nie mieszać stanu QML w teście.
     try:
-        tmp_engine = QQmlEngine()
-        tmp_engine.collectGarbage()
-        tmp_engine.deleteLater()
-        for _ in range(2):
-            QCoreApplication.sendPostedEvents(None, QEvent.DeferredDelete)
-            app.processEvents(QEventLoop.AllEvents, 50)
+        for engine in tracked_qml_engines():
+            try:
+                engine.collectGarbage()
+            except Exception:  # pragma: no cover - różnice API
+                continue
     except Exception:
         # Teardown ma nie wysadzać test runa.
         pass
+
+    for _ in range(2):
+        QCoreApplication.sendPostedEvents(None, QEvent.DeferredDelete)
+        app.processEvents(QEventLoop.AllEvents, 50)
 
     import gc
 

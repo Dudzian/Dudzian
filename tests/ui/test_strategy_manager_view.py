@@ -3,7 +3,7 @@ from pathlib import Path
 
 import pytest
 
-from tests.ui._qt import require_pyside6
+from tests.ui._qt import apply_qtcharts_context, require_pyside6
 
 pytestmark = pytest.mark.qml
 
@@ -78,6 +78,7 @@ def test_strategy_manager_view_triggers_actions(tmp_path: Path) -> None:
 
     controller = StubMarketplaceController()
     engine = QQmlApplicationEngine()
+    apply_qtcharts_context(engine)
     engine.rootContext().setContextProperty("marketplaceController", controller)
 
     view_path = Path(__file__).resolve().parents[2] / "ui" / "qml" / "views" / "StrategyManager.qml"

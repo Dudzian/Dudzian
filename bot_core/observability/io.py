@@ -4,30 +4,16 @@ from __future__ import annotations
 
 import json
 from datetime import datetime
-import importlib
 from pathlib import Path
 from typing import Any, Iterable, Mapping
 
-_YAML_ERROR: Exception | None = None
-try:  # pragma: no cover - PyYAML może być opcjonalny
-    yaml = importlib.import_module("yaml")
-except (ModuleNotFoundError, ImportError) as exc:  # pragma: no cover - brak PyYAML w light env
-    yaml = None  # type: ignore[assignment]
-    _YAML_ERROR = exc
+import yaml
 
 from bot_core.observability.slo import (
     SLOCompositeDefinition,
     SLODefinition,
     SLOMeasurement,
 )
-
-
-def _require_yaml() -> Any:
-    if yaml is None:
-        raise RuntimeError(
-            "PyYAML nie jest zainstalowany. Zainstaluj pakiet 'pyyaml' aby wczytać konfigurację."
-        ) from _YAML_ERROR
-    return yaml
 
 
 def _coerce_sequence(value: Any) -> Iterable[Any]:
@@ -55,8 +41,7 @@ def _load_yaml_or_json(path: Path) -> Any:
     try:
         return json.loads(text)
     except json.JSONDecodeError:
-        yaml_module = _require_yaml()
-        return yaml_module.safe_load(text)
+        return yaml.safe_load(text)
 
 
 def load_slo_definitions(path: Path) -> tuple[list[SLODefinition], list[SLOCompositeDefinition]]:
@@ -179,3 +164,4 @@ __all__ = [
     "load_slo_definitions",
     "load_slo_measurements",
 ]
+
