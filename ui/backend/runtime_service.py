@@ -3264,11 +3264,20 @@ class RuntimeService(QObject):
                 queue_obj.task_done()
                 continue
             if kind == "stream-ended":
+                message = "Strumień gRPC zakończony"
+                if isinstance(payload, Mapping):
+                    message = str(payload.get("message", message))
+                self._feed_last_error = message
                 self._grpc_stream_active = False
                 self._grpc_retry_attempts += 1
                 self._mark_feed_disconnected()
+                self._update_feed_health(
+                    reconnects=self._feed_reconnects,
+                    status="retrying",
+                    last_error=message,
+                )
                 if self._grpc_retry_limit == 0 or self._grpc_retry_attempts > self._grpc_retry_limit:
-                    fallback_reason = "Strumień gRPC zakończony"
+                    fallback_reason = message
                 queue_obj.task_done()
                 continue
             if kind == "done":
