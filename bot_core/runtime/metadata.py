@@ -5,9 +5,14 @@ from __future__ import annotations
 from dataclasses import dataclass
 import importlib
 import logging
+import sys
 from pathlib import Path
 from types import ModuleType
 from typing import Any, Iterable, Mapping, Sequence, Tuple
+
+_CANONICAL_MODULE = "bot_core.runtime.metadata"
+if __name__ != _CANONICAL_MODULE:
+    sys.modules[_CANONICAL_MODULE] = sys.modules[__name__]
 
 from bot_core.runtime.paths import resolve_core_config_path
 
