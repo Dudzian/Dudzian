@@ -61,6 +61,7 @@ from bot_core.exchanges.health_checks import build_standard_health_checks
 from bot_core.exchanges.zonda import ZondaSpotAdapter
 from bot_core.risk.base import RiskRepository
 from bot_core.risk.engine import ThresholdRiskEngine
+from bot_core.risk.settings import RiskManagerSettings, derive_risk_manager_settings
 from bot_core.security.signing import verify_hmac_signature
 from bot_core.risk.events import RiskDecisionLog
 from bot_core.risk.factory import build_risk_profile_from_config
@@ -290,9 +291,6 @@ try:  # pragma: no cover - eksporter metryk może być niedostępny
     from bot_core.runtime.risk_metrics import RiskMetricsExporter  # type: ignore
 except Exception:  # pragma: no cover
     RiskMetricsExporter = None  # type: ignore
-
-if TYPE_CHECKING:  # pragma: no cover - tylko do typów
-    from bot_core.runtime.metadata import RiskManagerSettings
 
 try:  # pragma: no cover - PortfolioGovernor może nie istnieć w tej gałęzi
     from bot_core.portfolio import PortfolioGovernor  # type: ignore
@@ -2267,11 +2265,9 @@ def bootstrap_environment(
                     ",".join(sorted(enabled_modules)) or "brak",
                 )
 
-    from bot_core.runtime.metadata import derive_risk_manager_settings
-
     risk_profile_config = _resolve_risk_profile(core_config.risk_profiles, selected_profile)
     try:
-        risk_manager_settings: RiskManagerSettings | None = derive_risk_manager_settings(
+        risk_manager_settings = derive_risk_manager_settings(
             risk_profile_config,
             profile_name=selected_profile,
         )

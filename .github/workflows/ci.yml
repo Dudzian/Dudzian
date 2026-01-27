@@ -271,7 +271,7 @@ jobs:
         shell: bash
         run: |
           python -m pip install --upgrade pip
-          python -m pip install .[dev]
+          python -m pip install .[test]
 
       - name: Preflight test environment
         shell: bash
@@ -666,7 +666,7 @@ jobs:
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
-          python -m pip install .[dev]
+          python -m pip install .[test,tools]
 
       - name: Generate exchange adapter report
         run: |
@@ -720,7 +720,7 @@ jobs:
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
-          python -m pip install .[dev]
+          python -m pip install .[tools]
 
       - name: Download exchange report artefact
         uses: actions/download-artifact@v4
@@ -901,7 +901,7 @@ jobs:
             PySide6_Addons==${{ env.PYSIDE6_VERSION }} \
             PySide6_Essentials==${{ env.PYSIDE6_VERSION }} \
             shiboken6==${{ env.PYSIDE6_VERSION }}
-          python scripts/ci/pip_install.py --wheelhouse "$WHEELHOUSE_DIR" -- .[dev]
+          python scripts/ci/pip_install.py --wheelhouse "$WHEELHOUSE_DIR" -- .[test]
 
       - name: Preflight test environment
         shell: bash
@@ -986,7 +986,7 @@ jobs:
             PySide6_Addons==${{ env.PYSIDE6_VERSION }} \
             PySide6_Essentials==${{ env.PYSIDE6_VERSION }} \
             shiboken6==${{ env.PYSIDE6_VERSION }}
-          python scripts/ci/pip_install.py --wheelhouse "$WHEELHOUSE_DIR" -- .[dev]
+          python scripts/ci/pip_install.py --wheelhouse "$WHEELHOUSE_DIR" -- .[test]
 
       - name: Preflight test environment
         shell: bash
@@ -1154,7 +1154,7 @@ jobs:
             PySide6_Addons==${{ env.PYSIDE6_VERSION }} \
             PySide6_Essentials==${{ env.PYSIDE6_VERSION }} \
             shiboken6==${{ env.PYSIDE6_VERSION }}
-          python scripts/ci/pip_install.py --wheelhouse "$WHEELHOUSE_DIR" -- .[dev]
+          python scripts/ci/pip_install.py --wheelhouse "$WHEELHOUSE_DIR" -- .[test]
 
       - name: Preflight test environment
         shell: bash
@@ -1282,7 +1282,7 @@ jobs:
             PySide6_Addons==${{ env.PYSIDE6_VERSION }} \
             PySide6_Essentials==${{ env.PYSIDE6_VERSION }} \
             shiboken6==${{ env.PYSIDE6_VERSION }}
-          python scripts/ci/pip_install.py --wheelhouse "$WHEELHOUSE_DIR" -- .[dev]
+          python scripts/ci/pip_install.py --wheelhouse "$WHEELHOUSE_DIR" -- .[test]
 
       - name: Preflight test environment
         shell: bash
@@ -1605,7 +1605,7 @@ jobs:
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
-          python -m pip install .[dev]
+          python -m pip install .[test,tools]
 
       - name: Preflight test environment
         shell: bash
@@ -1649,7 +1649,7 @@ jobs:
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
-          python -m pip install .[dev]
+          python -m pip install .[test,tools]
 
       - name: Preflight test environment
         shell: bash
@@ -1822,7 +1822,7 @@ jobs:
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
-          python -m pip install .[dev]
+          python -m pip install .[tools]
 
       - name: Download marketplace packages artifact
         uses: actions/download-artifact@v4

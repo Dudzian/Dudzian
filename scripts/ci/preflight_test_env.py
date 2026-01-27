@@ -7,11 +7,13 @@ import sys
 
 REQUIRED_MODULES = {
     "pandas": "pandas",
+    "pyarrow": "pyarrow",
     "yaml": "PyYAML",
     "numpy": "numpy",
     "joblib": "joblib",
     "pytest": "pytest",
     "pytest_cov": "pytest-cov",
+    "httpx": "httpx",
 }
 
 
@@ -68,10 +70,10 @@ def main() -> int:
             print(f"pip show pandas returncode: {pandas_show.returncode}")
 
     if missing:
-        print("Brakuje zależności testowych:")
+        print("Brakuje zależności środowiska CI:")
         for name in missing:
             print(f"- {name}")
-        print("Zainstaluj je poleceniem: python -m pip install -e \".[dev]\"")
+        print("Zainstaluj je poleceniem: python -m pip install -e \".[test]\"")
         return 1
 
     print("Preflight OK:")

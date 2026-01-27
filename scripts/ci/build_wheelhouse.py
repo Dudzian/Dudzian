@@ -85,7 +85,7 @@ def main(argv: list[str]) -> int:
     download(wheelhouse, build_download_cmd(wheelhouse, args, pyside_packages))
 
     # Project dependencies
-    project_target = ".[dev]" if not args.skip_dev else "."
+    project_target = ".[test]" if not args.skip_dev else "."
     download(wheelhouse, build_download_cmd(wheelhouse, args, [project_target]))
 
     if args.requirements:

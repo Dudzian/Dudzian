@@ -38,7 +38,7 @@ from bot_core.exchanges.nowa_gielda import NowaGieldaSpotAdapter
 from bot_core.exchanges.okx import OKXSpotAdapter
 from bot_core.risk.engine import ThresholdRiskEngine
 from bot_core.risk.repository import FileRiskRepository
-from bot_core.runtime.metadata import RiskManagerSettings
+from bot_core.risk.settings import RiskManagerSettings
 from bot_core.runtime.bootstrap import (
     BootstrapContext,
     _DEFAULT_ADAPTERS,
@@ -591,6 +591,7 @@ def test_bootstrap_environment_initialises_components(tmp_path: Path) -> None:
     assert context.risk_profile_name == "balanced"
     assert context.risk_profile_config.name == "balanced"
     assert isinstance(context.risk_manager_settings, RiskManagerSettings)
+    assert type(context.risk_manager_settings).__module__ == RiskManagerSettings.__module__
     assert context.risk_manager_settings.profile_name == "balanced"
     assert context.risk_manager_settings.max_daily_loss_pct == pytest.approx(0.015)
     assert context.credentials.key_id == "paper-key"
@@ -2030,6 +2031,7 @@ def test_bootstrap_environment_allows_risk_profile_override(tmp_path: Path) -> N
     assert context.risk_profile_name == "aggressive"
     assert context.environment.risk_profile == "aggressive"
     assert isinstance(context.risk_manager_settings, RiskManagerSettings)
+    assert type(context.risk_manager_settings).__module__ == RiskManagerSettings.__module__
     assert context.risk_manager_settings.profile_name == "aggressive"
     assert context.risk_engine.should_liquidate(profile_name="aggressive") is False
 

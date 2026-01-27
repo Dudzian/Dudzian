@@ -5,8 +5,9 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any, Callable, Dict, Generic, Optional, TypeVar
 
+from bot_core.risk.settings import RiskManagerSettings
 from bot_core.runtime.paths import DesktopAppPaths
-from bot_core.runtime.metadata import RuntimeEntrypointMetadata, RiskManagerSettings
+from bot_core.runtime.metadata import RuntimeEntrypointMetadata
 from bot_core.security.capabilities import LicenseCapabilities
 from bot_core.security.guards import CapabilityGuard
 
