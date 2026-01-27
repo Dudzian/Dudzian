@@ -12,14 +12,20 @@ from collections.abc import Iterable, Iterator, MutableMapping
 from collections import Counter, deque
 from importlib import import_module
 from pathlib import Path
-from typing import Any, Callable, Dict, List, Mapping, MutableMapping, Optional, Sequence, Tuple, cast
+from typing import Any, Callable, Dict, List, Mapping, MutableMapping, Optional, Sequence, Tuple, cast, TYPE_CHECKING
 
 from datetime import datetime, timezone
 
-import yaml
-from pydantic import BaseModel, Field
+try:  # pragma: no cover - optional dependency
+    import yaml
+except ModuleNotFoundError:  # pragma: no cover - allow minimal environment without PyYAML
+    yaml = None
 
-from bot_core.database.manager import DatabaseManager
+if TYPE_CHECKING:  # pragma: no cover
+    from bot_core.database.manager import DatabaseManager
+    from bot_core.strategies.catalog import StrategyCatalog, StrategyPresetDescriptor
+
+DatabaseManager = None  # type: ignore[assignment]
 from bot_core.exchanges.core import (
     BaseBackend,
     EventBus,
@@ -52,7 +58,6 @@ from bot_core.exchanges.health import (
 from bot_core.exchanges.errors import ExchangeError, ExchangeNetworkError, ExchangeThrottlingError
 from bot_core.exchanges.paper_simulator import PaperFuturesSimulator, PaperMarginSimulator
 from bot_core.exchanges.io import ExchangeIOLayer
-from bot_core.strategies.catalog import StrategyCatalog, StrategyPresetDescriptor
 from bot_core.observability.metrics import get_global_metrics_registry
 from bot_core.exchanges.rate_limiter import RateLimitRule, normalize_rate_limit_rules
 from bot_core.exchanges.network_guard import (
@@ -86,6 +91,12 @@ _FAILOVER_EXCEPTIONS = (
     ExchangeThrottlingError,
     CircuitOpenError,
 )
+
+
+def _yaml_safe_load(text: str) -> dict[str, Any]:
+    if yaml is None:
+        return {}
+    return yaml.safe_load(text) or {}
 
 
 def _enable_sandbox_mode(client: Any) -> bool:
@@ -359,7 +370,7 @@ def _load_exchange_profiles(
         text = path.read_text(encoding="utf-8")
     except FileNotFoundError as exc:
         raise FileNotFoundError(f"Nie znaleziono konfiguracji giełdy: {path}") from exc
-    data = yaml.safe_load(text) or {}
+    data = _yaml_safe_load(text)
     if not isinstance(data, Mapping):
         raise ValueError(f"Plik konfiguracji {path} musi zawierać mapę profili")
     normalized: dict[str, Any] = {}
@@ -477,7 +488,7 @@ def _load_raw_exchange_adapters(candidate: Path) -> Mapping[str, Any] | None:
     """Wczytuje sekcję ``exchange_adapters`` bez pełnego parsera konfiguracji."""
 
     try:
-        payload = yaml.safe_load(candidate.read_text(encoding="utf-8")) or {}
+        payload = _yaml_safe_load(candidate.read_text(encoding="utf-8"))
     except FileNotFoundError as exc:  # pragma: no cover - raport diagnostyczny
         log.debug("Nie odnaleziono alternatywnej konfiguracji adapterów %s: %s", candidate, exc)
         return None
@@ -1780,11 +1791,15 @@ class ExchangeManager:
         return binding.as_dict() if binding else None
 
     def _ensure_strategy_catalog(self) -> StrategyCatalog:
+        from bot_core.strategies.catalog import StrategyCatalog
+
         if not isinstance(self._strategy_catalog, StrategyCatalog):
             raise RuntimeError("StrategyCatalog is not configured for ExchangeManager")
         return self._strategy_catalog
 
     def _resolve_preset(self, descriptor_id: str) -> StrategyPresetDescriptor:
+        from bot_core.strategies.catalog import StrategyPresetDescriptor
+
         catalog = self._ensure_strategy_catalog()
         try:
             return catalog.preset(descriptor_id)
@@ -1802,6 +1817,8 @@ class ExchangeManager:
         return normalized
 
     def _rebuild_strategy_contexts(self) -> None:
+        from bot_core.strategies.catalog import StrategyCatalog
+
         catalog = self._strategy_catalog
         if not isinstance(catalog, StrategyCatalog):
             self._strategy_contexts = {}
@@ -2229,7 +2246,11 @@ class ExchangeManager:
             return None
         if self._db is None:
             try:
-                self._db = DatabaseManager(self._db_url)
+                db_cls = DatabaseManager
+                if db_cls is None:
+                    from bot_core.database.manager import DatabaseManager as db_cls
+
+                self._db = db_cls(self._db_url)
                 self._db.sync.init_db()
             except Exception as exc:  # pragma: no cover
                 log.warning("DatabaseManager init failed (%s): %s", self._db_url, exc)
@@ -3059,4 +3080,3 @@ __all__ = [
     "iter_registered_native_adapters",
     "NativeAdapterInfo",
 ]
-

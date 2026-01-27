@@ -73,6 +73,7 @@ _LAZY_EXCHANGE_PACKAGES = {
     "okx",
     "zonda",
     "http_client",
+    "manager",
 }
 
 
