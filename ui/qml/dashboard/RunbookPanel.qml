@@ -141,6 +141,7 @@ Item {
 
                     Frame {
                         Layout.fillWidth: true
+                        readonly property var alert: (typeof modelData !== "undefined" && modelData !== null) ? modelData : model
                         background: Rectangle {
                             radius: 6
                             color: Qt.rgba(0.16, 0.18, 0.22, 0.9)
@@ -151,16 +152,20 @@ Item {
                             anchors.margins: 12
                             spacing: 6
 
+                            readonly property string envText: "" + (alert.environment || alert["environment"] || "")
+                            readonly property string queueText: "" + (alert.queue || alert["queue"] || "")
+                            readonly property string msgText: "" + (alert.message || alert["message"] || "")
+
                             Text {
-                                text: model.environment && model.environment.length > 0
-                                      ? qsTr("%1 • %2").arg(model.environment).arg(model.queue)
-                                      : model.queue && model.queue.length > 0 ? model.queue : qsTrId("runbookPanel.defaultTitle")
+                                text: envText.length > 0
+                                      ? qsTr("%1 • %2").arg(envText).arg(queueText)
+                                      : queueText.length > 0 ? queueText : qsTrId("runbookPanel.defaultTitle")
                                 font.bold: true
                                 color: Styles.AppTheme.textPrimary
                             }
 
                             Text {
-                                text: model.message
+                                text: msgText
                                 color: Styles.AppTheme.textSecondary
                                 wrapMode: Text.Wrap
                             }
@@ -169,25 +174,30 @@ Item {
                                 Layout.fillWidth: true
                                 spacing: 8
 
+                                readonly property string severityValue: (alert.severity || alert["severity"] || "")
+
                                 Rectangle {
                                     width: 12
                                     height: 12
                                     radius: 6
-                                    color: model.severity === "error" ? Qt.rgba(0.9, 0.25, 0.3, 1)
-                                           : model.severity === "warning" ? Qt.rgba(0.95, 0.65, 0.2, 1)
+                                    color: severityValue === "error" ? Qt.rgba(0.9, 0.25, 0.3, 1)
+                                           : severityValue === "warning" ? Qt.rgba(0.95, 0.65, 0.2, 1)
                                            : Qt.rgba(0.35, 0.7, 0.9, 1)
                                 }
 
                                 Text {
-                                    text: qsTrId("runbookPanel.severity").arg(model.severity)
+                                    text: qsTrId("runbookPanel.severity").arg(severityValue)
                                     color: Styles.AppTheme.textSecondary
                                 }
 
                                 Item { Layout.fillWidth: true }
 
+                                readonly property var tsRaw: (alert.timestamp !== undefined ? alert.timestamp : alert["timestamp"])
+                                readonly property string tsText: (tsRaw === undefined || tsRaw === null) ? "" : ("" + tsRaw)
+
                                 Text {
-                                    visible: model.timestamp && model.timestamp.length > 0
-                                    text: model.timestamp
+                                    visible: tsText.length > 0
+                                    text: tsText
                                     color: Styles.AppTheme.textSecondary
                                     font.pointSize: 11
                                 }
@@ -198,8 +208,8 @@ Item {
                                 spacing: 8
 
                                 Text {
-                                    text: model.runbookTitle && model.runbookTitle.length > 0
-                                          ? qsTrId("runbookPanel.runbookAssigned").arg(model.runbookTitle)
+                                    text: (alert.runbookTitle || alert["runbookTitle"] || "").length > 0
+                                          ? qsTrId("runbookPanel.runbookAssigned").arg(alert.runbookTitle || alert["runbookTitle"])
                                           : qsTrId("runbookPanel.runbookMissing")
                                     color: Styles.AppTheme.textSecondary
                                     wrapMode: Text.Wrap
@@ -209,10 +219,10 @@ Item {
 
                                 Button {
                                     text: qsTrId("runbookPanel.openRunbook")
-                                    visible: model.runbookPath && model.runbookPath.length > 0
+                                    visible: (alert.runbookPath || alert["runbookPath"] || "").length > 0
                                     onClicked: {
                                         if (root.runbookController)
-                                            root.runbookController.openRunbook(model.runbookPath)
+                                            root.runbookController.openRunbook(alert.runbookPath || alert["runbookPath"])
                                     }
                                 }
                             }
@@ -220,7 +230,7 @@ Item {
                             ColumnLayout {
                                 Layout.fillWidth: true
                                 spacing: 6
-                                visible: model.manualSteps && model.manualSteps.length > 0
+                                visible: (alert.manualSteps || alert["manualSteps"] || []).length > 0
 
                                 Text {
                                     text: qsTrId("runbookPanel.manualSteps")
@@ -229,7 +239,7 @@ Item {
                                 }
 
                                 Repeater {
-                                    model: model.manualSteps || []
+                                    model: alert.manualSteps || alert["manualSteps"] || []
 
                                     Text {
                                         text: "• " + modelData
@@ -242,7 +252,7 @@ Item {
                             ColumnLayout {
                                 Layout.fillWidth: true
                                 spacing: 6
-                                visible: model.automaticActions && model.automaticActions.length > 0
+                                visible: (alert.automaticActions || alert["automaticActions"] || []).length > 0
 
                                 Text {
                                     text: qsTrId("runbookPanel.automaticActions")
@@ -251,12 +261,15 @@ Item {
                                 }
 
                                 Repeater {
-                                    model: model.automaticActions || []
+                                    model: alert.automaticActions || alert["automaticActions"] || []
 
                                     Button {
-                                        objectName: "runbookActionButton_" + modelData.id
-                                        text: modelData.label
-                                        onClicked: root.requestRunbookAction(model.runbookId, modelData)
+                                        readonly property string actionId: "" + ((modelData && (modelData["id"] !== undefined ? modelData["id"] : modelData.id)) || ("idx_" + index))
+                                        readonly property var actionLabel: (modelData && (modelData["label"] !== undefined ? modelData["label"] : modelData.label)) || ""
+
+                                        objectName: "runbookActionButton_" + actionId
+                                        text: actionLabel
+                                        onClicked: root.requestRunbookAction(alert.runbookId || alert["runbookId"], modelData)
                                     }
                                 }
                             }
