@@ -18,6 +18,18 @@ import pytest
 
 logger = logging.getLogger(__name__)
 
+os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+if "QML_IMPORT_TRACE" not in os.environ:
+    if os.getenv("QML_DIAGNOSTICS_DIR") or (
+        os.getenv("CI") and os.getenv("QML_TRACE") == "1"
+    ):
+        os.environ["QML_IMPORT_TRACE"] = "1"
+if sys.platform == "win32":
+    os.environ.setdefault("QT_QUICK_BACKEND", "software")
+    os.environ.setdefault("QSG_RHI_BACKEND", "software")
+    os.environ.setdefault("QT_OPENGL", "software")
+    os.environ.setdefault("QSG_RENDER_LOOP", "basic")
+
 
 def _sanitize_nodeid(nodeid: str) -> str:
     sanitized = nodeid.replace("::", "__").replace("/", "_").replace("\\", "_")
@@ -36,7 +48,15 @@ def qml_diagnostics_root(pytestconfig: pytest.Config) -> Path:
     info_path = root / "environment.txt"
     if not info_path.exists():
         lines: List[str] = []
-        for name in ("QT_QPA_PLATFORM", "QT_PLUGIN_PATH", "QT_QUICK_BACKEND", "QML_IMPORT_TRACE"):
+        for name in (
+            "QT_QPA_PLATFORM",
+            "QT_PLUGIN_PATH",
+            "QT_QUICK_BACKEND",
+            "QML_IMPORT_TRACE",
+            "QSG_RHI_BACKEND",
+            "QT_OPENGL",
+            "QSG_RENDER_LOOP",
+        ):
             lines.append(f"{name}={os.getenv(name, '')}")
         try:
             import PySide6
@@ -83,31 +103,6 @@ def qml_diagnostics_root(pytestconfig: pytest.Config) -> Path:
         command_path.write_text(cmdline + "\n", encoding="utf-8")
 
     return root
-
-
-@pytest.fixture(autouse=True)
-def configure_qt_environment(
-    request: pytest.FixtureRequest,
-) -> Generator[None, None, None]:
-    if "qml" not in request.node.keywords:
-        yield
-        return
-
-    applied: dict[str, None] = {}
-    for name, value in (
-        ("QT_QPA_PLATFORM", "offscreen"),
-        ("QT_QUICK_BACKEND", "software"),
-        ("QML_IMPORT_TRACE", "1"),
-    ):
-        if name not in os.environ:
-            os.environ[name] = value
-            applied[name] = None
-
-    try:
-        yield
-    finally:
-        for name in applied:
-            os.environ.pop(name, None)
 
 
 @pytest.fixture(scope="session", autouse=True)

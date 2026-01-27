@@ -38,6 +38,9 @@ Item {
         : (resolvedController && resolvedController.alertsModel ? resolvedController.alertsModel
            : (typeof alertsModel !== "undefined" && alertsModel ? alertsModel : null))
     )
+    readonly property bool uiTestModeEnabled: (
+        typeof uiTestMode !== "undefined" && uiTestMode === true
+    )
 
     property var exchangeExposureItems: []
     property var strategyExposureItems: []
@@ -162,13 +165,34 @@ Item {
             Layout.preferredHeight: 320
             spacing: 18
 
-            Components.EquityCurveDashboard {
-                id: equityView
+            Loader {
+                id: equityLoader
                 Layout.fillWidth: true
                 Layout.fillHeight: true
-                points: historyPoints
-                title: qsTr("Historia wartości portfela")
-                accentColor: palette.highlight
+                visible: !root.uiTestModeEnabled
+                active: !root.uiTestModeEnabled
+                source: "../components/EquityCurveDashboard.qml"
+                onLoaded: {
+                    if (!item)
+                        return
+                    item.points = Qt.binding(function() { return historyPoints })
+                    item.title = qsTr("Historia wartości portfela")
+                    item.accentColor = Qt.binding(function() { return palette.highlight })
+                }
+            }
+
+            Frame {
+                Layout.fillWidth: true
+                Layout.fillHeight: true
+                visible: root.uiTestModeEnabled
+                background: Rectangle { radius: 10; color: Qt.darker(palette.base, 1.05) }
+
+                Label {
+                    anchors.centerIn: parent
+                    text: qsTr("Wykres historii niedostępny w trybie testowym")
+                    color: palette.mid
+                    font.pixelSize: 16
+                }
             }
 
             Frame {
