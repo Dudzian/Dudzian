@@ -398,7 +398,16 @@ def flush_qt_deletes_after_qml(request: pytest.FixtureRequest) -> Generator[None
     for _ in range(3):
         QCoreApplication.sendPostedEvents(None, QEvent.DeferredDelete)
         app.processEvents(QEventLoop.AllEvents, 50)
-    QQmlEngine.collectGarbage()
+    # PySide6: w niektórych wersjach collectGarbage nie jest statyczne w bindingach
+    # i wymaga instancji (TypeError "unbound method ... needs an argument").
+    try:
+        QQmlEngine.collectGarbage()
+    except TypeError:
+        try:
+            QQmlEngine().collectGarbage()
+        except Exception:
+            # GC jest best-effort – nie chcemy failować teardownu przez różnice w bindingach
+            pass
     import gc
 
     gc.collect()
