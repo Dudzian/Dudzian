@@ -2,12 +2,12 @@
 
 from __future__ import annotations
 
+import importlib
 import json
 from datetime import datetime
 from pathlib import Path
+from types import ModuleType
 from typing import Any, Iterable, Mapping
-
-import yaml
 
 from bot_core.observability.slo import (
     SLOCompositeDefinition,
@@ -36,11 +36,22 @@ def _parse_datetime(value: Any) -> datetime | None:
         return None
 
 
+def _require_yaml() -> ModuleType:
+    try:
+        return importlib.import_module("yaml")
+    except (ModuleNotFoundError, ImportError) as exc:
+        raise RuntimeError(
+            "Brak opcjonalnej zależności 'PyYAML'. Zainstaluj pakiet PyYAML, "
+            "aby korzystać z konfiguracji YAML."
+        ) from exc
+
+
 def _load_yaml_or_json(path: Path) -> Any:
     text = path.read_text(encoding="utf-8")
     try:
         return json.loads(text)
     except json.JSONDecodeError:
+        yaml = _require_yaml()
         return yaml.safe_load(text)
 
 
@@ -164,4 +175,3 @@ __all__ = [
     "load_slo_definitions",
     "load_slo_measurements",
 ]
-

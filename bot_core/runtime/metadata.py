@@ -3,11 +3,11 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from pathlib import Path
-from typing import Iterable, Mapping, Sequence, Tuple, Any
+import importlib
 import logging
-
-import yaml
+from pathlib import Path
+from types import ModuleType
+from typing import Any, Iterable, Mapping, Sequence, Tuple
 
 from bot_core.runtime.paths import resolve_core_config_path
 
@@ -24,6 +24,16 @@ except Exception:  # pragma: no cover - brak modułu loadera
 
 _RUNTIME_RESOLVER_ATTEMPTED = _resolve_runtime_entrypoint is not None
 _TYPED_LOADER_ATTEMPTED = _load_core_config is not None
+
+
+def _require_yaml() -> ModuleType:
+    try:
+        return importlib.import_module("yaml")
+    except (ModuleNotFoundError, ImportError) as exc:
+        raise RuntimeError(
+            "Brak opcjonalnej zależności 'PyYAML'. Zainstaluj pakiet PyYAML, "
+            "aby korzystać z konfiguracji YAML."
+        ) from exc
 
 
 @dataclass(frozen=True, slots=True)
@@ -319,6 +329,7 @@ def _read_raw_core_config(
 ) -> Mapping[str, object] | None:
     try:
         with Path(path).open("r", encoding="utf-8") as handle:
+            yaml = _require_yaml()
             payload = yaml.safe_load(handle) or {}
     except Exception as exc:  # pragma: no cover - fallback diagnostyczny
         if logger is not None:
