@@ -191,7 +191,59 @@ def _invoke_cloud_cli(
                 f"Serwer cloud nie zasygnalizował gotowości (brak {ready_file}):\n{output}"
             )
 
-        data = json.loads(ready_file.read_text(encoding="utf-8"))
+        data: dict[str, Any] = {}
+        process_exited = False
+        if expect_mode == "active":
+            for _ in range(120):  # 30s
+                if proc.poll() is not None:
+                    process_exited = True
+                    break
+                try:
+                    data = json.loads(ready_file.read_text(encoding="utf-8"))
+                except json.JSONDecodeError:
+                    time.sleep(0.25)
+                    continue
+                if (
+                    data.get("healthStatus") == "ready"
+                    and data.get("orchestratorReady") is True
+                ):
+                    break
+                time.sleep(0.25)
+            if not (
+                data.get("healthStatus") == "ready"
+                and data.get("orchestratorReady") is True
+            ):
+                _terminate_process(proc)
+                output = _read_available_stdout(proc)
+                exit_code = proc.poll()
+                status_hint = "process exited before readiness, " if process_exited else ""
+                last_health_status = data.get("healthStatus")
+                last_orchestrator_ready = data.get("orchestratorReady")
+                raise AssertionError(
+                    "Serwer cloud nie osiągnął finalnej gotowości "
+                    f"({status_hint}healthStatus=ready, orchestratorReady=True, "
+                    f"exit_code={exit_code}, last_healthStatus={last_health_status}, "
+                    f"last_orchestratorReady={last_orchestrator_ready}):\n{output}"
+                )
+        if not data:
+            try:
+                data = json.loads(ready_file.read_text(encoding="utf-8"))
+            except json.JSONDecodeError:
+                _terminate_process(proc)
+                output = _read_available_stdout(proc)
+                exit_code = proc.poll()
+                raw = ""
+                try:
+                    raw_bytes = ready_file.read_bytes()
+                    raw = raw_bytes.decode("utf-8", errors="replace")
+                except OSError:
+                    pass
+                raise AssertionError(
+                    "Serwer cloud zwrócił niepoprawny JSON w ready.json "
+                    f"(exit_code={exit_code}).\n"
+                    f"raw ready.json content:\n{raw}\n"
+                    f"{output}"
+                )
         assert isinstance(data, dict)
         assert data.get("event") == "ready"
         runtime_cfg = data.get("runtime", {})

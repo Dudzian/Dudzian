@@ -129,6 +129,14 @@ class CloudRuntimeService:
             for registrar in self._registrars:
                 registrar(server.grpc_server, context)
             server.start()
+            self._server = server
+            self._address = server.address
+            self._update_health(
+                status="listening",
+                address=self._address,
+                orchestrator_ready=False,
+            )
+            self._emit_ready_event()
             marketplace_interval = (
                 self._config.marketplace.refresh_interval_seconds
                 if self._config.marketplace.auto_reload
@@ -140,18 +148,15 @@ class CloudRuntimeService:
                 health_hook=self._on_orchestrator_health,
             )
             context.cloud_orchestrator = orchestrator
-            self._on_orchestrator_health(orchestrator.health_snapshot())
             orchestrator.start()
-            self._server = server
             self._orchestrator = orchestrator
-            self._address = server.address
-            self._emit_ready_event()
-            orchestrator_health = orchestrator.health_snapshot() if orchestrator else {}
+            self._on_orchestrator_health(orchestrator.health_snapshot())
             self._update_health(
                 status="ready",
+                orchestrator_ready=True,
                 address=self._address,
-                orchestrator=orchestrator_health,
             )
+            self._emit_ready_event()
 
     def stop(self) -> None:
         with self._lock:
@@ -230,7 +235,23 @@ class CloudRuntimeService:
             return
         payload = self._build_ready_payload()
         try:
+            LOGGER.info(
+                "About to emit ready",
+                extra={
+                    "address": self._address,
+                    "status": payload.get("healthStatus"),
+                    "mode": payload.get("runtime", {}).get("mode"),
+                },
+            )
             self._ready_hook(payload)
+            LOGGER.info(
+                "Emitted ready",
+                extra={
+                    "address": self._address,
+                    "status": payload.get("healthStatus"),
+                    "mode": payload.get("runtime", {}).get("mode"),
+                },
+            )
         except Exception:  # pragma: no cover - handler zewnętrzny
             LOGGER.debug("Ready hook zgłosił wyjątek", exc_info=True)
 
@@ -244,6 +265,8 @@ class CloudRuntimeService:
         return {
             "event": "ready",
             "address": self._address,
+            "healthStatus": self._health_snapshot.get("status"),
+            "orchestratorReady": self._health_snapshot.get("orchestrator_ready"),
             "runtime": {
                 "config": str(self._config.runtime.config_path),
                 "entrypoint": self._config.runtime.entrypoint,
