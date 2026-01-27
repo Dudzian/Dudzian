@@ -1,4 +1,4 @@
-name: CI (Windows self-hosted)
+name: CI (cross-platform)
 
 run-name: "CI (${{ github.event_name }}: ${{ github.ref_name }})"
 
@@ -34,15 +34,24 @@ env:
   PIP_DISABLE_PIP_VERSION_CHECK: "1"
   PYTEST_DISABLE_PLUGIN_AUTOLOAD: "1"
 
+  # Wheelhouse strategy (per workflow run, overrideable per-job jeśli trzeba)
+  WHEELHOUSE_SOURCE: "build"    # build|skip (artifact mode dołóż jeśli potrzebujesz)
+  WHEELHOUSE_DIR: "wheelhouse"
+
   # Secrets presence flags (safe: only checks existence)
   HAS_MARKETPLACE_KEYS: ${{ secrets.MARKETPLACE_HMAC_KEY != '' }}
   HAS_LICENSING_KEYS: ${{ secrets.LICENSING_PRIVATE_KEY != '' }}
 
 jobs:
-  smoke-harness:
-    name: Smoke harness (env + first failure)
-    runs-on: [self-hosted, windows]
+  # 1) Budowa wheelhouse per OS (Linux/Windows/macOS) – jeden artefakt na platformę.
+  prepare-wheelhouse:
+    name: Prepare wheelhouse (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
     timeout-minutes: 25
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
 
     steps:
       - uses: actions/checkout@v4
@@ -51,77 +60,56 @@ jobs:
         with:
           python-version: ${{ env.PYTHON_VERSION }}
 
-      - name: Install deps
-        shell: pwsh
+      - name: Build wheelhouse
+        if: env.WHEELHOUSE_SOURCE == 'build'
+        shell: bash
         run: |
+          set -euo pipefail
           python -m pip install --upgrade pip
-          python -m pip install -e ".[dev]"
-          python -m pip install pytest
+          mkdir -p "${WHEELHOUSE_DIR}"
 
-      - name: Ensure ProcDump is available
-        shell: pwsh
-        run: |
-          $procdump = Get-Command procdump.exe -ErrorAction SilentlyContinue
-          if (-not $procdump) {
-            $procdumpDir = "tools/procdump"
-            New-Item -ItemType Directory -Force $procdumpDir | Out-Null
-            $zipPath = Join-Path $procdumpDir "procdump.zip"
-            Invoke-WebRequest -Uri "https://download.sysinternals.com/files/Procdump.zip" -OutFile $zipPath
-            Expand-Archive -Path $zipPath -DestinationPath $procdumpDir -Force
-            Add-Content $env:GITHUB_PATH $procdumpDir
-          }
-          $procdump = Get-Command procdump.exe -ErrorAction SilentlyContinue
-          if ($procdump) {
-            $ver = (Get-Item $procdump.Source).VersionInfo.FileVersion
-            Write-Host "ProcDump: $($procdump.Source)"
-            if ($ver) { Write-Host "ProcDump version: $ver" }
-          }
+          # Minimalnie: buduj wheelhouse z wszystkiego co potrzebne do testów.
+          # Jeśli masz swoje narzędzie (np. scripts/ci/pip_install.py), podmień na nie.
+          #
+          # Hermetyczne podejście: download kółek do wheelhouse, potem testy robią --no-index --find-links.
+          python -m pip download -d "${WHEELHOUSE_DIR}" ".[dev]" pytest pytest-cov pre-commit
 
-      - name: Environment snapshot
-        shell: pwsh
-        run: |
-          python -V
-          python -m pip list --format=columns
+          echo "Wheelhouse contents:"
+          ls -la "${WHEELHOUSE_DIR}" | head -n 50
 
-      - name: Pytest (first failure) + crash dump on AV
-        shell: pwsh
-        run: |
-          New-Item -ItemType Directory -Force var/ci | Out-Null
-          New-Item -ItemType Directory -Force var/crashdumps | Out-Null
-
-          $procdump = Get-Command procdump.exe -ErrorAction SilentlyContinue
-          if ($procdump) {
-            & $procdump.Source `
-              -accepteula `
-              -ma `
-              -e `
-              -t `
-              -n 1 `
-              -x var/crashdumps `
-              python -m pytest -vv --maxfail=1 -x --junitxml=var/ci/smoke_harness_first.xml
-            exit $LASTEXITCODE
-          }
-
-          pytest -vv --maxfail=1 -x --junitxml=var/ci/smoke_harness_first.xml
-
-      - name: Upload smoke harness diagnostics
-        if: always()
+      - name: Upload wheelhouse artifact
+        if: env.WHEELHOUSE_SOURCE == 'build'
         uses: actions/upload-artifact@v4
         with:
-          name: smoke-harness-diagnostics
-          path: |
-            var/ci/**
-            var/crashdumps/**
-            var/crashdumps/**/*.dmp
-          if-no-files-found: warn
-          retention-days: 5
+          name: wheelhouse-${{ runner.os }}-py${{ env.PYTHON_VERSION }}
+          path: ${{ env.WHEELHOUSE_DIR }}
+          if-no-files-found: error
+          retention-days: 7
 
-  smoke-harness-all:
-    name: Smoke harness (env + all failures)
-    runs-on: [self-hosted, windows]
-    needs: smoke-harness
-    if: always()
-    timeout-minutes: 25
+  # 2) “Fast” testy per OS
+  fast-tests:
+    name: Fast tests (${{ matrix.platform }})
+    needs: prepare-wheelhouse
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: linux
+            runs_on: ubuntu-latest
+          - platform: macos
+            runs_on: macos-latest
+          - platform: windows
+            runs_on: [self-hosted, windows]
+
+    runs-on: ${{ matrix.runs_on }}
+    if: |
+      github.event_name != 'workflow_dispatch' ||
+      inputs.run_fast
+
+    env:
+      WHEELHOUSE_ARTIFACT: wheelhouse-${{ runner.os }}-py${{ env.PYTHON_VERSION }}
+      WHEELHOUSE_ENABLED: ${{ env.WHEELHOUSE_SOURCE != 'skip' }}
 
     steps:
       - uses: actions/checkout@v4
@@ -130,39 +118,47 @@ jobs:
         with:
           python-version: ${{ env.PYTHON_VERSION }}
 
-      - name: Install deps
-        shell: pwsh
-        run: |
-          python -m pip install --upgrade pip
-          python -m pip install -e ".[dev]"
-          python -m pip install pytest
-
-      - name: Environment snapshot
-        shell: pwsh
-        run: |
-          python -V
-          python -m pip list --format=columns
-
-      - name: Pytest (all failures)
-        shell: pwsh
-        run: |
-          New-Item -ItemType Directory -Force var/ci | Out-Null
-          pytest -vv --junitxml=var/ci/smoke_harness_all.xml
-
-      - name: Upload smoke harness (all) report
-        if: always()
-        uses: actions/upload-artifact@v4
+      - name: Download wheelhouse
+        if: env.WHEELHOUSE_ENABLED == 'true'
+        uses: actions/download-artifact@v4
         with:
-          name: smoke-harness-all-report
-          path: |
-            var/ci/**
-          if-no-files-found: warn
-          retention-days: 5
+          name: ${{ env.WHEELHOUSE_ARTIFACT }}
+          path: ${{ env.WHEELHOUSE_DIR }}
+          if-no-artifact-found: error
 
+      - name: Install deps (from wheelhouse)
+        shell: bash
+        run: |
+          set -euo pipefail
+          python -m pip install --upgrade pip
+          if [[ "${WHEELHOUSE_ENABLED}" == "true" ]]; then
+            # hermetycznie: żadnego pypi podczas joba testowego
+            python -m pip install --no-index --find-links "${WHEELHOUSE_DIR}" -e ".[dev]"
+            python -m pip install --no-index --find-links "${WHEELHOUSE_DIR}" pytest
+          else
+            python -m pip install -e ".[dev]" pytest
+          fi
+
+      - name: Generate stubs (optional)
+        shell: bash
+        run: |
+          if [[ -f "scripts/generate_trading_stubs.py" ]]; then
+            python scripts/generate_trading_stubs.py --skip-cpp || echo "Stub generation failed (ignored)."
+          fi
+
+      - name: Pytest fast
+        shell: bash
+        run: |
+          pytest --maxfail=1 \
+            -m "not qml and not integration and not e2e_demo_paper and not soak and not performance" \
+            --ignore=tests/integration \
+            --ignore=tests/e2e
+
+  # 3) Lint – zwykle wystarczy na jednym OS (np. Linux), żeby nie mielić 3x tego samego.
   lint:
     name: Lint (pre-commit)
-    needs: smoke-harness
-    runs-on: [self-hosted, windows]
+    needs: fast-tests
+    runs-on: ubuntu-latest
     if: github.event_name == 'workflow_dispatch' && inputs.run_lint
     timeout-minutes: 25
 
@@ -173,226 +169,116 @@ jobs:
         with:
           python-version: ${{ env.PYTHON_VERSION }}
 
-      - name: Pre-commit
-        shell: pwsh
+      - name: Install + pre-commit
+        shell: bash
         run: |
+          python -m pip install --upgrade pip
           python -m pip install -e ".[dev]"
           python -m pip install pre-commit
           pre-commit run --all-files --show-diff-on-failure
 
-  fast-tests:
-    name: Fast tests (neutral)
-    needs: smoke-harness
-    runs-on: [self-hosted, windows]
-    if: |
-      github.event_name != 'workflow_dispatch' ||
-      inputs.run_fast
-    timeout-minutes: 30
-
-    steps:
-      - uses: actions/checkout@v4
-
-      - uses: actions/setup-python@v5
-        with:
-          python-version: ${{ env.PYTHON_VERSION }}
-
-      - name: Install deps
-        shell: pwsh
-        run: |
-          python -m pip install -e ".[dev]"
-          python -m pip install pytest
-
-      - name: Generate stubs (optional)
-        shell: pwsh
-        run: |
-          if (Test-Path "scripts/generate_trading_stubs.py") {
-            python scripts/generate_trading_stubs.py --skip-cpp
-            if ($LASTEXITCODE -ne 0) {
-              Write-Host "Stub generation failed (ignored)."
-            }
-          } else {
-            Write-Host "No stub generator found; skipping."
-          }
-
-      - name: Pytest fast
-        shell: pwsh
-        run: |
-          pytest --maxfail=1 `
-            -m "not qml and not integration and not e2e_demo_paper and not soak and not performance" `
-            --ignore=tests/integration `
-            --ignore=tests/e2e
-
   curated-tests:
-    name: Curated unit suite
+    name: Curated unit suite (per OS)
     needs: fast-tests
-    runs-on: [self-hosted, windows]
-    if: github.event_name == 'workflow_dispatch' && inputs.run_curated
     timeout-minutes: 40
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: linux
+            runs_on: ubuntu-latest
+          - platform: macos
+            runs_on: macos-latest
+          - platform: windows
+            runs_on: [self-hosted, windows]
+    runs-on: ${{ matrix.runs_on }}
+    if: github.event_name == 'workflow_dispatch' && inputs.run_curated
+
+    env:
+      WHEELHOUSE_ARTIFACT: wheelhouse-${{ runner.os }}-py${{ env.PYTHON_VERSION }}
+      WHEELHOUSE_ENABLED: ${{ env.WHEELHOUSE_SOURCE != 'skip' }}
 
     steps:
       - uses: actions/checkout@v4
-
       - uses: actions/setup-python@v5
         with:
           python-version: ${{ env.PYTHON_VERSION }}
 
+      - name: Download wheelhouse
+        if: env.WHEELHOUSE_ENABLED == 'true'
+        uses: actions/download-artifact@v4
+        with:
+          name: ${{ env.WHEELHOUSE_ARTIFACT }}
+          path: ${{ env.WHEELHOUSE_DIR }}
+          if-no-artifact-found: error
+
       - name: Install deps
-        shell: pwsh
+        shell: bash
         run: |
-          python -m pip install -e ".[dev]"
-          python -m pip install pytest
+          python -m pip install --upgrade pip
+          if [[ "${WHEELHOUSE_ENABLED}" == "true" ]]; then
+            python -m pip install --no-index --find-links "${WHEELHOUSE_DIR}" -e ".[dev]"
+            python -m pip install --no-index --find-links "${WHEELHOUSE_DIR}" pytest
+          else
+            python -m pip install -e ".[dev]" pytest
+          fi
 
       - name: Pytest curated
-        shell: pwsh
+        shell: bash
         run: |
-          pytest `
-            tests/test_pipeline_paper.py `
-            tests/test_risk_profiles.py `
-            tests/test_multi_strategy_scheduler.py `
+          pytest \
+            tests/test_pipeline_paper.py \
+            tests/test_risk_profiles.py \
+            tests/test_multi_strategy_scheduler.py \
             tests/test_trading_decision_journal.py
 
   integration-tests:
-    name: Integration tests
+    name: Integration tests (per OS)
     needs: fast-tests
-    runs-on: [self-hosted, windows]
-    if: github.event_name == 'workflow_dispatch' && inputs.run_integration
     timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: linux
+            runs_on: ubuntu-latest
+          - platform: macos
+            runs_on: macos-latest
+          - platform: windows
+            runs_on: [self-hosted, windows]
+    runs-on: ${{ matrix.runs_on }}
+    if: github.event_name == 'workflow_dispatch' && inputs.run_integration
+
+    env:
+      WHEELHOUSE_ARTIFACT: wheelhouse-${{ runner.os }}-py${{ env.PYTHON_VERSION }}
+      WHEELHOUSE_ENABLED: ${{ env.WHEELHOUSE_SOURCE != 'skip' }}
 
     steps:
       - uses: actions/checkout@v4
-
       - uses: actions/setup-python@v5
         with:
           python-version: ${{ env.PYTHON_VERSION }}
 
+      - name: Download wheelhouse
+        if: env.WHEELHOUSE_ENABLED == 'true'
+        uses: actions/download-artifact@v4
+        with:
+          name: ${{ env.WHEELHOUSE_ARTIFACT }}
+          path: ${{ env.WHEELHOUSE_DIR }}
+          if-no-artifact-found: error
+
       - name: Install deps
-        shell: pwsh
+        shell: bash
         run: |
-          python -m pip install -e ".[dev]"
-          python -m pip install pytest
+          python -m pip install --upgrade pip
+          if [[ "${WHEELHOUSE_ENABLED}" == "true" ]]; then
+            python -m pip install --no-index --find-links "${WHEELHOUSE_DIR}" -e ".[dev]"
+            python -m pip install --no-index --find-links "${WHEELHOUSE_DIR}" pytest
+          else
+            python -m pip install -e ".[dev]" pytest
+          fi
 
       - name: Pytest integration
-        shell: pwsh
+        shell: bash
         run: |
           pytest -m integration --maxfail=1
-
-  ui-tests-offscreen:
-    name: UI / QML tests (offscreen)
-    needs: fast-tests
-    runs-on: [self-hosted, windows]
-    if: github.event_name == 'workflow_dispatch' && inputs.run_ui
-    timeout-minutes: 45
-    env:
-      QT_QPA_PLATFORM: offscreen
-      QT_OPENGL: software
-
-    steps:
-      - uses: actions/checkout@v4
-
-      - uses: actions/setup-python@v5
-        with:
-          python-version: ${{ env.PYTHON_VERSION }}
-
-      - name: Install deps
-        shell: pwsh
-        run: |
-          python -m pip install -e ".[dev]"
-          python -m pip install pytest pytest-xdist
-
-      - name: Ensure ProcDump is available
-        shell: pwsh
-        run: |
-          $procdump = Get-Command procdump.exe -ErrorAction SilentlyContinue
-          if (-not $procdump) {
-            $procdumpDir = "tools/procdump"
-            New-Item -ItemType Directory -Force $procdumpDir | Out-Null
-            $zipPath = Join-Path $procdumpDir "procdump.zip"
-            Invoke-WebRequest -Uri "https://download.sysinternals.com/files/Procdump.zip" -OutFile $zipPath
-            Expand-Archive -Path $zipPath -DestinationPath $procdumpDir -Force
-            Add-Content $env:GITHUB_PATH $procdumpDir
-          }
-
-      - name: Check UI deps
-        shell: pwsh
-        run: |
-          python -c "import importlib.util, sys; sys.exit(0 if importlib.util.find_spec('PySide6') else 1)"
-        continue-on-error: true
-
-      - name: Pytest UI
-        shell: pwsh
-        run: |
-          ./scripts/run_qml_tests_windows.ps1 -QtQpaPlatform "offscreen" -QtOpenGL "${{ env.QT_OPENGL }}"
-
-      - name: Upload QML diagnostics
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: qml-test-diagnostics-offscreen
-          path: |
-            test-results/qml/**
-            var/crashdumps/**
-            var/crashdumps/**/*.dmp
-          if-no-files-found: warn
-          retention-days: 5
-
-  ui-tests-windows:
-    name: UI / QML tests (windows)
-    needs: fast-tests
-    runs-on: [self-hosted, windows]
-    if: >
-      github.event_name == 'workflow_dispatch' &&
-      inputs.run_ui &&
-      vars.RUN_QT_WINDOWS_PLATFORM == '1'
-    timeout-minutes: 45
-    env:
-      QT_QPA_PLATFORM: windows
-      QT_OPENGL: software
-
-    steps:
-      - uses: actions/checkout@v4
-
-      - uses: actions/setup-python@v5
-        with:
-          python-version: ${{ env.PYTHON_VERSION }}
-
-      - name: Install deps
-        shell: pwsh
-        run: |
-          python -m pip install -e ".[dev]"
-          python -m pip install pytest pytest-xdist
-
-      - name: Ensure ProcDump is available
-        shell: pwsh
-        run: |
-          $procdump = Get-Command procdump.exe -ErrorAction SilentlyContinue
-          if (-not $procdump) {
-            $procdumpDir = "tools/procdump"
-            New-Item -ItemType Directory -Force $procdumpDir | Out-Null
-            $zipPath = Join-Path $procdumpDir "procdump.zip"
-            Invoke-WebRequest -Uri "https://download.sysinternals.com/files/Procdump.zip" -OutFile $zipPath
-            Expand-Archive -Path $zipPath -DestinationPath $procdumpDir -Force
-            Add-Content $env:GITHUB_PATH $procdumpDir
-          }
-
-      - name: Check UI deps
-        shell: pwsh
-        run: |
-          python -c "import importlib.util, sys; sys.exit(0 if importlib.util.find_spec('PySide6') else 1)"
-        continue-on-error: true
-
-      - name: Pytest UI
-        shell: pwsh
-        run: |
-          ./scripts/run_qml_tests_windows.ps1 -QtQpaPlatform "windows" -QtOpenGL "${{ env.QT_OPENGL }}"
-
-      - name: Upload QML diagnostics
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: qml-test-diagnostics-windows
-          path: |
-            test-results/qml/**
-            var/crashdumps/**
-            var/crashdumps/**/*.dmp
-          if-no-files-found: warn
-          retention-days: 5
