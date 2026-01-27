@@ -38,6 +38,20 @@ def test_is_backend_available_uses_cached_import(monkeypatch: pytest.MonkeyPatch
     assert backends.require_backend("lightgbm") is sentinel
 
 
+def test_is_backend_available_handles_oserror(monkeypatch: pytest.MonkeyPatch) -> None:
+    original_import = importlib.import_module
+
+    def _raise_oserror(name: str, package: str | None = None):
+        if name == "lightgbm":
+            raise OSError("Library not loaded: @rpath/libomp.dylib")
+        return original_import(name, package)
+
+    monkeypatch.setattr(importlib, "import_module", _raise_oserror)
+    assert backends.is_backend_available("lightgbm") is False
+    with pytest.raises(backends.BackendUnavailableError):
+        backends.require_backend("lightgbm")
+
+
 def test_get_backend_priority_from_custom_config(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     config = tmp_path / "backends.yml"
     config.write_text(

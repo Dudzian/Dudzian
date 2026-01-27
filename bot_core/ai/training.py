@@ -101,9 +101,16 @@ def register_external_model_adapter(adapter: ExternalModelAdapter) -> None:
     )
 
 
+def ensure_external_adapters_initialized() -> None:
+    """Rejestruje domyślne adaptery modeli zewnętrznych, jeśli jeszcze nie istnieją."""
+
+    _ensure_default_external_adapters()
+
+
 def get_external_model_adapter(name: str) -> ExternalModelAdapter:
     """Zwraca adapter dla wskazanego backendu."""
 
+    ensure_external_adapters_initialized()
     backend = name.lower()
     if backend not in _EXTERNAL_ADAPTERS:
         raise KeyError(f"Brak adaptera dla backendu '{name}'")
@@ -352,6 +359,7 @@ class ModelTrainer:
         adapter_options: Mapping[str, object] | None = None,
     ) -> None:
         ensure_ai_signals_enabled("trenowania modeli AI")
+        ensure_external_adapters_initialized()
         if not 0.0 <= validation_split < 1.0:
             raise ValueError("validation_split musi zawierać się w przedziale [0, 1)")
         if not 0.0 <= test_split < 1.0:
@@ -1597,9 +1605,6 @@ def _ensure_default_external_adapters() -> None:
         )
 
 
-_ensure_default_external_adapters()
-
-
 __all__ = [
     "DecisionStump",
     "ExternalModelAdapter",
@@ -1609,6 +1614,7 @@ __all__ = [
     "SimpleGradientBoostingModel",
     "TrainingRunOutcome",
     "WalkForwardTrainingCoordinator",
+    "ensure_external_adapters_initialized",
     "get_external_model_adapter",
     "register_external_model_adapter",
 ]

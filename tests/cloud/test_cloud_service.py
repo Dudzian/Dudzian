@@ -10,7 +10,7 @@ import sys
 import time
 from enum import Enum
 from pathlib import Path
-from typing import Any
+from typing import Any, Mapping
 
 import pytest
 
@@ -98,7 +98,11 @@ def _read_available_stdout(proc: subprocess.Popen[str]) -> str:
 
 # --- Tests ---
 def _invoke_cloud_cli(
-    tmp_path: Path, *, ci_smoke: bool, expect_mode: str
+    tmp_path: Path,
+    *,
+    ci_smoke: bool,
+    expect_mode: str,
+    extra_env: Mapping[str, str] | None = None,
 ) -> dict[str, Any]:
     """
     Startuje scripts/run_cloud_service.py i czeka aż zapisze ready-file.
@@ -121,6 +125,8 @@ def _invoke_cloud_cli(
     # Windows runners w GitHub Actions potrafią buforować stdout pythonowego
     # subprocessu, co utrudnia diagnostykę przy ewentualnym błędzie startu.
     env.setdefault("PYTHONUNBUFFERED", "1")
+    if extra_env:
+        env.update(extra_env)
 
     # config cloud dla uruchomienia
     config_path = tmp_path / "cloud.yaml"
@@ -210,6 +216,18 @@ def _invoke_cloud_cli(
 def test_cloud_cli_smoke_ready(tmp_path: Path) -> None:
     data = _invoke_cloud_cli(tmp_path, ci_smoke=True, expect_mode="smoke")
     assert data["address"] == "ci-smoke"
+
+
+def test_cloud_cli_smoke_ready_handles_lightgbm_oserror(
+    tmp_path: Path,
+) -> None:
+    data = _invoke_cloud_cli(
+        tmp_path,
+        ci_smoke=True,
+        expect_mode="smoke",
+        extra_env={"BOT_CORE_SIMULATE_BACKEND_IMPORT_OSERROR": "lightgbm"},
+    )
+    assert data["runtime"]["mode"] == "smoke"
 
 
 @pytest.mark.integration
