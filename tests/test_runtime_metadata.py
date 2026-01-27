@@ -10,6 +10,7 @@ import pytest
 import tests._pathbootstrap  # noqa: F401  # pylint: disable=unused-import
 
 from bot_core.risk.settings import RiskManagerSettings, derive_risk_manager_settings
+import bot_core.runtime.metadata as metadata
 from bot_core.runtime.metadata import (
     load_risk_manager_settings,
     load_risk_profile_config,
@@ -97,9 +98,13 @@ def test_load_risk_profile_config_falls_back_to_yaml(
     core_config_path: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
 ) -> None:
     caplog.set_level(logging.DEBUG)
-    monkeypatch.setattr("bot_core.runtime.metadata._load_core_config", None)
-    monkeypatch.setattr("bot_core.runtime.metadata._TYPED_LOADER_ATTEMPTED", True)
-    name, profile = load_risk_profile_config("auto_trader", config_path=core_config_path, logger=logging.getLogger(__name__))
+    monkeypatch.setattr(metadata, "_load_core_config", None)
+    monkeypatch.setattr(metadata, "_TYPED_LOADER_ATTEMPTED", True)
+    name, profile = metadata.load_risk_profile_config(
+        "auto_trader",
+        config_path=core_config_path,
+        logger=logging.getLogger(__name__),
+    )
     assert name == "balanced"
     assert isinstance(profile, dict)
     assert profile["max_position_pct"] == pytest.approx(0.05)
@@ -119,9 +124,9 @@ def test_load_risk_manager_settings_combines_sources(core_config_path: Path) -> 
 def test_load_risk_manager_settings_handles_yaml_fallback(
     core_config_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    monkeypatch.setattr("bot_core.runtime.metadata._load_core_config", None)
-    monkeypatch.setattr("bot_core.runtime.metadata._TYPED_LOADER_ATTEMPTED", True)
-    name, profile, settings = load_risk_manager_settings(
+    monkeypatch.setattr(metadata, "_load_core_config", None)
+    monkeypatch.setattr(metadata, "_TYPED_LOADER_ATTEMPTED", True)
+    name, profile, settings = metadata.load_risk_manager_settings(
         "auto_trader",
         config_path=core_config_path,
         logger=logging.getLogger(__name__),
