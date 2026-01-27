@@ -19,8 +19,6 @@ from pathlib import Path
 from types import ModuleType, SimpleNamespace
 from typing import TYPE_CHECKING, Any, Callable, Iterable, Iterator, Mapping, MutableMapping, Sequence
 
-import yaml
-
 from bot_core.alerts import AlertSeverity, DefaultAlertRouter, emit_alert
 from bot_core.alerts.base import AlertAuditLog, AlertChannel
 from bot_core.config.loader import load_core_config
@@ -685,6 +683,16 @@ def _load_callable_from_path(target: str) -> Callable[..., Any]:
 
 _LOGGER = logging.getLogger(__name__)
 
+
+def _require_yaml() -> ModuleType:
+    try:
+        return importlib.import_module("yaml")
+    except (ModuleNotFoundError, ImportError) as exc:
+        raise RuntimeError(
+            "Brak opcjonalnej zależności 'PyYAML'. Zainstaluj pakiet PyYAML, "
+            "aby korzystać z konfiguracji YAML."
+        ) from exc
+
 try:  # pragma: no cover - w środowiskach developerskich manifest może nie istnieć
     verify_bundle_integrity()
 except RuntimeIntegrityError:
@@ -1317,6 +1325,7 @@ def _load_raw_runtime_entrypoints(core_config: CoreConfig) -> Mapping[str, Any]:
         )
         return {}
     try:
+        yaml = _require_yaml()
         parsed = yaml.safe_load(raw_text)
     except Exception:  # pragma: no cover - diagnostyka formatu YAML
         _LOGGER.debug(

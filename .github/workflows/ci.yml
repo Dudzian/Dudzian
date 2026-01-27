@@ -10,9 +10,13 @@ on:
     - cron: "0 3 * * *"
 
 env:
+  PYTHON_VERSION: "3.11"
   PYSIDE6_VERSION: "6.7.0"
   QT_DESKTOP_MODULES: "qtcharts qtdeclarative qtquickcontrols2"
   QT_WINDOWS_MODULES: "qtcharts qtdeclarative qtquickcontrols2 qtshadertools qtimageformats"
+  # Override WHEELHOUSE_SOURCE/WHEELHOUSE_DIR at the job level if using workflow_dispatch inputs.
+  WHEELHOUSE_SOURCE: "build"
+  WHEELHOUSE_DIR: "wheelhouse"
 
 jobs:
   # Source of truth: builds or fetches wheelhouse artifacts consumed by downstream jobs.
@@ -22,7 +26,8 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest]
+        # Note: Windows wheelhouse artifacts must remain compatible with self-hosted Windows runners.
+        os: [ubuntu-latest, windows-latest]
     if: |
       github.event_name == 'schedule' ||
       github.event_name == 'workflow_dispatch' ||
@@ -30,12 +35,6 @@ jobs:
       (github.event_name == 'push' &&
         (startsWith(github.ref, 'refs/heads/release/') || github.ref == 'refs/heads/stable' || github.ref == 'refs/heads/main'))
     timeout-minutes: 25
-    outputs:
-      wheelhouse_source: ${{ steps.wheelhouse-plan.outputs.wheelhouse_source }}
-      wheelhouse_dir: ${{ steps.wheelhouse-plan.outputs.wheelhouse_dir }}
-      wheelhouse_artifact: ${{ steps.wheelhouse-plan.outputs.wheelhouse_artifact }}
-      wheelhouse_enabled: ${{ steps.wheelhouse-plan.outputs.wheelhouse_enabled }}
-
     steps:
       - name: Check out repository
         uses: actions/checkout@v4
@@ -44,7 +43,7 @@ jobs:
         id: setup-python
         uses: actions/setup-python@v5
         with:
-          python-version: "3.11"
+          python-version: ${{ env.PYTHON_VERSION }}
 
       - name: Decide wheelhouse strategy
         id: wheelhouse-plan
@@ -55,7 +54,12 @@ jobs:
           # Single decision point: choose how wheelhouse is sourced in this workflow run.
           source="${WHEELHOUSE_SOURCE:-build}"
           wheelhouse_dir="${WHEELHOUSE_DIR:-wheelhouse}"
-          artifact_name="${WHEELHOUSE_ARTIFACT_NAME:-wheelhouse-${{ runner.os }}-py${PY_VERSION}}"
+          py_major_minor="$(python -c "import sys; print(f'{sys.version_info.major}.{sys.version_info.minor}')")"
+          if [[ "${PYTHON_VERSION}" != "${py_major_minor}" ]]; then
+            echo "PYTHON_VERSION must be set to major.minor (e.g. 3.11). Got: ${PYTHON_VERSION}, actual: ${py_major_minor}." >&2
+            exit 1
+          fi
+          artifact_name="${WHEELHOUSE_ARTIFACT_NAME:-wheelhouse-${{ runner.os }}-py${py_major_minor}}"
           wheelhouse_enabled=true
 
           case "${source}" in
@@ -133,10 +137,10 @@ jobs:
     runs-on: [self-hosted, windows]
     needs: prepare-wheelhouse
     env:
-      WHEELHOUSE_DIR: ${{ needs.prepare-wheelhouse.outputs.wheelhouse_dir }}
-      WHEELHOUSE_SOURCE: ${{ needs.prepare-wheelhouse.outputs.wheelhouse_source }}
-      WHEELHOUSE_ARTIFACT: ${{ needs.prepare-wheelhouse.outputs.wheelhouse_artifact }}
-      WHEELHOUSE_ENABLED: ${{ needs.prepare-wheelhouse.outputs.wheelhouse_enabled }}
+      WHEELHOUSE_DIR: ${{ env.WHEELHOUSE_DIR }}
+      WHEELHOUSE_SOURCE: ${{ env.WHEELHOUSE_SOURCE }}
+      WHEELHOUSE_ARTIFACT: wheelhouse-${{ runner.os }}-py${{ env.PYTHON_VERSION }}
+      WHEELHOUSE_ENABLED: ${{ env.WHEELHOUSE_SOURCE != 'skip' }}
 
     steps:
       - name: Check out repository
@@ -146,7 +150,7 @@ jobs:
         id: setup-python
         uses: actions/setup-python@v5
         with:
-          python-version: "3.11"
+          python-version: ${{ env.PYTHON_VERSION }}
 
       - name: Determine pip cache directory
         id: pip-cache
@@ -187,13 +191,13 @@ jobs:
       - name: Install dependencies
         shell: bash
         run: |
-          python -m pip install --upgrade pip
-          wheelhouse_args=()
-          if [[ "${WHEELHOUSE_ENABLED}" == "true" ]]; then
-            wheelhouse_args+=(--wheelhouse "$WHEELHOUSE_DIR" --require-wheelhouse)
-          fi
-          python scripts/ci/pip_install.py "${wheelhouse_args[@]}" -- .[dev]
-          python scripts/ci/pip_install.py "${wheelhouse_args[@]}" -- pytest pytest-cov pre-commit
+          bash scripts/ci/install_deps_python.sh
+          python -m pip install pre-commit
+
+      - name: Preflight test environment
+        shell: bash
+        run: |
+          python scripts/ci/preflight_test_env.py
 
       # Full lint suite via pre-commit: runs ruff + mypy just like local `pre-commit run --all-files`.
       # Local: pre-commit run --all-files --show-diff-on-failure
@@ -203,7 +207,6 @@ jobs:
       - name: Prepare test reports directory
         shell: bash
         run: mkdir -p test-results
-
       # Unit tests with coverage and JUnit output; replicate locally with the same pytest command.
       # Local: pytest --cov=bot_core.strategies --cov=bot_core.runtime.multi_strategy_scheduler --cov=bot_core.runtime.journal \
       #   --cov-config=.coveragerc --cov-report=xml --cov-report=term --cov-fail-under=75 tests/... (list below)
@@ -262,14 +265,18 @@ jobs:
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
-          python-version: "3.11"
+          python-version: ${{ env.PYTHON_VERSION }}
 
       - name: Install dependencies
         shell: bash
         run: |
           python -m pip install --upgrade pip
-          pip install .[dev]
+          python -m pip install .[dev]
 
+      - name: Preflight test environment
+        shell: bash
+        run: |
+          python scripts/ci/preflight_test_env.py
       - name: Run HWID tolerance tests
         shell: bash
         run: |
@@ -304,13 +311,13 @@ jobs:
         id: setup-python
         uses: actions/setup-python@v5
         with:
-          python-version: "3.11"
+          python-version: ${{ env.PYTHON_VERSION }}
 
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install .[dev]
-          pip install mypy
+          python -m pip install .[dev]
+          python -m pip install mypy
 
       - name: Run mypy for core packages
         run: python -m mypy
@@ -320,10 +327,10 @@ jobs:
     runs-on: ubuntu-latest
     needs: prepare-wheelhouse
     env:
-      WHEELHOUSE_DIR: ${{ needs.prepare-wheelhouse.outputs.wheelhouse_dir }}
-      WHEELHOUSE_SOURCE: ${{ needs.prepare-wheelhouse.outputs.wheelhouse_source }}
-      WHEELHOUSE_ARTIFACT: ${{ needs.prepare-wheelhouse.outputs.wheelhouse_artifact }}
-      WHEELHOUSE_ENABLED: ${{ needs.prepare-wheelhouse.outputs.wheelhouse_enabled }}
+      WHEELHOUSE_DIR: ${{ env.WHEELHOUSE_DIR }}
+      WHEELHOUSE_SOURCE: ${{ env.WHEELHOUSE_SOURCE }}
+      WHEELHOUSE_ARTIFACT: wheelhouse-${{ runner.os }}-py${{ env.PYTHON_VERSION }}
+      WHEELHOUSE_ENABLED: ${{ env.WHEELHOUSE_SOURCE != 'skip' }}
 
     steps:
       - name: Check out repository
@@ -355,17 +362,12 @@ jobs:
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
-          python-version: "3.11"
+          python-version: ${{ env.PYTHON_VERSION }}
 
       - name: Install dependencies
         shell: bash
         run: |
-          python -m pip install --upgrade pip
-          wheelhouse_args=()
-          if [[ "${WHEELHOUSE_ENABLED}" == "true" ]]; then
-            wheelhouse_args+=(--wheelhouse "$WHEELHOUSE_DIR" --require-wheelhouse)
-          fi
-          python scripts/ci/pip_install.py "${wheelhouse_args[@]}" -- .[dev]
+          bash scripts/ci/install_deps_python.sh
 
       - name: Install mypy
         shell: bash
@@ -376,9 +378,13 @@ jobs:
           fi
           python scripts/ci/pip_install.py "${wheelhouse_args[@]}" -- mypy
 
+      - name: Preflight test environment
+        shell: bash
+        run: |
+          python scripts/ci/preflight_test_env.py
+
       - name: Type check with mypy
         run: mypy
-
       - name: Pytest demo→paper scenario
         run: pytest -m e2e_demo_paper --maxfail=1 --disable-warnings
 
@@ -388,15 +394,16 @@ jobs:
       - name: Pytest execution router integrations
         run: pytest tests/integration/test_execution_router_failover.py
 
-  bot-core-fast-tests:
-    name: Bot Core Fast Tests
+  py-tests-windows:
+    name: Python tests (Windows)
     runs-on: [self-hosted, windows]
     needs: prepare-wheelhouse
     timeout-minutes: 25
     env:
-      WHEELHOUSE_DIR: ${{ needs.prepare-wheelhouse.outputs.wheelhouse_dir }}
-      WHEELHOUSE_SOURCE: ${{ needs.prepare-wheelhouse.outputs.wheelhouse_source }}
-      WHEELHOUSE_ARTIFACT: ${{ needs.prepare-wheelhouse.outputs.wheelhouse_artifact }}
+      WHEELHOUSE_DIR: ${{ env.WHEELHOUSE_DIR }}
+      WHEELHOUSE_SOURCE: ${{ env.WHEELHOUSE_SOURCE }}
+      WHEELHOUSE_ARTIFACT: wheelhouse-${{ runner.os }}-py${{ env.PYTHON_VERSION }}
+      WHEELHOUSE_ENABLED: ${{ env.WHEELHOUSE_SOURCE != 'skip' }}
 
     steps:
       - name: Check out repository
@@ -417,21 +424,20 @@ jobs:
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
-          python-version: "3.11"
+          python-version: ${{ env.PYTHON_VERSION }}
 
       - name: Install dependencies
         shell: bash
         run: |
-          python -m pip install --upgrade pip
-          wheelhouse_args=()
-          if [[ "${WHEELHOUSE_ENABLED}" == "true" ]]; then
-            wheelhouse_args+=(--wheelhouse "$WHEELHOUSE_DIR" --require-wheelhouse)
-          fi
-          python scripts/ci/pip_install.py "${wheelhouse_args[@]}" -- .[dev]
+          bash scripts/ci/install_deps_python.sh
 
       - name: Generate trading stubs
         run: python scripts/generate_trading_stubs.py --skip-cpp
 
+      - name: Preflight test environment
+        shell: bash
+        run: |
+          python scripts/ci/preflight_test_env.py
       - name: Run fast pytest suite
         env:
           PYTEST_FAST: "1"
@@ -473,10 +479,134 @@ jobs:
           if-no-files-found: warn
           retention-days: 3
 
+  py-tests-ubuntu:
+    name: Python tests (Ubuntu)
+    runs-on: ubuntu-latest
+    needs: prepare-wheelhouse
+    timeout-minutes: 25
+    env:
+      WHEELHOUSE_DIR: ${{ env.WHEELHOUSE_DIR }}
+      WHEELHOUSE_SOURCE: ${{ env.WHEELHOUSE_SOURCE }}
+      WHEELHOUSE_ARTIFACT: wheelhouse-${{ runner.os }}-py${{ env.PYTHON_VERSION }}
+      WHEELHOUSE_ENABLED: ${{ env.WHEELHOUSE_SOURCE != 'skip' }}
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Download wheelhouse
+        if: env.WHEELHOUSE_ENABLED == 'true'
+        uses: actions/download-artifact@v4
+        with:
+          name: ${{ env.WHEELHOUSE_ARTIFACT }}
+          path: ${{ env.WHEELHOUSE_DIR }}
+          if-no-artifact-found: error
+
+      - name: Lint repository paths
+        run: python scripts/lint_paths.py
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: Install dependencies
+        shell: bash
+        run: |
+          bash scripts/ci/install_deps_python.sh
+
+      - name: Generate trading stubs
+        run: python scripts/generate_trading_stubs.py --skip-cpp
+
+      - name: Preflight test environment
+        shell: bash
+        run: |
+          python scripts/ci/preflight_test_env.py
+      - name: Run fast pytest suite
+        env:
+          PYTEST_FAST: "1"
+          PYTEST_DISABLE_PLUGIN_AUTOLOAD: "1"
+        run: |
+          mkdir -p test-results
+          pytest \
+            --fast \
+            -m "not integration and not e2e_demo_paper and not retraining and not soak and not performance" \
+            --ignore=tests/e2e \
+            --ignore=tests/integration \
+            --maxfail=1 \
+            --durations=10 \
+            --junitxml=test-results/pytest.xml
+
+      - name: Upload pytest results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: py-tests-ubuntu-pytest-results
+          path: test-results/pytest.xml
+          retention-days: 3
+
+  py-tests-macos:
+    name: Python tests (macOS)
+    runs-on: macos-latest
+    needs: prepare-wheelhouse
+    timeout-minutes: 25
+    env:
+      WHEELHOUSE_DIR: ${{ env.WHEELHOUSE_DIR }}
+      WHEELHOUSE_SOURCE: "skip"
+      WHEELHOUSE_ARTIFACT: wheelhouse-${{ runner.os }}-py${{ env.PYTHON_VERSION }}
+      WHEELHOUSE_ENABLED: "false"
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Lint repository paths
+        run: python scripts/lint_paths.py
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: Install dependencies
+        shell: bash
+        run: |
+          bash scripts/ci/install_deps_python.sh
+
+      - name: Generate trading stubs
+        run: python scripts/generate_trading_stubs.py --skip-cpp
+
+      - name: Preflight test environment
+        shell: bash
+        run: |
+          python scripts/ci/preflight_test_env.py
+      - name: Run fast pytest suite
+        env:
+          PYTEST_FAST: "1"
+          PYTEST_DISABLE_PLUGIN_AUTOLOAD: "1"
+        run: |
+          mkdir -p test-results
+          pytest \
+            --fast \
+            -m "not integration and not e2e_demo_paper and not retraining and not soak and not performance" \
+            --ignore=tests/e2e \
+            --ignore=tests/integration \
+            --maxfail=1 \
+            --durations=10 \
+            --junitxml=test-results/pytest.xml
+
+      - name: Upload pytest results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: py-tests-macos-pytest-results
+          path: test-results/pytest.xml
+          retention-days: 3
+
   loopback-e2e:
     name: Loopback E2E
     runs-on: ubuntu-latest
-    needs: bot-core-fast-tests
+    needs: py-tests-windows
 
     steps:
       - name: Check out repository
@@ -531,12 +661,12 @@ jobs:
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
-          python-version: "3.11"
+          python-version: ${{ env.PYTHON_VERSION }}
 
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install .[dev]
+          python -m pip install .[dev]
 
       - name: Generate exchange adapter report
         run: |
@@ -585,7 +715,7 @@ jobs:
         id: setup-python
         uses: actions/setup-python@v5
         with:
-          python-version: "3.11"
+          python-version: ${{ env.PYTHON_VERSION }}
 
       - name: Install dependencies
         run: |
@@ -724,10 +854,10 @@ jobs:
       QT_QUICK_BACKEND: software
       PYTEST_REQUIRE_QML: "1"
       QML_DIAGNOSTICS_DIR: test-results/qml
-      WHEELHOUSE_DIR: ${{ needs.prepare-wheelhouse.outputs.wheelhouse_dir }}
-      WHEELHOUSE_SOURCE: ${{ needs.prepare-wheelhouse.outputs.wheelhouse_source }}
-      WHEELHOUSE_ARTIFACT: ${{ needs.prepare-wheelhouse.outputs.wheelhouse_artifact }}
-      WHEELHOUSE_ENABLED: ${{ needs.prepare-wheelhouse.outputs.wheelhouse_enabled }}
+      WHEELHOUSE_DIR: ${{ env.WHEELHOUSE_DIR }}
+      WHEELHOUSE_SOURCE: ${{ env.WHEELHOUSE_SOURCE }}
+      WHEELHOUSE_ARTIFACT: wheelhouse-${{ runner.os }}-py${{ env.PYTHON_VERSION }}
+      WHEELHOUSE_ENABLED: ${{ env.WHEELHOUSE_SOURCE != 'skip' }}
 
     steps:
       - name: Check out repository
@@ -737,7 +867,7 @@ jobs:
         id: setup-python
         uses: actions/setup-python@v5
         with:
-          python-version: "3.11"
+          python-version: ${{ env.PYTHON_VERSION }}
 
       - name: Install system dependencies
         run: |
@@ -773,6 +903,10 @@ jobs:
             shiboken6==${{ env.PYSIDE6_VERSION }}
           python scripts/ci/pip_install.py --wheelhouse "$WHEELHOUSE_DIR" -- .[dev]
 
+      - name: Preflight test environment
+        shell: bash
+        run: |
+          python scripts/ci/preflight_test_env.py
       - name: Collect/import QML risk panel test module (smoke)
         run: |
           set -o pipefail
@@ -815,10 +949,10 @@ jobs:
     env:
       QT_QPA_PLATFORM: offscreen
       QT_QUICK_BACKEND: software
-      WHEELHOUSE_DIR: ${{ needs.prepare-wheelhouse.outputs.wheelhouse_dir }}
-      WHEELHOUSE_SOURCE: ${{ needs.prepare-wheelhouse.outputs.wheelhouse_source }}
-      WHEELHOUSE_ARTIFACT: ${{ needs.prepare-wheelhouse.outputs.wheelhouse_artifact }}
-      WHEELHOUSE_ENABLED: ${{ needs.prepare-wheelhouse.outputs.wheelhouse_enabled }}
+      WHEELHOUSE_DIR: ${{ env.WHEELHOUSE_DIR }}
+      WHEELHOUSE_SOURCE: ${{ env.WHEELHOUSE_SOURCE }}
+      WHEELHOUSE_ARTIFACT: wheelhouse-${{ runner.os }}-py${{ env.PYTHON_VERSION }}
+      WHEELHOUSE_ENABLED: ${{ env.WHEELHOUSE_SOURCE != 'skip' }}
 
     steps:
       - name: Check out repository
@@ -827,7 +961,7 @@ jobs:
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
-          python-version: "3.11"
+          python-version: ${{ env.PYTHON_VERSION }}
 
       - name: Install system dependencies
         run: |
@@ -854,9 +988,13 @@ jobs:
             shiboken6==${{ env.PYSIDE6_VERSION }}
           python scripts/ci/pip_install.py --wheelhouse "$WHEELHOUSE_DIR" -- .[dev]
 
+      - name: Preflight test environment
+        shell: bash
+        run: |
+          python scripts/ci/preflight_test_env.py
+
       - name: Generate trading stubs
         run: python scripts/generate_trading_stubs.py --skip-cpp
-
       - name: Run gRPC decision feed tests
         run: |
           mkdir -p test-results/grpc
@@ -979,9 +1117,10 @@ jobs:
     env:
       QT_QPA_PLATFORM: offscreen
       QT_QUICK_BACKEND: software
-      WHEELHOUSE_DIR: ${{ needs.prepare-wheelhouse.outputs.wheelhouse_dir }}
-      WHEELHOUSE_SOURCE: ${{ needs.prepare-wheelhouse.outputs.wheelhouse_source }}
-      WHEELHOUSE_ARTIFACT: ${{ needs.prepare-wheelhouse.outputs.wheelhouse_artifact }}
+      WHEELHOUSE_DIR: ${{ env.WHEELHOUSE_DIR }}
+      WHEELHOUSE_SOURCE: ${{ env.WHEELHOUSE_SOURCE }}
+      WHEELHOUSE_ARTIFACT: wheelhouse-${{ runner.os }}-py${{ env.PYTHON_VERSION }}
+      WHEELHOUSE_ENABLED: ${{ env.WHEELHOUSE_SOURCE != 'skip' }}
 
     steps:
       - name: Check out repository
@@ -990,7 +1129,7 @@ jobs:
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
-          python-version: "3.11"
+          python-version: ${{ env.PYTHON_VERSION }}
 
       - name: Install system dependencies
         run: |
@@ -1017,9 +1156,13 @@ jobs:
             shiboken6==${{ env.PYSIDE6_VERSION }}
           python scripts/ci/pip_install.py --wheelhouse "$WHEELHOUSE_DIR" -- .[dev]
 
+      - name: Preflight test environment
+        shell: bash
+        run: |
+          python scripts/ci/preflight_test_env.py
+
       - name: Generate trading stubs
         run: python scripts/generate_trading_stubs.py --skip-cpp
-
       - name: Run gRPC soak tests
         run: |
           mkdir -p test-results/grpc-soak
@@ -1095,10 +1238,10 @@ jobs:
       cancel-in-progress: true
     env:
       QT_QPA_PLATFORM: offscreen
-      WHEELHOUSE_DIR: ${{ needs.prepare-wheelhouse.outputs.wheelhouse_dir }}
-      WHEELHOUSE_SOURCE: ${{ needs.prepare-wheelhouse.outputs.wheelhouse_source }}
-      WHEELHOUSE_ARTIFACT: ${{ needs.prepare-wheelhouse.outputs.wheelhouse_artifact }}
-      WHEELHOUSE_ENABLED: ${{ needs.prepare-wheelhouse.outputs.wheelhouse_enabled }}
+      WHEELHOUSE_DIR: ${{ env.WHEELHOUSE_DIR }}
+      WHEELHOUSE_SOURCE: ${{ env.WHEELHOUSE_SOURCE }}
+      WHEELHOUSE_ARTIFACT: wheelhouse-${{ runner.os }}-py${{ env.PYTHON_VERSION }}
+      WHEELHOUSE_ENABLED: ${{ env.WHEELHOUSE_SOURCE != 'skip' }}
 
     steps:
       - name: Check out repository
@@ -1114,7 +1257,7 @@ jobs:
         id: setup-python
         uses: actions/setup-python@v5
         with:
-          python-version: "3.11"
+          python-version: ${{ env.PYTHON_VERSION }}
 
       - name: Install system dependencies
         run: |
@@ -1140,6 +1283,11 @@ jobs:
             PySide6_Essentials==${{ env.PYSIDE6_VERSION }} \
             shiboken6==${{ env.PYSIDE6_VERSION }}
           python scripts/ci/pip_install.py --wheelhouse "$WHEELHOUSE_DIR" -- .[dev]
+
+      - name: Preflight test environment
+        shell: bash
+        run: |
+          python scripts/ci/preflight_test_env.py
 
       - name: Determine performance metrics mode
         env:
@@ -1218,7 +1366,6 @@ jobs:
             --manifest data/backtests/normalized/manifest.yaml \
             --output-dir reports/ci/benchmark_backtests \
             --regression-budget 0.10
-
       - name: Run backtest performance tests
         run: >-
           pytest
@@ -1453,13 +1600,17 @@ jobs:
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
-          python-version: "3.11"
+          python-version: ${{ env.PYTHON_VERSION }}
 
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
           python -m pip install .[dev]
 
+      - name: Preflight test environment
+        shell: bash
+        run: |
+          python scripts/ci/preflight_test_env.py
       - name: Run marketplace catalog validation tests
         run: |
           mkdir -p test-results/marketplace
@@ -1493,13 +1644,17 @@ jobs:
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
-          python-version: "3.11"
+          python-version: ${{ env.PYTHON_VERSION }}
 
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
           python -m pip install .[dev]
 
+      - name: Preflight test environment
+        shell: bash
+        run: |
+          python scripts/ci/preflight_test_env.py
       - name: Define marketplace packaging artifacts
         id: marketplace-artifact-metadata
         run: |
@@ -1577,10 +1732,10 @@ jobs:
             platform: linux
     # Builds platform-specific UI bundles that the deploy job publishes.
     env:
-      WHEELHOUSE_DIR: ${{ needs.prepare-wheelhouse.outputs.wheelhouse_dir }}
-      WHEELHOUSE_SOURCE: ${{ needs.prepare-wheelhouse.outputs.wheelhouse_source }}
-      WHEELHOUSE_ARTIFACT: ${{ needs.prepare-wheelhouse.outputs.wheelhouse_artifact }}
-      WHEELHOUSE_ENABLED: ${{ needs.prepare-wheelhouse.outputs.wheelhouse_enabled }}
+      WHEELHOUSE_DIR: ${{ env.WHEELHOUSE_DIR }}
+      WHEELHOUSE_SOURCE: ${{ env.WHEELHOUSE_SOURCE }}
+      WHEELHOUSE_ARTIFACT: wheelhouse-${{ runner.os }}-py${{ env.PYTHON_VERSION }}
+      WHEELHOUSE_ENABLED: ${{ env.WHEELHOUSE_SOURCE != 'skip' }}
 
     steps:
       - name: Check out repository
@@ -1598,7 +1753,7 @@ jobs:
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
-          python-version: "3.11"
+          python-version: ${{ env.PYTHON_VERSION }}
 
       - name: Install Protobuf on macOS
         if: matrix.os == 'macos-latest'
@@ -1662,7 +1817,7 @@ jobs:
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
-          python-version: "3.11"
+          python-version: ${{ env.PYTHON_VERSION }}
 
       - name: Install dependencies
         run: |

@@ -43,6 +43,24 @@ Jeżeli dodajesz dodatkowe testy jednostkowe/integracyjne, dopisz je do sekcji
 "Test Plan" w opisie PR. Pamiętaj, aby **nie** przełączać środowiska na live
 bez pisemnego zatwierdzenia zespołu compliance po zakończeniu testów demo.
 
+## Lokalny setup środowiska testowego
+
+Minimalny zestaw kroków, który zapewnia dostęp do zależności testowych
+(w tym `pandas` i `PyYAML`) oraz szybkie wykrywanie braków:
+
+```bash
+python -m venv .venv
+source .venv/bin/activate
+python -m pip install -e ".[dev]"
+python scripts/ci/preflight_test_env.py
+pytest -q
+```
+
+Jeżeli preflight zgłasza brakujące zależności, zainstaluj ponownie projekt z
+`.[dev]` lub sprawdź, czy nie używasz instalacji z `--no-deps`.
+Gdy zobaczysz `ModuleNotFoundError: pandas`, najczęściej testy uruchamiasz poza
+aktywnym `venv` albo projekt został zainstalowany bez `.[dev]`.
+
 Lint layoutu kończy się błędem za każdym razem, gdy w repozytorium pojawią się
 zakazane katalogi (prefiksy historyczne z poprzedniego etapu) albo pliki wykonywalne wewnątrz `archive/`.
 Pozostałości należy usunąć lub przenieść do dokumentacji historycznej przed
