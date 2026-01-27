@@ -26,4 +26,4 @@ print(f"[install-deps] python={sys.version}")
 PY
 
 python -m pip install --upgrade pip
-python scripts/ci/pip_install.py "${wheelhouse_args[@]}" -- -e ".[dev]"
+python scripts/ci/pip_install.py "${wheelhouse_args[@]+"${wheelhouse_args[@]}"}" -- -e ".[dev]"
