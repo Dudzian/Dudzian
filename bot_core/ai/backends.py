@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import importlib
 import logging
+import os
 from functools import lru_cache
 from pathlib import Path
 from types import ModuleType
@@ -112,6 +113,34 @@ def _resolve_backend_entry(
     return module_name, entry
 
 
+def _parse_backend_list(value: str | None) -> set[str]:
+    if not value:
+        return set()
+    if value.strip().lower() == "all":
+        return {"all"}
+    items = [item.strip().lower() for item in value.replace(";", ",").split(",")]
+    expanded: list[str] = []
+    for item in items:
+        expanded.extend(part for part in item.split() if part)
+    return {item for item in expanded if item}
+
+
+def _is_backend_disabled(backend: str) -> bool:
+    disabled = _parse_backend_list(os.environ.get("BOT_CORE_ML_BACKENDS_DISABLE"))
+    if "all" in disabled:
+        return True
+    return backend.strip().lower() in disabled
+
+
+def _is_backend_import_error_simulated(backend: str) -> bool:
+    simulated = _parse_backend_list(
+        os.environ.get("BOT_CORE_SIMULATE_BACKEND_IMPORT_OSERROR")
+    )
+    if "all" in simulated:
+        return True
+    return backend.strip().lower() in simulated
+
+
 @lru_cache(maxsize=None)
 def _import_backend_module(module_name: str) -> ModuleType:
     return importlib.import_module(module_name)
@@ -121,13 +150,15 @@ def is_backend_available(backend: str, *, config_path: Path | None = None) -> bo
     """Sprawdza, czy wskazany backend ML ma dostępny moduł importowy."""
 
     module_name, entry = _resolve_backend_entry(backend, config_path=config_path)
+    if _is_backend_disabled(backend) or _is_backend_import_error_simulated(backend):
+        return False
     if module_name is None:
         # Backend typu "builtin" nie wymaga importu zewnętrznego.
         available_flag = entry.get("available", True) if isinstance(entry, Mapping) else True
         return bool(available_flag)
     try:
         _import_backend_module(module_name)
-    except ModuleNotFoundError:
+    except (ModuleNotFoundError, ImportError, OSError):
         return False
     return True
 
@@ -138,14 +169,22 @@ def require_backend(backend: str, *, config_path: Path | None = None) -> ModuleT
     module_name, entry = _resolve_backend_entry(backend, config_path=config_path)
     if module_name is None:
         raise BackendUnavailableError(backend, module_name)
+    if _is_backend_disabled(backend):
+        raise BackendUnavailableError(backend, module_name)
     install_hint = None
     if isinstance(entry, Mapping):
         raw_hint = entry.get("install_hint")
         if isinstance(raw_hint, str) and raw_hint.strip():
             install_hint = raw_hint.strip()
+    if _is_backend_import_error_simulated(backend):
+        raise BackendUnavailableError(
+            backend,
+            module_name,
+            install_hint=install_hint,
+        ) from OSError("Symulowany błąd ładowania backendu ML")
     try:
         return _import_backend_module(module_name)
-    except ModuleNotFoundError as exc:
+    except (ModuleNotFoundError, ImportError, OSError) as exc:
         raise BackendUnavailableError(backend, module_name, install_hint=install_hint) from exc
 
 
@@ -177,4 +216,3 @@ __all__ = [
     "is_backend_available",
     "require_backend",
 ]
-
