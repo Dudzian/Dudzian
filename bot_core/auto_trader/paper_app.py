@@ -52,10 +52,8 @@ from bot_core.security.guards import (
     install_capability_guard,
 )
 from bot_core.security.license_service import LicenseService, LicenseServiceError
-from bot_core.runtime.metadata import (
-    RiskManagerSettings,
-    load_risk_manager_settings,
-)
+from bot_core.risk.settings import RiskManagerSettings
+from bot_core.runtime.metadata import load_risk_manager_settings
 from bot_core.runtime.paths import resolve_core_config_path
 
 

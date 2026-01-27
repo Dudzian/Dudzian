@@ -9,9 +9,8 @@ import pytest
 
 import tests._pathbootstrap  # noqa: F401  # pylint: disable=unused-import
 
+from bot_core.risk.settings import RiskManagerSettings, derive_risk_manager_settings
 from bot_core.runtime.metadata import (
-    RiskManagerSettings,
-    derive_risk_manager_settings,
     load_risk_manager_settings,
     load_risk_profile_config,
     load_runtime_entrypoint_metadata,

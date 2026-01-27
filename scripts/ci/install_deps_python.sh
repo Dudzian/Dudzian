@@ -26,8 +26,14 @@ print(f"[install-deps] python={sys.version}")
 PY
 
 python -m pip install --upgrade pip
+install_extras="$(echo "${INSTALL_EXTRAS:-test}" | xargs)"
+if [[ -z "${install_extras}" ]]; then
+  echo "[install-deps] INSTALL_EXTRAS is empty" >&2
+  exit 2
+fi
+echo "[install-deps] extras=${install_extras}"
 if (( ${#wheelhouse_args[@]} > 0 )); then
-  python scripts/ci/pip_install.py "${wheelhouse_args[@]}" -- -e ".[dev]"
+  python scripts/ci/pip_install.py "${wheelhouse_args[@]}" -- -e ".[${install_extras}]"
 else
-  python scripts/ci/pip_install.py -- -e ".[dev]"
+  python scripts/ci/pip_install.py -- -e ".[${install_extras}]"
 fi

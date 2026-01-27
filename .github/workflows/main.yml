@@ -87,7 +87,6 @@ jobs:
         run: |
           set -euo pipefail
           bash scripts/ci/install_deps_python.sh
-          python -m pip install pytest
 
       - name: Preflight
         shell: bash
@@ -116,8 +115,7 @@ jobs:
         shell: pwsh
         run: |
           python -m pip install --upgrade pip
-          python -m pip install -e ".[dev]"
-          python -m pip install pytest
+          python -m pip install -e ".[test]"
 
       - name: Preflight
         shell: pwsh
@@ -147,7 +145,6 @@ jobs:
         run: |
           set -euo pipefail
           bash scripts/ci/install_deps_python.sh
-          python -m pip install pytest
 
       - name: Preflight
         shell: bash
@@ -202,8 +199,7 @@ jobs:
         shell: bash
         run: |
           python -m pip install --upgrade pip
-          python -m pip install -e ".[dev]"
-          python -m pip install pytest
+          python -m pip install -e ".[test]"
       - name: Pytest curated
         shell: bash
         run: |
@@ -228,8 +224,7 @@ jobs:
         shell: pwsh
         run: |
           python -m pip install --upgrade pip
-          python -m pip install -e ".[dev]"
-          python -m pip install pytest
+          python -m pip install -e ".[test]"
       - name: Pytest curated
         shell: pwsh
         run: |
@@ -254,8 +249,7 @@ jobs:
         shell: bash
         run: |
           python -m pip install --upgrade pip
-          python -m pip install -e ".[dev]"
-          python -m pip install pytest
+          python -m pip install -e ".[test]"
       - name: Pytest curated
         shell: bash
         run: |
@@ -284,8 +278,7 @@ jobs:
         shell: bash
         run: |
           python -m pip install --upgrade pip
-          python -m pip install -e ".[dev]"
-          python -m pip install pytest
+          python -m pip install -e ".[test]"
       - name: Pytest integration
         shell: bash
         run: |
@@ -332,8 +325,7 @@ jobs:
         shell: bash
         run: |
           python -m pip install --upgrade pip
-          python -m pip install -e ".[dev]"
-          python -m pip install pytest
+          python -m pip install -e ".[test]"
       - name: Run soak tests
         shell: bash
         run: |
@@ -358,8 +350,7 @@ jobs:
         shell: bash
         run: |
           python -m pip install --upgrade pip
-          python -m pip install -e ".[dev]"
-          python -m pip install pytest
+          python -m pip install -e ".[test]"
       - name: Run performance tests
         shell: bash
         run: |
@@ -393,8 +384,7 @@ jobs:
         shell: bash
         run: |
           python -m pip install --upgrade pip
-          python -m pip install -e ".[dev]"
-          python -m pip install pytest
+          python -m pip install -e ".[test]"
       - name: Preflight
         shell: bash
         run: python scripts/ci/preflight_test_env.py
@@ -425,8 +415,8 @@ jobs:
         shell: pwsh
         run: |
           python -m pip install --upgrade pip
-          python -m pip install -e ".[dev]"
-          python -m pip install pytest pytest-xdist
+          python -m pip install -e ".[test]"
+          python -m pip install pytest-xdist
       - name: Preflight
         shell: pwsh
         run: python scripts/ci/preflight_test_env.py
@@ -453,8 +443,7 @@ jobs:
         shell: bash
         run: |
           python -m pip install --upgrade pip
-          python -m pip install -e ".[dev]"
-          python -m pip install pytest
+          python -m pip install -e ".[test]"
       - name: Preflight
         shell: bash
         run: python scripts/ci/preflight_test_env.py

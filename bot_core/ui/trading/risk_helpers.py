@@ -5,7 +5,7 @@ import logging
 from dataclasses import dataclass
 from typing import Any, Optional
 
-from bot_core.runtime.metadata import RiskManagerSettings
+from bot_core.risk.settings import RiskManagerSettings
 
 try:  # pragma: no cover - runtime bootstrap may be stripped in minimal builds
     from bot_core.runtime.metadata import load_risk_manager_settings
