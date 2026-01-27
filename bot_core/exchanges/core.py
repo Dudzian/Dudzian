@@ -8,11 +8,12 @@ import math
 import time
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Any, Callable, Dict, Iterable, List, Optional
+from typing import Any, Callable, Dict, Iterable, List, Optional, TYPE_CHECKING
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from bot_core.database.manager import DatabaseManager
+if TYPE_CHECKING:  # pragma: no cover
+    from bot_core.database.manager import DatabaseManager
 
 log = logging.getLogger(__name__)
 
@@ -267,7 +268,12 @@ class PaperBackend(BaseBackend):
         base_fee = self.FEE_RATE if fee_rate is None else float(fee_rate)
         self._fee_rate = max(0.0, base_fee)
         self._managed_db = database is None
-        self._db = database or DatabaseManager("sqlite+aiosqlite:///trading.db")
+        if database is None:
+            from bot_core.database.manager import DatabaseManager
+
+            self._db = DatabaseManager("sqlite+aiosqlite:///trading.db")
+        else:
+            self._db = database
         if hasattr(self._db, "sync") and hasattr(self._db.sync, "init_db"):
             try:
                 self._db.sync.init_db()
@@ -712,4 +718,3 @@ __all__ = [
     "SignalDTO",
     "TradeDTO",
 ]
-
