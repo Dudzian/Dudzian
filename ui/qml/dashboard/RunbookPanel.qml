@@ -8,35 +8,35 @@ Item {
     implicitWidth: 720
     implicitHeight: 560
 
-    property var runbookController: (typeof runbookController !== "undefined" ? runbookController : null)
+    property var runbookControllerObj: (typeof runbookController !== "undefined" ? runbookController : null)
     property int refreshIntervalMs: 5000
     property var pendingAction: ({ runbookId: "", actionId: "", label: "", confirmMessage: "" })
     property var actionStatus: ({})
 
     function refreshAlerts() {
-        if (!root.runbookController)
+        if (!root.runbookControllerObj)
             return
-        root.runbookController.refreshAlerts()
+        root.runbookControllerObj.refreshAlerts()
     }
 
     Timer {
         id: refreshTimer
         interval: Math.max(2000, root.refreshIntervalMs)
         repeat: true
-        running: !!root.runbookController
+        running: !!root.runbookControllerObj
         triggeredOnStart: true
         onTriggered: root.refreshAlerts()
     }
 
     Connections {
-        target: root.runbookController
+        target: root.runbookControllerObj
         ignoreUnknownSignals: true
         function onErrorMessageChanged() {
-            errorBanner.visible = root.runbookController.errorMessage.length > 0
+            errorBanner.visible = root.runbookControllerObj.errorMessage.length > 0
         }
         function onActionStatusChanged() {
             try {
-                root.actionStatus = JSON.parse(root.runbookController.actionStatus)
+                root.actionStatus = JSON.parse(root.runbookControllerObj.actionStatus)
                 actionStatusBanner.visible = root.actionStatus && root.actionStatus.status
             } catch (err) {
                 root.actionStatus = ({})
@@ -57,8 +57,8 @@ Item {
             Text {
                 id: lastUpdatedLabel
                 objectName: "runbookPanelLastUpdated"
-                text: root.runbookController && root.runbookController.lastUpdated.length > 0
-                      ? qsTrId("runbookPanel.lastUpdated").arg(root.runbookController.lastUpdated)
+                text: root.runbookControllerObj && root.runbookControllerObj.lastUpdated.length > 0
+                      ? qsTrId("runbookPanel.lastUpdated").arg(root.runbookControllerObj.lastUpdated)
                       : qsTrId("runbookPanel.lastUpdatedFallback")
                 color: Styles.AppTheme.textSecondary
                 font.pointSize: 12
@@ -69,7 +69,7 @@ Item {
             Button {
                 id: refreshButton
                 text: qsTrId("runbookPanel.refresh")
-                enabled: !!root.runbookController
+                enabled: !!root.runbookControllerObj
                 onClicked: root.refreshAlerts()
             }
         }
@@ -85,7 +85,7 @@ Item {
 
             Text {
                 anchors.centerIn: parent
-                text: root.runbookController ? root.runbookController.errorMessage : ""
+                text: root.runbookControllerObj ? root.runbookControllerObj.errorMessage : ""
                 color: "white"
                 font.pointSize: 11
             }
@@ -137,11 +137,24 @@ Item {
                 Repeater {
                     id: alertsRepeater
                     objectName: "runbookPanelRepeater"
-                    model: root.runbookController ? root.runbookController.alerts : []
+                    model: root.runbookControllerObj ? root.runbookControllerObj.alerts : []
 
                     Frame {
                         Layout.fillWidth: true
                         readonly property var alert: (typeof modelData !== "undefined" && modelData !== null) ? modelData : model
+                        function getField(obj, key, fallback) {
+                            if (!obj)
+                                return fallback
+                            var v = obj[key]
+                            if (v === undefined) {
+                                try {
+                                    v = obj[key]
+                                } catch (err) {
+                                    v = undefined
+                                }
+                            }
+                            return (v === undefined || v === null) ? fallback : v
+                        }
                         background: Rectangle {
                             radius: 6
                             color: Qt.rgba(0.16, 0.18, 0.22, 0.9)
@@ -152,9 +165,9 @@ Item {
                             anchors.margins: 12
                             spacing: 6
 
-                            readonly property string envText: "" + (alert.environment || alert["environment"] || "")
-                            readonly property string queueText: "" + (alert.queue || alert["queue"] || "")
-                            readonly property string msgText: "" + (alert.message || alert["message"] || "")
+                            readonly property string envText: "" + getField(alert, "environment", "")
+                            readonly property string queueText: "" + getField(alert, "queue", "")
+                            readonly property string msgText: "" + getField(alert, "message", "")
 
                             Text {
                                 text: envText.length > 0
@@ -174,7 +187,7 @@ Item {
                                 Layout.fillWidth: true
                                 spacing: 8
 
-                                readonly property string severityValue: (alert.severity || alert["severity"] || "")
+                                readonly property string severityValue: getField(alert, "severity", "")
 
                                 Rectangle {
                                     width: 12
@@ -192,7 +205,7 @@ Item {
 
                                 Item { Layout.fillWidth: true }
 
-                                readonly property var tsRaw: (alert.timestamp !== undefined ? alert.timestamp : alert["timestamp"])
+                                readonly property var tsRaw: getField(alert, "timestamp", undefined)
                                 readonly property string tsText: (tsRaw === undefined || tsRaw === null) ? "" : ("" + tsRaw)
 
                                 Text {
@@ -208,8 +221,8 @@ Item {
                                 spacing: 8
 
                                 Text {
-                                    text: (alert.runbookTitle || alert["runbookTitle"] || "").length > 0
-                                          ? qsTrId("runbookPanel.runbookAssigned").arg(alert.runbookTitle || alert["runbookTitle"])
+                                    text: (getField(alert, "runbookTitle", "")).length > 0
+                                          ? qsTrId("runbookPanel.runbookAssigned").arg(getField(alert, "runbookTitle", ""))
                                           : qsTrId("runbookPanel.runbookMissing")
                                     color: Styles.AppTheme.textSecondary
                                     wrapMode: Text.Wrap
@@ -219,10 +232,10 @@ Item {
 
                                 Button {
                                     text: qsTrId("runbookPanel.openRunbook")
-                                    visible: (alert.runbookPath || alert["runbookPath"] || "").length > 0
+                                    visible: (getField(alert, "runbookPath", "")).length > 0
                                     onClicked: {
-                                        if (root.runbookController)
-                                            root.runbookController.openRunbook(alert.runbookPath || alert["runbookPath"])
+                                        if (root.runbookControllerObj)
+                                            root.runbookControllerObj.openRunbook(getField(alert, "runbookPath", ""))
                                     }
                                 }
                             }
@@ -230,7 +243,7 @@ Item {
                             ColumnLayout {
                                 Layout.fillWidth: true
                                 spacing: 6
-                                visible: (alert.manualSteps || alert["manualSteps"] || []).length > 0
+                                visible: (getField(alert, "manualSteps", []) || []).length > 0
 
                                 Text {
                                     text: qsTrId("runbookPanel.manualSteps")
@@ -239,7 +252,7 @@ Item {
                                 }
 
                                 Repeater {
-                                    model: alert.manualSteps || alert["manualSteps"] || []
+                                    model: getField(alert, "manualSteps", []) || []
 
                                     Text {
                                         text: "• " + modelData
@@ -252,7 +265,7 @@ Item {
                             ColumnLayout {
                                 Layout.fillWidth: true
                                 spacing: 6
-                                visible: (alert.automaticActions || alert["automaticActions"] || []).length > 0
+                                visible: (getField(alert, "automaticActions", []) || []).length > 0
 
                                 Text {
                                     text: qsTrId("runbookPanel.automaticActions")
@@ -261,15 +274,18 @@ Item {
                                 }
 
                                 Repeater {
-                                    model: alert.automaticActions || alert["automaticActions"] || []
+                                    model: getField(alert, "automaticActions", []) || []
 
                                     Button {
-                                        readonly property string actionId: "" + ((modelData && (modelData["id"] !== undefined ? modelData["id"] : modelData.id)) || ("idx_" + index))
-                                        readonly property var actionLabel: (modelData && (modelData["label"] !== undefined ? modelData["label"] : modelData.label)) || ""
+                                        readonly property var rawId: getField(modelData, "id", undefined)
+                                        readonly property string actionId: (rawId === undefined || rawId === null || ("" + rawId).length === 0)
+                                                                          ? ("idx_" + index)
+                                                                          : ("" + rawId)
+                                        readonly property string actionLabel: "" + getField(modelData, "label", "")
 
                                         objectName: "runbookActionButton_" + actionId
                                         text: actionLabel
-                                        onClicked: root.requestRunbookAction(alert.runbookId || alert["runbookId"], modelData)
+                                        onClicked: root.requestRunbookAction(getField(alert, "runbookId", ""), modelData)
                                     }
                                 }
                             }
@@ -278,7 +294,7 @@ Item {
                 }
 
                 Label {
-                    visible: !root.runbookController || root.runbookController.alerts.length === 0
+                    visible: !root.runbookControllerObj || root.runbookControllerObj.alerts.length === 0
                     text: qsTrId("runbookPanel.emptyState")
                     color: Styles.AppTheme.textSecondary
                 }
@@ -308,16 +324,30 @@ Item {
     }
 
     function requestRunbookAction(runbookId, actionPayload) {
-        if (!root.runbookController)
+        if (!root.runbookControllerObj)
             return
+        var actionId = ""
+        var label = ""
+        var confirmMessage = ""
+
+        if (actionPayload) {
+            actionId = actionPayload["id"] !== undefined ? actionPayload["id"] : actionPayload.id
+            label = actionPayload["label"] !== undefined ? actionPayload["label"] : actionPayload.label
+            confirmMessage = actionPayload["confirmMessage"] !== undefined ? actionPayload["confirmMessage"] : actionPayload.confirmMessage
+        }
+
+        actionId = (actionId === undefined || actionId === null) ? "" : ("" + actionId)
+        label = (label === undefined || label === null) ? "" : ("" + label)
+        confirmMessage = (confirmMessage === undefined || confirmMessage === null) ? "" : ("" + confirmMessage)
+
         root.pendingAction = ({
             runbookId: runbookId,
-            actionId: actionPayload.id,
-            label: actionPayload.label,
-            confirmMessage: actionPayload.confirmMessage
+            actionId: actionId,
+            label: label,
+            confirmMessage: confirmMessage
         })
 
-        if (actionPayload.confirmMessage && actionPayload.confirmMessage.length > 0) {
+        if (confirmMessage.length > 0) {
             confirmActionDialog.open()
         } else {
             root.executePendingAction()
@@ -325,8 +355,8 @@ Item {
     }
 
     function executePendingAction() {
-        if (!root.runbookController || !root.pendingAction.runbookId || !root.pendingAction.actionId)
+        if (!root.runbookControllerObj || !root.pendingAction.runbookId || !root.pendingAction.actionId)
             return
-        root.runbookController.runAction(root.pendingAction.runbookId, root.pendingAction.actionId)
+        root.runbookControllerObj.runAction(root.pendingAction.runbookId, root.pendingAction.actionId)
     }
 }
