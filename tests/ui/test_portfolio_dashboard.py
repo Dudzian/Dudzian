@@ -13,7 +13,7 @@ from pathlib import Path
 import pytest
 
 from bot_core.database.manager import DatabaseManager
-from tests.ui._qt import require_pyside6
+from tests.ui._qt import qml_value_to_python, require_pyside6
 
 logger = logging.getLogger(__name__)
 
@@ -290,13 +290,13 @@ def test_portfolio_dashboard_builds_exposures_and_history(tmp_path: Path) -> Non
             QMetaObject.invokeMethod(root, method, Qt.DirectConnection)
         app.processEvents()
 
-        history_points = root.property("historyPoints")
+        history_points = qml_value_to_python(root.property("historyPoints"))
         assert isinstance(history_points, list)
         assert len(history_points) == 2
         assert history_points[0]["value"] == 100000.0
 
-        exchange_items = root.property("exchangeExposureItems")
-        strategy_items = root.property("strategyExposureItems")
+        exchange_items = qml_value_to_python(root.property("exchangeExposureItems"))
+        strategy_items = qml_value_to_python(root.property("strategyExposureItems"))
         assert isinstance(exchange_items, list) and isinstance(strategy_items, list)
         assert exchange_items[0]["name"].upper() == "BINANCE"
         assert strategy_items[0]["name"].startswith("theta_income")
