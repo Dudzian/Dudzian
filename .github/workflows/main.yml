@@ -54,7 +54,7 @@ env:
   PIP_DISABLE_PIP_VERSION_CHECK: "1"
   PYTEST_DISABLE_PLUGIN_AUTOLOAD: "1"
 
-  # Wheelhouse defaults (can be overridden per-job if needed)
+  # Wheelhouse defaults (left in env for scripts, but no artifacts are uploaded/downloaded)
   WHEELHOUSE_SOURCE: "build"
   WHEELHOUSE_DIR: "wheelhouse"
 
@@ -66,153 +66,21 @@ env:
 
 jobs:
   ###########################################################################
-  # Wheelhouse per OS (source-of-truth artifacts consumed by that OS branch)
-  ###########################################################################
-
-  prepare-wheelhouse-linux:
-    name: Prepare wheelhouse (Linux)
-    runs-on: ubuntu-latest
-    timeout-minutes: 25
-    if: |
-      github.event_name == 'schedule' ||
-      github.event_name == 'workflow_dispatch' ||
-      github.event_name == 'pull_request' ||
-      github.event_name == 'push'
-    steps:
-      - uses: actions/checkout@v4
-
-      - uses: actions/setup-python@v5
-        id: setup-python
-        with:
-          python-version: ${{ env.PYTHON_VERSION }}
-
-      - name: Build wheelhouse
-        shell: bash
-        run: |
-          set -euo pipefail
-          python -m pip install --upgrade pip
-          mkdir -p "${WHEELHOUSE_DIR}"
-          python -m pip download \
-            --dest "${WHEELHOUSE_DIR}" \
-            -e ".[dev]" \
-            --only-binary :all: || true
-          # Fallback: ensure at least core deps are present even if some are sdist-only
-          python -m pip download \
-            --dest "${WHEELHOUSE_DIR}" \
-            pytest pytest-cov numpy pandas PyYAML joblib \
-            --only-binary :all: || true
-          ls -la "${WHEELHOUSE_DIR}" || true
-
-      - name: Upload wheelhouse artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: wheelhouse-linux-py3.11
-          path: ${{ env.WHEELHOUSE_DIR }}
-          if-no-files-found: error
-          retention-days: 7
-
-  prepare-wheelhouse-windows:
-    name: Prepare wheelhouse (Windows / self-hosted)
-    runs-on: [self-hosted, windows]
-    timeout-minutes: 25
-    if: |
-      github.event_name == 'schedule' ||
-      github.event_name == 'workflow_dispatch' ||
-      github.event_name == 'pull_request' ||
-      github.event_name == 'push'
-    steps:
-      - uses: actions/checkout@v4
-
-      - uses: actions/setup-python@v5
-        id: setup-python
-        with:
-          python-version: ${{ env.PYTHON_VERSION }}
-
-      - name: Build wheelhouse
-        shell: pwsh
-        run: |
-          python -m pip install --upgrade pip
-          New-Item -ItemType Directory -Force "${env:WHEELHOUSE_DIR}" | Out-Null
-          # Keep windows wheelhouse compatible with self-hosted windows runners.
-          python -m pip download --dest "${env:WHEELHOUSE_DIR}" -e ".[dev]" --only-binary :all: 2>$null
-          python -m pip download --dest "${env:WHEELHOUSE_DIR}" pytest pytest-cov numpy pandas PyYAML joblib --only-binary :all: 2>$null
-          Get-ChildItem -Force "${env:WHEELHOUSE_DIR}" | Select-Object -First 50
-
-      - name: Upload wheelhouse artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: wheelhouse-windows-py3.11
-          path: ${{ env.WHEELHOUSE_DIR }}
-          if-no-files-found: error
-          retention-days: 7
-
-  prepare-wheelhouse-macos:
-    name: Prepare wheelhouse (macOS)
-    runs-on: macos-latest
-    timeout-minutes: 25
-    if: |
-      github.event_name == 'schedule' ||
-      github.event_name == 'workflow_dispatch' ||
-      github.event_name == 'pull_request' ||
-      github.event_name == 'push'
-    steps:
-      - uses: actions/checkout@v4
-
-      - uses: actions/setup-python@v5
-        id: setup-python
-        with:
-          python-version: ${{ env.PYTHON_VERSION }}
-
-      - name: Build wheelhouse
-        shell: bash
-        run: |
-          set -euo pipefail
-          python -m pip install --upgrade pip
-          mkdir -p "${WHEELHOUSE_DIR}"
-          python -m pip download \
-            --dest "${WHEELHOUSE_DIR}" \
-            -e ".[dev]" \
-            --only-binary :all: || true
-          python -m pip download \
-            --dest "${WHEELHOUSE_DIR}" \
-            pytest pytest-cov numpy pandas PyYAML joblib \
-            --only-binary :all: || true
-          ls -la "${WHEELHOUSE_DIR}" || true
-
-      - name: Upload wheelhouse artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: wheelhouse-macos-py3.11
-          path: ${{ env.WHEELHOUSE_DIR }}
-          if-no-files-found: error
-          retention-days: 7
-
-  ###########################################################################
   # Smoke / Fast tests per OS
   ###########################################################################
 
   smoke-tests-linux:
     name: Smoke tests (Linux)
     runs-on: ubuntu-latest
-    needs: prepare-wheelhouse-linux
     timeout-minutes: 30
     if: |
       github.event_name != 'workflow_dispatch' ||
       inputs.run_fast
-    env:
-      WHEELHOUSE_ARTIFACT: wheelhouse-linux-py3.11
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
           python-version: ${{ env.PYTHON_VERSION }}
-
-      - name: Download wheelhouse
-        uses: actions/download-artifact@v4
-        with:
-          name: ${{ env.WHEELHOUSE_ARTIFACT }}
-          path: ${{ env.WHEELHOUSE_DIR }}
-          if-no-artifact-found: error
 
       - name: Install deps (Linux)
         shell: bash
@@ -231,37 +99,18 @@ jobs:
           mkdir -p var/ci
           pytest -vv --maxfail=1 -x --junitxml=var/ci/smoke_linux_first.xml
 
-      - name: Upload smoke diagnostics
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: smoke-linux
-          path: var/ci/**
-          if-no-files-found: warn
-          retention-days: 5
-
   smoke-tests-windows:
     name: Smoke tests (Windows / self-hosted)
     runs-on: [self-hosted, windows]
-    needs: prepare-wheelhouse-windows
     timeout-minutes: 30
     if: |
       github.event_name != 'workflow_dispatch' ||
       inputs.run_fast
-    env:
-      WHEELHOUSE_ARTIFACT: wheelhouse-windows-py3.11
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
           python-version: ${{ env.PYTHON_VERSION }}
-
-      - name: Download wheelhouse
-        uses: actions/download-artifact@v4
-        with:
-          name: ${{ env.WHEELHOUSE_ARTIFACT }}
-          path: ${{ env.WHEELHOUSE_DIR }}
-          if-no-artifact-found: error
 
       - name: Install deps (Windows)
         shell: pwsh
@@ -280,37 +129,18 @@ jobs:
           New-Item -ItemType Directory -Force var/ci | Out-Null
           pytest -vv --maxfail=1 -x --junitxml=var/ci/smoke_windows_first.xml
 
-      - name: Upload smoke diagnostics
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: smoke-windows
-          path: var/ci/**
-          if-no-files-found: warn
-          retention-days: 5
-
   smoke-tests-macos:
     name: Smoke tests (macOS)
     runs-on: macos-latest
-    needs: prepare-wheelhouse-macos
     timeout-minutes: 30
     if: |
       github.event_name != 'workflow_dispatch' ||
       inputs.run_fast
-    env:
-      WHEELHOUSE_ARTIFACT: wheelhouse-macos-py3.11
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
           python-version: ${{ env.PYTHON_VERSION }}
-
-      - name: Download wheelhouse
-        uses: actions/download-artifact@v4
-        with:
-          name: ${{ env.WHEELHOUSE_ARTIFACT }}
-          path: ${{ env.WHEELHOUSE_DIR }}
-          if-no-artifact-found: error
 
       - name: Install deps (macOS)
         shell: bash
@@ -328,15 +158,6 @@ jobs:
         run: |
           mkdir -p var/ci
           pytest -vv --maxfail=1 -x --junitxml=var/ci/smoke_macos_first.xml
-
-      - name: Upload smoke diagnostics
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: smoke-macos
-          path: var/ci/**
-          if-no-files-found: warn
-          retention-days: 5
 
   ###########################################################################
   # Lint (Linux only by default)
@@ -495,17 +316,6 @@ jobs:
         run: |
           docker compose -f deploy/compose/loopback-tests.yml ps -a > loopback-logs/compose-ps.txt
           docker compose -f deploy/compose/loopback-tests.yml logs --no-color > loopback-logs/compose-services.log
-      - name: Upload loopback logs
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: loopback-e2e-logs
-          path: loopback-logs
-          if-no-files-found: warn
-          retention-days: 5
-      - name: Tear down loopback compose
-        if: always()
-        run: docker compose -f deploy/compose/loopback-tests.yml down -v --remove-orphans
 
   grpc-feed-soak-linux:
     name: gRPC Feed Soak (Linux branch / cron)
@@ -530,14 +340,6 @@ jobs:
           mkdir -p test-results/grpc-soak
           pytest -m "soak" tests/integration/test_grpc_transport.py --maxfail=1 --disable-warnings \
             --junitxml=test-results/grpc-soak/pytest.xml
-      - name: Upload soak report
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: grpc-soak
-          path: test-results/grpc-soak
-          if-no-files-found: warn
-          retention-days: 7
 
   performance-linux:
     name: Performance Benchmarks (Linux branch)
@@ -604,14 +406,6 @@ jobs:
           Xvfb "$DISPLAY" -screen 0 1920x1080x24 > /tmp/xvfb.log 2>&1 &
           python -m pytest -m qml --maxfail=1 --disable-warnings \
             --junitxml=test-results/qml/pytest.xml | tee test-results/qml/pytest-console.log
-      - name: Upload QML diagnostics
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: qml-linux
-          path: test-results/qml
-          if-no-files-found: warn
-          retention-days: 5
 
   ui-tests-windows:
     name: UI / QML tests (Windows / self-hosted)
@@ -640,16 +434,6 @@ jobs:
         shell: pwsh
         run: |
           ./scripts/run_qml_tests_windows.ps1 -QtQpaPlatform "offscreen" -QtOpenGL "${{ env.QT_OPENGL }}"
-      - name: Upload QML diagnostics
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: qml-windows
-          path: |
-            test-results/qml/**
-            var/crashdumps/**
-          if-no-files-found: warn
-          retention-days: 5
 
   ui-tests-macos:
     name: UI / QML tests (macOS)
@@ -680,17 +464,9 @@ jobs:
           mkdir -p test-results/qml
           python -m pytest -m qml --maxfail=1 --disable-warnings \
             --junitxml=test-results/qml/pytest.xml | tee test-results/qml/pytest-console.log
-      - name: Upload QML diagnostics
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: qml-macos
-          path: test-results/qml
-          if-no-files-found: warn
-          retention-days: 5
 
   ###########################################################################
-  # UI Packaging per OS (3 bundles)
+  # UI Packaging per OS (build only; no artifacts uploaded)
   ###########################################################################
 
   ui-packaging-linux:
@@ -705,13 +481,6 @@ jobs:
         shell: bash
         run: |
           bash deploy/packaging/build_installer_linux.sh
-      - name: Upload bundle
-        uses: actions/upload-artifact@v4
-        with:
-          name: ui-bundle-linux
-          path: artifacts/ui/linux
-          if-no-files-found: error
-          retention-days: 3
 
   ui-packaging-windows:
     name: UI packaging (Windows bundle / self-hosted)
@@ -725,13 +494,6 @@ jobs:
         shell: pwsh
         run: |
           ./deploy/packaging/build_installer_windows.ps1
-      - name: Upload bundle
-        uses: actions/upload-artifact@v4
-        with:
-          name: ui-bundle-windows
-          path: artifacts/ui/windows
-          if-no-files-found: error
-          retention-days: 3
 
   ui-packaging-macos:
     name: UI packaging (macOS bundle)
@@ -745,136 +507,3 @@ jobs:
         shell: bash
         run: |
           bash deploy/packaging/build_installer_macos.sh
-      - name: Upload bundle
-        uses: actions/upload-artifact@v4
-        with:
-          name: ui-bundle-macos
-          path: artifacts/ui/macos
-          if-no-files-found: error
-          retention-days: 3
-
-  ###########################################################################
-  # Marketplace catalog + Deploy/Release (publishes 3 bundles)
-  ###########################################################################
-
-  marketplace-catalog:
-    name: Marketplace Catalog Packaging (Windows / self-hosted)
-    runs-on: [self-hosted, windows]
-    needs: smoke-tests-windows
-    if: github.event_name != 'pull_request'
-    timeout-minutes: 40
-    outputs:
-      packages_artifact_name: ${{ steps.meta.outputs.packages_artifact_name }}
-      packages_archive: ${{ steps.meta.outputs.packages_archive }}
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
-        with:
-          python-version: ${{ env.PYTHON_VERSION }}
-      - name: Install
-        shell: pwsh
-        run: |
-          python -m pip install --upgrade pip
-          python -m pip install .[dev]
-      - name: Preflight
-        shell: pwsh
-        run: python scripts/ci/preflight_test_env.py
-      - name: Metadata
-        id: meta
-        shell: pwsh
-        run: |
-          "packages_artifact_name=marketplace-packages" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
-          "packages_archive=marketplace-packages.tar.gz" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
-      - name: Build marketplace catalog
-        shell: pwsh
-        run: |
-          python scripts/build_marketplace_catalog.py `
-            --private-key config/marketplace/keys/dev-presets-ed25519.key `
-            --key-id dev-presets `
-            --signing-key dev-hmac:config/marketplace/keys/dev-hmac.key `
-            --catalog-signature-key dev-hmac
-      - name: Archive packages
-        shell: pwsh
-        run: |
-          tar -czf "${{ steps.meta.outputs.packages_archive }}" -C config/marketplace packages
-      - name: Upload packages
-        uses: actions/upload-artifact@v4
-        with:
-          name: ${{ steps.meta.outputs.packages_artifact_name }}
-          path: ${{ steps.meta.outputs.packages_archive }}
-          if-no-files-found: error
-          retention-days: 3
-
-  deploy:
-    name: Deploy / Release (3 bundles)
-    runs-on: [self-hosted, windows]
-    needs:
-      - marketplace-catalog
-      - ui-packaging-linux
-      - ui-packaging-windows
-      - ui-packaging-macos
-    if: |
-      github.event_name != 'pull_request' &&
-      github.event_name == 'workflow_dispatch' &&
-      inputs.run_deploy
-    timeout-minutes: 45
-    permissions:
-      contents: write
-    env:
-      MARKETPLACE_PACKAGES_ARTIFACT: ${{ needs.marketplace-catalog.outputs.packages_artifact_name || 'marketplace-packages' }}
-      MARKETPLACE_PACKAGES_DIR: artifacts/marketplace
-      UI_LINUX_DIR: artifacts/ui/linux
-      UI_WINDOWS_DIR: artifacts/ui/windows
-      UI_MACOS_DIR: artifacts/ui/macos
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Download marketplace packages
-        uses: actions/download-artifact@v4
-        with:
-          name: ${{ env.MARKETPLACE_PACKAGES_ARTIFACT }}
-          path: ${{ env.MARKETPLACE_PACKAGES_DIR }}
-          if-no-artifact-found: error
-
-      - name: Download UI bundle (Linux)
-        uses: actions/download-artifact@v4
-        with:
-          name: ui-bundle-linux
-          path: ${{ env.UI_LINUX_DIR }}
-          if-no-artifact-found: error
-
-      - name: Download UI bundle (Windows)
-        uses: actions/download-artifact@v4
-        with:
-          name: ui-bundle-windows
-          path: ${{ env.UI_WINDOWS_DIR }}
-          if-no-artifact-found: error
-
-      - name: Download UI bundle (macOS)
-        uses: actions/download-artifact@v4
-        with:
-          name: ui-bundle-macos
-          path: ${{ env.UI_MACOS_DIR }}
-          if-no-artifact-found: error
-
-      - name: Publish combined deploy artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: deploy-bundles
-          path: |
-            artifacts/marketplace/**
-            artifacts/ui/linux/**
-            artifacts/ui/windows/**
-            artifacts/ui/macos/**
-          if-no-files-found: error
-          retention-days: 7
-
-      - name: Publish GitHub Release (tag required)
-        if: inputs.publish_release && startsWith(github.ref, 'refs/tags/')
-        uses: softprops/action-gh-release@v2
-        with:
-          files: |
-            artifacts/marketplace/**
-            artifacts/ui/linux/**
-            artifacts/ui/windows/**
-            artifacts/ui/macos/**
