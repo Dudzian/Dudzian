@@ -7,6 +7,7 @@ import os
 import sys
 from importlib import import_module
 from types import ModuleType
+from typing import Any
 
 _REQUIRE_ENV = {"1", "true", "yes", "on"}
 
@@ -74,3 +75,23 @@ def require_libgl() -> None:
         + (f" ({failure_reason})" if failure_reason else ""),
         allow_module_level=True,
     )
+
+
+def qml_value_to_python(value: Any) -> Any:
+    """Zamień QML/JS value na natywny typ Pythona (rekurencyjnie)."""
+    try:
+        from PySide6.QtQml import QJSValue
+    except Exception:
+        QJSValue = None  # type: ignore[assignment]
+
+    if QJSValue is not None and isinstance(value, QJSValue):
+        try:
+            value = value.toVariant()
+        except Exception:
+            return value
+
+    if isinstance(value, list):
+        return [qml_value_to_python(item) for item in value]
+    if isinstance(value, dict):
+        return {key: qml_value_to_python(item) for key, item in value.items()}
+    return value
