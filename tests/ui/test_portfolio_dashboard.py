@@ -146,6 +146,7 @@ def test_portfolio_dashboard_builds_exposures_and_history(tmp_path: Path) -> Non
     context.setContextProperty("riskHistoryModel", risk_history)
     context.setContextProperty("riskModel", risk_model)
     context.setContextProperty("alertsModel", alerts_model)
+    context.setContextProperty("uiTestMode", True)
 
     view_path = Path(__file__).resolve().parents[2] / "ui" / "qml" / "views" / "PortfolioDashboard.qml"
     qml_warnings = []
