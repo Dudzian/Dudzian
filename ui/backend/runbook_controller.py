@@ -126,7 +126,12 @@ class RunbookController(QObject):
         self._error_message = ""
         self.errorMessageChanged.emit()
 
-        self._alerts = self._map_alerts(report)
+        mapped_alerts = self._map_alerts(report)
+        try:
+            serialized_alerts = json.dumps(mapped_alerts, ensure_ascii=False)
+        except TypeError:
+            serialized_alerts = json.dumps(mapped_alerts, ensure_ascii=False, default=str)
+        self._alerts = json.loads(serialized_alerts)
         self.alertsChanged.emit()
 
         self._last_updated = _now_local_iso()
