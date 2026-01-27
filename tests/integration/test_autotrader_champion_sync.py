@@ -86,7 +86,7 @@ class _GUI:
 
 class _Provider:
     def __init__(self) -> None:
-        index = pd.date_range(datetime.now(timezone.utc), periods=120, freq="H")
+        index = pd.date_range(datetime.now(timezone.utc), periods=120, freq="h")
         self._df = pd.DataFrame(
             {
                 "open": pd.Series(range(120), index=index).astype(float),
