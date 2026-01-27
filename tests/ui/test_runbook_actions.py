@@ -1,4 +1,6 @@
 import os
+import time
+from datetime import datetime, timezone
 from pathlib import Path
 
 import pytest
@@ -14,7 +16,36 @@ try:  # pragma: no cover - zależne od środowiska CI
 except Exception:  # pragma: no cover - brak Qt
     QObject = QMetaObject = QUrl = QQmlApplicationEngine = QApplication = None  # type: ignore[assignment]
 
+from core.reporting.guardrails_reporter import (
+    GuardrailLogRecord,
+    GuardrailReport,
+    GuardrailReportEndpoint,
+)
 from ui.backend.runbook_controller import RunbookController
+
+
+def _build_sample_report() -> GuardrailReport:
+    generated_at = datetime(2025, 1, 1, 12, 0, tzinfo=timezone.utc)
+    logs = (
+        GuardrailLogRecord(
+            timestamp=generated_at,
+            level="ERROR",
+            message="TIMEOUT queue=binance_spot waited=5.000000s",
+            event="TIMEOUT",
+            metadata={"queue": "binance_spot", "environment": "paper"},
+        ),
+    )
+    return GuardrailReport(
+        generated_at=generated_at,
+        summaries=(),
+        logs=logs,
+        recommendations=(),
+    )
+
+
+class _StaticEndpoint(GuardrailReportEndpoint):
+    def __init__(self, report: GuardrailReport) -> None:
+        super().__init__(report_factory=lambda: report)
 
 
 @pytest.mark.skipif(QObject is None, reason="Wymagany PySide6 do testów UI")
@@ -51,7 +82,12 @@ from pathlib import Path
         encoding="utf-8",
     )
 
-    controller = RunbookController(runbook_directory=runbook_dir, actions_directory=actions_dir)
+    report = _build_sample_report()
+    controller = RunbookController(
+        report_endpoint=_StaticEndpoint(report),
+        runbook_directory=runbook_dir,
+        actions_directory=actions_dir,
+    )
     assert controller.refreshAlerts()
 
     app = QApplication.instance() or QApplication([])
@@ -60,10 +96,31 @@ from pathlib import Path
     qml_path = Path(__file__).resolve().parents[2] / "ui" / "qml" / "dashboard" / "RunbookPanel.qml"
     engine.load(QUrl.fromLocalFile(str(qml_path)))
     assert engine.rootObjects(), "Nie udało się załadować RunbookPanel.qml"
+    app.processEvents()
 
     root = engine.rootObjects()[0]
-    button = root.findChild(QObject, "runbookActionButton_restart_queue")
-    assert button is not None, "Przycisk akcji nie został wyrenderowany"
+    deadline = time.monotonic() + 5.0
+    button = None
+    while time.monotonic() < deadline:
+        app.processEvents()
+        button = root.findChild(QObject, "runbookActionButton_restart_queue")
+        if button is not None:
+            break
+        time.sleep(0.01)
+    if button is None:
+        alerts = getattr(controller, "alerts", None)
+        first = alerts[0] if isinstance(alerts, list) and alerts else None
+        if isinstance(first, dict):
+            auto_actions = first.get("automaticActions")
+        else:
+            auto_actions = getattr(first, "automaticActions", None)
+        pytest.fail(
+            "Przycisk akcji nie został wyrenderowany. "
+            f"alerts_type={type(alerts).__name__} "
+            f"alerts_len={(len(alerts) if isinstance(alerts, list) else 'n/a')} "
+            f"first_alert_type={type(first).__name__} "
+            f"automaticActions={auto_actions!r}"
+        )
 
     QMetaObject.invokeMethod(button, "click")
     app.processEvents()
