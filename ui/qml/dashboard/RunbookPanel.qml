@@ -8,10 +8,22 @@ Item {
     implicitWidth: 720
     implicitHeight: 560
 
-    property var runbookControllerObj: (typeof runbookController !== "undefined" ? runbookController : null)
+    property var runbookControllerObj: null
     property int refreshIntervalMs: 5000
     property var pendingAction: ({ runbookId: "", actionId: "", label: "", confirmMessage: "" })
     property var actionStatus: ({})
+
+    Component.onCompleted: {
+        // QQmlContext property: "runbookController" (set via rootContext().setContextProperty).
+        try {
+            if (!runbookControllerObj)
+                runbookControllerObj = runbookController
+            if (runbookControllerObj)
+                refreshAlerts()
+        } catch (e) {
+            // Keep null when the panel is loaded without the context property.
+        }
+    }
 
     function refreshAlerts() {
         if (!root.runbookControllerObj)

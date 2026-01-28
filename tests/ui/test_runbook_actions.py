@@ -1,4 +1,5 @@
 import os
+import sys
 import time
 from datetime import datetime, timezone
 from pathlib import Path
@@ -22,6 +23,7 @@ from core.reporting.guardrails_reporter import (
     GuardrailReportEndpoint,
 )
 from ui.backend.runbook_controller import RunbookController
+from tests.ui._qt_utils import qt_wait
 
 
 def _build_sample_report() -> GuardrailReport:
@@ -99,7 +101,29 @@ from pathlib import Path
     app.processEvents()
 
     root = engine.rootObjects()[0]
-    deadline = time.monotonic() + 5.0
+    timeout = 10.0 if sys.platform.startswith("win") else 5.0
+    deadline = time.monotonic() + timeout
+    repeater = None
+    while time.monotonic() < deadline:
+        app.processEvents()
+        repeater = root.findChild(QObject, "runbookPanelRepeater")
+        count = repeater.property("count") if repeater is not None else None
+        if isinstance(count, int) and count >= 1:
+            break
+        qt_wait(10)
+    count = repeater.property("count") if repeater is not None else None
+    if not isinstance(count, int) or count < 1:
+        alerts = getattr(controller, "alerts", None)
+        pytest.fail(
+            "Brak alertów w repeaterze (runbookPanelRepeater). "
+            f"repeater={repeater!r} "
+            f"count={count!r} "
+            f"alerts_type={type(alerts).__name__} "
+            f"alerts_len={(len(alerts) if isinstance(alerts, list) else 'n/a')} "
+            f"lastUpdated={getattr(controller, 'lastUpdated', None)!r} "
+            f"errorMessage={getattr(controller, 'errorMessage', None)!r}"
+        )
+    deadline = time.monotonic() + timeout
     button = None
     while time.monotonic() < deadline:
         app.processEvents()
@@ -119,7 +143,7 @@ from pathlib import Path
                     break
             button = preferred or candidates[0]
             break
-        time.sleep(0.01)
+        qt_wait(10)
     if button is None:
         alerts = getattr(controller, "alerts", None)
         first = alerts[0] if isinstance(alerts, list) and alerts else None

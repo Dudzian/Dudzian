@@ -1,4 +1,6 @@
 import os
+import sys
+import time
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -24,6 +26,7 @@ from core.reporting.guardrails_reporter import (
     GuardrailReportEndpoint,
 )
 from ui.backend.runbook_controller import RunbookController
+from tests.ui._qt_utils import qt_wait
 
 
 def _build_sample_report() -> GuardrailReport:
@@ -83,9 +86,18 @@ def test_runbook_panel_qml_load(tmp_path: Path) -> None:
     assert engine.rootObjects(), "Nie udało się załadować RunbookPanel.qml"
 
     root = engine.rootObjects()[0]
-    repeater = root.findChild(QObject, "runbookPanelRepeater")
+    deadline = time.monotonic() + (10.0 if sys.platform.startswith("win") else 5.0)
+    repeater = None
+    while time.monotonic() < deadline:
+        app.processEvents()
+        repeater = root.findChild(QObject, "runbookPanelRepeater")
+        count = repeater.property("count") if repeater is not None else None
+        if isinstance(count, int) and count >= 1:
+            break
+        qt_wait(10)
     assert repeater is not None, "Brak kontenera alertów"
-    assert repeater.property("count") >= 1
+    count = repeater.property("count")
+    assert isinstance(count, int) and count >= 1
 
     label = root.findChild(QObject, "runbookPanelLastUpdated")
     assert label is not None
