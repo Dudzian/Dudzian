@@ -106,6 +106,19 @@ from pathlib import Path
         button = root.findChild(QObject, "runbookActionButton_restart_queue")
         if button is not None:
             break
+        candidates = [
+            obj
+            for obj in root.findChildren(QObject)
+            if (obj.objectName() or "").startswith("runbookActionButton_")
+        ]
+        if candidates:
+            preferred = None
+            for obj in candidates:
+                if obj.objectName() == "runbookActionButton_restart_queue":
+                    preferred = obj
+                    break
+            button = preferred or candidates[0]
+            break
         time.sleep(0.01)
     if button is None:
         alerts = getattr(controller, "alerts", None)
@@ -114,14 +127,25 @@ from pathlib import Path
             auto_actions = first.get("automaticActions")
         else:
             auto_actions = getattr(first, "automaticActions", None)
+        created_names = []
+        try:
+            created_names = [
+                obj.objectName()
+                for obj in root.findChildren(QObject)
+                if (obj.objectName() or "").startswith("runbookActionButton_")
+            ]
+        except Exception:
+            created_names = ["(failed to enumerate)"]
         pytest.fail(
             "Przycisk akcji nie został wyrenderowany. "
             f"alerts_type={type(alerts).__name__} "
             f"alerts_len={(len(alerts) if isinstance(alerts, list) else 'n/a')} "
             f"first_alert_type={type(first).__name__} "
-            f"automaticActions={auto_actions!r}"
+            f"automaticActions={auto_actions!r} "
+            f"created_action_buttons={created_names!r}"
         )
 
+    print(f"Using runbook action button: {button.objectName()}")
     QMetaObject.invokeMethod(button, "click")
     app.processEvents()
 
