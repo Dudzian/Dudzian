@@ -94,9 +94,30 @@ from pathlib import Path
 
     app = QApplication.instance() or QApplication([])
     engine = QQmlApplicationEngine()
+    collected_warnings: list[str] = []
+
+    def _format_warning(warning: object) -> str:
+        try:
+            return warning.toString()
+        except Exception:
+            return str(warning)
+
+    try:
+        def _collect(warnings: list[object]) -> None:
+            collected_warnings.extend(_format_warning(warning) for warning in warnings)
+
+        engine.warnings.connect(_collect)  # type: ignore[attr-defined]
+    except Exception:
+        pass
     engine.rootContext().setContextProperty("runbookController", controller)
     qml_path = Path(__file__).resolve().parents[2] / "ui" / "qml" / "dashboard" / "RunbookPanel.qml"
     engine.load(QUrl.fromLocalFile(str(qml_path)))
+    try:
+        warn_attr = getattr(engine, "warnings", None)
+        if callable(warn_attr):
+            collected_warnings.extend(_format_warning(warning) for warning in warn_attr())
+    except Exception:
+        pass
     assert engine.rootObjects(), "Nie udało się załadować RunbookPanel.qml"
     app.processEvents()
 
@@ -123,6 +144,23 @@ from pathlib import Path
             f"lastUpdated={getattr(controller, 'lastUpdated', None)!r} "
             f"errorMessage={getattr(controller, 'errorMessage', None)!r}"
         )
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        app.processEvents()
+        button = root.findChild(QObject, "runbookActionButton_restart_queue")
+        if button is not None:
+            break
+        action_repeater_ready = False
+        for obj in root.findChildren(QObject):
+            name = obj.objectName() or ""
+            if name.startswith("runbookActionsRepeater_"):
+                count = obj.property("count")
+                if isinstance(count, int) and count >= 1:
+                    action_repeater_ready = True
+                    break
+        if action_repeater_ready:
+            break
+        qt_wait(10)
     deadline = time.monotonic() + timeout
     button = None
     while time.monotonic() < deadline:
@@ -160,13 +198,40 @@ from pathlib import Path
             ]
         except Exception:
             created_names = ["(failed to enumerate)"]
+        actions_repeaters = []
+        try:
+            for obj in root.findChildren(QObject):
+                name = obj.objectName() or ""
+                if name.startswith("runbookActionsRepeater_"):
+                    model = None
+                    item_at = None
+                    try:
+                        model = obj.property("model")
+                    except Exception:
+                        model = "(model property unavailable)"
+                    try:
+                        item_at = obj.itemAt(0)
+                    except Exception:
+                        item_at = "(itemAt unavailable)"
+                    actions_repeaters.append(
+                        {
+                            "objectName": name,
+                            "count": obj.property("count"),
+                            "model": model,
+                            "itemAt0": item_at,
+                        }
+                    )
+        except Exception:
+            actions_repeaters = ["(failed to enumerate)"]
         pytest.fail(
             "Przycisk akcji nie został wyrenderowany. "
             f"alerts_type={type(alerts).__name__} "
             f"alerts_len={(len(alerts) if isinstance(alerts, list) else 'n/a')} "
             f"first_alert_type={type(first).__name__} "
             f"automaticActions={auto_actions!r} "
-            f"created_action_buttons={created_names!r}"
+            f"created_action_buttons={created_names!r} "
+            f"runbook_action_repeaters={actions_repeaters!r} "
+            f"qml_warnings={collected_warnings!r}"
         )
 
     print(f"Using runbook action button: {button.objectName()}")

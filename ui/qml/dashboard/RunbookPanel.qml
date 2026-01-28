@@ -31,6 +31,28 @@ Item {
         root.runbookControllerObj.refreshAlerts()
     }
 
+    function listSize(value) {
+        if (value === undefined || value === null)
+            return 0
+        if (typeof value.length === "number")
+            return value.length
+        if (typeof value.length === "function")
+            try {
+                return value.length()
+            } catch (err) {}
+        if (typeof value.count === "number")
+            return value.count
+        if (typeof value.count === "function")
+            try {
+                return value.count()
+            } catch (err) {}
+        try {
+            if (typeof value.size === "function")
+                return value.size()
+        } catch (err) {}
+        return 0
+    }
+
     Timer {
         id: refreshTimer
         interval: Math.max(2000, root.refreshIntervalMs)
@@ -154,7 +176,21 @@ Item {
                     Frame {
                         id: alertFrame
                         Layout.fillWidth: true
-                        readonly property var alert: (typeof modelData !== "undefined" && modelData !== null) ? modelData : model
+                        readonly property int alertIndex: index
+                        readonly property var alert: {
+                            var m = alertsRepeater.model
+                            var i = alertFrame.alertIndex
+                            try {
+                                if (m && typeof m.get === "function")
+                                    return m.get(i)
+                                if (m && root.listSize(m) > i) {
+                                    var v = m[i]
+                                    if (v !== undefined)
+                                        return v
+                                }
+                            } catch (err) {}
+                            return (typeof modelData !== "undefined" && modelData !== null) ? modelData : null
+                        }
                         function getField(obj, key, fallback) {
                             if (!obj)
                                 return fallback
@@ -256,7 +292,7 @@ Item {
                             ColumnLayout {
                                 Layout.fillWidth: true
                                 spacing: 6
-                                visible: (alertFrame.getField(alert, "manualSteps", []) || []).length > 0
+                                visible: root.listSize(alertFrame.getField(alert, "manualSteps", null)) > 0
 
                                 Text {
                                     text: qsTrId("runbookPanel.manualSteps")
@@ -278,7 +314,7 @@ Item {
                             ColumnLayout {
                                 Layout.fillWidth: true
                                 spacing: 6
-                                visible: (alertFrame.getField(alert, "automaticActions", []) || []).length > 0
+                                visible: root.listSize(alertFrame.getField(alert, "automaticActions", null)) > 0
 
                                 Text {
                                     text: qsTrId("runbookPanel.automaticActions")
@@ -287,6 +323,7 @@ Item {
                                 }
 
                                 Repeater {
+                                    objectName: "runbookActionsRepeater_" + alertFrame.alertIndex
                                     model: alertFrame.getField(alert, "automaticActions", []) || []
 
                                     Button {
@@ -307,7 +344,8 @@ Item {
                 }
 
                 Label {
-                    visible: !root.runbookControllerObj || root.runbookControllerObj.alerts.length === 0
+                    visible: !root.runbookControllerObj
+                             || root.listSize(root.runbookControllerObj.alerts) === 0
                     text: qsTrId("runbookPanel.emptyState")
                     color: Styles.AppTheme.textSecondary
                 }
