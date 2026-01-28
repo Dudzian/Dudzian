@@ -26,6 +26,59 @@ from ui.backend.runbook_controller import RunbookController
 from tests.ui._qt_utils import qt_wait
 
 
+def _walk_qml_items(obj: object, limit: int = 5000) -> tuple[list[object], bool]:
+    out: list[object] = []
+    stack: list[object] = [obj]
+    seen: set[int] = set()
+    capped = False
+    while stack:
+        if len(out) >= limit:
+            capped = True
+            break
+        cur = stack.pop()
+        if cur is None:
+            continue
+        ident = id(cur)
+        if ident in seen:
+            continue
+        seen.add(ident)
+        out.append(cur)
+        child_items = None
+        try:
+            child_items = cur.childItems()  # type: ignore[attr-defined]
+        except Exception:
+            child_items = None
+        has_child_items = False
+        if child_items is not None:
+            try:
+                has_child_items = len(child_items) > 0
+            except Exception:
+                has_child_items = False
+        if has_child_items:
+            try:
+                stack.extend(child_items)
+            except Exception:
+                pass
+        else:
+            try:
+                stack.extend(cur.children())  # type: ignore[attr-defined]
+            except Exception:
+                pass
+    return out, capped
+
+
+def _find_by_object_name(root_obj: object, name: str) -> object | None:
+    items, _ = _walk_qml_items(root_obj)
+    for obj in items:
+        try:
+            object_name = obj.objectName()  # type: ignore[attr-defined]
+        except Exception:
+            object_name = None
+        if object_name == name:
+            return obj
+    return None
+
+
 def _build_sample_report() -> GuardrailReport:
     generated_at = datetime(2025, 1, 1, 12, 0, tzinfo=timezone.utc)
     logs = (
@@ -145,41 +198,32 @@ from pathlib import Path
             f"errorMessage={getattr(controller, 'errorMessage', None)!r}"
         )
     deadline = time.monotonic() + timeout
-    while time.monotonic() < deadline:
-        app.processEvents()
-        button = root.findChild(QObject, "runbookActionButton_restart_queue")
-        if button is not None:
-            break
-        action_repeater_ready = False
-        for obj in root.findChildren(QObject):
-            name = obj.objectName() or ""
-            if name.startswith("runbookActionsRepeater_"):
-                count = obj.property("count")
-                if isinstance(count, int) and count >= 1:
-                    action_repeater_ready = True
-                    break
-        if action_repeater_ready:
-            break
-        qt_wait(10)
-    deadline = time.monotonic() + timeout
     button = None
+    alert_item = None
     while time.monotonic() < deadline:
         app.processEvents()
-        button = root.findChild(QObject, "runbookActionButton_restart_queue")
+        count_now = repeater.property("count") if repeater is not None else None
+        if not isinstance(count_now, int) or count_now < 1:
+            qt_wait(10)
+            continue
+        for index in range(count_now):
+            try:
+                candidate = repeater.itemAt(index)
+            except Exception:
+                candidate = None
+            if candidate is None:
+                continue
+            button = None
+            try:
+                button = candidate.findChild(QObject, "runbookActionButton_restart_queue")
+            except Exception:
+                button = None
+            if button is None:
+                button = _find_by_object_name(candidate, "runbookActionButton_restart_queue")
+            if button is not None:
+                alert_item = candidate
+                break
         if button is not None:
-            break
-        candidates = [
-            obj
-            for obj in root.findChildren(QObject)
-            if (obj.objectName() or "").startswith("runbookActionButton_")
-        ]
-        if candidates:
-            preferred = None
-            for obj in candidates:
-                if obj.objectName() == "runbookActionButton_restart_queue":
-                    preferred = obj
-                    break
-            button = preferred or candidates[0]
             break
         qt_wait(10)
     if button is None:
@@ -189,19 +233,40 @@ from pathlib import Path
             auto_actions = first.get("automaticActions")
         else:
             auto_actions = getattr(first, "automaticActions", None)
+        fallback_alert = alert_item
+        if fallback_alert is None:
+            try:
+                fallback_alert = repeater.itemAt(0)
+            except Exception:
+                fallback_alert = None
+        if fallback_alert is None:
+            pytest.fail(
+                "Nie udało się pobrać delegata alertu do diagnostyki. "
+                f"alerts_type={type(alerts).__name__} "
+                f"alerts_len={(len(alerts) if isinstance(alerts, list) else 'n/a')} "
+                f"first_alert_type={type(first).__name__} "
+                f"automaticActions={auto_actions!r} "
+                f"qml_warnings={collected_warnings!r}"
+            )
+        items, capped = _walk_qml_items(fallback_alert)
         created_names = []
         try:
-            created_names = [
-                obj.objectName()
-                for obj in root.findChildren(QObject)
-                if (obj.objectName() or "").startswith("runbookActionButton_")
-            ]
+            for obj in items:
+                try:
+                    name = obj.objectName()  # type: ignore[attr-defined]
+                except Exception:
+                    continue
+                if (name or "").startswith("runbookActionButton_"):
+                    created_names.append(name)
         except Exception:
             created_names = ["(failed to enumerate)"]
         actions_repeaters = []
         try:
-            for obj in root.findChildren(QObject):
-                name = obj.objectName() or ""
+            for obj in items:
+                try:
+                    name = obj.objectName() or ""  # type: ignore[attr-defined]
+                except Exception:
+                    name = ""
                 if name.startswith("runbookActionsRepeater_"):
                     model = None
                     item_at = None
@@ -223,14 +288,37 @@ from pathlib import Path
                     )
         except Exception:
             actions_repeaters = ["(failed to enumerate)"]
+        panel_repeater_count = None
+        try:
+            panel_repeater_count = repeater.property("count") if repeater is not None else None
+        except Exception:
+            panel_repeater_count = "(count unavailable)"
+        runbook_names = []
+        try:
+            for obj in items:
+                try:
+                    name = obj.objectName()  # type: ignore[attr-defined]
+                except Exception:
+                    continue
+                if (name or "").startswith("runbook"):
+                    runbook_names.append(name)
+        except Exception:
+            runbook_names = ["(failed to enumerate)"]
+        if isinstance(runbook_names, list) and runbook_names and runbook_names != ["(failed to enumerate)"]:
+            runbook_names = sorted(set(runbook_names))[:200]
         pytest.fail(
             "Przycisk akcji nie został wyrenderowany. "
             f"alerts_type={type(alerts).__name__} "
             f"alerts_len={(len(alerts) if isinstance(alerts, list) else 'n/a')} "
             f"first_alert_type={type(first).__name__} "
             f"automaticActions={auto_actions!r} "
+            f"runbook_panel_count={count!r} "
+            f"runbook_panel_repeater_count={panel_repeater_count!r} "
             f"created_action_buttons={created_names!r} "
             f"runbook_action_repeaters={actions_repeaters!r} "
+            f"runbook_named_items={runbook_names!r} "
+            f"alert_item_tree_size={len(items)} "
+            f"alert_item_tree_capped={capped} "
             f"qml_warnings={collected_warnings!r}"
         )
 
