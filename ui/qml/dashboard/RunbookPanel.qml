@@ -152,6 +152,7 @@ Item {
                     model: root.runbookControllerObj ? root.runbookControllerObj.alerts : []
 
                     Frame {
+                        id: alertFrame
                         Layout.fillWidth: true
                         readonly property var alert: (typeof modelData !== "undefined" && modelData !== null) ? modelData : model
                         function getField(obj, key, fallback) {
@@ -177,9 +178,9 @@ Item {
                             anchors.margins: 12
                             spacing: 6
 
-                            readonly property string envText: "" + getField(alert, "environment", "")
-                            readonly property string queueText: "" + getField(alert, "queue", "")
-                            readonly property string msgText: "" + getField(alert, "message", "")
+                            readonly property string envText: "" + alertFrame.getField(alert, "environment", "")
+                            readonly property string queueText: "" + alertFrame.getField(alert, "queue", "")
+                            readonly property string msgText: "" + alertFrame.getField(alert, "message", "")
 
                             Text {
                                 text: envText.length > 0
@@ -199,7 +200,7 @@ Item {
                                 Layout.fillWidth: true
                                 spacing: 8
 
-                                readonly property string severityValue: getField(alert, "severity", "")
+                                readonly property string severityValue: alertFrame.getField(alert, "severity", "")
 
                                 Rectangle {
                                     width: 12
@@ -217,7 +218,7 @@ Item {
 
                                 Item { Layout.fillWidth: true }
 
-                                readonly property var tsRaw: getField(alert, "timestamp", undefined)
+                                readonly property var tsRaw: alertFrame.getField(alert, "timestamp", undefined)
                                 readonly property string tsText: (tsRaw === undefined || tsRaw === null) ? "" : ("" + tsRaw)
 
                                 Text {
@@ -233,8 +234,8 @@ Item {
                                 spacing: 8
 
                                 Text {
-                                    text: (getField(alert, "runbookTitle", "")).length > 0
-                                          ? qsTrId("runbookPanel.runbookAssigned").arg(getField(alert, "runbookTitle", ""))
+                                    text: (alertFrame.getField(alert, "runbookTitle", "")).length > 0
+                                          ? qsTrId("runbookPanel.runbookAssigned").arg(alertFrame.getField(alert, "runbookTitle", ""))
                                           : qsTrId("runbookPanel.runbookMissing")
                                     color: Styles.AppTheme.textSecondary
                                     wrapMode: Text.Wrap
@@ -244,10 +245,10 @@ Item {
 
                                 Button {
                                     text: qsTrId("runbookPanel.openRunbook")
-                                    visible: (getField(alert, "runbookPath", "")).length > 0
+                                    visible: (alertFrame.getField(alert, "runbookPath", "")).length > 0
                                     onClicked: {
                                         if (root.runbookControllerObj)
-                                            root.runbookControllerObj.openRunbook(getField(alert, "runbookPath", ""))
+                                            root.runbookControllerObj.openRunbook(alertFrame.getField(alert, "runbookPath", ""))
                                     }
                                 }
                             }
@@ -255,7 +256,7 @@ Item {
                             ColumnLayout {
                                 Layout.fillWidth: true
                                 spacing: 6
-                                visible: (getField(alert, "manualSteps", []) || []).length > 0
+                                visible: (alertFrame.getField(alert, "manualSteps", []) || []).length > 0
 
                                 Text {
                                     text: qsTrId("runbookPanel.manualSteps")
@@ -264,7 +265,7 @@ Item {
                                 }
 
                                 Repeater {
-                                    model: getField(alert, "manualSteps", []) || []
+                                    model: alertFrame.getField(alert, "manualSteps", []) || []
 
                                     Text {
                                         text: "• " + modelData
@@ -277,7 +278,7 @@ Item {
                             ColumnLayout {
                                 Layout.fillWidth: true
                                 spacing: 6
-                                visible: (getField(alert, "automaticActions", []) || []).length > 0
+                                visible: (alertFrame.getField(alert, "automaticActions", []) || []).length > 0
 
                                 Text {
                                     text: qsTrId("runbookPanel.automaticActions")
@@ -286,18 +287,18 @@ Item {
                                 }
 
                                 Repeater {
-                                    model: getField(alert, "automaticActions", []) || []
+                                    model: alertFrame.getField(alert, "automaticActions", []) || []
 
                                     Button {
-                                        readonly property var rawId: getField(modelData, "id", undefined)
+                                        readonly property var rawId: alertFrame.getField(modelData, "id", undefined)
                                         readonly property string actionId: (rawId === undefined || rawId === null || ("" + rawId).length === 0)
                                                                           ? ("idx_" + index)
                                                                           : ("" + rawId)
-                                        readonly property string actionLabel: "" + getField(modelData, "label", "")
+                                        readonly property string actionLabel: "" + alertFrame.getField(modelData, "label", "")
 
                                         objectName: "runbookActionButton_" + actionId
                                         text: actionLabel
-                                        onClicked: root.requestRunbookAction(getField(alert, "runbookId", ""), modelData)
+                                        onClicked: root.requestRunbookAction(alertFrame.getField(alert, "runbookId", ""), modelData)
                                     }
                                 }
                             }
