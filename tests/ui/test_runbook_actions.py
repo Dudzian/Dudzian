@@ -27,7 +27,7 @@ from ui.backend.runbook_controller import RunbookController
 from tests.ui._qt_utils import qt_wait
 
 
-def _walk_qml_items(obj: object, limit: int = 5000) -> tuple[list[object], bool]:
+def _walk_qml_items(obj: object, limit: int = 8000) -> tuple[list[object], bool]:
     out: list[object] = []
     stack: list[object] = [obj]
     seen: set[int] = set()
@@ -44,27 +44,23 @@ def _walk_qml_items(obj: object, limit: int = 5000) -> tuple[list[object], bool]
             continue
         seen.add(ident)
         out.append(cur)
-        child_items = None
+        # QtQuickControls often hide the "real" content under QObject children even if childItems() is non-empty.
+        # Walk both graphs; `seen` + `limit` keep it safe.
         try:
             child_items = cur.childItems()  # type: ignore[attr-defined]
         except Exception:
             child_items = None
-        has_child_items = False
         if child_items is not None:
             try:
-                has_child_items = len(child_items) > 0
-            except Exception:
-                has_child_items = False
-        if has_child_items:
-            try:
-                stack.extend(child_items)
+                for item in child_items:
+                    if item is not None:
+                        stack.append(item)
             except Exception:
                 pass
-        else:
-            try:
-                stack.extend(cur.children())  # type: ignore[attr-defined]
-            except Exception:
-                pass
+        try:
+            stack.extend(cur.children())  # type: ignore[attr-defined]
+        except Exception:
+            pass
     return out, capped
 
 
