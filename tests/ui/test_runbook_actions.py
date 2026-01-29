@@ -1,4 +1,5 @@
 import os
+import re
 import sys
 import time
 from datetime import datetime, timezone
@@ -77,6 +78,23 @@ def _find_by_object_name(root_obj: object, name: str) -> object | None:
         if object_name == name:
             return obj
     return None
+
+
+def _find_by_object_name_prefix(root_obj: object, prefix: str) -> object | None:
+    items, _ = _walk_qml_items(root_obj)
+    for obj in items:
+        try:
+            object_name = obj.objectName()  # type: ignore[attr-defined]
+        except Exception:
+            object_name = None
+        if object_name and object_name.startswith(prefix):
+            return obj
+    return None
+
+
+def _safe_name(value: object) -> str:
+    text = "" if value is None else str(value)
+    return re.sub(r"[^A-Za-z0-9_]", "_", text)
 
 
 def _build_sample_report() -> GuardrailReport:
@@ -197,32 +215,37 @@ from pathlib import Path
             f"lastUpdated={getattr(controller, 'lastUpdated', None)!r} "
             f"errorMessage={getattr(controller, 'errorMessage', None)!r}"
         )
+    runbook_id = ""
+    alerts_data = getattr(controller, "alerts", None)
+    if isinstance(alerts_data, list) and alerts_data:
+        first_alert = alerts_data[0]
+        if isinstance(first_alert, dict):
+            runbook_id = first_alert.get("runbookId", "") or ""
+        else:
+            runbook_id = getattr(first_alert, "runbookId", "") or ""
+    runbook_prefix = f"runbookAlertFrame_{_safe_name(runbook_id)}" if runbook_id else ""
+
     deadline = time.monotonic() + timeout
     button = None
     alert_item = None
     while time.monotonic() < deadline:
         app.processEvents()
-        count_now = repeater.property("count") if repeater is not None else None
-        if not isinstance(count_now, int) or count_now < 1:
+        alert_item = None
+        if runbook_prefix:
+            alert_item = _find_by_object_name_prefix(root, runbook_prefix)
+        if alert_item is None:
+            alert_item = root.findChild(QObject, "runbookAlertFrame_first")
+        if alert_item is None:
+            alert_item = root.findChild(QObject, "runbookAlertFrame_0")
+        if alert_item is None:
             qt_wait(10)
             continue
-        for index in range(count_now):
-            try:
-                candidate = repeater.itemAt(index)
-            except Exception:
-                candidate = None
-            if candidate is None:
-                continue
+        try:
+            button = alert_item.findChild(QObject, "runbookActionButton_restart_queue")
+        except Exception:
             button = None
-            try:
-                button = candidate.findChild(QObject, "runbookActionButton_restart_queue")
-            except Exception:
-                button = None
-            if button is None:
-                button = _find_by_object_name(candidate, "runbookActionButton_restart_queue")
-            if button is not None:
-                alert_item = candidate
-                break
+        if button is None:
+            button = _find_by_object_name(alert_item, "runbookActionButton_restart_queue")
         if button is not None:
             break
         qt_wait(10)
@@ -235,10 +258,12 @@ from pathlib import Path
             auto_actions = getattr(first, "automaticActions", None)
         fallback_alert = alert_item
         if fallback_alert is None:
-            try:
-                fallback_alert = repeater.itemAt(0)
-            except Exception:
-                fallback_alert = None
+            if runbook_prefix:
+                fallback_alert = _find_by_object_name_prefix(root, runbook_prefix)
+        if fallback_alert is None:
+            fallback_alert = root.findChild(QObject, "runbookAlertFrame_first")
+        if fallback_alert is None:
+            fallback_alert = root.findChild(QObject, "runbookAlertFrame_0")
         if fallback_alert is None:
             pytest.fail(
                 "Nie udało się pobrać delegata alertu do diagnostyki. "
@@ -306,17 +331,43 @@ from pathlib import Path
             runbook_names = ["(failed to enumerate)"]
         if isinstance(runbook_names, list) and runbook_names and runbook_names != ["(failed to enumerate)"]:
             runbook_names = sorted(set(runbook_names))[:200]
+        alert_frame_names = []
+        try:
+            for obj in root.findChildren(QObject):
+                try:
+                    name = obj.objectName()  # type: ignore[attr-defined]
+                except Exception:
+                    continue
+                if (name or "").startswith("runbookAlertFrame_"):
+                    alert_frame_names.append(name)
+        except Exception:
+            alert_frame_names = ["(failed to enumerate)"]
+        if isinstance(alert_frame_names, list) and alert_frame_names and alert_frame_names != ["(failed to enumerate)"]:
+            alert_frame_names = sorted(set(alert_frame_names))[:200]
+        alert_item_name = None
+        alert_item_type = type(alert_item).__name__ if alert_item is not None else None
+        if alert_item is not None:
+            try:
+                alert_item_name = alert_item.objectName()  # type: ignore[attr-defined]
+            except Exception:
+                alert_item_name = None
         pytest.fail(
             "Przycisk akcji nie został wyrenderowany. "
             f"alerts_type={type(alerts).__name__} "
             f"alerts_len={(len(alerts) if isinstance(alerts, list) else 'n/a')} "
             f"first_alert_type={type(first).__name__} "
             f"automaticActions={auto_actions!r} "
+            f"runbook_id={runbook_id!r} "
+            f"runbook_prefix={runbook_prefix!r} "
+            f"alert_item_found={bool(alert_item)} "
+            f"alert_item_name={alert_item_name!r} "
+            f"alert_item_type={alert_item_type!r} "
             f"runbook_panel_count={count!r} "
             f"runbook_panel_repeater_count={panel_repeater_count!r} "
             f"created_action_buttons={created_names!r} "
             f"runbook_action_repeaters={actions_repeaters!r} "
             f"runbook_named_items={runbook_names!r} "
+            f"runbook_alert_frames={alert_frame_names!r} "
             f"alert_item_tree_size={len(items)} "
             f"alert_item_tree_capped={capped} "
             f"qml_warnings={collected_warnings!r}"
