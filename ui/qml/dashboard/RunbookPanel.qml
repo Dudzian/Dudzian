@@ -175,6 +175,16 @@ Item {
 
                     Frame {
                         id: alertFrame
+                        function safeName(value) {
+                            var text = (value === undefined || value === null) ? "" : ("" + value)
+                            return text.replace(/[^A-Za-z0-9_]/g, "_")
+                        }
+                        objectName: {
+                            var runbookId = alertFrame.getField(alertFrame.alert, "runbookId", "")
+                            if (runbookId !== undefined && runbookId !== null && ("" + runbookId).length > 0)
+                                return "runbookAlertFrame_" + safeName(runbookId) + "_" + index
+                            return index === 0 ? "runbookAlertFrame_first" : "runbookAlertFrame_" + index
+                        }
                         Layout.fillWidth: true
                         readonly property int alertIndex: index
                         readonly property var alert: {
