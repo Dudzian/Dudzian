@@ -24,73 +24,20 @@ from core.reporting.guardrails_reporter import (
     GuardrailReportEndpoint,
 )
 from ui.backend.runbook_controller import RunbookController
+from tests.ui._qml_tree import find_by_object_name, walk_qml_items
 from tests.ui._qt_utils import qt_wait
-
-
-def _walk_qml_items(obj: object, limit: int = 8000) -> tuple[list[object], bool]:
-    out: list[object] = []
-    stack: list[object] = [obj]
-    seen: set[int] = set()
-    capped = False
-    while stack:
-        if len(out) >= limit:
-            capped = True
-            break
-        cur = stack.pop()
-        if cur is None:
-            continue
-        ident = id(cur)
-        if ident in seen:
-            continue
-        seen.add(ident)
-        out.append(cur)
-        # QtQuickControls often hide the "real" content under QObject children even if childItems() is non-empty.
-        # Walk both graphs; `seen` + `limit` keep it safe.
-        try:
-            child_items = cur.childItems()  # type: ignore[attr-defined]
-        except Exception:
-            child_items = None
-        if child_items is not None:
-            try:
-                for item in child_items:
-                    if item is not None:
-                        stack.append(item)
-            except Exception:
-                pass
-        try:
-            stack.extend(cur.children())  # type: ignore[attr-defined]
-        except Exception:
-            pass
-    return out, capped
-
-
-def _find_by_object_name(root_obj: object, name: str) -> object | None:
-    items, _ = _walk_qml_items(root_obj)
-    for obj in items:
-        try:
-            object_name = obj.objectName()  # type: ignore[attr-defined]
-        except Exception:
-            object_name = None
-        if object_name == name:
-            return obj
-    return None
-
-
-def _find_by_object_name_prefix(root_obj: object, prefix: str) -> object | None:
-    items, _ = _walk_qml_items(root_obj)
-    for obj in items:
-        try:
-            object_name = obj.objectName()  # type: ignore[attr-defined]
-        except Exception:
-            object_name = None
-        if object_name and object_name.startswith(prefix):
-            return obj
-    return None
 
 
 def _safe_name(value: object) -> str:
     text = "" if value is None else str(value)
     return re.sub(r"[^A-Za-z0-9_]", "_", text)
+
+
+def _obj_name(obj: object) -> str | None:
+    try:
+        return obj.objectName()  # type: ignore[attr-defined]
+    except Exception:
+        return None
 
 
 def _build_sample_report() -> GuardrailReport:
@@ -194,7 +141,7 @@ from pathlib import Path
     repeater = None
     while time.monotonic() < deadline:
         app.processEvents()
-        repeater = root.findChild(QObject, "runbookPanelRepeater")
+        repeater = find_by_object_name(root, "runbookPanelRepeater")
         count = repeater.property("count") if repeater is not None else None
         if isinstance(count, int) and count >= 1:
             break
@@ -223,25 +170,17 @@ from pathlib import Path
 
     deadline = time.monotonic() + timeout
     button = None
-    alert_item = None
+    last_items_root: list[object] | None = None
+    last_capped_root = False
     while time.monotonic() < deadline:
         app.processEvents()
-        alert_item = None
-        if runbook_prefix:
-            alert_item = _find_by_object_name_prefix(root, runbook_prefix)
-        if alert_item is None:
-            alert_item = root.findChild(QObject, "runbookAlertFrame_first")
-        if alert_item is None:
-            alert_item = root.findChild(QObject, "runbookAlertFrame_0")
-        if alert_item is None:
-            qt_wait(10)
-            continue
-        try:
-            button = alert_item.findChild(QObject, "runbookActionButton_restart_queue")
-        except Exception:
-            button = None
-        if button is None:
-            button = _find_by_object_name(alert_item, "runbookActionButton_restart_queue")
+        items_root, capped_root = walk_qml_items(root)
+        last_items_root = items_root
+        last_capped_root = capped_root
+        button = next(
+            (obj for obj in items_root if _obj_name(obj) == "runbookActionButton_restart_queue"),
+            None,
+        )
         if button is not None:
             break
         qt_wait(10)
@@ -252,27 +191,13 @@ from pathlib import Path
             auto_actions = first.get("automaticActions")
         else:
             auto_actions = getattr(first, "automaticActions", None)
-        fallback_alert = alert_item
-        if fallback_alert is None:
-            if runbook_prefix:
-                fallback_alert = _find_by_object_name_prefix(root, runbook_prefix)
-        if fallback_alert is None:
-            fallback_alert = root.findChild(QObject, "runbookAlertFrame_first")
-        if fallback_alert is None:
-            fallback_alert = root.findChild(QObject, "runbookAlertFrame_0")
-        if fallback_alert is None:
-            pytest.fail(
-                "Nie udało się pobrać delegata alertu do diagnostyki. "
-                f"alerts_type={type(alerts).__name__} "
-                f"alerts_len={(len(alerts) if isinstance(alerts, list) else 'n/a')} "
-                f"first_alert_type={type(first).__name__} "
-                f"automaticActions={auto_actions!r} "
-                f"qml_warnings={collected_warnings!r}"
-            )
-        items, capped = _walk_qml_items(fallback_alert)
+        if last_items_root is None:
+            items_root, capped_root = walk_qml_items(root)
+        else:
+            items_root, capped_root = last_items_root, last_capped_root
         created_names = []
         try:
-            for obj in items:
+            for obj in items_root:
                 try:
                     name = obj.objectName()  # type: ignore[attr-defined]
                 except Exception:
@@ -283,7 +208,7 @@ from pathlib import Path
             created_names = ["(failed to enumerate)"]
         actions_repeaters = []
         try:
-            for obj in items:
+            for obj in items_root:
                 try:
                     name = obj.objectName() or ""  # type: ignore[attr-defined]
                 except Exception:
@@ -316,7 +241,7 @@ from pathlib import Path
             panel_repeater_count = "(count unavailable)"
         runbook_names = []
         try:
-            for obj in items:
+            for obj in items_root:
                 try:
                     name = obj.objectName()  # type: ignore[attr-defined]
                 except Exception:
@@ -329,7 +254,7 @@ from pathlib import Path
             runbook_names = sorted(set(runbook_names))[:200]
         alert_frame_names = []
         try:
-            for obj in root.findChildren(QObject):
+            for obj in items_root:
                 try:
                     name = obj.objectName()  # type: ignore[attr-defined]
                 except Exception:
@@ -341,10 +266,32 @@ from pathlib import Path
         if isinstance(alert_frame_names, list) and alert_frame_names and alert_frame_names != ["(failed to enumerate)"]:
             alert_frame_names = sorted(set(alert_frame_names))[:200]
         alert_item_name = None
-        alert_item_type = type(alert_item).__name__ if alert_item is not None else None
-        if alert_item is not None:
+        alert_item_type = None
+        fallback_alert = None
+        if runbook_prefix:
+            # Prefix is used only for diagnostics, not for button lookup.
+            fallback_alert = next(
+                (
+                    obj
+                    for obj in items_root
+                    if (_obj_name(obj) or "").startswith(runbook_prefix)
+                ),
+                None,
+            )
+        if fallback_alert is None:
+            fallback_alert = next(
+                (obj for obj in items_root if _obj_name(obj) == "runbookAlertFrame_first"),
+                None,
+            )
+        if fallback_alert is None:
+            fallback_alert = next(
+                (obj for obj in items_root if _obj_name(obj) == "runbookAlertFrame_0"),
+                None,
+            )
+        if fallback_alert is not None:
+            alert_item_type = type(fallback_alert).__name__
             try:
-                alert_item_name = alert_item.objectName()  # type: ignore[attr-defined]
+                alert_item_name = fallback_alert.objectName()  # type: ignore[attr-defined]
             except Exception:
                 alert_item_name = None
         pytest.fail(
@@ -355,7 +302,7 @@ from pathlib import Path
             f"automaticActions={auto_actions!r} "
             f"runbook_id={runbook_id!r} "
             f"runbook_prefix={runbook_prefix!r} "
-            f"alert_item_found={bool(alert_item)} "
+            f"alert_item_found={bool(fallback_alert)} "
             f"alert_item_name={alert_item_name!r} "
             f"alert_item_type={alert_item_type!r} "
             f"runbook_panel_count={count!r} "
@@ -364,8 +311,8 @@ from pathlib import Path
             f"runbook_action_repeaters={actions_repeaters!r} "
             f"runbook_named_items={runbook_names!r} "
             f"runbook_alert_frames={alert_frame_names!r} "
-            f"alert_item_tree_size={len(items)} "
-            f"alert_item_tree_capped={capped} "
+            f"alert_item_tree_size={len(items_root)} "
+            f"alert_item_tree_capped={capped_root} "
             f"qml_warnings={collected_warnings!r}"
         )
 

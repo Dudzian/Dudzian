@@ -26,6 +26,7 @@ from core.reporting.guardrails_reporter import (
     GuardrailReportEndpoint,
 )
 from ui.backend.runbook_controller import RunbookController
+from tests.ui._qml_tree import find_by_object_name
 from tests.ui._qt_utils import qt_wait
 
 
@@ -90,7 +91,7 @@ def test_runbook_panel_qml_load(tmp_path: Path) -> None:
     repeater = None
     while time.monotonic() < deadline:
         app.processEvents()
-        repeater = root.findChild(QObject, "runbookPanelRepeater")
+        repeater = find_by_object_name(root, "runbookPanelRepeater")
         count = repeater.property("count") if repeater is not None else None
         if isinstance(count, int) and count >= 1:
             break
@@ -99,7 +100,7 @@ def test_runbook_panel_qml_load(tmp_path: Path) -> None:
     count = repeater.property("count")
     assert isinstance(count, int) and count >= 1
 
-    label = root.findChild(QObject, "runbookPanelLastUpdated")
+    label = find_by_object_name(root, "runbookPanelLastUpdated")
     assert label is not None
     text = label.property("text")
     assert "Ostatnia aktualizacja" in text
