@@ -40,6 +40,30 @@ def _obj_name(obj: object) -> str | None:
         return None
 
 
+def _find_button_via_repeater(
+    repeater: object,
+    repeater_count: int,
+    target_name: str,
+) -> tuple[object | None, bool]:
+    item_at = getattr(repeater, "itemAt", None)
+    if not callable(item_at):
+        return None, False
+    delegate_capped_any = False
+    for i in range(min(repeater_count, 10)):
+        try:
+            delegate = item_at(i)
+        except Exception:
+            delegate = None
+        if delegate is None:
+            continue
+        items, capped = walk_qml_items(delegate)
+        delegate_capped_any = delegate_capped_any or capped
+        found = next((obj for obj in items if _obj_name(obj) == target_name), None)
+        if found is not None:
+            return found, delegate_capped_any
+    return None, delegate_capped_any
+
+
 def _build_sample_report() -> GuardrailReport:
     generated_at = datetime(2025, 1, 1, 12, 0, tzinfo=timezone.utc)
     logs = (
@@ -168,19 +192,29 @@ from pathlib import Path
             runbook_id = getattr(first_alert, "runbookId", "") or ""
     runbook_prefix = f"runbookAlertFrame_{_safe_name(runbook_id)}" if runbook_id else ""
 
+    target_name = "runbookActionButton_restart_queue"
     deadline = time.monotonic() + timeout
     button = None
     last_items_root: list[object] | None = None
     last_capped_root = False
+    delegate_capped_any = False
     while time.monotonic() < deadline:
         app.processEvents()
+        rep_count = None
+        try:
+            rep_count = repeater.property("count") if repeater is not None else None
+        except Exception:
+            rep_count = None
+        if repeater is not None and isinstance(rep_count, int) and rep_count > 0:
+            found, capped = _find_button_via_repeater(repeater, rep_count, target_name)
+            delegate_capped_any = delegate_capped_any or capped
+            button = found
+            if button is not None:
+                break
         items_root, capped_root = walk_qml_items(root)
         last_items_root = items_root
         last_capped_root = capped_root
-        button = next(
-            (obj for obj in items_root if _obj_name(obj) == "runbookActionButton_restart_queue"),
-            None,
-        )
+        button = next((obj for obj in items_root if _obj_name(obj) == target_name), None)
         if button is not None:
             break
         qt_wait(10)
@@ -294,6 +328,26 @@ from pathlib import Path
                 alert_item_name = fallback_alert.objectName()  # type: ignore[attr-defined]
             except Exception:
                 alert_item_name = None
+        rep_item0_type = None
+        rep_item0_name = None
+        rep_item0_child_count = None
+        rep_item0_tree_size = None
+        rep_item0_tree_capped = None
+        try:
+            if repeater is not None and callable(getattr(repeater, "itemAt", None)):
+                rep_item0 = repeater.itemAt(0)
+                rep_item0_type = type(rep_item0).__name__ if rep_item0 is not None else None
+                rep_item0_name = _obj_name(rep_item0) if rep_item0 is not None else None
+                if rep_item0 is not None:
+                    try:
+                        rep_item0_child_count = sum(1 for _ in rep_item0.childItems())  # type: ignore[attr-defined]
+                    except Exception:
+                        rep_item0_child_count = "(childItems unavailable)"
+                    rep_items, rep_capped = walk_qml_items(rep_item0)
+                    rep_item0_tree_size = len(rep_items)
+                    rep_item0_tree_capped = rep_capped
+        except Exception:
+            rep_item0_type = "(itemAt failed)"
         pytest.fail(
             "Przycisk akcji nie został wyrenderowany. "
             f"alerts_type={type(alerts).__name__} "
@@ -313,6 +367,13 @@ from pathlib import Path
             f"runbook_alert_frames={alert_frame_names!r} "
             f"alert_item_tree_size={len(items_root)} "
             f"alert_item_tree_capped={capped_root} "
+            f"delegate_tree_capped_any={delegate_capped_any} "
+            f"repeater_has_itemAt={callable(getattr(repeater, 'itemAt', None))} "
+            f"repeater_item0_type={rep_item0_type!r} "
+            f"repeater_item0_name={rep_item0_name!r} "
+            f"repeater_item0_child_count={rep_item0_child_count!r} "
+            f"repeater_item0_tree_size={rep_item0_tree_size!r} "
+            f"repeater_item0_tree_capped={rep_item0_tree_capped!r} "
             f"qml_warnings={collected_warnings!r}"
         )
 
