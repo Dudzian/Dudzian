@@ -40,28 +40,41 @@ def _obj_name(obj: object) -> str | None:
         return None
 
 
+def _delegate_at(container: object, index: int) -> tuple[object | None, str | None, str | None]:
+    last_exc: str | None = None
+    for accessor_name in ("itemAt", "objectAt"):
+        accessor = getattr(container, accessor_name, None)
+        if not callable(accessor):
+            continue
+        try:
+            return accessor(index), accessor_name, None
+        except Exception as exc:
+            last_exc = f"{accessor_name}({index}) -> {exc!r}"
+    return None, None, last_exc
+
+
 def _find_button_via_repeater(
     repeater: object,
     repeater_count: int,
     target_name: str,
-) -> tuple[object | None, bool]:
-    item_at = getattr(repeater, "itemAt", None)
-    if not callable(item_at):
-        return None, False
+) -> tuple[object | None, bool, str | None, str | None]:
     delegate_capped_any = False
+    last_exc: str | None = None
+    accessor_used: str | None = None
     for i in range(min(repeater_count, 10)):
-        try:
-            delegate = item_at(i)
-        except Exception:
-            delegate = None
+        delegate, accessor, exc = _delegate_at(repeater, i)
+        if accessor_used is None:
+            accessor_used = accessor
+        if exc is not None:
+            last_exc = exc
         if delegate is None:
             continue
         items, capped = walk_qml_items(delegate)
         delegate_capped_any = delegate_capped_any or capped
         found = next((obj for obj in items if _obj_name(obj) == target_name), None)
         if found is not None:
-            return found, delegate_capped_any
-    return None, delegate_capped_any
+            return found, delegate_capped_any, accessor_used, last_exc
+    return None, delegate_capped_any, accessor_used, last_exc
 
 
 def _build_sample_report() -> GuardrailReport:
@@ -198,6 +211,8 @@ from pathlib import Path
     last_items_root: list[object] | None = None
     last_capped_root = False
     delegate_capped_any = False
+    delegate_accessor_used: str | None = None
+    delegate_last_exc: str | None = None
     while time.monotonic() < deadline:
         app.processEvents()
         rep_count = None
@@ -206,8 +221,14 @@ from pathlib import Path
         except Exception:
             rep_count = None
         if repeater is not None and isinstance(rep_count, int) and rep_count > 0:
-            found, capped = _find_button_via_repeater(repeater, rep_count, target_name)
+            found, capped, accessor_used, last_exc = _find_button_via_repeater(
+                repeater,
+                rep_count,
+                target_name,
+            )
             delegate_capped_any = delegate_capped_any or capped
+            delegate_accessor_used = delegate_accessor_used or accessor_used
+            delegate_last_exc = delegate_last_exc or last_exc
             button = found
             if button is not None:
                 break
@@ -328,14 +349,21 @@ from pathlib import Path
                 alert_item_name = fallback_alert.objectName()  # type: ignore[attr-defined]
             except Exception:
                 alert_item_name = None
+        repeater_qt_class = None
+        try:
+            repeater_qt_class = repeater.metaObject().className() if repeater is not None else None  # type: ignore[attr-defined]
+        except Exception:
+            repeater_qt_class = "(metaObject failed)"
         rep_item0_type = None
         rep_item0_name = None
         rep_item0_child_count = None
         rep_item0_tree_size = None
         rep_item0_tree_capped = None
+        rep_item0_accessor = None
+        rep_item0_exc = None
         try:
-            if repeater is not None and callable(getattr(repeater, "itemAt", None)):
-                rep_item0 = repeater.itemAt(0)
+            if repeater is not None:
+                rep_item0, rep_item0_accessor, rep_item0_exc = _delegate_at(repeater, 0)
                 rep_item0_type = type(rep_item0).__name__ if rep_item0 is not None else None
                 rep_item0_name = _obj_name(rep_item0) if rep_item0 is not None else None
                 if rep_item0 is not None:
@@ -368,9 +396,15 @@ from pathlib import Path
             f"alert_item_tree_size={len(items_root)} "
             f"alert_item_tree_capped={capped_root} "
             f"delegate_tree_capped_any={delegate_capped_any} "
+            f"delegate_accessor_used={delegate_accessor_used!r} "
+            f"delegate_last_exc={delegate_last_exc!r} "
             f"repeater_has_itemAt={callable(getattr(repeater, 'itemAt', None))} "
+            f"repeater_has_objectAt={callable(getattr(repeater, 'objectAt', None))} "
+            f"repeater_qt_class={repeater_qt_class!r} "
             f"repeater_item0_type={rep_item0_type!r} "
             f"repeater_item0_name={rep_item0_name!r} "
+            f"repeater_item0_accessor={rep_item0_accessor!r} "
+            f"repeater_item0_exc={rep_item0_exc!r} "
             f"repeater_item0_child_count={rep_item0_child_count!r} "
             f"repeater_item0_tree_size={rep_item0_tree_size!r} "
             f"repeater_item0_tree_capped={rep_item0_tree_capped!r} "
