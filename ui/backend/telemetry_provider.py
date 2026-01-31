@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Callable, Iterable, Mapping
 
 from PySide6.QtCore import QObject, Property, QTimer, Signal, Slot
@@ -20,9 +20,14 @@ from ui.backend.qml_bridge import to_plain_dict, to_plain_list, to_plain_text
 SnapshotLoader = Callable[[], RuntimeTelemetrySnapshot]
 
 
-def _format_timestamp(timestamp: datetime | None) -> str:
+def _format_timestamp(timestamp: datetime | str | None) -> str:
     if timestamp is None:
         return ""
+    if isinstance(timestamp, str):
+        stripped = timestamp.strip()
+        return stripped
+    if timestamp.tzinfo is None:
+        timestamp = timestamp.replace(tzinfo=timezone.utc)
     return timestamp.astimezone().isoformat(timespec="seconds")
 
 
