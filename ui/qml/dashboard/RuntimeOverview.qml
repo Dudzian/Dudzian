@@ -272,9 +272,11 @@ Item {
             Text {
                 id: lastUpdatedLabel
                 objectName: "runtimeOverviewLastUpdated"
-                text: root.telemetryProvider && root.telemetryProvider.lastUpdated.length > 0
-                      ? qsTr("Ostatnia aktualizacja: %1").arg(root.telemetryProvider.lastUpdated)
-                      : qsTr("Ostatnia aktualizacja: n/d")
+                text: qsTr("Ostatnia aktualizacja: %1")
+                      .arg(root.telemetryProvider && root.telemetryProvider.lastUpdated
+                           && root.telemetryProvider.lastUpdated.length > 0
+                           ? root.telemetryProvider.lastUpdated
+                           : qsTr("n/d"))
                 color: Styles.AppTheme.textSecondary
                 font.pointSize: 12
             }

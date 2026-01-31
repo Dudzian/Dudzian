@@ -126,6 +126,13 @@ class TelemetryProvider(QObject):
     def lastUpdated(self) -> str:  # type: ignore[override]
         return to_plain_text(self._last_updated)
 
+    @lastUpdated.setter
+    def lastUpdated(self, value: datetime | str | None) -> None:
+        formatted = _format_timestamp(value)
+        if formatted != self._last_updated:
+            self._last_updated = formatted
+            self.lastUpdatedChanged.emit()
+
     @Property(str, notify=errorMessageChanged)
     def errorMessage(self) -> str:  # type: ignore[override]
         return to_plain_text(self._error_message)
@@ -157,8 +164,7 @@ class TelemetryProvider(QObject):
         self._compliance_summary = self._compliance_payload(snapshot.compliance)
         self.complianceSummaryChanged.emit()
 
-        self._last_updated = _format_timestamp(snapshot.generated_at)
-        self.lastUpdatedChanged.emit()
+        self.lastUpdated = snapshot.generated_at
         return True
 
     @Slot("QVariantMap")
