@@ -26,10 +26,10 @@ Item {
     readonly property var retrainingRuns: root.telemetryProviderObj && root.telemetryProviderObj.retraining
                                  ? root.telemetryProviderObj.retraining
                                  : []
-    property var dashboardSettingsControllerObj: (typeof dashboardSettingsController !== "undefined" ? dashboardSettingsController : null)
-    property var complianceControllerObj: (typeof complianceController !== "undefined" ? complianceController : null)
+    property var dashboardSettingsControllerObj: null
+    property var complianceControllerObj: null
     property var runtimeServiceObj: (typeof runtimeService !== "undefined" ? runtimeService : null)
-    property var reportControllerObj: (typeof reportController !== "undefined" ? reportController : null)
+    property var reportControllerObj: null
     property int refreshIntervalMs: dashboardSettingsControllerObj ? dashboardSettingsControllerObj.refreshIntervalMs : 4000
     readonly property var defaultCardOrder: ["feed_sla", "io_queue", "guardrails", "retraining", "compliance", "risk_journal", "ai_decisions"]
     property var aiDecisions: []
