@@ -598,6 +598,7 @@ class LocalLongPollStream(Iterable[StreamBatch]):
         )
         self._clock = clock or time.monotonic
         self._sleep = sleep or time.sleep
+        self._sleep_is_custom = sleep is not None
 
         self._buffer_size = max(1, int(buffer_size))
         self._pending: Deque[StreamBatch] = deque()
@@ -957,6 +958,13 @@ class LocalLongPollStream(Iterable[StreamBatch]):
 
     def _sleep_with_stop(self, delay: float) -> None:
         if delay <= 0:
+            return
+        if self._sleep_is_custom or _is_test_mode_enabled():
+            if self._stop_event.is_set() or self._closed:
+                return
+            self._sleep(delay)
+            if self._stop_event.is_set() or self._closed:
+                return
             return
         deadline = time.monotonic() + delay
         while not self._stop_event.is_set() and not self._closed:
