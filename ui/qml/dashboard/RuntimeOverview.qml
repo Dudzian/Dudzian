@@ -11,37 +11,52 @@ Item {
     implicitHeight: 640
 
     property var telemetryProviderObj: (typeof telemetryProvider !== "undefined" ? telemetryProvider : null)
+    readonly property string telemetryLastUpdated: root.telemetryProviderObj && root.telemetryProviderObj.lastUpdated
+                                          ? root.telemetryProviderObj.lastUpdated
+                                          : ""
+    readonly property string telemetryErrorMessage: root.telemetryProviderObj && root.telemetryProviderObj.errorMessage
+                                           ? root.telemetryProviderObj.errorMessage
+                                           : ""
+    readonly property var telemetryIoQueues: root.telemetryProviderObj && root.telemetryProviderObj.ioQueues
+                                    ? root.telemetryProviderObj.ioQueues
+                                    : []
+    readonly property var guardrailSummary: root.telemetryProviderObj && root.telemetryProviderObj.guardrailSummary
+                                   ? root.telemetryProviderObj.guardrailSummary
+                                   : ({})
+    readonly property var retrainingRuns: root.telemetryProviderObj && root.telemetryProviderObj.retraining
+                                 ? root.telemetryProviderObj.retraining
+                                 : []
     property var dashboardSettingsController: (typeof dashboardSettingsController !== "undefined" ? dashboardSettingsController : null)
     property var complianceController: (typeof complianceController !== "undefined" ? complianceController : null)
-    property var runtimeService: (typeof runtimeService !== "undefined" ? runtimeService : null)
+    property var runtimeServiceObj: (typeof runtimeService !== "undefined" ? runtimeService : null)
     property var reportController: (typeof reportController !== "undefined" ? reportController : null)
     property int refreshIntervalMs: dashboardSettingsController ? dashboardSettingsController.refreshIntervalMs : 4000
     readonly property var defaultCardOrder: ["feed_sla", "io_queue", "guardrails", "retraining", "compliance", "risk_journal", "ai_decisions"]
     property var aiDecisions: []
     property string aiDecisionError: ""
-    property string retrainSchedulerNextRun: runtimeService && runtimeService.retrainNextRun
-                                            ? runtimeService.retrainNextRun
+    property string retrainSchedulerNextRun: runtimeServiceObj && runtimeServiceObj.retrainNextRun
+                                            ? runtimeServiceObj.retrainNextRun
                                             : ""
-    property string adaptiveStrategySummary: runtimeService && runtimeService.adaptiveStrategySummary
-                                              ? runtimeService.adaptiveStrategySummary
+    property string adaptiveStrategySummary: runtimeServiceObj && runtimeServiceObj.adaptiveStrategySummary
+                                              ? runtimeServiceObj.adaptiveStrategySummary
                                               : ""
-    property string regimeActivationSummary: runtimeService && runtimeService.regimeActivationSummary
-                                             ? runtimeService.regimeActivationSummary
+    property string regimeActivationSummary: runtimeServiceObj && runtimeServiceObj.regimeActivationSummary
+                                             ? runtimeServiceObj.regimeActivationSummary
                                              : ""
-    property var riskMetrics: runtimeService && runtimeService.riskMetrics ? runtimeService.riskMetrics : ({})
-    property var riskTimeline: runtimeService && runtimeService.riskTimeline ? runtimeService.riskTimeline : []
-    property var lastOperatorAction: runtimeService && runtimeService.lastOperatorAction ? runtimeService.lastOperatorAction : ({})
-    property var longPollMetrics: runtimeService && runtimeService.longPollMetrics ? runtimeService.longPollMetrics : []
-    property var cycleMetrics: runtimeService && runtimeService.cycleMetrics ? runtimeService.cycleMetrics : ({})
-    property var feedTransportSnapshot: runtimeService && runtimeService.feedTransportSnapshot
-                                        ? runtimeService.feedTransportSnapshot
+    property var riskMetrics: runtimeServiceObj && runtimeServiceObj.riskMetrics ? runtimeServiceObj.riskMetrics : ({})
+    property var riskTimeline: runtimeServiceObj && runtimeServiceObj.riskTimeline ? runtimeServiceObj.riskTimeline : []
+    property var lastOperatorAction: runtimeServiceObj && runtimeServiceObj.lastOperatorAction ? runtimeServiceObj.lastOperatorAction : ({})
+    property var longPollMetrics: runtimeServiceObj && runtimeServiceObj.longPollMetrics ? runtimeServiceObj.longPollMetrics : []
+    property var cycleMetrics: runtimeServiceObj && runtimeServiceObj.cycleMetrics ? runtimeServiceObj.cycleMetrics : ({})
+    property var feedTransportSnapshot: runtimeServiceObj && runtimeServiceObj.feedTransportSnapshot
+                                        ? runtimeServiceObj.feedTransportSnapshot
                                         : ({})
-    property var feedHealth: runtimeService && runtimeService.feedHealth ? runtimeService.feedHealth : ({})
-    property var feedSlaReport: runtimeService && runtimeService.feedSlaReport ? runtimeService.feedSlaReport : ({})
-    property var feedAlertHistory: runtimeService && runtimeService.feedAlertHistory ? runtimeService.feedAlertHistory : []
-    property var feedAlertChannels: runtimeService && runtimeService.feedAlertChannels ? runtimeService.feedAlertChannels : []
-    property var aiRegimeBreakdown: runtimeService && runtimeService.aiRegimeBreakdown
-                                    ? runtimeService.aiRegimeBreakdown
+    property var feedHealth: runtimeServiceObj && runtimeServiceObj.feedHealth ? runtimeServiceObj.feedHealth : ({})
+    property var feedSlaReport: runtimeServiceObj && runtimeServiceObj.feedSlaReport ? runtimeServiceObj.feedSlaReport : ({})
+    property var feedAlertHistory: runtimeServiceObj && runtimeServiceObj.feedAlertHistory ? runtimeServiceObj.feedAlertHistory : []
+    property var feedAlertChannels: runtimeServiceObj && runtimeServiceObj.feedAlertChannels ? runtimeServiceObj.feedAlertChannels : []
+    property var aiRegimeBreakdown: runtimeServiceObj && runtimeServiceObj.aiRegimeBreakdown
+                                    ? runtimeServiceObj.aiRegimeBreakdown
                                     : []
     property string feedLatencyAlertState: "ok"
     property real feedLatencyAlertValue: 0.0
@@ -76,29 +91,29 @@ Item {
     }
 
     function refreshDecisions() {
-        if (!root.runtimeService)
+        if (!root.runtimeServiceObj)
             return
-        const result = root.runtimeService.loadRecentDecisions(10)
+        const result = root.runtimeServiceObj.loadRecentDecisions(10)
         if (Array.isArray(result))
             root.aiDecisions = result
-        root.riskMetrics = root.runtimeService ? root.runtimeService.riskMetrics : ({})
-        root.riskTimeline = root.runtimeService ? root.runtimeService.riskTimeline : []
-        root.lastOperatorAction = root.runtimeService ? root.runtimeService.lastOperatorAction : ({})
-        root.longPollMetrics = root.runtimeService ? root.runtimeService.longPollMetrics : []
-        root.cycleMetrics = root.runtimeService ? root.runtimeService.cycleMetrics : ({})
-        root.feedTransportSnapshot = root.runtimeService ? root.runtimeService.feedTransportSnapshot : ({})
-        root.feedHealth = root.runtimeService ? root.runtimeService.feedHealth : ({})
-        root.feedSlaReport = root.runtimeService ? root.runtimeService.feedSlaReport : ({})
-        root.feedAlertHistory = root.runtimeService && root.runtimeService.feedAlertHistory
-                ? root.runtimeService.feedAlertHistory
+        root.riskMetrics = root.runtimeServiceObj ? root.runtimeServiceObj.riskMetrics : ({})
+        root.riskTimeline = root.runtimeServiceObj ? root.runtimeServiceObj.riskTimeline : []
+        root.lastOperatorAction = root.runtimeServiceObj ? root.runtimeServiceObj.lastOperatorAction : ({})
+        root.longPollMetrics = root.runtimeServiceObj ? root.runtimeServiceObj.longPollMetrics : []
+        root.cycleMetrics = root.runtimeServiceObj ? root.runtimeServiceObj.cycleMetrics : ({})
+        root.feedTransportSnapshot = root.runtimeServiceObj ? root.runtimeServiceObj.feedTransportSnapshot : ({})
+        root.feedHealth = root.runtimeServiceObj ? root.runtimeServiceObj.feedHealth : ({})
+        root.feedSlaReport = root.runtimeServiceObj ? root.runtimeServiceObj.feedSlaReport : ({})
+        root.feedAlertHistory = root.runtimeServiceObj && root.runtimeServiceObj.feedAlertHistory
+                ? root.runtimeServiceObj.feedAlertHistory
                 : []
-        root.feedAlertChannels = root.runtimeService && root.runtimeService.feedAlertChannels
-                ? root.runtimeService.feedAlertChannels
+        root.feedAlertChannels = root.runtimeServiceObj && root.runtimeServiceObj.feedAlertChannels
+                ? root.runtimeServiceObj.feedAlertChannels
                 : []
         root.syncLatencyAlert()
-        root.aiRegimeBreakdown = root.runtimeService ? root.runtimeService.aiRegimeBreakdown : []
-        root.adaptiveStrategySummary = root.runtimeService ? root.runtimeService.adaptiveStrategySummary : ""
-        root.regimeActivationSummary = root.runtimeService ? root.runtimeService.regimeActivationSummary : ""
+        root.aiRegimeBreakdown = root.runtimeServiceObj ? root.runtimeServiceObj.aiRegimeBreakdown : []
+        root.adaptiveStrategySummary = root.runtimeServiceObj ? root.runtimeServiceObj.adaptiveStrategySummary : ""
+        root.regimeActivationSummary = root.runtimeServiceObj ? root.runtimeServiceObj.regimeActivationSummary : ""
     }
 
     function refreshAll() {
@@ -161,102 +176,102 @@ Item {
         target: root.telemetryProviderObj
         ignoreUnknownSignals: true
         function onErrorMessageChanged() {
-            errorBanner.visible = root.telemetryProviderObj.errorMessage.length > 0
+            errorBanner.visible = root.telemetryErrorMessage.length > 0
         }
     }
 
     Connections {
-        target: root.runtimeService
+        target: root.runtimeServiceObj
         ignoreUnknownSignals: true
 
         function onDecisionsChanged() {
-            if (root.runtimeService)
-                root.aiDecisions = root.runtimeService.decisions
+            if (root.runtimeServiceObj)
+                root.aiDecisions = root.runtimeServiceObj.decisions
         }
 
         function onErrorMessageChanged() {
-            if (!root.runtimeService)
+            if (!root.runtimeServiceObj)
                 return
-            root.aiDecisionError = root.runtimeService.errorMessage
+            root.aiDecisionError = root.runtimeServiceObj.errorMessage
         }
 
         function onRiskMetricsChanged() {
-            if (!root.runtimeService)
+            if (!root.runtimeServiceObj)
                 return
-            root.riskMetrics = root.runtimeService.riskMetrics
+            root.riskMetrics = root.runtimeServiceObj.riskMetrics
         }
 
         function onRiskTimelineChanged() {
-            if (!root.runtimeService)
+            if (!root.runtimeServiceObj)
                 return
-            root.riskTimeline = root.runtimeService.riskTimeline
+            root.riskTimeline = root.runtimeServiceObj.riskTimeline
         }
 
         function onOperatorActionChanged() {
-            if (!root.runtimeService)
+            if (!root.runtimeServiceObj)
                 return
-            root.lastOperatorAction = root.runtimeService.lastOperatorAction
+            root.lastOperatorAction = root.runtimeServiceObj.lastOperatorAction
         }
 
         function onLongPollMetricsChanged() {
-            if (!root.runtimeService)
+            if (!root.runtimeServiceObj)
                 return
-            root.longPollMetrics = root.runtimeService.longPollMetrics
+            root.longPollMetrics = root.runtimeServiceObj.longPollMetrics
         }
 
         function onCycleMetricsChanged() {
-            if (!root.runtimeService)
+            if (!root.runtimeServiceObj)
                 return
-            root.cycleMetrics = root.runtimeService.cycleMetrics
+            root.cycleMetrics = root.runtimeServiceObj.cycleMetrics
         }
 
         function onFeedTransportSnapshotChanged() {
-            if (!root.runtimeService)
+            if (!root.runtimeServiceObj)
                 return
-            root.feedTransportSnapshot = root.runtimeService.feedTransportSnapshot
+            root.feedTransportSnapshot = root.runtimeServiceObj.feedTransportSnapshot
         }
 
         function onFeedHealthChanged() {
-            if (!root.runtimeService)
+            if (!root.runtimeServiceObj)
                 return
-            root.feedHealth = root.runtimeService.feedHealth
+            root.feedHealth = root.runtimeServiceObj.feedHealth
         }
 
         function onFeedSlaReportChanged() {
-            if (!root.runtimeService)
+            if (!root.runtimeServiceObj)
                 return
-            root.feedSlaReport = root.runtimeService.feedSlaReport
+            root.feedSlaReport = root.runtimeServiceObj.feedSlaReport
             root.syncLatencyAlert()
         }
 
         function onFeedAlertHistoryChanged() {
-            if (!root.runtimeService)
+            if (!root.runtimeServiceObj)
                 return
-            root.feedAlertHistory = root.runtimeService.feedAlertHistory
+            root.feedAlertHistory = root.runtimeServiceObj.feedAlertHistory
         }
 
         function onFeedAlertChannelsChanged() {
-            if (!root.runtimeService)
+            if (!root.runtimeServiceObj)
                 return
-            root.feedAlertChannels = root.runtimeService.feedAlertChannels
+            root.feedAlertChannels = root.runtimeServiceObj.feedAlertChannels
         }
 
         function onAiRegimeBreakdownChanged() {
-            if (!root.runtimeService)
+            if (!root.runtimeServiceObj)
                 return
-            root.aiRegimeBreakdown = root.runtimeService.aiRegimeBreakdown
+            root.aiRegimeBreakdown = root.runtimeServiceObj.aiRegimeBreakdown
         }
 
         function onAdaptiveStrategySummaryChanged() {
-            if (!root.runtimeService)
+            if (!root.runtimeServiceObj)
                 return
-            root.adaptiveStrategySummary = root.runtimeService.adaptiveStrategySummary
+            root.adaptiveStrategySummary = root.runtimeServiceObj.adaptiveStrategySummary
         }
 
         function onRegimeActivationSummaryChanged() {
-            if (!root.runtimeService)
+            if (!root.runtimeServiceObj)
                 return
-            root.regimeActivationSummary = root.runtimeService.regimeActivationSummary
+            root.regimeActivationSummary = root.runtimeServiceObj.regimeActivationSummary
         }
     }
 
@@ -273,9 +288,8 @@ Item {
                 id: lastUpdatedLabel
                 objectName: "runtimeOverviewLastUpdated"
                 text: qsTr("Ostatnia aktualizacja: %1")
-                      .arg(root.telemetryProviderObj && root.telemetryProviderObj.lastUpdated
-                           && root.telemetryProviderObj.lastUpdated.length > 0
-                           ? root.telemetryProviderObj.lastUpdated
+                      .arg(root.telemetryLastUpdated.length > 0
+                           ? root.telemetryLastUpdated
                            : qsTr("n/d"))
                 color: Styles.AppTheme.textSecondary
                 font.pointSize: 12
@@ -302,7 +316,7 @@ Item {
 
             Text {
                 anchors.centerIn: parent
-                text: root.telemetryProviderObj ? root.telemetryProviderObj.errorMessage : ""
+                text: root.telemetryErrorMessage
                 color: "white"
                 font.pointSize: 11
             }
@@ -312,7 +326,7 @@ Item {
             id: strategyAiPanel
             objectName: "runtimeOverviewStrategyAiPanel"
             Layout.fillWidth: true
-            runtimeService: root.runtimeService
+            runtimeService: root.runtimeServiceObj
             feedTransportSnapshot: root.feedTransportSnapshot
             aiRegimes: root.aiRegimeBreakdown
             adaptiveSummary: root.adaptiveStrategySummary
@@ -637,7 +651,7 @@ Item {
                         objectName: "runtimeOverviewIoRepeater"
 
                         Repeater {
-                            model: root.telemetryProviderObj ? root.telemetryProviderObj.ioQueues : []
+                            model: root.telemetryIoQueues
                             delegate: Frame {
                                 Layout.fillWidth: true
                                 background: Rectangle {
@@ -699,7 +713,7 @@ Item {
                         }
 
                         Label {
-                            visible: !root.telemetryProviderObj || root.telemetryProviderObj.ioQueues.length === 0
+                            visible: root.telemetryIoQueues.length === 0
                             text: qsTr("Brak danych z kolejki I/O")
                             color: Styles.AppTheme.textSecondary
                         }
@@ -736,24 +750,26 @@ Item {
                     spacing: 4
 
                     Text {
-                        text: qsTr("Łączna liczba kolejek: %1").arg(root.telemetryProviderObj ? root.telemetryProviderObj.guardrailSummary.totalQueues : 0)
+                        text: qsTr("Łączna liczba kolejek: %1")
+                              .arg(Number(root.guardrailSummary.totalQueues || 0).toFixed(0))
                         color: Styles.AppTheme.textSecondary
                     }
                     Text {
-                        text: qsTr("Błędy: %1 • Ostrzeżenia: %2").arg(root.telemetryProviderObj ? root.telemetryProviderObj.guardrailSummary.errorQueues : 0)
-                                                                                 .arg(root.telemetryProviderObj ? root.telemetryProviderObj.guardrailSummary.warningQueues : 0)
+                        text: qsTr("Błędy: %1 • Ostrzeżenia: %2")
+                              .arg(Number(root.guardrailSummary.errorQueues || 0).toFixed(0))
+                              .arg(Number(root.guardrailSummary.warningQueues || 0).toFixed(0))
                         color: Styles.AppTheme.textSecondary
                     }
                     Text {
                         text: qsTr("Informacje: %1 • Stabilne: %2")
-                              .arg(root.telemetryProviderObj ? root.telemetryProviderObj.guardrailSummary.infoQueues : 0)
-                              .arg(root.telemetryProviderObj ? root.telemetryProviderObj.guardrailSummary.normalQueues : 0)
+                              .arg(Number(root.guardrailSummary.infoQueues || 0).toFixed(0))
+                              .arg(Number(root.guardrailSummary.normalQueues || 0).toFixed(0))
                         color: Styles.AppTheme.textSecondary
                     }
                     Text {
                         text: qsTr("Timeouty: %1 • Oczekiwania: %2")
-                              .arg(root.telemetryProviderObj ? Number(root.telemetryProviderObj.guardrailSummary.totalTimeouts).toFixed(0) : "0")
-                              .arg(root.telemetryProviderObj ? Number(root.telemetryProviderObj.guardrailSummary.totalRateLimitWaits).toFixed(0) : "0")
+                              .arg(Number(root.guardrailSummary.totalTimeouts || 0).toFixed(0))
+                              .arg(Number(root.guardrailSummary.totalRateLimitWaits || 0).toFixed(0))
                         color: Styles.AppTheme.textSecondary
                     }
                 }
@@ -790,7 +806,7 @@ Item {
                     objectName: "runtimeOverviewRetrainingRepeater"
 
                     Repeater {
-                        model: root.telemetryProviderObj ? root.telemetryProviderObj.retraining : []
+                        model: root.retrainingRuns
                         delegate: Frame {
                             Layout.fillWidth: true
                             background: Rectangle {
@@ -832,7 +848,7 @@ Item {
                     }
 
                     Label {
-                        visible: !root.telemetryProviderObj || root.telemetryProviderObj.retraining.length === 0
+                        visible: root.retrainingRuns.length === 0
                         text: qsTr("Brak danych retrainingu")
                         color: Styles.AppTheme.textSecondary
                     }
@@ -865,18 +881,18 @@ Item {
             Dashboard.RiskJournalPanel {
                 anchors.fill: parent
                 anchors.margins: 16
-                runtimeService: root.runtimeService
+                runtimeService: root.runtimeServiceObj
                 metrics: root.riskMetrics
                 timeline: root.riskTimeline
                 lastOperatorAction: root.lastOperatorAction
                 onFreezeRequested: function(entry) {
-                    root.lastOperatorAction = root.runtimeService ? root.runtimeService.lastOperatorAction : ({})
+                    root.lastOperatorAction = root.runtimeServiceObj ? root.runtimeServiceObj.lastOperatorAction : ({})
                 }
                 onUnfreezeRequested: function(entry) {
-                    root.lastOperatorAction = root.runtimeService ? root.runtimeService.lastOperatorAction : ({})
+                    root.lastOperatorAction = root.runtimeServiceObj ? root.runtimeServiceObj.lastOperatorAction : ({})
                 }
                 onUnblockRequested: function(entry) {
-                    root.lastOperatorAction = root.runtimeService ? root.runtimeService.lastOperatorAction : ({})
+                    root.lastOperatorAction = root.runtimeServiceObj ? root.runtimeServiceObj.lastOperatorAction : ({})
                 }
             }
         }
