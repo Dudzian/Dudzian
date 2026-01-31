@@ -517,6 +517,8 @@ class LocalLongPollStream(Iterable[StreamBatch]):
 
     _active_lock = threading.Lock()
     _active_instances: "weakref.WeakSet[LocalLongPollStream]" = weakref.WeakSet()
+    _DEFAULT_JOIN_TIMEOUT = 2.0
+    _SLEEP_SLICE_SECONDS = 0.1
 
     def __init__(
         self,
@@ -700,9 +702,28 @@ class LocalLongPollStream(Iterable[StreamBatch]):
             active = list(cls._active_instances)
         for stream in active:
             try:
-                stream.close()
+                stream._signal_stop()
+            except Exception:  # pragma: no cover - defensywnie w teardownie
+                _LOGGER.debug("Nie udało się zasygnalizować stop dla LocalLongPollStream", exc_info=True)
+        for stream in active:
+            try:
+                stream._join_worker(timeout=cls._DEFAULT_JOIN_TIMEOUT)
             except Exception:  # pragma: no cover - defensywnie w teardownie
                 _LOGGER.debug("Nie udało się zamknąć LocalLongPollStream", exc_info=True)
+        for stream in active:
+            try:
+                if stream._worker_thread and stream._worker_thread.is_alive():
+                    stream._signal_stop()
+                    stream._join_worker(timeout=0.5)
+            except Exception:  # pragma: no cover - defensywnie w teardownie
+                _LOGGER.debug(
+                    "Nie udało się ponownie zamknąć LocalLongPollStream", exc_info=True
+                )
+        for stream in active:
+            try:
+                stream._unregister_if_stopped()
+            except Exception:  # pragma: no cover - defensywnie w teardownie
+                _LOGGER.debug("Nie udało się wyrejestrować LocalLongPollStream", exc_info=True)
 
     def start(self) -> "LocalLongPollStream":
         """Uruchamia wątek odpowiedzialny za polling long-pollowy."""
@@ -886,6 +907,11 @@ class LocalLongPollStream(Iterable[StreamBatch]):
     def close(self) -> None:
         """Zamyka iterator – kolejne próby pobrania danych zakończą się StopIteration."""
 
+        self._signal_stop()
+        self._join_worker(timeout=self._DEFAULT_JOIN_TIMEOUT)
+        self._unregister_if_stopped()
+
+    def _signal_stop(self) -> None:
         if self._closed:
             return
         self._closed = True
@@ -906,15 +932,38 @@ class LocalLongPollStream(Iterable[StreamBatch]):
             if response is not None:
                 with contextlib.suppress(Exception):
                     response.close()
+                response_fp = getattr(response, "fp", None)
+                if response_fp is not None:
+                    with contextlib.suppress(Exception):
+                        response_fp.close()
         except Exception:  # pragma: no cover - defensywne
             pass
 
+    def _join_worker(self, *, timeout: float | None = None) -> None:
         worker = self._worker_thread
         if worker and worker.is_alive() and worker is not threading.current_thread():
-            join_timeout = max(1.0, min(5.0, float(getattr(self, "_timeout", 1.0)) + 0.5))
+            join_timeout = (
+                self._DEFAULT_JOIN_TIMEOUT if timeout is None else max(0.0, float(timeout))
+            )
             worker.join(timeout=join_timeout)
-        self._worker_thread = None
+        if self._worker_thread and not self._worker_thread.is_alive():
+            self._worker_thread = None
+
+    def _unregister_if_stopped(self) -> None:
+        worker = self._worker_thread
+        if worker and worker.is_alive():
+            return
         self._unregister_instance()
+
+    def _sleep_with_stop(self, delay: float) -> None:
+        if delay <= 0:
+            return
+        deadline = self._clock() + delay
+        while not self._stop_event.is_set() and not self._closed:
+            remaining = deadline - self._clock()
+            if remaining <= 0:
+                break
+            self._sleep(min(self._SLEEP_SLICE_SECONDS, remaining))
 
     # ------------------------------------------------------------------
     # Wewnętrzne operacje long-polla
@@ -975,7 +1024,7 @@ class LocalLongPollStream(Iterable[StreamBatch]):
                     if acquired:
                         remaining = wait_until - self._clock()
                         if remaining > 0:
-                            self._sleep(remaining)
+                            self._sleep_with_stop(remaining)
                 else:
                     wait_until = next_poll_at if next_poll_at is not None else None
                     timeout = None
@@ -987,7 +1036,7 @@ class LocalLongPollStream(Iterable[StreamBatch]):
                     if wait_until is not None:
                         remaining = wait_until - self._clock()
                         if remaining > 0:
-                            self._sleep(remaining)
+                            self._sleep_with_stop(remaining)
 
                 if self._stop_event.is_set() or self._closed:
                     break
@@ -1023,20 +1072,23 @@ class LocalLongPollStream(Iterable[StreamBatch]):
         poll_started = self._clock()
         elapsed = poll_started - self._last_poll
         if elapsed < self._poll_interval:
-            self._sleep(self._poll_interval - elapsed)
+            self._sleep_with_stop(self._poll_interval - elapsed)
 
         attempt = 0
         last_error: Exception | None = None
         reconnect_started_at: float | None = None
         reconnect_attempts = 0
         reconnect_reason = "unknown"
-        while attempt < self._max_retries and not self._closed:
+        while attempt < self._max_retries and not self._closed and not self._stop_event.is_set():
             request = self._build_request()
             should_backoff = True
             headers = None
             retryable = False
+            effective_timeout = (
+                min(self._timeout, 0.5) if _is_test_mode_enabled() else self._timeout
+            )
             try:
-                with urlopen(request, timeout=self._timeout) as response:
+                with urlopen(request, timeout=effective_timeout) as response:
                     # Umożliw close() przerwanie blokującego read() poprzez response.close().
                     try:
                         with self._active_response_lock:
@@ -1078,7 +1130,7 @@ class LocalLongPollStream(Iterable[StreamBatch]):
                         reason=reason_label,
                     )
                     if server_retry_after is not None and server_retry_after > 0:
-                        self._sleep(server_retry_after)
+                        self._sleep_with_stop(server_retry_after)
                         should_backoff = False
                 elif 500 <= exc.code < 600:
                     last_error = ExchangeNetworkError(
@@ -1125,7 +1177,7 @@ class LocalLongPollStream(Iterable[StreamBatch]):
                         reason=reconnect_reason,
                     )
                 if retry_after > 0:
-                    self._sleep(retry_after)
+                    self._sleep_with_stop(retry_after)
                 return
 
             if retryable:
@@ -1137,12 +1189,12 @@ class LocalLongPollStream(Iterable[StreamBatch]):
                     attempt=reconnect_attempts,
                 )
             attempt += 1
-            if self._closed:
+            if self._closed or self._stop_event.is_set():
                 break
             if self._backoff_base > 0.0 and should_backoff:
                 delay = self._streaming_backoff.calculate_delay(attempt)
                 if delay > 0:
-                    self._sleep(delay)
+                    self._sleep_with_stop(delay)
 
         if reconnect_attempts > 0 and reconnect_started_at is not None:
             self._record_reconnect_result(
