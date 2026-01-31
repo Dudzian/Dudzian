@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import os
 import re
+import time
 from datetime import datetime, timezone
 import base64
 from pathlib import Path
@@ -66,6 +67,7 @@ from bot_core.observability.ui_metrics import (
 )
 from ui.backend.runtime_service import RuntimeService
 from ui.backend.telemetry_provider import TelemetryProvider
+from tests.ui._qt_utils import qt_wait
 from ui.backend.qml_bridge import to_plain_value
 
 
@@ -428,13 +430,43 @@ def test_runtime_overview_renders_snapshot(tmp_path: Path) -> None:
     ok = provider.refreshTelemetry()
     assert ok is True
     app.processEvents()
+    assert provider.lastUpdated, "TelemetryProvider.lastUpdated pozostał pusty po refreshTelemetry()."
 
     summary = provider.complianceSummary
     assert summary["totalViolations"] == 1.0
 
     last_updated = root.findChild(QObject, "runtimeOverviewLastUpdated")
     assert last_updated is not None
-    assert "2025" in last_updated.property("text")
+
+    def _last_updated_text() -> str:
+        return str(last_updated.property("text"))
+
+    def _wait_for_last_updated(timeout_s: float = 2.0) -> str:
+        start = time.monotonic()
+        while time.monotonic() - start < timeout_s:
+            app.processEvents()
+            current = _last_updated_text()
+            if "n/d" not in current:
+                return current
+            qt_wait(50)
+        return _last_updated_text()
+
+    label_text = _wait_for_last_updated()
+    assert "n/d" not in label_text, (
+        "Label runtimeOverviewLastUpdated nie zaktualizował się po refreshTelemetry. "
+        f"text={label_text!r}, provider.lastUpdated={provider.lastUpdated!r}"
+    )
+    assert re.search(r"\d{4}", label_text), (
+        "Label runtimeOverviewLastUpdated nie zawiera roku. "
+        f"text={label_text!r}, provider.lastUpdated={provider.lastUpdated!r}"
+    )
+    year_match = re.search(r"\d{4}", str(provider.lastUpdated))
+    if year_match:
+        year = year_match.group(0)
+        assert year in label_text, (
+            "Label runtimeOverviewLastUpdated nie zawiera roku z provider.lastUpdated. "
+            f"text={label_text!r}, provider.lastUpdated={provider.lastUpdated!r}"
+        )
 
     guardrail_card = root.findChild(QObject, "runtimeOverviewGuardrailCard")
     assert guardrail_card is not None
