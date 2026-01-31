@@ -925,7 +925,7 @@ class LocalLongPollStream(Iterable[StreamBatch]):
         if _is_test_mode_enabled() and not _allow_long_poll_in_test_mode():
             with self._pending_condition:
                 if self._worker_error is None:
-                    self._worker_error = RuntimeError(
+                    self._worker_error = StopIteration(
                         "LocalLongPollStream jest wyłączony w trybie testowym."
                     )
                     self._pending_condition.notify_all()

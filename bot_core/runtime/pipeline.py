@@ -1689,6 +1689,8 @@ class StreamingStrategyFeed(StrategyDataFeed):
                     on_heartbeat=self._handle_heartbeat,
                     stop_condition=self._stop_event.is_set,
                 )
+            except StopIteration:
+                break
             except TimeoutError:
                 self._logger.warning("Brak nowych danych w streamie strategii przez dłuższy czas")
             except Exception:  # pragma: no cover - logowanie dla diagnostyki
@@ -1710,6 +1712,8 @@ class StreamingStrategyFeed(StrategyDataFeed):
                         on_heartbeat=self._handle_heartbeat,
                         stop_condition=self._stop_event.is_set,
                     )
+                except (StopIteration, StopAsyncIteration):
+                    break
                 except asyncio.CancelledError:
                     raise
                 except TimeoutError:
