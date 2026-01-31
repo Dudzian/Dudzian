@@ -10,7 +10,7 @@ Item {
     implicitWidth: 1024
     implicitHeight: 640
 
-    property var telemetryProvider: (typeof telemetryProvider !== "undefined" ? telemetryProvider : null)
+    property var telemetryProviderObj: (typeof telemetryProvider !== "undefined" ? telemetryProvider : null)
     property var dashboardSettingsController: (typeof dashboardSettingsController !== "undefined" ? dashboardSettingsController : null)
     property var complianceController: (typeof complianceController !== "undefined" ? complianceController : null)
     property var runtimeService: (typeof runtimeService !== "undefined" ? runtimeService : null)
@@ -70,9 +70,9 @@ Item {
     }
 
     function refreshTelemetry() {
-        if (!root.telemetryProvider)
+        if (!root.telemetryProviderObj)
             return
-        root.telemetryProvider.refreshTelemetry()
+        root.telemetryProviderObj.refreshTelemetry()
     }
 
     function refreshDecisions() {
@@ -152,16 +152,16 @@ Item {
         id: refreshTimer
         interval: Math.max(1500, root.refreshIntervalMs)
         repeat: true
-        running: !!root.telemetryProvider
+        running: !!root.telemetryProviderObj
         triggeredOnStart: true
         onTriggered: root.refreshAll()
     }
 
     Connections {
-        target: root.telemetryProvider
+        target: root.telemetryProviderObj
         ignoreUnknownSignals: true
         function onErrorMessageChanged() {
-            errorBanner.visible = root.telemetryProvider.errorMessage.length > 0
+            errorBanner.visible = root.telemetryProviderObj.errorMessage.length > 0
         }
     }
 
@@ -273,9 +273,9 @@ Item {
                 id: lastUpdatedLabel
                 objectName: "runtimeOverviewLastUpdated"
                 text: qsTr("Ostatnia aktualizacja: %1")
-                      .arg(root.telemetryProvider && root.telemetryProvider.lastUpdated
-                           && root.telemetryProvider.lastUpdated.length > 0
-                           ? root.telemetryProvider.lastUpdated
+                      .arg(root.telemetryProviderObj && root.telemetryProviderObj.lastUpdated
+                           && root.telemetryProviderObj.lastUpdated.length > 0
+                           ? root.telemetryProviderObj.lastUpdated
                            : qsTr("n/d"))
                 color: Styles.AppTheme.textSecondary
                 font.pointSize: 12
@@ -286,7 +286,7 @@ Item {
             Button {
                 id: manualRefreshButton
                 text: qsTr("Odśwież")
-                enabled: !!root.telemetryProvider
+                enabled: !!root.telemetryProviderObj
                 onClicked: root.refreshAll()
             }
         }
@@ -302,7 +302,7 @@ Item {
 
             Text {
                 anchors.centerIn: parent
-                text: root.telemetryProvider ? root.telemetryProvider.errorMessage : ""
+                text: root.telemetryProviderObj ? root.telemetryProviderObj.errorMessage : ""
                 color: "white"
                 font.pointSize: 11
             }
@@ -637,7 +637,7 @@ Item {
                         objectName: "runtimeOverviewIoRepeater"
 
                         Repeater {
-                            model: root.telemetryProvider ? root.telemetryProvider.ioQueues : []
+                            model: root.telemetryProviderObj ? root.telemetryProviderObj.ioQueues : []
                             delegate: Frame {
                                 Layout.fillWidth: true
                                 background: Rectangle {
@@ -699,7 +699,7 @@ Item {
                         }
 
                         Label {
-                            visible: !root.telemetryProvider || root.telemetryProvider.ioQueues.length === 0
+                            visible: !root.telemetryProviderObj || root.telemetryProviderObj.ioQueues.length === 0
                             text: qsTr("Brak danych z kolejki I/O")
                             color: Styles.AppTheme.textSecondary
                         }
@@ -736,24 +736,24 @@ Item {
                     spacing: 4
 
                     Text {
-                        text: qsTr("Łączna liczba kolejek: %1").arg(root.telemetryProvider ? root.telemetryProvider.guardrailSummary.totalQueues : 0)
+                        text: qsTr("Łączna liczba kolejek: %1").arg(root.telemetryProviderObj ? root.telemetryProviderObj.guardrailSummary.totalQueues : 0)
                         color: Styles.AppTheme.textSecondary
                     }
                     Text {
-                        text: qsTr("Błędy: %1 • Ostrzeżenia: %2").arg(root.telemetryProvider ? root.telemetryProvider.guardrailSummary.errorQueues : 0)
-                                                                                 .arg(root.telemetryProvider ? root.telemetryProvider.guardrailSummary.warningQueues : 0)
+                        text: qsTr("Błędy: %1 • Ostrzeżenia: %2").arg(root.telemetryProviderObj ? root.telemetryProviderObj.guardrailSummary.errorQueues : 0)
+                                                                                 .arg(root.telemetryProviderObj ? root.telemetryProviderObj.guardrailSummary.warningQueues : 0)
                         color: Styles.AppTheme.textSecondary
                     }
                     Text {
                         text: qsTr("Informacje: %1 • Stabilne: %2")
-                              .arg(root.telemetryProvider ? root.telemetryProvider.guardrailSummary.infoQueues : 0)
-                              .arg(root.telemetryProvider ? root.telemetryProvider.guardrailSummary.normalQueues : 0)
+                              .arg(root.telemetryProviderObj ? root.telemetryProviderObj.guardrailSummary.infoQueues : 0)
+                              .arg(root.telemetryProviderObj ? root.telemetryProviderObj.guardrailSummary.normalQueues : 0)
                         color: Styles.AppTheme.textSecondary
                     }
                     Text {
                         text: qsTr("Timeouty: %1 • Oczekiwania: %2")
-                              .arg(root.telemetryProvider ? Number(root.telemetryProvider.guardrailSummary.totalTimeouts).toFixed(0) : "0")
-                              .arg(root.telemetryProvider ? Number(root.telemetryProvider.guardrailSummary.totalRateLimitWaits).toFixed(0) : "0")
+                              .arg(root.telemetryProviderObj ? Number(root.telemetryProviderObj.guardrailSummary.totalTimeouts).toFixed(0) : "0")
+                              .arg(root.telemetryProviderObj ? Number(root.telemetryProviderObj.guardrailSummary.totalRateLimitWaits).toFixed(0) : "0")
                         color: Styles.AppTheme.textSecondary
                     }
                 }
@@ -790,7 +790,7 @@ Item {
                     objectName: "runtimeOverviewRetrainingRepeater"
 
                     Repeater {
-                        model: root.telemetryProvider ? root.telemetryProvider.retraining : []
+                        model: root.telemetryProviderObj ? root.telemetryProviderObj.retraining : []
                         delegate: Frame {
                             Layout.fillWidth: true
                             background: Rectangle {
@@ -832,7 +832,7 @@ Item {
                     }
 
                     Label {
-                        visible: !root.telemetryProvider || root.telemetryProvider.retraining.length === 0
+                        visible: !root.telemetryProviderObj || root.telemetryProviderObj.retraining.length === 0
                         text: qsTr("Brak danych retrainingu")
                         color: Styles.AppTheme.textSecondary
                     }
@@ -845,7 +845,7 @@ Item {
         id: complianceCardComponent
         CompliancePanel {
             objectName: "runtimeOverviewCompliancePanel"
-            telemetryProviderOverride: root.telemetryProvider
+            telemetryProviderOverride: root.telemetryProviderObj
             complianceControllerOverride: root.complianceController
         }
     }
