@@ -958,9 +958,9 @@ class LocalLongPollStream(Iterable[StreamBatch]):
     def _sleep_with_stop(self, delay: float) -> None:
         if delay <= 0:
             return
-        deadline = self._clock() + delay
+        deadline = time.monotonic() + delay
         while not self._stop_event.is_set() and not self._closed:
-            remaining = deadline - self._clock()
+            remaining = deadline - time.monotonic()
             if remaining <= 0:
                 break
             self._sleep(min(self._SLEEP_SLICE_SECONDS, remaining))
