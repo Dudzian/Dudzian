@@ -26,11 +26,11 @@ Item {
     readonly property var retrainingRuns: root.telemetryProviderObj && root.telemetryProviderObj.retraining
                                  ? root.telemetryProviderObj.retraining
                                  : []
-    property var dashboardSettingsController: (typeof dashboardSettingsController !== "undefined" ? dashboardSettingsController : null)
-    property var complianceController: (typeof complianceController !== "undefined" ? complianceController : null)
+    property var dashboardSettingsControllerObj: (typeof dashboardSettingsController !== "undefined" ? dashboardSettingsController : null)
+    property var complianceControllerObj: (typeof complianceController !== "undefined" ? complianceController : null)
     property var runtimeServiceObj: (typeof runtimeService !== "undefined" ? runtimeService : null)
-    property var reportController: (typeof reportController !== "undefined" ? reportController : null)
-    property int refreshIntervalMs: dashboardSettingsController ? dashboardSettingsController.refreshIntervalMs : 4000
+    property var reportControllerObj: (typeof reportController !== "undefined" ? reportController : null)
+    property int refreshIntervalMs: dashboardSettingsControllerObj ? dashboardSettingsControllerObj.refreshIntervalMs : 4000
     readonly property var defaultCardOrder: ["feed_sla", "io_queue", "guardrails", "retraining", "compliance", "risk_journal", "ai_decisions"]
     property var aiDecisions: []
     property string aiDecisionError: ""
@@ -144,14 +144,14 @@ Item {
                 ? Number(report.latency_critical_ms || 0)
                 : Number(report.latency_warning_ms || 0)
         root.feedLatencyAlertTicket = "sla-feed-" + Date.now()
-        if (root.reportController && root.reportController.logOperationalAlert) {
+        if (root.reportControllerObj && root.reportControllerObj.logOperationalAlert) {
             const title = severity === "critical"
                     ? qsTr("ALERT: SLA feedu przekroczone")
                     : qsTr("Ostrzeżenie SLA feedu")
             const message = qsTr("Latencja p95 = %1 ms (limit %2 ms)")
                     .arg(p95.toFixed(0))
                     .arg(threshold.toFixed(0))
-            root.reportController.logOperationalAlert("sla.feed", {
+            root.reportControllerObj.logOperationalAlert("sla.feed", {
                 severity: severity,
                 title: title,
                 message: message,
@@ -342,19 +342,28 @@ Item {
 
             Repeater {
                 id: cardRepeater
-                model: root.dashboardSettingsController ? root.dashboardSettingsController.visibleCardOrder : root.defaultCardOrder
+                model: root.dashboardSettingsControllerObj
+                       ? root.dashboardSettingsControllerObj.visibleCardOrder
+                       : root.defaultCardOrder
                 delegate: Loader {
                     readonly property string cardId: modelData
+                    objectName: "runtimeOverviewCardLoader_" + cardId
                     Layout.fillWidth: true
                     Layout.fillHeight: true
+                    asynchronous: false
                     sourceComponent: root.componentForCard(cardId)
                     active: sourceComponent !== null
+                    onStatusChanged: {
+                        if (status === Loader.Error)
+                            console.error("Card load error:", cardId, errorString())
+                    }
                 }
             }
         }
 
         Label {
-            visible: root.dashboardSettingsController && root.dashboardSettingsController.visibleCardOrder.length === 0
+            visible: root.dashboardSettingsControllerObj
+                     && root.dashboardSettingsControllerObj.visibleCardOrder.length === 0
             text: qsTr("Wszystkie karty zostały ukryte w ustawieniach dashboardu")
             color: Styles.AppTheme.textSecondary
             horizontalAlignment: Text.AlignHCenter
@@ -597,12 +606,12 @@ Item {
                         }
 
                         Button {
-                            visible: root.reportController && root.reportController.logOperationalAlert
+                            visible: root.reportControllerObj && root.reportControllerObj.logOperationalAlert
                             text: qsTr("Zaloguj eskalację")
                             onClicked: {
-                                if (!root.reportController || !root.reportController.logOperationalAlert)
+                                if (!root.reportControllerObj || !root.reportControllerObj.logOperationalAlert)
                                     return
-                                root.reportController.logOperationalAlert("sla.feed", {
+                                root.reportControllerObj.logOperationalAlert("sla.feed", {
                                                          severity: feedSlaCard.severity,
                                                          title: qsTr("Manualna eskalacja SLA"),
                                                          message: qsTr("Potwierdzono incydent HyperCare (%1)")
@@ -726,6 +735,7 @@ Item {
     Component {
         id: guardrailCardComponent
         Rectangle {
+            id: guardrailCard
             objectName: "runtimeOverviewGuardrailCard"
             Layout.fillWidth: true
             Layout.fillHeight: true
@@ -733,6 +743,7 @@ Item {
             radius: 8
             border.color: Styles.AppTheme.surfaceSubtle
             border.width: 1
+            property var summary: root.guardrailSummary || ({})
 
             ColumnLayout {
                 anchors.fill: parent
@@ -751,25 +762,25 @@ Item {
 
                     Text {
                         text: qsTr("Łączna liczba kolejek: %1")
-                              .arg(Number(root.guardrailSummary.totalQueues || 0).toFixed(0))
+                              .arg(Number(guardrailCard.summary.totalQueues || 0).toFixed(0))
                         color: Styles.AppTheme.textSecondary
                     }
                     Text {
                         text: qsTr("Błędy: %1 • Ostrzeżenia: %2")
-                              .arg(Number(root.guardrailSummary.errorQueues || 0).toFixed(0))
-                              .arg(Number(root.guardrailSummary.warningQueues || 0).toFixed(0))
+                              .arg(Number(guardrailCard.summary.errorQueues || 0).toFixed(0))
+                              .arg(Number(guardrailCard.summary.warningQueues || 0).toFixed(0))
                         color: Styles.AppTheme.textSecondary
                     }
                     Text {
                         text: qsTr("Informacje: %1 • Stabilne: %2")
-                              .arg(Number(root.guardrailSummary.infoQueues || 0).toFixed(0))
-                              .arg(Number(root.guardrailSummary.normalQueues || 0).toFixed(0))
+                              .arg(Number(guardrailCard.summary.infoQueues || 0).toFixed(0))
+                              .arg(Number(guardrailCard.summary.normalQueues || 0).toFixed(0))
                         color: Styles.AppTheme.textSecondary
                     }
                     Text {
                         text: qsTr("Timeouty: %1 • Oczekiwania: %2")
-                              .arg(Number(root.guardrailSummary.totalTimeouts || 0).toFixed(0))
-                              .arg(Number(root.guardrailSummary.totalRateLimitWaits || 0).toFixed(0))
+                              .arg(Number(guardrailCard.summary.totalTimeouts || 0).toFixed(0))
+                              .arg(Number(guardrailCard.summary.totalRateLimitWaits || 0).toFixed(0))
                         color: Styles.AppTheme.textSecondary
                     }
                 }
@@ -862,7 +873,7 @@ Item {
         CompliancePanel {
             objectName: "runtimeOverviewCompliancePanel"
             telemetryProviderOverride: root.telemetryProviderObj
-            complianceControllerOverride: root.complianceController
+            complianceControllerOverride: root.complianceControllerObj
         }
     }
 
