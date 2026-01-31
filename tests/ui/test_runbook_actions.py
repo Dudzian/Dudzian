@@ -17,6 +17,10 @@ try:  # pragma: no cover - zależne od środowiska CI
     from PySide6.QtWidgets import QApplication
 except Exception:  # pragma: no cover - brak Qt
     QObject = QMetaObject = QUrl = QQmlApplicationEngine = QApplication = None  # type: ignore[assignment]
+try:  # pragma: no cover - zależne od środowiska CI
+    from PySide6.QtQuick import QQuickItem  # noqa: F401
+except Exception:  # pragma: no cover - brak QtQuick
+    QQuickItem = None  # type: ignore[assignment]
 
 from core.reporting.guardrails_reporter import (
     GuardrailLogRecord,
@@ -375,7 +379,7 @@ from pathlib import Path
                     rep_item0_tree_size = len(rep_items)
                     rep_item0_tree_capped = rep_capped
         except Exception:
-            rep_item0_type = "(itemAt failed)"
+            rep_item0_type = "(delegate_at failed)"
         pytest.fail(
             "Przycisk akcji nie został wyrenderowany. "
             f"alerts_type={type(alerts).__name__} "
@@ -401,6 +405,7 @@ from pathlib import Path
             f"repeater_has_itemAt={callable(getattr(repeater, 'itemAt', None))} "
             f"repeater_has_objectAt={callable(getattr(repeater, 'objectAt', None))} "
             f"repeater_qt_class={repeater_qt_class!r} "
+            f"qtquick_available={QQuickItem is not None} "
             f"repeater_item0_type={rep_item0_type!r} "
             f"repeater_item0_name={rep_item0_name!r} "
             f"repeater_item0_accessor={rep_item0_accessor!r} "
