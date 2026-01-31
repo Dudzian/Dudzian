@@ -69,7 +69,7 @@ from ui.backend.telemetry_provider import TelemetryProvider
 from ui.backend.qml_bridge import to_plain_value
 
 
-@pytest.fixture(scope="module", autouse=True)
+@pytest.fixture(autouse=True)
 def qml_prop(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
     """Zapewnia, że property() z QML zwraca plain Python w ramach tego modułu."""
 
