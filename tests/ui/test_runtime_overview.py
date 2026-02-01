@@ -492,8 +492,21 @@ def test_runtime_overview_renders_snapshot(tmp_path: Path) -> None:
     engine.load(QUrl.fromLocalFile(str(qml_path)))
     assert engine.rootObjects(), "Nie udało się załadować RuntimeOverview.qml"
     root = engine.rootObjects()[0]
-    # Ustawiamy kontrolery na None, aby zachować deterministyczną kolejność kart w snapshotach.
-    root.setProperty("dashboardSettingsController", None)
+    # Utrzymujemy deterministyczną kolejność kart w snapshotach, ale nie zerujemy
+    # dashboardSettingsController, bo QML może od niego zależeć przy budowie listy kart.
+    default_order = root.property("defaultCardOrder")
+
+    class _StubDashboardSettingsController(QObject):
+        def __init__(self, visible_order: object, parent: QObject | None = None) -> None:
+            super().__init__(parent)
+            self._visible_order = visible_order
+
+        @Property("QVariant", constant=True)
+        def visibleCardOrder(self) -> object:
+            return self._visible_order
+
+    stub_controller = _StubDashboardSettingsController(default_order, parent=root)
+    root.setProperty("dashboardSettingsController", stub_controller)
     root.setProperty("complianceController", None)
     root.setProperty("reportController", None)
 
