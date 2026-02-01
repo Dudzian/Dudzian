@@ -576,9 +576,20 @@ def test_runtime_overview_renders_snapshot(tmp_path: Path) -> None:
             if object_name.startswith("runtimeOverviewCardLoader_"):
                 loaders.append(child)
                 continue
-            card_id = child.property("cardId")
-            status = child.property("status")
-            if card_id is None or status is None:
+            # Najpierw filtrujemy po cardId, żeby nie dotykać "status" na obcych typach
+            # (np. QQuickFontLoader ma status o typie bez konwertera na Windows).
+            try:
+                card_id = child.property("cardId")
+            except RuntimeError:
+                continue
+            if card_id is None:
+                continue
+            try:
+                status = child.property("status")
+            except RuntimeError:
+                # Obiekt ma cardId, ale status jest typu bez konwertera -> nie traktujemy go jako loadera.
+                continue
+            if status is None:
                 continue
             source_component = child.property("sourceComponent")
             active = child.property("active")
