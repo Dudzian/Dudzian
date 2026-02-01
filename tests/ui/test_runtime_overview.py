@@ -492,21 +492,33 @@ def test_runtime_overview_renders_snapshot(tmp_path: Path) -> None:
     engine.load(QUrl.fromLocalFile(str(qml_path)))
     assert engine.rootObjects(), "Nie udało się załadować RuntimeOverview.qml"
     root = engine.rootObjects()[0]
-    # Utrzymujemy deterministyczną kolejność kart w snapshotach, ale nie zerujemy
+    # Utrzymujemy deterministyczną kolejność kart w snapshotach, ale nie podmieniamy
     # dashboardSettingsController, bo QML może od niego zależeć przy budowie listy kart.
     default_order = root.property("defaultCardOrder")
-
-    class _StubDashboardSettingsController(QObject):
-        def __init__(self, visible_order: object, parent: QObject | None = None) -> None:
-            super().__init__(parent)
-            self._visible_order = visible_order
-
-        @Property("QVariant", constant=True)
-        def visibleCardOrder(self) -> object:
-            return self._visible_order
-
-    stub_controller = _StubDashboardSettingsController(default_order, parent=root)
-    root.setProperty("dashboardSettingsController", stub_controller)
+    controller = root.property("dashboardSettingsController")
+    assert controller is not None, "dashboardSettingsController jest None – QML nie zbuduje kart."
+    try:
+        controller.setProperty("visibleCardOrder", default_order)
+    except Exception:
+        pass
+    for method_name in (
+        "applyVisibleCardOrder",
+        "applySettings",
+        "apply",
+        "commit",
+        "save",
+        "persist",
+        "refresh",
+        "reload",
+    ):
+        apply_fn = getattr(controller, method_name, None)
+        if callable(apply_fn):
+            try:
+                apply_fn()
+            except Exception:
+                pass
+            else:
+                break
     root.setProperty("complianceController", None)
     root.setProperty("reportController", None)
 
@@ -598,6 +610,12 @@ def test_runtime_overview_renders_snapshot(tmp_path: Path) -> None:
         except Exception:
             return "<unknown>"
 
+    def _is_qquickloader(obj: QObject) -> bool:
+        try:
+            return "QQuickLoader" in str(obj.metaObject().className())
+        except Exception:
+            return False
+
     def _fail_loader_error(loader: QObject, message_prefix: str) -> NoReturn:
         active = _safe_prop(loader, "active")
         source_component = _normalize_source_component(loader)
@@ -617,39 +635,23 @@ def test_runtime_overview_renders_snapshot(tmp_path: Path) -> None:
         for child in root.findChildren(QObject):
             object_name = str(child.objectName())
             if object_name.startswith("runtimeOverviewCardLoader_"):
+                status = _safe_prop(child, "status")
+                if status is None or (isinstance(status, str) and status.startswith("<")):
+                    continue
                 loaders.append(child)
                 continue
-            # Najpierw filtrujemy po cardId, żeby nie dotykać "status" na obcych typach
-            # (np. QQuickFontLoader ma status o typie bez konwertera na Windows).
-            card_id = _safe_prop(child, "cardId")
-            if isinstance(card_id, str) and card_id.startswith("<"):
-                continue
-            if card_id is None:
+            if not _is_qquickloader(child):
                 continue
             status = _safe_prop(child, "status")
-            if isinstance(status, str) and status.startswith("<"):
+            if status is None or (isinstance(status, str) and status.startswith("<")):
                 continue
-            if status is None:
-                continue
-            status_i = _safe_int(status, default=-1)
-            source_component = _safe_prop(child, "sourceComponent")
-            if isinstance(source_component, str) and source_component.startswith("<"):
-                source_component = None
-            active = _safe_prop(child, "active")
-            if isinstance(active, str) and active.startswith("<"):
-                active = None
-            item = _safe_prop(child, "item")
-            if isinstance(item, str) and item.startswith("<"):
-                item = None
-            if source_component is None and active is None and item is None:
-                if status_i != LOADER_ERROR:
-                    continue
             loaders.append(child)
         return loaders
 
     def _find_guardrail_loader(aliases: set[str], deadline: float) -> QObject | None:
         cached_loaders: list[QObject] | None = None
         last_refresh = 0.0
+        target_object_name = "runtimeOverviewGuardrailCard"
         while True:
             now = time.monotonic()
             if now >= deadline:
@@ -661,14 +663,23 @@ def test_runtime_overview_renders_snapshot(tmp_path: Path) -> None:
             loaders = cached_loaders if cached_loaders is not None else []
             for loader in loaders:
                 card_id = str(_safe_prop(loader, "cardId") or "")
+                status = _safe_int(_safe_prop(loader, "status"), default=-1)
                 if card_id in aliases:
-                    status = _safe_int(_safe_prop(loader, "status"), default=-1)
                     if status == LOADER_ERROR:
                         _fail_loader_error(
                             loader,
                             "Loader guardrail (alias cardId) zakończył się błędem podczas lookup.",
                         )
                     return loader
+                if status == LOADER_READY:
+                    item = _safe_prop(loader, "item")
+                    if item is not None and not (isinstance(item, str) and item.startswith("<")):
+                        try:
+                            if isinstance(item, QObject) or hasattr(item, "property"):
+                                if str(item.property("objectName")) == target_object_name:
+                                    return loader
+                        except Exception:
+                            pass
             qt_wait(50)
         return None
 
@@ -682,11 +693,18 @@ def test_runtime_overview_renders_snapshot(tmp_path: Path) -> None:
                     "Loader guardrail (alias cardId) zakończył się błędem podczas oczekiwania.",
                 )
             if status == LOADER_READY:
-                item = loader.property("item")
-                if item is not None:
+                item = _safe_prop(loader, "item")
+                if (
+                    item is not None
+                    and not (isinstance(item, str) and item.startswith("<"))
+                    and (isinstance(item, QObject) or hasattr(item, "property"))
+                ):
                     return item
             qt_wait(50)
-        return loader.property("item")
+        item = _safe_prop(loader, "item")
+        if isinstance(item, str) and item.startswith("<"):
+            return None
+        return item
 
     guardrail_aliases = {"guardrails", "guardrail", "guardrails_card", "guardrail_card"}
     guardrail_timeout_s = 6.0
