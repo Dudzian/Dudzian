@@ -473,8 +473,38 @@ def test_runtime_overview_renders_snapshot(tmp_path: Path) -> None:
             f"text={label_text!r}, provider.lastUpdated={provider.lastUpdated!r}"
         )
 
-    guardrail_card = root.findChild(QObject, "runtimeOverviewGuardrailCard")
-    assert guardrail_card is not None
+    LOADER_READY = 1
+
+    def _wait_for_loader_item(loader: QObject, timeout_s: float = 3.0) -> QObject | None:
+        start = time.monotonic()
+        while time.monotonic() - start < timeout_s:
+            app.processEvents()
+            if loader.property("status") == LOADER_READY:
+                item = loader.property("item")
+                if item is not None:
+                    return item
+            qt_wait(50)
+        return loader.property("item")
+
+    guardrail_loader = root.findChild(QObject, "runtimeOverviewCardLoader_guardrails")
+    assert guardrail_loader is not None, "Nie znaleziono Loadera runtimeOverviewCardLoader_guardrails."
+    guardrail_card = _wait_for_loader_item(guardrail_loader)
+    if guardrail_card is None:
+        status = guardrail_loader.property("status")
+        active = guardrail_loader.property("active")
+        source_component = guardrail_loader.property("sourceComponent")
+        error_string = ""
+        error_attr = getattr(guardrail_loader, "errorString", None)
+        if callable(error_attr):
+            error_string = error_attr()
+        elif error_attr is not None:
+            error_string = str(error_attr)
+        pytest.fail(
+            "Loader runtimeOverviewCardLoader_guardrails nie osiągnął statusu Ready lub nie zwrócił item. "
+            f"status={status}, active={active}, sourceComponent={source_component}, "
+            f"errorString={error_string}"
+        )
+    assert guardrail_card.property("objectName") == "runtimeOverviewGuardrailCard"
     manual_button = root.findChild(QObject, "manualRefreshButton")
     assert manual_button is not None and manual_button.property("enabled") is True
 
