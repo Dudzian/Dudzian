@@ -72,6 +72,9 @@ Item {
         case "io_queue":
             return ioCardComponent
         case "guardrails":
+        case "guardrail":
+        case "guardrails_card":
+        case "guardrail_card":
             return guardrailCardComponent
         case "retraining":
             return retrainingCardComponent
@@ -82,6 +85,7 @@ Item {
         case "ai_decisions":
             return aiDecisionCardComponent
         default:
+            console.warn("RuntimeOverview: unknown card id", cardId)
             return null
         }
     }
