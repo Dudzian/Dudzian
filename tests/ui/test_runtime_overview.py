@@ -104,6 +104,12 @@ if _QT_READY:
     from ui.backend.runtime_service import RuntimeService
     from ui.backend.telemetry_provider import TelemetryProvider
     from ui.backend.qml_bridge import to_plain_value
+    from core.config.ui_settings import UISettingsStore
+    from ui.backend.dashboard_settings import DashboardSettingsController
+    try:  # pragma: no cover - zależne od środowiska
+        import shiboken6  # type: ignore[import-not-found]
+    except Exception:  # pragma: no cover - brak shiboken6
+        shiboken6 = None  # type: ignore[assignment]
 else:  # pragma: no cover - brak PySide6 w środowisku collect-only
     MetricsRegistry = None  # type: ignore[assignment]
     FeedHealthMetricsExporter = None  # type: ignore[assignment]
@@ -111,6 +117,9 @@ else:  # pragma: no cover - brak PySide6 w środowisku collect-only
     runtime_service_module = None  # type: ignore[assignment]
     RuntimeService = None  # type: ignore[assignment]
     TelemetryProvider = None  # type: ignore[assignment]
+    UISettingsStore = None  # type: ignore[assignment]
+    DashboardSettingsController = None  # type: ignore[assignment]
+    shiboken6 = None  # type: ignore[assignment]
     def to_plain_value(value: Any) -> Any:  # type: ignore[override]
         return value
 
@@ -488,37 +497,52 @@ def test_runtime_overview_renders_snapshot(tmp_path: Path) -> None:
     engine.rootContext().setContextProperty("telemetryProvider", provider)
     engine.rootContext().setContextProperty("runtimeService", runtime_service)
     engine.rootContext().setContextProperty("ciSnapshot", True)
+    settings_store = UISettingsStore(tmp_path / "ui_settings.json")
+    dashboard_controller = DashboardSettingsController(store=settings_store, parent=engine)
+    engine.rootContext().setContextProperty("dashboardSettingsController", dashboard_controller)
     qml_path = Path(__file__).resolve().parents[2] / "ui" / "qml" / "dashboard" / "RuntimeOverview.qml"
     engine.load(QUrl.fromLocalFile(str(qml_path)))
     assert engine.rootObjects(), "Nie udało się załadować RuntimeOverview.qml"
     root = engine.rootObjects()[0]
+    root.setProperty("dashboardSettingsController", dashboard_controller)
+    injected_controller = root.property("dashboardSettingsController")
+    assert injected_controller is not None, "dashboardSettingsController jest None – QML nie zbuduje kart."
+    if shiboken6 is not None:
+        injected_ptr = shiboken6.getCppPointer(injected_controller)[0]
+        controller_ptr = shiboken6.getCppPointer(dashboard_controller)[0]
+        assert injected_ptr == controller_ptr, (
+            "dashboardSettingsController nie wskazuje na wstrzyknięty kontroler (różne QObject*)."
+        )
+    else:
+        assert callable(getattr(injected_controller, "setCardOrder", None)), (
+            "dashboardSettingsController nie wskazuje na wstrzyknięty kontroler (brak setCardOrder)."
+        )
+    def _as_str_list(value: object) -> list[str]:
+        try:
+            return [str(item) for item in (value or [])]
+        except TypeError:
+            return [str(value)]
+
     # Utrzymujemy deterministyczną kolejność kart w snapshotach, ale nie podmieniamy
     # dashboardSettingsController, bo QML może od niego zależeć przy budowie listy kart.
     default_order = root.property("defaultCardOrder")
-    controller = root.property("dashboardSettingsController")
-    assert controller is not None, "dashboardSettingsController jest None – QML nie zbuduje kart."
-    try:
-        controller.setProperty("visibleCardOrder", default_order)
-    except Exception:
-        pass
-    for method_name in (
-        "applyVisibleCardOrder",
-        "applySettings",
-        "apply",
-        "commit",
-        "save",
-        "persist",
-        "refresh",
-        "reload",
-    ):
-        apply_fn = getattr(controller, method_name, None)
-        if callable(apply_fn):
-            try:
-                apply_fn()
-            except Exception:
-                pass
-            else:
-                break
+    dashboard_controller.setCardOrder(default_order)
+    deadline = time.monotonic() + 2.0
+    while time.monotonic() < deadline:
+        app.processEvents()
+        visible_order = injected_controller.property("visibleCardOrder")
+        if _as_str_list(visible_order) == _as_str_list(default_order):
+            break
+        qt_wait(50)
+    app.processEvents()
+    visible_order = injected_controller.property("visibleCardOrder")
+    assert _as_str_list(visible_order) == _as_str_list(default_order), (
+        "visibleCardOrder nie ustawił się deterministycznie po setCardOrder. "
+        f"visibleCardOrder={visible_order!r} ({type(visible_order)}), "
+        f"defaultOrder={default_order!r} ({type(default_order)}), "
+        f"visibleOrderList={_as_str_list(visible_order)!r}, "
+        f"defaultOrderList={_as_str_list(default_order)!r}"
+    )
     root.setProperty("complianceController", None)
     root.setProperty("reportController", None)
 
