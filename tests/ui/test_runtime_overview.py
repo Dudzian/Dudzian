@@ -570,11 +570,24 @@ def test_runtime_overview_renders_snapshot(tmp_path: Path) -> None:
         )
 
     def _collect_card_loaders() -> list[QObject]:
-        return [
-            child
-            for child in root.findChildren(QObject)
-            if str(child.objectName()).startswith("runtimeOverviewCardLoader_")
-        ]
+        loaders: list[QObject] = []
+        for child in root.findChildren(QObject):
+            object_name = str(child.objectName())
+            if object_name.startswith("runtimeOverviewCardLoader_"):
+                loaders.append(child)
+                continue
+            card_id = child.property("cardId")
+            status = child.property("status")
+            if card_id is None or status is None:
+                continue
+            source_component = child.property("sourceComponent")
+            active = child.property("active")
+            item = child.property("item")
+            if source_component is None and active is None and item is None:
+                if int(status) != LOADER_ERROR:
+                    continue
+            loaders.append(child)
+        return loaders
 
     def _find_guardrail_loader(aliases: set[str], deadline: float) -> QObject | None:
         cached_loaders: list[QObject] | None = None
