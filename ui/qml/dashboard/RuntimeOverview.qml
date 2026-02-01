@@ -9,6 +9,8 @@ Item {
     id: root
     implicitWidth: 1024
     implicitHeight: 640
+    width: implicitWidth
+    height: implicitHeight
 
     property var telemetryProviderObj: (typeof telemetryProvider !== "undefined" ? telemetryProvider : null)
     readonly property string telemetryLastUpdated: root.telemetryProviderObj && root.telemetryProviderObj.lastUpdated
@@ -26,11 +28,11 @@ Item {
     readonly property var retrainingRuns: root.telemetryProviderObj && root.telemetryProviderObj.retraining
                                  ? root.telemetryProviderObj.retraining
                                  : []
-    property var dashboardSettingsControllerObj: null
-    property var complianceControllerObj: null
+    property var dashboardSettingsController: null
+    property var complianceController: null
     property var runtimeServiceObj: (typeof runtimeService !== "undefined" ? runtimeService : null)
-    property var reportControllerObj: null
-    property int refreshIntervalMs: dashboardSettingsControllerObj ? dashboardSettingsControllerObj.refreshIntervalMs : 4000
+    property var reportController: null
+    property int refreshIntervalMs: dashboardSettingsController ? dashboardSettingsController.refreshIntervalMs : 4000
     readonly property var defaultCardOrder: ["feed_sla", "io_queue", "guardrails", "retraining", "compliance", "risk_journal", "ai_decisions"]
     property var aiDecisions: []
     property string aiDecisionError: ""
@@ -144,14 +146,14 @@ Item {
                 ? Number(report.latency_critical_ms || 0)
                 : Number(report.latency_warning_ms || 0)
         root.feedLatencyAlertTicket = "sla-feed-" + Date.now()
-        if (root.reportControllerObj && root.reportControllerObj.logOperationalAlert) {
+        if (root.reportController && root.reportController.logOperationalAlert) {
             const title = severity === "critical"
                     ? qsTr("ALERT: SLA feedu przekroczone")
                     : qsTr("Ostrzeżenie SLA feedu")
             const message = qsTr("Latencja p95 = %1 ms (limit %2 ms)")
                     .arg(p95.toFixed(0))
                     .arg(threshold.toFixed(0))
-            root.reportControllerObj.logOperationalAlert("sla.feed", {
+            root.reportController.logOperationalAlert("sla.feed", {
                 severity: severity,
                 title: title,
                 message: message,
@@ -342,8 +344,8 @@ Item {
 
             Repeater {
                 id: cardRepeater
-                model: root.dashboardSettingsControllerObj
-                       ? root.dashboardSettingsControllerObj.visibleCardOrder
+                model: root.dashboardSettingsController
+                       ? root.dashboardSettingsController.visibleCardOrder
                        : root.defaultCardOrder
                 delegate: Loader {
                     readonly property string cardId: modelData
@@ -362,8 +364,8 @@ Item {
         }
 
         Label {
-            visible: root.dashboardSettingsControllerObj
-                     && root.dashboardSettingsControllerObj.visibleCardOrder.length === 0
+            visible: root.dashboardSettingsController
+                     && root.dashboardSettingsController.visibleCardOrder.length === 0
             text: qsTr("Wszystkie karty zostały ukryte w ustawieniach dashboardu")
             color: Styles.AppTheme.textSecondary
             horizontalAlignment: Text.AlignHCenter
@@ -388,7 +390,7 @@ Item {
             property var alertChannels: root.feedAlertChannels || []
             property string alertChannelsText: ""
             property string severity: report && report.sla_state ? report.sla_state : "ok"
-            readonly property bool latencyAlertActive: report && report.latency_state && report.latency_state !== "ok"
+            readonly property bool latencyAlertActive: !!(report && report.latency_state && report.latency_state !== "ok")
 
             onAlertChannelsChanged: {
                 var channels = alertChannels || []
@@ -480,7 +482,7 @@ Item {
 
                 Label {
                     objectName: "runtimeOverviewSlaLastError"
-                    visible: root.feedHealth && root.feedHealth.lastError && root.feedHealth.lastError.length > 0
+                    visible: !!(root.feedHealth && root.feedHealth.lastError && root.feedHealth.lastError.length > 0)
                     text: qsTr("Ostatni błąd: %1").arg(root.feedHealth.lastError)
                     color: Styles.AppTheme.warning
                     wrapMode: Text.WordWrap
@@ -606,15 +608,15 @@ Item {
                         }
 
                         Button {
-                            visible: root.reportControllerObj && root.reportControllerObj.logOperationalAlert
+                            visible: root.reportController && root.reportController.logOperationalAlert
                             text: qsTr("Zaloguj eskalację")
                             onClicked: {
-                                if (!root.reportControllerObj || !root.reportControllerObj.logOperationalAlert)
+                                if (!root.reportController || !root.reportController.logOperationalAlert)
                                     return
-                                root.reportControllerObj.logOperationalAlert("sla.feed", {
-                                                         severity: feedSlaCard.severity,
-                                                         title: qsTr("Manualna eskalacja SLA"),
-                                                         message: qsTr("Potwierdzono incydent HyperCare (%1)")
+                                root.reportController.logOperationalAlert("sla.feed", {
+                                                          severity: feedSlaCard.severity,
+                                                          title: qsTr("Manualna eskalacja SLA"),
+                                                          message: qsTr("Potwierdzono incydent HyperCare (%1)")
                                                                    .arg(root.feedLatencyAlertTicket),
                                                          latency_ms: Number(feedSlaCard.report.p95_ms || 0)
                                                      })
@@ -743,7 +745,7 @@ Item {
             radius: 8
             border.color: Styles.AppTheme.surfaceSubtle
             border.width: 1
-            property var summary: root.guardrailSummary || ({})
+            property var summary: root.guardrailSummary
 
             ColumnLayout {
                 anchors.fill: parent
@@ -873,7 +875,7 @@ Item {
         CompliancePanel {
             objectName: "runtimeOverviewCompliancePanel"
             telemetryProviderOverride: root.telemetryProviderObj
-            complianceControllerOverride: root.complianceControllerObj
+            complianceControllerOverride: root.complianceController
         }
     }
 
@@ -993,6 +995,7 @@ Item {
                     Layout.fillWidth: true
 
                     ColumnLayout {
+                        id: cycleMetricsSummary
                         spacing: 6
                         readonly property real cycleCount: Number(root.cycleMetrics.cycles_total || 0)
                         readonly property real strategySwitches: Number(root.cycleMetrics.strategy_switch_total || 0)
@@ -1009,7 +1012,7 @@ Item {
                             Item { Layout.fillWidth: true }
                             Text {
                                 objectName: "runtimeOverviewCycleCount"
-                                text: parent.cycleCount.toFixed(0)
+                                text: cycleMetricsSummary.cycleCount.toFixed(0)
                                 font.bold: true
                                 color: Styles.AppTheme.textPrimary
                             }
@@ -1024,8 +1027,8 @@ Item {
                             Item { Layout.fillWidth: true }
                             Text {
                                 objectName: "runtimeOverviewStrategySwitches"
-                                readonly property bool alert: parent.strategyAlert
-                                text: parent.strategySwitches.toFixed(0)
+                                readonly property bool alert: cycleMetricsSummary.strategyAlert
+                                text: cycleMetricsSummary.strategySwitches.toFixed(0)
                                 font.bold: alert
                                 color: alert ? Qt.rgba(0.95, 0.65, 0.2, 1) : Styles.AppTheme.textPrimary
                             }
@@ -1040,8 +1043,8 @@ Item {
                             Item { Layout.fillWidth: true }
                             Text {
                                 objectName: "runtimeOverviewGuardrailBlocks"
-                                readonly property bool alert: parent.guardrailAlert
-                                text: parent.guardrailBlocks.toFixed(0)
+                                readonly property bool alert: cycleMetricsSummary.guardrailAlert
+                                text: cycleMetricsSummary.guardrailBlocks.toFixed(0)
                                 font.bold: alert
                                 color: alert ? Qt.rgba(0.9, 0.25, 0.3, 1) : Styles.AppTheme.textPrimary
                             }
@@ -1049,7 +1052,7 @@ Item {
 
                         Text {
                             objectName: "runtimeOverviewGuardrailAlert"
-                            visible: parent.guardrailAlert
+                            visible: cycleMetricsSummary.guardrailAlert
                             text: qsTr("Blokady guardrail wymagają uwagi – sprawdź kartę Guardrail'e")
                             color: Qt.rgba(0.9, 0.25, 0.3, 1)
                             font.bold: true

@@ -8,6 +8,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from PySide6.QtGui import QGuiApplication
+from PySide6.QtCore import QObject
 from PySide6.QtQml import QQmlApplicationEngine
 from PySide6.QtCore import QUrl
 
@@ -182,6 +183,12 @@ class BotPysideApplication:
         if not engine.rootObjects():  # pragma: no cover - informacyjne
             details = "; ".join(collected_warnings) if collected_warnings else "brak szczegółów"
             raise RuntimeError(f"Nie udało się załadować QML z {qml_file}: {details}")
+        root = engine.rootObjects()[0]
+        context = engine.rootContext()
+        for name in ("dashboardSettingsController", "complianceController", "reportController"):
+            controller = context.contextProperty(name)
+            if isinstance(controller, QObject):
+                root.setProperty(name, controller)
         self._engine = engine
         return engine
 

@@ -422,10 +422,15 @@ def test_runtime_overview_renders_snapshot(tmp_path: Path) -> None:
     engine = QQmlApplicationEngine()
     engine.rootContext().setContextProperty("telemetryProvider", provider)
     engine.rootContext().setContextProperty("runtimeService", runtime_service)
+    engine.rootContext().setContextProperty("ciSnapshot", True)
     qml_path = Path(__file__).resolve().parents[2] / "ui" / "qml" / "dashboard" / "RuntimeOverview.qml"
     engine.load(QUrl.fromLocalFile(str(qml_path)))
     assert engine.rootObjects(), "Nie udało się załadować RuntimeOverview.qml"
     root = engine.rootObjects()[0]
+    # Ustawiamy kontrolery na None, aby zachować deterministyczną kolejność kart w snapshotach.
+    root.setProperty("dashboardSettingsController", None)
+    root.setProperty("complianceController", None)
+    root.setProperty("reportController", None)
 
     ok = provider.refreshTelemetry()
     assert ok is True
