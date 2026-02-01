@@ -1,7 +1,7 @@
 import QtQuick
 import QtQuick.Controls
 import Qt5Compat.GraphicalEffects
-import ".." as Design
+import "." as Design
 import "fonts/FontAwesomeData.js" as FontAwesomeData
 
 Item {
@@ -10,9 +10,12 @@ Item {
     implicitHeight: size
 
     property string name: ""
+    property alias iconName: root.name
     property string glyph: ""
     property color color: Design.Palette.textPrimary
+    property alias iconColor: root.color
     property real size: 20
+    property alias iconSize: root.size
     property url source: ""
 
     readonly property bool showsImage: resolvedGlyph.length === 0 && source.toString().length > 0
@@ -36,7 +39,7 @@ Item {
 
     FontLoader {
         id: fontLoader
-        source: FontAwesomeData.solidDataUrl()
+        source: FontAwesomeData.solidDataUrl(typeof ciSnapshot !== "undefined" && ciSnapshot)
     }
 
     Text {

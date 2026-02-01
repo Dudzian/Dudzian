@@ -1,7 +1,7 @@
 import QtQuick
 import QtQuick.Controls
 import QtQuick.Layouts
-import ".." as Design
+import "." as Design
 import "components" as Components
 
 Components.Card {
@@ -65,7 +65,7 @@ Components.Card {
                 }
 
                 Label {
-                    visible: feedTransportSnapshot && feedTransportSnapshot.lastError && feedTransportSnapshot.lastError.length > 0
+                    visible: !!(feedTransportSnapshot && feedTransportSnapshot.lastError && feedTransportSnapshot.lastError.length > 0)
                     text: qsTr("Ostatni błąd: %1").arg(feedTransportSnapshot.lastError)
                     color: Design.Palette.warning
                     font.pixelSize: Design.Typography.caption
