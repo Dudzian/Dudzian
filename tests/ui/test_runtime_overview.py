@@ -7,49 +7,82 @@ import time
 from datetime import datetime, timezone
 import base64
 from pathlib import Path
-from typing import Any, Mapping, Iterator
+from typing import Any, Mapping, Iterator, NoReturn
 import sys
 
 import pytest
 
-from tests.ui._qt import require_pyside6
-
-pytestmark = pytest.mark.qml
-
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
-PySide6 = require_pyside6()
-
-from PySide6.QtCore import (  # type: ignore[attr-defined]
-    QObject,
-    Property,
-    QUrl,
-    Qt,
-    QMetaObject,
-    Q_ARG,
-    Signal,
-    QByteArray,
-)
-from PySide6.QtQml import QQmlApplicationEngine  # type: ignore[attr-defined]
-
-try:  # pragma: no cover - zależne od bibliotek systemowych
-    from PySide6.QtGui import QImage  # type: ignore[attr-defined]
-except ImportError as exc:  # pragma: no cover - brak bibliotek systemowych
-    qt_qpa_platform = os.getenv("QT_QPA_PLATFORM", "<unset>")
-    pytest.skip(
-        f"Brak zależności QtGui na {sys.platform} (QT_QPA_PLATFORM={qt_qpa_platform}): {exc}",
-        allow_module_level=True,
+_QT_IMPORT_ERROR: Exception | None = None
+try:  # pragma: no cover - zależne od środowiska
+    from PySide6.QtCore import (  # type: ignore[attr-defined]
+        QObject,
+        Property,
+        QUrl,
+        Qt,
+        QMetaObject,
+        Q_ARG,
+        Signal,
+        QByteArray,
     )
-
-_QIMAGE_TYPE: type | None = QImage if "QImage" in globals() else None
-
-try:  # pragma: no cover - zależne od środowiska CI
+    from PySide6.QtQml import QQmlApplicationEngine  # type: ignore[attr-defined]
+    from PySide6.QtGui import QImage  # type: ignore[attr-defined]
     from PySide6.QtWidgets import QApplication  # type: ignore[attr-defined]
-except ImportError as exc:  # pragma: no cover - brak bibliotek systemowych
+    _QT_READY = True
+except ImportError as exc:  # pragma: no cover - brak PySide6 lub zależności systemowych
+    _QT_READY = False
+    _QT_IMPORT_ERROR = exc
+
+    class QObject:  # type: ignore[no-redef]
+        pass
+
+    class Property:  # type: ignore[no-redef]
+        def __init__(self, *args: Any, **kwargs: Any) -> None:
+            pass
+
+        def __call__(self, func: Any) -> Any:
+            return func
+
+    class QUrl:  # type: ignore[no-redef]
+        pass
+
+    class Qt:  # type: ignore[no-redef]
+        pass
+
+    class QMetaObject:  # type: ignore[no-redef]
+        pass
+
+    def Q_ARG(*args: Any, **kwargs: Any) -> None:  # type: ignore[no-redef]
+        return None
+
+    class Signal:  # type: ignore[no-redef]
+        def __init__(self, *args: Any, **kwargs: Any) -> None:
+            pass
+
+    class QByteArray:  # type: ignore[no-redef]
+        pass
+
+    class QQmlApplicationEngine:  # type: ignore[no-redef]
+        pass
+
+    class QApplication:  # type: ignore[no-redef]
+        pass
+
+    QImage = None  # type: ignore[assignment]
+
+_QIMAGE_TYPE: type | None = QImage if _QT_READY else None
+
+pytestmark = [pytest.mark.qml]
+if not _QT_READY:
     qt_qpa_platform = os.getenv("QT_QPA_PLATFORM", "<unset>")
-    pytest.skip(
-        f"Brak zależności QtWidgets na {sys.platform} (QT_QPA_PLATFORM={qt_qpa_platform}): {exc}",
-        allow_module_level=True,
+    pytestmark.append(
+        pytest.mark.skip(
+            reason=(
+                "Brak zależności Qt/PySide6"
+                f" na {sys.platform} (QT_QPA_PLATFORM={qt_qpa_platform}): {_QT_IMPORT_ERROR}"
+            )
+        )
     )
 
 from core.monitoring.metrics_api import (
@@ -59,16 +92,48 @@ from core.monitoring.metrics_api import (
     RetrainingTelemetry,
     RuntimeTelemetrySnapshot,
 )
-from ui.backend import runtime_service as runtime_service_module
-from bot_core.observability.metrics import MetricsRegistry
-from bot_core.observability.ui_metrics import (
-    FeedHealthMetricsExporter,
-    RiskJournalMetricsExporter,
-)
-from ui.backend.runtime_service import RuntimeService
-from ui.backend.telemetry_provider import TelemetryProvider
 from tests.ui._qt_utils import qt_wait
-from ui.backend.qml_bridge import to_plain_value
+
+if _QT_READY:
+    from bot_core.observability.metrics import MetricsRegistry
+    from bot_core.observability.ui_metrics import (
+        FeedHealthMetricsExporter,
+        RiskJournalMetricsExporter,
+    )
+    from ui.backend import runtime_service as runtime_service_module
+    from ui.backend.runtime_service import RuntimeService
+    from ui.backend.telemetry_provider import TelemetryProvider
+    from ui.backend.qml_bridge import to_plain_value
+else:  # pragma: no cover - brak PySide6 w środowisku collect-only
+    MetricsRegistry = None  # type: ignore[assignment]
+    FeedHealthMetricsExporter = None  # type: ignore[assignment]
+    RiskJournalMetricsExporter = None  # type: ignore[assignment]
+    runtime_service_module = None  # type: ignore[assignment]
+    RuntimeService = None  # type: ignore[assignment]
+    TelemetryProvider = None  # type: ignore[assignment]
+    def to_plain_value(value: Any) -> Any:  # type: ignore[override]
+        return value
+
+
+@pytest.fixture(autouse=True)
+def qt_runtime_sanity() -> Iterator[None]:
+    if not _QT_READY:
+        yield
+        return
+    created_here = QApplication.instance() is None
+    try:
+        app = QApplication.instance() or QApplication([])
+    except Exception as exc:  # pragma: no cover - awaria pluginu platformy
+        qt_qpa_platform = os.getenv("QT_QPA_PLATFORM", "<unset>")
+        pytest.skip(
+            f"Qt runtime niedostępny na {sys.platform} "
+            f"(QT_QPA_PLATFORM={qt_qpa_platform}): {exc}"
+        )
+    yield
+    if created_here and app is not None:
+        app.processEvents()
+        app.quit()
+        app.processEvents()
 
 
 @pytest.fixture(autouse=True)
@@ -473,36 +538,119 @@ def test_runtime_overview_renders_snapshot(tmp_path: Path) -> None:
             f"text={label_text!r}, provider.lastUpdated={provider.lastUpdated!r}"
         )
 
+    # QQuickLoader status codes: Null=0, Ready=1, Loading=2, Error=3 (QtQuick.Loader / Loader.*)
     LOADER_READY = 1
+    LOADER_ERROR = 3
+    LOADER_STATUS_NAME = {0: "Null", 1: "Ready", 2: "Loading", 3: "Error"}
 
-    def _wait_for_loader_item(loader: QObject, timeout_s: float = 3.0) -> QObject | None:
-        start = time.monotonic()
-        while time.monotonic() - start < timeout_s:
+    def _normalize_error_string(loader: QObject) -> str:
+        error_attr = getattr(loader, "errorString", None)
+        if callable(error_attr):
+            return str(error_attr())
+        if error_attr is not None:
+            return str(error_attr)
+        return ""
+
+    def _normalize_source_component(loader: QObject) -> str:
+        source_component = loader.property("sourceComponent")
+        return "" if source_component is None else str(source_component)
+
+    def _fail_loader_error(loader: QObject, message_prefix: str) -> NoReturn:
+        active = loader.property("active")
+        source_component = _normalize_source_component(loader)
+        error_string = _normalize_error_string(loader)
+        card_id = str(loader.property("cardId") or "")
+        status = int(loader.property("status") or -1)
+        status_name = LOADER_STATUS_NAME.get(status, "Unknown")
+        pytest.fail(
+            f"{message_prefix} "
+            f"objectName={loader.objectName()}, cardId={card_id}, status={status}, "
+            f"statusName={status_name}, active={active}, sourceComponent={source_component}, "
+            f"errorString={error_string}"
+        )
+
+    def _collect_card_loaders() -> list[QObject]:
+        return [
+            child
+            for child in root.findChildren(QObject)
+            if str(child.objectName()).startswith("runtimeOverviewCardLoader_")
+        ]
+
+    def _find_guardrail_loader(aliases: set[str], deadline: float) -> QObject | None:
+        cached_loaders: list[QObject] | None = None
+        last_refresh = 0.0
+        while True:
+            now = time.monotonic()
+            if now >= deadline:
+                break
             app.processEvents()
-            if loader.property("status") == LOADER_READY:
+            if cached_loaders is None or now - last_refresh >= 0.2:
+                cached_loaders = _collect_card_loaders()
+                last_refresh = now
+            loaders = cached_loaders if cached_loaders is not None else []
+            for loader in loaders:
+                card_id = str(loader.property("cardId") or "")
+                if card_id in aliases:
+                    status = int(loader.property("status") or -1)
+                    if status == LOADER_ERROR:
+                        _fail_loader_error(
+                            loader,
+                            "Loader guardrail (alias cardId) zakończył się błędem podczas lookup.",
+                        )
+                    return loader
+            qt_wait(50)
+        return None
+
+    def _wait_for_loader_item(loader: QObject, deadline: float) -> QObject | None:
+        while time.monotonic() < deadline:
+            app.processEvents()
+            status = loader.property("status")
+            if status == LOADER_ERROR:
+                _fail_loader_error(
+                    loader,
+                    "Loader guardrail (alias cardId) zakończył się błędem podczas oczekiwania.",
+                )
+            if status == LOADER_READY:
                 item = loader.property("item")
                 if item is not None:
                     return item
             qt_wait(50)
         return loader.property("item")
 
-    guardrail_loader = root.findChild(QObject, "runtimeOverviewCardLoader_guardrails")
-    assert guardrail_loader is not None, "Nie znaleziono Loadera runtimeOverviewCardLoader_guardrails."
-    guardrail_card = _wait_for_loader_item(guardrail_loader)
-    if guardrail_card is None:
-        status = guardrail_loader.property("status")
-        active = guardrail_loader.property("active")
-        source_component = guardrail_loader.property("sourceComponent")
-        error_string = ""
-        error_attr = getattr(guardrail_loader, "errorString", None)
-        if callable(error_attr):
-            error_string = error_attr()
-        elif error_attr is not None:
-            error_string = str(error_attr)
+    guardrail_aliases = {"guardrails", "guardrail", "guardrails_card", "guardrail_card"}
+    guardrail_timeout_s = 3.0
+    guardrail_deadline = time.monotonic() + guardrail_timeout_s
+    guardrail_loader = _find_guardrail_loader(guardrail_aliases, deadline=guardrail_deadline)
+    if guardrail_loader is None:
+        available_loaders = []
+        for child in _collect_card_loaders():
+            status = int(child.property("status") or -1)
+            available_loaders.append(
+                {
+                    "objectName": str(child.objectName()),
+                    "cardId": str(child.property("cardId") or ""),
+                    "status": status,
+                    "statusName": LOADER_STATUS_NAME.get(status, "Unknown"),
+                    "active": child.property("active"),
+                    "sourceComponent": _normalize_source_component(child),
+                    "errorString": _normalize_error_string(child),
+                }
+            )
+        default_order = root.property("defaultCardOrder")
+        controller = root.property("dashboardSettingsController")
+        visible_order = None
+        if controller is not None:
+            visible_order = controller.property("visibleCardOrder")
         pytest.fail(
-            "Loader runtimeOverviewCardLoader_guardrails nie osiągnął statusu Ready lub nie zwrócił item. "
-            f"status={status}, active={active}, sourceComponent={source_component}, "
-            f"errorString={error_string}"
+            "Nie znaleziono guardrail loadera (alias cardId). "
+            f"Szukano aliasów={sorted(guardrail_aliases)}, dostępne loadery={available_loaders}, "
+            f"defaultCardOrder={default_order}, visibleCardOrder={visible_order}"
+        )
+    guardrail_card = _wait_for_loader_item(guardrail_loader, deadline=guardrail_deadline)
+    if guardrail_card is None:
+        _fail_loader_error(
+            guardrail_loader,
+            "Loader guardrail (alias cardId) nie osiągnął statusu Ready lub nie zwrócił item.",
         )
     assert guardrail_card.property("objectName") == "runtimeOverviewGuardrailCard"
     manual_button = root.findChild(QObject, "manualRefreshButton")
@@ -1012,7 +1160,6 @@ def test_runtime_service_attach_reports_missing_log(tmp_path: Path, monkeypatch:
 
 
 def test_runtime_service_feed_health_exports_alerts(monkeypatch: pytest.MonkeyPatch) -> None:
-    require_pyside6()
     monkeypatch.setenv("BOT_CORE_UI_FEED_LATENCY_P95_WARNING_MS", "1.0")
     monkeypatch.setenv("BOT_CORE_UI_FEED_LATENCY_P95_CRITICAL_MS", "2.0")
 
@@ -1063,7 +1210,6 @@ def test_runtime_service_feed_health_exports_alerts(monkeypatch: pytest.MonkeyPa
 
 
 def test_runtime_service_records_escalation_channels(monkeypatch: pytest.MonkeyPatch) -> None:
-    require_pyside6()
     monkeypatch.setenv("BOT_CORE_UI_FEED_RECONNECT_WARNING", "1")
     monkeypatch.setenv("BOT_CORE_UI_FEED_DOWNTIME_WARNING_SECONDS", "1.0")
 
@@ -1104,7 +1250,6 @@ def test_runtime_service_records_escalation_channels(monkeypatch: pytest.MonkeyP
 
 
 def test_risk_journal_metrics_exporter_records_state(monkeypatch: pytest.MonkeyPatch) -> None:
-    require_pyside6()
     captured: list[dict[str, object]] = []
 
     class _Sink:
@@ -1144,7 +1289,6 @@ def test_risk_journal_metrics_exporter_records_state(monkeypatch: pytest.MonkeyP
 
 
 def test_risk_journal_metrics_exporter_normalizes_snake_case() -> None:
-    require_pyside6()
     service = RuntimeService(feed_alert_sink=None)
 
     diagnostics = {"incomplete_entries": 3, "incomplete_samples": ["x", "y"]}
@@ -1167,7 +1311,6 @@ def test_risk_journal_metrics_exporter_normalizes_snake_case() -> None:
 
 
 def test_risk_journal_metrics_exporter_tracks_risk_flag_counts() -> None:
-    require_pyside6()
     registry = MetricsRegistry()
     service = RuntimeService(feed_alert_sink=None)
     service._risk_journal_metrics_exporter = RiskJournalMetricsExporter(
@@ -1204,7 +1347,6 @@ def test_risk_journal_metrics_exporter_tracks_risk_flag_counts() -> None:
 
 
 def test_risk_journal_metrics_exporter_accepts_numeric_samples() -> None:
-    require_pyside6()
     registry = MetricsRegistry()
     service = RuntimeService(feed_alert_sink=None)
     service._risk_journal_metrics_exporter = RiskJournalMetricsExporter(
@@ -1229,7 +1371,6 @@ def test_risk_journal_metrics_exporter_accepts_numeric_samples() -> None:
 
 
 def test_risk_journal_metrics_exporter_prefers_explicit_sample_count() -> None:
-    require_pyside6()
     registry = MetricsRegistry()
     service = RuntimeService(feed_alert_sink=None)
     service._risk_journal_metrics_exporter = RiskJournalMetricsExporter(
