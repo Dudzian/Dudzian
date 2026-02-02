@@ -26,7 +26,10 @@ try:  # pragma: no cover - zależne od środowiska
         Signal,
         QByteArray,
     )
-    from PySide6.QtQml import QQmlApplicationEngine  # type: ignore[attr-defined]
+    from PySide6.QtQml import (  # type: ignore[attr-defined]
+        QQmlApplicationEngine,
+        QQmlComponent,
+    )
     from PySide6.QtGui import QImage  # type: ignore[attr-defined]
     from PySide6.QtWidgets import QApplication  # type: ignore[attr-defined]
     _QT_READY = True
@@ -64,6 +67,9 @@ except ImportError as exc:  # pragma: no cover - brak PySide6 lub zależności s
         pass
 
     class QQmlApplicationEngine:  # type: ignore[no-redef]
+        pass
+
+    class QQmlComponent:  # type: ignore[no-redef]
         pass
 
     class QApplication:  # type: ignore[no-redef]
@@ -501,10 +507,44 @@ def test_runtime_overview_renders_snapshot(tmp_path: Path) -> None:
     dashboard_controller = DashboardSettingsController(store=settings_store, parent=engine)
     engine.rootContext().setContextProperty("dashboardSettingsController", dashboard_controller)
     qml_path = Path(__file__).resolve().parents[2] / "ui" / "qml" / "dashboard" / "RuntimeOverview.qml"
-    engine.load(QUrl.fromLocalFile(str(qml_path)))
-    assert engine.rootObjects(), "Nie udało się załadować RuntimeOverview.qml"
-    root = engine.rootObjects()[0]
-    root.setProperty("dashboardSettingsController", dashboard_controller)
+    initial_properties = {
+        "dashboardSettingsController": dashboard_controller,
+        "complianceController": None,
+        "reportController": None,
+    }
+    # QML buduje listę kart w onCompleted, więc property musi być ustawione PRZED load().
+    if hasattr(engine, "setInitialProperties"):
+        engine.setInitialProperties(initial_properties)
+        engine.load(QUrl.fromLocalFile(str(qml_path)))
+        assert engine.rootObjects(), "Nie udało się załadować RuntimeOverview.qml"
+        root = engine.rootObjects()[0]
+    else:
+        component = QQmlComponent(engine, QUrl.fromLocalFile(str(qml_path)))
+        if hasattr(component, "isError") and component.isError():
+            pytest.fail(f"Nie udało się załadować RuntimeOverview.qml: errors={component.errors()}")
+        status = component.status() if hasattr(component, "status") else None
+        status_error = getattr(getattr(QQmlComponent, "Status", None), "Error", None)
+        if status_error is not None and status == status_error:
+            pytest.fail(f"Nie udało się załadować RuntimeOverview.qml: errors={component.errors()}")
+        if hasattr(component, "createWithInitialProperties"):
+            root = component.createWithInitialProperties(initial_properties)
+        else:
+            root = component.create()
+            if root is not None:
+                for key, value in initial_properties.items():
+                    root.setProperty(key, value)
+        try:
+            if root is not None and root.parent() is None:
+                root.setParent(engine)
+        except Exception:
+            pass
+        if root is None:
+            error_list = component.errors() if hasattr(component, "errors") else []
+            status = component.status() if hasattr(component, "status") else None
+            pytest.fail(
+                "Nie udało się załadować RuntimeOverview.qml: "
+                f"errors={error_list}, status={status}"
+            )
     injected_controller = root.property("dashboardSettingsController")
     assert injected_controller is not None, "dashboardSettingsController jest None – QML nie zbuduje kart."
     if shiboken6 is not None:
@@ -563,9 +603,6 @@ def test_runtime_overview_renders_snapshot(tmp_path: Path) -> None:
         "Karta guardrails nie jest widoczna wg dashboardSettingsController. "
         f"visible={visible_list!r}, default={default_list!r}"
     )
-    root.setProperty("complianceController", None)
-    root.setProperty("reportController", None)
-
     # Dajemy QML chwilę na przepięcie bindingów i ewentualne zbudowanie listy kart.
     app.processEvents()
     qt_wait(50)
@@ -679,18 +716,32 @@ def test_runtime_overview_renders_snapshot(tmp_path: Path) -> None:
         for child in root.findChildren(QObject):
             object_name = str(child.objectName())
             if object_name.startswith("runtimeOverviewCardLoader_"):
-                status = _safe_prop(child, "status")
-                if status is None or (isinstance(status, str) and status.startswith("<")):
-                    continue
-                loaders.append(child)
+                if _is_qquickloader(child):
+                    loaders.append(child)
                 continue
             if not _is_qquickloader(child):
                 continue
-            status = _safe_prop(child, "status")
-            if status is None or (isinstance(status, str) and status.startswith("<")):
-                continue
             loaders.append(child)
         return loaders
+
+    def _has_guardrail_loader(aliases: set[str]) -> bool:
+        for loader in _collect_card_loaders():
+            card_id = str(_safe_prop(loader, "cardId") or "")
+            status = _safe_int(_safe_prop(loader, "status"), default=-1)
+            if card_id in aliases and status > 0:
+                return True
+        return False
+
+    def _find_loader_from_guardrail_item() -> QObject | None:
+        guardrail_item = root.findChild(QObject, "runtimeOverviewGuardrailCard")
+        if guardrail_item is None:
+            return None
+        current = guardrail_item.parent()
+        while current is not None:
+            if _is_qquickloader(current):
+                return current
+            current = current.parent()
+        return None
 
     def _find_guardrail_loader(aliases: set[str], deadline: float) -> QObject | None:
         cached_loaders: list[QObject] | None = None
@@ -724,6 +775,9 @@ def test_runtime_overview_renders_snapshot(tmp_path: Path) -> None:
                                     return loader
                         except Exception:
                             pass
+            fallback_loader = _find_loader_from_guardrail_item()
+            if fallback_loader is not None:
+                return fallback_loader
             qt_wait(50)
         return None
 
@@ -751,6 +805,25 @@ def test_runtime_overview_renders_snapshot(tmp_path: Path) -> None:
         return item
 
     guardrail_aliases = {"guardrails", "guardrail", "guardrails_card", "guardrail_card"}
+    early_deadline = time.monotonic() + 3.0
+    while time.monotonic() < early_deadline:
+        app.processEvents()
+        try:
+            visible_order = injected_controller.property("visibleCardOrder")
+        except RuntimeError:
+            visible_order = None
+        visible_has_guardrails = "guardrails" in _as_str_list(visible_order)
+        if not visible_has_guardrails:
+            qt_wait(50)
+            continue
+        fallback_loader = _find_loader_from_guardrail_item()
+        if fallback_loader is not None:
+            break
+        if root.findChild(QObject, "runtimeOverviewGuardrailCard") is not None:
+            break
+        if _has_guardrail_loader(guardrail_aliases):
+            break
+        qt_wait(50)
     guardrail_timeout_s = 6.0
     guardrail_deadline = time.monotonic() + guardrail_timeout_s
     guardrail_loader = _find_guardrail_loader(guardrail_aliases, deadline=guardrail_deadline)
@@ -762,10 +835,17 @@ def test_runtime_overview_renders_snapshot(tmp_path: Path) -> None:
             object_name = str(child.objectName())
             card_id = _safe_prop(child, "cardId")
             card_id_ok = not (isinstance(card_id, str) and card_id.startswith("<"))
-            if (card_id is not None and card_id_ok) or ("Loader" in object_name) or ("runtimeOverview" in object_name) or ("card" in object_name.lower()):
+            class_name = _class_name(child)
+            if (
+                (card_id is not None and card_id_ok)
+                or ("Loader" in object_name)
+                or ("Loader" in class_name)
+                or ("runtimeOverview" in object_name)
+                or ("card" in object_name.lower())
+            ):
                 sample.append(
                     {
-                        "class": _class_name(child),
+                        "class": class_name,
                         "objectName": object_name,
                         "cardId": card_id if card_id_ok else None,
                         "status": _safe_prop(child, "status"),
@@ -776,12 +856,15 @@ def test_runtime_overview_renders_snapshot(tmp_path: Path) -> None:
                 )
         available_loaders = []
         for child in _collect_card_loaders():
-            status = _safe_int(_safe_prop(child, "status"), default=-1)
+            status_raw = _safe_prop(child, "status")
+            status = _safe_int(status_raw, default=-1)
             available_loaders.append(
                 {
+                    "className": _class_name(child),
                     "objectName": str(child.objectName()),
                     "cardId": str(_safe_prop(child, "cardId") or ""),
                     "status": status,
+                    "status_raw": status_raw,
                     "statusName": LOADER_STATUS_NAME.get(status, "Unknown"),
                     "active": _safe_prop(child, "active"),
                     "sourceComponent": _normalize_source_component(child),
