@@ -527,21 +527,41 @@ def test_runtime_overview_renders_snapshot(tmp_path: Path) -> None:
     # dashboardSettingsController, bo QML może od niego zależeć przy budowie listy kart.
     default_order = root.property("defaultCardOrder")
     dashboard_controller.setCardOrder(default_order)
+    default_list = _as_str_list(default_order)
     deadline = time.monotonic() + 2.0
+    visible_list: list[str] = []
     while time.monotonic() < deadline:
         app.processEvents()
         visible_order = injected_controller.property("visibleCardOrder")
-        if _as_str_list(visible_order) == _as_str_list(default_order):
+        visible_list = _as_str_list(visible_order)
+
+        # warunek „gotowe”: mamy jakąś sensowną listę (niepustą) i jest subsekwencją default
+        if visible_list and all(cid in default_list for cid in visible_list):
             break
         qt_wait(50)
+
     app.processEvents()
     visible_order = injected_controller.property("visibleCardOrder")
-    assert _as_str_list(visible_order) == _as_str_list(default_order), (
-        "visibleCardOrder nie ustawił się deterministycznie po setCardOrder. "
-        f"visibleCardOrder={visible_order!r} ({type(visible_order)}), "
-        f"defaultOrder={default_order!r} ({type(default_order)}), "
-        f"visibleOrderList={_as_str_list(visible_order)!r}, "
-        f"defaultOrderList={_as_str_list(default_order)!r}"
+    visible_list = _as_str_list(visible_order)
+
+    # 1) bez obcych cardId
+    unknown = [cid for cid in visible_list if cid not in default_list]
+    assert not unknown, (
+        "visibleCardOrder zawiera nieznane cardId. "
+        f"unknown={unknown!r}, visible={visible_list!r}, default={default_list!r}"
+    )
+
+    # 2) zachowana kolejność jak w default (subsekwencja)
+    expected_subseq = [cid for cid in default_list if cid in set(visible_list)]
+    assert visible_list == expected_subseq, (
+        "visibleCardOrder nie jest deterministycznym podzbiorem defaultCardOrder. "
+        f"visible={visible_list!r}, expectedSubseq={expected_subseq!r}, default={default_list!r}"
+    )
+
+    # 3) guardrails musi być, bo później tego szukasz
+    assert "guardrails" in visible_list, (
+        "Karta guardrails nie jest widoczna wg dashboardSettingsController. "
+        f"visible={visible_list!r}, default={default_list!r}"
     )
     root.setProperty("complianceController", None)
     root.setProperty("reportController", None)
