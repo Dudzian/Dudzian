@@ -13,11 +13,12 @@ from urllib.parse import urlparse
 import sys
 import hashlib
 from contextlib import contextmanager
+from collections.abc import Iterable, Iterator, Mapping, MutableMapping, Sequence
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from types import ModuleType, SimpleNamespace
-from typing import TYPE_CHECKING, Any, Callable, Iterable, Iterator, Mapping, MutableMapping, Sequence
+from typing import TYPE_CHECKING, Any, Callable
 
 from bot_core.alerts import AlertSeverity, DefaultAlertRouter, emit_alert
 from bot_core.alerts.base import AlertAuditLog, AlertChannel
@@ -3606,12 +3607,59 @@ def bootstrap_environment(
                     environment.name,
                     exc,
                 )
+                verification_documents: list[dict[str, Any]] = []
+                verification_documents_by_name: dict[str, dict[str, Any]] = {}
+                readiness_metadata = (
+                    extract_live_readiness_metadata(live_readiness_checklist)
+                    if live_readiness_checklist is not None
+                    else {}
+                )
+                readiness_documents = None
+                if isinstance(readiness_metadata, Mapping):
+                    readiness_documents = readiness_metadata.get("documents")
+                if not isinstance(readiness_documents, Sequence) or isinstance(
+                    readiness_documents, (str, bytes)
+                ):
+                    readiness_config = getattr(environment, "live_readiness", None)
+                    if readiness_config is not None:
+                        readiness_documents = getattr(readiness_config, "documents", None)
+                if isinstance(readiness_documents, Sequence) and not isinstance(
+                    readiness_documents, (str, bytes)
+                ):
+                    for entry in readiness_documents:
+                        if not isinstance(entry, Mapping):
+                            continue
+                        name = entry.get("name")
+                        if not name:
+                            continue
+                        doc_payload: dict[str, Any] = {"name": str(name)}
+                        for key in (
+                            "required",
+                            "status",
+                            "path",
+                            "resolved_path",
+                            "signature_path",
+                            "sha256",
+                            "computed_sha256",
+                            "signed",
+                            "signed_at",
+                        ):
+                            if key in entry:
+                                doc_payload[key] = entry[key]
+                        if entry.get("reasons"):
+                            doc_payload["reasons"] = tuple(entry.get("reasons", ()))
+                        if entry.get("signed_by"):
+                            doc_payload["signed_by"] = tuple(entry.get("signed_by", ()))
+                        verification_documents.append(doc_payload)
+                        verification_documents_by_name[str(name)] = doc_payload
                 # W testach/CI nie przerywamy bootstrapa na invalid signatures,
                 # aby checklistę live dało się zweryfikować w testach.
                 live_signature_verification = {
                     "status": "invalid",
                     "error": str(exc),
                     "environment": environment.name,
+                    "documents": verification_documents,
+                    "documents_by_name": verification_documents_by_name,
                 }
             else:
                 raise RuntimeError(
