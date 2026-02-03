@@ -691,6 +691,22 @@ def test_runtime_overview_renders_snapshot(tmp_path: Path) -> None:
         except Exception:
             return "<unknown>"
 
+    def _looks_like_loader_by_props(obj: QObject) -> bool:
+        # Nie ufamy className na Windows; patrzymy po właściwościach.
+        status_raw = _safe_prop(obj, "status")
+        status = _safe_int(status_raw, default=-1)
+        if status >= 0:
+            return True
+        item = _safe_prop(obj, "item")
+        if item is not None and not (isinstance(item, str) and item.startswith("<")):
+            return True
+        source_component = _safe_prop(obj, "sourceComponent")
+        if source_component is not None and not (
+            isinstance(source_component, str) and source_component.startswith("<")
+        ):
+            return True
+        return False
+
     def _is_loader_like(obj: QObject) -> bool:
         name = _class_name(obj)
         if "QQuickLoader" in name or "Loader" in name:
@@ -726,10 +742,11 @@ def test_runtime_overview_renders_snapshot(tmp_path: Path) -> None:
         for child in root.findChildren(QObject):
             object_name = str(child.objectName())
             if object_name.startswith("runtimeOverviewCardLoader_"):
-                if _is_loader_like(child):
+                # Prefiks jest najbardziej wiarygodny; className na Windows bywa bezużyteczne.
+                if _looks_like_loader_by_props(child) or _is_loader_like(child):
                     loaders.append(child)
                 continue
-            if not _is_loader_like(child):
+            if not (_is_loader_like(child) or _looks_like_loader_by_props(child)):
                 continue
             loaders.append(child)
         return loaders
@@ -748,7 +765,11 @@ def test_runtime_overview_renders_snapshot(tmp_path: Path) -> None:
             return None
         current = guardrail_item.parent()
         while current is not None:
-            if _is_loader_like(current):
+            # Jak wyżej: najpierw prefiks / właściwości, potem className.
+            if str(current.objectName()).startswith("runtimeOverviewCardLoader_"):
+                if _looks_like_loader_by_props(current) or _is_loader_like(current):
+                    return current
+            if _looks_like_loader_by_props(current) or _is_loader_like(current):
                 return current
             current = current.parent()
         return None
