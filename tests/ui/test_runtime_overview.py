@@ -742,9 +742,9 @@ def test_runtime_overview_renders_snapshot(tmp_path: Path) -> None:
         for child in root.findChildren(QObject):
             object_name = str(child.objectName())
             if object_name.startswith("runtimeOverviewCardLoader_"):
-                # Prefiks jest najbardziej wiarygodny; className na Windows bywa bezużyteczne.
-                if _looks_like_loader_by_props(child) or _is_loader_like(child):
-                    loaders.append(child)
+                # Prefiks jest najbardziej wiarygodny; na Windows status/item potrafią być
+                # niekonwertowalne lub chwilowo rzucać RuntimeError, więc nie filtrujemy tutaj.
+                loaders.append(child)
                 continue
             if not (_is_loader_like(child) or _looks_like_loader_by_props(child)):
                 continue
