@@ -691,11 +691,21 @@ def test_runtime_overview_renders_snapshot(tmp_path: Path) -> None:
         except Exception:
             return "<unknown>"
 
-    def _is_qquickloader(obj: QObject) -> bool:
-        try:
-            return "QQuickLoader" in str(obj.metaObject().className())
-        except Exception:
-            return False
+    def _is_loader_like(obj: QObject) -> bool:
+        name = _class_name(obj)
+        if "QQuickLoader" in name or "Loader" in name:
+            status = _safe_int(_safe_prop(obj, "status"), default=-1)
+            item = _safe_prop(obj, "item")
+            source_component = _safe_prop(obj, "sourceComponent")
+            if status >= 0:
+                return True
+            if item is not None and not (isinstance(item, str) and item.startswith("<")):
+                return True
+            if source_component is not None and not (
+                isinstance(source_component, str) and source_component.startswith("<")
+            ):
+                return True
+        return False
 
     def _fail_loader_error(loader: QObject, message_prefix: str) -> NoReturn:
         active = _safe_prop(loader, "active")
@@ -716,10 +726,10 @@ def test_runtime_overview_renders_snapshot(tmp_path: Path) -> None:
         for child in root.findChildren(QObject):
             object_name = str(child.objectName())
             if object_name.startswith("runtimeOverviewCardLoader_"):
-                if _is_qquickloader(child):
+                if _is_loader_like(child):
                     loaders.append(child)
                 continue
-            if not _is_qquickloader(child):
+            if not _is_loader_like(child):
                 continue
             loaders.append(child)
         return loaders
@@ -738,7 +748,7 @@ def test_runtime_overview_renders_snapshot(tmp_path: Path) -> None:
             return None
         current = guardrail_item.parent()
         while current is not None:
-            if _is_qquickloader(current):
+            if _is_loader_like(current):
                 return current
             current = current.parent()
         return None
