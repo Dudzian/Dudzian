@@ -31,7 +31,7 @@ try:  # pragma: no cover - zależne od środowiska
         QQmlComponent,
     )
     from PySide6.QtGui import QImage  # type: ignore[attr-defined]
-    from PySide6.QtQuick import QQuickWindow  # type: ignore[attr-defined]
+    from PySide6.QtQuick import QQuickItem, QQuickWindow  # type: ignore[attr-defined]
     from PySide6.QtWidgets import QApplication  # type: ignore[attr-defined]
     _QT_READY = True
 except ImportError as exc:  # pragma: no cover - brak PySide6 lub zależności systemowych
@@ -77,6 +77,9 @@ except ImportError as exc:  # pragma: no cover - brak PySide6 lub zależności s
         pass
 
     class QQuickWindow:  # type: ignore[no-redef]
+        pass
+
+    class QQuickItem:  # type: ignore[no-redef]
         pass
 
     QImage = None  # type: ignore[assignment]
@@ -727,6 +730,47 @@ def test_runtime_overview_renders_snapshot(tmp_path: Path) -> None:
             except Exception as exc:  # pragma: no cover
                 return f"<{type(exc).__name__}: {exc}>"
 
+        def _safe_object_name(obj: QObject) -> str:
+            try:
+                name = str(obj.objectName())
+            except Exception:
+                name = ""
+            if name:
+                return name
+            prop_name = _safe_prop(obj, "objectName")
+            if isinstance(prop_name, str) and prop_name:
+                return prop_name
+            return ""
+
+        def _quick_root_item(start: QObject) -> QObject | None:
+            if hasattr(start, "childItems"):
+                return start
+            if hasattr(quick_window, "contentItem"):
+                try:
+                    return quick_window.contentItem()
+                except Exception:
+                    return None
+            return None
+
+        def _iter_quick_items(start: QObject | None) -> Iterator[QObject]:
+            if start is None:
+                return
+            stack = [start]
+            visited: set[int] = set()
+            while stack:
+                item = stack.pop()
+                item_id = id(item)
+                if item_id in visited:
+                    continue
+                visited.add(item_id)
+                yield item
+                try:
+                    children = item.childItems() if hasattr(item, "childItems") else []
+                except Exception:
+                    children = []
+                if children:
+                    stack.extend(children)
+
         def _safe_int(value: object, default: int = -1) -> int:
             if value is None:
                 return default
@@ -767,18 +811,21 @@ def test_runtime_overview_renders_snapshot(tmp_path: Path) -> None:
 
         def _is_loader_like(obj: QObject) -> bool:
             name = _class_name(obj)
-            if "QQuickLoader" in name or "Loader" in name:
-                status = _safe_int(_safe_prop(obj, "status"), default=-1)
-                item = _safe_prop(obj, "item")
-                source_component = _safe_prop(obj, "sourceComponent")
-                if status >= 0:
-                    return True
-                if item is not None and not (isinstance(item, str) and item.startswith("<")):
-                    return True
-                if source_component is not None and not (
-                    isinstance(source_component, str) and source_component.startswith("<")
-                ):
-                    return True
+            if "QQuickLoader" in name:
+                return True
+            if "Loader" in name:
+                return True
+            status = _safe_int(_safe_prop(obj, "status"), default=-1)
+            if status >= 0:
+                return True
+            item = _safe_prop(obj, "item")
+            if item is not None and not (isinstance(item, str) and item.startswith("<")):
+                return True
+            source_component = _safe_prop(obj, "sourceComponent")
+            if source_component is not None and not (
+                isinstance(source_component, str) and source_component.startswith("<")
+            ):
+                return True
             return False
 
         def _fail_loader_error(loader: QObject, message_prefix: str) -> NoReturn:
@@ -797,8 +844,10 @@ def test_runtime_overview_renders_snapshot(tmp_path: Path) -> None:
 
         def _collect_card_loaders() -> list[QObject]:
             loaders: list[QObject] = []
-            for child in root.findChildren(QObject):
-                object_name = str(child.objectName())
+            quick_root = _quick_root_item(root)
+            quick_items = _iter_quick_items(quick_root)
+            for child in quick_items:
+                object_name = _safe_object_name(child)
                 if object_name.startswith("runtimeOverviewCardLoader_"):
                     # Prefiks jest najbardziej wiarygodny; na Windows status/item potrafią być
                     # niekonwertowalne lub chwilowo rzucać RuntimeError, więc nie filtrujemy tutaj.
@@ -817,19 +866,30 @@ def test_runtime_overview_renders_snapshot(tmp_path: Path) -> None:
                     return True
             return False
 
+        def _find_quick_item_by_object_name(target_object_name: str) -> QObject | None:
+            quick_root = _quick_root_item(root)
+            for child in _iter_quick_items(quick_root):
+                if _safe_object_name(child) == target_object_name:
+                    return child
+            return None
+
         def _find_loader_from_guardrail_item() -> QObject | None:
-            guardrail_item = root.findChild(QObject, "runtimeOverviewGuardrailCard")
+            guardrail_item = _find_quick_item_by_object_name("runtimeOverviewGuardrailCard")
             if guardrail_item is None:
                 return None
-            current = guardrail_item.parent()
+            current = (
+                guardrail_item.parentItem()
+                if hasattr(guardrail_item, "parentItem")
+                else guardrail_item.parent()
+            )
             while current is not None:
                 # Jak wyżej: najpierw prefiks / właściwości, potem className.
-                if str(current.objectName()).startswith("runtimeOverviewCardLoader_"):
+                if _safe_object_name(current).startswith("runtimeOverviewCardLoader_"):
                     if _looks_like_loader_by_props(current) or _is_loader_like(current):
                         return current
                 if _looks_like_loader_by_props(current) or _is_loader_like(current):
                     return current
-                current = current.parent()
+                current = current.parentItem() if hasattr(current, "parentItem") else current.parent()
             return None
 
         def _find_guardrail_loader(aliases: set[str], deadline: float) -> QObject | None:
@@ -873,9 +933,21 @@ def test_runtime_overview_renders_snapshot(tmp_path: Path) -> None:
         def _find_guardrail_loader_by_object_name(aliases: set[str]) -> QObject | None:
             # Wymaga objectName na Loaderze w QML (runtimeOverviewCardLoader_<cardId>).
             for alias in sorted(aliases):
-                loader = root.findChild(QObject, f"runtimeOverviewCardLoader_{alias}")
+                loader = _find_quick_item_by_object_name(f"runtimeOverviewCardLoader_{alias}")
                 if loader is not None:
                     return loader
+            return None
+
+        def _try_find_guardrail_loader_now(aliases: set[str]) -> QObject | None:
+            return _find_guardrail_loader(aliases, deadline=time.monotonic() + 0.05)
+
+        def _wait_for_guardrail_loader(aliases: set[str], deadline: float) -> QObject | None:
+            while time.monotonic() < deadline:
+                app.processEvents()
+                loader = _find_guardrail_loader_by_object_name(aliases)
+                if loader is not None:
+                    return loader
+                qt_wait(50)
             return None
 
         def _wait_for_loader_item(loader: QObject, deadline: float) -> QObject | None:
@@ -887,6 +959,17 @@ def test_runtime_overview_renders_snapshot(tmp_path: Path) -> None:
                         loader,
                         "Loader guardrail (alias cardId) zakończył się błędem podczas oczekiwania.",
                     )
+                item = _safe_prop(loader, "item")
+                if (
+                    item is not None
+                    and not (isinstance(item, str) and item.startswith("<"))
+                    and (isinstance(item, QObject) or hasattr(item, "property"))
+                ):
+                    return item
+                active = _safe_prop(loader, "active")
+                if isinstance(active, bool) and not active:
+                    qt_wait(50)
+                    continue
                 if status == LOADER_READY:
                     item = _safe_prop(loader, "item")
                     if (
@@ -913,38 +996,41 @@ def test_runtime_overview_renders_snapshot(tmp_path: Path) -> None:
             if not visible_has_guardrails:
                 qt_wait(50)
                 continue
-            fallback_loader = _find_loader_from_guardrail_item()
-            if fallback_loader is not None:
+            if _find_guardrail_loader_by_object_name(guardrail_aliases) is not None:
                 break
-            if root.findChild(QObject, "runtimeOverviewGuardrailCard") is not None:
+            if _find_loader_from_guardrail_item() is not None:
+                break
+            if _find_quick_item_by_object_name("runtimeOverviewGuardrailCard") is not None:
                 break
             if _has_guardrail_loader(guardrail_aliases):
                 break
             qt_wait(50)
-        # Na Windows w CI Loader-y potrafią nie być widoczne / mieć problemy z konwersją property,
-        # więc najpierw czekamy bezpośrednio na docelowy item.
         guardrail_deadline = time.monotonic() + 20.0
+        guardrail_loader = _wait_for_guardrail_loader(guardrail_aliases, deadline=guardrail_deadline)
+        if guardrail_loader is None:
+            guardrail_loader = _find_guardrail_loader(guardrail_aliases, deadline=guardrail_deadline)
+
         guardrail_card = None
-        while time.monotonic() < guardrail_deadline:
-            app.processEvents()
-            guardrail_card = root.findChild(QObject, "runtimeOverviewGuardrailCard")
-            if guardrail_card is not None:
-                break
-            qt_wait(50)
+        if guardrail_loader is not None:
+            guardrail_card = _wait_for_loader_item(guardrail_loader, deadline=guardrail_deadline)
 
         if guardrail_card is None:
-            # dopiero tu próbujemy diagnostyki loaderów (best-effort)
-            guardrail_loader = _find_guardrail_loader_by_object_name(guardrail_aliases)
-            if guardrail_loader is None:
-                guardrail_loader = _find_guardrail_loader(guardrail_aliases, deadline=guardrail_deadline)
-            if guardrail_loader is not None:
-                guardrail_card = _wait_for_loader_item(guardrail_loader, deadline=guardrail_deadline)
+            # Na Windows w CI Loader-y potrafią nie być widoczne / mieć problemy z konwersją property,
+            # więc jako fallback czekamy bezpośrednio na docelowy item.
+            while time.monotonic() < guardrail_deadline:
+                app.processEvents()
+                guardrail_card = _find_quick_item_by_object_name("runtimeOverviewGuardrailCard")
+                if guardrail_card is not None:
+                    break
+                qt_wait(50)
+
             if guardrail_card is None:
                 # Szerokie diagnostyki: co w ogóle mamy w drzewie QML?
-                all_children = root.findChildren(QObject)
+                quick_root = _quick_root_item(root)
+                all_children = list(_iter_quick_items(quick_root))
                 direct_match = []
                 for child in all_children:
-                    object_name = str(child.objectName())
+                    object_name = _safe_object_name(child)
                     prop_object_name = str(_safe_prop(child, "objectName") or "")
                     if object_name == "runtimeOverviewGuardrailCard" or prop_object_name == "runtimeOverviewGuardrailCard":
                         direct_match.append(
@@ -957,7 +1043,7 @@ def test_runtime_overview_renders_snapshot(tmp_path: Path) -> None:
                         )
                 sample = []
                 for child in all_children[:250]:  # limit, żeby nie zalać logów
-                    object_name = str(child.objectName())
+                    object_name = _safe_object_name(child)
                     card_id = _safe_prop(child, "cardId")
                     card_id_ok = not (isinstance(card_id, str) and card_id.startswith("<"))
                     class_name = _class_name(child)
@@ -986,7 +1072,7 @@ def test_runtime_overview_renders_snapshot(tmp_path: Path) -> None:
                     available_loaders.append(
                         {
                             "className": _class_name(child),
-                            "objectName": str(child.objectName()),
+                            "objectName": _safe_object_name(child),
                             "cardId": str(_safe_prop(child, "cardId") or ""),
                             "status": status,
                             "status_raw": status_raw,
@@ -1001,10 +1087,38 @@ def test_runtime_overview_renders_snapshot(tmp_path: Path) -> None:
                 visible_order = None
                 if controller is not None:
                     visible_order = controller.property("visibleCardOrder")
+                root_width = _safe_prop(root, "width")
+                root_height = _safe_prop(root, "height")
+                quick_window_visible = None
+                if hasattr(quick_window, "isVisible"):
+                    try:
+                        quick_window_visible = bool(quick_window.isVisible())
+                    except Exception:
+                        quick_window_visible = None
+                guardrail_loader_state = None
+                if guardrail_loader is not None:
+                    guardrail_loader_state = {
+                        "objectName": _safe_object_name(guardrail_loader),
+                        "cardId": _safe_prop(guardrail_loader, "cardId"),
+                        "active": _safe_prop(guardrail_loader, "active"),
+                        "status": _safe_prop(guardrail_loader, "status"),
+                        "statusName": LOADER_STATUS_NAME.get(
+                            _safe_int(_safe_prop(guardrail_loader, "status"), default=-1),
+                            "Unknown",
+                        ),
+                        "item": _safe_prop(guardrail_loader, "item"),
+                        "errorString": _normalize_error_string(guardrail_loader),
+                    }
+                guardrail_loader_by_name = _find_guardrail_loader_by_object_name(guardrail_aliases)
+                guardrail_loader_by_heuristic = _try_find_guardrail_loader_now(guardrail_aliases)
                 pytest.fail(
                     "Nie znaleziono runtimeOverviewGuardrailCard w drzewie QML. "
                     f"Szukano aliasów={sorted(guardrail_aliases)}, dostępne loadery={available_loaders}, "
                     f"defaultCardOrder={default_order}, visibleCardOrder={visible_order}, "
+                    f"rootSize=({root_width}, {root_height}), quickWindowVisible={quick_window_visible}, "
+                    f"guardrailLoaderState={guardrail_loader_state}, "
+                    f"guardrailLoaderByName={_safe_object_name(guardrail_loader_by_name) if guardrail_loader_by_name else None}, "
+                    f"guardrailLoaderByHeuristic={_safe_object_name(guardrail_loader_by_heuristic) if guardrail_loader_by_heuristic else None}, "
                     f"qmlChildrenCount={len(all_children)}, directGuardrailMatches={direct_match}, "
                     f"sampleChildren={sample}"
                 )
