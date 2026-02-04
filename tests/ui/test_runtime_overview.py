@@ -1025,6 +1025,20 @@ def test_runtime_overview_renders_snapshot(tmp_path: Path) -> None:
                 qt_wait(50)
 
             if guardrail_card is None:
+                # Last chance: diagnostyka czasem widzi już element; spróbujmy raz jeszcze.
+                app.processEvents()
+                qt_wait(10)
+                guardrail_card = _find_quick_item_by_object_name("runtimeOverviewGuardrailCard")
+
+            if guardrail_card is None:
+                guardrail_loader = guardrail_loader or _find_guardrail_loader_by_object_name(guardrail_aliases)
+                if guardrail_loader is not None:
+                    guardrail_card = _wait_for_loader_item(
+                        guardrail_loader,
+                        deadline=time.monotonic() + 2.0,
+                    )
+
+            if guardrail_card is None:
                 # Szerokie diagnostyki: co w ogóle mamy w drzewie QML?
                 quick_root = _quick_root_item(root)
                 all_children = list(_iter_quick_items(quick_root))
