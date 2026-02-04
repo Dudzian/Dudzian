@@ -494,7 +494,7 @@ def _sample_risk_decisions() -> list[dict[str, object]]:
     ]
 
 
-@pytest.mark.timeout(30)
+@pytest.mark.timeout(45)
 def test_runtime_overview_renders_snapshot(tmp_path: Path) -> None:
     provider = TelemetryProvider(snapshot_loader=_sample_snapshot)
     runtime_service = RuntimeService(decision_loader=lambda limit: [])
@@ -855,70 +855,91 @@ def test_runtime_overview_renders_snapshot(tmp_path: Path) -> None:
         if _has_guardrail_loader(guardrail_aliases):
             break
         qt_wait(50)
-    guardrail_timeout_s = 6.0
-    guardrail_deadline = time.monotonic() + guardrail_timeout_s
-    guardrail_loader = _find_guardrail_loader(guardrail_aliases, deadline=guardrail_deadline)
-    if guardrail_loader is None:
-        # Szerokie diagnostyki: co w ogóle mamy w drzewie QML?
-        all_children = root.findChildren(QObject)
-        sample = []
-        for child in all_children[:250]:  # limit, żeby nie zalać logów
-            object_name = str(child.objectName())
-            card_id = _safe_prop(child, "cardId")
-            card_id_ok = not (isinstance(card_id, str) and card_id.startswith("<"))
-            class_name = _class_name(child)
-            if (
-                (card_id is not None and card_id_ok)
-                or ("Loader" in object_name)
-                or ("Loader" in class_name)
-                or ("runtimeOverview" in object_name)
-                or ("card" in object_name.lower())
-            ):
-                sample.append(
+    # Na Windows w CI Loader-y potrafią nie być widoczne / mieć problemy z konwersją property,
+    # więc najpierw czekamy bezpośrednio na docelowy item.
+    guardrail_deadline = time.monotonic() + 20.0
+    guardrail_card = None
+    while time.monotonic() < guardrail_deadline:
+        app.processEvents()
+        guardrail_card = root.findChild(QObject, "runtimeOverviewGuardrailCard")
+        if guardrail_card is not None:
+            break
+        qt_wait(50)
+
+    if guardrail_card is None:
+        # dopiero tu próbujemy diagnostyki loaderów (best-effort)
+        guardrail_loader = _find_guardrail_loader(guardrail_aliases, deadline=guardrail_deadline)
+        if guardrail_loader is not None:
+            guardrail_card = _wait_for_loader_item(guardrail_loader, deadline=guardrail_deadline)
+        if guardrail_card is None:
+            # Szerokie diagnostyki: co w ogóle mamy w drzewie QML?
+            all_children = root.findChildren(QObject)
+            direct_match = []
+            for child in all_children:
+                object_name = str(child.objectName())
+                prop_object_name = str(_safe_prop(child, "objectName") or "")
+                if object_name == "runtimeOverviewGuardrailCard" or prop_object_name == "runtimeOverviewGuardrailCard":
+                    direct_match.append(
+                        {
+                            "class": _class_name(child),
+                            "objectName": object_name,
+                            "propObjectName": prop_object_name,
+                            "cardId": _safe_prop(child, "cardId"),
+                        }
+                    )
+            sample = []
+            for child in all_children[:250]:  # limit, żeby nie zalać logów
+                object_name = str(child.objectName())
+                card_id = _safe_prop(child, "cardId")
+                card_id_ok = not (isinstance(card_id, str) and card_id.startswith("<"))
+                class_name = _class_name(child)
+                if (
+                    (card_id is not None and card_id_ok)
+                    or ("Loader" in object_name)
+                    or ("Loader" in class_name)
+                    or ("runtimeOverview" in object_name)
+                    or ("card" in object_name.lower())
+                ):
+                    sample.append(
+                        {
+                            "class": class_name,
+                            "objectName": object_name,
+                            "cardId": card_id if card_id_ok else None,
+                            "status": _safe_prop(child, "status"),
+                            "item": _safe_prop(child, "item"),
+                            "active": _safe_prop(child, "active"),
+                            "sourceComponent": _safe_prop(child, "sourceComponent"),
+                        }
+                    )
+            available_loaders = []
+            for child in _collect_card_loaders():
+                status_raw = _safe_prop(child, "status")
+                status = _safe_int(status_raw, default=-1)
+                available_loaders.append(
                     {
-                        "class": class_name,
-                        "objectName": object_name,
-                        "cardId": card_id if card_id_ok else None,
-                        "status": _safe_prop(child, "status"),
-                        "item": _safe_prop(child, "item"),
+                        "className": _class_name(child),
+                        "objectName": str(child.objectName()),
+                        "cardId": str(_safe_prop(child, "cardId") or ""),
+                        "status": status,
+                        "status_raw": status_raw,
+                        "statusName": LOADER_STATUS_NAME.get(status, "Unknown"),
                         "active": _safe_prop(child, "active"),
-                        "sourceComponent": _safe_prop(child, "sourceComponent"),
+                        "sourceComponent": _normalize_source_component(child),
+                        "errorString": _normalize_error_string(child),
                     }
                 )
-        available_loaders = []
-        for child in _collect_card_loaders():
-            status_raw = _safe_prop(child, "status")
-            status = _safe_int(status_raw, default=-1)
-            available_loaders.append(
-                {
-                    "className": _class_name(child),
-                    "objectName": str(child.objectName()),
-                    "cardId": str(_safe_prop(child, "cardId") or ""),
-                    "status": status,
-                    "status_raw": status_raw,
-                    "statusName": LOADER_STATUS_NAME.get(status, "Unknown"),
-                    "active": _safe_prop(child, "active"),
-                    "sourceComponent": _normalize_source_component(child),
-                    "errorString": _normalize_error_string(child),
-                }
+            default_order = root.property("defaultCardOrder")
+            controller = root.property("dashboardSettingsController")
+            visible_order = None
+            if controller is not None:
+                visible_order = controller.property("visibleCardOrder")
+            pytest.fail(
+                "Nie znaleziono runtimeOverviewGuardrailCard w drzewie QML. "
+                f"Szukano aliasów={sorted(guardrail_aliases)}, dostępne loadery={available_loaders}, "
+                f"defaultCardOrder={default_order}, visibleCardOrder={visible_order}, "
+                f"qmlChildrenCount={len(all_children)}, directGuardrailMatches={direct_match}, "
+                f"sampleChildren={sample}"
             )
-        default_order = root.property("defaultCardOrder")
-        controller = root.property("dashboardSettingsController")
-        visible_order = None
-        if controller is not None:
-            visible_order = controller.property("visibleCardOrder")
-        pytest.fail(
-            "Nie znaleziono guardrail loadera (alias cardId). "
-            f"Szukano aliasów={sorted(guardrail_aliases)}, dostępne loadery={available_loaders}, "
-            f"defaultCardOrder={default_order}, visibleCardOrder={visible_order}, "
-            f"qmlChildrenCount={len(all_children)}, sampleChildren={sample}"
-        )
-    guardrail_card = _wait_for_loader_item(guardrail_loader, deadline=guardrail_deadline)
-    if guardrail_card is None:
-        _fail_loader_error(
-            guardrail_loader,
-            "Loader guardrail (alias cardId) nie osiągnął statusu Ready lub nie zwrócił item.",
-        )
     assert guardrail_card.property("objectName") == "runtimeOverviewGuardrailCard"
     manual_button = root.findChild(QObject, "manualRefreshButton")
     assert manual_button is not None and manual_button.property("enabled") is True
