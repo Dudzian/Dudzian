@@ -31,6 +31,7 @@ try:  # pragma: no cover - zależne od środowiska
         QQmlComponent,
     )
     from PySide6.QtGui import QImage  # type: ignore[attr-defined]
+    from PySide6.QtQuick import QQuickWindow  # type: ignore[attr-defined]
     from PySide6.QtWidgets import QApplication  # type: ignore[attr-defined]
     _QT_READY = True
 except ImportError as exc:  # pragma: no cover - brak PySide6 lub zależności systemowych
@@ -73,6 +74,9 @@ except ImportError as exc:  # pragma: no cover - brak PySide6 lub zależności s
         pass
 
     class QApplication:  # type: ignore[no-redef]
+        pass
+
+    class QQuickWindow:  # type: ignore[no-redef]
         pass
 
     QImage = None  # type: ignore[assignment]
@@ -498,6 +502,7 @@ def _sample_risk_decisions() -> list[dict[str, object]]:
 def test_runtime_overview_renders_snapshot(tmp_path: Path) -> None:
     provider = TelemetryProvider(snapshot_loader=_sample_snapshot)
     runtime_service = RuntimeService(decision_loader=lambda limit: [])
+    created_app = QApplication.instance() is None
     app = QApplication.instance() or QApplication([])
     engine = QQmlApplicationEngine()
     engine.rootContext().setContextProperty("telemetryProvider", provider)
@@ -545,407 +550,458 @@ def test_runtime_overview_renders_snapshot(tmp_path: Path) -> None:
                 "Nie udało się załadować RuntimeOverview.qml: "
                 f"errors={error_list}, status={status}"
             )
-    injected_controller = root.property("dashboardSettingsController")
-    assert injected_controller is not None, "dashboardSettingsController jest None – QML nie zbuduje kart."
-    if shiboken6 is not None:
-        injected_ptr = shiboken6.getCppPointer(injected_controller)[0]
-        controller_ptr = shiboken6.getCppPointer(dashboard_controller)[0]
-        assert injected_ptr == controller_ptr, (
-            "dashboardSettingsController nie wskazuje na wstrzyknięty kontroler (różne QObject*)."
-        )
-    else:
-        assert callable(getattr(injected_controller, "setCardOrder", None)), (
-            "dashboardSettingsController nie wskazuje na wstrzyknięty kontroler (brak setCardOrder)."
-        )
-    def _as_str_list(value: object) -> list[str]:
-        try:
-            return [str(item) for item in (value or [])]
-        except TypeError:
-            return [str(value)]
+    created_window = not (hasattr(root, "contentItem") and hasattr(root, "show"))
+    quick_window = root if not created_window else QQuickWindow()
 
-    # Utrzymujemy deterministyczną kolejność kart w snapshotach, ale nie podmieniamy
-    # dashboardSettingsController, bo QML może od niego zależeć przy budowie listy kart.
-    default_order = root.property("defaultCardOrder")
-    dashboard_controller.setCardOrder(default_order)
-    default_list = _as_str_list(default_order)
-    deadline = time.monotonic() + 2.0
-    visible_list: list[str] = []
-    while time.monotonic() < deadline:
+    try:
+        try:
+            quick_window.setTitle("RuntimeOverview test host")
+        except Exception:
+            pass
+        try:
+            quick_window.setWidth(1280)
+            quick_window.setHeight(720)
+        except Exception:
+            pass
+        try:
+            if hasattr(root, "setParentItem") and quick_window is not root:
+                root.setParentItem(quick_window.contentItem())
+        except Exception:
+            pass
+        quick_window.show()
+        app.processEvents()
+        qt_wait(250)
+        app.processEvents()
+        qt_wait(50)
+        app.processEvents()
+        injected_controller = root.property("dashboardSettingsController")
+        assert injected_controller is not None, "dashboardSettingsController jest None – QML nie zbuduje kart."
+        if shiboken6 is not None:
+            injected_ptr = shiboken6.getCppPointer(injected_controller)[0]
+            controller_ptr = shiboken6.getCppPointer(dashboard_controller)[0]
+            assert injected_ptr == controller_ptr, (
+                "dashboardSettingsController nie wskazuje na wstrzyknięty kontroler (różne QObject*)."
+            )
+        else:
+            assert callable(getattr(injected_controller, "setCardOrder", None)), (
+                "dashboardSettingsController nie wskazuje na wstrzyknięty kontroler (brak setCardOrder)."
+            )
+
+        def _as_str_list(value: object) -> list[str]:
+            try:
+                return [str(item) for item in (value or [])]
+            except TypeError:
+                return [str(value)]
+
+        # Utrzymujemy deterministyczną kolejność kart w snapshotach, ale nie podmieniamy
+        # dashboardSettingsController, bo QML może od niego zależeć przy budowie listy kart.
+        default_order = root.property("defaultCardOrder")
+        dashboard_controller.setCardOrder(default_order)
+        default_list = _as_str_list(default_order)
+        deadline = time.monotonic() + 2.0
+        visible_list: list[str] = []
+        while time.monotonic() < deadline:
+            app.processEvents()
+            visible_order = injected_controller.property("visibleCardOrder")
+            visible_list = _as_str_list(visible_order)
+
+            # warunek „gotowe”: mamy jakąś sensowną listę (niepustą) i jest subsekwencją default
+            if visible_list and all(cid in default_list for cid in visible_list):
+                break
+            qt_wait(50)
+
         app.processEvents()
         visible_order = injected_controller.property("visibleCardOrder")
         visible_list = _as_str_list(visible_order)
 
-        # warunek „gotowe”: mamy jakąś sensowną listę (niepustą) i jest subsekwencją default
-        if visible_list and all(cid in default_list for cid in visible_list):
-            break
-        qt_wait(50)
-
-    app.processEvents()
-    visible_order = injected_controller.property("visibleCardOrder")
-    visible_list = _as_str_list(visible_order)
-
-    # 1) bez obcych cardId
-    unknown = [cid for cid in visible_list if cid not in default_list]
-    assert not unknown, (
-        "visibleCardOrder zawiera nieznane cardId. "
-        f"unknown={unknown!r}, visible={visible_list!r}, default={default_list!r}"
-    )
-
-    # 2) zachowana kolejność jak w default (subsekwencja)
-    expected_subseq = [cid for cid in default_list if cid in set(visible_list)]
-    assert visible_list == expected_subseq, (
-        "visibleCardOrder nie jest deterministycznym podzbiorem defaultCardOrder. "
-        f"visible={visible_list!r}, expectedSubseq={expected_subseq!r}, default={default_list!r}"
-    )
-
-    # 3) guardrails musi być, bo później tego szukasz
-    assert "guardrails" in visible_list, (
-        "Karta guardrails nie jest widoczna wg dashboardSettingsController. "
-        f"visible={visible_list!r}, default={default_list!r}"
-    )
-    # Dajemy QML chwilę na przepięcie bindingów i ewentualne zbudowanie listy kart.
-    app.processEvents()
-    qt_wait(50)
-
-    ok = provider.refreshTelemetry()
-    assert ok is True
-    app.processEvents()
-    assert provider.lastUpdated, "TelemetryProvider.lastUpdated pozostał pusty po refreshTelemetry()."
-
-    summary = provider.complianceSummary
-    assert summary["totalViolations"] == 1.0
-
-    last_updated = root.findChild(QObject, "runtimeOverviewLastUpdated")
-    assert last_updated is not None
-
-    def _last_updated_text() -> str:
-        return str(last_updated.property("text"))
-
-    def _wait_for_last_updated(timeout_s: float = 2.0) -> str:
-        start = time.monotonic()
-        while time.monotonic() - start < timeout_s:
-            app.processEvents()
-            current = _last_updated_text()
-            if "n/d" not in current:
-                return current
-            qt_wait(50)
-        return _last_updated_text()
-
-    label_text = _wait_for_last_updated()
-    assert "n/d" not in label_text, (
-        "Label runtimeOverviewLastUpdated nie zaktualizował się po refreshTelemetry. "
-        f"text={label_text!r}, provider.lastUpdated={provider.lastUpdated!r}"
-    )
-    assert re.search(r"\d{4}", label_text), (
-        "Label runtimeOverviewLastUpdated nie zawiera roku. "
-        f"text={label_text!r}, provider.lastUpdated={provider.lastUpdated!r}"
-    )
-    year_match = re.search(r"\d{4}", str(provider.lastUpdated))
-    if year_match:
-        year = year_match.group(0)
-        assert year in label_text, (
-            "Label runtimeOverviewLastUpdated nie zawiera roku z provider.lastUpdated. "
-            f"text={label_text!r}, provider.lastUpdated={provider.lastUpdated!r}"
+        # 1) bez obcych cardId
+        unknown = [cid for cid in visible_list if cid not in default_list]
+        assert not unknown, (
+            "visibleCardOrder zawiera nieznane cardId. "
+            f"unknown={unknown!r}, visible={visible_list!r}, default={default_list!r}"
         )
 
-    # QQuickLoader status codes: Null=0, Ready=1, Loading=2, Error=3 (QtQuick.Loader / Loader.*)
-    LOADER_READY = 1
-    LOADER_ERROR = 3
-    LOADER_STATUS_NAME = {0: "Null", 1: "Ready", 2: "Loading", 3: "Error"}
+        # 2) zachowana kolejność jak w default (subsekwencja)
+        expected_subseq = [cid for cid in default_list if cid in set(visible_list)]
+        assert visible_list == expected_subseq, (
+            "visibleCardOrder nie jest deterministycznym podzbiorem defaultCardOrder. "
+            f"visible={visible_list!r}, expectedSubseq={expected_subseq!r}, default={default_list!r}"
+        )
 
-    def _normalize_error_string(loader: QObject) -> str:
-        error_attr = getattr(loader, "errorString", None)
-        if callable(error_attr):
-            return str(error_attr())
-        if error_attr is not None:
-            return str(error_attr)
-        return ""
+        # 3) guardrails musi być, bo później tego szukasz
+        assert "guardrails" in visible_list, (
+            "Karta guardrails nie jest widoczna wg dashboardSettingsController. "
+            f"visible={visible_list!r}, default={default_list!r}"
+        )
+        # Dajemy QML chwilę na przepięcie bindingów i ewentualne zbudowanie listy kart.
+        app.processEvents()
+        qt_wait(50)
 
-    def _safe_prop(obj: QObject, name: str) -> object:
-        try:
-            return obj.property(name)
-        except RuntimeError as exc:
-            return f"<RuntimeError: {exc}>"
-        except Exception as exc:  # pragma: no cover
-            return f"<{type(exc).__name__}: {exc}>"
+        ok = provider.refreshTelemetry()
+        assert ok is True
+        app.processEvents()
+        assert provider.lastUpdated, "TelemetryProvider.lastUpdated pozostał pusty po refreshTelemetry()."
 
-    def _safe_int(value: object, default: int = -1) -> int:
-        if value is None:
-            return default
-        if isinstance(value, str) and value.startswith("<"):
-            return default
-        try:
-            return int(value)  # type: ignore[arg-type]
-        except Exception:
-            return default
+        summary = provider.complianceSummary
+        assert summary["totalViolations"] == 1.0
 
-    def _normalize_source_component(loader: QObject) -> str:
-        source_component = _safe_prop(loader, "sourceComponent")
-        if isinstance(source_component, str) and source_component.startswith("<"):
+        last_updated = root.findChild(QObject, "runtimeOverviewLastUpdated")
+        assert last_updated is not None
+
+        def _last_updated_text() -> str:
+            return str(last_updated.property("text"))
+
+        def _wait_for_last_updated(timeout_s: float = 2.0) -> str:
+            start = time.monotonic()
+            while time.monotonic() - start < timeout_s:
+                app.processEvents()
+                current = _last_updated_text()
+                if "n/d" not in current:
+                    return current
+                qt_wait(50)
+            return _last_updated_text()
+
+        label_text = _wait_for_last_updated()
+        assert "n/d" not in label_text, (
+            "Label runtimeOverviewLastUpdated nie zaktualizował się po refreshTelemetry. "
+            f"text={label_text!r}, provider.lastUpdated={provider.lastUpdated!r}"
+        )
+        assert re.search(r"\d{4}", label_text), (
+            "Label runtimeOverviewLastUpdated nie zawiera roku. "
+            f"text={label_text!r}, provider.lastUpdated={provider.lastUpdated!r}"
+        )
+        year_match = re.search(r"\d{4}", str(provider.lastUpdated))
+        if year_match:
+            year = year_match.group(0)
+            assert year in label_text, (
+                "Label runtimeOverviewLastUpdated nie zawiera roku z provider.lastUpdated. "
+                f"text={label_text!r}, provider.lastUpdated={provider.lastUpdated!r}"
+            )
+
+        # QQuickLoader status codes: Null=0, Ready=1, Loading=2, Error=3 (QtQuick.Loader / Loader.*)
+        LOADER_READY = 1
+        LOADER_ERROR = 3
+        LOADER_STATUS_NAME = {0: "Null", 1: "Ready", 2: "Loading", 3: "Error"}
+
+        def _normalize_error_string(loader: QObject) -> str:
+            error_attr = getattr(loader, "errorString", None)
+            if callable(error_attr):
+                return str(error_attr())
+            if error_attr is not None:
+                return str(error_attr)
             return ""
-        return "" if source_component is None else str(source_component)
 
-    def _class_name(obj: QObject) -> str:
-        try:
-            return str(obj.metaObject().className())
-        except Exception:
-            return "<unknown>"
+        def _safe_prop(obj: QObject, name: str) -> object:
+            try:
+                return obj.property(name)
+            except RuntimeError as exc:
+                return f"<RuntimeError: {exc}>"
+            except Exception as exc:  # pragma: no cover
+                return f"<{type(exc).__name__}: {exc}>"
 
-    def _looks_like_loader_by_props(obj: QObject) -> bool:
-        # Nie ufamy className na Windows; patrzymy po właściwościach.
-        status_raw = _safe_prop(obj, "status")
-        status = _safe_int(status_raw, default=-1)
-        if status >= 0:
-            return True
-        item = _safe_prop(obj, "item")
-        if item is not None and not (isinstance(item, str) and item.startswith("<")):
-            return True
-        source_component = _safe_prop(obj, "sourceComponent")
-        if source_component is not None and not (
-            isinstance(source_component, str) and source_component.startswith("<")
-        ):
-            return True
-        return False
+        def _safe_int(value: object, default: int = -1) -> int:
+            if value is None:
+                return default
+            if isinstance(value, str) and value.startswith("<"):
+                return default
+            try:
+                return int(value)  # type: ignore[arg-type]
+            except Exception:
+                return default
 
-    def _is_loader_like(obj: QObject) -> bool:
-        name = _class_name(obj)
-        if "QQuickLoader" in name or "Loader" in name:
-            status = _safe_int(_safe_prop(obj, "status"), default=-1)
-            item = _safe_prop(obj, "item")
-            source_component = _safe_prop(obj, "sourceComponent")
+        def _normalize_source_component(loader: QObject) -> str:
+            source_component = _safe_prop(loader, "sourceComponent")
+            if isinstance(source_component, str) and source_component.startswith("<"):
+                return ""
+            return "" if source_component is None else str(source_component)
+
+        def _class_name(obj: QObject) -> str:
+            try:
+                return str(obj.metaObject().className())
+            except Exception:
+                return "<unknown>"
+
+        def _looks_like_loader_by_props(obj: QObject) -> bool:
+            # Nie ufamy className na Windows; patrzymy po właściwościach.
+            status_raw = _safe_prop(obj, "status")
+            status = _safe_int(status_raw, default=-1)
             if status >= 0:
                 return True
+            item = _safe_prop(obj, "item")
             if item is not None and not (isinstance(item, str) and item.startswith("<")):
                 return True
+            source_component = _safe_prop(obj, "sourceComponent")
             if source_component is not None and not (
                 isinstance(source_component, str) and source_component.startswith("<")
             ):
                 return True
-        return False
+            return False
 
-    def _fail_loader_error(loader: QObject, message_prefix: str) -> NoReturn:
-        active = _safe_prop(loader, "active")
-        source_component = _normalize_source_component(loader)
-        error_string = _normalize_error_string(loader)
-        card_id = str(_safe_prop(loader, "cardId") or "")
-        status = _safe_int(_safe_prop(loader, "status"), default=-1)
-        status_name = LOADER_STATUS_NAME.get(status, "Unknown")
-        pytest.fail(
-            f"{message_prefix} "
-            f"objectName={loader.objectName()}, cardId={card_id}, status={status}, "
-            f"statusName={status_name}, active={active}, sourceComponent={source_component}, "
-            f"errorString={error_string}"
-        )
+        def _is_loader_like(obj: QObject) -> bool:
+            name = _class_name(obj)
+            if "QQuickLoader" in name or "Loader" in name:
+                status = _safe_int(_safe_prop(obj, "status"), default=-1)
+                item = _safe_prop(obj, "item")
+                source_component = _safe_prop(obj, "sourceComponent")
+                if status >= 0:
+                    return True
+                if item is not None and not (isinstance(item, str) and item.startswith("<")):
+                    return True
+                if source_component is not None and not (
+                    isinstance(source_component, str) and source_component.startswith("<")
+                ):
+                    return True
+            return False
 
-    def _collect_card_loaders() -> list[QObject]:
-        loaders: list[QObject] = []
-        for child in root.findChildren(QObject):
-            object_name = str(child.objectName())
-            if object_name.startswith("runtimeOverviewCardLoader_"):
-                # Prefiks jest najbardziej wiarygodny; na Windows status/item potrafią być
-                # niekonwertowalne lub chwilowo rzucać RuntimeError, więc nie filtrujemy tutaj.
-                loaders.append(child)
-                continue
-            if not (_is_loader_like(child) or _looks_like_loader_by_props(child)):
-                continue
-            loaders.append(child)
-        return loaders
-
-    def _has_guardrail_loader(aliases: set[str]) -> bool:
-        for loader in _collect_card_loaders():
+        def _fail_loader_error(loader: QObject, message_prefix: str) -> NoReturn:
+            active = _safe_prop(loader, "active")
+            source_component = _normalize_source_component(loader)
+            error_string = _normalize_error_string(loader)
             card_id = str(_safe_prop(loader, "cardId") or "")
             status = _safe_int(_safe_prop(loader, "status"), default=-1)
-            if card_id in aliases and status > 0:
-                return True
-        return False
+            status_name = LOADER_STATUS_NAME.get(status, "Unknown")
+            pytest.fail(
+                f"{message_prefix} "
+                f"objectName={loader.objectName()}, cardId={card_id}, status={status}, "
+                f"statusName={status_name}, active={active}, sourceComponent={source_component}, "
+                f"errorString={error_string}"
+            )
 
-    def _find_loader_from_guardrail_item() -> QObject | None:
-        guardrail_item = root.findChild(QObject, "runtimeOverviewGuardrailCard")
-        if guardrail_item is None:
-            return None
-        current = guardrail_item.parent()
-        while current is not None:
-            # Jak wyżej: najpierw prefiks / właściwości, potem className.
-            if str(current.objectName()).startswith("runtimeOverviewCardLoader_"):
-                if _looks_like_loader_by_props(current) or _is_loader_like(current):
-                    return current
-            if _looks_like_loader_by_props(current) or _is_loader_like(current):
-                return current
-            current = current.parent()
-        return None
+        def _collect_card_loaders() -> list[QObject]:
+            loaders: list[QObject] = []
+            for child in root.findChildren(QObject):
+                object_name = str(child.objectName())
+                if object_name.startswith("runtimeOverviewCardLoader_"):
+                    # Prefiks jest najbardziej wiarygodny; na Windows status/item potrafią być
+                    # niekonwertowalne lub chwilowo rzucać RuntimeError, więc nie filtrujemy tutaj.
+                    loaders.append(child)
+                    continue
+                if not (_is_loader_like(child) or _looks_like_loader_by_props(child)):
+                    continue
+                loaders.append(child)
+            return loaders
 
-    def _find_guardrail_loader(aliases: set[str], deadline: float) -> QObject | None:
-        cached_loaders: list[QObject] | None = None
-        last_refresh = 0.0
-        target_object_name = "runtimeOverviewGuardrailCard"
-        while True:
-            now = time.monotonic()
-            if now >= deadline:
-                break
-            app.processEvents()
-            if cached_loaders is None or now - last_refresh >= 0.2:
-                cached_loaders = _collect_card_loaders()
-                last_refresh = now
-            loaders = cached_loaders if cached_loaders is not None else []
-            for loader in loaders:
+        def _has_guardrail_loader(aliases: set[str]) -> bool:
+            for loader in _collect_card_loaders():
                 card_id = str(_safe_prop(loader, "cardId") or "")
                 status = _safe_int(_safe_prop(loader, "status"), default=-1)
-                if card_id in aliases:
-                    if status == LOADER_ERROR:
-                        _fail_loader_error(
-                            loader,
-                            "Loader guardrail (alias cardId) zakończył się błędem podczas lookup.",
-                        )
-                    return loader
+                if card_id in aliases and status > 0:
+                    return True
+            return False
+
+        def _find_loader_from_guardrail_item() -> QObject | None:
+            guardrail_item = root.findChild(QObject, "runtimeOverviewGuardrailCard")
+            if guardrail_item is None:
+                return None
+            current = guardrail_item.parent()
+            while current is not None:
+                # Jak wyżej: najpierw prefiks / właściwości, potem className.
+                if str(current.objectName()).startswith("runtimeOverviewCardLoader_"):
+                    if _looks_like_loader_by_props(current) or _is_loader_like(current):
+                        return current
+                if _looks_like_loader_by_props(current) or _is_loader_like(current):
+                    return current
+                current = current.parent()
+            return None
+
+        def _find_guardrail_loader(aliases: set[str], deadline: float) -> QObject | None:
+            cached_loaders: list[QObject] | None = None
+            last_refresh = 0.0
+            target_object_name = "runtimeOverviewGuardrailCard"
+            while True:
+                now = time.monotonic()
+                if now >= deadline:
+                    break
+                app.processEvents()
+                if cached_loaders is None or now - last_refresh >= 0.2:
+                    cached_loaders = _collect_card_loaders()
+                    last_refresh = now
+                loaders = cached_loaders if cached_loaders is not None else []
+                for loader in loaders:
+                    card_id = str(_safe_prop(loader, "cardId") or "")
+                    status = _safe_int(_safe_prop(loader, "status"), default=-1)
+                    if card_id in aliases:
+                        if status == LOADER_ERROR:
+                            _fail_loader_error(
+                                loader,
+                                "Loader guardrail (alias cardId) zakończył się błędem podczas lookup.",
+                            )
+                        return loader
+                    if status == LOADER_READY:
+                        item = _safe_prop(loader, "item")
+                        if item is not None and not (isinstance(item, str) and item.startswith("<")):
+                            try:
+                                if isinstance(item, QObject) or hasattr(item, "property"):
+                                    if str(item.property("objectName")) == target_object_name:
+                                        return loader
+                            except Exception:
+                                pass
+                fallback_loader = _find_loader_from_guardrail_item()
+                if fallback_loader is not None:
+                    return fallback_loader
+                qt_wait(50)
+            return None
+
+        def _wait_for_loader_item(loader: QObject, deadline: float) -> QObject | None:
+            while time.monotonic() < deadline:
+                app.processEvents()
+                status = _safe_int(_safe_prop(loader, "status"), default=-1)
+                if status == LOADER_ERROR:
+                    _fail_loader_error(
+                        loader,
+                        "Loader guardrail (alias cardId) zakończył się błędem podczas oczekiwania.",
+                    )
                 if status == LOADER_READY:
                     item = _safe_prop(loader, "item")
-                    if item is not None and not (isinstance(item, str) and item.startswith("<")):
-                        try:
-                            if isinstance(item, QObject) or hasattr(item, "property"):
-                                if str(item.property("objectName")) == target_object_name:
-                                    return loader
-                        except Exception:
-                            pass
+                    if (
+                        item is not None
+                        and not (isinstance(item, str) and item.startswith("<"))
+                        and (isinstance(item, QObject) or hasattr(item, "property"))
+                    ):
+                        return item
+                qt_wait(50)
+            item = _safe_prop(loader, "item")
+            if isinstance(item, str) and item.startswith("<"):
+                return None
+            return item
+
+        guardrail_aliases = {"guardrails", "guardrail", "guardrails_card", "guardrail_card"}
+        early_deadline = time.monotonic() + 3.0
+        while time.monotonic() < early_deadline:
+            app.processEvents()
+            try:
+                visible_order = injected_controller.property("visibleCardOrder")
+            except RuntimeError:
+                visible_order = None
+            visible_has_guardrails = "guardrails" in _as_str_list(visible_order)
+            if not visible_has_guardrails:
+                qt_wait(50)
+                continue
             fallback_loader = _find_loader_from_guardrail_item()
             if fallback_loader is not None:
-                return fallback_loader
+                break
+            if root.findChild(QObject, "runtimeOverviewGuardrailCard") is not None:
+                break
+            if _has_guardrail_loader(guardrail_aliases):
+                break
             qt_wait(50)
-        return None
-
-    def _wait_for_loader_item(loader: QObject, deadline: float) -> QObject | None:
-        while time.monotonic() < deadline:
+        # Na Windows w CI Loader-y potrafią nie być widoczne / mieć problemy z konwersją property,
+        # więc najpierw czekamy bezpośrednio na docelowy item.
+        guardrail_deadline = time.monotonic() + 20.0
+        guardrail_card = None
+        while time.monotonic() < guardrail_deadline:
             app.processEvents()
-            status = _safe_int(_safe_prop(loader, "status"), default=-1)
-            if status == LOADER_ERROR:
-                _fail_loader_error(
-                    loader,
-                    "Loader guardrail (alias cardId) zakończył się błędem podczas oczekiwania.",
-                )
-            if status == LOADER_READY:
-                item = _safe_prop(loader, "item")
-                if (
-                    item is not None
-                    and not (isinstance(item, str) and item.startswith("<"))
-                    and (isinstance(item, QObject) or hasattr(item, "property"))
-                ):
-                    return item
+            guardrail_card = root.findChild(QObject, "runtimeOverviewGuardrailCard")
+            if guardrail_card is not None:
+                break
             qt_wait(50)
-        item = _safe_prop(loader, "item")
-        if isinstance(item, str) and item.startswith("<"):
-            return None
-        return item
 
-    guardrail_aliases = {"guardrails", "guardrail", "guardrails_card", "guardrail_card"}
-    early_deadline = time.monotonic() + 3.0
-    while time.monotonic() < early_deadline:
-        app.processEvents()
-        try:
-            visible_order = injected_controller.property("visibleCardOrder")
-        except RuntimeError:
-            visible_order = None
-        visible_has_guardrails = "guardrails" in _as_str_list(visible_order)
-        if not visible_has_guardrails:
-            qt_wait(50)
-            continue
-        fallback_loader = _find_loader_from_guardrail_item()
-        if fallback_loader is not None:
-            break
-        if root.findChild(QObject, "runtimeOverviewGuardrailCard") is not None:
-            break
-        if _has_guardrail_loader(guardrail_aliases):
-            break
-        qt_wait(50)
-    # Na Windows w CI Loader-y potrafią nie być widoczne / mieć problemy z konwersją property,
-    # więc najpierw czekamy bezpośrednio na docelowy item.
-    guardrail_deadline = time.monotonic() + 20.0
-    guardrail_card = None
-    while time.monotonic() < guardrail_deadline:
-        app.processEvents()
-        guardrail_card = root.findChild(QObject, "runtimeOverviewGuardrailCard")
-        if guardrail_card is not None:
-            break
-        qt_wait(50)
-
-    if guardrail_card is None:
-        # dopiero tu próbujemy diagnostyki loaderów (best-effort)
-        guardrail_loader = _find_guardrail_loader(guardrail_aliases, deadline=guardrail_deadline)
-        if guardrail_loader is not None:
-            guardrail_card = _wait_for_loader_item(guardrail_loader, deadline=guardrail_deadline)
         if guardrail_card is None:
-            # Szerokie diagnostyki: co w ogóle mamy w drzewie QML?
-            all_children = root.findChildren(QObject)
-            direct_match = []
-            for child in all_children:
-                object_name = str(child.objectName())
-                prop_object_name = str(_safe_prop(child, "objectName") or "")
-                if object_name == "runtimeOverviewGuardrailCard" or prop_object_name == "runtimeOverviewGuardrailCard":
-                    direct_match.append(
+            # dopiero tu próbujemy diagnostyki loaderów (best-effort)
+            guardrail_loader = _find_guardrail_loader(guardrail_aliases, deadline=guardrail_deadline)
+            if guardrail_loader is not None:
+                guardrail_card = _wait_for_loader_item(guardrail_loader, deadline=guardrail_deadline)
+            if guardrail_card is None:
+                # Szerokie diagnostyki: co w ogóle mamy w drzewie QML?
+                all_children = root.findChildren(QObject)
+                direct_match = []
+                for child in all_children:
+                    object_name = str(child.objectName())
+                    prop_object_name = str(_safe_prop(child, "objectName") or "")
+                    if object_name == "runtimeOverviewGuardrailCard" or prop_object_name == "runtimeOverviewGuardrailCard":
+                        direct_match.append(
+                            {
+                                "class": _class_name(child),
+                                "objectName": object_name,
+                                "propObjectName": prop_object_name,
+                                "cardId": _safe_prop(child, "cardId"),
+                            }
+                        )
+                sample = []
+                for child in all_children[:250]:  # limit, żeby nie zalać logów
+                    object_name = str(child.objectName())
+                    card_id = _safe_prop(child, "cardId")
+                    card_id_ok = not (isinstance(card_id, str) and card_id.startswith("<"))
+                    class_name = _class_name(child)
+                    if (
+                        (card_id is not None and card_id_ok)
+                        or ("Loader" in object_name)
+                        or ("Loader" in class_name)
+                        or ("runtimeOverview" in object_name)
+                        or ("card" in object_name.lower())
+                    ):
+                        sample.append(
+                            {
+                                "class": class_name,
+                                "objectName": object_name,
+                                "cardId": card_id if card_id_ok else None,
+                                "status": _safe_prop(child, "status"),
+                                "item": _safe_prop(child, "item"),
+                                "active": _safe_prop(child, "active"),
+                                "sourceComponent": _safe_prop(child, "sourceComponent"),
+                            }
+                        )
+                available_loaders = []
+                for child in _collect_card_loaders():
+                    status_raw = _safe_prop(child, "status")
+                    status = _safe_int(status_raw, default=-1)
+                    available_loaders.append(
                         {
-                            "class": _class_name(child),
-                            "objectName": object_name,
-                            "propObjectName": prop_object_name,
-                            "cardId": _safe_prop(child, "cardId"),
-                        }
-                    )
-            sample = []
-            for child in all_children[:250]:  # limit, żeby nie zalać logów
-                object_name = str(child.objectName())
-                card_id = _safe_prop(child, "cardId")
-                card_id_ok = not (isinstance(card_id, str) and card_id.startswith("<"))
-                class_name = _class_name(child)
-                if (
-                    (card_id is not None and card_id_ok)
-                    or ("Loader" in object_name)
-                    or ("Loader" in class_name)
-                    or ("runtimeOverview" in object_name)
-                    or ("card" in object_name.lower())
-                ):
-                    sample.append(
-                        {
-                            "class": class_name,
-                            "objectName": object_name,
-                            "cardId": card_id if card_id_ok else None,
-                            "status": _safe_prop(child, "status"),
-                            "item": _safe_prop(child, "item"),
+                            "className": _class_name(child),
+                            "objectName": str(child.objectName()),
+                            "cardId": str(_safe_prop(child, "cardId") or ""),
+                            "status": status,
+                            "status_raw": status_raw,
+                            "statusName": LOADER_STATUS_NAME.get(status, "Unknown"),
                             "active": _safe_prop(child, "active"),
-                            "sourceComponent": _safe_prop(child, "sourceComponent"),
+                            "sourceComponent": _normalize_source_component(child),
+                            "errorString": _normalize_error_string(child),
                         }
                     )
-            available_loaders = []
-            for child in _collect_card_loaders():
-                status_raw = _safe_prop(child, "status")
-                status = _safe_int(status_raw, default=-1)
-                available_loaders.append(
-                    {
-                        "className": _class_name(child),
-                        "objectName": str(child.objectName()),
-                        "cardId": str(_safe_prop(child, "cardId") or ""),
-                        "status": status,
-                        "status_raw": status_raw,
-                        "statusName": LOADER_STATUS_NAME.get(status, "Unknown"),
-                        "active": _safe_prop(child, "active"),
-                        "sourceComponent": _normalize_source_component(child),
-                        "errorString": _normalize_error_string(child),
-                    }
+                default_order = root.property("defaultCardOrder")
+                controller = root.property("dashboardSettingsController")
+                visible_order = None
+                if controller is not None:
+                    visible_order = controller.property("visibleCardOrder")
+                pytest.fail(
+                    "Nie znaleziono runtimeOverviewGuardrailCard w drzewie QML. "
+                    f"Szukano aliasów={sorted(guardrail_aliases)}, dostępne loadery={available_loaders}, "
+                    f"defaultCardOrder={default_order}, visibleCardOrder={visible_order}, "
+                    f"qmlChildrenCount={len(all_children)}, directGuardrailMatches={direct_match}, "
+                    f"sampleChildren={sample}"
                 )
-            default_order = root.property("defaultCardOrder")
-            controller = root.property("dashboardSettingsController")
-            visible_order = None
-            if controller is not None:
-                visible_order = controller.property("visibleCardOrder")
-            pytest.fail(
-                "Nie znaleziono runtimeOverviewGuardrailCard w drzewie QML. "
-                f"Szukano aliasów={sorted(guardrail_aliases)}, dostępne loadery={available_loaders}, "
-                f"defaultCardOrder={default_order}, visibleCardOrder={visible_order}, "
-                f"qmlChildrenCount={len(all_children)}, directGuardrailMatches={direct_match}, "
-                f"sampleChildren={sample}"
-            )
-    assert guardrail_card.property("objectName") == "runtimeOverviewGuardrailCard"
-    manual_button = root.findChild(QObject, "manualRefreshButton")
-    assert manual_button is not None and manual_button.property("enabled") is True
-
-    engine.deleteLater()
-    app.quit()
+        assert guardrail_card.property("objectName") == "runtimeOverviewGuardrailCard"
+        manual_button = root.findChild(QObject, "manualRefreshButton")
+        assert manual_button is not None and manual_button.property("enabled") is True
+    finally:
+        if created_window:
+            try:
+                quick_window.close()
+            except Exception:
+                pass
+            try:
+                quick_window.deleteLater()
+            except Exception:
+                pass
+        else:
+            # Zakładamy, że root-window jest własnością tego testu/engine; zamykamy bez deleteLater().
+            try:
+                quick_window.close()
+            except Exception:
+                pass
+        try:
+            engine.deleteLater()
+        except Exception:
+            pass
+        if created_app:
+            try:
+                app.quit()
+            except Exception:
+                pass
+        try:
+            app.processEvents()
+        except Exception:
+            pass
 
 
 @pytest.mark.timeout(30)
