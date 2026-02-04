@@ -516,6 +516,8 @@ def test_runtime_overview_renders_snapshot(tmp_path: Path) -> None:
         "dashboardSettingsController": dashboard_controller,
         "complianceController": None,
         "reportController": None,
+        "width": 1280,
+        "height": 720,
     }
     # QML buduje listę kart w onCompleted, więc property musi być ustawione PRZED load().
     if hasattr(engine, "setInitialProperties"):
@@ -568,8 +570,34 @@ def test_runtime_overview_renders_snapshot(tmp_path: Path) -> None:
                 root.setParentItem(quick_window.contentItem())
         except Exception:
             pass
+        try:
+            if hasattr(root, "setWidth"):
+                root.setWidth(quick_window.width())
+            if hasattr(root, "setHeight"):
+                root.setHeight(quick_window.height())
+        except Exception:
+            pass
         quick_window.show()
         app.processEvents()
+        try:
+            if hasattr(quick_window, "requestUpdate"):
+                quick_window.requestUpdate()
+        except Exception:
+            pass
+        try:
+            if hasattr(root, "polish"):
+                root.polish()
+        except Exception:
+            pass
+        try:
+            w = max(1, int(quick_window.width()))
+            h = max(1, int(quick_window.height()))
+            if hasattr(root, "setWidth"):
+                root.setWidth(w)
+            if hasattr(root, "setHeight"):
+                root.setHeight(h)
+        except Exception:
+            pass
         qt_wait(250)
         app.processEvents()
         qt_wait(50)
@@ -842,6 +870,14 @@ def test_runtime_overview_renders_snapshot(tmp_path: Path) -> None:
                 qt_wait(50)
             return None
 
+        def _find_guardrail_loader_by_object_name(aliases: set[str]) -> QObject | None:
+            # Wymaga objectName na Loaderze w QML (runtimeOverviewCardLoader_<cardId>).
+            for alias in sorted(aliases):
+                loader = root.findChild(QObject, f"runtimeOverviewCardLoader_{alias}")
+                if loader is not None:
+                    return loader
+            return None
+
         def _wait_for_loader_item(loader: QObject, deadline: float) -> QObject | None:
             while time.monotonic() < deadline:
                 app.processEvents()
@@ -898,7 +934,9 @@ def test_runtime_overview_renders_snapshot(tmp_path: Path) -> None:
 
         if guardrail_card is None:
             # dopiero tu próbujemy diagnostyki loaderów (best-effort)
-            guardrail_loader = _find_guardrail_loader(guardrail_aliases, deadline=guardrail_deadline)
+            guardrail_loader = _find_guardrail_loader_by_object_name(guardrail_aliases)
+            if guardrail_loader is None:
+                guardrail_loader = _find_guardrail_loader(guardrail_aliases, deadline=guardrail_deadline)
             if guardrail_loader is not None:
                 guardrail_card = _wait_for_loader_item(guardrail_loader, deadline=guardrail_deadline)
             if guardrail_card is None:
