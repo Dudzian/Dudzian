@@ -128,6 +128,24 @@ def _parse_entry(record: DecisionRecord) -> RuntimeDecisionEntry:
     return parse_runtime_decision_entry(record)
 
 
+def _normalize_bool(value: object) -> object:
+    """Normalizuje flagi bool używane w snapshotach i telemetrii runtime.
+
+    Zasada utrzymaniowa: helpery dot. snapshotów/telemetrii zostają w runtime_service,
+    a helpery dot. payloadu decyzji trafiają do decision_payload_normalizer.
+    """
+
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, str):
+        lowered = value.strip().lower()
+        if lowered in {"true", "yes", "1"}:
+            return True
+        if lowered in {"false", "no", "0"}:
+            return False
+    return value
+
+
 def _normalize_sequence(value: object) -> list[str]:
     if value is None:
         return []
@@ -3659,7 +3677,14 @@ class RuntimeService(QObject):
         max_position_usd = self._safe_float(payload.get("maxPositionUsd"))
         if max_position_usd is not None:
             base["maxPositionUsd"] = max(0.0, float(max_position_usd))
-        base["killSwitch"] = bool(payload.get("killSwitch", base.get("killSwitch", False)))
+        kill_switch_value = _normalize_bool(
+            payload.get("killSwitch", base.get("killSwitch", False))
+        )
+        base["killSwitch"] = (
+            kill_switch_value
+            if isinstance(kill_switch_value, bool)
+            else bool(base.get("killSwitch", False))
+        )
         return base
 
     def _guardrail_block_reason(self) -> str | None:
