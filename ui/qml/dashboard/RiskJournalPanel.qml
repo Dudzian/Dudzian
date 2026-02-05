@@ -724,7 +724,7 @@ Item {
                                     model: [
                                         { label: qsTr("Blokady"), value: summaryBlockCount },
                                         { label: qsTr("Zamrożenia"), value: summaryFreezeCount },
-                                        { label: qsTr("Overrides"), value: summaryOverrideCount },
+                                        { label: qsTr("Overrides"), value: summaryOverrideCount }
                                     ]
 
                                     delegate: Rectangle {
@@ -872,6 +872,8 @@ Item {
                 }
             }
         }
+    }
+
     }
 
     Dialog {
