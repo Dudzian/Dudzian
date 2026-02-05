@@ -305,6 +305,7 @@ Item {
 
             Button {
                 id: manualRefreshButton
+                objectName: "manualRefreshButton"
                 text: qsTr("Odśwież")
                 enabled: !!root.telemetryProviderObj
                 onClicked: root.refreshAll()
