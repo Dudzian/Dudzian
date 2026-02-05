@@ -1007,6 +1007,76 @@ def test_runtime_overview_renders_snapshot(tmp_path: Path) -> None:
                 return None
             return item
 
+        def _wait_for_enabled(obj: QObject, timeout_s: float = 2.0) -> bool:
+            deadline = time.monotonic() + timeout_s
+            while time.monotonic() < deadline:
+                app.processEvents()
+                if _safe_prop(obj, "enabled") is True:
+                    return True
+                qt_wait(20)
+            return _safe_prop(obj, "enabled") is True
+
+        def _parent_chain(obj: QObject | None, depth: int = 3) -> list[dict[str, object]]:
+            chain: list[dict[str, object]] = []
+            current = obj
+            for _ in range(depth):
+                if current is None:
+                    break
+                chain.append(
+                    {
+                        "objectName": _safe_object_name(current),
+                        "class": _class_name(current),
+                    }
+                )
+                next_parent = None
+                if hasattr(current, "parentItem"):
+                    try:
+                        next_parent = current.parentItem()
+                    except Exception:
+                        next_parent = None
+                if next_parent is None:
+                    try:
+                        next_parent = current.parent()
+                    except Exception:
+                        next_parent = None
+                current = next_parent
+            return chain
+
+        def _first_parent_prop(
+            obj: QObject | None,
+            prop_name: str,
+            depth: int = 4,
+        ) -> dict[str, object] | None:
+            current = obj
+            for _ in range(depth):
+                if current is None:
+                    return None
+                next_parent = None
+                if hasattr(current, "parentItem"):
+                    try:
+                        next_parent = current.parentItem()
+                    except Exception:
+                        next_parent = None
+                if next_parent is None:
+                    try:
+                        next_parent = current.parent()
+                    except Exception:
+                        next_parent = None
+                current = next_parent
+                if current is None:
+                    return None
+                val = _safe_prop(current, prop_name)
+                if val is None:
+                    continue
+                if isinstance(val, str) and val.startswith("<"):
+                    continue
+                return {
+                    "value": val,
+                    "objectName": _safe_object_name(current),
+                    "class": _class_name(current),
+                }
+            return None
+
         guardrail_aliases = {"guardrails", "guardrail", "guardrails_card", "guardrail_card"}
         early_deadline = time.monotonic() + 3.0
         while time.monotonic() < early_deadline:
@@ -1161,7 +1231,28 @@ def test_runtime_overview_renders_snapshot(tmp_path: Path) -> None:
                 )
         assert guardrail_card.property("objectName") == "runtimeOverviewGuardrailCard"
         manual_button = root.findChild(QObject, "manualRefreshButton")
-        assert manual_button is not None and manual_button.property("enabled") is True
+        if manual_button is None:
+            manual_button = _find_quick_item_by_object_name(
+                "manualRefreshButton",
+                deadline=time.monotonic() + 2.0,
+            )
+        assert manual_button is not None, "Nie znaleziono manualRefreshButton w drzewie QML."
+        if not _wait_for_enabled(manual_button):
+            enabled_val = _safe_prop(manual_button, "enabled")
+            visible_val = _safe_prop(manual_button, "visible")
+            opacity_val = _safe_prop(manual_button, "opacity")
+            parent_chain = _parent_chain(manual_button, depth=4)
+            parent_val = _safe_prop(manual_button, "parent")
+            active_val = _safe_prop(manual_button, "active")
+            first_parent_active = _first_parent_prop(manual_button, "active", depth=4)
+            pytest.fail(
+                "manualRefreshButton nie jest enabled=True po oczekiwaniu "
+                f"(enabled={enabled_val!r}, visible={visible_val!r}, opacity={opacity_val!r}, "
+                f"active={active_val!r}, parent={parent_val!r}, "
+                f"firstParentActive={first_parent_active!r}, "
+                f"objectName={_safe_object_name(manual_button)!r}, class={_class_name(manual_button)!r}, "
+                f"parentChain={parent_chain!r})."
+            )
     finally:
         if created_window:
             try:
