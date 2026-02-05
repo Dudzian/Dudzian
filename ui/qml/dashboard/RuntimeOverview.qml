@@ -960,15 +960,9 @@ Item {
                 anchors.fill: parent
                 anchors.margins: 16
                 runtimeService: root.runtimeServiceObj
-                metrics: root.runtimeServiceObj && root.runtimeServiceObj.riskMetrics
-                         ? root.runtimeServiceObj.riskMetrics
-                         : ({})
-                timeline: root.runtimeServiceObj && root.runtimeServiceObj.riskTimeline
-                          ? root.runtimeServiceObj.riskTimeline
-                          : []
-                lastOperatorAction: root.runtimeServiceObj && root.runtimeServiceObj.lastOperatorAction
-                                    ? root.runtimeServiceObj.lastOperatorAction
-                                    : ({})
+                metrics: root.runtimeServiceObj ? root.runtimeServiceObj.riskMetrics : ({})
+                timeline: root.runtimeServiceObj ? root.runtimeServiceObj.riskTimeline : []
+                lastOperatorAction: root.runtimeServiceObj ? root.runtimeServiceObj.lastOperatorAction : ({})
                 onFreezeRequested: function(entry) {
                     root.lastOperatorAction = root.runtimeServiceObj ? root.runtimeServiceObj.lastOperatorAction : ({})
                 }

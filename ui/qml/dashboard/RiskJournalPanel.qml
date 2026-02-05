@@ -68,7 +68,7 @@ Item {
     readonly property int stressFailureChipCount: stressFailureRepeater ? stressFailureRepeater.count : 0
 
     readonly property var availableStrategies: {
-        const data = Array.isArray(root.timeline) ? root.timeline : []
+        const data = root.toJsArray(root.timeline)
         const values = []
         for (let i = 0; i < data.length; ++i) {
             const entry = data[i]
@@ -96,25 +96,44 @@ Item {
     }
 
     readonly property var filteredTimeline: {
-        const data = Array.isArray(root.timeline) ? root.timeline : []
-        if (!data.length)
-            return []
-        return data.filter(function(entry) {
+        const data = root.toJsArray(root.timeline)
+        if (!root.strategyFilter && !root.riskFilter)
+            return data
+        const result = []
+        for (let i = 0; i < data.length; ++i) {
+            const entry = data[i]
             if (!entry)
-                return false
+                continue
             if (root.strategyFilter && entry.strategy !== root.strategyFilter)
-                return false
+                continue
             if (root.riskFilter) {
-                const riskFlags = entry.riskFlags || []
-                const stressFailures = entry.stressFailures || []
+                const riskFlags = root.toJsArray(entry.riskFlags)
+                const stressFailures = root.toJsArray(entry.stressFailures)
                 if (riskFlags.indexOf(root.riskFilter) === -1 && stressFailures.indexOf(root.riskFilter) === -1)
-                    return false
+                    continue
             }
-            return true
-        })
+            result.push(entry)
+        }
+        return result
     }
 
     readonly property bool hasIncompleteEntries: (root.metricValue("incompleteEntries", 0) || 0) > 0
+
+    function toJsArray(value) {
+        const out = []
+        if (!value)
+            return out
+        if (Array.isArray(value))
+            return value
+        if (value.length === undefined)
+            return out
+        const size = Number(value.length)
+        if (!isFinite(size) || size <= 0)
+            return out
+        for (let i = 0; i < size; ++i)
+            out.push(value[i])
+        return out
+    }
 
     function metricValue(key, defaultValue) {
         const metrics = root.metrics || {}

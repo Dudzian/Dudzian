@@ -3507,8 +3507,8 @@ class RuntimeService(QObject):
 
     def _apply_risk_context(self, entries: Iterable[Mapping[str, object]]) -> None:
         metrics, timeline, diagnostics = _build_risk_context(entries)
-        self._risk_metrics = metrics
-        self._risk_timeline = timeline
+        self._risk_metrics = dict(metrics)
+        self._risk_timeline = [dict(item) for item in timeline]
         self._maybe_emit_risk_journal_alert(diagnostics)
         self.riskMetricsChanged.emit()
         self.riskTimelineChanged.emit()
