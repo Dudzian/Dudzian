@@ -102,6 +102,26 @@ _AI_FEED_CHANNEL = "ai_governor"
 _AI_HISTORY_LIMIT = 32
 
 
+def _default_loader(limit: int) -> Iterable[DecisionRecord]:
+    """Zapewnia dane demonstracyjne przy pierwszym uruchomieniu."""
+
+    entries = list(load_demo_decisions())
+    if not entries:
+        return []
+    if limit > 0:
+        entries = entries[-limit:]
+    # `load_demo_decisions()` zwraca chronologicznie (najstarsze -> najnowsze),
+    # więc odwrócenie daje kolejność spójną z resztą runtime (najnowsze -> najstarsze).
+    return reversed(entries)
+
+
+def _load_from_journal(journal: TradingDecisionJournal, limit: int) -> Iterable[DecisionRecord]:
+    exported = list(journal.export())
+    if limit > 0:
+        exported = exported[-limit:]
+    return reversed(exported)
+
+
 
 
 def _parse_entry(record: DecisionRecord) -> RuntimeDecisionEntry:
