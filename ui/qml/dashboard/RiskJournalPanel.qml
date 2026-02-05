@@ -516,23 +516,33 @@ Item {
                     Repeater {
                         id: strategyRepeater
                         model: root.strategyHistogram
-                        delegate: Rectangle {
+                        delegate: Item {
+                            id: strategyChipItem
                             required property var modelData
                             property string chipText: (modelData.label || "") + " (" + String(modelData.count || 0) + ")"
                             objectName: "riskJournalStrategyChip_" + index
-                            parent: root
-                            parentItem: strategyChipFlow
-                            radius: Styles.AppTheme.radiusMedium
-                            color: Styles.AppTheme.surfaceSubtle
-                            border.color: Styles.AppTheme.surfaceStrong
-                            border.width: 1
-                            height: 26
+                            implicitWidth: strategyChipRect.implicitWidth
+                            implicitHeight: strategyChipRect.implicitHeight
+                            width: implicitWidth
+                            height: implicitHeight
 
-                            Text {
-                                anchors.centerIn: parent
-                                text: parent.chipText
-                                color: Styles.AppTheme.textSecondary
-                                font.pointSize: Styles.AppTheme.fontSizeCaption
+                            Rectangle {
+                                id: strategyChipRect
+                                anchors.fill: parent
+                                implicitWidth: strategyChipText.implicitWidth + 2 * Styles.AppTheme.spacingSm
+                                implicitHeight: 26
+                                radius: Styles.AppTheme.radiusMedium
+                                color: Styles.AppTheme.surfaceSubtle
+                                border.color: Styles.AppTheme.surfaceStrong
+                                border.width: 1
+
+                                Text {
+                                    id: strategyChipText
+                                    anchors.centerIn: parent
+                                    text: strategyChipItem.chipText
+                                    color: Styles.AppTheme.textSecondary
+                                    font.pointSize: Styles.AppTheme.fontSizeCaption
+                                }
                             }
                         }
                     }
@@ -560,24 +570,34 @@ Item {
                     Repeater {
                         id: riskFlagRepeater
                         model: root.riskFlagHistogram
-                        delegate: Rectangle {
+                        delegate: Item {
+                            id: riskFlagChipItem
                             required property var modelData
                             property int chipIndex: index
                             property string chipText: (modelData.label || "") + " (" + String(modelData.count || 0) + ")"
                             objectName: "riskJournalFlagChip_" + chipIndex
-                            parent: root
-                            parentItem: riskFlagChipFlow
-                            radius: Styles.AppTheme.radiusMedium
-                            color: Styles.AppTheme.surfaceSubtle
-                            border.color: Styles.AppTheme.surfaceStrong
-                            border.width: 1
-                            height: 26
+                            implicitWidth: riskFlagChipRect.implicitWidth
+                            implicitHeight: riskFlagChipRect.implicitHeight
+                            width: implicitWidth
+                            height: implicitHeight
 
-                            Text {
-                                anchors.centerIn: parent
-                                text: parent.chipText
-                                color: Styles.AppTheme.textSecondary
-                                font.pointSize: Styles.AppTheme.fontSizeCaption
+                            Rectangle {
+                                id: riskFlagChipRect
+                                anchors.fill: parent
+                                implicitWidth: riskFlagChipText.implicitWidth + 2 * Styles.AppTheme.spacingSm
+                                implicitHeight: 26
+                                radius: Styles.AppTheme.radiusMedium
+                                color: Styles.AppTheme.surfaceSubtle
+                                border.color: Styles.AppTheme.surfaceStrong
+                                border.width: 1
+
+                                Text {
+                                    id: riskFlagChipText
+                                    anchors.centerIn: parent
+                                    text: riskFlagChipItem.chipText
+                                    color: Styles.AppTheme.textSecondary
+                                    font.pointSize: Styles.AppTheme.fontSizeCaption
+                                }
                             }
                         }
                     }
@@ -605,24 +625,34 @@ Item {
                     Repeater {
                         id: stressFailureRepeater
                         model: root.stressFailureHistogram
-                        delegate: Rectangle {
+                        delegate: Item {
+                            id: stressFailureChipItem
                             required property var modelData
                             property int chipIndex: index
                             property string chipText: (modelData.label || "") + " (" + String(modelData.count || 0) + ")"
                             objectName: "riskJournalStressChip_" + chipIndex
-                            parent: root
-                            parentItem: stressFailureChipFlow
-                            radius: Styles.AppTheme.radiusMedium
-                            color: Styles.AppTheme.surfaceSubtle
-                            border.color: Styles.AppTheme.surfaceStrong
-                            border.width: 1
-                            height: 26
+                            implicitWidth: stressFailureChipRect.implicitWidth
+                            implicitHeight: stressFailureChipRect.implicitHeight
+                            width: implicitWidth
+                            height: implicitHeight
 
-                            Text {
-                                anchors.centerIn: parent
-                                text: parent.chipText
-                                color: Styles.AppTheme.textSecondary
-                                font.pointSize: Styles.AppTheme.fontSizeCaption
+                            Rectangle {
+                                id: stressFailureChipRect
+                                anchors.fill: parent
+                                implicitWidth: stressFailureChipText.implicitWidth + 2 * Styles.AppTheme.spacingSm
+                                implicitHeight: 26
+                                radius: Styles.AppTheme.radiusMedium
+                                color: Styles.AppTheme.surfaceSubtle
+                                border.color: Styles.AppTheme.surfaceStrong
+                                border.width: 1
+
+                                Text {
+                                    id: stressFailureChipText
+                                    anchors.centerIn: parent
+                                    text: stressFailureChipItem.chipText
+                                    color: Styles.AppTheme.textSecondary
+                                    font.pointSize: Styles.AppTheme.fontSizeCaption
+                                }
                             }
                         }
                     }
@@ -651,7 +681,8 @@ Item {
                 Repeater {
                     model: root.strategySummaries
 
-                    delegate: Rectangle {
+                    delegate: Item {
+                        id: strategySummaryItem
                         required property var modelData
                         property int summaryIndex: index
                         property string summaryStrategy: modelData.strategy || ""
@@ -660,20 +691,24 @@ Item {
                         property int summaryOverrideCount: modelData.stressOverrideCount || 0
                         property string summarySeverity: modelData.severity || "neutral"
                         objectName: "riskJournalStrategySummary_" + summaryIndex
-                        parent: root
-                        parentItem: strategySummaryFlow
                         width: Math.min(260, Math.max(200, strategySummaryFlow.width / 3))
-                        implicitHeight: summaryLayout.implicitHeight + 2 * Styles.AppTheme.spacingSm
-                        radius: Styles.AppTheme.radiusSmall
-                        color: Styles.AppTheme.surfaceSubtle
-                        border.width: 2
-                        border.color: root.strategySeverityColor(modelData)
+                        implicitHeight: summaryRect.implicitHeight
+                        height: implicitHeight
 
-                        ColumnLayout {
-                            id: summaryLayout
+                        Rectangle {
+                            id: summaryRect
                             anchors.fill: parent
-                            anchors.margins: Styles.AppTheme.spacingSm
-                            spacing: Styles.AppTheme.spacingXs
+                            implicitHeight: summaryLayout.implicitHeight + 2 * Styles.AppTheme.spacingSm
+                            radius: Styles.AppTheme.radiusSmall
+                            color: Styles.AppTheme.surfaceSubtle
+                            border.width: 2
+                            border.color: root.strategySeverityColor(modelData)
+
+                            ColumnLayout {
+                                id: summaryLayout
+                                anchors.fill: parent
+                                anchors.margins: Styles.AppTheme.spacingSm
+                                spacing: Styles.AppTheme.spacingXs
 
                             Label {
                                 text: summaryStrategy || qsTr("Brak strategii")
