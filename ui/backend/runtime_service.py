@@ -50,6 +50,7 @@ from bot_core.runtime.cloud_client import (
 from bot_core.runtime.journal import TradingDecisionJournal
 from .ai_governor_demo import build_demo_ai_governor_snapshot
 from .demo_data import load_demo_decisions
+from .decision_payload_normalizer import DecisionRecord, RuntimeDecisionEntry, parse_runtime_decision_entry
 from .qml_bridge import to_plain_dict, to_plain_list, to_plain_text, to_plain_value
 
 try:  # pragma: no cover - moduł może nie być dostępny w wersjach light
@@ -96,191 +97,15 @@ try:  # pragma: no cover - gRPC może nie być dostępne w trybach light
 except Exception:  # pragma: no cover - fallback gdy brak gRPC
     grpc = None  # type: ignore[assignment]
 
-DecisionRecord = Mapping[str, str]
 DecisionLoader = Callable[[int], Iterable[DecisionRecord]]
 _AI_FEED_CHANNEL = "ai_governor"
 _AI_HISTORY_LIMIT = 32
 
 
-@dataclass(slots=True)
-class _RuntimeDecisionEntry:
-    """Struktura pośrednia używana w konwersji rekordów."""
-
-    event: str
-    timestamp: str
-    environment: str
-    portfolio: str
-    risk_profile: str
-    schedule: str | None
-    strategy: str | None
-    symbol: str | None
-    side: str | None
-    status: str | None
-    quantity: str | None
-    price: str | None
-    market_regime: Mapping[str, object]
-    decision: Mapping[str, object]
-    ai: Mapping[str, object]
-    extras: Mapping[str, object]
-
-    def to_payload(self) -> dict[str, object]:
-        return {
-            "event": self.event,
-            "timestamp": self.timestamp,
-            "environment": self.environment,
-            "portfolio": self.portfolio,
-            "riskProfile": self.risk_profile,
-            "schedule": self.schedule,
-            "strategy": self.strategy,
-            "symbol": self.symbol,
-            "side": self.side,
-            "status": self.status,
-            "quantity": self.quantity,
-            "price": self.price,
-            "marketRegime": dict(self.market_regime),
-            "decision": dict(self.decision),
-            "ai": dict(self.ai),
-            "metadata": dict(self.extras),
-        }
 
 
-def _default_loader(limit: int) -> Iterable[DecisionRecord]:
-    """Zapewnia dane demonstracyjne przy pierwszym uruchomieniu."""
-
-    entries = list(load_demo_decisions())
-    if not entries:
-        return []
-    if limit > 0:
-        entries = entries[-limit:]
-    # Zwracamy w kolejności od najnowszych do najstarszych, aby zachować spójność z dziennikiem
-    return reversed(entries)
-
-
-def _load_from_journal(journal: TradingDecisionJournal, limit: int) -> Iterable[DecisionRecord]:
-    exported = list(journal.export())
-    if limit > 0:
-        exported = exported[-limit:]
-    return reversed(exported)
-
-
-def _normalize_bool(value: object) -> object:
-    if isinstance(value, bool):
-        return value
-    if isinstance(value, str):
-        lowered = value.strip().lower()
-        if lowered in {"true", "yes", "1"}:
-            return True
-        if lowered in {"false", "no", "0"}:
-            return False
-    return value
-
-
-def _camelize(prefix: str, key: str) -> str:
-    suffix = key[len(prefix) :].lstrip("_")
-    if not suffix:
-        return ""
-    parts = [part for part in suffix.split("_") if part]
-    if not parts:
-        return ""
-    head, *tail = parts
-    return head + "".join(segment.capitalize() for segment in tail)
-
-
-_BASE_FIELD_MAP: Mapping[str, str] = {
-    "event": "event",
-    "timestamp": "timestamp",
-    "environment": "environment",
-    "portfolio": "portfolio",
-    "risk_profile": "risk_profile",
-    "schedule": "schedule",
-    "strategy": "strategy",
-    "symbol": "symbol",
-    "side": "side",
-    "status": "status",
-    "quantity": "quantity",
-    "price": "price",
-}
-
-
-def _parse_entry(record: DecisionRecord) -> _RuntimeDecisionEntry:
-    base: MutableMapping[str, str | None] = {key: None for key in _BASE_FIELD_MAP.values()}
-    decision_payload: MutableMapping[str, object] = {}
-    ai_payload: MutableMapping[str, object] = {}
-    regime_payload: MutableMapping[str, object] = {}
-    extras: MutableMapping[str, object] = {}
-
-    confidence = record.get("confidence")
-    latency = record.get("latency_ms")
-    if confidence is not None:
-        decision_payload["confidence"] = confidence
-    if latency is not None:
-        decision_payload["latencyMs"] = latency
-
-    for key, value in record.items():
-        if key in {"confidence", "latency_ms"}:
-            continue
-        mapped = _BASE_FIELD_MAP.get(key)
-        if mapped is not None:
-            base[mapped] = value
-            continue
-        if key.startswith("decision_"):
-            normalized = _camelize("decision_", key)
-            if not normalized:
-                continue
-            payload_value: object = value
-            if normalized == "shouldTrade":
-                payload_value = _normalize_bool(value)
-            decision_payload[normalized] = payload_value
-            continue
-        if key.startswith("ai_"):
-            normalized = _camelize("ai_", key)
-            if not normalized:
-                continue
-            ai_payload[normalized] = value
-            continue
-        if key.startswith("market_regime"):
-            normalized = _camelize("market_regime", key)
-            if not normalized:
-                continue
-            regime_payload[normalized] = value
-            continue
-        if key == "risk_profile":
-            # już zmapowane do base
-            continue
-        extras[key] = value
-
-    event = str(base["event"] or "")
-    timestamp = str(base["timestamp"] or "")
-    environment = str(base["environment"] or "")
-    portfolio = str(base["portfolio"] or "")
-    risk_profile = str(base["risk_profile"] or "")
-
-    schedule = base.get("schedule")
-    strategy = base.get("strategy")
-    symbol = base.get("symbol")
-    side = base.get("side")
-    status = base.get("status")
-    quantity = base.get("quantity")
-    price = base.get("price")
-
-    return _RuntimeDecisionEntry(
-        event=event,
-        timestamp=timestamp,
-        environment=environment,
-        portfolio=portfolio,
-        risk_profile=risk_profile,
-        schedule=schedule,
-        strategy=strategy,
-        symbol=symbol,
-        side=side,
-        status=status,
-        quantity=quantity,
-        price=price,
-        market_regime=regime_payload,
-        decision=decision_payload,
-        ai=ai_payload,
-        extras=extras,
-    )
+def _parse_entry(record: DecisionRecord) -> RuntimeDecisionEntry:
+    return parse_runtime_decision_entry(record)
 
 
 def _normalize_sequence(value: object) -> list[str]:
