@@ -738,8 +738,11 @@ def test_runtime_overview_renders_snapshot(tmp_path: Path) -> None:
             if name:
                 return name
             prop_name = _safe_prop(obj, "objectName")
-            if isinstance(prop_name, str) and prop_name:
-                return prop_name
+            if isinstance(prop_name, str):
+                if prop_name.startswith("<"):
+                    return ""
+                if prop_name:
+                    return prop_name
             return ""
 
         def _quick_root_item(start: QObject) -> QObject | None:
@@ -866,11 +869,25 @@ def test_runtime_overview_renders_snapshot(tmp_path: Path) -> None:
                     return True
             return False
 
-        def _find_quick_item_by_object_name(target_object_name: str) -> QObject | None:
-            quick_root = _quick_root_item(root)
-            for child in _iter_quick_items(quick_root):
-                if _safe_object_name(child) == target_object_name:
-                    return child
+        def _find_quick_item_by_object_name(
+            target_object_name: str,
+            deadline: float | None = None,
+        ) -> QObject | None:
+            if deadline is None:
+                deadline = time.monotonic() + 0.2
+            while time.monotonic() < deadline:
+                quick_root = _quick_root_item(root)
+                for child in _iter_quick_items(quick_root):
+                    if _safe_object_name(child) == target_object_name:
+                        return child
+                    try:
+                        prop = child.property("objectName")
+                        if isinstance(prop, str) and prop == target_object_name:
+                            return child
+                    except Exception:
+                        pass
+                app.processEvents()
+                qt_wait(10)
             return None
 
         def _find_loader_from_guardrail_item() -> QObject | None:
@@ -933,7 +950,10 @@ def test_runtime_overview_renders_snapshot(tmp_path: Path) -> None:
         def _find_guardrail_loader_by_object_name(aliases: set[str]) -> QObject | None:
             # Wymaga objectName na Loaderze w QML (runtimeOverviewCardLoader_<cardId>).
             for alias in sorted(aliases):
-                loader = _find_quick_item_by_object_name(f"runtimeOverviewCardLoader_{alias}")
+                loader = _find_quick_item_by_object_name(
+                    f"runtimeOverviewCardLoader_{alias}",
+                    deadline=time.monotonic() + 0.2,
+                )
                 if loader is not None:
                     return loader
             return None
@@ -945,6 +965,9 @@ def test_runtime_overview_renders_snapshot(tmp_path: Path) -> None:
             while time.monotonic() < deadline:
                 app.processEvents()
                 loader = _find_guardrail_loader_by_object_name(aliases)
+                if loader is not None:
+                    return loader
+                loader = _try_find_guardrail_loader_now(aliases)
                 if loader is not None:
                     return loader
                 qt_wait(50)
