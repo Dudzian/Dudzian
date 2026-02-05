@@ -520,6 +520,8 @@ Item {
                             required property var modelData
                             property string chipText: (modelData.label || "") + " (" + String(modelData.count || 0) + ")"
                             objectName: "riskJournalStrategyChip_" + index
+                            parent: root
+                            parentItem: strategyChipFlow
                             radius: Styles.AppTheme.radiusMedium
                             color: Styles.AppTheme.surfaceSubtle
                             border.color: Styles.AppTheme.surfaceStrong
@@ -563,6 +565,8 @@ Item {
                             property int chipIndex: index
                             property string chipText: (modelData.label || "") + " (" + String(modelData.count || 0) + ")"
                             objectName: "riskJournalFlagChip_" + chipIndex
+                            parent: root
+                            parentItem: riskFlagChipFlow
                             radius: Styles.AppTheme.radiusMedium
                             color: Styles.AppTheme.surfaceSubtle
                             border.color: Styles.AppTheme.surfaceStrong
@@ -606,6 +610,8 @@ Item {
                             property int chipIndex: index
                             property string chipText: (modelData.label || "") + " (" + String(modelData.count || 0) + ")"
                             objectName: "riskJournalStressChip_" + chipIndex
+                            parent: root
+                            parentItem: stressFailureChipFlow
                             radius: Styles.AppTheme.radiusMedium
                             color: Styles.AppTheme.surfaceSubtle
                             border.color: Styles.AppTheme.surfaceStrong
@@ -654,6 +660,8 @@ Item {
                         property int summaryOverrideCount: modelData.stressOverrideCount || 0
                         property string summarySeverity: modelData.severity || "neutral"
                         objectName: "riskJournalStrategySummary_" + summaryIndex
+                        parent: root
+                        parentItem: strategySummaryFlow
                         width: Math.min(260, Math.max(200, strategySummaryFlow.width / 3))
                         implicitHeight: summaryLayout.implicitHeight + 2 * Styles.AppTheme.spacingSm
                         radius: Styles.AppTheme.radiusSmall
