@@ -518,9 +518,8 @@ Item {
                         model: root.strategyHistogram
                         delegate: Rectangle {
                             required property var modelData
-                            property int chipIndex: index
                             property string chipText: (modelData.label || "") + " (" + String(modelData.count || 0) + ")"
-                            objectName: "riskJournalStrategyChip_" + chipIndex
+                            objectName: "riskJournalStrategyChip_" + index
                             radius: Styles.AppTheme.radiusMedium
                             color: Styles.AppTheme.surfaceSubtle
                             border.color: Styles.AppTheme.surfaceStrong
