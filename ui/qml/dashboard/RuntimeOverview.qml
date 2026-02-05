@@ -354,14 +354,12 @@ Item {
                        : root.defaultCardOrder
                 delegate: Loader {
                     readonly property string cardId: modelData
-                    objectName: cardId === "ai_decisions"
-                                ? "runtimeOverviewAiCard"
-                                : "runtimeOverviewCardLoader_" + cardId
+                    objectName: "runtimeOverviewCardLoader_" + cardId
                     Layout.fillWidth: true
                     Layout.fillHeight: true
                     asynchronous: false
                     sourceComponent: root.componentForCard(cardId)
-                    active: true
+                    active: sourceComponent !== null
                     onStatusChanged: {
                         if (status === Loader.Error)
                             console.error("Card load error:", cardId, errorString())
@@ -920,19 +918,23 @@ Item {
 
     Component {
         id: aiDecisionCardComponent
-        Rectangle {
+        Item {
             objectName: "runtimeOverviewAiCard"
             Layout.fillWidth: true
             Layout.fillHeight: true
-            color: Styles.AppTheme.surfaceStrong
-            radius: 8
-            border.color: Styles.AppTheme.surfaceSubtle
-            border.width: 1
 
-            ColumnLayout {
+            Rectangle {
+                id: aiDecisionCardSurface
                 anchors.fill: parent
-                anchors.margins: 16
-                spacing: 12
+                color: Styles.AppTheme.surfaceStrong
+                radius: 8
+                border.color: Styles.AppTheme.surfaceSubtle
+                border.width: 1
+
+                ColumnLayout {
+                    anchors.fill: parent
+                    anchors.margins: 16
+                    spacing: 12
 
                 Text {
                     text: qsTr("Decyzje AI")
