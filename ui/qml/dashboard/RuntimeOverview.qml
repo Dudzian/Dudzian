@@ -39,7 +39,7 @@ Item {
                                             && dashboardSettingsController.visibleCardOrder.length > 0)
                                             ? dashboardSettingsController.visibleCardOrder
                                             : defaultCardOrder
-    readonly property var effectiveGridCardOrder: cardOrderWithoutAiDecisions(effectiveCardOrder)
+    readonly property var effectiveGridCardOrder: cardOrderWithoutStandaloneCards(effectiveCardOrder)
     property var aiDecisions: []
     property string aiDecisionError: ""
     property string retrainSchedulerNextRun: runtimeServiceObj && runtimeServiceObj.retrainNextRun
@@ -96,11 +96,11 @@ Item {
         }
     }
 
-    function cardOrderWithoutAiDecisions(cardOrder) {
+    function cardOrderWithoutStandaloneCards(cardOrder) {
         const filtered = []
         const source = cardOrder || []
         for (let i = 0; i < source.length; ++i) {
-            if (source[i] !== "ai_decisions")
+            if (source[i] !== "ai_decisions" && source[i] !== "risk_journal")
                 filtered.push(source[i])
         }
         return filtered
@@ -110,6 +110,15 @@ Item {
         const source = cardOrder || []
         for (let i = 0; i < source.length; ++i) {
             if (source[i] === "ai_decisions")
+                return true
+        }
+        return false
+    }
+
+    function hasRiskJournalCard(cardOrder) {
+        const source = cardOrder || []
+        for (let i = 0; i < source.length; ++i) {
+            if (source[i] === "risk_journal")
                 return true
         }
         return false
@@ -383,6 +392,20 @@ Item {
                 onStatusChanged: {
                     if (status === Loader.Error)
                         console.error("Card load error:", "ai_decisions", errorString())
+                }
+            }
+
+            Loader {
+                id: riskJournalCardLoader
+                objectName: "runtimeOverviewRiskJournalCard"
+                Layout.fillWidth: true
+                Layout.fillHeight: true
+                asynchronous: false
+                sourceComponent: riskJournalCardComponent
+                active: root.hasRiskJournalCard(root.effectiveCardOrder)
+                onStatusChanged: {
+                    if (status === Loader.Error)
+                        console.error("Card load error:", "risk_journal", errorString())
                 }
             }
 
@@ -923,7 +946,7 @@ Item {
     Component {
         id: riskJournalCardComponent
         Rectangle {
-            objectName: "runtimeOverviewRiskJournalCard"
+            objectName: "runtimeOverviewRiskJournalCardSurface"
             Layout.fillWidth: true
             Layout.fillHeight: true
             Layout.rowSpan: cardsGrid.columns === 1 ? 1 : 2
@@ -933,6 +956,7 @@ Item {
             border.width: 1
 
             Dashboard.RiskJournalPanel {
+                objectName: "riskJournalPanel"
                 anchors.fill: parent
                 anchors.margins: 16
                 runtimeService: root.runtimeServiceObj
