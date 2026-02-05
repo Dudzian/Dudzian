@@ -34,7 +34,9 @@ Item {
     property var reportController: null
     property int refreshIntervalMs: dashboardSettingsController ? dashboardSettingsController.refreshIntervalMs : 4000
     readonly property var defaultCardOrder: ["feed_sla", "io_queue", "guardrails", "retraining", "compliance", "risk_journal", "ai_decisions"]
-    readonly property var effectiveCardOrder: dashboardSettingsController
+    readonly property var effectiveCardOrder: (dashboardSettingsController
+                                            && dashboardSettingsController.visibleCardOrder
+                                            && dashboardSettingsController.visibleCardOrder.length > 0)
                                             ? dashboardSettingsController.visibleCardOrder
                                             : defaultCardOrder
     readonly property var effectiveGridCardOrder: cardOrderWithoutAiDecisions(effectiveCardOrder)
