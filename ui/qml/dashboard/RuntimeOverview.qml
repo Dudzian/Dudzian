@@ -354,7 +354,9 @@ Item {
                        : root.defaultCardOrder
                 delegate: Loader {
                     readonly property string cardId: modelData
-                    objectName: "runtimeOverviewCardLoader_" + cardId
+                    objectName: sourceComponent === aiDecisionCardComponent
+                                ? "runtimeOverviewAiCard"
+                                : "runtimeOverviewCardLoader_" + cardId
                     Layout.fillWidth: true
                     Layout.fillHeight: true
                     asynchronous: false
@@ -919,7 +921,7 @@ Item {
     Component {
         id: aiDecisionCardComponent
         Item {
-            objectName: "runtimeOverviewAiCard"
+            objectName: "runtimeOverviewAiCardContent"
             Layout.fillWidth: true
             Layout.fillHeight: true
 
