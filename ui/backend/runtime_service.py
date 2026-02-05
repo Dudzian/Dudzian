@@ -8,6 +8,7 @@ import logging
 import math
 import os
 import queue
+import re
 import statistics
 import tempfile
 import threading
@@ -266,6 +267,15 @@ def _compute_activity_score(is_block: bool, is_freeze: bool, is_override: bool) 
     return 0.45
 
 
+def _contains_keyword_token(value: str, keywords: set[str]) -> bool:
+    if not value:
+        return False
+    tokens = set(re.findall(r"[a-z]+", value.lower()))
+    if not tokens:
+        return False
+    return bool(tokens & keywords)
+
+
 def _build_risk_context(
     entries: Iterable[Mapping[str, object]]
 ) -> tuple[dict[str, object], list[dict[str, object]], dict[str, object]]:
@@ -334,9 +344,9 @@ def _build_risk_context(
         if not is_block and status:
             is_block = any(keyword in status.lower() for keyword in block_keywords)
 
-        is_freeze = any(keyword in risk_action.lower() for keyword in freeze_keywords) if risk_action else False
+        is_freeze = _contains_keyword_token(risk_action, freeze_keywords)
         if not is_freeze and status:
-            is_freeze = any(keyword in status.lower() for keyword in freeze_keywords)
+            is_freeze = _contains_keyword_token(status, freeze_keywords)
 
         override_indicator = False
         if stress_overrides:
