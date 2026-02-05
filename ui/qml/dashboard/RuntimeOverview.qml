@@ -354,12 +354,14 @@ Item {
                        : root.defaultCardOrder
                 delegate: Loader {
                     readonly property string cardId: modelData
-                    objectName: "runtimeOverviewCardLoader_" + cardId
+                    objectName: cardId === "ai_decisions"
+                                ? "runtimeOverviewAiCard"
+                                : "runtimeOverviewCardLoader_" + cardId
                     Layout.fillWidth: true
                     Layout.fillHeight: true
                     asynchronous: false
                     sourceComponent: root.componentForCard(cardId)
-                    active: sourceComponent !== null
+                    active: true
                     onStatusChanged: {
                         if (status === Loader.Error)
                             console.error("Card load error:", cardId, errorString())
