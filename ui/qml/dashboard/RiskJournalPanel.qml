@@ -30,7 +30,27 @@ Item {
         return entries
     }
     readonly property var riskFlagHistogram: {
-        const counts = root.metricValue("riskFlagCounts", {})
+        const counts = {}
+        const timeline = root.toJsArray(root.timeline)
+        for (let i = 0; i < timeline.length; ++i) {
+            const entry = timeline[i]
+            if (!entry)
+                continue
+            const riskFlags = root.toJsArray(entry.riskFlags)
+            for (let j = 0; j < riskFlags.length; ++j) {
+                const flag = riskFlags[j]
+                if (!flag)
+                    continue
+                counts[flag] = (counts[flag] || 0) + 1
+            }
+        }
+        const metricCounts = root.metricValue("riskFlagCounts", {})
+        for (const key in metricCounts) {
+            if (!Object.prototype.hasOwnProperty.call(metricCounts, key))
+                continue
+            if (counts[key] === undefined)
+                counts[key] = metricCounts[key]
+        }
         const entries = []
         for (const key in counts) {
             if (!Object.prototype.hasOwnProperty.call(counts, key))
@@ -83,14 +103,27 @@ Item {
 
     readonly property var availableRiskSignals: {
         const result = []
-        const riskFlags = root.metricValue("uniqueRiskFlags", [])
-        const stressFailures = root.metricValue("uniqueStressFailures", [])
-        const aggregate = riskFlags.concat(stressFailures)
-        for (let i = 0; i < aggregate.length; ++i) {
-            const item = aggregate[i]
-            if (result.indexOf(item) === -1)
+        const pushUnique = function(values) {
+            for (let i = 0; i < values.length; ++i) {
+                const item = values[i]
+                if (!item || result.indexOf(item) !== -1)
+                    continue
                 result.push(item)
+            }
         }
+
+        const timeline = root.toJsArray(root.timeline)
+        for (let i = 0; i < timeline.length; ++i) {
+            const entry = timeline[i]
+            if (!entry)
+                continue
+            pushUnique(root.toJsArray(entry.riskFlags))
+            pushUnique(root.toJsArray(entry.stressFailures))
+        }
+
+        pushUnique(root.toJsArray(root.metricValue("uniqueRiskFlags", [])))
+        pushUnique(root.toJsArray(root.metricValue("uniqueStressFailures", [])))
+
         result.sort()
         return result
     }
