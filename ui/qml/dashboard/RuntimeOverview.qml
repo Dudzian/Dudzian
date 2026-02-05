@@ -34,6 +34,10 @@ Item {
     property var reportController: null
     property int refreshIntervalMs: dashboardSettingsController ? dashboardSettingsController.refreshIntervalMs : 4000
     readonly property var defaultCardOrder: ["feed_sla", "io_queue", "guardrails", "retraining", "compliance", "risk_journal", "ai_decisions"]
+    readonly property var effectiveCardOrder: dashboardSettingsController
+                                            ? dashboardSettingsController.visibleCardOrder
+                                            : defaultCardOrder
+    readonly property var effectiveGridCardOrder: cardOrderWithoutAiDecisions(effectiveCardOrder)
     property var aiDecisions: []
     property string aiDecisionError: ""
     property string retrainSchedulerNextRun: runtimeServiceObj && runtimeServiceObj.retrainNextRun
@@ -88,6 +92,25 @@ Item {
             console.warn("RuntimeOverview: unknown card id", cardId)
             return null
         }
+    }
+
+    function cardOrderWithoutAiDecisions(cardOrder) {
+        const filtered = []
+        const source = cardOrder || []
+        for (let i = 0; i < source.length; ++i) {
+            if (source[i] !== "ai_decisions")
+                filtered.push(source[i])
+        }
+        return filtered
+    }
+
+    function hasAiDecisionsCard(cardOrder) {
+        const source = cardOrder || []
+        for (let i = 0; i < source.length; ++i) {
+            if (source[i] === "ai_decisions")
+                return true
+        }
+        return false
     }
 
     function refreshTelemetry() {
@@ -347,11 +370,23 @@ Item {
             minColumnWidth: 360
             maxColumns: 3
 
+            Loader {
+                id: aiDecisionCardLoader
+                objectName: "runtimeOverviewAiCard"
+                Layout.fillWidth: true
+                Layout.fillHeight: true
+                asynchronous: false
+                sourceComponent: aiDecisionCardComponent
+                active: root.hasAiDecisionsCard(root.effectiveCardOrder)
+                onStatusChanged: {
+                    if (status === Loader.Error)
+                        console.error("Card load error:", "ai_decisions", errorString())
+                }
+            }
+
             Repeater {
                 id: cardRepeater
-                model: root.dashboardSettingsController
-                       ? root.dashboardSettingsController.visibleCardOrder
-                       : root.defaultCardOrder
+                model: root.effectiveGridCardOrder
                 delegate: Loader {
                     readonly property string cardId: modelData
                     objectName: "runtimeOverviewCardLoader_" + cardId
@@ -369,8 +404,7 @@ Item {
         }
 
         Label {
-            visible: root.dashboardSettingsController
-                     && root.dashboardSettingsController.visibleCardOrder.length === 0
+            visible: root.effectiveCardOrder.length === 0
             text: qsTr("Wszystkie karty zostały ukryte w ustawieniach dashboardu")
             color: Styles.AppTheme.textSecondary
             horizontalAlignment: Text.AlignHCenter
@@ -919,7 +953,7 @@ Item {
     Component {
         id: aiDecisionCardComponent
         Item {
-            objectName: "runtimeOverviewAiCard"
+            objectName: "runtimeOverviewAiCardContent"
             Layout.fillWidth: true
             Layout.fillHeight: true
 
