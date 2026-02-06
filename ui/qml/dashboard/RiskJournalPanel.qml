@@ -91,7 +91,6 @@ Item {
 
     // Test hooks exposed in QObject tree for deterministic findChild(QObject, ...)
     QtObject {
-        parent: root
         objectName: "riskJournalStrategyChip_0"
         property string chipText: {
             const entry = (root.strategyHistogram && root.strategyHistogram.length) ? root.strategyHistogram[0] : null
@@ -102,7 +101,6 @@ Item {
     }
 
     QtObject {
-        parent: root
         objectName: "riskJournalFlagChip_0"
         property string chipText: {
             const entry = (root.riskFlagHistogram && root.riskFlagHistogram.length) ? root.riskFlagHistogram[0] : null
@@ -113,7 +111,6 @@ Item {
     }
 
     QtObject {
-        parent: root
         objectName: "riskJournalStressChip_0"
         property string chipText: {
             const entry = (root.stressFailureHistogram && root.stressFailureHistogram.length) ? root.stressFailureHistogram[0] : null
@@ -124,7 +121,6 @@ Item {
     }
 
     QtObject {
-        parent: root
         objectName: "riskJournalStrategySummary_0"
         property string summaryStrategy: {
             const summary = (root.strategySummaries && root.strategySummaries.length) ? root.strategySummaries[0] : null
