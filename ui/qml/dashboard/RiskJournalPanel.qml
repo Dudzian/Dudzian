@@ -1,6 +1,7 @@
 import QtQuick
 import QtQuick.Controls
 import QtQuick.Layouts
+import QtQml
 import "../styles" as Styles
 
 Item {
@@ -86,6 +87,64 @@ Item {
     readonly property int strategyChipCount: strategyRepeater ? strategyRepeater.count : 0
     readonly property int riskFlagChipCount: riskFlagRepeater ? riskFlagRepeater.count : 0
     readonly property int stressFailureChipCount: stressFailureRepeater ? stressFailureRepeater.count : 0
+
+
+    // Test hooks exposed in QObject tree for deterministic findChild(QObject, ...)
+    QtObject {
+        parent: root
+        objectName: "riskJournalStrategyChip_0"
+        property string chipText: {
+            const entry = (root.strategyHistogram && root.strategyHistogram.length) ? root.strategyHistogram[0] : null
+            const label = (entry && entry.label) ? entry.label : ""
+            const count = (entry && entry.count !== undefined) ? entry.count : 0
+            return label + " (" + String(count) + ")"
+        }
+    }
+
+    QtObject {
+        parent: root
+        objectName: "riskJournalFlagChip_0"
+        property string chipText: {
+            const entry = (root.riskFlagHistogram && root.riskFlagHistogram.length) ? root.riskFlagHistogram[0] : null
+            const label = (entry && entry.label) ? entry.label : ""
+            const count = (entry && entry.count !== undefined) ? entry.count : 0
+            return label + " (" + String(count) + ")"
+        }
+    }
+
+    QtObject {
+        parent: root
+        objectName: "riskJournalStressChip_0"
+        property string chipText: {
+            const entry = (root.stressFailureHistogram && root.stressFailureHistogram.length) ? root.stressFailureHistogram[0] : null
+            const label = (entry && entry.label) ? entry.label : ""
+            const count = (entry && entry.count !== undefined) ? entry.count : 0
+            return label + " (" + String(count) + ")"
+        }
+    }
+
+    QtObject {
+        parent: root
+        objectName: "riskJournalStrategySummary_0"
+        property string summaryStrategy: {
+            const summary = (root.strategySummaries && root.strategySummaries.length) ? root.strategySummaries[0] : null
+            return (summary && summary.strategy) ? summary.strategy : ""
+        }
+        property int summaryBlockCount: {
+            const summary = (root.strategySummaries && root.strategySummaries.length) ? root.strategySummaries[0] : null
+            if (!summary)
+                return 0
+            if (summary.blockCount !== undefined)
+                return summary.blockCount
+            if (summary.block_count !== undefined)
+                return summary.block_count
+            return 0
+        }
+        property string summarySeverity: {
+            const summary = (root.strategySummaries && root.strategySummaries.length) ? root.strategySummaries[0] : null
+            return (summary && summary.severity) ? summary.severity : "neutral"
+        }
+    }
 
     readonly property var availableStrategies: {
         const data = root.toJsArray(root.timeline)
@@ -520,7 +579,8 @@ Item {
                             id: strategyChipItem
                             required property var modelData
                             property string chipText: (modelData.label || "") + " (" + String(modelData.count || 0) + ")"
-                            objectName: "riskJournalStrategyChip_" + index
+
+
                             implicitWidth: strategyChipRect.implicitWidth
                             implicitHeight: strategyChipRect.implicitHeight
                             width: implicitWidth
@@ -575,7 +635,8 @@ Item {
                             required property var modelData
                             property int chipIndex: index
                             property string chipText: (modelData.label || "") + " (" + String(modelData.count || 0) + ")"
-                            objectName: "riskJournalFlagChip_" + chipIndex
+
+
                             implicitWidth: riskFlagChipRect.implicitWidth
                             implicitHeight: riskFlagChipRect.implicitHeight
                             width: implicitWidth
@@ -630,7 +691,8 @@ Item {
                             required property var modelData
                             property int chipIndex: index
                             property string chipText: (modelData.label || "") + " (" + String(modelData.count || 0) + ")"
-                            objectName: "riskJournalStressChip_" + chipIndex
+
+
                             implicitWidth: stressFailureChipRect.implicitWidth
                             implicitHeight: stressFailureChipRect.implicitHeight
                             width: implicitWidth
@@ -690,7 +752,8 @@ Item {
                         property int summaryFreezeCount: modelData.freezeCount || 0
                         property int summaryOverrideCount: modelData.stressOverrideCount || 0
                         property string summarySeverity: modelData.severity || "neutral"
-                        objectName: "riskJournalStrategySummary_" + summaryIndex
+
+
                         width: Math.min(260, Math.max(200, strategySummaryFlow.width / 3))
                         implicitHeight: summaryRect.implicitHeight
                         height: implicitHeight
