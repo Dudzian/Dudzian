@@ -334,8 +334,24 @@ Item {
         if (!selectedEntry)
             return
         let record = selectedEntry.record || selectedEntry
-        if (runtimeService && typeof runtimeService[action] === "function") {
-            runtimeService[action](record)
+        if (runtimeService) {
+            let handled = false
+            const isOperatorAction = action === "requestFreeze"
+                || action === "requestUnfreeze"
+                || action === "requestUnblock"
+            if (action === "requestFreeze" && typeof runtimeService.requestFreeze === "function") {
+                runtimeService.requestFreeze(record)
+                handled = true
+            } else if (action === "requestUnfreeze" && typeof runtimeService.requestUnfreeze === "function") {
+                runtimeService.requestUnfreeze(record)
+                handled = true
+            } else if (action === "requestUnblock" && typeof runtimeService.requestUnblock === "function") {
+                runtimeService.requestUnblock(record)
+                handled = true
+            }
+            if (!handled && !isOperatorAction && typeof runtimeService[action] === "function") {
+                runtimeService[action](record)
+            }
         }
         if (action === "requestFreeze")
             root.freezeRequested(record)
