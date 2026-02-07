@@ -82,7 +82,7 @@ Item {
     }
     readonly property var strategySummaries: {
         const summaries = root.metricValue("strategySummaries", [])
-        return Array.isArray(summaries) ? summaries : []
+        return root.toJsArray(summaries)
     }
     readonly property int strategyChipCount: strategyRepeater ? strategyRepeater.count : 0
     readonly property int riskFlagChipCount: riskFlagRepeater ? riskFlagRepeater.count : 0
