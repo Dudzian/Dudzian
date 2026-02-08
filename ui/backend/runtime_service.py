@@ -2324,16 +2324,16 @@ class RuntimeService(QObject):
         return False
 
     # ------------------------------------------------------------------ operator actions --
-    @Slot("QVariantMap", result=bool)
-    def requestFreeze(self, entry: Mapping[str, object] | None = None) -> bool:  # type: ignore[override]
+    @Slot("QVariant", result=bool)
+    def requestFreeze(self, entry: object = None) -> bool:  # type: ignore[override]
         return self._record_operator_action("freeze", entry)
 
-    @Slot("QVariantMap", result=bool)
-    def requestUnfreeze(self, entry: Mapping[str, object] | None = None) -> bool:  # type: ignore[override]
+    @Slot("QVariant", result=bool)
+    def requestUnfreeze(self, entry: object = None) -> bool:  # type: ignore[override]
         return self._record_operator_action("unfreeze", entry)
 
-    @Slot("QVariantMap", result=bool)
-    def requestUnblock(self, entry: Mapping[str, object] | None = None) -> bool:  # type: ignore[override]
+    @Slot("QVariant", result=bool)
+    def requestUnblock(self, entry: object = None) -> bool:  # type: ignore[override]
         return self._record_operator_action("unblock", entry)
 
     # ------------------------------------------------------------------
@@ -3809,10 +3809,29 @@ class RuntimeService(QObject):
         except Exception:
             pass
 
-    def _record_operator_action(
-        self, action: str, entry: Mapping[str, object] | None
-    ) -> bool:
-        sanitized = to_plain_dict(entry) if entry is not None else {}
+    def _normalize_operator_entry(self, entry: object | None) -> Mapping[str, object] | None:
+        if entry is None:
+            return None
+        if isinstance(entry, Mapping):
+            return dict(entry)
+        variant = None
+        if hasattr(entry, "toVariant"):
+            try:
+                variant = entry.toVariant()
+            except Exception:
+                variant = None
+        if variant is None and hasattr(entry, "toPyObject"):
+            try:
+                variant = entry.toPyObject()
+            except Exception:
+                variant = None
+        if isinstance(variant, Mapping):
+            return dict(variant)
+        return None
+
+    def _record_operator_action(self, action: str, entry: object | None) -> bool:
+        normalized_entry = self._normalize_operator_entry(entry)
+        sanitized = to_plain_dict(normalized_entry) if normalized_entry is not None else {}
         timestamp = datetime.now(timezone.utc).astimezone().isoformat(timespec="seconds")
         self._last_operator_action = {
             "action": action,
