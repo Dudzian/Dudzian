@@ -2338,13 +2338,7 @@ class RuntimeService(QObject):
 
     @Slot("QVariant", "QVariant", result=bool)
     def triggerOperatorAction(self, action: object, entry: object = None) -> bool:  # type: ignore[override]
-        plain_action = to_plain_value(action)
-        if isinstance(plain_action, str):
-            action_str = plain_action
-        else:
-            action_str = str(plain_action or "")
-        normalized_action = self._normalize_operator_action(action_str)
-        return self._record_operator_action(normalized_action, entry)
+        return self._record_operator_action(action, entry)
 
     # ------------------------------------------------------------------
     def _build_live_loader(
@@ -3838,8 +3832,10 @@ class RuntimeService(QObject):
                 variant = entry.toPyObject()
             except Exception:
                 variant = None
-        if isinstance(variant, Mapping):
-            return dict(variant)
+        if variant is not None:
+            variant_plain = to_plain_value(variant)
+            if isinstance(variant_plain, Mapping):
+                return dict(variant_plain)
         return None
 
     @staticmethod
@@ -3851,7 +3847,16 @@ class RuntimeService(QObject):
         }
         return mapping.get(action, action)
 
-    def _record_operator_action(self, action: str, entry: object | None) -> bool:
+    def _record_operator_action(self, action: object, entry: object | None) -> bool:
+        try:
+            plain_action = to_plain_value(action)
+        except Exception:
+            plain_action = ""
+        if isinstance(plain_action, str):
+            action_str = plain_action.strip()
+        else:
+            action_str = str(plain_action or "")
+        normalized_action = self._normalize_operator_action(action_str)
         try:
             normalized_entry = self._normalize_operator_entry(entry)
             sanitized = to_plain_dict(normalized_entry) if normalized_entry is not None else {}
@@ -3859,7 +3864,7 @@ class RuntimeService(QObject):
             sanitized = {}
         timestamp = datetime.now(timezone.utc).astimezone().isoformat(timespec="seconds")
         self._last_operator_action = {
-            "action": action,
+            "action": normalized_action,
             "timestamp": timestamp,
             "entry": sanitized,
         }
@@ -3869,9 +3874,9 @@ class RuntimeService(QObject):
         else:
             reference = None
         if reference:
-            _LOGGER.info("Operator action '%s' triggered for %s", action, reference)
+            _LOGGER.info("Operator action '%s' triggered for %s", normalized_action, reference)
         else:
-            _LOGGER.info("Operator action '%s' triggered", action)
+            _LOGGER.info("Operator action '%s' triggered", normalized_action)
         return True
 
     def _load_core_config(self):
