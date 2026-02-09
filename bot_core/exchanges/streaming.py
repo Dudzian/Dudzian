@@ -703,7 +703,7 @@ class LocalLongPollStream(Iterable[StreamBatch]):
             active = list(cls._active_instances)
         for stream in active:
             try:
-                stream._signal_stop()
+                stream._signal_stop(force=True)
             except Exception:  # pragma: no cover - defensywnie w teardownie
                 _LOGGER.debug("Nie udało się zasygnalizować stop dla LocalLongPollStream", exc_info=True)
         for stream in active:
@@ -714,7 +714,7 @@ class LocalLongPollStream(Iterable[StreamBatch]):
         for stream in active:
             try:
                 if stream._worker_thread and stream._worker_thread.is_alive():
-                    stream._signal_stop()
+                    stream._signal_stop(force=True)
                     stream._join_worker(timeout=0.5)
             except Exception:  # pragma: no cover - defensywnie w teardownie
                 _LOGGER.debug(
@@ -908,12 +908,12 @@ class LocalLongPollStream(Iterable[StreamBatch]):
     def close(self) -> None:
         """Zamyka iterator – kolejne próby pobrania danych zakończą się StopIteration."""
 
-        self._signal_stop()
+        self._signal_stop(force=True)
         self._join_worker(timeout=self._DEFAULT_JOIN_TIMEOUT)
         self._unregister_if_stopped()
 
-    def _signal_stop(self) -> None:
-        if self._closed:
+    def _signal_stop(self, *, force: bool = False) -> None:
+        if self._closed and not force:
             return
         self._closed = True
         self._stop_event.set()
@@ -947,7 +947,7 @@ class LocalLongPollStream(Iterable[StreamBatch]):
                 self._DEFAULT_JOIN_TIMEOUT if timeout is None else max(0.0, float(timeout))
             )
             worker.join(timeout=join_timeout)
-        if self._worker_thread and not self._worker_thread.is_alive():
+        if self._worker_thread is worker and self._worker_thread and not self._worker_thread.is_alive():
             self._worker_thread = None
 
     def _unregister_if_stopped(self) -> None:
