@@ -16,6 +16,8 @@ from typing import Generator, List
 
 import pytest
 
+pytest.importorskip("PySide6", reason="UI/QML tests require PySide6")
+
 logger = logging.getLogger(__name__)
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
@@ -148,7 +150,9 @@ def enforce_test_mode_for_qml(request: pytest.FixtureRequest) -> Generator[None,
         yield
         return
     previous = os.environ.get("DUDZIAN_TEST_MODE")
+    previous_allow_long_poll = os.environ.get("DUDZIAN_ALLOW_LONG_POLL")
     os.environ["DUDZIAN_TEST_MODE"] = "1"
+    os.environ["DUDZIAN_ALLOW_LONG_POLL"] = "0"
     try:
         yield
     finally:
@@ -156,6 +160,10 @@ def enforce_test_mode_for_qml(request: pytest.FixtureRequest) -> Generator[None,
             os.environ.pop("DUDZIAN_TEST_MODE", None)
         else:
             os.environ["DUDZIAN_TEST_MODE"] = previous
+        if previous_allow_long_poll is None:
+            os.environ.pop("DUDZIAN_ALLOW_LONG_POLL", None)
+        else:
+            os.environ["DUDZIAN_ALLOW_LONG_POLL"] = previous_allow_long_poll
 
 
 @pytest.fixture(autouse=True)
