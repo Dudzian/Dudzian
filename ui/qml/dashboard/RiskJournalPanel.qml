@@ -339,15 +339,15 @@ Item {
             const isOperatorAction = action === "requestFreeze"
                 || action === "requestUnfreeze"
                 || action === "requestUnblock"
-            if (action === "requestFreeze" && typeof runtimeService.requestFreeze === "function") {
-                runtimeService.requestFreeze(record)
-                handled = true
-            } else if (action === "requestUnfreeze" && typeof runtimeService.requestUnfreeze === "function") {
-                runtimeService.requestUnfreeze(record)
-                handled = true
-            } else if (action === "requestUnblock" && typeof runtimeService.requestUnblock === "function") {
-                runtimeService.requestUnblock(record)
-                handled = true
+            if (isOperatorAction && typeof runtimeService.triggerOperatorAction === "function") {
+                handled = runtimeService.triggerOperatorAction(action, record)
+            }
+            if ((!handled || !isOperatorAction) && action === "requestFreeze" && typeof runtimeService.requestFreeze === "function") {
+                handled = runtimeService.requestFreeze(record)
+            } else if ((!handled || !isOperatorAction) && action === "requestUnfreeze" && typeof runtimeService.requestUnfreeze === "function") {
+                handled = runtimeService.requestUnfreeze(record)
+            } else if ((!handled || !isOperatorAction) && action === "requestUnblock" && typeof runtimeService.requestUnblock === "function") {
+                handled = runtimeService.requestUnblock(record)
             }
             if (!handled && !isOperatorAction && typeof runtimeService[action] === "function") {
                 runtimeService[action](record)
