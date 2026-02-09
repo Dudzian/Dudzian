@@ -2336,6 +2336,16 @@ class RuntimeService(QObject):
     def requestUnblock(self, entry: object = None) -> bool:  # type: ignore[override]
         return self._record_operator_action("unblock", entry)
 
+    @Slot("QVariant", "QVariant", result=bool)
+    def triggerOperatorAction(self, action: object, entry: object = None) -> bool:  # type: ignore[override]
+        plain_action = to_plain_value(action)
+        if isinstance(plain_action, str):
+            action_str = plain_action
+        else:
+            action_str = str(plain_action or "")
+        normalized_action = self._normalize_operator_action(action_str)
+        return self._record_operator_action(normalized_action, entry)
+
     # ------------------------------------------------------------------
     def _build_live_loader(
         self, profile: str | None
@@ -3814,6 +3824,9 @@ class RuntimeService(QObject):
             return None
         if isinstance(entry, Mapping):
             return dict(entry)
+        plain = to_plain_value(entry)
+        if isinstance(plain, Mapping):
+            return dict(plain)
         variant = None
         if hasattr(entry, "toVariant"):
             try:
@@ -3829,9 +3842,21 @@ class RuntimeService(QObject):
             return dict(variant)
         return None
 
+    @staticmethod
+    def _normalize_operator_action(action: str) -> str:
+        mapping = {
+            "requestFreeze": "freeze",
+            "requestUnfreeze": "unfreeze",
+            "requestUnblock": "unblock",
+        }
+        return mapping.get(action, action)
+
     def _record_operator_action(self, action: str, entry: object | None) -> bool:
-        normalized_entry = self._normalize_operator_entry(entry)
-        sanitized = to_plain_dict(normalized_entry) if normalized_entry is not None else {}
+        try:
+            normalized_entry = self._normalize_operator_entry(entry)
+            sanitized = to_plain_dict(normalized_entry) if normalized_entry is not None else {}
+        except Exception:
+            sanitized = {}
         timestamp = datetime.now(timezone.utc).astimezone().isoformat(timespec="seconds")
         self._last_operator_action = {
             "action": action,
