@@ -342,7 +342,7 @@ Item {
         if (isOperatorAction && runtimeService) {
             let handled = false
             try {
-                handled = !!runtimeService.triggerOperatorAction(action, record)
+                handled = runtimeService.triggerOperatorAction(action, record) === true
             } catch (e) {
                 console.warn("runtimeService triggerOperatorAction failed:", action, e)
             }

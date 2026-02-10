@@ -2324,18 +2324,23 @@ class RuntimeService(QObject):
         return False
 
     # ------------------------------------------------------------------ operator actions --
+    @Slot("QVariantMap", result=bool)
     @Slot("QVariant", result=bool)
     def requestFreeze(self, entry: object = None) -> bool:  # type: ignore[override]
         return self._record_operator_action("freeze", entry)
 
+    @Slot("QVariantMap", result=bool)
     @Slot("QVariant", result=bool)
     def requestUnfreeze(self, entry: object = None) -> bool:  # type: ignore[override]
         return self._record_operator_action("unfreeze", entry)
 
+    @Slot("QVariantMap", result=bool)
     @Slot("QVariant", result=bool)
     def requestUnblock(self, entry: object = None) -> bool:  # type: ignore[override]
         return self._record_operator_action("unblock", entry)
 
+    @Slot("QString", "QVariantMap", result=bool)
+    @Slot("QString", "QVariant", result=bool)
     @Slot(str, "QVariantMap", result=bool)
     @Slot(str, "QVariant", result=bool)
     @Slot("QVariant", "QVariantMap", result=bool)

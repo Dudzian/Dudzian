@@ -5,6 +5,7 @@ from types import SimpleNamespace
 import pytest
 
 pytest.importorskip("PySide6", reason="UI/QML tests require PySide6")
+from PySide6.QtCore import QCoreApplication, QMetaObject, Qt, Q_ARG
 
 from ui.backend.runtime_service import RuntimeService
 
@@ -156,3 +157,24 @@ def test_runtime_service_trigger_operator_action_reports_handled_for_request_ali
 
     assert service.triggerOperatorAction("requestUnblock", entry) is True
     assert service.lastOperatorAction["action"] == "unblock"
+
+
+def test_runtime_service_operator_action_can_be_invoked_via_qt_metaobject() -> None:
+    app = QCoreApplication.instance() or QCoreApplication([])
+    service = RuntimeService(decision_loader=lambda limit: [])
+    entry = {
+        "event": "risk_blocked",
+        "timestamp": "2025-01-02T09:15:00+00:00",
+    }
+
+    ok = QMetaObject.invokeMethod(
+        service,
+        "triggerOperatorAction",
+        Qt.ConnectionType.DirectConnection,
+        Q_ARG("QString", "requestFreeze"),
+        Q_ARG("QVariantMap", entry),
+    )
+
+    assert app is not None
+    assert ok is True
+    assert service.lastOperatorAction["action"] == "freeze"
