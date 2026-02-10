@@ -2173,3 +2173,45 @@ def test_local_long_poll_stream_wait_prefill_async_propagates_errors(
     asyncio.run(_call())
     stream.close()
 
+
+
+def test_local_long_poll_stream_close_all_active_uses_progressive_join(monkeypatch: pytest.MonkeyPatch) -> None:
+    # Izolacja od ewentualnych niedomkniętych streamów z innych testów.
+    LocalLongPollStream.close_all_active()
+
+    class _FakeWorker:
+        def __init__(self) -> None:
+            self.alive = True
+            self.name = "LocalLongPollStream[test:public]"
+            self.ident = 12345
+
+        def is_alive(self) -> bool:
+            return self.alive
+
+    stream = LocalLongPollStream(
+        base_url="http://127.0.0.1:9105",
+        path="/teardown",
+        channels=["ticker"],
+        adapter="test",
+        scope="public",
+        environment="paper",
+        timeout=4.0,
+    )
+
+    worker = _FakeWorker()
+    stream._worker_thread = worker  # type: ignore[assignment]
+    calls: list[float] = []
+
+    def _fake_join_worker(*, timeout: float | None = None) -> None:
+        timeout_value = 0.0 if timeout is None else float(timeout)
+        calls.append(timeout_value)
+        if len(calls) >= 2:
+            worker.alive = False
+
+    monkeypatch.setattr(stream, "_join_worker", _fake_join_worker)
+
+    LocalLongPollStream.close_all_active()
+
+    assert len(calls) >= 2
+    assert calls[0] == pytest.approx(LocalLongPollStream._DEFAULT_JOIN_TIMEOUT)
+    assert calls[1] == pytest.approx(4.5)

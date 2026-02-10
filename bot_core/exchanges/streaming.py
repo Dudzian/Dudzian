@@ -518,6 +518,7 @@ class LocalLongPollStream(Iterable[StreamBatch]):
     _active_lock = threading.Lock()
     _active_instances: "weakref.WeakSet[LocalLongPollStream]" = weakref.WeakSet()
     _DEFAULT_JOIN_TIMEOUT = 2.0
+    _CLOSE_ALL_JOIN_CAP_SECONDS = 30.0
     _SLEEP_SLICE_SECONDS = 0.1
 
     def __init__(
@@ -709,6 +710,24 @@ class LocalLongPollStream(Iterable[StreamBatch]):
         for stream in active:
             try:
                 stream._join_worker(timeout=cls._DEFAULT_JOIN_TIMEOUT)
+                worker = stream._worker_thread
+                if worker and worker.is_alive():
+                    timeout_value = getattr(stream, "_timeout", cls._DEFAULT_JOIN_TIMEOUT)
+                    try:
+                        timeout_float = float(timeout_value)
+                    except (TypeError, ValueError):
+                        timeout_float = cls._DEFAULT_JOIN_TIMEOUT
+                    timeout_float = max(0.0, timeout_float)
+                    fallback_timeout = min(timeout_float + 0.5, cls._CLOSE_ALL_JOIN_CAP_SECONDS)
+                    stream._join_worker(timeout=fallback_timeout)
+                    if stream._worker_thread and stream._worker_thread.is_alive():
+                        _LOGGER.debug(
+                            "LocalLongPollStream worker nadal żyje po progresywnym join: %s (ident=%s, timeout_stream=%s, join_fallback=%s)",
+                            stream._worker_thread.name,
+                            stream._worker_thread.ident,
+                            timeout_float,
+                            fallback_timeout,
+                        )
             except Exception:  # pragma: no cover - defensywnie w teardownie
                 _LOGGER.debug("Nie udało się zamknąć LocalLongPollStream", exc_info=True)
         for stream in active:
