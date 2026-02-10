@@ -16,7 +16,12 @@ from typing import Generator, List
 
 import pytest
 
-pytest.importorskip("PySide6", reason="UI/QML tests require PySide6")
+try:  # pragma: no cover - zależne od środowiska CI
+    import PySide6  # type: ignore[import-not-found]  # noqa: F401
+    _PYSIDE6_AVAILABLE = True
+except Exception:  # pragma: no cover - zależne od środowiska CI
+    _PYSIDE6_AVAILABLE = False
+
 
 logger = logging.getLogger(__name__)
 
@@ -36,6 +41,15 @@ if sys.platform == "win32":
 def _sanitize_nodeid(nodeid: str) -> str:
     sanitized = nodeid.replace("::", "__").replace("/", "_").replace("\\", "_")
     return sanitized
+
+
+def pytest_collection_modifyitems(config: pytest.Config, items: list[pytest.Item]) -> None:
+    if _PYSIDE6_AVAILABLE:
+        return
+    skip_qml = pytest.mark.skip(reason="UI/QML tests require PySide6")
+    for item in items:
+        item.add_marker(skip_qml)
+
 
 
 @pytest.fixture(scope="session")

@@ -2324,24 +2324,18 @@ class RuntimeService(QObject):
         return False
 
     # ------------------------------------------------------------------ operator actions --
-    @Slot("QVariantMap", result=bool)
     @Slot("QVariant", result=bool)
     def requestFreeze(self, entry: object = None) -> bool:  # type: ignore[override]
         return self._record_operator_action("freeze", entry)
 
-    @Slot("QVariantMap", result=bool)
     @Slot("QVariant", result=bool)
     def requestUnfreeze(self, entry: object = None) -> bool:  # type: ignore[override]
         return self._record_operator_action("unfreeze", entry)
 
-    @Slot("QVariantMap", result=bool)
     @Slot("QVariant", result=bool)
     def requestUnblock(self, entry: object = None) -> bool:  # type: ignore[override]
         return self._record_operator_action("unblock", entry)
 
-    @Slot(str, "QVariantMap", result=bool)
-    @Slot(str, "QVariant", result=bool)
-    @Slot("QVariant", "QVariantMap", result=bool)
     @Slot("QVariant", "QVariant", result=bool)
     def triggerOperatorAction(self, action: object, entry: object = None) -> bool:  # type: ignore[override]
         return self._record_operator_action(action, entry)
@@ -3819,14 +3813,22 @@ class RuntimeService(QObject):
         except Exception:
             pass
 
+    @staticmethod
+    def _unwrap_operator_entry_mapping(payload: Mapping[str, object]) -> Mapping[str, object]:
+        payload_dict = dict(payload)
+        nested_record = payload_dict.get("record")
+        if isinstance(nested_record, Mapping):
+            return dict(nested_record)
+        return payload_dict
+
     def _normalize_operator_entry(self, entry: object | None) -> Mapping[str, object] | None:
         if entry is None:
             return None
         if isinstance(entry, Mapping):
-            return dict(entry)
+            return self._unwrap_operator_entry_mapping(entry)
         plain = to_plain_value(entry)
         if isinstance(plain, Mapping):
-            return dict(plain)
+            return self._unwrap_operator_entry_mapping(plain)
         variant = None
         if hasattr(entry, "toVariant"):
             try:
@@ -3841,17 +3843,21 @@ class RuntimeService(QObject):
         if variant is not None:
             variant_plain = to_plain_value(variant)
             if isinstance(variant_plain, Mapping):
-                return dict(variant_plain)
+                return self._unwrap_operator_entry_mapping(variant_plain)
         return None
 
     @staticmethod
-    def _normalize_operator_action(action: str) -> str:
+    def _normalize_operator_action(action: object) -> str:
+        raw = str(action or "").strip()
         mapping = {
             "requestFreeze": "freeze",
             "requestUnfreeze": "unfreeze",
             "requestUnblock": "unblock",
+            "freeze": "freeze",
+            "unfreeze": "unfreeze",
+            "unblock": "unblock",
         }
-        return mapping.get(action, action)
+        return mapping.get(raw, raw)
 
     def _record_operator_action(self, action: object, entry: object | None) -> bool:
         try:
@@ -3868,10 +3874,16 @@ class RuntimeService(QObject):
             sanitized = to_plain_dict(normalized_entry) if normalized_entry is not None else {}
         except Exception:
             sanitized = {}
-        timestamp = datetime.now(timezone.utc).astimezone().isoformat(timespec="seconds")
+        timestamp_value: object | None = None
+        for key in ("timestamp", "time", "ts"):
+            if key in sanitized and sanitized[key] is not None:
+                timestamp_value = sanitized[key]
+                break
+        if timestamp_value is None:
+            timestamp_value = datetime.now(timezone.utc).astimezone().isoformat(timespec="seconds")
         self._last_operator_action = {
             "action": normalized_action,
-            "timestamp": timestamp,
+            "timestamp": str(timestamp_value),
             "entry": sanitized,
         }
         self.operatorActionChanged.emit()
