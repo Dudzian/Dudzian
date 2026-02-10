@@ -1,6 +1,7 @@
 import QtQuick
 import QtQuick.Controls
 import QtQuick.Layouts
+import QtQuick.Window
 import "../styles" as Styles
 import "../design-system" as Design
 import "." as Dashboard
@@ -207,7 +208,9 @@ Item {
         id: refreshTimer
         interval: Math.max(1500, root.refreshIntervalMs)
         repeat: true
-        running: !!root.telemetryProviderObj
+        // W testach headless (QQmlEngine.load(Item)) komponent zwykle nie jest osadzony
+        // w Window, więc wyłączamy auto-refresh aby uniknąć wyścigu z asercjami.
+        running: !!root.telemetryProviderObj && !!root.Window.window
         triggeredOnStart: true
         onTriggered: root.refreshAll()
     }
