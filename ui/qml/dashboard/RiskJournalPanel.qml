@@ -330,35 +330,24 @@ Item {
         drilldownDialog.open()
     }
 
+    // UI-only dispatch: panel emituje sygnały do rodzica; backend dispatch jest w RuntimeOverview.
     function triggerOperatorAction(action) {
         if (!selectedEntry)
             return
         let record = selectedEntry.record || selectedEntry
-        if (runtimeService) {
-            let handled = false
-            const isOperatorAction = action === "requestFreeze"
-                || action === "requestUnfreeze"
-                || action === "requestUnblock"
-            if (isOperatorAction && typeof runtimeService.triggerOperatorAction === "function") {
-                handled = runtimeService.triggerOperatorAction(action, record)
-            }
-            if ((!handled || !isOperatorAction) && action === "requestFreeze" && typeof runtimeService.requestFreeze === "function") {
-                handled = runtimeService.requestFreeze(record)
-            } else if ((!handled || !isOperatorAction) && action === "requestUnfreeze" && typeof runtimeService.requestUnfreeze === "function") {
-                handled = runtimeService.requestUnfreeze(record)
-            } else if ((!handled || !isOperatorAction) && action === "requestUnblock" && typeof runtimeService.requestUnblock === "function") {
-                handled = runtimeService.requestUnblock(record)
-            }
-            if (!handled && !isOperatorAction && typeof runtimeService[action] === "function") {
-                runtimeService[action](record)
-            }
+        const isOperatorAction = action === "requestFreeze"
+            || action === "requestUnfreeze"
+            || action === "requestUnblock"
+        if (!isOperatorAction)
+            console.warn("unsupported non-operator action in RiskJournalPanel:", action)
+        if (isOperatorAction) {
+            if (action === "requestFreeze")
+                root.freezeRequested(record)
+            else if (action === "requestUnfreeze")
+                root.unfreezeRequested(record)
+            else if (action === "requestUnblock")
+                root.unblockRequested(record)
         }
-        if (action === "requestFreeze")
-            root.freezeRequested(record)
-        else if (action === "requestUnfreeze")
-            root.unfreezeRequested(record)
-        else if (action === "requestUnblock")
-            root.unblockRequested(record)
         drilldownDialog.close()
         selectedEntry = null
     }
