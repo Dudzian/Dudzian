@@ -2,8 +2,10 @@ from datetime import datetime, timezone
 from pathlib import Path
 from types import SimpleNamespace
 
-from bot_core.ai import FilesystemModelRepository, ModelRepository
-from bot_core.ai.models import ModelArtifact
+import pytest
+
+pytest.importorskip("PySide6", reason="UI/QML tests require PySide6")
+
 from ui.backend.runtime_service import RuntimeService
 
 
@@ -21,6 +23,14 @@ def test_runtime_service_uses_demo_loader_when_no_journal() -> None:
 
 
 def test_runtime_service_refreshes_runtime_metadata(tmp_path: Path) -> None:
+    pytest.importorskip("pyarrow", reason="Runtime metadata test requires pyarrow-backed AI repository")
+    try:
+        from bot_core.ai import FilesystemModelRepository
+        from bot_core.ai.models import ModelArtifact
+    except ModuleNotFoundError as exc:
+        pytest.skip(f"Runtime metadata test requires optional AI dependencies: {exc}")
+
+
     registry_dir = tmp_path / "models"
     registry_dir.mkdir()
     runtime_template = Path("config/runtime.yaml").read_text(encoding="utf-8")
@@ -126,3 +136,23 @@ def test_runtime_service_exposes_cloud_status(monkeypatch) -> None:
     assert status["status"] in {"configured", "ready", "initializing"}
     assert status["target"] == "127.0.0.1:50052"
     assert status["handshake"]["status"] == "ok"
+
+
+def test_runtime_service_trigger_operator_action_reports_handled_for_request_aliases() -> None:
+    service = RuntimeService(decision_loader=lambda limit: [])
+    entry = {
+        "event": "risk_blocked",
+        "timestamp": "2025-01-02T09:15:00+00:00",
+        "id": "decision-123",
+        "portfolio": "paper-main",
+        "strategy": "momentum_v2",
+    }
+
+    assert service.triggerOperatorAction("requestFreeze", entry) is True
+    assert service.lastOperatorAction["action"] == "freeze"
+
+    assert service.triggerOperatorAction("requestUnfreeze", entry) is True
+    assert service.lastOperatorAction["action"] == "unfreeze"
+
+    assert service.triggerOperatorAction("requestUnblock", entry) is True
+    assert service.lastOperatorAction["action"] == "unblock"

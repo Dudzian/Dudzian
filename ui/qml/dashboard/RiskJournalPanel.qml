@@ -330,7 +330,6 @@ Item {
         drilldownDialog.open()
     }
 
-    // UI-only dispatch: panel emituje sygnały do rodzica; backend dispatch jest w RuntimeOverview.
     function triggerOperatorAction(action) {
         if (!selectedEntry)
             return
@@ -340,6 +339,26 @@ Item {
             || action === "requestUnblock"
         if (!isOperatorAction)
             console.warn("unsupported non-operator action in RiskJournalPanel:", action)
+        if (isOperatorAction && runtimeService) {
+            let handled = false
+            try {
+                handled = !!runtimeService.triggerOperatorAction(action, record)
+            } catch (e) {
+                console.warn("runtimeService triggerOperatorAction failed:", action, e)
+            }
+            if (!handled) {
+                try {
+                    if (action === "requestFreeze")
+                        runtimeService.requestFreeze(record)
+                    else if (action === "requestUnfreeze")
+                        runtimeService.requestUnfreeze(record)
+                    else if (action === "requestUnblock")
+                        runtimeService.requestUnblock(record)
+                } catch (fallbackError) {
+                    console.warn("runtimeService fallback failed:", action, fallbackError)
+                }
+            }
+        }
         if (isOperatorAction) {
             if (action === "requestFreeze")
                 root.freezeRequested(record)

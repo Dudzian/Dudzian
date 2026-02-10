@@ -161,29 +161,6 @@ Item {
         root.refreshDecisions()
     }
 
-    function dispatchOperatorAction(action, entry) {
-        if (!root.runtimeServiceObj)
-            return
-        let handled = false
-        try {
-            handled = root.runtimeServiceObj.triggerOperatorAction(action, entry) === true
-        } catch (e) {
-            console.warn("RuntimeOverview operator dispatch failed:", action, e)
-        }
-        if (!handled) {
-            try {
-                if (action === "requestFreeze")
-                    root.runtimeServiceObj.requestFreeze(entry)
-                else if (action === "requestUnfreeze")
-                    root.runtimeServiceObj.requestUnfreeze(entry)
-                else if (action === "requestUnblock")
-                    root.runtimeServiceObj.requestUnblock(entry)
-            } catch (fallbackError) {
-                console.warn("RuntimeOverview operator fallback failed:", action, fallbackError)
-            }
-        }
-    }
-
     function slaSeverityColor(state) {
         if (state === "critical")
             return Qt.rgba(0.9, 0.2, 0.25, 1)
@@ -987,15 +964,12 @@ Item {
                 timeline: root.runtimeServiceObj ? root.runtimeServiceObj.riskTimeline : []
                 lastOperatorAction: root.runtimeServiceObj ? root.runtimeServiceObj.lastOperatorAction : ({})
                 onFreezeRequested: function(entry) {
-                    root.dispatchOperatorAction("requestFreeze", entry)
                     root.lastOperatorAction = root.runtimeServiceObj ? root.runtimeServiceObj.lastOperatorAction : ({})
                 }
                 onUnfreezeRequested: function(entry) {
-                    root.dispatchOperatorAction("requestUnfreeze", entry)
                     root.lastOperatorAction = root.runtimeServiceObj ? root.runtimeServiceObj.lastOperatorAction : ({})
                 }
                 onUnblockRequested: function(entry) {
-                    root.dispatchOperatorAction("requestUnblock", entry)
                     root.lastOperatorAction = root.runtimeServiceObj ? root.runtimeServiceObj.lastOperatorAction : ({})
                 }
             }
