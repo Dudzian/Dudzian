@@ -178,3 +178,50 @@ def test_runtime_service_operator_action_can_be_invoked_via_qt_metaobject() -> N
     assert app is not None
     assert ok is True
     assert service.lastOperatorAction["action"] == "freeze"
+
+
+def test_runtime_service_operator_action_normalizes_qjsvalue_like_entry() -> None:
+    service = RuntimeService(decision_loader=lambda limit: [])
+
+    class _FakeQjsValue:
+        def toVariant(self):
+            return {
+                "record": {
+                    "event": "risk_blocked",
+                    "timestamp": "2025-01-02T09:15:00+00:00",
+                    "id": "decision-123",
+                }
+            }
+
+    assert service.requestFreeze(_FakeQjsValue()) is True
+    assert service.lastOperatorAction["action"] == "freeze"
+    assert service.lastOperatorAction["entry"]["id"] == "decision-123"
+
+
+def test_runtime_service_operator_action_normalizes_topyobject_fallback() -> None:
+    service = RuntimeService(decision_loader=lambda limit: [])
+
+    class _FakeQjsValue:
+        def toPyObject(self):
+            return {
+                "record": {
+                    "event": "risk_blocked",
+                    "timestamp": "2025-01-02T09:15:00+00:00",
+                    "id": "decision-456",
+                }
+            }
+
+    assert service.requestFreeze(_FakeQjsValue()) is True
+    assert service.lastOperatorAction["action"] == "freeze"
+    assert service.lastOperatorAction["entry"]["id"] == "decision-456"
+
+
+def test_runtime_service_operator_action_is_recorded_for_unmappable_payload() -> None:
+    service = RuntimeService(decision_loader=lambda limit: [])
+
+    class _UnmappableEntry:
+        pass
+
+    assert service.requestFreeze(_UnmappableEntry()) is True
+    assert service.lastOperatorAction["action"] == "freeze"
+    assert service.lastOperatorAction["entry"] == {}
