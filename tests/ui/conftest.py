@@ -43,6 +43,24 @@ def _sanitize_nodeid(nodeid: str) -> str:
     return sanitized
 
 
+
+
+def pytest_ignore_collect(collection_path: Path, config: pytest.Config) -> bool:
+    """Pomiń import modułów z tests/ui przy braku PySide6 (unikamy collection errors)."""
+
+    if _PYSIDE6_AVAILABLE:
+        return False
+    root = Path(str(config.rootpath)).resolve()
+    path = Path(str(collection_path)).resolve()
+    try:
+        relative = path.relative_to(root)
+    except ValueError:
+        return False
+    if relative.suffix != ".py":
+        return False
+    return len(relative.parts) >= 2 and relative.parts[0] == "tests" and relative.parts[1] == "ui"
+
+
 def pytest_collection_modifyitems(config: pytest.Config, items: list[pytest.Item]) -> None:
     if _PYSIDE6_AVAILABLE:
         return
