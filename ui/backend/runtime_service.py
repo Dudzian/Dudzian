@@ -2339,6 +2339,9 @@ class RuntimeService(QObject):
     def requestUnblock(self, entry: object = None) -> bool:  # type: ignore[override]
         return self._record_operator_action("unblock", entry)
 
+    @Slot(str, "QVariantMap", result=bool)
+    @Slot(str, "QVariant", result=bool)
+    @Slot("QVariant", "QVariantMap", result=bool)
     @Slot("QVariant", "QVariant", result=bool)
     def triggerOperatorAction(self, action: object, entry: object = None) -> bool:  # type: ignore[override]
         return self._record_operator_action(action, entry)
