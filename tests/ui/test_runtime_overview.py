@@ -481,6 +481,7 @@ def _sample_risk_decisions() -> list[dict[str, object]]:
             "risk_profile": "dynamic",
             "strategy": "mean_reversion",
             "status": "ok",
+            "risk_action": "update",
             "decision_state": "monitor",
             "decision_should_trade": "false",
             "risk_flags": ["drawdown_watch"],
