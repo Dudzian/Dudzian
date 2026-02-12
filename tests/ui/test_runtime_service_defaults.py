@@ -180,6 +180,70 @@ def test_runtime_service_operator_action_can_be_invoked_via_qt_metaobject() -> N
     assert service.lastOperatorAction["action"] == "freeze"
 
 
+
+
+def test_runtime_service_operator_action_can_be_invoked_via_qvariant_signature() -> None:
+    app = QCoreApplication.instance() or QCoreApplication([])
+    service = RuntimeService(decision_loader=lambda limit: [])
+    entry = {
+        "event": "risk_blocked",
+        "timestamp": "2025-01-02T09:15:00+00:00",
+        "id": "decision-variant",
+    }
+
+    ok = QMetaObject.invokeMethod(
+        service,
+        "triggerOperatorAction",
+        Qt.ConnectionType.DirectConnection,
+        Q_ARG("QString", "requestFreeze"),
+        Q_ARG("QVariant", entry),
+    )
+
+    assert app is not None
+    assert ok is True
+    assert service.lastOperatorAction["action"] == "freeze"
+    assert service.lastOperatorAction["entry"]["id"] == "decision-variant"
+
+
+def test_runtime_service_request_freeze_can_be_invoked_via_qvariant_signature() -> None:
+    app = QCoreApplication.instance() or QCoreApplication([])
+    service = RuntimeService(decision_loader=lambda limit: [])
+    entry = {
+        "event": "risk_blocked",
+        "timestamp": "2025-01-02T09:15:00+00:00",
+        "id": "decision-freeze-variant",
+    }
+
+    ok = QMetaObject.invokeMethod(
+        service,
+        "requestFreeze",
+        Qt.ConnectionType.DirectConnection,
+        Q_ARG("QVariant", entry),
+    )
+
+    assert app is not None
+    assert ok is True
+    assert service.lastOperatorAction["action"] == "freeze"
+    assert service.lastOperatorAction["entry"]["id"] == "decision-freeze-variant"
+
+def test_runtime_service_trigger_operator_action_normalizes_qjsvalue_like_entry() -> None:
+    service = RuntimeService(decision_loader=lambda limit: [])
+
+    class _FakeQjsValue:
+        def toVariant(self):
+            return {
+                "record": {
+                    "event": "risk_blocked",
+                    "timestamp": "2025-01-02T09:15:00+00:00",
+                    "id": "decision-qjs-trigger",
+                }
+            }
+
+    assert service.triggerOperatorAction("requestFreeze", _FakeQjsValue()) is True
+    assert service.lastOperatorAction["action"] == "freeze"
+    assert service.lastOperatorAction["entry"]["id"] == "decision-qjs-trigger"
+
+
 def test_runtime_service_operator_action_normalizes_qjsvalue_like_entry() -> None:
     service = RuntimeService(decision_loader=lambda limit: [])
 
