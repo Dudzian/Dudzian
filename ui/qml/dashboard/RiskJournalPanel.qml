@@ -330,6 +330,10 @@ Item {
         drilldownDialog.open()
     }
 
+    function isHandled(result) {
+        return result === true
+    }
+
     function triggerOperatorAction(action) {
         if (!selectedEntry)
             return
@@ -337,27 +341,43 @@ Item {
         const isOperatorAction = action === "requestFreeze"
             || action === "requestUnfreeze"
             || action === "requestUnblock"
+        const recordSummary = {
+            id: record && record.id ? record.id : "",
+            timestamp: record && record.timestamp ? record.timestamp : "",
+            event: record && record.event ? record.event : "",
+            portfolio: record && record.portfolio ? record.portfolio : "",
+            strategy: record && record.strategy ? record.strategy : ""
+        }
         if (!isOperatorAction)
             console.warn("unsupported non-operator action in RiskJournalPanel:", action)
         if (isOperatorAction && runtimeService) {
             let handled = false
             try {
-                handled = runtimeService.triggerOperatorAction(action, record) === true
+                let mainResult = runtimeService.triggerOperatorAction(action, record)
+                handled = isHandled(mainResult)
+                if (!handled && (mainResult === undefined || mainResult === null))
+                    console.warn("runtimeService triggerOperatorAction returned void-like value:", action, recordSummary)
             } catch (e) {
                 console.warn("runtimeService triggerOperatorAction failed:", action, e)
             }
             if (!handled) {
                 try {
+                    let fallbackResult = false
                     if (action === "requestFreeze")
-                        runtimeService.requestFreeze(record)
+                        fallbackResult = runtimeService.requestFreeze(record)
                     else if (action === "requestUnfreeze")
-                        runtimeService.requestUnfreeze(record)
+                        fallbackResult = runtimeService.requestUnfreeze(record)
                     else if (action === "requestUnblock")
-                        runtimeService.requestUnblock(record)
+                        fallbackResult = runtimeService.requestUnblock(record)
+                    handled = isHandled(fallbackResult)
+                    if (!handled && (fallbackResult === undefined || fallbackResult === null))
+                        console.warn("runtimeService fallback returned void-like value:", action, recordSummary)
                 } catch (fallbackError) {
                     console.warn("runtimeService fallback failed:", action, fallbackError)
                 }
             }
+            if (!handled)
+                console.warn("runtimeService operator action was not handled:", action, recordSummary)
         }
         if (isOperatorAction) {
             if (action === "requestFreeze")
