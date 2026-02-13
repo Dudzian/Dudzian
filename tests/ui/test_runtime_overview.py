@@ -1574,223 +1574,296 @@ def test_runtime_overview_risk_panel_filters_and_actions() -> None:
 
 
 @pytest.mark.timeout(30)
-def test_runtime_overview_cards_react_to_live_signals() -> None:
+def test_runtime_overview_cards_react_to_live_signals(tmp_path: Path) -> None:
     provider = _StubTelemetryProvider()
     runtime_service = _StubRuntimeService()
 
+    created_app = QApplication.instance() is None
     app = QApplication.instance() or QApplication([])
     engine = QQmlApplicationEngine()
-    engine.rootContext().setContextProperty("telemetryProvider", provider)
-    engine.rootContext().setContextProperty("runtimeService", runtime_service)
-    qml_path = Path(__file__).resolve().parents[2] / "ui" / "qml" / "dashboard" / "RuntimeOverview.qml"
-    engine.load(QUrl.fromLocalFile(str(qml_path)))
-    assert engine.rootObjects(), "Nie udało się załadować RuntimeOverview.qml"
-    root = engine.rootObjects()[0]
+    quick_window = QQuickWindow()
 
-    provider.refreshTelemetry()
-    runtime_service.push_decisions(
-        [
+    try:
+        engine.rootContext().setContextProperty("telemetryProvider", provider)
+        engine.rootContext().setContextProperty("runtimeService", runtime_service)
+        settings_store = UISettingsStore(tmp_path / "ui_settings_live.json")
+        dashboard_controller = DashboardSettingsController(store=settings_store, parent=engine)
+        engine.rootContext().setContextProperty("dashboardSettingsController", dashboard_controller)
+        qml_path = Path(__file__).resolve().parents[2] / "ui" / "qml" / "dashboard" / "RuntimeOverview.qml"
+
+        initial_properties = {
+            "dashboardSettingsController": dashboard_controller,
+            "complianceController": None,
+            "reportController": None,
+            "width": 1280,
+            "height": 720,
+        }
+        # QML buduje listę kart w onCompleted, więc property musi być ustawione PRZED load().
+        if hasattr(engine, "setInitialProperties"):
+            engine.setInitialProperties(initial_properties)
+            engine.load(QUrl.fromLocalFile(str(qml_path)))
+            assert engine.rootObjects(), "Nie udało się załadować RuntimeOverview.qml"
+            root = engine.rootObjects()[0]
+        else:
+            component = QQmlComponent(engine, QUrl.fromLocalFile(str(qml_path)))
+            if hasattr(component, "createWithInitialProperties"):
+                root = component.createWithInitialProperties(initial_properties)
+            else:
+                root = component.create()
+                if root is not None:
+                    for key, value in initial_properties.items():
+                        root.setProperty(key, value)
+            assert root is not None, "Nie udało się utworzyć RuntimeOverview.qml"
+
+        assert isinstance(root, QQuickItem), (
+            "RuntimeOverview root musi być QQuickItem, aby osadzić go w oknie hosta. "
+            f"Otrzymano: {type(root)!r}"
+        )
+
+        def _wait_for_child(object_name: str, timeout_ms: int = 1000) -> QObject | None:
+            deadline = time.monotonic() + (timeout_ms / 1000.0)
+            while time.monotonic() < deadline:
+                app.processEvents()
+                child = root.findChild(QObject, object_name)
+                if child is not None:
+                    return child
+                qt_wait(50)
+            app.processEvents()
+            return root.findChild(QObject, object_name)
+
+        quick_window.setWidth(1280)
+        quick_window.setHeight(720)
+        root.setParentItem(quick_window.contentItem())
+        root.setWidth(quick_window.width())
+        root.setHeight(quick_window.height())
+        quick_window.show()
+        app.processEvents()
+
+        default_order = root.property("defaultCardOrder")
+        assert isinstance(default_order, list), (
+            "RuntimeOverview.defaultCardOrder powinno być listą cardId."
+        )
+        dashboard_controller.setCardOrder(default_order)
+        app.processEvents()
+        assert _wait_for_child("runtimeOverviewFeedSlaCard") is not None, (
+            "Nie udało się zbudować runtimeOverviewFeedSlaCard w zadanym czasie."
+        )
+
+        provider.refreshTelemetry()
+        runtime_service.push_decisions(
+            [
+                {
+                    "event": "order_submitted",
+                    "timestamp": "2025-03-01T12:00:00+00:00",
+                    "portfolio": "alpha",
+                    "environment": "prod",
+                    "strategy": "adaptive_alpha",
+                    "riskProfile": "balanced",
+                    "marketRegime": {"regime": "bull"},
+                    "decision": {"state": "trade", "model": "xgb-v6"},
+                    "ai": {"confidence": 0.91},
+                }
+            ]
+        )
+        app.processEvents()
+
+        decisions = root.property("aiDecisions")
+        assert isinstance(decisions, list)
+        assert decisions and decisions[0]["event"] == "order_submitted"
+        assert decisions[0]["decision"]["model"] == "xgb-v6"
+
+        runtime_service.push_error("feed degraded")
+        app.processEvents()
+
+        assert root.property("aiDecisionError") == "feed degraded"
+        ai_error_banner = root.findChild(QObject, "runtimeOverviewAiErrorBanner")
+        assert ai_error_banner is not None and ai_error_banner.property("visible") is True
+
+        runtime_service.push_feed_transport(
             {
-                "event": "order_submitted",
+                "status": "connected",
+                "mode": "grpc",
+                "label": "grpc://localhost:5100",
+                "reconnects": 2,
+                "latencyP95": 2800.0,
+                "lastError": "timeout spike",
+            }
+        )
+        runtime_service.push_feed_health(
+            {
+                "status": "connected",
+                "reconnects": 2,
+                "downtimeMs": 500.0,
+                "lastError": "timeout spike",
+            }
+        )
+        runtime_service.push_feed_sla_report(
+            {
+                "p95_ms": 2800.0,
+                "p50_ms": 1200.0,
+                "latency_state": "warning",
+                "latency_warning_ms": 2500.0,
+                "reconnects": 2,
+                "reconnects_warning": 3,
+                "reconnects_state": "ok",
+                "downtime_seconds": 0.5,
+                "downtime_state": "ok",
+                "downtime_warning_seconds": 30.0,
+                "sla_state": "warning",
+                "nextRetrySeconds": 1.5,
+            }
+        )
+        runtime_service.push_feed_alerts(
+            [
+                {
+                    "metric": "latency",
+                    "label": "Latencja p95",
+                    "severity": "warning",
+                    "formattedValue": "2800 ms",
+                    "timestamp": "2025-03-01T12:00:00Z",
+                },
+                {
+                    "metric": "reconnects",
+                    "label": "Reconnecty",
+                    "severity": "info",
+                    "formattedValue": "2",
+                    "timestamp": "2025-03-01T12:00:00Z",
+                },
+            ],
+            [{"name": "cloud-escalation", "status": "ok"}],
+        )
+        app.processEvents()
+
+        sla_card = _wait_for_child("runtimeOverviewFeedSlaCard")
+        assert sla_card is not None
+        sla_state_label = _wait_for_child("runtimeOverviewSlaStateLabel")
+        assert sla_state_label is not None
+        assert "connected" in sla_state_label.property("text").lower()
+        sla_latency_label = _wait_for_child("runtimeOverviewSlaLatency")
+        assert sla_latency_label is not None and "2800" in sla_latency_label.property("text")
+        sla_last_error = _wait_for_child("runtimeOverviewSlaLastError")
+        assert sla_last_error is not None and sla_last_error.property("visible") is True
+        sla_retry = _wait_for_child("runtimeOverviewSlaRetry")
+        assert sla_retry is not None and "1.5" in sla_retry.property("text")
+        alert_list = _wait_for_child("runtimeOverviewSlaAlertList")
+        assert alert_list is not None and alert_list.property("count") == 2
+        escalation_label = _wait_for_child("runtimeOverviewSlaEscalationStatus")
+        assert escalation_label is not None
+        assert "cloud-escalation" in escalation_label.property("text")
+
+        metrics = {
+            "blockCount": 1,
+            "uniqueRiskFlags": ["latency_spike"],
+            "uniqueStressFailures": ["latency_spike"],
+            "strategySummaries": [
+                {
+                    "strategy": "adaptive_alpha",
+                    "blockCount": 1,
+                    "freezeCount": 0,
+                    "stressOverrideCount": 1,
+                    "severity": "block",
+                    "lastTimestamp": "2025-03-01T12:00:00+00:00",
+                    "lastEvent": "risk_blocked",
+                    "lastRiskFlags": ["latency_spike"],
+                }
+            ],
+            "lastBlock": {"timestamp": "2025-03-01T12:00:00+00:00", "strategy": "adaptive_alpha"},
+        }
+        timeline = [
+            {
+                "event": "risk_blocked",
                 "timestamp": "2025-03-01T12:00:00+00:00",
-                "portfolio": "alpha",
-                "environment": "prod",
                 "strategy": "adaptive_alpha",
-                "riskProfile": "balanced",
-                "marketRegime": {"regime": "bull"},
-                "decision": {"state": "trade", "model": "xgb-v6"},
-                "ai": {"confidence": 0.91},
+                "riskFlags": ["latency_spike"],
+                "stressFailures": ["latency_spike"],
             }
         ]
-    )
-    app.processEvents()
+        runtime_service.push_risk_update(
+            metrics,
+            timeline,
+            {"action": "freeze", "entry": timeline[0], "timestamp": "2025-03-01T12:05:00+00:00"},
+        )
+        app.processEvents()
 
-    decisions = root.property("aiDecisions")
-    assert isinstance(decisions, list)
-    assert decisions and decisions[0]["event"] == "order_submitted"
-    assert decisions[0]["decision"]["model"] == "xgb-v6"
+        risk_metrics = root.property("riskMetrics")
+        assert risk_metrics.get("blockCount") == 1
+        assert "latency_spike" in risk_metrics.get("uniqueRiskFlags", [])
 
-    runtime_service.push_error("feed degraded")
-    app.processEvents()
+        risk_timeline = root.property("riskTimeline")
+        assert risk_timeline and risk_timeline[0]["event"] == "risk_blocked"
 
-    assert root.property("aiDecisionError") == "feed degraded"
-    ai_error_banner = root.findChild(QObject, "runtimeOverviewAiErrorBanner")
-    assert ai_error_banner is not None and ai_error_banner.property("visible") is True
+        operator_action = root.property("lastOperatorAction")
+        assert operator_action.get("action") == "freeze"
+        assert operator_action.get("timestamp") == "2025-03-01T12:05:00+00:00"
 
-    runtime_service.push_feed_transport(
-        {
-            "status": "connected",
-            "mode": "grpc",
-            "label": "grpc://localhost:5100",
-            "reconnects": 2,
-            "latencyP95": 2800.0,
-            "lastError": "timeout spike",
-        }
-    )
-    runtime_service.push_feed_health(
-        {
-            "status": "connected",
-            "reconnects": 2,
-            "downtimeMs": 500.0,
-            "lastError": "timeout spike",
-        }
-    )
-    runtime_service.push_feed_sla_report(
-        {
-            "p95_ms": 2800.0,
-            "p50_ms": 1200.0,
-            "latency_state": "warning",
-            "latency_warning_ms": 2500.0,
-            "reconnects": 2,
-            "reconnects_warning": 3,
-            "reconnects_state": "ok",
-            "downtime_seconds": 0.5,
-            "downtime_state": "ok",
-            "downtime_warning_seconds": 30.0,
-            "sla_state": "warning",
-            "nextRetrySeconds": 1.5,
-        }
-    )
-    runtime_service.push_feed_alerts(
-        [
+        provider.push_error("telemetry degraded")
+        app.processEvents()
+
+        banner = root.findChild(QObject, "runtimeOverviewErrorBanner")
+        assert banner is not None and banner.property("visible") is True
+
+        runtime_service.push_cycle_metrics(
             {
-                "metric": "latency",
-                "label": "Latencja p95",
-                "severity": "warning",
-                "formattedValue": "2800 ms",
-                "timestamp": "2025-03-01T12:00:00Z",
-            },
-            {
-                "metric": "reconnects",
-                "label": "Reconnecty",
-                "severity": "info",
-                "formattedValue": "2",
-                "timestamp": "2025-03-01T12:00:00Z",
-            },
-        ],
-        [{"name": "cloud-escalation", "status": "ok"}],
-    )
-    app.processEvents()
-
-    sla_card = root.findChild(QObject, "runtimeOverviewFeedSlaCard")
-    assert sla_card is not None
-    sla_state_label = root.findChild(QObject, "runtimeOverviewSlaStateLabel")
-    assert sla_state_label is not None
-    assert "connected" in sla_state_label.property("text").lower()
-    sla_latency_label = root.findChild(QObject, "runtimeOverviewSlaLatency")
-    assert sla_latency_label is not None and "2800" in sla_latency_label.property("text")
-    sla_last_error = root.findChild(QObject, "runtimeOverviewSlaLastError")
-    assert sla_last_error is not None and sla_last_error.property("visible") is True
-    sla_retry = root.findChild(QObject, "runtimeOverviewSlaRetry")
-    assert sla_retry is not None and "1.5" in sla_retry.property("text")
-    alert_list = root.findChild(QObject, "runtimeOverviewSlaAlertList")
-    assert alert_list is not None and alert_list.property("count") == 2
-    escalation_label = root.findChild(QObject, "runtimeOverviewSlaEscalationStatus")
-    assert escalation_label is not None
-    assert "cloud-escalation" in escalation_label.property("text")
-
-    metrics = {
-        "blockCount": 1,
-        "uniqueRiskFlags": ["latency_spike"],
-        "uniqueStressFailures": ["latency_spike"],
-        "strategySummaries": [
-            {
-                "strategy": "adaptive_alpha",
-                "blockCount": 1,
-                "freezeCount": 0,
-                "stressOverrideCount": 1,
-                "severity": "block",
-                "lastTimestamp": "2025-03-01T12:00:00+00:00",
-                "lastEvent": "risk_blocked",
-                "lastRiskFlags": ["latency_spike"],
+                "cycles_total": 42.0,
+                "strategy_switch_total": 6.0,
+                "guardrail_blocks_total": 2.0,
+                "cycle_latency_p50_ms": 1250.0,
+                "cycle_latency_p95_ms": 2450.0,
             }
-        ],
-        "lastBlock": {"timestamp": "2025-03-01T12:00:00+00:00", "strategy": "adaptive_alpha"},
-    }
-    timeline = [
-        {
-            "event": "risk_blocked",
-            "timestamp": "2025-03-01T12:00:00+00:00",
-            "strategy": "adaptive_alpha",
-            "riskFlags": ["latency_spike"],
-            "stressFailures": ["latency_spike"],
-        }
-    ]
-    runtime_service.push_risk_update(
-        metrics,
-        timeline,
-        {"action": "freeze", "entry": timeline[0], "timestamp": "2025-03-01T12:05:00+00:00"},
-    )
-    app.processEvents()
+        )
+        app.processEvents()
 
-    risk_metrics = root.property("riskMetrics")
-    assert risk_metrics.get("blockCount") == 1
-    assert "latency_spike" in risk_metrics.get("uniqueRiskFlags", [])
+        cycle_group = root.findChild(QObject, "runtimeOverviewCycleMetricsGroup")
+        assert cycle_group is not None
+        cycle_count = cycle_group.findChild(QObject, "runtimeOverviewCycleCount")
+        assert cycle_count is not None and "42" in cycle_count.property("text")
+        strategy_switches = cycle_group.findChild(QObject, "runtimeOverviewStrategySwitches")
+        assert strategy_switches is not None and "6" in strategy_switches.property("text")
+        guardrail_blocks = cycle_group.findChild(QObject, "runtimeOverviewGuardrailBlocks")
+        assert guardrail_blocks is not None and "2" in guardrail_blocks.property("text")
+        guardrail_alert = cycle_group.findChild(QObject, "runtimeOverviewGuardrailAlert")
+        assert guardrail_alert is not None and guardrail_alert.property("visible") is True
+        latency_label = cycle_group.findChild(QObject, "runtimeOverviewCycleLatency")
+        assert latency_label is not None
+        latency_text = latency_label.property("text")
+        assert "2450" in latency_text
 
-    risk_timeline = root.property("riskTimeline")
-    assert risk_timeline and risk_timeline[0]["event"] == "risk_blocked"
+        runtime_service.push_longpoll_metrics(
+            [
+                {
+                    "labels": {"adapter": "binance", "scope": "spot", "environment": "paper"},
+                    "requestLatency": {"p50": 0.150, "p95": 0.480},
+                    "httpErrors": {"total": 2},
+                    "reconnects": {"attempts": 3, "failure": 1},
+                }
+            ]
+        )
+        app.processEvents()
 
-    operator_action = root.property("lastOperatorAction")
-    assert operator_action.get("action") == "freeze"
-    assert operator_action.get("timestamp") == "2025-03-01T12:05:00+00:00"
-
-    provider.push_error("telemetry degraded")
-    app.processEvents()
-
-    banner = root.findChild(QObject, "runtimeOverviewErrorBanner")
-    assert banner is not None and banner.property("visible") is True
-
-    runtime_service.push_cycle_metrics(
-        {
-            "cycles_total": 42.0,
-            "strategy_switch_total": 6.0,
-            "guardrail_blocks_total": 2.0,
-            "cycle_latency_p50_ms": 1250.0,
-            "cycle_latency_p95_ms": 2450.0,
-        }
-    )
-    app.processEvents()
-
-    cycle_group = root.findChild(QObject, "runtimeOverviewCycleMetricsGroup")
-    assert cycle_group is not None
-    cycle_count = cycle_group.findChild(QObject, "runtimeOverviewCycleCount")
-    assert cycle_count is not None and "42" in cycle_count.property("text")
-    strategy_switches = cycle_group.findChild(QObject, "runtimeOverviewStrategySwitches")
-    assert strategy_switches is not None and "6" in strategy_switches.property("text")
-    guardrail_blocks = cycle_group.findChild(QObject, "runtimeOverviewGuardrailBlocks")
-    assert guardrail_blocks is not None and "2" in guardrail_blocks.property("text")
-    guardrail_alert = cycle_group.findChild(QObject, "runtimeOverviewGuardrailAlert")
-    assert guardrail_alert is not None and guardrail_alert.property("visible") is True
-    latency_label = cycle_group.findChild(QObject, "runtimeOverviewCycleLatency")
-    assert latency_label is not None
-    latency_text = latency_label.property("text")
-    assert "2450" in latency_text
-
-    runtime_service.push_longpoll_metrics(
-        [
-            {
-                "labels": {"adapter": "binance", "scope": "spot", "environment": "paper"},
-                "requestLatency": {"p50": 0.150, "p95": 0.480},
-                "httpErrors": {"total": 2},
-                "reconnects": {"attempts": 3, "failure": 1},
-            }
-        ]
-    )
-    app.processEvents()
-
-    longpoll_entries = root.findChildren(QObject, "runtimeOverviewLongPollEntry")
-    assert longpoll_entries, "Brak widocznych wpisów long-pollowych"
-    header = longpoll_entries[0].findChild(QObject, "runtimeOverviewLongPollHeader")
-    assert header is not None and "binance" in header.property("text")
-    latency_label = longpoll_entries[0].findChild(QObject, "runtimeOverviewLongPollLatency")
-    assert latency_label is not None
-    assert "0.480" in latency_label.property("text")
-    reconnect_label = longpoll_entries[0].findChild(QObject, "runtimeOverviewLongPollReconnects")
-    assert reconnect_label is not None
-    assert "próby 3" in reconnect_label.property("text")
-
-    engine.deleteLater()
-    app.quit()
+        longpoll_entries = root.findChildren(QObject, "runtimeOverviewLongPollEntry")
+        assert longpoll_entries, "Brak widocznych wpisów long-pollowych"
+        header = longpoll_entries[0].findChild(QObject, "runtimeOverviewLongPollHeader")
+        assert header is not None and "binance" in header.property("text")
+        latency_label = longpoll_entries[0].findChild(QObject, "runtimeOverviewLongPollLatency")
+        assert latency_label is not None
+        assert "0.480" in latency_label.property("text")
+        reconnect_label = longpoll_entries[0].findChild(QObject, "runtimeOverviewLongPollReconnects")
+        assert reconnect_label is not None
+        assert "próby 3" in reconnect_label.property("text")
+    finally:
+        try:
+            if "root" in locals() and isinstance(root, QQuickItem):
+                root.setParentItem(None)
+                root.deleteLater()
+        except Exception:
+            pass
+        try:
+            quick_window.close()
+        except Exception:
+            pass
+        engine.deleteLater()
+        if created_app:
+            app.quit()
 
 
 def test_telemetry_provider_reports_errors() -> None:
