@@ -223,6 +223,88 @@ def test_stream_retries_after_network_error(monkeypatch: pytest.MonkeyPatch) -> 
     stream.close()
 
 
+def test_local_long_poll_stream_stop_induced_network_errors_do_not_reconnect(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    registry = MetricsRegistry()
+
+    def stop_then_fail(request, timeout=0.0):  # noqa: D401
+        stream._signal_stop()
+        raise URLError("socket closed")
+
+    monkeypatch.setattr("bot_core.exchanges.streaming.urlopen", stop_then_fail)
+
+    stream = LocalLongPollStream(
+        base_url="http://127.0.0.1:9106",
+        path="/stop-induced-error",
+        channels=["ticker"],
+        adapter="test",
+        scope="public",
+        environment="paper",
+        poll_interval=0.0,
+        timeout=0.1,
+        max_retries=3,
+        backoff_base=0.0,
+        backoff_cap=0.0,
+        jitter=(0.0, 0.0),
+        metrics_registry=registry,
+    )
+
+    # Nie powinno podnosić wyjątku ani uruchamiać reconnectów, gdy błąd wynika
+    # z celowego stopu streamu.
+    stream._poll_once()
+
+    reconnect_metric = registry.get("bot_exchange_stream_reconnects_total")
+    assert isinstance(reconnect_metric, CounterMetric)
+    labels = {"adapter": "test", "scope": "public", "environment": "paper", "status": "attempt", "reason": "network"}
+    assert reconnect_metric.value(labels=labels) == pytest.approx(0.0)
+
+    stream.close()
+
+
+def test_local_long_poll_stream_stop_induced_value_error_does_not_reconnect(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    registry = MetricsRegistry()
+
+    def stop_then_fail(request, timeout=0.0):  # noqa: D401
+        stream._signal_stop()
+        raise ValueError("read of closed file")
+
+    monkeypatch.setattr("bot_core.exchanges.streaming.urlopen", stop_then_fail)
+
+    stream = LocalLongPollStream(
+        base_url="http://127.0.0.1:9107",
+        path="/stop-induced-value-error",
+        channels=["ticker"],
+        adapter="test",
+        scope="public",
+        environment="paper",
+        poll_interval=0.0,
+        timeout=0.1,
+        max_retries=3,
+        backoff_base=0.0,
+        backoff_cap=0.0,
+        jitter=(0.0, 0.0),
+        metrics_registry=registry,
+    )
+
+    stream._poll_once()
+
+    reconnect_metric = registry.get("bot_exchange_stream_reconnects_total")
+    assert isinstance(reconnect_metric, CounterMetric)
+    labels = {
+        "adapter": "test",
+        "scope": "public",
+        "environment": "paper",
+        "status": "attempt",
+        "reason": "network",
+    }
+    assert reconnect_metric.value(labels=labels) == pytest.approx(0.0)
+
+    stream.close()
+
+
 def test_local_long_poll_stream_backpressure_metrics(monkeypatch: pytest.MonkeyPatch) -> None:
     registry = MetricsRegistry()
     payload = {
