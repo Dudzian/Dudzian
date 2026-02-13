@@ -8,10 +8,12 @@ from pathlib import Path
 from typing import Iterable, Mapping, MutableMapping, Sequence
 
 _DEFAULT_CARD_ORDER = (
+    "feed_sla",
     "io_queue",
     "guardrails",
     "retraining",
     "compliance",
+    "risk_journal",
     "ai_decisions",
 )
 _DEFAULT_REFRESH_INTERVAL_MS = 4000
