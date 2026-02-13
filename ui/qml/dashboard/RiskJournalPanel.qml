@@ -334,13 +334,28 @@ Item {
         return result === true
     }
 
+    function normalizeOperatorAction(action) {
+        if (action === "freeze")
+            return "requestFreeze"
+        if (action === "unfreeze")
+            return "requestUnfreeze"
+        if (action === "unblock")
+            return "requestUnblock"
+        if (action === "requestFreeze"
+                || action === "requestUnfreeze"
+                || action === "requestUnblock")
+            return action
+        return ""
+    }
+
     function triggerOperatorAction(action) {
-        if (!selectedEntry)
+        const normalizedAction = normalizeOperatorAction(action)
+        const isOperatorAction = normalizedAction.length > 0
+        if (isOperatorAction && !selectedEntry) {
+            console.warn("operator action ignored due to missing selectedEntry:", normalizedAction)
             return
-        let record = selectedEntry.record || selectedEntry
-        const isOperatorAction = action === "requestFreeze"
-            || action === "requestUnfreeze"
-            || action === "requestUnblock"
+        }
+        let record = selectedEntry ? (selectedEntry.record || selectedEntry) : {}
         const recordSummary = {
             id: record && record.id ? record.id : "",
             timestamp: record && record.timestamp ? record.timestamp : "",
@@ -353,38 +368,38 @@ Item {
         if (isOperatorAction && runtimeService) {
             let handled = false
             try {
-                let mainResult = runtimeService.triggerOperatorAction(action, record)
+                let mainResult = runtimeService.triggerOperatorAction(normalizedAction, record)
                 handled = isHandled(mainResult)
                 if (!handled && (mainResult === undefined || mainResult === null))
-                    console.warn("runtimeService triggerOperatorAction returned void-like value:", action, recordSummary)
+                    console.warn("runtimeService triggerOperatorAction returned void-like value:", normalizedAction, recordSummary)
             } catch (e) {
-                console.warn("runtimeService triggerOperatorAction failed:", action, e)
+                console.warn("runtimeService triggerOperatorAction failed:", normalizedAction, e)
             }
             if (!handled) {
                 try {
                     let fallbackResult = false
-                    if (action === "requestFreeze")
+                    if (normalizedAction === "requestFreeze")
                         fallbackResult = runtimeService.requestFreeze(record)
-                    else if (action === "requestUnfreeze")
+                    else if (normalizedAction === "requestUnfreeze")
                         fallbackResult = runtimeService.requestUnfreeze(record)
-                    else if (action === "requestUnblock")
+                    else if (normalizedAction === "requestUnblock")
                         fallbackResult = runtimeService.requestUnblock(record)
                     handled = isHandled(fallbackResult)
                     if (!handled && (fallbackResult === undefined || fallbackResult === null))
-                        console.warn("runtimeService fallback returned void-like value:", action, recordSummary)
+                        console.warn("runtimeService fallback returned void-like value:", normalizedAction, recordSummary)
                 } catch (fallbackError) {
-                    console.warn("runtimeService fallback failed:", action, fallbackError)
+                    console.warn("runtimeService fallback failed:", normalizedAction, fallbackError)
                 }
             }
             if (!handled)
-                console.warn("runtimeService operator action was not handled:", action, recordSummary)
+                console.warn("runtimeService operator action was not handled:", normalizedAction, recordSummary)
         }
         if (isOperatorAction) {
-            if (action === "requestFreeze")
+            if (normalizedAction === "requestFreeze")
                 root.freezeRequested(record)
-            else if (action === "requestUnfreeze")
+            else if (normalizedAction === "requestUnfreeze")
                 root.unfreezeRequested(record)
-            else if (action === "requestUnblock")
+            else if (normalizedAction === "requestUnblock")
                 root.unblockRequested(record)
         }
         drilldownDialog.close()

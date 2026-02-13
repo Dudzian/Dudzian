@@ -1496,26 +1496,51 @@ def test_runtime_overview_risk_panel_filters_and_actions() -> None:
     assert top_summary_card.property("summarySeverity") == "block"
 
     entry = filtered_lat[0]
-    QMetaObject.invokeMethod(
+    ok = QMetaObject.invokeMethod(
         risk_panel,
         "openDrilldown",
         Qt.DirectConnection,
         Q_ARG("QVariant", entry),
     )
+    assert ok
     app.processEvents()
     assert risk_panel.property("selectedEntry") is not None
 
-    QMetaObject.invokeMethod(
+    ok = QMetaObject.invokeMethod(
         risk_panel,
         "triggerOperatorAction",
         Qt.DirectConnection,
-        Q_ARG("QString", "requestFreeze"),
+        Q_ARG("QVariant", "requestFreeze"),
     )
+    assert ok
     app.processEvents()
 
     last_action = runtime_service.lastOperatorAction
     assert last_action.get("action") == "freeze"
     assert last_action.get("entry", {}).get("event") == entry.get("record", {}).get("event")
+
+    ok = QMetaObject.invokeMethod(
+        risk_panel,
+        "openDrilldown",
+        Qt.DirectConnection,
+        Q_ARG("QVariant", entry),
+    )
+    assert ok
+    app.processEvents()
+    assert risk_panel.property("selectedEntry") is not None
+
+    ok = QMetaObject.invokeMethod(
+        risk_panel,
+        "triggerOperatorAction",
+        Qt.DirectConnection,
+        Q_ARG("QVariant", "freeze"),
+    )
+    assert ok
+    app.processEvents()
+
+    alias_last_action = runtime_service.lastOperatorAction
+    assert alias_last_action.get("action") == "freeze"
+    assert alias_last_action.get("entry", {}).get("event") == entry.get("record", {}).get("event")
 
     assert risk_panel.property("selectedEntry") is None
 
