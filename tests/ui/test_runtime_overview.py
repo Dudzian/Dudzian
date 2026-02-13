@@ -23,6 +23,7 @@ try:  # pragma: no cover - zależne od środowiska
         Qt,
         QMetaObject,
         Q_ARG,
+        Slot,
         Signal,
         QByteArray,
     )
@@ -63,6 +64,13 @@ except ImportError as exc:  # pragma: no cover - brak PySide6 lub zależności s
     class Signal:  # type: ignore[no-redef]
         def __init__(self, *args: Any, **kwargs: Any) -> None:
             pass
+
+    class Slot:  # type: ignore[no-redef]
+        def __init__(self, *args: Any, **kwargs: Any) -> None:
+            pass
+
+        def __call__(self, func: Any) -> Any:
+            return func
 
     class QByteArray:  # type: ignore[no-redef]
         pass
@@ -346,6 +354,38 @@ class _StubRuntimeService(QObject):
         if action is not None:
             self._last_operator_action = dict(action)
             self.operatorActionChanged.emit()
+
+    @Slot(str, result=bool)
+    @Slot(str, "QVariant", result=bool)
+    def triggerOperatorAction(self, action: str, entry: Any = None) -> bool:  # type: ignore[override]
+        normalized = {
+            "requestFreeze": "freeze",
+            "requestUnfreeze": "unfreeze",
+            "requestUnblock": "unblock",
+        }.get(action, action)
+        payload = dict(entry) if isinstance(entry, Mapping) else {}
+        self._last_operator_action = {
+            "action": normalized,
+            "entry": payload,
+            "timestamp": payload.get("timestamp", ""),
+        }
+        self.operatorActionChanged.emit()
+        return True
+
+    @Slot(result=bool)
+    @Slot("QVariant", result=bool)
+    def requestFreeze(self, entry: Any = None) -> bool:  # type: ignore[override]
+        return self.triggerOperatorAction("requestFreeze", entry)
+
+    @Slot(result=bool)
+    @Slot("QVariant", result=bool)
+    def requestUnfreeze(self, entry: Any = None) -> bool:  # type: ignore[override]
+        return self.triggerOperatorAction("requestUnfreeze", entry)
+
+    @Slot(result=bool)
+    @Slot("QVariant", result=bool)
+    def requestUnblock(self, entry: Any = None) -> bool:  # type: ignore[override]
+        return self.triggerOperatorAction("requestUnblock", entry)
 
     def push_longpoll_metrics(self, payload: list[dict[str, Any]]) -> None:
         self._longpoll_metrics = [dict(entry) for entry in payload]
