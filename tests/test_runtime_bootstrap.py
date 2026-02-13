@@ -895,7 +895,15 @@ def test_bootstrap_environment_live_exposes_checklist(
     verification = context.live_signature_verification
     assert verification is not None
     verified_docs = verification["documents"]
-    assert set(verified_docs) == {
+    if isinstance(verified_docs, Mapping):
+        verified_doc_names = set(verified_docs)
+    else:
+        verified_doc_names = {
+            str(doc["name"])
+            for doc in verified_docs
+            if isinstance(doc, Mapping) and doc.get("name")
+        }
+    assert verified_doc_names == {
         "kyc_packet",
         "risk_profile_alignment",
         "penetration_report",
