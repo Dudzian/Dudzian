@@ -7,7 +7,7 @@ import time
 from datetime import datetime, timezone
 import base64
 from pathlib import Path
-from typing import Any, Mapping, Iterator, NoReturn
+from typing import Any, Mapping, Iterator, NoReturn, Callable
 import sys
 
 import pytest
@@ -1644,9 +1644,76 @@ def test_runtime_overview_cards_react_to_live_signals(tmp_path: Path) -> None:
             "RuntimeOverview.defaultCardOrder powinno być listą cardId."
         )
         dashboard_controller.setCardOrder(default_order)
+
+        def _wait_until(predicate: Callable[[], bool], timeout_ms: int = 5000) -> bool:
+            deadline = time.monotonic() + timeout_ms / 1000.0
+            while time.monotonic() < deadline:
+                app.processEvents()
+                if predicate():
+                    return True
+                qt_wait(50)
+            app.processEvents()
+            return bool(predicate())
+
+        # QML buduje siatkę asynchronicznie po show() i zmianie kolejności kart.
         app.processEvents()
-        assert _wait_for_child("runtimeOverviewFeedSlaCard") is not None, (
-            "Nie udało się zbudować runtimeOverviewFeedSlaCard w zadanym czasie."
+        qt_wait(250)
+        qt_wait(0)
+        app.processEvents()
+
+        def _grid_order_contains_feed_sla() -> bool:
+            order = root.property("effectiveGridCardOrder") or []
+            try:
+                return "feed_sla" in order
+            except Exception:
+                try:
+                    return "feed_sla" in list(order)
+                except Exception:
+                    return False
+
+        assert _wait_until(_grid_order_contains_feed_sla, timeout_ms=5000), (
+            "feed_sla nie pojawiło się w effectiveGridCardOrder: "
+            f"{root.property('effectiveGridCardOrder')!r}"
+        )
+
+        loader = _wait_for_child("runtimeOverviewCardLoader_feed_sla", timeout_ms=5000)
+        assert loader is not None, (
+            "Nie znaleziono loadera SLA (runtimeOverviewCardLoader_feed_sla)."
+        )
+
+        # QtQuick.Loader status: Null=0, Ready=1, Loading=2, Error=3
+        loader_ready = 1
+        loader_error = 3
+
+        def _loader_status() -> int:
+            try:
+                return int(loader.property("status"))
+            except Exception:
+                return -1
+
+        def _loader_debug_state() -> str:
+            return (
+                f"status={_loader_status()}, "
+                f"active={loader.property('active')!r}, "
+                f"source={loader.property('source')!r}, "
+                f"hasItem={loader.property('item') is not None}"
+            )
+
+        def _loader_ready_or_raise() -> bool:
+            status = _loader_status()
+            if status == loader_error:
+                err = loader.property("errorString")
+                raise AssertionError(
+                    f"Loader feed_sla jest w stanie Error: {err!r}; {_loader_debug_state()}"
+                )
+            return status == loader_ready
+
+        assert _wait_until(_loader_ready_or_raise, timeout_ms=5000), (
+            f"Loader feed_sla nie osiągnął Ready; {_loader_debug_state()}"
+        )
+
+        assert _wait_for_child("runtimeOverviewFeedSlaCard", timeout_ms=5000) is not None, (
+            "Karta SLA nie została utworzona mimo Loader.Ready."
         )
 
         provider.refreshTelemetry()
