@@ -43,7 +43,10 @@ def test_dashboard_settings_controller_persists_changes(tmp_path: Path, qapp: QA
     for required_card in ("io_queue", "guardrails", "retraining"):
         assert required_card in available_cards
 
-    controller.moveCard("retraining", -2)
+    # moveCard używa offsetu relatywnego, więc przenosimy kartę na początek
+    # niezależnie od domyślnego porządku listy kart.
+    retraining_index = controller.cardOrder.index("retraining")
+    controller.moveCard("retraining", -retraining_index)
     controller.setCardVisibility("guardrails", False)
     controller.setRefreshIntervalMs(5500)
     controller.setTheme("dark")
