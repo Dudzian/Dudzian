@@ -14,10 +14,12 @@ from core.config.ui_settings import (
 )
 
 _AVAILABLE_CARDS: tuple[str, ...] = (
+    "feed_sla",
     "io_queue",
     "guardrails",
     "retraining",
     "compliance",
+    "risk_journal",
     "ai_decisions",
 )
 
