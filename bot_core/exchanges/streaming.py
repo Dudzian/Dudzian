@@ -11,8 +11,10 @@ import math
 import os
 import random
 import socket
+import sys
 import threading
 import time
+import traceback
 import weakref
 import zlib
 from collections import deque
@@ -698,6 +700,18 @@ class LocalLongPollStream(Iterable[StreamBatch]):
             with contextlib.suppress(KeyError):
                 self._active_instances.remove(self)
 
+    @staticmethod
+    def _format_worker_stack(worker: object) -> str | None:
+        worker_ident = getattr(worker, "ident", None)
+        if worker_ident is None:
+            return None
+        with contextlib.suppress(Exception):
+            frame = sys._current_frames().get(worker_ident)
+            if frame is None:
+                return None
+            return "".join(traceback.format_stack(frame))
+        return None
+
     @classmethod
     def close_all_active(cls) -> None:
         with cls._active_lock:
@@ -721,6 +735,7 @@ class LocalLongPollStream(Iterable[StreamBatch]):
                     fallback_timeout = min(timeout_float + 0.5, cls._CLOSE_ALL_JOIN_CAP_SECONDS)
                     stream._join_worker(timeout=fallback_timeout)
                     if stream._worker_thread and stream._worker_thread.is_alive():
+                        stack_dump = cls._format_worker_stack(stream._worker_thread)
                         _LOGGER.debug(
                             "LocalLongPollStream worker nadal żyje po progresywnym join: %s (ident=%s, timeout_stream=%s, join_fallback=%s)",
                             stream._worker_thread.name,
@@ -728,6 +743,11 @@ class LocalLongPollStream(Iterable[StreamBatch]):
                             timeout_float,
                             fallback_timeout,
                         )
+                        if stack_dump:
+                            _LOGGER.debug(
+                                "LocalLongPollStream worker stack (po progresywnym join):\n%s",
+                                stack_dump,
+                            )
             except Exception:  # pragma: no cover - defensywnie w teardownie
                 _LOGGER.debug("Nie udało się zamknąć LocalLongPollStream", exc_info=True)
         for stream in active:
@@ -735,6 +755,18 @@ class LocalLongPollStream(Iterable[StreamBatch]):
                 if stream._worker_thread and stream._worker_thread.is_alive():
                     stream._signal_stop(force=True)
                     stream._join_worker(timeout=0.5)
+                    if stream._worker_thread and stream._worker_thread.is_alive():
+                        stack_dump = cls._format_worker_stack(stream._worker_thread)
+                        _LOGGER.debug(
+                            "LocalLongPollStream worker nadal żyje po force-stop: %s (ident=%s)",
+                            stream._worker_thread.name,
+                            stream._worker_thread.ident,
+                        )
+                        if stack_dump:
+                            _LOGGER.debug(
+                                "LocalLongPollStream worker stack (po force-stop):\n%s",
+                                stack_dump,
+                            )
             except Exception:  # pragma: no cover - defensywnie w teardownie
                 _LOGGER.debug(
                     "Nie udało się ponownie zamknąć LocalLongPollStream", exc_info=True
@@ -931,6 +963,28 @@ class LocalLongPollStream(Iterable[StreamBatch]):
         self._join_worker(timeout=self._DEFAULT_JOIN_TIMEOUT)
         self._unregister_if_stopped()
 
+    def _set_active_response(self, response: Any | None) -> None:
+        with self._active_response_lock:
+            self._active_response = response
+
+    def _clear_active_response(self, *, expected: Any | None = None) -> None:
+        with self._active_response_lock:
+            if expected is None or self._active_response is expected:
+                self._active_response = None
+
+    def _abort_active_response(self) -> None:
+        with self._active_response_lock:
+            response = self._active_response
+            self._active_response = None
+        if response is None:
+            return
+        with contextlib.suppress(Exception):
+            response.close()
+        response_fp = getattr(response, "fp", None)
+        if response_fp is not None:
+            with contextlib.suppress(Exception):
+                response_fp.close()
+
     def _signal_stop(self, *, force: bool = False) -> None:
         if self._closed and not force:
             return
@@ -944,20 +998,9 @@ class LocalLongPollStream(Iterable[StreamBatch]):
             self._update_queue_metric_locked()
             self._pending_condition.notify_all()
 
-        # Jeśli worker jest aktualnie zablokowany na response.read() (long-poll),
-        # spróbuj zamknąć response, żeby odblokować wątek deterministycznie.
-        try:
-            with self._active_response_lock:
-                response = self._active_response
-            if response is not None:
-                with contextlib.suppress(Exception):
-                    response.close()
-                response_fp = getattr(response, "fp", None)
-                if response_fp is not None:
-                    with contextlib.suppress(Exception):
-                        response_fp.close()
-        except Exception:  # pragma: no cover - defensywne
-            pass
+        # Nawet przy graceful-stop próbujemy przerwać in-flight read(), aby uniknąć
+        # czekania do timeoutu I/O i niedeterministycznych teardownów.
+        self._abort_active_response()
 
     def _join_worker(self, *, timeout: float | None = None) -> None:
         worker = self._worker_thread
@@ -1118,14 +1161,11 @@ class LocalLongPollStream(Iterable[StreamBatch]):
                 with urlopen(request, timeout=effective_timeout) as response:
                     # Umożliw close() przerwanie blokującego read() poprzez response.close().
                     try:
-                        with self._active_response_lock:
-                            self._active_response = response
+                        self._set_active_response(response)
                         raw_payload = response.read()
                         headers = getattr(response, "headers", None)
                     finally:
-                        with self._active_response_lock:
-                            if self._active_response is response:
-                                self._active_response = None
+                        self._clear_active_response(expected=response)
             except HTTPError as exc:
                 server_retry_after = self._retry_after(exc.headers)
                 error_duration = max(0.0, self._clock() - poll_started)
@@ -1186,6 +1226,20 @@ class LocalLongPollStream(Iterable[StreamBatch]):
                         payload=None,
                     ) from exc
             except URLError as exc:
+                # Celowe przerwanie response/socket podczas stopu może skończyć się
+                # URLError. Traktujemy to jako oczekiwane zakończenie bez reconnectu.
+                if self._closed or self._stop_event.is_set():
+                    return
+                last_error = ExchangeNetworkError(
+                    f"Nie udało się połączyć ze streamem {self._adapter}/{self._scope}.",
+                    reason=exc,
+                )
+                retryable = True
+            except (OSError, ValueError) as exc:
+                # Zamknięcie inflight response przy stopie potrafi zgłosić wyjątek
+                # bezpośrednio z warstwy I/O (np. read of closed file / socket).
+                if self._closed or self._stop_event.is_set():
+                    return
                 last_error = ExchangeNetworkError(
                     f"Nie udało się połączyć ze streamem {self._adapter}/{self._scope}.",
                     reason=exc,
