@@ -1684,6 +1684,7 @@ def test_runtime_overview_cards_react_to_live_signals(tmp_path: Path) -> None:
             try:
                 status = item.property("status")
                 active = item.property("active")
+                source_component = item.property("sourceComponent")
                 source = item.property("source")
             except Exception:
                 return False
@@ -1700,7 +1701,7 @@ def test_runtime_overview_cards_react_to_live_signals(tmp_path: Path) -> None:
             except Exception:
                 return False
 
-            return source is not None
+            return source_component is not None or source is not None
 
         def _iter_qobjects(start: QObject | None) -> Iterator[QObject]:
             if start is None:
@@ -1807,6 +1808,10 @@ def test_runtime_overview_cards_react_to_live_signals(tmp_path: Path) -> None:
                 except Exception:
                     active = "<error>"
                 try:
+                    source_component = feed_loader.property("sourceComponent")
+                except Exception:
+                    source_component = "<error>"
+                try:
                     source = feed_loader.property("source")
                 except Exception:
                     source = "<error>"
@@ -1815,7 +1820,9 @@ def test_runtime_overview_cards_react_to_live_signals(tmp_path: Path) -> None:
                 except Exception:
                     has_item = "<error>"
                 feed_loader_state = (
-                    f"status={status}, active={active!r}, source={source!r}, hasItem={has_item!r}"
+                    "status="
+                    f"{status}, active={active!r}, sourceComponent={source_component!r}, "
+                    f"source={source!r}, hasItem={has_item!r}"
                 )
 
             try:
@@ -1921,6 +1928,7 @@ def test_runtime_overview_cards_react_to_live_signals(tmp_path: Path) -> None:
                 return (
                     f"status={_loader_status()}, "
                     f"active={loader.property('active')!r}, "
+                    f"sourceComponent={loader.property('sourceComponent')!r}, "
                     f"source={loader.property('source')!r}, "
                     f"hasItem={loader.property('item') is not None}"
                 )
