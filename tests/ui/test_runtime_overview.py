@@ -1702,15 +1702,47 @@ def test_runtime_overview_cards_react_to_live_signals(tmp_path: Path) -> None:
 
             return source is not None
 
+        def _iter_qobjects(start: QObject | None) -> Iterator[QObject]:
+            if start is None:
+                return
+            stack: list[QObject] = [start]
+            visited: set[int] = set()
+            while stack:
+                obj = stack.pop()
+                marker = id(obj)
+                if marker in visited:
+                    continue
+                visited.add(marker)
+                yield obj
+                try:
+                    stack.extend(list(obj.children() or []))
+                except Exception:
+                    pass
+
+        def _find_loader_like_descendant(start: QObject | None) -> QObject | None:
+            if start is None:
+                return None
+            if _is_loader_like(start):
+                return start
+            for child in _iter_qobjects(start):
+                if child is start:
+                    continue
+                if _is_loader_like(child):
+                    return child
+            return None
+
         def _find_loader_by_card_id(card_id: str) -> QObject | None:
             prefixed_name = f"runtimeOverviewCardLoader_{card_id}"
             by_name = _find_object(prefixed_name)
-            if by_name is not None and _is_loader_like(by_name):
-                return by_name
+            by_name_loader = _find_loader_like_descendant(by_name)
+            if by_name_loader is not None:
+                return by_name_loader
             for item in _iter_quick_items(_quick_root_item()):
                 try:
-                    if str(item.property("cardId")) == card_id and _is_loader_like(item):
-                        return item
+                    if str(item.property("cardId")) == card_id:
+                        by_card_loader = _find_loader_like_descendant(item)
+                        if by_card_loader is not None:
+                            return by_card_loader
                 except Exception:
                     continue
             return None
@@ -1724,6 +1756,7 @@ def test_runtime_overview_cards_react_to_live_signals(tmp_path: Path) -> None:
             loader_card_id_candidates: set[str] = set()
             loader_card_id_mismatches: list[str] = []
             feed_loader_by_card_id: QObject | None = None
+            feed_loader_wrapper_by_card_id: QObject | None = None
             for item in quick_items:
                 try:
                     object_name = str(item.objectName())
@@ -1739,14 +1772,14 @@ def test_runtime_overview_cards_react_to_live_signals(tmp_path: Path) -> None:
                     card_id = item.property("cardId")
                 except Exception:
                     continue
-                if (
-                    isinstance(card_id, str)
-                    and card_id
-                    and (has_loader_prefix or _is_loader_like(item))
-                ):
-                    loader_card_id_candidates.add(card_id)
-                    if card_id == "feed_sla" and feed_loader_by_card_id is None and _is_loader_like(item):
-                        feed_loader_by_card_id = item
+                if isinstance(card_id, str) and card_id:
+                    if has_loader_prefix or _is_loader_like(item):
+                        loader_card_id_candidates.add(card_id)
+                    if card_id == "feed_sla":
+                        if feed_loader_wrapper_by_card_id is None:
+                            feed_loader_wrapper_by_card_id = item
+                        if feed_loader_by_card_id is None and _is_loader_like(item):
+                            feed_loader_by_card_id = item
                 if (
                     has_loader_prefix
                     and _is_loader_like(item)
@@ -1756,9 +1789,11 @@ def test_runtime_overview_cards_react_to_live_signals(tmp_path: Path) -> None:
                 ):
                     loader_card_id_mismatches.append(f"{loader_card_id}->{card_id}")
 
-            feed_loader = loaders.get("feed_sla")
-            if feed_loader is None or not _is_loader_like(feed_loader):
+            feed_loader = _find_loader_like_descendant(loaders.get("feed_sla"))
+            if feed_loader is None:
                 feed_loader = feed_loader_by_card_id
+            if feed_loader is None:
+                feed_loader = _find_loader_like_descendant(feed_loader_wrapper_by_card_id)
 
             if feed_loader is None:
                 feed_loader_state = "missing"
@@ -1858,8 +1893,11 @@ def test_runtime_overview_cards_react_to_live_signals(tmp_path: Path) -> None:
 
         card_name = "runtimeOverviewFeedSlaCard"
 
+        feed_sla_prefixed_name = "runtimeOverviewCardLoader_feed_sla"
+
         assert _wait_until(
-            lambda: _find_loader_by_card_id("feed_sla") is not None
+            lambda: _find_object(feed_sla_prefixed_name) is not None
+            or _find_loader_by_card_id("feed_sla") is not None
             or _wait_for_child(card_name, timeout_ms=0) is not None,
             timeout_ms=10000,
         ), (
