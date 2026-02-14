@@ -65,11 +65,22 @@ def _context() -> ExecutionContext:
     return ExecutionContext(portfolio_id="P1", risk_profile="conservative", environment="live", metadata={})
 
 
-def _request(symbol: str = "BTCUSDT", *, quantity: float = 1.0) -> OrderRequest:
-    return OrderRequest(symbol=symbol, side="buy", quantity=quantity, order_type="market")
+def _request(
+    symbol: str = "BTCUSDT",
+    *,
+    quantity: float = 1.0,
+    client_order_id: str | None = "router-test-client-id",
+) -> OrderRequest:
+    return OrderRequest(
+        symbol=symbol,
+        side="buy",
+        quantity=quantity,
+        order_type="market",
+        client_order_id=client_order_id,
+    )
 
 
-def test_router_uses_fallback_on_network_error() -> None:
+def test_router_does_not_use_cross_exchange_fallback_by_default() -> None:
     primary = _DummyAdapter("primary", should_fail=True)
     secondary = _DummyAdapter("secondary", should_fail=False)
     metrics = MetricsRegistry()
@@ -80,17 +91,17 @@ def test_router_uses_fallback_on_network_error() -> None:
     )
 
     try:
-        result = router.execute(_request(), _context())
+        with pytest.raises(ExchangeNetworkError):
+            router.execute(_request(), _context())
 
-        assert result.order_id.startswith("secondary")
         assert primary.executed == []
-        assert len(secondary.executed) == 1
+        assert secondary.executed == []
         fallback_counter = metrics.get("live_router_fallbacks_total")
         assert (
             fallback_counter.value(
                 labels={"exchange": "secondary", "symbol": "BTCUSDT", "portfolio": "P1"}
             )
-            == 1.0
+            == 0.0
         )
     finally:
         router.close()
@@ -145,5 +156,18 @@ def test_router_uses_overrides_when_available() -> None:
     try:
         result = router.execute(_request(symbol="ETHUSDT"), _context())
         assert result.order_id.startswith("b")
+    finally:
+        router.close()
+
+
+def test_router_rejects_missing_client_order_id_in_live_environment() -> None:
+    primary = _DummyAdapter("primary", should_fail=False)
+    router = LiveExecutionRouter(adapters={"primary": primary}, default_route=("primary",))
+
+    try:
+        with pytest.raises(ValueError, match="client_order_id"):
+            router.execute(_request(client_order_id=None), _context())
+
+        assert primary.executed == []
     finally:
         router.close()

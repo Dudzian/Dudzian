@@ -37,7 +37,11 @@ class DummyExecutionService(ExecutionService):
 
 
 class DummyRiskEngine:
+    def __init__(self) -> None:
+        self.requests: list[OrderRequest] = []
+
     def apply_pre_trade_checks(self, request: OrderRequest, *, account: AccountSnapshot, profile_name: str):  # type: ignore[override]
+        self.requests.append(request)
         return type("RiskResult", (), {"allowed": True, "reason": None, "adjustments": {}})()
 
     def should_liquidate(self, *, profile_name: str) -> bool:  # type: ignore[override]
@@ -63,8 +67,9 @@ def _account_snapshot() -> AccountSnapshot:
 
 def test_reversal_pipeline_executes_close_then_open():
     execution = DummyExecutionService()
+    risk_engine = DummyRiskEngine()
     controller = TradingController(
-        risk_engine=DummyRiskEngine(),
+        risk_engine=risk_engine,
         execution_service=execution,
         alert_router=DummyRouter(),
         account_snapshot_provider=_account_snapshot,
@@ -85,6 +90,7 @@ def test_reversal_pipeline_executes_close_then_open():
             "order_type": "market",
             "current_position_qty": "0.4",
             "current_position_side": "LONG",
+            "reverse_position": "true",
         },
     )
 
@@ -94,4 +100,14 @@ def test_reversal_pipeline_executes_close_then_open():
     close_request, open_request = execution.requests
     assert close_request.side == "SELL"
     assert close_request.metadata["action"] == "close"
+    assert close_request.client_order_id
+    assert close_request.metadata.get("generated_client_order_id") is True
     assert open_request.side == "SELL"
+    assert open_request.client_order_id
+    assert open_request.metadata.get("generated_client_order_id") is True
+    close_risk_request = next(
+        req for req in risk_engine.requests if (req.metadata or {}).get("action") == "close"
+    )
+    assert close_risk_request.metadata.get("is_reducing") is True
+    assert close_risk_request.metadata.get("reducing_only") is True
+

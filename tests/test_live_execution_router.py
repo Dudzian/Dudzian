@@ -34,16 +34,22 @@ class FakeClock:
         return current
 
 
-def build_request(symbol: str = "BTCUSDT") -> OrderRequest:
-    return OrderRequest(symbol=symbol, side="buy", quantity=1.0, order_type="market")
+def build_request(symbol: str = "BTCUSDT", *, client_order_id: str | None = "test-client-id") -> OrderRequest:
+    return OrderRequest(
+        symbol=symbol,
+        side="buy",
+        quantity=1.0,
+        order_type="market",
+        client_order_id=client_order_id,
+    )
 
 
-def build_context(route: str | None = None) -> ExecutionContext:
+def build_context(route: str | None = None, *, environment: object = "live") -> ExecutionContext:
     metadata: Mapping[str, str] = {"execution_route": route} if route else {}
     return ExecutionContext(
         portfolio_id="core",
         risk_profile="balanced",
-        environment="live",
+        environment=environment,
         metadata=metadata,
     )
 
@@ -126,7 +132,13 @@ def test_live_router_uses_fallback(tmp_path: Path) -> None:
     }
     router = LiveExecutionRouter(
         adapters=adapters,
-        routes=[RouteDefinition(name="balanced", exchanges=("primary", "secondary"))],
+        routes=[
+            RouteDefinition(
+                name="balanced",
+                exchanges=("primary", "secondary"),
+                allow_cross_exchange_fallback=True,
+            )
+        ],
         decision_log_path=tmp_path / "fallback.jsonl",
         decision_log_hmac_key=b"A" * 48,
         metrics=registry,
@@ -181,6 +193,126 @@ def test_live_router_blocks_disallowed_fallback(tmp_path: Path) -> None:
         entries = read_decision_entries(log_path)
         assert entries[0]["payload"].get("fallback_used") is False
 
+
+def test_live_router_does_not_cross_exchange_fallback_by_default(tmp_path: Path) -> None:
+    adapters = {
+        "primary": StubExchangeAdapter.from_name(
+            "primary",
+            environment=Environment.LIVE,
+            responses=[ExchangeNetworkError("fail", None)],
+        ),
+        "secondary": StubExchangeAdapter.from_name(
+            "secondary",
+            environment=Environment.LIVE,
+            responses=[
+                OrderResult(order_id="2", status="FILLED", filled_quantity=1.0, avg_price=99.5, raw_response={})
+            ],
+        ),
+    }
+    router = LiveExecutionRouter(
+        adapters=adapters,
+        routes=[RouteDefinition(name="balanced", exchanges=("primary", "secondary"))],
+        decision_log_path=tmp_path / "no-fallback-default.jsonl",
+        decision_log_hmac_key=b"G" * 48,
+        time_source=FakeClock(),
+    )
+
+    try:
+        with pytest.raises(ExchangeNetworkError):
+            router.execute(build_request(), build_context("balanced"))
+
+        assert len(adapters["primary"].placed) == 1
+        assert adapters["secondary"].placed == []
+    finally:
+        router.close()
+
+
+def test_live_router_network_error_without_client_order_id_has_no_retry(tmp_path: Path) -> None:
+    adapters = {
+        "primary": StubExchangeAdapter.from_name(
+            "primary",
+            environment=Environment.LIVE,
+            responses=[
+                ExchangeNetworkError("fail-1", None),
+                ExchangeNetworkError("fail-2", None),
+                ExchangeNetworkError("fail-3", None),
+            ],
+        )
+    }
+    router = LiveExecutionRouter(
+        adapters=adapters,
+        routes=[RouteDefinition(name="default", exchanges=("primary",), max_retries_per_exchange=3)],
+        decision_log_path=tmp_path / "no-retry-without-client-id.jsonl",
+        decision_log_hmac_key=b"H" * 48,
+        time_source=FakeClock(),
+    )
+
+    try:
+        request = build_request(client_order_id=None)
+        assert request.client_order_id is None
+        with pytest.raises(ValueError, match="client_order_id"):
+            router.execute(request, build_context("default"))
+
+        assert adapters["primary"].placed == []
+    finally:
+        router.close()
+
+
+
+def test_live_router_rejects_live_request_without_client_order_id(tmp_path: Path) -> None:
+    registry = MetricsRegistry()
+    adapters = {
+        "primary": StubExchangeAdapter.from_name("primary", environment=Environment.LIVE),
+    }
+    router = LiveExecutionRouter(
+        adapters=adapters,
+        routes=[RouteDefinition(name="default", exchanges=("primary",))],
+        decision_log_path=tmp_path / "reject-missing-client-id.jsonl",
+        decision_log_hmac_key=b"I" * 48,
+        time_source=FakeClock(),
+        metrics=registry,
+    )
+
+    try:
+        with pytest.raises(ValueError, match="client_order_id"):
+            router.execute(build_request(client_order_id=None), build_context("default", environment="live"))
+
+        assert adapters["primary"].placed == []
+        assert registry.get("live_orders_rejected_missing_client_id_total").value(
+            labels={"exchange": "unknown", "route": "default", "portfolio": "core", "symbol": "BTCUSDT"}
+        ) == 1.0
+    finally:
+        router.close()
+
+
+
+def test_live_router_rejects_missing_client_id_when_env_is_enum(tmp_path: Path) -> None:
+    registry = MetricsRegistry()
+    adapters = {
+        "primary": StubExchangeAdapter.from_name("primary", environment=Environment.LIVE),
+    }
+    router = LiveExecutionRouter(
+        adapters=adapters,
+        routes=[RouteDefinition(name="default", exchanges=("primary",))],
+        decision_log_path=tmp_path / "reject-missing-client-id-enum.jsonl",
+        decision_log_hmac_key=b"J" * 48,
+        time_source=FakeClock(),
+        metrics=registry,
+    )
+
+    try:
+        with pytest.raises(ValueError, match="client_order_id"):
+            router.execute(
+                build_request(client_order_id=None),
+                build_context("default", environment=Environment.LIVE),
+            )
+
+        assert adapters["primary"].placed == []
+        assert registry.get("live_orders_rejected_missing_client_id_total").value(
+            labels={"exchange": "unknown", "route": "default", "portfolio": "core", "symbol": "BTCUSDT"}
+        ) == 1.0
+    finally:
+        router.close()
 
 def test_live_router_raises_when_all_fail(tmp_path: Path) -> None:
     registry = MetricsRegistry()
@@ -247,6 +379,56 @@ def test_cancel_uses_recorded_exchange(tmp_path: Path) -> None:
     finally:
         router.close()
 
+
+
+
+def test_live_router_cancel_uses_persisted_binding_after_restart(tmp_path: Path) -> None:
+    store_path = tmp_path / "router-bindings.sqlite3"
+    first_adapters = {
+        "primary": StubExchangeAdapter.from_name(
+            "primary",
+            environment=Environment.LIVE,
+            responses=[
+                OrderResult(order_id="persist-1", status="FILLED", filled_quantity=1.0, avg_price=100.0, raw_response={})
+            ],
+        ),
+        "fallback": StubExchangeAdapter.from_name("fallback", environment=Environment.LIVE),
+    }
+    router_a = LiveExecutionRouter(
+        adapters=first_adapters,
+        routes=[RouteDefinition(name="default", exchanges=("primary",))],
+        decision_log_path=tmp_path / "persist-a.jsonl",
+        decision_log_hmac_key=b"K" * 48,
+        intent_store_path=store_path,
+        time_source=FakeClock(),
+    )
+
+    try:
+        result = router_a.execute(build_request(), build_context("default"))
+        assert result.order_id == "persist-1"
+    finally:
+        router_a.close()
+
+    second_adapters = {
+        "primary": StubExchangeAdapter.from_name("primary", environment=Environment.LIVE),
+        "fallback": StubExchangeAdapter.from_name("fallback", environment=Environment.LIVE),
+    }
+    router_b = LiveExecutionRouter(
+        adapters=second_adapters,
+        routes=[RouteDefinition(name="default", exchanges=("primary", "fallback"))],
+        decision_log_path=tmp_path / "persist-b.jsonl",
+        decision_log_hmac_key=b"L" * 48,
+        intent_store_path=store_path,
+        time_source=FakeClock(),
+    )
+
+    try:
+        router_b.cancel("persist-1", build_context("default"))
+
+        assert second_adapters["primary"].cancelled == ["persist-1"]
+        assert second_adapters["fallback"].cancelled == []
+    finally:
+        router_b.close()
 
 def test_execute_async_returns_result(tmp_path: Path) -> None:
     registry = MetricsRegistry()

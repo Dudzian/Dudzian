@@ -205,6 +205,7 @@ class RouteDefinition:
     # Domyślnie jedna próba – dodatkowe retry należy zadeklarować explicite.
     max_retries_per_exchange: int = 1
     latency_budget_ms: float = 250.0
+    allow_cross_exchange_fallback: bool = False
     metadata: Mapping[str, str] = field(default_factory=dict)
 
     def iter_exchanges(self) -> Iterable[str]:
@@ -247,6 +248,7 @@ class _ExecutionPlan:
     route_metadata: Mapping[str, str]
     exchanges_and_retries: tuple[tuple[str, int], ...]
     latency_budget_ms: float | None
+    allow_cross_exchange_fallback: bool
 
 
 @dataclass(slots=True)
@@ -278,6 +280,7 @@ class LiveExecutionRouter(ExecutionService):
         decision_log_key_id: str | None = None,
         decision_log_rotate_bytes: int = 8 * 1024 * 1024,
         decision_log_keep: int = 3,
+        intent_store_path: str | os.PathLike[str] | None = None,
         # --- metryki / czas ---
         metrics_registry: MetricsRegistry | None = None,
         metrics: MetricsRegistry | None = None,  # alias zgodności
@@ -353,6 +356,15 @@ class LiveExecutionRouter(ExecutionService):
                 self._decision_log_key = bytes(decision_log_hmac_key)
         self._log_lock = threading.Lock()
 
+        resolved_intent_store_path: Path | None = None
+        if intent_store_path is not None:
+            resolved_intent_store_path = Path(intent_store_path)
+        elif self._decision_log_path is not None:
+            resolved_intent_store_path = self._decision_log_path.with_name("intent_store.sqlite3")
+        self._intent_store: IntentStore | None = (
+            IntentStore(resolved_intent_store_path) if resolved_intent_store_path is not None else None
+        )
+
         # Metryki
         self._metrics = metrics_registry or metrics or get_global_metrics_registry()
         buckets = tuple(latency_buckets or (0.050, 0.100, 0.250, 0.500, 1.000, 2.500, 5.000))
@@ -398,6 +410,21 @@ class LiveExecutionRouter(ExecutionService):
         self._m_errors = self._metrics.counter(
             "live_orders_errors_total",
             "Liczba błędów podczas obsługi zleceń live.",
+        )
+        self._m_rejected_missing_client_id = self._metrics.counter(
+            "live_orders_rejected_missing_client_id_total",
+            "Liczba zleceń live odrzuconych z powodu braku client_order_id.",
+            labels=("exchange", "route", "portfolio", "symbol"),
+        )
+        self._m_cancel_binding_hit = self._metrics.counter(
+            "live_cancel_binding_hit_total",
+            "Liczba anulacji, dla których znaleziono binding order_id->exchange.",
+            labels=("exchange", "portfolio", "symbol"),
+        )
+        self._m_cancel_binding_miss = self._metrics.counter(
+            "live_cancel_binding_miss_total",
+            "Liczba anulacji bez odnalezionego bindingu order_id->exchange.",
+            labels=("portfolio", "symbol"),
         )
         self._g_breaker_open = getattr(self._metrics, "gauge", self._metrics.counter)(
             "live_breaker_open", "Stan breakerów (1=open, 0=closed)."
@@ -481,7 +508,23 @@ class LiveExecutionRouter(ExecutionService):
 
     def binding_for_order(self, order_id: str) -> str | None:
         with self._bindings_lock:
-            return self._bindings.get(order_id)
+            exchange = self._bindings.get(order_id)
+        if exchange:
+            return exchange
+        if self._intent_store is None:
+            return None
+        payload = self._intent_store.get_order_binding(order_id)
+        if not payload:
+            return None
+        exchange = str(payload.get("exchange") or "").strip()
+        if not exchange:
+            return None
+        with self._bindings_lock:
+            self._bindings[order_id] = exchange
+            self._bindings.move_to_end(order_id)
+            if len(self._bindings) > self._bindings_capacity:
+                self._bindings.popitem(last=False)
+        return exchange
 
     def _resolve_account_identifier(
         self,
@@ -632,6 +675,49 @@ class LiveExecutionRouter(ExecutionService):
         normalized["hardware_wallet_account"] = account_id
         request.metadata = normalized
 
+
+    @staticmethod
+    def _has_client_order_id(request: OrderRequest) -> bool:
+        return isinstance(request.client_order_id, str) and bool(request.client_order_id.strip())
+
+    @staticmethod
+    def _is_live_environment(context: ExecutionContext | object) -> bool:
+        env = getattr(context, "environment", context)
+        if isinstance(env, str):
+            return env.strip().lower() == "live"
+
+        for attr in ("value", "name"):
+            candidate = getattr(env, attr, None)
+            if isinstance(candidate, str) and candidate.strip().lower() == "live":
+                return True
+
+        return str(env).strip().lower() == "live"
+
+    def _validate_live_order_request(self, request: OrderRequest, context: ExecutionContext) -> None:
+        if not self._is_live_environment(context):
+            return
+        if self._has_client_order_id(request):
+            return
+
+        route = "default"
+        context_meta = context.metadata if isinstance(context.metadata, Mapping) else {}
+        if context_meta.get("execution_route"):
+            route = str(context_meta.get("execution_route"))
+        labels = {
+            "exchange": "unknown",
+            "route": route,
+            "portfolio": context.portfolio_id,
+            "symbol": request.symbol,
+        }
+        self._m_rejected_missing_client_id.inc(labels=labels)
+        _LOGGER.warning(
+            "Odrzucam zlecenie live bez client_order_id (route=%s, symbol=%s, portfolio=%s).",
+            route,
+            request.symbol,
+            context.portfolio_id,
+        )
+        raise ValueError("LiveExecutionRouter wymaga client_order_id dla zleceń w środowisku live.")
+
     # --- ExecutionService API ------------------------------------------------
 
     def _submit_order_threadsafe(
@@ -663,8 +749,13 @@ class LiveExecutionRouter(ExecutionService):
 
     def cancel(self, order_id: str, context: ExecutionContext) -> None:  # noqa: D401
         exchange_name: str | None = self.binding_for_order(order_id)
+        symbol = "unknown"
+        context_meta = context.metadata if isinstance(context.metadata, Mapping) else {}
+        if context_meta.get("symbol"):
+            symbol = str(context_meta.get("symbol"))
 
         if not exchange_name:
+            self._m_cancel_binding_miss.inc(labels={"portfolio": context.portfolio_id, "symbol": symbol})
             for adapter in self._adapters.values():
                 try:
                     adapter.cancel_order(order_id)
@@ -677,6 +768,9 @@ class LiveExecutionRouter(ExecutionService):
                     )
             return
 
+        self._m_cancel_binding_hit.inc(
+            labels={"exchange": exchange_name, "portfolio": context.portfolio_id, "symbol": symbol}
+        )
         adapter = self._adapters.get(exchange_name)
         if adapter is None:
             _LOGGER.warning("Brak adaptera %s do anulacji %s", exchange_name, order_id)
@@ -843,6 +937,7 @@ class LiveExecutionRouter(ExecutionService):
             self._queue = None
 
     async def _submit_order(self, request: OrderRequest, context: ExecutionContext) -> OrderResult:
+        self._validate_live_order_request(request, context)
         if self._queue is None:
             raise RuntimeError("Kolejka LiveExecutionRouter nie została zainicjalizowana")
         loop = asyncio.get_running_loop()
@@ -1012,6 +1107,13 @@ class LiveExecutionRouter(ExecutionService):
                         last_error = exc
                         if breaker:
                             breaker.record_failure(current_time)
+                        if not self._has_client_order_id(request):
+                            _LOGGER.error(
+                                "Błąd %s na %s bez client_order_id – fail fast bez retry/fallback.",
+                                category,
+                                exchange_name,
+                            )
+                            raise
                         if not fallback_allowed:
                             raise
                         if attempt < max_retries:
@@ -1098,7 +1200,7 @@ class LiveExecutionRouter(ExecutionService):
                     )
                     fallback_used = True
 
-                self._remember_binding(result.order_id, exchange_name)
+                self._remember_binding(result.order_id, exchange_name, request)
                 attempts_rec.append({"exchange": exchange_name, "status": "success", "latency_s": f"{elapsed:.6f}"})
                 self._maybe_write_decision_log(
                     route_name=route_name or "default",
@@ -1365,11 +1467,14 @@ class LiveExecutionRouter(ExecutionService):
             )
             if not exchanges:
                 raise RuntimeError("Trasa live nie definiuje żadnych giełd do egzekucji")
+            if not selection.allow_cross_exchange_fallback and len(exchanges) > 1:
+                exchanges = (exchanges[0],)
             return _ExecutionPlan(
                 route_name=selection.name,
                 route_metadata=selection.metadata,
                 exchanges_and_retries=exchanges,
                 latency_budget_ms=float(selection.latency_budget_ms),
+                allow_cross_exchange_fallback=bool(selection.allow_cross_exchange_fallback),
             )
 
         routing_plan = self._resolve_plan(request.symbol)
@@ -1379,18 +1484,26 @@ class LiveExecutionRouter(ExecutionService):
         return _ExecutionPlan(
             route_name=None,
             route_metadata={},
-            exchanges_and_retries=exchanges,
+            exchanges_and_retries=(exchanges[0],) if len(exchanges) > 1 else exchanges,
             latency_budget_ms=None,
+            allow_cross_exchange_fallback=False,
         )
 
     # --- Wewnętrzne narzędzia ------------------------------------------------
 
-    def _remember_binding(self, order_id: str, exchange_name: str) -> None:
+    def _remember_binding(self, order_id: str, exchange_name: str, request: OrderRequest | None = None) -> None:
         with self._bindings_lock:
             self._bindings[order_id] = exchange_name
             self._bindings.move_to_end(order_id)
             if len(self._bindings) > self._bindings_capacity:
                 self._bindings.popitem(last=False)
+        if self._intent_store is not None:
+            self._intent_store.save_order_binding(
+                order_id=order_id,
+                exchange=exchange_name,
+                symbol=(request.symbol if request else None),
+                client_order_id=(request.client_order_id if request else None),
+            )
 
     def _set_breaker_metric(self, exchange: str, *, open_: bool) -> None:
         try:
