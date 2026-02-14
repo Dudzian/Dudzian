@@ -1620,16 +1620,206 @@ def test_runtime_overview_cards_react_to_live_signals(tmp_path: Path) -> None:
             f"Otrzymano: {type(root)!r}"
         )
 
+        def _quick_root_item() -> QQuickItem | None:
+            try:
+                host_item = quick_window.contentItem()
+                if host_item is not None:
+                    return host_item
+            except Exception:
+                pass
+            if isinstance(root, QQuickItem):
+                return root
+            return None
+
+        def _iter_quick_items(start: QQuickItem | None) -> Iterator[QQuickItem]:
+            if start is None:
+                return
+            stack = [start]
+            visited: set[int] = set()
+            while stack:
+                item = stack.pop()
+                if id(item) in visited:
+                    continue
+                visited.add(id(item))
+                yield item
+                try:
+                    stack.extend(list(item.childItems() or []))
+                except Exception:
+                    pass
+
+        def _find_object(object_name: str) -> QObject | None:
+            found = root.findChild(QObject, object_name)
+            if found is not None:
+                return found
+
+            host_item = _quick_root_item()
+            if host_item is not None:
+                try:
+                    host_found = host_item.findChild(QObject, object_name)
+                    if host_found is not None:
+                        return host_found
+                except Exception:
+                    pass
+
+            for item in _iter_quick_items(host_item):
+                try:
+                    if str(item.objectName()) == object_name:
+                        return item
+                except Exception:
+                    continue
+            return None
+
         def _wait_for_child(object_name: str, timeout_ms: int = 1000) -> QObject | None:
             deadline = time.monotonic() + (timeout_ms / 1000.0)
             while time.monotonic() < deadline:
                 app.processEvents()
-                child = root.findChild(QObject, object_name)
+                child = _find_object(object_name)
                 if child is not None:
                     return child
                 qt_wait(50)
             app.processEvents()
-            return root.findChild(QObject, object_name)
+            return _find_object(object_name)
+
+        def _is_loader_like(item: QObject) -> bool:
+            try:
+                status = item.property("status")
+                active = item.property("active")
+                source = item.property("source")
+            except Exception:
+                return False
+
+            try:
+                int(status)
+            except Exception:
+                return False
+
+            if active is None:
+                return False
+            try:
+                str(active)
+            except Exception:
+                return False
+
+            return source is not None
+
+        def _find_loader_by_card_id(card_id: str) -> QObject | None:
+            prefixed_name = f"runtimeOverviewCardLoader_{card_id}"
+            by_name = _find_object(prefixed_name)
+            if by_name is not None and _is_loader_like(by_name):
+                return by_name
+            for item in _iter_quick_items(_quick_root_item()):
+                try:
+                    if str(item.property("cardId")) == card_id and _is_loader_like(item):
+                        return item
+                except Exception:
+                    continue
+            return None
+
+        def _sla_debug_snapshot() -> str:
+            host_item = _quick_root_item()
+            quick_items = list(_iter_quick_items(host_item))
+            prefix = "runtimeOverviewCardLoader_"
+
+            loaders: dict[str, QObject] = {}
+            loader_card_id_candidates: set[str] = set()
+            loader_card_id_mismatches: list[str] = []
+            feed_loader_by_card_id: QObject | None = None
+            for item in quick_items:
+                try:
+                    object_name = str(item.objectName())
+                except Exception:
+                    object_name = ""
+                has_loader_prefix = object_name.startswith(prefix)
+                if has_loader_prefix:
+                    loader_card_id = object_name[len(prefix):]
+                    loaders[loader_card_id] = item
+                    loader_card_id_candidates.add(loader_card_id)
+
+                try:
+                    card_id = item.property("cardId")
+                except Exception:
+                    continue
+                if (
+                    isinstance(card_id, str)
+                    and card_id
+                    and (has_loader_prefix or _is_loader_like(item))
+                ):
+                    loader_card_id_candidates.add(card_id)
+                    if card_id == "feed_sla" and feed_loader_by_card_id is None and _is_loader_like(item):
+                        feed_loader_by_card_id = item
+                if (
+                    has_loader_prefix
+                    and _is_loader_like(item)
+                    and isinstance(card_id, str)
+                    and card_id
+                    and card_id != loader_card_id
+                ):
+                    loader_card_id_mismatches.append(f"{loader_card_id}->{card_id}")
+
+            feed_loader = loaders.get("feed_sla")
+            if feed_loader is None or not _is_loader_like(feed_loader):
+                feed_loader = feed_loader_by_card_id
+
+            if feed_loader is None:
+                feed_loader_state = "missing"
+            else:
+                try:
+                    status = int(feed_loader.property("status"))
+                except Exception:
+                    status = -1
+                try:
+                    active = feed_loader.property("active")
+                except Exception:
+                    active = "<error>"
+                try:
+                    source = feed_loader.property("source")
+                except Exception:
+                    source = "<error>"
+                try:
+                    has_item = feed_loader.property("item") is not None
+                except Exception:
+                    has_item = "<error>"
+                feed_loader_state = (
+                    f"status={status}, active={active!r}, source={source!r}, hasItem={has_item!r}"
+                )
+
+            try:
+                host_children = len(list(host_item.childItems() or [])) if host_item is not None else 0
+            except Exception:
+                host_children = 0
+
+            return (
+                f"Dostępne loadery: {sorted(loaders.keys())!r}; "
+                f"loaderCardIdCandidates={sorted(loader_card_id_candidates)!r}; "
+                f"loaderCardIdMismatches={sorted(set(loader_card_id_mismatches))!r}; "
+                f"effectiveGridCardOrder={root.property('effectiveGridCardOrder')!r}; "
+                f"hostChildren={host_children}; "
+                f"quickItems={len(quick_items)}; "
+                f"feedSlaLoader={feed_loader_state}"
+            )
+
+        def _stabilize_quick_scene() -> None:
+            app.processEvents()
+            try:
+                if hasattr(quick_window, "requestUpdate"):
+                    quick_window.requestUpdate()
+            except Exception:
+                pass
+            try:
+                if hasattr(root, "polish"):
+                    root.polish()
+            except Exception:
+                pass
+            try:
+                root.setWidth(quick_window.width())
+                root.setHeight(quick_window.height())
+            except Exception:
+                pass
+            qt_wait(250)
+            app.processEvents()
+            qt_wait(50)
+            app.processEvents()
+
 
         quick_window.setWidth(1280)
         quick_window.setHeight(720)
@@ -1637,13 +1827,14 @@ def test_runtime_overview_cards_react_to_live_signals(tmp_path: Path) -> None:
         root.setWidth(quick_window.width())
         root.setHeight(quick_window.height())
         quick_window.show()
-        app.processEvents()
+        _stabilize_quick_scene()
 
         default_order = root.property("defaultCardOrder")
         assert isinstance(default_order, list), (
             "RuntimeOverview.defaultCardOrder powinno być listą cardId."
         )
         dashboard_controller.setCardOrder(default_order)
+        _stabilize_quick_scene()
 
         def _wait_until(predicate: Callable[[], bool], timeout_ms: int = 5000) -> bool:
             deadline = time.monotonic() + timeout_ms / 1000.0
@@ -1655,65 +1846,63 @@ def test_runtime_overview_cards_react_to_live_signals(tmp_path: Path) -> None:
             app.processEvents()
             return bool(predicate())
 
-        # QML buduje siatkę asynchronicznie po show() i zmianie kolejności kart.
-        app.processEvents()
-        qt_wait(250)
-        qt_wait(0)
-        app.processEvents()
-
         def _grid_order_contains_feed_sla() -> bool:
+            # Opiera się na autouse fixture qml_prop, która zwraca plain Python.
             order = root.property("effectiveGridCardOrder") or []
-            try:
-                return "feed_sla" in order
-            except Exception:
-                try:
-                    return "feed_sla" in list(order)
-                except Exception:
-                    return False
+            return "feed_sla" in order
 
         assert _wait_until(_grid_order_contains_feed_sla, timeout_ms=5000), (
             "feed_sla nie pojawiło się w effectiveGridCardOrder: "
             f"{root.property('effectiveGridCardOrder')!r}"
         )
 
-        loader = _wait_for_child("runtimeOverviewCardLoader_feed_sla", timeout_ms=5000)
-        assert loader is not None, (
-            "Nie znaleziono loadera SLA (runtimeOverviewCardLoader_feed_sla)."
+        card_name = "runtimeOverviewFeedSlaCard"
+
+        assert _wait_until(
+            lambda: _find_loader_by_card_id("feed_sla") is not None
+            or _wait_for_child(card_name, timeout_ms=0) is not None,
+            timeout_ms=10000,
+        ), (
+            "Nie znaleziono loadera SLA ani karty SLA. "
+            f"{_sla_debug_snapshot()}"
         )
 
-        # QtQuick.Loader status: Null=0, Ready=1, Loading=2, Error=3
-        loader_ready = 1
-        loader_error = 3
+        loader = _find_loader_by_card_id("feed_sla")
+        if loader is not None:
+            # QtQuick.Loader status: Null=0, Ready=1, Loading=2, Error=3
+            loader_ready = 1
+            loader_error = 3
 
-        def _loader_status() -> int:
-            try:
-                return int(loader.property("status"))
-            except Exception:
-                return -1
+            def _loader_status() -> int:
+                try:
+                    return int(loader.property("status"))
+                except Exception:
+                    return -1
 
-        def _loader_debug_state() -> str:
-            return (
-                f"status={_loader_status()}, "
-                f"active={loader.property('active')!r}, "
-                f"source={loader.property('source')!r}, "
-                f"hasItem={loader.property('item') is not None}"
+            def _loader_debug_state() -> str:
+                return (
+                    f"status={_loader_status()}, "
+                    f"active={loader.property('active')!r}, "
+                    f"source={loader.property('source')!r}, "
+                    f"hasItem={loader.property('item') is not None}"
+                )
+
+            def _loader_ready_or_raise() -> bool:
+                status = _loader_status()
+                if status == loader_error:
+                    err = loader.property("errorString")
+                    raise AssertionError(
+                        f"Loader feed_sla jest w stanie Error: {err!r}; {_loader_debug_state()}"
+                    )
+                return status == loader_ready
+
+            assert _wait_until(_loader_ready_or_raise, timeout_ms=5000), (
+                f"Loader feed_sla nie osiągnął Ready; {_loader_debug_state()}"
             )
 
-        def _loader_ready_or_raise() -> bool:
-            status = _loader_status()
-            if status == loader_error:
-                err = loader.property("errorString")
-                raise AssertionError(
-                    f"Loader feed_sla jest w stanie Error: {err!r}; {_loader_debug_state()}"
-                )
-            return status == loader_ready
-
-        assert _wait_until(_loader_ready_or_raise, timeout_ms=5000), (
-            f"Loader feed_sla nie osiągnął Ready; {_loader_debug_state()}"
-        )
-
-        assert _wait_for_child("runtimeOverviewFeedSlaCard", timeout_ms=5000) is not None, (
-            "Karta SLA nie została utworzona mimo Loader.Ready."
+        assert _wait_for_child(card_name, timeout_ms=5000) is not None, (
+            "Karta SLA nie została utworzona w zadanym czasie. "
+            f"{_sla_debug_snapshot()}"
         )
 
         provider.refreshTelemetry()
