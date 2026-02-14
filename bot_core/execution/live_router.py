@@ -416,6 +416,16 @@ class LiveExecutionRouter(ExecutionService):
             "Liczba zleceń live odrzuconych z powodu braku client_order_id.",
             labels=("exchange", "route", "portfolio", "symbol"),
         )
+        self._m_orders_reconciled = self._metrics.counter(
+            "live_orders_reconciled_total",
+            "Liczba zleceń zreconcile'owanych po błędzie sieci/throttling.",
+            labels=("exchange", "symbol", "portfolio", "route"),
+        )
+        self._m_orders_reconcile_failed = self._metrics.counter(
+            "live_orders_reconcile_failed_total",
+            "Liczba nieudanych prób reconcile po błędzie sieci/throttling.",
+            labels=("exchange", "symbol", "portfolio", "route"),
+        )
         self._m_cancel_binding_hit = self._metrics.counter(
             "live_cancel_binding_hit_total",
             "Liczba anulacji, dla których znaleziono binding order_id->exchange.",
@@ -1114,6 +1124,36 @@ class LiveExecutionRouter(ExecutionService):
                                 exchange_name,
                             )
                             raise
+
+                        reconciled_result, reconcile_supported = await self._try_reconcile_order_by_client_id(
+                            adapter=adapter,
+                            request=request,
+                            common_labels=common_labels,
+                            labels=labels,
+                            route_name=route_name,
+                            route_meta=route_meta,
+                            context=context,
+                            attempts_rec=attempts_rec,
+                            latency_seconds=elapsed,
+                            fallback_used=fallback_used,
+                        )
+                        if reconciled_result is not None:
+                            if breaker:
+                                breaker.record_success()
+                                self._set_breaker_metric(exchange_name, open_=False)
+                            return reconciled_result
+
+                        if not reconcile_supported:
+                            attempts_rec.append(
+                                {
+                                    "exchange": exchange_name,
+                                    "attempt": str(attempt),
+                                    "status": "reconcile_not_supported_failfast",
+                                    "decision_event": "reconcile_not_supported_failfast",
+                                }
+                            )
+                            raise
+
                         if not fallback_allowed:
                             raise
                         if attempt < max_retries:
@@ -1618,6 +1658,83 @@ class LiveExecutionRouter(ExecutionService):
             return override
         assert self._default_plan is not None
         return self._default_plan
+
+    async def _try_reconcile_order_by_client_id(
+        self,
+        *,
+        adapter: ExchangeAdapter,
+        request: OrderRequest,
+        common_labels: Mapping[str, str],
+        labels: Mapping[str, str],
+        route_name: str | None,
+        route_meta: Mapping[str, str],
+        context: ExecutionContext,
+        attempts_rec: list[dict[str, str]],
+        latency_seconds: float,
+        fallback_used: bool,
+    ) -> tuple[OrderResult | None, bool]:
+        if type(adapter).fetch_order_by_client_id is ExchangeAdapter.fetch_order_by_client_id:
+            return None, False
+        fetch_order_by_client_id = adapter.fetch_order_by_client_id
+
+        try:
+            reconciled = await asyncio.to_thread(
+                fetch_order_by_client_id,
+                str(request.client_order_id),
+                symbol=request.symbol,
+            )
+        except Exception as reconcile_exc:  # noqa: BLE001
+            self._m_orders_reconcile_failed.inc(labels=common_labels)
+            attempts_rec.append(
+                {
+                    "exchange": str(common_labels.get("exchange", "unknown")),
+                    "status": "reconcile_failed",
+                    "error": repr(reconcile_exc),
+                }
+            )
+            return None, True
+
+        if reconciled is None:
+            self._m_orders_reconcile_failed.inc(labels=common_labels)
+            attempts_rec.append(
+                {
+                    "exchange": str(common_labels.get("exchange", "unknown")),
+                    "status": "reconcile_not_found",
+                }
+            )
+            return None, True
+
+        metadata = dict(reconciled.raw_response or {})
+        metadata.setdefault("reconciled", True)
+        metadata.setdefault("reconcile_source", "fetch_order_by_client_id")
+        result = OrderResult(
+            order_id=reconciled.order_id,
+            status=reconciled.status,
+            filled_quantity=reconciled.filled_quantity,
+            avg_price=reconciled.avg_price,
+            raw_response=metadata,
+        )
+        self._m_orders_reconciled.inc(labels=common_labels)
+        self._m_success.inc(labels=common_labels)
+        self._m_attempts.inc(labels={**labels, "result": "reconciled"})
+        attempts_rec.append(
+            {
+                "exchange": str(common_labels.get("exchange", "unknown")),
+                "status": "order_reconciled",
+                "decision_event": "order_reconciled",
+            }
+        )
+        self._maybe_write_decision_log(
+            route_name=route_name or "default",
+            route_metadata=route_meta,
+            request=request,
+            context=context,
+            result=result,
+            attempts=attempts_rec,
+            latency_seconds=latency_seconds,
+            fallback_used=fallback_used,
+        )
+        return result, True
 
     # --- Decision log --------------------------------------------------------
 

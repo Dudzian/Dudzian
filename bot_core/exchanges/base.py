@@ -110,6 +110,19 @@ class ExchangeAdapter(abc.ABC):
     def place_order(self, request: OrderRequest) -> OrderResult:
         """Składa zlecenie w imieniu strategii."""
 
+    def fetch_order_by_client_id(
+        self,
+        client_order_id: str,
+        *,
+        symbol: Optional[str] = None,
+    ) -> OrderResult | None:
+        """Opcjonalny reconcile zlecenia po `client_order_id`.
+
+        Domyślnie adapter nie wspiera tej operacji i zwraca ``None``.
+        """
+
+        return None
+
     @abc.abstractmethod
     def cancel_order(self, order_id: str, *, symbol: Optional[str] = None) -> None:
         """Anuluje zlecenie po identyfikatorze."""

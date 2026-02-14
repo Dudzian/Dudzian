@@ -7,6 +7,7 @@ import json
 import logging
 import os
 import time
+import uuid
 from dataclasses import dataclass, field
 from collections.abc import Iterable, Iterator, MutableMapping
 from collections import Counter, deque
@@ -2619,13 +2620,16 @@ class ExchangeManager:
                     f"Notional {notional:.8f} < minNotional {min_notional:.8f} dla {symbol}"
                 )
 
+            resolved_client_order_id = (str(client_order_id).strip() if client_order_id is not None else "")
+            if not resolved_client_order_id:
+                resolved_client_order_id = f"svc-{uuid.uuid4().hex}"
             request = OrderRequest(
                 symbol=symbol,
                 side=side_enum.value,
                 quantity=qty,
                 order_type=type_enum.value,
                 price=price_value,
-                client_order_id=client_order_id,
+                client_order_id=resolved_client_order_id,
             )
             fallback_backend = self._ensure_private() if self._failover_enabled else None
 
@@ -2641,7 +2645,7 @@ class ExchangeManager:
                     type_enum,
                     qty,
                     price_value,
-                    client_order_id,
+                    resolved_client_order_id,
                 )
 
             started = time.monotonic()
