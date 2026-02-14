@@ -303,8 +303,161 @@ def test_controller_reverses_position_before_opening_new_one() -> None:
     assert open_request.quantity == pytest.approx(2.0)
 
     journal_events = journal.export()
-    assert any(event["event"] == "order_close_for_reversal" for event in journal_events)
+    close_event = next(event for event in journal_events if event["event"] == "order_close_for_reversal")
+    assert close_event.get("client_order_id")
+    assert close_event.get("order_generated_client_order_id") == "True"
+    close_risk_event = next(event for event in journal_events if event["event"] == "reversal_close_risk_check")
+    assert close_risk_event.get("status") == "allowed"
+    assert close_risk_event.get("order_is_reducing") == "True"
+    assert close_risk_event.get("order_reducing_only") == "True"
 
+
+
+
+def test_controller_reversal_is_disabled_by_default() -> None:
+    registry = MetricsRegistry()
+    risk_engine = DummyRiskEngine()
+    execution = DummyExecutionService()
+    router, _, _ = _router_with_channel()
+    journal = CollectingDecisionJournal()
+    controller = TradingController(
+        risk_engine=risk_engine,
+        execution_service=execution,
+        alert_router=router,
+        account_snapshot_provider=_account_snapshot,
+        portfolio_id="paper-1",
+        environment="paper",
+        risk_profile="balanced",
+        health_check_interval=timedelta(hours=1),
+        decision_journal=journal,
+        metrics_registry=registry,
+    )
+
+    signal = StrategySignal(
+        symbol="BTC/USDT",
+        side="SELL",
+        confidence=0.9,
+        metadata={
+            "quantity": "2",
+            "price": "101",
+            "order_type": "market",
+            "current_position_qty": "1.5",
+            "current_position_side": "LONG",
+        },
+    )
+
+    results = controller.process_signals([signal])
+
+    assert len(results) == 1
+    assert len(execution.requests) == 1
+    assert execution.requests[0].metadata.get("action") != "close"
+    events = [event["event"] for event in journal.export()]
+    assert "order_close_for_reversal" not in events
+
+    labels = {
+        "environment": "paper",
+        "portfolio": "paper-1",
+        "risk_profile": "balanced",
+        "symbol": "BTC/USDT",
+        "reason": "disabled",
+    }
+    skipped_counter = registry.get("trading_reversal_skipped_total")
+    assert skipped_counter.value(labels=labels) == 1.0
+
+
+def test_controller_logs_untrusted_position_when_reversal_requested() -> None:
+    risk_engine = DummyRiskEngine()
+    execution = DummyExecutionService()
+    router, _, _ = _router_with_channel()
+    journal = CollectingDecisionJournal()
+    controller = TradingController(
+        risk_engine=risk_engine,
+        execution_service=execution,
+        alert_router=router,
+        account_snapshot_provider=_account_snapshot,
+        portfolio_id="paper-1",
+        environment="paper",
+        risk_profile="balanced",
+        health_check_interval=timedelta(hours=1),
+        decision_journal=journal,
+    )
+
+    signal = StrategySignal(
+        symbol="BTC/USDT",
+        side="SELL",
+        confidence=0.9,
+        metadata={
+            "quantity": "2",
+            "price": "101",
+            "order_type": "market",
+            "current_position_qty": "bad-value",
+            "current_position_side": "LONG",
+            "reverse_position": "true",
+        },
+    )
+
+    results = controller.process_signals([signal])
+
+    assert len(results) == 1
+    assert len(execution.requests) == 1
+    events = journal.export()
+    skipped = next(event for event in events if event["event"] == "reversal_skipped_untrusted_position")
+    assert skipped["status"] == "skipped"
+
+
+def test_controller_reversal_close_can_be_denied_by_risk() -> None:
+    registry = MetricsRegistry()
+    risk_engine = DummyRiskEngine()
+    risk_engine.set_result_sequence([RiskCheckResult(allowed=True), RiskCheckResult(allowed=False, reason="close blocked")])
+    execution = DummyExecutionService()
+    router, _, _ = _router_with_channel()
+    journal = CollectingDecisionJournal()
+    controller = TradingController(
+        risk_engine=risk_engine,
+        execution_service=execution,
+        alert_router=router,
+        account_snapshot_provider=_account_snapshot,
+        portfolio_id="paper-1",
+        environment="paper",
+        risk_profile="balanced",
+        health_check_interval=timedelta(hours=1),
+        decision_journal=journal,
+        metrics_registry=registry,
+    )
+
+    signal = StrategySignal(
+        symbol="BTC/USDT",
+        side="SELL",
+        confidence=0.9,
+        metadata={
+            "quantity": "2",
+            "price": "101",
+            "order_type": "market",
+            "current_position_qty": "1.5",
+            "current_position_side": "LONG",
+            "reverse_position": "true",
+        },
+    )
+
+    results = controller.process_signals([signal])
+
+    assert len(results) == 1
+    assert len(execution.requests) == 1
+    events = journal.export()
+    close_risk_event = next(event for event in events if event["event"] == "reversal_close_risk_check")
+    assert close_risk_event["status"] == "rejected"
+    denied_event = next(event for event in events if event["event"] == "reversal_denied_by_risk")
+    assert denied_event["status"] == "rejected"
+
+    labels = {
+        "environment": "paper",
+        "portfolio": "paper-1",
+        "risk_profile": "balanced",
+        "symbol": "BTC/USDT",
+        "side": "SELL",
+    }
+    denied_counter = registry.get("trading_reversal_denied_by_risk_total")
+    assert denied_counter.value(labels=labels) == 1.0
 
 def test_controller_alerts_on_risk_rejection_and_limit() -> None:
     risk_engine = DummyRiskEngine()
@@ -793,3 +946,34 @@ def test_controller_attaches_decision_metadata_for_execution() -> None:
     assert decision_meta["model"] == "gbm_v2"
     decision_events = [event for event in journal.events if event.event_type == "decision_evaluation"]
     assert any(event.status == "accepted" for event in decision_events)
+
+
+def test_controller_generates_client_order_id_when_missing() -> None:
+    risk_engine = DummyRiskEngine()
+    execution = DummyExecutionService()
+    router, _channel, _audit = _router_with_channel()
+    journal = CollectingDecisionJournal()
+    controller = TradingController(
+        risk_engine=risk_engine,
+        execution_service=execution,
+        alert_router=router,
+        account_snapshot_provider=_account_snapshot,
+        portfolio_id="paper-1",
+        environment="paper",
+        risk_profile="balanced",
+        health_check_interval=timedelta(hours=1),
+        decision_journal=journal,
+    )
+
+    controller.process_signals([_signal("BUY")])
+
+    assert len(execution.requests) == 1
+    request = execution.requests[0]
+    assert request.client_order_id
+    assert request.metadata is not None
+    assert request.metadata.get("generated_client_order_id") is True
+
+    order_submitted_event = next(event for event in journal.export() if event["event"] == "order_submitted")
+    assert order_submitted_event.get("client_order_id") == request.client_order_id
+    assert order_submitted_event.get("order_generated_client_order_id") == "True"
+

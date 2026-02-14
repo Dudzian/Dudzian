@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import logging
 import math
+import uuid
 from collections.abc import Sequence as SequenceABC
 from dataclasses import asdict, dataclass, field, is_dataclass
 from datetime import datetime, timedelta, timezone
@@ -355,6 +356,8 @@ class TradingController:
     _metric_orders_total: Any = field(init=False, repr=False)
     _metric_health_reports: Any = field(init=False, repr=False)
     _metric_liquidation_state: Any = field(init=False, repr=False)
+    _metric_reversal_skipped_total: Any = field(init=False, repr=False)
+    _metric_reversal_denied_by_risk_total: Any = field(init=False, repr=False)
     _decision_journal: TradingDecisionJournal | None = field(init=False, repr=False)
     _strategy_name: str | None = field(init=False, repr=False, default=None)
     _exchange_name: str | None = field(init=False, repr=False, default=None)
@@ -417,6 +420,14 @@ class TradingController:
         self._metric_liquidation_state = self._metrics.gauge(
             "trading_liquidation_state",
             "Stan trybu awaryjnego profilu ryzyka (1=liquidation, 0=normal).",
+        )
+        self._metric_reversal_skipped_total = self._metrics.counter(
+            "trading_reversal_skipped_total",
+            "Liczba pominiętych prób reversal (powód=disabled/untrusted_position/not_required).",
+        )
+        self._metric_reversal_denied_by_risk_total = self._metrics.counter(
+            "trading_reversal_denied_by_risk_total",
+            "Liczba prób close dla reversal odrzuconych przez risk engine.",
         )
         self._metric_liquidation_state.set(0.0, labels=self._metric_labels)
         self._decision_orchestrator = self.decision_orchestrator
@@ -965,6 +976,8 @@ class TradingController:
             risk_result = new_result
             self._metric_signals_total.inc(labels={**metric_labels, "status": "adjusted"})
 
+        adjusted_request = self._ensure_client_order_id(adjusted_request)
+
         self._metric_signals_total.inc(labels={**metric_labels, "status": "accepted"})
         self._record_decision_event(
             "risk_check_passed",
@@ -986,6 +999,7 @@ class TradingController:
             request=adjusted_request,
             status="submitted",
         )
+
         try:
             self._maybe_reverse_position(signal, adjusted_request, metric_labels)
         except Exception as exc:  # noqa: BLE001
@@ -1060,32 +1074,71 @@ class TradingController:
         metric_labels: Mapping[str, str],
     ) -> None:
         metadata = dict(request.metadata or {})
-        reverse_flag = metadata.pop("reverse_position", True)
+        reverse_flag = metadata.pop("reverse_position", False)
         if isinstance(reverse_flag, str):
-            reverse_flag = reverse_flag.strip().lower() not in {"false", "0", "no"}
+            reverse_flag = reverse_flag.strip().lower() in {"true", "1", "yes", "on"}
+        elif isinstance(reverse_flag, (int, float)):
+            reverse_flag = bool(reverse_flag)
+        else:
+            reverse_flag = bool(reverse_flag)
         if not reverse_flag:
+            self._metric_reversal_skipped_total.inc(labels={**metric_labels, "reason": "disabled"})
             return
 
         qty_raw = metadata.pop("current_position_qty", None)
         side_raw = metadata.pop("current_position_side", None)
+        untrusted_reason = ""
         try:
             position_qty = float(qty_raw)
         except (TypeError, ValueError):
-            return
-        if position_qty <= 0:
-            return
-        if not side_raw:
-            return
-        current_side = str(side_raw).upper()
+            untrusted_reason = "invalid_qty"
+            position_qty = 0.0
+        if not untrusted_reason and (not math.isfinite(position_qty) or position_qty <= 0):
+            untrusted_reason = "non_positive_qty"
+        if not untrusted_reason and not side_raw:
+            untrusted_reason = "missing_side"
+
+        current_side = str(side_raw).upper() if side_raw else ""
         desired_side = request.side.upper()
-        if current_side not in {"LONG", "SHORT"}:
-            return
-        if (current_side == "LONG" and desired_side == "BUY") or (
-            current_side == "SHORT" and desired_side == "SELL"
+        if not untrusted_reason and current_side not in {"LONG", "SHORT"}:
+            untrusted_reason = "invalid_side"
+        if not untrusted_reason and (
+            (current_side == "LONG" and desired_side == "BUY")
+            or (current_side == "SHORT" and desired_side == "SELL")
         ):
+            self._metric_reversal_skipped_total.inc(labels={**metric_labels, "reason": "not_required"})
+            return
+
+        if untrusted_reason:
+            self._metric_reversal_skipped_total.inc(labels={**metric_labels, "reason": "untrusted_position"})
+            self._record_decision_event(
+                "reversal_skipped_untrusted_position",
+                signal=signal,
+                request=request,
+                status="skipped",
+                metadata={
+                    "reason": untrusted_reason,
+                    "current_position_qty": str(qty_raw),
+                    "current_position_side": str(side_raw),
+                },
+            )
+            _LOGGER.warning(
+                "Pomijam reversal dla %s: niewiarygodne źródło pozycji (reason=%s, qty=%r, side=%r)",
+                request.symbol,
+                untrusted_reason,
+                qty_raw,
+                side_raw,
+            )
             return
 
         close_side = "SELL" if current_side == "LONG" else "BUY"
+        close_metadata = {
+            **metadata,
+            "action": "close",
+            "reverse_target": desired_side,
+            "reducing_only": True,
+            "is_reducing": True,
+        }
         close_request = OrderRequest(
             symbol=request.symbol,
             side=close_side,
@@ -1096,8 +1149,38 @@ class TradingController:
             client_order_id=None,
             stop_price=None,
             atr=None,
-            metadata={**metadata, "action": "close", "reverse_target": desired_side},
+            metadata=close_metadata,
         )
+        close_request = self._ensure_client_order_id(close_request)
+
+        close_account = self.account_snapshot_provider()
+        close_risk = self.risk_engine.apply_pre_trade_checks(
+            close_request,
+            account=close_account,
+            profile_name=self.risk_profile,
+        )
+        self._record_decision_event(
+            "reversal_close_risk_check",
+            signal=signal,
+            request=close_request,
+            status="allowed" if close_risk.allowed else "rejected",
+            metadata={
+                "reason": close_risk.reason or "",
+                "available_margin": f"{close_account.available_margin:.8f}",
+                "total_equity": f"{close_account.total_equity:.8f}",
+                "maintenance_margin": f"{close_account.maintenance_margin:.8f}",
+            },
+        )
+        if not close_risk.allowed:
+            self._metric_reversal_denied_by_risk_total.inc(labels={**metric_labels, "side": close_side})
+            self._record_decision_event(
+                "reversal_denied_by_risk",
+                signal=signal,
+                request=close_request,
+                status="rejected",
+                metadata={"reason": close_risk.reason or ""},
+            )
+            return
 
         self._metric_orders_total.inc(
             labels={**metric_labels, "result": "submitted", "side": close_side},
@@ -1134,6 +1217,7 @@ class TradingController:
             status=result.status or "filled",
             metadata={"close_order_id": result.order_id or ""},
         )
+
 
     def _maybe_adjust_request(
         self,
@@ -1230,6 +1314,28 @@ class TradingController:
             stop_price=stop_price,
             atr=atr,
             metadata=metadata_source,
+        )
+
+    def _ensure_client_order_id(self, request: OrderRequest) -> OrderRequest:
+        client_order_id = request.client_order_id
+        if isinstance(client_order_id, str) and client_order_id.strip():
+            return request
+
+        generated_id = f"tc-{uuid.uuid4().hex}"
+        metadata = self._clone_metadata(request.metadata)
+        metadata["client_order_id"] = generated_id
+        metadata["generated_client_order_id"] = True
+        return OrderRequest(
+            symbol=request.symbol,
+            side=request.side,
+            quantity=request.quantity,
+            order_type=request.order_type,
+            price=request.price,
+            time_in_force=request.time_in_force,
+            client_order_id=generated_id,
+            stop_price=request.stop_price,
+            atr=request.atr,
+            metadata=metadata,
         )
 
     def _decision_engine_enabled(self) -> bool:
