@@ -1910,9 +1910,10 @@ def _validate_live_signatures(
             resolved_root = document_root
 
     for document in documents:
-        is_required = getattr(document, "required", True)
         if required_names:
-            is_required = is_required or document.name in required_names
+            is_required = document.name in required_names
+        else:
+            is_required = getattr(document, "required", True)
         if not is_required:
             continue
 

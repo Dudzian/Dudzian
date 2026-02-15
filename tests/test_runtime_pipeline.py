@@ -241,7 +241,7 @@ def pipeline_fixture(tmp_path: Path) -> tuple[Path, FakeExchangeAdapter, SecretM
     config_path = tmp_path / "core.yaml"
 
     # Zamieniamy strukturę na YAML kompatybilny z loaderem.
-    import yaml  # type: ignore
+    yaml = pytest.importorskip("yaml", reason="PyYAML nie jest zainstalowane w tym środowisku testowym.")
 
     config_path.write_text(yaml.safe_dump(config), encoding="utf-8")
 
@@ -509,7 +509,7 @@ def test_pipeline_bootstrap_integrates_tco_reports(tmp_path: Path) -> None:
     }
 
     config_path = tmp_path / "core.yaml"
-    import yaml  # type: ignore
+    yaml = pytest.importorskip("yaml", reason="PyYAML nie jest zainstalowane w tym środowisku testowym.")
 
     config_path.write_text(yaml.safe_dump(config, sort_keys=False), encoding="utf-8")
 
@@ -668,7 +668,7 @@ def test_account_loader_handles_multi_currency_and_shorts(tmp_path: Path) -> Non
     }
 
     config_path = tmp_path / "core_multi.yaml"
-    import yaml  # type: ignore
+    yaml = pytest.importorskip("yaml", reason="PyYAML nie jest zainstalowane w tym środowisku testowym.")
 
     config_path.write_text(yaml.safe_dump(config), encoding="utf-8")
 

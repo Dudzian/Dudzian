@@ -5,23 +5,31 @@ import os
 from pathlib import Path
 
 import pytest
-import yaml
 
-pytestmark = pytest.mark.unstable_windows
+try:
+    import yaml  # type: ignore
+except ModuleNotFoundError:  # pragma: no cover
+    yaml = None  # type: ignore
 
-from bot_core.exchanges.base import Environment
-from bot_core.runtime import bootstrap as bootstrap_module
-from bot_core.runtime.bootstrap import bootstrap_environment
-from bot_core.security.signing import build_hmac_signature
+pytestmark = [
+    pytest.mark.unstable_windows,
+    pytest.mark.skipif(yaml is None, reason="PyYAML nie jest zainstalowane w tym środowisku testowym."),
+]
 
-from tests.test_runtime_bootstrap import (
-    _BASE_CONFIG,
-    _apply_license_stub,
-    _prepare_manager,
-    _prepare_signed_license_bundle,
-    _disable_exchange_health,
-    _stub_license_validation,
-)
+if yaml is not None:
+    from bot_core.exchanges.base import Environment
+    from bot_core.runtime import bootstrap as bootstrap_module
+    from bot_core.runtime.bootstrap import bootstrap_environment
+    from bot_core.security.signing import build_hmac_signature
+
+    from tests.test_runtime_bootstrap import (
+        _BASE_CONFIG,
+        _apply_license_stub,
+        _prepare_manager,
+        _prepare_signed_license_bundle,
+        _disable_exchange_health,
+        _stub_license_validation,
+    )
 
 
 def _sign_environment_for_test(
