@@ -32,6 +32,7 @@ Szczegółowe instrukcje znajdują się w dokumentacji:
 - [Plan wsparcia](docs/support/plan.md)
 - [Instalacja i budowa instalatorów](docs/deployment/installer_build.md)
 - [Monitorowanie offline](docs/monitoring_offline.md)
+- [Semantyka LiveExecutionRouter (reconcile/retry + metryki + decision log)](docs/live_execution_router.md)
 - [Blueprint architektury enterprise](docs/architecture/enterprise_bot_blueprint.md)
 - [Ocena wdrożenia Stage6 (gap analysis)](docs/architecture/enterprise_gap_analysis.md)
 - [Raport katalogu presetów (2025-01-15)](reports/strategy/presets_2025-01-15.md)
