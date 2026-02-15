@@ -265,12 +265,16 @@ class _ExchangeManagerAdapter(ExchangeAdapter if ExchangeAdapter is not None els
         *,
         environment: str | None = None,
         name: str = "primary",
+        sandbox: bool | None = None,
+        key_id: str | None = None,
     ) -> None:
         if ExchangeAdapter is None or ExchangeCredentials is None:
             raise RuntimeError("ExchangeAdapter nie jest dostępny w tej dystrybucji")
+        if sandbox is True and environment is None:
+            environment = "testnet"
         env = self._resolve_environment(environment)
         credentials = ExchangeCredentials(
-            key_id=f"{getattr(manager, 'exchange_id', 'exchange')}-{env.value}",
+            key_id=key_id or f"{getattr(manager, 'exchange_id', 'exchange')}-{env.value}",
             environment=env,
         )
         super().__init__(credentials)  # type: ignore[misc]
@@ -278,6 +282,7 @@ class _ExchangeManagerAdapter(ExchangeAdapter if ExchangeAdapter is not None els
         self.name = name
         self._env = env
         self._order_symbols: dict[str, str] = {}
+        self._client_symbols: dict[str, str] = {}
 
     @staticmethod
     def _resolve_environment(candidate: str | None) -> "ExecutionEnvironment":
@@ -357,6 +362,15 @@ class _ExchangeManagerAdapter(ExchangeAdapter if ExchangeAdapter is not None els
                 return tuple(tuple(map(float, row)) for row in candles)
         return ()
 
+    def _json_safe(self, value: Any) -> Any:
+        if isinstance(value, Mapping):
+            return {str(key): self._json_safe(raw) for key, raw in value.items()}
+        if isinstance(value, (list, tuple, set)):
+            return [self._json_safe(item) for item in value]
+        if isinstance(value, (str, int, float, bool)) or value is None:
+            return value
+        return str(value)
+
     def place_order(self, request: "CoreOrderRequest") -> "CoreOrderResult":
         creator = getattr(self._manager, "create_order", None)
         if not callable(creator):
@@ -375,6 +389,9 @@ class _ExchangeManagerAdapter(ExchangeAdapter if ExchangeAdapter is not None els
             or f"{request.symbol}:{getattr(dto, 'ts', 0.0)}"
         )
         self._order_symbols[order_id] = request.symbol
+        cid = str(request.client_order_id).strip() if request.client_order_id is not None else ""
+        if cid:
+            self._client_symbols[cid] = request.symbol
         if CoreOrderResult is None:
             raise RuntimeError("OrderResult nie jest dostępny")
         status = getattr(dto, "status", "unknown")
@@ -384,9 +401,8 @@ class _ExchangeManagerAdapter(ExchangeAdapter if ExchangeAdapter is not None els
             avg_price = float(price_value) if price_value is not None else None
         except Exception:
             avg_price = None
-        raw_payload: Mapping[str, Any] | dict[str, Any]
         try:
-            raw_payload = getattr(dto, "__dict__", {})
+            raw_payload = self._json_safe(getattr(dto, "__dict__", {"repr": repr(dto)}))
         except Exception:
             raw_payload = {"repr": repr(dto)}
         return CoreOrderResult(
@@ -394,8 +410,150 @@ class _ExchangeManagerAdapter(ExchangeAdapter if ExchangeAdapter is not None els
             status=status_value,
             filled_quantity=float(getattr(dto, "quantity", request.quantity)),
             avg_price=avg_price,
-            raw_response=dict(raw_payload),
+            raw_response=dict(raw_payload) if isinstance(raw_payload, Mapping) else {"payload": raw_payload},
         )
+
+    def _call_with_optional_symbol(self, fetcher: Any, symbol: str | None, *, include_none: bool = False) -> Any:
+        if symbol:
+            call_patterns = (
+                ((symbol,), {}),
+                ((), {"symbol": symbol}),
+                ((), {}),
+            )
+        else:
+            call_patterns = (
+                ((), {}),
+                ((None,), {}),
+                ((), {"symbol": None}),
+            ) if include_none else (((), {}),)
+
+        last_error: TypeError | None = None
+        for args, kwargs in call_patterns:
+            try:
+                return fetcher(*args, **kwargs)
+            except TypeError as exc:
+                last_error = exc
+                continue
+        if last_error is not None:
+            raise last_error
+        raise TypeError("No compatible call pattern")
+
+    def _build_reconciled_result(
+        self,
+        order: Any,
+        *,
+        cid: str,
+        resolved_symbol: str | None,
+    ) -> "CoreOrderResult":
+        status = getattr(order, "status", "unknown")
+        status_value = status.value if hasattr(status, "value") else str(status)
+        extra = getattr(order, "extra", {})
+        filled_candidate = extra.get("filled_quantity") if isinstance(extra, Mapping) else None
+        if filled_candidate is None:
+            filled_candidate = getattr(order, "quantity", 0.0)
+        avg_candidate = extra.get("avg_price") if isinstance(extra, Mapping) else None
+        if avg_candidate is None:
+            avg_candidate = getattr(order, "price", 0.0)
+        order_symbol = getattr(order, "symbol", None) or resolved_symbol
+        timestamp = getattr(order, "ts", 0.0)
+        extra_order_id = extra.get("order_id") if isinstance(extra, Mapping) else None
+        order_id = str(
+            getattr(order, "id", None)
+            or getattr(order, "order_id", None)
+            or extra_order_id
+            or cid
+            or f"{order_symbol}:{timestamp}"
+        )
+        if order_symbol:
+            self._order_symbols[order_id] = str(order_symbol)
+        if hasattr(order, "model_dump"):
+            dumped_order = self._json_safe(order.model_dump())
+        elif hasattr(order, "dict"):
+            dumped_order = self._json_safe(order.dict())
+        else:
+            dumped_order = self._json_safe(getattr(order, "__dict__", {"repr": repr(order)}))
+        try:
+            filled_quantity = float(filled_candidate)
+        except (TypeError, ValueError):
+            filled_quantity = 0.0
+        try:
+            avg_price = float(avg_candidate) if avg_candidate is not None else None
+        except (TypeError, ValueError):
+            avg_price = None
+        return CoreOrderResult(
+            order_id=order_id,
+            status=status_value,
+            filled_quantity=filled_quantity,
+            avg_price=avg_price,
+            raw_response={
+                "source": "exchange_manager",
+                "reconcile": "client_order_id",
+                "order": dumped_order,
+            },
+        )
+
+    def _find_order_by_client_id(self, orders: Any, cid: str) -> Any | None:
+        for order in orders or ():
+            order_cid_raw = getattr(order, "client_order_id", None)
+            order_cid = str(order_cid_raw).strip() if order_cid_raw is not None else ""
+            if order_cid == cid:
+                return order
+        return None
+
+    def fetch_order_by_client_id(
+        self,
+        client_order_id: str,
+        *,
+        symbol: str | None = None,
+    ) -> "CoreOrderResult | None":
+        cid = str(client_order_id).strip() if client_order_id is not None else ""
+        if not cid:
+            return None
+        if CoreOrderResult is None:
+            raise RuntimeError("OrderResult nie jest dostępny")
+
+        resolved_symbol = symbol or self._client_symbols.get(cid)
+
+        direct_fetcher = getattr(self._manager, "fetch_order_by_client_id", None)
+        if callable(direct_fetcher):
+            order = None
+            call_patterns: list[tuple[tuple[Any, ...], dict[str, Any]]] = []
+            if resolved_symbol is not None:
+                call_patterns.append(((cid, resolved_symbol), {}))
+            call_patterns.extend(
+                [
+                    ((cid,), {"symbol": resolved_symbol}),
+                    ((cid,), {}),
+                    ((), {"client_order_id": cid, "symbol": resolved_symbol}),
+                    ((), {"client_order_id": cid}),
+                ]
+            )
+            for args, kwargs in call_patterns:
+                if kwargs.get("symbol") is None:
+                    kwargs = {key: value for key, value in kwargs.items() if key != "symbol"}
+                try:
+                    order = direct_fetcher(*args, **kwargs)
+                except TypeError:
+                    continue
+                break
+            if order is not None:
+                order_cid_raw = getattr(order, "client_order_id", None)
+                order_cid = str(order_cid_raw).strip() if order_cid_raw is not None else ""
+                if order_cid == cid:
+                    return self._build_reconciled_result(order, cid=cid, resolved_symbol=resolved_symbol)
+
+        for source_name in ("fetch_orders", "fetch_closed_orders", "fetch_open_orders"):
+            source = getattr(self._manager, source_name, None)
+            if not callable(source):
+                continue
+            try:
+                orders = self._call_with_optional_symbol(source, resolved_symbol, include_none=True)
+            except TypeError:
+                continue
+            order = self._find_order_by_client_id(orders, cid)
+            if order is not None:
+                return self._build_reconciled_result(order, cid=cid, resolved_symbol=resolved_symbol)
+        return None
 
     def cancel_order(self, order_id: str, *, symbol: str | None = None) -> None:
         resolver = getattr(self._manager, "cancel_order", None)
