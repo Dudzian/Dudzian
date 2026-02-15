@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import logging
 import math
+import uuid
 import time
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
@@ -133,12 +134,22 @@ def decision_to_order_request(
             if notional_value < market.min_notional:
                 raise ValueError("notional below market minimum")
 
+    source_raw = source.get("client_order_id")
+    payload_raw = payload.get("client_order_id")
+    source_id = str(source_raw).strip() if source_raw is not None else ""
+    payload_id = str(payload_raw).strip() if payload_raw is not None else ""
+    client_order_id = source_id or payload_id
+    if not client_order_id:
+        client_order_id = f"svc-{uuid.uuid4().hex}"
+        meta["client_order_id"] = client_order_id
+
     return OrderRequest(
         symbol=str(symbol),
         side=str(side),
         quantity=max(0.0, quantity),
         order_type=order_type,
         price=resolved_price,
+        client_order_id=client_order_id,
         metadata=meta or None,
     )
 

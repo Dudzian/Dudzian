@@ -4768,11 +4768,14 @@ class AutoTrader:
             if isinstance(value, (str, int, float, bool)):
                 metadata[str(key)] = str(value)
         metadata["mode"] = decision.mode
+        client_order_id = f"svc-{uuid.uuid4().hex}"
+        metadata["client_order_id"] = client_order_id
         return OrderRequest(
             symbol=symbol,
             side=side,
             quantity=abs(quantity),
             order_type="market",
+            client_order_id=client_order_id,
             metadata=metadata,
         )
         return candidate
