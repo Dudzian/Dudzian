@@ -577,9 +577,12 @@ class LiveExecutionRouter(ExecutionService):
 
         context_meta = context.metadata if isinstance(context.metadata, Mapping) else {}
         operation = str(normalized.get("operation") or context_meta.get("operation") or "").strip().lower()
+        is_outgoing = self._is_outgoing_operation(request, context)
         requires_hw = bool(normalized.get("requires_hardware_wallet") or context_meta.get("requires_hardware_wallet"))
-        if operation in {"withdrawal", "payout"}:
+        if is_outgoing:
             requires_hw = True
+            if not operation:
+                operation = "withdrawal"
 
         if not requires_hw:
             if normalized != metadata:
@@ -703,10 +706,27 @@ class LiveExecutionRouter(ExecutionService):
 
         return str(env).strip().lower() == "live"
 
+    @staticmethod
+    def _is_outgoing_operation(request: OrderRequest, context: ExecutionContext) -> bool:
+        metadata = request.metadata if isinstance(request.metadata, Mapping) else {}
+        context_meta = context.metadata if isinstance(context.metadata, Mapping) else {}
+        operation = str(metadata.get("operation") or context_meta.get("operation") or "").strip().lower()
+        if operation in {"withdrawal", "payout"}:
+            return True
+
+        side = str(getattr(request, "side", "") or "").strip().lower()
+        if side in {"withdraw", "payout"}:
+            return True
+
+        symbol = str(getattr(request, "symbol", "") or "").strip().upper()
+        return symbol == "WITHDRAWAL"
+
     def _validate_live_order_request(self, request: OrderRequest, context: ExecutionContext) -> None:
         if not self._is_live_environment(context):
             return
         if self._has_client_order_id(request):
+            return
+        if self._is_outgoing_operation(request, context):
             return
 
         route = "default"
@@ -1045,8 +1065,7 @@ class LiveExecutionRouter(ExecutionService):
             requires_hw = self._require_hardware_wallet_for_withdrawals or bool(
                 metadata.get("requires_hardware_wallet") or context_meta.get("requires_hardware_wallet")
             )
-            operation = str(metadata.get("operation") or context_meta.get("operation") or "").strip().lower()
-            is_withdrawal = operation in {"withdrawal", "payout"}
+            is_withdrawal = self._is_outgoing_operation(request, context)
             if requires_hw or is_withdrawal:
                 primary_exchange, _ = exchanges_and_retries[0]
                 maybe_prepare(request, context, primary_exchange)
