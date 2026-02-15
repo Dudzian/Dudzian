@@ -1668,6 +1668,17 @@ def test_runtime_overview_cards_react_to_live_signals(tmp_path: Path) -> None:
                 return
             stack = [start]
             visited: set[int] = set()
+
+            def _push_item_candidate(candidate: object) -> None:
+                if isinstance(candidate, str) and candidate.startswith("<"):
+                    return
+                if not isinstance(candidate, QQuickItem):
+                    return
+                marker = id(candidate)
+                if marker in visited:
+                    return
+                stack.append(candidate)
+
             while stack:
                 item = stack.pop()
                 if id(item) in visited:
@@ -1675,15 +1686,36 @@ def test_runtime_overview_cards_react_to_live_signals(tmp_path: Path) -> None:
                 visited.add(id(item))
                 yield item
                 try:
-                    stack.extend(list(item.childItems() or []))
+                    for child in list(item.childItems() or []):
+                        _push_item_candidate(child)
+                except RuntimeError:
+                    pass
                 except Exception:
                     pass
+                for prop_name in ("item", "contentItem"):
+                    try:
+                        _push_item_candidate(item.property(prop_name))
+                    except RuntimeError:
+                        pass
+                    except Exception:
+                        pass
 
         def _iter_descendants(start: QObject | None) -> Iterator[QObject]:
             if start is None:
                 return
             stack: list[QObject] = [start]
             visited: set[int] = set()
+
+            def _push_object_candidate(candidate: object) -> None:
+                if isinstance(candidate, str) and candidate.startswith("<"):
+                    return
+                if not isinstance(candidate, QObject):
+                    return
+                marker = id(candidate)
+                if marker in visited:
+                    return
+                stack.append(candidate)
+
             while stack:
                 current = stack.pop()
                 marker = id(current)
@@ -1693,13 +1725,26 @@ def test_runtime_overview_cards_react_to_live_signals(tmp_path: Path) -> None:
                 yield current
                 if hasattr(current, "childItems"):
                     try:
-                        stack.extend(list(current.childItems() or []))
+                        for child in list(current.childItems() or []):
+                            _push_object_candidate(child)
+                    except RuntimeError:
+                        pass
                     except Exception:
                         pass
                 try:
-                    stack.extend(list(current.children() or []))
+                    for child in list(current.children() or []):
+                        _push_object_candidate(child)
+                except RuntimeError:
+                    pass
                 except Exception:
                     pass
+                for prop_name in ("item", "contentItem"):
+                    try:
+                        _push_object_candidate(current.property(prop_name))
+                    except RuntimeError:
+                        pass
+                    except Exception:
+                        pass
 
         def _find_object(object_name: str) -> QObject | None:
             host_item = _quick_root_item()
@@ -1842,6 +1887,26 @@ def test_runtime_overview_cards_react_to_live_signals(tmp_path: Path) -> None:
                     f"{status}, active={active!r}, sourceComponent={source_component!r}, "
                     f"source={source!r}, hasItem={has_item!r}"
                 )
+                if has_item:
+                    item_object_name = ""
+                    item_descendants: list[str] = []
+                    if isinstance(item_prop, QObject):
+                        item_object_name = _safe_object_name(item_prop)
+                        truncated_descendants = False
+                        for descendant in _iter_descendants(item_prop):
+                            descendant_name = _safe_object_name(descendant)
+                            if not descendant_name:
+                                continue
+                            if len(item_descendants) >= 8:
+                                truncated_descendants = True
+                                break
+                            item_descendants.append(descendant_name)
+                        if truncated_descendants:
+                            item_descendants.append("<truncated>")
+                    feed_loader_state += (
+                        f", itemObjectName={item_object_name!r}, "
+                        f"itemDescendants={item_descendants!r}"
+                    )
 
             try:
                 host_children = len(list(host_item.childItems() or [])) if host_item is not None else 0
