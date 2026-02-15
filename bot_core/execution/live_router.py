@@ -1058,6 +1058,7 @@ class LiveExecutionRouter(ExecutionService):
         start = started_at
         last_error: Exception | None = None
         route_label = route_name or "default"
+        is_live_environment = self._is_live_environment(context)
 
         for exchange_name, max_retries in exchanges_and_retries:
             breaker_now = self._time()
@@ -1117,7 +1118,7 @@ class LiveExecutionRouter(ExecutionService):
                         last_error = exc
                         if breaker:
                             breaker.record_failure(current_time)
-                        if not self._has_client_order_id(request):
+                        if is_live_environment and not self._has_client_order_id(request):
                             _LOGGER.error(
                                 "Błąd %s na %s bez client_order_id – fail fast bez retry/fallback.",
                                 category,
@@ -1145,15 +1146,21 @@ class LiveExecutionRouter(ExecutionService):
                             return reconciled_result
 
                         if not reconcile_supported:
+                            status = (
+                                "reconcile_not_supported_failfast"
+                                if is_live_environment
+                                else "reconcile_not_supported_continue"
+                            )
                             attempts_rec.append(
                                 {
                                     "exchange": exchange_name,
                                     "attempt": str(attempt),
-                                    "status": "reconcile_not_supported_failfast",
-                                    "decision_event": "reconcile_not_supported_failfast",
+                                    "status": status,
+                                    "decision_event": status,
                                 }
                             )
-                            raise
+                            if is_live_environment:
+                                raise
 
                         if not fallback_allowed:
                             raise
