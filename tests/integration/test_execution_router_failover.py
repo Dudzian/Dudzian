@@ -10,7 +10,7 @@ from typing import Iterable, Mapping, Sequence
 import pytest
 
 from bot_core.execution.base import ExecutionContext
-from bot_core.execution.live_router import LiveExecutionRouter, QoSConfig
+from bot_core.execution.live_router import LiveExecutionRouter, QoSConfig, RouteDefinition
 from bot_core.execution.paper import MarketMetadata, PaperTradingExecutionService
 from bot_core.exchanges.base import (
     AccountSnapshot,
@@ -114,7 +114,15 @@ def test_live_router_failover_to_backup_exchange(execution_context: ExecutionCon
 
     router = LiveExecutionRouter(
         adapters={"primary": failing_adapter, "backup": backup_adapter},
-        default_route=("primary", "backup"),
+        routes=[
+            RouteDefinition(
+                name="default",
+                exchanges=("primary", "backup"),
+                max_retries_per_exchange=1,
+                allow_cross_exchange_fallback=True,
+            )
+        ],
+        default_route="default",
         metrics_registry=metrics,
         qos=QoSConfig(worker_concurrency=2, per_exchange_concurrency={"primary": 1, "backup": 1}),
     )
@@ -146,7 +154,8 @@ def test_live_router_enforces_rate_limit_per_exchange(execution_context: Executi
 
     router = LiveExecutionRouter(
         adapters={"primary": rate_limited_adapter},
-        default_route=("primary",),
+        routes=[RouteDefinition(name="default", exchanges=("primary",))],
+        default_route="default",
         metrics_registry=metrics,
         qos=QoSConfig(worker_concurrency=2, per_exchange_concurrency={"primary": 1}),
     )
