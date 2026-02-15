@@ -144,6 +144,12 @@ def test_router_retries_after_reconcile_returns_none(tmp_path: Path) -> None:
         attempts = entries[0]["payload"]["attempts"]
         statuses = [attempt.get("status") for attempt in attempts]
         assert "reconcile_not_found" in statuses
+        assert any(
+            attempt.get("status") == "reconcile_not_found"
+            and attempt.get("attempt") == "1"
+            and attempt.get("decision_event") == "reconcile_not_found"
+            for attempt in attempts
+        )
         assert any(attempt.get("exchange") == "primary" and "latency_s" in attempt for attempt in attempts)
     finally:
         router.close()
@@ -183,7 +189,9 @@ def test_router_retries_after_reconcile_raises_error(tmp_path: Path) -> None:
         entries = read_decision_entries(tmp_path / "reconcile-raises-retry.jsonl")
         attempts = entries[0]["payload"]["attempts"]
         assert any(
-            attempt.get("status") == "reconcile_failed" and attempt.get("attempt") == "1"
+            attempt.get("status") == "reconcile_failed"
+            and attempt.get("attempt") == "1"
+            and attempt.get("decision_event") == "reconcile_failed"
             for attempt in attempts
         )
     finally:
