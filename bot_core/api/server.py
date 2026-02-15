@@ -1369,6 +1369,7 @@ class _OrderServicer(_CloudHealthMixin, trading_pb2_grpc.OrderServiceServicer):
         self._apply_cloud_health_metadata(context)
         symbol = request.instrument.symbol or request.instrument.venue_symbol or self._context.primary_symbol
         execution_service: ExecutionService = self._context.pipeline.execution_service
+        client_order_id = (request.client_order_id or "").strip() or f"svc-{uuid.uuid4().hex}"
         order_request = OrderRequest(
             symbol=symbol,
             side=self._map_side(request.side),
@@ -1376,8 +1377,8 @@ class _OrderServicer(_CloudHealthMixin, trading_pb2_grpc.OrderServiceServicer):
             order_type=self._map_type(request.type),
             price=float(request.price) if request.price else None,
             time_in_force=self._map_tif(request.time_in_force),
-            client_order_id=request.client_order_id or None,
-            metadata={"source": "grpc"},
+            client_order_id=client_order_id,
+            metadata={"source": "grpc", "client_order_id": client_order_id},
         )
         context_model = self._context.execution_context
         try:

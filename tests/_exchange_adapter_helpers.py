@@ -22,6 +22,7 @@ class StubExchangeAdapter(ExchangeAdapter):
         *,
         name: str | None = None,
         responses: Sequence[OrderResult | Exception] | None = None,
+        reconciled_order: OrderResult | None = None,
     ) -> None:
         super().__init__(credentials)
         self.name = name or credentials.key_id
@@ -29,6 +30,8 @@ class StubExchangeAdapter(ExchangeAdapter):
         self.placed: list[OrderRequest] = []
         self.cancelled: list[str] = []
         self.ip_allowlist: Sequence[str] | None = None
+        self.reconciled_order = reconciled_order
+        self.reconcile_calls: list[tuple[str, str | None]] = []
 
     @classmethod
     def from_name(
@@ -37,9 +40,10 @@ class StubExchangeAdapter(ExchangeAdapter):
         *,
         environment: Environment = Environment.PAPER,
         responses: Sequence[OrderResult | Exception] | None = None,
+        reconciled_order: OrderResult | None = None,
     ) -> "StubExchangeAdapter":
         credentials = ExchangeCredentials(key_id=name, environment=environment)
-        return cls(credentials, name=name, responses=responses)
+        return cls(credentials, name=name, responses=responses, reconciled_order=reconciled_order)
 
     def configure_network(self, *, ip_allowlist: Sequence[str] | None = None) -> None:  # noqa: D401
         self.ip_allowlist = ip_allowlist
@@ -79,6 +83,15 @@ class StubExchangeAdapter(ExchangeAdapter):
         if isinstance(response, Exception):
             raise response
         return response
+
+    def fetch_order_by_client_id(
+        self,
+        client_order_id: str,
+        *,
+        symbol: str | None = None,
+    ) -> OrderResult | None:
+        self.reconcile_calls.append((client_order_id, symbol))
+        return self.reconciled_order
 
     def cancel_order(self, order_id: str, *, symbol: str | None = None) -> None:  # noqa: ARG002
         self.cancelled.append(order_id)
