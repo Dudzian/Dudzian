@@ -37,6 +37,11 @@ try:  # pragma: no cover - optional dependency in stripped builds
 except Exception:  # pragma: no cover
     AsyncIOTaskQueue = None  # type: ignore[misc,assignment]
 
+try:  # pragma: no cover - optional dependency in stripped builds
+    from bot_core.execution.intent_store import IntentStore
+except Exception:  # pragma: no cover
+    IntentStore = None  # type: ignore[misc,assignment]
+
 
 # --- Observability (wymagana w buildach produkcyjnych)
 try:  # pragma: no cover
@@ -362,7 +367,9 @@ class LiveExecutionRouter(ExecutionService):
         elif self._decision_log_path is not None:
             resolved_intent_store_path = self._decision_log_path.with_name("intent_store.sqlite3")
         self._intent_store: IntentStore | None = (
-            IntentStore(resolved_intent_store_path) if resolved_intent_store_path is not None else None
+            IntentStore(resolved_intent_store_path)
+            if resolved_intent_store_path is not None and IntentStore is not None
+            else None
         )
 
         # Metryki
