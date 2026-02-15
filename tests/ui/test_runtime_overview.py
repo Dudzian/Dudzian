@@ -1799,14 +1799,23 @@ def test_runtime_overview_cards_react_to_live_signals(tmp_path: Path) -> None:
         def _find_loader_like_descendant(start: QObject | None) -> QObject | None:
             if start is None:
                 return None
-            if _is_loader_like(start):
+
+            def _has_loader_status(obj: QObject) -> bool:
+                return _safe_int(_safe_prop(obj, "status"), default=-1) >= 0
+
+            if _has_loader_status(start):
                 return start
+
+            fallback_loader_like: QObject | None = start if _is_loader_like(start) else None
             for child in _iter_descendants(start):
                 if child is start:
                     continue
-                if _is_loader_like(child):
+                if _has_loader_status(child):
                     return child
-            return None
+                if fallback_loader_like is None and _is_loader_like(child):
+                    fallback_loader_like = child
+
+            return fallback_loader_like
 
         def _find_loader_by_card_id(card_id: str) -> QObject | None:
             prefixed_name = f"runtimeOverviewCardLoader_{card_id}"
@@ -1828,6 +1837,32 @@ def test_runtime_overview_cards_react_to_live_signals(tmp_path: Path) -> None:
                     if by_card_loader is not None:
                         return by_card_loader
             return None
+
+        def _find_feed_sla_object(object_name: str) -> QObject | None:
+            loader = _find_loader_by_card_id("feed_sla")
+            if loader is None:
+                return None
+
+            item_prop = _safe_prop(loader, "item")
+            if item_prop is None or (isinstance(item_prop, str) and item_prop.startswith("<")):
+                return None
+            if not isinstance(item_prop, QObject):
+                return None
+
+            if _safe_object_name(item_prop) == object_name:
+                return item_prop
+
+            for descendant in _iter_descendants(item_prop):
+                if _safe_object_name(descendant) == object_name:
+                    return descendant
+
+            return None
+
+        def _feed_sla_ready_via_loader() -> bool:
+            return (
+                _find_feed_sla_object("runtimeOverviewFeedSlaCard") is not None
+                or _find_feed_sla_object("runtimeOverviewSlaStateLabel") is not None
+            )
 
         def _sla_debug_snapshot() -> str:
             host_item = _quick_root_item()
@@ -1924,6 +1959,8 @@ def test_runtime_overview_cards_react_to_live_signals(tmp_path: Path) -> None:
                     f"{object_name}(cardId={card_id!r},status={status})"
                 )
 
+            sla_label_found = _find_feed_sla_object("runtimeOverviewSlaStateLabel") is not None
+
             return (
                 f"Dostępne loadery: {sorted(loaders.keys())!r}; "
                 f"loaderObjects={loader_objects!r}; "
@@ -1932,6 +1969,7 @@ def test_runtime_overview_cards_react_to_live_signals(tmp_path: Path) -> None:
                 f"effectiveGridCardOrder={runtime_root.property('effectiveGridCardOrder')!r}; "
                 f"hostChildren={host_children}; "
                 f"quickItems={len(quick_items)}; "
+                f"feedSlaLabelFoundViaLoader={sla_label_found!r}; "
                 f"feedSlaLoader={feed_loader_state}"
             )
 
@@ -2012,7 +2050,8 @@ def test_runtime_overview_cards_react_to_live_signals(tmp_path: Path) -> None:
         )
 
         assert _wait_until(
-            lambda: _wait_for_child(card_name, timeout_ms=0) is not None
+            lambda: _feed_sla_ready_via_loader()
+            or _wait_for_child(card_name, timeout_ms=0) is not None
             or _wait_for_child("runtimeOverviewSlaStateLabel", timeout_ms=0) is not None,
             timeout_ms=5000,
         ), (
@@ -2030,32 +2069,46 @@ def test_runtime_overview_cards_react_to_live_signals(tmp_path: Path) -> None:
                 return _safe_int(_safe_prop(loader, "status"), default=-1)
 
             def _loader_debug_state() -> str:
+                status = _loader_status()
+                status_prop_missing = status < 0
                 item_prop = _safe_prop(loader, "item")
                 has_item = item_prop is not None and not (
                     isinstance(item_prop, str) and item_prop.startswith("<")
                 )
+                item_object_name = _safe_object_name(item_prop) if isinstance(item_prop, QObject) else ""
                 return (
-                    f"status={_loader_status()}, "
+                    f"status={status}, "
+                    f"statusPropMissing={status_prop_missing}, "
                     f"active={_safe_prop(loader, 'active')!r}, "
                     f"sourceComponent={_safe_prop(loader, 'sourceComponent')!r}, "
                     f"source={_safe_prop(loader, 'source')!r}, "
-                    f"hasItem={has_item}"
+                    f"hasItem={has_item}, "
+                    f"itemObjectName={item_object_name!r}"
                 )
 
             def _loader_ready_or_raise() -> bool:
                 status = _loader_status()
+                item_prop = _safe_prop(loader, "item")
+                has_item = item_prop is not None and not (
+                    isinstance(item_prop, str) and item_prop.startswith("<")
+                )
                 if status == loader_error:
                     err = _safe_prop(loader, "errorString")
                     raise AssertionError(
                         f"Loader feed_sla jest w stanie Error: {err!r}; {_loader_debug_state()}"
                     )
+                if status < 0:
+                    return has_item
                 return status == loader_ready
 
             assert _wait_until(_loader_ready_or_raise, timeout_ms=5000), (
                 f"Loader feed_sla nie osiągnął Ready; {_loader_debug_state()}"
             )
 
-        assert _wait_for_child(card_name, timeout_ms=5000) is not None, (
+        assert (
+            _find_feed_sla_object(card_name) is not None
+            or _wait_for_child(card_name, timeout_ms=5000) is not None
+        ), (
             "Karta SLA nie została utworzona w zadanym czasie. "
             f"{_sla_debug_snapshot()}"
         )
@@ -2145,20 +2198,20 @@ def test_runtime_overview_cards_react_to_live_signals(tmp_path: Path) -> None:
         )
         app.processEvents()
 
-        sla_card = _wait_for_child("runtimeOverviewFeedSlaCard")
+        sla_card = _find_feed_sla_object("runtimeOverviewFeedSlaCard") or _wait_for_child("runtimeOverviewFeedSlaCard")
         assert sla_card is not None
-        sla_state_label = _wait_for_child("runtimeOverviewSlaStateLabel")
+        sla_state_label = _find_feed_sla_object("runtimeOverviewSlaStateLabel") or _wait_for_child("runtimeOverviewSlaStateLabel")
         assert sla_state_label is not None
         assert "connected" in sla_state_label.property("text").lower()
-        sla_latency_label = _wait_for_child("runtimeOverviewSlaLatency")
+        sla_latency_label = _find_feed_sla_object("runtimeOverviewSlaLatency") or _wait_for_child("runtimeOverviewSlaLatency")
         assert sla_latency_label is not None and "2800" in sla_latency_label.property("text")
-        sla_last_error = _wait_for_child("runtimeOverviewSlaLastError")
+        sla_last_error = _find_feed_sla_object("runtimeOverviewSlaLastError") or _wait_for_child("runtimeOverviewSlaLastError")
         assert sla_last_error is not None and sla_last_error.property("visible") is True
-        sla_retry = _wait_for_child("runtimeOverviewSlaRetry")
+        sla_retry = _find_feed_sla_object("runtimeOverviewSlaRetry") or _wait_for_child("runtimeOverviewSlaRetry")
         assert sla_retry is not None and "1.5" in sla_retry.property("text")
-        alert_list = _wait_for_child("runtimeOverviewSlaAlertList")
+        alert_list = _find_feed_sla_object("runtimeOverviewSlaAlertList") or _wait_for_child("runtimeOverviewSlaAlertList")
         assert alert_list is not None and alert_list.property("count") == 2
-        escalation_label = _wait_for_child("runtimeOverviewSlaEscalationStatus")
+        escalation_label = _find_feed_sla_object("runtimeOverviewSlaEscalationStatus") or _wait_for_child("runtimeOverviewSlaEscalationStatus")
         assert escalation_label is not None
         assert "cloud-escalation" in escalation_label.property("text")
 
