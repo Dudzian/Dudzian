@@ -21,6 +21,7 @@ from bot_core.execution.live_router import (
 from bot_core.exchanges.base import Environment, ExchangeAdapter, OrderRequest, OrderResult
 from bot_core.exchanges.errors import ExchangeAPIError, ExchangeNetworkError, ExchangeThrottlingError
 from bot_core.observability import MetricsRegistry
+from bot_core.runtime.frontend import _ExchangeManagerAdapter
 
 from tests._exchange_adapter_helpers import StubExchangeAdapter
 
@@ -105,6 +106,265 @@ def test_router_reconciles_existing_order_after_network_timeout(tmp_path: Path) 
         entries = read_decision_entries(tmp_path / "reconcile.jsonl")
         statuses = [attempt.get("status") for attempt in entries[0]["payload"]["attempts"]]
         assert "order_reconciled" in statuses
+    finally:
+        router.close()
+
+
+def test_router_reconciles_existing_order_after_network_timeout_via_exchange_manager_adapter(tmp_path: Path) -> None:
+    registry = MetricsRegistry()
+
+    class DummyManager:
+        exchange_id = "dummy"
+
+        def __init__(self) -> None:
+            self.create_calls = 0
+            self.fetch_calls = 0
+
+        def create_order(self, *_args: object, **_kwargs: object) -> object:
+            self.create_calls += 1
+            raise ExchangeNetworkError("timeout", None)
+
+        def fetch_open_orders(self, symbol: str | None = None) -> list[types.SimpleNamespace]:
+            self.fetch_calls += 1
+            return [
+                types.SimpleNamespace(
+                    client_order_id="test-client-id",
+                    id="remote-1",
+                    status="FILLED",
+                    quantity=1.0,
+                    price=100.5,
+                    ts=123.0,
+                    symbol=(symbol or "BTCUSDT"),
+                    extra={"filled_quantity": 1.0, "avg_price": 100.5, "order_id": "remote-1"},
+                )
+            ]
+
+    manager = DummyManager()
+    adapter = _ExchangeManagerAdapter(manager, sandbox=False, key_id="dummy-key")
+    router = LiveExecutionRouter(
+        adapters={"primary": adapter},
+        routes=[RouteDefinition(name="default", exchanges=("primary",), max_retries_per_exchange=2)],
+        decision_log_path=tmp_path / "reconcile-manager-adapter.jsonl",
+        decision_log_hmac_key=b"K" * 48,
+        metrics=registry,
+        time_source=FakeClock(),
+    )
+
+    try:
+        result = router.execute(build_request(), build_context("default"))
+
+        assert result.order_id == "remote-1"
+        assert result.raw_response["reconciled"] is True
+        labels = {"exchange": "primary", "symbol": "BTCUSDT", "portfolio": "core", "route": "default"}
+        assert registry.get("live_orders_reconciled_total").value(labels=labels) == 1.0
+        assert registry.get("live_orders_reconcile_failed_total").value(labels=labels) == 0.0
+        assert manager.create_calls == 1
+        assert manager.fetch_calls == 1
+        entries = read_decision_entries(tmp_path / "reconcile-manager-adapter.jsonl")
+        attempts = entries[0]["payload"]["attempts"]
+        assert any(
+            attempt.get("status") == "order_reconciled"
+            and attempt.get("attempt") == "1"
+            and attempt.get("decision_event") == "order_reconciled"
+            for attempt in attempts
+        )
+    finally:
+        router.close()
+
+
+
+def test_router_reconciles_existing_order_after_network_timeout_via_exchange_manager_adapter_closed_orders(tmp_path: Path) -> None:
+    registry = MetricsRegistry()
+
+    class DummyManager:
+        exchange_id = "dummy"
+
+        def __init__(self) -> None:
+            self.create_calls = 0
+            self.fetch_open_calls = 0
+            self.fetch_closed_calls = 0
+
+        def create_order(self, *_args: object, **_kwargs: object) -> object:
+            self.create_calls += 1
+            raise ExchangeNetworkError("timeout", None)
+
+        def fetch_open_orders(self, symbol: str | None = None) -> list[types.SimpleNamespace]:
+            self.fetch_open_calls += 1
+            return []
+
+        def fetch_closed_orders(self, symbol: str | None = None) -> list[types.SimpleNamespace]:
+            self.fetch_closed_calls += 1
+            return [
+                types.SimpleNamespace(
+                    client_order_id=" test-client-id ",
+                    id=None,
+                    order_id=None,
+                    status="FILLED",
+                    quantity=1.0,
+                    price=100.5,
+                    ts=123.0,
+                    symbol=(symbol or "BTCUSDT"),
+                    extra={"filled_quantity": 1.0, "avg_price": 100.5, "order_id": "remote-1"},
+                )
+            ]
+
+    manager = DummyManager()
+    adapter = _ExchangeManagerAdapter(manager, sandbox=False, key_id="dummy-key")
+    router = LiveExecutionRouter(
+        adapters={"primary": adapter},
+        routes=[RouteDefinition(name="default", exchanges=("primary",), max_retries_per_exchange=2)],
+        decision_log_path=tmp_path / "reconcile-manager-adapter-closed.jsonl",
+        decision_log_hmac_key=b"C" * 48,
+        metrics=registry,
+        time_source=FakeClock(),
+    )
+
+    try:
+        result = router.execute(build_request(), build_context("default"))
+
+        assert result.order_id == "remote-1"
+        assert result.raw_response["reconciled"] is True
+        labels = {"exchange": "primary", "symbol": "BTCUSDT", "portfolio": "core", "route": "default"}
+        assert registry.get("live_orders_reconciled_total").value(labels=labels) == 1.0
+        assert registry.get("live_orders_reconcile_failed_total").value(labels=labels) == 0.0
+        assert manager.create_calls == 1
+        assert manager.fetch_open_calls == 0
+        assert manager.fetch_closed_calls == 1
+        entries = read_decision_entries(tmp_path / "reconcile-manager-adapter-closed.jsonl")
+        attempts = entries[0]["payload"]["attempts"]
+        assert any(
+            attempt.get("status") == "order_reconciled"
+            and attempt.get("attempt") == "1"
+            and attempt.get("decision_event") == "order_reconciled"
+            for attempt in attempts
+        )
+    finally:
+        router.close()
+
+
+def test_router_reconciles_even_if_fetch_orders_signature_mismatch_via_exchange_manager_adapter(tmp_path: Path) -> None:
+    registry = MetricsRegistry()
+
+    class DummyManager:
+        exchange_id = "dummy"
+
+        def __init__(self) -> None:
+            self.create_calls = 0
+            self.fetch_orders_calls = 0
+            self.fetch_closed_calls = 0
+
+        def create_order(self, *_args: object, **_kwargs: object) -> object:
+            self.create_calls += 1
+            raise ExchangeNetworkError("timeout", None)
+
+        def fetch_orders(self, *args: object, **kwargs: object) -> list[types.SimpleNamespace]:
+            self.fetch_orders_calls += 1
+            raise TypeError("signature mismatch")
+
+        def fetch_closed_orders(self, symbol: str | None = None) -> list[types.SimpleNamespace]:
+            self.fetch_closed_calls += 1
+            return [
+                types.SimpleNamespace(
+                    client_order_id="test-client-id",
+                    id=None,
+                    order_id=None,
+                    status="FILLED",
+                    quantity=1.0,
+                    price=100.5,
+                    ts=123.0,
+                    symbol=(symbol or "BTCUSDT"),
+                    extra={"filled_quantity": 1.0, "avg_price": 100.5, "order_id": "remote-1"},
+                )
+            ]
+
+    manager = DummyManager()
+    adapter = _ExchangeManagerAdapter(manager, sandbox=False, key_id="dummy-key")
+    router = LiveExecutionRouter(
+        adapters={"primary": adapter},
+        routes=[RouteDefinition(name="default", exchanges=("primary",), max_retries_per_exchange=2)],
+        decision_log_path=tmp_path / "reconcile-manager-adapter-mismatch.jsonl",
+        decision_log_hmac_key=b"S" * 48,
+        metrics=registry,
+        time_source=FakeClock(),
+    )
+
+    try:
+        result = router.execute(build_request(), build_context("default"))
+
+        assert result.order_id == "remote-1"
+        assert result.raw_response["reconciled"] is True
+        assert manager.create_calls == 1
+        assert manager.fetch_orders_calls >= 1
+        assert manager.fetch_closed_calls == 1
+        labels = {"exchange": "primary", "symbol": "BTCUSDT", "portfolio": "core", "route": "default"}
+        assert registry.get("live_orders_reconciled_total").value(labels=labels) == 1.0
+        assert registry.get("live_orders_reconcile_failed_total").value(labels=labels) == 0.0
+        entries = read_decision_entries(tmp_path / "reconcile-manager-adapter-mismatch.jsonl")
+        attempts = entries[0]["payload"]["attempts"]
+        assert any(
+            attempt.get("status") == "order_reconciled"
+            and attempt.get("attempt") == "1"
+            and attempt.get("decision_event") == "order_reconciled"
+            for attempt in attempts
+        )
+    finally:
+        router.close()
+
+
+def test_router_retries_after_reconcile_failed_via_exchange_manager_adapter(tmp_path: Path) -> None:
+    registry = MetricsRegistry()
+
+    class DummyManager:
+        exchange_id = "dummy"
+
+        def __init__(self) -> None:
+            self.create_calls = 0
+            self.fetch_closed_calls = 0
+
+        def create_order(self, symbol: str, side: str, order_type: str, quantity: float, price: float | None, client_order_id: str | None) -> object:  # noqa: ARG002
+            self.create_calls += 1
+            if self.create_calls == 1:
+                raise ExchangeNetworkError("timeout", None)
+            return types.SimpleNamespace(
+                id="ok-2",
+                status="FILLED",
+                quantity=1.0,
+                price=100.0,
+                ts=124.0,
+                client_order_id=client_order_id,
+            )
+
+        def fetch_closed_orders(self, symbol: str | None = None) -> list[types.SimpleNamespace]:  # noqa: ARG002
+            self.fetch_closed_calls += 1
+            raise RuntimeError("boom")
+
+    manager = DummyManager()
+    adapter = _ExchangeManagerAdapter(manager, sandbox=False, key_id="dummy-key")
+    router = LiveExecutionRouter(
+        adapters={"primary": adapter},
+        routes=[RouteDefinition(name="default", exchanges=("primary",), max_retries_per_exchange=2)],
+        decision_log_path=tmp_path / "reconcile-manager-adapter-failed-retry.jsonl",
+        decision_log_hmac_key=b"F" * 48,
+        metrics=registry,
+        time_source=FakeClock(),
+    )
+
+    try:
+        result = router.execute(build_request(), build_context("default"))
+
+        assert result.order_id == "ok-2"
+        assert manager.create_calls == 2
+        assert manager.fetch_closed_calls == 1
+        labels = {"exchange": "primary", "symbol": "BTCUSDT", "portfolio": "core", "route": "default"}
+        assert registry.get("live_orders_reconcile_failed_total").value(labels=labels) == 1.0
+        entries = read_decision_entries(tmp_path / "reconcile-manager-adapter-failed-retry.jsonl")
+        attempts = entries[0]["payload"]["attempts"]
+        assert any(
+            attempt.get("status") == "reconcile_failed"
+            and attempt.get("attempt") == "1"
+            and attempt.get("decision_event") == "reconcile_failed"
+            for attempt in attempts
+        )
     finally:
         router.close()
 
@@ -239,7 +499,9 @@ def test_router_reconciles_existing_order_after_throttling_error(tmp_path: Path)
         entries = read_decision_entries(tmp_path / "reconcile-throttling.jsonl")
         attempts = entries[0]["payload"]["attempts"]
         assert any(
-            attempt.get("status") == "order_reconciled" and attempt.get("attempt") == "1"
+            attempt.get("status") == "order_reconciled"
+            and attempt.get("attempt") == "1"
+            and attempt.get("decision_event") == "order_reconciled"
             for attempt in attempts
         )
     finally:
