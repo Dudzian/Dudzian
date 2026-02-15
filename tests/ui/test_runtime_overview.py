@@ -1691,15 +1691,11 @@ def test_runtime_overview_cards_react_to_live_signals(tmp_path: Path) -> None:
                     continue
                 visited.add(marker)
                 yield current
-                quick_children: list[QObject] = []
                 if hasattr(current, "childItems"):
                     try:
-                        quick_children = list(current.childItems() or [])
+                        stack.extend(list(current.childItems() or []))
                     except Exception:
-                        quick_children = []
-                    if quick_children:
-                        stack.extend(quick_children)
-                        continue
+                        pass
                 try:
                     stack.extend(list(current.children() or []))
                 except Exception:
