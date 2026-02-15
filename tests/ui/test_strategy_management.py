@@ -2,27 +2,88 @@ import os
 from pathlib import Path
 
 import pytest
-import yaml
 
-from tests.ui._qt import require_pyside6
-from ui.pyside_app.controllers.strategy import StrategyManagementController
+try:
+    import yaml  # type: ignore
+except ModuleNotFoundError:  # pragma: no cover
+    yaml = None  # type: ignore
 
-pytestmark = pytest.mark.qml
+pytestmark = [
+    pytest.mark.qml,
+    pytest.mark.skipif(yaml is None, reason="PyYAML nie jest zainstalowane w tym środowisku testowym."),
+]
 
-os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+if yaml is not None:
+    from tests.ui._qt import require_pyside6
+    from ui.pyside_app.controllers.strategy import StrategyManagementController
 
-PySide6 = require_pyside6()
-qt_root = Path(PySide6.__file__).resolve().parent
-os.environ.setdefault("QML2_IMPORT_PATH", str(qt_root / "Qt" / "qml"))
-os.environ.setdefault("QT_PLUGIN_PATH", str(qt_root / "Qt" / "plugins"))
+    os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
-from PySide6.QtCore import QObject, Property, Qt, QUrl, Signal, Slot, QMetaObject, Q_ARG
-from PySide6.QtQml import QQmlApplicationEngine
+    PySide6 = require_pyside6()
+    qt_root = Path(PySide6.__file__).resolve().parent
+    os.environ.setdefault("QML2_IMPORT_PATH", str(qt_root / "Qt" / "qml"))
+    os.environ.setdefault("QT_PLUGIN_PATH", str(qt_root / "Qt" / "plugins"))
 
-try:  # pragma: no cover - zależne od środowiska CI
-    from PySide6.QtWidgets import QApplication
-except ImportError as exc:  # pragma: no cover
-    pytest.skip(f"Brak zależności QtWidgets: {exc}", allow_module_level=True)
+    from PySide6.QtCore import QObject, Property, Qt, QUrl, Signal, Slot, QMetaObject, Q_ARG
+    from PySide6.QtQml import QQmlApplicationEngine
+
+    try:  # pragma: no cover - zależne od środowiska CI
+        from PySide6.QtWidgets import QApplication
+    except ImportError as exc:  # pragma: no cover
+        pytest.skip(f"Brak zależności QtWidgets: {exc}", allow_module_level=True)
+else:
+    class QObject:  # pragma: no cover - wykorzystywane tylko gdy moduł jest skipowany
+        def __init__(self, *args, **kwargs) -> None:
+            pass
+
+    class QUrl:  # pragma: no cover
+        @staticmethod
+        def fromLocalFile(path: str) -> str:
+            return path
+
+    class Qt:  # pragma: no cover
+        QueuedConnection = 0
+
+    class QQmlApplicationEngine:  # pragma: no cover
+        pass
+
+    class QApplication:  # pragma: no cover
+        @staticmethod
+        def instance():
+            return None
+
+        def __init__(self, *args, **kwargs) -> None:
+            pass
+
+    class Signal:  # pragma: no cover
+        def __init__(self, *args, **kwargs) -> None:
+            pass
+
+        def emit(self, *args, **kwargs) -> None:
+            pass
+
+    def Property(*args, **kwargs):  # pragma: no cover
+        def _decorator(func):
+            return func
+
+        return _decorator
+
+    def Slot(*args, **kwargs):  # pragma: no cover
+        def _decorator(func):
+            return func
+
+        return _decorator
+
+    class QMetaObject:  # pragma: no cover
+        @staticmethod
+        def invokeMethod(*args, **kwargs) -> bool:
+            return True
+
+    def Q_ARG(*args, **kwargs):  # pragma: no cover
+        return None
+
+    class StrategyManagementController:  # pragma: no cover
+        pass
 
 
 class RuntimeServiceStub(QObject):

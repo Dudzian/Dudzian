@@ -14,52 +14,84 @@ from types import SimpleNamespace
 from dataclasses import is_dataclass
 
 import pytest
-import yaml
 
-from bot_core.config.loader import load_core_config
+try:
+    import yaml  # type: ignore
+except ModuleNotFoundError:  # pragma: no cover
+    yaml = None  # type: ignore
+
+pytestmark = pytest.mark.skipif(yaml is None, reason="PyYAML nie jest zainstalowane w tym środowisku testowym.")
 
 import tests._pathbootstrap  # noqa: F401  # pylint: disable=unused-import
 
-from bot_core.config.models import DecisionEngineTCOConfig, SMSProviderSettings
-from bot_core.alerts import EmailChannel, SMSChannel, TelegramChannel
-from bot_core.decision.models import DecisionCandidate, DecisionContext, RiskSnapshot
-from bot_core.exchanges.base import (
-    AccountSnapshot,
-    Environment,
-    ExchangeAdapter,
-    ExchangeCredentials,
-    OrderRequest,
-)
-from bot_core.exchanges.binance import BinanceSpotAdapter
-from bot_core.exchanges.bybit import BybitSpotAdapter
-from bot_core.exchanges.coinbase import CoinbaseSpotAdapter
-from bot_core.exchanges.kucoin import KuCoinSpotAdapter
-from bot_core.exchanges.nowa_gielda import NowaGieldaSpotAdapter
-from bot_core.exchanges.okx import OKXSpotAdapter
-from bot_core.risk.engine import ThresholdRiskEngine
-from bot_core.risk.repository import FileRiskRepository
-from bot_core.risk.settings import RiskManagerSettings
-from bot_core.runtime.bootstrap import (
-    BootstrapContext,
-    _DEFAULT_ADAPTERS,
-    _instantiate_adapter,
-    _apply_adapter_factory_specs,
-    _load_initial_tco_costs,
-    bootstrap_environment,
-    catalog_runtime_entrypoints,
-    extract_live_readiness_metadata,
-    get_registered_adapter_factories,
-    register_adapter_factory,
-    register_adapter_factory_from_path,
-    resolve_runtime_entrypoint,
-    parse_adapter_factory_cli_specs,
-    unregister_adapter_factory,
-    temporary_adapter_factories,
-)
-import bot_core.runtime.bootstrap as bootstrap_module
-from bot_core.runtime.metrics_alerts import DEFAULT_UI_ALERTS_JSONL_PATH
-from bot_core.security import SecretManager, SecretStorage, SecretStorageError
-from bot_core.security.signing import build_hmac_signature
+if yaml is not None:
+    from bot_core.config.loader import load_core_config
+    from bot_core.config.models import DecisionEngineTCOConfig, SMSProviderSettings
+    from bot_core.alerts import EmailChannel, SMSChannel, TelegramChannel
+    from bot_core.decision.models import DecisionCandidate, DecisionContext, RiskSnapshot
+    from bot_core.exchanges.base import (
+        AccountSnapshot,
+        Environment,
+        ExchangeAdapter,
+        ExchangeCredentials,
+        OrderRequest,
+    )
+    from bot_core.exchanges.binance import BinanceSpotAdapter
+    from bot_core.exchanges.bybit import BybitSpotAdapter
+    from bot_core.exchanges.coinbase import CoinbaseSpotAdapter
+    from bot_core.exchanges.kucoin import KuCoinSpotAdapter
+    from bot_core.exchanges.nowa_gielda import NowaGieldaSpotAdapter
+    from bot_core.exchanges.okx import OKXSpotAdapter
+    from bot_core.risk.engine import ThresholdRiskEngine
+    from bot_core.risk.repository import FileRiskRepository
+    from bot_core.risk.settings import RiskManagerSettings
+    from bot_core.runtime.bootstrap import (
+        BootstrapContext,
+        _DEFAULT_ADAPTERS,
+        _instantiate_adapter,
+        _apply_adapter_factory_specs,
+        _load_initial_tco_costs,
+        bootstrap_environment,
+        catalog_runtime_entrypoints,
+        extract_live_readiness_metadata,
+        get_registered_adapter_factories,
+        register_adapter_factory,
+        register_adapter_factory_from_path,
+        resolve_runtime_entrypoint,
+        parse_adapter_factory_cli_specs,
+        unregister_adapter_factory,
+        temporary_adapter_factories,
+    )
+    import bot_core.runtime.bootstrap as bootstrap_module
+    from bot_core.runtime.metrics_alerts import DEFAULT_UI_ALERTS_JSONL_PATH
+    from bot_core.security import SecretManager, SecretStorage, SecretStorageError
+    from bot_core.security.signing import build_hmac_signature
+else:
+    class SecretStorage:
+        pass
+
+    load_core_config = None  # type: ignore[assignment]
+    DecisionEngineTCOConfig = SMSProviderSettings = object  # type: ignore[assignment]
+    EmailChannel = SMSChannel = TelegramChannel = object  # type: ignore[assignment]
+    DecisionCandidate = DecisionContext = RiskSnapshot = object  # type: ignore[assignment]
+    AccountSnapshot = Environment = ExchangeAdapter = ExchangeCredentials = OrderRequest = object  # type: ignore[assignment]
+    BinanceSpotAdapter = BybitSpotAdapter = CoinbaseSpotAdapter = KuCoinSpotAdapter = NowaGieldaSpotAdapter = OKXSpotAdapter = object  # type: ignore[assignment]
+    ThresholdRiskEngine = FileRiskRepository = RiskManagerSettings = object  # type: ignore[assignment]
+    BootstrapContext = object  # type: ignore[assignment]
+    _DEFAULT_ADAPTERS = {}  # type: ignore[assignment]
+    _instantiate_adapter = _apply_adapter_factory_specs = _load_initial_tco_costs = None  # type: ignore[assignment]
+    bootstrap_environment = catalog_runtime_entrypoints = extract_live_readiness_metadata = None  # type: ignore[assignment]
+    get_registered_adapter_factories = register_adapter_factory = register_adapter_factory_from_path = None  # type: ignore[assignment]
+    resolve_runtime_entrypoint = parse_adapter_factory_cli_specs = unregister_adapter_factory = temporary_adapter_factories = None  # type: ignore[assignment]
+    DEFAULT_UI_ALERTS_JSONL_PATH = ""  # type: ignore[assignment]
+    SecretManager = SecretStorageError = object  # type: ignore[assignment]
+    build_hmac_signature = None  # type: ignore[assignment]
+
+    class _BootstrapModuleStub:
+        def __getattr__(self, name: str):
+            raise RuntimeError("bootstrap module unavailable when PyYAML is missing")
+
+    bootstrap_module = _BootstrapModuleStub()  # type: ignore[assignment]
 
 
 @pytest.mark.parametrize(
