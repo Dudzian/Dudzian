@@ -1581,7 +1581,7 @@ def test_runtime_overview_cards_react_to_live_signals(tmp_path: Path) -> None:
     created_app = QApplication.instance() is None
     app = QApplication.instance() or QApplication([])
     engine = QQmlApplicationEngine()
-    quick_window = QQuickWindow()
+    quick_window: QQuickWindow | None = None
 
     try:
         engine.rootContext().setContextProperty("telemetryProvider", provider)
@@ -1615,21 +1615,53 @@ def test_runtime_overview_cards_react_to_live_signals(tmp_path: Path) -> None:
                         root.setProperty(key, value)
             assert root is not None, "Nie udało się utworzyć RuntimeOverview.qml"
 
-        assert isinstance(root, QQuickItem), (
-            "RuntimeOverview root musi być QQuickItem, aby osadzić go w oknie hosta. "
-            f"Otrzymano: {type(root)!r}"
-        )
+        if root.parent() is None:
+            root.setParent(engine)
+
+        runtime_root: QObject = root
+        runtime_root_item: QQuickItem | None = root if isinstance(root, QQuickItem) else None
+        if isinstance(root, QQuickWindow):
+            quick_window = root
+            runtime_root_item = None
+        elif isinstance(root, QQuickItem):
+            quick_window = QQuickWindow()
+            root.setParentItem(quick_window.contentItem())
+            runtime_root_item = root
+        else:
+            raise AssertionError(
+                "RuntimeOverview root musi być QQuickItem albo QQuickWindow. "
+                f"Otrzymano: {type(root)!r}"
+            )
 
         def _quick_root_item() -> QQuickItem | None:
             try:
+                assert quick_window is not None
                 host_item = quick_window.contentItem()
                 if host_item is not None:
                     return host_item
             except Exception:
                 pass
-            if isinstance(root, QQuickItem):
-                return root
-            return None
+            return runtime_root_item
+
+        def _safe_prop(obj: QObject, name: str) -> object:
+            try:
+                return obj.property(name)
+            except RuntimeError as exc:
+                return f"<RuntimeError: {exc}>"
+            except Exception as exc:  # pragma: no cover
+                return f"<{type(exc).__name__}: {exc}>"
+
+        def _safe_object_name(obj: QObject) -> str:
+            try:
+                object_name = str(obj.objectName())
+            except Exception:
+                object_name = ""
+            if object_name:
+                return object_name
+            prop_name = _safe_prop(obj, "objectName")
+            if isinstance(prop_name, str) and prop_name and not prop_name.startswith("<"):
+                return prop_name
+            return ""
 
         def _iter_quick_items(start: QQuickItem | None) -> Iterator[QQuickItem]:
             if start is None:
@@ -1647,26 +1679,45 @@ def test_runtime_overview_cards_react_to_live_signals(tmp_path: Path) -> None:
                 except Exception:
                     pass
 
-        def _find_object(object_name: str) -> QObject | None:
-            found = root.findChild(QObject, object_name)
-            if found is not None:
-                return found
-
-            host_item = _quick_root_item()
-            if host_item is not None:
+        def _iter_descendants(start: QObject | None) -> Iterator[QObject]:
+            if start is None:
+                return
+            stack: list[QObject] = [start]
+            visited: set[int] = set()
+            while stack:
+                current = stack.pop()
+                marker = id(current)
+                if marker in visited:
+                    continue
+                visited.add(marker)
+                yield current
+                quick_children: list[QObject] = []
+                if hasattr(current, "childItems"):
+                    try:
+                        quick_children = list(current.childItems() or [])
+                    except Exception:
+                        quick_children = []
+                    if quick_children:
+                        stack.extend(quick_children)
+                        continue
                 try:
-                    host_found = host_item.findChild(QObject, object_name)
-                    if host_found is not None:
-                        return host_found
+                    stack.extend(list(current.children() or []))
                 except Exception:
                     pass
 
+        def _find_object(object_name: str) -> QObject | None:
+            host_item = _quick_root_item()
             for item in _iter_quick_items(host_item):
-                try:
-                    if str(item.objectName()) == object_name:
-                        return item
-                except Exception:
-                    continue
+                if _safe_object_name(item) == object_name:
+                    return item
+
+            for obj in _iter_descendants(runtime_root_item):
+                if _safe_object_name(obj) == object_name:
+                    return obj
+
+            found = runtime_root.findChild(QObject, object_name)
+            if found is not None:
+                return found
             return None
 
         def _wait_for_child(object_name: str, timeout_ms: int = 1000) -> QObject | None:
@@ -1680,52 +1731,36 @@ def test_runtime_overview_cards_react_to_live_signals(tmp_path: Path) -> None:
             app.processEvents()
             return _find_object(object_name)
 
+        def _safe_int(value: object, default: int = -1) -> int:
+            if value is None:
+                return default
+            if isinstance(value, str) and value.startswith("<"):
+                return default
+            try:
+                return int(value)  # type: ignore[arg-type]
+            except Exception:
+                return default
+
         def _is_loader_like(item: QObject) -> bool:
-            try:
-                status = item.property("status")
-                active = item.property("active")
-                source_component = item.property("sourceComponent")
-                source = item.property("source")
-            except Exception:
-                return False
-
-            try:
-                int(status)
-            except Exception:
-                return False
-
-            if active is None:
-                return False
-            try:
-                str(active)
-            except Exception:
-                return False
-
-            return source_component is not None or source is not None
-
-        def _iter_qobjects(start: QObject | None) -> Iterator[QObject]:
-            if start is None:
-                return
-            stack: list[QObject] = [start]
-            visited: set[int] = set()
-            while stack:
-                obj = stack.pop()
-                marker = id(obj)
-                if marker in visited:
-                    continue
-                visited.add(marker)
-                yield obj
-                try:
-                    stack.extend(list(obj.children() or []))
-                except Exception:
-                    pass
+            status = _safe_int(_safe_prop(item, "status"), default=-1)
+            if status >= 0:
+                return True
+            item_prop = _safe_prop(item, "item")
+            if item_prop is not None and not (isinstance(item_prop, str) and item_prop.startswith("<")):
+                return True
+            source_component = _safe_prop(item, "sourceComponent")
+            if source_component is not None and not (
+                isinstance(source_component, str) and source_component.startswith("<")
+            ):
+                return True
+            return False
 
         def _find_loader_like_descendant(start: QObject | None) -> QObject | None:
             if start is None:
                 return None
             if _is_loader_like(start):
                 return start
-            for child in _iter_qobjects(start):
+            for child in _iter_descendants(start):
                 if child is start:
                     continue
                 if _is_loader_like(child):
@@ -1735,17 +1770,22 @@ def test_runtime_overview_cards_react_to_live_signals(tmp_path: Path) -> None:
         def _find_loader_by_card_id(card_id: str) -> QObject | None:
             prefixed_name = f"runtimeOverviewCardLoader_{card_id}"
             by_name = _find_object(prefixed_name)
-            by_name_loader = _find_loader_like_descendant(by_name)
-            if by_name_loader is not None:
-                return by_name_loader
+            if by_name is not None:
+                by_name_loader = _find_loader_like_descendant(by_name)
+                if by_name_loader is not None:
+                    return by_name_loader
+
             for item in _iter_quick_items(_quick_root_item()):
-                try:
-                    if str(item.property("cardId")) == card_id:
-                        by_card_loader = _find_loader_like_descendant(item)
-                        if by_card_loader is not None:
-                            return by_card_loader
-                except Exception:
-                    continue
+                object_name = _safe_object_name(item)
+                if object_name == prefixed_name:
+                    nested_loader = _find_loader_like_descendant(item)
+                    if nested_loader is not None:
+                        return nested_loader
+                    return item
+                if str(_safe_prop(item, "cardId") or "") == card_id:
+                    by_card_loader = _find_loader_like_descendant(item)
+                    if by_card_loader is not None:
+                        return by_card_loader
             return None
 
         def _sla_debug_snapshot() -> str:
@@ -1759,20 +1799,14 @@ def test_runtime_overview_cards_react_to_live_signals(tmp_path: Path) -> None:
             feed_loader_by_card_id: QObject | None = None
             feed_loader_wrapper_by_card_id: QObject | None = None
             for item in quick_items:
-                try:
-                    object_name = str(item.objectName())
-                except Exception:
-                    object_name = ""
+                object_name = _safe_object_name(item)
                 has_loader_prefix = object_name.startswith(prefix)
                 if has_loader_prefix:
                     loader_card_id = object_name[len(prefix):]
                     loaders[loader_card_id] = item
                     loader_card_id_candidates.add(loader_card_id)
 
-                try:
-                    card_id = item.property("cardId")
-                except Exception:
-                    continue
+                card_id = _safe_prop(item, "cardId")
                 if isinstance(card_id, str) and card_id:
                     if has_loader_prefix or _is_loader_like(item):
                         loader_card_id_candidates.add(card_id)
@@ -1799,26 +1833,14 @@ def test_runtime_overview_cards_react_to_live_signals(tmp_path: Path) -> None:
             if feed_loader is None:
                 feed_loader_state = "missing"
             else:
-                try:
-                    status = int(feed_loader.property("status"))
-                except Exception:
-                    status = -1
-                try:
-                    active = feed_loader.property("active")
-                except Exception:
-                    active = "<error>"
-                try:
-                    source_component = feed_loader.property("sourceComponent")
-                except Exception:
-                    source_component = "<error>"
-                try:
-                    source = feed_loader.property("source")
-                except Exception:
-                    source = "<error>"
-                try:
-                    has_item = feed_loader.property("item") is not None
-                except Exception:
-                    has_item = "<error>"
+                status = _safe_int(_safe_prop(feed_loader, "status"), default=-1)
+                active = _safe_prop(feed_loader, "active")
+                source_component = _safe_prop(feed_loader, "sourceComponent")
+                source = _safe_prop(feed_loader, "source")
+                item_prop = _safe_prop(feed_loader, "item")
+                has_item = item_prop is not None and not (
+                    isinstance(item_prop, str) and item_prop.startswith("<")
+                )
                 feed_loader_state = (
                     "status="
                     f"{status}, active={active!r}, sourceComponent={source_component!r}, "
@@ -1830,11 +1852,23 @@ def test_runtime_overview_cards_react_to_live_signals(tmp_path: Path) -> None:
             except Exception:
                 host_children = 0
 
+            loader_objects: list[str] = []
+            for item in quick_items:
+                object_name = _safe_object_name(item)
+                if not object_name.startswith(prefix):
+                    continue
+                card_id = _safe_prop(item, "cardId")
+                status = _safe_int(_safe_prop(item, "status"), default=-1)
+                loader_objects.append(
+                    f"{object_name}(cardId={card_id!r},status={status})"
+                )
+
             return (
                 f"Dostępne loadery: {sorted(loaders.keys())!r}; "
+                f"loaderObjects={loader_objects!r}; "
                 f"loaderCardIdCandidates={sorted(loader_card_id_candidates)!r}; "
                 f"loaderCardIdMismatches={sorted(set(loader_card_id_mismatches))!r}; "
-                f"effectiveGridCardOrder={root.property('effectiveGridCardOrder')!r}; "
+                f"effectiveGridCardOrder={runtime_root.property('effectiveGridCardOrder')!r}; "
                 f"hostChildren={host_children}; "
                 f"quickItems={len(quick_items)}; "
                 f"feedSlaLoader={feed_loader_state}"
@@ -1843,18 +1877,21 @@ def test_runtime_overview_cards_react_to_live_signals(tmp_path: Path) -> None:
         def _stabilize_quick_scene() -> None:
             app.processEvents()
             try:
+                assert quick_window is not None
                 if hasattr(quick_window, "requestUpdate"):
                     quick_window.requestUpdate()
             except Exception:
                 pass
             try:
-                if hasattr(root, "polish"):
-                    root.polish()
+                if runtime_root_item is not None and hasattr(runtime_root_item, "polish"):
+                    runtime_root_item.polish()
             except Exception:
                 pass
             try:
-                root.setWidth(quick_window.width())
-                root.setHeight(quick_window.height())
+                assert quick_window is not None
+                if runtime_root_item is not None:
+                    runtime_root_item.setWidth(quick_window.width())
+                    runtime_root_item.setHeight(quick_window.height())
             except Exception:
                 pass
             qt_wait(250)
@@ -1863,15 +1900,16 @@ def test_runtime_overview_cards_react_to_live_signals(tmp_path: Path) -> None:
             app.processEvents()
 
 
+        assert quick_window is not None
         quick_window.setWidth(1280)
         quick_window.setHeight(720)
-        root.setParentItem(quick_window.contentItem())
-        root.setWidth(quick_window.width())
-        root.setHeight(quick_window.height())
+        if runtime_root_item is not None:
+            runtime_root_item.setWidth(quick_window.width())
+            runtime_root_item.setHeight(quick_window.height())
         quick_window.show()
         _stabilize_quick_scene()
 
-        default_order = root.property("defaultCardOrder")
+        default_order = runtime_root.property("defaultCardOrder")
         assert isinstance(default_order, list), (
             "RuntimeOverview.defaultCardOrder powinno być listą cardId."
         )
@@ -1890,12 +1928,12 @@ def test_runtime_overview_cards_react_to_live_signals(tmp_path: Path) -> None:
 
         def _grid_order_contains_feed_sla() -> bool:
             # Opiera się na autouse fixture qml_prop, która zwraca plain Python.
-            order = root.property("effectiveGridCardOrder") or []
+            order = runtime_root.property("effectiveGridCardOrder") or []
             return "feed_sla" in order
 
         assert _wait_until(_grid_order_contains_feed_sla, timeout_ms=5000), (
             "feed_sla nie pojawiło się w effectiveGridCardOrder: "
-            f"{root.property('effectiveGridCardOrder')!r}"
+            f"{runtime_root.property('effectiveGridCardOrder')!r}"
         )
 
         card_name = "runtimeOverviewFeedSlaCard"
@@ -1912,6 +1950,15 @@ def test_runtime_overview_cards_react_to_live_signals(tmp_path: Path) -> None:
             f"{_sla_debug_snapshot()}"
         )
 
+        assert _wait_until(
+            lambda: _wait_for_child(card_name, timeout_ms=0) is not None
+            or _wait_for_child("runtimeOverviewSlaStateLabel", timeout_ms=0) is not None,
+            timeout_ms=5000,
+        ), (
+            "Feed SLA nie osiągnęło stanu gotowości (brak karty i SLA state label). "
+            f"{_sla_debug_snapshot()}"
+        )
+
         loader = _find_loader_by_card_id("feed_sla")
         if loader is not None:
             # QtQuick.Loader status: Null=0, Ready=1, Loading=2, Error=3
@@ -1919,24 +1966,25 @@ def test_runtime_overview_cards_react_to_live_signals(tmp_path: Path) -> None:
             loader_error = 3
 
             def _loader_status() -> int:
-                try:
-                    return int(loader.property("status"))
-                except Exception:
-                    return -1
+                return _safe_int(_safe_prop(loader, "status"), default=-1)
 
             def _loader_debug_state() -> str:
+                item_prop = _safe_prop(loader, "item")
+                has_item = item_prop is not None and not (
+                    isinstance(item_prop, str) and item_prop.startswith("<")
+                )
                 return (
                     f"status={_loader_status()}, "
-                    f"active={loader.property('active')!r}, "
-                    f"sourceComponent={loader.property('sourceComponent')!r}, "
-                    f"source={loader.property('source')!r}, "
-                    f"hasItem={loader.property('item') is not None}"
+                    f"active={_safe_prop(loader, 'active')!r}, "
+                    f"sourceComponent={_safe_prop(loader, 'sourceComponent')!r}, "
+                    f"source={_safe_prop(loader, 'source')!r}, "
+                    f"hasItem={has_item}"
                 )
 
             def _loader_ready_or_raise() -> bool:
                 status = _loader_status()
                 if status == loader_error:
-                    err = loader.property("errorString")
+                    err = _safe_prop(loader, "errorString")
                     raise AssertionError(
                         f"Loader feed_sla jest w stanie Error: {err!r}; {_loader_debug_state()}"
                     )
