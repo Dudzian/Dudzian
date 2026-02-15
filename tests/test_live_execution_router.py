@@ -19,7 +19,7 @@ from bot_core.execution.live_router import (
     RouterRuntimeStats,
 )
 from bot_core.exchanges.base import Environment, ExchangeAdapter, OrderRequest, OrderResult
-from bot_core.exchanges.errors import ExchangeAPIError, ExchangeNetworkError
+from bot_core.exchanges.errors import ExchangeAPIError, ExchangeNetworkError, ExchangeThrottlingError
 from bot_core.observability import MetricsRegistry
 
 from tests._exchange_adapter_helpers import StubExchangeAdapter
@@ -145,6 +145,133 @@ def test_router_retries_after_reconcile_returns_none(tmp_path: Path) -> None:
         statuses = [attempt.get("status") for attempt in attempts]
         assert "reconcile_not_found" in statuses
         assert any(attempt.get("exchange") == "primary" and "latency_s" in attempt for attempt in attempts)
+    finally:
+        router.close()
+
+
+
+def test_router_retries_after_reconcile_raises_error(tmp_path: Path) -> None:
+    registry = MetricsRegistry()
+    adapters = {
+        "primary": StubExchangeAdapter.from_name(
+            "primary",
+            environment=Environment.LIVE,
+            responses=[
+                ExchangeNetworkError("timeout", None),
+                OrderResult(order_id="second-attempt", status="FILLED", filled_quantity=1.0, avg_price=99.9, raw_response={}),
+            ],
+            reconcile_error=RuntimeError("boom"),
+        )
+    }
+    router = LiveExecutionRouter(
+        adapters=adapters,
+        routes=[RouteDefinition(name="default", exchanges=("primary",), max_retries_per_exchange=2)],
+        decision_log_path=tmp_path / "reconcile-raises-retry.jsonl",
+        decision_log_hmac_key=b"E" * 48,
+        metrics=registry,
+        time_source=FakeClock(),
+    )
+
+    try:
+        result = router.execute(build_request(), build_context("default"))
+
+        assert result.order_id == "second-attempt"
+        assert len(adapters["primary"].placed) == 2
+        assert adapters["primary"].reconcile_calls == [("test-client-id", "BTCUSDT")]
+        labels = {"exchange": "primary", "symbol": "BTCUSDT", "portfolio": "core", "route": "default"}
+        assert registry.get("live_orders_reconcile_failed_total").value(labels=labels) == 1.0
+        entries = read_decision_entries(tmp_path / "reconcile-raises-retry.jsonl")
+        attempts = entries[0]["payload"]["attempts"]
+        assert any(
+            attempt.get("status") == "reconcile_failed" and attempt.get("attempt") == "1"
+            for attempt in attempts
+        )
+    finally:
+        router.close()
+
+def test_router_reconciles_existing_order_after_throttling_error(tmp_path: Path) -> None:
+    registry = MetricsRegistry()
+    reconciled_order = OrderResult(
+        order_id="remote-throttle-1",
+        status="FILLED",
+        filled_quantity=1.0,
+        avg_price=100.5,
+        raw_response={"source": "exchange"},
+    )
+    adapters = {
+        "primary": StubExchangeAdapter.from_name(
+            "primary",
+            environment=Environment.LIVE,
+            responses=[
+                ExchangeThrottlingError("rate limit", status_code=429, payload=None),
+                OrderResult(order_id="duplicate", status="FILLED", filled_quantity=1.0, avg_price=101.0, raw_response={}),
+            ],
+            reconciled_order=reconciled_order,
+        )
+    }
+    router = LiveExecutionRouter(
+        adapters=adapters,
+        routes=[RouteDefinition(name="default", exchanges=("primary",), max_retries_per_exchange=2)],
+        decision_log_path=tmp_path / "reconcile-throttling.jsonl",
+        decision_log_hmac_key=b"T" * 48,
+        metrics=registry,
+        time_source=FakeClock(),
+    )
+
+    try:
+        result = router.execute(build_request(), build_context("default"))
+
+        assert result.order_id == "remote-throttle-1"
+        assert result.raw_response.get("reconciled") is True
+        assert len(adapters["primary"].placed) == 1
+        assert adapters["primary"].reconcile_calls == [("test-client-id", "BTCUSDT")]
+        labels = {"exchange": "primary", "symbol": "BTCUSDT", "portfolio": "core", "route": "default"}
+        assert registry.get("live_orders_reconciled_total").value(labels=labels) == 1.0
+        assert registry.get("live_orders_reconcile_failed_total").value(labels=labels) == 0.0
+        entries = read_decision_entries(tmp_path / "reconcile-throttling.jsonl")
+        attempts = entries[0]["payload"]["attempts"]
+        assert any(
+            attempt.get("status") == "order_reconciled" and attempt.get("attempt") == "1"
+            for attempt in attempts
+        )
+    finally:
+        router.close()
+
+
+
+def test_router_throttling_reconcile_unsupported_fails_fast(tmp_path: Path) -> None:
+    registry = MetricsRegistry()
+    adapters = {
+        "primary": NoReconcileStubAdapter.from_name(
+            "primary",
+            environment=Environment.LIVE,
+            responses=[
+                ExchangeThrottlingError("rate limit", status_code=429, payload=None),
+                OrderResult(order_id="should-not-happen", status="FILLED", filled_quantity=1.0, avg_price=100.0, raw_response={}),
+            ],
+        )
+    }
+    router = LiveExecutionRouter(
+        adapters=adapters,
+        routes=[RouteDefinition(name="default", exchanges=("primary",), max_retries_per_exchange=2)],
+        decision_log_path=tmp_path / "reconcile-throttling-unsupported.jsonl",
+        decision_log_hmac_key=b"U" * 48,
+        metrics=registry,
+        time_source=FakeClock(),
+    )
+
+    try:
+        with pytest.raises(ExchangeThrottlingError):
+            router.execute(build_request(), build_context("default"))
+
+        assert len(adapters["primary"].placed) == 1
+        assert adapters["primary"].reconcile_calls == []
+        entries = read_decision_entries(tmp_path / "reconcile-throttling-unsupported.jsonl")
+        attempts = entries[0]["payload"]["attempts"]
+        assert any(
+            attempt.get("status") == "reconcile_not_supported_failfast" and attempt.get("attempt") == "1"
+            for attempt in attempts
+        )
     finally:
         router.close()
 
