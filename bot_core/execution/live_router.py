@@ -1692,6 +1692,7 @@ class LiveExecutionRouter(ExecutionService):
                     "exchange": str(common_labels.get("exchange", "unknown")),
                     "attempt": str(attempt),
                     "status": "reconcile_failed",
+                    "decision_event": "reconcile_failed",
                     "error": repr(reconcile_exc),
                 }
             )
@@ -1704,6 +1705,7 @@ class LiveExecutionRouter(ExecutionService):
                     "exchange": str(common_labels.get("exchange", "unknown")),
                     "attempt": str(attempt),
                     "status": "reconcile_not_found",
+                    "decision_event": "reconcile_not_found",
                 }
             )
             return None, True
