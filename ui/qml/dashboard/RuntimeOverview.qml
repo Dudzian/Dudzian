@@ -170,6 +170,16 @@ Item {
         return Styles.AppTheme.textPrimary
     }
 
+    function statusLabel(slaState, transportStatus) {
+        if (transportStatus)
+            return qsTr("%1 • %2")
+                    .arg(transportStatus)
+                    .arg(root.feedTransportSnapshot.mode || "demo")
+        if (slaState && slaState !== "ok")
+            return qsTr("SLA: %1").arg(slaState)
+        return qsTr("Status transportu nieznany")
+    }
+
     function syncLatencyAlert() {
         const report = root.feedSlaReport || ({})
         const severity = report.latency_state || "ok"
@@ -456,7 +466,8 @@ Item {
             property var alertHistory: root.feedAlertHistory || []
             property var alertChannels: root.feedAlertChannels || []
             property string alertChannelsText: ""
-            property string severity: report && report.sla_state ? report.sla_state : "ok"
+            property string sla_state: report && report.sla_state ? report.sla_state : "ok"
+            property string severity: feedSlaCard.sla_state
             readonly property bool latencyAlertActive: !!(report && report.latency_state && report.latency_state !== "ok")
 
             onAlertChannelsChanged: {
@@ -478,17 +489,16 @@ Item {
                     color: Styles.AppTheme.textPrimary
                 }
 
-                Label {
+                Text {
                     id: slaStateLabel
                     objectName: "runtimeOverviewSlaStateLabel"
-                    text: root.feedTransportSnapshot && root.feedTransportSnapshot.status
-                          ? qsTr("%1 • %2")
-                                .arg(root.feedTransportSnapshot.status)
-                                .arg(root.feedTransportSnapshot.mode || "demo")
-                          : qsTr("Status transportu nieznany")
+                    Layout.fillWidth: true
+                    text: statusLabel(feedSlaCard.sla_state, root.feedTransportSnapshot.status)
                     color: slaSeverityColor(feedSlaCard.severity)
                     font.pointSize: 13
                     font.bold: true
+                    elide: Text.ElideRight
+                    wrapMode: Text.NoWrap
                 }
 
                 RowLayout {
@@ -499,7 +509,7 @@ Item {
                         Layout.fillWidth: true
                         spacing: 4
 
-                        Label {
+                        Text {
                             objectName: "runtimeOverviewSlaLatency"
                             text: report && report.p95_ms !== undefined
                                   ? qsTr("Latencja p95: %1 ms (limit %2 ms)")
@@ -523,7 +533,7 @@ Item {
                         Layout.fillWidth: true
                         spacing: 4
 
-                        Label {
+                        Text {
                             objectName: "runtimeOverviewSlaReconnects"
                             text: report && report.reconnects !== undefined
                                   ? qsTr("Reconnecty: %1 / próg %2")
@@ -534,7 +544,7 @@ Item {
                             wrapMode: Text.WordWrap
                         }
 
-                        Label {
+                        Text {
                             objectName: "runtimeOverviewSlaDowntime"
                             text: report && report.downtime_seconds !== undefined
                                   ? qsTr("Downtime: %1 s / próg %2 s")
@@ -547,7 +557,7 @@ Item {
                     }
                 }
 
-                Label {
+                Text {
                     objectName: "runtimeOverviewSlaLastError"
                     visible: !!(root.feedHealth && root.feedHealth.lastError && root.feedHealth.lastError.length > 0)
                     text: qsTr("Ostatni błąd: %1").arg(root.feedHealth.lastError)
@@ -555,7 +565,7 @@ Item {
                     wrapMode: Text.WordWrap
                 }
 
-                Label {
+                Text {
                     objectName: "runtimeOverviewSlaRetry"
                     visible: report && report.nextRetrySeconds !== undefined && report.nextRetrySeconds !== null
                     text: qsTr("Następny reconnect za %1 s")
@@ -563,6 +573,7 @@ Item {
                                ? Number(report.nextRetrySeconds).toFixed(1)
                                : "n/d")
                     color: Styles.AppTheme.textSecondary
+                    wrapMode: Text.WordWrap
                 }
 
                 ColumnLayout {
@@ -616,14 +627,16 @@ Item {
                         }
                     }
 
-                    Label {
+                    Text {
                         objectName: "runtimeOverviewSlaEscalationStatus"
+                        Layout.fillWidth: true
                         text: alertChannels && alertChannels.length > 0
                               ? qsTr("Kanały eskalacji: %1")
                                     .arg(feedSlaCard.alertChannelsText)
                               : qsTr("Kanały eskalacji nieaktywne")
                         color: Styles.AppTheme.textSecondary
-                        wrapMode: Text.WordWrap
+                        elide: Text.ElideRight
+                        wrapMode: Text.NoWrap
                     }
                 }
             }
