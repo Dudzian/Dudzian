@@ -1080,269 +1080,288 @@ class LiveExecutionRouter(ExecutionService):
         attempts_rec: list[dict[str, str]] = []
         attempts_counter = 0
         fallback_used = False
+        decision_logged = False
         # start nie obejmuje czasu kolejki – metryki dostają go osobno w etykietach
         start = started_at
         last_error: Exception | None = None
         route_label = route_name or "default"
         is_live_environment = self._is_live_environment(context)
 
-        for exchange_name, max_retries in exchanges_and_retries:
-            breaker_now = self._time()
-            breaker = self._breakers.get(exchange_name)
-            if breaker and not breaker.allow(breaker_now):
-                attempts_rec.append({"exchange": exchange_name, "status": "breaker_open"})
-                self._set_breaker_metric(exchange_name, open_=True)
-                continue
+        try:
+            for exchange_name, max_retries in exchanges_and_retries:
+                breaker_now = self._time()
+                breaker = self._breakers.get(exchange_name)
+                if breaker and not breaker.allow(breaker_now):
+                    attempts_rec.append({"exchange": exchange_name, "status": "breaker_open"})
+                    self._set_breaker_metric(exchange_name, open_=True)
+                    continue
 
-            adapter = self._adapters.get(exchange_name)
-            if adapter is None:
-                _LOGGER.warning("Brak adaptera %s", exchange_name)
-                attempts_rec.append({"exchange": exchange_name, "status": "adapter_missing"})
-                continue
+                adapter = self._adapters.get(exchange_name)
+                if adapter is None:
+                    _LOGGER.warning("Brak adaptera %s", exchange_name)
+                    attempts_rec.append({"exchange": exchange_name, "status": "adapter_missing"})
+                    continue
 
-            attempt = 1
-            while attempt <= max_retries:
-                attempt_now = self._time()
-                if latency_budget_ms is not None:
-                    elapsed_ms = (attempt_now - start) * 1000.0
-                    if elapsed_ms > latency_budget_ms:
-                        attempts_rec.append({"exchange": exchange_name, "status": "latency_budget_exceeded"})
-                        last_error = last_error or TimeoutError("Przekroczono budżet opóźnień trasy")
-                        break
+                attempt = 1
+                while attempt <= max_retries:
+                    attempt_now = self._time()
+                    if latency_budget_ms is not None:
+                        elapsed_ms = (attempt_now - start) * 1000.0
+                        if elapsed_ms > latency_budget_ms:
+                            attempts_rec.append({"exchange": exchange_name, "status": "latency_budget_exceeded"})
+                            last_error = last_error or TimeoutError("Przekroczono budżet opóźnień trasy")
+                            break
 
-                common_labels = {
-                    "exchange": exchange_name,
-                    "symbol": request.symbol,
-                    "portfolio": context.portfolio_id,
-                    "route": route_label,
-                }
-                labels = {**common_labels, **self._queue_labels(queue_wait)}
-                attempts_counter += 1
-                try:
-                    self._m_orders_total.inc(labels=common_labels)
-                    result = await self._perform_attempt(adapter, order.request, exchange_name)
-                    self._validate_adapter_result(result, exchange_name, request)
-                except Exception as exc:  # noqa: BLE001
-                    category = self._classify_exception(exc)
-                    fallback_allowed = self._is_fallback_allowed(
-                        category, allowed_fallback_categories
-                    )
-                    current_time = self._time()
-                    elapsed = max(0.0, current_time - start)
-                    if category in {"network", "throttling"}:
-                        self._m_latency.observe(elapsed, labels={**labels, "result": "error"})
-                        self._m_attempts.inc(labels={**labels, "result": "error"})
+                    common_labels = {
+                        "exchange": exchange_name,
+                        "symbol": request.symbol,
+                        "portfolio": context.portfolio_id,
+                        "route": route_label,
+                    }
+                    labels = {**common_labels, **self._queue_labels(queue_wait)}
+                    attempts_counter += 1
+                    try:
+                        self._m_orders_total.inc(labels=common_labels)
+                        result = await self._perform_attempt(adapter, order.request, exchange_name)
+                        self._validate_adapter_result(result, exchange_name, request)
+                    except Exception as exc:  # noqa: BLE001
+                        category = self._classify_exception(exc)
+                        fallback_allowed = self._is_fallback_allowed(
+                            category, allowed_fallback_categories
+                        )
+                        current_time = self._time()
+                        elapsed = max(0.0, current_time - start)
+                        if category in {"network", "throttling"}:
+                            self._m_latency.observe(elapsed, labels={**labels, "result": "error"})
+                            self._m_attempts.inc(labels={**labels, "result": "error"})
+                            self._m_errors.inc(labels=labels)
+                            attempts_rec.append(
+                                {
+                                    "exchange": exchange_name,
+                                    "attempt": str(attempt),
+                                    "status": "error",
+                                    "error": repr(exc),
+                                }
+                            )
+                            last_error = exc
+                            if breaker:
+                                breaker.record_failure(current_time)
+                            if is_live_environment and not self._has_client_order_id(request):
+                                _LOGGER.error(
+                                    "Błąd %s na %s bez client_order_id – fail fast bez retry/fallback.",
+                                    category,
+                                    exchange_name,
+                                )
+                                raise
+
+                            reconciled_result, reconcile_supported = await self._try_reconcile_order_by_client_id(
+                                adapter=adapter,
+                                request=request,
+                                common_labels=common_labels,
+                                labels=labels,
+                                route_name=route_name,
+                                route_meta=route_meta,
+                                context=context,
+                                attempts_rec=attempts_rec,
+                                attempt=attempt,
+                                latency_seconds=elapsed,
+                                fallback_used=fallback_used,
+                            )
+                            if reconciled_result is not None:
+                                if breaker:
+                                    breaker.record_success()
+                                    self._set_breaker_metric(exchange_name, open_=False)
+                                return reconciled_result
+
+                            if not reconcile_supported:
+                                status = (
+                                    "reconcile_not_supported_failfast"
+                                    if is_live_environment
+                                    else "reconcile_not_supported_continue"
+                                )
+                                attempts_rec.append(
+                                    {
+                                        "exchange": exchange_name,
+                                        "attempt": str(attempt),
+                                        "status": status,
+                                        "decision_event": status,
+                                    }
+                                )
+                                if is_live_environment:
+                                    raise
+
+                            if not fallback_allowed:
+                                raise
+                            if attempt < max_retries:
+                                await asyncio.sleep(
+                                    self._error_policy.backoff(attempt, exc)
+                                )
+                                attempt += 1
+                                continue
+                            break
+                        if category == "auth":
+                            self._m_attempts.inc(labels={**labels, "result": "auth_error"})
+                            attempts_rec.append(
+                                {"exchange": exchange_name, "attempt": str(attempt), "status": "auth_error"}
+                            )
+                            last_error = exc
+                            if breaker:
+                                breaker.record_failure(self._time())
+                            _LOGGER.error("Błąd uwierzytelnienia na %s – przerywam fallback.", exchange_name)
+                            raise
+                        if category == "api":
+                            self._m_attempts.inc(labels={**labels, "result": "api_error"})
+                            self._m_errors.inc(labels=labels)
+                            attempts_rec.append(
+                                {"exchange": exchange_name, "attempt": str(attempt), "status": "api_error"}
+                            )
+                            last_error = exc
+                            if breaker:
+                                breaker.record_failure(self._time())
+                            _LOGGER.error(
+                                "API %s odrzuciło zlecenie (status=%s): %s",
+                                exchange_name,
+                                getattr(exc, "status_code", "?"),
+                                getattr(exc, "message", repr(exc)),
+                            )
+                            raise
+
+                        self._m_latency.observe(elapsed, labels={**labels, "result": "exception"})
+                        self._m_attempts.inc(labels={**labels, "result": "exception"})
                         self._m_errors.inc(labels=labels)
                         attempts_rec.append(
                             {
                                 "exchange": exchange_name,
                                 "attempt": str(attempt),
-                                "status": "error",
+                                "status": "exception",
                                 "error": repr(exc),
                             }
                         )
                         last_error = exc
                         if breaker:
                             breaker.record_failure(current_time)
-                        if is_live_environment and not self._has_client_order_id(request):
-                            _LOGGER.error(
-                                "Błąd %s na %s bez client_order_id – fail fast bez retry/fallback.",
-                                category,
-                                exchange_name,
-                            )
-                            raise
-
-                        reconciled_result, reconcile_supported = await self._try_reconcile_order_by_client_id(
-                            adapter=adapter,
-                            request=request,
-                            common_labels=common_labels,
-                            labels=labels,
-                            route_name=route_name,
-                            route_meta=route_meta,
-                            context=context,
-                            attempts_rec=attempts_rec,
-                            attempt=attempt,
-                            latency_seconds=elapsed,
-                            fallback_used=fallback_used,
-                        )
-                        if reconciled_result is not None:
-                            if breaker:
-                                breaker.record_success()
-                                self._set_breaker_metric(exchange_name, open_=False)
-                            return reconciled_result
-
-                        if not reconcile_supported:
-                            status = (
-                                "reconcile_not_supported_failfast"
-                                if is_live_environment
-                                else "reconcile_not_supported_continue"
-                            )
-                            attempts_rec.append(
-                                {
-                                    "exchange": exchange_name,
-                                    "attempt": str(attempt),
-                                    "status": status,
-                                    "decision_event": status,
-                                }
-                            )
-                            if is_live_environment:
-                                raise
-
                         if not fallback_allowed:
                             raise
                         if attempt < max_retries:
                             await asyncio.sleep(
-                                self._error_policy.backoff(attempt, exc)
+                                self._error_policy.backoff(attempt, exc, allow_unknown=True)
                             )
                             attempt += 1
                             continue
                         break
-                    if category == "auth":
-                        self._m_attempts.inc(labels={**labels, "result": "auth_error"})
-                        attempts_rec.append(
-                            {"exchange": exchange_name, "attempt": str(attempt), "status": "auth_error"}
-                        )
-                        if breaker:
-                            breaker.record_failure(self._time())
-                        _LOGGER.error("Błąd uwierzytelnienia na %s – przerywam fallback.", exchange_name)
-                        raise
-                    if category == "api":
-                        self._m_attempts.inc(labels={**labels, "result": "api_error"})
-                        self._m_errors.inc(labels=labels)
-                        attempts_rec.append(
-                            {"exchange": exchange_name, "attempt": str(attempt), "status": "api_error"}
-                        )
-                        last_error = exc
-                        if breaker:
-                            breaker.record_failure(self._time())
-                        _LOGGER.error(
-                            "API %s odrzuciło zlecenie (status=%s): %s",
-                            exchange_name,
-                            getattr(exc, "status_code", "?"),
-                            getattr(exc, "message", repr(exc)),
-                        )
-                        raise
 
-                    self._m_latency.observe(elapsed, labels={**labels, "result": "exception"})
-                    self._m_attempts.inc(labels={**labels, "result": "exception"})
-                    self._m_errors.inc(labels=labels)
-                    attempts_rec.append(
-                        {
-                            "exchange": exchange_name,
-                            "attempt": str(attempt),
-                            "status": "exception",
-                            "error": repr(exc),
-                        }
-                    )
-                    last_error = exc
+                    # sukces
+                    current_time = self._time()
+                    elapsed = max(0.0, current_time - start)
+                    self._m_latency.observe(elapsed, labels={**labels, "result": "success"})
+                    self._m_attempts.inc(labels={**labels, "result": "success"})
+                    self._m_success.inc(labels=common_labels)
+                    filled_qty = float(result.filled_quantity or 0.0)
+                    requested_qty = float(request.quantity or 0.0)
+                    ratio = 0.0
+                    if requested_qty > 0:
+                        ratio = max(0.0, min(1.0, filled_qty / requested_qty))
+                    self._m_fill_ratio.observe(ratio, labels=common_labels)
                     if breaker:
-                        breaker.record_failure(current_time)
-                    if not fallback_allowed:
-                        raise
-                    if attempt < max_retries:
-                        await asyncio.sleep(
-                            self._error_policy.backoff(attempt, exc, allow_unknown=True)
+                        breaker.record_success()
+                        self._set_breaker_metric(exchange_name, open_=False)
+                    if attempts_counter > 1:
+                        fallback_labels = {"route": route_label}
+                        self._m_fallbacks.inc(labels=fallback_labels)
+                        self._m_router_fallbacks.inc(
+                            labels={
+                                "exchange": exchange_name,
+                                "symbol": request.symbol,
+                                "portfolio": context.portfolio_id,
+                            }
                         )
-                        attempt += 1
-                        continue
-                    break
+                        fallback_used = True
 
-                # sukces
-                current_time = self._time()
-                elapsed = max(0.0, current_time - start)
-                self._m_latency.observe(elapsed, labels={**labels, "result": "success"})
-                self._m_attempts.inc(labels={**labels, "result": "success"})
-                self._m_success.inc(labels=common_labels)
-                filled_qty = float(result.filled_quantity or 0.0)
-                requested_qty = float(request.quantity or 0.0)
-                ratio = 0.0
-                if requested_qty > 0:
-                    ratio = max(0.0, min(1.0, filled_qty / requested_qty))
-                self._m_fill_ratio.observe(ratio, labels=common_labels)
-                if breaker:
-                    breaker.record_success()
-                    self._set_breaker_metric(exchange_name, open_=False)
-                if attempts_counter > 1:
-                    fallback_labels = {"route": route_label}
-                    self._m_fallbacks.inc(labels=fallback_labels)
-                    self._m_router_fallbacks.inc(
-                        labels={
-                            "exchange": exchange_name,
-                            "symbol": request.symbol,
-                            "portfolio": context.portfolio_id,
-                        }
+                    self._remember_binding(result.order_id, exchange_name, request)
+                    attempts_rec.append({"exchange": exchange_name, "status": "success", "latency_s": f"{elapsed:.6f}"})
+                    await self._emit_decision_log_best_effort(
+                        route_name=route_name or "default",
+                        route_metadata=route_meta,
+                        request=request,
+                        context=context,
+                        result=result,
+                        attempts=attempts_rec,
+                        latency_seconds=elapsed,
+                        fallback_used=fallback_used,
                     )
-                    fallback_used = True
+                    decision_logged = True
+                    return result
 
-                self._remember_binding(result.order_id, exchange_name, request)
-                attempts_rec.append({"exchange": exchange_name, "status": "success", "latency_s": f"{elapsed:.6f}"})
-                self._maybe_write_decision_log(
-                    route_name=route_name or "default",
-                    route_metadata=route_meta,
-                    request=request,
-                    context=context,
-                    result=result,
-                    attempts=attempts_rec,
-                    latency_seconds=elapsed,
-                    fallback_used=fallback_used,
-                )
-                return result
-
-        elapsed = max(0.0, self._time() - start)
-        attempts_rec.append({"status": "failed", "latency_s": f"{elapsed:.6f}"})
-        failure_exchange = None
-        attempted_exchanges = {
-            str(attempt.get("exchange"))
-            for attempt in attempts_rec
-            if attempt.get("exchange") and str(attempt.get("exchange")) not in {"queue"}
-        }
-        if len(attempted_exchanges) > 1:
-            failure_exchange = "multiple"
-        else:
-            for attempt in reversed(attempts_rec):
-                exchange = attempt.get("exchange")
-                if exchange:
-                    failure_exchange = str(exchange)
-                    break
-            if failure_exchange is None and exchanges_and_retries:
-                failure_exchange = str(exchanges_and_retries[0][0])
-
-        failure_labels = {
-            "exchange": failure_exchange or "unknown",
-            "symbol": request.symbol,
-            "portfolio": context.portfolio_id,
-            "route": route_label,
-        }
-        self._m_failures.inc(labels=failure_labels)
-        self._m_router_failures.inc(
-            labels={
-                "symbol": request.symbol,
-                "portfolio": context.portfolio_id,
+            elapsed = max(0.0, self._time() - start)
+            attempts_rec.append({"status": "failed", "latency_s": f"{elapsed:.6f}"})
+            failure_exchange = None
+            attempted_exchanges = {
+                str(attempt.get("exchange"))
+                for attempt in attempts_rec
+                if attempt.get("exchange") and str(attempt.get("exchange")) not in {"queue"}
             }
-        )
-        self._m_errors.inc(
-            labels={
-                "exchange": exchanges_and_retries[0][0] if exchanges_and_retries else "unknown",
+            if len(attempted_exchanges) > 1:
+                failure_exchange = "multiple"
+            else:
+                for attempt in reversed(attempts_rec):
+                    exchange = attempt.get("exchange")
+                    if exchange:
+                        failure_exchange = str(exchange)
+                        break
+                if failure_exchange is None and exchanges_and_retries:
+                    failure_exchange = str(exchanges_and_retries[0][0])
+
+            failure_labels = {
+                "exchange": failure_exchange or "unknown",
                 "symbol": request.symbol,
                 "portfolio": context.portfolio_id,
                 "route": route_label,
             }
-        )
-        await asyncio.to_thread(
-            self._maybe_write_decision_log,
-            route_name=(route_name or "default"),
-            route_metadata=route_meta,
-            request=order.request,
-            context=order.context,
-            result=None,
-            attempts=attempts_rec,
-            latency_seconds=elapsed,
-            fallback_used=fallback_used,
-            error=repr(last_error) if last_error else None,
-        )
-        if last_error is not None:
-            raise last_error
-        raise RuntimeError("Nie udało się zrealizować zlecenia – brak dostępnych giełd")
+            self._m_failures.inc(labels=failure_labels)
+            self._m_router_failures.inc(
+                labels={
+                    "symbol": request.symbol,
+                    "portfolio": context.portfolio_id,
+                }
+            )
+            self._m_errors.inc(
+                labels={
+                    "exchange": exchanges_and_retries[0][0] if exchanges_and_retries else "unknown",
+                    "symbol": request.symbol,
+                    "portfolio": context.portfolio_id,
+                    "route": route_label,
+                }
+            )
+            await self._emit_decision_log_best_effort(
+                route_name=(route_name or "default"),
+                route_metadata=route_meta,
+                request=order.request,
+                context=order.context,
+                result=None,
+                attempts=attempts_rec,
+                latency_seconds=elapsed,
+                fallback_used=fallback_used,
+                error=repr(last_error) if last_error else None,
+            )
+            decision_logged = True
+            if last_error is not None:
+                raise last_error
+            raise RuntimeError("Nie udało się zrealizować zlecenia – brak dostępnych giełd")
+        except Exception as exc:
+            if not decision_logged:
+                elapsed = max(0.0, self._time() - start)
+                await self._emit_decision_log_best_effort(
+                    route_name=(route_name or "default"),
+                    route_metadata=route_meta,
+                    request=order.request,
+                    context=order.context,
+                    result=None,
+                    attempts=attempts_rec,
+                    latency_seconds=elapsed,
+                    fallback_used=fallback_used,
+                    error=repr(exc),
+                )
+            raise
 
     async def _perform_attempt(
         self,
@@ -1841,6 +1860,38 @@ class LiveExecutionRouter(ExecutionService):
             self._rotate_log_if_needed_unlocked()
             with self._decision_log_path.open("a", encoding="utf-8") as handle:
                 handle.write(serialized + "\n")
+
+    async def _emit_decision_log_best_effort(
+        self,
+        *,
+        route_name: str,
+        route_metadata: Mapping[str, str],
+        request: OrderRequest,
+        context: ExecutionContext,
+        attempts: Sequence[Mapping[str, str]],
+        latency_seconds: float,
+        fallback_used: bool,
+        result: OrderResult | None,
+        error: str | None = None,
+    ) -> None:
+        if self._decision_log_path is None:
+            return
+        try:
+            await asyncio.to_thread(
+                self._maybe_write_decision_log,
+                route_name=route_name,
+                route_metadata=route_metadata,
+                request=request,
+                context=context,
+                result=result,
+                attempts=attempts,
+                latency_seconds=latency_seconds,
+                fallback_used=fallback_used,
+                error=error,
+            )
+            await asyncio.to_thread(self._flush_log, sync=True)
+        except Exception:  # pragma: no cover - telemetry only
+            _LOGGER.exception("Nie udało się zapisać decision log entry")
 
     def _rotate_log_if_needed_unlocked(self) -> None:
         path = self._decision_log_path
