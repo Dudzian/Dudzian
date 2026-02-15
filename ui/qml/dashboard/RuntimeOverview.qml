@@ -489,16 +489,25 @@ Item {
                     color: Styles.AppTheme.textPrimary
                 }
 
-                Text {
+                Item {
                     id: slaStateLabel
                     objectName: "runtimeOverviewSlaStateLabel"
                     Layout.fillWidth: true
-                    text: statusLabel(feedSlaCard.sla_state, root.feedTransportSnapshot.status)
-                    color: slaSeverityColor(feedSlaCard.severity)
-                    font.pointSize: 13
-                    font.bold: true
-                    elide: Text.ElideRight
-                    wrapMode: Text.NoWrap
+                    property string text: statusLabel(feedSlaCard.sla_state, root.feedTransportSnapshot.status)
+                    property color color: slaSeverityColor(feedSlaCard.severity)
+                    implicitHeight: slaStateText.implicitHeight
+
+                    Text {
+                        id: slaStateText
+                        objectName: parent.objectName
+                        anchors.fill: parent
+                        text: parent.text
+                        color: parent.color
+                        font.pointSize: 13
+                        font.bold: true
+                        elide: Text.ElideRight
+                        wrapMode: Text.NoWrap
+                    }
                 }
 
                 RowLayout {
@@ -509,15 +518,25 @@ Item {
                         Layout.fillWidth: true
                         spacing: 4
 
-                        Text {
+                        Item {
                             objectName: "runtimeOverviewSlaLatency"
-                            text: report && report.p95_ms !== undefined
-                                  ? qsTr("Latencja p95: %1 ms (limit %2 ms)")
-                                        .arg(Number(report.p95_ms).toFixed(0))
-                                        .arg(report.latency_warning_ms || 0)
-                                  : qsTr("Brak pomiarów latencji")
-                            color: slaSeverityColor(report ? report.latency_state : "ok")
-                            wrapMode: Text.WordWrap
+                            property string text: report && report.p95_ms !== undefined
+                                                  ? qsTr("Latencja p95: %1 ms (limit %2 ms)")
+                                                        .arg(Number(report.p95_ms).toFixed(0))
+                                                        .arg(report.latency_warning_ms || 0)
+                                                  : qsTr("Brak pomiarów latencji")
+                            property color color: slaSeverityColor(report ? report.latency_state : "ok")
+                            Layout.fillWidth: true
+                            implicitHeight: slaLatencyText.implicitHeight
+
+                            Text {
+                                id: slaLatencyText
+                                objectName: parent.objectName
+                                anchors.fill: parent
+                                text: parent.text
+                                color: parent.color
+                                wrapMode: Text.WordWrap
+                            }
                         }
 
                         Label {
@@ -533,47 +552,87 @@ Item {
                         Layout.fillWidth: true
                         spacing: 4
 
-                        Text {
+                        Item {
                             objectName: "runtimeOverviewSlaReconnects"
-                            text: report && report.reconnects !== undefined
-                                  ? qsTr("Reconnecty: %1 / próg %2")
-                                        .arg(report.reconnects)
-                                        .arg(report.reconnects_warning || 0)
-                                  : qsTr("Reconnecty: n/d")
-                            color: slaSeverityColor(report ? report.reconnects_state : "ok")
-                            wrapMode: Text.WordWrap
+                            property string text: report && report.reconnects !== undefined
+                                                  ? qsTr("Reconnecty: %1 / próg %2")
+                                                        .arg(report.reconnects)
+                                                        .arg(report.reconnects_warning || 0)
+                                                  : qsTr("Reconnecty: n/d")
+                            property color color: slaSeverityColor(report ? report.reconnects_state : "ok")
+                            Layout.fillWidth: true
+                            implicitHeight: slaReconnectsText.implicitHeight
+
+                            Text {
+                                id: slaReconnectsText
+                                objectName: parent.objectName
+                                anchors.fill: parent
+                                text: parent.text
+                                color: parent.color
+                                wrapMode: Text.WordWrap
+                            }
                         }
 
-                        Text {
+                        Item {
                             objectName: "runtimeOverviewSlaDowntime"
-                            text: report && report.downtime_seconds !== undefined
-                                  ? qsTr("Downtime: %1 s / próg %2 s")
-                                        .arg(Number(report.downtime_seconds || 0).toFixed(1))
-                                        .arg(report.downtime_warning_seconds || 0)
-                                  : qsTr("Downtime: n/d")
-                            color: slaSeverityColor(report ? report.downtime_state : "ok")
-                            wrapMode: Text.WordWrap
+                            property string text: report && report.downtime_seconds !== undefined
+                                                  ? qsTr("Downtime: %1 s / próg %2 s")
+                                                        .arg(Number(report.downtime_seconds || 0).toFixed(1))
+                                                        .arg(report.downtime_warning_seconds || 0)
+                                                  : qsTr("Downtime: n/d")
+                            property color color: slaSeverityColor(report ? report.downtime_state : "ok")
+                            Layout.fillWidth: true
+                            implicitHeight: slaDowntimeText.implicitHeight
+
+                            Text {
+                                id: slaDowntimeText
+                                objectName: parent.objectName
+                                anchors.fill: parent
+                                text: parent.text
+                                color: parent.color
+                                wrapMode: Text.WordWrap
+                            }
                         }
                     }
                 }
 
-                Text {
+                Item {
                     objectName: "runtimeOverviewSlaLastError"
+                    property string text: qsTr("Ostatni błąd: %1").arg(root.feedHealth.lastError)
+                    property color color: Styles.AppTheme.warning
                     visible: !!(root.feedHealth && root.feedHealth.lastError && root.feedHealth.lastError.length > 0)
-                    text: qsTr("Ostatni błąd: %1").arg(root.feedHealth.lastError)
-                    color: Styles.AppTheme.warning
-                    wrapMode: Text.WordWrap
+                    Layout.fillWidth: true
+                    implicitHeight: slaLastErrorText.implicitHeight
+
+                    Text {
+                        id: slaLastErrorText
+                        objectName: parent.objectName
+                        anchors.fill: parent
+                        text: parent.text
+                        color: parent.color
+                        wrapMode: Text.WordWrap
+                    }
                 }
 
-                Text {
+                Item {
                     objectName: "runtimeOverviewSlaRetry"
+                    property string text: qsTr("Następny reconnect za %1 s")
+                                          .arg(report && report.nextRetrySeconds !== undefined && report.nextRetrySeconds !== null
+                                               ? Number(report.nextRetrySeconds).toFixed(1)
+                                               : "n/d")
+                    property color color: Styles.AppTheme.textSecondary
                     visible: report && report.nextRetrySeconds !== undefined && report.nextRetrySeconds !== null
-                    text: qsTr("Następny reconnect za %1 s")
-                          .arg(report && report.nextRetrySeconds !== undefined && report.nextRetrySeconds !== null
-                               ? Number(report.nextRetrySeconds).toFixed(1)
-                               : "n/d")
-                    color: Styles.AppTheme.textSecondary
-                    wrapMode: Text.WordWrap
+                    Layout.fillWidth: true
+                    implicitHeight: slaRetryText.implicitHeight
+
+                    Text {
+                        id: slaRetryText
+                        objectName: parent.objectName
+                        anchors.fill: parent
+                        text: parent.text
+                        color: parent.color
+                        wrapMode: Text.WordWrap
+                    }
                 }
 
                 ColumnLayout {
@@ -627,16 +686,25 @@ Item {
                         }
                     }
 
-                    Text {
+                    Item {
                         objectName: "runtimeOverviewSlaEscalationStatus"
                         Layout.fillWidth: true
-                        text: alertChannels && alertChannels.length > 0
-                              ? qsTr("Kanały eskalacji: %1")
-                                    .arg(feedSlaCard.alertChannelsText)
-                              : qsTr("Kanały eskalacji nieaktywne")
-                        color: Styles.AppTheme.textSecondary
-                        elide: Text.ElideRight
-                        wrapMode: Text.NoWrap
+                        property string text: alertChannels && alertChannels.length > 0
+                                              ? qsTr("Kanały eskalacji: %1")
+                                                    .arg(feedSlaCard.alertChannelsText)
+                                              : qsTr("Kanały eskalacji nieaktywne")
+                        property color color: Styles.AppTheme.textSecondary
+                        implicitHeight: slaEscalationText.implicitHeight
+
+                        Text {
+                            id: slaEscalationText
+                            objectName: parent.objectName
+                            anchors.fill: parent
+                            text: parent.text
+                            color: parent.color
+                            elide: Text.ElideRight
+                            wrapMode: Text.NoWrap
+                        }
                     }
                 }
             }

@@ -1782,9 +1782,24 @@ def test_runtime_overview_cards_react_to_live_signals(tmp_path: Path) -> None:
             except Exception:
                 return default
 
+        def _qt_class_name(obj: QObject) -> str:
+            try:
+                mo = obj.metaObject()
+                return str(mo.className()) if mo is not None else ""
+            except Exception:
+                return ""
+
+        def _is_real_loader(obj: QObject) -> bool:
+            cls = _qt_class_name(obj)
+            if "QQuickLoader" not in cls:
+                return False
+            return _safe_int(_safe_prop(obj, "status"), default=-1) >= 0
+
+        def _is_quick_text(obj: QObject) -> bool:
+            return "QQuickText" in _qt_class_name(obj)
+
         def _is_loader_like(item: QObject) -> bool:
-            status = _safe_int(_safe_prop(item, "status"), default=-1)
-            if status >= 0:
+            if _is_real_loader(item):
                 return True
             item_prop = _safe_prop(item, "item")
             if item_prop is not None and not (isinstance(item_prop, str) and item_prop.startswith("<")):
@@ -1800,18 +1815,19 @@ def test_runtime_overview_cards_react_to_live_signals(tmp_path: Path) -> None:
             if start is None:
                 return None
 
-            def _has_loader_status(obj: QObject) -> bool:
-                return _safe_int(_safe_prop(obj, "status"), default=-1) >= 0
-
-            if _has_loader_status(start):
+            if _is_real_loader(start):
                 return start
+
+            for child in _iter_descendants(start):
+                if child is start:
+                    continue
+                if _is_real_loader(child):
+                    return child
 
             fallback_loader_like: QObject | None = start if _is_loader_like(start) else None
             for child in _iter_descendants(start):
                 if child is start:
                     continue
-                if _has_loader_status(child):
-                    return child
                 if fallback_loader_like is None and _is_loader_like(child):
                     fallback_loader_like = child
 
@@ -1819,21 +1835,38 @@ def test_runtime_overview_cards_react_to_live_signals(tmp_path: Path) -> None:
 
         def _find_loader_by_card_id(card_id: str) -> QObject | None:
             prefixed_name = f"runtimeOverviewCardLoader_{card_id}"
+
+            def _preferred_real_loader(start: QObject | None) -> QObject | None:
+                if start is None:
+                    return None
+                real_loaders: list[QObject] = []
+                if _is_real_loader(start):
+                    real_loaders.append(start)
+                for child in _iter_descendants(start):
+                    if child is start:
+                        continue
+                    if _is_real_loader(child):
+                        real_loaders.append(child)
+                for candidate in real_loaders:
+                    if _safe_object_name(candidate) == prefixed_name:
+                        return candidate
+                return real_loaders[0] if real_loaders else None
+
             by_name = _find_object(prefixed_name)
             if by_name is not None:
-                by_name_loader = _find_loader_like_descendant(by_name)
+                by_name_loader = _preferred_real_loader(by_name) or _find_loader_like_descendant(by_name)
                 if by_name_loader is not None:
                     return by_name_loader
 
             for item in _iter_quick_items(_quick_root_item()):
                 object_name = _safe_object_name(item)
                 if object_name == prefixed_name:
-                    nested_loader = _find_loader_like_descendant(item)
+                    nested_loader = _preferred_real_loader(item) or _find_loader_like_descendant(item)
                     if nested_loader is not None:
                         return nested_loader
                     return item
                 if str(_safe_prop(item, "cardId") or "") == card_id:
-                    by_card_loader = _find_loader_like_descendant(item)
+                    by_card_loader = _preferred_real_loader(item) or _find_loader_like_descendant(item)
                     if by_card_loader is not None:
                         return by_card_loader
             return None
@@ -1849,6 +1882,30 @@ def test_runtime_overview_cards_react_to_live_signals(tmp_path: Path) -> None:
             if not isinstance(item_prop, QObject):
                 return None
 
+            try:
+                quick_matches = item_prop.findChildren(QQuickItem, object_name) or []
+            except RuntimeError:
+                quick_matches = []
+            except Exception:
+                quick_matches = []
+            for match in quick_matches:
+                if not _is_quick_text(match):
+                    return match
+            if quick_matches:
+                return quick_matches[0]
+
+            try:
+                object_matches = item_prop.findChildren(QObject, object_name) or []
+            except RuntimeError:
+                object_matches = []
+            except Exception:
+                object_matches = []
+            for match in object_matches:
+                if not _is_quick_text(match):
+                    return match
+            if object_matches:
+                return object_matches[0]
+
             if _safe_object_name(item_prop) == object_name:
                 return item_prop
 
@@ -1857,6 +1914,53 @@ def test_runtime_overview_cards_react_to_live_signals(tmp_path: Path) -> None:
                     return descendant
 
             return None
+
+        def _pump_qt(frames: int = 3) -> None:
+            for _ in range(frames):
+                app.processEvents()
+                try:
+                    if quick_window is not None and hasattr(quick_window, "requestUpdate"):
+                        quick_window.requestUpdate()
+                except Exception:
+                    pass
+                try:
+                    if runtime_root_item is not None and hasattr(runtime_root_item, "polish"):
+                        runtime_root_item.polish()
+                except Exception:
+                    pass
+                qt_wait(20)
+            app.processEvents()
+
+        def _prefer_wrapper(obj: QObject | None, object_name: str) -> QObject | None:
+            if obj is None:
+                return None
+            if _is_quick_text(obj) and _safe_object_name(obj) == object_name:
+                parent = obj.parent()
+                if isinstance(parent, QObject):
+                    if _safe_object_name(parent) == object_name and not _is_quick_text(parent):
+                        return parent
+                    grandparent = parent.parent()
+                    if isinstance(grandparent, QObject):
+                        if _safe_object_name(grandparent) == object_name and not _is_quick_text(grandparent):
+                            return grandparent
+                return None
+            return obj
+
+        def _wait_for_feed_sla_object(object_name: str, timeout_ms: int = 5000) -> QObject | None:
+            deadline = time.monotonic() + (timeout_ms / 1000.0)
+            while time.monotonic() < deadline:
+                _pump_qt(1)
+                candidate = _find_feed_sla_object(object_name)
+                if candidate is None:
+                    candidate = _prefer_wrapper(_find_object(object_name), object_name)
+                if candidate is not None:
+                    return candidate
+                qt_wait(50)
+            _pump_qt(2)
+            candidate = _find_feed_sla_object(object_name)
+            if candidate is None:
+                candidate = _prefer_wrapper(_find_object(object_name), object_name)
+            return candidate
 
         def _feed_sla_ready_via_loader() -> bool:
             return (
@@ -1919,12 +2023,14 @@ def test_runtime_overview_cards_react_to_live_signals(tmp_path: Path) -> None:
                 )
                 feed_loader_state = (
                     "status="
-                    f"{status}, active={active!r}, sourceComponent={source_component!r}, "
+                    f"{status}, class={_qt_class_name(feed_loader)!r}, "
+                    f"active={active!r}, sourceComponent={source_component!r}, "
                     f"source={source!r}, hasItem={has_item!r}"
                 )
                 if has_item:
                     item_object_name = ""
                     item_descendants: list[str] = []
+                    sla_subtree_names: list[str] = []
                     if isinstance(item_prop, QObject):
                         item_object_name = _safe_object_name(item_prop)
                         truncated_descendants = False
@@ -1938,9 +2044,33 @@ def test_runtime_overview_cards_react_to_live_signals(tmp_path: Path) -> None:
                             item_descendants.append(descendant_name)
                         if truncated_descendants:
                             item_descendants.append("<truncated>")
+
+                        try:
+                            all_children = item_prop.findChildren(QObject)
+                        except RuntimeError:
+                            all_children = []
+                        except Exception:
+                            all_children = []
+                        sla_truncated = False
+                        seen_sla_names: set[str] = set()
+                        for child in all_children or []:
+                            child_name = _safe_object_name(child)
+                            if not child_name.startswith("runtimeOverviewSla"):
+                                continue
+                            if child_name in seen_sla_names:
+                                continue
+                            seen_sla_names.add(child_name)
+                            if len(sla_subtree_names) >= 20:
+                                sla_truncated = True
+                                break
+                            sla_subtree_names.append(child_name)
+                        if sla_truncated:
+                            sla_subtree_names.append("<truncated>")
+
                     feed_loader_state += (
                         f", itemObjectName={item_object_name!r}, "
-                        f"itemDescendants={item_descendants!r}"
+                        f"itemDescendants={item_descendants!r}, "
+                        f"slaSubtreeNames={sla_subtree_names!r}"
                     )
 
             try:
@@ -1956,7 +2086,7 @@ def test_runtime_overview_cards_react_to_live_signals(tmp_path: Path) -> None:
                 card_id = _safe_prop(item, "cardId")
                 status = _safe_int(_safe_prop(item, "status"), default=-1)
                 loader_objects.append(
-                    f"{object_name}(cardId={card_id!r},status={status})"
+                    f"{object_name}(cardId={card_id!r},status={status},class={_qt_class_name(item)!r})"
                 )
 
             sla_label_found = _find_feed_sla_object("runtimeOverviewSlaStateLabel") is not None
@@ -2051,8 +2181,8 @@ def test_runtime_overview_cards_react_to_live_signals(tmp_path: Path) -> None:
 
         assert _wait_until(
             lambda: _feed_sla_ready_via_loader()
-            or _wait_for_child(card_name, timeout_ms=0) is not None
-            or _wait_for_child("runtimeOverviewSlaStateLabel", timeout_ms=0) is not None,
+            or _wait_for_feed_sla_object(card_name, timeout_ms=0) is not None
+            or _wait_for_feed_sla_object("runtimeOverviewSlaStateLabel", timeout_ms=0) is not None,
             timeout_ms=5000,
         ), (
             "Feed SLA nie osiągnęło stanu gotowości (brak karty i SLA state label). "
@@ -2105,10 +2235,7 @@ def test_runtime_overview_cards_react_to_live_signals(tmp_path: Path) -> None:
                 f"Loader feed_sla nie osiągnął Ready; {_loader_debug_state()}"
             )
 
-        assert (
-            _find_feed_sla_object(card_name) is not None
-            or _wait_for_child(card_name, timeout_ms=5000) is not None
-        ), (
+        assert _wait_for_feed_sla_object(card_name, timeout_ms=5000) is not None, (
             "Karta SLA nie została utworzona w zadanym czasie. "
             f"{_sla_debug_snapshot()}"
         )
@@ -2196,22 +2323,22 @@ def test_runtime_overview_cards_react_to_live_signals(tmp_path: Path) -> None:
             ],
             [{"name": "cloud-escalation", "status": "ok"}],
         )
-        app.processEvents()
+        _pump_qt(3)
 
-        sla_card = _find_feed_sla_object("runtimeOverviewFeedSlaCard") or _wait_for_child("runtimeOverviewFeedSlaCard")
+        sla_card = _wait_for_feed_sla_object("runtimeOverviewFeedSlaCard", timeout_ms=5000)
         assert sla_card is not None
-        sla_state_label = _find_feed_sla_object("runtimeOverviewSlaStateLabel") or _wait_for_child("runtimeOverviewSlaStateLabel")
+        sla_state_label = _wait_for_feed_sla_object("runtimeOverviewSlaStateLabel", timeout_ms=5000)
         assert sla_state_label is not None
         assert "connected" in sla_state_label.property("text").lower()
-        sla_latency_label = _find_feed_sla_object("runtimeOverviewSlaLatency") or _wait_for_child("runtimeOverviewSlaLatency")
+        sla_latency_label = _wait_for_feed_sla_object("runtimeOverviewSlaLatency", timeout_ms=5000)
         assert sla_latency_label is not None and "2800" in sla_latency_label.property("text")
-        sla_last_error = _find_feed_sla_object("runtimeOverviewSlaLastError") or _wait_for_child("runtimeOverviewSlaLastError")
+        sla_last_error = _wait_for_feed_sla_object("runtimeOverviewSlaLastError", timeout_ms=5000)
         assert sla_last_error is not None and sla_last_error.property("visible") is True
-        sla_retry = _find_feed_sla_object("runtimeOverviewSlaRetry") or _wait_for_child("runtimeOverviewSlaRetry")
+        sla_retry = _wait_for_feed_sla_object("runtimeOverviewSlaRetry", timeout_ms=5000)
         assert sla_retry is not None and "1.5" in sla_retry.property("text")
-        alert_list = _find_feed_sla_object("runtimeOverviewSlaAlertList") or _wait_for_child("runtimeOverviewSlaAlertList")
+        alert_list = _wait_for_feed_sla_object("runtimeOverviewSlaAlertList", timeout_ms=5000)
         assert alert_list is not None and alert_list.property("count") == 2
-        escalation_label = _find_feed_sla_object("runtimeOverviewSlaEscalationStatus") or _wait_for_child("runtimeOverviewSlaEscalationStatus")
+        escalation_label = _wait_for_feed_sla_object("runtimeOverviewSlaEscalationStatus", timeout_ms=5000)
         assert escalation_label is not None
         assert "cloud-escalation" in escalation_label.property("text")
 
