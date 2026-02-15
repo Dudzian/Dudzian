@@ -1,5 +1,7 @@
 """Moduł egzekucji zleceń."""
 
+import importlib.util
+
 from bot_core.execution.base import ExecutionContext, ExecutionService, PriceResolver, RetryPolicy
 from bot_core.execution.errors import ExecutionErrorPolicy
 from bot_core.execution.mode_policy import (
@@ -28,10 +30,16 @@ except ImportError:
     RoutingPlan = RouteDefinition  # alias ujednolicający API
     RouterRuntimeStats = object  # type: ignore
 
-from bot_core.execution.bridge import (  # noqa: F401 - eksport publiczny
-    ExchangeAdapterExecutionService,
-    decision_to_order_request,
-)
+if importlib.util.find_spec("pydantic") is not None:
+    from bot_core.execution.bridge import (  # noqa: F401 - eksport publiczny
+        ExchangeAdapterExecutionService,
+        decision_to_order_request,
+    )
+else:  # pragma: no cover - fallback dla środowisk testowych bez pydantic
+    ExchangeAdapterExecutionService = None  # type: ignore[assignment]
+
+    def decision_to_order_request(*args: object, **kwargs: object) -> object:
+        raise RuntimeError("decision_to_order_request wymaga zainstalowanego pakietu 'pydantic'.")
 from bot_core.execution.paper import (  # noqa: F401 - eksport publiczny
     InsufficientBalanceError,
     LedgerEntry,
@@ -39,10 +47,17 @@ from bot_core.execution.paper import (  # noqa: F401 - eksport publiczny
     PaperTradingExecutionService,
     ShortPosition,
 )
-from bot_core.execution.execution_service import (  # noqa: F401 - eksport publiczny
-    build_live_execution_service,
-    resolve_execution_mode,
-)
+if importlib.util.find_spec("cryptography") is not None:
+    from bot_core.execution.execution_service import (  # noqa: F401 - eksport publiczny
+        build_live_execution_service,
+        resolve_execution_mode,
+    )
+else:  # pragma: no cover - fallback dla środowisk testowych bez cryptography
+    def resolve_execution_mode(*args: object, **kwargs: object) -> object:
+        raise RuntimeError("resolve_execution_mode wymaga zależności security (cryptography).")
+
+    def build_live_execution_service(*args: object, **kwargs: object) -> object:
+        raise RuntimeError("build_live_execution_service wymaga zależności security (cryptography).")
 
 __all__ = [
     "ExecutionContext",

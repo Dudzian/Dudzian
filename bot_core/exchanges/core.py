@@ -8,9 +8,26 @@ import math
 import time
 from dataclasses import dataclass, field
 from enum import Enum
+import importlib.util
 from typing import Any, Callable, Dict, Iterable, List, Optional, TYPE_CHECKING
 
-from pydantic import BaseModel, ConfigDict, Field
+if importlib.util.find_spec("pydantic") is not None:
+    from pydantic import BaseModel, ConfigDict, Field
+else:  # pragma: no cover - fallback dla środowisk bez zależności opcjonalnych
+    class BaseModel:
+        model_config: dict[str, object] = {}
+
+        def __init__(self, **kwargs: object) -> None:
+            for key, value in kwargs.items():
+                setattr(self, key, value)
+
+    def ConfigDict(**kwargs: object) -> dict[str, object]:
+        return dict(kwargs)
+
+    def Field(*, default: object = None, default_factory: Callable[[], object] | None = None) -> object:
+        if default_factory is not None:
+            return default_factory()
+        return default
 
 if TYPE_CHECKING:  # pragma: no cover
     from bot_core.database.manager import DatabaseManager

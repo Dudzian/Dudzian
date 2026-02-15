@@ -1,5 +1,6 @@
 """Pakiet narzędzi obserwowalności (metryki, eksport)."""
 from importlib import import_module
+import importlib.util
 from typing import TYPE_CHECKING, Any
 
 from bot_core.observability.alert_overrides import (
@@ -25,12 +26,23 @@ from bot_core.observability.metrics import (
     get_data_feed_metrics,
     get_global_metrics_registry,
 )
-from bot_core.observability.exporters import (
-    LocalPrometheusExporter,
-    PrometheusExporterConfig,
-)
-from bot_core.observability.server import MetricsHTTPServer, start_http_server
-from bot_core.observability.ui_metrics import UiTelemetryPrometheusExporter
+if importlib.util.find_spec("cryptography") is not None:
+    from bot_core.observability.exporters import (
+        LocalPrometheusExporter,
+        PrometheusExporterConfig,
+    )
+    from bot_core.observability.server import MetricsHTTPServer, start_http_server
+else:  # pragma: no cover - fallback dla środowisk testowych bez cryptography
+    LocalPrometheusExporter = None  # type: ignore[assignment]
+    PrometheusExporterConfig = None  # type: ignore[assignment]
+    MetricsHTTPServer = None  # type: ignore[assignment]
+
+    def start_http_server(*args: object, **kwargs: object) -> object:
+        raise RuntimeError("start_http_server wymaga zależności security (cryptography).")
+if importlib.util.find_spec("cryptography") is not None:
+    from bot_core.observability.ui_metrics import UiTelemetryPrometheusExporter
+else:  # pragma: no cover - fallback dla środowisk testowych bez cryptography
+    UiTelemetryPrometheusExporter = None  # type: ignore[assignment]
 from bot_core.observability.slo import (
     SLOCompositeDefinition,
     SLOCompositeStatus,

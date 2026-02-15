@@ -404,10 +404,12 @@ class LiveExecutionRouter(ExecutionService):
         self._m_router_fallbacks = self._metrics.counter(
             "live_router_fallbacks_total",
             "Liczba zleceń wymagających fallbacku (metryka kompatybilności).",
+            labels=("exchange", "symbol", "portfolio"),
         )
         self._m_router_failures = self._metrics.counter(
             "live_router_failures_total",
             "Liczba zleceń zakończonych niepowodzeniem (metryka kompatybilności).",
+            labels=("symbol", "portfolio"),
         )
         self._m_fill_ratio = self._metrics.histogram(
             "live_orders_fill_ratio",
@@ -1349,6 +1351,34 @@ class LiveExecutionRouter(ExecutionService):
             raise RuntimeError("Nie udało się zrealizować zlecenia – brak dostępnych giełd")
         except Exception as exc:
             if not decision_logged:
+                attempted_exchanges = {
+                    str(attempt.get("exchange"))
+                    for attempt in attempts_rec
+                    if attempt.get("exchange") and str(attempt.get("exchange")) not in {"queue"}
+                }
+                attempted_execution = attempts_counter > 0 or bool(attempted_exchanges)
+                if attempted_execution:
+                    failure_exchange = "unknown"
+                    if len(attempted_exchanges) > 1 or attempts_counter > 1:
+                        failure_exchange = "multiple"
+                    elif attempted_exchanges:
+                        failure_exchange = sorted(attempted_exchanges)[0]
+                    elif exchanges_and_retries:
+                        failure_exchange = str(exchanges_and_retries[0][0])
+                    self._m_router_failures.inc(
+                        labels={
+                            "symbol": request.symbol,
+                            "portfolio": context.portfolio_id,
+                        }
+                    )
+                    self._m_failures.inc(
+                        labels={
+                            "exchange": failure_exchange,
+                            "symbol": request.symbol,
+                            "portfolio": context.portfolio_id,
+                            "route": route_label,
+                        }
+                    )
                 elapsed = max(0.0, self._time() - start)
                 await self._emit_decision_log_best_effort(
                     route_name=(route_name or "default"),
