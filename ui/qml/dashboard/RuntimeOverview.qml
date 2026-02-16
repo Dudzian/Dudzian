@@ -57,8 +57,9 @@ Item {
     property var lastOperatorAction: runtimeServiceObj && runtimeServiceObj.lastOperatorAction ? runtimeServiceObj.lastOperatorAction : ({})
     property var longPollMetrics: runtimeServiceObj && runtimeServiceObj.longPollMetrics ? runtimeServiceObj.longPollMetrics : []
     ListModel {
-        id: longPollMetricsModel
+        id: longPollMetricsListModel
     }
+    property alias longPollMetricsModel: longPollMetricsListModel
     property var cycleMetrics: runtimeServiceObj && runtimeServiceObj.cycleMetrics ? runtimeServiceObj.cycleMetrics : ({})
     property var feedTransportSnapshot: runtimeServiceObj && runtimeServiceObj.feedTransportSnapshot
                                         ? runtimeServiceObj.feedTransportSnapshot
@@ -162,20 +163,20 @@ Item {
     }
 
     function syncLongPollMetricsModel() {
-        longPollMetricsModel.clear()
+        longPollMetricsListModel.clear()
         const source = root.longPollMetrics || []
         const size = source.length || 0
         for (let i = 0; i < size; ++i) {
             const entry = source[i]
             if (!entry || typeof entry !== "object") {
-                longPollMetricsModel.append({})
+                longPollMetricsListModel.append({})
                 continue
             }
             if (Array.isArray(entry)) {
-                longPollMetricsModel.append({ raw: entry })
+                longPollMetricsListModel.append({ raw: entry })
                 continue
             }
-            longPollMetricsModel.append(Object.assign({}, entry))
+            longPollMetricsListModel.append(Object.assign({}, entry))
         }
     }
 
@@ -1275,8 +1276,8 @@ Item {
 
                         Repeater {
                             id: longPollRepeater
-                            model: longPollMetricsModel
-                            visible: longPollMetricsModel.count > 0
+                            model: root.longPollMetricsModel
+                            visible: root.longPollMetricsModel.count > 0
                             delegate: Item {
                                 id: longPollEntry
                                 objectName: "runtimeOverviewLongPollEntry"
@@ -1345,7 +1346,7 @@ Item {
 
                         Label {
                             objectName: "runtimeOverviewLongPollEmpty"
-                            visible: longPollMetricsModel.count === 0
+                            visible: root.longPollMetricsModel.count === 0
                             text: qsTr("Fallback long-poll: brak aktywnych streamów")
                             color: Styles.AppTheme.textSecondary
                         }
