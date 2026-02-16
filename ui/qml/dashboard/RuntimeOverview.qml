@@ -56,6 +56,7 @@ Item {
     property var riskTimeline: runtimeServiceObj && runtimeServiceObj.riskTimeline ? runtimeServiceObj.riskTimeline : []
     property var lastOperatorAction: runtimeServiceObj && runtimeServiceObj.lastOperatorAction ? runtimeServiceObj.lastOperatorAction : ({})
     property var longPollMetrics: runtimeServiceObj && runtimeServiceObj.longPollMetrics ? runtimeServiceObj.longPollMetrics : []
+    onLongPollMetricsChanged: root.syncLongPollMetricsModel()
     ListModel {
         id: longPollMetricsListModel
     }
@@ -1285,10 +1286,10 @@ Item {
                                 Layout.preferredHeight: longPollContent.implicitHeight
                                 implicitHeight: longPollContent.implicitHeight
 
-                                readonly property var labels: modelData && modelData.labels ? modelData.labels : ({})
-                                readonly property string adapterLabel: labels.adapter || qsTr("n/d")
-                                readonly property string scopeLabel: labels.scope || qsTr("n/d")
-                                readonly property string envLabel: labels.environment || qsTr("n/d")
+                                readonly property var safeLabels: (labels && typeof labels === "object") ? labels : ({})
+                                readonly property string adapterLabel: safeLabels.adapter || qsTr("n/d")
+                                readonly property string scopeLabel: safeLabels.scope || qsTr("n/d")
+                                readonly property string envLabel: safeLabels.environment || qsTr("n/d")
 
                                 ColumnLayout {
                                     id: longPollContent
@@ -1306,7 +1307,7 @@ Item {
                                     Text {
                                         objectName: "runtimeOverviewLongPollLatency"
                                         text: {
-                                            const latency = modelData.requestLatency || {}
+                                            const latency = (requestLatency && typeof requestLatency === "object") ? requestLatency : ({})
                                             const hasP95 = typeof latency.p95 === "number"
                                             const hasP50 = typeof latency.p50 === "number"
                                             if (!hasP95 && !hasP50)
@@ -1321,7 +1322,7 @@ Item {
                                     Text {
                                         objectName: "runtimeOverviewLongPollErrors"
                                         text: {
-                                            const errors = modelData.httpErrors || {}
+                                            const errors = (httpErrors && typeof httpErrors === "object") ? httpErrors : ({})
                                             const total = typeof errors.total === "number" ? errors.total : 0
                                             if (total === 0)
                                                 return qsTr("Błędy HTTP: brak prób w ostatnich próbkach")
@@ -1333,9 +1334,9 @@ Item {
                                     Text {
                                         objectName: "runtimeOverviewLongPollReconnects"
                                         text: {
-                                            const reconnects = modelData.reconnects || {}
-                                            const attempts = typeof reconnects.attempts === "number" ? reconnects.attempts : 0
-                                            const failures = typeof reconnects.failure === "number" ? reconnects.failure : 0
+                                            const reconnectStats = (reconnects && typeof reconnects === "object") ? reconnects : ({})
+                                            const attempts = typeof reconnectStats.attempts === "number" ? reconnectStats.attempts : 0
+                                            const failures = typeof reconnectStats.failure === "number" ? reconnectStats.failure : 0
                                             return qsTr("Reconnecty: próby %1 • błędy %2").arg(attempts).arg(failures)
                                         }
                                         color: Styles.AppTheme.textSecondary
