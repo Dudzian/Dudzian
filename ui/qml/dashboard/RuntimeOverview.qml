@@ -56,6 +56,9 @@ Item {
     property var riskTimeline: runtimeServiceObj && runtimeServiceObj.riskTimeline ? runtimeServiceObj.riskTimeline : []
     property var lastOperatorAction: runtimeServiceObj && runtimeServiceObj.lastOperatorAction ? runtimeServiceObj.lastOperatorAction : ({})
     property var longPollMetrics: runtimeServiceObj && runtimeServiceObj.longPollMetrics ? runtimeServiceObj.longPollMetrics : []
+    ListModel {
+        id: longPollMetricsModel
+    }
     property var cycleMetrics: runtimeServiceObj && runtimeServiceObj.cycleMetrics ? runtimeServiceObj.cycleMetrics : ({})
     property var feedTransportSnapshot: runtimeServiceObj && runtimeServiceObj.feedTransportSnapshot
                                         ? runtimeServiceObj.feedTransportSnapshot
@@ -141,6 +144,7 @@ Item {
         root.riskTimeline = root.runtimeServiceObj ? root.runtimeServiceObj.riskTimeline : []
         root.lastOperatorAction = root.runtimeServiceObj ? root.runtimeServiceObj.lastOperatorAction : ({})
         root.longPollMetrics = root.runtimeServiceObj ? root.runtimeServiceObj.longPollMetrics : []
+        root.syncLongPollMetricsModel()
         root.cycleMetrics = root.runtimeServiceObj ? root.runtimeServiceObj.cycleMetrics : ({})
         root.feedTransportSnapshot = root.runtimeServiceObj ? root.runtimeServiceObj.feedTransportSnapshot : ({})
         root.feedHealth = root.runtimeServiceObj ? root.runtimeServiceObj.feedHealth : ({})
@@ -157,10 +161,37 @@ Item {
         root.regimeActivationSummary = root.runtimeServiceObj ? root.runtimeServiceObj.regimeActivationSummary : ""
     }
 
+    function syncLongPollMetricsModel() {
+        longPollMetricsModel.clear()
+        const source = root.longPollMetrics || []
+        const size = source.length || 0
+        for (let i = 0; i < size; ++i) {
+            const entry = source[i]
+            if (!entry || typeof entry !== "object") {
+                longPollMetricsModel.append({})
+                continue
+            }
+            if (Array.isArray(entry)) {
+                longPollMetricsModel.append({ raw: entry })
+                continue
+            }
+            longPollMetricsModel.append(Object.assign({}, entry))
+        }
+    }
+
     function refreshAll() {
         root.refreshTelemetry()
         root.refreshDecisions()
     }
+
+    onRuntimeServiceObjChanged: {
+        root.longPollMetrics = root.runtimeServiceObj && root.runtimeServiceObj.longPollMetrics
+                ? root.runtimeServiceObj.longPollMetrics
+                : []
+        root.syncLongPollMetricsModel()
+    }
+
+    Component.onCompleted: root.syncLongPollMetricsModel()
 
     function slaSeverityColor(state) {
         if (state === "critical")
@@ -270,6 +301,7 @@ Item {
             if (!root.runtimeServiceObj)
                 return
             root.longPollMetrics = root.runtimeServiceObj.longPollMetrics
+            root.syncLongPollMetricsModel()
         }
 
         function onCycleMetricsChanged() {
@@ -1243,67 +1275,77 @@ Item {
 
                         Repeater {
                             id: longPollRepeater
-                            model: root.longPollMetrics
-                            visible: root.longPollMetrics.length > 0
-                            delegate: ColumnLayout {
+                            model: longPollMetricsModel
+                            visible: longPollMetricsModel.count > 0
+                            delegate: Item {
+                                id: longPollEntry
                                 objectName: "runtimeOverviewLongPollEntry"
-                                spacing: 2
+                                Layout.fillWidth: true
+                                Layout.preferredHeight: longPollContent.implicitHeight
+                                implicitHeight: longPollContent.implicitHeight
 
                                 readonly property var labels: modelData && modelData.labels ? modelData.labels : ({})
                                 readonly property string adapterLabel: labels.adapter || qsTr("n/d")
                                 readonly property string scopeLabel: labels.scope || qsTr("n/d")
                                 readonly property string envLabel: labels.environment || qsTr("n/d")
 
-                                Text {
-                                    objectName: "runtimeOverviewLongPollHeader"
-                                    text: qsTr("%1 • %2 • %3").arg(parent.adapterLabel).arg(parent.scopeLabel).arg(parent.envLabel)
-                                    font.bold: true
-                                    color: Styles.AppTheme.textPrimary
-                                }
+                                ColumnLayout {
+                                    id: longPollContent
+                                    anchors.left: parent.left
+                                    anchors.right: parent.right
+                                    spacing: 2
 
-                                Text {
-                                    objectName: "runtimeOverviewLongPollLatency"
-                                    text: {
-                                        const latency = modelData.requestLatency || {}
-                                        const hasP95 = typeof latency.p95 === "number"
-                                        const hasP50 = typeof latency.p50 === "number"
-                                        if (!hasP95 && !hasP50)
-                                            return qsTr("Brak próbek latencji long-pollowych")
-                                        const p95 = hasP95 ? latency.p95.toFixed(3) : qsTr("n/d")
-                                        const p50 = hasP50 ? latency.p50.toFixed(3) : qsTr("n/d")
-                                        return qsTr("Latencja p50: %1 s • p95: %2 s").arg(p50).arg(p95)
+                                    Text {
+                                        objectName: "runtimeOverviewLongPollHeader"
+                                        text: qsTr("%1 • %2 • %3").arg(longPollEntry.adapterLabel).arg(longPollEntry.scopeLabel).arg(longPollEntry.envLabel)
+                                        font.bold: true
+                                        color: Styles.AppTheme.textPrimary
                                     }
-                                    color: Styles.AppTheme.textSecondary
-                                }
 
-                                Text {
-                                    objectName: "runtimeOverviewLongPollErrors"
-                                    text: {
-                                        const errors = modelData.httpErrors || {}
-                                        const total = typeof errors.total === "number" ? errors.total : 0
-                                        if (total === 0)
-                                            return qsTr("Błędy HTTP: brak prób w ostatnich próbkach")
-                                        return qsTr("Błędy HTTP: %1").arg(total)
+                                    Text {
+                                        objectName: "runtimeOverviewLongPollLatency"
+                                        text: {
+                                            const latency = modelData.requestLatency || {}
+                                            const hasP95 = typeof latency.p95 === "number"
+                                            const hasP50 = typeof latency.p50 === "number"
+                                            if (!hasP95 && !hasP50)
+                                                return qsTr("Brak próbek latencji long-pollowych")
+                                            const p95 = hasP95 ? latency.p95.toFixed(3) : qsTr("n/d")
+                                            const p50 = hasP50 ? latency.p50.toFixed(3) : qsTr("n/d")
+                                            return qsTr("Latencja p50: %1 s • p95: %2 s").arg(p50).arg(p95)
+                                        }
+                                        color: Styles.AppTheme.textSecondary
                                     }
-                                    color: Styles.AppTheme.textSecondary
-                                }
 
-                                Text {
-                                    objectName: "runtimeOverviewLongPollReconnects"
-                                    text: {
-                                        const reconnects = modelData.reconnects || {}
-                                        const attempts = typeof reconnects.attempts === "number" ? reconnects.attempts : 0
-                                        const failures = typeof reconnects.failure === "number" ? reconnects.failure : 0
-                                        return qsTr("Reconnecty: próby %1 • błędy %2").arg(attempts).arg(failures)
+                                    Text {
+                                        objectName: "runtimeOverviewLongPollErrors"
+                                        text: {
+                                            const errors = modelData.httpErrors || {}
+                                            const total = typeof errors.total === "number" ? errors.total : 0
+                                            if (total === 0)
+                                                return qsTr("Błędy HTTP: brak prób w ostatnich próbkach")
+                                            return qsTr("Błędy HTTP: %1").arg(total)
+                                        }
+                                        color: Styles.AppTheme.textSecondary
                                     }
-                                    color: Styles.AppTheme.textSecondary
+
+                                    Text {
+                                        objectName: "runtimeOverviewLongPollReconnects"
+                                        text: {
+                                            const reconnects = modelData.reconnects || {}
+                                            const attempts = typeof reconnects.attempts === "number" ? reconnects.attempts : 0
+                                            const failures = typeof reconnects.failure === "number" ? reconnects.failure : 0
+                                            return qsTr("Reconnecty: próby %1 • błędy %2").arg(attempts).arg(failures)
+                                        }
+                                        color: Styles.AppTheme.textSecondary
+                                    }
                                 }
                             }
                         }
 
                         Label {
                             objectName: "runtimeOverviewLongPollEmpty"
-                            visible: root.longPollMetrics.length === 0
+                            visible: longPollMetricsModel.count === 0
                             text: qsTr("Fallback long-poll: brak aktywnych streamów")
                             color: Styles.AppTheme.textSecondary
                         }
