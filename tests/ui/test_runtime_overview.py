@@ -2155,6 +2155,44 @@ def test_runtime_overview_cards_react_to_live_signals(tmp_path: Path) -> None:
             app.processEvents()
             return bool(predicate())
 
+        def _find_quick_items_by_name(name: str) -> list[QObject]:
+            matches: list[QObject] = []
+            for item in _iter_quick_items(_quick_root_item()):
+                if _safe_object_name(item) == name:
+                    matches.append(item)
+            try:
+                matches.extend(root.findChildren(QObject, name) or [])
+            except RuntimeError:
+                pass
+            except Exception:
+                pass
+
+            deduped: list[QObject] = []
+            seen: set[int] = set()
+            for item in matches:
+                marker = id(item)
+                if marker in seen:
+                    continue
+                seen.add(marker)
+                deduped.append(item)
+            return deduped
+
+        def _longpoll_debug_snapshot(limit: int = 20) -> str:
+            total = 0
+            sample: list[str] = []
+            for item in _iter_quick_items(_quick_root_item()):
+                total += 1
+                if len(sample) < limit:
+                    sample.append(_safe_object_name(item) or f"<{type(item).__name__}>")
+            if total > limit:
+                sample.append("<truncated>")
+            return (
+                f"quickItemTotal={total}; "
+                f"quickItemSampleSize={min(limit, total)}; "
+                f"runtimeOverviewLongPollEntryCount={len(_find_quick_items_by_name('runtimeOverviewLongPollEntry'))}; "
+                f"sample={sample!r}"
+            )
+
         def _grid_order_contains_feed_sla() -> bool:
             # Opiera się na autouse fixture qml_prop, która zwraca plain Python.
             order = runtime_root.property("effectiveGridCardOrder") or []
@@ -2430,9 +2468,25 @@ def test_runtime_overview_cards_react_to_live_signals(tmp_path: Path) -> None:
             ]
         )
         app.processEvents()
+        _pump_qt(3)
 
-        longpoll_entries = root.findChildren(QObject, "runtimeOverviewLongPollEntry")
-        assert longpoll_entries, "Brak widocznych wpisów long-pollowych"
+        def _longpoll_entries_ready() -> bool:
+            _pump_qt(1)
+            return bool(_find_quick_items_by_name("runtimeOverviewLongPollEntry"))
+
+        assert _wait_until(
+            _longpoll_entries_ready,
+            timeout_ms=5000,
+        ), (
+            "Brak widocznych wpisów long-pollowych po push_longpoll_metrics. "
+            f"{_longpoll_debug_snapshot()}"
+        )
+
+        longpoll_entries = _find_quick_items_by_name("runtimeOverviewLongPollEntry")
+        assert longpoll_entries, (
+            "Brak widocznych wpisów long-pollowych po oczekiwaniu. "
+            f"count={len(longpoll_entries)}; {_longpoll_debug_snapshot()}"
+        )
         header = longpoll_entries[0].findChild(QObject, "runtimeOverviewLongPollHeader")
         assert header is not None and "binance" in header.property("text")
         latency_label = longpoll_entries[0].findChild(QObject, "runtimeOverviewLongPollLatency")
