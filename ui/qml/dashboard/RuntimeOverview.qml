@@ -415,6 +415,7 @@ Item {
             objectName: "runtimeOverviewStrategyAiPanel"
             Layout.fillWidth: true
             runtimeService: root.runtimeServiceObj
+            longPollMetricsModel: root.longPollMetricsModel
             feedTransportSnapshot: root.feedTransportSnapshot
             aiRegimes: root.aiRegimeBreakdown
             adaptiveSummary: root.adaptiveStrategySummary
@@ -1267,92 +1268,6 @@ Item {
                     }
                 }
 
-                GroupBox {
-                    title: qsTr("Fallback long-poll")
-                    Layout.fillWidth: true
-
-                    ColumnLayout {
-                        spacing: 6
-                        objectName: "runtimeOverviewLongPollContainer"
-
-                        Repeater {
-                            id: longPollRepeater
-                            model: root.longPollMetricsModel
-                            visible: root.longPollMetricsModel.count > 0
-                            delegate: Item {
-                                id: longPollEntry
-                                objectName: "runtimeOverviewLongPollEntry"
-                                Layout.fillWidth: true
-                                Layout.preferredHeight: longPollContent.implicitHeight
-                                implicitHeight: longPollContent.implicitHeight
-
-                                readonly property var safeLabels: (labels && typeof labels === "object") ? labels : ({})
-                                readonly property string adapterLabel: safeLabels.adapter || qsTr("n/d")
-                                readonly property string scopeLabel: safeLabels.scope || qsTr("n/d")
-                                readonly property string envLabel: safeLabels.environment || qsTr("n/d")
-
-                                ColumnLayout {
-                                    id: longPollContent
-                                    anchors.left: parent.left
-                                    anchors.right: parent.right
-                                    spacing: 2
-
-                                    Text {
-                                        objectName: "runtimeOverviewLongPollHeader"
-                                        text: qsTr("%1 • %2 • %3").arg(longPollEntry.adapterLabel).arg(longPollEntry.scopeLabel).arg(longPollEntry.envLabel)
-                                        font.bold: true
-                                        color: Styles.AppTheme.textPrimary
-                                    }
-
-                                    Text {
-                                        objectName: "runtimeOverviewLongPollLatency"
-                                        text: {
-                                            const latency = (requestLatency && typeof requestLatency === "object") ? requestLatency : ({})
-                                            const hasP95 = typeof latency.p95 === "number"
-                                            const hasP50 = typeof latency.p50 === "number"
-                                            if (!hasP95 && !hasP50)
-                                                return qsTr("Brak próbek latencji long-pollowych")
-                                            const p95 = hasP95 ? latency.p95.toFixed(3) : qsTr("n/d")
-                                            const p50 = hasP50 ? latency.p50.toFixed(3) : qsTr("n/d")
-                                            return qsTr("Latencja p50: %1 s • p95: %2 s").arg(p50).arg(p95)
-                                        }
-                                        color: Styles.AppTheme.textSecondary
-                                    }
-
-                                    Text {
-                                        objectName: "runtimeOverviewLongPollErrors"
-                                        text: {
-                                            const errors = (httpErrors && typeof httpErrors === "object") ? httpErrors : ({})
-                                            const total = typeof errors.total === "number" ? errors.total : 0
-                                            if (total === 0)
-                                                return qsTr("Błędy HTTP: brak prób w ostatnich próbkach")
-                                            return qsTr("Błędy HTTP: %1").arg(total)
-                                        }
-                                        color: Styles.AppTheme.textSecondary
-                                    }
-
-                                    Text {
-                                        objectName: "runtimeOverviewLongPollReconnects"
-                                        text: {
-                                            const reconnectStats = (reconnects && typeof reconnects === "object") ? reconnects : ({})
-                                            const attempts = typeof reconnectStats.attempts === "number" ? reconnectStats.attempts : 0
-                                            const failures = typeof reconnectStats.failure === "number" ? reconnectStats.failure : 0
-                                            return qsTr("Reconnecty: próby %1 • błędy %2").arg(attempts).arg(failures)
-                                        }
-                                        color: Styles.AppTheme.textSecondary
-                                    }
-                                }
-                            }
-                        }
-
-                        Label {
-                            objectName: "runtimeOverviewLongPollEmpty"
-                            visible: root.longPollMetricsModel.count === 0
-                            text: qsTr("Fallback long-poll: brak aktywnych streamów")
-                            color: Styles.AppTheme.textSecondary
-                        }
-                    }
-                }
 
                 ScrollView {
                     Layout.fillWidth: true
@@ -1462,5 +1377,7 @@ Item {
             }
         }
     }
+
+
 }
 }
