@@ -132,6 +132,63 @@ Item {
         return false
     }
 
+    function _seqCount(source) {
+        if (!source)
+            return 0
+        if (typeof source.count === "function") {
+            const fnCount = Number(source.count())
+            if (isFinite(fnCount) && fnCount >= 0)
+                return fnCount
+        }
+        if (typeof source.size === "function") {
+            const fnSize = Number(source.size())
+            if (isFinite(fnSize) && fnSize >= 0)
+                return fnSize
+        }
+        if (typeof source.length === "function") {
+            const fnLength = Number(source.length())
+            if (isFinite(fnLength) && fnLength >= 0)
+                return fnLength
+        }
+        if (typeof source.length === "number") {
+            const arrLength = Number(source.length)
+            if (isFinite(arrLength) && arrLength >= 0)
+                return arrLength
+        }
+        if (typeof source.count === "number") {
+            const numberCount = Number(source.count)
+            if (isFinite(numberCount) && numberCount >= 0)
+                return numberCount
+        }
+        if (typeof source.size === "number") {
+            const numberSize = Number(source.size)
+            if (isFinite(numberSize) && numberSize >= 0)
+                return numberSize
+        }
+        const numericKeys = Object.keys(source).filter(function(key) {
+            return /^\d+$/.test(key)
+        })
+        return numericKeys.length
+    }
+
+    function _seqAt(source, index) {
+        if (!source)
+            return undefined
+        if (typeof source.get === "function")
+            return source.get(index)
+        if (typeof source.at === "function")
+            return source.at(index)
+        return source[index]
+    }
+
+    function _toPlainArray(source) {
+        const normalized = []
+        const size = root._seqCount(source)
+        for (let i = 0; i < size; ++i)
+            normalized.push(root._seqAt(source, i))
+        return normalized
+    }
+
     function refreshTelemetry() {
         if (!root.telemetryProviderObj)
             return
@@ -147,7 +204,7 @@ Item {
         root.riskMetrics = root.runtimeServiceObj ? root.runtimeServiceObj.riskMetrics : ({})
         root.riskTimeline = root.runtimeServiceObj ? root.runtimeServiceObj.riskTimeline : []
         root.lastOperatorAction = root.runtimeServiceObj ? root.runtimeServiceObj.lastOperatorAction : ({})
-        root.longPollMetrics = root.runtimeServiceObj ? root.runtimeServiceObj.longPollMetrics : []
+        root.longPollMetrics = root._toPlainArray(root.runtimeServiceObj ? root.runtimeServiceObj.longPollMetrics : [])
         root.syncLongPollMetricsModel()
         root.cycleMetrics = root.runtimeServiceObj ? root.runtimeServiceObj.cycleMetrics : ({})
         root.feedTransportSnapshot = root.runtimeServiceObj ? root.runtimeServiceObj.feedTransportSnapshot : ({})
@@ -167,16 +224,16 @@ Item {
 
     function syncLongPollMetricsModel() {
         longPollMetricsListModel.clear()
-        const source = root.longPollMetrics || []
-        const size = source.length || 0
+        const source = root.longPollMetrics
+        const size = root._seqCount(source)
         for (let i = 0; i < size; ++i) {
-            const entry = source[i]
+            const entry = root._seqAt(source, i)
             if (!entry || typeof entry !== "object") {
                 longPollMetricsListModel.append({})
                 continue
             }
             if (Array.isArray(entry)) {
-                longPollMetricsListModel.append({ raw: entry })
+                longPollMetricsListModel.append({ raw: entry.slice(0) })
                 continue
             }
             longPollMetricsListModel.append(Object.assign({}, entry))
@@ -193,15 +250,9 @@ Item {
                     return
                 const repeaterCount = longPollEntryHookRepeater ? longPollEntryHookRepeater.count : 0
                 const model = longPollEntryHookRepeater ? longPollEntryHookRepeater.model : null
-                const modelCount = (model && model.count !== undefined)
-                        ? model.count
-                        : ((model && model.length !== undefined) ? model.length : 0)
-                const arrayCount = (root.longPollMetrics && root.longPollMetrics.length !== undefined)
-                        ? root.longPollMetrics.length
-                        : 0
-                const listCount = (root.longPollMetricsModel && root.longPollMetricsModel.count !== undefined)
-                        ? root.longPollMetricsModel.count
-                        : 0
+                const modelCount = root._seqCount(model)
+                const arrayCount = root._seqCount(root.longPollMetrics)
+                const listCount = root._seqCount(root.longPollMetricsModel)
                 if (modelCount > 0 && repeaterCount === 0 && root.longPollHookWarnedRevision !== revision) {
                     root.longPollHookWarnedRevision = revision
                     const modelType = model ? typeof model : "null"
@@ -226,9 +277,9 @@ Item {
     }
 
     onRuntimeServiceObjChanged: {
-        root.longPollMetrics = root.runtimeServiceObj && root.runtimeServiceObj.longPollMetrics
+        root.longPollMetrics = root._toPlainArray(root.runtimeServiceObj && root.runtimeServiceObj.longPollMetrics
                 ? root.runtimeServiceObj.longPollMetrics
-                : []
+                : [])
         root.syncLongPollMetricsModel()
     }
 
@@ -341,7 +392,7 @@ Item {
         function onLongPollMetricsChanged() {
             if (!root.runtimeServiceObj)
                 return
-            root.longPollMetrics = root.runtimeServiceObj.longPollMetrics
+            root.longPollMetrics = root._toPlainArray(root.runtimeServiceObj.longPollMetrics)
             root.syncLongPollMetricsModel()
         }
 
@@ -410,7 +461,6 @@ Item {
         height: 1
         x: -10000
         y: -10000
-        enabled: false
         focus: false
         z: -1
 
@@ -419,8 +469,8 @@ Item {
             model: {
                 const listModel = root.longPollMetricsModel
                 const arrayModel = root.longPollMetrics
-                const listCount = (listModel && listModel.count !== undefined) ? listModel.count : 0
-                const arrayCount = (arrayModel && arrayModel.length !== undefined) ? arrayModel.length : 0
+                const listCount = root._seqCount(listModel)
+                const arrayCount = root._seqCount(arrayModel)
 
                 if (listModel && listCount > 0)
                     return listModel
