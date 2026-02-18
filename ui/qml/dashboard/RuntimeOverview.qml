@@ -55,7 +55,7 @@ Item {
     property var riskMetrics: runtimeServiceObj && runtimeServiceObj.riskMetrics ? runtimeServiceObj.riskMetrics : ({})
     property var riskTimeline: runtimeServiceObj && runtimeServiceObj.riskTimeline ? runtimeServiceObj.riskTimeline : []
     property var lastOperatorAction: runtimeServiceObj && runtimeServiceObj.lastOperatorAction ? runtimeServiceObj.lastOperatorAction : ({})
-    property var longPollMetrics: runtimeServiceObj && runtimeServiceObj.longPollMetrics ? runtimeServiceObj.longPollMetrics : []
+    property var longPollMetrics: []
     onLongPollMetricsChanged: root.syncLongPollMetricsModel()
     ListModel {
         id: longPollMetricsListModel
@@ -77,6 +77,8 @@ Item {
     property string feedLatencyAlertTicket: ""
     property int longPollHookRevision: 0
     property int longPollHookWarnedRevision: -1
+    property bool longPollHookForcePlaceholder: false
+    property bool longPollHookSeenSignal: false
     readonly property url feedSlaRunbookUrl: Qt.resolvedUrl("../../docs/runbooks/operations/feed_sla.md")
 
     function componentForCard(cardId) {
@@ -136,19 +138,28 @@ Item {
         if (!source)
             return 0
         if (typeof source.count === "function") {
-            const fnCount = Number(source.count())
-            if (isFinite(fnCount) && fnCount >= 0)
-                return fnCount
+            try {
+                const fnCount = Number(source.count())
+                if (isFinite(fnCount) && fnCount >= 0)
+                    return fnCount
+            } catch (e) {
+            }
         }
         if (typeof source.size === "function") {
-            const fnSize = Number(source.size())
-            if (isFinite(fnSize) && fnSize >= 0)
-                return fnSize
+            try {
+                const fnSize = Number(source.size())
+                if (isFinite(fnSize) && fnSize >= 0)
+                    return fnSize
+            } catch (e) {
+            }
         }
         if (typeof source.length === "function") {
-            const fnLength = Number(source.length())
-            if (isFinite(fnLength) && fnLength >= 0)
-                return fnLength
+            try {
+                const fnLength = Number(source.length())
+                if (isFinite(fnLength) && fnLength >= 0)
+                    return fnLength
+            } catch (e) {
+            }
         }
         if (typeof source.length === "number") {
             const arrLength = Number(source.length)
@@ -178,18 +189,32 @@ Item {
             return source.get(index)
         if (typeof source.at === "function")
             return source.at(index)
+        if (typeof source.value === "function")
+            return source.value(index)
         return source[index]
     }
 
     function _toPlainArray(source) {
         const normalized = []
         const size = root._seqCount(source)
-        for (let i = 0; i < size; ++i)
-            normalized.push(root._seqAt(source, i))
+        if (size > 0) {
+            for (let i = 0; i < size; ++i) {
+                let entry = undefined
+                try {
+                    entry = root._seqAt(source, i)
+                } catch (e) {
+                    break
+                }
+                if (entry === undefined || entry === null)
+                    break
+                normalized.push(entry)
+            }
+            return normalized
+        }
 
         // PySide/QVariant wrappers can sometimes expose index access while
         // count/size/length introspection returns 0 in CI.
-        if (size === 0 && source) {
+        if (source) {
             const probeLimit = 256
             for (let i = 0; i < probeLimit; ++i) {
                 let entry = undefined
@@ -295,9 +320,11 @@ Item {
     }
 
     onRuntimeServiceObjChanged: {
-        root.longPollMetrics = root._toPlainArray(root.runtimeServiceObj && root.runtimeServiceObj.longPollMetrics
-                ? root.runtimeServiceObj.longPollMetrics
-                : [])
+        root.longPollHookSeenSignal = false
+        const serviceModel = root.runtimeServiceObj ? root.runtimeServiceObj.longPollMetrics : undefined
+        const normalized = root._toPlainArray(serviceModel)
+        root.longPollHookForcePlaceholder = false
+        root.longPollMetrics = normalized
         root.syncLongPollMetricsModel()
     }
 
@@ -410,7 +437,14 @@ Item {
         function onLongPollMetricsChanged() {
             if (!root.runtimeServiceObj)
                 return
-            root.longPollMetrics = root._toPlainArray(root.runtimeServiceObj.longPollMetrics)
+            root.longPollHookSeenSignal = true
+            const serviceModel = root.runtimeServiceObj ? root.runtimeServiceObj.longPollMetrics : undefined
+            const normalized = root._toPlainArray(serviceModel)
+            root.longPollHookForcePlaceholder = (root.longPollHookSeenSignal
+                                                 && serviceModel !== undefined
+                                                 && serviceModel !== null
+                                                 && normalized.length === 0)
+            root.longPollMetrics = normalized
             root.syncLongPollMetricsModel()
         }
 
@@ -488,6 +522,9 @@ Item {
                 const listModel = root.longPollMetricsModel
                 const arrayModel = root.longPollMetrics
                 const serviceModel = root.runtimeServiceObj ? root.runtimeServiceObj.longPollMetrics : undefined
+                const serviceArray = (root.runtimeServiceObj && serviceModel !== undefined && serviceModel !== null)
+                                   ? root._toPlainArray(serviceModel)
+                                   : []
                 const listCount = root._seqCount(listModel)
                 const arrayCount = root._seqCount(arrayModel)
 
@@ -495,8 +532,10 @@ Item {
                     return listModel
                 if (arrayModel && arrayCount > 0)
                     return arrayModel
-                if (root.runtimeServiceObj && serviceModel !== undefined && serviceModel !== null)
-                    return root._toPlainArray(serviceModel)
+                if (serviceArray.length > 0)
+                    return serviceArray
+                if (root.longPollHookForcePlaceholder)
+                    return [{}]
                 return listModel || []
             }
 
