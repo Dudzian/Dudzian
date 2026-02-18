@@ -29,16 +29,16 @@ Components.Card {
                             ? injectedModel.count
                             : ((injectedModel && injectedModel.length !== undefined) ? injectedModel.length : 0)
 
-        if (serviceModel && serviceCount > 0)
-            return serviceModel
-
         if (injectedModel && injectedCount > 0)
             return injectedModel
 
-        if (serviceModel)
+        if (serviceModel && serviceCount > 0)
             return serviceModel
 
-        return injectedModel ? injectedModel : []
+        if (injectedModel)
+            return injectedModel
+
+        return serviceModel ? serviceModel : []
     }
 
     ColumnLayout {
