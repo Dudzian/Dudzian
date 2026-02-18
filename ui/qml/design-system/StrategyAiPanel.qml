@@ -26,74 +26,137 @@ Components.Card {
     readonly property var effectiveLongPollMetricsModel: {
         var injectedModel = longPollMetricsModel
         var serviceModel = serviceLongPollMetricsModel
+        var injectedCount = root.modelItemCount(injectedModel)
+        var serviceCount = root.modelItemCount(serviceModel)
+        var injectedArray = []
+        var serviceArray = []
+
+        if (injectedModel && injectedCount === 0)
+            injectedArray = root._toPlainArray(injectedModel)
+
+        if (serviceModel && serviceCount === 0)
+            serviceArray = root._toPlainArray(serviceModel)
 
         // Pusty model wstrzyknięty nie może zasłaniać niepustego modelu z runtimeService,
         // bo wtedy wpisy fallback long-poll nie renderują się mimo dostępnych danych live.
-        if (injectedModel && injectedLongPollMetricsCount > 0)
+        if (injectedModel && injectedCount > 0)
             return injectedModel
 
-        if (serviceModel && serviceLongPollMetricsCount > 0)
+        if (injectedArray.length > 0)
+            return injectedArray
+
+        if (serviceModel && serviceCount > 0)
             return serviceModel
 
-        if (injectedModel && injectedLongPollMetricsCount === 0 && serviceModel)
-            return serviceModel
+        if (serviceArray.length > 0)
+            return serviceArray
+
+        if (injectedModel && injectedCount === 0 && serviceModel)
+            return serviceArray.length > 0 ? serviceArray : serviceModel
 
         if (injectedModel)
             return injectedModel
 
         if (serviceModel)
-            return serviceModel
+            return serviceArray.length > 0 ? serviceArray : serviceModel
 
         return []
     }
 
-    function modelItemCount(model) {
-        if (!model)
+    function _seqCount(source) {
+        if (!source)
             return 0
 
-        if (typeof model.count === "function") {
-            var fnCount = Number(model.count())
-            if (isFinite(fnCount) && fnCount > 0)
+        if (typeof source.count === "function") {
+            var fnCount = Number(source.count())
+            if (isFinite(fnCount) && fnCount >= 0)
                 return fnCount
         }
 
-        if (typeof model.size === "function") {
-            var fnSize = Number(model.size())
-            if (isFinite(fnSize) && fnSize > 0)
+        if (typeof source.size === "function") {
+            var fnSize = Number(source.size())
+            if (isFinite(fnSize) && fnSize >= 0)
                 return fnSize
         }
 
-        if (typeof model.length === "function") {
-            var fnLength = Number(model.length())
-            if (isFinite(fnLength) && fnLength > 0)
+        if (typeof source.length === "function") {
+            var fnLength = Number(source.length())
+            if (isFinite(fnLength) && fnLength >= 0)
                 return fnLength
         }
 
-        if (typeof model.length === "number") {
-            var numberLength = Number(model.length)
-            if (isFinite(numberLength) && numberLength > 0)
+        if (typeof source.length === "number") {
+            var numberLength = Number(source.length)
+            if (isFinite(numberLength) && numberLength >= 0)
                 return numberLength
         }
 
-        if (typeof model.count === "number") {
-            var numberCount = Number(model.count)
-            if (isFinite(numberCount) && numberCount > 0)
+        if (typeof source.count === "number") {
+            var numberCount = Number(source.count)
+            if (isFinite(numberCount) && numberCount >= 0)
                 return numberCount
         }
 
-        if (typeof model.size === "number") {
-            var numberSize = Number(model.size)
-            if (isFinite(numberSize) && numberSize > 0)
+        if (typeof source.size === "number") {
+            var numberSize = Number(source.size)
+            if (isFinite(numberSize) && numberSize >= 0)
                 return numberSize
         }
 
-        var numericKeys = Object.keys(model).filter(function(key) {
+        var numericKeys = Object.keys(source).filter(function(key) {
             return /^\d+$/.test(key)
         })
         if (numericKeys.length > 0)
             return numericKeys.length
 
         return 0
+    }
+
+    function _seqAt(source, index) {
+        if (!source)
+            return undefined
+
+        if (typeof source.get === "function")
+            return source.get(index)
+
+        if (typeof source.at === "function")
+            return source.at(index)
+
+        return source[index]
+    }
+
+    function _toPlainArray(source) {
+        var values = []
+
+        if (!source)
+            return values
+
+        var size = root._seqCount(source)
+        if (size > 0) {
+            for (var idx = 0; idx < size; idx++)
+                values.push(root._seqAt(source, idx))
+            return values
+        }
+
+        for (var probe = 0; probe < 256; probe++) {
+            var entry
+            try {
+                entry = root._seqAt(source, probe)
+            } catch (error) {
+                break
+            }
+
+            if (entry === undefined || entry === null)
+                break
+
+            values.push(entry)
+        }
+
+        return values
+    }
+
+    function modelItemCount(model) {
+        return root._seqCount(model)
     }
 
     ColumnLayout {
