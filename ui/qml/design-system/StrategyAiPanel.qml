@@ -18,27 +18,42 @@ Components.Card {
     property string adaptiveSummary: ""
     property string activationSummary: ""
     property var longPollMetricsModel: null
+    readonly property var serviceLongPollMetricsModel: (runtimeService && runtimeService.longPollMetrics)
+                                                     ? runtimeService.longPollMetrics
+                                                     : null
+    readonly property int injectedLongPollMetricsCount: root.modelItemCount(longPollMetricsModel)
+    readonly property int serviceLongPollMetricsCount: root.modelItemCount(serviceLongPollMetricsModel)
     readonly property var effectiveLongPollMetricsModel: {
-        var serviceModel = (runtimeService && runtimeService.longPollMetrics) ? runtimeService.longPollMetrics : null
         var injectedModel = longPollMetricsModel
+        var serviceModel = serviceLongPollMetricsModel
 
-        var serviceCount = (serviceModel && serviceModel.count !== undefined)
-                           ? serviceModel.count
-                           : ((serviceModel && serviceModel.length !== undefined) ? serviceModel.length : 0)
-        var injectedCount = (injectedModel && injectedModel.count !== undefined)
-                            ? injectedModel.count
-                            : ((injectedModel && injectedModel.length !== undefined) ? injectedModel.length : 0)
-
-        if (injectedModel && injectedCount > 0)
+        // Pusty model wstrzyknięty nie może zasłaniać niepustego modelu z runtimeService,
+        // bo wtedy wpisy fallback long-poll nie renderują się mimo dostępnych danych live.
+        if (injectedModel && injectedLongPollMetricsCount > 0)
             return injectedModel
 
-        if (serviceModel && serviceCount > 0)
+        if (serviceModel && serviceLongPollMetricsCount > 0)
             return serviceModel
 
         if (injectedModel)
             return injectedModel
 
-        return serviceModel ? serviceModel : []
+        if (serviceModel)
+            return serviceModel
+
+        return []
+    }
+
+    function modelItemCount(model) {
+        if (!model)
+            return 0
+
+        var rawCount = (model.count !== undefined)
+                ? model.count
+                : ((model.length !== undefined) ? model.length : 0)
+        var normalizedCount = Number(rawCount)
+
+        return (isFinite(normalizedCount) && normalizedCount > 0) ? normalizedCount : 0
     }
 
     ColumnLayout {
