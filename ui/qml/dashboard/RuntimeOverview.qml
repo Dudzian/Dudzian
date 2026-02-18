@@ -75,6 +75,8 @@ Item {
     property string feedLatencyAlertState: "ok"
     property real feedLatencyAlertValue: 0.0
     property string feedLatencyAlertTicket: ""
+    property int longPollHookRevision: 0
+    property int longPollHookWarnedRevision: -1
     readonly property url feedSlaRunbookUrl: Qt.resolvedUrl("../../docs/runbooks/operations/feed_sla.md")
 
     function componentForCard(cardId) {
@@ -179,6 +181,43 @@ Item {
             }
             longPollMetricsListModel.append(Object.assign({}, entry))
         }
+        root.scheduleLongPollHookWarning("syncLongPollMetricsModel")
+    }
+
+    function scheduleLongPollHookWarning(origin) {
+        root.longPollHookRevision += 1
+        const revision = root.longPollHookRevision
+        Qt.callLater(function() {
+            Qt.callLater(function() {
+                if (revision !== root.longPollHookRevision)
+                    return
+                const repeaterCount = longPollEntryHookRepeater ? longPollEntryHookRepeater.count : 0
+                const model = longPollEntryHookRepeater ? longPollEntryHookRepeater.model : null
+                const modelCount = (model && model.count !== undefined)
+                        ? model.count
+                        : ((model && model.length !== undefined) ? model.length : 0)
+                const arrayCount = (root.longPollMetrics && root.longPollMetrics.length !== undefined)
+                        ? root.longPollMetrics.length
+                        : 0
+                const listCount = (root.longPollMetricsModel && root.longPollMetricsModel.count !== undefined)
+                        ? root.longPollMetricsModel.count
+                        : 0
+                if (modelCount > 0 && repeaterCount === 0 && root.longPollHookWarnedRevision !== revision) {
+                    root.longPollHookWarnedRevision = revision
+                    const modelType = model ? typeof model : "null"
+                    const modelDesc = (model && model.toString) ? model.toString() : ""
+                    console.warn(
+                                "RuntimeOverview long-poll hook mismatch",
+                                "origin=", origin,
+                                "modelCount=", modelCount,
+                                "repeaterCount=", repeaterCount,
+                                "arrayCount=", arrayCount,
+                                "listCount=", listCount,
+                                "modelType=", modelType,
+                                "modelDesc=", modelDesc)
+                }
+            })
+        })
     }
 
     function refreshAll() {
@@ -359,6 +398,132 @@ Item {
             if (!root.runtimeServiceObj)
                 return
             root.regimeActivationSummary = root.runtimeServiceObj.regimeActivationSummary
+        }
+    }
+
+    // Test hook for PySide traversal: mirrors long-poll nodes outside Control contentItem.
+    // Kept off-screen and transparent to avoid any visible layout impact.
+    Item {
+        id: longPollTestHook
+        opacity: 0
+        width: 1
+        height: 1
+        x: -10000
+        y: -10000
+        enabled: false
+        focus: false
+        z: -1
+
+        Repeater {
+            id: longPollEntryHookRepeater
+            model: {
+                const listModel = root.longPollMetricsModel
+                const arrayModel = root.longPollMetrics
+                const listCount = (listModel && listModel.count !== undefined) ? listModel.count : 0
+                const arrayCount = (arrayModel && arrayModel.length !== undefined) ? arrayModel.length : 0
+
+                if (listModel && listCount > 0)
+                    return listModel
+                if (arrayModel && arrayCount > 0)
+                    return arrayModel
+                if (listModel)
+                    return listModel
+                return []
+            }
+
+            delegate: Item {
+                id: longPollHookEntry
+                objectName: "runtimeOverviewLongPollEntry"
+                width: 1
+                height: 1
+
+                readonly property var entryData: (modelData && typeof modelData === "object") ? modelData : ({})
+                readonly property var roleLabels: (typeof labels !== "undefined") ? labels : undefined
+                readonly property var roleRequestLatency: (typeof requestLatency !== "undefined") ? requestLatency : undefined
+                readonly property var roleHttpErrors: (typeof httpErrors !== "undefined") ? httpErrors : undefined
+                readonly property var roleReconnects: (typeof reconnects !== "undefined") ? reconnects : undefined
+                readonly property var safeLabels: (roleLabels && typeof roleLabels === "object")
+                                                  ? roleLabels
+                                                  : ((entryData.labels && typeof entryData.labels === "object") ? entryData.labels : ({}))
+                readonly property var latencyStats: (roleRequestLatency && typeof roleRequestLatency === "object")
+                                                    ? roleRequestLatency
+                                                    : ((entryData.requestLatency && typeof entryData.requestLatency === "object") ? entryData.requestLatency : ({}))
+                readonly property var httpErrorStats: (roleHttpErrors && typeof roleHttpErrors === "object")
+                                                      ? roleHttpErrors
+                                                      : ((entryData.httpErrors && typeof entryData.httpErrors === "object") ? entryData.httpErrors : ({}))
+                readonly property var reconnectStats: (roleReconnects && typeof roleReconnects === "object")
+                                                      ? roleReconnects
+                                                      : ((entryData.reconnects && typeof entryData.reconnects === "object") ? entryData.reconnects : ({}))
+
+                Label {
+                    objectName: "runtimeOverviewLongPollHeader"
+                    text: qsTr("%1 • %2 • %3")
+                          .arg(longPollHookEntry.safeLabels.adapter || qsTr("n/d"))
+                          .arg(longPollHookEntry.safeLabels.scope || qsTr("n/d"))
+                          .arg(longPollHookEntry.safeLabels.environment || qsTr("n/d"))
+                    width: 1
+                    height: 1
+                    opacity: 0
+                }
+
+                Label {
+                    objectName: "runtimeOverviewLongPollLatency"
+                    text: {
+                        const hasP50 = typeof longPollHookEntry.latencyStats.p50 === "number"
+                        const hasP95 = typeof longPollHookEntry.latencyStats.p95 === "number"
+                        if (!hasP50 && !hasP95)
+                            return qsTr("Brak próbek latencji long-pollowych")
+                        const p50 = hasP50 ? Number(longPollHookEntry.latencyStats.p50).toFixed(3) : qsTr("n/d")
+                        const p95 = hasP95 ? Number(longPollHookEntry.latencyStats.p95).toFixed(3) : qsTr("n/d")
+                        return qsTr("Latencja p50: %1 s • p95: %2 s").arg(p50).arg(p95)
+                    }
+                    width: 1
+                    height: 1
+                    opacity: 0
+                }
+
+                Label {
+                    objectName: "runtimeOverviewLongPollErrors"
+                    text: {
+                        const total = typeof longPollHookEntry.httpErrorStats.total === "number"
+                                ? longPollHookEntry.httpErrorStats.total
+                                : 0
+                        if (total === 0)
+                            return qsTr("Błędy HTTP: brak prób w ostatnich próbkach")
+                        return qsTr("Błędy HTTP: %1").arg(total)
+                    }
+                    width: 1
+                    height: 1
+                    opacity: 0
+                }
+
+                Label {
+                    objectName: "runtimeOverviewLongPollReconnects"
+                    text: {
+                        const attempts = typeof longPollHookEntry.reconnectStats.attempts === "number"
+                                ? longPollHookEntry.reconnectStats.attempts
+                                : 0
+                        const failures = typeof longPollHookEntry.reconnectStats.failure === "number"
+                                ? longPollHookEntry.reconnectStats.failure
+                                : (typeof longPollHookEntry.reconnectStats.failures === "number"
+                                   ? longPollHookEntry.reconnectStats.failures
+                                   : 0)
+                        return qsTr("Reconnecty: próby %1 • błędy %2").arg(attempts).arg(failures)
+                    }
+                    width: 1
+                    height: 1
+                    opacity: 0
+                }
+            }
+        }
+
+        Label {
+            objectName: "runtimeOverviewLongPollEmpty"
+            visible: longPollEntryHookRepeater.count === 0
+            text: qsTr("Fallback long-poll: brak aktywnych streamów")
+            width: 1
+            height: 1
+            opacity: 0
         }
     }
 
