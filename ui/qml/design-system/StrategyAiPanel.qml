@@ -18,7 +18,7 @@ Components.Card {
     property string adaptiveSummary: ""
     property string activationSummary: ""
     property var longPollMetricsModel: null
-    readonly property var serviceLongPollMetricsModel: (runtimeService && runtimeService.longPollMetrics)
+    readonly property var serviceLongPollMetricsModel: (runtimeService && runtimeService.longPollMetrics !== undefined && runtimeService.longPollMetrics !== null)
                                                      ? runtimeService.longPollMetrics
                                                      : null
     readonly property int injectedLongPollMetricsCount: root.modelItemCount(longPollMetricsModel)
@@ -68,21 +68,30 @@ Components.Card {
             return 0
 
         if (typeof source.count === "function") {
-            var fnCount = Number(source.count())
-            if (isFinite(fnCount) && fnCount >= 0)
-                return fnCount
+            try {
+                var fnCount = Number(source.count())
+                if (isFinite(fnCount) && fnCount >= 0)
+                    return fnCount
+            } catch (error) {
+            }
         }
 
         if (typeof source.size === "function") {
-            var fnSize = Number(source.size())
-            if (isFinite(fnSize) && fnSize >= 0)
-                return fnSize
+            try {
+                var fnSize = Number(source.size())
+                if (isFinite(fnSize) && fnSize >= 0)
+                    return fnSize
+            } catch (error) {
+            }
         }
 
         if (typeof source.length === "function") {
-            var fnLength = Number(source.length())
-            if (isFinite(fnLength) && fnLength >= 0)
-                return fnLength
+            try {
+                var fnLength = Number(source.length())
+                if (isFinite(fnLength) && fnLength >= 0)
+                    return fnLength
+            } catch (error) {
+            }
         }
 
         if (typeof source.length === "number") {
@@ -122,6 +131,9 @@ Components.Card {
         if (typeof source.at === "function")
             return source.at(index)
 
+        if (typeof source.value === "function")
+            return source.value(index)
+
         return source[index]
     }
 
@@ -133,8 +145,19 @@ Components.Card {
 
         var size = root._seqCount(source)
         if (size > 0) {
-            for (var idx = 0; idx < size; idx++)
-                values.push(root._seqAt(source, idx))
+            for (var idx = 0; idx < size; idx++) {
+                var indexedEntry
+                try {
+                    indexedEntry = root._seqAt(source, idx)
+                } catch (error) {
+                    break
+                }
+
+                if (indexedEntry === undefined || indexedEntry === null)
+                    break
+
+                values.push(indexedEntry)
+            }
             return values
         }
 
