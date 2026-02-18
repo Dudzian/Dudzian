@@ -186,6 +186,24 @@ Item {
         const size = root._seqCount(source)
         for (let i = 0; i < size; ++i)
             normalized.push(root._seqAt(source, i))
+
+        // PySide/QVariant wrappers can sometimes expose index access while
+        // count/size/length introspection returns 0 in CI.
+        if (size === 0 && source) {
+            const probeLimit = 256
+            for (let i = 0; i < probeLimit; ++i) {
+                let entry = undefined
+                try {
+                    entry = root._seqAt(source, i)
+                } catch (e) {
+                    break
+                }
+                if (entry === undefined || entry === null)
+                    break
+                normalized.push(entry)
+            }
+        }
+
         return normalized
     }
 
@@ -469,6 +487,7 @@ Item {
             model: {
                 const listModel = root.longPollMetricsModel
                 const arrayModel = root.longPollMetrics
+                const serviceModel = root.runtimeServiceObj ? root.runtimeServiceObj.longPollMetrics : undefined
                 const listCount = root._seqCount(listModel)
                 const arrayCount = root._seqCount(arrayModel)
 
@@ -476,9 +495,9 @@ Item {
                     return listModel
                 if (arrayModel && arrayCount > 0)
                     return arrayModel
-                if (listModel)
-                    return listModel
-                return []
+                if (root.runtimeServiceObj && serviceModel !== undefined && serviceModel !== null)
+                    return root._toPlainArray(serviceModel)
+                return listModel || []
             }
 
             delegate: Item {

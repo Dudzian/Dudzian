@@ -35,6 +35,9 @@ Components.Card {
         if (serviceModel && serviceLongPollMetricsCount > 0)
             return serviceModel
 
+        if (injectedModel && injectedLongPollMetricsCount === 0 && serviceModel)
+            return serviceModel
+
         if (injectedModel)
             return injectedModel
 
@@ -54,6 +57,12 @@ Components.Card {
                 return fnCount
         }
 
+        if (typeof model.size === "function") {
+            var fnSize = Number(model.size())
+            if (isFinite(fnSize) && fnSize > 0)
+                return fnSize
+        }
+
         if (typeof model.length === "function") {
             var fnLength = Number(model.length())
             if (isFinite(fnLength) && fnLength > 0)
@@ -70,6 +79,12 @@ Components.Card {
             var numberCount = Number(model.count)
             if (isFinite(numberCount) && numberCount > 0)
                 return numberCount
+        }
+
+        if (typeof model.size === "number") {
+            var numberSize = Number(model.size)
+            if (isFinite(numberSize) && numberSize > 0)
+                return numberSize
         }
 
         var numericKeys = Object.keys(model).filter(function(key) {
