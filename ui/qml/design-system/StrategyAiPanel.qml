@@ -48,12 +48,37 @@ Components.Card {
         if (!model)
             return 0
 
-        var rawCount = (model.count !== undefined)
-                ? model.count
-                : ((model.length !== undefined) ? model.length : 0)
-        var normalizedCount = Number(rawCount)
+        if (typeof model.count === "function") {
+            var fnCount = Number(model.count())
+            if (isFinite(fnCount) && fnCount > 0)
+                return fnCount
+        }
 
-        return (isFinite(normalizedCount) && normalizedCount > 0) ? normalizedCount : 0
+        if (typeof model.length === "function") {
+            var fnLength = Number(model.length())
+            if (isFinite(fnLength) && fnLength > 0)
+                return fnLength
+        }
+
+        if (typeof model.length === "number") {
+            var numberLength = Number(model.length)
+            if (isFinite(numberLength) && numberLength > 0)
+                return numberLength
+        }
+
+        if (typeof model.count === "number") {
+            var numberCount = Number(model.count)
+            if (isFinite(numberCount) && numberCount > 0)
+                return numberCount
+        }
+
+        var numericKeys = Object.keys(model).filter(function(key) {
+            return /^\d+$/.test(key)
+        })
+        if (numericKeys.length > 0)
+            return numericKeys.length
+
+        return 0
     }
 
     ColumnLayout {
@@ -247,9 +272,10 @@ Components.Card {
                         color: Qt.rgba(1, 1, 1, 0.03)
                         border.color: Qt.rgba(1, 1, 1, 0.06)
                         border.width: 1
-                        objectName: root.objectName && root.objectName.startsWith("runtimeOverview")
-                                    ? "runtimeOverviewLongPollEntry"
-                                    : "strategyAiLongPollEntry"
+                        readonly property string objectPrefix: root.objectName && root.objectName.startsWith("runtimeOverview")
+                                                               ? "runtimeOverview"
+                                                               : "strategyAi"
+                        objectName: objectPrefix + "LongPollEntry"
 
                         readonly property var entryData: (modelData && typeof modelData === "object") ? modelData : ({})
                         readonly property var roleLabels: (typeof labels !== "undefined") ? labels : undefined
@@ -268,10 +294,6 @@ Components.Card {
                         readonly property var reconnectStats: (roleReconnects && typeof roleReconnects === "object")
                                                               ? roleReconnects
                                                               : ((entryData.reconnects && typeof entryData.reconnects === "object") ? entryData.reconnects : ({}))
-                        readonly property string objectPrefix: root.objectName && root.objectName.startsWith("runtimeOverview")
-                                                               ? "runtimeOverview"
-                                                               : "strategyAi"
-
                         ColumnLayout {
                             id: longPollColumn
                             anchors.fill: parent
