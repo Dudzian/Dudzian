@@ -18,9 +18,28 @@ Components.Card {
     property string adaptiveSummary: ""
     property string activationSummary: ""
     property var longPollMetricsModel: null
-    readonly property var effectiveLongPollMetricsModel: longPollMetricsModel
-                                                       ? longPollMetricsModel
-                                                       : (runtimeService && runtimeService.longPollMetrics ? runtimeService.longPollMetrics : [])
+    readonly property var effectiveLongPollMetricsModel: {
+        var serviceModel = (runtimeService && runtimeService.longPollMetrics) ? runtimeService.longPollMetrics : null
+        var injectedModel = longPollMetricsModel
+
+        var serviceCount = (serviceModel && serviceModel.count !== undefined)
+                           ? serviceModel.count
+                           : ((serviceModel && serviceModel.length !== undefined) ? serviceModel.length : 0)
+        var injectedCount = (injectedModel && injectedModel.count !== undefined)
+                            ? injectedModel.count
+                            : ((injectedModel && injectedModel.length !== undefined) ? injectedModel.length : 0)
+
+        if (serviceModel && serviceCount > 0)
+            return serviceModel
+
+        if (injectedModel && injectedCount > 0)
+            return injectedModel
+
+        if (serviceModel)
+            return serviceModel
+
+        return injectedModel ? injectedModel : []
+    }
 
     ColumnLayout {
         Layout.fillWidth: true
