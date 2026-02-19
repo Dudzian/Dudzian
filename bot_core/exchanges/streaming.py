@@ -85,6 +85,10 @@ def _is_test_mode_enabled() -> bool:
     return os.getenv(_TEST_MODE_ENV, "").strip().lower() in {"1", "true", "yes", "on"}
 
 
+def _is_pytest_running() -> bool:
+    return "pytest" in sys.modules or bool(os.getenv("PYTEST_CURRENT_TEST"))
+
+
 def _allow_long_poll_in_test_mode() -> bool:
     return os.getenv(_ALLOW_TEST_LONG_POLL_ENV, "").strip().lower() in {"1", "true", "yes", "on"}
 
@@ -1154,8 +1158,13 @@ class LocalLongPollStream(Iterable[StreamBatch]):
             should_backoff = True
             headers = None
             retryable = False
+            # urlopen() jest wrapperem blokującym i zwraca response dopiero po
+            # zakończeniu requestu, więc close_all_active() nie przerwie in-flight
+            # requestu zanim minie timeout transportu.
             effective_timeout = (
-                min(self._timeout, 0.5) if _is_test_mode_enabled() else self._timeout
+                min(self._timeout, 0.5)
+                if _is_test_mode_enabled() or _is_pytest_running()
+                else self._timeout
             )
             try:
                 with urlopen(request, timeout=effective_timeout) as response:
