@@ -349,10 +349,42 @@ Item {
         root.scheduleLongPollHookWarning(origin || "syncLongPollMetricsModel")
     }
 
+    function _snapshotPlainArray(serviceModel) {
+        if (serviceModel === null || serviceModel === undefined)
+            return serviceModel
+
+        const normalized = root._toPlainArray(serviceModel)
+        const out = []
+        for (let i = 0; i < normalized.length; ++i) {
+            const entry = normalized[i]
+            if (!entry || typeof entry !== "object") {
+                out.push({})
+                continue
+            }
+            if (Array.isArray(entry)) {
+                out.push({ raw: entry.slice(0) })
+                continue
+            }
+            try {
+                const copy = ({})
+                for (const k in entry)
+                    copy[k] = entry[k]
+                out.push(copy)
+            } catch (e) {
+                try {
+                    out.push(entry)
+                } catch (innerError) {
+                    out.push({ raw: entry })
+                }
+            }
+        }
+        return out
+    }
+
     function queueLongPollUpdate(markSignalSeen, origin) {
         // Snapshot metrics at enqueue time to avoid Qt.callLater race on Windows/CI
         // where runtimeServiceObj.longPollMetrics can transiently look empty.
-        root._longPollUpdateSnapshot = root.serviceLongPollMetrics
+        root._longPollUpdateSnapshot = root._snapshotPlainArray(root.runtimeServiceObj ? root.runtimeServiceObj.longPollMetrics : root.serviceLongPollMetrics)
         if (markSignalSeen)
             root.longPollHookSeenSignal = true
         if (markSignalSeen)
@@ -614,8 +646,19 @@ Item {
                 const listModel = root.longPollMetricsModel
                 const arrayModel = root.longPollMetrics
                 const serviceModel = root.serviceLongPollMetrics
+                const queuedSnapshot = root._longPollUpdateSnapshot
+                let queuedArray = []
+                if (Array.isArray(queuedSnapshot))
+                    queuedArray = queuedSnapshot
+                else if (queuedSnapshot != null) {
+                    try {
+                        queuedArray = root._toPlainArray(queuedSnapshot)
+                    } catch (e) {
+                        queuedArray = []
+                    }
+                }
                 let serviceArray = []
-                if (serviceModel !== undefined && serviceModel !== null) {
+                if (serviceModel != null) {
                     try {
                         serviceArray = root._toPlainArray(serviceModel)
                     } catch (e) {
@@ -630,9 +673,11 @@ Item {
                     return listModel
                 if (arrayModel && arrayCount > 0)
                     return arrayModel
+                if (queuedArray.length > 0)
+                    return queuedArray
                 if (serviceArray.length > 0)
                     return serviceArray
-                if (root.longPollHookSeenSignal && serviceModel !== undefined && serviceModel !== null && serviceArray.length === 0)
+                if (root.longPollHookSeenSignal && serviceArray.length === 0 && queuedArray.length === 0)
                     return [{}]
                 if (root.longPollHookForcePlaceholder)
                     return [{}]
