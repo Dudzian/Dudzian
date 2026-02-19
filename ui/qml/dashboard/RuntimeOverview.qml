@@ -32,6 +32,8 @@ Item {
     property var dashboardSettingsController: null
     property var complianceController: null
     property var runtimeServiceObj: (typeof runtimeService !== "undefined" ? runtimeService : null)
+    property var serviceLongPollMetrics: (root.runtimeServiceObj ? root.runtimeServiceObj.longPollMetrics : null)
+    onServiceLongPollMetricsChanged: root.queueLongPollUpdate(true, "serviceLongPollMetricsChanged")
     property var reportController: null
     property int refreshIntervalMs: dashboardSettingsController ? dashboardSettingsController.refreshIntervalMs : 4000
     readonly property var defaultCardOrder: ["feed_sla", "io_queue", "guardrails", "retraining", "compliance", "risk_journal", "ai_decisions"]
@@ -56,7 +58,6 @@ Item {
     property var riskTimeline: runtimeServiceObj && runtimeServiceObj.riskTimeline ? runtimeServiceObj.riskTimeline : []
     property var lastOperatorAction: runtimeServiceObj && runtimeServiceObj.lastOperatorAction ? runtimeServiceObj.lastOperatorAction : ({})
     property var longPollMetrics: []
-    onLongPollMetricsChanged: root.syncLongPollMetricsModel()
     ListModel {
         id: longPollMetricsListModel
     }
@@ -80,6 +81,9 @@ Item {
     property bool longPollHookForcePlaceholder: false
     property bool longPollHookSeenSignal: false
     property bool longPollGuardWarningLogged: false
+    property bool _longPollUpdateQueued: false
+    property bool _longPollUpdateMarkSeen: false
+    property string _longPollUpdateOrigin: ""
     readonly property url feedSlaRunbookUrl: Qt.resolvedUrl("../../docs/runbooks/operations/feed_sla.md")
 
     function componentForCard(cardId) {
@@ -297,8 +301,7 @@ Item {
         root.riskMetrics = root.runtimeServiceObj ? root.runtimeServiceObj.riskMetrics : ({})
         root.riskTimeline = root.runtimeServiceObj ? root.runtimeServiceObj.riskTimeline : []
         root.lastOperatorAction = root.runtimeServiceObj ? root.runtimeServiceObj.lastOperatorAction : ({})
-        root.longPollMetrics = root._toPlainArray(root.runtimeServiceObj ? root.runtimeServiceObj.longPollMetrics : [])
-        root.syncLongPollMetricsModel()
+        root.queueLongPollUpdate(true, "refreshDecisions")
         root.cycleMetrics = root.runtimeServiceObj ? root.runtimeServiceObj.cycleMetrics : ({})
         root.feedTransportSnapshot = root.runtimeServiceObj ? root.runtimeServiceObj.feedTransportSnapshot : ({})
         root.feedHealth = root.runtimeServiceObj ? root.runtimeServiceObj.feedHealth : ({})
@@ -315,7 +318,7 @@ Item {
         root.regimeActivationSummary = root.runtimeServiceObj ? root.runtimeServiceObj.regimeActivationSummary : ""
     }
 
-    function syncLongPollMetricsModel() {
+    function syncLongPollMetricsModel(origin) {
         longPollMetricsListModel.clear()
         const source = root.longPollMetrics
         const size = root._seqCount(source)
@@ -329,9 +332,50 @@ Item {
                 longPollMetricsListModel.append({ raw: entry.slice(0) })
                 continue
             }
-            longPollMetricsListModel.append(Object.assign({}, entry))
+            try {
+                const copy = ({})
+                for (const key in entry)
+                    copy[key] = entry[key]
+                longPollMetricsListModel.append(copy)
+            } catch (e) {
+                try {
+                    longPollMetricsListModel.append(entry)
+                } catch (innerError) {
+                    longPollMetricsListModel.append({ raw: entry })
+                }
+            }
         }
-        root.scheduleLongPollHookWarning("syncLongPollMetricsModel")
+        root.scheduleLongPollHookWarning(origin || "syncLongPollMetricsModel")
+    }
+
+    function queueLongPollUpdate(markSignalSeen, origin) {
+        if (markSignalSeen)
+            root._longPollUpdateMarkSeen = true
+        root._longPollUpdateOrigin = origin || root._longPollUpdateOrigin
+        if (root._longPollUpdateQueued)
+            return
+        root._longPollUpdateQueued = true
+        Qt.callLater(function() {
+            root._longPollUpdateQueued = false
+            const mark = root._longPollUpdateMarkSeen
+            const org = root._longPollUpdateOrigin || "queueLongPollUpdate"
+            root._longPollUpdateMarkSeen = false
+            root._longPollUpdateOrigin = ""
+            root.updateLongPollMetricsFromService(root.runtimeServiceObj ? root.runtimeServiceObj.longPollMetrics : null,
+                                                  mark,
+                                                  org)
+        })
+    }
+
+    function updateLongPollMetricsFromService(serviceModel, markSignalSeen, origin) {
+        if (markSignalSeen)
+            root.longPollHookSeenSignal = true
+        const normalized = root._toPlainArray(serviceModel)
+        root.longPollHookForcePlaceholder = (serviceModel !== undefined
+                                             && serviceModel !== null
+                                             && normalized.length === 0)
+        root.longPollMetrics = normalized
+        root.syncLongPollMetricsModel(origin)
     }
 
     function scheduleLongPollHookWarning(origin) {
@@ -371,14 +415,13 @@ Item {
 
     onRuntimeServiceObjChanged: {
         root.longPollHookSeenSignal = false
-        const serviceModel = root.runtimeServiceObj ? root.runtimeServiceObj.longPollMetrics : undefined
-        const normalized = root._toPlainArray(serviceModel)
-        root.longPollHookForcePlaceholder = false
-        root.longPollMetrics = normalized
-        root.syncLongPollMetricsModel()
+        root._longPollUpdateQueued = false
+        root._longPollUpdateMarkSeen = false
+        root._longPollUpdateOrigin = ""
+        root.queueLongPollUpdate(false, "runtimeServiceObjChanged")
     }
 
-    Component.onCompleted: root.syncLongPollMetricsModel()
+    Component.onCompleted: root.queueLongPollUpdate(false, "componentCompleted")
 
     function slaSeverityColor(state) {
         if (state === "critical")
@@ -487,15 +530,7 @@ Item {
         function onLongPollMetricsChanged() {
             if (!root.runtimeServiceObj)
                 return
-            root.longPollHookSeenSignal = true
-            const serviceModel = root.runtimeServiceObj ? root.runtimeServiceObj.longPollMetrics : undefined
-            const normalized = root._toPlainArray(serviceModel)
-            root.longPollHookForcePlaceholder = (root.longPollHookSeenSignal
-                                                 && serviceModel !== undefined
-                                                 && serviceModel !== null
-                                                 && normalized.length === 0)
-            root.longPollMetrics = normalized
-            root.syncLongPollMetricsModel()
+            root.queueLongPollUpdate(true, "connections.onLongPollMetricsChanged")
         }
 
         function onCycleMetricsChanged() {
