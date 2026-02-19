@@ -413,6 +413,7 @@ Item {
             root.longPollHookForcePlaceholder = (candidateSnapshot !== undefined
                                                  && candidateSnapshot !== null
                                                  && candidateArray.length === 0)
+            root.longPollHookRevision += 1
         }
 
         if (candidateSnapshot === null || candidateSnapshot === undefined)
@@ -432,10 +433,19 @@ Item {
             root._longPollUpdateQueued = false
             const mark = root._longPollUpdateMarkSeen
             const org = root._longPollUpdateOrigin || "queueLongPollUpdate"
-            const snapshot = root._longPollUpdateSnapshot
+            let snapshot = root._longPollUpdateSnapshot
             root._longPollUpdateSnapshot = null
             root._longPollUpdateMarkSeen = false
             root._longPollUpdateOrigin = ""
+            // Resample only before first non-empty snapshot so later real clears keep their semantics.
+            if (Array.isArray(snapshot)
+                    && snapshot.length === 0
+                    && (!Array.isArray(root._longPollLastNonEmptySnapshot) || root._longPollLastNonEmptySnapshot.length === 0)
+                    && root.runtimeServiceObj) {
+                const resampled = root._snapshotPlainArray(root.runtimeServiceObj.longPollMetrics)
+                if (Array.isArray(resampled) && resampled.length > 0)
+                    snapshot = resampled
+            }
             root.updateLongPollMetricsFromService(snapshot, mark, org)
         })
     }
@@ -682,52 +692,66 @@ Item {
         Repeater {
             id: longPollEntryHookRepeater
             model: {
+                const _rev = root.longPollHookRevision
+                // Defensive first-element probe for Windows/headless wrapper quirks.
+                function _hasFirst(seq) {
+                    try {
+                        const first = root._seqAt(seq, 0)
+                        if (first !== undefined && first !== null)
+                            return true
+                    } catch (e) {}
+                    try {
+                        const count = root._seqCount(seq)
+                        if (count > 0) {
+                            const firstByCount = root._seqAt(seq, 0)
+                            if (firstByCount !== undefined && firstByCount !== null)
+                                return true
+                            const lastByCount = root._seqAt(seq, count - 1)
+                            if (lastByCount !== undefined && lastByCount !== null)
+                                return true
+                        }
+                    } catch (e) {}
+                    try {
+                        return seq && seq[0] !== undefined && seq[0] !== null
+                    } catch (e) {
+                        return false
+                    }
+                }
+
                 const listModel = root.longPollMetricsModel
                 const arrayModel = root.longPollMetrics
                 const serviceModel = root.serviceLongPollMetrics
                 const queuedSnapshot = root._longPollUpdateSnapshot
-                let queuedArray = []
-                if (Array.isArray(queuedSnapshot))
-                    queuedArray = queuedSnapshot
-                else if (queuedSnapshot != null) {
-                    try {
-                        queuedArray = root._toPlainArray(queuedSnapshot)
-                    } catch (e) {
-                        queuedArray = []
-                    }
-                }
-                let serviceArray = []
-                if (serviceModel != null) {
-                    try {
-                        serviceArray = root._toPlainArray(serviceModel)
-                    } catch (e) {
-                        root.warnLongPollGuardOnce("longPollEntryHookRepeater.model", e)
-                        serviceArray = []
-                    }
-                }
+
                 const listCount = root._seqCount(listModel)
                 const arrayCount = root._seqCount(arrayModel)
+                const queuedCount = root._seqCount(queuedSnapshot)
+                const serviceCount = root._seqCount(serviceModel)
+                const listHasData = (listCount > 0) || _hasFirst(listModel)
+                const arrayHasData = (arrayCount > 0) || _hasFirst(arrayModel)
+                const queuedHasData = (queuedCount > 0) || _hasFirst(queuedSnapshot)
+                const serviceHasData = (serviceCount > 0) || _hasFirst(serviceModel)
 
-                if (listModel && listCount > 0)
+                if (listModel && listHasData)
                     return listModel
-                if (arrayModel && arrayCount > 0)
+                if (arrayModel && arrayHasData)
                     return arrayModel
-                if (queuedArray.length > 0)
-                    return queuedArray
-                if (serviceArray.length > 0)
-                    return serviceArray
-                if (listCount === 0
-                        && arrayCount === 0
-                        && queuedArray.length === 0
-                        && serviceArray.length === 0
+                if (queuedSnapshot != null && queuedHasData)
+                    return queuedSnapshot
+                if (serviceModel != null && serviceHasData)
+                    return serviceModel
+                if (!listHasData
+                        && !arrayHasData
+                        && !queuedHasData
+                        && !serviceHasData
                         && Array.isArray(root._longPollLastNonEmptySnapshot)
                         && root._longPollLastNonEmptySnapshot.length > 0)
                     return root._longPollLastNonEmptySnapshot
                 if (root.longPollHookSeenSignal
-                        && listCount === 0
-                        && arrayCount === 0
-                        && queuedArray.length === 0
-                        && serviceArray.length === 0)
+                        && !listHasData
+                        && !arrayHasData
+                        && !queuedHasData
+                        && !serviceHasData)
                     return [{}]
                 if (root.longPollHookForcePlaceholder)
                     return [{}]
