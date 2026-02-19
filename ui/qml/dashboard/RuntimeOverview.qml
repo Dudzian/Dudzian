@@ -79,6 +79,7 @@ Item {
     property int longPollHookWarnedRevision: -1
     property bool longPollHookForcePlaceholder: false
     property bool longPollHookSeenSignal: false
+    property bool longPollGuardWarningLogged: false
     readonly property url feedSlaRunbookUrl: Qt.resolvedUrl("../../docs/runbooks/operations/feed_sla.md")
 
     function componentForCard(cardId) {
@@ -134,87 +135,133 @@ Item {
         return false
     }
 
+    function warnLongPollGuardOnce(context, detail) {
+        if (root.longPollGuardWarningLogged)
+            return
+        root.longPollGuardWarningLogged = true
+        console.warn("RuntimeOverview long-poll guard fallback", context, detail)
+    }
+
     function _seqCount(source) {
-        if (!source)
+        try {
+            if (!source)
+                return 0
+            if (typeof source.count === "function") {
+                try {
+                    const fnCount = Number(source.count())
+                    if (isFinite(fnCount) && fnCount >= 0)
+                        return fnCount
+                } catch (e) {
+                }
+            }
+            if (typeof source.size === "function") {
+                try {
+                    const fnSize = Number(source.size())
+                    if (isFinite(fnSize) && fnSize >= 0)
+                        return fnSize
+                } catch (e) {
+                }
+            }
+            if (typeof source.length === "function") {
+                try {
+                    const fnLength = Number(source.length())
+                    if (isFinite(fnLength) && fnLength >= 0)
+                        return fnLength
+                } catch (e) {
+                }
+            }
+            if (typeof source.length === "number") {
+                const arrLength = Number(source.length)
+                if (isFinite(arrLength) && arrLength >= 0)
+                    return arrLength
+            }
+            if (typeof source.count === "number") {
+                const numberCount = Number(source.count)
+                if (isFinite(numberCount) && numberCount >= 0)
+                    return numberCount
+            }
+            if (typeof source.size === "number") {
+                const numberSize = Number(source.size)
+                if (isFinite(numberSize) && numberSize >= 0)
+                    return numberSize
+            }
+            try {
+                const keys = Object.keys(source)
+                if (!keys || typeof keys.length !== "number")
+                    return 0
+                const numericKeys = keys.filter(function(key) {
+                    return /^\d+$/.test(key)
+                })
+                return Array.isArray(numericKeys) ? numericKeys.length : 0
+            } catch (e) {
+                root.warnLongPollGuardOnce("_seqCount.keys", e)
+                return 0
+            }
+        } catch (e) {
+            root.warnLongPollGuardOnce("_seqCount", e)
             return 0
-        if (typeof source.count === "function") {
-            try {
-                const fnCount = Number(source.count())
-                if (isFinite(fnCount) && fnCount >= 0)
-                    return fnCount
-            } catch (e) {
-            }
         }
-        if (typeof source.size === "function") {
-            try {
-                const fnSize = Number(source.size())
-                if (isFinite(fnSize) && fnSize >= 0)
-                    return fnSize
-            } catch (e) {
-            }
-        }
-        if (typeof source.length === "function") {
-            try {
-                const fnLength = Number(source.length())
-                if (isFinite(fnLength) && fnLength >= 0)
-                    return fnLength
-            } catch (e) {
-            }
-        }
-        if (typeof source.length === "number") {
-            const arrLength = Number(source.length)
-            if (isFinite(arrLength) && arrLength >= 0)
-                return arrLength
-        }
-        if (typeof source.count === "number") {
-            const numberCount = Number(source.count)
-            if (isFinite(numberCount) && numberCount >= 0)
-                return numberCount
-        }
-        if (typeof source.size === "number") {
-            const numberSize = Number(source.size)
-            if (isFinite(numberSize) && numberSize >= 0)
-                return numberSize
-        }
-        const numericKeys = Object.keys(source).filter(function(key) {
-            return /^\d+$/.test(key)
-        })
-        return numericKeys.length
     }
 
     function _seqAt(source, index) {
         if (!source)
             return undefined
-        if (typeof source.get === "function")
-            return source.get(index)
-        if (typeof source.at === "function")
-            return source.at(index)
-        if (typeof source.value === "function")
-            return source.value(index)
-        return source[index]
+        if (typeof source.get === "function") {
+            try {
+                return source.get(index)
+            } catch (e) {
+            }
+        }
+        if (typeof source.at === "function") {
+            try {
+                return source.at(index)
+            } catch (e) {
+            }
+        }
+        if (typeof source.value === "function") {
+            try {
+                return source.value(index)
+            } catch (e) {
+            }
+        }
+        try {
+            return source[index]
+        } catch (e) {
+            return undefined
+        }
     }
 
     function _toPlainArray(source) {
         const normalized = []
-        const size = root._seqCount(source)
-        if (size > 0) {
-            for (let i = 0; i < size; ++i) {
-                let entry = undefined
-                try {
-                    entry = root._seqAt(source, i)
-                } catch (e) {
-                    break
-                }
-                if (entry === undefined || entry === null)
-                    break
-                normalized.push(entry)
-            }
+        if (!source)
             return normalized
-        }
 
-        // PySide/QVariant wrappers can sometimes expose index access while
-        // count/size/length introspection returns 0 in CI.
-        if (source) {
+        try {
+            let size = 0
+            try {
+                size = root._seqCount(source)
+            } catch (e) {
+                root.warnLongPollGuardOnce("_toPlainArray.count", e)
+                size = 0
+            }
+
+            if (size > 0) {
+                for (let i = 0; i < size; ++i) {
+                    let entry = undefined
+                    try {
+                        entry = root._seqAt(source, i)
+                    } catch (e) {
+                        break
+                    }
+                    if (entry === undefined || entry === null)
+                        break
+                    normalized.push(entry)
+                }
+                return normalized
+            }
+
+            // PySide/QVariant wrappers can sometimes expose index access while
+            // count/size/length introspection returns 0 in CI.
             const probeLimit = 256
             for (let i = 0; i < probeLimit; ++i) {
                 let entry = undefined
@@ -227,6 +274,9 @@ Item {
                     break
                 normalized.push(entry)
             }
+        } catch (e) {
+            root.warnLongPollGuardOnce("_toPlainArray", e)
+            return []
         }
 
         return normalized
@@ -522,9 +572,15 @@ Item {
                 const listModel = root.longPollMetricsModel
                 const arrayModel = root.longPollMetrics
                 const serviceModel = root.runtimeServiceObj ? root.runtimeServiceObj.longPollMetrics : undefined
-                const serviceArray = (root.runtimeServiceObj && serviceModel !== undefined && serviceModel !== null)
-                                   ? root._toPlainArray(serviceModel)
-                                   : []
+                let serviceArray = []
+                if (root.runtimeServiceObj && serviceModel !== undefined && serviceModel !== null) {
+                    try {
+                        serviceArray = root._toPlainArray(serviceModel)
+                    } catch (e) {
+                        root.warnLongPollGuardOnce("longPollEntryHookRepeater.model", e)
+                        serviceArray = []
+                    }
+                }
                 const listCount = root._seqCount(listModel)
                 const arrayCount = root._seqCount(arrayModel)
 

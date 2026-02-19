@@ -23,6 +23,7 @@ Components.Card {
                                                      : null
     readonly property int injectedLongPollMetricsCount: root.modelItemCount(longPollMetricsModel)
     readonly property int serviceLongPollMetricsCount: root.modelItemCount(serviceLongPollMetricsModel)
+    property bool longPollGuardWarningLogged: false
     readonly property var effectiveLongPollMetricsModel: {
         var injectedModel = longPollMetricsModel
         var serviceModel = serviceLongPollMetricsModel
@@ -63,78 +64,111 @@ Components.Card {
         return []
     }
 
+    function warnLongPollGuardOnce(context, detail) {
+        if (root.longPollGuardWarningLogged)
+            return
+        root.longPollGuardWarningLogged = true
+        console.warn("StrategyAiPanel long-poll guard fallback", context, detail)
+    }
+
     function _seqCount(source) {
-        if (!source)
+        try {
+            if (!source)
+                return 0
+
+            if (typeof source.count === "function") {
+                try {
+                    var fnCount = Number(source.count())
+                    if (isFinite(fnCount) && fnCount >= 0)
+                        return fnCount
+                } catch (error) {
+                }
+            }
+
+            if (typeof source.size === "function") {
+                try {
+                    var fnSize = Number(source.size())
+                    if (isFinite(fnSize) && fnSize >= 0)
+                        return fnSize
+                } catch (error) {
+                }
+            }
+
+            if (typeof source.length === "function") {
+                try {
+                    var fnLength = Number(source.length())
+                    if (isFinite(fnLength) && fnLength >= 0)
+                        return fnLength
+                } catch (error) {
+                }
+            }
+
+            if (typeof source.length === "number") {
+                var numberLength = Number(source.length)
+                if (isFinite(numberLength) && numberLength >= 0)
+                    return numberLength
+            }
+
+            if (typeof source.count === "number") {
+                var numberCount = Number(source.count)
+                if (isFinite(numberCount) && numberCount >= 0)
+                    return numberCount
+            }
+
+            if (typeof source.size === "number") {
+                var numberSize = Number(source.size)
+                if (isFinite(numberSize) && numberSize >= 0)
+                    return numberSize
+            }
+
+            try {
+                var keys = Object.keys(source)
+                if (!keys || typeof keys.length !== "number")
+                    return 0
+                var numericKeys = keys.filter(function(key) {
+                    return /^\d+$/.test(key)
+                })
+                return Array.isArray(numericKeys) ? numericKeys.length : 0
+            } catch (error) {
+                root.warnLongPollGuardOnce("_seqCount.keys", error)
+                return 0
+            }
+        } catch (error) {
+            root.warnLongPollGuardOnce("_seqCount", error)
             return 0
-
-        if (typeof source.count === "function") {
-            try {
-                var fnCount = Number(source.count())
-                if (isFinite(fnCount) && fnCount >= 0)
-                    return fnCount
-            } catch (error) {
-            }
         }
-
-        if (typeof source.size === "function") {
-            try {
-                var fnSize = Number(source.size())
-                if (isFinite(fnSize) && fnSize >= 0)
-                    return fnSize
-            } catch (error) {
-            }
-        }
-
-        if (typeof source.length === "function") {
-            try {
-                var fnLength = Number(source.length())
-                if (isFinite(fnLength) && fnLength >= 0)
-                    return fnLength
-            } catch (error) {
-            }
-        }
-
-        if (typeof source.length === "number") {
-            var numberLength = Number(source.length)
-            if (isFinite(numberLength) && numberLength >= 0)
-                return numberLength
-        }
-
-        if (typeof source.count === "number") {
-            var numberCount = Number(source.count)
-            if (isFinite(numberCount) && numberCount >= 0)
-                return numberCount
-        }
-
-        if (typeof source.size === "number") {
-            var numberSize = Number(source.size)
-            if (isFinite(numberSize) && numberSize >= 0)
-                return numberSize
-        }
-
-        var numericKeys = Object.keys(source).filter(function(key) {
-            return /^\d+$/.test(key)
-        })
-        if (numericKeys.length > 0)
-            return numericKeys.length
-
-        return 0
     }
 
     function _seqAt(source, index) {
         if (!source)
             return undefined
 
-        if (typeof source.get === "function")
-            return source.get(index)
+        if (typeof source.get === "function") {
+            try {
+                return source.get(index)
+            } catch (error) {
+            }
+        }
 
-        if (typeof source.at === "function")
-            return source.at(index)
+        if (typeof source.at === "function") {
+            try {
+                return source.at(index)
+            } catch (error) {
+            }
+        }
 
-        if (typeof source.value === "function")
-            return source.value(index)
+        if (typeof source.value === "function") {
+            try {
+                return source.value(index)
+            } catch (error) {
+            }
+        }
 
-        return source[index]
+        try {
+            return source[index]
+        } catch (error) {
+            return undefined
+        }
     }
 
     function _toPlainArray(source) {
@@ -143,36 +177,48 @@ Components.Card {
         if (!source)
             return values
 
-        var size = root._seqCount(source)
-        if (size > 0) {
-            for (var idx = 0; idx < size; idx++) {
-                var indexedEntry
+        try {
+            var size = 0
+            try {
+                size = root._seqCount(source)
+            } catch (error) {
+                root.warnLongPollGuardOnce("_toPlainArray.count", error)
+                size = 0
+            }
+
+            if (size > 0) {
+                for (var idx = 0; idx < size; idx++) {
+                    var indexedEntry
+                    try {
+                        indexedEntry = root._seqAt(source, idx)
+                    } catch (error) {
+                        break
+                    }
+
+                    if (indexedEntry === undefined || indexedEntry === null)
+                        break
+
+                    values.push(indexedEntry)
+                }
+                return values
+            }
+
+            for (var probe = 0; probe < 256; probe++) {
+                var entry
                 try {
-                    indexedEntry = root._seqAt(source, idx)
+                    entry = root._seqAt(source, probe)
                 } catch (error) {
                     break
                 }
 
-                if (indexedEntry === undefined || indexedEntry === null)
+                if (entry === undefined || entry === null)
                     break
 
-                values.push(indexedEntry)
+                values.push(entry)
             }
-            return values
-        }
-
-        for (var probe = 0; probe < 256; probe++) {
-            var entry
-            try {
-                entry = root._seqAt(source, probe)
-            } catch (error) {
-                break
-            }
-
-            if (entry === undefined || entry === null)
-                break
-
-            values.push(entry)
+        } catch (error) {
+            root.warnLongPollGuardOnce("_toPlainArray", error)
+            return []
         }
 
         return values
