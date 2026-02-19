@@ -85,6 +85,7 @@ Item {
     property bool _longPollUpdateMarkSeen: false
     property string _longPollUpdateOrigin: ""
     property var _longPollUpdateSnapshot: null
+    property var _longPollLastNonEmptySnapshot: []
     readonly property url feedSlaRunbookUrl: Qt.resolvedUrl("../../docs/runbooks/operations/feed_sla.md")
 
     function componentForCard(cardId) {
@@ -384,7 +385,41 @@ Item {
     function queueLongPollUpdate(markSignalSeen, origin) {
         // Snapshot metrics at enqueue time to avoid Qt.callLater race on Windows/CI
         // where runtimeServiceObj.longPollMetrics can transiently look empty.
-        root._longPollUpdateSnapshot = root._snapshotPlainArray(root.runtimeServiceObj ? root.runtimeServiceObj.longPollMetrics : root.serviceLongPollMetrics)
+        const source = root.runtimeServiceObj ? root.runtimeServiceObj.longPollMetrics : root.serviceLongPollMetrics
+        const candidateSnapshot = root._snapshotPlainArray(source)
+        let candidateArray = []
+        try {
+            if (Array.isArray(candidateSnapshot))
+                candidateArray = candidateSnapshot
+            else
+                candidateArray = root._toPlainArray(candidateSnapshot)
+        } catch (e) {
+            candidateArray = []
+        }
+
+        const hasPreviousNonEmpty = (Array.isArray(root._longPollUpdateSnapshot) && root._longPollUpdateSnapshot.length > 0)
+                || (Array.isArray(root._longPollLastNonEmptySnapshot) && root._longPollLastNonEmptySnapshot.length > 0)
+        // Keep previous non-empty hook data while queued; Windows/CI can briefly report empty wrapper snapshots.
+        const preserveExisting = root._longPollUpdateQueued
+                && candidateSnapshot !== undefined
+                && candidateSnapshot !== null
+                && candidateArray.length === 0
+                && hasPreviousNonEmpty
+
+        if (!preserveExisting) {
+            root._longPollUpdateSnapshot = candidateSnapshot
+            // Keep hook data visible immediately; Windows/CI can delay deferred Qt.callLater sync.
+            root.longPollMetrics = candidateArray
+            root.longPollHookForcePlaceholder = (candidateSnapshot !== undefined
+                                                 && candidateSnapshot !== null
+                                                 && candidateArray.length === 0)
+        }
+
+        if (candidateSnapshot === null || candidateSnapshot === undefined)
+            root._longPollLastNonEmptySnapshot = []
+        else if (candidateArray.length > 0)
+            root._longPollLastNonEmptySnapshot = candidateArray.slice(0)
+
         if (markSignalSeen)
             root.longPollHookSeenSignal = true
         if (markSignalSeen)
@@ -457,6 +492,7 @@ Item {
         root._longPollUpdateMarkSeen = false
         root._longPollUpdateOrigin = ""
         root._longPollUpdateSnapshot = null
+        root._longPollLastNonEmptySnapshot = []
         root.queueLongPollUpdate(false, "runtimeServiceObjChanged")
     }
 
@@ -632,6 +668,9 @@ Item {
     // Kept off-screen and transparent to avoid any visible layout impact.
     Item {
         id: longPollTestHook
+        objectName: "runtimeOverviewLongPollTestHook"
+        // Keep the hook anchored in the QQuickItem tree for stable headless traversal.
+        parent: root
         opacity: 0
         width: 1
         height: 1
@@ -677,11 +716,23 @@ Item {
                     return queuedArray
                 if (serviceArray.length > 0)
                     return serviceArray
-                if (root.longPollHookSeenSignal && serviceArray.length === 0 && queuedArray.length === 0)
+                if (listCount === 0
+                        && arrayCount === 0
+                        && queuedArray.length === 0
+                        && serviceArray.length === 0
+                        && Array.isArray(root._longPollLastNonEmptySnapshot)
+                        && root._longPollLastNonEmptySnapshot.length > 0)
+                    return root._longPollLastNonEmptySnapshot
+                if (root.longPollHookSeenSignal
+                        && listCount === 0
+                        && arrayCount === 0
+                        && queuedArray.length === 0
+                        && serviceArray.length === 0)
                     return [{}]
                 if (root.longPollHookForcePlaceholder)
                     return [{}]
-                return listModel || []
+                // Do not return an empty ListModel fallback; it can mask queued/placeholder sources.
+                return []
             }
 
             delegate: Item {
