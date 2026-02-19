@@ -84,6 +84,7 @@ Item {
     property bool _longPollUpdateQueued: false
     property bool _longPollUpdateMarkSeen: false
     property string _longPollUpdateOrigin: ""
+    property var _longPollUpdateSnapshot: null
     readonly property url feedSlaRunbookUrl: Qt.resolvedUrl("../../docs/runbooks/operations/feed_sla.md")
 
     function componentForCard(cardId) {
@@ -349,6 +350,11 @@ Item {
     }
 
     function queueLongPollUpdate(markSignalSeen, origin) {
+        // Snapshot metrics at enqueue time to avoid Qt.callLater race on Windows/CI
+        // where runtimeServiceObj.longPollMetrics can transiently look empty.
+        root._longPollUpdateSnapshot = root.serviceLongPollMetrics
+        if (markSignalSeen)
+            root.longPollHookSeenSignal = true
         if (markSignalSeen)
             root._longPollUpdateMarkSeen = true
         root._longPollUpdateOrigin = origin || root._longPollUpdateOrigin
@@ -359,11 +365,11 @@ Item {
             root._longPollUpdateQueued = false
             const mark = root._longPollUpdateMarkSeen
             const org = root._longPollUpdateOrigin || "queueLongPollUpdate"
+            const snapshot = root._longPollUpdateSnapshot
+            root._longPollUpdateSnapshot = null
             root._longPollUpdateMarkSeen = false
             root._longPollUpdateOrigin = ""
-            root.updateLongPollMetricsFromService(root.runtimeServiceObj ? root.runtimeServiceObj.longPollMetrics : null,
-                                                  mark,
-                                                  org)
+            root.updateLongPollMetricsFromService(snapshot, mark, org)
         })
     }
 
@@ -418,6 +424,7 @@ Item {
         root._longPollUpdateQueued = false
         root._longPollUpdateMarkSeen = false
         root._longPollUpdateOrigin = ""
+        root._longPollUpdateSnapshot = null
         root.queueLongPollUpdate(false, "runtimeServiceObjChanged")
     }
 
@@ -606,9 +613,9 @@ Item {
             model: {
                 const listModel = root.longPollMetricsModel
                 const arrayModel = root.longPollMetrics
-                const serviceModel = root.runtimeServiceObj ? root.runtimeServiceObj.longPollMetrics : undefined
+                const serviceModel = root.serviceLongPollMetrics
                 let serviceArray = []
-                if (root.runtimeServiceObj && serviceModel !== undefined && serviceModel !== null) {
+                if (serviceModel !== undefined && serviceModel !== null) {
                     try {
                         serviceArray = root._toPlainArray(serviceModel)
                     } catch (e) {
@@ -625,6 +632,8 @@ Item {
                     return arrayModel
                 if (serviceArray.length > 0)
                     return serviceArray
+                if (root.longPollHookSeenSignal && serviceModel !== undefined && serviceModel !== null && serviceArray.length === 0)
+                    return [{}]
                 if (root.longPollHookForcePlaceholder)
                     return [{}]
                 return listModel || []
