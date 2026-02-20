@@ -152,6 +152,14 @@ Item {
         try {
             if (!source)
                 return 0
+            if (typeof source.rowCount === "function") {
+                try {
+                    const fnRowCount = Number(source.rowCount())
+                    if (isFinite(fnRowCount) && fnRowCount >= 0)
+                        return fnRowCount
+                } catch (e) {
+                }
+            }
             if (typeof source.count === "function") {
                 try {
                     const fnCount = Number(source.count())
@@ -191,6 +199,26 @@ Item {
                 if (isFinite(numberSize) && numberSize >= 0)
                     return numberSize
             }
+            if (typeof source.property === "function") {
+                try {
+                    const propertyLength = Number(source.property("length"))
+                    if (isFinite(propertyLength) && propertyLength >= 0)
+                        return propertyLength
+                } catch (e) {
+                }
+                try {
+                    const propertyCount = Number(source.property("count"))
+                    if (isFinite(propertyCount) && propertyCount >= 0)
+                        return propertyCount
+                } catch (e) {
+                }
+                try {
+                    const propertySize = Number(source.property("size"))
+                    if (isFinite(propertySize) && propertySize >= 0)
+                        return propertySize
+                } catch (e) {
+                }
+            }
             try {
                 const keys = Object.keys(source)
                 if (!keys || typeof keys.length !== "number")
@@ -229,6 +257,20 @@ Item {
                 return source.value(index)
             } catch (e) {
             }
+        }
+        if (typeof source.property === "function") {
+            try {
+                return source.property(String(index))
+            } catch (e) {
+            }
+            try {
+                return source.property(index)
+            } catch (e) {
+            }
+        }
+        try {
+            return source[String(index)]
+        } catch (e) {
         }
         try {
             return source[index]
@@ -350,6 +392,37 @@ Item {
         root.scheduleLongPollHookWarning(origin || "syncLongPollMetricsModel")
     }
 
+    function _pickLongPollSource() {
+        const serviceSource = root.serviceLongPollMetrics
+        const runtimeSource = root.runtimeServiceObj ? root.runtimeServiceObj.longPollMetrics : undefined
+
+        function hasData(seq) {
+            try {
+                if (root._seqCount(seq) > 0)
+                    return true
+            } catch (e) {
+            }
+            try {
+                const first = root._seqAt(seq, 0)
+                return first !== undefined && first !== null
+            } catch (e) {
+            }
+            return false
+        }
+
+        const serviceHasData = hasData(serviceSource)
+        const runtimeHasData = hasData(runtimeSource)
+
+        if (serviceHasData)
+            return serviceSource
+        if (runtimeHasData)
+            return runtimeSource
+
+        if (serviceSource === undefined || serviceSource === null)
+            return runtimeSource
+        return serviceSource
+    }
+
     function _snapshotPlainArray(serviceModel) {
         if (serviceModel === null || serviceModel === undefined)
             return serviceModel
@@ -385,7 +458,7 @@ Item {
     function queueLongPollUpdate(markSignalSeen, origin) {
         // Snapshot metrics at enqueue time to avoid Qt.callLater race on Windows/CI
         // where runtimeServiceObj.longPollMetrics can transiently look empty.
-        const source = root.runtimeServiceObj ? root.runtimeServiceObj.longPollMetrics : root.serviceLongPollMetrics
+        const source = root._pickLongPollSource()
         const candidateSnapshot = root._snapshotPlainArray(source)
         let candidateArray = []
         try {
@@ -440,9 +513,8 @@ Item {
             // Resample only before first non-empty snapshot so later real clears keep their semantics.
             if (Array.isArray(snapshot)
                     && snapshot.length === 0
-                    && (!Array.isArray(root._longPollLastNonEmptySnapshot) || root._longPollLastNonEmptySnapshot.length === 0)
-                    && root.runtimeServiceObj) {
-                const resampled = root._snapshotPlainArray(root.runtimeServiceObj.longPollMetrics)
+                    && (!Array.isArray(root._longPollLastNonEmptySnapshot) || root._longPollLastNonEmptySnapshot.length === 0)) {
+                const resampled = root._snapshotPlainArray(root._pickLongPollSource())
                 if (Array.isArray(resampled) && resampled.length > 0)
                     snapshot = resampled
             }
@@ -473,7 +545,15 @@ Item {
                 const modelCount = root._seqCount(model)
                 const arrayCount = root._seqCount(root.longPollMetrics)
                 const listCount = root._seqCount(root.longPollMetricsModel)
-                if (modelCount > 0 && repeaterCount === 0 && root.longPollHookWarnedRevision !== revision) {
+                const modelHasFirst = (function() {
+                    try {
+                        const first = root._seqAt(model, 0)
+                        return first !== undefined && first !== null
+                    } catch (e) {
+                        return false
+                    }
+                })()
+                if ((modelCount > 0 || modelHasFirst) && repeaterCount === 0 && root.longPollHookWarnedRevision !== revision) {
                     root.longPollHookWarnedRevision = revision
                     const modelType = model ? typeof model : "null"
                     const modelDesc = (model && model.toString) ? model.toString() : ""
@@ -722,24 +802,37 @@ Item {
                 const arrayModel = root.longPollMetrics
                 const serviceModel = root.serviceLongPollMetrics
                 const queuedSnapshot = root._longPollUpdateSnapshot
+                // Repeater must receive plain arrays for wrapper-backed sources in CI/headless.
+                let queuedArray = []
+                let serviceArray = []
+                try {
+                    queuedArray = root._toPlainArray(queuedSnapshot)
+                } catch (e) {
+                    queuedArray = []
+                }
+                try {
+                    serviceArray = root._toPlainArray(serviceModel)
+                } catch (e) {
+                    serviceArray = []
+                }
 
                 const listCount = root._seqCount(listModel)
                 const arrayCount = root._seqCount(arrayModel)
-                const queuedCount = root._seqCount(queuedSnapshot)
-                const serviceCount = root._seqCount(serviceModel)
-                const listHasData = (listCount > 0) || _hasFirst(listModel)
+                const queuedCount = root._seqCount(queuedArray)
+                const serviceCount = root._seqCount(serviceArray)
+                const listHasData = (listCount > 0)
                 const arrayHasData = (arrayCount > 0) || _hasFirst(arrayModel)
-                const queuedHasData = (queuedCount > 0) || _hasFirst(queuedSnapshot)
-                const serviceHasData = (serviceCount > 0) || _hasFirst(serviceModel)
+                const queuedHasData = (queuedCount > 0) || _hasFirst(queuedArray)
+                const serviceHasData = (serviceCount > 0) || _hasFirst(serviceArray)
 
                 if (listModel && listHasData)
                     return listModel
                 if (arrayModel && arrayHasData)
                     return arrayModel
                 if (queuedSnapshot != null && queuedHasData)
-                    return queuedSnapshot
+                    return queuedArray
                 if (serviceModel != null && serviceHasData)
-                    return serviceModel
+                    return serviceArray
                 if (!listHasData
                         && !arrayHasData
                         && !queuedHasData
