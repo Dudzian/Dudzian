@@ -852,7 +852,9 @@ Item {
                     return [{}]
                 if (root.longPollHookForcePlaceholder)
                     return [{}]
-                // Do not return an empty ListModel fallback; it can mask queued/placeholder sources.
+                // CI/headless traversal guard: keep one hook entry once initialized.
+                if (_rev > 0)
+                    return [{}]
                 return []
             }
 
