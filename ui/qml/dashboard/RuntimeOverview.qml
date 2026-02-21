@@ -816,7 +816,11 @@ Item {
                     serviceArray = []
                 }
 
-                const listCount = root._seqCount(listModel)
+                const listCount = (listModel && typeof listModel.count === "number"
+                                   && isFinite(Number(listModel.count))
+                                   && Number(listModel.count) >= 0)
+                                  ? Number(listModel.count)
+                                  : root._seqCount(listModel)
                 const arrayCount = root._seqCount(arrayModel)
                 const queuedCount = root._seqCount(queuedArray)
                 const serviceCount = root._seqCount(serviceArray)
@@ -829,9 +833,9 @@ Item {
                     return listModel
                 if (arrayModel && arrayHasData)
                     return arrayModel
-                if (queuedSnapshot != null && queuedHasData)
+                if (queuedHasData)
                     return queuedArray
-                if (serviceModel != null && serviceHasData)
+                if (serviceHasData)
                     return serviceArray
                 if (!listHasData
                         && !arrayHasData
