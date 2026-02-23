@@ -259,7 +259,8 @@ async def _async_open(request: Request | str, timeout: float | None = None) -> A
     params: Sequence[tuple[str, str]] | None = None
     if parts.query:
         params = tuple(parse_qsl(parts.query, keep_blank_values=True))
-    client = _resolve_client(base_url, float(timeout or _DEFAULT_TIMEOUT))
+    resolved_timeout = _DEFAULT_TIMEOUT if timeout is None else float(timeout)
+    client = _resolve_client(base_url, resolved_timeout)
     httpx = _require_httpx()
     try:
         response = await client.request(
@@ -268,6 +269,7 @@ async def _async_open(request: Request | str, timeout: float | None = None) -> A
             headers=headers or None,
             params=params,
             content=data,
+            timeout=resolved_timeout,
         )
     except httpx.RequestError as exc:
         raise URLError(exc) from exc

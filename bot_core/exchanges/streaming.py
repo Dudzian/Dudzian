@@ -736,7 +736,10 @@ class LocalLongPollStream(Iterable[StreamBatch]):
                     except (TypeError, ValueError):
                         timeout_float = cls._DEFAULT_JOIN_TIMEOUT
                     timeout_float = max(0.0, timeout_float)
-                    fallback_timeout = min(timeout_float + 0.5, cls._CLOSE_ALL_JOIN_CAP_SECONDS)
+                    fallback_timeout = min(
+                        max(timeout_float + 0.5, cls._DEFAULT_JOIN_TIMEOUT),
+                        cls._CLOSE_ALL_JOIN_CAP_SECONDS,
+                    )
                     stream._join_worker(timeout=fallback_timeout)
                     if stream._worker_thread and stream._worker_thread.is_alive():
                         stack_dump = cls._format_worker_stack(stream._worker_thread)
@@ -758,7 +761,7 @@ class LocalLongPollStream(Iterable[StreamBatch]):
             try:
                 if stream._worker_thread and stream._worker_thread.is_alive():
                     stream._signal_stop(force=True)
-                    stream._join_worker(timeout=0.5)
+                    stream._join_worker(timeout=cls._DEFAULT_JOIN_TIMEOUT)
                     if stream._worker_thread and stream._worker_thread.is_alive():
                         stack_dump = cls._format_worker_stack(stream._worker_thread)
                         _LOGGER.debug(
@@ -784,6 +787,8 @@ class LocalLongPollStream(Iterable[StreamBatch]):
     def start(self) -> "LocalLongPollStream":
         """Uruchamia wątek odpowiedzialny za polling long-pollowy."""
 
+        if self._disable_long_poll_in_test_mode():
+            return self
         with self._pending_condition:
             if self._closed:
                 return self
@@ -1025,33 +1030,32 @@ class LocalLongPollStream(Iterable[StreamBatch]):
     def _sleep_with_stop(self, delay: float) -> None:
         if delay <= 0:
             return
-        if self._sleep_is_custom or _is_test_mode_enabled():
+        if self._sleep_is_custom:
             if self._stop_event.is_set() or self._closed:
                 return
             self._sleep(delay)
             if self._stop_event.is_set() or self._closed:
                 return
             return
-        deadline = time.monotonic() + delay
-        while not self._stop_event.is_set() and not self._closed:
-            remaining = deadline - time.monotonic()
-            if remaining <= 0:
-                break
-            self._sleep(min(self._SLEEP_SLICE_SECONDS, remaining))
+        self._stop_event.wait(timeout=delay)
+        if self._closed:
+            return
 
     # ------------------------------------------------------------------
     # Wewnętrzne operacje long-polla
     # ------------------------------------------------------------------
+    def _disable_long_poll_in_test_mode(self) -> bool:
+        if not (_is_test_mode_enabled() and not _allow_long_poll_in_test_mode()):
+            return False
+        self._signal_stop(force=True)
+        self._worker_thread = None
+        self._unregister_instance()
+        return True
+
     def _ensure_worker(self) -> None:
         if self._closed:
             return
-        if _is_test_mode_enabled() and not _allow_long_poll_in_test_mode():
-            with self._pending_condition:
-                if self._worker_error is None:
-                    self._worker_error = StopIteration(
-                        "LocalLongPollStream jest wyłączony w trybie testowym."
-                    )
-                    self._pending_condition.notify_all()
+        if self._disable_long_poll_in_test_mode():
             return
         with self._pending_condition:
             worker = self._worker_thread

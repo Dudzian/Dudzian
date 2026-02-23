@@ -2297,3 +2297,99 @@ def test_local_long_poll_stream_close_all_active_uses_progressive_join(monkeypat
     assert len(calls) >= 2
     assert calls[0] == pytest.approx(LocalLongPollStream._DEFAULT_JOIN_TIMEOUT)
     assert calls[1] == pytest.approx(4.5)
+
+
+def test_local_long_poll_stream_close_all_active_waits_long_enough_for_small_timeout(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    LocalLongPollStream.close_all_active()
+
+    def fake_urlopen(request, timeout=0.0):  # noqa: D401
+        time.sleep(2.5)
+        raise URLError("simulated hanging request")
+
+    monkeypatch.setattr("bot_core.exchanges.streaming.urlopen", fake_urlopen)
+    monkeypatch.delenv("DUDZIAN_TEST_MODE", raising=False)
+    monkeypatch.delenv("DUDZIAN_ALLOW_LONG_POLL", raising=False)
+
+    stream = LocalLongPollStream(
+        base_url="http://127.0.0.1:9106",
+        path="/hanging-request",
+        channels=["ticker"],
+        adapter="demo",
+        scope="public",
+        environment="paper",
+        poll_interval=0.0,
+        timeout=0.1,
+        max_retries=1,
+        backoff_base=0.0,
+        backoff_cap=0.0,
+        jitter=(0.0, 0.0),
+    )
+
+    stream.start()
+    time.sleep(0.05)
+    LocalLongPollStream.close_all_active()
+
+    leaking_workers = [
+        thread
+        for thread in threading.enumerate()
+        if thread.name.startswith("LocalLongPollStream[")
+    ]
+    assert not leaking_workers
+
+
+def test_local_long_poll_stream_stop_interrupts_retry_after_sleep_in_test_mode(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    LocalLongPollStream.close_all_active()
+    poll_started = threading.Event()
+
+    def fake_urlopen(request, timeout=0.0):  # noqa: D401
+        poll_started.set()
+        payload = {
+            "channel": "ticker",
+            "events": [],
+            "retry_after": 30.0,
+        }
+        return _FakeResponse(json.dumps(payload).encode("utf-8"))
+
+    monkeypatch.setenv("DUDZIAN_TEST_MODE", "1")
+    monkeypatch.setenv("DUDZIAN_ALLOW_LONG_POLL", "1")
+    monkeypatch.setattr("bot_core.exchanges.streaming.urlopen", fake_urlopen)
+
+    stream = LocalLongPollStream(
+        base_url="http://127.0.0.1:9107",
+        path="/retry-after-sleep",
+        channels=["ticker"],
+        adapter="demo",
+        scope="public",
+        environment="paper",
+        poll_interval=0.0,
+        timeout=0.1,
+        max_retries=1,
+        backoff_base=0.0,
+        backoff_cap=0.0,
+        jitter=(0.0, 0.0),
+    )
+
+    try:
+        stream.start()
+        assert poll_started.wait(timeout=1.0)
+
+        LocalLongPollStream.close_all_active()
+        deadline = time.monotonic() + 1.0
+        while time.monotonic() < deadline:
+            leaking_workers = [
+                thread
+                for thread in threading.enumerate()
+                if thread.name.startswith("LocalLongPollStream[")
+            ]
+            if not leaking_workers:
+                break
+            time.sleep(0.01)
+
+        assert not leaking_workers
+    finally:
+        stream.close()
+        LocalLongPollStream.close_all_active()
