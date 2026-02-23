@@ -159,47 +159,66 @@ Components.Card {
     function _seqAt(source, index) {
         if (!source)
             return undefined
+        function _accept(value) {
+            return value !== undefined && value !== null
+        }
+        var candidate = undefined
 
         if (typeof source.get === "function") {
             try {
-                return source.get(index)
+                candidate = source.get(index)
+                if (_accept(candidate))
+                    return candidate
             } catch (error) {
             }
         }
 
         if (typeof source.at === "function") {
             try {
-                return source.at(index)
+                candidate = source.at(index)
+                if (_accept(candidate))
+                    return candidate
             } catch (error) {
             }
         }
 
         if (typeof source.value === "function") {
             try {
-                return source.value(index)
+                candidate = source.value(index)
+                if (_accept(candidate))
+                    return candidate
             } catch (error) {
             }
         }
 
         if (typeof source.property === "function") {
             try {
-                return source.property(String(index))
+                candidate = source.property(String(index))
+                if (_accept(candidate))
+                    return candidate
             } catch (error) {
             }
 
             try {
-                return source.property(index)
+                candidate = source.property(index)
+                if (_accept(candidate))
+                    return candidate
             } catch (error) {
             }
         }
 
         try {
-            return source[String(index)]
+            candidate = source[String(index)]
+            if (_accept(candidate))
+                return candidate
         } catch (error) {
         }
 
         try {
-            return source[index]
+            candidate = source[index]
+            if (_accept(candidate))
+                return candidate
+            return undefined
         } catch (error) {
             return undefined
         }

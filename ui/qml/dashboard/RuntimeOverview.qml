@@ -241,40 +241,59 @@ Item {
     function _seqAt(source, index) {
         if (!source)
             return undefined
+        function _accept(value) {
+            return value !== undefined && value !== null
+        }
+        let candidate = undefined
         if (typeof source.get === "function") {
             try {
-                return source.get(index)
+                candidate = source.get(index)
+                if (_accept(candidate))
+                    return candidate
             } catch (e) {
             }
         }
         if (typeof source.at === "function") {
             try {
-                return source.at(index)
+                candidate = source.at(index)
+                if (_accept(candidate))
+                    return candidate
             } catch (e) {
             }
         }
         if (typeof source.value === "function") {
             try {
-                return source.value(index)
+                candidate = source.value(index)
+                if (_accept(candidate))
+                    return candidate
             } catch (e) {
             }
         }
         if (typeof source.property === "function") {
             try {
-                return source.property(String(index))
+                candidate = source.property(String(index))
+                if (_accept(candidate))
+                    return candidate
             } catch (e) {
             }
             try {
-                return source.property(index)
+                candidate = source.property(index)
+                if (_accept(candidate))
+                    return candidate
             } catch (e) {
             }
         }
         try {
-            return source[String(index)]
+            candidate = source[String(index)]
+            if (_accept(candidate))
+                return candidate
         } catch (e) {
         }
         try {
-            return source[index]
+            candidate = source[index]
+            if (_accept(candidate))
+                return candidate
+            return undefined
         } catch (e) {
             return undefined
         }
@@ -778,67 +797,106 @@ Item {
         focus: false
         z: -1
 
-        property var hookSnapshotEntry: null
-        property string hookSnapshotAdapter: ""
-        property int hookFallbackTickAttempts: 0
-        property bool hookFallbackPollingEnabled: true
+        property var hookEntry: null
+        property string hookAdapter: ""
+        property int hookEntryTickAttempts: 0
+        property bool hookEntryPollingEnabled: true
+        property bool _hookRetryEnabled: false
+        property int _hookRetryAttempts: 0
 
-        function _refreshHookFallbackSnapshot() {
-            const sources = [
-                root.runtimeServiceObj ? root.runtimeServiceObj.longPollMetrics : null,
-                root.serviceLongPollMetrics,
-                root.longPollMetrics
-            ]
-            for (let i = 0; i < sources.length; ++i) {
-                let arr = []
+        function _normalizeAdapter(raw) {
+            if (raw === undefined || raw === null)
+                return ""
+            const text = String(raw)
+            if (text === "undefined" || text === "null")
+                return ""
+            return text
+        }
+
+        function _tryPickEntryFrom(source) {
+            const probeLimit = 8
+            for (let i = 0; i < probeLimit; ++i) {
+                let candidate = undefined
                 try {
-                    arr = root._toPlainArray(sources[i])
+                    candidate = root._seqAt(source, i)
                 } catch (e) {
-                    arr = []
+                    candidate = undefined
                 }
-                if (!arr || arr.length === 0)
+                if (candidate === undefined || candidate === null)
                     continue
 
-                const candidate = arr[0]
                 const labels = (candidate && typeof candidate === "object")
                                ? (candidate.labels !== undefined ? candidate.labels : candidate["labels"])
                                : null
                 const rawAdapter = (labels && typeof labels === "object")
                                  ? (labels.adapter !== undefined ? labels.adapter : labels["adapter"])
                                  : null
-                const adapter = (rawAdapter === undefined || rawAdapter === null) ? "" : String(rawAdapter)
-                if (adapter === "undefined" || adapter === "null" || adapter === "")
+                const adapter = longPollTestHook._normalizeAdapter(rawAdapter)
+                if (!adapter)
                     continue
+                return {"entry": candidate, "adapter": adapter}
+            }
+            return null
+        }
 
-                longPollTestHook.hookSnapshotEntry = candidate
-                longPollTestHook.hookSnapshotAdapter = adapter
+        function refreshHookEntry() {
+            const runtimeModel = root.runtimeServiceObj ? root.runtimeServiceObj.longPollMetrics : null
+            const snapshotSources = []
+            try {
+                const parsed = JSON.parse(JSON.stringify(runtimeModel))
+                if (Array.isArray(parsed))
+                    snapshotSources.push(parsed)
+            } catch (e) {
+            }
+            snapshotSources.push(runtimeModel)
+            snapshotSources.push(root.serviceLongPollMetrics)
+            snapshotSources.push(root.longPollMetrics)
+            snapshotSources.push(root._longPollLastNonEmptySnapshot)
+
+            for (let i = 0; i < snapshotSources.length; ++i) {
+                const picked = longPollTestHook._tryPickEntryFrom(snapshotSources[i])
+                if (!picked)
+                    continue
+                longPollTestHook.hookEntry = picked.entry
+                longPollTestHook.hookAdapter = picked.adapter
+                Qt.callLater(function() {
+                    if (longPollEntryHookFallback)
+                        longPollEntryHookFallback._syncName()
+                })
                 return true
             }
+            longPollTestHook.hookEntry = null
+            longPollTestHook.hookAdapter = ""
             return false
         }
 
-        function _startHookFallbackPolling(origin) {
-            longPollTestHook.hookFallbackTickAttempts = 0
-            longPollTestHook.hookFallbackPollingEnabled = true
-            longPollTestHook.hookSnapshotEntry = null
-            longPollTestHook.hookSnapshotAdapter = ""
-            if (longPollTestHook._refreshHookFallbackSnapshot())
-                longPollTestHook.hookFallbackPollingEnabled = false
+        function _startHookEntryPolling(origin) {
+            longPollTestHook.hookEntryTickAttempts = 0
+            longPollTestHook.hookEntryPollingEnabled = true
+            if (longPollTestHook.refreshHookEntry())
+                longPollTestHook.hookEntryPollingEnabled = false
+        }
+
+        function _startHookRetry(origin) {
+            longPollTestHook._hookRetryAttempts = 0
+            longPollTestHook._hookRetryEnabled = true
         }
 
         Component.onCompleted: {
-            longPollTestHook._startHookFallbackPolling("hookCompleted")
+            longPollTestHook._startHookEntryPolling("hookCompleted")
         }
 
-        readonly property var hookFallbackEntry: longPollTestHook.hookSnapshotEntry
-        readonly property string hookFallbackAdapter: longPollTestHook.hookSnapshotAdapter
-        readonly property bool hookFallbackHasData: longPollTestHook.hookSnapshotAdapter.length > 0
+        readonly property var hookFallbackEntry: longPollTestHook.hookEntry
+        readonly property string hookFallbackAdapter: longPollTestHook.hookAdapter
+        readonly property bool hookFallbackHasData: longPollTestHook.hookAdapter.length > 0
 
 
         Connections {
             target: root.runtimeServiceObj
             function onLongPollMetricsChanged() {
-                longPollTestHook._startHookFallbackPolling("runtimeServiceLongPollMetricsChanged")
+                longPollTestHook.refreshHookEntry()
+                longPollTestHook._startHookEntryPolling("runtimeServiceLongPollMetricsChanged")
+                longPollTestHook._startHookRetry("longPollHookSignal")
                 root.queueLongPollUpdate(true, "longPollHookSignal")
             }
         }
@@ -846,14 +904,14 @@ Item {
         Connections {
             target: root
             function onLongPollMetricsChanged() {
-                longPollTestHook._startHookFallbackPolling("rootLongPollMetricsChanged")
+                longPollTestHook._startHookEntryPolling("rootLongPollMetricsChanged")
             }
         }
 
         Connections {
             target: root
             function onServiceLongPollMetricsChanged() {
-                longPollTestHook._startHookFallbackPolling("rootServiceLongPollMetricsChanged")
+                longPollTestHook._startHookEntryPolling("rootServiceLongPollMetricsChanged")
             }
         }
 
@@ -861,14 +919,32 @@ Item {
             id: hookFallbackTimer
             interval: 50
             repeat: true
-            running: longPollTestHook.hookFallbackPollingEnabled
+            running: longPollTestHook.hookEntryPollingEnabled
                      && longPollEntryHookRepeater.count === 0
                      && !longPollTestHook.hookFallbackHasData
-                     && longPollTestHook.hookFallbackTickAttempts < 40
+                     && longPollTestHook.hookEntryTickAttempts < 60
             onTriggered: {
-                longPollTestHook.hookFallbackTickAttempts += 1
-                if (longPollTestHook._refreshHookFallbackSnapshot())
-                    longPollTestHook.hookFallbackPollingEnabled = false
+                longPollTestHook.hookEntryTickAttempts += 1
+                if (longPollTestHook.refreshHookEntry())
+                    longPollTestHook.hookEntryPollingEnabled = false
+            }
+        }
+
+        Timer {
+            id: longPollHookRetryTimer
+            interval: 50
+            repeat: true
+            running: longPollTestHook._hookRetryEnabled
+                     && longPollEntryHookRepeater.count === 0
+                     && longPollTestHook._hookRetryAttempts < 60
+            onTriggered: {
+                longPollTestHook._hookRetryAttempts += 1
+                const hasArray = root._seqCount(root.longPollMetrics) > 0
+                if (hasArray) {
+                    longPollTestHook._hookRetryEnabled = false
+                    return
+                }
+                root.queueLongPollUpdate(true, "longPollHookRetryTimer")
             }
         }
 
@@ -876,7 +952,9 @@ Item {
             id: longPollEntryHookRepeater
             onCountChanged: {
                 if (longPollEntryHookRepeater.count > 0)
-                    longPollTestHook.hookFallbackPollingEnabled = false
+                    longPollTestHook._hookRetryEnabled = false
+                if (longPollEntryHookRepeater.count > 0)
+                    longPollTestHook.hookEntryPollingEnabled = false
             }
             model: {
                 // Defensive first-element probe for Windows/headless wrapper quirks.
@@ -934,6 +1012,8 @@ Item {
                 const queuedCount = root._seqCount(queuedArray)
                 const serviceCount = root._seqCount(serviceArray)
                 const runtimeServiceCount = root._seqCount(runtimeServiceArray)
+                const hookRevision = root.longPollHookRevision
+                const hookSeenSignal = root.longPollHookSeenSignal
                 const listHasData = (listCount > 0)
                 const arrayHasData = (arrayCount > 0) || _hasFirst(arrayModel)
                 const queuedHasData = (queuedCount > 0) || _hasFirst(queuedArray)
@@ -975,44 +1055,87 @@ Item {
                             root.queueLongPollUpdate(true, "longPollHookResample")
                         })
                     }
-                    if (longPollTestHook.hookSnapshotAdapter.length > 0 && longPollTestHook.hookSnapshotEntry)
-                        return [longPollTestHook.hookSnapshotEntry]
+                    if (longPollTestHook.hookFallbackAdapter.length > 0 && longPollTestHook.hookFallbackEntry)
+                        return [longPollTestHook.hookFallbackEntry]
                     return []
                 }
-                if (longPollTestHook.hookSnapshotAdapter.length > 0 && longPollTestHook.hookSnapshotEntry)
-                    return [longPollTestHook.hookSnapshotEntry]
+                if (longPollTestHook.hookFallbackAdapter.length > 0 && longPollTestHook.hookFallbackEntry)
+                    return [longPollTestHook.hookFallbackEntry]
+                if (hookSeenSignal || hookRevision > 0)
+                    return [{}]
                 // Do not return empty ListModel; it can mask queued/placeholder sources in CI/headless.
                 return []
             }
 
             delegate: Item {
                 id: longPollHookEntry
-                objectName: "runtimeOverviewLongPollEntry"
+                readonly property string _effectiveAdapter: {
+                    const raw = longPollHookEntry.safeLabels.adapter !== undefined
+                            ? longPollHookEntry.safeLabels.adapter
+                            : longPollHookEntry.safeLabels["adapter"]
+                    return longPollTestHook._normalizeAdapter(raw)
+                }
+                objectName: _effectiveAdapter.length > 0 ? "runtimeOverviewLongPollEntry" : ""
                 width: 1
                 height: 1
 
                 readonly property var entryData: (modelData && typeof modelData === "object") ? modelData : ({})
+                readonly property bool _isPlaceholder: !entryData || !entryData.labels
+                function _pickLiveEntry() {
+                    const sources = [
+                        root.longPollMetrics,
+                        root.serviceLongPollMetrics,
+                        root.runtimeServiceObj ? root.runtimeServiceObj.longPollMetrics : null,
+                        root._longPollLastNonEmptySnapshot
+                    ]
+                    for (let s = 0; s < sources.length; ++s) {
+                        const source = sources[s]
+                        for (let i = 0; i < 8; ++i) {
+                            let candidate = undefined
+                            try {
+                                candidate = root._seqAt(source, i)
+                            } catch (e) {
+                                candidate = undefined
+                            }
+                            if (!candidate || typeof candidate !== "object")
+                                continue
+                            const labels = candidate.labels !== undefined ? candidate.labels : candidate["labels"]
+                            if (!labels || typeof labels !== "object")
+                                continue
+                            const adapterRaw = labels.adapter !== undefined ? labels.adapter : labels["adapter"]
+                            if (adapterRaw === undefined || adapterRaw === null)
+                                continue
+                            const adapter = String(adapterRaw)
+                            if (adapter === "" || adapter === "undefined" || adapter === "null")
+                                continue
+                            return candidate
+                        }
+                    }
+                    return ({})
+                }
+                readonly property var _liveEntry: _isPlaceholder ? _pickLiveEntry() : ({})
+                readonly property var effectiveEntry: _isPlaceholder ? _liveEntry : entryData
                 readonly property var roleLabels: (typeof labels !== "undefined") ? labels : undefined
                 readonly property var roleRequestLatency: (typeof requestLatency !== "undefined") ? requestLatency : undefined
                 readonly property var roleHttpErrors: (typeof httpErrors !== "undefined") ? httpErrors : undefined
                 readonly property var roleReconnects: (typeof reconnects !== "undefined") ? reconnects : undefined
                 readonly property var safeLabels: (roleLabels && typeof roleLabels === "object")
                                                   ? roleLabels
-                                                  : ((entryData.labels && typeof entryData.labels === "object") ? entryData.labels : ({}))
+                                                  : ((effectiveEntry.labels && typeof effectiveEntry.labels === "object") ? effectiveEntry.labels : ({}))
                 readonly property var latencyStats: (roleRequestLatency && typeof roleRequestLatency === "object")
                                                     ? roleRequestLatency
-                                                    : ((entryData.requestLatency && typeof entryData.requestLatency === "object") ? entryData.requestLatency : ({}))
+                                                    : ((effectiveEntry.requestLatency && typeof effectiveEntry.requestLatency === "object") ? effectiveEntry.requestLatency : ({}))
                 readonly property var httpErrorStats: (roleHttpErrors && typeof roleHttpErrors === "object")
                                                       ? roleHttpErrors
-                                                      : ((entryData.httpErrors && typeof entryData.httpErrors === "object") ? entryData.httpErrors : ({}))
+                                                      : ((effectiveEntry.httpErrors && typeof effectiveEntry.httpErrors === "object") ? effectiveEntry.httpErrors : ({}))
                 readonly property var reconnectStats: (roleReconnects && typeof roleReconnects === "object")
                                                       ? roleReconnects
-                                                      : ((entryData.reconnects && typeof entryData.reconnects === "object") ? entryData.reconnects : ({}))
+                                                      : ((effectiveEntry.reconnects && typeof effectiveEntry.reconnects === "object") ? effectiveEntry.reconnects : ({}))
 
                 Text {
                     objectName: "runtimeOverviewLongPollHeader"
                     text: qsTr("%1 • %2 • %3")
-                          .arg(longPollHookEntry.safeLabels.adapter || longPollHookEntry.safeLabels.source || longPollHookEntry.safeLabels.name || qsTr("n/d"))
+                          .arg(longPollHookEntry._effectiveAdapter || longPollHookEntry.safeLabels.source || longPollHookEntry.safeLabels.name || qsTr("n/d"))
                           .arg(longPollHookEntry.safeLabels.scope || qsTr("n/d"))
                           .arg(longPollHookEntry.safeLabels.environment || qsTr("n/d"))
                     width: 1
@@ -1074,12 +1197,45 @@ Item {
         Item {
             id: longPollEntryHookFallback
             parent: longPollTestHook
-            objectName: (longPollEntryHookRepeater.count === 0 && longPollTestHook.hookFallbackHasData) ? "runtimeOverviewLongPollEntry" : ""
             opacity: 0
             width: 1
             height: 1
             x: -10000
             y: -10000
+            objectName: ""
+
+            function _syncName() {
+                longPollEntryHookFallback.objectName = (longPollEntryHookRepeater.count === 0 && longPollTestHook.hookFallbackHasData)
+                        ? "runtimeOverviewLongPollEntry"
+                        : ""
+            }
+
+            Component.onCompleted: {
+                longPollEntryHookFallback._syncName()
+            }
+
+            Connections {
+                target: longPollTestHook
+                function onHookAdapterChanged() {
+                    longPollEntryHookFallback._syncName()
+                }
+                function onHookEntryChanged() {
+                    longPollEntryHookFallback._syncName()
+                }
+                function onHookFallbackAdapterChanged() {
+                    longPollEntryHookFallback._syncName()
+                }
+                function onHookFallbackEntryChanged() {
+                    longPollEntryHookFallback._syncName()
+                }
+            }
+
+            Connections {
+                target: longPollEntryHookRepeater
+                function onCountChanged() {
+                    longPollEntryHookFallback._syncName()
+                }
+            }
 
             readonly property var _entryLabels: (longPollTestHook.hookFallbackEntry && typeof longPollTestHook.hookFallbackEntry === "object")
                                                ? (longPollTestHook.hookFallbackEntry.labels !== undefined
