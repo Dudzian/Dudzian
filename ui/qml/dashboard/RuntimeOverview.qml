@@ -800,10 +800,12 @@ Item {
                 const listModel = root.longPollMetricsModel
                 const arrayModel = root.longPollMetrics
                 const serviceModel = root.serviceLongPollMetrics
+                const runtimeServiceModel = root.runtimeServiceObj ? root.runtimeServiceObj.longPollMetrics : null
                 const queuedSnapshot = root._longPollUpdateSnapshot
                 // Repeater must receive plain arrays for wrapper-backed sources in CI/headless.
                 let queuedArray = []
                 let serviceArray = []
+                let runtimeServiceArray = []
                 try {
                     queuedArray = root._toPlainArray(queuedSnapshot)
                 } catch (e) {
@@ -814,15 +816,22 @@ Item {
                 } catch (e) {
                     serviceArray = []
                 }
+                try {
+                    runtimeServiceArray = root._toPlainArray(runtimeServiceModel)
+                } catch (e) {
+                    runtimeServiceArray = []
+                }
 
                 const listCount = root._seqCount(listModel)
                 const arrayCount = root._seqCount(arrayModel)
                 const queuedCount = root._seqCount(queuedArray)
                 const serviceCount = root._seqCount(serviceArray)
+                const runtimeServiceCount = root._seqCount(runtimeServiceArray)
                 const listHasData = (listCount > 0)
                 const arrayHasData = (arrayCount > 0) || _hasFirst(arrayModel)
                 const queuedHasData = (queuedCount > 0) || _hasFirst(queuedArray)
                 const serviceHasData = (serviceCount > 0) || _hasFirst(serviceArray)
+                const runtimeServiceHasData = (runtimeServiceCount > 0) || _hasFirst(runtimeServiceArray)
 
                 if (listModel && listHasData)
                     return listModel
@@ -832,10 +841,15 @@ Item {
                     return queuedArray
                 if (serviceHasData)
                     return serviceArray
+                // Bind directly to runtimeServiceObj.longPollMetrics as a final live fallback;
+                // wrapper models can be transient-empty on Windows/CI right after notify.
+                if (runtimeServiceHasData)
+                    return runtimeServiceArray
                 if (!listHasData
                         && !arrayHasData
                         && !queuedHasData
                         && !serviceHasData
+                        && !runtimeServiceHasData
                         && Array.isArray(root._longPollLastNonEmptySnapshot)
                         && root._longPollLastNonEmptySnapshot.length > 0)
                     return root._longPollLastNonEmptySnapshot
@@ -843,7 +857,8 @@ Item {
                         && !listHasData
                         && !arrayHasData
                         && !queuedHasData
-                        && !serviceHasData)
+                        && !serviceHasData
+                        && !runtimeServiceHasData)
                     return [{}]
                 if (root.longPollHookForcePlaceholder)
                     return [{}]

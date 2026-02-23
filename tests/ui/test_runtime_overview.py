@@ -388,7 +388,8 @@ class _StubRuntimeService(QObject):
         return self.triggerOperatorAction("requestUnblock", entry)
 
     def push_longpoll_metrics(self, payload: list[dict[str, Any]]) -> None:
-        self._longpoll_metrics = [dict(entry) for entry in payload]
+        # Always assign a fresh list instance and notify QML bindings.
+        self._longpoll_metrics = list(payload)
         self.longPollMetricsChanged.emit()
 
     def push_cycle_metrics(self, payload: dict[str, float]) -> None:
@@ -540,6 +541,23 @@ def _sample_risk_decisions() -> list[dict[str, object]]:
             "risk_flags": ["latency_spike"],
         },
     ]
+
+
+def test_stub_runtime_service_push_longpoll_metrics_emits_notify() -> None:
+    service = _StubRuntimeService()
+    emitted = {"count": 0}
+
+    def _on_changed() -> None:
+        emitted["count"] += 1
+
+    service.longPollMetricsChanged.connect(_on_changed)
+    payload = [{"labels": {"adapter": "binance", "scope": "spot", "environment": "prod"}}]
+
+    service.push_longpoll_metrics(payload)
+
+    assert emitted["count"] >= 1
+    assert isinstance(service.longPollMetrics, list)
+    assert len(service.longPollMetrics) == 1
 
 
 @pytest.mark.timeout(45)

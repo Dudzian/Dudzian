@@ -27,39 +27,26 @@ Components.Card {
     readonly property var effectiveLongPollMetricsModel: {
         var injectedModel = longPollMetricsModel
         var serviceModel = serviceLongPollMetricsModel
-        var injectedCount = root.modelItemCount(injectedModel)
-        var serviceCount = root.modelItemCount(serviceModel)
         var injectedArray = []
         var serviceArray = []
 
-        if (injectedModel && injectedCount === 0)
+        try {
             injectedArray = root._toPlainArray(injectedModel)
+        } catch (error) {
+            injectedArray = []
+        }
 
-        if (serviceModel && serviceCount === 0)
+        try {
             serviceArray = root._toPlainArray(serviceModel)
-
-        // Pusty model wstrzyknięty nie może zasłaniać niepustego modelu z runtimeService,
-        // bo wtedy wpisy fallback long-poll nie renderują się mimo dostępnych danych live.
-        if (injectedModel && injectedCount > 0)
-            return injectedModel
+        } catch (error) {
+            serviceArray = []
+        }
 
         if (injectedArray.length > 0)
             return injectedArray
 
-        if (serviceModel && serviceCount > 0)
-            return serviceModel
-
         if (serviceArray.length > 0)
             return serviceArray
-
-        if (injectedModel && injectedCount === 0 && serviceModel)
-            return serviceArray.length > 0 ? serviceArray : serviceModel
-
-        if (injectedModel)
-            return injectedModel
-
-        if (serviceModel)
-            return serviceArray.length > 0 ? serviceArray : serviceModel
 
         return []
     }
@@ -75,6 +62,15 @@ Components.Card {
         try {
             if (!source)
                 return 0
+
+            if (typeof source.rowCount === "function") {
+                try {
+                    var fnRowCount = Number(source.rowCount())
+                    if (isFinite(fnRowCount) && fnRowCount >= 0)
+                        return fnRowCount
+                } catch (error) {
+                }
+            }
 
             if (typeof source.count === "function") {
                 try {
@@ -121,6 +117,27 @@ Components.Card {
                     return numberSize
             }
 
+            if (typeof source.property === "function") {
+                try {
+                    var propertyLength = Number(source.property("length"))
+                    if (isFinite(propertyLength) && propertyLength >= 0)
+                        return propertyLength
+                } catch (error) {
+                }
+                try {
+                    var propertyCount = Number(source.property("count"))
+                    if (isFinite(propertyCount) && propertyCount >= 0)
+                        return propertyCount
+                } catch (error) {
+                }
+                try {
+                    var propertySize = Number(source.property("size"))
+                    if (isFinite(propertySize) && propertySize >= 0)
+                        return propertySize
+                } catch (error) {
+                }
+            }
+
             try {
                 var keys = Object.keys(source)
                 if (!keys || typeof keys.length !== "number")
@@ -162,6 +179,23 @@ Components.Card {
                 return source.value(index)
             } catch (error) {
             }
+        }
+
+        if (typeof source.property === "function") {
+            try {
+                return source.property(String(index))
+            } catch (error) {
+            }
+
+            try {
+                return source.property(index)
+            } catch (error) {
+            }
+        }
+
+        try {
+            return source[String(index)]
+        } catch (error) {
         }
 
         try {
@@ -211,8 +245,11 @@ Components.Card {
                     break
                 }
 
-                if (entry === undefined || entry === null)
+                if (entry === undefined || entry === null) {
+                    if (probe === 0)
+                        continue
                     break
+                }
 
                 values.push(entry)
             }
