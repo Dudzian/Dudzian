@@ -769,6 +769,18 @@ Item {
         focus: false
         z: -1
 
+        Item {
+            id: longPollEntryTraversalStabilizer
+            // Stabilizator wyłącznie dla PySide/Windows headless traversal.
+            objectName: "runtimeOverviewLongPollEntry"
+            parent: longPollTestHook
+            width: 1
+            height: 1
+            opacity: 0
+            x: -10000
+            y: -10000
+        }
+
         Repeater {
             id: longPollEntryHookRepeater
             model: {
