@@ -220,6 +220,7 @@ Components.Card {
                 size = 0
             }
 
+            var firstTransientEmpty = false
             if (size > 0) {
                 for (var idx = 0; idx < size; idx++) {
                     var indexedEntry
@@ -229,12 +230,18 @@ Components.Card {
                         break
                     }
 
-                    if (indexedEntry === undefined || indexedEntry === null)
+                    if (indexedEntry === undefined || indexedEntry === null) {
+                        if (idx === 0)
+                            firstTransientEmpty = true
                         break
+                    }
 
                     values.push(indexedEntry)
                 }
-                return values
+                if (values.length > 0)
+                    return values
+                if (!firstTransientEmpty)
+                    return values
             }
 
             for (var probe = 0; probe < 256; probe++) {

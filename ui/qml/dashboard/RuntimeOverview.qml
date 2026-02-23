@@ -78,8 +78,9 @@ Item {
     property string feedLatencyAlertTicket: ""
     property int longPollHookRevision: 0
     property int longPollHookWarnedRevision: -1
-    property bool longPollHookForcePlaceholder: false
     property bool longPollHookSeenSignal: false
+    property bool longPollHookResampleQueued: false
+    property int longPollHookResampleAttempts: 0
     property bool longPollGuardWarningLogged: false
     property bool _longPollUpdateQueued: false
     property bool _longPollUpdateMarkSeen: false
@@ -293,6 +294,7 @@ Item {
                 size = 0
             }
 
+            let firstTransientEmpty = false
             if (size > 0) {
                 for (let i = 0; i < size; ++i) {
                     let entry = undefined
@@ -301,11 +303,17 @@ Item {
                     } catch (e) {
                         break
                     }
-                    if (entry === undefined || entry === null)
+                    if (entry === undefined || entry === null) {
+                        if (i === 0)
+                            firstTransientEmpty = true
                         break
+                    }
                     normalized.push(entry)
                 }
-                return normalized
+                if (normalized.length > 0)
+                    return normalized
+                if (!firstTransientEmpty)
+                    return normalized
             }
 
             // PySide/QVariant wrappers can sometimes expose index access while
@@ -318,8 +326,11 @@ Item {
                 } catch (e) {
                     break
                 }
-                if (entry === undefined || entry === null)
+                if (entry === undefined || entry === null) {
+                    if (i === 0)
+                        continue
                     break
+                }
                 normalized.push(entry)
             }
         } catch (e) {
@@ -483,9 +494,6 @@ Item {
             root._longPollUpdateSnapshot = candidateSnapshot
             // Keep hook data visible immediately; Windows/CI can delay deferred Qt.callLater sync.
             root.longPollMetrics = candidateArray
-            root.longPollHookForcePlaceholder = (candidateSnapshot !== undefined
-                                                 && candidateSnapshot !== null
-                                                 && candidateArray.length === 0)
             root.longPollHookRevision += 1
         }
 
@@ -526,9 +534,10 @@ Item {
         if (markSignalSeen)
             root.longPollHookSeenSignal = true
         const normalized = root._toPlainArray(serviceModel)
-        root.longPollHookForcePlaceholder = (serviceModel !== undefined
-                                             && serviceModel !== null
-                                             && normalized.length === 0)
+        if (normalized.length > 0) {
+            root.longPollHookResampleQueued = false
+            root.longPollHookResampleAttempts = 0
+        }
         root.longPollMetrics = normalized
         root.syncLongPollMetricsModel(origin)
     }
@@ -769,16 +778,12 @@ Item {
         focus: false
         z: -1
 
-        Item {
-            id: longPollEntryTraversalStabilizer
-            // Stabilizator wyłącznie dla PySide/Windows headless traversal.
-            objectName: "runtimeOverviewLongPollEntry"
-            parent: longPollTestHook
-            width: 1
-            height: 1
-            opacity: 0
-            x: -10000
-            y: -10000
+
+        Connections {
+            target: root.runtimeServiceObj
+            function onLongPollMetricsChanged() {
+                root.queueLongPollUpdate(true, "longPollHookSignal")
+            }
         }
 
         Repeater {
@@ -865,15 +870,23 @@ Item {
                         && Array.isArray(root._longPollLastNonEmptySnapshot)
                         && root._longPollLastNonEmptySnapshot.length > 0)
                     return root._longPollLastNonEmptySnapshot
-                if (root.longPollHookSeenSignal
-                        && !listHasData
+                if (!listHasData
                         && !arrayHasData
                         && !queuedHasData
                         && !serviceHasData
-                        && !runtimeServiceHasData)
-                    return [{}]
-                if (root.longPollHookForcePlaceholder)
-                    return [{}]
+                        && !runtimeServiceHasData
+                        && ((serviceModel !== null && serviceModel !== undefined)
+                            || (runtimeServiceModel !== null && runtimeServiceModel !== undefined))) {
+                    if (!root.longPollHookResampleQueued && root.longPollHookResampleAttempts < 8) {
+                        root.longPollHookResampleQueued = true
+                        Qt.callLater(function() {
+                            root.longPollHookResampleQueued = false
+                            root.longPollHookResampleAttempts += 1
+                            root.queueLongPollUpdate(true, "longPollHookResample")
+                        })
+                    }
+                    return []
+                }
                 // Do not return empty ListModel; it can mask queued/placeholder sources in CI/headless.
                 return []
             }
@@ -902,10 +915,10 @@ Item {
                                                       ? roleReconnects
                                                       : ((entryData.reconnects && typeof entryData.reconnects === "object") ? entryData.reconnects : ({}))
 
-                Label {
+                Text {
                     objectName: "runtimeOverviewLongPollHeader"
                     text: qsTr("%1 • %2 • %3")
-                          .arg(longPollHookEntry.safeLabels.adapter || qsTr("n/d"))
+                          .arg(longPollHookEntry.safeLabels.adapter || longPollHookEntry.safeLabels.source || longPollHookEntry.safeLabels.name || qsTr("n/d"))
                           .arg(longPollHookEntry.safeLabels.scope || qsTr("n/d"))
                           .arg(longPollHookEntry.safeLabels.environment || qsTr("n/d"))
                     width: 1
@@ -913,7 +926,7 @@ Item {
                     opacity: 0
                 }
 
-                Label {
+                Text {
                     objectName: "runtimeOverviewLongPollLatency"
                     text: {
                         const hasP50 = typeof longPollHookEntry.latencyStats.p50 === "number"
@@ -929,7 +942,7 @@ Item {
                     opacity: 0
                 }
 
-                Label {
+                Text {
                     objectName: "runtimeOverviewLongPollErrors"
                     text: {
                         const total = typeof longPollHookEntry.httpErrorStats.total === "number"
@@ -944,7 +957,7 @@ Item {
                     opacity: 0
                 }
 
-                Label {
+                Text {
                     objectName: "runtimeOverviewLongPollReconnects"
                     text: {
                         const attempts = typeof longPollHookEntry.reconnectStats.attempts === "number"
@@ -964,18 +977,7 @@ Item {
             }
         }
 
-        // CI/headless traversal guard: expose deterministic entry when Repeater materializes 0 delegates.
-        Item {
-            id: longPollEntryHookFallback
-            objectName: (longPollEntryHookRepeater && longPollEntryHookRepeater.count === 0)
-                        ? "runtimeOverviewLongPollEntry"
-                        : ""
-            width: 1
-            height: 1
-            opacity: 0
-        }
-
-        Label {
+        Text {
             objectName: "runtimeOverviewLongPollEmpty"
             visible: longPollEntryHookRepeater.count === 0
             text: qsTr("Fallback long-poll: brak aktywnych streamów")
