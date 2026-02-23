@@ -778,16 +778,106 @@ Item {
         focus: false
         z: -1
 
+        property var hookSnapshotEntry: null
+        property string hookSnapshotAdapter: ""
+        property int hookFallbackTickAttempts: 0
+        property bool hookFallbackPollingEnabled: true
+
+        function _refreshHookFallbackSnapshot() {
+            const sources = [
+                root.runtimeServiceObj ? root.runtimeServiceObj.longPollMetrics : null,
+                root.serviceLongPollMetrics,
+                root.longPollMetrics
+            ]
+            for (let i = 0; i < sources.length; ++i) {
+                let arr = []
+                try {
+                    arr = root._toPlainArray(sources[i])
+                } catch (e) {
+                    arr = []
+                }
+                if (!arr || arr.length === 0)
+                    continue
+
+                const candidate = arr[0]
+                const labels = (candidate && typeof candidate === "object")
+                               ? (candidate.labels !== undefined ? candidate.labels : candidate["labels"])
+                               : null
+                const rawAdapter = (labels && typeof labels === "object")
+                                 ? (labels.adapter !== undefined ? labels.adapter : labels["adapter"])
+                                 : null
+                const adapter = (rawAdapter === undefined || rawAdapter === null) ? "" : String(rawAdapter)
+                if (adapter === "undefined" || adapter === "null" || adapter === "")
+                    continue
+
+                longPollTestHook.hookSnapshotEntry = candidate
+                longPollTestHook.hookSnapshotAdapter = adapter
+                return true
+            }
+            return false
+        }
+
+        function _startHookFallbackPolling(origin) {
+            longPollTestHook.hookFallbackTickAttempts = 0
+            longPollTestHook.hookFallbackPollingEnabled = true
+            longPollTestHook.hookSnapshotEntry = null
+            longPollTestHook.hookSnapshotAdapter = ""
+            if (longPollTestHook._refreshHookFallbackSnapshot())
+                longPollTestHook.hookFallbackPollingEnabled = false
+        }
+
+        Component.onCompleted: {
+            longPollTestHook._startHookFallbackPolling("hookCompleted")
+        }
+
+        readonly property var hookFallbackEntry: longPollTestHook.hookSnapshotEntry
+        readonly property string hookFallbackAdapter: longPollTestHook.hookSnapshotAdapter
+        readonly property bool hookFallbackHasData: longPollTestHook.hookSnapshotAdapter.length > 0
+
 
         Connections {
             target: root.runtimeServiceObj
             function onLongPollMetricsChanged() {
+                longPollTestHook._startHookFallbackPolling("runtimeServiceLongPollMetricsChanged")
                 root.queueLongPollUpdate(true, "longPollHookSignal")
+            }
+        }
+
+        Connections {
+            target: root
+            function onLongPollMetricsChanged() {
+                longPollTestHook._startHookFallbackPolling("rootLongPollMetricsChanged")
+            }
+        }
+
+        Connections {
+            target: root
+            function onServiceLongPollMetricsChanged() {
+                longPollTestHook._startHookFallbackPolling("rootServiceLongPollMetricsChanged")
+            }
+        }
+
+        Timer {
+            id: hookFallbackTimer
+            interval: 50
+            repeat: true
+            running: longPollTestHook.hookFallbackPollingEnabled
+                     && longPollEntryHookRepeater.count === 0
+                     && !longPollTestHook.hookFallbackHasData
+                     && longPollTestHook.hookFallbackTickAttempts < 40
+            onTriggered: {
+                longPollTestHook.hookFallbackTickAttempts += 1
+                if (longPollTestHook._refreshHookFallbackSnapshot())
+                    longPollTestHook.hookFallbackPollingEnabled = false
             }
         }
 
         Repeater {
             id: longPollEntryHookRepeater
+            onCountChanged: {
+                if (longPollEntryHookRepeater.count > 0)
+                    longPollTestHook.hookFallbackPollingEnabled = false
+            }
             model: {
                 // Defensive first-element probe for Windows/headless wrapper quirks.
                 function _hasFirst(seq) {
@@ -885,8 +975,12 @@ Item {
                             root.queueLongPollUpdate(true, "longPollHookResample")
                         })
                     }
+                    if (longPollTestHook.hookSnapshotAdapter.length > 0 && longPollTestHook.hookSnapshotEntry)
+                        return [longPollTestHook.hookSnapshotEntry]
                     return []
                 }
+                if (longPollTestHook.hookSnapshotAdapter.length > 0 && longPollTestHook.hookSnapshotEntry)
+                    return [longPollTestHook.hookSnapshotEntry]
                 // Do not return empty ListModel; it can mask queued/placeholder sources in CI/headless.
                 return []
             }
@@ -974,6 +1068,102 @@ Item {
                     height: 1
                     opacity: 0
                 }
+            }
+        }
+
+        Item {
+            id: longPollEntryHookFallback
+            parent: longPollTestHook
+            objectName: (longPollEntryHookRepeater.count === 0 && longPollTestHook.hookFallbackHasData) ? "runtimeOverviewLongPollEntry" : ""
+            opacity: 0
+            width: 1
+            height: 1
+            x: -10000
+            y: -10000
+
+            readonly property var _entryLabels: (longPollTestHook.hookFallbackEntry && typeof longPollTestHook.hookFallbackEntry === "object")
+                                               ? (longPollTestHook.hookFallbackEntry.labels !== undefined
+                                                  ? longPollTestHook.hookFallbackEntry.labels
+                                                  : longPollTestHook.hookFallbackEntry["labels"])
+                                               : null
+            readonly property var safeLabels: (_entryLabels && typeof _entryLabels === "object") ? _entryLabels : ({})
+            readonly property var _entryRequestLatency: (longPollTestHook.hookFallbackEntry && typeof longPollTestHook.hookFallbackEntry === "object")
+                                                       ? (longPollTestHook.hookFallbackEntry.requestLatency !== undefined
+                                                          ? longPollTestHook.hookFallbackEntry.requestLatency
+                                                          : longPollTestHook.hookFallbackEntry["requestLatency"])
+                                                       : null
+            readonly property var latencyStats: (_entryRequestLatency && typeof _entryRequestLatency === "object") ? _entryRequestLatency : ({})
+            readonly property var _entryHttpErrors: (longPollTestHook.hookFallbackEntry && typeof longPollTestHook.hookFallbackEntry === "object")
+                                                   ? (longPollTestHook.hookFallbackEntry.httpErrors !== undefined
+                                                      ? longPollTestHook.hookFallbackEntry.httpErrors
+                                                      : longPollTestHook.hookFallbackEntry["httpErrors"])
+                                                   : null
+            readonly property var httpErrorStats: (_entryHttpErrors && typeof _entryHttpErrors === "object") ? _entryHttpErrors : ({})
+            readonly property var _entryReconnects: (longPollTestHook.hookFallbackEntry && typeof longPollTestHook.hookFallbackEntry === "object")
+                                                   ? (longPollTestHook.hookFallbackEntry.reconnects !== undefined
+                                                      ? longPollTestHook.hookFallbackEntry.reconnects
+                                                      : longPollTestHook.hookFallbackEntry["reconnects"])
+                                                   : null
+            readonly property var reconnectStats: (_entryReconnects && typeof _entryReconnects === "object") ? _entryReconnects : ({})
+
+            Text {
+                objectName: "runtimeOverviewLongPollHeader"
+                text: qsTr("%1 • %2 • %3")
+                      .arg(longPollTestHook.hookFallbackAdapter || longPollEntryHookFallback.safeLabels.source || longPollEntryHookFallback.safeLabels.name || qsTr("n/d"))
+                      .arg(longPollEntryHookFallback.safeLabels.scope || qsTr("n/d"))
+                      .arg(longPollEntryHookFallback.safeLabels.environment || qsTr("n/d"))
+                width: 1
+                height: 1
+                opacity: 0
+            }
+
+            Text {
+                objectName: "runtimeOverviewLongPollLatency"
+                text: {
+                    const hasP50 = typeof longPollEntryHookFallback.latencyStats.p50 === "number"
+                    const hasP95 = typeof longPollEntryHookFallback.latencyStats.p95 === "number"
+                    if (!hasP50 && !hasP95)
+                        return qsTr("Brak próbek latencji long-pollowych")
+                    const p50 = hasP50 ? Number(longPollEntryHookFallback.latencyStats.p50).toFixed(3) : qsTr("n/d")
+                    const p95 = hasP95 ? Number(longPollEntryHookFallback.latencyStats.p95).toFixed(3) : qsTr("n/d")
+                    return qsTr("Latencja p50: %1 s • p95: %2 s").arg(p50).arg(p95)
+                }
+                width: 1
+                height: 1
+                opacity: 0
+            }
+
+            Text {
+                objectName: "runtimeOverviewLongPollErrors"
+                text: {
+                    const total = typeof longPollEntryHookFallback.httpErrorStats.total === "number"
+                            ? longPollEntryHookFallback.httpErrorStats.total
+                            : 0
+                    if (total === 0)
+                        return qsTr("Błędy HTTP: brak prób w ostatnich próbkach")
+                    return qsTr("Błędy HTTP: %1").arg(total)
+                }
+                width: 1
+                height: 1
+                opacity: 0
+            }
+
+            Text {
+                objectName: "runtimeOverviewLongPollReconnects"
+                text: {
+                    const attempts = typeof longPollEntryHookFallback.reconnectStats.attempts === "number"
+                            ? longPollEntryHookFallback.reconnectStats.attempts
+                            : 0
+                    const failures = typeof longPollEntryHookFallback.reconnectStats.failure === "number"
+                            ? longPollEntryHookFallback.reconnectStats.failure
+                            : (typeof longPollEntryHookFallback.reconnectStats.failures === "number"
+                               ? longPollEntryHookFallback.reconnectStats.failures
+                               : 0)
+                    return qsTr("Reconnecty: próby %1 • błędy %2").arg(attempts).arg(failures)
+                }
+                width: 1
+                height: 1
+                opacity: 0
             }
         }
 
