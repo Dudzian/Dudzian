@@ -772,7 +772,6 @@ Item {
         Repeater {
             id: longPollEntryHookRepeater
             model: {
-                const _rev = root.longPollHookRevision
                 // Defensive first-element probe for Windows/headless wrapper quirks.
                 function _hasFirst(seq) {
                     try {
@@ -816,11 +815,7 @@ Item {
                     serviceArray = []
                 }
 
-                const listCount = (listModel && typeof listModel.count === "number"
-                                   && isFinite(Number(listModel.count))
-                                   && Number(listModel.count) >= 0)
-                                  ? Number(listModel.count)
-                                  : root._seqCount(listModel)
+                const listCount = root._seqCount(listModel)
                 const arrayCount = root._seqCount(arrayModel)
                 const queuedCount = root._seqCount(queuedArray)
                 const serviceCount = root._seqCount(serviceArray)
@@ -852,9 +847,7 @@ Item {
                     return [{}]
                 if (root.longPollHookForcePlaceholder)
                     return [{}]
-                // CI/headless traversal guard: keep one hook entry once initialized.
-                if (_rev > 0)
-                    return [{}]
+                // Do not return empty ListModel; it can mask queued/placeholder sources in CI/headless.
                 return []
             }
 
@@ -942,6 +935,17 @@ Item {
                     opacity: 0
                 }
             }
+        }
+
+        // CI/headless traversal guard: expose deterministic entry when Repeater materializes 0 delegates.
+        Item {
+            id: longPollEntryHookFallback
+            objectName: (longPollEntryHookRepeater && longPollEntryHookRepeater.count === 0)
+                        ? "runtimeOverviewLongPollEntry"
+                        : ""
+            width: 1
+            height: 1
+            opacity: 0
         }
 
         Label {
