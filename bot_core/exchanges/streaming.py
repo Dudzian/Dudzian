@@ -1048,8 +1048,11 @@ class LocalLongPollStream(Iterable[StreamBatch]):
         if not (_is_test_mode_enabled() and not _allow_long_poll_in_test_mode()):
             return False
         self._signal_stop(force=True)
-        self._worker_thread = None
-        self._unregister_instance()
+        # Nie osieracaj żywego workera: zachowaj referencję i rejestrację,
+        # żeby close_all_active() mógł go jeszcze zjoinować w teardownie.
+        # Instancję wyrejestruj dopiero po potwierdzeniu, że wątek domknięto.
+        self._join_worker(timeout=self._DEFAULT_JOIN_TIMEOUT)
+        self._unregister_if_stopped()
         return True
 
     def _ensure_worker(self) -> None:

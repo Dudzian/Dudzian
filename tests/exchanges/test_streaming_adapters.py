@@ -2257,6 +2257,56 @@ def test_local_long_poll_stream_wait_prefill_async_propagates_errors(
 
 
 
+
+
+def test_local_long_poll_stream_disable_in_test_mode_keeps_active_worker_registered(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    LocalLongPollStream.close_all_active()
+
+    class _FakeWorker:
+        def __init__(self) -> None:
+            self.alive = True
+            self.name = "LocalLongPollStream[test:public]"
+
+        def is_alive(self) -> bool:
+            return self.alive
+
+        def join(self, timeout: float | None = None) -> None:
+            return None
+
+    monkeypatch.setenv("DUDZIAN_TEST_MODE", "1")
+    monkeypatch.delenv("DUDZIAN_ALLOW_LONG_POLL", raising=False)
+
+    stream = LocalLongPollStream(
+        base_url="http://127.0.0.1:9108",
+        path="/toggle-test-mode",
+        channels=["ticker"],
+        adapter="demo",
+        scope="public",
+        environment="paper",
+    )
+
+    worker = _FakeWorker()
+    stream._worker_thread = worker  # type: ignore[assignment]
+
+    with LocalLongPollStream._active_lock:
+        assert stream in stream._active_instances
+
+    disabled = stream._disable_long_poll_in_test_mode()
+
+    assert disabled is True
+    assert stream._worker_thread is worker
+
+    with LocalLongPollStream._active_lock:
+        assert stream in stream._active_instances
+
+    worker.alive = False
+    stream._unregister_if_stopped()
+
+    with LocalLongPollStream._active_lock:
+        assert stream not in stream._active_instances
+
 def test_local_long_poll_stream_close_all_active_uses_progressive_join(monkeypatch: pytest.MonkeyPatch) -> None:
     # Izolacja od ewentualnych niedomkniętych streamów z innych testów.
     LocalLongPollStream.close_all_active()
