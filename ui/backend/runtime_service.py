@@ -2931,6 +2931,7 @@ class RuntimeService(QObject):
 
     def _set_feed_alert_sink(self, sink: object | None) -> None:
         if self._feed_alert_sink_override is not None:
+            self._feed_alert_sink = self._feed_alert_sink_override
             return
         self._feed_alert_sink = sink
 
