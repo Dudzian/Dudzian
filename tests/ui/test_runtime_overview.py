@@ -7,7 +7,8 @@ import time
 from datetime import datetime, timezone
 import base64
 from pathlib import Path
-from typing import Any, Mapping, Iterator, NoReturn, Callable
+from collections.abc import Mapping, Iterator, Callable
+from typing import Any, NoReturn
 import sys
 
 import pytest
@@ -2612,6 +2613,10 @@ def test_runtime_service_feed_health_exports_alerts(monkeypatch: pytest.MonkeyPa
     service._update_feed_health(status="connected", reconnects=0, last_error="")
 
     assert events[:2] == ["critical", "info"]
+
+    service._update_feed_health(status="connected", reconnects=0, last_error="")
+    assert events[:2] == ["critical", "info"]
+    assert len(events) == 2
     recovery_report = service.feedSlaReport
     assert recovery_report["latency_state"] == "ok"
     assert recovery_report["sla_state"] == "ok"
@@ -2633,6 +2638,42 @@ def test_runtime_service_feed_health_exports_alerts(monkeypatch: pytest.MonkeyPa
     assert sla_latency_gauge.value(labels={"adapter": "demo", "transport": "grpc"}) > 0.0
     sla_reconnects = registry.get("bot_ui_feed_sla_reconnects_total")
     assert sla_reconnects.value(labels={"adapter": "demo", "transport": "grpc"}) >= 0.0
+
+
+def test_runtime_service_uses_injected_feed_alert_sink(monkeypatch: pytest.MonkeyPatch) -> None:
+    fallback_calls = 0
+    emitted_events: list[dict[str, object]] = []
+
+    def _fallback_sink() -> object:
+        nonlocal fallback_calls
+        fallback_calls += 1
+        return object()
+
+    class _Sink:
+        def emit_feed_health_event(self, **payload: object) -> None:  # pragma: no cover - prosty stub
+            emitted_events.append(payload)
+
+    injected_sink = _Sink()
+    monkeypatch.setattr(runtime_service_module, "get_feed_health_alert_sink", _fallback_sink)
+    monkeypatch.setenv("BOT_CORE_UI_FEED_LATENCY_P95_WARNING_MS", "1.0")
+    monkeypatch.setenv("BOT_CORE_UI_FEED_LATENCY_P95_CRITICAL_MS", "2.0")
+
+    service = RuntimeService(feed_alert_sink=injected_sink)
+
+    samples = service._latency_samples_for("grpc")
+    samples.clear()
+    samples.append(5.0)
+    service._update_feed_health(status="connected", reconnects=0, last_error="")
+
+    assert fallback_calls == 0
+    assert service._feed_alert_sink is injected_sink
+    assert emitted_events
+    assert any(
+        event.get("severity") == "critical"
+        and isinstance(event.get("payload"), Mapping)
+        and event.get("payload", {}).get("metric") == "latency"
+        for event in emitted_events
+    )
 
 
 def test_runtime_service_records_escalation_channels(monkeypatch: pytest.MonkeyPatch) -> None:
