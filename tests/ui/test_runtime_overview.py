@@ -2636,9 +2636,15 @@ def test_runtime_service_feed_health_exports_alerts(monkeypatch: pytest.MonkeyPa
 
     registry = exporter._registry  # type: ignore[attr-defined]
     sla_latency_gauge = registry.get("bot_ui_feed_sla_latency_p95_ms")
-    assert sla_latency_gauge.value(labels={"adapter": "grpc", "transport": "grpc"}) > 0.0
+    assert (
+        sla_latency_gauge.value(labels={"adapter": "grpc", "transport": "grpc", "environment": "default"})
+        > 0.0
+    )
     sla_reconnects = registry.get("bot_ui_feed_sla_reconnects_total")
-    assert sla_reconnects.value(labels={"adapter": "grpc", "transport": "grpc"}) >= 0.0
+    assert (
+        sla_reconnects.value(labels={"adapter": "grpc", "transport": "grpc", "environment": "default"})
+        >= 0.0
+    )
 
 
 def test_feed_alert_sink_survives_runtime_metadata_refresh(monkeypatch: pytest.MonkeyPatch) -> None:
