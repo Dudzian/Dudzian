@@ -1149,7 +1149,9 @@ class RuntimeService(QObject):
         self._risk_journal_metrics_exporter: RiskJournalMetricsExporter = (
             get_risk_journal_metrics_exporter()
         )
-        self._feed_alert_sink = feed_alert_sink or get_feed_health_alert_sink()
+        self._feed_alert_sink = (
+            feed_alert_sink if feed_alert_sink is not None else get_feed_health_alert_sink()
+        )
         self._feed_alert_history: deque[dict[str, object]] = deque(maxlen=12)
         self._feed_alert_channels: list[dict[str, str]] = []
         self._feed_thresholds = self._load_feed_thresholds()
@@ -1812,8 +1814,9 @@ class RuntimeService(QObject):
         if last_error:
             payload["last_error"] = last_error
 
-        if sink is not None:
-            sink.emit_feed_health_event(
+        emit = getattr(sink, "emit_feed_health_event", None) if sink is not None else None
+        if callable(emit):
+            emit(
                 severity=severity_label,
                 title=title,
                 body=body,
@@ -1886,10 +1889,11 @@ class RuntimeService(QObject):
         )
 
         sink = self._feed_alert_sink
-        if sink is None:
+        emit = getattr(sink, "emit_feed_health_event", None) if sink is not None else None
+        if not callable(emit):
             return
 
-        sink.emit_feed_health_event(
+        emit(
             severity="warning" if incomplete_entries else "info",
             title="Risk Journal completeness",
             body=body,
@@ -2887,7 +2891,8 @@ class RuntimeService(QObject):
 
     def _emit_ai_feed_event(self, severity: str, message: str) -> None:
         sink = self._feed_alert_sink
-        if sink is None:
+        emit = getattr(sink, "emit_feed_health_event", None) if sink is not None else None
+        if not callable(emit):
             return
         context = {"adapter": "grpc", "channel": self._ai_feed_channel}
         payload = {
@@ -2896,7 +2901,7 @@ class RuntimeService(QObject):
             "state": severity,
             "last_error": message,
         }
-        sink.emit_feed_health_event(
+        emit(
             severity=severity,
             title="AI Governor feed status",
             body=message,
