@@ -957,114 +957,96 @@ Item {
                     longPollTestHook.hookEntryPollingEnabled = false
             }
             model: {
-                // Defensive first-element probe for Windows/headless wrapper quirks.
-                function _hasFirst(seq) {
-                    try {
-                        const first = root._seqAt(seq, 0)
-                        if (first !== undefined && first !== null)
-                            return true
-                    } catch (e) {}
-                    try {
-                        const count = root._seqCount(seq)
-                        if (count > 0) {
-                            const firstByCount = root._seqAt(seq, 0)
-                            if (firstByCount !== undefined && firstByCount !== null)
+                try {
+                    // Defensive first-element probe for Windows/headless wrapper quirks.
+                    function _hasFirst(seq) {
+                        try {
+                            const first = root._seqAt(seq, 0)
+                            if (first !== undefined && first !== null)
                                 return true
-                            const lastByCount = root._seqAt(seq, count - 1)
-                            if (lastByCount !== undefined && lastByCount !== null)
-                                return true
+                        } catch (e) {}
+                        try {
+                            const count = root._seqCount(seq)
+                            if (count > 0) {
+                                const firstByCount = root._seqAt(seq, 0)
+                                if (firstByCount !== undefined && firstByCount !== null)
+                                    return true
+                                const lastByCount = root._seqAt(seq, count - 1)
+                                if (lastByCount !== undefined && lastByCount !== null)
+                                    return true
+                            }
+                        } catch (e) {}
+                        try {
+                            return seq && seq[0] !== undefined && seq[0] !== null
+                        } catch (e) {
+                            return false
                         }
-                    } catch (e) {}
+                    }
+
+                    const listModel = root.longPollMetricsModel
+                    const arrayModel = root.longPollMetrics
+                    const serviceModel = root.serviceLongPollMetrics
+                    const runtimeServiceModel = root.runtimeServiceObj ? root.runtimeServiceObj.longPollMetrics : null
+                    const queuedSnapshot = root._longPollUpdateSnapshot
+                    // Repeater must receive plain arrays for wrapper-backed sources in CI/headless.
+                    let queuedArray = []
+                    let serviceArray = []
+                    let runtimeServiceArray = []
                     try {
-                        return seq && seq[0] !== undefined && seq[0] !== null
+                        queuedArray = root._toPlainArray(queuedSnapshot)
                     } catch (e) {
-                        return false
+                        queuedArray = []
                     }
-                }
-
-                const listModel = root.longPollMetricsModel
-                const arrayModel = root.longPollMetrics
-                const serviceModel = root.serviceLongPollMetrics
-                const runtimeServiceModel = root.runtimeServiceObj ? root.runtimeServiceObj.longPollMetrics : null
-                const queuedSnapshot = root._longPollUpdateSnapshot
-                // Repeater must receive plain arrays for wrapper-backed sources in CI/headless.
-                let queuedArray = []
-                let serviceArray = []
-                let runtimeServiceArray = []
-                try {
-                    queuedArray = root._toPlainArray(queuedSnapshot)
-                } catch (e) {
-                    queuedArray = []
-                }
-                try {
-                    serviceArray = root._toPlainArray(serviceModel)
-                } catch (e) {
-                    serviceArray = []
-                }
-                try {
-                    runtimeServiceArray = root._toPlainArray(runtimeServiceModel)
-                } catch (e) {
-                    runtimeServiceArray = []
-                }
-
-                const listCount = root._seqCount(listModel)
-                const arrayCount = root._seqCount(arrayModel)
-                const queuedCount = root._seqCount(queuedArray)
-                const serviceCount = root._seqCount(serviceArray)
-                const runtimeServiceCount = root._seqCount(runtimeServiceArray)
-                const hookRevision = root.longPollHookRevision
-                const hookSeenSignal = root.longPollHookSeenSignal
-                const listHasData = (listCount > 0)
-                const arrayHasData = (arrayCount > 0) || _hasFirst(arrayModel)
-                const queuedHasData = (queuedCount > 0) || _hasFirst(queuedArray)
-                const serviceHasData = (serviceCount > 0) || _hasFirst(serviceArray)
-                const runtimeServiceHasData = (runtimeServiceCount > 0) || _hasFirst(runtimeServiceArray)
-
-                if (listModel && listHasData)
-                    return listModel
-                if (arrayModel && arrayHasData)
-                    return arrayModel
-                if (queuedHasData)
-                    return queuedArray
-                if (serviceHasData)
-                    return serviceArray
-                // Bind directly to runtimeServiceObj.longPollMetrics as a final live fallback;
-                // wrapper models can be transient-empty on Windows/CI right after notify.
-                if (runtimeServiceHasData)
-                    return runtimeServiceArray
-                if (!listHasData
-                        && !arrayHasData
-                        && !queuedHasData
-                        && !serviceHasData
-                        && !runtimeServiceHasData
-                        && Array.isArray(root._longPollLastNonEmptySnapshot)
-                        && root._longPollLastNonEmptySnapshot.length > 0)
-                    return root._longPollLastNonEmptySnapshot
-                if (!listHasData
-                        && !arrayHasData
-                        && !queuedHasData
-                        && !serviceHasData
-                        && !runtimeServiceHasData
-                        && ((serviceModel !== null && serviceModel !== undefined)
-                            || (runtimeServiceModel !== null && runtimeServiceModel !== undefined))) {
-                    if (!root.longPollHookResampleQueued && root.longPollHookResampleAttempts < 8) {
-                        root.longPollHookResampleQueued = true
-                        Qt.callLater(function() {
-                            root.longPollHookResampleQueued = false
-                            root.longPollHookResampleAttempts += 1
-                            root.queueLongPollUpdate(true, "longPollHookResample")
-                        })
+                    try {
+                        serviceArray = root._toPlainArray(serviceModel)
+                    } catch (e) {
+                        serviceArray = []
                     }
+                    try {
+                        runtimeServiceArray = root._toPlainArray(runtimeServiceModel)
+                    } catch (e) {
+                        runtimeServiceArray = []
+                    }
+
+                    const listCount = root._seqCount(listModel)
+                    const arrayCount = root._seqCount(arrayModel)
+                    const queuedCount = root._seqCount(queuedArray)
+                    const serviceCount = root._seqCount(serviceArray)
+                    const runtimeServiceCount = root._seqCount(runtimeServiceArray)
+                    const hookRevision = root.longPollHookRevision
+                    const hookSeenSignal = root.longPollHookSeenSignal
+                    const listHasData = (listCount > 0)
+                    const arrayHasData = (arrayCount > 0) || _hasFirst(arrayModel)
+                    const queuedHasData = (queuedCount > 0) || _hasFirst(queuedArray)
+                    const serviceHasData = (serviceCount > 0) || _hasFirst(serviceArray)
+                    const runtimeServiceHasData = (runtimeServiceCount > 0) || _hasFirst(runtimeServiceArray)
+
+                    if (listModel && listHasData)
+                        return listModel
+                    if (arrayModel && arrayHasData)
+                        return arrayModel
+                    if (queuedHasData)
+                        return queuedArray
+                    if (serviceHasData)
+                        return serviceArray
+                    if (runtimeServiceHasData)
+                        return runtimeServiceArray
+
+                    if (Array.isArray(root._longPollLastNonEmptySnapshot)
+                            && root._longPollLastNonEmptySnapshot.length > 0)
+                        return root._longPollLastNonEmptySnapshot
+
                     if (longPollTestHook.hookFallbackAdapter.length > 0 && longPollTestHook.hookFallbackEntry)
                         return [longPollTestHook.hookFallbackEntry]
+
+                    if (hookSeenSignal || hookRevision > 0)
+                        return [{}]
+
                     return []
-                }
-                if (longPollTestHook.hookFallbackAdapter.length > 0 && longPollTestHook.hookFallbackEntry)
-                    return [longPollTestHook.hookFallbackEntry]
-                if (hookSeenSignal || hookRevision > 0)
+                } catch (e) {
+                    console.warn("RuntimeOverview long-poll hook model crash:", e)
                     return [{}]
-                // Do not return empty ListModel; it can mask queued/placeholder sources in CI/headless.
-                return []
+                }
             }
 
             delegate: Item {
@@ -1075,7 +1057,9 @@ Item {
                             : longPollHookEntry.safeLabels["adapter"]
                     return longPollTestHook._normalizeAdapter(raw)
                 }
-                objectName: _effectiveAdapter.length > 0 ? "runtimeOverviewLongPollEntry" : ""
+                objectName: (root.longPollHookSeenSignal || root.longPollHookRevision > 0)
+                            ? "runtimeOverviewLongPollEntry"
+                            : ""
                 width: 1
                 height: 1
 
