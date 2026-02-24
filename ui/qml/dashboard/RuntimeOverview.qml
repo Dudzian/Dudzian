@@ -895,6 +895,8 @@ Item {
             target: root.runtimeServiceObj
             function onLongPollMetricsChanged() {
                 longPollTestHook.refreshHookEntry()
+                // Keep this as a real function call (not a bare reference), otherwise
+                // hook fallback polling never re-arms after long-poll updates.
                 longPollTestHook._startHookEntryPolling("runtimeServiceLongPollMetricsChanged")
                 longPollTestHook._startHookRetry("longPollHookSignal")
                 root.queueLongPollUpdate(true, "longPollHookSignal")
