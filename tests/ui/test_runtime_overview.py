@@ -2945,18 +2945,48 @@ def test_runtime_overview_strategy_ai_panel_tracks_transport() -> None:
 
 
 @pytest.mark.timeout(30)
-def test_runtime_overview_feed_sla_exposes_anti_flap_counters() -> None:
+def test_runtime_overview_feed_sla_exposes_anti_flap_counters(tmp_path: Path) -> None:
     provider = TelemetryProvider(snapshot_loader=_sample_snapshot)
     runtime_service = RuntimeService(decision_loader=lambda limit: [])
 
     app = QApplication.instance() or QApplication([])
     engine = QQmlApplicationEngine()
+    settings_store = UISettingsStore(tmp_path / "ui_settings_sla.json")
+    dashboard_controller = DashboardSettingsController(store=settings_store, parent=engine)
+    engine.rootContext().setContextProperty("dashboardSettingsController", dashboard_controller)
     engine.rootContext().setContextProperty("telemetryProvider", provider)
     engine.rootContext().setContextProperty("runtimeService", runtime_service)
     qml_path = Path(__file__).resolve().parents[2] / "ui" / "qml" / "dashboard" / "RuntimeOverview.qml"
-    engine.load(QUrl.fromLocalFile(str(qml_path)))
-    assert engine.rootObjects(), "Nie udało się załadować RuntimeOverview.qml"
-    root = engine.rootObjects()[0]
+
+    initial_properties = {
+        "dashboardSettingsController": dashboard_controller,
+        "complianceController": None,
+        "reportController": None,
+        "width": 1280,
+        "height": 720,
+    }
+    if hasattr(engine, "setInitialProperties"):
+        engine.setInitialProperties(initial_properties)
+        engine.load(QUrl.fromLocalFile(str(qml_path)))
+        assert engine.rootObjects(), "Nie udało się załadować RuntimeOverview.qml"
+        root = engine.rootObjects()[0]
+    else:
+        component = QQmlComponent(engine, QUrl.fromLocalFile(str(qml_path)))
+        if hasattr(component, "createWithInitialProperties"):
+            root = component.createWithInitialProperties(initial_properties)
+        else:
+            root = component.create()
+            if root is not None:
+                for key, value in initial_properties.items():
+                    root.setProperty(key, value)
+        assert root is not None, "Nie udało się utworzyć RuntimeOverview.qml"
+
+    default_order = root.property("defaultCardOrder")
+    assert isinstance(default_order, list)
+    dashboard_controller.setCardOrder(default_order)
+    for _ in range(3):
+        app.processEvents()
+        qt_wait(20)
 
     runtime_service._feed_sla_report = {
         "sla_state": "warning",
@@ -2968,6 +2998,9 @@ def test_runtime_overview_feed_sla_exposes_anti_flap_counters() -> None:
     }
     runtime_service.feedSlaReportChanged.emit()
     app.processEvents()
+    for _ in range(2):
+        qt_wait(20)
+        app.processEvents()
 
     report = root.property("feedSlaReport")
     assert isinstance(report, dict)
