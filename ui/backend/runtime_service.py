@@ -1728,7 +1728,21 @@ class RuntimeService(QObject):
             return
         self._feed_alert_state[key] = severity
         sink = self._feed_alert_sink
-        router = getattr(sink, "_router", None) if sink is not None else None
+        emit = getattr(sink, "emit_feed_health_event", None) if sink is not None else None
+        if not callable(emit):
+            sink = None
+            emit = None
+        router = None
+        if sink is not None:
+            try:
+                router = getattr(sink, "router", None)
+            except Exception:
+                router = None
+            if router is None:
+                try:
+                    router = getattr(sink, "_router", None)
+                except Exception:
+                    router = None
 
         severity_label = severity
         state = severity
@@ -1814,7 +1828,6 @@ class RuntimeService(QObject):
         if last_error:
             payload["last_error"] = last_error
 
-        emit = getattr(sink, "emit_feed_health_event", None) if sink is not None else None
         if callable(emit):
             emit(
                 severity=severity_label,
