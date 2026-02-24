@@ -890,6 +890,22 @@ Item {
         readonly property string hookFallbackAdapter: longPollTestHook.hookAdapter
         readonly property bool hookFallbackHasData: longPollTestHook.hookAdapter.length > 0
 
+        // Marker for UI tests: becomes discoverable once any long-poll data is present.
+        Item {
+            id: longPollEntryPresenceMarker
+            width: 1
+            height: 1
+            opacity: 0
+            readonly property bool hasLongPollData: (
+                root._seqCount(root.longPollMetrics) > 0
+                || root._seqCount(root.longPollMetricsModel) > 0
+                || longPollTestHook.hookFallbackHasData
+            )
+
+            // Keep the name stable for tests (tests look for "runtimeOverviewLongPollEntry").
+            objectName: hasLongPollData ? "runtimeOverviewLongPollEntry" : ""
+        }
+
 
         Connections {
             target: root.runtimeServiceObj
