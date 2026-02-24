@@ -1890,15 +1890,68 @@ def _validate_live_signatures(
     if readiness is None:
         raise LiveSignatureVerificationError("Środowisko live nie posiada sekcji live_readiness.")
 
-    documents = tuple(getattr(readiness, "documents", ()) or ())
-    if not documents:
+    documents_all = tuple(getattr(readiness, "documents", ()) or ())
+    if not documents_all:
         raise LiveSignatureVerificationError(
             "Sekcja live_readiness nie zawiera żadnych dokumentów do weryfikacji."
         )
 
-    required_names = {str(name) for name in getattr(readiness, "required_documents", ()) or () if str(name)}
+    required_names_ordered_raw: list[str] = []
+    for raw_name in getattr(readiness, "required_documents", ()) or ():
+        if raw_name is None:
+            continue
+        normalized_name = str(raw_name).strip()
+        if not normalized_name or normalized_name.lower() in {"none", "null"}:
+            continue
+        required_names_ordered_raw.append(normalized_name)
+
+    required_seen: set[str] = set()
+    required_names_ordered: list[str] = []
+    for name in required_names_ordered_raw:
+        if name in required_seen:
+            continue
+        required_seen.add(name)
+        required_names_ordered.append(name)
+
+    documents_by_name: dict[str, LiveChecklistDocumentConfig] = {}
+    duplicate_document_names: list[str] = []
+    duplicate_seen: set[str] = set()
+    for document in documents_all:
+        normalized_name = str(getattr(document, "name", "")).strip()
+        if not normalized_name:
+            continue
+        if normalized_name in documents_by_name:
+            if normalized_name not in duplicate_seen:
+                duplicate_document_names.append(normalized_name)
+                duplicate_seen.add(normalized_name)
+            continue
+        documents_by_name[normalized_name] = document
+
     verification_results: dict[str, Mapping[str, Any]] = {}
     failures: list[str] = []
+    if duplicate_document_names:
+        for duplicate_name in duplicate_document_names:
+            failures.append(f"{duplicate_name}: zduplikowana definicja dokumentu w live_readiness.documents")
+        raise LiveSignatureVerificationError("; ".join(failures))
+    if required_names_ordered:
+        missing_required_documents = [
+            name for name in required_names_ordered if name not in documents_by_name
+        ]
+        if missing_required_documents:
+            for missing_name in missing_required_documents:
+                failures.append(f"{missing_name}: brak definicji dokumentu w live_readiness.documents")
+            raise LiveSignatureVerificationError("; ".join(failures))
+        documents_for_verification = tuple(
+            documents_by_name[name]
+            for name in required_names_ordered
+        )
+    else:
+        documents_for_verification = tuple(
+            document
+            for document in documents_all
+            if getattr(document, "required", True)
+        )
+
     categories_status = {"compliance": False, "risk": False, "penetration": False}
     categories_seen = {"compliance": False, "risk": False, "penetration": False}
 
@@ -1909,14 +1962,7 @@ def _validate_live_signatures(
         except Exception:  # pragma: no cover - defensywnie wobec nietypowych ścieżek
             resolved_root = document_root
 
-    for document in documents:
-        if required_names:
-            is_required = document.name in required_names
-        else:
-            is_required = getattr(document, "required", True)
-        if not is_required:
-            continue
-
+    for document in documents_for_verification:
         categories = _categorize_live_document(document)
         if not categories:
             continue
@@ -1932,7 +1978,10 @@ def _validate_live_signatures(
             failures.append(f"{document.name}: {exc}")
             continue
 
-        verification_results[document.name] = verification
+        normalized_document_name = str(getattr(document, "name", "")).strip()
+        verification_payload = dict(verification)
+        verification_payload["name"] = normalized_document_name
+        verification_results[normalized_document_name] = verification_payload
         for category in categories:
             categories_status[category] = True
 
