@@ -1149,7 +1149,9 @@ class RuntimeService(QObject):
         self._risk_journal_metrics_exporter: RiskJournalMetricsExporter = (
             get_risk_journal_metrics_exporter()
         )
-        self._feed_alert_sink = (
+        self._feed_alert_sink_override = feed_alert_sink
+        self._feed_alert_sink = None
+        self._set_feed_alert_sink(
             feed_alert_sink if feed_alert_sink is not None else get_feed_health_alert_sink()
         )
         self._feed_alert_history: deque[dict[str, object]] = deque(maxlen=12)
@@ -1727,7 +1729,7 @@ class RuntimeService(QObject):
         if severity == previous:
             return
         self._feed_alert_state[key] = severity
-        sink = self._feed_alert_sink
+        sink = self._effective_feed_alert_sink()
         emit = getattr(sink, "emit_feed_health_event", None) if sink is not None else None
         if not callable(emit):
             sink = None
@@ -1901,7 +1903,7 @@ class RuntimeService(QObject):
             labels={"environment": environment},
         )
 
-        sink = self._feed_alert_sink
+        sink = self._effective_feed_alert_sink()
         emit = getattr(sink, "emit_feed_health_event", None) if sink is not None else None
         if not callable(emit):
             return
@@ -2903,7 +2905,7 @@ class RuntimeService(QObject):
         self._ai_feed_retry_timer.start(max(1000, int(delay_seconds * 1000)))
 
     def _emit_ai_feed_event(self, severity: str, message: str) -> None:
-        sink = self._feed_alert_sink
+        sink = self._effective_feed_alert_sink()
         emit = getattr(sink, "emit_feed_health_event", None) if sink is not None else None
         if not callable(emit):
             return
@@ -2921,6 +2923,16 @@ class RuntimeService(QObject):
             context=context,
             payload=payload,
         )
+
+    def _effective_feed_alert_sink(self) -> object | None:
+        if self._feed_alert_sink_override is not None:
+            return self._feed_alert_sink_override
+        return self._feed_alert_sink
+
+    def _set_feed_alert_sink(self, sink: object | None) -> None:
+        if self._feed_alert_sink_override is not None:
+            return
+        self._feed_alert_sink = sink
 
     def _ai_feed_worker(
         self,
