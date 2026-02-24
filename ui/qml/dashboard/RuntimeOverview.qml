@@ -896,14 +896,154 @@ Item {
             width: 1
             height: 1
             opacity: 0
-            readonly property bool hasLongPollData: (
-                root._seqCount(root.longPollMetrics) > 0
-                || root._seqCount(root.longPollMetricsModel) > 0
-                || longPollTestHook.hookFallbackHasData
-            )
+
+            function _pickLiveEntry() {
+                const runtimeModel = root.runtimeServiceObj ? root.runtimeServiceObj.longPollMetrics : null
+                const sources = [
+                    root.longPollMetrics,
+                    root.serviceLongPollMetrics
+                ]
+                // Prefer hook fallback if already validated.
+                if (longPollTestHook.hookFallbackHasData && longPollTestHook.hookFallbackEntry)
+                    sources.unshift([longPollTestHook.hookFallbackEntry])
+
+                // Mirror refreshHookEntry() defensive parsed snapshot to avoid transient wrapper empties.
+                try {
+                    const parsed = JSON.parse(JSON.stringify(runtimeModel))
+                    if (Array.isArray(parsed))
+                        sources.push(parsed)
+                } catch (e) {
+                }
+
+                sources.push(runtimeModel)
+                sources.push(root._longPollLastNonEmptySnapshot)
+
+                for (let s = 0; s < sources.length; ++s) {
+                    const source = sources[s]
+                    if (!source)
+                        continue
+                    // If source is a single object (not a seq), accept it too.
+                    if (typeof source === "object" && !Array.isArray(source)) {
+                        const labels0 = source.labels !== undefined ? source.labels : source["labels"]
+                        const adapter0 = labels0 ? longPollTestHook._normalizeAdapter(
+                            labels0.adapter !== undefined ? labels0.adapter : labels0["adapter"]
+                        ) : ""
+                        if (adapter0)
+                            return source
+                    }
+                    for (let i = 0; i < 8; ++i) {
+                        let candidate = undefined
+                        try {
+                            candidate = root._seqAt(source, i)
+                        } catch (e) {
+                            candidate = undefined
+                        }
+                        if (!candidate || typeof candidate !== "object")
+                            continue
+                        const labels = candidate.labels !== undefined ? candidate.labels : candidate["labels"]
+                        if (!labels || typeof labels !== "object")
+                            continue
+                        const adapterRaw = labels.adapter !== undefined ? labels.adapter : labels["adapter"]
+                        const adapter = longPollTestHook._normalizeAdapter(adapterRaw)
+                        if (!adapter)
+                            continue
+                        return candidate
+                    }
+                }
+                return ({})
+            }
+
+            readonly property var entryData: _pickLiveEntry()
+            readonly property var safeLabels: (entryData && entryData.labels && typeof entryData.labels === "object")
+                                              ? entryData.labels
+                                              : ((entryData && entryData["labels"] && typeof entryData["labels"] === "object")
+                                                 ? entryData["labels"]
+                                                 : ({}))
+            readonly property var latencyStats: (entryData && entryData.requestLatency && typeof entryData.requestLatency === "object")
+                                                ? entryData.requestLatency
+                                                : ((entryData && entryData["requestLatency"] && typeof entryData["requestLatency"] === "object")
+                                                   ? entryData["requestLatency"]
+                                                   : ({}))
+            readonly property var httpErrorStats: (entryData && entryData.httpErrors && typeof entryData.httpErrors === "object")
+                                                  ? entryData.httpErrors
+                                                  : ((entryData && entryData["httpErrors"] && typeof entryData["httpErrors"] === "object")
+                                                     ? entryData["httpErrors"]
+                                                     : ({}))
+            readonly property var reconnectStats: (entryData && entryData.reconnects && typeof entryData.reconnects === "object")
+                                                  ? entryData.reconnects
+                                                  : ((entryData && entryData["reconnects"] && typeof entryData["reconnects"] === "object")
+                                                     ? entryData["reconnects"]
+                                                     : ({}))
+
+            readonly property string _effectiveAdapter: {
+                const raw = safeLabels.adapter !== undefined ? safeLabels.adapter : safeLabels["adapter"]
+                return longPollTestHook._normalizeAdapter(raw)
+            }
 
             // Keep the name stable for tests (tests look for "runtimeOverviewLongPollEntry").
-            objectName: hasLongPollData ? "runtimeOverviewLongPollEntry" : ""
+            // Make it discoverable only when we already have a real adapter.
+            objectName: _effectiveAdapter.length > 0 ? "runtimeOverviewLongPollEntry" : ""
+
+            Text {
+                objectName: "runtimeOverviewLongPollHeader"
+                text: qsTr("%1 • %2 • %3")
+                      .arg(longPollEntryPresenceMarker.safeLabels.adapter
+                           || longPollEntryPresenceMarker.safeLabels.source
+                           || longPollEntryPresenceMarker.safeLabels.name
+                           || qsTr("n/d"))
+                      .arg(longPollEntryPresenceMarker.safeLabels.scope || qsTr("n/d"))
+                      .arg(longPollEntryPresenceMarker.safeLabels.environment || qsTr("n/d"))
+                width: 1
+                height: 1
+                opacity: 0
+            }
+
+            Text {
+                objectName: "runtimeOverviewLongPollLatency"
+                text: {
+                    const hasP50 = typeof longPollEntryPresenceMarker.latencyStats.p50 === "number"
+                    const hasP95 = typeof longPollEntryPresenceMarker.latencyStats.p95 === "number"
+                    if (!hasP50 && !hasP95)
+                        return qsTr("Brak próbek latencji long-pollowych")
+                    const p50 = hasP50 ? Number(longPollEntryPresenceMarker.latencyStats.p50).toFixed(3) : qsTr("n/d")
+                    const p95 = hasP95 ? Number(longPollEntryPresenceMarker.latencyStats.p95).toFixed(3) : qsTr("n/d")
+                    return qsTr("Latencja p50: %1 s • p95: %2 s").arg(p50).arg(p95)
+                }
+                width: 1
+                height: 1
+                opacity: 0
+            }
+
+            Text {
+                objectName: "runtimeOverviewLongPollHttpErrors"
+                text: {
+                    const total = typeof longPollEntryPresenceMarker.httpErrorStats.total === "number"
+                            ? longPollEntryPresenceMarker.httpErrorStats.total
+                            : 0
+                    return qsTr("Błędy HTTP: %1").arg(total)
+                }
+                width: 1
+                height: 1
+                opacity: 0
+            }
+
+            Text {
+                objectName: "runtimeOverviewLongPollReconnects"
+                text: {
+                    const attempts = typeof longPollEntryPresenceMarker.reconnectStats.attempts === "number"
+                            ? longPollEntryPresenceMarker.reconnectStats.attempts
+                            : 0
+                    const failures = typeof longPollEntryPresenceMarker.reconnectStats.failure === "number"
+                            ? longPollEntryPresenceMarker.reconnectStats.failure
+                            : (typeof longPollEntryPresenceMarker.reconnectStats.failures === "number"
+                               ? longPollEntryPresenceMarker.reconnectStats.failures
+                               : 0)
+                    return qsTr("Reconnecty: próby %1 • błędy %2").arg(attempts).arg(failures)
+                }
+                width: 1
+                height: 1
+                opacity: 0
+            }
         }
 
 
