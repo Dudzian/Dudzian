@@ -2599,6 +2599,7 @@ def test_runtime_service_feed_health_exports_alerts(monkeypatch: pytest.MonkeyPa
     exporter = FeedHealthMetricsExporter(registry=MetricsRegistry())
     sink = _Sink()
     service = RuntimeService(feed_alert_sink=sink, feed_metrics_exporter=exporter)
+    service._active_stream_label = "grpc://demo"
 
     samples = service._latency_samples_for("grpc")
     samples.clear()
@@ -2640,6 +2641,28 @@ def test_runtime_service_feed_health_exports_alerts(monkeypatch: pytest.MonkeyPa
     assert sla_reconnects.value(labels={"adapter": "demo", "transport": "grpc"}) >= 0.0
 
 
+def test_feed_alert_sink_survives_runtime_metadata_refresh(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("BOT_CORE_UI_FEED_LATENCY_P95_WARNING_MS", "1.0")
+    monkeypatch.setenv("BOT_CORE_UI_FEED_LATENCY_P95_CRITICAL_MS", "2.0")
+
+    events: list[dict[str, object]] = []
+
+    class _Sink:
+        def emit_feed_health_event(self, **payload: object) -> None:  # pragma: no cover - prosty stub
+            events.append(dict(payload))
+
+    service = RuntimeService(feed_alert_sink=_Sink())
+    service._active_stream_label = "grpc://demo"
+    service._update_runtime_metadata(invalidate_cache=False)
+
+    samples = service._latency_samples_for("grpc")
+    samples.clear()
+    samples.append(5.0)
+    service._update_feed_health(status="connected", reconnects=0, last_error="")
+
+    assert any(event.get("severity") == "critical" for event in events)
+
+
 def test_runtime_service_uses_injected_feed_alert_sink(monkeypatch: pytest.MonkeyPatch) -> None:
     fallback_calls = 0
     emitted_events: list[dict[str, object]] = []
@@ -2659,6 +2682,7 @@ def test_runtime_service_uses_injected_feed_alert_sink(monkeypatch: pytest.Monke
     monkeypatch.setenv("BOT_CORE_UI_FEED_LATENCY_P95_CRITICAL_MS", "2.0")
 
     service = RuntimeService(feed_alert_sink=injected_sink)
+    service._active_stream_label = "grpc://demo"
 
     samples = service._latency_samples_for("grpc")
     samples.clear()

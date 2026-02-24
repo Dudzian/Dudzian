@@ -56,8 +56,7 @@ def test_risk_journal_marks_incomplete_entries() -> None:
 
 def test_risk_journal_emits_telemetry_warning() -> None:
     sink = _DummyAlertSink()
-    runtime_service = RuntimeService(decision_loader=lambda limit: [])
-    runtime_service._feed_alert_sink = sink
+    runtime_service = RuntimeService(decision_loader=lambda limit: [], feed_alert_sink=sink)
 
     runtime_service._apply_risk_context(
         [
