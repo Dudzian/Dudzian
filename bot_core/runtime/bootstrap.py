@@ -239,12 +239,13 @@ def _is_test_mode() -> bool:
     )
 
 
+def _strip_diacritics(value: str) -> str:
+    normalized = unicodedata.normalize("NFKD", value)
+    return "".join(ch for ch in normalized if not unicodedata.combining(ch))
+
+
 def _live_signature_error_is_missing_document(exc: Exception) -> bool:
     message = str(exc).lower()
-
-    def _strip_diacritics(value: str) -> str:
-        normalized = unicodedata.normalize("NFKD", value)
-        return "".join(ch for ch in normalized if not unicodedata.combining(ch))
 
     candidates = (
         "nie istnieje",
@@ -263,6 +264,23 @@ def _live_signature_error_is_missing_document(exc: Exception) -> bool:
         fragment in message or normalized_fragment in normalized_message
         for fragment, normalized_fragment in zip(candidates, normalized_candidates)
     )
+
+
+def _live_signature_error_is_configuration_error(exc: Exception) -> bool:
+    message = str(exc).lower()
+
+    fragments = (
+        "srodowisko live nie posiada sekcji live_readiness",
+        "sekcja live_readiness nie zawiera zadnych dokumentow do weryfikacji",
+        "brak definicji dokumentu w live_readiness.documents",
+        "zduplikowana definicja dokumentu w live_readiness.documents",
+        "live environment is missing live_readiness section",
+        "live_readiness section has no documents to verify",
+        "missing document definition in live_readiness.documents",
+        "duplicate document definition in live_readiness.documents",
+    )
+    normalized_message = _strip_diacritics(message)
+    return any(_strip_diacritics(fragment) in normalized_message for fragment in fragments)
 
 
 # --- Metrics service (opcjonalny – w niektórych gałęziach może nie istnieć) ---
@@ -3640,12 +3658,10 @@ def bootstrap_environment(
                 document_root=document_root,
             )
         except LiveSignatureVerificationError as exc:
-            if getattr(environment, "live_readiness", None) is None:
-                _LOGGER.warning(
-                    "Pominięto weryfikację podpisów live dla %s: brak sekcji live_readiness.",
-                    environment.name,
-                )
-                live_signature_verification = None
+            if _live_signature_error_is_configuration_error(exc):
+                raise RuntimeError(
+                    f"Nie można aktywować środowiska live '{environment.name}': {exc}"
+                ) from exc
             elif _live_signature_error_is_missing_document(exc):
                 raise RuntimeError(
                     f"Nie można aktywować środowiska live '{environment.name}': {exc}"
