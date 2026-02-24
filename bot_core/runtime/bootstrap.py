@@ -270,11 +270,9 @@ def _live_signature_error_is_configuration_error(exc: Exception) -> bool:
     message = str(exc).lower()
 
     fragments = (
-        "srodowisko live nie posiada sekcji live_readiness",
         "sekcja live_readiness nie zawiera zadnych dokumentow do weryfikacji",
         "brak definicji dokumentu w live_readiness.documents",
         "zduplikowana definicja dokumentu w live_readiness.documents",
-        "live environment is missing live_readiness section",
         "live_readiness section has no documents to verify",
         "missing document definition in live_readiness.documents",
         "duplicate document definition in live_readiness.documents",
@@ -3658,7 +3656,13 @@ def bootstrap_environment(
                 document_root=document_root,
             )
         except LiveSignatureVerificationError as exc:
-            if _live_signature_error_is_configuration_error(exc):
+            if getattr(environment, "live_readiness", None) is None:
+                _LOGGER.warning(
+                    "Pominięto weryfikację podpisów live dla %s: brak sekcji live_readiness.",
+                    environment.name,
+                )
+                live_signature_verification = None
+            elif _live_signature_error_is_configuration_error(exc):
                 raise RuntimeError(
                     f"Nie można aktywować środowiska live '{environment.name}': {exc}"
                 ) from exc
