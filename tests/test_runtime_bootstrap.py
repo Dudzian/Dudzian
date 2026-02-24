@@ -1430,8 +1430,18 @@ def test_live_checklist_normalizes_verified_document_names(
     verification = context.live_signature_verification
     assert verification is not None
     verified_docs = verification["documents"]
-    assert "kyc_packet" in verified_docs
-    assert "kyc_packet " not in verified_docs
+    if isinstance(verified_docs, Mapping):
+        assert "kyc_packet" in verified_docs
+        assert "kyc_packet " not in verified_docs
+        assert str(verified_docs["kyc_packet"].get("name", "")) == "kyc_packet"
+    else:
+        raw_names = {
+            str(doc.get("name", ""))
+            for doc in verified_docs
+            if isinstance(doc, Mapping) and doc.get("name") is not None
+        }
+        assert "kyc_packet" in raw_names
+        assert "kyc_packet " not in raw_names
 
 
 def test_live_checklist_blocks_on_duplicate_document_definition(
