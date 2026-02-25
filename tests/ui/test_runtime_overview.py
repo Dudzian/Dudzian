@@ -428,6 +428,73 @@ class _StubRuntimeService(QObject):
             self.regimeActivationSummaryChanged.emit()
 
 
+
+
+def _safe_prop(obj: QObject, name: str) -> object:
+    try:
+        return obj.property(name)
+    except RuntimeError as exc:
+        return f"<RuntimeError: {exc}>"
+    except Exception as exc:  # pragma: no cover
+        return f"<{type(exc).__name__}: {exc}>"
+
+
+def _safe_object_name(obj: QObject) -> str:
+    try:
+        name = str(obj.objectName())
+    except Exception:
+        name = ""
+    if name:
+        return name
+    prop_name = _safe_prop(obj, "objectName")
+    if isinstance(prop_name, str):
+        if prop_name.startswith("<"):
+            return ""
+        if prop_name:
+            return prop_name
+    return ""
+
+
+def _iter_quick_items(start: QObject | None) -> Iterator[QObject]:
+    if start is None:
+        return
+    stack = [start]
+    queued: set[int] = {id(start)}
+    seen: set[int] = set()
+
+    def _push_candidate(candidate: object) -> None:
+        if isinstance(candidate, str) and candidate.startswith("<"):
+            return
+        if not isinstance(candidate, QObject):
+            return
+        marker = id(candidate)
+        if marker in seen or marker in queued:
+            return
+        queued.add(marker)
+        stack.append(candidate)
+
+    while stack:
+        item = stack.pop()
+        marker = id(item)
+        queued.discard(marker)
+        if marker in seen:
+            continue
+        seen.add(marker)
+        yield item
+        try:
+            children = item.childItems() if hasattr(item, "childItems") else []
+        except Exception:
+            children = []
+        if children:
+            for child in children:
+                _push_candidate(child)
+        for prop_name in ("item", "contentItem"):
+            try:
+                _push_candidate(item.property(prop_name))
+            except Exception:
+                pass
+
+
 def _sample_snapshot() -> RuntimeTelemetrySnapshot:
     generated = datetime(2025, 1, 1, 12, 0, 0, tzinfo=timezone.utc)
     io_entries = (
@@ -782,29 +849,6 @@ def test_runtime_overview_renders_snapshot(tmp_path: Path) -> None:
                 return str(error_attr)
             return ""
 
-        def _safe_prop(obj: QObject, name: str) -> object:
-            try:
-                return obj.property(name)
-            except RuntimeError as exc:
-                return f"<RuntimeError: {exc}>"
-            except Exception as exc:  # pragma: no cover
-                return f"<{type(exc).__name__}: {exc}>"
-
-        def _safe_object_name(obj: QObject) -> str:
-            try:
-                name = str(obj.objectName())
-            except Exception:
-                name = ""
-            if name:
-                return name
-            prop_name = _safe_prop(obj, "objectName")
-            if isinstance(prop_name, str):
-                if prop_name.startswith("<"):
-                    return ""
-                if prop_name:
-                    return prop_name
-            return ""
-
         def _quick_root_item(start: QObject) -> QObject | None:
             if hasattr(start, "childItems"):
                 return start
@@ -814,25 +858,6 @@ def test_runtime_overview_renders_snapshot(tmp_path: Path) -> None:
                 except Exception:
                     return None
             return None
-
-        def _iter_quick_items(start: QObject | None) -> Iterator[QObject]:
-            if start is None:
-                return
-            stack = [start]
-            visited: set[int] = set()
-            while stack:
-                item = stack.pop()
-                item_id = id(item)
-                if item_id in visited:
-                    continue
-                visited.add(item_id)
-                yield item
-                try:
-                    children = item.childItems() if hasattr(item, "childItems") else []
-                except Exception:
-                    children = []
-                if children:
-                    stack.extend(children)
 
         def _safe_int(value: object, default: int = -1) -> int:
             if value is None:
@@ -1661,63 +1686,6 @@ def test_runtime_overview_cards_react_to_live_signals(tmp_path: Path) -> None:
             except Exception:
                 pass
             return runtime_root_item
-
-        def _safe_prop(obj: QObject, name: str) -> object:
-            try:
-                return obj.property(name)
-            except RuntimeError as exc:
-                return f"<RuntimeError: {exc}>"
-            except Exception as exc:  # pragma: no cover
-                return f"<{type(exc).__name__}: {exc}>"
-
-        def _safe_object_name(obj: QObject) -> str:
-            try:
-                object_name = str(obj.objectName())
-            except Exception:
-                object_name = ""
-            if object_name:
-                return object_name
-            prop_name = _safe_prop(obj, "objectName")
-            if isinstance(prop_name, str) and prop_name and not prop_name.startswith("<"):
-                return prop_name
-            return ""
-
-        def _iter_quick_items(start: QQuickItem | None) -> Iterator[QQuickItem]:
-            if start is None:
-                return
-            stack = [start]
-            visited: set[int] = set()
-
-            def _push_item_candidate(candidate: object) -> None:
-                if isinstance(candidate, str) and candidate.startswith("<"):
-                    return
-                if not isinstance(candidate, QQuickItem):
-                    return
-                marker = id(candidate)
-                if marker in visited:
-                    return
-                stack.append(candidate)
-
-            while stack:
-                item = stack.pop()
-                if id(item) in visited:
-                    continue
-                visited.add(id(item))
-                yield item
-                try:
-                    for child in list(item.childItems() or []):
-                        _push_item_candidate(child)
-                except RuntimeError:
-                    pass
-                except Exception:
-                    pass
-                for prop_name in ("item", "contentItem"):
-                    try:
-                        _push_item_candidate(item.property(prop_name))
-                    except RuntimeError:
-                        pass
-                    except Exception:
-                        pass
 
         def _iter_descendants(start: QObject | None) -> Iterator[QObject]:
             if start is None:
@@ -3023,18 +2991,168 @@ def test_runtime_overview_feed_sla_exposes_anti_flap_counters(tmp_path: Path) ->
         qt_wait(250)
         app.processEvents()
 
-        grid_deadline = time.monotonic() + 5.0
-        while time.monotonic() < grid_deadline:
+        order_deadline = time.monotonic() + 1.0
+        while time.monotonic() < order_deadline:
             app.processEvents()
-            order = root.property("effectiveGridCardOrder") or []
-            if isinstance(order, list) and "feed_sla" in order:
+            if isinstance(_safe_prop(root, "effectiveGridCardOrder") or [], list):
                 break
             qt_wait(50)
 
-        order = root.property("effectiveGridCardOrder") or []
-        assert isinstance(order, list) and "feed_sla" in order, (
-            f"feed_sla missing in effectiveGridCardOrder: {order!r}"
+        order = _safe_prop(root, "effectiveGridCardOrder")
+        assert isinstance(order, list), f"effectiveGridCardOrder nie jest listą: {order!r}"
+        assert "feed_sla" in order, f"feed_sla missing in effectiveGridCardOrder: {order!r}"
+
+        def _find_quick_item_by_name(name: str) -> QObject | None:
+            host = quick_window.contentItem() if hasattr(quick_window, "contentItem") else root
+            for item in _iter_quick_items(host):
+                if _safe_object_name(item) == name:
+                    return item
+            return None
+
+        def _find_feed_sla_loader() -> QObject | None:
+            loader = _find_quick_item_by_name("runtimeOverviewCardLoader_feed_sla")
+            if loader is not None:
+                return loader
+            host = quick_window.contentItem() if hasattr(quick_window, "contentItem") else root
+            for item in _iter_quick_items(host):
+                object_name = _safe_object_name(item)
+                if not object_name.startswith("runtimeOverviewCardLoader_"):
+                    continue
+                if _safe_prop(item, "cardId") == "feed_sla":
+                    return item
+            return None
+
+        LOADER_STATUS_NAME = {0: "Null", 1: "Ready", 2: "Loading", 3: "Error"}
+
+        def _safe_int(value: object, default: int = -1) -> int:
+            if value is None:
+                return default
+            if isinstance(value, str) and value.startswith("<"):
+                return default
+            try:
+                return int(value)  # type: ignore[arg-type]
+            except Exception:
+                return default
+
+        def _loader_debug_info(loader_obj: QObject | None) -> str:
+            if loader_obj is None:
+                return "<missing loader>"
+            status_raw = _safe_prop(loader_obj, "status")
+            status = _safe_int(status_raw, default=-1)
+            status_name = LOADER_STATUS_NAME.get(status, f"Unknown({status_raw!r})")
+            parts = {
+                "objectName": _safe_object_name(loader_obj),
+                "cardId": _safe_prop(loader_obj, "cardId"),
+                "status": status_name,
+                "active": _safe_prop(loader_obj, "active"),
+                "sourceComponent": _safe_prop(loader_obj, "sourceComponent"),
+                "item": _safe_prop(loader_obj, "item"),
+                "errorString": _safe_prop(loader_obj, "errorString"),
+            }
+            return ", ".join(f"{k}={v!r}" for k, v in parts.items())
+
+        def _known_loader_diagnostics() -> str:
+            host = quick_window.contentItem() if hasattr(quick_window, "contentItem") else root
+            rows: list[str] = []
+            for item in _iter_quick_items(host):
+                object_name = _safe_object_name(item)
+                card_id = _safe_prop(item, "cardId")
+                status_raw = _safe_prop(item, "status")
+                is_named_loader = object_name.startswith("runtimeOverviewCardLoader_")
+                is_loader_like = isinstance(card_id, str) and status_raw is not None
+                if not (is_named_loader or is_loader_like):
+                    continue
+                status = _safe_int(status_raw, default=-1)
+                status_name = LOADER_STATUS_NAME.get(status, f"Unknown({status_raw!r})")
+                label = object_name if object_name else "<unnamed-loader>"
+                rows.append(f"{label}(cardId={card_id!r}, status={status_name})")
+            return ", ".join(rows) if rows else "<none>"
+
+        def _wait_until(pred, timeout_s: float = 5.0, step_ms: int = 50) -> bool:
+            deadline = time.monotonic() + timeout_s
+            while time.monotonic() < deadline:
+                try:
+                    if hasattr(quick_window, "requestUpdate"):
+                        quick_window.requestUpdate()
+                except Exception:
+                    pass
+                try:
+                    if hasattr(root, "polish"):
+                        root.polish()
+                except Exception:
+                    pass
+                app.processEvents()
+                try:
+                    if pred():
+                        return True
+                except AssertionError:
+                    raise
+                except Exception:
+                    pass
+                qt_wait(step_ms)
+            app.processEvents()
+            return bool(pred())
+
+        assert _wait_until(lambda: _find_feed_sla_loader() is not None), (
+            "Nie znaleziono loadera SLA (runtimeOverviewCardLoader_feed_sla/cardId=feed_sla). "
+            f"Dostępne loadery: {_known_loader_diagnostics()}"
         )
+
+        loader = _find_feed_sla_loader()
+        assert loader is not None, (
+            "Nie znaleziono loadera SLA po wait_until. "
+            f"Dostępne loadery: {_known_loader_diagnostics()}"
+        )
+
+        def _loader_item():
+            try:
+                item = loader.property("item")
+            except Exception:
+                return None
+            if item is None:
+                return None
+            if isinstance(item, str) and item.startswith("<"):
+                return None
+            return item
+
+        def _loader_is_ready() -> bool:
+            try:
+                status_raw = _safe_prop(loader, "status")
+                status = _safe_int(status_raw, default=-1)
+                # QtQuick.Loader: Null=0 Ready=1 Loading=2 Error=3
+                if status == 3:
+                    err = ""
+                    try:
+                        err = str(loader.property("errorString"))
+                    except Exception:
+                        pass
+                    raise AssertionError(f"Loader feed_sla w stanie Error: {err!r}")
+                if status == 1:
+                    return True
+            except AssertionError:
+                raise
+            except Exception:
+                pass
+            return _loader_item() is not None
+
+        assert _wait_until(_loader_is_ready, timeout_s=5.0), (
+            "Loader feed_sla nie osiągnął gotowości (Ready/item). "
+            f"{_loader_debug_info(loader)}"
+        )
+
+        def _find_in_subtree(start: QObject, name: str) -> QObject | None:
+            for item in _iter_quick_items(start):
+                if _safe_object_name(item) == name:
+                    return item
+            return None
+
+        sla_card = _find_quick_item_by_name("runtimeOverviewFeedSlaCard")
+        if sla_card is None:
+            item = _loader_item()
+            if isinstance(item, QObject):
+                sla_card = _find_in_subtree(item, "runtimeOverviewFeedSlaCard")
+
+        assert sla_card is not None, "Karta SLA nie została utworzona mimo gotowego loadera."
 
         runtime_service._feed_sla_report = {
             "sla_state": "warning",
@@ -3052,31 +3170,10 @@ def test_runtime_overview_feed_sla_exposes_anti_flap_counters(tmp_path: Path) ->
         assert report.get("consecutive_degraded_periods") == 3
         assert report.get("consecutive_healthy_periods") == 0
 
-        sla_card = None
-        deadline = time.monotonic() + 5.0
-        while time.monotonic() < deadline and sla_card is None:
-            try:
-                if hasattr(quick_window, "requestUpdate"):
-                    quick_window.requestUpdate()
-            except Exception:
-                pass
-            try:
-                if hasattr(root, "polish"):
-                    root.polish()
-            except Exception:
-                pass
-            app.processEvents()
-            sla_card = root.findChild(QObject, "runtimeOverviewFeedSlaCard")
-            if sla_card is None and hasattr(quick_window, "contentItem"):
-                try:
-                    sla_card = quick_window.contentItem().findChild(QObject, "runtimeOverviewFeedSlaCard")
-                except Exception:
-                    sla_card = None
-            if sla_card is None:
-                qt_wait(50)
-
-        assert sla_card is not None
-        assert sla_card.property("severity") == "warning"
+        assert _wait_until(lambda: sla_card.property("severity") == "warning", timeout_s=1.0), (
+            f"Nieprawidłowe severity SLA card: {sla_card.property('severity')!r}; "
+            f"feedSlaReport={root.property('feedSlaReport')!r}"
+        )
     finally:
         for obj in engine.rootObjects():
             obj.deleteLater()
