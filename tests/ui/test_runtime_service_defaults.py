@@ -1,3 +1,4 @@
+import sys
 from datetime import datetime, timezone
 from pathlib import Path
 from types import SimpleNamespace
@@ -167,13 +168,31 @@ def test_runtime_service_operator_action_can_be_invoked_via_qt_metaobject() -> N
         "timestamp": "2025-01-02T09:15:00+00:00",
     }
 
-    ok = QMetaObject.invokeMethod(
-        service,
-        "triggerOperatorAction",
-        Qt.ConnectionType.DirectConnection,
-        Q_ARG("QString", "requestFreeze"),
-        Q_ARG("QVariantMap", entry),
-    )
+    if sys.platform == "win32":
+        # PySide6 on Windows: Q_ARG("QVariantMap", python dict) can segfault.
+        meta = service.metaObject()
+        target = "triggerOperatorAction(QString,QVariantMap)"
+        has_overload = any(
+            bytes(meta.method(i).methodSignature()).decode(errors="ignore") == target
+            for i in range(meta.methodCount())
+        )
+        assert has_overload, f"Brak overloadu {target} w metaObject()"
+
+        ok = QMetaObject.invokeMethod(
+            service,
+            "triggerOperatorAction",
+            Qt.ConnectionType.DirectConnection,
+            Q_ARG("QString", "requestFreeze"),
+            Q_ARG("QVariant", entry),
+        )
+    else:
+        ok = QMetaObject.invokeMethod(
+            service,
+            "triggerOperatorAction",
+            Qt.ConnectionType.DirectConnection,
+            Q_ARG("QString", "requestFreeze"),
+            Q_ARG("QVariantMap", entry),
+        )
 
     assert app is not None
     assert ok is True
