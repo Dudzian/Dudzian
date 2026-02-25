@@ -2696,7 +2696,8 @@ def test_runtime_service_uses_injected_feed_alert_sink(monkeypatch: pytest.Monke
     service._update_feed_health(status="connected", reconnects=0, last_error="")
 
     assert fallback_calls == 0
-    assert service._feed_alert_sink is injected_sink
+    assert getattr(service, "_feed_alert_sink_override", None) is injected_sink
+    assert service._effective_feed_alert_sink() is injected_sink
     assert emitted_events
     assert any(
         event.get("severity") == "critical"
@@ -2981,34 +2982,110 @@ def test_runtime_overview_feed_sla_exposes_anti_flap_counters(tmp_path: Path) ->
                     root.setProperty(key, value)
         assert root is not None, "Nie udało się utworzyć RuntimeOverview.qml"
 
+    if root.parent() is None:
+        root.setParent(engine)
+
     default_order = root.property("defaultCardOrder")
     assert isinstance(default_order, list)
     dashboard_controller.setCardOrder(default_order)
-    for _ in range(3):
+    created_window = not (hasattr(root, "contentItem") and hasattr(root, "show"))
+    quick_window = root if not created_window else QQuickWindow()
+    try:
+        try:
+            quick_window.setWidth(1280)
+            quick_window.setHeight(720)
+        except Exception:
+            pass
+        try:
+            if hasattr(root, "setParentItem") and quick_window is not root:
+                root.setParentItem(quick_window.contentItem())
+        except Exception:
+            pass
+        try:
+            if hasattr(root, "setWidth"):
+                root.setWidth(quick_window.width())
+            if hasattr(root, "setHeight"):
+                root.setHeight(quick_window.height())
+        except Exception:
+            pass
+        quick_window.show()
         app.processEvents()
-        qt_wait(20)
-
-    runtime_service._feed_sla_report = {
-        "sla_state": "warning",
-        "p95_ms": 1250.0,
-        "latency_warning_ms": 800.0,
-        "latency_critical_ms": 1500.0,
-        "consecutive_degraded_periods": 3,
-        "consecutive_healthy_periods": 0,
-    }
-    runtime_service.feedSlaReportChanged.emit()
-    app.processEvents()
-    for _ in range(2):
-        qt_wait(20)
+        try:
+            if hasattr(quick_window, "requestUpdate"):
+                quick_window.requestUpdate()
+        except Exception:
+            pass
+        try:
+            if hasattr(root, "polish"):
+                root.polish()
+        except Exception:
+            pass
+        qt_wait(250)
         app.processEvents()
 
-    report = root.property("feedSlaReport")
-    assert isinstance(report, dict)
-    assert report.get("consecutive_degraded_periods") == 3
-    assert report.get("consecutive_healthy_periods") == 0
-    sla_card = root.findChild(QObject, "runtimeOverviewFeedSlaCard")
-    assert sla_card is not None
-    assert sla_card.property("severity") == "warning"
+        grid_deadline = time.monotonic() + 5.0
+        while time.monotonic() < grid_deadline:
+            app.processEvents()
+            order = root.property("effectiveGridCardOrder") or []
+            if isinstance(order, list) and "feed_sla" in order:
+                break
+            qt_wait(50)
+
+        order = root.property("effectiveGridCardOrder") or []
+        assert isinstance(order, list) and "feed_sla" in order, (
+            f"feed_sla missing in effectiveGridCardOrder: {order!r}"
+        )
+
+        runtime_service._feed_sla_report = {
+            "sla_state": "warning",
+            "p95_ms": 1250.0,
+            "latency_warning_ms": 800.0,
+            "latency_critical_ms": 1500.0,
+            "consecutive_degraded_periods": 3,
+            "consecutive_healthy_periods": 0,
+        }
+        runtime_service.feedSlaReportChanged.emit()
+        app.processEvents()
+
+        report = root.property("feedSlaReport")
+        assert isinstance(report, dict)
+        assert report.get("consecutive_degraded_periods") == 3
+        assert report.get("consecutive_healthy_periods") == 0
+
+        sla_card = None
+        deadline = time.monotonic() + 5.0
+        while time.monotonic() < deadline and sla_card is None:
+            try:
+                if hasattr(quick_window, "requestUpdate"):
+                    quick_window.requestUpdate()
+            except Exception:
+                pass
+            try:
+                if hasattr(root, "polish"):
+                    root.polish()
+            except Exception:
+                pass
+            app.processEvents()
+            sla_card = root.findChild(QObject, "runtimeOverviewFeedSlaCard")
+            if sla_card is None and hasattr(quick_window, "contentItem"):
+                try:
+                    sla_card = quick_window.contentItem().findChild(QObject, "runtimeOverviewFeedSlaCard")
+                except Exception:
+                    sla_card = None
+            if sla_card is None:
+                qt_wait(50)
+
+        assert sla_card is not None
+        assert sla_card.property("severity") == "warning"
+    finally:
+        for obj in engine.rootObjects():
+            obj.deleteLater()
+        engine.deleteLater()
+        if created_window:
+            quick_window.deleteLater()
+        app.processEvents()
+        qt_wait(10)
+        app.processEvents()
 
 
 def test_runtime_overview_reference_screenshot_exists() -> None:
