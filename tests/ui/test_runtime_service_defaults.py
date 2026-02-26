@@ -9,7 +9,7 @@ pytest.importorskip("PySide6", reason="UI/QML tests require PySide6")
 from PySide6.QtCore import QCoreApplication, QMetaObject, Qt, Q_ARG
 
 from ui.backend.runtime_service import RuntimeService
-from tests.ui._qt_invoke_safe import assert_has_overload, invoke_safe_variant
+from tests.ui._qt_invoke_safe import assert_has_overload
 
 
 
@@ -176,12 +176,19 @@ def test_runtime_service_operator_action_can_be_invoked_via_qt_metaobject() -> N
         target = "triggerOperatorAction(QString,QVariantMap)"
         assert_has_overload(service, target)
 
+        # Windows/PySide6: avoid passing Python objects through invokeMethod.
+        # Use Qt-native QJSValue created by QJSEngine.
+        from PySide6.QtQml import QJSEngine
+
+        js_engine = QJSEngine()
+        entry_arg = js_engine.toScriptValue(entry_payload)
+
         ok = QMetaObject.invokeMethod(
             service,
             "triggerOperatorAction",
             Qt.ConnectionType.DirectConnection,
             Q_ARG("QString", "requestFreeze"),
-            Q_ARG("QVariant", invoke_safe_variant(entry_payload, wrap_dict_in_key="record")),
+            Q_ARG("QVariant", entry_arg),
         )
     else:
         ok = QMetaObject.invokeMethod(
@@ -207,7 +214,13 @@ def test_runtime_service_operator_action_can_be_invoked_via_qvariant_signature()
         "timestamp": "2025-01-02T09:15:00+00:00",
         "id": "decision-variant",
     }
-    entry_arg = invoke_safe_variant(entry_payload, wrap_dict_in_key="record")
+    if sys.platform == "win32":
+        from PySide6.QtQml import QJSEngine
+
+        js_engine = QJSEngine()
+        entry_arg = js_engine.toScriptValue(entry_payload)
+    else:
+        entry_arg = entry_payload
 
     ok = QMetaObject.invokeMethod(
         service,
@@ -231,7 +244,13 @@ def test_runtime_service_request_freeze_can_be_invoked_via_qvariant_signature() 
         "timestamp": "2025-01-02T09:15:00+00:00",
         "id": "decision-freeze-variant",
     }
-    entry_arg = invoke_safe_variant(entry_payload, wrap_dict_in_key="record")
+    if sys.platform == "win32":
+        from PySide6.QtQml import QJSEngine
+
+        js_engine = QJSEngine()
+        entry_arg = js_engine.toScriptValue(entry_payload)
+    else:
+        entry_arg = entry_payload
 
     ok = QMetaObject.invokeMethod(
         service,
