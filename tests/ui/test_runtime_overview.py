@@ -13,6 +13,8 @@ import sys
 
 import pytest
 
+from tests.ui._qt_invoke_safe import invoke_safe_qml_variant
+
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 _QT_IMPORT_ERROR: Exception | None = None
@@ -1540,11 +1542,12 @@ def test_runtime_overview_risk_panel_filters_and_actions() -> None:
     assert top_summary_card.property("summarySeverity") == "block"
 
     entry = filtered_lat[0]
+    entry_arg = invoke_safe_qml_variant(engine, entry)
     ok = QMetaObject.invokeMethod(
         risk_panel,
         "openDrilldown",
         Qt.DirectConnection,
-        Q_ARG("QVariant", entry),
+        Q_ARG("QVariant", entry_arg),
     )
     assert ok
     app.processEvents()
@@ -1567,7 +1570,7 @@ def test_runtime_overview_risk_panel_filters_and_actions() -> None:
         risk_panel,
         "openDrilldown",
         Qt.DirectConnection,
-        Q_ARG("QVariant", entry),
+        Q_ARG("QVariant", entry_arg),
     )
     assert ok
     app.processEvents()
