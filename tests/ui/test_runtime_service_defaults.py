@@ -9,6 +9,9 @@ pytest.importorskip("PySide6", reason="UI/QML tests require PySide6")
 from PySide6.QtCore import QCoreApplication, QMetaObject, Qt, Q_ARG
 
 from ui.backend.runtime_service import RuntimeService
+from tests.ui._qt_invoke_safe import assert_has_overload, invoke_safe_variant
+
+
 
 
 def test_runtime_service_uses_demo_loader_when_no_journal() -> None:
@@ -163,27 +166,22 @@ def test_runtime_service_trigger_operator_action_reports_handled_for_request_ali
 def test_runtime_service_operator_action_can_be_invoked_via_qt_metaobject() -> None:
     app = QCoreApplication.instance() or QCoreApplication([])
     service = RuntimeService(decision_loader=lambda limit: [])
-    entry = {
+    entry_payload = {
         "event": "risk_blocked",
         "timestamp": "2025-01-02T09:15:00+00:00",
+        "id": "decision-meta",
     }
 
     if sys.platform == "win32":
-        # PySide6 on Windows: Q_ARG("QVariantMap", python dict) can segfault.
-        meta = service.metaObject()
         target = "triggerOperatorAction(QString,QVariantMap)"
-        has_overload = any(
-            bytes(meta.method(i).methodSignature()).decode(errors="ignore") == target
-            for i in range(meta.methodCount())
-        )
-        assert has_overload, f"Brak overloadu {target} w metaObject()"
+        assert_has_overload(service, target)
 
         ok = QMetaObject.invokeMethod(
             service,
             "triggerOperatorAction",
             Qt.ConnectionType.DirectConnection,
             Q_ARG("QString", "requestFreeze"),
-            Q_ARG("QVariant", entry),
+            Q_ARG("QVariant", invoke_safe_variant(entry_payload, wrap_dict_in_key="record")),
         )
     else:
         ok = QMetaObject.invokeMethod(
@@ -191,7 +189,7 @@ def test_runtime_service_operator_action_can_be_invoked_via_qt_metaobject() -> N
             "triggerOperatorAction",
             Qt.ConnectionType.DirectConnection,
             Q_ARG("QString", "requestFreeze"),
-            Q_ARG("QVariantMap", entry),
+            Q_ARG("QVariantMap", entry_payload),
         )
 
     assert app is not None
@@ -204,18 +202,19 @@ def test_runtime_service_operator_action_can_be_invoked_via_qt_metaobject() -> N
 def test_runtime_service_operator_action_can_be_invoked_via_qvariant_signature() -> None:
     app = QCoreApplication.instance() or QCoreApplication([])
     service = RuntimeService(decision_loader=lambda limit: [])
-    entry = {
+    entry_payload = {
         "event": "risk_blocked",
         "timestamp": "2025-01-02T09:15:00+00:00",
         "id": "decision-variant",
     }
+    entry_arg = invoke_safe_variant(entry_payload, wrap_dict_in_key="record")
 
     ok = QMetaObject.invokeMethod(
         service,
         "triggerOperatorAction",
         Qt.ConnectionType.DirectConnection,
         Q_ARG("QString", "requestFreeze"),
-        Q_ARG("QVariant", entry),
+        Q_ARG("QVariant", entry_arg),
     )
 
     assert app is not None
@@ -227,17 +226,18 @@ def test_runtime_service_operator_action_can_be_invoked_via_qvariant_signature()
 def test_runtime_service_request_freeze_can_be_invoked_via_qvariant_signature() -> None:
     app = QCoreApplication.instance() or QCoreApplication([])
     service = RuntimeService(decision_loader=lambda limit: [])
-    entry = {
+    entry_payload = {
         "event": "risk_blocked",
         "timestamp": "2025-01-02T09:15:00+00:00",
         "id": "decision-freeze-variant",
     }
+    entry_arg = invoke_safe_variant(entry_payload, wrap_dict_in_key="record")
 
     ok = QMetaObject.invokeMethod(
         service,
         "requestFreeze",
         Qt.ConnectionType.DirectConnection,
-        Q_ARG("QVariant", entry),
+        Q_ARG("QVariant", entry_arg),
     )
 
     assert app is not None

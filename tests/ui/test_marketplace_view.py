@@ -1,11 +1,13 @@
 from __future__ import annotations
 
 import os
+import sys
 from pathlib import Path
 
 import pytest
 
 from tests.ui._qt import require_pyside6
+from tests.ui._qt_invoke_safe import invoke_safe_qml_variant
 
 pytestmark = pytest.mark.qml
 
@@ -14,7 +16,7 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 require_pyside6()
 
 from PySide6.QtCore import QObject, QMetaObject, Qt, QUrl, Slot, Q_ARG
-from PySide6.QtQml import QQmlApplicationEngine, QQmlComponent, QJSValue
+from PySide6.QtQml import QQmlApplicationEngine, QQmlComponent
 
 try:  # pragma: no cover - zależy od środowiska wykonawczego
     from PySide6.QtWidgets import QApplication
@@ -96,8 +98,9 @@ class StubMarketplaceController(QObject):
 
 
 def _as_py(value: object) -> object:
-    if isinstance(value, QJSValue):
-        return value.toVariant()
+    to_variant = getattr(value, "toVariant", None)
+    if callable(to_variant):
+        return to_variant()
     return value
 
 
@@ -241,16 +244,23 @@ def test_marketplace_view_refresh_and_actions(tmp_path: Path) -> None:
     assert isinstance(presets_variant, list)
     assert len(presets_variant) >= 2
 
-    first_preset = _as_py(presets_variant[0])
+    presets_raw = root.property("presets")
+    assert isinstance(presets_raw, list) and presets_raw, f"presets_raw={presets_raw!r}"
+
+    first_preset_qt = presets_raw[0]
+    first_preset_py = _as_py(first_preset_qt)
     assert isinstance(
-        first_preset, dict
-    ), f"first_preset type={type(first_preset)!r} value={first_preset!r}"
+        first_preset_py, dict
+    ), f"first_preset_py type={type(first_preset_py)!r} value={first_preset_py!r}"
+    preset_candidate = first_preset_qt if sys.platform == "win32" else first_preset_py
+    preset_arg = invoke_safe_qml_variant(engine, preset_candidate)
+
     export_url = QUrl.fromLocalFile(str(tmp_path / "out.yaml"))
     invoked = QMetaObject.invokeMethod(
         root,
         "exportPreset",
         Qt.DirectConnection,
-        Q_ARG("QVariant", first_preset),
+        Q_ARG("QVariant", preset_arg),
         Q_ARG("QVariant", export_url),
     )
     assert invoked, "invokeMethod(exportPreset) returned False (method not invoked)"
@@ -266,7 +276,7 @@ def test_marketplace_view_refresh_and_actions(tmp_path: Path) -> None:
         )
     export_format = _as_py(root.property("exportFormat"))
     assert controller.export_calls[-1] == (
-        first_preset.get("presetId"),
+        first_preset_py.get("presetId"),
         export_format,
         export_url.toString(),
     )
@@ -275,19 +285,19 @@ def test_marketplace_view_refresh_and_actions(tmp_path: Path) -> None:
         root,
         "activatePreset",
         Qt.DirectConnection,
-        Q_ARG("QVariant", first_preset),
+        Q_ARG("QVariant", preset_arg),
     )
     app.processEvents()
-    assert controller.activate_calls[-1] == first_preset.get("presetId")
+    assert controller.activate_calls[-1] == first_preset_py.get("presetId")
 
     QMetaObject.invokeMethod(
         root,
         "removePreset",
         Qt.DirectConnection,
-        Q_ARG("QVariant", first_preset),
+        Q_ARG("QVariant", preset_arg),
     )
     app.processEvents()
-    assert controller.remove_calls[-1] == first_preset.get("presetId")
+    assert controller.remove_calls[-1] == first_preset_py.get("presetId")
 
     for obj in engine.rootObjects():
         obj.deleteLater()
