@@ -88,5 +88,24 @@ def invoke_safe_qml_variant(engine: Any, arg: Any) -> Any:
 
 def assert_has_overload(qobj: Any, signature: str) -> None:
     meta = qobj.metaObject()
-    idx = meta.indexOfMethod(signature.encode())
-    assert idx != -1, f"Brak overloadu {signature} w metaObject()"
+    idx = -1
+    try:
+        # PySide6: indexOfMethod expects str
+        idx = meta.indexOfMethod(signature)
+    except TypeError:
+        idx = -1
+
+    if idx == -1:
+        # Fallback: scan method signatures (useful for debugging/normalization differences)
+        method_name = signature.split("(", 1)[0]
+        candidates: list[str] = []
+        for i in range(meta.methodCount()):
+            try:
+                sig = bytes(meta.method(i).methodSignature()).decode(errors="ignore")
+            except Exception:
+                continue
+            if sig.startswith(method_name + "("):
+                candidates.append(sig)
+        assert signature in candidates, (
+            f"Brak overloadu {signature} w metaObject(); znalezione: {candidates!r}"
+        )
