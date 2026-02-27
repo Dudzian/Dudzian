@@ -109,7 +109,7 @@ class DummyEngine:
         self.loaded: str | None = None
 
     def addImportPath(self, path: str) -> None:  # noqa: N802 - zgodnie z API Qt
-        self.import_paths.append(path)
+        self.import_paths.insert(0, path)
 
     def importPathList(self) -> list[str]:  # noqa: N802 - zgodnie z API Qt
         return list(self.import_paths)
@@ -126,6 +126,25 @@ class DummyEngine:
     def rootContext(self) -> DummyContext:  # noqa: N802 - zgodnie z API Qt
         return DummyContext()
 
+
+
+
+class DummyEngineWithoutImportPathList:
+    def __init__(self):
+        self.import_paths: list[str] = []
+        self.loaded: str | None = None
+
+    def addImportPath(self, path: str) -> None:  # noqa: N802 - zgodnie z API Qt
+        self.import_paths.insert(0, path)
+
+    def load(self, url: str) -> None:  # noqa: N802 - zgodnie z API Qt
+        self.loaded = url
+
+    def rootObjects(self) -> list[object]:  # noqa: N802 - zgodnie z API Qt
+        return [object()] if self.loaded else []
+
+    def rootContext(self) -> DummyContext:  # noqa: N802 - zgodnie z API Qt
+        return DummyContext()
 
 class DummyBridge:
     def __init__(self, engine: DummyEngine, config: object, enable_cloud_runtime: bool):
@@ -250,3 +269,28 @@ def test_shared_qml_path_not_added_on_windows(monkeypatch, tmp_path):
 
     expected_shared_qml = (Path(app.__file__).resolve().parent.parent / "qml").as_posix()
     assert expected_shared_qml not in engine.import_paths
+
+
+def test_fallback_add_import_path_keeps_desired_order(monkeypatch, tmp_path):
+    config_path = tmp_path / "ui.yaml"
+    config_path.write_text("history_limit: 5\n", encoding="utf-8")
+
+    qml_dir = tmp_path / "custom"
+    qml_dir.mkdir()
+    qml_file = qml_dir / "Main.qml"
+    qml_file.write_text("import QtQuick 2.15\nItem {}\n", encoding="utf-8")
+
+    monkeypatch.setattr(app, "QGuiApplication", DummyQGuiApplication)
+    monkeypatch.setattr(app, "QQmlApplicationEngine", DummyEngineWithoutImportPathList)
+    monkeypatch.setattr(app, "QUrl", DummyQUrl)
+    monkeypatch.setattr(app, "QmlContextBridge", DummyBridge)
+    monkeypatch.setattr(app, "load_ui_app_config", _dummy_load_ui_app_config)
+    monkeypatch.setattr(app.sys, "platform", "linux")
+
+    options = app.AppOptions(config_path=config_path, qml_path=Path(qml_file))
+    pyside_app = app.BotPysideApplication(options)
+    engine = pyside_app.load()
+
+    qml_root = (Path(app.__file__).resolve().parent / "qml").as_posix()
+    shared_qml = (Path(app.__file__).resolve().parent.parent / "qml").as_posix()
+    assert engine.import_paths[:3] == [qml_root, shared_qml, qml_file.parent.as_posix()]
