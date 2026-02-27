@@ -410,7 +410,7 @@ Item {
                                 spacing: 4
                                 RowLayout {
                                     spacing: 6
-                                    IconImage {
+                                    Components.IconGlyph {
                                         source: designSystem.iconSource(modelData.icon || "mode_wizard")
                                         width: 18
                                         height: 18

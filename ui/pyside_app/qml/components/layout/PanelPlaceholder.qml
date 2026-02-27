@@ -2,6 +2,7 @@ import QtQuick
 import QtQuick.Controls
 import QtQuick.Layouts
 import QtQuick.Effects
+import ".." as Components
 
 Rectangle {
     id: root
@@ -35,7 +36,7 @@ Rectangle {
 
         RowLayout {
             spacing: 8
-            IconImage {
+            Components.IconGlyph {
                 source: designSystem ? designSystem.iconSource(iconName) : ""
                 width: 20
                 height: 20
