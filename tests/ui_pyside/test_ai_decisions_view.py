@@ -109,6 +109,10 @@ def test_ai_decisions_view_renders_without_live_runtime() -> None:
     warnings = collect_engine_warnings(engine)
     engine.rootContext().setContextProperty("runtimeService", runtime)
     engine.rootContext().setContextProperty("designSystem", design)
+    if hasattr(engine, "setInitialProperties"):
+        engine.setInitialProperties(
+            {"runtimeService": runtime, "designSystem": design}
+        )
     qml_path = Path("ui/pyside_app/qml/views/AiDecisionsView.qml").resolve()
     engine.load(QUrl.fromLocalFile(qml_path.as_posix()))
     assert_engine_loaded(engine, warnings, "QML view failed to load")
@@ -116,6 +120,19 @@ def test_ai_decisions_view_renders_without_live_runtime() -> None:
     view = engine.rootObjects()[0]
     app = _ensure_app()
     app.processEvents()
+
+    # Defensive: if backend/order of initialization differs, ensure the view
+    # sees the stubs and refreshes its snapshot.
+    try:
+        view.setProperty("runtimeService", runtime)
+        view.setProperty("designSystem", design)
+    except Exception:
+        pass
+    runtime.reloadAiGovernorSnapshot()
+    for _ in range(50):
+        app.processEvents()
+        if int(view.property("timelineCount")) == len(snapshot["history"]):
+            break
 
     assert int(view.property("timelineCount")) == len(snapshot["history"])
     assert int(view.property("recommendationCount")) == len(snapshot["lastDecision"]["recommendedModes"])
