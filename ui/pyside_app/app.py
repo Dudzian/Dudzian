@@ -157,7 +157,7 @@ class BotPysideApplication:
             for index, import_path in enumerate(merged_import_paths):
                 _LOGGER.debug("QML importPath[%d]: %s", index, import_path)
         else:
-            for import_path in import_paths:
+            for import_path in reversed(import_paths):
                 engine.addImportPath(import_path)
                 _LOGGER.debug("Dodano QML importPath: %s", import_path)
         collected_warnings: list[str] = []
