@@ -192,7 +192,12 @@ def test_marketplace_view_refresh_and_actions(tmp_path: Path) -> None:
         presets = _get_presets(root)
         return isinstance(presets, list) and len(presets) >= n
 
-    QMetaObject.invokeMethod(root, "refreshPresets", Qt.DirectConnection)
+    if sys.platform == "win32":
+        refresh = getattr(root, "refreshPresets", None)
+        assert callable(refresh), "refreshPresets not callable from Python on win32 (avoid invokeMethod)"
+        refresh()
+    else:
+        QMetaObject.invokeMethod(root, "refreshPresets", Qt.DirectConnection)
     ok = _wait_for(
         lambda: _has_presets_at_least(1),
         app,
@@ -210,13 +215,16 @@ def test_marketplace_view_refresh_and_actions(tmp_path: Path) -> None:
     assert len(presets_variant) >= 1
 
     import_url = QUrl.fromLocalFile(str(tmp_path / "preset.yaml"))
-    invoked = QMetaObject.invokeMethod(
-        root,
-        "importPresetFromUrl",
-        Qt.DirectConnection,
-        Q_ARG("QVariant", import_url),
-    )
-    assert invoked, "invokeMethod(importPresetFromUrl) returned False (method not invoked)"
+    if sys.platform == "win32":
+        root.importPresetFromUrl(import_url)
+    else:
+        invoked = QMetaObject.invokeMethod(
+            root,
+            "importPresetFromUrl",
+            Qt.DirectConnection,
+            Q_ARG("QVariant", import_url),
+        )
+        assert invoked, "invokeMethod(importPresetFromUrl) returned False (method not invoked)"
     ok = _wait_for(lambda: len(controller.import_calls) >= 1, app, steps=60)
     if not ok:
         status_error = _as_py(root.property("statusError"))
@@ -256,14 +264,17 @@ def test_marketplace_view_refresh_and_actions(tmp_path: Path) -> None:
     preset_arg = invoke_safe_qml_variant(engine, preset_candidate)
 
     export_url = QUrl.fromLocalFile(str(tmp_path / "out.yaml"))
-    invoked = QMetaObject.invokeMethod(
-        root,
-        "exportPreset",
-        Qt.DirectConnection,
-        Q_ARG("QVariant", preset_arg),
-        Q_ARG("QVariant", export_url),
-    )
-    assert invoked, "invokeMethod(exportPreset) returned False (method not invoked)"
+    if sys.platform == "win32":
+        root.exportPreset(preset_arg, export_url)
+    else:
+        invoked = QMetaObject.invokeMethod(
+            root,
+            "exportPreset",
+            Qt.DirectConnection,
+            Q_ARG("QVariant", preset_arg),
+            Q_ARG("QVariant", export_url),
+        )
+        assert invoked, "invokeMethod(exportPreset) returned False (method not invoked)"
     ok = _wait_for(lambda: len(controller.export_calls) >= 1, app, steps=60)
     if not ok:
         status_error = _as_py(root.property("statusError"))
@@ -281,21 +292,27 @@ def test_marketplace_view_refresh_and_actions(tmp_path: Path) -> None:
         export_url.toString(),
     )
 
-    QMetaObject.invokeMethod(
-        root,
-        "activatePreset",
-        Qt.DirectConnection,
-        Q_ARG("QVariant", preset_arg),
-    )
+    if sys.platform == "win32":
+        root.activatePreset(preset_arg)
+    else:
+        QMetaObject.invokeMethod(
+            root,
+            "activatePreset",
+            Qt.DirectConnection,
+            Q_ARG("QVariant", preset_arg),
+        )
     app.processEvents()
     assert controller.activate_calls[-1] == first_preset_py.get("presetId")
 
-    QMetaObject.invokeMethod(
-        root,
-        "removePreset",
-        Qt.DirectConnection,
-        Q_ARG("QVariant", preset_arg),
-    )
+    if sys.platform == "win32":
+        root.removePreset(preset_arg)
+    else:
+        QMetaObject.invokeMethod(
+            root,
+            "removePreset",
+            Qt.DirectConnection,
+            Q_ARG("QVariant", preset_arg),
+        )
     app.processEvents()
     assert controller.remove_calls[-1] == first_preset_py.get("presetId")
 
