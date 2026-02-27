@@ -1,7 +1,6 @@
 import QtQuick
 import QtQuick.Controls
 import QtQuick.Layouts
-import "../styles" as Styles
 import "../components" as Components
 
 ColumnLayout {
