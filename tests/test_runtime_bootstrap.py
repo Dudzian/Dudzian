@@ -114,6 +114,63 @@ def test_extract_payload_sha256_handles_missing_candidates() -> None:
     assert bootstrap_module._extract_payload_sha256({"sha512": "noop"}) is None
 
 
+def test_normalize_documents_map_prefers_sha_and_canonical_name() -> None:
+    docs = {
+        "KYC_PACKET": {
+            "name": "KYC_PACKET",
+            "path": "compliance/KYC_PACKET.pdf",
+            "signature_path": "compliance/KYC_PACKET.sig",
+        },
+        "kyc_packet": {
+            "name": "kyc_packet",
+            "path": "compliance/kyc_packet.pdf",
+            "signature_path": "compliance/kyc_packet.sig",
+            "sha256": "abc123",
+        },
+        "risk_profile": "not-a-mapping",
+    }
+
+    normalized = bootstrap_module._normalize_documents_map(docs)
+
+    assert "kyc_packet" in normalized
+    assert "KYC_PACKET" not in normalized
+    assert normalized["kyc_packet"]["sha256"] == "abc123"
+    assert "risk_profile" not in normalized
+
+
+def test_normalize_documents_map_tie_break_prefers_fewer_uppercase() -> None:
+    docs = {
+        "KYC_PACKET": {
+            "name": "KYC_PACKET",
+            "path": "compliance/kyc_packet.pdf",
+            "signature_path": "compliance/kyc_packet.sig",
+            "sha256": "same-hash",
+        },
+        "kyc_packet": {
+            "name": "kyc_packet",
+            "path": "compliance/kyc_packet.pdf",
+            "signature_path": "compliance/kyc_packet.sig",
+            "sha256": "same-hash",
+        },
+    }
+
+    normalized = bootstrap_module._normalize_documents_map(docs)
+
+    assert set(normalized) == {"kyc_packet"}
+    assert normalized["kyc_packet"]["name"] == "kyc_packet"
+
+
+def test_normalize_documents_map_breaks_full_tie_deterministically() -> None:
+    docs = {
+        "DOC": {"name": "doc", "path": "a", "signature_path": "b", "sha256": "x", "note": "zzz"},
+        "doc": {"name": "doc", "path": "a", "signature_path": "b", "sha256": "x", "note": "aaa"},
+    }
+
+    normalized = bootstrap_module._normalize_documents_map(docs)
+
+    assert normalized["doc"]["note"] == "aaa"
+
+
 class _MemorySecretStorage(SecretStorage):
     def __init__(self) -> None:
         self._store: dict[str, str] = {}
@@ -1774,6 +1831,8 @@ def test_live_checklist_blocks_on_invalid_signature(
     assert verification is not None
     assert verification["status"] == "invalid"
     assert "error" in verification
+    assert isinstance(verification["documents"], Mapping)
+    assert verification["documents"] == verification["documents_by_name"]
 
 
 def test_live_checklist_blocks_on_missing_document_in_pytest(

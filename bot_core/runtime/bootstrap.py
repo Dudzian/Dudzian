@@ -1898,6 +1898,54 @@ def _verify_live_document_signature(
     }
 
 
+def _normalize_documents_map(
+    docs: Mapping[str, Any],
+) -> dict[str, Mapping[str, Any]]:
+    """Normalizuje mapę dokumentów i deduplikuje wpisy bez rozróżniania wielkości liter."""
+
+    def _rank_doc(
+        source_key: str,
+        name: str,
+        payload: Mapping[str, Any],
+    ) -> tuple[int, int, int, tuple[tuple[str, str], ...], str]:
+        score = 0
+        score += 4 if payload.get("sha256") else 0
+        score += 2 if payload.get("signature_path") else 0
+        score += 1 if payload.get("path") else 0
+        upper_count = sum(1 for char in name if char.isupper())
+        stable_fields = ("name", "sha256", "signature_path", "path", "key_id")
+        payload_fingerprint = tuple(
+            (field, str(payload.get(field, "")))
+            for field in stable_fields
+        )
+        return (score, -upper_count, len(payload), payload_fingerprint, source_key)
+
+    merged: dict[str, tuple[str, str, Mapping[str, Any]]] = {}
+    for key, payload in docs.items():
+        if not isinstance(payload, Mapping):
+            continue
+        name = str(payload.get("name") or key).strip()
+        if not name:
+            continue
+        normalized_payload: dict[str, Any] = dict(payload)
+        normalized_payload["name"] = name
+        lookup_key = name.lower()
+
+        if lookup_key in merged:
+            previous_source_key, previous_name, previous_payload = merged[lookup_key]
+            if _rank_doc(str(key), name, normalized_payload) > _rank_doc(
+                previous_source_key,
+                previous_name,
+                previous_payload,
+            ):
+                merged[lookup_key] = (str(key), name, normalized_payload)
+            continue
+
+        merged[lookup_key] = (str(key), name, normalized_payload)
+
+    return dict(sorted((name, payload) for _, name, payload in merged.values()))
+
+
 def _validate_live_signatures(
     environment: EnvironmentConfig,
     *,
@@ -2047,6 +2095,8 @@ def _validate_live_signatures(
 
     if failures:
         raise LiveSignatureVerificationError("; ".join(failures))
+
+    verification_results = _normalize_documents_map(verification_results)
 
     return {
         "documents": verification_results,
@@ -3748,14 +3798,17 @@ def bootstrap_environment(
                             doc_payload["signed_by"] = tuple(entry.get("signed_by", ()))
                         verification_documents.append(doc_payload)
                         verification_documents_by_name[str(name)] = doc_payload
+                normalized_documents_by_name = _normalize_documents_map(
+                    verification_documents_by_name
+                )
                 # W testach/CI nie przerywamy bootstrapa na invalid signatures,
                 # aby checklistę live dało się zweryfikować w testach.
                 live_signature_verification = {
                     "status": "invalid",
                     "error": str(exc),
                     "environment": environment.name,
-                    "documents": verification_documents,
-                    "documents_by_name": verification_documents_by_name,
+                    "documents": normalized_documents_by_name,
+                    "documents_by_name": normalized_documents_by_name,
                 }
             else:
                 raise RuntimeError(
