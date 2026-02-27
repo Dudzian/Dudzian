@@ -1321,6 +1321,113 @@ def test_live_checklist_ignores_null_required_entries(
     }
 
 
+def test_live_checklist_matches_required_documents_case_insensitive(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _stub_license_validation(monkeypatch, tmp_path)
+    _disable_exchange_health(monkeypatch)
+    _prepare_signed_license_bundle(tmp_path)
+    data = yaml.safe_load(_BASE_CONFIG)
+    _apply_license_stub(data, tmp_path)
+    live_env = copy.deepcopy(data["environments"]["binance_paper"])
+    live_env.update(
+        {
+            "environment": "live",
+            "keychain_key": "binance_live_key",
+            "alert_audit": {"backend": "file", "directory": "./var/live_alerts"},
+        }
+    )
+    compliance_doc = _create_signed_document(
+        tmp_path,
+        "compliance/live/binance/kyc_packet.pdf",
+        "compliance/live/binance/kyc_packet.sig",
+        key_id="compliance-key",
+        signed_by=("compliance",),
+    )
+    risk_doc = _create_signed_document(
+        tmp_path,
+        "risk/live/binance/risk_profile_alignment.pdf",
+        "risk/live/binance/risk_profile_alignment.sig",
+        key_id="risk-key",
+        signed_by=("risk",),
+    )
+
+    live_env["live_readiness"] = {
+        "checklist_id": "binance-q3",
+        "signed": True,
+        "signed_by": ["compliance", "security"],
+        "signature_path": "compliance/live/binance/checklist.sig",
+        "required_documents": [
+            "KYC_PACKET",
+            "RISK_PROFILE_ALIGNMENT",
+        ],
+        "documents": [
+            {
+                "name": "kyc_packet",
+                "path": "compliance/live/binance/kyc_packet.pdf",
+                "sha256": compliance_doc["sha256"],
+                "signed": True,
+                "signed_by": ["compliance"],
+                "signature_path": compliance_doc["signature_path"],
+            },
+            {
+                "name": "risk_profile_alignment",
+                "path": "risk/live/binance/risk_profile_alignment.pdf",
+                "sha256": risk_doc["sha256"],
+                "signed": True,
+                "signed_by": ["risk"],
+                "signature_path": risk_doc["signature_path"],
+            },
+        ],
+    }
+    data["environments"]["binance_live"] = live_env
+
+    auto_trader_entry = data["runtime_entrypoints"]["auto_trader"]
+    auto_trader_entry["environment"] = "binance_live"
+    auto_trader_entry["trusted_auto_confirm"] = True
+    auto_trader_entry["compliance"] = {
+        "live_allowed": True,
+        "signed": True,
+        "require_signoff": True,
+        "risk_profiles": ["balanced"],
+        "signoffs": ["kyc2024", "risk_limits"],
+    }
+
+    config_path = tmp_path / "core_live.yaml"
+    config_path.write_text(yaml.safe_dump(data, sort_keys=False), encoding="utf-8")
+
+    storage, manager = _prepare_manager()
+    storage.set_secret(
+        "tests:binance_live_key:trading",
+        json.dumps(
+            {
+                "key_id": "live-key",
+                "secret": "live-secret",
+                "passphrase": None,
+                "permissions": ["read", "trade"],
+                "environment": Environment.LIVE.value,
+            }
+        ),
+    )
+
+    context = bootstrap_environment(
+        "binance_live", config_path=config_path, secret_manager=manager
+    )
+
+    verification = context.live_signature_verification
+    assert verification is not None
+    verified_docs = verification["documents"]
+    if isinstance(verified_docs, Mapping):
+        verified_doc_names = set(verified_docs)
+    else:
+        verified_doc_names = {
+            str(doc["name"])
+            for doc in verified_docs
+            if isinstance(doc, Mapping) and doc.get("name")
+        }
+    assert verified_doc_names == {"kyc_packet", "risk_profile_alignment"}
+
+
 def test_live_checklist_normalizes_verified_document_names(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
