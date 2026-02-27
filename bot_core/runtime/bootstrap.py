@@ -1888,8 +1888,9 @@ def _verify_live_document_signature(
             f"Suma kontrolna w podpisie dokumentu '{document.name}' nie zgadza się z plikiem źródłowym."
         )
 
+    normalized_name = str(getattr(document, "name", "")).strip()
     return {
-        "name": document.name,
+        "name": normalized_name,
         "path": str(doc_path),
         "signature_path": str(signature_path),
         "key_id": key_id,
@@ -1906,28 +1907,50 @@ def _validate_live_signatures(
     if readiness is None:
         raise LiveSignatureVerificationError("Środowisko live nie posiada sekcji live_readiness.")
 
-    documents_all = tuple(getattr(readiness, "documents", ()) or ())
+    raw_documents = (
+        readiness.get("documents")
+        if isinstance(readiness, Mapping)
+        else getattr(readiness, "documents", None)
+    )
+    if isinstance(raw_documents, Mapping):
+        documents_all_raw = tuple(raw_documents.values())
+    else:
+        documents_all_raw = tuple(raw_documents or ())
+
+    documents_buffer: list[LiveChecklistDocumentConfig] = []
+    for index, document in enumerate(documents_all_raw):
+        if isinstance(document, LiveChecklistDocumentConfig):
+            documents_buffer.append(document)
+            continue
+        if not isinstance(document, Mapping):
+            raise LiveSignatureVerificationError(
+                "Sekcja live_readiness.documents zawiera nieprawidłowy wpis "
+                f"na pozycji {index} (typ={type(document).__name__}, oczekiwano mapy)."
+            )
+
+        try:
+            parsed_document = LiveChecklistDocumentConfig(**document)
+        except TypeError as exc:
+            raise LiveSignatureVerificationError(
+                f"Nieprawidłowy wpis w live_readiness.documents na pozycji {index}: {exc}"
+            ) from exc
+        documents_buffer.append(parsed_document)
+
+    documents_all: tuple[LiveChecklistDocumentConfig, ...] = tuple(documents_buffer)
     if not documents_all:
         raise LiveSignatureVerificationError(
             "Sekcja live_readiness nie zawiera żadnych dokumentów do weryfikacji."
         )
 
-    required_names_ordered_raw: list[str] = []
-    for raw_name in getattr(readiness, "required_documents", ()) or ():
-        if raw_name is None:
-            continue
-        normalized_name = str(raw_name).strip()
-        if not normalized_name or normalized_name.lower() in {"none", "null"}:
-            continue
-        required_names_ordered_raw.append(normalized_name)
-
-    required_seen: set[str] = set()
-    required_names_ordered: list[str] = []
-    for name in required_names_ordered_raw:
-        if name in required_seen:
-            continue
-        required_seen.add(name)
-        required_names_ordered.append(name)
+    raw_required_documents = (
+        readiness.get("required_documents")
+        if isinstance(readiness, Mapping)
+        else getattr(readiness, "required_documents", None)
+    )
+    required_names_ordered = list(
+        LiveReadinessChecklistConfig.normalize_required_documents(raw_required_documents)
+    )
+    required_name_lookup = {name.lower(): name for name in required_names_ordered}
 
     documents_by_name: dict[str, LiveChecklistDocumentConfig] = {}
     duplicate_document_names: list[str] = []
@@ -1936,12 +1959,13 @@ def _validate_live_signatures(
         normalized_name = str(getattr(document, "name", "")).strip()
         if not normalized_name:
             continue
-        if normalized_name in documents_by_name:
-            if normalized_name not in duplicate_seen:
+        key = normalized_name.lower()
+        if key in documents_by_name:
+            if key not in duplicate_seen:
                 duplicate_document_names.append(normalized_name)
-                duplicate_seen.add(normalized_name)
+                duplicate_seen.add(key)
             continue
-        documents_by_name[normalized_name] = document
+        documents_by_name[key] = document
 
     verification_results: dict[str, Mapping[str, Any]] = {}
     failures: list[str] = []
@@ -1951,14 +1975,16 @@ def _validate_live_signatures(
         raise LiveSignatureVerificationError("; ".join(failures))
     if required_names_ordered:
         missing_required_documents = [
-            name for name in required_names_ordered if name not in documents_by_name
+            required_name_lookup[name.lower()]
+            for name in required_names_ordered
+            if name.lower() not in documents_by_name
         ]
         if missing_required_documents:
             for missing_name in missing_required_documents:
                 failures.append(f"{missing_name}: brak definicji dokumentu w live_readiness.documents")
             raise LiveSignatureVerificationError("; ".join(failures))
         documents_for_verification = tuple(
-            documents_by_name[name]
+            documents_by_name[name.lower()]
             for name in required_names_ordered
         )
     else:

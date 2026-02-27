@@ -11,6 +11,7 @@ from bot_core.config.models import (
     DailyTrendMomentumStrategyConfig,
     DecisionEngineConfig,
     DecisionEngineTCOConfig,
+    LiveReadinessChecklistConfig,
     DecisionOrchestratorThresholds,
     EnvironmentConfig,
     InstrumentBackfillWindow,
@@ -764,3 +765,41 @@ def test_validate_core_config_detects_invalid_tco_age_thresholds(
     result = validate_core_config(config)
     assert not result.is_valid()
     assert any("warn_report_age_hours" in err for err in result.errors)
+
+
+def test_live_readiness_required_documents_normalizes_nullish_values() -> None:
+    readiness = LiveReadinessChecklistConfig(
+        required_documents=("kyc_packet", None, "null", "None", "  ", "KYC_PACKET", "risk_profile"),
+    )
+
+    assert readiness.required_documents == ("kyc_packet", "risk_profile")
+
+
+def test_live_readiness_required_documents_handles_scalar_string() -> None:
+    readiness = LiveReadinessChecklistConfig(required_documents="KYC_PACKET")
+
+    assert readiness.required_documents == ("KYC_PACKET",)
+
+
+def test_live_readiness_required_documents_handles_mapping_values() -> None:
+    readiness = LiveReadinessChecklistConfig(
+        required_documents={"first": "kyc_packet", "second": "None", "third": "risk_profile"},
+    )
+
+    assert readiness.required_documents == ("kyc_packet", "risk_profile")
+
+
+def test_live_readiness_required_documents_ignores_nested_structures() -> None:
+    readiness = LiveReadinessChecklistConfig(
+        required_documents=("kyc_packet", {"name": "risk_profile"}, ["penetration_report"], "risk_profile"),
+    )
+
+    assert readiness.required_documents == ("kyc_packet", "risk_profile")
+
+
+def test_live_readiness_required_documents_ignores_non_string_scalars() -> None:
+    readiness = LiveReadinessChecklistConfig(
+        required_documents=("kyc_packet", 123, True, "risk_profile"),
+    )
+
+    assert readiness.required_documents == ("kyc_packet", "risk_profile")

@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from datetime import datetime
-from typing import Any, Mapping, Sequence, SupportsInt, cast
+from typing import Any, Iterable, Mapping, Sequence, SupportsInt, cast
 
 from bot_core.exchanges.base import Environment
 from bot_core.exchanges.core import Mode
@@ -780,6 +780,41 @@ class LiveReadinessChecklistConfig:
     signature_path: str | None = None
     documents: Sequence[LiveChecklistDocumentConfig] = field(default_factory=tuple)
     required_documents: Sequence[str] = field(default_factory=tuple)
+
+    @staticmethod
+    def normalize_required_documents(values: Iterable[object] | str | None) -> tuple[str, ...]:
+        nullish = {"null", "none"}
+        if isinstance(values, str):
+            values = (values,)
+        elif isinstance(values, Mapping):
+            values = values.values()
+
+        seen: set[str] = set()
+        normalized: list[str] = []
+        for raw_name in values or ():
+            if raw_name is None:
+                continue
+            if isinstance(raw_name, Mapping):
+                continue
+            if isinstance(raw_name, Sequence) and not isinstance(raw_name, str):
+                continue
+            if not isinstance(raw_name, str):
+                continue
+
+            name = raw_name.strip()
+            if not name:
+                continue
+            key = name.lower()
+            if key in nullish or key in seen:
+                continue
+
+            seen.add(key)
+            normalized.append(name)
+
+        return tuple(normalized)
+
+    def __post_init__(self) -> None:
+        self.required_documents = self.normalize_required_documents(self.required_documents)
 
 
 @dataclass(slots=True)
