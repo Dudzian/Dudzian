@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import contextlib
 import json
 import sys
 from typing import Any
@@ -18,6 +19,44 @@ class _InvokeSafeVariantWrapper:
         if self._wrap_key:
             return {self._wrap_key: payload}
         return payload
+
+
+def _normalize_method_signature(value: Any) -> str:
+    if isinstance(value, str):
+        return value
+    if isinstance(value, (bytes, bytearray)):
+        return bytes(value).decode(errors="ignore")
+    with_data = getattr(value, "data", None)
+    if callable(with_data):
+        with_data_value = with_data()
+        if isinstance(with_data_value, (bytes, bytearray)):
+            return bytes(with_data_value).decode(errors="ignore")
+    with contextlib.suppress(Exception):
+        return bytes(value).decode(errors="ignore")
+    return str(value)
+
+
+def _binding_version() -> str:
+    with contextlib.suppress(Exception):
+        import PySide6  # type: ignore
+
+        return getattr(PySide6, "__version__", "unknown")
+    return "unavailable"
+
+
+def _collect_method_candidates(qobj: Any, method_name: str) -> tuple[list[str], int]:
+    candidates: list[str] = []
+    scan_errors = 0
+    meta = qobj.metaObject()
+    for i in range(meta.methodCount()):
+        try:
+            sig = _normalize_method_signature(meta.method(i).methodSignature())
+        except Exception:
+            scan_errors += 1
+            continue
+        if sig.startswith(method_name + "("):
+            candidates.append(sig)
+    return candidates, scan_errors
 
 
 def _is_qjsvalue_instance(value: Any) -> bool:
@@ -110,29 +149,6 @@ def assert_has_overload(qobj: Any, signature: str) -> None:
     - never probe availability by calling invokeMethod with test payloads.
     """
 
-    def _normalize_method_signature(value: Any) -> str:
-        if isinstance(value, str):
-            return value
-        if isinstance(value, (bytes, bytearray)):
-            return bytes(value).decode(errors="ignore")
-        with_data = getattr(value, "data", None)
-        if callable(with_data):
-            with_data_value = with_data()
-            if isinstance(with_data_value, (bytes, bytearray)):
-                return bytes(with_data_value).decode(errors="ignore")
-        with contextlib.suppress(Exception):
-            return bytes(value).decode(errors="ignore")
-        return str(value)
-
-    def _binding_version() -> str:
-        with contextlib.suppress(Exception):
-            import PySide6  # type: ignore
-
-            return getattr(PySide6, "__version__", "unknown")
-        return "unavailable"
-
-    import contextlib
-
     meta = qobj.metaObject()
     idx = -1
     try:
@@ -143,14 +159,7 @@ def assert_has_overload(qobj: Any, signature: str) -> None:
 
     if idx == -1:
         method_name = str(signature).split("(", 1)[0]
-        candidates: list[str] = []
-        for i in range(meta.methodCount()):
-            try:
-                sig = _normalize_method_signature(meta.method(i).methodSignature())
-            except Exception:
-                continue
-            if sig.startswith(method_name + "("):
-                candidates.append(sig)
+        candidates, _ = _collect_method_candidates(qobj, method_name)
         assert str(signature) in candidates, (
             "Brak overloadu w metaObject(); "
             f"target={signature!r}; "
@@ -159,3 +168,39 @@ def assert_has_overload(qobj: Any, signature: str) -> None:
             f"platform={sys.platform}; "
             f"binding=PySide6/{_binding_version()}"
         )
+
+
+def assert_has_any_overload(qobj: Any, *signatures: str) -> None:
+    """Assert that QObject exposes at least one of the provided overload signatures."""
+    if not signatures:
+        raise ValueError("Brak sygnatur do sprawdzenia; signatures=()")
+
+    method_names = {str(signature).split("(", 1)[0] for signature in signatures}
+    if len(method_names) != 1:
+        raise ValueError(
+            "Mieszane nazwy metod w signatures; "
+            f"signatures={signatures!r}; methods={sorted(method_names)!r}"
+        )
+
+    errors: list[str] = []
+    for signature in signatures:
+        try:
+            assert_has_overload(qobj, signature)
+            return
+        except AssertionError as exc:
+            errors.append(str(exc))
+
+    method_name = next(iter(method_names))
+    candidates, scan_errors = _collect_method_candidates(qobj, method_name)
+
+    details_preview = errors[:2]
+    if len(errors) > 2:
+        details_preview.append(f"... +{len(errors) - 2} more")
+
+    raise AssertionError(
+        "Brak oczekiwanego overloadu (żaden wariant nie pasuje); "
+        f"method={method_name!r}; signatures={signatures!r}; "
+        f"candidates={candidates!r}; scan_errors={scan_errors}; "
+        f"platform={sys.platform}; binding=PySide6/{_binding_version()}; "
+        f"details={details_preview!r}"
+    )
