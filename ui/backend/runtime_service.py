@@ -2343,6 +2343,7 @@ class RuntimeService(QObject):
         return False
 
     # ------------------------------------------------------------------ operator actions --
+    @Slot(result=bool)
     @Slot("QVariantMap", result=bool)
     @Slot("QVariant", result=bool)
     def requestFreeze(self, entry: object = None) -> bool:  # type: ignore[override]
@@ -2358,6 +2359,7 @@ class RuntimeService(QObject):
     def requestUnblock(self, entry: object = None) -> bool:  # type: ignore[override]
         return self._record_operator_action("unblock", entry)
 
+    @Slot("QString", result=bool)
     @Slot("QString", "QVariantMap", result=bool)
     @Slot("QString", "QVariant", result=bool)
     @Slot(str, "QVariantMap", result=bool)
@@ -3860,9 +3862,9 @@ class RuntimeService(QObject):
             return dict(nested_record)
         return payload_dict
 
-    def _normalize_operator_entry(self, entry: object | None) -> Mapping[str, object] | None:
+    def _normalize_operator_entry(self, entry: object | None) -> Mapping[str, object]:
         if entry is None:
-            return None
+            return {}
         if isinstance(entry, Mapping):
             return self._unwrap_operator_entry_mapping(entry)
         plain = to_plain_value(entry)
@@ -3883,7 +3885,7 @@ class RuntimeService(QObject):
             variant_plain = to_plain_value(variant)
             if isinstance(variant_plain, Mapping):
                 return self._unwrap_operator_entry_mapping(variant_plain)
-        return None
+        return {}
 
     @staticmethod
     def _normalize_operator_action(action: object) -> str:
@@ -3910,7 +3912,7 @@ class RuntimeService(QObject):
         normalized_action = self._normalize_operator_action(action_str)
         try:
             normalized_entry = self._normalize_operator_entry(entry)
-            sanitized = to_plain_dict(normalized_entry) if normalized_entry is not None else {}
+            sanitized = to_plain_dict(normalized_entry)
         except Exception:
             sanitized = {}
         timestamp_value: object | None = None
