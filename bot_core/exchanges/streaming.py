@@ -1100,19 +1100,35 @@ class LocalLongPollStream(Iterable[StreamBatch]):
                     now = self._clock()
                     candidate = next_poll_at if next_poll_at is not None else now
                     wait_until = max(candidate, self._last_poll + min_interval)
-                    timeout = max(0.0, wait_until - now)
+                    remaining_until_poll = max(0.0, wait_until - now)
+                    # acquire(timeout=...) używa zegara rzeczywistego (monotonic),
+                    # więc deadline też liczmy w czasie rzeczywistym, niezależnie
+                    # od ewentualnie wstrzykniętego self._clock() w testach.
+                    wait_deadline = time.monotonic() + remaining_until_poll
+                    timeout = remaining_until_poll
+                    timeout = min(timeout, self._SLEEP_SLICE_SECONDS)
                     acquired = self._poll_tokens.acquire(timeout=timeout)
                     if acquired:
                         remaining = wait_until - self._clock()
                         if remaining > 0:
                             self._sleep_with_stop(remaining)
+                    else:
+                        if self._stop_event.is_set() or self._closed:
+                            break
+                        if time.monotonic() < wait_deadline:
+                            continue
                 else:
                     wait_until = next_poll_at if next_poll_at is not None else None
-                    timeout = None
+                    timeout = self._SLEEP_SLICE_SECONDS
                     if wait_until is not None:
-                        timeout = max(0.0, wait_until - self._clock())
+                        timeout = min(
+                            timeout,
+                            max(0.0, wait_until - self._clock()),
+                        )
                     # W trybie non-prefill NIE robimy poll'a bez tokena.
                     if not self._poll_tokens.acquire(timeout=timeout):
+                        if self._stop_event.is_set() or self._closed:
+                            break
                         continue
                     if wait_until is not None:
                         remaining = wait_until - self._clock()

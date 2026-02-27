@@ -256,6 +256,17 @@ def shutdown_live_threads_after_qml(request: pytest.FixtureRequest) -> Generator
         for thread in threading.enumerate()
         if thread.is_alive() and thread.name.startswith(prefixes)
     ]
+    if active:
+        details = [
+            {
+                "name": thread.name,
+                "ident": thread.ident,
+                "daemon": thread.daemon,
+                "alive": thread.is_alive(),
+            }
+            for thread in active
+        ]
+        logger.error("Live threads still active after QML cleanup: %s", details)
     assert not active, f"Pozostały aktywne wątki live: {[t.name for t in active]}"
     assert not DatabaseManager.active_instances(), "Pozostały aktywne instancje DatabaseManager"
 

@@ -36,6 +36,8 @@ def invoke_safe_variant(arg: Any, *, wrap_dict_in_key: str | None = None) -> Any
     Rule of thumb:
     - QML method invocation on win32 should prefer QJSValue via invoke_safe_qml_variant().
     - Python slot invocation may pass dict through this wrapper (toVariant()).
+    - For Q_ARG("QVariantMap", ...) on win32 prefer dispatch-only payloads
+      (e.g. ``None``) in tests; avoid structured marshalling through invokeMethod.
     - Never pass raw dict into Q_ARG("QVariant"|"QVariantMap", ...) on win32.
     """
     if sys.platform != "win32":
@@ -86,26 +88,74 @@ def invoke_safe_qml_variant(engine: Any, arg: Any) -> Any:
     return invoke_safe_variant(arg)
 
 
+def invoke_safe_qvariantmap(arg: Any) -> Any:
+    """Return safest payload for Q_ARG("QVariantMap", ...) tests.
+
+    Test-only helper for invokeMethod arguments; do not use in production paths.
+
+    On win32, structured QVariantMap marshalling in invokeMethod may crash before
+    entering Python slot logic. For dispatch/meta-call tests use ``None``.
+    On non-win32 this function is pass-through.
+    """
+    if sys.platform == "win32":
+        return None
+    return arg
+
+
 def assert_has_overload(qobj: Any, signature: str) -> None:
+    """Assert that QObject exposes the exact method overload with robust diagnostics.
+
+    Rule of thumb (Windows/PySide6):
+    - validate overloads through metaObject() only,
+    - never probe availability by calling invokeMethod with test payloads.
+    """
+
+    def _normalize_method_signature(value: Any) -> str:
+        if isinstance(value, str):
+            return value
+        if isinstance(value, (bytes, bytearray)):
+            return bytes(value).decode(errors="ignore")
+        with_data = getattr(value, "data", None)
+        if callable(with_data):
+            with_data_value = with_data()
+            if isinstance(with_data_value, (bytes, bytearray)):
+                return bytes(with_data_value).decode(errors="ignore")
+        with contextlib.suppress(Exception):
+            return bytes(value).decode(errors="ignore")
+        return str(value)
+
+    def _binding_version() -> str:
+        with contextlib.suppress(Exception):
+            import PySide6  # type: ignore
+
+            return getattr(PySide6, "__version__", "unknown")
+        return "unavailable"
+
+    import contextlib
+
     meta = qobj.metaObject()
     idx = -1
     try:
         # PySide6: indexOfMethod expects str
-        idx = meta.indexOfMethod(signature)
+        idx = meta.indexOfMethod(str(signature))
     except TypeError:
         idx = -1
 
     if idx == -1:
-        # Fallback: scan method signatures (useful for debugging/normalization differences)
-        method_name = signature.split("(", 1)[0]
+        method_name = str(signature).split("(", 1)[0]
         candidates: list[str] = []
         for i in range(meta.methodCount()):
             try:
-                sig = bytes(meta.method(i).methodSignature()).decode(errors="ignore")
+                sig = _normalize_method_signature(meta.method(i).methodSignature())
             except Exception:
                 continue
             if sig.startswith(method_name + "("):
                 candidates.append(sig)
-        assert signature in candidates, (
-            f"Brak overloadu {signature} w metaObject(); znalezione: {candidates!r}"
+        assert str(signature) in candidates, (
+            "Brak overloadu w metaObject(); "
+            f"target={signature!r}; "
+            f"method={method_name!r}; "
+            f"candidates={candidates!r}; "
+            f"platform={sys.platform}; "
+            f"binding=PySide6/{_binding_version()}"
         )
