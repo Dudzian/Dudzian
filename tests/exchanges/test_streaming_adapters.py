@@ -2389,6 +2389,136 @@ def test_local_long_poll_stream_close_all_active_waits_long_enough_for_small_tim
     assert not leaking_workers
 
 
+def test_local_long_poll_stream_close_all_active_stops_worker_waiting_for_token(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    LocalLongPollStream.close_all_active()
+
+    def _never_poll(request, timeout=0.0):  # noqa: D401
+        raise AssertionError("worker should not reach network poll without token")
+
+    monkeypatch.setattr("bot_core.exchanges.streaming.urlopen", _never_poll)
+    monkeypatch.delenv("DUDZIAN_TEST_MODE", raising=False)
+    monkeypatch.delenv("DUDZIAN_ALLOW_LONG_POLL", raising=False)
+
+    stream = LocalLongPollStream(
+        base_url="http://127.0.0.1:9109",
+        path="/token-wait",
+        channels=["ticker"],
+        adapter="demo",
+        scope="public",
+        environment="paper",
+        poll_interval=0.0,
+        timeout=5.0,
+        max_retries=1,
+        backoff_base=0.0,
+        backoff_cap=0.0,
+        jitter=(0.0, 0.0),
+    )
+
+    stream._ensure_worker()
+
+    deadline = time.monotonic() + 1.0
+    while time.monotonic() < deadline:
+        worker = stream._worker_thread
+        if worker and worker.is_alive():
+            break
+        time.sleep(0.01)
+
+    worker = stream._worker_thread
+    assert worker is not None and worker.is_alive()
+
+    LocalLongPollStream.close_all_active()
+
+    worker_after_close = stream._worker_thread
+    assert worker_after_close is None or not worker_after_close.is_alive()
+
+
+def test_local_long_poll_stream_prefill_does_not_poll_before_wait_until() -> None:
+    LocalLongPollStream.close_all_active()
+    now = time.monotonic()
+
+    stream = LocalLongPollStream(
+        base_url="http://127.0.0.1:9110",
+        path="/prefill-wait-until",
+        channels=["ticker"],
+        adapter="demo",
+        scope="public",
+        environment="paper",
+        poll_interval=5.0,
+        timeout=0.1,
+        max_retries=1,
+        backoff_base=0.0,
+        backoff_cap=0.0,
+        jitter=(0.0, 0.0),
+    )
+
+    stream._prefill_enabled = True
+    stream._last_poll = now
+    stream._next_poll_at = now + 5.0
+
+    poll_called = threading.Event()
+
+    def _poll_once() -> None:
+        poll_called.set()
+
+    stream._poll_once = _poll_once  # type: ignore[method-assign]
+    stream._ensure_worker()
+
+    time.sleep(0.3)
+    assert poll_called.is_set() is False
+
+    stream.close()
+
+
+def test_local_long_poll_stream_close_all_active_stops_prefill_waiting_worker_quickly() -> None:
+    LocalLongPollStream.close_all_active()
+    now = time.monotonic()
+
+    stream = LocalLongPollStream(
+        base_url="http://127.0.0.1:9111",
+        path="/prefill-close",
+        channels=["ticker"],
+        adapter="demo",
+        scope="public",
+        environment="paper",
+        poll_interval=5.0,
+        timeout=0.1,
+        max_retries=1,
+        backoff_base=0.0,
+        backoff_cap=0.0,
+        jitter=(0.0, 0.0),
+    )
+
+    stream._prefill_enabled = True
+    stream._last_poll = now
+    stream._next_poll_at = now + 5.0
+
+    def _poll_once() -> None:
+        raise AssertionError("worker should not poll before wait_until")
+
+    stream._poll_once = _poll_once  # type: ignore[method-assign]
+    stream._ensure_worker()
+
+    deadline = time.monotonic() + 1.0
+    while time.monotonic() < deadline:
+        worker = stream._worker_thread
+        if worker and worker.is_alive():
+            break
+        time.sleep(0.01)
+
+    worker = stream._worker_thread
+    assert worker is not None and worker.is_alive()
+
+    started = time.monotonic()
+    LocalLongPollStream.close_all_active()
+    elapsed = time.monotonic() - started
+
+    worker_after_close = stream._worker_thread
+    assert worker_after_close is None or not worker_after_close.is_alive()
+    assert elapsed < (LocalLongPollStream._DEFAULT_JOIN_TIMEOUT + 0.5)
+
+
 def test_local_long_poll_stream_stop_interrupts_retry_after_sleep_in_test_mode(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
