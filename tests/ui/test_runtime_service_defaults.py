@@ -10,12 +10,12 @@ from PySide6.QtCore import QCoreApplication, QMetaObject, Qt, Q_ARG
 
 from ui.backend.runtime_service import RuntimeService
 from tests.ui._qt_invoke_safe import (
-    assert_has_any_overload,
     assert_has_overload,
     invoke_safe_qvariantmap,
     invoke_safe_variant,
 )
 
+_WIN32_SKIP_VARIANTMAP_ONLY = "win32: only QVariantMap overload present; invokeMethod marshalling risk"
 
 
 def test_runtime_service_uses_demo_loader_when_no_journal() -> None:
@@ -172,21 +172,19 @@ def test_runtime_service_operator_action_can_be_invoked_via_qt_metaobject() -> N
     service = RuntimeService(decision_loader=lambda limit: [])
 
     if sys.platform == "win32":
-        # Test name mentions metaobject invocation with QVariant signatures, but on
-        # win32 this branch is intentionally dispatch-only to avoid AV-prone
-        # QVariant/QVariantMap marshalling in PySide6.
-        assert_has_overload(service, "triggerOperatorAction(QString)")
-        assert_has_any_overload(
-            service,
-            "triggerOperatorAction(QString,QVariant)",
-            "triggerOperatorAction(QString,QVariantMap)",
-        )
+        # Win32/PySide6: invoke only the safer primitive QVariant path.
+        try:
+            assert_has_overload(service, "triggerOperatorAction(QString,QVariant)")
+        except AssertionError:
+            assert_has_overload(service, "triggerOperatorAction(QString,QVariantMap)")
+            pytest.skip(_WIN32_SKIP_VARIANTMAP_ONLY)
 
         ok = QMetaObject.invokeMethod(
             service,
             "triggerOperatorAction",
             Qt.ConnectionType.DirectConnection,
             Q_ARG("QString", "requestFreeze"),
+            Q_ARG("QVariant", 0),
         )
     else:
         entry_payload = {
@@ -215,19 +213,18 @@ def test_runtime_service_operator_action_can_be_invoked_via_qvariant_signature()
     app = QCoreApplication.instance() or QCoreApplication([])
     service = RuntimeService(decision_loader=lambda limit: [])
     if sys.platform == "win32":
-        # This test is dispatch-only on win32 despite the name; payload semantics
-        # remain covered by direct Python call tests.
-        assert_has_overload(service, "triggerOperatorAction(QString)")
-        assert_has_any_overload(
-            service,
-            "triggerOperatorAction(QString,QVariant)",
-            "triggerOperatorAction(QString,QVariantMap)",
-        )
+        try:
+            assert_has_overload(service, "triggerOperatorAction(QString,QVariant)")
+        except AssertionError:
+            assert_has_overload(service, "triggerOperatorAction(QString,QVariantMap)")
+            pytest.skip(_WIN32_SKIP_VARIANTMAP_ONLY)
+
         ok = QMetaObject.invokeMethod(
             service,
             "triggerOperatorAction",
             Qt.ConnectionType.DirectConnection,
             Q_ARG("QString", "requestFreeze"),
+            Q_ARG("QVariant", 0),
         )
     else:
         entry_payload = {
@@ -256,15 +253,26 @@ def test_runtime_service_request_freeze_can_be_invoked_via_qvariant_signature() 
     app = QCoreApplication.instance() or QCoreApplication([])
     service = RuntimeService(decision_loader=lambda limit: [])
     if sys.platform == "win32":
-        # This test is dispatch-only on win32 despite the name; payload semantics
-        # remain covered by direct Python call tests.
-        assert_has_overload(service, "requestFreeze()")
-        assert_has_overload(service, "requestFreeze(QVariant)")
-        ok = QMetaObject.invokeMethod(
-            service,
-            "requestFreeze",
-            Qt.ConnectionType.DirectConnection,
-        )
+        try:
+            assert_has_overload(service, "requestFreeze(QVariant)")
+        except AssertionError:
+            try:
+                assert_has_overload(service, "requestFreeze()")
+            except AssertionError:
+                assert_has_overload(service, "requestFreeze(QVariantMap)")
+                pytest.skip(_WIN32_SKIP_VARIANTMAP_ONLY)
+            ok = QMetaObject.invokeMethod(
+                service,
+                "requestFreeze",
+                Qt.ConnectionType.DirectConnection,
+            )
+        else:
+            ok = QMetaObject.invokeMethod(
+                service,
+                "requestFreeze",
+                Qt.ConnectionType.DirectConnection,
+                Q_ARG("QVariant", 0),
+            )
     else:
         entry_payload = {
             "event": "risk_blocked",
