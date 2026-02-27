@@ -35,7 +35,7 @@ Button {
             font.pixelSize: 18
             color: control.foregroundColor
         }
-        IconImage {
+        IconGlyph {
             visible: control.glyphText.length === 0 && control.iconName.length > 0
             source: control.iconName.length > 0 && designSystem
                     ? designSystem.iconSource(control.iconName)
