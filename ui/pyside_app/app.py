@@ -133,28 +133,33 @@ class BotPysideApplication:
         qml_file = (self._options.qml_path or self._config.qml_entrypoint).resolve()
         qml_root = Path(__file__).resolve().parent / "qml"
         engine = QQmlApplicationEngine()
-        qml_paths = [
-            qml_root,
-            Path(__file__).resolve().parent.parent / "qml",
-            qml_file.parent,
-        ]
-        seen_paths: set[str] = set()
-        for import_path in qml_paths:
-            import_path_resolved = import_path.resolve()
-            import_path_str = import_path_resolved.as_posix()
-            if import_path_str in seen_paths:
+        shared_qml = Path(__file__).resolve().parent.parent / "qml"
+        desired_import_paths = [qml_root.resolve().as_posix(), qml_file.parent.resolve().as_posix()]
+        if sys.platform != "win32":
+            desired_import_paths.insert(1, shared_qml.resolve().as_posix())
+
+        import_paths: list[str] = []
+        for import_path in desired_import_paths:
+            if import_path in import_paths:
                 continue
-            if not import_path.exists():
-                _LOGGER.debug("Pomijam nieistniejący importPath %s", import_path_str)
+            if not Path(import_path).exists():
+                _LOGGER.debug("Pomijam nieistniejący importPath %s", import_path)
                 continue
-            engine.addImportPath(import_path_str)
-            _LOGGER.debug("Dodano QML importPath: %s", import_path_str)
-            seen_paths.add(import_path_str)
-        qml_root_resolved = qml_root.resolve()
-        qml_root_str = qml_root_resolved.as_posix()
-        if qml_root_str not in seen_paths and qml_root_resolved.exists():
-            engine.addImportPath(qml_root_str)
-            _LOGGER.debug("Wymuszono importPath z modułami QML (Styles): %s", qml_root_str)
+            import_paths.append(import_path)
+
+        if hasattr(engine, "setImportPathList") and hasattr(engine, "importPathList"):
+            merged_import_paths: list[str] = []
+            for import_path in import_paths + list(engine.importPathList()):
+                if import_path in merged_import_paths:
+                    continue
+                merged_import_paths.append(import_path)
+            engine.setImportPathList(merged_import_paths)
+            for index, import_path in enumerate(merged_import_paths):
+                _LOGGER.debug("QML importPath[%d]: %s", index, import_path)
+        else:
+            for import_path in import_paths:
+                engine.addImportPath(import_path)
+                _LOGGER.debug("Dodano QML importPath: %s", import_path)
         collected_warnings: list[str] = []
 
         def _on_warnings(warnings: list) -> None:

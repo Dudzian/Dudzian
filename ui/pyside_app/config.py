@@ -5,7 +5,10 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Mapping, MutableMapping, cast
 
-import yaml
+try:
+    import yaml
+except Exception:  # noqa: BLE001
+    yaml = None
 
 
 def _merge_dicts(base: Mapping[str, Any], override: Mapping[str, Any]) -> dict[str, Any]:
@@ -74,6 +77,9 @@ def load_ui_app_config(
     default_qml: str | Path | None = None,
 ) -> UiAppConfig:
     """Czyta plik YAML i przygotowuje dane do kontekstu QML."""
+
+    if yaml is None:
+        raise RuntimeError("UI/PySide config loader requires PyYAML (pip install pyyaml).")
 
     path = Path(config_path).expanduser().resolve()
     if not path.exists():
