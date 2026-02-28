@@ -10,8 +10,6 @@ from typing import Mapping, MutableMapping, Sequence
 
 import jsonschema
 import numpy as np
-from pydantic import ConfigDict
-from pydantic.dataclasses import dataclass as pydantic_dataclass
 
 from .models import ModelArtifact
 from bot_core.reporting.model_quality import (
@@ -146,7 +144,7 @@ class CalibrationReport:
         return {"slope": float(self.slope), "intercept": float(self.intercept)}
 
 
-@pydantic_dataclass
+@dataclass(slots=True)
 class ModelQualityReport:
     """Raport jakości modelu wykorzystywany do audytu i monitoringu dryfu."""
 
@@ -156,16 +154,10 @@ class ModelQualityReport:
     metrics: Mapping[str, object]
     status: str
     baseline_version: str | None = None
-    delta: Mapping[str, float] = None  # type: ignore[assignment]
+    delta: Mapping[str, float] = field(default_factory=dict)
     validation: Mapping[str, object] | None = None
     dataset_rows: int | None = None
     trained_at: datetime | None = None
-    model_config = ConfigDict(arbitrary_types_allowed=True)
-
-    def __post_init__(self) -> None:
-        if self.delta is None:
-            object.__setattr__(self, "delta", {})
-
     def to_dict(self) -> Mapping[str, object]:
         payload: MutableMapping[str, object] = {
             "model_name": self.model_name,

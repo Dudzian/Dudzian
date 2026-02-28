@@ -184,7 +184,7 @@ def _install_pyside6_dummies() -> None:
 _install_pyside6_dummies()
 
 qml_bridge_stub = types.ModuleType("ui.pyside_app.qml_bridge")
-qml_bridge_stub.QmlContextBridge = DummyBridge
+setattr(qml_bridge_stub, "QmlContextBridge", DummyBridge)
 sys.modules.setdefault("ui.pyside_app.qml_bridge", qml_bridge_stub)
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
