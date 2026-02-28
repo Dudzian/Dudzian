@@ -66,14 +66,12 @@ QJsonObject variantMapToJson(const QVariantMap& map)
         } else if (it->typeId() == QMetaType::QVariantList) {
             QJsonArray array;
             const QVariantList list = it->toList();
-            array.reserve(list.size());
             for (const QVariant& value : list) {
                 if (value.typeId() == QMetaType::QVariantMap)
                     array.append(variantMapToJson(value.toMap()));
                 else if (value.typeId() == QMetaType::QVariantList) {
                     const QVariantList nested = value.toList();
                     QJsonArray nestedArray;
-                    nestedArray.reserve(nested.size());
                     for (const QVariant& nestedValue : nested) {
                         if (nestedValue.typeId() == QMetaType::QVariantMap)
                             nestedArray.append(variantMapToJson(nestedValue.toMap()));

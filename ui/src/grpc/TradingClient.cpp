@@ -23,7 +23,7 @@
 
 #include <google/protobuf/timestamp.pb.h>
 #include <grpcpp/create_channel.h>
-#include <grpcpp/channel_arguments.h>
+#include <grpcpp/support/channel_arguments.h>
 #include <grpcpp/grpcpp.h>
 #include <grpcpp/security/credentials.h>
 
@@ -916,10 +916,8 @@ void TradingClient::ensureStub() {
             const auto clientCert = readFileUtf8(m_tlsConfig.clientCertificatePath);
             const auto clientKey  = readFileUtf8(m_tlsConfig.clientKeyPath);
             if (clientCert && clientKey) {
-                grpc::SslCredentialsOptions::PemKeyCertPair pair;
-                pair.private_key = std::string(clientKey->constData(), static_cast<std::size_t>(clientKey->size()));
-                pair.cert_chain  = std::string(clientCert->constData(), static_cast<std::size_t>(clientCert->size()));
-                options.pem_key_cert_pairs.push_back(std::move(pair));
+                options.pem_private_key = std::string(clientKey->constData(), static_cast<std::size_t>(clientKey->size()));
+                options.pem_cert_chain = std::string(clientCert->constData(), static_cast<std::size_t>(clientCert->size()));
             } else if (m_tlsConfig.requireClientAuth) {
                 qCWarning(lcTradingClient) << "mTLS wymaga zarówno certyfikatu, jak i klucza klienta.";
                 fingerprintValid = false;

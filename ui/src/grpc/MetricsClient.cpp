@@ -8,7 +8,7 @@
 #include <QStringList>
 
 #include <grpcpp/channel.h>
-#include <grpcpp/channel_arguments.h>
+#include <grpcpp/support/channel_arguments.h>
 #include <grpcpp/create_channel.h>
 #include <grpcpp/client_context.h>
 #include <grpcpp/security/credentials.h>
@@ -235,7 +235,8 @@ void MetricsClient::ensureChannel()
                 auto cert = readFileUtf8(m_tlsConfig.clientCertificatePath);
                 auto key = readFileUtf8(m_tlsConfig.clientKeyPath);
                 if (cert && key) {
-                    options.pem_key_cert_pairs.push_back({*key, *cert});
+                    options.pem_private_key = *key;
+                    options.pem_cert_chain = *cert;
                 }
             }
             credentials = grpc::SslCredentials(options);

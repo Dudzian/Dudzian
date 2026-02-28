@@ -189,8 +189,10 @@ void DecisionMonitorController::rebuildSummaries()
             ++stats.executed;
         else if (!state.isEmpty())
             ++stats.rejected;
+        const QDateTime entryTimestamp = entry.value(QStringLiteral("timestamp")).toDateTime();
+        const QDateTime lastTimestamp = stats.lastDecision.value(QStringLiteral("timestamp")).toDateTime();
         if (!stats.lastDecision.contains(QStringLiteral("timestamp"))
-            || entry.value(QStringLiteral("timestamp")) > stats.lastDecision.value(QStringLiteral("timestamp"))) {
+            || (entryTimestamp.isValid() && (!lastTimestamp.isValid() || entryTimestamp > lastTimestamp))) {
             stats.lastDecision = entry;
         }
         scheduleStats.insert(schedule, stats);

@@ -12,6 +12,23 @@
 #include <functional>
 #include <memory>
 
+class BindingSecretJob : public QObject {
+    Q_OBJECT
+
+public:
+    explicit BindingSecretJob(QObject* parent = nullptr)
+        : QObject(parent)
+    {
+    }
+
+    virtual void start(const QString& program, const QStringList& arguments) = 0;
+    virtual void cancel() = 0;
+
+signals:
+    void started();
+    void completed(bool success, const QString& message, const QByteArray& stdoutData, const QByteArray& stderrData);
+};
+
 class LicenseActivationController : public QObject {
     Q_OBJECT
     Q_PROPERTY(bool licenseActive READ licenseActive NOTIFY licenseActiveChanged)
@@ -37,23 +54,6 @@ class LicenseActivationController : public QObject {
     Q_PROPERTY(QString provisioningDirectory READ provisioningDirectory WRITE setProvisioningDirectory NOTIFY provisioningDirectoryChanged)
 
 public:
-    class BindingSecretJob : public QObject {
-        Q_OBJECT
-
-    public:
-        explicit BindingSecretJob(QObject* parent = nullptr)
-            : QObject(parent)
-        {
-        }
-
-        virtual void start(const QString& program, const QStringList& arguments) = 0;
-        virtual void cancel() = 0;
-
-    signals:
-        void started();
-        void completed(bool success, const QString& message, const QByteArray& stdoutData, const QByteArray& stderrData);
-    };
-
     explicit LicenseActivationController(QObject* parent = nullptr);
 
     void setConfigDirectory(const QString& path);
