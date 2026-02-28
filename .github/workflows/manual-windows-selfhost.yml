@@ -36,6 +36,11 @@ on:
         required: false
         default: ""
         type: string
+      qt6_dir:
+        description: "Optional Qt prefix path for UI jobs (e.g. C:\\Qt\\6.7.0\\msvc2022_64); leave empty if runner already has Qt6_DIR/QT_ROOT_DIR"
+        required: false
+        default: ""
+        type: string
       upload_artifacts:
         description: "Upload artifacts/local-ci and test-results"
         required: false
@@ -152,6 +157,7 @@ jobs:
       SELECTED_JOB: ui-packaging-windows
       WHEELHOUSE_SOURCE: ${{ github.event_name == 'workflow_dispatch' && inputs.wheelhouse_source || 'none' }}
       WHEELHOUSE_LOCAL_PATH: ${{ github.event_name == 'workflow_dispatch' && inputs.wheelhouse_local_path || '' }}
+      QT6_DIR_INPUT: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.qt6_dir || '' }}
       UPLOAD_ARTIFACTS: ${{ inputs.upload_artifacts != 'false' }}
 
     steps:
@@ -177,6 +183,7 @@ jobs:
       SELECTED_JOB: ui-native-tests
       WHEELHOUSE_SOURCE: ${{ github.event_name == 'workflow_dispatch' && inputs.wheelhouse_source || 'none' }}
       WHEELHOUSE_LOCAL_PATH: ${{ github.event_name == 'workflow_dispatch' && inputs.wheelhouse_local_path || '' }}
+      QT6_DIR_INPUT: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.qt6_dir || '' }}
       UPLOAD_ARTIFACTS: ${{ inputs.upload_artifacts != 'false' }}
 
     steps:
@@ -213,4 +220,3 @@ jobs:
           wheelhouse_source: ${{ env.WHEELHOUSE_SOURCE }}
           wheelhouse_local_path: ${{ env.WHEELHOUSE_LOCAL_PATH }}
           upload_artifacts: ${{ env.UPLOAD_ARTIFACTS }}
-
