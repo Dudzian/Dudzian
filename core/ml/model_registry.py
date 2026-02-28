@@ -98,15 +98,19 @@ class ModelRegistry:
 
         digest = self._compute_sha256(artifact)
         created_at = datetime.now(timezone.utc)
-        existing_entries = [
-            ModelMetadata.from_dict(item)
-            for item in self._load_registry().get("models", [])
-            if isinstance(item, Mapping)
-        ]
-        if existing_entries:
-            latest_created_at = max(entry.created_at for entry in existing_entries)
-            if created_at <= latest_created_at:
-                created_at = latest_created_at + timedelta(microseconds=1)
+        registry = self._load_registry()
+        try:
+            existing_entries = [
+                ModelMetadata.from_dict(item)
+                for item in registry.get("models", [])
+                if isinstance(item, Mapping)
+            ]
+            if existing_entries:
+                latest_created_at = max(entry.created_at for entry in existing_entries)
+                if created_at <= latest_created_at:
+                    created_at = latest_created_at + timedelta(microseconds=1)
+        except Exception:  # pragma: no cover - defensywnie: publish ma pozostać możliwy
+            pass
         model_id = f"{created_at.strftime('%Y%m%d%H%M%S%f')}_{digest[:8]}"
         metadata = ModelMetadata(
             model_id=model_id,
@@ -117,7 +121,6 @@ class ModelRegistry:
             dataset_metadata=dict(dataset_metadata or {}),
         )
 
-        registry = self._load_registry()
         existing = {entry["model_id"]: entry for entry in registry.get("models", [])}
         existing[model_id] = metadata.to_dict()
         registry["models"] = list(existing.values())
