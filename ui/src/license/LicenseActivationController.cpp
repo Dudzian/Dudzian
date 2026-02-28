@@ -1332,3 +1332,5 @@ bool LicenseActivationController::primeBindingSecret(const QString& fingerprint)
         qCWarning(lcActivation) << "ensure-binding-secret zwrócił status" << status;
     return false;
 }
+
+#include "LicenseActivationController.moc"
