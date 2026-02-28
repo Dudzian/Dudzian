@@ -117,11 +117,19 @@ runs:
         if ($env:WHEELHOUSE_DIR) { $wheelArg = "-Wheelhouse `"$env:WHEELHOUSE_DIR`"" }
         pwsh -File scripts/ci/run_windows.ps1 -Job "${{ inputs.selected_job }}" $wheelArg
 
+    - name: Debug artifact name inputs
+      if: ${{ always() && inputs.enabled == 'true' && inputs.upload_artifacts == 'true' }}
+      shell: pwsh
+      run: |
+        Write-Host "github.job=${{ github.job }}"
+        Write-Host "github.run_attempt=${{ github.run_attempt }}"
+        Write-Host "inputs.selected_job=${{ inputs.selected_job }}"
+
     - name: Upload artifacts (logs/results)
       if: ${{ always() && inputs.enabled == 'true' && inputs.upload_artifacts == 'true' }}
       uses: actions/upload-artifact@v4
       with:
-        name: windows-selfhost-artifacts-${{ github.job }}-${{ github.run_attempt }}
+        name: windows-selfhost-artifacts-${{ inputs.selected_job }}-${{ github.run_attempt }}
         path: |
           artifacts/local-ci/**
           test-results/**
