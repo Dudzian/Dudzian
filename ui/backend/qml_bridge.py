@@ -7,10 +7,13 @@ from decimal import Decimal
 from numbers import Number
 from typing import Any
 
+QJSValue: type[Any] | None
 try:  # pragma: no cover - PySide6 może nie być dostępne w środowiskach light
-    from PySide6.QtQml import QJSValue  # type: ignore[attr-defined]
+    from PySide6.QtQml import QJSValue as _QJSValue  # type: ignore[attr-defined]
 except Exception:  # pragma: no cover - defensywne obejście braku Qt
-    QJSValue = None  # type: ignore[assignment]
+    QJSValue = None
+else:
+    QJSValue = _QJSValue
 
 _PRIMITIVES = (str, type(None))
 

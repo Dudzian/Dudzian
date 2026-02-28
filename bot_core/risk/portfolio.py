@@ -932,8 +932,8 @@ class RiskManagement:
             if not portfolio_returns:
                 return 0.0
             percentile = (1.0 - confidence) * 100.0
-            var = np.percentile(portfolio_returns, percentile)
-            return float(abs(var))
+            var_percentile: float = float(np.percentile(portfolio_returns, percentile))
+            return float(abs(var_percentile))
         except Exception as exc:  # pragma: no cover - log i fallback
             self.logger.error("Error calculating VaR: %s", exc)
             return 0.05
@@ -1239,8 +1239,8 @@ class MultiAccountRiskManager:
             if not portfolio_returns:
                 return 0.0
             percentile = (1.0 - confidence) * 100.0
-            var = np.percentile(portfolio_returns, percentile)
-            return float(abs(var))
+            var_percentile: float = float(np.percentile(portfolio_returns, percentile))
+            return float(abs(var_percentile))
         except Exception as exc:  # pragma: no cover - log i fallback
             self.logger.error("Error calculating VaR: %s", exc)
             return 0.05

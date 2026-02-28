@@ -119,10 +119,11 @@ def derive_risk_manager_settings(
             return fallback
         return coerced
 
-    per_trade = _coerce_float(_read_value("max_position_pct"), base["max_risk_per_trade"])
+    per_trade = _coerce_float(_read_value("max_position_pct"), float(base["max_risk_per_trade"]))
     if per_trade <= 0:
-        per_trade = base["max_risk_per_trade"]
-    base["max_risk_per_trade"] = max(0.0, min(1.0, per_trade))
+        per_trade = float(base["max_risk_per_trade"])
+    max_risk_per_trade = float(max(0.0, min(1.0, per_trade)))
+    base["max_risk_per_trade"] = max_risk_per_trade
 
     daily_loss = _coerce_float(_read_value("max_daily_loss_pct"), base["max_daily_loss_pct"])
     if daily_loss <= 0:
@@ -135,7 +136,7 @@ def derive_risk_manager_settings(
     )
     if portfolio_limit <= 0:
         portfolio_limit = base["max_portfolio_risk"] if base["max_portfolio_risk"] else daily_loss
-    portfolio_limit = max(base["max_risk_per_trade"] + 1e-4, portfolio_limit)
+    portfolio_limit = max(max_risk_per_trade + 1e-4, portfolio_limit)
     base["max_portfolio_risk"] = min(1.0, portfolio_limit)
 
     positions = _read_value("max_open_positions")
@@ -148,7 +149,7 @@ def derive_risk_manager_settings(
 
     drawdown = _coerce_float(_read_value("hard_drawdown_pct"), base["emergency_stop_drawdown"])
     if drawdown > 0:
-        base["emergency_stop_drawdown"] = min(1.0, max(drawdown, base["max_risk_per_trade"]))
+        base["emergency_stop_drawdown"] = min(1.0, max(drawdown, max_risk_per_trade))
 
     target_vol = _coerce_float(_read_value("target_volatility"), base["target_volatility"] or 0.0)
     if target_vol > 0:

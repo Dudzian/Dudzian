@@ -77,7 +77,7 @@ def _serialize(decisions: Sequence[Any]) -> str:
                 return decision.to_mapping()  # type: ignore[no-any-return]
             except Exception:
                 pass
-        if is_dataclass(decision):
+        if is_dataclass(decision) and not isinstance(decision, type):
             return asdict(decision)
         if isinstance(decision, Mapping):
             return dict(decision)
