@@ -33,15 +33,8 @@ runs:
       if: ${{ inputs.enabled == 'true' }}
       uses: actions/checkout@v4
 
-    - name: Check existing Python
-      if: ${{ inputs.enabled == 'true' }}
-      id: python_check
-      shell: pwsh
-      run: python --version
-      continue-on-error: true
-
     - name: Setup Python 3.11
-      if: ${{ inputs.enabled == 'true' && steps.python_check.outcome == 'failure' }}
+      if: ${{ inputs.enabled == 'true' }}
       uses: actions/setup-python@v5
       with:
         python-version: "3.11"
@@ -93,8 +86,45 @@ runs:
         $qtPrefix = $env:QT6_DIR_INPUT
         if (-not $qtPrefix) { $qtPrefix = $env:Qt6_DIR }
         if (-not $qtPrefix) { $qtPrefix = $env:QT_ROOT_DIR }
+
+        if (-not $qtPrefix -and (Test-Path 'C:\Qt')) {
+          $versionDirs = Get-ChildItem -Path 'C:\Qt' -Directory -ErrorAction SilentlyContinue |
+            Where-Object { $_.Name -match '^\d+(\.\d+)+$' } |
+            Sort-Object { [version]$_.Name } -Descending
+          $toolchainPreference = @('msvc2022_64', 'msvc2019_64', 'clang_64')
+
+          foreach ($versionDir in $versionDirs) {
+            foreach ($toolchain in $toolchainPreference) {
+              $candidate = Join-Path $versionDir.FullName $toolchain
+              $candidateConfig = Join-Path $candidate 'lib\cmake\Qt6\Qt6ConfigVersion.cmake'
+              if (Test-Path $candidateConfig) {
+                $qtPrefix = $candidate
+                Write-Host "Detected Qt prefix from C:\Qt scan: $qtPrefix"
+                break
+              }
+            }
+            if ($qtPrefix) {
+              break
+            }
+          }
+
+
+          if (-not $qtPrefix) {
+            $fallbackCandidates = Get-ChildItem -Path 'C:\Qt' -Directory -ErrorAction SilentlyContinue |
+              ForEach-Object { Get-ChildItem -Path $_.FullName -Directory -ErrorAction SilentlyContinue }
+            foreach ($candidate in $fallbackCandidates) {
+              $candidateConfig = Join-Path $candidate.FullName 'lib\cmake\Qt6\Qt6ConfigVersion.cmake'
+              if (Test-Path $candidateConfig) {
+                $qtPrefix = $candidate.FullName
+                Write-Host "Detected Qt prefix from fallback C:\Qt scan: $qtPrefix"
+                break
+              }
+            }
+          }
+        }
+
         if (-not $qtPrefix) {
-          throw "Qt prefix is not set. Provide Qt6_DIR or QT_ROOT_DIR (for workflow_dispatch you can use input qt6_dir)."
+          throw "Qt prefix is not set. Provide qt6_dir input, Qt6_DIR/QT_ROOT_DIR on the runner, or install Qt under C:\Qt\\<version>\\<toolchain>."
         }
 
         $qtCmake = Join-Path $qtPrefix "lib\cmake\Qt6\Qt6ConfigVersion.cmake"
@@ -103,9 +133,7 @@ runs:
         }
 
         Write-Host "Qt prefix: $qtPrefix"
-        if ($env:QT6_DIR_INPUT) {
-          "Qt6_DIR=$qtPrefix" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
-        }
+        "Qt6_DIR=$qtPrefix" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
 
     - name: Python and proxy diagnostics
       if: ${{ inputs.enabled == 'true' }}
