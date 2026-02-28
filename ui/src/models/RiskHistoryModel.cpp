@@ -262,7 +262,6 @@ QJsonArray RiskHistoryModel::toJson(int limit) const
         const QVariantList exposures = exposuresToVariantList(entry);
         if (!exposures.isEmpty()) {
             QJsonArray exposuresArray;
-            exposuresArray.reserve(exposures.size());
             for (const QVariant& exposureVariant : exposures) {
                 const QVariantMap exposureMap = exposureVariant.toMap();
                 QJsonObject exposureObject;
@@ -374,7 +373,6 @@ bool RiskHistoryModel::exportToCsv(const QString& filePath, int limit) const
         stream << locale.toString(entry.maxExposureUtilization, 'f', 6) << QLatin1Char(',');
 
         QJsonArray exposuresArray;
-        exposuresArray.reserve(entry.exposures.size());
         for (const RiskExposureData& exposure : entry.exposures) {
             QJsonObject object;
             object.insert(QStringLiteral("code"), exposure.code);

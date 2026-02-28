@@ -8,7 +8,7 @@ set(CMAKE_AUTOMOC ON)
 set(CMAKE_AUTORCC ON)
 set(CMAKE_AUTOUIC ON)
 
-find_package(Qt6 6.5 COMPONENTS Quick QuickControls2 Charts Widgets LinguistTools REQUIRED)
+find_package(Qt6 6.5 COMPONENTS Quick QuickControls2 Charts Widgets Network Concurrent LinguistTools REQUIRED)
 
 set(UI_TRANSLATIONS
     ${CMAKE_CURRENT_SOURCE_DIR}/i18n/bot_trading_shell_en.ts
@@ -46,7 +46,8 @@ find_package(Protobuf REQUIRED)
 find_package(gRPC REQUIRED)
 find_package(LibArchive)
 
-set(PROTO_SRC ${CMAKE_SOURCE_DIR}/proto/trading.proto)
+set(PROTO_DIR ${CMAKE_CURRENT_LIST_DIR}/../proto)
+set(PROTO_SRC ${PROTO_DIR}/trading.proto)
 set(GENERATED_DIR ${CMAKE_CURRENT_BINARY_DIR}/generated)
 file(MAKE_DIRECTORY ${GENERATED_DIR})
 
@@ -57,7 +58,7 @@ add_custom_command(
         ${GENERATED_DIR}/trading.grpc.pb.cc
         ${GENERATED_DIR}/trading.grpc.pb.h
     COMMAND ${Protobuf_PROTOC_EXECUTABLE}
-        --proto_path=${CMAKE_SOURCE_DIR}/proto
+        --proto_path=${PROTO_DIR}
         --cpp_out=${GENERATED_DIR}
         --grpc_out=${GENERATED_DIR}
         --plugin=protoc-gen-grpc=$<TARGET_FILE:gRPC::grpc_cpp_plugin>
@@ -202,6 +203,8 @@ target_link_libraries(bot_trading_shell
         Qt6::QuickControls2
         Qt6::Charts
         Qt6::Widgets
+        Qt6::Network
+        Qt6::Concurrent
         trading_proto
 )
 if(LibArchive_FOUND)

@@ -55,7 +55,7 @@ QString extractFingerprintFromDocument(const QJsonDocument& doc)
     const QJsonObject root = doc.object();
     const QString payloadB64 = root.value(QStringLiteral("payload_b64")).toString();
     if (!payloadB64.isEmpty()) {
-        const QByteArray decoded = QByteArray::fromBase64(payloadB64.toUtf8(), QByteArray::Base64Option::IgnoreBase64Whitespace);
+        const QByteArray decoded = QByteArray::fromBase64(payloadB64.toUtf8(), QByteArray::IgnoreBase64Whitespace);
         if (!decoded.isEmpty()) {
             QString parseError;
             const QJsonDocument payloadDoc = parseJson(decoded, &parseError);
@@ -98,7 +98,7 @@ QString extractFingerprintFromBytes(const QByteArray& data)
 QByteArray tryDecodeBase64(const QString& text)
 {
     const QByteArray raw = text.toUtf8();
-    QByteArray decoded = QByteArray::fromBase64(raw, QByteArray::Base64Option::IgnoreBase64Whitespace);
+    QByteArray decoded = QByteArray::fromBase64(raw, QByteArray::IgnoreBase64Whitespace);
     if (decoded.isEmpty())
         return {};
     return decoded;
@@ -106,12 +106,12 @@ QByteArray tryDecodeBase64(const QString& text)
 
 } // namespace
 
-class ProcessBindingSecretJob : public LicenseActivationController::BindingSecretJob {
+class ProcessBindingSecretJob : public BindingSecretJob {
     Q_OBJECT
 
 public:
     explicit ProcessBindingSecretJob(QObject* parent = nullptr)
-        : LicenseActivationController::BindingSecretJob(parent)
+        : BindingSecretJob(parent)
     {
         m_process.setProcessChannelMode(QProcess::SeparateChannels);
         connect(&m_process, &QProcess::started, this, &ProcessBindingSecretJob::handleStarted);
@@ -669,7 +669,7 @@ bool LicenseActivationController::parseLicenseDocument(const QJsonDocument& docu
             error = tr("Licencja musi zawierać pole 'signature_b64'");
             return false;
         }
-        const QByteArray payloadBytes = QByteArray::fromBase64(payloadB64.toUtf8(), QByteArray::Base64Option::IgnoreBase64Whitespace);
+        const QByteArray payloadBytes = QByteArray::fromBase64(payloadB64.toUtf8(), QByteArray::IgnoreBase64Whitespace);
         if (payloadBytes.isEmpty()) {
             error = tr("Nie można zdekodować sekcji payload_b64 (base64)");
             return false;

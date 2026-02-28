@@ -10,6 +10,7 @@
 
 #include <google/protobuf/empty.pb.h>
 #include <grpcpp/channel.h>
+#include <grpcpp/support/channel_arguments.h>
 #include <grpcpp/client_context.h>
 #include <grpcpp/create_channel.h>
 #include <grpcpp/security/credentials.h>
@@ -247,10 +248,8 @@ void HealthClient::ensureStub()
                 const auto cert = readFileBytes(m_tlsConfig.clientCertificatePath);
                 const auto key = readFileBytes(m_tlsConfig.clientKeyPath);
                 if (cert && key) {
-                    grpc::SslCredentialsOptions::PemKeyCertPair pair;
-                    pair.cert_chain = std::string(cert->constData(), static_cast<std::size_t>(cert->size()));
-                    pair.private_key = std::string(key->constData(), static_cast<std::size_t>(key->size()));
-                    options.pem_key_cert_pairs.push_back(std::move(pair));
+                    options.pem_cert_chain = std::string(cert->constData(), static_cast<std::size_t>(cert->size()));
+                    options.pem_private_key = std::string(key->constData(), static_cast<std::size_t>(key->size()));
                 }
             }
             credentials = grpc::SslCredentials(options);
@@ -259,7 +258,7 @@ void HealthClient::ensureStub()
                 args.SetString(GRPC_SSL_TARGET_NAME_OVERRIDE_ARG, m_tlsConfig.targetNameOverride.toStdString());
             }
             if (!m_tlsConfig.serverNameOverride.trimmed().isEmpty()) {
-                args.SetString(GRPC_ARG_OVERRIDE_DEFAULT_AUTHORITY, m_tlsConfig.serverNameOverride.toStdString());
+                args.SetString(GRPC_ARG_DEFAULT_AUTHORITY, m_tlsConfig.serverNameOverride.toStdString());
             }
 
             if (!m_tlsConfig.pinnedServerFingerprint.isEmpty() && !rootPem.isEmpty()) {

@@ -62,6 +62,8 @@ class OfflineUpdateManager;            // forward decl (update/OfflineUpdateMana
 class ResultsDashboardModel;           // forward decl (models/ResultsDashboardModel.hpp)
 class UserProfileController;           // forward decl (app/UserProfileController.hpp)
 class HypercareController;             // forward decl (app/HypercareController.hpp)
+class MarketplaceController;          // forward decl (app/MarketplaceController.hpp)
+class PortfolioManagerController;     // forward decl (app/PortfolioManagerController.hpp)
 
 class Application : public QObject {
     Q_OBJECT
@@ -364,7 +366,6 @@ private:
                                          bool cliTlsPinnedProvided,
                                          QString& healthToken,
                                          QString& healthTokenFile);
-                                              bool cliScopesProvided);
     void applyScreenEnvironmentOverrides(const QCommandLineParser& parser);
     void applyPreferredScreen(QQuickWindow* window);
     QScreen* resolvePreferredScreen() const;
