@@ -85,6 +85,28 @@ runs:
         path: wheelhouse
         if-no-artifact-found: error
 
+
+    - name: Qt prefix preflight (UI jobs)
+      if: ${{ inputs.enabled == 'true' && (inputs.selected_job == 'ui-native-tests' || inputs.selected_job == 'ui-packaging-windows') }}
+      shell: pwsh
+      run: |
+        $qtPrefix = $env:QT6_DIR_INPUT
+        if (-not $qtPrefix) { $qtPrefix = $env:Qt6_DIR }
+        if (-not $qtPrefix) { $qtPrefix = $env:QT_ROOT_DIR }
+        if (-not $qtPrefix) {
+          throw "Qt prefix is not set. Provide Qt6_DIR or QT_ROOT_DIR (for workflow_dispatch you can use input qt6_dir)."
+        }
+
+        $qtCmake = Join-Path $qtPrefix "lib\cmake\Qt6\Qt6ConfigVersion.cmake"
+        if (-not (Test-Path $qtCmake)) {
+          throw "Qt prefix '$qtPrefix' is missing $qtCmake"
+        }
+
+        Write-Host "Qt prefix: $qtPrefix"
+        if ($env:QT6_DIR_INPUT) {
+          "Qt6_DIR=$qtPrefix" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+        }
+
     - name: Python and proxy diagnostics
       if: ${{ inputs.enabled == 'true' }}
       shell: pwsh
@@ -113,6 +135,9 @@ runs:
       if: ${{ inputs.enabled == 'true' }}
       shell: pwsh
       run: |
+        if ($env:QT6_DIR_INPUT) {
+          $env:Qt6_DIR = $env:QT6_DIR_INPUT
+        }
         $wheelArg = ""
         if ($env:WHEELHOUSE_DIR) { $wheelArg = "-Wheelhouse `"$env:WHEELHOUSE_DIR`"" }
         pwsh -File scripts/ci/run_windows.ps1 -Job "${{ inputs.selected_job }}" $wheelArg
