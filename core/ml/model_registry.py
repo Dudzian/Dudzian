@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 import logging
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from hashlib import sha256
 from pathlib import Path
 from typing import Any, Iterable, Mapping, MutableMapping, Sequence
@@ -98,7 +98,16 @@ class ModelRegistry:
 
         digest = self._compute_sha256(artifact)
         created_at = datetime.now(timezone.utc)
-        model_id = f"{created_at.strftime('%Y%m%d%H%M%S')}_{digest[:8]}"
+        existing_entries = [
+            ModelMetadata.from_dict(item)
+            for item in self._load_registry().get("models", [])
+            if isinstance(item, Mapping)
+        ]
+        if existing_entries:
+            latest_created_at = max(entry.created_at for entry in existing_entries)
+            if created_at <= latest_created_at:
+                created_at = latest_created_at + timedelta(microseconds=1)
+        model_id = f"{created_at.strftime('%Y%m%d%H%M%S%f')}_{digest[:8]}"
         metadata = ModelMetadata(
             model_id=model_id,
             backend=str(backend),
@@ -125,7 +134,9 @@ class ModelRegistry:
         entries: Iterable[ModelMetadata] = (
             ModelMetadata.from_dict(item) for item in registry.get("models", [])
         )
-        return tuple(sorted(entries, key=lambda item: item.created_at, reverse=True))
+        return tuple(
+            sorted(entries, key=lambda item: (item.created_at, item.model_id), reverse=True)
+        )
 
     def get_active_model(self) -> ModelMetadata | None:
         """Pobiera aktywny model (jeśli został ustawiony)."""
@@ -200,4 +211,3 @@ __all__ = [
     "ModelRegistry",
     "ModelRegistryError",
 ]
-
