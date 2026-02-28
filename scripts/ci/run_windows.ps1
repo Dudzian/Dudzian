@@ -17,7 +17,9 @@ function Write-Log {
 function Run {
     param([string]$Command)
     Write-Log "[run] $Command"
-    powershell -Command $Command 2>&1 | Tee-Object -FilePath $logFile -Append
+    $wrapped = "`$ErrorActionPreference='Stop'; $Command"
+    powershell -NoProfile -Command $wrapped 2>&1 | Tee-Object -FilePath $logFile -Append
+    if ($LASTEXITCODE -ne 0) { throw "Command failed ($LASTEXITCODE): $Command" }
 }
 
 function Activate-Venv {
@@ -31,7 +33,7 @@ function Activate-Venv {
 }
 
 function Pip-Install {
-    param([string]$Args)
+    param([string]$PipArgs)
     Activate-Venv -VenvPath (".venv-" + $Job)
     $wheelArg = ""
     $wheelhousePath = $Wheelhouse
@@ -40,7 +42,7 @@ function Pip-Install {
         $resolved = (Resolve-Path $wheelhousePath).Path
         $wheelArg = "--wheelhouse `"$resolved`""
     }
-    Run "python scripts/ci/pip_install.py $wheelArg -- $Args"
+    Run "python scripts/ci/pip_install.py $wheelArg -- $PipArgs"
 }
 
 function Install-DevDeps {
@@ -105,9 +107,11 @@ function Ui-Native-Tests {
     Install-DevDeps
     $qtPrefix = $env:Qt6_DIR
     if (-not $qtPrefix) { $qtPrefix = $env:QT_ROOT_DIR }
-    if (-not $qtPrefix) { Write-Log "Qt prefix not set; set Qt6_DIR or QT_ROOT_DIR" }
-    $cmakePrefixArg = ""
-    if ($qtPrefix) { $cmakePrefixArg = "-DCMAKE_PREFIX_PATH=`"$qtPrefix`"" }
+    if (-not $qtPrefix) { throw "Qt prefix not set; set Qt6_DIR or QT_ROOT_DIR" }
+    if (-not (Get-Command cmake -ErrorAction SilentlyContinue) -or -not (Get-Command ninja -ErrorAction SilentlyContinue)) {
+        Pip-Install "cmake ninja"
+    }
+    $cmakePrefixArg = "-DCMAKE_PREFIX_PATH=`"$qtPrefix`""
     Run "cmake -S ui -B ui/build-tests -G Ninja -DBUILD_TESTING=ON $cmakePrefixArg"
     Run "cmake --build ui/build-tests"
     Run "ctest --test-dir ui/build-tests --output-on-failure"
