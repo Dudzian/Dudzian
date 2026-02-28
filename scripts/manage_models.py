@@ -116,12 +116,12 @@ def _command_list(args: argparse.Namespace) -> int:
         print("Brak modeli w rejestrze")
         return 0
 
-    header = f"{'MODEL ID':<24} {'BACKEND':<12} {'HASH':<16} CREATED AT"
+    header = f"{'MODEL ID':<32} {'BACKEND':<12} {'HASH':<16} CREATED AT"
     print(header)
     print("-" * len(header))
     for model in models:
         created = model.created_at.astimezone(timezone.utc).strftime("%Y-%m-%d %H:%M:%SZ")
-        print(f"{model.model_id:<24} {model.backend:<12} {model.sha256[:16]:<16} {created}")
+        print(f"{model.model_id:<32} {model.backend:<12} {model.sha256[:16]:<16} {created}")
     return 0
 
 

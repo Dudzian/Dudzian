@@ -120,6 +120,38 @@ def test_cli_publish_list_and_rollback(tmp_path: Path, capsys: pytest.CaptureFix
     assert rollback_output["model_id"] == publish_payload["model_id"]
 
 
+def test_list_models_uses_model_id_as_tie_breaker(tmp_path: Path) -> None:
+    registry_root = tmp_path / "models"
+    registry = ModelRegistry(root=registry_root)
+
+    same_ts = "2026-02-28T00:15:38+00:00"
+    payload = {
+        "active_model_id": "20260228001538000002_bbbbbbbb",
+        "models": [
+            {
+                "model_id": "20260228001538000001_aaaaaaaa",
+                "backend": "reference",
+                "artifact_path": str(tmp_path / "a.bin"),
+                "sha256": "a" * 64,
+                "created_at": same_ts,
+            },
+            {
+                "model_id": "20260228001538000002_bbbbbbbb",
+                "backend": "reference",
+                "artifact_path": str(tmp_path / "b.bin"),
+                "sha256": "b" * 64,
+                "created_at": same_ts,
+            },
+        ],
+    }
+    (registry_root / "registry.json").write_text(json.dumps(payload), encoding="utf-8")
+
+    models = registry.list_models()
+    assert [model.model_id for model in models] == [
+        "20260228001538000002_bbbbbbbb",
+        "20260228001538000001_aaaaaaaa",
+    ]
+
 def test_metadata_parser_rejects_invalid_entries() -> None:
     with pytest.raises(ModelRegistryError):
         manage_models._parse_metadata(["invalid-entry"])  # type: ignore[attr-defined]
