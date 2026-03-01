@@ -90,6 +90,13 @@ def _emit_ready(payload: Mapping[str, object], *, ready_file: str | None, emit_s
         print(serialized, flush=True)
 
 
+def _package_version() -> str:
+    try:
+        return metadata.version("dudzian-bot")
+    except metadata.PackageNotFoundError:  # pragma: no cover - środowiska deweloperskie
+        return "unknown"
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     args = _parse_args(argv)
     # Środowiska CI (szczególnie Windows) mogą nie przekazywać zmiennej
@@ -118,11 +125,6 @@ def main(argv: Sequence[str] | None = None) -> int:
         # wymagające pełnej konfiguracji giełd/GUI. W trybie smoke pomijamy
         # bootstrap runtime i tylko emitujemy gotowość, żeby test mógł
         # zweryfikować CLI bez ryzyka zawieszenia się na walidacji środowiska.
-        try:
-            pkg_version = metadata.version("dudzian-bot")
-        except metadata.PackageNotFoundError:  # pragma: no cover - środowiska deweloperskie
-            pkg_version = "unknown"
-
         payload = {
             "event": "ready",
             "address": "ci-smoke",
@@ -136,11 +138,37 @@ def main(argv: Sequence[str] | None = None) -> int:
                 "pid": os.getpid(),
                 "platform": platform.platform(),
                 "python_version": sys.version,
-                "package_version": pkg_version,
+                "package_version": _package_version(),
             },
         }
         _emit_ready(payload, ready_file=args.ready_file, emit_stdout=args.emit_stdout)
         return 0
+
+    # CI: bootstrap runtime potrafi trwać dłużej niż 30 sekund. Test CLI
+    # najpierw sprawdza samą obecność ready-file, a dopiero potem czeka
+    # na finalny status gotowości emitowany przez runtime.
+    _emit_ready(
+        {
+            "event": "ready",
+            "address": "booting",
+            "healthStatus": "starting",
+            "orchestratorReady": False,
+            "runtime": {
+                "config": str(config.runtime.config_path),
+                "entrypoint": config.runtime.entrypoint,
+                "mode": "active",
+            },
+            "meta": {
+                "timestamp": int(time.time()),
+                "pid": os.getpid(),
+                "platform": platform.platform(),
+                "python_version": sys.version,
+                "package_version": _package_version(),
+            },
+        },
+        ready_file=args.ready_file,
+        emit_stdout=args.emit_stdout,
+    )
 
     service = CloudRuntimeService(
         config,
