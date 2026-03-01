@@ -2,8 +2,12 @@ from __future__ import annotations
 
 from collections.abc import Iterator
 import os
+from typing import Final
 
 import pytest
+
+
+_TRUTHY: Final = {"1", "true", "yes", "on"}
 
 
 @pytest.fixture(autouse=True)
@@ -12,7 +16,8 @@ def allow_long_poll_in_exchange_tests(monkeypatch: pytest.MonkeyPatch) -> Iterat
     Włącz long-poll dla testów adapterów giełdowych (LocalLongPollStream soft-close w test mode),
     ale zawsze sprzątaj wątki po teście, żeby nie wyciekały do teardownów UI/QML.
     """
-    if "DUDZIAN_ALLOW_LONG_POLL" not in os.environ:
+    allow_long_poll = os.getenv("DUDZIAN_ALLOW_LONG_POLL", "").strip().lower()
+    if allow_long_poll not in _TRUTHY:
         monkeypatch.setenv("DUDZIAN_ALLOW_LONG_POLL", "1")
 
     try:
