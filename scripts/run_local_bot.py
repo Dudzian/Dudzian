@@ -58,6 +58,18 @@ def _configure_logging(level: str) -> None:
     )
 
 
+def _configure_cli_stdio() -> None:
+    """Zapobiega błędom kodowania CLI w środowiskach z nie-UTF8 stdout (często Windows/CI)."""
+
+    for stream in (sys.stdout, sys.stderr):
+        if not hasattr(stream, "reconfigure"):
+            continue
+        try:
+            stream.reconfigure(errors="backslashreplace")
+        except Exception:  # pragma: no cover - zależne od implementacji strumieni/wrapperów
+            pass
+
+
 def _build_demo_ai_snapshot() -> Mapping[str, Any] | None:
     try:
         return build_demo_ai_governor_snapshot()
@@ -427,6 +439,7 @@ def _run_cloud_proxy(
 
 
 def _parse_args(argv: list[str] | None) -> argparse.Namespace:
+    _configure_cli_stdio()
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--config", default="config/runtime.yaml", help="Ścieżka do pliku runtime.yaml")
     parser.add_argument("--entrypoint", help="Nazwa punktu wejścia z sekcji trading.entrypoints")
