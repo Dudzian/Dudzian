@@ -167,7 +167,7 @@ dependencies = [
   "aiosqlite>=0.20",
   "respx>=0.20",
   "jsonschema>=4.21",
-  "sqlalchemy>=2.0",
+  "sqlalchemy[asyncio]>=2.0",
   "PySide6>=6.7",
   "packaging>=23.2",
 ]
@@ -194,7 +194,7 @@ dev = [
   "responses>=0.25",
   "httpx>=0.26",
   "respx>=0.20",
-  "sqlalchemy>=2.0",
+  "sqlalchemy[asyncio]>=2.0",
   "packaging>=23.2",
   "types-requests>=2.31",
 ]
