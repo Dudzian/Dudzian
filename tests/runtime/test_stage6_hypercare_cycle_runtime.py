@@ -7,7 +7,8 @@ from pathlib import Path
 from typing import Any, Mapping
 
 import pytest
-import yaml
+
+yaml = pytest.importorskip("yaml", reason="Stage6 hypercare runtime test wymaga PyYAML.")
 
 
 class _StubResult:
@@ -210,11 +211,11 @@ def test_stage6_hypercare_cycle_runtime(
         config_path.as_posix(),
     ]
 
-    
     monkeypatch.setattr(sys, "argv", argv)
 
+    script_path = repo_root / "scripts" / "run_stage6_hypercare_cycle.py"
     with pytest.raises(SystemExit) as exit_info:
-        runpy.run_module("scripts.run_stage6_hypercare_cycle", run_name="__main__")
+        runpy.run_path(str(script_path), run_name="__main__")
 
     assert exit_info.value.code == 0
 
@@ -246,4 +247,3 @@ def test_stage6_hypercare_cycle_runtime(
     assert not summary_path.exists()
     assert not signature_path.exists()
     assert not allocations_path.exists()
-
