@@ -6,10 +6,10 @@
 #include <QStringList>
 #include <QUrl>
 #include <QVariantMap>
-#include <QVector>
 
 #include <functional>
 #include <memory>
+#include <vector>
 
 #include "app/UiModuleInterface.hpp"
 
@@ -77,12 +77,12 @@ private:
     };
 
     QVariantMap serializeView(const ViewDescriptor& descriptor, const QString& moduleId) const;
-    QObject* ensureServiceInstance(ServiceEntry& entry) const;
+    QObject* ensureServiceInstance(const ServiceEntry& entry) const;
     bool isValidLibraryPath(const QString& path) const;
 
     QHash<QString, ViewEntry> m_views;
     QHash<QString, ServiceEntry> m_services;
     QStringList m_pluginPaths;
-    QVector<std::unique_ptr<QPluginLoader>> m_pluginLoaders;
+    std::vector<std::unique_ptr<QPluginLoader>> m_pluginLoaders;
 };
 

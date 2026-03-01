@@ -1,5 +1,6 @@
 #include "ActivationController.hpp"
 
+#include <QDir>
 #include <QFile>
 #include <QFileInfo>
 #include <QJsonArray>

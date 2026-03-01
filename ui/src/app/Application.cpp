@@ -76,31 +76,31 @@ constexpr double kDefaultRiskRefreshSeconds = 5.0;
 constexpr int kMinRiskRefreshIntervalMs = 1000;
 constexpr int kMaxRiskRefreshIntervalMs = 300000;
 constexpr int kUiSettingsDebounceMs = 500;
-constexpr auto kUiSettingsEnv = QByteArrayLiteral("BOT_CORE_UI_SETTINGS_PATH");
-constexpr auto kDudzianHomeEnv = QByteArrayLiteral("DUDZIAN_HOME");
-constexpr auto kUiSettingsDisableEnv = QByteArrayLiteral("BOT_CORE_UI_SETTINGS_DISABLE");
-constexpr auto kRiskHistoryExportDirEnv = QByteArrayLiteral("BOT_CORE_UI_RISK_HISTORY_EXPORT_DIR");
-constexpr auto kRiskHistoryExportLimitEnv = QByteArrayLiteral("BOT_CORE_UI_RISK_HISTORY_EXPORT_LIMIT");
-constexpr auto kRiskHistoryExportLimitEnabledEnv = QByteArrayLiteral("BOT_CORE_UI_RISK_HISTORY_EXPORT_LIMIT_ENABLED");
-constexpr auto kRiskHistoryAutoExportEnabledEnv = QByteArrayLiteral("BOT_CORE_UI_RISK_HISTORY_AUTO_EXPORT");
-constexpr auto kRiskHistoryAutoExportIntervalEnv = QByteArrayLiteral("BOT_CORE_UI_RISK_HISTORY_AUTO_EXPORT_INTERVAL_MINUTES");
-constexpr auto kRiskHistoryAutoExportBasenameEnv = QByteArrayLiteral("BOT_CORE_UI_RISK_HISTORY_AUTO_EXPORT_BASENAME");
-constexpr auto kRiskHistoryAutoExportDirEnv = QByteArrayLiteral("BOT_CORE_UI_RISK_HISTORY_AUTO_EXPORT_DIR");
-constexpr auto kRiskHistoryAutoExportLocalTimeEnv = QByteArrayLiteral("BOT_CORE_UI_RISK_HISTORY_AUTO_EXPORT_USE_LOCAL_TIME");
-constexpr auto kDecisionLogPathEnv = QByteArrayLiteral("BOT_CORE_UI_DECISION_LOG");
-constexpr auto kDecisionLogLimitEnv = QByteArrayLiteral("BOT_CORE_UI_DECISION_LOG_LIMIT");
-constexpr auto kRegimeThresholdsEnv = QByteArrayLiteral("BOT_CORE_UI_REGIME_THRESHOLDS");
-constexpr auto kRegimeTimelineLimitEnv = QByteArrayLiteral("BOT_CORE_UI_REGIME_TIMELINE_LIMIT");
-constexpr auto kTransportModeEnv = QByteArrayLiteral("BOT_CORE_UI_TRANSPORT_MODE");
-constexpr auto kTransportDatasetEnv = QByteArrayLiteral("BOT_CORE_UI_TRANSPORT_DATASET");
-constexpr auto kMarketplaceBridgeEnv = QByteArrayLiteral("BOT_CORE_UI_MARKETPLACE_BRIDGE");
-constexpr auto kMarketplacePresetsDirEnv = QByteArrayLiteral("BOT_CORE_UI_MARKETPLACE_PRESETS_DIR");
-constexpr auto kMarketplaceLicensesPathEnv = QByteArrayLiteral("BOT_CORE_UI_MARKETPLACE_LICENSES_PATH");
-constexpr auto kMarketplaceLicensesDirEnv = QByteArrayLiteral("BOT_CORE_UI_MARKETPLACE_LICENSES_DIR");
-constexpr auto kMarketplaceCatalogPathEnv = QByteArrayLiteral("BOT_CORE_UI_MARKETPLACE_CATALOG_PATH");
-constexpr auto kMarketplaceSigningKeysEnv = QByteArrayLiteral("BOT_CORE_UI_MARKETPLACE_SIGNING_KEYS");
-constexpr auto kMarketplaceSigningKeyFilesEnv = QByteArrayLiteral("BOT_CORE_UI_MARKETPLACE_SIGNING_KEY_FILES");
-constexpr auto kMarketplaceFingerprintEnv = QByteArrayLiteral("BOT_CORE_UI_MARKETPLACE_FINGERPRINT");
+static const QByteArray kUiSettingsEnv = QByteArrayLiteral("BOT_CORE_UI_SETTINGS_PATH");
+static const QByteArray kDudzianHomeEnv = QByteArrayLiteral("DUDZIAN_HOME");
+static const QByteArray kUiSettingsDisableEnv = QByteArrayLiteral("BOT_CORE_UI_SETTINGS_DISABLE");
+static const QByteArray kRiskHistoryExportDirEnv = QByteArrayLiteral("BOT_CORE_UI_RISK_HISTORY_EXPORT_DIR");
+static const QByteArray kRiskHistoryExportLimitEnv = QByteArrayLiteral("BOT_CORE_UI_RISK_HISTORY_EXPORT_LIMIT");
+static const QByteArray kRiskHistoryExportLimitEnabledEnv = QByteArrayLiteral("BOT_CORE_UI_RISK_HISTORY_EXPORT_LIMIT_ENABLED");
+static const QByteArray kRiskHistoryAutoExportEnabledEnv = QByteArrayLiteral("BOT_CORE_UI_RISK_HISTORY_AUTO_EXPORT");
+static const QByteArray kRiskHistoryAutoExportIntervalEnv = QByteArrayLiteral("BOT_CORE_UI_RISK_HISTORY_AUTO_EXPORT_INTERVAL_MINUTES");
+static const QByteArray kRiskHistoryAutoExportBasenameEnv = QByteArrayLiteral("BOT_CORE_UI_RISK_HISTORY_AUTO_EXPORT_BASENAME");
+static const QByteArray kRiskHistoryAutoExportDirEnv = QByteArrayLiteral("BOT_CORE_UI_RISK_HISTORY_AUTO_EXPORT_DIR");
+static const QByteArray kRiskHistoryAutoExportLocalTimeEnv = QByteArrayLiteral("BOT_CORE_UI_RISK_HISTORY_AUTO_EXPORT_USE_LOCAL_TIME");
+static const QByteArray kDecisionLogPathEnv = QByteArrayLiteral("BOT_CORE_UI_DECISION_LOG");
+static const QByteArray kDecisionLogLimitEnv = QByteArrayLiteral("BOT_CORE_UI_DECISION_LOG_LIMIT");
+static const QByteArray kRegimeThresholdsEnv = QByteArrayLiteral("BOT_CORE_UI_REGIME_THRESHOLDS");
+static const QByteArray kRegimeTimelineLimitEnv = QByteArrayLiteral("BOT_CORE_UI_REGIME_TIMELINE_LIMIT");
+static const QByteArray kTransportModeEnv = QByteArrayLiteral("BOT_CORE_UI_TRANSPORT_MODE");
+static const QByteArray kTransportDatasetEnv = QByteArrayLiteral("BOT_CORE_UI_TRANSPORT_DATASET");
+static const QByteArray kMarketplaceBridgeEnv = QByteArrayLiteral("BOT_CORE_UI_MARKETPLACE_BRIDGE");
+static const QByteArray kMarketplacePresetsDirEnv = QByteArrayLiteral("BOT_CORE_UI_MARKETPLACE_PRESETS_DIR");
+static const QByteArray kMarketplaceLicensesPathEnv = QByteArrayLiteral("BOT_CORE_UI_MARKETPLACE_LICENSES_PATH");
+static const QByteArray kMarketplaceLicensesDirEnv = QByteArrayLiteral("BOT_CORE_UI_MARKETPLACE_LICENSES_DIR");
+static const QByteArray kMarketplaceCatalogPathEnv = QByteArrayLiteral("BOT_CORE_UI_MARKETPLACE_CATALOG_PATH");
+static const QByteArray kMarketplaceSigningKeysEnv = QByteArrayLiteral("BOT_CORE_UI_MARKETPLACE_SIGNING_KEYS");
+static const QByteArray kMarketplaceSigningKeyFilesEnv = QByteArrayLiteral("BOT_CORE_UI_MARKETPLACE_SIGNING_KEY_FILES");
+static const QByteArray kMarketplaceFingerprintEnv = QByteArrayLiteral("BOT_CORE_UI_MARKETPLACE_FINGERPRINT");
 
 class StrategyUiModule final : public UiModuleInterface {
 public:
@@ -3447,7 +3447,7 @@ bool Application::validateTransportConfiguration(const QString& endpoint,
         if (!tls.enabled) {
             if (!tls.clientCertificatePath.trimmed().isEmpty() || !tls.clientKeyPath.trimmed().isEmpty()
                 || !tls.rootCertificatePath.trimmed().isEmpty() || !tls.pinnedServerSha256.trimmed().isEmpty()) {
-                errors.append(QStringLiteral("Podano konfigurację TLS telemetrii, ale TLS jest wyłączony (użyj --metrics-use-tls).");
+                errors.append(QStringLiteral("Podano konfigurację TLS telemetrii, ale TLS jest wyłączony (użyj --metrics-use-tls)."));
             }
             return;
         }
@@ -3929,6 +3929,11 @@ void Application::exposeToQml() {
 QObject* Application::activationController() const
 {
     return m_activationController.get();
+}
+
+QObject* Application::licenseController() const
+{
+    return m_licenseController.get();
 }
 
 QObject* Application::reportController() const
