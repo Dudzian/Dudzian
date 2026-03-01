@@ -67,10 +67,10 @@ void MarketMultiStreamViewTest::createsWithSampleData()
     indicatorModel.replaceSamples(QStringLiteral("vwap"), emaFast);
 
     SignalListModel signalModel;
-    QVector<SignalEventEntry> signals = {
+    QVector<SignalEventEntry> signalEvents = {
         {candles.at(1).timestampMs, QStringLiteral("ema_bullish_cross"), QStringLiteral("Szybka EMA powyżej"), 0.8, QStringLiteral("trend")}
     };
-    signalModel.resetWithSignals(signals);
+    signalModel.resetWithSignals(signalEvents);
 
     MarketRegimeTimelineModel regimeModel;
     MarketRegimeSnapshotEntry regimeSnapshot;

@@ -2606,8 +2606,6 @@ Drawer {
                                 }
                             }
                         }
-                    }
-                }
 
                         Label {
                             Layout.fillWidth: true
