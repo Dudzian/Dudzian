@@ -14,6 +14,8 @@ from bot_core.runtime.file_metadata import (
 )
 from bot_core.security.certificates import certificate_reference_metadata
 
+WORLD_READABLE_CERT_WARNING = "Plik jest dostępny do odczytu dla wszystkich użytkowników"
+
 __all__ = [
     "verify_certificate_key_pair",
     "audit_tls_entry",
@@ -127,6 +129,20 @@ def _is_in_temp_directory(path_value: str | Path) -> bool:
             return False
 
 
+def _skip_world_readable_on_windows(metadata: Mapping[str, Any] | None, text: str) -> bool:
+    """Pomija warning world-readable, gdy model uprawnień POSIX nie ma zastosowania."""
+
+    if WORLD_READABLE_CERT_WARNING not in text:
+        return False
+    if os.name == "nt":
+        return True
+    if isinstance(metadata, Mapping):
+        flags = metadata.get("security_flags")
+        if isinstance(flags, Mapping) and flags.get("permissions_supported") is False:
+            return True
+    return False
+
+
 def audit_tls_entry(
     tls_config: Mapping[str, Any] | object | None,
     *,
@@ -181,14 +197,16 @@ def audit_tls_entry(
         else:
             report["certificate"] = certificate_metadata
             for entry in collect_security_warnings(certificate_metadata):
+                entry_metadata = entry.get("metadata")
+                metadata_node = (
+                    entry_metadata if isinstance(entry_metadata, Mapping) else certificate_metadata
+                )
                 for item in entry.get("warnings", ()):
                     text = str(item)
-                    # Certyfikaty są z natury często publiczne; na Windows dodajemy ten warning dla kompatybilności testów,
-                    # ale NIE chcemy, żeby zaniżał status security baseline.
-                    if (
-                        os.name == "nt"
-                        and "Plik jest dostępny do odczytu dla wszystkich użytkowników" in text
-                    ):
+                    # Certyfikaty są z natury często publiczne; warning POSIX o world-readable
+                    # ignorujemy na Windows oraz gdy metadane sygnalizują brak wsparcia
+                    # dla semantyki uprawnień POSIX.
+                    if _skip_world_readable_on_windows(metadata_node, text):
                         continue
                     warnings.append(text)
 
@@ -331,7 +349,15 @@ def audit_tls_entry(
         else:
             report["client_ca"] = client_ca_metadata
             for entry in collect_security_warnings(client_ca_metadata):
-                warnings.extend(str(item) for item in entry.get("warnings", ()))
+                entry_metadata = entry.get("metadata")
+                metadata_node = (
+                    entry_metadata if isinstance(entry_metadata, Mapping) else client_ca_metadata
+                )
+                for item in entry.get("warnings", ()):
+                    text = str(item)
+                    if _skip_world_readable_on_windows(metadata_node, text):
+                        continue
+                    warnings.append(text)
 
     if certificate_metadata and private_key_metadata:
         cert_exists = bool(certificate_metadata.get("exists"))
@@ -442,7 +468,13 @@ def audit_mtls_bundle(
     else:
         report["ca"] = {"certificate": ca_metadata}
         for entry in collect_security_warnings(ca_metadata):
-            warnings.extend(str(item) for item in entry.get("warnings", ()))
+            entry_metadata = entry.get("metadata")
+            metadata_node = entry_metadata if isinstance(entry_metadata, Mapping) else ca_metadata
+            for item in entry.get("warnings", ()):
+                text = str(item)
+                if _skip_world_readable_on_windows(metadata_node, text):
+                    continue
+                warnings.append(text)
 
     try:
         ca_key_metadata = file_reference_metadata(ca_key, role="mtls_ca_key")
@@ -463,7 +495,13 @@ def audit_mtls_bundle(
         )
         key = file_reference_metadata(key_path, role=f"{label}_key")
         for entry in collect_security_warnings(certificate):
-            warnings.extend(str(item) for item in entry.get("warnings", ()))
+            entry_metadata = entry.get("metadata")
+            metadata_node = entry_metadata if isinstance(entry_metadata, Mapping) else certificate
+            for item in entry.get("warnings", ()):
+                text = str(item)
+                if _skip_world_readable_on_windows(metadata_node, text):
+                    continue
+                warnings.append(text)
         for entry in collect_security_warnings(key):
             warnings.extend(str(item) for item in entry.get("warnings", ()))
         matches, message = verify_certificate_key_pair(cert_path, key_path)
