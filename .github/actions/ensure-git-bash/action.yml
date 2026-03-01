@@ -1,0 +1,50 @@
+name: Ensure Git Bash
+
+description: Ensure bash.exe from Git for Windows is available in PATH
+
+runs:
+  using: composite
+  steps:
+    - name: Ensure Git Bash is available in PATH
+      if: runner.os == 'Windows'
+      shell: pwsh
+      run: |
+        if (Get-Command bash -ErrorAction SilentlyContinue) {
+          $bashCommand = Get-Command bash -ErrorAction SilentlyContinue
+          Write-Host "bash already available in PATH: $($bashCommand.Source)"
+          bash --version
+          return
+        }
+
+        $pf = $env:ProgramFiles
+        $pf86 = ${env:ProgramFiles(x86)}
+
+        $bashCandidates = @(
+          if ($pf) { Join-Path $pf 'Git\usr\bin' }
+          if ($pf) { Join-Path $pf 'Git\bin' }
+          if ($pf86) { Join-Path $pf86 'Git\usr\bin' }
+          if ($pf86) { Join-Path $pf86 'Git\bin' }
+        ) | Where-Object { $_ -and (Test-Path (Join-Path $_ 'bash.exe')) }
+
+        if (-not $bashCandidates) {
+          throw 'bash.exe not found in Program Files paths. Install Git for Windows and expose Git\usr\bin or Git\bin in PATH.'
+        }
+
+        $bashDir = $bashCandidates[0]
+        $bashDir | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+        $env:PATH = "$bashDir;$env:PATH"
+
+        $bashCommand = Get-Command bash -ErrorAction SilentlyContinue
+        if (-not $bashCommand) {
+          throw "bash.exe still not resolvable after PATH update (selected: $bashDir)."
+        }
+
+        Write-Host "Git Bash configured from: $bashDir"
+        Write-Host "bash command source: $($bashCommand.Source)"
+        bash --version
+
+    - name: Skip ensure-git-bash (non-Windows runner)
+      if: runner.os != 'Windows'
+      shell: sh
+      run: |
+        echo "Skipping ensure-git-bash: runner.os=${RUNNER_OS}"
