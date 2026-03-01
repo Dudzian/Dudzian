@@ -55,12 +55,15 @@ class CloudRuntimeService:
         self._address: str | None = None
         self._registrars: list[GrpcRegistrar] = []
         self._lock = threading.Lock()
+        self._health_lock = threading.Lock()
         self._license_snapshot: object | None = None
         self._security_manager: CloudSecurityManager | None = None
         self._ready_hook = ready_hook
         self._health_path = Path(health_probe_path).expanduser() if health_probe_path else None
         self._health_snapshot: dict[str, object] = {"status": "stopped"}
         self._cloud_health_headers: dict[str, str] = {}
+        self._context_start_thread: threading.Thread | None = None
+        self._starting = False
 
     @property
     def address(self) -> str | None:
@@ -82,42 +85,42 @@ class CloudRuntimeService:
 
     @property
     def health_snapshot(self) -> Mapping[str, object]:
-        return dict(self._health_snapshot)
+        with self._health_lock:
+            return dict(self._health_snapshot)
 
     def start(self) -> None:
         with self._lock:
-            if self._server is not None:
+            if self._server is not None or self._starting:
                 return
-            self._update_health(status="starting", address=None)
+            self._starting = True
             runtime_cfg = self._config.runtime
             context = self._context_builder(
                 config_path=runtime_cfg.config_path,
                 entrypoint=runtime_cfg.entrypoint,
             )
-            context.start()
             self._context = context
-            try:
-                self._maybe_attach_license()
-                security_manager = self._ensure_security_manager()
-            except Exception:
-                context.stop()
-                self._context = None
-                raise
+        with self._lock:
+            if self._context is not context or not self._starting:
+                return
+            self._update_health(status="starting", address=None)
+
+        self._start_context_in_background(context, wait_for_invocation=True)
+
+        server: LocalRuntimeServer | None = None
+        orchestrator: CloudOrchestrator | None = None
+        try:
+            self._maybe_attach_license()
+            security_manager = self._ensure_security_manager()
             interceptors: list[grpc.ServerInterceptor] = []
             if security_manager and security_manager.requires_handshake:
                 interceptors.append(CloudAuthInterceptor(security_manager))
-            try:
-                server = LocalRuntimeServer(
-                    context,
-                    host=self._config.host,
-                    port=self._config.port,
-                    max_workers=self._config.max_workers,
-                    interceptors=interceptors or None,
-                )
-            except Exception:
-                context.stop()
-                self._context = None
-                raise
+            server = LocalRuntimeServer(
+                context,
+                host=self._config.host,
+                port=self._config.port,
+                max_workers=self._config.max_workers,
+                interceptors=interceptors or None,
+            )
             if security_manager:
                 trading_pb2_grpc.add_CloudAuthServiceServicer_to_server(
                     CloudAuthServicer(
@@ -126,17 +129,21 @@ class CloudRuntimeService:
                     ),
                     server.grpc_server,
                 )
-            for registrar in self._registrars:
+            with self._lock:
+                is_current_context = self._context is context
+                registrars = list(self._registrars) if is_current_context else []
+            if not is_current_context:
+                try:
+                    server.stop(0.5)
+                except Exception:  # pragma: no cover - defensywne
+                    LOGGER.debug("Błąd podczas zatrzymywania nieaktywnego CloudRuntimeServer", exc_info=True)
+                with self._lock:
+                    self._starting = False
+                context.stop()
+                return
+            for registrar in registrars:
                 registrar(server.grpc_server, context)
             server.start()
-            self._server = server
-            self._address = server.address
-            self._update_health(
-                status="listening",
-                address=self._address,
-                orchestrator_ready=False,
-            )
-            self._emit_ready_event()
             marketplace_interval = (
                 self._config.marketplace.refresh_interval_seconds
                 if self._config.marketplace.auto_reload
@@ -149,34 +156,79 @@ class CloudRuntimeService:
             )
             context.cloud_orchestrator = orchestrator
             orchestrator.start()
-            self._orchestrator = orchestrator
-            self._on_orchestrator_health(orchestrator.health_snapshot())
-            self._update_health(
-                status="ready",
-                orchestrator_ready=True,
-                address=self._address,
-            )
-            self._emit_ready_event()
+        except Exception:
+            with self._lock:
+                if self._context is context:
+                    self._context = None
+                    self._context_start_thread = None
+                self._starting = False
+            if orchestrator is not None:
+                orchestrator.stop()
+            if server is not None:
+                try:
+                    server.stop(0.5)
+                except Exception:  # pragma: no cover - defensywne
+                    LOGGER.debug("Błąd podczas zatrzymywania CloudRuntimeServer po błędzie startu", exc_info=True)
+            context.stop()
+            raise
+
+        with self._lock:
+            should_publish = self._context is context and server is not None and orchestrator is not None
+            if should_publish:
+                self._server = server
+                self._address = server.address
+                self._orchestrator = orchestrator
+                address = self._address
+            else:
+                address = None
+            self._starting = False
+        if not should_publish:
+            if orchestrator is not None:
+                orchestrator.stop()
+            if server is not None:
+                server.stop(0.5)
+            context.stop()
+            return
+
+        self._update_health(
+            status="listening",
+            address=address,
+            orchestrator_ready=False,
+        )
+        self._emit_ready_event()
+        self._on_orchestrator_health(orchestrator.health_snapshot())
+        self._update_health(
+            status="ready",
+            orchestrator_ready=True,
+            address=address,
+        )
+        self._emit_ready_event()
 
     def stop(self) -> None:
         with self._lock:
-            if self._server is None:
-                return
-            try:
-                self._server.stop(0.5)
-            except Exception:  # pragma: no cover - defensywne
-                LOGGER.debug("Błąd podczas zatrzymywania CloudRuntimeServer", exc_info=True)
-            if self._orchestrator is not None:
-                self._orchestrator.stop()
-            if self._context is not None:
-                self._context.stop()
-                self._context.cloud_health_headers = {}
+            server = self._server
+            orchestrator = self._orchestrator
+            context = self._context
             self._server = None
             self._orchestrator = None
             self._context = None
             self._address = None
+            self._context_start_thread = None
+            self._starting = False
+        with self._health_lock:
             self._cloud_health_headers = {}
-            self._update_health(status="stopped", address=None)
+
+        self._update_health(status="stopped", address=None)
+        if server is not None:
+            try:
+                server.stop(0.5)
+            except Exception:  # pragma: no cover - defensywne
+                LOGGER.debug("Błąd podczas zatrzymywania CloudRuntimeServer", exc_info=True)
+        if orchestrator is not None:
+            orchestrator.stop()
+        if context is not None:
+            context.stop()
+            context.cloud_health_headers = {}
 
     def wait(self) -> None:
         server = self._server
@@ -261,12 +313,13 @@ class CloudRuntimeService:
             pkg_version = metadata.version("dudzian-bot")
         except metadata.PackageNotFoundError:  # pragma: no cover - środowiska deweloperskie
             pkg_version = "unknown"
+        health_snapshot = self.health_snapshot
 
         return {
             "event": "ready",
             "address": self._address,
-            "healthStatus": self._health_snapshot.get("status"),
-            "orchestratorReady": self._health_snapshot.get("orchestrator_ready"),
+            "healthStatus": health_snapshot.get("status"),
+            "orchestratorReady": health_snapshot.get("orchestrator_ready"),
             "runtime": {
                 "config": str(self._config.runtime.config_path),
                 "entrypoint": self._config.runtime.entrypoint,
@@ -290,26 +343,89 @@ class CloudRuntimeService:
         }
 
     def _update_health(self, **updates: object) -> None:
-        snapshot = dict(self._health_snapshot)
-        snapshot.update(updates)
-        snapshot["updatedAt"] = datetime.now(timezone.utc).isoformat()
-        self._health_snapshot = snapshot
+        with self._health_lock:
+            snapshot = dict(self._health_snapshot)
+            snapshot.update(updates)
+            snapshot["updatedAt"] = datetime.now(timezone.utc).isoformat()
+            self._health_snapshot = snapshot
+            serialized = json.dumps(snapshot, ensure_ascii=False, indent=2)
         if self._health_path is None:
             return
         try:
             self._health_path.parent.mkdir(parents=True, exist_ok=True)
             self._health_path.write_text(
-                json.dumps(snapshot, ensure_ascii=False, indent=2),
+                serialized,
                 encoding="utf-8",
             )
         except OSError:  # pragma: no cover - diagnostyka środowiska
             LOGGER.debug("Nie udało się zapisać pliku health probe", exc_info=True)
 
     def _on_orchestrator_health(self, snapshot: Mapping[str, object]) -> None:
-        self._cloud_health_headers = _build_cloud_health_headers(snapshot)
-        if self._context is not None:
-            self._context.cloud_health_headers = dict(self._cloud_health_headers)
+        with self._lock:
+            if self._orchestrator is None:
+                return
+            context = self._context
+        headers = _build_cloud_health_headers(snapshot)
+        with self._health_lock:
+            self._cloud_health_headers = headers
+        if context is not None:
+            try:
+                context.cloud_health_headers = dict(headers)
+            except Exception:  # pragma: no cover - defensywne
+                LOGGER.debug("Nie udało się zaktualizować cloud_health_headers w kontekście", exc_info=True)
         self._update_health(orchestrator=snapshot)
+
+    def _start_context_in_background(
+        self,
+        context: LocalRuntimeContext,
+        *,
+        wait_for_invocation: bool = False,
+    ) -> None:
+        started_evt = threading.Event()
+        thread = threading.Thread(
+            target=self._run_context_start,
+            args=(context, started_evt),
+            name="cloud-runtime-context-start",
+            daemon=True,
+        )
+        self._context_start_thread = thread
+        thread.start()
+        if not wait_for_invocation:
+            return
+        started_evt.wait(timeout=0.2)
+        deadline = time.monotonic() + 0.2
+        while time.monotonic() < deadline:
+            if self._context_start_observed(context):
+                return
+            time.sleep(0.01)
+
+    def _context_start_observed(self, context: LocalRuntimeContext) -> bool:
+        started_attr = getattr(context, "is_started", None)
+        if isinstance(started_attr, bool) and started_attr:
+            return True
+        started_flag = getattr(context, "started", None)
+        return isinstance(started_flag, bool) and started_flag
+
+    def _is_current_context(self, context: LocalRuntimeContext) -> bool:
+        with self._lock:
+            return self._context is context
+
+    def _run_context_start(self, context: LocalRuntimeContext, started_evt: threading.Event) -> None:
+        if not self._is_current_context(context):
+            started_evt.set()
+            return
+        started_evt.set()
+        if not self._is_current_context(context):
+            return
+        try:
+            context.start()
+        except Exception:
+            LOGGER.exception("Cloud runtime context.start() zakończone błędem")
+            with self._lock:
+                is_current_context = self._context is context
+            if is_current_context:
+                self._update_health(status="degraded", context_error=True)
+                self._emit_ready_event()
 
 
 def _build_cloud_health_headers(snapshot: Mapping[str, object]) -> dict[str, str]:
