@@ -671,6 +671,7 @@ jobs:
       - name: Generate exchange adapter report
         run: |
           REPORT_DATE=$(date +%Y-%m-%d)
+          # TTL <= 0 forces long_poll_metrics_status=fresh (age is still reported).
           python scripts/list_exchange_adapters.py \
             --report-date "${REPORT_DATE}" \
             --report-dir reports/exchanges \
@@ -680,6 +681,7 @@ jobs:
             --hypercare-dir reports/exchanges/hypercare \
             --daily-csv-dir reports/exchanges \
             --long-poll-metrics var/metrics/long_poll_snapshots.json \
+            --long-poll-ttl-minutes 0 \
             --generate-hypercare-assets
 
       - name: Inspect signal quality snapshots
