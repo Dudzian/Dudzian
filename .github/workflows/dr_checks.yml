@@ -81,16 +81,89 @@ jobs:
 
       - name: Run Cloud DR synthetic probes (pre-failover readiness)
         env:
-          PYTHONVERBOSE: "1"
           DR_GRPC_ENDPOINT: ${{ secrets.DR_GRPC_ENDPOINT }}
           DR_ALERTMANAGER_URL: ${{ secrets.DR_ALERTMANAGER_URL }}
           DR_PROMETHEUS_URL: ${{ secrets.DR_PROMETHEUS_URL }}
+        shell: bash
         run: |
           python scripts/dr_synthetic_probes.py \
-            --endpoint "${DR_GRPC_ENDPOINT:-localhost:50051}" \
+            --endpoint "$DR_GRPC_ENDPOINT" \
             ${DR_ALERTMANAGER_URL:+--alertmanager-url "$DR_ALERTMANAGER_URL"} \
             ${DR_PROMETHEUS_URL:+--prometheus-url "$DR_PROMETHEUS_URL"} \
             --output-dir reports/ci/dr_probes
+
+      - name: Print DR probe failure reasons
+        if: ${{ always() && steps.validate_probe_secrets.outcome == 'success' && steps.setup_python_probes.outcome == 'success' }}
+        env:
+          DR_GRPC_ENDPOINT: ${{ secrets.DR_GRPC_ENDPOINT }}
+          DR_ALERTMANAGER_URL: ${{ secrets.DR_ALERTMANAGER_URL }}
+          DR_PROMETHEUS_URL: ${{ secrets.DR_PROMETHEUS_URL }}
+        shell: bash
+        run: |
+          python - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+          from urllib.parse import urlparse
+
+          reports = sorted(Path("reports/ci/dr_probes").glob("cloud_orchestrator_probe_*.json"))
+          if not reports:
+              raise SystemExit(0)
+
+          raw_redactions = [
+              os.environ.get("DR_GRPC_ENDPOINT", ""),
+              os.environ.get("DR_ALERTMANAGER_URL", ""),
+              os.environ.get("DR_PROMETHEUS_URL", ""),
+          ]
+
+          redactions = set()
+          for idx, raw_value in enumerate(raw_redactions):
+              value = raw_value.strip()
+              if not value:
+                  continue
+              redactions.add(value)
+              redactions.add(value.rstrip("/"))
+              try:
+                  parsed = urlparse(value)
+                  if parsed.netloc:
+                      redactions.add(parsed.netloc)
+                  if parsed.hostname:
+                      redactions.add(parsed.hostname)
+              except Exception:
+                  pass
+
+              if idx == 0 and "://" not in value:
+                  if value.count(":") == 1:
+                      host_only = value.split(":", 1)[0].strip()
+                      if host_only:
+                          redactions.add(host_only)
+                  elif value.startswith("[") and "]" in value:
+                      ipv6_host_only = value[1:value.index("]")].strip()
+                      if ipv6_host_only:
+                          redactions.add(ipv6_host_only)
+
+          def redact(value: object) -> str:
+              text = "" if value is None else str(value)
+              for secret_value in sorted(redactions, key=len, reverse=True):
+                  if secret_value:
+                      text = text.replace(secret_value, "<redacted>")
+              return text
+
+          for report in reports:
+              print(f"report={report.name}")
+              try:
+                  data = json.loads(report.read_text(encoding="utf-8"))
+              except Exception as exc:
+                  print(f"  failureReason={redact(f'json_parse_error: {exc}')}")
+                  continue
+
+              summary = data.get("summary", {})
+              print(f"  status={summary.get('status')}")
+              print(f"  healthOk={summary.get('healthOk')}")
+              print(f"  alertmanagerOk={summary.get('alertmanagerOk')}")
+              print(f"  prometheusOk={summary.get('prometheusOk')}")
+              print(f"  failureReason={redact(summary.get('failureReason'))}")
+          PY
 
       - name: Summarize Cloud DR probe results
         if: ${{ always() && steps.validate_probe_secrets.outcome == 'success' && steps.setup_python_probes.outcome == 'success' }}
@@ -234,9 +307,10 @@ jobs:
           DR_STANDBY_ALERTMANAGER_URL: ${{ secrets.DR_STANDBY_ALERTMANAGER_URL }}
           DR_STANDBY_PROMETHEUS_URL: ${{ secrets.DR_STANDBY_PROMETHEUS_URL }}
           DR_FAILOVER_WEBHOOK: ${{ secrets.DR_FAILOVER_WEBHOOK }}
+        shell: bash
         run: |
           python scripts/dr_failover_validation.py \
-            --endpoint "${DR_GRPC_ENDPOINT:-localhost:50051}" \
+            --endpoint "$DR_GRPC_ENDPOINT" \
             ${DR_ALERTMANAGER_URL:+--alertmanager-url "$DR_ALERTMANAGER_URL"} \
             ${DR_PROMETHEUS_URL:+--prometheus-url "$DR_PROMETHEUS_URL"} \
             ${DR_STANDBY_ALERTMANAGER_URL:+--dr-alertmanager-url "$DR_STANDBY_ALERTMANAGER_URL"} \
@@ -381,9 +455,10 @@ jobs:
           DR_STANDBY_ALERTMANAGER_URL: ${{ secrets.DR_STANDBY_ALERTMANAGER_URL }}
           DR_STANDBY_PROMETHEUS_URL: ${{ secrets.DR_STANDBY_PROMETHEUS_URL }}
           DR_FAILOVER_WEBHOOK: ${{ secrets.DR_FAILOVER_WEBHOOK }}
+        shell: bash
         run: |
           python scripts/dr_failover_validation.py \
-            --endpoint "${DR_GRPC_ENDPOINT:-localhost:50051}" \
+            --endpoint "$DR_GRPC_ENDPOINT" \
             ${DR_ALERTMANAGER_URL:+--alertmanager-url "$DR_ALERTMANAGER_URL"} \
             ${DR_PROMETHEUS_URL:+--prometheus-url "$DR_PROMETHEUS_URL"} \
             ${DR_STANDBY_ALERTMANAGER_URL:+--dr-alertmanager-url "$DR_STANDBY_ALERTMANAGER_URL"} \
@@ -533,9 +608,10 @@ jobs:
           DR_STANDBY_ALERTMANAGER_URL: ${{ secrets.DR_STANDBY_ALERTMANAGER_URL }}
           DR_STANDBY_PROMETHEUS_URL: ${{ secrets.DR_STANDBY_PROMETHEUS_URL }}
           DR_FAILOVER_WEBHOOK: ${{ secrets.DR_FAILOVER_WEBHOOK }}
+        shell: bash
         run: |
           python scripts/dr_failover_validation.py \
-            --endpoint "${DR_GRPC_ENDPOINT:-localhost:50051}" \
+            --endpoint "$DR_GRPC_ENDPOINT" \
             ${DR_ALERTMANAGER_URL:+--alertmanager-url "$DR_ALERTMANAGER_URL"} \
             ${DR_PROMETHEUS_URL:+--prometheus-url "$DR_PROMETHEUS_URL"} \
             ${DR_STANDBY_ALERTMANAGER_URL:+--dr-alertmanager-url "$DR_STANDBY_ALERTMANAGER_URL"} \
