@@ -1,6 +1,9 @@
 from pathlib import Path
 from types import SimpleNamespace
 
+import pytest
+
+import bot_core.security.tls_audit as tls_audit_module
 from bot_core.security.tls_audit import audit_tls_assets, audit_tls_entry, verify_certificate_key_pair
 
 
@@ -194,3 +197,84 @@ def test_audit_tls_assets_aggregates_services(tmp_path: Path) -> None:
     assert metrics_report["warnings"]
     assert report["warnings"]
     assert report["errors"]  # brak dopasowania fingerprintu
+
+
+def test_audit_tls_entry_uses_entry_metadata_for_world_readable_filter(monkeypatch: pytest.MonkeyPatch) -> None:
+    warning_text = tls_audit_module.WORLD_READABLE_CERT_WARNING
+
+    monkeypatch.setattr(
+        tls_audit_module,
+        "certificate_reference_metadata",
+        lambda *args, **kwargs: {
+            "path": "cert.pem",
+            "exists": True,
+            "security_flags": {"permissions_supported": True},
+        },
+    )
+    monkeypatch.setattr(tls_audit_module, "file_reference_metadata", lambda *args, **kwargs: None)
+
+    def _collect_security_warnings(_metadata):
+        return [
+            {
+                "warnings": [warning_text],
+                "metadata": {"security_flags": {"permissions_supported": False}},
+            }
+        ]
+
+    monkeypatch.setattr(tls_audit_module, "collect_security_warnings", _collect_security_warnings)
+
+    config = SimpleNamespace(
+        enabled=True,
+        certificate_path="cert.pem",
+        private_key_path=None,
+        client_ca_path=None,
+        require_client_auth=False,
+        private_key_password_env=None,
+        pinned_fingerprints=(),
+    )
+
+    report = audit_tls_entry(config, role_prefix="test_tls", env={})
+
+    assert warning_text not in report["warnings"]
+
+
+def test_audit_mtls_bundle_filters_world_readable_for_certificate_warnings(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    warning_text = tls_audit_module.WORLD_READABLE_CERT_WARNING
+
+    monkeypatch.setattr(
+        tls_audit_module,
+        "certificate_reference_metadata",
+        lambda path, **kwargs: {
+            "path": str(path),
+            "exists": True,
+            "security_flags": {"permissions_supported": True},
+        },
+    )
+
+    monkeypatch.setattr(
+        tls_audit_module,
+        "file_reference_metadata",
+        lambda path, **kwargs: {
+            "path": str(path),
+            "exists": True,
+            "security_flags": {"permissions_supported": True},
+        },
+    )
+
+    def _collect_security_warnings(metadata):
+        path_str = str(metadata.get("path", ""))
+        if path_str.endswith(("ca.pem", "server.crt", "client.crt")):
+            return [
+                {
+                    "warnings": [warning_text],
+                    "metadata": {"security_flags": {"permissions_supported": False}},
+                }
+            ]
+        return []
+
+    monkeypatch.setattr(tls_audit_module, "collect_security_warnings", _collect_security_warnings)
+    monkeypatch.setattr(tls_audit_module, "verify_certificate_key_pair", lambda *args, **kwargs: (True, None))
+
+    report = tls_audit_module.audit_mtls_bundle(tmp_path)
+
+    assert warning_text not in report["warnings"]
