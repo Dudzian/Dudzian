@@ -97,6 +97,10 @@ def main(argv: list[str]) -> int:
     stub_tooling_packages = ["grpcio-tools>=1.62"]
     download(wheelhouse, build_download_cmd(wheelhouse, args, stub_tooling_packages, args.python))
 
+    # Lint/type-check tooling required by CI quality gates.
+    lint_tooling_packages = ["mypy==1.10.0"]
+    download(wheelhouse, build_download_cmd(wheelhouse, args, lint_tooling_packages, args.python))
+
     # Project dependencies
     project_target = ".[test]" if not args.skip_dev else "."
     download(wheelhouse, build_download_cmd(wheelhouse, args, [project_target], args.python))
