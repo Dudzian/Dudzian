@@ -16,7 +16,7 @@ except ImportError as exc:  # pragma: no cover - environment guard
     pytest.skip(f"PySide6 unavailable: {exc}", allow_module_level=True)
 
 try:  # pragma: no cover - environment guard
-    from PySide6.QtCore import QCoreApplication, QUrl  # type: ignore[attr-defined]
+    from PySide6.QtCore import QCoreApplication, QEvent, QUrl  # type: ignore[attr-defined]
     from PySide6.QtGui import QGuiApplication  # type: ignore[attr-defined]
     from PySide6.QtQml import QQmlComponent, QQmlEngine  # type: ignore[attr-defined]
 except ImportError as exc:  # pragma: no cover - environment guard
@@ -76,6 +76,8 @@ def _render_component(component: QQmlComponent, properties: dict[str, Any]) -> f
     QCoreApplication.processEvents()
     elapsed_ms = (time.perf_counter() - start) * 1000.0
     instance.deleteLater()
+    QCoreApplication.sendPostedEvents(instance, QEvent.DeferredDelete)
+    QCoreApplication.processEvents()
     return elapsed_ms
 
 

@@ -14,9 +14,9 @@ import pytest
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
-# Windows jest najbardziej problematyczny (patrz WIL/AVResultException spam w logach).
-# Na innych platformach zostawiamy możliwość użycia domyślnego backendu, jeśli ktoś uruchamia lokalnie.
-if sys.platform == "win32":
+# W środowisku CI wymuszamy software backend (w tym headless macOS),
+# a lokalnie robimy wyjątek tylko dla Windows, gdzie backend GPU jest najbardziej niestabilny.
+if sys.platform == "win32" or os.environ.get("CI"):
     os.environ.setdefault("QT_QUICK_BACKEND", "software")
     os.environ.setdefault("QSG_RHI_BACKEND", "software")
     os.environ.setdefault("QT_OPENGL", "software")
