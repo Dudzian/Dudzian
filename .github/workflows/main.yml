@@ -3,10 +3,6 @@ name: CI (Multi-platform)
 run-name: "CI (${{ github.event_name }}: ${{ github.ref_name }})"
 
 on:
-  push:
-    branches: ["**"]
-    tags: ["v*"]
-  pull_request:
   workflow_dispatch:
     inputs:
       run_lint:
@@ -41,11 +37,8 @@ on:
         description: "If run_deploy=true, publish a GitHub Release (tag required)"
         type: boolean
         default: false
-  schedule:
-    - cron: "0 3 * * *"
-
 concurrency:
-  group: ci-${{ github.ref }}
+  group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
 env:
