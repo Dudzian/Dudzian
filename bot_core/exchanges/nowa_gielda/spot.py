@@ -504,9 +504,21 @@ class NowaGieldaStreamClient(Iterable[StreamBatch]):
                 return batch
             try:
                 batch = next(self._stream)
-            except StopIteration:
-                self.close()
-                raise
+            except StopIteration as exc:
+                # Fallback (LocalLongPollStream) nie powinien kończyć się podczas
+                # normalnej pracy streamingu – traktujemy to jak rozłączenie.
+                if self._closed:
+                    raise
+                self._handle_disconnect(
+                    ExchangeNetworkError(
+                        (
+                            "Fallbackowy stream zakończył się przedwcześnie "
+                            f"(scope={self._scope}, cursor={self._last_cursor!r})"
+                        ),
+                        reason=exc,
+                    )
+                )
+                continue
             except (ExchangeNetworkError, ExchangeThrottlingError) as exc:
                 self._handle_disconnect(exc)
                 continue
@@ -713,7 +725,7 @@ class NowaGieldaStreamClient(Iterable[StreamBatch]):
         self._reconnect_attempt += 1
         if self._reconnect_attempt > self._max_reconnects:
             self.close()
-            raise
+            raise exc
         delay = min(self._backoff_base * (2 ** (self._reconnect_attempt - 1)), self._backoff_cap)
         if delay > 0:
             self._sleep(delay)
@@ -885,12 +897,24 @@ class NowaGieldaSpotAdapter(ExchangeAdapter):
             settings.get(f"{scope}_reconnect_attempts", settings.get("reconnect_attempts", 3))
         )
         backoff_base = float(
-            settings.get(f"{scope}_reconnect_backoff", settings.get("reconnect_backoff", 0.5))
+            settings.get(
+                f"{scope}_reconnect_backoff",
+                settings.get(
+                    "reconnect_backoff",
+                    settings.get(f"{scope}_backoff_base", settings.get("backoff_base", 0.5)),
+                ),
+            )
         )
         backoff_cap = float(
             settings.get(
                 f"{scope}_reconnect_backoff_cap",
-                settings.get("reconnect_backoff_cap", max(backoff_base, 5.0)),
+                settings.get(
+                    "reconnect_backoff_cap",
+                    settings.get(
+                        f"{scope}_backoff_cap",
+                        settings.get("backoff_cap", max(backoff_base, 5.0)),
+                    ),
+                ),
             )
         )
         buffer_size = int(settings.get(f"{scope}_buffer_size", settings.get("buffer_size", 8)))

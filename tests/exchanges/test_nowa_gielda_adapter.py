@@ -560,6 +560,79 @@ def test_stream_client_closes_after_exhausting_reconnects() -> None:
     assert all(stream.closed for stream in created_streams)
 
 
+def test_stream_client_treats_stop_iteration_as_disconnect() -> None:
+    class _StopThenBatchStream:
+        def __init__(self, steps: Sequence[StreamBatch | Exception]) -> None:
+            self._steps = list(steps)
+            self.closed = False
+
+        def __iter__(self) -> "_StopThenBatchStream":
+            return self
+
+        def __next__(self) -> StreamBatch:
+            if not self._steps:
+                raise AssertionError("Brak kolejnych kroków dla testowego streamu")
+            step = self._steps.pop(0)
+            if isinstance(step, Exception):
+                raise step
+            return step
+
+        def close(self) -> None:
+            self.closed = True
+
+    first = StreamBatch(
+        channel="ticker",
+        events=({"symbol": "BTC-USDT", "price": 100.0},),
+        received_at=1.0,
+        cursor="cursor-1",
+    )
+    after_reconnect = StreamBatch(
+        channel="ticker",
+        events=({"symbol": "BTC-USDT", "price": 101.0},),
+        received_at=2.0,
+        cursor="cursor-2",
+    )
+
+    scripts: list[list[StreamBatch | Exception]] = [
+        [first, StopIteration()],
+        [after_reconnect],
+    ]
+    created_streams: list[_StopThenBatchStream] = []
+    requested_cursors: list[str | None] = []
+
+    def factory(mapped_channels: Sequence[str], cursor: str | None) -> _StopThenBatchStream:
+        assert mapped_channels == ("ticker",)
+        requested_cursors.append(cursor)
+        assert scripts, "nieoczekiwany dodatkowy restart streamu"
+        stream = _StopThenBatchStream(scripts.pop(0))
+        created_streams.append(stream)
+        return stream
+
+    client = NowaGieldaStreamClient(
+        scope="public",
+        channels=["ticker"],
+        fallback_factory=factory,  # type: ignore[arg-type]
+        channel_mapping={},
+        backoff_base=0.0,
+        backoff_cap=0.0,
+        max_reconnects=2,
+    )
+
+    try:
+        assert next(client).cursor == "cursor-1"
+        # reconnect powinien najpierw odtworzyć historię
+        assert next(client).cursor == "cursor-1"
+        assert next(client).cursor == "cursor-2"
+
+        assert requested_cursors == [None, "cursor-1"]
+        assert client.reconnects_total == 1
+    finally:
+        client.close()
+
+    assert client.closed
+    assert all(stream.closed for stream in created_streams)
+
+
 def test_stream_client_context_manager_closes() -> None:
     class _StaticStream:
         def __init__(self) -> None:
@@ -1081,6 +1154,27 @@ def test_stream_client_diagnostics_counters_and_reset() -> None:
 
     client.close()
     assert cursors_seen == [None, "cur-1", "cur-2"]
+
+def test_stream_reconnect_config_supports_backoff_aliases() -> None:
+    adapter = _build_stream_adapter(
+        {
+            "backoff_base": 0.0,
+            "backoff_cap": 0.0,
+            "public_backoff_base": 0.1,
+            "public_backoff_cap": 0.2,
+            "private_reconnect_backoff": 0.3,
+            "private_reconnect_backoff_cap": 0.4,
+        }
+    )
+
+    public = adapter._stream_reconnect_config("public")
+    private = adapter._stream_reconnect_config("private")
+
+    assert public[1] == pytest.approx(0.1)
+    assert public[2] == pytest.approx(0.2)
+    assert private[1] == pytest.approx(0.3)
+    assert private[2] == pytest.approx(0.4)
+
 
 def test_stream_public_data_filters_and_buffers(monkeypatch: pytest.MonkeyPatch) -> None:
     stream_settings = {
