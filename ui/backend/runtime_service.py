@@ -2745,6 +2745,91 @@ class RuntimeService(QObject):
         if queue_obj is None:
             return
         stop_event = self._grpc_stop_event
+        warn_rate_limit_seconds = 5.0
+        default_dropped_update_log_every = 100
+        default_dropped_requeue_log_every = 25
+        dropped_update_log_every = max(1, default_dropped_update_log_every)
+        dropped_requeue_log_every = max(1, default_dropped_requeue_log_every)
+        dropped_updates = 0
+        dropped_requeue_events = 0
+        last_deadline_warning = 0.0
+        last_requeue_warning = 0.0
+
+        def _is_data_event(event_kind: object) -> bool:
+            return str(event_kind) in {"snapshot", "increment"}
+
+        def _track_dropped_update() -> None:
+            nonlocal dropped_updates
+            dropped_updates += 1
+            if dropped_updates == 1 or dropped_updates % dropped_update_log_every == 0:
+                _LOGGER.debug(
+                    "Pominięto %s aktualizacji danych gRPC z powodu pełnej kolejki.",
+                    dropped_updates,
+                )
+
+        def _track_dropped_requeue_event() -> None:
+            nonlocal dropped_requeue_events
+            dropped_requeue_events += 1
+            if dropped_requeue_events == 1 or dropped_requeue_events % dropped_requeue_log_every == 0:
+                _LOGGER.debug(
+                    "Utracono %s zdarzeń sterujących gRPC podczas ponownego kolejkowania.",
+                    dropped_requeue_events,
+                )
+
+        def _enqueue(
+            kind: str,
+            payload: Mapping[str, object] | None,
+            *,
+            drop_if_full: bool = False,
+            deadline_seconds: float | None = 3.0,
+        ) -> bool:
+            nonlocal last_deadline_warning, last_requeue_warning
+            deadline = None
+            if deadline_seconds is not None:
+                deadline = time.monotonic() + max(0.1, float(deadline_seconds))
+            while stop_event is None or not stop_event.is_set():
+                try:
+                    queue_obj.put((kind, payload), timeout=0.1)
+                    return True
+                except queue.Full:
+                    if drop_if_full:
+                        _track_dropped_update()
+                        return False
+                    try:
+                        queued_kind, queued_payload = queue_obj.get_nowait()
+                    except queue.Empty:
+                        pass
+                    else:
+                        if _is_data_event(queued_kind):
+                            queue_obj.task_done()
+                            _track_dropped_update()
+                            continue
+                        try:
+                            queue_obj.put_nowait((queued_kind, queued_payload))
+                        except queue.Full:
+                            queue_obj.task_done()
+                            _track_dropped_requeue_event()
+                            now = time.monotonic()
+                            if now - last_requeue_warning >= warn_rate_limit_seconds:
+                                _LOGGER.warning(
+                                    "Nie udało się odtworzyć zdarzenia gRPC %s po próbie priorytetyzacji; zdarzenie utracone.",
+                                    queued_kind,
+                                )
+                                last_requeue_warning = now
+                        else:
+                            queue_obj.task_done()
+                    if deadline is not None and time.monotonic() >= deadline:
+                        now = time.monotonic()
+                        if now - last_deadline_warning >= warn_rate_limit_seconds:
+                            _LOGGER.warning(
+                                "Przekroczono deadline publikacji zdarzenia gRPC %s; pomijam event.",
+                                kind,
+                            )
+                            last_deadline_warning = now
+                        return False
+                    continue
+            return False
+
         metadata = tuple(self._active_grpc_metadata)
         ssl_credentials = self._grpc_ssl_credentials
         authority_override = self._grpc_authority_override
@@ -2776,7 +2861,7 @@ class RuntimeService(QObject):
                     stream = stub.StreamDecisions(request, metadata=metadata)
                 else:
                     stream = stub.StreamDecisions(request)
-                queue_obj.put(("connected", {"attempt": attempt}))
+                _enqueue("connected", {"attempt": attempt})
                 backoff = base_backoff
                 terminated_normally = True
                 for update in stream:
@@ -2791,21 +2876,21 @@ class RuntimeService(QObject):
                             "records": [dict(entry.fields) for entry in update.snapshot.records],
                             "metrics": metrics_payload,
                         }
-                        queue_obj.put(("snapshot", payload))
+                        _enqueue("snapshot", payload, drop_if_full=True, deadline_seconds=None)
                     elif update.HasField("increment"):
-                        queue_obj.put(
-                            (
-                                "increment",
-                                {
-                                    "record": dict(update.increment.record.fields),
-                                    "metrics": metrics_payload,
-                                },
-                            )
+                        _enqueue(
+                            "increment",
+                            {
+                                "record": dict(update.increment.record.fields),
+                                "metrics": metrics_payload,
+                            },
+                            drop_if_full=True,
+                            deadline_seconds=None,
                         )
                 if terminated_normally and (stop_event is None or not stop_event.is_set()):
-                    queue_obj.put(("stream-ended", {"attempt": attempt}))
+                    _enqueue("stream-ended", {"attempt": attempt})
             except Exception as exc:  # pragma: no cover - diagnostyka
-                queue_obj.put(("connection-error", {"attempt": attempt, "message": str(exc)}))
+                _enqueue("connection-error", {"attempt": attempt, "message": str(exc)})
             finally:
                 if channel is not None:
                     try:
@@ -2815,14 +2900,14 @@ class RuntimeService(QObject):
             if stop_event is not None and stop_event.is_set():
                 break
             sleep_seconds = min(max_backoff, backoff)
-            queue_obj.put(("retrying", {"attempt": attempt, "sleep": float(sleep_seconds)}))
+            _enqueue("retrying", {"attempt": attempt, "sleep": float(sleep_seconds)})
             deadline = time.monotonic() + sleep_seconds
             while time.monotonic() < deadline:
                 if stop_event is not None and stop_event.is_set():
                     break
                 time.sleep(0.1)
             backoff = min(max_backoff, backoff * multiplier)
-        queue_obj.put(("done", None))
+        _enqueue("done", None)
 
     def _start_ai_governor_stream(self) -> None:
         if self._ai_feed_stream_active:
