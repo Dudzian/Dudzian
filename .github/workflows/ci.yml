@@ -7,12 +7,6 @@ on:
       - main
       - stable
       - release/**
-    branches-ignore:
-      - copilot-coding-agent
-      - copilot-coding-agent/**
-      - copilot/**
-      - gh-copilot/**
-      - github-copilot/**
     tags:
       - "v*"
   pull_request:
@@ -29,7 +23,6 @@ concurrency:
   cancel-in-progress: true
 
 env:
-  CI_PR_HEAD_ALLOWED: ${{ github.event_name != 'pull_request' || !(startsWith(github.head_ref, 'copilot-coding-agent') || startsWith(github.head_ref, 'copilot/') || startsWith(github.head_ref, 'gh-copilot/') || startsWith(github.head_ref, 'github-copilot/') || startsWith(github.head_ref, 'copilot')) }}
   PYTHON_VERSION: "3.11"
   PYSIDE6_VERSION: "6.7.0"
   QT_DESKTOP_MODULES: "qtcharts qtdeclarative qtquickcontrols2"
@@ -39,22 +32,6 @@ env:
   WHEELHOUSE_DIR: "wheelhouse"
 
 jobs:
-  ci-policy-notice:
-    if: github.event_name != 'schedule'
-    name: CI policy notice
-    runs-on: ubuntu-latest
-    steps:
-      - name: Explain copilot PR policy
-        shell: bash
-        run: |
-          if [[ "${CI_PR_HEAD_ALLOWED}" != "true" ]]; then
-            echo "### CI policy" >> "$GITHUB_STEP_SUMMARY"
-            echo "This pull request head branch is blocked by copilot branch policy; heavy CI jobs are intentionally skipped." >> "$GITHUB_STEP_SUMMARY"
-          else
-            echo "### CI policy" >> "$GITHUB_STEP_SUMMARY"
-            echo "Standard CI policy applied." >> "$GITHUB_STEP_SUMMARY"
-          fi
-  # Source of truth: builds or fetches wheelhouse artifacts consumed by downstream jobs.
   prepare-wheelhouse:
     name: Prepare wheelhouse
     runs-on: ${{ matrix.os }}
@@ -64,8 +41,7 @@ jobs:
         # Note: Windows wheelhouse artifacts must remain compatible with self-hosted Windows runners.
         os: [ubuntu-latest, windows-latest]
     if: |
-      env.CI_PR_HEAD_ALLOWED == 'true' &&
-      (github.event_name == 'schedule' ||
+      github.event_name == 'schedule' ||
       github.event_name == 'workflow_dispatch' ||
       github.event_name == 'pull_request' ||
       (github.event_name == 'push' &&
@@ -169,7 +145,7 @@ jobs:
           retention-days: 7
 
   lint-and-test:
-    if: env.CI_PR_HEAD_ALLOWED == 'true' && github.event_name != 'schedule'
+    if: github.event_name != 'schedule'
     name: Lint and Test
     runs-on: [self-hosted, windows]
     needs: prepare-wheelhouse
@@ -291,7 +267,7 @@ jobs:
           retention-days: 3
 
   licensing-hwid-tolerance:
-    if: env.CI_PR_HEAD_ALLOWED == 'true' && github.event_name != 'schedule'
+    if: github.event_name != 'schedule'
     name: Licensing HWID Tolerance
     runs-on: [self-hosted, windows]
     env:
@@ -342,7 +318,7 @@ jobs:
           if-no-files-found: warn
 
   mypy-core:
-    if: env.CI_PR_HEAD_ALLOWED == 'true' && github.event_name != 'schedule'
+    if: github.event_name != 'schedule'
     name: Mypy (core packages)
     runs-on: [self-hosted, windows]
 
@@ -366,7 +342,7 @@ jobs:
         run: python -m mypy
 
   release-quality-gates:
-    if: env.CI_PR_HEAD_ALLOWED == 'true' && github.event_name != 'schedule'
+    if: github.event_name != 'schedule'
     name: Release Quality Gates
     runs-on: ubuntu-latest
     needs: prepare-wheelhouse
@@ -434,7 +410,7 @@ jobs:
         run: pytest tests/integration/test_execution_router_failover.py
 
   py-tests-windows:
-    if: env.CI_PR_HEAD_ALLOWED == 'true' && github.event_name != 'schedule'
+    if: github.event_name != 'schedule'
     name: Python tests (Windows)
     runs-on: [self-hosted, windows]
     needs: prepare-wheelhouse
@@ -515,7 +491,7 @@ jobs:
           retention-days: 3
 
   py-tests-ubuntu:
-    if: env.CI_PR_HEAD_ALLOWED == 'true' && github.event_name != 'schedule'
+    if: github.event_name != 'schedule'
     name: Python tests (Ubuntu)
     runs-on: ubuntu-latest
     needs: prepare-wheelhouse
@@ -577,7 +553,7 @@ jobs:
           retention-days: 3
 
   py-tests-macos:
-    if: env.CI_PR_HEAD_ALLOWED == 'true' && github.event_name != 'schedule'
+    if: github.event_name != 'schedule'
     name: Python tests (macOS)
     runs-on: macos-latest
     needs: prepare-wheelhouse
@@ -633,7 +609,7 @@ jobs:
           retention-days: 3
 
   loopback-e2e:
-    if: env.CI_PR_HEAD_ALLOWED == 'true' && github.event_name != 'schedule'
+    if: github.event_name != 'schedule'
     name: Loopback E2E
     runs-on: ubuntu-latest
     needs: py-tests-windows
@@ -677,7 +653,7 @@ jobs:
         run: docker compose -f deploy/compose/loopback-tests.yml down -v --remove-orphans
 
   exchange-report:
-    if: env.CI_PR_HEAD_ALLOWED == 'true' && github.event_name != 'schedule'
+    if: github.event_name != 'schedule'
     name: Exchange HyperCare Report
     runs-on: ubuntu-latest
     needs: lint-and-test
@@ -732,7 +708,7 @@ jobs:
         run: docker compose -f deploy/compose/loopback-tests.yml down -v
 
   marketing-bundle-parity:
-    if: env.CI_PR_HEAD_ALLOWED == 'true' && github.event_name != 'schedule'
+    if: github.event_name != 'schedule'
     name: Marketing bundle parity
     runs-on: ubuntu-latest
     needs: exchange-report
@@ -812,7 +788,7 @@ jobs:
           if-no-files-found: error
 
   ui-ctest:
-    if: env.CI_PR_HEAD_ALLOWED == 'true' && github.event_name != 'schedule'
+    if: github.event_name != 'schedule'
     name: UI Native Tests
     runs-on: ubuntu-latest
 
@@ -881,7 +857,7 @@ jobs:
           fi
 
   ui-tests:
-    if: env.CI_PR_HEAD_ALLOWED == 'true' && github.event_name != 'schedule'
+    if: github.event_name != 'schedule'
     name: UI QML Tests
     runs-on: ubuntu-latest
     needs: prepare-wheelhouse
@@ -976,7 +952,7 @@ jobs:
           fi
 
   grpc-feed-integration:
-    if: env.CI_PR_HEAD_ALLOWED == 'true' && github.event_name != 'schedule'
+    if: github.event_name != 'schedule'
     name: gRPC Decision Feed Integration
     runs-on: ubuntu-latest
     needs: prepare-wheelhouse
@@ -1143,7 +1119,7 @@ jobs:
     name: gRPC Feed Soak (cron)
     runs-on: ubuntu-latest
     needs: prepare-wheelhouse
-    if: env.CI_PR_HEAD_ALLOWED == 'true' && (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch')
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
     env:
       QT_QPA_PLATFORM: offscreen
       QT_QUICK_BACKEND: software
@@ -1254,9 +1230,8 @@ jobs:
     runs-on: ubuntu-latest
     needs: prepare-wheelhouse
     if: |
-      env.CI_PR_HEAD_ALLOWED == 'true' &&
-      (github.event_name == 'schedule' ||
-      github.event_name == 'workflow_dispatch')
+      github.event_name == 'schedule' ||
+      github.event_name == 'workflow_dispatch'
     concurrency:
       group: performance-benchmarks-${{ github.ref }}
       cancel-in-progress: true
@@ -1610,7 +1585,7 @@ jobs:
           retention-days: 14
 
   marketplace-catalog-validation:
-    if: env.CI_PR_HEAD_ALLOWED == 'true' && github.event_name != 'schedule'
+    if: github.event_name != 'schedule'
     name: Marketplace catalog validation
     runs-on: ubuntu-latest
 
@@ -1650,7 +1625,7 @@ jobs:
           if-no-files-found: warn
 
   marketplace-catalog:
-    if: env.CI_PR_HEAD_ALLOWED == 'true' && github.event_name != 'schedule'
+    if: github.event_name != 'schedule'
     name: Marketplace Catalog Packaging
     runs-on: [self-hosted, windows]
     needs: lint-and-test
@@ -1743,7 +1718,7 @@ jobs:
           retention-days: 3
 
   ui-packaging:
-    if: env.CI_PR_HEAD_ALLOWED == 'true' && github.event_name != 'schedule'
+    if: github.event_name != 'schedule'
     name: UI Packaging
     needs: prepare-wheelhouse
     runs-on: ${{ matrix.os }}
@@ -1819,7 +1794,7 @@ jobs:
     needs:
       - marketplace-catalog
       - ui-packaging
-    if: env.CI_PR_HEAD_ALLOWED == 'true' && github.event_name != 'pull_request' && github.event_name != 'schedule'
+    if: github.event_name != 'pull_request' && github.event_name != 'schedule'
     # Consumes marketplace catalog packages and UI bundle artifacts prepared upstream.
     env:
       MARKETPLACE_PACKAGES_ARTIFACT: ${{ needs.marketplace-catalog.outputs.packages_artifact_name || 'marketplace-packages' }}
