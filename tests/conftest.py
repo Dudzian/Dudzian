@@ -353,7 +353,10 @@ def _guard_network_connections() -> None:
 
 @pytest.fixture(autouse=True)
 def block_external_network() -> None:
-    if os.environ.get("ALLOW_NETWORK_TESTS") == "1":
+    if (
+        os.environ.get("ALLOW_NETWORK_TESTS") == "1"
+        or os.environ.get("RUN_NETWORK_TESTS") == "1"
+    ):
         # Explicit opt-in for integration runs.
         yield
         return
@@ -369,6 +372,16 @@ def pytest_addoption(parser: pytest.Parser) -> None:
         default=False,
         help="Run tests marked as requiring external network access",
     )
+    parser.addoption(
+        "--fast",
+        action="store_true",
+        default=False,
+        help=(
+            "Run a quick subset of tests (skips integration/qml/performance/"
+            "soak/retraining/e2e/long_poll markers). "
+            "You can also set PYTEST_FAST=1."
+        ),
+    )
 
 
 def pytest_collection_modifyitems(config: pytest.Config, items: list[pytest.Item]) -> None:
@@ -377,15 +390,32 @@ def pytest_collection_modifyitems(config: pytest.Config, items: list[pytest.Item
         or os.environ.get("RUN_NETWORK_TESTS") == "1"
         or os.environ.get("ALLOW_NETWORK_TESTS") == "1"
     )
-    if run_network:
+    if not run_network:
+        skip_network = pytest.mark.skip(
+            reason="Network tests require RUN_NETWORK_TESTS=1 or --run-network-tests",
+        )
+        for item in items:
+            if "network" in item.keywords:
+                item.add_marker(skip_network)
+
+    fast_mode = bool(config.getoption("--fast")) or os.environ.get("PYTEST_FAST") == "1"
+    if not fast_mode:
         return
 
-    skip_network = pytest.mark.skip(
-        reason="Network tests require RUN_NETWORK_TESTS=1 or --run-network-tests",
-    )
+    skip_fast = pytest.mark.skip(reason="Skipped in --fast / PYTEST_FAST=1 mode")
+    fast_excluded = {
+        "integration",
+        "qml",
+        "performance",
+        "soak",
+        "retraining",
+        "e2e_demo_paper",
+        "e2e_retraining",
+        "long_poll",
+    }
     for item in items:
-        if "network" in item.keywords:
-            item.add_marker(skip_network)
+        if any(marker in item.keywords for marker in fast_excluded):
+            item.add_marker(skip_fast)
 
 
 @pytest.fixture(autouse=True, scope="session")
