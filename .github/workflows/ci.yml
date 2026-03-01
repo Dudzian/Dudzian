@@ -173,11 +173,6 @@ jobs:
     name: Lint and Test
     runs-on: [self-hosted, windows]
     needs: prepare-wheelhouse
-    env:
-      WHEELHOUSE_DIR: ${{ env.WHEELHOUSE_DIR }}
-      WHEELHOUSE_SOURCE: ${{ env.WHEELHOUSE_SOURCE }}
-      WHEELHOUSE_ARTIFACT: wheelhouse-${{ runner.os }}-py${{ env.PYTHON_VERSION }}
-      WHEELHOUSE_ENABLED: ${{ env.WHEELHOUSE_SOURCE != 'skip' }}
 
     steps:
       - name: Check out repository
@@ -213,10 +208,10 @@ jobs:
 
       # Wheelhouse consumer: expects artifact from prepare-wheelhouse.
       - name: Download wheelhouse
-        if: env.WHEELHOUSE_ENABLED == 'true'
+        if: env.WHEELHOUSE_SOURCE != 'skip'
         uses: actions/download-artifact@v4
         with:
-          name: ${{ env.WHEELHOUSE_ARTIFACT }}
+          name: wheelhouse-${{ runner.os }}-py${{ env.PYTHON_VERSION }}
           path: ${{ env.WHEELHOUSE_DIR }}
           if-no-artifact-found: error
 
@@ -375,11 +370,6 @@ jobs:
     name: Release Quality Gates
     runs-on: ubuntu-latest
     needs: prepare-wheelhouse
-    env:
-      WHEELHOUSE_DIR: ${{ env.WHEELHOUSE_DIR }}
-      WHEELHOUSE_SOURCE: ${{ env.WHEELHOUSE_SOURCE }}
-      WHEELHOUSE_ARTIFACT: wheelhouse-${{ runner.os }}-py${{ env.PYTHON_VERSION }}
-      WHEELHOUSE_ENABLED: ${{ env.WHEELHOUSE_SOURCE != 'skip' }}
 
     steps:
       - name: Check out repository
@@ -387,10 +377,10 @@ jobs:
 
       # Wheelhouse consumer: uses artifact produced in prepare-wheelhouse.
       - name: Download wheelhouse
-        if: env.WHEELHOUSE_ENABLED == 'true'
+        if: env.WHEELHOUSE_SOURCE != 'skip'
         uses: actions/download-artifact@v4
         with:
-          name: ${{ env.WHEELHOUSE_ARTIFACT }}
+          name: wheelhouse-${{ runner.os }}-py${{ env.PYTHON_VERSION }}
           path: ${{ env.WHEELHOUSE_DIR }}
           if-no-artifact-found: error
 
@@ -422,7 +412,7 @@ jobs:
         shell: bash
         run: |
           wheelhouse_args=()
-          if [[ "${WHEELHOUSE_ENABLED}" == "true" ]]; then
+          if [[ "${WHEELHOUSE_SOURCE}" != "skip" ]]; then
             wheelhouse_args+=(--wheelhouse "$WHEELHOUSE_DIR" --require-wheelhouse)
           fi
           python scripts/ci/pip_install.py "${wheelhouse_args[@]}" -- mypy
@@ -449,11 +439,6 @@ jobs:
     runs-on: [self-hosted, windows]
     needs: prepare-wheelhouse
     timeout-minutes: 25
-    env:
-      WHEELHOUSE_DIR: ${{ env.WHEELHOUSE_DIR }}
-      WHEELHOUSE_SOURCE: ${{ env.WHEELHOUSE_SOURCE }}
-      WHEELHOUSE_ARTIFACT: wheelhouse-${{ runner.os }}-py${{ env.PYTHON_VERSION }}
-      WHEELHOUSE_ENABLED: ${{ env.WHEELHOUSE_SOURCE != 'skip' }}
 
     steps:
       - name: Check out repository
@@ -461,10 +446,10 @@ jobs:
 
       # Wheelhouse consumer: uses artifact produced in prepare-wheelhouse.
       - name: Download wheelhouse
-        if: env.WHEELHOUSE_ENABLED == 'true'
+        if: env.WHEELHOUSE_SOURCE != 'skip'
         uses: actions/download-artifact@v4
         with:
-          name: ${{ env.WHEELHOUSE_ARTIFACT }}
+          name: wheelhouse-${{ runner.os }}-py${{ env.PYTHON_VERSION }}
           path: ${{ env.WHEELHOUSE_DIR }}
           if-no-artifact-found: error
 
@@ -535,21 +520,16 @@ jobs:
     runs-on: ubuntu-latest
     needs: prepare-wheelhouse
     timeout-minutes: 25
-    env:
-      WHEELHOUSE_DIR: ${{ env.WHEELHOUSE_DIR }}
-      WHEELHOUSE_SOURCE: ${{ env.WHEELHOUSE_SOURCE }}
-      WHEELHOUSE_ARTIFACT: wheelhouse-${{ runner.os }}-py${{ env.PYTHON_VERSION }}
-      WHEELHOUSE_ENABLED: ${{ env.WHEELHOUSE_SOURCE != 'skip' }}
 
     steps:
       - name: Check out repository
         uses: actions/checkout@v4
 
       - name: Download wheelhouse
-        if: env.WHEELHOUSE_ENABLED == 'true'
+        if: env.WHEELHOUSE_SOURCE != 'skip'
         uses: actions/download-artifact@v4
         with:
-          name: ${{ env.WHEELHOUSE_ARTIFACT }}
+          name: wheelhouse-${{ runner.os }}-py${{ env.PYTHON_VERSION }}
           path: ${{ env.WHEELHOUSE_DIR }}
           if-no-artifact-found: error
 
@@ -603,10 +583,7 @@ jobs:
     needs: prepare-wheelhouse
     timeout-minutes: 25
     env:
-      WHEELHOUSE_DIR: ${{ env.WHEELHOUSE_DIR }}
       WHEELHOUSE_SOURCE: "skip"
-      WHEELHOUSE_ARTIFACT: wheelhouse-${{ runner.os }}-py${{ env.PYTHON_VERSION }}
-      WHEELHOUSE_ENABLED: "false"
 
     steps:
       - name: Check out repository
@@ -914,10 +891,6 @@ jobs:
       PYTEST_REQUIRE_QML: "1"
       QML_DIAGNOSTICS_DIR: test-results/qml
       DUDZIAN_QML_FLUSH_DELETES: "0"
-      WHEELHOUSE_DIR: ${{ env.WHEELHOUSE_DIR }}
-      WHEELHOUSE_SOURCE: ${{ env.WHEELHOUSE_SOURCE }}
-      WHEELHOUSE_ARTIFACT: wheelhouse-${{ runner.os }}-py${{ env.PYTHON_VERSION }}
-      WHEELHOUSE_ENABLED: ${{ env.WHEELHOUSE_SOURCE != 'skip' }}
 
     steps:
       - name: Check out repository
@@ -946,10 +919,10 @@ jobs:
 
       # Wheelhouse consumer: uses artifact produced in prepare-wheelhouse.
       - name: Download PySide6 wheel artifact
-        if: env.WHEELHOUSE_ENABLED == 'true'
+        if: env.WHEELHOUSE_SOURCE != 'skip'
         uses: actions/download-artifact@v4
         with:
-          name: ${{ env.WHEELHOUSE_ARTIFACT }}
+          name: wheelhouse-${{ runner.os }}-py${{ env.PYTHON_VERSION }}
           path: ${{ env.WHEELHOUSE_DIR }}
           if-no-artifact-found: error
 
@@ -1010,10 +983,6 @@ jobs:
     env:
       QT_QPA_PLATFORM: offscreen
       QT_QUICK_BACKEND: software
-      WHEELHOUSE_DIR: ${{ env.WHEELHOUSE_DIR }}
-      WHEELHOUSE_SOURCE: ${{ env.WHEELHOUSE_SOURCE }}
-      WHEELHOUSE_ARTIFACT: wheelhouse-${{ runner.os }}-py${{ env.PYTHON_VERSION }}
-      WHEELHOUSE_ENABLED: ${{ env.WHEELHOUSE_SOURCE != 'skip' }}
 
     steps:
       - name: Check out repository
@@ -1032,10 +1001,10 @@ jobs:
 
       # Wheelhouse consumer: uses artifact produced in prepare-wheelhouse.
       - name: Download PySide6 wheel artifact
-        if: env.WHEELHOUSE_ENABLED == 'true'
+        if: env.WHEELHOUSE_SOURCE != 'skip'
         uses: actions/download-artifact@v4
         with:
-          name: ${{ env.WHEELHOUSE_ARTIFACT }}
+          name: wheelhouse-${{ runner.os }}-py${{ env.PYTHON_VERSION }}
           path: ${{ env.WHEELHOUSE_DIR }}
           if-no-artifact-found: error
 
@@ -1178,10 +1147,6 @@ jobs:
     env:
       QT_QPA_PLATFORM: offscreen
       QT_QUICK_BACKEND: software
-      WHEELHOUSE_DIR: ${{ env.WHEELHOUSE_DIR }}
-      WHEELHOUSE_SOURCE: ${{ env.WHEELHOUSE_SOURCE }}
-      WHEELHOUSE_ARTIFACT: wheelhouse-${{ runner.os }}-py${{ env.PYTHON_VERSION }}
-      WHEELHOUSE_ENABLED: ${{ env.WHEELHOUSE_SOURCE != 'skip' }}
 
     steps:
       - name: Check out repository
@@ -1200,10 +1165,10 @@ jobs:
 
       # Wheelhouse consumer: uses artifact produced in prepare-wheelhouse.
       - name: Download PySide6 wheel artifact
-        if: env.WHEELHOUSE_ENABLED == 'true'
+        if: env.WHEELHOUSE_SOURCE != 'skip'
         uses: actions/download-artifact@v4
         with:
-          name: ${{ env.WHEELHOUSE_ARTIFACT }}
+          name: wheelhouse-${{ runner.os }}-py${{ env.PYTHON_VERSION }}
           path: ${{ env.WHEELHOUSE_DIR }}
           if-no-artifact-found: error
 
@@ -1297,10 +1262,6 @@ jobs:
       cancel-in-progress: true
     env:
       QT_QPA_PLATFORM: offscreen
-      WHEELHOUSE_DIR: ${{ env.WHEELHOUSE_DIR }}
-      WHEELHOUSE_SOURCE: ${{ env.WHEELHOUSE_SOURCE }}
-      WHEELHOUSE_ARTIFACT: wheelhouse-${{ runner.os }}-py${{ env.PYTHON_VERSION }}
-      WHEELHOUSE_ENABLED: ${{ env.WHEELHOUSE_SOURCE != 'skip' }}
 
     steps:
       - name: Check out repository
@@ -1326,10 +1287,10 @@ jobs:
 
       # Wheelhouse consumer: uses artifact produced in prepare-wheelhouse.
       - name: Download wheelhouse
-        if: env.WHEELHOUSE_ENABLED == 'true'
+        if: env.WHEELHOUSE_SOURCE != 'skip'
         uses: actions/download-artifact@v4
         with:
-          name: ${{ env.WHEELHOUSE_ARTIFACT }}
+          name: wheelhouse-${{ runner.os }}-py${{ env.PYTHON_VERSION }}
           path: ${{ env.WHEELHOUSE_DIR }}
           if-no-artifact-found: error
 
@@ -1793,11 +1754,6 @@ jobs:
           - os: ubuntu-latest
             platform: linux
     # Builds platform-specific UI bundles that the deploy job publishes.
-    env:
-      WHEELHOUSE_DIR: ${{ env.WHEELHOUSE_DIR }}
-      WHEELHOUSE_SOURCE: ${{ env.WHEELHOUSE_SOURCE }}
-      WHEELHOUSE_ARTIFACT: wheelhouse-${{ runner.os }}-py${{ env.PYTHON_VERSION }}
-      WHEELHOUSE_ENABLED: ${{ env.WHEELHOUSE_SOURCE != 'skip' }}
 
     steps:
       - name: Check out repository
@@ -1805,10 +1761,10 @@ jobs:
 
       # Wheelhouse consumer: uses artifact produced in prepare-wheelhouse.
       - name: Download wheelhouse
-        if: env.WHEELHOUSE_ENABLED == 'true'
+        if: env.WHEELHOUSE_SOURCE != 'skip'
         uses: actions/download-artifact@v4
         with:
-          name: ${{ env.WHEELHOUSE_ARTIFACT }}
+          name: wheelhouse-${{ runner.os }}-py${{ env.PYTHON_VERSION }}
           path: ${{ env.WHEELHOUSE_DIR }}
           if-no-artifact-found: error
 
