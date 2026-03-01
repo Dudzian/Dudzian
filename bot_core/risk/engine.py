@@ -503,10 +503,17 @@ class ThresholdRiskEngine(RiskEngine):
                 else:
                     stop_distance = stop_price_value - price
 
+                if stop_distance is None:  # defensive + mypy narrowing
+                    return deny(
+                        "Nie udało się wyznaczyć odległości stop loss (stop_distance) – brak danych do kontroli ryzyka."
+                    )
+
                 if stop_distance <= 0:
                     return deny(
                         "Stop loss musi znajdować się po stronie ograniczającej stratę (nieprawidłowy stop_price)."
                     )
+
+                stop_distance_eps: float = max(stop_distance, 1e-12)
 
                 minimum_distance = atr_value * max(atr_multiple, 1.0)
                 if minimum_distance > 0 and stop_distance + 1e-9 < minimum_distance:
@@ -521,7 +528,7 @@ class ThresholdRiskEngine(RiskEngine):
                     max_risk_capital = max_trade_risk_pct * account.total_equity
                     risk_capital = stop_distance * incremental_quantity
                     if risk_capital > max_risk_capital + 1e-9:
-                        allowed_increment = max_risk_capital / max(stop_distance, 1e-12)
+                        allowed_increment = max_risk_capital / stop_distance_eps
                         return deny(
                             "Zlecenie przekracza limit ryzyka na pojedynczą transakcję.",
                             adjustments={"max_quantity": max(0.0, allowed_increment)},
@@ -554,7 +561,7 @@ class ThresholdRiskEngine(RiskEngine):
                 if max_risk_capital <= 0:
                     return deny("Kapitał lub target volatility profilu uniemożliwia otwarcie pozycji.")
 
-                allowed_total_quantity = max_risk_capital / max(stop_distance, 1e-12)
+                allowed_total_quantity = max_risk_capital / stop_distance_eps
 
                 if allowed_total_quantity <= 0:
                     return deny(
