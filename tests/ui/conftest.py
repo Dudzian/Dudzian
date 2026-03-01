@@ -2,7 +2,6 @@
 from __future__ import annotations
 
 import io
-import importlib.util
 import json
 import logging
 import os
@@ -41,6 +40,60 @@ if sys.platform == "win32":
 def _sanitize_nodeid(nodeid: str) -> str:
     sanitized = nodeid.replace("::", "__").replace("/", "_").replace("\\", "_")
     return sanitized
+
+
+def _flush_qt_deferred_deletes_best_effort() -> None:
+    import gc
+
+    if not _PYSIDE6_AVAILABLE:
+        logger.debug("Skipping Qt deferred-delete flush: PySide6 unavailable.")
+        return
+    flush_enabled = os.getenv("DUDZIAN_QML_FLUSH_DELETES", "1").strip().lower()
+    if flush_enabled not in {"1", "true", "yes", "on"}:
+        logger.debug("Skipping Qt deferred-delete flush: DUDZIAN_QML_FLUSH_DELETES=%s", flush_enabled)
+        return
+    if threading.current_thread() is not threading.main_thread():
+        logger.debug("Skipping Qt deferred-delete flush: not on main thread.")
+        return
+
+    try:
+        from PySide6.QtCore import QCoreApplication, QEvent, QEventLoop, QThread
+        from PySide6.QtQml import QQmlEngine
+    except Exception as exc:
+        logger.debug("Skipping Qt deferred-delete flush: Qt import failed: %r", exc)
+        return
+
+    app = QCoreApplication.instance()
+    if app is None:
+        logger.debug("Skipping Qt deferred-delete flush: missing QCoreApplication instance.")
+        return
+
+    app_thread = app.thread()
+    current_qt_thread = QThread.currentThread()
+    if app_thread is not None and current_qt_thread != app_thread:
+        logger.debug(
+            "Skipping Qt deferred-delete flush: qt_thread_mismatch current=%r app=%r",
+            current_qt_thread,
+            app_thread,
+        )
+        return
+
+    closing_down = getattr(QCoreApplication, "closingDown", None)
+    if callable(closing_down) and closing_down():
+        logger.debug("Skipping Qt deferred-delete flush: QCoreApplication.closingDown() is true.")
+        return
+
+    for _ in range(3):
+        QCoreApplication.sendPostedEvents(None, QEvent.DeferredDelete)
+        app.processEvents(QEventLoop.AllEvents, 50)
+
+    if os.getenv("DUDZIAN_QML_COLLECT_GARBAGE", "").strip().lower() in {"1", "true", "yes", "on"}:
+        try:
+            QQmlEngine.collectGarbage()
+        except Exception as exc:
+            logger.debug("QQmlEngine.collectGarbage() failed during teardown flush: %r", exc)
+
+    gc.collect()
 
 
 
@@ -205,70 +258,73 @@ def shutdown_live_threads_after_qml(request: pytest.FixtureRequest) -> Generator
         return
     yield
     try:
-        from bot_core.events.emitter import EventBus, EventEmitter
-        from bot_core.exchanges.streaming import LocalLongPollStream
-        from bot_core.execution.live_router import LiveExecutionRouter
-        from bot_core.runtime.pipeline import Pipeline
-        from bot_core.database.manager import DatabaseManager
-    except Exception:
-        return
+        try:
+            from bot_core.events.emitter import EventBus, EventEmitter
+            from bot_core.exchanges.streaming import LocalLongPollStream
+            from bot_core.execution.live_router import LiveExecutionRouter
+            from bot_core.runtime.pipeline import Pipeline
+            from bot_core.database.manager import DatabaseManager
+        except Exception:
+            return
 
-    EventBus.close_all_active()
-    EventEmitter.close_all_active()
-    Pipeline.close_all_active()
-    LocalLongPollStream.close_all_active()
-    LiveExecutionRouter.close_all_active()
-    prefixes = (
-        "LocalLongPollStream[",
-        "LiveExecutionRouterLoop",
-        "LiveExecutionRouterWorker-",
-        "EventEmitter",
-        "PipelineStream",
-    )
-    deadline = time.monotonic() + 2.0
-    active: list[threading.Thread] = []
-    while True:
+        EventBus.close_all_active()
+        EventEmitter.close_all_active()
+        Pipeline.close_all_active()
+        LocalLongPollStream.close_all_active()
+        LiveExecutionRouter.close_all_active()
+        prefixes = (
+            "LocalLongPollStream[",
+            "LiveExecutionRouterLoop",
+            "LiveExecutionRouterWorker-",
+            "EventEmitter",
+            "PipelineStream",
+        )
+        deadline = time.monotonic() + 2.0
+        active: list[threading.Thread] = []
+        while True:
+            active = [
+                thread
+                for thread in threading.enumerate()
+                if thread.is_alive() and thread.name.startswith(prefixes)
+            ]
+            if not active or time.monotonic() >= deadline:
+                break
+            time.sleep(0.05)
+
+        # Po domknięciu komponentów jeszcze raz domknij DB (w razie late teardown).
+        DatabaseManager.close_all_active(blocking=True, timeout=2.5)
+        if DatabaseManager.active_instances():
+            logger.debug(
+                "DatabaseManager.close_all_active left instances: %s",
+                [id(instance) for instance in DatabaseManager.active_instances()],
+            )
+        suspicious_threads = [
+            thread.name
+            for thread in threading.enumerate()
+            if thread.is_alive() and ("aiosqlite" in thread.name or "AnyIO" in thread.name)
+        ]
+        if suspicious_threads:
+            logger.debug("Suspicious background threads after QML cleanup: %s", suspicious_threads)
         active = [
             thread
             for thread in threading.enumerate()
             if thread.is_alive() and thread.name.startswith(prefixes)
         ]
-        if not active or time.monotonic() >= deadline:
-            break
-        time.sleep(0.05)
-
-    # Po domknięciu komponentów jeszcze raz domknij DB (w razie late teardown).
-    DatabaseManager.close_all_active(blocking=True, timeout=2.5)
-    if DatabaseManager.active_instances():
-        logger.debug(
-            "DatabaseManager.close_all_active left instances: %s",
-            [id(instance) for instance in DatabaseManager.active_instances()],
-        )
-    suspicious_threads = [
-        thread.name
-        for thread in threading.enumerate()
-        if thread.is_alive() and ("aiosqlite" in thread.name or "AnyIO" in thread.name)
-    ]
-    if suspicious_threads:
-        logger.debug("Suspicious background threads after QML cleanup: %s", suspicious_threads)
-    active = [
-        thread
-        for thread in threading.enumerate()
-        if thread.is_alive() and thread.name.startswith(prefixes)
-    ]
-    if active:
-        details = [
-            {
-                "name": thread.name,
-                "ident": thread.ident,
-                "daemon": thread.daemon,
-                "alive": thread.is_alive(),
-            }
-            for thread in active
-        ]
-        logger.error("Live threads still active after QML cleanup: %s", details)
-    assert not active, f"Pozostały aktywne wątki live: {[t.name for t in active]}"
-    assert not DatabaseManager.active_instances(), "Pozostały aktywne instancje DatabaseManager"
+        if active:
+            details = [
+                {
+                    "name": thread.name,
+                    "ident": thread.ident,
+                    "daemon": thread.daemon,
+                    "alive": thread.is_alive(),
+                }
+                for thread in active
+            ]
+            logger.error("Live threads still active after QML cleanup: %s", details)
+        assert not active, f"Pozostały aktywne wątki live: {[t.name for t in active]}"
+        assert not DatabaseManager.active_instances(), "Pozostały aktywne instancje DatabaseManager"
+    finally:
+        _flush_qt_deferred_deletes_best_effort()
 
 
 @pytest.fixture(autouse=True)
@@ -425,38 +481,6 @@ def capture_qml_artifacts(
             placeholder.write_text(
                 "Brak widocznych okien do zrzutu ekranu." "\n", encoding="utf-8"
             )
-
-
-@pytest.fixture(autouse=True)
-def flush_qt_deletes_after_qml(request: pytest.FixtureRequest) -> Generator[None, None, None]:
-    if "qml" not in request.node.keywords:
-        yield
-        return
-    yield
-    if importlib.util.find_spec("PySide6") is None:
-        return
-    from PySide6.QtCore import QCoreApplication, QEvent, QEventLoop
-    from PySide6.QtQml import QQmlEngine
-
-    app = QCoreApplication.instance()
-    if app is None:
-        return
-    for _ in range(3):
-        QCoreApplication.sendPostedEvents(None, QEvent.DeferredDelete)
-        app.processEvents(QEventLoop.AllEvents, 50)
-    # PySide6: w niektórych wersjach collectGarbage nie jest statyczne w bindingach
-    # i wymaga instancji (TypeError "unbound method ... needs an argument").
-    try:
-        QQmlEngine.collectGarbage()
-    except TypeError:
-        try:
-            QQmlEngine().collectGarbage()
-        except Exception:
-            # GC jest best-effort – nie chcemy failować teardownu przez różnice w bindingach
-            pass
-    import gc
-
-    gc.collect()
 
 
 @pytest.hookimpl(hookwrapper=True)
