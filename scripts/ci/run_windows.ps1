@@ -25,7 +25,7 @@ function Run {
 function Activate-Venv {
     param([string]$VenvPath)
     if (-Not (Test-Path $VenvPath)) {
-        Run "py -3.11 -m venv $VenvPath"
+        Run "python -m venv $VenvPath"
     }
     $activate = Join-Path $VenvPath "Scripts/Activate.ps1"
     . $activate

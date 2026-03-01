@@ -135,6 +135,46 @@ runs:
         Write-Host "Qt prefix: $qtPrefix"
         "Qt6_DIR=$qtPrefix" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
 
+    - name: Setup MSVC dev environment (x64)
+      if: ${{ inputs.enabled == 'true' && (inputs.selected_job == 'ui-native-tests' || inputs.selected_job == 'ui-packaging-windows') }}
+      uses: ilammy/msvc-dev-cmd@v1
+      with:
+        arch: x64
+        vsversion: "2022"
+
+    - name: Verify MSVC 2022 present
+      if: ${{ inputs.enabled == 'true' && (inputs.selected_job == 'ui-native-tests' || inputs.selected_job == 'ui-packaging-windows') }}
+      shell: pwsh
+      run: |
+        if (-not $env:VCToolsInstallDir) {
+          throw "MSVC env not initialized. Ensure VS 2022 Build Tools are installed (Desktop development with C++)."
+        }
+
+    - name: Verify compiler
+      if: ${{ inputs.enabled == 'true' && (inputs.selected_job == 'ui-native-tests' || inputs.selected_job == 'ui-packaging-windows') }}
+      shell: pwsh
+      run: |
+        cl /Bv
+        if (-not (Get-Command rc.exe -ErrorAction SilentlyContinue)) {
+          throw "rc.exe not found. Install Windows 10/11 SDK (via VS 2022 Build Tools -> Desktop development with C++)."
+        }
+        $nmake = Get-Command nmake.exe -ErrorAction SilentlyContinue
+        if (-not $nmake) {
+          Write-Warning "nmake.exe not found. This is not required for Ninja builds, but may indicate incomplete MSVC components."
+        }
+        $mt = Get-Command mt.exe -ErrorAction SilentlyContinue
+        if (-not $mt) {
+          Write-Warning "mt.exe not found. Some builds may require Windows SDK tools (Manifest Tool)."
+        }
+        where.exe cl
+        where.exe link
+        where.exe rc
+        if ($nmake) { where.exe nmake }
+        if ($mt) { where.exe mt }
+        Get-Command cl.exe -ErrorAction SilentlyContinue | Format-List *
+        Get-Command link.exe -ErrorAction SilentlyContinue | Format-List *
+        Get-Command rc.exe -ErrorAction SilentlyContinue | Format-List *
+
     - name: Python and proxy diagnostics
       if: ${{ inputs.enabled == 'true' }}
       shell: pwsh
