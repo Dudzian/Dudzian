@@ -4,15 +4,15 @@
     "issuer": "marketplace-ci",
     "key_id": "dev-presets-ed25519",
     "public_key": "wnD5eTEGDB3CPb6r3oMOmRjFtjCxHISZXHlHX0TIKhY=",
-    "signed_at": "2025-11-19T19:56:30Z",
-    "value": "HOa4toq9kvlGu8sQGTeNPbIKDxDFkQeVQMdI0p0XqJOBtZZzSmTTYsdHviUguDFlcDGFqJMy1C3gTzVIB3cHAw=="
+    "signed_at": "2026-03-01T13:50:22Z",
+    "value": "bQxkpk0Vv//GzxqIsW32lM5jxa7otkcYXDaOthzWqQdfJBYw3l5eFQIYXiFMVf/QNJbP5q1O/wFKL9/dRQ2BAQ=="
   },
   "hmac": {
     "algorithm": "HMAC-SHA256",
     "key_id": "dev-hmac",
-    "signed_at": "2025-11-19T19:56:30Z",
-    "value": "YzYxLjD0XjFWDiciJVMFgd9eBXujM3s+P3e6qJEi0hg="
+    "signed_at": "2026-03-01T13:50:22Z",
+    "value": "QSeZclQQxN4lpPZssI4474BJTwN0tkk359nTEInGGso="
   },
-  "sha256": "ba0c0bf7be8b0864f41fda75a4898945dbf0bd51c12d1202c2f1a91e7c27bcd0",
+  "sha256": "a8abc849b7df2f949afa53ce0b6bf1e59719711746ab5179ffa369dbe5e97f54",
   "target": "/workspace/Dudzian/config/marketplace/presets/exchanges/exchange_gateio.json"
 }

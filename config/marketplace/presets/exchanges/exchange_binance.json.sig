@@ -4,15 +4,15 @@
     "issuer": "marketplace-ci",
     "key_id": "dev-presets-ed25519",
     "public_key": "wnD5eTEGDB3CPb6r3oMOmRjFtjCxHISZXHlHX0TIKhY=",
-    "signed_at": "2025-11-19T19:56:30Z",
-    "value": "vqtxOpe6uEwN68LXmfSHaTXopE6jfNuUeRpj/yEGL4zJtFVRv3++aC/gB57l9cGjbfG8Yb84sv7ntEXaYUFjCA=="
+    "signed_at": "2026-03-01T13:50:22Z",
+    "value": "xGR4cFdFyMm6Lc+Z9JXyjLbY+i92k14xWOEtTM/egNTuuw8+WV+mc8/HwXnZoE7YucS4rnJ+vSaMbyl/bYmbBg=="
   },
   "hmac": {
     "algorithm": "HMAC-SHA256",
     "key_id": "dev-hmac",
-    "signed_at": "2025-11-19T19:56:30Z",
-    "value": "ph4U1i7Ew0YoehxhX4gQK3BHmHra3GaaE4GEGszWbg8="
+    "signed_at": "2026-03-01T13:50:22Z",
+    "value": "55K4WJBk6eNhd1o6lxYH9L7iMe+1b9PyyoiGQ3A2+MU="
   },
-  "sha256": "3676f1c42f85518332bac9919fd6801c8f4f9f0d557f2c6c781d3b55bb5f3a54",
+  "sha256": "6ed491557d8be2bdd20041ccbb641160a585df9ccf85d82d11b51e22edd33270",
   "target": "/workspace/Dudzian/config/marketplace/presets/exchanges/exchange_binance.json"
 }

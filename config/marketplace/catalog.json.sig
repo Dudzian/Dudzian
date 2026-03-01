@@ -1,5 +1,5 @@
 {
-  "target": "/workspace/Dudzian/config/marketplace/catalog.json",
+  "target": "config/marketplace/catalog.json",
   "sha256": "15f53a7a1cef66a7b998a2c754cdb122e24867adc434642479d1cf2fdc692d3a",
   "hmac": {
     "algorithm": "HMAC-SHA256",
