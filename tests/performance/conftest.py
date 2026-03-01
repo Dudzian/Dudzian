@@ -13,6 +13,8 @@ import pytest
 # Cel: stabilność (szczególnie na Windows runnerach) i eliminacja zależności od GPU/ANGLE/D3D.
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+os.environ.setdefault("DUDZIAN_TEST_MODE", "1")
+os.environ.setdefault("DUDZIAN_ALLOW_LONG_POLL", "0")
 
 # W środowisku CI wymuszamy software backend (w tym headless macOS),
 # a lokalnie robimy wyjątek tylko dla Windows, gdzie backend GPU jest najbardziej niestabilny.
@@ -34,6 +36,7 @@ os.environ.setdefault("QT_LOGGING_RULES", "*.debug=false;qt.qpa.*=false;qt.scene
 @pytest.fixture(scope="session")
 def qml_engine() -> Generator["QQmlEngine", None, None]:
     # Importy PySide6 dopiero w środku, żeby środowisko było ustawione.
+    pytest.importorskip("PySide6.QtQml")
     from PySide6.QtQml import QQmlEngine
 
     engine = QQmlEngine()

@@ -246,18 +246,7 @@ def _get_limits_dict(model: object) -> dict[str, float]:
 
 
 def _shutdown_local_long_poll_streams(timeout: float = 2.0) -> None:
-    LocalLongPollStream.close_all_active()
-    deadline = time.monotonic() + timeout
-    while time.monotonic() < deadline:
-        active = [
-            thread
-            for thread in threading.enumerate()
-            if thread.is_alive() and thread.name.startswith("LocalLongPollStream[")
-        ]
-        if not active:
-            break
-        time.sleep(0.05)
-    LocalLongPollStream.close_all_active()
+    LocalLongPollStream.close_all_active(blocking=True, timeout=timeout)
     active = [
         thread
         for thread in threading.enumerate()
@@ -270,6 +259,7 @@ def _shutdown_local_long_poll_streams(timeout: float = 2.0) -> None:
 
 
 @pytest.mark.timeout(30)
+@pytest.mark.long_poll
 def test_risk_controls_panel_handles_engine_snapshot():
     app = QApplication.instance() or QApplication([])
 

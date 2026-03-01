@@ -134,6 +134,7 @@ markers = [
   "qml: testy wymagające środowiska Qt/QML (PySide6)",
   "soak: długotrwałe scenariusze stabilności i anti-flap",
   "performance: benchmarki i testy SLA wydajnościowej",
+  "long_poll: testy obejmujące lifecycle i teardown LocalLongPollStream",
 ]
 
 [project]
