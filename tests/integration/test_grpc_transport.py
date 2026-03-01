@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import asyncio
 import json
 import os
 import statistics
@@ -12,9 +11,9 @@ from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, Callable, Iterable, Mapping
 
-import grpc
 import pytest
-import yaml
+grpc = pytest.importorskip("grpc", reason="Integracyjne testy transportu wymagają pakietu grpcio.")
+yaml = pytest.importorskip("yaml", reason="Integracyjne testy transportu wymagają PyYAML.")
 
 from google.protobuf import timestamp_pb2
 
@@ -278,6 +277,8 @@ def test_runtime_service_consumes_grpc_stream(
     from PySide6.QtCore import QCoreApplication  # type: ignore[attr-defined]
 
     dataset = build_default_dataset()
+    monkeypatch.setattr(RuntimeService, "_auto_connect_grpc", lambda self: None)
+    monkeypatch.setattr(RuntimeService, "_refresh_long_poll_metrics", lambda self: None)
 
     with TradingStubServer(dataset, port=0, stream_repeat=True, stream_interval=0.0) as server:
         monkeypatch.setenv("BOT_CORE_UI_GRPC_ENDPOINT", server.address)
@@ -285,30 +286,26 @@ def test_runtime_service_consumes_grpc_stream(
         service = RuntimeService(default_limit=5)
         try:
             assert service.attachToLiveDecisionLog("") is True
+            assert _wait_for(lambda: bool(service.decisions), app, timeout=30.0)
+            payload_holder: dict[str, Any] = {}
 
-            async def _wait_for_decisions() -> list[dict[str, Any]]:
-                """Poll for incoming decisions without hanging indefinitely."""
+            def _metrics_ready() -> bool:
+                if not ci_decision_feed_metrics.exists():
+                    return False
+                try:
+                    payload = json.loads(ci_decision_feed_metrics.read_text(encoding="utf-8"))
+                except (OSError, json.JSONDecodeError):
+                    return False
+                if payload.get("count", 0) >= 1:
+                    payload_holder.clear()
+                    payload_holder.update(payload)
+                    return True
+                return False
 
-                while not service.decisions:
-                    app.processEvents()
-                    await asyncio.sleep(0.05)
-                return service.decisions
+            assert _wait_for(_metrics_ready, app, timeout=30.0)
 
-            async def _wait_for_metrics() -> dict[str, Any]:
-                while True:
-                    app.processEvents()
-                    if ci_decision_feed_metrics.exists():
-                        payload = json.loads(ci_decision_feed_metrics.read_text(encoding="utf-8"))
-                        if payload.get("count", 0) >= 1:
-                            return payload
-                    await asyncio.sleep(0.05)
-
-            async def _run() -> tuple[list[dict[str, Any]], dict[str, Any]]:
-                decisions = await asyncio.wait_for(_wait_for_decisions(), timeout=30.0)
-                payload = await asyncio.wait_for(_wait_for_metrics(), timeout=30.0)
-                return decisions, payload
-
-            decisions, payload = asyncio.run(_run())
+            decisions = service.decisions
+            payload = dict(payload_holder)
 
             assert decisions
             assert payload["count"] >= 1

@@ -388,6 +388,9 @@ def _sleep_with_context(duration: float, context) -> None:
         time.sleep(min(remaining, 0.1))
 
 
+_MIN_REPEAT_STREAM_SLEEP_SECONDS = 0.01
+
+
 class _MarketDataService:
     def __init__(
         self,
@@ -455,7 +458,8 @@ class _MarketDataService:
                         return
                 yield self._build_increment_update(candle)
             if not self._stream_interval:
-                # brak interwału – natychmiast powtarzaj kolejne cykle
+                # brak interwału – nie rób busy-loop; daj oddech schedulerowi/CI
+                _sleep_with_context(_MIN_REPEAT_STREAM_SLEEP_SECONDS, context)
                 continue
             if not _context_is_active(context):
                 return
@@ -595,6 +599,8 @@ class _RuntimeService:
                 update = self._update_cls(increment=increment)
                 _apply_cycle_metrics(update, self._dataset.decision_cycle_metrics)
                 yield update
+            if not self._stream_interval:
+                _sleep_with_context(_MIN_REPEAT_STREAM_SLEEP_SECONDS, context)
 
     def ListDecisions(self, request, context):  # noqa: N802
         del context
