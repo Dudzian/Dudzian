@@ -13,8 +13,6 @@ import pytest
 # Cel: stabilność (szczególnie na Windows runnerach) i eliminacja zależności od GPU/ANGLE/D3D.
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
-os.environ.setdefault("DUDZIAN_TEST_MODE", "1")
-os.environ.setdefault("DUDZIAN_ALLOW_LONG_POLL", "0")
 
 # W środowisku CI wymuszamy software backend (w tym headless macOS),
 # a lokalnie robimy wyjątek tylko dla Windows, gdzie backend GPU jest najbardziej niestabilny.
@@ -31,6 +29,12 @@ os.environ.setdefault("DUDZIAN_QML_DISABLE_ANIMATIONS", "1")
 
 # Mniej szumu w logach (zostawiamy ostrzeżenia krytyczne):
 os.environ.setdefault("QT_LOGGING_RULES", "*.debug=false;qt.qpa.*=false;qt.scenegraph.*=false")
+
+
+@pytest.fixture(autouse=True)
+def _perf_env(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("DUDZIAN_TEST_MODE", "1")
+    monkeypatch.setenv("DUDZIAN_ALLOW_LONG_POLL", "0")
 
 
 @pytest.fixture(scope="session")
