@@ -35,6 +35,17 @@ jobs:
           # install the local package
           pip install .[dev]
 
+      - name: Validate DR probe secrets
+        env:
+          DR_GRPC_ENDPOINT: ${{ secrets.DR_GRPC_ENDPOINT }}
+          DR_PROMETHEUS_URL: ${{ secrets.DR_PROMETHEUS_URL }}
+        run: |
+          ./scripts/validate_dr_secrets.sh \
+            "Missing DR probe secrets" \
+            "Cloud DR probe summary" \
+            DR_GRPC_ENDPOINT \
+            DR_PROMETHEUS_URL
+
       - name: Run Cloud DR synthetic probes (pre-failover readiness)
         env:
           PYTHONVERBOSE: "1"
@@ -98,11 +109,13 @@ jobs:
           (output_dir / "summary.md").write_text("\n".join(summary_lines) + "\n", encoding="utf-8")
 
           summary_path = Path(os.environ["GITHUB_STEP_SUMMARY"])
-          summary_path.write_text("\n".join(summary_lines) + "\n", encoding="utf-8")
+          with summary_path.open("a", encoding="utf-8") as summary_file:
+              summary_file.write("\n".join(summary_lines) + "\n")
           print("\n".join(summary_lines))
           PY
 
       - name: Publish DR probe report
+        if: always()
         uses: actions/upload-artifact@v4
         with:
           name: dr-probes-report
@@ -131,6 +144,19 @@ jobs:
           python -m pip install --upgrade setuptools_scm
           # install the local package
           pip install .[dev]
+
+      - name: Validate DR failover secrets
+        env:
+          DR_GRPC_ENDPOINT: ${{ secrets.DR_GRPC_ENDPOINT }}
+          DR_PROMETHEUS_URL: ${{ secrets.DR_PROMETHEUS_URL }}
+          DR_STANDBY_PROMETHEUS_URL: ${{ secrets.DR_STANDBY_PROMETHEUS_URL }}
+        run: |
+          ./scripts/validate_dr_secrets.sh \
+            "Missing DR failover secrets" \
+            "Failover validation summary" \
+            DR_GRPC_ENDPOINT \
+            DR_PROMETHEUS_URL \
+            DR_STANDBY_PROMETHEUS_URL
 
       - name: Run DR failover validation (alerting path)
         env:
@@ -195,11 +221,13 @@ jobs:
           (report_path.parent / "summary.md").write_text("\n".join(summary_lines) + "\n", encoding="utf-8")
 
           summary_path = Path(os.environ["GITHUB_STEP_SUMMARY"])
-          summary_path.write_text("\n".join(summary_lines) + "\n", encoding="utf-8")
+          with summary_path.open("a", encoding="utf-8") as summary_file:
+              summary_file.write("\n".join(summary_lines) + "\n")
           print("\n".join(summary_lines))
           PY
 
       - name: Publish DR failover report
+        if: always()
         uses: actions/upload-artifact@v4
         with:
           name: dr-failover-report
@@ -228,6 +256,19 @@ jobs:
           python -m pip install --upgrade setuptools_scm
           # install the local package
           pip install .[dev]
+
+      - name: Validate weekly DR snapshot secrets
+        env:
+          DR_GRPC_ENDPOINT: ${{ secrets.DR_GRPC_ENDPOINT }}
+          DR_PROMETHEUS_URL: ${{ secrets.DR_PROMETHEUS_URL }}
+          DR_STANDBY_PROMETHEUS_URL: ${{ secrets.DR_STANDBY_PROMETHEUS_URL }}
+        run: |
+          ./scripts/validate_dr_secrets.sh \
+            "Missing weekly DR snapshot secrets" \
+            "Weekly failover snapshot summary" \
+            DR_GRPC_ENDPOINT \
+            DR_PROMETHEUS_URL \
+            DR_STANDBY_PROMETHEUS_URL
 
       - name: Run DR failover with snapshots (evidence collection)
         env:
@@ -295,11 +336,13 @@ jobs:
           (report_path.parent / "summary.md").write_text("\n".join(summary_lines) + "\n", encoding="utf-8")
 
           summary_path = Path(os.environ["GITHUB_STEP_SUMMARY"])
-          summary_path.write_text("\n".join(summary_lines) + "\n", encoding="utf-8")
+          with summary_path.open("a", encoding="utf-8") as summary_file:
+              summary_file.write("\n".join(summary_lines) + "\n")
           print("\n".join(summary_lines))
           PY
 
       - name: Publish DR weekly snapshots
+        if: always()
         uses: actions/upload-artifact@v4
         with:
           name: dr-failover-weekly
@@ -328,6 +371,21 @@ jobs:
           python -m pip install --upgrade setuptools_scm
           # install the local package
           pip install .[dev]
+
+      - name: Validate weekly DR runbook secrets
+        env:
+          DR_GRPC_ENDPOINT: ${{ secrets.DR_GRPC_ENDPOINT }}
+          DR_PROMETHEUS_URL: ${{ secrets.DR_PROMETHEUS_URL }}
+          DR_STANDBY_PROMETHEUS_URL: ${{ secrets.DR_STANDBY_PROMETHEUS_URL }}
+          DR_FAILOVER_WEBHOOK: ${{ secrets.DR_FAILOVER_WEBHOOK }}
+        run: |
+          ./scripts/validate_dr_secrets.sh \
+            "Missing weekly DR runbook secrets" \
+            "DR weekly failover runbook summary" \
+            DR_GRPC_ENDPOINT \
+            DR_PROMETHEUS_URL \
+            DR_STANDBY_PROMETHEUS_URL \
+            DR_FAILOVER_WEBHOOK
 
       - name: Execute DR failover runbook (full exercise)
         env:
@@ -438,11 +496,13 @@ jobs:
           (report_path.parent / "summary.md").write_text("\n".join(lines) + "\n", encoding="utf-8")
 
           summary_path = Path(os.environ["GITHUB_STEP_SUMMARY"])
-          summary_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+          with summary_path.open("a", encoding="utf-8") as summary_file:
+              summary_file.write("\n".join(lines) + "\n")
           print("\n".join(lines))
           PY
 
       - name: Publish DR failover runbook artifacts
+        if: always()
         uses: actions/upload-artifact@v4
         with:
           name: dr-failover-runbook
