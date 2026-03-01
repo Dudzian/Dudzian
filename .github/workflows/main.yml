@@ -3,6 +3,10 @@ name: CI (Multi-platform)
 run-name: "CI (${{ github.event_name }}: ${{ github.ref_name }})"
 
 on:
+  push:
+  pull_request:
+  schedule:
+    - cron: "0 3 * * *"
   workflow_dispatch:
     inputs:
       run_lint:
@@ -37,6 +41,7 @@ on:
         description: "If run_deploy=true, publish a GitHub Release (tag required)"
         type: boolean
         default: false
+
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
@@ -68,7 +73,7 @@ jobs:
     timeout-minutes: 30
     if: |
       github.event_name != 'workflow_dispatch' ||
-      inputs.run_fast
+      fromJSON(github.event.inputs.run_fast || 'true')
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -89,7 +94,7 @@ jobs:
         shell: bash
         run: |
           mkdir -p var/ci
-          pytest -vv --maxfail=1 -x --junitxml=var/ci/smoke_linux_first.xml
+          python -m pytest -vv --maxfail=1 -x --junitxml=var/ci/smoke_linux_first.xml
 
   smoke-tests-windows:
     name: Smoke tests (Windows / self-hosted)
@@ -97,7 +102,7 @@ jobs:
     timeout-minutes: 30
     if: |
       github.event_name != 'workflow_dispatch' ||
-      inputs.run_fast
+      fromJSON(github.event.inputs.run_fast || 'true')
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -118,7 +123,7 @@ jobs:
         shell: pwsh
         run: |
           New-Item -ItemType Directory -Force var/ci | Out-Null
-          pytest -vv --maxfail=1 -x --junitxml=var/ci/smoke_windows_first.xml
+          python -m pytest -vv --maxfail=1 -x --junitxml=var/ci/smoke_windows_first.xml
 
   smoke-tests-macos:
     name: Smoke tests (macOS)
@@ -126,7 +131,7 @@ jobs:
     timeout-minutes: 30
     if: |
       github.event_name != 'workflow_dispatch' ||
-      inputs.run_fast
+      fromJSON(github.event.inputs.run_fast || 'true')
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -147,7 +152,7 @@ jobs:
         shell: bash
         run: |
           mkdir -p var/ci
-          pytest -vv --maxfail=1 -x --junitxml=var/ci/smoke_macos_first.xml
+          python -m pytest -vv --maxfail=1 -x --junitxml=var/ci/smoke_macos_first.xml
 
   ###########################################################################
   # Lint (Linux only by default)
@@ -157,7 +162,7 @@ jobs:
     name: Lint (pre-commit) [Linux]
     runs-on: ubuntu-latest
     needs: smoke-tests-linux
-    if: github.event_name == 'workflow_dispatch' && inputs.run_lint
+    if: github.event_name == 'workflow_dispatch' && fromJSON(github.event.inputs.run_lint || 'false')
     timeout-minutes: 25
     steps:
       - uses: actions/checkout@v4
@@ -181,7 +186,7 @@ jobs:
     name: Curated unit suite (Linux)
     runs-on: ubuntu-latest
     needs: smoke-tests-linux
-    if: github.event_name == 'workflow_dispatch' && inputs.run_curated
+    if: github.event_name == 'workflow_dispatch' && fromJSON(github.event.inputs.run_curated || 'false')
     timeout-minutes: 40
     steps:
       - uses: actions/checkout@v4
@@ -196,7 +201,7 @@ jobs:
       - name: Pytest curated
         shell: bash
         run: |
-          pytest \
+          python -m pytest \
             tests/test_pipeline_paper.py \
             tests/test_risk_profiles.py \
             tests/test_multi_strategy_scheduler.py \
@@ -206,7 +211,7 @@ jobs:
     name: Curated unit suite (Windows / self-hosted)
     runs-on: [self-hosted, windows]
     needs: smoke-tests-windows
-    if: github.event_name == 'workflow_dispatch' && inputs.run_curated
+    if: github.event_name == 'workflow_dispatch' && fromJSON(github.event.inputs.run_curated || 'false')
     timeout-minutes: 40
     steps:
       - uses: actions/checkout@v4
@@ -221,7 +226,7 @@ jobs:
       - name: Pytest curated
         shell: pwsh
         run: |
-          pytest `
+          python -m pytest `
             tests/test_pipeline_paper.py `
             tests/test_risk_profiles.py `
             tests/test_multi_strategy_scheduler.py `
@@ -231,7 +236,7 @@ jobs:
     name: Curated unit suite (macOS)
     runs-on: macos-latest
     needs: smoke-tests-macos
-    if: github.event_name == 'workflow_dispatch' && inputs.run_curated
+    if: github.event_name == 'workflow_dispatch' && fromJSON(github.event.inputs.run_curated || 'false')
     timeout-minutes: 40
     steps:
       - uses: actions/checkout@v4
@@ -246,7 +251,7 @@ jobs:
       - name: Pytest curated
         shell: bash
         run: |
-          pytest \
+          python -m pytest \
             tests/test_pipeline_paper.py \
             tests/test_risk_profiles.py \
             tests/test_multi_strategy_scheduler.py \
@@ -260,7 +265,7 @@ jobs:
     name: Integration tests (Linux branch)
     runs-on: ubuntu-latest
     needs: smoke-tests-linux
-    if: github.event_name == 'workflow_dispatch' && inputs.run_integration
+    if: github.event_name == 'workflow_dispatch' && fromJSON(github.event.inputs.run_integration || 'false')
     timeout-minutes: 60
     steps:
       - uses: actions/checkout@v4
@@ -275,12 +280,13 @@ jobs:
       - name: Pytest integration
         shell: bash
         run: |
-          pytest -m integration --maxfail=1
+          python -m pytest -m integration --maxfail=1
 
   loopback-e2e-linux:
     name: Loopback E2E (Linux branch)
     runs-on: ubuntu-latest
     needs: smoke-tests-linux
+    if: github.event_name == 'workflow_dispatch' && fromJSON(github.event.inputs.run_integration || 'false')
     timeout-minutes: 60
     steps:
       - uses: actions/checkout@v4
@@ -323,16 +329,14 @@ jobs:
         shell: bash
         run: |
           mkdir -p test-results/grpc-soak
-          pytest -m "soak" tests/integration/test_grpc_transport.py --maxfail=1 --disable-warnings \
+          python -m pytest -m "soak" tests/integration/test_grpc_transport.py --maxfail=1 --disable-warnings \
             --junitxml=test-results/grpc-soak/pytest.xml
 
   performance-linux:
     name: Performance Benchmarks (Linux branch)
     runs-on: ubuntu-latest
     needs: smoke-tests-linux
-    if: |
-      github.event_name == 'schedule' ||
-      github.event_name == 'workflow_dispatch'
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
     timeout-minutes: 90
     steps:
       - uses: actions/checkout@v4
@@ -347,7 +351,7 @@ jobs:
       - name: Run performance tests
         shell: bash
         run: |
-          pytest -m performance tests/performance --disable-warnings
+          python -m pytest -m performance tests/performance --disable-warnings
 
   ###########################################################################
   # UI / QML tests per OS (optional)
@@ -357,7 +361,7 @@ jobs:
     name: UI / QML tests (Linux)
     runs-on: ubuntu-latest
     needs: smoke-tests-linux
-    if: github.event_name == 'workflow_dispatch' && inputs.run_ui
+    if: github.event_name == 'workflow_dispatch' && fromJSON(github.event.inputs.run_ui || 'false')
     timeout-minutes: 60
     env:
       QT_QPA_PLATFORM: offscreen
@@ -395,7 +399,7 @@ jobs:
     name: UI / QML tests (Windows / self-hosted)
     runs-on: [self-hosted, windows]
     needs: smoke-tests-windows
-    if: github.event_name == 'workflow_dispatch' && inputs.run_ui
+    if: github.event_name == 'workflow_dispatch' && fromJSON(github.event.inputs.run_ui || 'false')
     timeout-minutes: 60
     env:
       QT_QPA_PLATFORM: offscreen
@@ -424,7 +428,7 @@ jobs:
     name: UI / QML tests (macOS)
     runs-on: macos-latest
     needs: smoke-tests-macos
-    if: github.event_name == 'workflow_dispatch' && inputs.run_ui
+    if: github.event_name == 'workflow_dispatch' && fromJSON(github.event.inputs.run_ui || 'false')
     timeout-minutes: 60
     env:
       QT_QPA_PLATFORM: offscreen
@@ -458,7 +462,7 @@ jobs:
     name: UI packaging (Linux bundle)
     runs-on: ubuntu-latest
     needs: smoke-tests-linux
-    if: github.event_name == 'workflow_dispatch' && inputs.run_packaging
+    if: github.event_name == 'workflow_dispatch' && fromJSON(github.event.inputs.run_packaging || 'false')
     timeout-minutes: 60
     steps:
       - uses: actions/checkout@v4
@@ -471,7 +475,7 @@ jobs:
     name: UI packaging (Windows bundle / self-hosted)
     runs-on: [self-hosted, windows]
     needs: smoke-tests-windows
-    if: github.event_name == 'workflow_dispatch' && inputs.run_packaging
+    if: github.event_name == 'workflow_dispatch' && fromJSON(github.event.inputs.run_packaging || 'false')
     timeout-minutes: 60
     steps:
       - uses: actions/checkout@v4
@@ -484,7 +488,7 @@ jobs:
     name: UI packaging (macOS bundle)
     runs-on: macos-latest
     needs: smoke-tests-macos
-    if: github.event_name == 'workflow_dispatch' && inputs.run_packaging
+    if: github.event_name == 'workflow_dispatch' && fromJSON(github.event.inputs.run_packaging || 'false')
     timeout-minutes: 60
     steps:
       - uses: actions/checkout@v4
