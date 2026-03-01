@@ -194,6 +194,14 @@ jobs:
           bash scripts/ci/install_deps_python.sh
           python -m pip install pre-commit
 
+      - name: Verify PyYAML availability for runtime tests
+        shell: bash
+        run: |
+          python - <<'PY'
+          import yaml
+          print(f"PyYAML available: {getattr(yaml, '__version__', 'unknown')}")
+          PY
+
       - name: Preflight test environment
         shell: bash
         run: |
@@ -231,6 +239,7 @@ jobs:
           tests/test_telemetry_risk_profiles.py
           tests/test_trading_decision_journal.py
           tests/test_smoke_demo_strategies_cli.py
+          tests/runtime/test_stage6_hypercare_cycle_runtime.py
 
       - name: Upload coverage report
         if: always()
