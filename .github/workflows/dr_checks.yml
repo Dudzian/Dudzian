@@ -19,10 +19,54 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
+      - name: Show workflow run revision details
+        shell: bash
+        run: |
+          run_url="${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
+
+          echo "::group::Workflow run revision details"
+          echo "event=${GITHUB_EVENT_NAME}"
+          echo "ref=${GITHUB_REF}"
+          echo "ref_name=${GITHUB_REF_NAME}"
+          echo "head_ref=${GITHUB_HEAD_REF:-<none>}"
+          echo "base_ref=${GITHUB_BASE_REF:-<none>}"
+          echo "sha=${GITHUB_SHA}"
+          echo "workflow=${GITHUB_WORKFLOW}"
+          echo "job=${GITHUB_JOB}"
+          echo "workflow_ref=${GITHUB_WORKFLOW_REF}"
+          echo "run_attempt=${GITHUB_RUN_ATTEMPT}"
+          echo "run_number=${GITHUB_RUN_NUMBER}"
+          echo "run_url=${run_url}"
+          echo "::endgroup::"
+
+          if [[ -n "${GITHUB_STEP_SUMMARY:-}" ]]; then
+            {
+              echo "### Workflow run revision details"
+              echo "- job: \`${GITHUB_JOB}\`"
+              echo "- sha: \`${GITHUB_SHA}\`"
+              echo "- run_number: \`${GITHUB_RUN_NUMBER}\`"
+              echo "- run_attempt: \`${GITHUB_RUN_ATTEMPT}\`"
+              echo "- run_url: [${run_url}](${run_url})"
+              echo
+            } >> "${GITHUB_STEP_SUMMARY}"
+          fi
+
       - name: Check out repository
         uses: actions/checkout@v4
+      - name: Validate DR probe secrets
+        id: validate_probe_secrets
+        env:
+          DR_GRPC_ENDPOINT: ${{ secrets.DR_GRPC_ENDPOINT }}
+          DR_PROMETHEUS_URL: ${{ secrets.DR_PROMETHEUS_URL }}
+        run: |
+          ./scripts/validate_dr_secrets.sh \
+            "Missing DR probe secrets" \
+            "Cloud DR probe summary" \
+            DR_GRPC_ENDPOINT \
+            DR_PROMETHEUS_URL
 
       - name: Set up Python for DR probes
+        id: setup_python_probes
         uses: actions/setup-python@v5
         with:
           python-version: "3.11"
@@ -34,17 +78,6 @@ jobs:
           python -m pip install --upgrade setuptools_scm
           # install the local package
           pip install .[dev]
-
-      - name: Validate DR probe secrets
-        env:
-          DR_GRPC_ENDPOINT: ${{ secrets.DR_GRPC_ENDPOINT }}
-          DR_PROMETHEUS_URL: ${{ secrets.DR_PROMETHEUS_URL }}
-        run: |
-          ./scripts/validate_dr_secrets.sh \
-            "Missing DR probe secrets" \
-            "Cloud DR probe summary" \
-            DR_GRPC_ENDPOINT \
-            DR_PROMETHEUS_URL
 
       - name: Run Cloud DR synthetic probes (pre-failover readiness)
         env:
@@ -60,7 +93,7 @@ jobs:
             --output-dir reports/ci/dr_probes
 
       - name: Summarize Cloud DR probe results
-        if: always()
+        if: ${{ always() && steps.validate_probe_secrets.outcome == 'success' && steps.setup_python_probes.outcome == 'success' }}
         run: |
           python - <<'PY'
           import json
@@ -108,9 +141,11 @@ jobs:
           )
           (output_dir / "summary.md").write_text("\n".join(summary_lines) + "\n", encoding="utf-8")
 
-          summary_path = Path(os.environ["GITHUB_STEP_SUMMARY"])
-          with summary_path.open("a", encoding="utf-8") as summary_file:
-              summary_file.write("\n".join(summary_lines) + "\n")
+          summary_env = os.environ.get("GITHUB_STEP_SUMMARY")
+          if summary_env:
+              summary_path = Path(summary_env)
+              with summary_path.open("a", encoding="utf-8") as summary_file:
+                  summary_file.write("\n".join(summary_lines) + "\n")
           print("\n".join(summary_lines))
           PY
 
@@ -129,23 +164,42 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
+      - name: Show workflow run revision details
+        shell: bash
+        run: |
+          run_url="${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
+
+          echo "::group::Workflow run revision details"
+          echo "event=${GITHUB_EVENT_NAME}"
+          echo "ref=${GITHUB_REF}"
+          echo "ref_name=${GITHUB_REF_NAME}"
+          echo "head_ref=${GITHUB_HEAD_REF:-<none>}"
+          echo "base_ref=${GITHUB_BASE_REF:-<none>}"
+          echo "sha=${GITHUB_SHA}"
+          echo "workflow=${GITHUB_WORKFLOW}"
+          echo "job=${GITHUB_JOB}"
+          echo "workflow_ref=${GITHUB_WORKFLOW_REF}"
+          echo "run_attempt=${GITHUB_RUN_ATTEMPT}"
+          echo "run_number=${GITHUB_RUN_NUMBER}"
+          echo "run_url=${run_url}"
+          echo "::endgroup::"
+
+          if [[ -n "${GITHUB_STEP_SUMMARY:-}" ]]; then
+            {
+              echo "### Workflow run revision details"
+              echo "- job: \`${GITHUB_JOB}\`"
+              echo "- sha: \`${GITHUB_SHA}\`"
+              echo "- run_number: \`${GITHUB_RUN_NUMBER}\`"
+              echo "- run_attempt: \`${GITHUB_RUN_ATTEMPT}\`"
+              echo "- run_url: [${run_url}](${run_url})"
+              echo
+            } >> "${GITHUB_STEP_SUMMARY}"
+          fi
+
       - name: Check out repository
         uses: actions/checkout@v4
-
-      - name: Set up Python for failover validation
-        uses: actions/setup-python@v5
-        with:
-          python-version: "3.11"
-
-      - name: Install DR validation dependencies
-        run: |
-          python -m pip install --upgrade pip setuptools wheel build
-          # optional: ensure common problematic packages are up-to-date
-          python -m pip install --upgrade setuptools_scm
-          # install the local package
-          pip install .[dev]
-
       - name: Validate DR failover secrets
+        id: validate_failover_secrets
         env:
           DR_GRPC_ENDPOINT: ${{ secrets.DR_GRPC_ENDPOINT }}
           DR_PROMETHEUS_URL: ${{ secrets.DR_PROMETHEUS_URL }}
@@ -157,6 +211,20 @@ jobs:
             DR_GRPC_ENDPOINT \
             DR_PROMETHEUS_URL \
             DR_STANDBY_PROMETHEUS_URL
+
+      - name: Set up Python for failover validation
+        id: setup_python_failover
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install DR validation dependencies
+        run: |
+          python -m pip install --upgrade pip setuptools wheel build
+          # optional: ensure common problematic packages are up-to-date
+          python -m pip install --upgrade setuptools_scm
+          # install the local package
+          pip install .[dev]
 
       - name: Run DR failover validation (alerting path)
         env:
@@ -177,7 +245,7 @@ jobs:
             --output-dir reports/ci/dr_failover
 
       - name: Summarize failover validation results
-        if: always()
+        if: ${{ always() && steps.validate_failover_secrets.outcome == 'success' && steps.setup_python_failover.outcome == 'success' }}
         run: |
           python - <<'PY'
           import json
@@ -220,9 +288,11 @@ jobs:
           status_path.write_text(json.dumps(status_payload, ensure_ascii=False, indent=2), encoding="utf-8")
           (report_path.parent / "summary.md").write_text("\n".join(summary_lines) + "\n", encoding="utf-8")
 
-          summary_path = Path(os.environ["GITHUB_STEP_SUMMARY"])
-          with summary_path.open("a", encoding="utf-8") as summary_file:
-              summary_file.write("\n".join(summary_lines) + "\n")
+          summary_env = os.environ.get("GITHUB_STEP_SUMMARY")
+          if summary_env:
+              summary_path = Path(summary_env)
+              with summary_path.open("a", encoding="utf-8") as summary_file:
+                  summary_file.write("\n".join(summary_lines) + "\n")
           print("\n".join(summary_lines))
           PY
 
@@ -241,23 +311,42 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
+      - name: Show workflow run revision details
+        shell: bash
+        run: |
+          run_url="${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
+
+          echo "::group::Workflow run revision details"
+          echo "event=${GITHUB_EVENT_NAME}"
+          echo "ref=${GITHUB_REF}"
+          echo "ref_name=${GITHUB_REF_NAME}"
+          echo "head_ref=${GITHUB_HEAD_REF:-<none>}"
+          echo "base_ref=${GITHUB_BASE_REF:-<none>}"
+          echo "sha=${GITHUB_SHA}"
+          echo "workflow=${GITHUB_WORKFLOW}"
+          echo "job=${GITHUB_JOB}"
+          echo "workflow_ref=${GITHUB_WORKFLOW_REF}"
+          echo "run_attempt=${GITHUB_RUN_ATTEMPT}"
+          echo "run_number=${GITHUB_RUN_NUMBER}"
+          echo "run_url=${run_url}"
+          echo "::endgroup::"
+
+          if [[ -n "${GITHUB_STEP_SUMMARY:-}" ]]; then
+            {
+              echo "### Workflow run revision details"
+              echo "- job: \`${GITHUB_JOB}\`"
+              echo "- sha: \`${GITHUB_SHA}\`"
+              echo "- run_number: \`${GITHUB_RUN_NUMBER}\`"
+              echo "- run_attempt: \`${GITHUB_RUN_ATTEMPT}\`"
+              echo "- run_url: [${run_url}](${run_url})"
+              echo
+            } >> "${GITHUB_STEP_SUMMARY}"
+          fi
+
       - name: Check out repository
         uses: actions/checkout@v4
-
-      - name: Set up Python for weekly snapshots
-        uses: actions/setup-python@v5
-        with:
-          python-version: "3.11"
-
-      - name: Install DR snapshot dependencies
-        run: |
-          python -m pip install --upgrade pip setuptools wheel build
-          # optional: ensure common problematic packages are up-to-date
-          python -m pip install --upgrade setuptools_scm
-          # install the local package
-          pip install .[dev]
-
       - name: Validate weekly DR snapshot secrets
+        id: validate_weekly_snapshot_secrets
         env:
           DR_GRPC_ENDPOINT: ${{ secrets.DR_GRPC_ENDPOINT }}
           DR_PROMETHEUS_URL: ${{ secrets.DR_PROMETHEUS_URL }}
@@ -269,6 +358,20 @@ jobs:
             DR_GRPC_ENDPOINT \
             DR_PROMETHEUS_URL \
             DR_STANDBY_PROMETHEUS_URL
+
+      - name: Set up Python for weekly snapshots
+        id: setup_python_weekly_snapshots
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install DR snapshot dependencies
+        run: |
+          python -m pip install --upgrade pip setuptools wheel build
+          # optional: ensure common problematic packages are up-to-date
+          python -m pip install --upgrade setuptools_scm
+          # install the local package
+          pip install .[dev]
 
       - name: Run DR failover with snapshots (evidence collection)
         env:
@@ -290,7 +393,7 @@ jobs:
             --snapshot-prefix reports/ci/dr_failover/weekly/failover_snapshot
 
       - name: Summarize weekly snapshot validation
-        if: always()
+        if: ${{ always() && steps.validate_weekly_snapshot_secrets.outcome == 'success' && steps.setup_python_weekly_snapshots.outcome == 'success' }}
         run: |
           python - <<'PY'
           import json
@@ -335,9 +438,11 @@ jobs:
           status_path.write_text(json.dumps(status_payload, ensure_ascii=False, indent=2), encoding="utf-8")
           (report_path.parent / "summary.md").write_text("\n".join(summary_lines) + "\n", encoding="utf-8")
 
-          summary_path = Path(os.environ["GITHUB_STEP_SUMMARY"])
-          with summary_path.open("a", encoding="utf-8") as summary_file:
-              summary_file.write("\n".join(summary_lines) + "\n")
+          summary_env = os.environ.get("GITHUB_STEP_SUMMARY")
+          if summary_env:
+              summary_path = Path(summary_env)
+              with summary_path.open("a", encoding="utf-8") as summary_file:
+                  summary_file.write("\n".join(summary_lines) + "\n")
           print("\n".join(summary_lines))
           PY
 
@@ -356,23 +461,42 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
+      - name: Show workflow run revision details
+        shell: bash
+        run: |
+          run_url="${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
+
+          echo "::group::Workflow run revision details"
+          echo "event=${GITHUB_EVENT_NAME}"
+          echo "ref=${GITHUB_REF}"
+          echo "ref_name=${GITHUB_REF_NAME}"
+          echo "head_ref=${GITHUB_HEAD_REF:-<none>}"
+          echo "base_ref=${GITHUB_BASE_REF:-<none>}"
+          echo "sha=${GITHUB_SHA}"
+          echo "workflow=${GITHUB_WORKFLOW}"
+          echo "job=${GITHUB_JOB}"
+          echo "workflow_ref=${GITHUB_WORKFLOW_REF}"
+          echo "run_attempt=${GITHUB_RUN_ATTEMPT}"
+          echo "run_number=${GITHUB_RUN_NUMBER}"
+          echo "run_url=${run_url}"
+          echo "::endgroup::"
+
+          if [[ -n "${GITHUB_STEP_SUMMARY:-}" ]]; then
+            {
+              echo "### Workflow run revision details"
+              echo "- job: \`${GITHUB_JOB}\`"
+              echo "- sha: \`${GITHUB_SHA}\`"
+              echo "- run_number: \`${GITHUB_RUN_NUMBER}\`"
+              echo "- run_attempt: \`${GITHUB_RUN_ATTEMPT}\`"
+              echo "- run_url: [${run_url}](${run_url})"
+              echo
+            } >> "${GITHUB_STEP_SUMMARY}"
+          fi
+
       - name: Check out repository
         uses: actions/checkout@v4
-
-      - name: Set up Python for DR runbook
-        uses: actions/setup-python@v5
-        with:
-          python-version: "3.11"
-
-      - name: Install DR runbook dependencies
-        run: |
-          python -m pip install --upgrade pip setuptools wheel build
-          # optional: ensure common problematic packages are up-to-date
-          python -m pip install --upgrade setuptools_scm
-          # install the local package
-          pip install .[dev]
-
       - name: Validate weekly DR runbook secrets
+        id: validate_weekly_runbook_secrets
         env:
           DR_GRPC_ENDPOINT: ${{ secrets.DR_GRPC_ENDPOINT }}
           DR_PROMETHEUS_URL: ${{ secrets.DR_PROMETHEUS_URL }}
@@ -386,6 +510,20 @@ jobs:
             DR_PROMETHEUS_URL \
             DR_STANDBY_PROMETHEUS_URL \
             DR_FAILOVER_WEBHOOK
+
+      - name: Set up Python for DR runbook
+        id: setup_python_runbook
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install DR runbook dependencies
+        run: |
+          python -m pip install --upgrade pip setuptools wheel build
+          # optional: ensure common problematic packages are up-to-date
+          python -m pip install --upgrade setuptools_scm
+          # install the local package
+          pip install .[dev]
 
       - name: Execute DR failover runbook (full exercise)
         env:
@@ -407,6 +545,7 @@ jobs:
             --snapshot-prefix reports/ci/dr_failover/runbook/failover_snapshot
 
       - name: Report synthetic probe regression (post-failover)
+        if: ${{ always() && steps.validate_weekly_runbook_secrets.outcome == 'success' && steps.setup_python_runbook.outcome == 'success' }}
         run: |
           python - <<'PY'
           import json
@@ -441,7 +580,7 @@ jobs:
           PY
 
       - name: Summarize failover comparison for runbook
-        if: always()
+        if: ${{ always() && steps.validate_weekly_runbook_secrets.outcome == 'success' && steps.setup_python_runbook.outcome == 'success' }}
         run: |
           python - <<'PY'
           import json
@@ -495,9 +634,11 @@ jobs:
           status_path.write_text(json.dumps(status_payload, ensure_ascii=False, indent=2), encoding="utf-8")
           (report_path.parent / "summary.md").write_text("\n".join(lines) + "\n", encoding="utf-8")
 
-          summary_path = Path(os.environ["GITHUB_STEP_SUMMARY"])
-          with summary_path.open("a", encoding="utf-8") as summary_file:
-              summary_file.write("\n".join(lines) + "\n")
+          summary_env = os.environ.get("GITHUB_STEP_SUMMARY")
+          if summary_env:
+              summary_path = Path(summary_env)
+              with summary_path.open("a", encoding="utf-8") as summary_file:
+                  summary_file.write("\n".join(lines) + "\n")
           print("\n".join(lines))
           PY
 
