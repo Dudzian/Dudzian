@@ -41,7 +41,7 @@ jobs:
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
-          python-version: "3.11"
+          python-version: ${{ env.PYTHON_VERSION }}
 
       - name: Inspect pip configuration
         shell: bash
@@ -65,36 +65,32 @@ jobs:
       - name: Upload wheelhouse artifact
         uses: actions/upload-artifact@v4
         with:
-          name: wheelhouse-${{ matrix.os == 'windows-latest' && 'Windows' || 'Linux' }}-py3.11
-          path: wheelhouse
+          name: wheelhouse-${{ runner.os }}-py${{ env.PYTHON_VERSION }}
+          path: ${{ env.WHEELHOUSE_DIR }}
           if-no-files-found: error
           retention-days: 7
 
   lint-and-test:
     if: github.event_name != 'schedule'
     name: Lint and Test
-    runs-on: [self-hosted, windows]
+    runs-on: windows-latest
     needs: prepare-wheelhouse
     steps:
       - name: Check out repository
         uses: actions/checkout@v4
 
-      - name: Ensure Git Bash is available in PATH
-        uses: ./.github/actions/ensure-git-bash
-
       - name: Set up Python
         id: setup-python
         uses: actions/setup-python@v5
         with:
-          python-version: "3.11"
+          python-version: ${{ env.PYTHON_VERSION }}
 
       - name: Determine pip cache directory
         id: pip-cache
         shell: bash
         run: |
           python - <<'PY'
-          import os
-          import subprocess
+          import os, subprocess
           cache_dir = subprocess.check_output(["python", "-m", "pip", "cache", "dir"], text=True).strip()
           print(f"cache_dir={cache_dir}")
           with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as fh:
@@ -105,15 +101,15 @@ jobs:
         uses: actions/cache@v4
         with:
           path: ${{ steps.pip-cache.outputs.cache_dir }}
-          key: pip-${{ github.job }}-${{ steps.setup-python.outputs.python-version }}-${{ hashFiles('pyproject.toml', 'requirements.txt', 'pytest_cov_stub.py') }}
+          key: pip-${{ runner.os }}-${{ steps.setup-python.outputs.python-version }}-${{ hashFiles('pyproject.toml', 'requirements.txt', 'pytest_cov_stub.py') }}
           restore-keys: |
-            pip-${{ github.job }}-${{ steps.setup-python.outputs.python-version }}-
+            pip-${{ runner.os }}-${{ steps.setup-python.outputs.python-version }}-
 
       - name: Download wheelhouse
         uses: actions/download-artifact@v4
         with:
-          name: wheelhouse-Windows-py3.11
-          path: wheelhouse
+          name: wheelhouse-${{ runner.os }}-py${{ env.PYTHON_VERSION }}
+          path: ${{ env.WHEELHOUSE_DIR }}
           if-no-artifact-found: error
 
       - name: Lint repository paths
@@ -122,7 +118,8 @@ jobs:
       - name: Install dependencies
         shell: bash
         run: |
-          bash scripts/ci/install_deps_python.sh
+          python -m pip install --upgrade pip
+          python -m pip install -e ".[dev]"
           python -m pip install pre-commit
 
       - name: Verify PyYAML availability for runtime tests
@@ -139,13 +136,16 @@ jobs:
           python scripts/ci/preflight_test_env.py
 
       - name: "Lint (pre-commit: ruff + mypy)"
-        run: pre-commit run --all-files --show-diff-on-failure
+        shell: bash
+        run: |
+          python -m pre_commit run --all-files --show-diff-on-failure
 
       - name: Prepare test reports directory
         shell: bash
         run: mkdir -p test-results
 
       - name: Pytest (unit suite) with coverage
+        shell: bash
         run: >-
           python -m pytest
           --cov=bot_core.strategies
@@ -188,7 +188,7 @@ jobs:
   licensing-hwid-tolerance:
     if: github.event_name != 'schedule'
     name: Licensing HWID Tolerance
-    runs-on: [self-hosted, windows]
+    runs-on: windows-latest
     env:
       PYTHONHASHSEED: "0"
       PYTEST_DISABLE_PLUGIN_AUTOLOAD: "1"
@@ -201,7 +201,7 @@ jobs:
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
-          python-version: "3.11"
+          python-version: ${{ env.PYTHON_VERSION }}
 
       - name: Install dependencies
         shell: pwsh
@@ -239,7 +239,7 @@ jobs:
   mypy-core:
     if: github.event_name != 'schedule'
     name: Mypy (core packages)
-    runs-on: [self-hosted, windows]
+    runs-on: windows-latest
     steps:
       - name: Check out repository
         uses: actions/checkout@v4
@@ -247,12 +247,13 @@ jobs:
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
-          python-version: "3.11"
+          python-version: ${{ env.PYTHON_VERSION }}
 
       - name: Install dependencies
+        shell: bash
         run: |
           python -m pip install --upgrade pip
-          python -m pip install .[dev]
+          python -m pip install -e ".[dev]"
           python -m pip install mypy
 
       - name: Run mypy for core packages
@@ -270,8 +271,8 @@ jobs:
       - name: Download wheelhouse
         uses: actions/download-artifact@v4
         with:
-          name: wheelhouse-Linux-py3.11
-          path: wheelhouse
+          name: wheelhouse-${{ runner.os }}-py${{ env.PYTHON_VERSION }}
+          path: ${{ env.WHEELHOUSE_DIR }}
           if-no-artifact-found: error
 
       - name: Lint repository paths
@@ -291,7 +292,7 @@ jobs:
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
-          python-version: "3.11"
+          python-version: ${{ env.PYTHON_VERSION }}
 
       - name: Install dependencies
         shell: bash
@@ -323,21 +324,18 @@ jobs:
   py-tests-windows:
     if: github.event_name != 'schedule'
     name: Python tests (Windows)
-    runs-on: [self-hosted, windows]
+    runs-on: windows-latest
     needs: prepare-wheelhouse
     timeout-minutes: 25
     steps:
       - name: Check out repository
         uses: actions/checkout@v4
 
-      - name: Ensure Git Bash is available in PATH
-        uses: ./.github/actions/ensure-git-bash
-
       - name: Download wheelhouse
         uses: actions/download-artifact@v4
         with:
-          name: wheelhouse-Windows-py3.11
-          path: wheelhouse
+          name: wheelhouse-${{ runner.os }}-py${{ env.PYTHON_VERSION }}
+          path: ${{ env.WHEELHOUSE_DIR }}
           if-no-artifact-found: error
 
       - name: Lint repository paths
@@ -346,7 +344,7 @@ jobs:
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
-          python-version: "3.11"
+          python-version: ${{ env.PYTHON_VERSION }}
 
       - name: Install dependencies
         shell: bash
@@ -416,8 +414,8 @@ jobs:
       - name: Download wheelhouse
         uses: actions/download-artifact@v4
         with:
-          name: wheelhouse-Linux-py3.11
-          path: wheelhouse
+          name: wheelhouse-${{ runner.os }}-py${{ env.PYTHON_VERSION }}
+          path: ${{ env.WHEELHOUSE_DIR }}
           if-no-artifact-found: error
 
       - name: Lint repository paths
@@ -426,7 +424,7 @@ jobs:
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
-          python-version: "3.11"
+          python-version: ${{ env.PYTHON_VERSION }}
 
       - name: Install dependencies
         shell: bash
@@ -468,7 +466,6 @@ jobs:
     if: github.event_name != 'schedule'
     name: Python tests (macOS)
     runs-on: macos-latest
-    needs: prepare-wheelhouse
     timeout-minutes: 25
     steps:
       - name: Check out repository
@@ -480,7 +477,7 @@ jobs:
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
-          python-version: "3.11"
+          python-version: ${{ env.PYTHON_VERSION }}
 
       - name: Install dependencies
         shell: bash
@@ -576,7 +573,7 @@ jobs:
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
-          python-version: "3.11"
+          python-version: ${{ env.PYTHON_VERSION }}
 
       - name: Install dependencies
         run: |
@@ -630,7 +627,7 @@ jobs:
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
-          python-version: "3.11"
+          python-version: ${{ env.PYTHON_VERSION }}
 
       - name: Install dependencies
         run: |
@@ -774,7 +771,7 @@ jobs:
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
-          python-version: "3.11"
+          python-version: ${{ env.PYTHON_VERSION }}
 
       - name: Install system dependencies
         run: |
@@ -793,8 +790,8 @@ jobs:
       - name: Download PySide6 wheel artifact
         uses: actions/download-artifact@v4
         with:
-          name: wheelhouse-Linux-py3.11
-          path: wheelhouse
+          name: wheelhouse-Linux-py${{ env.PYTHON_VERSION }}
+          path: ${{ env.WHEELHOUSE_DIR }}
           if-no-artifact-found: error
 
       - name: Install Python dependencies
@@ -860,7 +857,7 @@ jobs:
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
-          python-version: "3.11"
+          python-version: ${{ env.PYTHON_VERSION }}
 
       - name: Install system dependencies
         run: |
@@ -871,8 +868,8 @@ jobs:
       - name: Download PySide6 wheel artifact
         uses: actions/download-artifact@v4
         with:
-          name: wheelhouse-Linux-py3.11
-          path: wheelhouse
+          name: wheelhouse-Linux-py${{ env.PYTHON_VERSION }}
+          path: ${{ env.WHEELHOUSE_DIR }}
           if-no-artifact-found: error
 
       - name: Install Python dependencies
@@ -943,7 +940,7 @@ jobs:
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
-          python-version: "3.11"
+          python-version: ${{ env.PYTHON_VERSION }}
 
       - name: Install system dependencies
         run: |
@@ -954,8 +951,8 @@ jobs:
       - name: Download PySide6 wheel artifact
         uses: actions/download-artifact@v4
         with:
-          name: wheelhouse-Linux-py3.11
-          path: wheelhouse
+          name: wheelhouse-Linux-py${{ env.PYTHON_VERSION }}
+          path: ${{ env.WHEELHOUSE_DIR }}
           if-no-artifact-found: error
 
       - name: Install Python dependencies
@@ -1023,7 +1020,7 @@ jobs:
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
-          python-version: "3.11"
+          python-version: ${{ env.PYTHON_VERSION }}
 
       - name: Install system dependencies
         run: |
@@ -1034,8 +1031,8 @@ jobs:
       - name: Download wheelhouse
         uses: actions/download-artifact@v4
         with:
-          name: wheelhouse-Linux-py3.11
-          path: wheelhouse
+          name: wheelhouse-Linux-py${{ env.PYTHON_VERSION }}
+          path: ${{ env.WHEELHOUSE_DIR }}
           if-no-artifact-found: error
 
       - name: Install Python dependencies
@@ -1123,7 +1120,7 @@ jobs:
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
-          python-version: "3.11"
+          python-version: ${{ env.PYTHON_VERSION }}
 
       - name: Install dependencies
         run: |
@@ -1155,7 +1152,7 @@ jobs:
   marketplace-catalog:
     if: github.event_name != 'schedule'
     name: Marketplace Catalog Packaging
-    runs-on: [self-hosted, windows]
+    runs-on: windows-latest
     needs: lint-and-test
     outputs:
       packages_artifact_name: ${{ steps.marketplace-artifact-metadata.outputs.packages_artifact_name }}
@@ -1164,13 +1161,10 @@ jobs:
       - name: Check out repository
         uses: actions/checkout@v4
 
-      - name: Ensure Git Bash is available in PATH
-        uses: ./.github/actions/ensure-git-bash
-
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
-          python-version: "3.11"
+          python-version: ${{ env.PYTHON_VERSION }}
 
       - name: Install dependencies
         shell: pwsh
@@ -1258,13 +1252,7 @@ jobs:
     if: github.event_name != 'schedule'
     name: UI Packaging
     needs: prepare-wheelhouse
-    runs-on: ${{ matrix.os }}
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - os: ubuntu-latest
-            platform: linux
+    runs-on: ubuntu-latest
     steps:
       - name: Check out repository
         uses: actions/checkout@v4
@@ -1272,14 +1260,14 @@ jobs:
       - name: Download wheelhouse
         uses: actions/download-artifact@v4
         with:
-          name: wheelhouse-Linux-py3.11
-          path: wheelhouse
+          name: wheelhouse-Linux-py${{ env.PYTHON_VERSION }}
+          path: ${{ env.WHEELHOUSE_DIR }}
           if-no-artifact-found: error
 
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
-          python-version: "3.11"
+          python-version: ${{ env.PYTHON_VERSION }}
 
       - name: Install Qt
         uses: jurplel/install-qt-action@v3
@@ -1300,21 +1288,21 @@ jobs:
         shell: bash
         run: |
           python scripts/packaging/qt_bundle.py \
-            --platform ${{ matrix.platform }} \
-            --build-dir ui/build-${{ matrix.platform }} \
-            --install-dir ui/install-${{ matrix.platform }} \
-            --artifact-dir artifacts/ui/${{ matrix.platform }}
+            --platform linux \
+            --build-dir ui/build-linux \
+            --install-dir ui/install-linux \
+            --artifact-dir artifacts/ui/linux
 
       - name: Upload UI bundle
         uses: actions/upload-artifact@v4
         with:
-          name: ui-bundle-${{ matrix.platform }}
-          path: artifacts/ui/${{ matrix.platform }}
+          name: ui-bundle-linux
+          path: artifacts/ui/linux
           retention-days: 3
 
   deploy:
     name: Release marketplace assets
-    runs-on: [self-hosted, windows]
+    runs-on: windows-latest
     needs:
       - marketplace-catalog
       - ui-packaging
@@ -1336,13 +1324,10 @@ jobs:
       - name: Check out repository
         uses: actions/checkout@v4
 
-      - name: Ensure Git Bash is available in PATH
-        uses: ./.github/actions/ensure-git-bash
-
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
-          python-version: "3.11"
+          python-version: ${{ env.PYTHON_VERSION }}
 
       - name: Install dependencies
         shell: pwsh
