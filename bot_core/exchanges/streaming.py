@@ -717,7 +717,12 @@ class LocalLongPollStream(Iterable[StreamBatch]):
         return None
 
     @classmethod
-    def close_all_active(cls) -> None:
+    def close_all_active(
+        cls,
+        *,
+        blocking: bool = True,
+        timeout: float | None = None,
+    ) -> None:
         with cls._active_lock:
             active = list(cls._active_instances)
         for stream in active:
@@ -725,9 +730,32 @@ class LocalLongPollStream(Iterable[StreamBatch]):
                 stream._signal_stop(force=True)
             except Exception:  # pragma: no cover - defensywnie w teardownie
                 _LOGGER.debug("Nie udało się zasygnalizować stop dla LocalLongPollStream", exc_info=True)
+        if not blocking:
+            for stream in active:
+                try:
+                    stream._unregister_if_stopped()
+                except Exception:  # pragma: no cover - defensywnie w teardownie
+                    _LOGGER.debug("Nie udało się wyrejestrować LocalLongPollStream", exc_info=True)
+            return
+
+        timeout_budget_seconds = cls._DEFAULT_JOIN_TIMEOUT
+        deadline: float | None = None
+        if timeout is not None:
+            try:
+                timeout_budget_seconds = max(0.0, float(timeout))
+            except (TypeError, ValueError):
+                timeout_budget_seconds = cls._DEFAULT_JOIN_TIMEOUT
+            deadline = time.monotonic() + timeout_budget_seconds
+
+        def _remaining_timeout(default: float) -> float:
+            if deadline is None:
+                return default
+            return max(0.0, deadline - time.monotonic())
+
         for stream in active:
             try:
-                stream._join_worker(timeout=cls._DEFAULT_JOIN_TIMEOUT)
+                join_timeout = _remaining_timeout(timeout_budget_seconds)
+                stream._join_worker(timeout=join_timeout)
                 worker = stream._worker_thread
                 if worker and worker.is_alive():
                     timeout_value = getattr(stream, "_timeout", cls._DEFAULT_JOIN_TIMEOUT)
@@ -740,15 +768,17 @@ class LocalLongPollStream(Iterable[StreamBatch]):
                         max(timeout_float + 0.5, cls._DEFAULT_JOIN_TIMEOUT),
                         cls._CLOSE_ALL_JOIN_CAP_SECONDS,
                     )
-                    stream._join_worker(timeout=fallback_timeout)
+                    fallback_join_timeout = _remaining_timeout(fallback_timeout)
+                    stream._join_worker(timeout=fallback_join_timeout)
                     if stream._worker_thread and stream._worker_thread.is_alive():
                         stack_dump = cls._format_worker_stack(stream._worker_thread)
                         _LOGGER.debug(
-                            "LocalLongPollStream worker nadal żyje po progresywnym join: %s (ident=%s, timeout_stream=%s, join_fallback=%s)",
+                            "LocalLongPollStream worker nadal żyje po progresywnym join: %s (ident=%s, timeout_stream=%s, join_fallback=%s, join_remaining=%s)",
                             stream._worker_thread.name,
                             stream._worker_thread.ident,
                             timeout_float,
                             fallback_timeout,
+                            fallback_join_timeout,
                         )
                         if stack_dump:
                             _LOGGER.debug(
@@ -761,13 +791,15 @@ class LocalLongPollStream(Iterable[StreamBatch]):
             try:
                 if stream._worker_thread and stream._worker_thread.is_alive():
                     stream._signal_stop(force=True)
-                    stream._join_worker(timeout=cls._DEFAULT_JOIN_TIMEOUT)
+                    join_timeout = _remaining_timeout(timeout_budget_seconds)
+                    stream._join_worker(timeout=join_timeout)
                     if stream._worker_thread and stream._worker_thread.is_alive():
                         stack_dump = cls._format_worker_stack(stream._worker_thread)
                         _LOGGER.debug(
-                            "LocalLongPollStream worker nadal żyje po force-stop: %s (ident=%s)",
+                            "LocalLongPollStream worker nadal żyje po force-stop: %s (ident=%s, join_remaining=%s)",
                             stream._worker_thread.name,
                             stream._worker_thread.ident,
+                            join_timeout,
                         )
                         if stack_dump:
                             _LOGGER.debug(
