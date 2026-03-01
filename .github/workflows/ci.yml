@@ -21,8 +21,8 @@ concurrency:
 env:
   PYTHON_VERSION: "3.11"
   PYSIDE6_VERSION: "6.7.0"
-  QT_DESKTOP_MODULES: "qtcharts qtdeclarative qtquickcontrols2"
-  QT_WINDOWS_MODULES: "qtcharts qtdeclarative qtquickcontrols2 qtshadertools qtimageformats"
+  QT_DESKTOP_MODULES: "qtcharts"
+  QT_WINDOWS_MODULES: "qtcharts qtshadertools qtimageformats"
   WHEELHOUSE_DIR: "wheelhouse"
   WHEELHOUSE_ENABLED: "true"
 
@@ -709,7 +709,7 @@ jobs:
         uses: jurplel/install-qt-action@v3
         with:
           version: 6.7.0
-          modules: qtcharts qtdeclarative qtquickcontrols2
+          modules: qtcharts
 
       - name: Start virtual display
         run: |
@@ -1265,7 +1265,7 @@ jobs:
         uses: jurplel/install-qt-action@v3
         with:
           version: 6.7.0
-          modules: qtcharts qtdeclarative qtquickcontrols2
+          modules: qtcharts
 
       - name: Install PySide6 runtime
         run: |

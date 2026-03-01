@@ -6,7 +6,7 @@ This document describes how to run and debug the UI test suites (QML and native/
 
 - Python 3.11+
 - System libraries used by Qt: `libegl1`, `libgl1`, `libpulse0`, `libxkbcommon-x11-0`, `libxcb-cursor0`, `libxcb-xinerama0`
-- Qt 6.7 desktop modules (`qtcharts`, `qtdeclarative`, `qtquickcontrols2`) installed locally or via `jurplel/install-qt-action`
+- Qt 6.7 desktop modules (`qtcharts`; avoid forcing `qtdeclarative`/`qtquickcontrols2` because they are not separate `aqtinstall` modules for linux desktop 6.7.0) installed locally or via `jurplel/install-qt-action`
 - For headless environments, a virtual display (e.g., `xvfb` with a 1920x1080x24 screen)
 
 ```bash
