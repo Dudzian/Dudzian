@@ -21,6 +21,10 @@ inputs:
     description: Upload wheelhouse artifact (used by prepare job)
     required: false
     default: "false"
+  wheelhouse_artifact_name:
+    description: Artifact name for wheelhouse download/upload when wheelhouse_source=artifact
+    required: false
+    default: "wheelhouse-windows"
   enabled:
     description: Whether to execute the common steps
     required: false
@@ -48,15 +52,16 @@ runs:
       if: ${{ inputs.enabled == 'true' }}
       shell: pwsh
       run: |
+        $ErrorActionPreference = "Stop"
         switch ("${{ inputs.wheelhouse_source }}") {
           'artifact' {
             "WHEELHOUSE_DIR=$env:GITHUB_WORKSPACE\wheelhouse" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
           }
           'local_path' {
             if (-not "${{ inputs.wheelhouse_local_path }}") {
-              Write-Error "wheelhouse_local_path is required when wheelhouse_source=local_path"
+              throw "wheelhouse_local_path is required when wheelhouse_source=local_path"
             } elseif (-not (Test-Path "${{ inputs.wheelhouse_local_path }}")) {
-              Write-Error "wheelhouse_local_path '${{ inputs.wheelhouse_local_path }}' does not exist on the runner"
+              throw "wheelhouse_local_path '${{ inputs.wheelhouse_local_path }}' does not exist on the runner"
             } else {
               "WHEELHOUSE_DIR=${{ inputs.wheelhouse_local_path }}" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
             }
@@ -66,7 +71,7 @@ runs:
             "WHEELHOUSE_DIR=" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
           }
           default {
-            Write-Error "Unknown wheelhouse_source '${{ inputs.wheelhouse_source }}'"
+            throw "Unknown wheelhouse_source '${{ inputs.wheelhouse_source }}'"
           }
         }
 
@@ -74,10 +79,23 @@ runs:
       if: ${{ inputs.enabled == 'true' && inputs.wheelhouse_source == 'artifact' }}
       uses: actions/download-artifact@v4
       with:
-        name: wheelhouse-windows
+        name: ${{ inputs.wheelhouse_artifact_name }}
         path: wheelhouse
-        if-no-artifact-found: error
 
+    - name: Verify wheelhouse contents
+      if: ${{ inputs.enabled == 'true' && inputs.wheelhouse_source != 'none' }}
+      shell: pwsh
+      run: |
+        if (-not $env:WHEELHOUSE_DIR) {
+          throw "WHEELHOUSE_DIR is not set despite wheelhouse_source=${{ inputs.wheelhouse_source }}"
+        }
+        if (-not (Test-Path $env:WHEELHOUSE_DIR)) {
+          throw "Wheelhouse directory does not exist: $env:WHEELHOUSE_DIR"
+        }
+        $wheelFiles = Get-ChildItem -Path $env:WHEELHOUSE_DIR -Filter "*.whl" -File -ErrorAction SilentlyContinue
+        if (-not $wheelFiles -or $wheelFiles.Count -eq 0) {
+          throw "Wheelhouse directory is empty or does not contain *.whl files: $env:WHEELHOUSE_DIR"
+        }
 
     - name: Qt prefix preflight (UI jobs)
       if: ${{ inputs.enabled == 'true' && (inputs.selected_job == 'ui-native-tests' || inputs.selected_job == 'ui-packaging-windows') }}
@@ -233,7 +251,7 @@ runs:
       if: ${{ always() && inputs.enabled == 'true' && inputs.upload_artifacts == 'true' && inputs.upload_wheelhouse_artifact == 'true' && inputs.selected_job == 'prepare-wheelhouse' }}
       uses: actions/upload-artifact@v4
       with:
-        name: wheelhouse-windows
+        name: ${{ inputs.wheelhouse_artifact_name }}
         path: wheelhouse/**
         overwrite: true
         if-no-files-found: warn

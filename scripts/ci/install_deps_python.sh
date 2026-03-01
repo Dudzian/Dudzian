@@ -5,15 +5,11 @@ wheelhouse_args=()
 wheelhouse_enabled="${WHEELHOUSE_ENABLED:-false}"
 wheelhouse_dir="${WHEELHOUSE_DIR:-}"
 wheelhouse_artifact="${WHEELHOUSE_ARTIFACT:-}"
-runner_os="${RUNNER_OS:-}"
 wheelhouse_enforce="false"
 
 if [[ "${wheelhouse_enabled}" == "true" ]] && [[ -n "${wheelhouse_dir}" ]]; then
-  wheelhouse_args+=(--wheelhouse "${wheelhouse_dir}")
-  if [[ "${runner_os}" != "Windows" ]]; then
-    wheelhouse_args+=(--require-wheelhouse)
-    wheelhouse_enforce="true"
-  fi
+  wheelhouse_args+=(--wheelhouse "${wheelhouse_dir}" --require-wheelhouse)
+  wheelhouse_enforce="true"
 fi
 
 echo "[install-deps] wheelhouse_enabled=${wheelhouse_enabled}"
