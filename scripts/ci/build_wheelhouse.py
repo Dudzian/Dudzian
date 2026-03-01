@@ -28,8 +28,13 @@ def write_manifest(wheelhouse: Path) -> None:
     print(f"[wheelhouse] wrote manifest with {len(lines)} entries -> {manifest}")
 
 
-def build_download_cmd(wheelhouse: Path, args: argparse.Namespace, packages: Iterable[str]) -> list[str]:
-    cmd = [sys.executable, "-m", "pip", "download", "--dest", str(wheelhouse)]
+def build_download_cmd(
+    wheelhouse: Path,
+    args: argparse.Namespace,
+    packages: Iterable[str],
+    python_executable: str,
+) -> list[str]:
+    cmd = [python_executable, "-m", "pip", "download", "--dest", str(wheelhouse)]
     if args.no_binary:
         cmd.extend(["--no-binary", args.no_binary])
     if args.index_url:
@@ -82,14 +87,18 @@ def main(argv: list[str]) -> int:
         f"PySide6_Essentials=={args.pyside6_version}",
         f"shiboken6=={args.pyside6_version}",
     ]
-    download(wheelhouse, build_download_cmd(wheelhouse, args, pyside_packages))
+    download(wheelhouse, build_download_cmd(wheelhouse, args, pyside_packages, args.python))
+
+    # PEP 517 build backend tooling required by pyproject.toml
+    bootstrap_packages = ["wheel", "setuptools>=68"]
+    download(wheelhouse, build_download_cmd(wheelhouse, args, bootstrap_packages, args.python))
 
     # Project dependencies
     project_target = ".[test]" if not args.skip_dev else "."
-    download(wheelhouse, build_download_cmd(wheelhouse, args, [project_target]))
+    download(wheelhouse, build_download_cmd(wheelhouse, args, [project_target], args.python))
 
     if args.requirements:
-        download(wheelhouse, build_download_cmd(wheelhouse, args, [f"-r{args.requirements}"]))
+        download(wheelhouse, build_download_cmd(wheelhouse, args, [f"-r{args.requirements}"], args.python))
 
     write_manifest(wheelhouse)
     return 0

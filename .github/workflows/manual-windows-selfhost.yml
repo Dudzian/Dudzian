@@ -49,6 +49,7 @@ concurrency:
 
 env:
   CI: "1"
+  WHEELHOUSE_ARTIFACT_NAME: "wheelhouse-windows"
   # Manual workflow: wheelhouse source is chosen via workflow_dispatch inputs.
 
 jobs:
@@ -77,6 +78,7 @@ jobs:
           wheelhouse_source: ${{ env.WHEELHOUSE_SOURCE }}
           wheelhouse_local_path: ${{ env.WHEELHOUSE_LOCAL_PATH }}
           upload_artifacts: ${{ env.UPLOAD_ARTIFACTS }}
+          wheelhouse_artifact_name: ${{ env.WHEELHOUSE_ARTIFACT_NAME }}
           upload_wheelhouse_artifact: ${{ env.UPLOAD_ARTIFACTS }}
           enabled: ${{ env.PREPARE_WHEELHOUSE_REQUESTED }}
 
@@ -104,6 +106,7 @@ jobs:
           wheelhouse_source: ${{ env.WHEELHOUSE_SOURCE }}
           wheelhouse_local_path: ${{ env.WHEELHOUSE_LOCAL_PATH }}
           upload_artifacts: ${{ env.UPLOAD_ARTIFACTS }}
+          wheelhouse_artifact_name: ${{ env.WHEELHOUSE_ARTIFACT_NAME }}
 
   bot-core-fast-tests-windows:
     if: github.event.inputs.job == 'bot-core-fast-tests'
@@ -128,6 +131,7 @@ jobs:
           wheelhouse_source: ${{ env.WHEELHOUSE_SOURCE }}
           wheelhouse_local_path: ${{ env.WHEELHOUSE_LOCAL_PATH }}
           upload_artifacts: ${{ env.UPLOAD_ARTIFACTS }}
+          wheelhouse_artifact_name: ${{ env.WHEELHOUSE_ARTIFACT_NAME }}
 
   ui-packaging-windows:
     if: github.event.inputs.job == 'ui-packaging-windows'
@@ -152,6 +156,7 @@ jobs:
           wheelhouse_source: ${{ env.WHEELHOUSE_SOURCE }}
           wheelhouse_local_path: ${{ env.WHEELHOUSE_LOCAL_PATH }}
           upload_artifacts: ${{ env.UPLOAD_ARTIFACTS }}
+          wheelhouse_artifact_name: ${{ env.WHEELHOUSE_ARTIFACT_NAME }}
 
   ui-native-tests-windows:
     if: github.event.inputs.job == 'ui-native-tests'
@@ -176,6 +181,7 @@ jobs:
           wheelhouse_source: ${{ env.WHEELHOUSE_SOURCE }}
           wheelhouse_local_path: ${{ env.WHEELHOUSE_LOCAL_PATH }}
           upload_artifacts: ${{ env.UPLOAD_ARTIFACTS }}
+          wheelhouse_artifact_name: ${{ env.WHEELHOUSE_ARTIFACT_NAME }}
 
   release-quality-gates-windows:
     if: github.event.inputs.job == 'release-quality-gates'
@@ -200,3 +206,4 @@ jobs:
           wheelhouse_source: ${{ env.WHEELHOUSE_SOURCE }}
           wheelhouse_local_path: ${{ env.WHEELHOUSE_LOCAL_PATH }}
           upload_artifacts: ${{ env.UPLOAD_ARTIFACTS }}
+          wheelhouse_artifact_name: ${{ env.WHEELHOUSE_ARTIFACT_NAME }}
