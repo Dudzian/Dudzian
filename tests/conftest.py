@@ -15,6 +15,11 @@ from bot_core.backtest.simulation import SimulationScenario
 
 logger = logging.getLogger(__name__)
 
+# Testy/CI często działają w VM (np. Hyper-V na runnerach), a build_capability_guard
+# blokuje VM i rzuca FingerprintError. W testach nie weryfikujemy anty-tamper,
+# tylko logikę licencji/workflow.
+os.environ.setdefault("DUDZIAN_SECURITY_SKIP", "1")
+
 if sys.platform == "win32":
     os.environ.setdefault("BOT_CORE_DISABLE_DB_BACKGROUND_LOOP", "1")
 
