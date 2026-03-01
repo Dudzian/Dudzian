@@ -856,6 +856,7 @@ jobs:
       QT_QUICK_BACKEND: software
       PYTEST_REQUIRE_QML: "1"
       QML_DIAGNOSTICS_DIR: test-results/qml
+      DUDZIAN_QML_FLUSH_DELETES: "0"
       WHEELHOUSE_DIR: ${{ env.WHEELHOUSE_DIR }}
       WHEELHOUSE_SOURCE: ${{ env.WHEELHOUSE_SOURCE }}
       WHEELHOUSE_ARTIFACT: wheelhouse-${{ runner.os }}-py${{ env.PYTHON_VERSION }}

@@ -370,6 +370,7 @@ jobs:
       QT_QPA_PLATFORM: offscreen
       QT_QUICK_BACKEND: software
       PYTEST_REQUIRE_QML: "1"
+      DUDZIAN_QML_FLUSH_DELETES: "0"
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -406,6 +407,7 @@ jobs:
     env:
       QT_QPA_PLATFORM: offscreen
       QT_OPENGL: software
+      DUDZIAN_QML_FLUSH_DELETES: "0"
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -434,6 +436,7 @@ jobs:
     env:
       QT_QPA_PLATFORM: offscreen
       QT_OPENGL: software
+      DUDZIAN_QML_FLUSH_DELETES: "0"
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5

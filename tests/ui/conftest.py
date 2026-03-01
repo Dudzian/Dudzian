@@ -47,13 +47,18 @@ def _flush_qt_deferred_deletes_best_effort() -> None:
 
     if not _PYSIDE6_AVAILABLE:
         logger.debug("Skipping Qt deferred-delete flush: PySide6 unavailable.")
+        gc.collect()
         return
-    flush_enabled = os.getenv("DUDZIAN_QML_FLUSH_DELETES", "1").strip().lower()
+
+    default_flush = "0" if os.getenv("CI") else "1"
+    flush_enabled = os.getenv("DUDZIAN_QML_FLUSH_DELETES", default_flush).strip().lower()
     if flush_enabled not in {"1", "true", "yes", "on"}:
         logger.debug("Skipping Qt deferred-delete flush: DUDZIAN_QML_FLUSH_DELETES=%s", flush_enabled)
+        gc.collect()
         return
     if threading.current_thread() is not threading.main_thread():
         logger.debug("Skipping Qt deferred-delete flush: not on main thread.")
+        gc.collect()
         return
 
     try:
@@ -61,11 +66,29 @@ def _flush_qt_deferred_deletes_best_effort() -> None:
         from PySide6.QtQml import QQmlEngine
     except Exception as exc:
         logger.debug("Skipping Qt deferred-delete flush: Qt import failed: %r", exc)
+        gc.collect()
         return
 
     app = QCoreApplication.instance()
     if app is None:
         logger.debug("Skipping Qt deferred-delete flush: missing QCoreApplication instance.")
+        gc.collect()
+        return
+
+    try:
+        import shiboken6
+    except Exception as exc:
+        logger.debug("Skipping Qt deferred-delete flush: shiboken6 unavailable: %r", exc)
+        gc.collect()
+        return
+    if not shiboken6.isValid(app):
+        logger.debug("Skipping Qt deferred-delete flush: invalid QCoreApplication wrapper.")
+        gc.collect()
+        return
+    dispatcher = app.eventDispatcher()
+    if dispatcher is None or not shiboken6.isValid(dispatcher):
+        logger.debug("Skipping Qt deferred-delete flush: missing/invalid event dispatcher.")
+        gc.collect()
         return
 
     app_thread = app.thread()
@@ -76,11 +99,13 @@ def _flush_qt_deferred_deletes_best_effort() -> None:
             current_qt_thread,
             app_thread,
         )
+        gc.collect()
         return
 
     closing_down = getattr(QCoreApplication, "closingDown", None)
     if callable(closing_down) and closing_down():
         logger.debug("Skipping Qt deferred-delete flush: QCoreApplication.closingDown() is true.")
+        gc.collect()
         return
 
     for _ in range(3):
