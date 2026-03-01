@@ -220,7 +220,11 @@ def _write_signature(
         return
     digest = hashlib.sha256(content.encode("utf-8")).hexdigest()
     timestamp = datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
-    payload: dict[str, Any] = {"target": str(path), "sha256": digest}
+    try:
+        target = path.resolve().relative_to(REPO_ROOT).as_posix()
+    except ValueError:
+        target = str(path.resolve())
+    payload: dict[str, Any] = {"target": target, "sha256": digest}
 
     if hmac_key_id:
         key_bytes = signing_keys.get(hmac_key_id)
@@ -250,7 +254,8 @@ def _write_signature(
             ).decode("ascii"),
         }
 
-    path.with_suffix(path.suffix + ".sig").write_text(json.dumps(payload, indent=2), encoding="utf-8")
+    serialized = json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True) + "\n"
+    path.with_suffix(path.suffix + ".sig").write_text(serialized, encoding="utf-8")
 
 
 def build_catalog(

@@ -4,15 +4,15 @@
     "issuer": "marketplace-ci",
     "key_id": "dev-presets-ed25519",
     "public_key": "wnD5eTEGDB3CPb6r3oMOmRjFtjCxHISZXHlHX0TIKhY=",
-    "signed_at": "2025-11-19T19:56:30Z",
-    "value": "yNblVowCOqQL+RBj3C3tLq9nawRuefvRc3ifeWWvfgRPTwAI87lMv2VqMAia2YMyNaDBRxiGnY7Qiz0SNVZCDw=="
+    "signed_at": "2026-03-01T13:50:22Z",
+    "value": "D7SKPnGIXN6WPAqwfx97VcEwzgMA2bGDAGM73QahbZAsozznq0TKkMREsK15FL+Ct7hvkBjquyARtxtZxGbLBQ=="
   },
   "hmac": {
     "algorithm": "HMAC-SHA256",
     "key_id": "dev-hmac",
-    "signed_at": "2025-11-19T19:56:30Z",
-    "value": "bvBg4S2AEowe8BxjcrzMQHPKpXAtvDmV/dmchxE+Tmo="
+    "signed_at": "2026-03-01T13:50:22Z",
+    "value": "QZz79CRvQhDR5Dy/VB3bg9vxBhDPfNx3FBUFiscgLIg="
   },
-  "sha256": "8e920f328020a2c2cb61a81a1ec44ce6c3f8480719acbe72fe7db34462913116",
+  "sha256": "f1def9e5284753d1ca2ebd4a2273b52cb4cdc409d4e0e84072607eb0de6c0ba6",
   "target": "/workspace/Dudzian/config/marketplace/presets/exchanges/exchange_deribit.json"
 }
