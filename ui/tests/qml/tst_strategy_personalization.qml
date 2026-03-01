@@ -286,13 +286,13 @@ TestCase {
                 let baseName = (name || "").trim()
                 if (baseName.length === 0) {
                     const original = (source.displayName || "").trim()
-                    baseName = original.length > 0 ? `${original} (kopia)` : `${targetId} (kopia)`
+                    baseName = original.length > 0 ? (original + " (kopia)") : (targetId + " (kopia)")
                 }
                 const baseIdRaw = baseName.toLowerCase().replace(/[^a-z0-9_-]+/g, "-") || "profile"
                 let candidate = baseIdRaw
                 let suffix = 2
                 while (profiles.some(p => p.id === candidate)) {
-                    candidate = `${baseIdRaw}_${suffix}`
+                    candidate = baseIdRaw + "_" + suffix
                     suffix += 1
                 }
                 const duplicate = ({
