@@ -146,7 +146,7 @@ public:
     bool             reduceMotionActive() const { return m_reduceMotionActive; }
     QObject*         riskModel() const { return const_cast<RiskStateModel*>(&m_riskModel); }
     QObject*         activationController() const;
-    QObject*         licenseController() const { return m_licenseController.get(); }
+    QObject*         licenseController() const;
     QObject*         reportController() const;
     QObject*         strategyController() const;
     QObject*         workbenchController() const;
@@ -167,6 +167,9 @@ public:
     QObject*         runtimeService() const { return m_runtimeBridge.get(); }
     QObject*         alertsModel() const { return const_cast<AlertsModel*>(&m_alertsModel); }
     QObject*         alertsFilterModel() const { return const_cast<AlertsFilterProxyModel*>(&m_filteredAlertsModel); }
+    QObject*         indicatorSeriesModel() const { return const_cast<IndicatorSeriesModel*>(&m_indicatorModel); }
+    QObject*         signalListModel() const { return const_cast<SignalListModel*>(&m_signalModel); }
+    QObject*         marketRegimeTimelineModel() const { return const_cast<MarketRegimeTimelineModel*>(&m_regimeTimelineModel); }
     QObject*         riskHistoryModel() const { return const_cast<RiskHistoryModel*>(&m_riskHistoryModel); }
     QObject*         riskLimitsModel() const { return const_cast<RiskLimitsModel*>(&m_riskLimitsModel); }
     QObject*         riskCostModel() const { return const_cast<RiskCostModel*>(&m_riskCostModel); }
@@ -181,6 +184,7 @@ public:
     QDateTime        riskHistoryLastAutoExportAt() const { return m_lastRiskHistoryAutoExportUtc; }
     QUrl             riskHistoryLastAutoExportPath() const { return m_lastRiskHistoryAutoExportPath; }
     bool             riskKillSwitchEngaged() const { return m_riskKillSwitchEngaged; }
+    int              regimeTimelineMaximumSnapshots() const { return m_regimeTimelineMaximumSnapshots; }
     bool             offlineMode() const { return m_offlineMode; }
     QString          offlineDaemonStatus() const { return m_offlineStatus; }
     bool             offlineAutomationRunning() const { return m_offlineAutomationRunning; }
@@ -249,6 +253,7 @@ public slots:
     Q_INVOKABLE bool reloadDecisionLog();
     Q_INVOKABLE bool reloadUiModules();
 
+public:
     // Test helpers (persistent UI state)
     void saveUiSettingsImmediatelyForTesting();
     QString uiSettingsPathForTesting() const { return m_uiSettingsPath; }
@@ -434,6 +439,7 @@ private:
     void handleMetricsTlsPathChanged(const QString& path);
     void handleHealthTlsPathChanged(const QString& path);
     void handleRegimeThresholdPathChanged(const QString& path);
+    void updateSecurityCacheFromControllers();
     QVariantMap buildMarketplacePresetVariant(const TradingClient::MarketplacePresetSummary& preset) const;
     QVariantMap buildMarketplaceErrorResult(const QString& message) const;
     bool writeMarketplacePayloadToFile(const QByteArray& payload,
@@ -534,6 +540,7 @@ private:
     QString                            m_healthRbacRole;
     QStringList                        m_healthRbacScopes;
     std::shared_ptr<MetricsClientInterface> m_inProcessMetricsClient;
+    bool                               m_usingInProcessMetricsClient = false;
     std::shared_ptr<HealthClientInterface>  m_inProcessHealthClient;
     int                                m_healthRefreshIntervalSeconds = 60;
     bool                               m_healthAutoRefreshEnabled = true;

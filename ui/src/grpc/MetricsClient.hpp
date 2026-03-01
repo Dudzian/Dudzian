@@ -10,17 +10,12 @@
 #include <optional>
 
 #include "telemetry/TelemetryTlsConfig.hpp"
+#include "trading.grpc.pb.h"
 
 namespace grpc {
 class Channel;
 class ClientContext;
 } // namespace grpc
-
-namespace botcore::trading::v1 {
-class MetricsService;
-class MetricsSnapshot;
-class MetricsAck;
-} // namespace botcore::trading::v1
 
 struct MetricsPreflightResult {
     bool ok = false;

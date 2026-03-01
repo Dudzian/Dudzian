@@ -255,7 +255,7 @@ QVariantMap UiModuleManager::serializeView(const ViewDescriptor& descriptor, con
     return map;
 }
 
-QObject* UiModuleManager::ensureServiceInstance(ServiceEntry& entry) const
+QObject* UiModuleManager::ensureServiceInstance(const ServiceEntry& entry) const
 {
     if (!entry.descriptor.factory) {
         return nullptr;

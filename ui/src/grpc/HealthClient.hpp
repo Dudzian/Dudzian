@@ -11,11 +11,7 @@
 #include <mutex>
 
 #include "GrpcTlsConfig.hpp"
-
-namespace botcore::trading::v1 {
-class HealthService;
-class HealthCheckResponse;
-} // namespace botcore::trading::v1
+#include "trading.grpc.pb.h"
 
 namespace grpc {
 class Channel;
