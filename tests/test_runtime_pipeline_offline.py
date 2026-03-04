@@ -589,83 +589,107 @@ def _materialize_loopback_configs(tmp_path: Path, *, port: int) -> tuple[Path, P
 def test_live_pipeline_uses_loopback_adapter(
     tmp_path: Path,
     loopback_exchange_server: _LoopbackExchangeState,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    # LiveExecutionRouter jest domyślnie wyłączany przy DUDZIAN_TEST_MODE.
+    monkeypatch.setenv("DUDZIAN_ALLOW_LIVE_ROUTER", "1")
+
     core_path, runtime_path = _materialize_loopback_configs(tmp_path, port=loopback_exchange_server.port)
     _, secret_manager = _prepare_manager()
     runtime_cfg = load_runtime_app_config(runtime_path)
 
-    pipeline = build_daily_trend_pipeline(
-        environment_name="loopback_testnet",
-        strategy_name=None,
-        controller_name=None,
-        config_path=core_path,
-        secret_manager=secret_manager,
-        runtime_config=runtime_cfg,
-    )
+    pipeline = None
+    try:
+        pipeline = build_daily_trend_pipeline(
+            environment_name="loopback_testnet",
+            strategy_name=None,
+            controller_name=None,
+            config_path=core_path,
+            secret_manager=secret_manager,
+            runtime_config=runtime_cfg,
+        )
 
-    adapter = pipeline.bootstrap.adapter
-    assert isinstance(adapter, LoopbackExchangeAdapter)
-    assert isinstance(pipeline.execution_service, LiveExecutionRouter)
+        adapter = pipeline.bootstrap.adapter
+        assert isinstance(adapter, LoopbackExchangeAdapter)
+        assert isinstance(pipeline.execution_service, LiveExecutionRouter)
 
-    stream = adapter.stream_public_data(channels=["ticker"])
-    stream.close()
-    assert any(entry.get("action") == "open" for entry in loopback_exchange_server.streams)
+        stream = adapter.stream_public_data(channels=["ticker"])
+        stream.close()
+        assert any(entry.get("action") == "open" for entry in loopback_exchange_server.streams)
 
-    request = OrderRequest(
-        symbol="BTCUSDT",
-        side="buy",
-        order_type="market",
-        quantity=0.1,
-        price=10.5,
-    )
-    execution_context = pipeline.controller.execution_context
-    result = pipeline.execution_service.execute(request, execution_context)
-    assert result.order_id.startswith("loop-")
-    assert loopback_exchange_server.orders
+        request = OrderRequest(
+            symbol="BTCUSDT",
+            side="buy",
+            order_type="market",
+            quantity=0.1,
+            price=10.5,
+        )
+        execution_context = pipeline.controller.execution_context
+        result = pipeline.execution_service.execute(request, execution_context)
+        assert result.order_id.startswith("loop-")
+        assert loopback_exchange_server.orders
 
-    metrics = summarize_live_execution_metrics(
-        pipeline.execution_service._metrics,  # type: ignore[attr-defined]
-        exchange="loopback_spot",
-        symbol="BTCUSDT",
-        portfolio=execution_context.portfolio_id,
-    )
-    assert metrics["fill_ratio_avg"] == pytest.approx(1.0)
-    assert metrics["fill_ratio_count"] == 1
-    assert metrics["fill_ratio_sum"] == pytest.approx(1.0)
-    assert metrics["fill_ratio_p50"] == pytest.approx(1.0)
-    assert metrics["fill_ratio_p95"] == pytest.approx(1.0)
-    assert metrics["fill_ratio_min"] == pytest.approx(1.0)
-    assert metrics["fill_ratio_max"] == pytest.approx(1.0)
-    assert metrics["fill_ratio_stddev"] == pytest.approx(0.0)
-    assert metrics["errors_total"] == 0
-    assert metrics["latency_count"] == 1
-    assert metrics["latency_sum"] >= 0.0
-    assert metrics["latency_avg"] is not None
-    assert metrics["latency_p50"] is not None
-    assert metrics["latency_p95"] is not None
-    assert metrics["latency_p99"] is not None
-    assert metrics["latency_p99"] >= metrics["latency_p95"] >= metrics["latency_p50"] >= 0.0
-    assert metrics["latency_min"] is not None
-    assert metrics["latency_max"] is not None
-    assert metrics["latency_max"] >= metrics["latency_min"] >= 0.0
-    assert metrics["latency_stddev"] is not None
-    assert metrics["latency_stddev"] >= 0.0
-    assert metrics["orders_success_total"] == 1
-    assert metrics["orders_failed_total"] == 0
-    assert metrics["orders_total"] == 1
-    assert metrics["orders_routed_total"] == 1
-    assert metrics["orders_attempts_total"] == 1
-    assert metrics["orders_attempts_success"] == 1
-    assert metrics["orders_attempts_error"] == 0
-    assert metrics["orders_attempts_api_error"] == 0
-    assert metrics["orders_attempts_auth_error"] == 0
-    assert metrics["orders_attempts_exception"] == 0
-    assert metrics["orders_attempts_success_rate"] == pytest.approx(1.0)
-    assert metrics["orders_attempts_error_rate"] == pytest.approx(0.0)
-    assert metrics["orders_attempts_api_error_rate"] == pytest.approx(0.0)
-    assert metrics["orders_attempts_auth_error_rate"] == pytest.approx(0.0)
-    assert metrics["orders_attempts_exception_rate"] == pytest.approx(0.0)
-    assert metrics["orders_fallback_total"] == 0
-    assert metrics["orders_success_rate"] == pytest.approx(1.0)
-    assert metrics["orders_failure_rate"] == pytest.approx(0.0)
-    assert metrics["orders_fallback_rate"] == pytest.approx(0.0)
+        metrics = summarize_live_execution_metrics(
+            pipeline.execution_service._metrics,  # type: ignore[attr-defined]
+            exchange="loopback_spot",
+            symbol="BTCUSDT",
+            portfolio=execution_context.portfolio_id,
+        )
+        assert metrics["fill_ratio_avg"] == pytest.approx(1.0)
+        assert metrics["fill_ratio_count"] == 1
+        assert metrics["fill_ratio_sum"] == pytest.approx(1.0)
+        assert metrics["fill_ratio_p50"] == pytest.approx(1.0)
+        assert metrics["fill_ratio_p95"] == pytest.approx(1.0)
+        assert metrics["fill_ratio_min"] == pytest.approx(1.0)
+        assert metrics["fill_ratio_max"] == pytest.approx(1.0)
+        assert metrics["fill_ratio_stddev"] == pytest.approx(0.0)
+        assert metrics["errors_total"] == 0
+        assert metrics["latency_count"] == 1
+        assert metrics["latency_sum"] >= 0.0
+        assert metrics["latency_avg"] is not None
+        assert metrics["latency_p50"] is not None
+        assert metrics["latency_p95"] is not None
+        assert metrics["latency_p99"] is not None
+        assert metrics["latency_p99"] >= metrics["latency_p95"] >= metrics["latency_p50"] >= 0.0
+        assert metrics["latency_min"] is not None
+        assert metrics["latency_max"] is not None
+        assert metrics["latency_max"] >= metrics["latency_min"] >= 0.0
+        assert metrics["latency_stddev"] is not None
+        assert metrics["latency_stddev"] >= 0.0
+        assert metrics["orders_success_total"] == 1
+        assert metrics["orders_failed_total"] == 0
+        assert metrics["orders_total"] == 1
+        assert metrics["orders_routed_total"] == 1
+        assert metrics["orders_attempts_total"] == 1
+        assert metrics["orders_attempts_success"] == 1
+        assert metrics["orders_attempts_error"] == 0
+        assert metrics["orders_attempts_api_error"] == 0
+        assert metrics["orders_attempts_auth_error"] == 0
+        assert metrics["orders_attempts_exception"] == 0
+        assert metrics["orders_attempts_success_rate"] == pytest.approx(1.0)
+        assert metrics["orders_attempts_error_rate"] == pytest.approx(0.0)
+        assert metrics["orders_attempts_api_error_rate"] == pytest.approx(0.0)
+        assert metrics["orders_attempts_auth_error_rate"] == pytest.approx(0.0)
+        assert metrics["orders_attempts_exception_rate"] == pytest.approx(0.0)
+        assert metrics["orders_fallback_total"] == 0
+        assert metrics["orders_success_rate"] == pytest.approx(1.0)
+        assert metrics["orders_failure_rate"] == pytest.approx(0.0)
+        assert metrics["orders_fallback_rate"] == pytest.approx(0.0)
+    finally:
+        if pipeline is not None:
+            pipeline_closed = False
+            pipeline_closer = getattr(pipeline, "close", None)
+            if callable(pipeline_closer):
+                try:
+                    pipeline_closer()
+                    pipeline_closed = True
+                except Exception:
+                    # Best-effort cleanup in tests: nie maskuj właściwej przyczyny faila.
+                    pass
+            if not pipeline_closed:
+                # build_daily_trend_pipeline może przerwać inicjalizację przed podpięciem execution_service.
+                service = getattr(pipeline, "execution_service", None)
+                service_closer = getattr(service, "close", None) if service is not None else None
+                if callable(service_closer):
+                    with contextlib.suppress(Exception):
+                        service_closer()
