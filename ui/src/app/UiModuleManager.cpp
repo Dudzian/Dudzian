@@ -5,8 +5,10 @@
 #include <QFileInfo>
 #include <QLoggingCategory>
 #include <QPluginLoader>
+#include <QSet>
 #include <QVariantList>
 #include <QVariantMap>
+#include <QtGlobal>
 
 #include <algorithm>
 
@@ -149,8 +151,38 @@ QStringList UiModuleManager::pluginPaths() const
 
 bool UiModuleManager::loadPlugins(const QStringList& candidates)
 {
+    m_lastLoadReport.clear();
+
+    if (!m_pluginLoaders.empty()) {
+        Q_ASSERT_X(m_pluginLoaders.empty(),
+                   "UiModuleManager::loadPlugins",
+                   "loadPlugins() should normally be called with empty plugin loader state (call unloadPlugins() first)");
+        qWarning() << "UiModuleManager: wykryto poprzednio załadowane pluginy; odświeżam stan przed kolejnym ładowaniem";
+        unloadPlugins();
+    }
+
     const QStringList targets = candidates.isEmpty() ? m_pluginPaths : candidates;
     bool success = true;
+    QStringList loadedPlugins;
+    QSet<QString> seenLoadedPlugins;
+
+    const auto normalizeLoadedPluginPath = [](const QFileInfo& info) {
+        QString normalized = QDir::cleanPath(info.absoluteFilePath());
+        if (info.exists()) {
+            const QString canonicalPath = info.canonicalFilePath();
+            if (!canonicalPath.isEmpty())
+                normalized = QDir::cleanPath(canonicalPath);
+        }
+        return normalized;
+    };
+
+    const auto appendLoadedPlugin = [&loadedPlugins, &seenLoadedPlugins, &normalizeLoadedPluginPath](const QFileInfo& info) {
+        const QString normalized = normalizeLoadedPluginPath(info);
+        if (normalized.isEmpty() || seenLoadedPlugins.contains(normalized))
+            return;
+        seenLoadedPlugins.insert(normalized);
+        loadedPlugins.append(normalized);
+    };
 
     for (const QString& target : targets) {
         QFileInfo info(target);
@@ -171,6 +203,7 @@ bool UiModuleManager::loadPlugins(const QStringList& candidates)
                 if (auto module = qobject_cast<UiModuleInterface*>(plugin)) {
                     module->registerComponents(*this);
                     m_pluginLoaders.push_back(std::move(loader));
+                    appendLoadedPlugin(info);
                 } else {
                     qWarning() << "UiModuleManager: plugin" << info.absoluteFilePath() << "nie implementuje UiModuleInterface";
                     loader->unload();
@@ -195,6 +228,7 @@ bool UiModuleManager::loadPlugins(const QStringList& candidates)
                 if (auto module = qobject_cast<UiModuleInterface*>(plugin)) {
                     module->registerComponents(*this);
                     m_pluginLoaders.push_back(std::move(loader));
+                    appendLoadedPlugin(fileInfo);
                 } else {
                     qWarning() << "UiModuleManager: plugin" << fileInfo.absoluteFilePath()
                                << "nie implementuje UiModuleInterface";
@@ -208,6 +242,11 @@ bool UiModuleManager::loadPlugins(const QStringList& candidates)
             }
         }
     }
+
+    m_lastLoadReport.insert(QStringLiteral("ok"), success);
+    m_lastLoadReport.insert(QStringLiteral("loadedCount"), static_cast<int>(m_pluginLoaders.size()));
+    m_lastLoadReport.insert(QStringLiteral("pluginPaths"), targets);
+    m_lastLoadReport.insert(QStringLiteral("loadedPlugins"), loadedPlugins);
 
     return success;
 }

@@ -71,6 +71,18 @@ void UiModuleViewsModel::setCategoryFilter(const QString& category)
     rebuild();
 }
 
+
+void UiModuleViewsModel::setSearchFilter(const QString& query)
+{
+    const QString normalized = query.trimmed();
+    if (m_searchFilter == normalized)
+        return;
+
+    m_searchFilter = normalized;
+    emit searchFilterChanged();
+    rebuild();
+}
+
 void UiModuleViewsModel::setModuleManager(UiModuleManager* manager)
 {
     if (m_manager == manager)
@@ -215,6 +227,8 @@ QVector<QString> UiModuleViewsModel::buildOrderedIds() const
         const ViewEntry& entry = it.value();
         if (!m_categoryFilter.isEmpty() && entry.descriptor.category != m_categoryFilter)
             continue;
+        if (!m_searchFilter.isEmpty() && !matchesSearch(entry, m_searchFilter))
+            continue;
         filtered.append(it.key());
     }
 
@@ -227,5 +241,17 @@ QVector<QString> UiModuleViewsModel::buildOrderedIds() const
     });
 
     return filtered;
+}
+
+bool UiModuleViewsModel::matchesSearch(const ViewEntry& entry, const QString& query) const
+{
+    const QString q = query.trimmed();
+    if (q.isEmpty())
+        return true;
+
+    return entry.descriptor.id.contains(q, Qt::CaseInsensitive)
+        || entry.descriptor.name.contains(q, Qt::CaseInsensitive)
+        || entry.descriptor.category.contains(q, Qt::CaseInsensitive)
+        || entry.moduleId.contains(q, Qt::CaseInsensitive);
 }
 
