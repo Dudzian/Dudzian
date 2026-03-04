@@ -216,6 +216,29 @@ install(TARGETS bot_trading_shell RUNTIME DESTINATION bin)
 
 # --- Tests ---
 if(BUILD_TESTING)
+    # Shared Qt module bundles for test targets.
+    # Quick include→module map: QColor/QBrush/QImage/QPainter/QFont→Gui,
+    # QSsl*/QNetwork*→Network, QtConcurrent→Concurrent.
+    if(NOT TARGET ui_tests_qt_base)
+        add_library(ui_tests_qt_base INTERFACE)
+        target_link_libraries(ui_tests_qt_base INTERFACE Qt6::Core Qt6::Test)
+    endif()
+
+    if(NOT TARGET ui_tests_qt_gui)
+        add_library(ui_tests_qt_gui INTERFACE)
+        target_link_libraries(ui_tests_qt_gui INTERFACE ui_tests_qt_base Qt6::Gui)
+    endif()
+
+    if(NOT TARGET ui_tests_qt_net)
+        add_library(ui_tests_qt_net INTERFACE)
+        target_link_libraries(ui_tests_qt_net INTERFACE ui_tests_qt_base Qt6::Network)
+    endif()
+
+    if(NOT TARGET ui_tests_qt_concurrent)
+        add_library(ui_tests_qt_concurrent INTERFACE)
+        target_link_libraries(ui_tests_qt_concurrent INTERFACE ui_tests_qt_base Qt6::Concurrent)
+    endif()
+
     # UiTelemetryReporter tests (needs protobuf/gRPC stubs)
     add_executable(ui_telemetry_tests
         tests/UiTelemetryReporterTest.cpp
@@ -258,12 +281,10 @@ if(BUILD_TESTING)
     target_include_directories(ui_application_telemetry_tests PRIVATE src ${GENERATED_DIR})
     target_link_libraries(ui_application_telemetry_tests
         PRIVATE
-            Qt6::Core
-            Qt6::Gui
+            ui_tests_qt_gui
+            ui_tests_qt_net
+            ui_tests_qt_concurrent
             Qt6::Quick
-            Qt6::Network
-            Qt6::Concurrent
-            Qt6::Test
             trading_proto
             protobuf::libprotobuf
             gRPC::grpc++
@@ -355,11 +376,10 @@ if(BUILD_TESTING)
     target_include_directories(application_risk_refresh_tests PRIVATE src ${GENERATED_DIR})
     target_link_libraries(application_risk_refresh_tests
         PRIVATE
-            Qt6::Core
-            Qt6::Gui
+            ui_tests_qt_gui
+            ui_tests_qt_net
+            ui_tests_qt_concurrent
             Qt6::Quick
-            Qt6::Concurrent
-            Qt6::Test
             trading_proto
             protobuf::libprotobuf
             gRPC::grpc++
@@ -390,11 +410,10 @@ if(BUILD_TESTING)
     target_include_directories(application_settings_persistence_tests PRIVATE src ${GENERATED_DIR})
     target_link_libraries(application_settings_persistence_tests
         PRIVATE
-            Qt6::Core
-            Qt6::Gui
+            ui_tests_qt_gui
+            ui_tests_qt_net
+            ui_tests_qt_concurrent
             Qt6::Quick
-            Qt6::Concurrent
-            Qt6::Test
             trading_proto
             protobuf::libprotobuf
             gRPC::grpc++
@@ -406,11 +425,7 @@ if(BUILD_TESTING)
         src/app/UiModuleManager.cpp
     )
     target_include_directories(ui_module_manager_tests PRIVATE src)
-    target_link_libraries(ui_module_manager_tests
-        PRIVATE
-            Qt6::Core
-            Qt6::Test
-    )
+    target_link_libraries(ui_module_manager_tests PRIVATE ui_tests_qt_base)
     add_test(NAME ui_module_manager_tests COMMAND ui_module_manager_tests)
 
     add_executable(ui_module_views_model_tests
@@ -419,11 +434,7 @@ if(BUILD_TESTING)
         src/app/UiModuleViewsModel.cpp
     )
     target_include_directories(ui_module_views_model_tests PRIVATE src)
-    target_link_libraries(ui_module_views_model_tests
-        PRIVATE
-            Qt6::Core
-            Qt6::Test
-    )
+    target_link_libraries(ui_module_views_model_tests PRIVATE ui_tests_qt_base)
     add_test(NAME ui_module_views_model_tests COMMAND ui_module_views_model_tests)
 
     add_executable(runtime_decision_bridge_tests
@@ -431,11 +442,7 @@ if(BUILD_TESTING)
         src/runtime/RuntimeDecisionBridge.cpp
     )
     target_include_directories(runtime_decision_bridge_tests PRIVATE src)
-    target_link_libraries(runtime_decision_bridge_tests
-        PRIVATE
-            Qt6::Core
-            Qt6::Test
-    )
+    target_link_libraries(runtime_decision_bridge_tests PRIVATE ui_tests_qt_gui)
     add_test(NAME runtime_decision_bridge_tests COMMAND runtime_decision_bridge_tests)
 
     add_executable(user_profile_controller_tests
@@ -443,11 +450,7 @@ if(BUILD_TESTING)
         src/app/UserProfileController.cpp
     )
     target_include_directories(user_profile_controller_tests PRIVATE src)
-    target_link_libraries(user_profile_controller_tests
-        PRIVATE
-            Qt6::Core
-            Qt6::Test
-    )
+    target_link_libraries(user_profile_controller_tests PRIVATE ui_tests_qt_base)
     add_test(NAME user_profile_controller_tests COMMAND user_profile_controller_tests)
 
     add_executable(application_risk_history_auto_export_tests
@@ -474,11 +477,10 @@ if(BUILD_TESTING)
     target_include_directories(application_risk_history_auto_export_tests PRIVATE src ${GENERATED_DIR})
     target_link_libraries(application_risk_history_auto_export_tests
         PRIVATE
-            Qt6::Core
-            Qt6::Gui
+            ui_tests_qt_gui
+            ui_tests_qt_net
+            ui_tests_qt_concurrent
             Qt6::Quick
-            Qt6::Concurrent
-            Qt6::Test
             trading_proto
             protobuf::libprotobuf
             gRPC::grpc++
@@ -512,11 +514,10 @@ if(BUILD_TESTING)
     target_include_directories(application_decision_log_tests PRIVATE src ${GENERATED_DIR})
     target_link_libraries(application_decision_log_tests
         PRIVATE
-            Qt6::Core
-            Qt6::Gui
+            ui_tests_qt_gui
+            ui_tests_qt_net
+            ui_tests_qt_concurrent
             Qt6::Quick
-            Qt6::Concurrent
-            Qt6::Test
             trading_proto
             protobuf::libprotobuf
             gRPC::grpc++
@@ -550,11 +551,10 @@ if(BUILD_TESTING)
     target_include_directories(application_ui_modules_tests PRIVATE src ${GENERATED_DIR})
     target_link_libraries(application_ui_modules_tests
         PRIVATE
-            Qt6::Core
-            Qt6::Gui
+            ui_tests_qt_gui
+            ui_tests_qt_net
+            ui_tests_qt_concurrent
             Qt6::Quick
-            Qt6::Concurrent
-            Qt6::Test
             trading_proto
             protobuf::libprotobuf
             gRPC::grpc++
@@ -568,7 +568,7 @@ if(BUILD_TESTING)
         src/utils/FrameRateMonitor.cpp
     )
     target_include_directories(frame_rate_monitor_tests PRIVATE src)
-    target_link_libraries(frame_rate_monitor_tests PRIVATE Qt6::Core Qt6::Test)
+    target_link_libraries(frame_rate_monitor_tests PRIVATE ui_tests_qt_base)
     add_test(NAME frame_rate_monitor_tests COMMAND frame_rate_monitor_tests)
 
     add_executable(translation_loader_tests
@@ -578,7 +578,7 @@ if(BUILD_TESTING)
         PREFIX "/i18n"
         FILES ${UI_TRANSLATION_QM}
     )
-    target_link_libraries(translation_loader_tests PRIVATE Qt6::Core Qt6::Test)
+    target_link_libraries(translation_loader_tests PRIVATE ui_tests_qt_base)
     add_test(NAME translation_loader_tests COMMAND translation_loader_tests)
 
     add_executable(performance_telemetry_controller_tests
@@ -589,7 +589,7 @@ if(BUILD_TESTING)
     )
     target_include_directories(performance_telemetry_controller_tests PRIVATE src ${GENERATED_DIR})
     target_link_libraries(performance_telemetry_controller_tests
-        PRIVATE Qt6::Core Qt6::Test protobuf::libprotobuf gRPC::grpc++)
+        PRIVATE ui_tests_qt_base protobuf::libprotobuf gRPC::grpc++)
     add_test(NAME performance_telemetry_controller_tests COMMAND performance_telemetry_controller_tests)
 
     # CandlestickChartView tests (needs QML/Charts)
@@ -612,7 +612,7 @@ if(BUILD_TESTING)
         src/models/MarketRegimeTimelineModel.cpp
     )
     target_include_directories(market_regime_timeline_model_tests PRIVATE src ${GENERATED_DIR})
-    target_link_libraries(market_regime_timeline_model_tests PRIVATE Qt6::Core Qt6::Test)
+    target_link_libraries(market_regime_timeline_model_tests PRIVATE ui_tests_qt_gui)
     add_test(NAME market_regime_timeline_model_tests COMMAND market_regime_timeline_model_tests)
 
     add_executable(market_multi_stream_view_tests
@@ -641,7 +641,7 @@ if(BUILD_TESTING)
         src/models/RiskStateModel.cpp
     )
     target_include_directories(risk_state_model_tests PRIVATE src)
-    target_link_libraries(risk_state_model_tests PRIVATE Qt6::Core Qt6::Test)
+    target_link_libraries(risk_state_model_tests PRIVATE ui_tests_qt_base)
     add_test(NAME risk_state_model_tests COMMAND risk_state_model_tests)
 
     add_executable(risk_history_model_tests
@@ -649,7 +649,7 @@ if(BUILD_TESTING)
         src/models/RiskHistoryModel.cpp
     )
     target_include_directories(risk_history_model_tests PRIVATE src)
-    target_link_libraries(risk_history_model_tests PRIVATE Qt6::Core Qt6::Test)
+    target_link_libraries(risk_history_model_tests PRIVATE ui_tests_qt_base)
     add_test(NAME risk_history_model_tests COMMAND risk_history_model_tests)
 
 
@@ -659,7 +659,7 @@ if(BUILD_TESTING)
         src/models/RiskCostModel.cpp
     )
     target_include_directories(risk_models_translation_refresh_tests PRIVATE src)
-    target_link_libraries(risk_models_translation_refresh_tests PRIVATE Qt6::Core Qt6::Test)
+    target_link_libraries(risk_models_translation_refresh_tests PRIVATE ui_tests_qt_base)
     add_test(NAME risk_models_translation_refresh_tests COMMAND risk_models_translation_refresh_tests)
 
     add_executable(decision_log_model_tests
@@ -667,7 +667,7 @@ if(BUILD_TESTING)
         src/models/DecisionLogModel.cpp
     )
     target_include_directories(decision_log_model_tests PRIVATE src)
-    target_link_libraries(decision_log_model_tests PRIVATE Qt6::Core Qt6::Test)
+    target_link_libraries(decision_log_model_tests PRIVATE ui_tests_qt_base)
     add_test(NAME decision_log_model_tests COMMAND decision_log_model_tests)
 
     add_executable(decision_log_filter_proxy_model_tests
@@ -675,7 +675,7 @@ if(BUILD_TESTING)
         src/models/DecisionLogFilterProxyModel.cpp
     )
     target_include_directories(decision_log_filter_proxy_model_tests PRIVATE src)
-    target_link_libraries(decision_log_filter_proxy_model_tests PRIVATE Qt6::Core Qt6::Test)
+    target_link_libraries(decision_log_filter_proxy_model_tests PRIVATE ui_tests_qt_base)
     add_test(NAME decision_log_filter_proxy_model_tests COMMAND decision_log_filter_proxy_model_tests)
 
     add_executable(market_regime_classifier_tests
@@ -683,7 +683,7 @@ if(BUILD_TESTING)
         src/models/MarketRegimeClassifierBridge.cpp
     )
     target_include_directories(market_regime_classifier_tests PRIVATE src)
-    target_link_libraries(market_regime_classifier_tests PRIVATE Qt6::Core Qt6::Test)
+    target_link_libraries(market_regime_classifier_tests PRIVATE ui_tests_qt_gui)
     add_test(NAME market_regime_classifier_tests COMMAND market_regime_classifier_tests)
 
     add_executable(alerts_model_tests
@@ -691,7 +691,7 @@ if(BUILD_TESTING)
         src/models/AlertsModel.cpp
     )
     target_include_directories(alerts_model_tests PRIVATE src)
-    target_link_libraries(alerts_model_tests PRIVATE Qt6::Core Qt6::Test)
+    target_link_libraries(alerts_model_tests PRIVATE ui_tests_qt_base)
     add_test(NAME alerts_model_tests COMMAND alerts_model_tests)
 
     add_executable(alerts_filter_proxy_model_tests
@@ -700,7 +700,7 @@ if(BUILD_TESTING)
         src/models/AlertsFilterProxyModel.cpp
     )
     target_include_directories(alerts_filter_proxy_model_tests PRIVATE src)
-    target_link_libraries(alerts_filter_proxy_model_tests PRIVATE Qt6::Core Qt6::Test)
+    target_link_libraries(alerts_filter_proxy_model_tests PRIVATE ui_tests_qt_base)
     add_test(NAME alerts_filter_proxy_model_tests COMMAND alerts_filter_proxy_model_tests)
 
     # SidePanel QML tests
@@ -731,11 +731,7 @@ if(BUILD_TESTING)
         src/utils/PathUtils.cpp
     )
     target_include_directories(license_activation_controller_tests PRIVATE src)
-    target_link_libraries(license_activation_controller_tests
-        PRIVATE
-            Qt6::Core
-            Qt6::Test
-    )
+    target_link_libraries(license_activation_controller_tests PRIVATE ui_tests_qt_base)
     add_test(NAME license_activation_controller_tests COMMAND license_activation_controller_tests)
 
     add_executable(security_admin_controller_tests
@@ -743,7 +739,7 @@ if(BUILD_TESTING)
         src/security/SecurityAdminController.cpp
     )
     target_include_directories(security_admin_controller_tests PRIVATE src)
-    target_link_libraries(security_admin_controller_tests PRIVATE Qt6::Core Qt6::Test)
+    target_link_libraries(security_admin_controller_tests PRIVATE ui_tests_qt_base)
     add_test(NAME security_admin_controller_tests COMMAND security_admin_controller_tests)
 
     add_executable(admin_dialog_e2e_tests
@@ -811,11 +807,7 @@ if(BUILD_TESTING)
         src/app/StrategyWorkbenchController.cpp
     )
     target_include_directories(strategy_workbench_controller_tests PRIVATE src)
-    target_link_libraries(strategy_workbench_controller_tests
-        PRIVATE
-            Qt6::Core
-            Qt6::Test
-    )
+    target_link_libraries(strategy_workbench_controller_tests PRIVATE ui_tests_qt_base)
     add_test(NAME strategy_workbench_controller_tests COMMAND strategy_workbench_controller_tests)
 
     add_executable(bot_core_local_service_tests
@@ -826,11 +818,10 @@ if(BUILD_TESTING)
     target_include_directories(bot_core_local_service_tests PRIVATE src ${GENERATED_DIR})
     target_link_libraries(bot_core_local_service_tests
         PRIVATE
-            Qt6::Core
-            Qt6::Gui
+            ui_tests_qt_gui
+            ui_tests_qt_net
             Qt6::Qml
             Qt6::Quick
-            Qt6::Test
             trading_proto
             protobuf::libprotobuf
             gRPC::grpc++
@@ -844,9 +835,8 @@ if(BUILD_TESTING)
     target_include_directories(trading_client_auth_metadata_tests PRIVATE src ${GENERATED_DIR})
     target_link_libraries(trading_client_auth_metadata_tests
         PRIVATE
-            Qt6::Core
-            Qt6::Test
-            Qt6::Network
+            ui_tests_qt_gui
+            ui_tests_qt_net
             trading_proto
             protobuf::libprotobuf
             gRPC::grpc++
@@ -862,9 +852,8 @@ if(BUILD_TESTING)
     target_include_directories(trading_client_transport_tests PRIVATE src ${GENERATED_DIR})
     target_link_libraries(trading_client_transport_tests
         PRIVATE
-            Qt6::Core
-            Qt6::Test
-            Qt6::Network
+            ui_tests_qt_gui
+            ui_tests_qt_net
             trading_proto
             protobuf::libprotobuf
             gRPC::grpc++
@@ -876,7 +865,7 @@ if(BUILD_TESTING)
         src/reporting/ReportCenterController.cpp
     )
     target_include_directories(report_center_controller_tests PRIVATE src)
-    target_link_libraries(report_center_controller_tests PRIVATE Qt6::Core Qt6::Concurrent Qt6::Test)
+    target_link_libraries(report_center_controller_tests PRIVATE ui_tests_qt_concurrent)
     add_test(NAME report_center_controller_tests COMMAND report_center_controller_tests)
 
     add_executable(strategy_config_controller_tests
@@ -884,7 +873,7 @@ if(BUILD_TESTING)
         src/app/StrategyConfigController.cpp
     )
     target_include_directories(strategy_config_controller_tests PRIVATE src ${GENERATED_DIR})
-    target_link_libraries(strategy_config_controller_tests PRIVATE Qt6::Core Qt6::Test)
+    target_link_libraries(strategy_config_controller_tests PRIVATE ui_tests_qt_base)
     add_test(NAME strategy_config_controller_tests COMMAND strategy_config_controller_tests)
 
     add_executable(support_bundle_controller_tests
@@ -892,6 +881,6 @@ if(BUILD_TESTING)
         src/support/SupportBundleController.cpp
     )
     target_include_directories(support_bundle_controller_tests PRIVATE src ${GENERATED_DIR})
-    target_link_libraries(support_bundle_controller_tests PRIVATE Qt6::Core Qt6::Test)
+    target_link_libraries(support_bundle_controller_tests PRIVATE ui_tests_qt_base)
     add_test(NAME support_bundle_controller_tests COMMAND support_bundle_controller_tests)
 endif()
