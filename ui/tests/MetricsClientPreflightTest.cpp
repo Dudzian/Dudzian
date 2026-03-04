@@ -16,7 +16,8 @@ QString writeRootCertificate(const QTemporaryDir& dir, const QString& name = QSt
     const QString path = dir.filePath(name);
     QFile file(path);
     if (!file.open(QIODevice::WriteOnly | QIODevice::Text)) {
-        QFAIL("Nie udało się zapisać pliku certyfikatu root CA na potrzeby testu");
+        QTest::qFail("Nie udało się zapisać pliku certyfikatu root CA na potrzeby testu", __FILE__, __LINE__);
+        return {};
     }
     static const QByteArray kCertificate =
         "-----BEGIN CERTIFICATE-----\n"
@@ -36,7 +37,8 @@ QString computeFingerprint(const QString& path)
 {
     QFile file(path);
     if (!file.open(QIODevice::ReadOnly)) {
-        QFAIL("Nie udało się otworzyć certyfikatu root CA do obliczenia fingerprintu");
+        QTest::qFail("Nie udało się otworzyć certyfikatu root CA do obliczenia fingerprintu", __FILE__, __LINE__);
+        return {};
     }
     const QByteArray data = file.readAll();
     file.close();
@@ -116,6 +118,7 @@ void MetricsClientPreflightTest::preflightValidatesTlsMaterial()
     QVERIFY(dir.isValid());
 
     const QString rootPath = writeRootCertificate(dir);
+    QVERIFY(!rootPath.isEmpty());
 
     MetricsClient client;
     client.setEndpoint(QStringLiteral("metrics.example:8443"));
@@ -140,6 +143,7 @@ void MetricsClientPreflightTest::preflightDetectsFingerprintMismatch()
     QTemporaryDir dir;
     QVERIFY(dir.isValid());
     const QString rootPath = writeRootCertificate(dir);
+    QVERIFY(!rootPath.isEmpty());
 
     MetricsClient client;
     client.setEndpoint(QStringLiteral("metrics.example:8443"));
@@ -161,7 +165,9 @@ void MetricsClientPreflightTest::preflightSucceedsWithValidConfig()
     QTemporaryDir dir;
     QVERIFY(dir.isValid());
     const QString rootPath = writeRootCertificate(dir);
+    QVERIFY(!rootPath.isEmpty());
     const QString fingerprint = computeFingerprint(rootPath);
+    QVERIFY(!fingerprint.isEmpty());
 
     MetricsClient client;
     client.setEndpoint(QStringLiteral("metrics.example:8443"));
