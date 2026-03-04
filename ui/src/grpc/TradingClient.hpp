@@ -163,36 +163,7 @@ signals:
 
 private:
     class MarketDataStreamReader;
-    class IMarketDataTransport {
-    public:
-        virtual ~IMarketDataTransport() = default;
-        virtual void setInstrument(const InstrumentConfig& config) = 0;
-        virtual void setEndpoint(const QString& endpoint) = 0;
-        virtual void setTlsConfig(const TlsConfig& config) = 0;
-        virtual void setDatasetPath(const QString& path) = 0;
-        virtual bool ensureReady() = 0;
-        virtual grpc::Status getOhlcvHistory(grpc::ClientContext* context,
-                                             const botcore::trading::v1::GetOhlcvHistoryRequest& request,
-                                             botcore::trading::v1::GetOhlcvHistoryResponse* response) = 0;
-        virtual std::unique_ptr<class MarketDataStreamReader> streamOhlcv(
-            grpc::ClientContext* context,
-            const botcore::trading::v1::StreamOhlcvRequest& request) = 0;
-        virtual grpc::Status getRiskState(grpc::ClientContext* context,
-                                          const botcore::trading::v1::RiskStateRequest& request,
-                                          botcore::trading::v1::RiskState* response) = 0;
-        virtual grpc::Status listTradableInstruments(
-            grpc::ClientContext* context,
-            const botcore::trading::v1::ListTradableInstrumentsRequest& request,
-            botcore::trading::v1::ListTradableInstrumentsResponse* response) = 0;
-        virtual void shutdown() = 0;
-        virtual void requestRestart() = 0;
-        virtual bool hasConnectivity() const = 0;
-        virtual bool isGrpcTransport() const = 0;
-        virtual bool hasNativeChannel() const = 0;
-    };
-
     void ensureTransport();
-    std::unique_ptr<IMarketDataTransport> makeTransport(TransportMode mode) const;
     QList<OhlcvPoint> convertHistory(
         const google::protobuf::RepeatedPtrField<botcore::trading::v1::OhlcvCandle>& candles) const;
     OhlcvPoint convertCandle(const botcore::trading::v1::OhlcvCandle& candle) const;
@@ -233,6 +204,13 @@ private:
     class MarketDataStubInterface;
     class RiskServiceStubInterface;
     class MarketplaceServiceStubInterface;
+    class GrpcMarketDataStreamReader;
+    class GrpcMarketDataStub;
+    class GrpcRiskServiceStub;
+    class GrpcMarketplaceServiceStub;
+    class InProcessMarketDataStub;
+    class InProcessRiskServiceStub;
+    class InProcessMarketDataStreamReader;
     std::unique_ptr<MarketDataStubInterface> m_marketDataStub;
     std::unique_ptr<RiskServiceStubInterface> m_riskStub;
     std::unique_ptr<MarketplaceServiceStubInterface> m_marketplaceStub;

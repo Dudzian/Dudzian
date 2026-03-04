@@ -43,8 +43,6 @@
 
 Q_LOGGING_CATEGORY(lcTradingClient, "bot.shell.trading.grpc")
 
-namespace {
-
 using botcore::trading::v1::GetOhlcvHistoryRequest;
 using botcore::trading::v1::GetOhlcvHistoryResponse;
 using botcore::trading::v1::Instrument;
@@ -67,7 +65,7 @@ using botcore::trading::v1::StreamOhlcvRequest;
 using botcore::trading::v1::StreamOhlcvUpdate;
 using botcore::trading::v1::MarketplacePresetSummary;
 
-class MarketDataStreamReader {
+class TradingClient::MarketDataStreamReader {
 public:
     virtual ~MarketDataStreamReader() = default;
     virtual bool Read(StreamOhlcvUpdate* update) = 0;
@@ -97,7 +95,7 @@ public:
                                       RiskState* response) = 0;
 };
 
-class GrpcMarketDataStreamReader final : public MarketDataStreamReader {
+class TradingClient::GrpcMarketDataStreamReader final : public TradingClient::MarketDataStreamReader {
 public:
     explicit GrpcMarketDataStreamReader(std::unique_ptr<grpc::ClientReader<StreamOhlcvUpdate>> reader)
         : m_reader(std::move(reader))
@@ -122,7 +120,7 @@ private:
     std::unique_ptr<grpc::ClientReader<StreamOhlcvUpdate>> m_reader;
 };
 
-class GrpcMarketDataStub final : public TradingClient::MarketDataStubInterface {
+class TradingClient::GrpcMarketDataStub final : public MarketDataStubInterface {
 public:
     explicit GrpcMarketDataStub(std::shared_ptr<grpc::Channel> channel)
         : m_stub(botcore::trading::v1::MarketDataService::NewStub(std::move(channel)))
@@ -143,7 +141,7 @@ public:
         auto reader = m_stub->StreamOhlcv(context, request);
         if (!reader)
             return {};
-        return std::make_unique<GrpcMarketDataStreamReader>(std::move(reader));
+        return std::make_unique<TradingClient::GrpcMarketDataStreamReader>(std::move(reader));
     }
 
     grpc::Status ListTradableInstruments(grpc::ClientContext* context,
@@ -157,7 +155,7 @@ private:
     std::unique_ptr<botcore::trading::v1::MarketDataService::Stub> m_stub;
 };
 
-class GrpcRiskServiceStub final : public TradingClient::RiskServiceStubInterface {
+class TradingClient::GrpcRiskServiceStub final : public RiskServiceStubInterface {
 public:
     explicit GrpcRiskServiceStub(std::shared_ptr<grpc::Channel> channel)
         : m_stub(botcore::trading::v1::RiskService::NewStub(std::move(channel)))
@@ -195,7 +193,7 @@ public:
                                         ActivateMarketplacePresetResponse* response) = 0;
 };
 
-class GrpcMarketplaceServiceStub final : public TradingClient::MarketplaceServiceStubInterface {
+class TradingClient::GrpcMarketplaceServiceStub final : public MarketplaceServiceStubInterface {
 public:
     explicit GrpcMarketplaceServiceStub(std::shared_ptr<grpc::Channel> channel)
         : m_stub(botcore::trading::v1::MarketplaceService::NewStub(std::move(channel)))
@@ -241,6 +239,8 @@ private:
     std::unique_ptr<botcore::trading::v1::MarketplaceService::Stub> m_stub;
 };
 
+namespace {
+
 google::protobuf::Timestamp toProtoTimestamp(qint64 timestampMs)
 {
     google::protobuf::Timestamp ts;
@@ -284,7 +284,9 @@ QString normalizeFingerprint(QString value) {
     return normalized;
 }
 
-class InProcessMarketDataStreamReader final : public MarketDataStreamReader {
+} // namespace
+
+class TradingClient::InProcessMarketDataStreamReader final : public TradingClient::MarketDataStreamReader {
 public:
     InProcessMarketDataStreamReader(grpc::ClientContext* context,
                                     std::shared_ptr<std::vector<OhlcvCandle>> candles,
@@ -298,9 +300,6 @@ public:
     bool Read(StreamOhlcvUpdate* update) override
     {
         if (!update)
-            return false;
-
-        if (m_context && m_context->IsCancelled())
             return false;
 
         if (!m_snapshotDelivered) {
@@ -328,8 +327,6 @@ public:
         increment->mutable_candle()->CopyFrom((*m_candles)[m_index]);
         ++m_index;
         for (int i = 0; i < 15; ++i) {
-            if (m_context && m_context->IsCancelled())
-                return false;
             std::this_thread::sleep_for(std::chrono::milliseconds(10));
         }
         return true;
@@ -345,7 +342,7 @@ private:
     int m_index = 0;
 };
 
-class InProcessMarketDataStub final : public TradingClient::MarketDataStubInterface {
+class TradingClient::InProcessMarketDataStub final : public MarketDataStubInterface {
 public:
     InProcessMarketDataStub(const TradingClient::InstrumentConfig& config, const QString& datasetPath)
     {
@@ -507,7 +504,7 @@ private:
     std::shared_ptr<std::vector<OhlcvCandle>> m_candles;
 };
 
-class InProcessRiskServiceStub final : public TradingClient::RiskServiceStubInterface {
+class TradingClient::InProcessRiskServiceStub final : public RiskServiceStubInterface {
 public:
     grpc::Status GetRiskState(grpc::ClientContext*,
                               const RiskStateRequest&,
@@ -537,6 +534,8 @@ public:
     }
 };
 
+namespace {
+
 Instrument makeInstrument(const TradingClient::InstrumentConfig& config) {
     Instrument instrument;
     instrument.set_exchange(config.exchange.toStdString());
@@ -549,16 +548,7 @@ Instrument makeInstrument(const TradingClient::InstrumentConfig& config) {
 
 } // namespace
 
-std::unique_ptr<TradingClient::IMarketDataTransport> TradingClient::makeTransport(TransportMode mode) const
-{
-    switch (mode) {
-    case TransportMode::Grpc:
-        return std::make_unique<GrpcMarketDataTransport>();
-    case TransportMode::InProcess:
-        return std::make_unique<InProcessMarketDataTransport>();
-    }
-    return {};
-}
+
 
 TradingClient::TradingClient(QObject* parent)
     : QObject(parent) {
@@ -573,13 +563,6 @@ TradingClient::TradingClient(QObject* parent)
 
     m_regimeClassifier = std::make_unique<MarketRegimeClassifierBridge>(this);
 
-    m_transport = makeTransport(m_transportMode);
-    if (m_transport) {
-        m_transport->setInstrument(m_instrumentConfig);
-        m_transport->setEndpoint(m_endpoint);
-        m_transport->setTlsConfig(m_tlsConfig);
-        m_transport->setDatasetPath(m_inProcessDatasetPath);
-    }
 }
 
 TradingClient::~TradingClient() {
@@ -591,30 +574,10 @@ void TradingClient::setEndpoint(const QString& endpoint) {
         return;
     }
     m_endpoint = endpoint;
-    if (m_transport) {
-        m_transport->setEndpoint(m_endpoint);
-        m_transport->ensureReady();
-    }
-}
-
-void TradingClient::setTransportMode(TransportMode mode)
-{
-    if (mode == m_transportMode)
-        return;
-    const bool wasRunning = m_running.load();
-    if (wasRunning)
-        stop();
-    m_transportMode = mode;
-    m_transport = makeTransport(m_transportMode);
-    if (m_transport) {
-        m_transport->setInstrument(m_instrumentConfig);
-        m_transport->setEndpoint(m_endpoint);
-        m_transport->setTlsConfig(m_tlsConfig);
-        m_transport->setDatasetPath(m_inProcessDatasetPath);
-        m_transport->ensureReady();
-    }
-    if (wasRunning)
-        start();
+    m_channel.reset();
+    m_marketDataStub.reset();
+    m_riskStub.reset();
+    m_marketplaceStub.reset();
 }
 
 void TradingClient::setTransportMode(TransportMode mode)
@@ -657,10 +620,10 @@ void TradingClient::setTlsConfig(const TlsConfig& config) {
     TlsConfig sanitized = config;
     sanitized.pinnedServerFingerprint = normalizeFingerprint(sanitized.pinnedServerFingerprint);
     m_tlsConfig = sanitized;
-    if (m_transport) {
-        m_transport->setTlsConfig(m_tlsConfig);
-        m_transport->ensureReady();
-    }
+    m_channel.reset();
+    m_marketDataStub.reset();
+    m_riskStub.reset();
+    m_marketplaceStub.reset();
 }
 
 void TradingClient::setAuthToken(const QString& token)
@@ -798,7 +761,7 @@ void TradingClient::start() {
     GetOhlcvHistoryResponse historyResp;
     auto historyContext = createContext();
     const grpc::Status historyStatus =
-        m_transport->getOhlcvHistory(historyContext.get(), historyReq, &historyResp);
+        m_marketDataStub->GetOhlcvHistory(historyContext.get(), historyReq, &historyResp);
     if (historyStatus.ok()) {
         const QList<OhlcvPoint> history = convertHistory(historyResp.candles());
         QVector<IndicatorSample> emaFast;
@@ -862,16 +825,13 @@ void TradingClient::stop() {
     if (m_streamThread.joinable()) {
         m_streamThread.join();
     }
-    if (m_transport) {
-        m_transport->shutdown();
-    }
     if (wasRunning) {
         Q_EMIT streamingChanged();
         Q_EMIT connectionStateChanged(tr("stopped"));
     }
 }
 
-void TradingClient::ensureStub() {
+void TradingClient::ensureTransport() {
     if (m_transportMode == TransportMode::InProcess) {
         if (!m_marketDataStub) {
             m_marketDataStub = std::make_unique<InProcessMarketDataStub>(m_instrumentConfig,
@@ -972,7 +932,6 @@ void TradingClient::ensureStub() {
     if (m_channel && !m_marketplaceStub) {
         m_marketplaceStub = std::make_unique<GrpcMarketplaceServiceStub>(m_channel);
     }
-    m_transport->ensureReady();
 }
 
 QList<OhlcvPoint> TradingClient::convertHistory(const google::protobuf::RepeatedPtrField<OhlcvCandle>& candles) const {
@@ -1003,7 +962,7 @@ void TradingClient::streamLoop()
 
     while (m_running.load()) {
         ensureTransport();
-        if (!m_transport || !m_transport->hasConnectivity()) {
+        if (!m_marketDataStub) {
             QMetaObject::invokeMethod(
                 this,
                 [this]() { Q_EMIT connectionStateChanged(tr("stream unavailable")); },
@@ -1215,7 +1174,7 @@ void TradingClient::streamLoop()
 }
 
 void TradingClient::refreshRiskState() {
-    ensureStub();
+    ensureTransport();
     if (!m_riskStub) {
         if (m_transportMode == TransportMode::InProcess) {
             qCWarning(lcTradingClient) << "Brak transportu in-process dla RiskService – pomijam odczyt stanu ryzyka.";
@@ -1227,7 +1186,7 @@ void TradingClient::refreshRiskState() {
     auto riskContext = createContext();
     RiskStateRequest request;
     RiskState response;
-    const grpc::Status status = m_transport->getRiskState(riskContext.get(), request, &response);
+    const grpc::Status status = m_riskStub->GetRiskState(riskContext.get(), request, &response);
     if (status.ok()) {
         const auto snapshot = convertRiskState(response);
         QMetaObject::invokeMethod(
@@ -1243,7 +1202,7 @@ void TradingClient::refreshRiskState() {
 QVector<TradingClient::TradableInstrument> TradingClient::listTradableInstruments(const QString& exchange)
 {
     QVector<TradableInstrument> instruments;
-    ensureStub();
+    ensureTransport();
     if (!m_marketDataStub) {
         if (m_transportMode == TransportMode::InProcess) {
             qCWarning(lcTradingClient)
@@ -1267,7 +1226,7 @@ QVector<TradingClient::TradableInstrument> TradingClient::listTradableInstrument
     request.set_exchange(normalizedExchange.toStdString());
     ListTradableInstrumentsResponse response;
 
-    const grpc::Status status = m_transport->listTradableInstruments(&context, request, &response);
+    const grpc::Status status = m_marketDataStub->ListTradableInstruments(&context, request, &response);
     if (!status.ok()) {
         qCWarning(lcTradingClient)
             << "ListTradableInstruments nie powiodło się:" << QString::fromStdString(status.error_message());
@@ -1301,7 +1260,7 @@ QVector<TradingClient::TradableInstrument> TradingClient::listTradableInstrument
 QVector<TradingClient::MarketplacePresetSummary> TradingClient::listMarketplacePresets()
 {
     QVector<MarketplacePresetSummary> presets;
-    ensureStub();
+    ensureTransport();
     if (!m_marketplaceStub) {
         qCWarning(lcTradingClient) << "ListMarketplacePresets pominięte – brak stubu MarketplaceService.";
         return presets;
@@ -1328,7 +1287,7 @@ QVector<TradingClient::MarketplacePresetSummary> TradingClient::listMarketplaceP
 TradingClient::MarketplacePresetSummary TradingClient::importMarketplacePreset(const QByteArray& payload,
                                                                               const QString& filename)
 {
-    ensureStub();
+    ensureTransport();
     MarketplacePresetSummary summary;
     if (!m_marketplaceStub) {
         qCWarning(lcTradingClient) << "ImportMarketplacePreset pominięty – brak stubu MarketplaceService.";
@@ -1361,7 +1320,7 @@ TradingClient::MarketplacePresetSummary TradingClient::importMarketplacePreset(c
 
 TradingClient::MarketplacePresetSummary TradingClient::activateMarketplacePreset(const QString& presetId)
 {
-    ensureStub();
+    ensureTransport();
     MarketplacePresetSummary summary;
     if (!m_marketplaceStub) {
         qCWarning(lcTradingClient) << "ActivateMarketplacePreset pominięte – brak stubu MarketplaceService.";
@@ -1393,7 +1352,7 @@ QByteArray TradingClient::exportMarketplacePreset(const QString& presetId,
                                                    MarketplacePresetSummary* summary,
                                                    QString* exportedFilename)
 {
-    ensureStub();
+    ensureTransport();
     if (summary) {
         *summary = MarketplacePresetSummary{};
     }
@@ -1447,7 +1406,7 @@ QByteArray TradingClient::exportMarketplacePreset(const QString& presetId,
 
 bool TradingClient::removeMarketplacePreset(const QString& presetId)
 {
-    ensureStub();
+    ensureTransport();
     if (!m_marketplaceStub) {
         qCWarning(lcTradingClient) << "RemoveMarketplacePreset pominięte – brak stubu MarketplaceService.";
         return false;
@@ -1644,9 +1603,6 @@ void TradingClient::triggerStreamRestart()
 {
     if (!m_running.load()) {
         return;
-    }
-    if (m_transport) {
-        m_transport->requestRestart();
     }
     m_restartRequested.store(true);
     std::lock_guard<std::mutex> lock(m_contextMutex);
