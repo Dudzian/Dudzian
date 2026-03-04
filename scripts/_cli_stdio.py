@@ -4,13 +4,16 @@ import sys
 
 
 def configure_cli_stdio() -> None:
-    """Zapobiega błędom kodowania CLI na stdout/stderr w środowiskach bez UTF-8."""
+    """Wymusza UTF-8 na stdout/stderr i zachowuje niezawodny fallback backslashreplace."""
 
     for stream in (sys.stdout, sys.stderr):
         reconfigure = getattr(stream, "reconfigure", None)
         if not callable(reconfigure):
             continue
         try:
-            reconfigure(errors="backslashreplace")
+            reconfigure(encoding="utf-8", errors="backslashreplace")
         except Exception:  # pragma: no cover - depends on stream implementation
-            pass
+            try:
+                reconfigure(errors="backslashreplace")
+            except Exception:  # pragma: no cover - depends on stream implementation
+                pass

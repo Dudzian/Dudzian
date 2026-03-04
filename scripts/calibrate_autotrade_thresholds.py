@@ -3878,10 +3878,14 @@ def _build_parser() -> argparse.ArgumentParser:
     return parser
 
 
-def main(argv: list[str] | None = None) -> int:
+def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     configure_cli_stdio()
     parser = _build_parser()
-    args = parser.parse_args(argv)
+    return parser.parse_args(argv)
+
+
+def main(argv: list[str] | None = None) -> int:
+    args = _parse_args(argv)
 
     percentiles = _parse_percentiles(args.percentiles)
     if not (0.0 < args.suggestion_percentile < 1.0):
