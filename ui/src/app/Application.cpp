@@ -102,6 +102,11 @@ static const QByteArray kMarketplaceCatalogPathEnv = QByteArrayLiteral("BOT_CORE
 static const QByteArray kMarketplaceSigningKeysEnv = QByteArrayLiteral("BOT_CORE_UI_MARKETPLACE_SIGNING_KEYS");
 static const QByteArray kMarketplaceSigningKeyFilesEnv = QByteArrayLiteral("BOT_CORE_UI_MARKETPLACE_SIGNING_KEY_FILES");
 static const QByteArray kMarketplaceFingerprintEnv = QByteArrayLiteral("BOT_CORE_UI_MARKETPLACE_FINGERPRINT");
+static const QByteArray kLicenseCachePathEnv = QByteArrayLiteral("BOT_CORE_UI_LICENSE_CACHE_PATH");
+static const QByteArray kLicenseRefreshIntervalEnv = QByteArrayLiteral("BOT_CORE_UI_LICENSE_REFRESH_INTERVAL");
+constexpr int kDefaultLicenseRefreshIntervalSeconds = 600;
+constexpr int kMinLicenseRefreshIntervalSeconds = 0;
+constexpr int kMaxLicenseRefreshIntervalSeconds = 86400;
 
 class StrategyUiModule final : public UiModuleInterface {
 public:
@@ -437,6 +442,11 @@ QStringList splitScopesList(const QString& raw)
         unique.append(trimmed);
     }
     return unique;
+}
+
+QStringList parseMarketplaceList(const QString& raw)
+{
+    return splitScopesList(raw);
 }
 
 QString sanitizeAutoExportBasename(const QString& raw)
@@ -1366,17 +1376,31 @@ bool Application::applyParser(const QCommandLineParser& parser) {
 
         const QString cliMetricsToken = parser.value("metrics-auth-token").trimmed();
         const QString cliMetricsTokenFile = parser.value("metrics-auth-token-file").trimmed();
-        const bool cliMetricsTokenProvided = !cliMetricsToken.isEmpty();
-        const bool cliMetricsTokenFileProvided = !cliMetricsTokenFile.isEmpty();
+        const bool cliMetricsTokenProvided = parser.isSet(QStringLiteral("metrics-auth-token"));
+        const bool cliMetricsTokenFileProvided = parser.isSet(QStringLiteral("metrics-auth-token-file"));
         if (cliMetricsTokenProvided && cliMetricsTokenFileProvided) {
             qCWarning(lcAppMetrics)
-                << "Podano jednocześnie --metrics-auth-token oraz --metrics-auth-token-file. Użyję tokenu przekazanego bezpośrednio.";
+                << "Podano jednocześnie --metrics-auth-token oraz --metrics-auth-token-file. Użyję tokenu przekazanego bezpośrednio; parametr --metrics-auth-token-file zostanie zignorowany.";
+        }
+        if (cliMetricsTokenProvided && cliMetricsToken.isEmpty()) {
+            qCWarning(lcAppMetrics)
+                << "Parametr --metrics-auth-token ustawiono na pusty ciąg. Token MetricsService zostanie wyczyszczony.";
+        }
+        if (!cliMetricsTokenProvided && cliMetricsTokenFileProvided && cliMetricsTokenFile.isEmpty()) {
+            qCWarning(lcAppMetrics)
+                << "Parametr --metrics-auth-token-file ustawiono na pusty ciąg. Ścieżka pliku tokenu MetricsService zostanie wyczyszczona.";
         }
         if (cliMetricsTokenProvided) {
             metricsAuthToken = cliMetricsToken;
+            metricsAuthTokenFile.clear();
         } else if (cliMetricsTokenFileProvided) {
-            metricsAuthTokenFile = expandPath(cliMetricsTokenFile);
-            metricsAuthToken = readTokenFile(metricsAuthTokenFile);
+            if (cliMetricsTokenFile.isEmpty()) {
+                metricsAuthToken.clear();
+                metricsAuthTokenFile.clear();
+            } else {
+                metricsAuthTokenFile = expandPath(cliMetricsTokenFile);
+                metricsAuthToken = readTokenFile(metricsAuthTokenFile);
+            }
         }
         m_metricsRbacRole = parser.value("metrics-rbac-role").trimmed();
 
@@ -1389,17 +1413,31 @@ bool Application::applyParser(const QCommandLineParser& parser) {
 
         const QString cliHealthToken = parser.value("health-auth-token").trimmed();
         const QString cliHealthTokenFile = parser.value("health-auth-token-file").trimmed();
-        const bool cliHealthTokenProvided = !cliHealthToken.isEmpty();
-        const bool cliHealthTokenFileProvided = !cliHealthTokenFile.isEmpty();
+        const bool cliHealthTokenProvided = parser.isSet(QStringLiteral("health-auth-token"));
+        const bool cliHealthTokenFileProvided = parser.isSet(QStringLiteral("health-auth-token-file"));
         if (cliHealthTokenProvided && cliHealthTokenFileProvided) {
             qCWarning(lcAppMetrics)
-                << "Podano jednocześnie --health-auth-token oraz --health-auth-token-file. Użyję tokenu przekazanego bezpośrednio.";
+                << "Podano jednocześnie --health-auth-token oraz --health-auth-token-file. Użyję tokenu przekazanego bezpośrednio; parametr --health-auth-token-file zostanie zignorowany.";
+        }
+        if (cliHealthTokenProvided && cliHealthToken.isEmpty()) {
+            qCWarning(lcAppMetrics)
+                << "Parametr --health-auth-token ustawiono na pusty ciąg. Token HealthService zostanie wyczyszczony.";
+        }
+        if (!cliHealthTokenProvided && cliHealthTokenFileProvided && cliHealthTokenFile.isEmpty()) {
+            qCWarning(lcAppMetrics)
+                << "Parametr --health-auth-token-file ustawiono na pusty ciąg. Ścieżka pliku tokenu HealthService zostanie wyczyszczona.";
         }
         if (cliHealthTokenProvided) {
             healthAuthToken = cliHealthToken;
+            healthAuthTokenFile.clear();
         } else if (cliHealthTokenFileProvided) {
-            healthAuthTokenFile = expandPath(cliHealthTokenFile);
-            healthAuthToken = readTokenFile(healthAuthTokenFile, QStringLiteral("HealthService"));
+            if (cliHealthTokenFile.isEmpty()) {
+                healthAuthToken.clear();
+                healthAuthTokenFile.clear();
+            } else {
+                healthAuthTokenFile = expandPath(cliHealthTokenFile);
+                healthAuthToken = readTokenFile(healthAuthTokenFile, QStringLiteral("HealthService"));
+            }
         }
 
         const QString cliHealthRole = parser.value("health-rbac-role").trimmed();
@@ -5651,6 +5689,9 @@ void Application::updateUiModuleWatchTargets(const QStringList& directories, con
     m_watchedUiModuleDirectories.clear();
     m_watchedUiModuleFiles.clear();
 
+    QStringList directoryTargets;
+    QStringList fileTargets;
+
     auto appendUnique = [](QStringList& list, const QString& value) {
         if (value.isEmpty())
             return;
@@ -5663,9 +5704,6 @@ void Application::updateUiModuleWatchTargets(const QStringList& directories, con
         for (const QString& candidate : candidates)
             appendUnique(directoryTargets, candidate);
     };
-
-    QStringList directoryTargets;
-    QStringList fileTargets;
 
     for (const QString& entry : directories) {
         const QString trimmed = entry.trimmed();
