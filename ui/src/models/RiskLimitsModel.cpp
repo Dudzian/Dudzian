@@ -5,42 +5,6 @@
 
 #include <algorithm>
 
-namespace {
-using Definition = RiskLimitsModel::Definition;
-
-Definition makeDefinition(const QString& key,
-                          const QString& label,
-                          double defaultValue,
-                          double minValue,
-                          double maxValue,
-                          double step,
-                          bool isPercent,
-                          bool editable = true)
-{
-    Definition def;
-    def.key = key;
-    def.label = label;
-    def.defaultValue = defaultValue;
-    def.minValue = minValue;
-    def.maxValue = maxValue;
-    def.step = step;
-    def.isPercent = isPercent;
-    def.editable = editable;
-    return def;
-}
-
-const QVector<Definition> kDefinitions = {
-    makeDefinition(QStringLiteral("max_positions"), QObject::tr("Liczba pozycji"), 0.0, 0.0, 200.0, 1.0, false),
-    makeDefinition(QStringLiteral("max_leverage"), QObject::tr("Maksymalna dźwignia"), 1.0, 0.0, 100.0, 0.1, false),
-    makeDefinition(QStringLiteral("max_position_pct"), QObject::tr("Limit ekspozycji"), 0.0, 0.0, 1.0, 0.01, true),
-    makeDefinition(QStringLiteral("daily_loss_limit"), QObject::tr("Limit dzienny"), 0.0, 0.0, 1.0, 0.01, true),
-    makeDefinition(QStringLiteral("drawdown_limit"), QObject::tr("Limit obsunięcia"), 0.0, 0.0, 1.0, 0.01, true),
-    makeDefinition(QStringLiteral("target_volatility"), QObject::tr("Docelowa zmienność"), 0.0, 0.0, 1.0, 0.01, true),
-    makeDefinition(QStringLiteral("stop_loss_atr_multiple"), QObject::tr("Stop loss (ATR)"), 0.0, 0.0, 10.0, 0.1, false),
-};
-
-} // namespace
-
 RiskLimitsModel::RiskLimitsModel(QObject* parent)
     : QAbstractListModel(parent)
 {
@@ -99,6 +63,37 @@ QHash<int, QByteArray> RiskLimitsModel::roleNames() const
 
 const QVector<RiskLimitsModel::Definition>& RiskLimitsModel::knownDefinitions()
 {
+    static const QVector<Definition> kDefinitions = [] {
+        auto makeDefinition = [](const QString& key,
+                                 const QString& label,
+                                 double defaultValue,
+                                 double minValue,
+                                 double maxValue,
+                                 double step,
+                                 bool isPercent,
+                                 bool editable = true) {
+            Definition def;
+            def.key = key;
+            def.label = label;
+            def.defaultValue = defaultValue;
+            def.minValue = minValue;
+            def.maxValue = maxValue;
+            def.step = step;
+            def.isPercent = isPercent;
+            def.editable = editable;
+            return def;
+        };
+
+        return QVector<Definition>{
+            makeDefinition(QStringLiteral("max_positions"), RiskLimitsModel::tr("Liczba pozycji"), 0.0, 0.0, 200.0, 1.0, false),
+            makeDefinition(QStringLiteral("max_leverage"), RiskLimitsModel::tr("Maksymalna dźwignia"), 1.0, 0.0, 100.0, 0.1, false),
+            makeDefinition(QStringLiteral("max_position_pct"), RiskLimitsModel::tr("Limit ekspozycji"), 0.0, 0.0, 1.0, 0.01, true),
+            makeDefinition(QStringLiteral("daily_loss_limit"), RiskLimitsModel::tr("Limit dzienny"), 0.0, 0.0, 1.0, 0.01, true),
+            makeDefinition(QStringLiteral("drawdown_limit"), RiskLimitsModel::tr("Limit obsunięcia"), 0.0, 0.0, 1.0, 0.01, true),
+            makeDefinition(QStringLiteral("target_volatility"), RiskLimitsModel::tr("Docelowa zmienność"), 0.0, 0.0, 1.0, 0.01, true),
+            makeDefinition(QStringLiteral("stop_loss_atr_multiple"), RiskLimitsModel::tr("Stop loss (ATR)"), 0.0, 0.0, 10.0, 0.1, false),
+        };
+    }();
     return kDefinitions;
 }
 
