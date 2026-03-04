@@ -194,9 +194,7 @@ def test_streaming_strategy_feed_converts_events() -> None:
 
 
 def test_streaming_strategy_feed_start_async_consumes(monkeypatch: pytest.MonkeyPatch) -> None:
-    # StreamingStrategyFeed jest wyłączany w test-mode (DUDZIAN_TEST_MODE=1),
-    # a ten test weryfikuje realną konsumpcję streamu – więc robimy opt-out.
-    monkeypatch.setenv("DUDZIAN_TEST_MODE", "0")
+    monkeypatch.setenv("DUDZIAN_TEST_MODE", "1")
 
     history = _DummyHistoryFeed()
     batches = [
@@ -249,6 +247,111 @@ def test_streaming_strategy_feed_start_async_consumes(monkeypatch: pytest.Monkey
 
         assert snapshots and snapshots[0].symbol == "BTC/USDT"
         assert streams and streams[0].aclose_calls >= 1
+
+    asyncio.run(_run())
+
+
+def test_streaming_strategy_feed_start_async_consumes_after_sync_start_disabled(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("DUDZIAN_TEST_MODE", "1")
+    history = _DummyHistoryFeed()
+    batches = [
+        StreamBatch(
+            channel="ticker",
+            events=(
+                {
+                    "symbol": "BTC/USDT",
+                    "last_price": 102.5,
+                    "open_price": 101.0,
+                    "high_24h": 103.0,
+                    "low_24h": 99.5,
+                    "volume_24h_base": 15.0,
+                    "timestamp": time.time(),
+                },
+            ),
+            received_at=time.monotonic(),
+        )
+    ]
+
+    def _factory() -> _AsyncBatchStream:
+        return _AsyncBatchStream(batches)
+
+    feed = StreamingStrategyFeed(
+        history_feed=history,
+        stream_factory=_factory,
+        symbols_map={"daily": ("BTC/USDT",)},
+        buffer_size=4,
+        restart_delay=0.01,
+    )
+
+    feed.start()
+
+    async def _run() -> None:
+        _ = feed.start_async()
+
+        async def _wait_for_data() -> Sequence[MarketSnapshot]:
+            for _ in range(20):
+                snapshots = feed.fetch_latest("daily")
+                if snapshots:
+                    return snapshots
+                await asyncio.sleep(0.01)
+            return ()
+
+        snapshots = await _wait_for_data()
+        await feed.stop_async()
+
+        assert snapshots and snapshots[0].symbol == "BTC/USDT"
+
+    asyncio.run(_run())
+
+
+def test_streaming_strategy_feed_start_async_replaces_disabled_pending_task(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("DUDZIAN_TEST_MODE", "1")
+    history = _DummyHistoryFeed()
+
+    def _factory() -> _AsyncBatchStream:
+        return _AsyncBatchStream([])
+
+    feed = StreamingStrategyFeed(
+        history_feed=history,
+        stream_factory=_factory,
+        symbols_map={"daily": ("BTC/USDT",)},
+        buffer_size=2,
+        restart_delay=0.01,
+    )
+
+    async def _run() -> None:
+        stale_task = asyncio.create_task(asyncio.sleep(3600))
+        feed._disabled = True
+        feed._async_task = stale_task
+
+        task = feed.start_async()
+        assert task is not stale_task
+        with suppress(asyncio.CancelledError):
+            await stale_task
+        assert stale_task.cancelled()
+
+        await feed.stop_async()
+
+    asyncio.run(_run())
+
+
+def test_streaming_strategy_feed_start_async_raises_for_sync_stream_factory(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("DUDZIAN_TEST_MODE", "1")
+    history = _DummyHistoryFeed()
+
+    feed = StreamingStrategyFeed(
+        history_feed=history,
+        stream_factory=lambda: iter(()),
+        symbols_map={"daily": ("BTC/USDT",)},
+        buffer_size=2,
+        restart_delay=0.0,
+    )
+
+    async def _run() -> None:
+        task = feed.start_async()
+        with pytest.raises(TypeError, match="AsyncIterable\[StreamBatch\], got:"):
+            await task
+        await feed.stop_async()
 
     asyncio.run(_run())
 
