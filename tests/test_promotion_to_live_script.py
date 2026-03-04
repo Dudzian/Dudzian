@@ -1,8 +1,9 @@
 from __future__ import annotations
 
 import json
-import subprocess
 import sys
+
+from tests._subprocess import run_cli_utf8
 import textwrap
 from pathlib import Path
 
@@ -88,7 +89,7 @@ def test_cli_execution_writes_report(tmp_path: Path) -> None:
     _write_core_config(config_path)
     output_path = tmp_path / "promotion.json"
 
-    result = subprocess.run(
+    result = run_cli_utf8(
         [
             sys.executable,
             "scripts/promotion_to_live.py",
@@ -101,7 +102,6 @@ def test_cli_execution_writes_report(tmp_path: Path) -> None:
         ],
         check=False,
         capture_output=True,
-        text=True,
         cwd=Path(__file__).resolve().parents[1],
     )
 

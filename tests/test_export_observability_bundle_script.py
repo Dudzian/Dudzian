@@ -6,6 +6,8 @@ import json
 import os
 import subprocess
 import sys
+
+from tests._subprocess import run_cli_utf8
 import zipfile
 from pathlib import Path
 
@@ -15,23 +17,21 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 
 
 def _run_cli(args: list[str]) -> subprocess.CompletedProcess[str]:
-    return subprocess.run(
+    return run_cli_utf8(
         [sys.executable, str(REPO_ROOT / "scripts/export_observability_bundle.py"), *args],
         check=True,
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
-        text=True,
         cwd=REPO_ROOT,
     )
 
 
 def _run_verify(args: list[str]) -> subprocess.CompletedProcess[str]:
-    return subprocess.run(
+    return run_cli_utf8(
         [sys.executable, str(REPO_ROOT / "scripts/verify_signature.py"), *args],
         check=True,
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
-        text=True,
         cwd=REPO_ROOT,
     )
 

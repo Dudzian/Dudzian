@@ -4,6 +4,8 @@ from __future__ import annotations
 import json
 import subprocess
 import sys
+
+from tests._subprocess import run_cli_utf8
 import tarfile
 import zipfile
 from pathlib import Path
@@ -39,12 +41,11 @@ def sample_root(tmp_path: Path) -> Path:
 
 
 def _run_cli(args: list[str], *, cwd: Path | None = None) -> subprocess.CompletedProcess[str]:
-    return subprocess.run(
+    return run_cli_utf8(
         [sys.executable, str(SCRIPT_PATH), *args],
         cwd=str(cwd or REPO_ROOT),
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
-        text=True,
         check=True,
     )
 

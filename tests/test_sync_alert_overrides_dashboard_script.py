@@ -1,8 +1,9 @@
 from __future__ import annotations
 
 import json
-import subprocess
 import sys
+
+from tests._subprocess import run_cli_utf8
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
@@ -39,7 +40,7 @@ def test_sync_alert_overrides_dashboard_script(tmp_path: Path) -> None:
         encoding="utf-8",
     )
 
-    result = subprocess.run(
+    result = run_cli_utf8(
         [
             sys.executable,
             "scripts/sync_alert_overrides_dashboard.py",
@@ -54,7 +55,6 @@ def test_sync_alert_overrides_dashboard_script(tmp_path: Path) -> None:
         ],
         check=False,
         capture_output=True,
-        text=True,
     )
 
     assert result.returncode == 0, result.stderr
