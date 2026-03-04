@@ -61,6 +61,24 @@ Jeżeli preflight zgłasza brakujące zależności, zainstaluj ponownie projekt 
 Gdy zobaczysz `ModuleNotFoundError: pandas`, najczęściej testy uruchamiasz poza
 aktywnym `venv` albo projekt został zainstalowany bez `.[dev]`.
 
+### Setup offline z wheelhouse (gdy brak dostępu do internetu/proxy)
+
+Dla środowisk odciętych od internetu (np. lokalnie bez dostępu do PyPI) użyj
+artefaktu wheelhouse z ostatniego runa CI dla właściwego OS/Python i rozpakuj
+go do katalogu `./wheelhouse` w repozytorium.
+
+Następnie ustaw wymagane zmienne i uruchom instalator:
+
+```bash
+export WHEELHOUSE_ENABLED=true
+export WHEELHOUSE_DIR=wheelhouse
+bash scripts/ci/install_deps_python.sh
+```
+
+Skrypt instaluje zależności testowe z lokalnych kółek i pozwala uniknąć błędów
+`ModuleNotFoundError` dla cięższych pakietów (np. `pyarrow`) podczas kolekcji
+pytest.
+
 Lint layoutu kończy się błędem za każdym razem, gdy w repozytorium pojawią się
 zakazane katalogi (prefiksy historyczne z poprzedniego etapu) albo pliki wykonywalne wewnątrz `archive/`.
 Pozostałości należy usunąć lub przenieść do dokumentacji historycznej przed
