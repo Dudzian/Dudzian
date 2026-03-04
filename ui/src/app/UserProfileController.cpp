@@ -229,7 +229,7 @@ bool UserProfileController::load()
     return true;
 }
 
-bool UserProfileController::save() const
+bool UserProfileController::save()
 {
     return persistProfiles();
 }

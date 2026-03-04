@@ -210,6 +210,7 @@ private slots:
     void testOverlayBudgetDispatch();
     void testTlsConfigurationForwarding();
     void testEnvironmentOverrides();
+    void testInProcessCliMetricsAuthTokenIsPreserved();
     void testJankTelemetryDispatch();
     void testPreferredScreenSelectionCli();
     void testPreferredScreenSelectionEnvironment();
@@ -553,6 +554,32 @@ void ApplicationTelemetryTest::testInProcessTransportMode()
     QVERIFY(historySpy.wait(2000));
     QVERIFY(historySpy.count() > 0);
     app.stop();
+}
+
+void ApplicationTelemetryTest::testInProcessCliMetricsAuthTokenIsPreserved()
+{
+    qunsetenv("BOT_CORE_UI_METRICS_AUTH_TOKEN");
+    qunsetenv("BOT_CORE_UI_METRICS_AUTH_TOKEN_FILE");
+
+    QQmlApplicationEngine engine;
+    Application app(engine);
+
+    auto reporter = std::make_unique<FakeTelemetryReporter>();
+    FakeTelemetryReporter* reporterPtr = reporter.get();
+    app.setTelemetryReporter(std::move(reporter));
+
+    QCommandLineParser parser;
+    app.configureParser(parser);
+    const QStringList args{
+        QStringLiteral("test"),
+        QStringLiteral("--transport-mode"), QStringLiteral("in-process"),
+        QStringLiteral("--transport-dataset"), QStringLiteral("data/sample_ohlcv/trend.csv"),
+        QStringLiteral("--metrics-auth-token"), QStringLiteral("cli-token-123")
+    };
+    parser.process(args);
+
+    QVERIFY(app.applyParser(parser));
+    QCOMPARE(reporterPtr->authToken, QStringLiteral("cli-token-123"));
 }
 
 void ApplicationTelemetryTest::testPreferredScreenSelectionCli()
