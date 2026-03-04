@@ -69,6 +69,7 @@ class DummyAdapter(ExchangeAdapter):
 @pytest.fixture(autouse=True)
 def enable_simulator(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("BOT_CORE_HW_SIMULATOR", "1")
+    monkeypatch.setenv("DUDZIAN_ALLOW_LIVE_ROUTER", "1")
 
 
 def test_withdrawal_requires_hardware_signature() -> None:
@@ -82,42 +83,45 @@ def test_withdrawal_requires_hardware_signature() -> None:
         require_hardware_wallet_for_withdrawals=True,
     )
 
-    metadata = require_hardware_wallet_metadata({}, account_id="primary", operation="withdrawal")
-    request = OrderRequest(
-        symbol="WITHDRAWAL",
-        side="withdraw",
-        quantity=1.0,
-        order_type="market",
-        metadata=metadata,
-    )
-    context = ExecutionContext(
-        portfolio_id="portfolio-1",
-        risk_profile="default",
-        environment="live",
-        metadata={"account": "primary"},
-    )
+    try:
+        metadata = require_hardware_wallet_metadata({}, account_id="primary", operation="withdrawal")
+        request = OrderRequest(
+            symbol="WITHDRAWAL",
+            side="withdraw",
+            quantity=1.0,
+            order_type="market",
+            metadata=metadata,
+        )
+        context = ExecutionContext(
+            portfolio_id="portfolio-1",
+            risk_profile="default",
+            environment="live",
+            metadata={"account": "primary"},
+        )
 
-    result = router.execute(request, context)
-    assert result.status == "accepted"
-    assert adapter.last_request is not None
-    signed_metadata = dict(adapter.last_request.metadata or {})
-    signature_doc = signed_metadata["hardware_wallet_signature"]
-    assert signed_metadata["requires_hardware_wallet"] is True
-    assert signed_metadata["operation"] == "withdrawal"
-    assert signer.verify(
-        {
-            "exchange": "primary",
-            "account": "primary",
-            "portfolio": "portfolio-1",
-            "risk_profile": "default",
-            "symbol": "WITHDRAWAL",
-            "side": "withdraw",
-            "quantity": 1.0,
-            "operation": "withdrawal",
-            "timestamp": signed_metadata["hardware_wallet_signed_at"],
-        },
-        signature_doc,
-    )
+        result = router.execute(request, context)
+        assert result.status == "accepted"
+        assert adapter.last_request is not None
+        signed_metadata = dict(adapter.last_request.metadata or {})
+        signature_doc = signed_metadata["hardware_wallet_signature"]
+        assert signed_metadata["requires_hardware_wallet"] is True
+        assert signed_metadata["operation"] == "withdrawal"
+        assert signer.verify(
+            {
+                "exchange": "primary",
+                "account": "primary",
+                "portfolio": "portfolio-1",
+                "risk_profile": "default",
+                "symbol": "WITHDRAWAL",
+                "side": "withdraw",
+                "quantity": 1.0,
+                "operation": "withdrawal",
+                "timestamp": signed_metadata["hardware_wallet_signed_at"],
+            },
+            signature_doc,
+        )
+    finally:
+        router.close()
 
 
 def test_withdrawal_operation_whitespace_requires_signature() -> None:
@@ -130,42 +134,45 @@ def test_withdrawal_operation_whitespace_requires_signature() -> None:
         transaction_signers=selector,
     )
 
-    metadata = {"operation": " withdrawal ", "account": "primary"}
-    request = OrderRequest(
-        symbol="WITHDRAWAL",
-        side="withdraw",
-        quantity=1.0,
-        order_type="market",
-        metadata=metadata,
-    )
-    context = ExecutionContext(
-        portfolio_id="portfolio-1",
-        risk_profile="default",
-        environment="live",
-        metadata={"account": "primary"},
-    )
+    try:
+        metadata = {"operation": " withdrawal ", "account": "primary"}
+        request = OrderRequest(
+            symbol="WITHDRAWAL",
+            side="withdraw",
+            quantity=1.0,
+            order_type="market",
+            metadata=metadata,
+        )
+        context = ExecutionContext(
+            portfolio_id="portfolio-1",
+            risk_profile="default",
+            environment="live",
+            metadata={"account": "primary"},
+        )
 
-    result = router.execute(request, context)
-    assert result.status == "accepted"
-    assert adapter.last_request is not None
-    signed_metadata = dict(adapter.last_request.metadata or {})
-    signature_doc = signed_metadata["hardware_wallet_signature"]
-    assert signed_metadata["requires_hardware_wallet"] is True
-    assert signed_metadata["operation"] == "withdrawal"
-    assert signer.verify(
-        {
-            "exchange": "primary",
-            "account": "primary",
-            "portfolio": "portfolio-1",
-            "risk_profile": "default",
-            "symbol": "WITHDRAWAL",
-            "side": "withdraw",
-            "quantity": 1.0,
-            "operation": "withdrawal",
-            "timestamp": signed_metadata["hardware_wallet_signed_at"],
-        },
-        signature_doc,
-    )
+        result = router.execute(request, context)
+        assert result.status == "accepted"
+        assert adapter.last_request is not None
+        signed_metadata = dict(adapter.last_request.metadata or {})
+        signature_doc = signed_metadata["hardware_wallet_signature"]
+        assert signed_metadata["requires_hardware_wallet"] is True
+        assert signed_metadata["operation"] == "withdrawal"
+        assert signer.verify(
+            {
+                "exchange": "primary",
+                "account": "primary",
+                "portfolio": "portfolio-1",
+                "risk_profile": "default",
+                "symbol": "WITHDRAWAL",
+                "side": "withdraw",
+                "quantity": 1.0,
+                "operation": "withdrawal",
+                "timestamp": signed_metadata["hardware_wallet_signed_at"],
+            },
+            signature_doc,
+        )
+    finally:
+        router.close()
 
 
 def test_missing_signer_with_required_wallet_raises() -> None:
@@ -176,23 +183,26 @@ def test_missing_signer_with_required_wallet_raises() -> None:
         require_hardware_wallet_for_withdrawals=True,
     )
 
-    metadata = require_hardware_wallet_metadata({}, account_id="primary", operation="withdrawal")
-    request = OrderRequest(
-        symbol="WITHDRAWAL",
-        side="withdraw",
-        quantity=1.0,
-        order_type="market",
-        metadata=metadata,
-    )
-    context = ExecutionContext(
-        portfolio_id="portfolio-1",
-        risk_profile="default",
-        environment="live",
-        metadata={"account": "primary"},
-    )
+    try:
+        metadata = require_hardware_wallet_metadata({}, account_id="primary", operation="withdrawal")
+        request = OrderRequest(
+            symbol="WITHDRAWAL",
+            side="withdraw",
+            quantity=1.0,
+            order_type="market",
+            metadata=metadata,
+        )
+        context = ExecutionContext(
+            portfolio_id="portfolio-1",
+            risk_profile="default",
+            environment="live",
+            metadata={"account": "primary"},
+        )
 
-    with pytest.raises(RuntimeError):
-        router.execute(request, context)
+        with pytest.raises(RuntimeError):
+            router.execute(request, context)
+    finally:
+        router.close()
 
 
 def test_build_live_execution_service_rejects_non_hardware_signer_when_required() -> None:
@@ -308,50 +318,53 @@ def test_router_reuses_existing_valid_signature() -> None:
         require_hardware_wallet_for_withdrawals=True,
     )
 
-    context = ExecutionContext(
-        portfolio_id="portfolio-1",
-        risk_profile="default",
-        environment="live",
-        metadata={"account": "primary"},
-    )
+    try:
+        context = ExecutionContext(
+            portfolio_id="portfolio-1",
+            risk_profile="default",
+            environment="live",
+            metadata={"account": "primary"},
+        )
 
-    timestamp = "2024-01-01T00:00:00Z"
-    payload = {
-        "exchange": "primary",
-        "account": "primary",
-        "portfolio": context.portfolio_id,
-        "risk_profile": context.risk_profile,
-        "symbol": "WITHDRAWAL",
-        "side": "withdraw",
-        "quantity": 1.0,
-        "operation": "withdrawal",
-        "timestamp": timestamp,
-    }
-
-    signature = signer.sign(payload)
-
-    request = OrderRequest(
-        symbol="WITHDRAWAL",
-        side="withdraw",
-        quantity=1.0,
-        order_type="market",
-        metadata={
+        timestamp = "2024-01-01T00:00:00Z"
+        payload = {
+            "exchange": "primary",
+            "account": "primary",
+            "portfolio": context.portfolio_id,
+            "risk_profile": context.risk_profile,
+            "symbol": "WITHDRAWAL",
+            "side": "withdraw",
+            "quantity": 1.0,
             "operation": "withdrawal",
-            "requires_hardware_wallet": True,
-            "hardware_wallet_signature": signature,
-            "hardware_wallet_algorithm": signature.get("algorithm"),
-            "hardware_wallet_signed_at": timestamp,
-            "hardware_wallet_account": "primary",
-            "hardware_wallet_key_id": signature.get("key_id"),
-        },
-    )
+            "timestamp": timestamp,
+        }
 
-    result = router.execute(request, context)
-    assert result.status == "accepted"
-    assert adapter.last_request is not None
-    signed_metadata = dict(adapter.last_request.metadata or {})
-    assert signed_metadata["hardware_wallet_signed_at"] == timestamp
-    assert dict(signed_metadata["hardware_wallet_signature"]) == dict(signature)
+        signature = signer.sign(payload)
+
+        request = OrderRequest(
+            symbol="WITHDRAWAL",
+            side="withdraw",
+            quantity=1.0,
+            order_type="market",
+            metadata={
+                "operation": "withdrawal",
+                "requires_hardware_wallet": True,
+                "hardware_wallet_signature": signature,
+                "hardware_wallet_algorithm": signature.get("algorithm"),
+                "hardware_wallet_signed_at": timestamp,
+                "hardware_wallet_account": "primary",
+                "hardware_wallet_key_id": signature.get("key_id"),
+            },
+        )
+
+        result = router.execute(request, context)
+        assert result.status == "accepted"
+        assert adapter.last_request is not None
+        signed_metadata = dict(adapter.last_request.metadata or {})
+        assert signed_metadata["hardware_wallet_signed_at"] == timestamp
+        assert dict(signed_metadata["hardware_wallet_signature"]) == dict(signature)
+    finally:
+        router.close()
 
 
 def test_router_restores_key_id_and_reuses_signature_from_other_account() -> None:
@@ -365,54 +378,57 @@ def test_router_restores_key_id_and_reuses_signature_from_other_account() -> Non
         require_hardware_wallet_for_withdrawals=True,
     )
 
-    context = ExecutionContext(
-        portfolio_id="portfolio-1",
-        risk_profile="default",
-        environment="live",
-        metadata={"account": "primary"},
-    )
+    try:
+        context = ExecutionContext(
+            portfolio_id="portfolio-1",
+            risk_profile="default",
+            environment="live",
+            metadata={"account": "primary"},
+        )
 
-    timestamp = "2024-02-02T00:00:00Z"
-    payload = {
-        "exchange": "primary",
-        "account": "backup",  # podpis przygotowany dla innego konta
-        "portfolio": context.portfolio_id,
-        "risk_profile": context.risk_profile,
-        "symbol": "WITHDRAWAL",
-        "side": "withdraw",
-        "quantity": 1.0,
-        "operation": "withdrawal",
-        "timestamp": timestamp,
-    }
+        timestamp = "2024-02-02T00:00:00Z"
+        payload = {
+            "exchange": "primary",
+            "account": "backup",  # podpis przygotowany dla innego konta
+            "portfolio": context.portfolio_id,
+            "risk_profile": context.risk_profile,
+            "symbol": "WITHDRAWAL",
+            "side": "withdraw",
+            "quantity": 1.0,
+            "operation": "withdrawal",
+            "timestamp": timestamp,
+        }
 
-    signature = signer.sign(payload)
-    sanitized_signature = dict(signature)
-    sanitized_signature.pop("key_id", None)
+        signature = signer.sign(payload)
+        sanitized_signature = dict(signature)
+        sanitized_signature.pop("key_id", None)
 
-    request = OrderRequest(
-        symbol="WITHDRAWAL",
-        side="withdraw",
-        quantity=1.0,
-        order_type="market",
-        metadata=require_hardware_wallet_metadata(
-            {
-                "hardware_wallet_signature": sanitized_signature,
-                "hardware_wallet_algorithm": signature.get("algorithm"),
-                "hardware_wallet_signed_at": timestamp,
-                "hardware_wallet_account": "backup",
-                "hardware_wallet_key_id": signature.get("key_id"),
-            },
-            account_id="primary",
-            operation="withdrawal",
-        ),
-    )
+        request = OrderRequest(
+            symbol="WITHDRAWAL",
+            side="withdraw",
+            quantity=1.0,
+            order_type="market",
+            metadata=require_hardware_wallet_metadata(
+                {
+                    "hardware_wallet_signature": sanitized_signature,
+                    "hardware_wallet_algorithm": signature.get("algorithm"),
+                    "hardware_wallet_signed_at": timestamp,
+                    "hardware_wallet_account": "backup",
+                    "hardware_wallet_key_id": signature.get("key_id"),
+                },
+                account_id="primary",
+                operation="withdrawal",
+            ),
+        )
 
-    result = router.execute(request, context)
-    assert result.status == "accepted"
-    assert adapter.last_request is not None
-    signed_metadata = dict(adapter.last_request.metadata or {})
+        result = router.execute(request, context)
+        assert result.status == "accepted"
+        assert adapter.last_request is not None
+        signed_metadata = dict(adapter.last_request.metadata or {})
 
-    reused_signature = dict(signed_metadata["hardware_wallet_signature"])
-    assert reused_signature["key_id"] == "ledger-reuse"
-    assert signed_metadata["hardware_wallet_key_id"] == "ledger-reuse"
-    assert signed_metadata["hardware_wallet_account"] == "backup"
+        reused_signature = dict(signed_metadata["hardware_wallet_signature"])
+        assert reused_signature["key_id"] == "ledger-reuse"
+        assert signed_metadata["hardware_wallet_key_id"] == "ledger-reuse"
+        assert signed_metadata["hardware_wallet_account"] == "backup"
+    finally:
+        router.close()
