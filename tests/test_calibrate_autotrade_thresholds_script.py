@@ -5580,12 +5580,14 @@ def test_main_respects_freeze_events_limit_flag(
     assert "Przetworzono" in output
 
 
-def test_configure_cli_stdio_sets_backslashreplace(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_configure_cli_stdio_sets_utf8_backslashreplace(monkeypatch: pytest.MonkeyPatch) -> None:
     class _Stream:
         def __init__(self) -> None:
+            self.encoding: str | None = None
             self.errors: str | None = None
 
-        def reconfigure(self, *, errors: str) -> None:
+        def reconfigure(self, *, encoding: str, errors: str) -> None:
+            self.encoding = encoding
             self.errors = errors
 
     stdout = _Stream()
@@ -5595,8 +5597,37 @@ def test_configure_cli_stdio_sets_backslashreplace(monkeypatch: pytest.MonkeyPat
 
     cli_stdio.configure_cli_stdio()
 
+    assert stdout.encoding == "utf-8"
     assert stdout.errors == "backslashreplace"
+    assert stderr.encoding == "utf-8"
     assert stderr.errors == "backslashreplace"
+
+
+def test_configure_cli_stdio_falls_back_to_backslashreplace(monkeypatch: pytest.MonkeyPatch) -> None:
+    class _Stream:
+        def __init__(self) -> None:
+            self.calls: list[dict[str, str]] = []
+
+        def reconfigure(self, **kwargs: str) -> None:
+            self.calls.append(kwargs)
+            if kwargs.get("encoding") == "utf-8":
+                raise ValueError("encoding unsupported")
+
+    stdout = _Stream()
+    stderr = _Stream()
+    monkeypatch.setattr(cli_stdio.sys, "stdout", stdout)
+    monkeypatch.setattr(cli_stdio.sys, "stderr", stderr)
+
+    cli_stdio.configure_cli_stdio()
+
+    assert stdout.calls == [
+        {"encoding": "utf-8", "errors": "backslashreplace"},
+        {"errors": "backslashreplace"},
+    ]
+    assert stderr.calls == [
+        {"encoding": "utf-8", "errors": "backslashreplace"},
+        {"errors": "backslashreplace"},
+    ]
 
 
 def test_configure_cli_stdio_ignores_streams_without_reconfigure(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -5617,6 +5648,21 @@ def test_configure_cli_stdio_ignores_non_callable_reconfigure(monkeypatch: pytes
     monkeypatch.setattr(cli_stdio.sys, "stderr", _StreamWithNonCallableReconfigure())
 
     cli_stdio.configure_cli_stdio()
+
+
+def test_parse_args_configures_stdio_before_argparse_exit(monkeypatch: pytest.MonkeyPatch) -> None:
+    calls: list[str] = []
+
+    def _fake_configure() -> None:
+        calls.append("configured")
+
+    monkeypatch.setattr(calibrate_autotrade_thresholds, "configure_cli_stdio", _fake_configure)
+
+    with pytest.raises(SystemExit) as excinfo:
+        calibrate_autotrade_thresholds._parse_args(["--__definitely_unknown_flag__"])
+
+    assert excinfo.value.code not in (None, 0)
+    assert calls == ["configured"]
 
 
 def test_main_rejects_negative_limit_freeze_events(
