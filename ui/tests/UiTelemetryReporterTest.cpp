@@ -20,7 +20,7 @@
 
 class MetricsCaptureService final : public botcore::trading::v1::MetricsService::Service {
 public:
-    grpc::Status StreamMetrics(grpc::ServerContext*, const botcore::trading::v1::StreamMetricsRequest*,
+    grpc::Status StreamMetrics(grpc::ServerContext*, const botcore::trading::v1::MetricsRequest*,
                                grpc::ServerWriter<botcore::trading::v1::MetricsSnapshot>*) override {
         return grpc::Status::OK;
     }
@@ -79,7 +79,7 @@ public:
                       QString* errorMessage = nullptr) override {
         CallRecord record;
         record.notes = QString::fromStdString(snapshot.notes());
-        record.fps = snapshot.has_fps() ? snapshot.fps() : 0.0;
+        record.fps = snapshot.fps();
         const QJsonObject json = QJsonDocument::fromJson(record.notes.toUtf8()).object();
         record.event = json.value(QStringLiteral("event")).toString();
         calls.push_back(record);
