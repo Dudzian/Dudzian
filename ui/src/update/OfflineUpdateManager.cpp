@@ -325,8 +325,11 @@ bool OfflineUpdateManager::verifyPackageSignature(const UpdatePackage& pkg, QStr
 bool OfflineUpdateManager::verifyFingerprint(const UpdatePackage& pkg, QString* message) const
 {
     QString fingerprint = m_fingerprintOverride;
-    if (fingerprint.trimmed().isEmpty() && m_licenseController)
-        fingerprint = m_licenseController->fingerprint().value(QStringLiteral("hash")).toString();
+    if (fingerprint.trimmed().isEmpty() && m_licenseController) {
+        fingerprint = m_licenseController->expectedFingerprint();
+        if (fingerprint.trimmed().isEmpty())
+            fingerprint = m_licenseController->licenseFingerprint();
+    }
 
     if (fingerprint.trimmed().isEmpty()) {
         if (message)

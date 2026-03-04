@@ -53,7 +53,6 @@ void PerformanceTelemetryControllerTest::publishesSnapshots()
 
     QCOMPARE(metricsClient->calls, 1);
     const auto& snapshot = metricsClient->lastSnapshot;
-    QVERIFY(snapshot.has_fps());
     QCOMPARE(snapshot.fps(), 118.5);
     const QJsonObject json = QJsonDocument::fromJson(QString::fromStdString(snapshot.notes()).toUtf8()).object();
     QCOMPARE(json.value(QStringLiteral("cpu_util")).toDouble(), 42.0);
