@@ -91,7 +91,9 @@ class EventBus:
     def start(self) -> None:
         if _is_test_mode_enabled():
             with self._lock:
-                self._closed = True
+                # W trybie testowym nie uruchamiamy wątku, ale EventBus
+                # ma pozostać aktywny i dostarczać zdarzenia synchronicznie.
+                self._closed = False
                 self._async_mode = False
                 self._thread = None
             self._unregister_instance()
