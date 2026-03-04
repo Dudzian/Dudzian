@@ -1515,7 +1515,7 @@ class StreamingStrategyFeed(StrategyDataFeed):
         self,
         *,
         history_feed: StrategyDataFeed,
-        stream_factory: Callable[[], Iterable[StreamBatch]],
+        stream_factory: Callable[[], Iterable[StreamBatch] | AsyncIterable[StreamBatch]],
         symbols_map: Mapping[str, Sequence[str]],
         buffer_size: int = 256,
         heartbeat_interval: float = 15.0,
@@ -1603,27 +1603,21 @@ class StreamingStrategyFeed(StrategyDataFeed):
         loop: asyncio.AbstractEventLoop | None = None,
     ) -> asyncio.Task[None]:
         """Uruchamia przetwarzanie streamu w pętli asynchronicznej."""
-
-        if _is_test_mode_enabled():
-            self._disabled = True
-            self._stop_event.set()
-            if loop is None:
-                try:
-                    loop = asyncio.get_running_loop()
-                except RuntimeError:  # pragma: no cover - wywołanie spoza pętli zdarzeń
-                    loop = asyncio.get_event_loop()
-            task = loop.create_task(asyncio.sleep(0))
-            self._async_task = task
-            return task
         if self._disabled:
-            if self._async_task is None:
-                if loop is None:
-                    try:
-                        loop = asyncio.get_running_loop()
-                    except RuntimeError:  # pragma: no cover - wywołanie spoza pętli zdarzeń
-                        loop = asyncio.get_event_loop()
-                self._async_task = loop.create_task(asyncio.sleep(0))
-            return self._async_task
+            if not _is_test_mode_enabled():
+                if self._async_task is None:
+                    if loop is None:
+                        try:
+                            loop = asyncio.get_running_loop()
+                        except RuntimeError:  # pragma: no cover - wywołanie spoza pętli zdarzeń
+                            loop = asyncio.get_event_loop()
+                    self._async_task = loop.create_task(asyncio.sleep(0))
+                return self._async_task
+            task = self._async_task
+            if task is not None and not task.done():
+                task.cancel()
+            self._async_task = None
+            self._disabled = False
 
         if self._thread and self._thread.is_alive():
             raise RuntimeError("StreamingStrategyFeed jest już uruchomiony w trybie synchronicznym.")
@@ -1704,6 +1698,12 @@ class StreamingStrategyFeed(StrategyDataFeed):
             while not self._stop_event.is_set():
                 try:
                     stream = self._stream_factory()
+                    is_async_stream = callable(getattr(stream, "__aiter__", None))
+                    if not is_async_stream:
+                        raise TypeError(
+                            "StreamingStrategyFeed.start_async wymaga, aby stream_factory zwracał AsyncIterable[StreamBatch], got: "
+                            f"{type(stream)!r}"
+                        )
                     await consume_stream_async(
                         stream,
                         handle_batch=self.ingest_batch,
@@ -1715,6 +1715,8 @@ class StreamingStrategyFeed(StrategyDataFeed):
                 except (StopIteration, StopAsyncIteration):
                     break
                 except asyncio.CancelledError:
+                    raise
+                except TypeError:
                     raise
                 except TimeoutError:
                     self._logger.warning("Brak nowych danych w streamie strategii przez dłuższy czas")
