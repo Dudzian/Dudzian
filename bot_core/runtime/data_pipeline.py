@@ -347,6 +347,19 @@ class StreamingStrategyFeed(StrategyDataFeed):
         *,
         loop: asyncio.AbstractEventLoop | None = None,
     ) -> asyncio.Task[None]:
+        if _is_test_mode_enabled():
+            self._disabled = True
+            self._stop_event.set()
+            if self._async_task is not None and not self._async_task.done():
+                return self._async_task
+            if loop is None:
+                try:
+                    loop = asyncio.get_running_loop()
+                except RuntimeError:  # pragma: no cover
+                    loop = asyncio.get_event_loop()
+            task = loop.create_task(asyncio.sleep(0))
+            self._async_task = task
+            return task
         if self._disabled:
             if not _is_test_mode_enabled():
                 if self._async_task is None:
