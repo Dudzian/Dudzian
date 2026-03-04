@@ -68,7 +68,7 @@ void ApplicationSettingsPersistenceTest::testPersistsAndReloadsConfiguration()
     QVERIFY(persistedAutoExportAt.isValid());
     const QString autoExportPath = dir.filePath(QStringLiteral("exports/latest.csv"));
 
-    constexpr auto kEnvName = QByteArrayLiteral("BOT_CORE_UI_SETTINGS_PATH");
+    static const QByteArray kEnvName = QByteArrayLiteral("BOT_CORE_UI_SETTINGS_PATH");
     EnvRestore guard(kEnvName);
     qputenv(kEnvName.constData(), settingsPath.toUtf8());
 
@@ -300,8 +300,8 @@ void ApplicationSettingsPersistenceTest::testDisableUiSettingsSkipsWrites()
     QVERIFY(dir.isValid());
     const QString settingsPath = dir.filePath(QStringLiteral("ui_disabled.json"));
 
-    constexpr auto kEnvName = QByteArrayLiteral("BOT_CORE_UI_SETTINGS_PATH");
-    constexpr auto kDisableEnv = QByteArrayLiteral("BOT_CORE_UI_SETTINGS_DISABLE");
+    static const QByteArray kEnvName = QByteArrayLiteral("BOT_CORE_UI_SETTINGS_PATH");
+    static const QByteArray kDisableEnv = QByteArrayLiteral("BOT_CORE_UI_SETTINGS_DISABLE");
     EnvRestore pathGuard(kEnvName);
     EnvRestore disableGuard(kDisableEnv);
     qputenv(kEnvName.constData(), settingsPath.toUtf8());
@@ -356,7 +356,7 @@ void ApplicationSettingsPersistenceTest::testCliOverridesUiSettingsPath()
         file.close();
     }
 
-    constexpr auto kDisableEnv = QByteArrayLiteral("BOT_CORE_UI_SETTINGS_DISABLE");
+    static const QByteArray kDisableEnv = QByteArrayLiteral("BOT_CORE_UI_SETTINGS_DISABLE");
     EnvRestore disableGuard(kDisableEnv);
     qputenv(kDisableEnv.constData(), QByteArrayLiteral("1"));
 
@@ -397,7 +397,7 @@ void ApplicationSettingsPersistenceTest::testCliOverridesUiSettingsPath()
 
 void ApplicationSettingsPersistenceTest::testRegimeTimelineCliOverride()
 {
-    constexpr auto kEnvName = QByteArrayLiteral("BOT_CORE_UI_REGIME_TIMELINE_LIMIT");
+    static const QByteArray kEnvName = QByteArrayLiteral("BOT_CORE_UI_REGIME_TIMELINE_LIMIT");
     EnvRestore envGuard(kEnvName);
 
     {
@@ -490,14 +490,14 @@ void ApplicationSettingsPersistenceTest::testRiskHistoryEnvOverrides()
     const QString exportDir = dir.filePath(QStringLiteral("env_exports"));
     const QString autoDir = dir.filePath(QStringLiteral("env_auto"));
 
-    constexpr auto kDirEnv = QByteArrayLiteral("BOT_CORE_UI_RISK_HISTORY_EXPORT_DIR");
-    constexpr auto kAutoDirEnv = QByteArrayLiteral("BOT_CORE_UI_RISK_HISTORY_AUTO_EXPORT_DIR");
-    constexpr auto kLimitEnv = QByteArrayLiteral("BOT_CORE_UI_RISK_HISTORY_EXPORT_LIMIT");
-    constexpr auto kLimitEnabledEnv = QByteArrayLiteral("BOT_CORE_UI_RISK_HISTORY_EXPORT_LIMIT_ENABLED");
-    constexpr auto kAutoEnabledEnv = QByteArrayLiteral("BOT_CORE_UI_RISK_HISTORY_AUTO_EXPORT");
-    constexpr auto kIntervalEnv = QByteArrayLiteral("BOT_CORE_UI_RISK_HISTORY_AUTO_EXPORT_INTERVAL_MINUTES");
-    constexpr auto kBasenameEnv = QByteArrayLiteral("BOT_CORE_UI_RISK_HISTORY_AUTO_EXPORT_BASENAME");
-    constexpr auto kLocalTimeEnv = QByteArrayLiteral("BOT_CORE_UI_RISK_HISTORY_AUTO_EXPORT_USE_LOCAL_TIME");
+    static const QByteArray kDirEnv = QByteArrayLiteral("BOT_CORE_UI_RISK_HISTORY_EXPORT_DIR");
+    static const QByteArray kAutoDirEnv = QByteArrayLiteral("BOT_CORE_UI_RISK_HISTORY_AUTO_EXPORT_DIR");
+    static const QByteArray kLimitEnv = QByteArrayLiteral("BOT_CORE_UI_RISK_HISTORY_EXPORT_LIMIT");
+    static const QByteArray kLimitEnabledEnv = QByteArrayLiteral("BOT_CORE_UI_RISK_HISTORY_EXPORT_LIMIT_ENABLED");
+    static const QByteArray kAutoEnabledEnv = QByteArrayLiteral("BOT_CORE_UI_RISK_HISTORY_AUTO_EXPORT");
+    static const QByteArray kIntervalEnv = QByteArrayLiteral("BOT_CORE_UI_RISK_HISTORY_AUTO_EXPORT_INTERVAL_MINUTES");
+    static const QByteArray kBasenameEnv = QByteArrayLiteral("BOT_CORE_UI_RISK_HISTORY_AUTO_EXPORT_BASENAME");
+    static const QByteArray kLocalTimeEnv = QByteArrayLiteral("BOT_CORE_UI_RISK_HISTORY_AUTO_EXPORT_USE_LOCAL_TIME");
 
     EnvRestore dirGuard(kDirEnv);
     EnvRestore autoDirGuard(kAutoDirEnv);
