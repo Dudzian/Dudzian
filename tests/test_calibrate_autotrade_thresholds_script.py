@@ -1627,12 +1627,14 @@ def test_script_rejects_non_finite_current_threshold(tmp_path: Path) -> None:
             "signal_after_adjustment=NaN",
         ],
         capture_output=True,
-        text=True,
         check=False,
     )
 
     assert result.returncode != 0
-    stderr = result.stderr
+    try:
+        stderr = result.stderr.decode("utf-8")
+    except UnicodeDecodeError as exc:
+        pytest.fail(f"stderr is not valid UTF-8: {exc}; raw={result.stderr!r}")
     assert "musi być skończoną liczbą" in stderr
     assert "signal_after_adjustment" in stderr
 
