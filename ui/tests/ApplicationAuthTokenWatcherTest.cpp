@@ -63,6 +63,7 @@ public:
         ++tlsConfigCallCount;
         m_tlsConfig = config;
     }
+    const TelemetryTlsConfig& tlsConfig() const { return m_tlsConfig; }
     void setAuthToken(const QString& token) override { authToken = token; }
     void setRbacRole(const QString& role) override { m_role = role; }
     void setScreenInfo(const ScreenInfo& info) override { m_screenInfo = info; }
@@ -430,9 +431,9 @@ void ApplicationAuthTokenWatcherTest::metricsTlsWatcherHandlesDeferredDirectoryC
     writeTextFile(keyPath, QStringLiteral("key"));
 
     QTRY_VERIFY_WITH_TIMEOUT(reporterPtr->tlsConfigCallCount > initialCalls, 3000);
-    QCOMPARE(reporterPtr->tlsConfig.rootCertificatePath, rootPath);
-    QCOMPARE(reporterPtr->tlsConfig.clientCertificatePath, certPath);
-    QCOMPARE(reporterPtr->tlsConfig.clientKeyPath, keyPath);
+    QCOMPARE(reporterPtr->tlsConfig().rootCertificatePath, rootPath);
+    QCOMPARE(reporterPtr->tlsConfig().clientCertificatePath, certPath);
+    QCOMPARE(reporterPtr->tlsConfig().clientKeyPath, keyPath);
 }
 
 QTEST_MAIN(ApplicationAuthTokenWatcherTest)
