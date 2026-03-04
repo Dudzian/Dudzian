@@ -91,17 +91,37 @@ _MODULE_ALIASES: dict[str, tuple[str, ...]] = {
 }
 
 
+def _looks_like_protobuf_cmake_dir(path: Path) -> bool:
+    return path.is_dir() and path.name.lower() == "protobuf" and path.parent.name.lower() == "cmake"
+
+
 def _probe_protobuf_dir(base: Path | str | None) -> str | None:
     if not base:
         return None
     root = Path(base)
     candidates = [
-        root,
         root / "lib" / "cmake" / "protobuf",
+        root / "lib" / "cmake" / "Protobuf",
+        root / "lib64" / "cmake" / "protobuf",
+        root / "lib64" / "cmake" / "Protobuf",
         root / "cmake" / "protobuf",
+        root / "cmake" / "Protobuf",
+        root / "share" / "cmake" / "protobuf",
+        root / "share" / "cmake" / "Protobuf",
+        root,
     ]
+    lib_dir = root / "lib"
+    if lib_dir.is_dir():
+        for triplet_dir in lib_dir.glob("*-linux-gnu"):
+            candidates.extend(
+                [
+                    triplet_dir / "cmake" / "protobuf",
+                    triplet_dir / "cmake" / "Protobuf",
+                ]
+            )
+
     for candidate in candidates:
-        if candidate.is_dir():
+        if _looks_like_protobuf_cmake_dir(candidate):
             return str(candidate)
     return None
 
@@ -123,6 +143,24 @@ def _detect_protobuf_dir() -> str | None:
         if detected:
             return detected
 
+    # Typowe lokalizacje pakietów systemowych Linux (Debian/Ubuntu/Fedora).
+    for system_path in (
+        "/usr/lib/x86_64-linux-gnu/cmake/protobuf",
+        "/usr/lib/x86_64-linux-gnu/cmake/Protobuf",
+        "/usr/lib/aarch64-linux-gnu/cmake/protobuf",
+        "/usr/lib/aarch64-linux-gnu/cmake/Protobuf",
+        "/usr/lib64/cmake/protobuf",
+        "/usr/lib64/cmake/Protobuf",
+        "/usr/lib/cmake/protobuf",
+        "/usr/lib/cmake/Protobuf",
+        "/usr/local/lib/cmake/protobuf",
+        "/usr/local/lib/cmake/Protobuf",
+        "/usr/share/cmake/protobuf",
+        "/usr/share/cmake/Protobuf",
+    ):
+        if Path(system_path).is_dir():
+            return system_path
+
     brew_executable = shutil.which("brew")
     if brew_executable:
         result = subprocess.run(
@@ -138,6 +176,24 @@ def _detect_protobuf_dir() -> str | None:
             return detected
 
     return None
+
+
+def _protobuf_root_from_cmake_dir(protobuf_dir: str) -> str:
+    path = Path(protobuf_dir)
+
+    # Oczekiwany układ: <prefix>/lib[/<triplet>]/cmake/(protobuf|Protobuf)
+    if path.name.lower() != "protobuf" or path.parent.name.lower() != "cmake":
+        return str(path)
+
+    libish = path.parent.parent  # .../lib, .../lib64 albo .../lib/<triplet>
+    if libish.name.lower() in {"lib", "lib64"}:
+        return str(libish.parent)
+
+    # Debian/Ubuntu multiarch: .../lib/x86_64-linux-gnu/cmake/protobuf
+    if libish.parent.name.lower() == "lib":
+        return str(libish.parent.parent)
+
+    return str(libish.parent)
 
 
 def preflight(qt_prefix: str | None, required_modules: Sequence[str]) -> Path:
@@ -191,6 +247,18 @@ def preflight(qt_prefix: str | None, required_modules: Sequence[str]) -> Path:
     return qt_prefix_path
 
 
+def _extract_cmake_define(args: Sequence[str], key: str) -> str | None:
+    plain_prefix = f"-D{key}="
+    typed_prefix = f"-D{key}:"
+    for arg in args:
+        if not (arg.startswith(plain_prefix) or arg.startswith(typed_prefix)):
+            continue
+        if "=" not in arg:
+            continue
+        return arg.split("=", 1)[1]
+    return None
+
+
 def configure_and_build(
     source_dir: Path,
     build_dir: Path,
@@ -218,15 +286,28 @@ def configure_and_build(
             cmake_args.append(f"-DQt6_DIR={qt6_dir}")
 
     extra_args = list(extra_cmake_args)
-    has_protobuf_override = any(
-        arg.startswith("-DProtobuf_DIR=") or arg.startswith("-DProtobuf_ROOT=")
-        for arg in extra_args
-    )
-    if not has_protobuf_override:
+    protobuf_dir_override = _extract_cmake_define(extra_args, "Protobuf_DIR")
+    protobuf_root_override = _extract_cmake_define(extra_args, "Protobuf_ROOT")
+
+    if protobuf_dir_override and not protobuf_root_override:
+        protobuf_root = _protobuf_root_from_cmake_dir(protobuf_dir_override)
+        logger.info("Derived Protobuf root from Protobuf_DIR override: %s", protobuf_root)
+        extra_args.append(f"-DProtobuf_ROOT={protobuf_root}")
+    elif protobuf_root_override and not protobuf_dir_override:
+        protobuf_dir = _probe_protobuf_dir(protobuf_root_override)
+        if protobuf_dir:
+            logger.info("Detected Protobuf CMake directory from Protobuf_ROOT override: %s", protobuf_dir)
+            extra_args.append(f"-DProtobuf_DIR={protobuf_dir}")
+        else:
+            logger.info("Could not derive Protobuf_DIR from Protobuf_ROOT override: %s", protobuf_root_override)
+    elif not protobuf_dir_override and not protobuf_root_override:
         protobuf_dir = _detect_protobuf_dir()
         if protobuf_dir:
             logger.info("Detected Protobuf CMake directory: %s", protobuf_dir)
             extra_args.append(f"-DProtobuf_DIR={protobuf_dir}")
+            protobuf_root = _protobuf_root_from_cmake_dir(protobuf_dir)
+            logger.info("Derived Protobuf root: %s", protobuf_root)
+            extra_args.append(f"-DProtobuf_ROOT={protobuf_root}")
 
     cmake_args.extend(extra_args)
     _run(cmake_args)
