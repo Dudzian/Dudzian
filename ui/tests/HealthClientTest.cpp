@@ -39,7 +39,7 @@ QString writeCertificate(const QTemporaryDir& dir)
     const QString path = dir.filePath(QStringLiteral("root.pem"));
     QFile file(path);
     if (!file.open(QIODevice::WriteOnly | QIODevice::Text)) {
-        QFAIL("Nie udało się zapisać certyfikatu testowego");
+        QTest::qFail("Nie udało się zapisać certyfikatu testowego", __FILE__, __LINE__);
         return {};
     }
     file.write(kSampleCertificatePem);
@@ -51,7 +51,7 @@ QString certificateFingerprint()
 {
     const QList<QSslCertificate> certificates = QSslCertificate::fromData(QByteArray(kSampleCertificatePem), QSsl::Pem);
     if (certificates.isEmpty()) {
-        QFAIL("Nie udało się sparsować certyfikatu testowego");
+        QTest::qFail("Nie udało się sparsować certyfikatu testowego", __FILE__, __LINE__);
         return {};
     }
     const QByteArray digest = certificates.first().digest(QCryptographicHash::Sha256);
@@ -119,6 +119,7 @@ void HealthClientTest::preflightValidatesTlsFiles()
     QTemporaryDir dir;
     QVERIFY(dir.isValid());
     const QString certPath = writeCertificate(dir);
+    QVERIFY(!certPath.isEmpty());
 
     HealthClient client;
     client.setEndpoint(QStringLiteral("localhost:50051"));
@@ -174,6 +175,7 @@ void HealthClientTest::checkDoesNotCreateChannelOnFingerprintMismatch()
     QTemporaryDir dir;
     QVERIFY(dir.isValid());
     const QString certPath = writeCertificate(dir);
+    QVERIFY(!certPath.isEmpty());
     const QString validFingerprint = certificateFingerprint();
     QVERIFY(!validFingerprint.isEmpty());
 

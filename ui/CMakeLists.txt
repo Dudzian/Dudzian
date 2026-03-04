@@ -261,6 +261,7 @@ if(BUILD_TESTING)
             Qt6::Core
             Qt6::Gui
             Qt6::Quick
+            Qt6::Network
             Qt6::Concurrent
             Qt6::Test
             trading_proto
@@ -292,6 +293,7 @@ if(BUILD_TESTING)
     target_link_libraries(health_client_tests
         PRIVATE
             Qt6::Core
+            Qt6::Network
             Qt6::Test
             trading_proto
             protobuf::libprotobuf
@@ -320,6 +322,7 @@ if(BUILD_TESTING)
     target_link_libraries(health_status_controller_tests
         PRIVATE
             Qt6::Core
+            Qt6::Network
             Qt6::Concurrent
             Qt6::Test
             trading_proto
