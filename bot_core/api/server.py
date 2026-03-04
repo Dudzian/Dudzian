@@ -18,7 +18,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from types import ModuleType
-from typing import Any, Callable, Dict, Iterable, Mapping, MutableMapping, Optional, Sequence
+from typing import TYPE_CHECKING, Any, Callable, Dict, Iterable, Mapping, MutableMapping, Optional, Sequence
 
 import grpc
 import pandas as pd
@@ -102,6 +102,9 @@ from bot_core.runtime.risk_service import (  # noqa: E402
     RiskSnapshotStore,
 )
 from bot_core.strategies.catalog import DEFAULT_STRATEGY_CATALOG
+
+if TYPE_CHECKING:  # pragma: no cover - typing only
+    from bot_core.marketplace import PresetDocument
 
 _ISO_TO_INTERVAL: Mapping[str, str] = {
     "PT1M": "1m",
