@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import json
 import os
-import subprocess
 import sys
 from pathlib import Path
 
@@ -14,6 +13,7 @@ ROOT = Path(__file__).resolve().parents[1]
 
 from bot_core.resilience.bundle import ResilienceBundleBuilder  # noqa: E402
 from scripts.failover_drill import main as run_failover_drill  # noqa: E402
+from tests._subprocess import run_cli_utf8  # noqa: E402
 
 
 def test_failover_drill_cli(tmp_path: Path) -> None:
@@ -62,7 +62,7 @@ def test_failover_drill_cli(tmp_path: Path) -> None:
     env = os.environ.copy()
     env["PYTHONPATH"] = "."
 
-    result = subprocess.run(
+    result = run_cli_utf8(
         [
             sys.executable,
             "scripts/failover_drill.py",
@@ -81,6 +81,8 @@ def test_failover_drill_cli(tmp_path: Path) -> None:
         ],
         check=True,
         env=env,
+        cwd=ROOT,
+        capture_output=True,
     )
     assert result.returncode == 0
 
@@ -172,7 +174,7 @@ def test_failover_drill_cli_with_self_heal(tmp_path: Path) -> None:
     env = os.environ.copy()
     env["PYTHONPATH"] = "."
 
-    result = subprocess.run(
+    result = run_cli_utf8(
         [
             sys.executable,
             "scripts/failover_drill.py",
@@ -197,6 +199,8 @@ def test_failover_drill_cli_with_self_heal(tmp_path: Path) -> None:
         ],
         check=True,
         env=env,
+        cwd=ROOT,
+        capture_output=True,
     )
     assert result.returncode == 0
 
