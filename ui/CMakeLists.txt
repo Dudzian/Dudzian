@@ -358,6 +358,7 @@ if(BUILD_TESTING)
             Qt6::Core
             Qt6::Gui
             Qt6::Quick
+            Qt6::Concurrent
             Qt6::Test
             trading_proto
             protobuf::libprotobuf
@@ -392,6 +393,7 @@ if(BUILD_TESTING)
             Qt6::Core
             Qt6::Gui
             Qt6::Quick
+            Qt6::Concurrent
             Qt6::Test
             trading_proto
             protobuf::libprotobuf
@@ -475,6 +477,7 @@ if(BUILD_TESTING)
             Qt6::Core
             Qt6::Gui
             Qt6::Quick
+            Qt6::Concurrent
             Qt6::Test
             trading_proto
             protobuf::libprotobuf
@@ -873,7 +876,7 @@ if(BUILD_TESTING)
         src/reporting/ReportCenterController.cpp
     )
     target_include_directories(report_center_controller_tests PRIVATE src)
-    target_link_libraries(report_center_controller_tests PRIVATE Qt6::Core Qt6::Test)
+    target_link_libraries(report_center_controller_tests PRIVATE Qt6::Core Qt6::Concurrent Qt6::Test)
     add_test(NAME report_center_controller_tests COMMAND report_center_controller_tests)
 
     add_executable(strategy_config_controller_tests
