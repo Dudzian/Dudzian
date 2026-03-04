@@ -37,19 +37,52 @@ def test_scheduler_async_runs_until_stop() -> None:
     asyncio.run(_runner())
 
 
+def _wait_for_invocations(
+    trader: _StubTrader,
+    minimum: int,
+    *,
+    interval_s: float,
+    timeout_s: float | None = None,
+) -> None:
+    if minimum <= 0:
+        return
+
+    resolved_interval_s = max(0.0, float(interval_s))
+    if timeout_s is None:
+        minimum_cycles_budget_s = max(0.0, float(minimum)) * resolved_interval_s * 2.0
+        guard_budget_s = max(0.25, min(5.0, 20.0 * resolved_interval_s))
+        resolved_timeout_s = max(minimum_cycles_budget_s, guard_budget_s)
+    else:
+        resolved_timeout_s = max(0.0, float(timeout_s))
+    poll_sleep_s = min(0.05, max(0.001, resolved_interval_s / 4.0))
+    deadline = time.monotonic() + resolved_timeout_s
+    while len(trader.invocations) < minimum and time.monotonic() < deadline:
+        time.sleep(poll_sleep_s)
+    assert len(trader.invocations) >= minimum, (
+        "Expected >= "
+        f"{minimum} invocations within {resolved_timeout_s:.2f}s "
+        f"(interval_s={resolved_interval_s:.3f}), got {len(trader.invocations)}"
+    )
+
+
 def test_scheduler_background_cycles_and_stops() -> None:
     trader = _StubTrader()
     scheduler = AutoTraderDecisionScheduler(trader, interval_s=0.01)
 
     scheduler.start_in_background()
+    background_thread: threading.Thread | None = None
     try:
-        time.sleep(0.05)
-        assert len(trader.invocations) >= 2
+        _wait_for_invocations(trader, 2, interval_s=scheduler.interval_s)
+        background_thread = scheduler._thread
     finally:
         scheduler.stop_background()
 
     invocation_count = len(trader.invocations)
-    time.sleep(0.03)
+    if background_thread is not None:
+        background_thread.join(timeout=0.5)
+    assert scheduler._thread is None
+    assert background_thread is None or not background_thread.is_alive()
+    time.sleep(min(0.05, max(0.01, 3.0 * scheduler.interval_s)))
     assert len(trader.invocations) == invocation_count
 
 
