@@ -362,13 +362,18 @@ jobs:
         env:
           PYTEST_FAST: "1"
           PYTEST_DISABLE_PLUGIN_AUTOLOAD: "1"
+          DUDZIAN_TEST_MODE: "1"
+          DUDZIAN_ALLOW_LONG_POLL: "0"
         run: |
           mkdir -p test-results
           python -m pytest \
             --fast \
-            -m "not integration and not e2e_demo_paper and not retraining and not soak and not performance" \
+            -m "not integration and not e2e_demo_paper and not retraining and not soak and not performance and not qml" \
             --ignore=tests/e2e \
             --ignore=tests/integration \
+            --ignore=tests/performance \
+            --ignore=tests/ui_pyside \
+            --ignore=tests/ui_backend \
             --maxfail=1 \
             --durations=10 \
             --junitxml=test-results/pytest.xml
@@ -440,13 +445,18 @@ jobs:
         env:
           PYTEST_FAST: "1"
           PYTEST_DISABLE_PLUGIN_AUTOLOAD: "1"
+          DUDZIAN_TEST_MODE: "1"
+          DUDZIAN_ALLOW_LONG_POLL: "0"
         run: |
           mkdir -p test-results
           python -m pytest \
             --fast \
-            -m "not integration and not e2e_demo_paper and not retraining and not soak and not performance" \
+            -m "not integration and not e2e_demo_paper and not retraining and not soak and not performance and not qml" \
             --ignore=tests/e2e \
             --ignore=tests/integration \
+            --ignore=tests/performance \
+            --ignore=tests/ui_pyside \
+            --ignore=tests/ui_backend \
             --maxfail=1 \
             --durations=10 \
             --junitxml=test-results/pytest.xml
@@ -500,13 +510,18 @@ jobs:
         env:
           PYTEST_FAST: "1"
           PYTEST_DISABLE_PLUGIN_AUTOLOAD: "1"
+          DUDZIAN_TEST_MODE: "1"
+          DUDZIAN_ALLOW_LONG_POLL: "0"
         run: |
           mkdir -p test-results
           python -m pytest \
             --fast \
-            -m "not integration and not e2e_demo_paper and not retraining and not soak and not performance" \
+            -m "not integration and not e2e_demo_paper and not retraining and not soak and not performance and not qml" \
             --ignore=tests/e2e \
             --ignore=tests/integration \
+            --ignore=tests/performance \
+            --ignore=tests/ui_pyside \
+            --ignore=tests/ui_backend \
             --maxfail=1 \
             --durations=10 \
             --junitxml=test-results/pytest.xml

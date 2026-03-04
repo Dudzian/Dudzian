@@ -41,3 +41,31 @@ def test_local_long_poll_stream_does_not_start_worker_when_disabled_in_test_mode
         assert stream.closed
     finally:
         stream.close()
+
+
+def test_local_long_poll_stream_does_not_start_worker_when_pytest_detected(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.delenv("DUDZIAN_TEST_MODE", raising=False)
+    monkeypatch.delenv("DUDZIAN_ALLOW_LONG_POLL", raising=False)
+    monkeypatch.setenv("PYTEST_CURRENT_TEST", "tests/exchanges/test_streaming_test_mode.py::test")
+
+    stream = LocalLongPollStream(
+        base_url="http://127.0.0.1:9110",
+        path="/long-poll",
+        channels=["ticker"],
+        adapter="demo",
+        scope="public",
+        environment="paper",
+        timeout=10.0,
+        poll_interval=0.0,
+    )
+
+    try:
+        stream.start()
+
+        worker = stream._worker_thread
+        assert worker is None or not worker.is_alive()
+        assert stream.closed
+    finally:
+        stream.close()
