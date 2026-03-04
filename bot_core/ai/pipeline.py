@@ -6,7 +6,7 @@ import json
 import logging
 import math
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Iterable, Mapping, MutableMapping, Sequence
 
@@ -144,9 +144,7 @@ class AutoRetrainPolicy:
     journal_strategy: str | None = None
     metadata: Mapping[str, str] = field(default_factory=dict)
 
-    def interval_timedelta(self) -> "timedelta | None":
-        from datetime import timedelta
-
+    def interval_timedelta(self) -> timedelta | None:
         if self.interval_seconds <= 0:
             return None
         return timedelta(seconds=float(self.interval_seconds))

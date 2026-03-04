@@ -90,6 +90,7 @@ from .models import (
 )
 from .validation import ModelArtifactValidationError, validate_model_artifact_schema
 from .regime import (
+    MarketRegime,
     MarketRegimeAssessment,
     MarketRegimeClassifier,
     RegimeHistory,

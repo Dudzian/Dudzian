@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from datetime import date, datetime, time, timedelta, timezone
+from datetime import date, datetime, time, timedelta, timezone, tzinfo
 from typing import Iterable, Mapping, Sequence
 
 try:
@@ -374,20 +374,6 @@ class ScheduleState:
             payload["decision_mode"] = self.decision_mode
         return payload
 
-    @property
-    def time_until_next_override(self) -> float | None:
-        if self.next_override is None:
-            return None
-        base = self.as_of.astimezone(self.next_override.start.tzinfo)
-        remaining = (self.next_override.start - base).total_seconds()
-        return max(0.0, remaining)
-
-    @property
-    def override_active(self) -> bool:
-        if self.override is None:
-            return False
-        return self.override.contains(self.as_of)
-
 
 class TradingSchedule:
     """Determine the active trading mode based on time windows."""
@@ -453,154 +439,33 @@ class TradingSchedule:
 
     def describe(self, reference: datetime | None = None) -> ScheduleState:
         reference_dt = self._normalize_datetime(reference)
-        intervals = self._build_intervals(reference_dt.date())
-        active_window: tuple[datetime, datetime, ScheduleWindow] | None = None
-        upcoming_window: tuple[datetime, datetime, ScheduleWindow] | None = None
-        for start, end, window in intervals:
-            if start <= reference_dt < end:
-                active_window = (start, end, window)
-                break
-            if start > reference_dt and upcoming_window is None:
-                upcoming_window = (start, end, window)
-
+        mode, is_open, window, next_transition = self._describe_base(reference_dt)
         active_override, next_override = self._locate_overrides(reference_dt)
 
         if active_override is not None:
-            window = active_window[2] if active_window else None
+            mode = active_override.mode
+            is_open = bool(active_override.allow_trading)
             next_transition = active_override.end
-            return ScheduleState(
-                mode=active_override.mode,
-                is_open=bool(active_override.allow_trading),
-                window=window,
-                next_transition=next_transition,
-                reference_time=reference_dt,
-                override=active_override,
-                next_override=next_override,
-                override_active=True,
-            )
-
-        if active_window is not None:
-            start, end, window = active_window
-            next_transition = end
-            if next_override is not None and next_override.start < next_transition:
-                next_transition = next_override.start
-            return ScheduleState(
-                mode=window.mode,
-                is_open=bool(window.allow_trading),
-                window=window,
-                next_transition=next_transition,
-                reference_time=reference_dt,
-                override=None,
-                next_override=next_override,
-                override_active=False,
-            )
-
-        window = upcoming_window[2] if upcoming_window else None
-        next_transition = upcoming_window[0] if upcoming_window else None
-        if next_override is not None and (
-            next_transition is None or next_override.start < next_transition
-        ):
-            next_transition = next_override.start
-        return ScheduleState(
-            mode=self._default_mode,
-            is_open=False,
-            window=window,
-            next_transition=next_transition,
-            reference_time=reference_dt,
-            override=None,
-            next_override=next_override,
-            override_active=False,
-        )
-
-    def with_overrides(
-        self,
-        overrides: Sequence[ScheduleOverride] | Sequence[Mapping[str, object]],
-    ) -> "TradingSchedule":
-        """Return a copy of the schedule with provided overrides."""
-
-        normalized: list[ScheduleOverride] = []
-        for override in overrides:
-            if isinstance(override, Mapping):
-                normalized.append(
-                    ScheduleOverride.from_mapping(override, default_timezone=self._tz)
-                )
-            elif isinstance(override, ScheduleOverride):
-                normalized.append(override)
-            else:  # pragma: no cover - defensive branch
-                raise TypeError(
-                    "Overrides must be ScheduleOverride or mapping payloads"
-                )
-        return TradingSchedule(
-            self._windows,
-            timezone_name=self._timezone_name,
-            tz=self._tz,
-            default_mode=self._default_mode,
-            overrides=normalized,
-        )
-
-    @property
-    def windows(self) -> tuple[ScheduleWindow, ...]:
-        return self._windows
-
-        active_window: tuple[datetime, datetime, ScheduleWindow] | None = None
-        upcoming_window: tuple[datetime, datetime, ScheduleWindow] | None = None
-        for start, end, window in intervals:
-            if start <= reference < end:
-                active_window = (start, end, window)
-                break
-            if start > reference and upcoming_window is None:
-                upcoming_window = (start, end, window)
-
-        active_override, next_override = self._locate_overrides(reference)
-
-        if active_override is not None:
-            next_transition = active_override.end
-            window = active_window[2] if active_window else None
-            state = ScheduleState(
-                mode=active_override.mode,
-                is_open=bool(active_override.allow_trading),
-                window=window,
-                next_transition=next_transition,
-                reference_time=reference,
-                override=active_override,
-                next_override=next_override,
-                override_active=True,
-            )
-        elif active_window is not None:
-            start, end, window = active_window
-            next_transition = end
-            if next_override is not None and next_override.start < next_transition:
-                next_transition = next_override.start
-            state = ScheduleState(
-                mode=window.mode,
-                is_open=bool(window.allow_trading),
-                window=window,
-                next_transition=next_transition,
-                reference_time=reference,
-                override=None,
-                next_override=next_override,
-                override_active=False,
-            )
+            override = active_override
+            override_active = True
         else:
-            next_transition = None
-            window = upcoming_window[2] if upcoming_window else None
-            if upcoming_window is not None:
-                next_transition = upcoming_window[0]
+            override = None
+            override_active = False
             if next_override is not None and (
                 next_transition is None or next_override.start < next_transition
             ):
                 next_transition = next_override.start
-            state = ScheduleState(
-                mode=self._default_mode,
-                is_open=False,
-                window=window,
-                next_transition=next_transition,
-                reference_time=reference,
-                override=None,
-                next_override=next_override,
-                override_active=False,
-            )
-        return state
+
+        return ScheduleState(
+            mode=mode,
+            is_open=bool(is_open),
+            window=window,
+            next_transition=next_transition,
+            reference_time=reference_dt,
+            override=override,
+            next_override=next_override,
+            override_active=override_active,
+        )
 
     def _normalize_datetime(self, now: datetime | None) -> datetime:
         if now is None:

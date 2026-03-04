@@ -68,6 +68,7 @@ from bot_core.auto_trader.risk_bridge import GuardrailTrigger, RiskDecision
 from bot_core.auto_trader.schedule import (
     ScheduleOverride,
     ScheduleState,
+    ScheduleWindow,
     TradingSchedule,
 )
 from bot_core.ai.repository import FilesystemModelRepository, ModelRepository
@@ -127,6 +128,7 @@ LOGGER = logging.getLogger(__name__)
 
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
+    from bot_core.auto_trader.audit import DecisionAuditRecord
     from bot_core.strategies.regime_workflow import (
         RegimePresetActivation,
         StrategyRegimeWorkflow,
@@ -4778,8 +4780,6 @@ class AutoTrader:
             client_order_id=client_order_id,
             metadata=metadata,
         )
-        return candidate
-
 
     def _dispatch_execution(
         self,
@@ -6281,35 +6281,6 @@ class AutoTrader:
             json_ready.append(payload)
         return json_ready
 
-        probability = self._ai_probability_from_prediction(value)
-        evaluated_at_raw = predictions.index[-1]
-        evaluated_at: str | float | None
-        if hasattr(evaluated_at_raw, "isoformat"):
-            evaluated_at = evaluated_at_raw.isoformat()
-        elif isinstance(evaluated_at_raw, (int, float)):
-            evaluated_at = float(evaluated_at_raw)
-        else:
-            evaluated_at = None
-
-        snapshot: Dict[str, object] = {
-            "prediction": value,
-            "prediction_bps": prediction_bps,
-            "threshold_bps": threshold,
-            "direction": direction,
-            "probability": probability,
-        }
-        if evaluated_at is not None:
-            snapshot["evaluated_at"] = evaluated_at
-
-        self._log(
-            "AI prediction snapshot",
-            level=logging.DEBUG,
-            symbol=symbol,
-            prediction_bps=prediction_bps,
-            direction=direction,
-            threshold_bps=threshold,
-        )
-        return snapshot
 
     def _snapshot_guardrail_timeline_filters(
         self,
@@ -6441,35 +6412,6 @@ class AutoTrader:
             json_ready.append(payload)
         return json_ready
 
-        probability = self._ai_probability_from_prediction(value)
-        evaluated_at_raw = predictions.index[-1]
-        evaluated_at: str | float | None
-        if hasattr(evaluated_at_raw, "isoformat"):
-            evaluated_at = evaluated_at_raw.isoformat()
-        elif isinstance(evaluated_at_raw, (int, float)):
-            evaluated_at = float(evaluated_at_raw)
-        else:
-            evaluated_at = None
-
-        snapshot: Dict[str, object] = {
-            "prediction": value,
-            "prediction_bps": prediction_bps,
-            "threshold_bps": threshold,
-            "direction": direction,
-            "probability": probability,
-        }
-        if evaluated_at is not None:
-            snapshot["evaluated_at"] = evaluated_at
-
-        self._log(
-            "AI prediction snapshot",
-            level=logging.DEBUG,
-            symbol=symbol,
-            prediction_bps=prediction_bps,
-            direction=direction,
-            threshold_bps=threshold,
-        )
-        return snapshot
 
     def _normalize_ai_context(
         self,
@@ -10323,20 +10265,6 @@ class AutoTrader:
         else:
             summary["repr"] = repr(response)
         return summary
-
-        iterator: Iterable[dict[str, Any]]
-        if reverse:
-            iterator = reversed(filtered_records)
-        else:
-            iterator = iter(filtered_records)
-
-        results: list[dict[str, Any]] = []
-        for entry in iterator:
-            results.append(copy.deepcopy(entry))
-            if normalized_limit is not None and len(results) >= normalized_limit:
-                break
-        return results
-
 
 
     def get_grouped_decision_audit_entries(

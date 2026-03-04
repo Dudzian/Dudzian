@@ -7,10 +7,15 @@ import logging
 import threading
 import time
 from dataclasses import dataclass
-from typing import Iterable, Mapping, MutableMapping, Sequence
+from typing import TYPE_CHECKING, Any, Iterable, Mapping, MutableMapping, Sequence
 from urllib.error import HTTPError, URLError
 from urllib.parse import parse_qsl, urlsplit
 from urllib.request import Request
+
+if TYPE_CHECKING:
+    from core.network import RateLimitedAsyncClient
+else:
+    RateLimitedAsyncClient = Any
 
 __all__ = [
     "urlopen",
