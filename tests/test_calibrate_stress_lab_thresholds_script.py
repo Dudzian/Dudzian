@@ -1,6 +1,7 @@
 import json
-import subprocess
 import sys
+
+from tests._subprocess import run_cli_utf8
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -98,7 +99,7 @@ def test_calibrate_stress_lab_cli(tmp_path: Path) -> None:
     output_csv = tmp_path / "calibration.csv"
     signature_path = tmp_path / "calibration.sig"
 
-    result = subprocess.run(
+    result = run_cli_utf8(
         [
             sys.executable,
             "scripts/calibrate_stress_lab_thresholds.py",
@@ -121,7 +122,6 @@ def test_calibrate_stress_lab_cli(tmp_path: Path) -> None:
         ],
         check=True,
         capture_output=True,
-        text=True,
     )
 
     assert output_json.exists()
@@ -171,7 +171,7 @@ def test_calibrate_cli_with_volume_segments(tmp_path: Path) -> None:
 
     output_json = tmp_path / "auto_segments.json"
 
-    result = subprocess.run(
+    result = run_cli_utf8(
         [
             sys.executable,
             "scripts/calibrate_stress_lab_thresholds.py",
@@ -190,7 +190,6 @@ def test_calibrate_cli_with_volume_segments(tmp_path: Path) -> None:
         ],
         check=True,
         capture_output=True,
-        text=True,
     )
 
     payload_json = json.loads(output_json.read_text(encoding="utf-8"))

@@ -1,8 +1,9 @@
 from __future__ import annotations
 
 import json
-import subprocess
 import sys
+
+from tests._subprocess import run_cli_utf8
 from pathlib import Path
 
 import pytest
@@ -110,7 +111,7 @@ def test_log_portfolio_decision_script_generates_signed_entry(tmp_path: Path, mo
     key_value = "stage6-secret"
     monkeypatch.setenv("PORTFOLIO_STAGE6_KEY", key_value)
 
-    result = subprocess.run(
+    result = run_cli_utf8(
         [
             sys.executable,
             "scripts/log_portfolio_decision.py",
@@ -133,7 +134,6 @@ def test_log_portfolio_decision_script_generates_signed_entry(tmp_path: Path, mo
         ],
         check=True,
         capture_output=True,
-        text=True,
     )
 
     assert log_path.exists()

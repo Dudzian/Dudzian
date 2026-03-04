@@ -7,8 +7,9 @@ import gc
 import json
 import math
 import io
-import subprocess
 import sys
+
+from tests._subprocess import run_cli_utf8
 import weakref
 from array import array
 from weakref import ReferenceType
@@ -1002,7 +1003,7 @@ def test_script_generates_report(tmp_path: Path) -> None:
     output_json = tmp_path / "report.json"
     output_csv = tmp_path / "report.csv"
 
-    result = subprocess.run(
+    result = run_cli_utf8(
         [
             sys.executable,
             "scripts/calibrate_autotrade_thresholds.py",
@@ -1027,7 +1028,6 @@ def test_script_generates_report(tmp_path: Path) -> None:
         ],
         check=True,
         capture_output=True,
-        text=True,
     )
 
     assert "Zapisano raport JSON" in result.stdout
@@ -1145,7 +1145,7 @@ def test_script_accepts_cli_risk_score_threshold(tmp_path: Path) -> None:
 
     output_json = tmp_path / "report.json"
 
-    subprocess.run(
+    run_cli_utf8(
         [
             sys.executable,
             "scripts/calibrate_autotrade_thresholds.py",
@@ -1164,7 +1164,6 @@ def test_script_accepts_cli_risk_score_threshold(tmp_path: Path) -> None:
         ],
         check=True,
         capture_output=True,
-        text=True,
     )
 
     payload = json.loads(output_json.read_text(encoding="utf-8"))
@@ -1206,7 +1205,7 @@ def test_script_tracks_file_risk_score_threshold(tmp_path: Path) -> None:
 
     output_json = tmp_path / "report.json"
 
-    subprocess.run(
+    run_cli_utf8(
         [
             sys.executable,
             "scripts/calibrate_autotrade_thresholds.py",
@@ -1225,7 +1224,6 @@ def test_script_tracks_file_risk_score_threshold(tmp_path: Path) -> None:
         ],
         check=True,
         capture_output=True,
-        text=True,
     )
 
     payload = json.loads(output_json.read_text(encoding="utf-8"))
@@ -1252,7 +1250,7 @@ def test_script_limits_raw_freeze_events_via_cli(tmp_path: Path) -> None:
 
     output_json = tmp_path / "report.json"
 
-    subprocess.run(
+    run_cli_utf8(
         [
             sys.executable,
             "scripts/calibrate_autotrade_thresholds.py",
@@ -1267,7 +1265,6 @@ def test_script_limits_raw_freeze_events_via_cli(tmp_path: Path) -> None:
         ],
         check=True,
         capture_output=True,
-        text=True,
     )
 
     payload = json.loads(output_json.read_text(encoding="utf-8"))
@@ -1299,7 +1296,7 @@ def test_script_limits_raw_values_via_cli(tmp_path: Path) -> None:
 
     output_json = tmp_path / "report.json"
 
-    subprocess.run(
+    run_cli_utf8(
         [
             sys.executable,
             "scripts/calibrate_autotrade_thresholds.py",
@@ -1314,7 +1311,6 @@ def test_script_limits_raw_values_via_cli(tmp_path: Path) -> None:
         ],
         check=True,
         capture_output=True,
-        text=True,
     )
 
     payload = json.loads(output_json.read_text(encoding="utf-8"))
@@ -1360,7 +1356,7 @@ def test_cli_risk_score_source_tracks_specific_pair(tmp_path: Path) -> None:
 
     output_json = tmp_path / "report.json"
 
-    subprocess.run(
+    run_cli_utf8(
         [
             sys.executable,
             "scripts/calibrate_autotrade_thresholds.py",
@@ -1379,7 +1375,6 @@ def test_cli_risk_score_source_tracks_specific_pair(tmp_path: Path) -> None:
         ],
         check=True,
         capture_output=True,
-        text=True,
     )
 
     payload = json.loads(output_json.read_text(encoding="utf-8"))
@@ -1412,7 +1407,7 @@ def test_script_accepts_thresholds_from_json_file(tmp_path: Path) -> None:
 
     output_json = tmp_path / "report.json"
 
-    subprocess.run(
+    run_cli_utf8(
         [
             sys.executable,
             "scripts/calibrate_autotrade_thresholds.py",
@@ -1429,7 +1424,6 @@ def test_script_accepts_thresholds_from_json_file(tmp_path: Path) -> None:
         ],
         check=True,
         capture_output=True,
-        text=True,
     )
 
     payload = json.loads(output_json.read_text(encoding="utf-8"))
@@ -1467,7 +1461,7 @@ def test_cli_risk_score_overrides_file_threshold(tmp_path: Path) -> None:
 
     output_json = tmp_path / "report.json"
 
-    subprocess.run(
+    run_cli_utf8(
         [
             sys.executable,
             "scripts/calibrate_autotrade_thresholds.py",
@@ -1484,7 +1478,6 @@ def test_cli_risk_score_overrides_file_threshold(tmp_path: Path) -> None:
         ],
         check=True,
         capture_output=True,
-        text=True,
     )
 
     payload = json.loads(output_json.read_text(encoding="utf-8"))
@@ -1569,7 +1562,7 @@ def test_script_normalizes_cli_threshold_keys(tmp_path: Path) -> None:
 
     output_json = tmp_path / "report.json"
 
-    subprocess.run(
+    run_cli_utf8(
         [
             sys.executable,
             "scripts/calibrate_autotrade_thresholds.py",
@@ -1590,7 +1583,6 @@ def test_script_normalizes_cli_threshold_keys(tmp_path: Path) -> None:
         ],
         check=True,
         capture_output=True,
-        text=True,
     )
 
     payload = json.loads(output_json.read_text(encoding="utf-8"))
@@ -1615,7 +1607,7 @@ def test_script_rejects_non_finite_current_threshold(tmp_path: Path) -> None:
     export_path = tmp_path / "autotrade.json"
     _write_autotrade_export(export_path)
 
-    result = subprocess.run(
+    result = run_cli_utf8(
         [
             sys.executable,
             "scripts/calibrate_autotrade_thresholds.py",
@@ -1631,10 +1623,7 @@ def test_script_rejects_non_finite_current_threshold(tmp_path: Path) -> None:
     )
 
     assert result.returncode != 0
-    try:
-        stderr = result.stderr.decode("utf-8")
-    except UnicodeDecodeError as exc:
-        pytest.fail(f"stderr is not valid UTF-8: {exc}; raw={result.stderr!r}")
+    stderr = result.stderr
     assert "musi być skończoną liczbą" in stderr
     assert "signal_after_adjustment" in stderr
 

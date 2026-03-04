@@ -1,8 +1,9 @@
 from __future__ import annotations
 
 import json
-import subprocess
 import sys
+
+from tests._subprocess import run_cli_utf8
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
@@ -76,7 +77,7 @@ def test_slo_monitor_cli_generates_signed_report(tmp_path: Path, monkeypatch: py
     key_value = "stage6-secret-key"
     monkeypatch.setenv("SLO_MONITOR_KEY", key_value)
 
-    result = subprocess.run(
+    result = run_cli_utf8(
         [
             sys.executable,
             "scripts/slo_monitor.py",
@@ -97,7 +98,6 @@ def test_slo_monitor_cli_generates_signed_report(tmp_path: Path, monkeypatch: py
         ],
         check=True,
         capture_output=True,
-        text=True,
     )
 
     assert output_path.exists()

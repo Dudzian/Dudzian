@@ -1,8 +1,9 @@
 from __future__ import annotations
 
 import json
-import subprocess
 import sys
+
+from tests._subprocess import run_cli_utf8
 import os
 from pathlib import Path
 
@@ -102,7 +103,7 @@ def test_describe_regime_workflow_reports_availability_and_history(tmp_path: Pat
         tuple(filter(None, [str(Path.cwd()), pythonpath]))
     )
 
-    result = subprocess.run(
+    result = run_cli_utf8(
         [
             sys.executable,
             str(script_path),
@@ -114,7 +115,6 @@ def test_describe_regime_workflow_reports_availability_and_history(tmp_path: Pat
         ],
         check=True,
         capture_output=True,
-        text=True,
         env=env,
     )
 
