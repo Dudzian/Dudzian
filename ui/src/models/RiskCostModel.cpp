@@ -3,31 +3,6 @@
 #include <QLocale>
 #include <QMetaType>
 
-namespace {
-using MetricDefinition = RiskCostModel::MetricDefinition;
-
-MetricDefinition makeMetric(const QString& key, const QString& label, bool percent = false, int decimals = 2)
-{
-    MetricDefinition def;
-    def.key = key;
-    def.label = label;
-    def.percent = percent;
-    def.decimals = decimals;
-    return def;
-}
-
-const QVector<MetricDefinition> kMetrics = {
-    makeMetric(QStringLiteral("dailyRealizedPnl"), QObject::tr("Zrealizowany wynik (dzień)"), false, 2),
-    makeMetric(QStringLiteral("grossNotional"), QObject::tr("Wartość brutto pozycji"), false, 2),
-    makeMetric(QStringLiteral("activePositions"), QObject::tr("Aktywne pozycje"), false, 0),
-    makeMetric(QStringLiteral("dailyLossPct"), QObject::tr("Strata dzienna"), true, 2),
-    makeMetric(QStringLiteral("drawdownPct"), QObject::tr("Obsunięcie kapitału"), true, 2),
-    makeMetric(QStringLiteral("averageCostBps"), QObject::tr("Średni koszt (bps)"), false, 2),
-    makeMetric(QStringLiteral("totalCostBps"), QObject::tr("Łączny koszt (bps)"), false, 2),
-};
-
-} // namespace
-
 RiskCostModel::RiskCostModel(QObject* parent)
     : QAbstractListModel(parent)
 {
@@ -74,6 +49,26 @@ QHash<int, QByteArray> RiskCostModel::roleNames() const
 
 const QVector<RiskCostModel::MetricDefinition>& RiskCostModel::metricDefinitions()
 {
+    static const QVector<MetricDefinition> kMetrics = [] {
+        auto makeMetric = [](const QString& key, const QString& label, bool percent = false, int decimals = 2) {
+            MetricDefinition def;
+            def.key = key;
+            def.label = label;
+            def.percent = percent;
+            def.decimals = decimals;
+            return def;
+        };
+
+        return QVector<MetricDefinition>{
+            makeMetric(QStringLiteral("dailyRealizedPnl"), RiskCostModel::tr("Zrealizowany wynik (dzień)"), false, 2),
+            makeMetric(QStringLiteral("grossNotional"), RiskCostModel::tr("Wartość brutto pozycji"), false, 2),
+            makeMetric(QStringLiteral("activePositions"), RiskCostModel::tr("Aktywne pozycje"), false, 0),
+            makeMetric(QStringLiteral("dailyLossPct"), RiskCostModel::tr("Strata dzienna"), true, 2),
+            makeMetric(QStringLiteral("drawdownPct"), RiskCostModel::tr("Obsunięcie kapitału"), true, 2),
+            makeMetric(QStringLiteral("averageCostBps"), RiskCostModel::tr("Średni koszt (bps)"), false, 2),
+            makeMetric(QStringLiteral("totalCostBps"), RiskCostModel::tr("Łączny koszt (bps)"), false, 2),
+        };
+    }();
     return kMetrics;
 }
 

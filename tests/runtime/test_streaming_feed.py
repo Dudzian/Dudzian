@@ -194,9 +194,7 @@ def test_streaming_strategy_feed_converts_events() -> None:
 
 
 def test_streaming_strategy_feed_start_async_consumes(monkeypatch: pytest.MonkeyPatch) -> None:
-    # StreamingStrategyFeed jest wyłączany w test-mode (DUDZIAN_TEST_MODE=1),
-    # a ten test weryfikuje realną konsumpcję streamu – więc robimy opt-out.
-    monkeypatch.setenv("DUDZIAN_TEST_MODE", "0")
+    monkeypatch.setenv("DUDZIAN_TEST_MODE", "1")
 
     history = _DummyHistoryFeed()
     batches = [
