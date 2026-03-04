@@ -23,6 +23,7 @@ from unittest.mock import patch
 import pytest
 
 import scripts.calibrate_autotrade_thresholds as calibrate_autotrade_thresholds
+import scripts._cli_stdio as cli_stdio
 
 from bot_core.runtime.journal import TradingDecisionEvent
 
@@ -5577,6 +5578,45 @@ def test_main_respects_freeze_events_limit_flag(
 
     output = capsys.readouterr().out
     assert "Przetworzono" in output
+
+
+def test_configure_cli_stdio_sets_backslashreplace(monkeypatch: pytest.MonkeyPatch) -> None:
+    class _Stream:
+        def __init__(self) -> None:
+            self.errors: str | None = None
+
+        def reconfigure(self, *, errors: str) -> None:
+            self.errors = errors
+
+    stdout = _Stream()
+    stderr = _Stream()
+    monkeypatch.setattr(cli_stdio.sys, "stdout", stdout)
+    monkeypatch.setattr(cli_stdio.sys, "stderr", stderr)
+
+    cli_stdio.configure_cli_stdio()
+
+    assert stdout.errors == "backslashreplace"
+    assert stderr.errors == "backslashreplace"
+
+
+def test_configure_cli_stdio_ignores_streams_without_reconfigure(monkeypatch: pytest.MonkeyPatch) -> None:
+    class _StreamWithoutReconfigure:
+        pass
+
+    monkeypatch.setattr(cli_stdio.sys, "stdout", _StreamWithoutReconfigure())
+    monkeypatch.setattr(cli_stdio.sys, "stderr", _StreamWithoutReconfigure())
+
+    cli_stdio.configure_cli_stdio()
+
+
+def test_configure_cli_stdio_ignores_non_callable_reconfigure(monkeypatch: pytest.MonkeyPatch) -> None:
+    class _StreamWithNonCallableReconfigure:
+        reconfigure = "not-callable"
+
+    monkeypatch.setattr(cli_stdio.sys, "stdout", _StreamWithNonCallableReconfigure())
+    monkeypatch.setattr(cli_stdio.sys, "stderr", _StreamWithNonCallableReconfigure())
+
+    cli_stdio.configure_cli_stdio()
 
 
 def test_main_rejects_negative_limit_freeze_events(

@@ -19,6 +19,10 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Final, Mapping, Optional, Sequence, cast
 
+REPO_ROOT = Path(__file__).resolve().parents[1]
+if str(REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(REPO_ROOT))
+
 from bot_core.api.server import build_local_runtime_context, LocalRuntimeServer
 from bot_core.execution.live_router import LiveExecutionRouter
 from bot_core.exchanges.base import Environment as ExchangeEnvironment
@@ -41,6 +45,7 @@ from bot_core.auto_trader.demo import build_demo_ai_governor_snapshot
 from bot_core.security.base import SecretStorageError
 from bot_core.observability.metrics import CounterMetric, summarize_live_execution_metrics
 from core.reporting import DemoPaperReport, GuardrailReport
+from scripts._cli_stdio import configure_cli_stdio
 
 _LOGGER = logging.getLogger(__name__)
 class _CloudFallbackSentinel:
@@ -57,17 +62,6 @@ def _configure_logging(level: str) -> None:
         format="[%(asctime)s] [%(levelname)s] %(name)s: %(message)s",
     )
 
-
-def _configure_cli_stdio() -> None:
-    """Zapobiega błędom kodowania CLI w środowiskach z nie-UTF8 stdout (często Windows/CI)."""
-
-    for stream in (sys.stdout, sys.stderr):
-        if not hasattr(stream, "reconfigure"):
-            continue
-        try:
-            stream.reconfigure(errors="backslashreplace")
-        except Exception:  # pragma: no cover - zależne od implementacji strumieni/wrapperów
-            pass
 
 
 def _build_demo_ai_snapshot() -> Mapping[str, Any] | None:
@@ -439,7 +433,7 @@ def _run_cloud_proxy(
 
 
 def _parse_args(argv: list[str] | None) -> argparse.Namespace:
-    _configure_cli_stdio()
+    configure_cli_stdio()
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--config", default="config/runtime.yaml", help="Ścieżka do pliku runtime.yaml")
     parser.add_argument("--entrypoint", help="Nazwa punktu wejścia z sekcji trading.entrypoints")
