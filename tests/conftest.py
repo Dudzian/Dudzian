@@ -6,8 +6,9 @@ import os
 import socket
 import threading
 import sys
+from pathlib import Path
 from contextlib import contextmanager
-from typing import Generator
+from typing import Generator, cast
 
 import pytest
 
@@ -39,6 +40,8 @@ unstable_windows = pytest.mark.skipif(
 )
 
 pytest.mark.unstable_windows = unstable_windows  # type: ignore[attr-defined]
+
+_UI_QML_DIRS = pytest.StashKey[tuple[Path, Path]]()
 
 
 def _force_windows_selector_event_loop_policy() -> None:
@@ -384,6 +387,31 @@ def pytest_addoption(parser: pytest.Parser) -> None:
     )
 
 
+def _resolve_item_path(item: pytest.Item) -> Path:
+    return (getattr(item, "path", None) or Path(str(item.fspath))).resolve()
+
+
+def _get_ui_qml_dirs(config: pytest.Config) -> tuple[Path, Path]:
+    dirs = config.stash.get(_UI_QML_DIRS, None)
+    if dirs is None:
+        root = Path(str(config.rootpath)).resolve()
+        dirs = (root / "tests/ui_pyside", root / "tests/ui_backend")
+        config.stash[_UI_QML_DIRS] = dirs
+    return cast(tuple[Path, Path], dirs)
+
+
+def _is_ui_qml_test_path(config: pytest.Config, item_path: Path) -> bool:
+    return any(item_path.is_relative_to(directory) for directory in _get_ui_qml_dirs(config))
+
+
+@pytest.hookimpl(tryfirst=True)
+def pytest_itemcollected(item: pytest.Item) -> None:
+    item_path = _resolve_item_path(item)
+    if _is_ui_qml_test_path(item.config, item_path):
+        item.add_marker(pytest.mark.qml)
+
+
+@pytest.hookimpl(tryfirst=True)
 def pytest_collection_modifyitems(config: pytest.Config, items: list[pytest.Item]) -> None:
     run_network = (
         config.getoption("--run-network-tests")

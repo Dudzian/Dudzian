@@ -1077,7 +1077,9 @@ class LocalLongPollStream(Iterable[StreamBatch]):
     # Wewnętrzne operacje long-polla
     # ------------------------------------------------------------------
     def _disable_long_poll_in_test_mode(self) -> bool:
-        if not (_is_test_mode_enabled() and not _allow_long_poll_in_test_mode()):
+        if not (_is_test_mode_enabled() or _is_pytest_running()):
+            return False
+        if _allow_long_poll_in_test_mode():
             return False
         self._signal_stop(force=True)
         # Nie osieracaj żywego workera: zachowaj referencję i rejestrację,
