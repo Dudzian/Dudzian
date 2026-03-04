@@ -462,10 +462,41 @@ jobs:
     timeout-minutes: 60
     steps:
       - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+          cache-dependency-path: deploy/packaging/requirements-desktop.txt
+      - name: Install build deps (protobuf/grpc/archive + Qt runtime)
+        shell: bash
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            build-essential \
+            ninja-build \
+            pkg-config \
+            libprotobuf-dev \
+            protobuf-compiler \
+            protobuf-compiler-grpc \
+            libgrpc-dev \
+            libgrpc++-dev \
+            libarchive-dev \
+            libegl1 \
+            libgl1 \
+            libpulse0 \
+            libxkbcommon-x11-0 \
+            libxcb-cursor0 \
+            libxcb-xinerama0
+          sudo rm -rf /var/lib/apt/lists/*
+      - name: Install packaging dependencies
+        shell: bash
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r deploy/packaging/requirements-desktop.txt
       - name: Build installer (Linux)
         shell: bash
         run: |
-          bash deploy/packaging/build_installer_linux.sh
+          bash scripts/build_installer_linux.sh
 
   ui-packaging-windows:
     name: UI packaging (Windows bundle / self-hosted)
@@ -475,10 +506,20 @@ jobs:
     timeout-minutes: 60
     steps:
       - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+          cache-dependency-path: deploy/packaging/requirements-desktop.txt
+      - name: Install packaging dependencies
+        shell: pwsh
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r deploy/packaging/requirements-desktop.txt
       - name: Build installer (Windows)
         shell: pwsh
         run: |
-          ./deploy/packaging/build_installer_windows.ps1
+          ./scripts/build_installer_windows.ps1
 
   ui-packaging-macos:
     name: UI packaging (macOS bundle)
@@ -488,7 +529,17 @@ jobs:
     timeout-minutes: 60
     steps:
       - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+          cache-dependency-path: deploy/packaging/requirements-desktop.txt
+      - name: Install packaging dependencies
+        shell: bash
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r deploy/packaging/requirements-desktop.txt
       - name: Build installer (macOS)
         shell: bash
         run: |
-          bash deploy/packaging/build_installer_macos.sh
+          bash scripts/build_installer_macos.sh
