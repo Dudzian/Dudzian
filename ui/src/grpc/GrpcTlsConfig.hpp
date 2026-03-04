@@ -11,5 +11,7 @@ struct GrpcTlsConfig {
     QString  serverNameOverride;
     QString  targetNameOverride;
     QString  pinnedServerFingerprint;
+
+    bool operator==(const GrpcTlsConfig& other) const = default;
 };
 
