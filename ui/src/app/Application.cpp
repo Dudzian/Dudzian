@@ -1284,6 +1284,35 @@ bool Application::applyParser(const QCommandLineParser& parser) {
     QString metricsAuthTokenFile;
     QString healthAuthToken;
     QString healthAuthTokenFile;
+    bool cliMetricsTokenProvided = parser.isSet(QStringLiteral("metrics-auth-token"));
+    bool cliMetricsTokenFileProvided = parser.isSet(QStringLiteral("metrics-auth-token-file"));
+    const QString cliMetricsToken = parser.value("metrics-auth-token").trimmed();
+    const QString cliMetricsTokenFile = parser.value("metrics-auth-token-file").trimmed();
+
+    if (cliMetricsTokenProvided && cliMetricsTokenFileProvided) {
+        qCWarning(lcAppMetrics)
+            << "Podano jednocześnie --metrics-auth-token oraz --metrics-auth-token-file. Użyję tokenu przekazanego bezpośrednio; parametr --metrics-auth-token-file zostanie zignorowany.";
+    }
+    if (cliMetricsTokenProvided && cliMetricsToken.isEmpty()) {
+        qCWarning(lcAppMetrics)
+            << "Parametr --metrics-auth-token ustawiono na pusty ciąg. Token MetricsService zostanie wyczyszczony.";
+    }
+    if (!cliMetricsTokenProvided && cliMetricsTokenFileProvided && cliMetricsTokenFile.isEmpty()) {
+        qCWarning(lcAppMetrics)
+            << "Parametr --metrics-auth-token-file ustawiono na pusty ciąg. Ścieżka pliku tokenu MetricsService zostanie wyczyszczona.";
+    }
+    if (cliMetricsTokenProvided) {
+        metricsAuthToken = cliMetricsToken;
+        metricsAuthTokenFile.clear();
+    } else if (cliMetricsTokenFileProvided) {
+        if (cliMetricsTokenFile.isEmpty()) {
+            metricsAuthToken.clear();
+            metricsAuthTokenFile.clear();
+        } else {
+            metricsAuthTokenFile = expandPath(cliMetricsTokenFile);
+            metricsAuthToken = readTokenFile(metricsAuthTokenFile);
+        }
+    }
 
     if (m_transportMode == TradingClient::TransportMode::Grpc) {
         TradingClient::TlsConfig tradingTls;
@@ -1374,34 +1403,6 @@ bool Application::applyParser(const QCommandLineParser& parser) {
         m_metricsTag = parser.value("metrics-tag");
         m_metricsEnabled = !(parser.isSet("disable-metrics") || parser.isSet("no-metrics"));
 
-        const QString cliMetricsToken = parser.value("metrics-auth-token").trimmed();
-        const QString cliMetricsTokenFile = parser.value("metrics-auth-token-file").trimmed();
-        const bool cliMetricsTokenProvided = parser.isSet(QStringLiteral("metrics-auth-token"));
-        const bool cliMetricsTokenFileProvided = parser.isSet(QStringLiteral("metrics-auth-token-file"));
-        if (cliMetricsTokenProvided && cliMetricsTokenFileProvided) {
-            qCWarning(lcAppMetrics)
-                << "Podano jednocześnie --metrics-auth-token oraz --metrics-auth-token-file. Użyję tokenu przekazanego bezpośrednio; parametr --metrics-auth-token-file zostanie zignorowany.";
-        }
-        if (cliMetricsTokenProvided && cliMetricsToken.isEmpty()) {
-            qCWarning(lcAppMetrics)
-                << "Parametr --metrics-auth-token ustawiono na pusty ciąg. Token MetricsService zostanie wyczyszczony.";
-        }
-        if (!cliMetricsTokenProvided && cliMetricsTokenFileProvided && cliMetricsTokenFile.isEmpty()) {
-            qCWarning(lcAppMetrics)
-                << "Parametr --metrics-auth-token-file ustawiono na pusty ciąg. Ścieżka pliku tokenu MetricsService zostanie wyczyszczona.";
-        }
-        if (cliMetricsTokenProvided) {
-            metricsAuthToken = cliMetricsToken;
-            metricsAuthTokenFile.clear();
-        } else if (cliMetricsTokenFileProvided) {
-            if (cliMetricsTokenFile.isEmpty()) {
-                metricsAuthToken.clear();
-                metricsAuthTokenFile.clear();
-            } else {
-                metricsAuthTokenFile = expandPath(cliMetricsTokenFile);
-                metricsAuthToken = readTokenFile(metricsAuthTokenFile);
-            }
-        }
         m_metricsRbacRole = parser.value("metrics-rbac-role").trimmed();
 
         const QString cliHealthEndpoint = parser.value("health-endpoint").trimmed();
@@ -1492,8 +1493,6 @@ bool Application::applyParser(const QCommandLineParser& parser) {
         m_metricsTag = parser.value("metrics-tag");
         m_metricsEnabled = !(parser.isSet("disable-metrics") || parser.isSet("no-metrics"));
         m_metricsRbacRole.clear();
-        metricsAuthToken.clear();
-        metricsAuthTokenFile.clear();
         m_healthEndpoint = QStringLiteral("in-process");
         m_healthRbacRole.clear();
         m_healthRbacScopes.clear();
@@ -1643,12 +1642,12 @@ bool Application::applyParser(const QCommandLineParser& parser) {
         m_licenseController->setFingerprintDocumentPath(expandPath(cliExpectedFingerprint));
     m_licenseController->initialize();
 
+    applyMetricsEnvironmentOverrides(parser,
+                                     cliMetricsTokenProvided,
+                                     cliMetricsTokenFileProvided,
+                                     metricsAuthToken,
+                                     metricsAuthTokenFile);
     if (m_transportMode == TradingClient::TransportMode::Grpc) {
-        applyMetricsEnvironmentOverrides(parser,
-                                         cliMetricsTokenProvided,
-                                         cliMetricsTokenFileProvided,
-                                         metricsAuthToken,
-                                         metricsAuthTokenFile);
         configureMetricsTlsWatchers();
     }
     applyMetricsTlsConfig();

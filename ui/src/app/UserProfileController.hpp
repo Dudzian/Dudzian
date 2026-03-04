@@ -37,7 +37,7 @@ public:
     QVariantList activeRecommendations() const;
 
     Q_INVOKABLE bool load();
-    Q_INVOKABLE bool save() const;
+    Q_INVOKABLE bool save();
     Q_INVOKABLE bool setActiveProfile(const QString& profileId);
     Q_INVOKABLE QVariantMap profileDetails(const QString& profileId) const;
     Q_INVOKABLE bool upsertProfile(const QVariantMap& profile);
