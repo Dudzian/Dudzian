@@ -50,6 +50,7 @@
 #include "app/ConfigurationWizardController.hpp"
 #include "app/UiModuleInterface.hpp"
 #include "app/UiModuleManager.hpp"
+#include "app/UiModuleServicesModel.hpp"
 #include "app/UiModuleViewsModel.hpp"
 #include "app/StrategyConfigController.hpp"
 #include "app/StrategyWorkbenchController.hpp"
@@ -632,7 +633,9 @@ Application::Application(QQmlApplicationEngine& engine, QObject* parent)
 
     m_moduleManager = std::make_unique<UiModuleManager>(this);
     m_moduleViewsModel = std::make_unique<UiModuleViewsModel>(this);
+    m_moduleServicesModel = std::make_unique<UiModuleServicesModel>(this);
     m_moduleViewsModel->setModuleManager(m_moduleManager.get());
+    m_moduleServicesModel->setModuleManager(m_moduleManager.get());
     registerBuiltinModules();
 
     m_decisionLogModel.setParent(this);
@@ -1604,8 +1607,8 @@ bool Application::applyParser(const QCommandLineParser& parser) {
 
     if (m_transportMode == TradingClient::TransportMode::Grpc) {
         applyMetricsEnvironmentOverrides(parser,
-                                         cliTokenProvided,
-                                         cliTokenFileProvided,
+                                         cliMetricsTokenProvided,
+                                         cliMetricsTokenFileProvided,
                                          metricsAuthToken,
                                          metricsAuthTokenFile);
         configureMetricsTlsWatchers();
@@ -2302,10 +2305,16 @@ void Application::configureUiModules(const QCommandLineParser& parser)
         const QString trimmed = raw.trimmed();
         if (trimmed.isEmpty())
             return {};
-        const QString expanded = expandPath(trimmed);
-        if (!expanded.isEmpty())
-            return QFileInfo(expanded).absoluteFilePath();
-        return QFileInfo(trimmed).absoluteFilePath();
+
+        const QString resolvedInput = expandPath(trimmed);
+        QFileInfo info(resolvedInput.isEmpty() ? trimmed : resolvedInput);
+        const QString absolutePath = QDir::cleanPath(info.absoluteFilePath());
+        if (info.exists()) {
+            const QString canonicalPath = info.canonicalFilePath();
+            if (!canonicalPath.isEmpty())
+                return QDir::cleanPath(canonicalPath);
+        }
+        return absolutePath;
     };
 
     QSet<QString> unique;
@@ -2347,11 +2356,27 @@ void Application::configureUiModules(const QCommandLineParser& parser)
 
     m_uiModuleDirectories = directories;
     m_moduleManager->setPluginPaths(directories);
-    if (!directories.isEmpty()) {
-        if (!m_moduleManager->loadPlugins()) {
-            qCWarning(lcAppMetrics) << "Nie wszystkie pluginy UI zostały poprawnie załadowane";
-        }
+    const bool loadOk = m_moduleManager->loadPlugins();
+    if (!loadOk)
+        qCWarning(lcAppMetrics) << "Nie wszystkie pluginy UI zostały poprawnie załadowane";
+
+    const QVariantMap report = m_moduleManager->lastLoadReport();
+    updateUiModuleWatchTargets(m_uiModuleDirectories,
+                               report.value(QStringLiteral("loadedPlugins")).toStringList());
+}
+
+void Application::configureRegimeThresholds(const QCommandLineParser& parser)
+{
+    QString path = parser.value(QStringLiteral("regime-thresholds")).trimmed();
+    if (path.isEmpty()) {
+        if (const auto envPath = envValue(kRegimeThresholdsEnv); envPath.has_value())
+            path = envPath->trimmed();
     }
+
+    if (path.isEmpty())
+        return;
+
+    applyRegimeThresholdPath(path, true);
 }
 
 void Application::configureDecisionLog(const QCommandLineParser& parser)
@@ -2568,19 +2593,28 @@ void Application::loadUiSettings()
         const QJsonObject modulesObj = root.value(QStringLiteral("uiModules")).toObject();
 
         if (modulesObj.contains(QStringLiteral("autoReload"))) {
-            const bool autoReload = modulesObj.value(QStringLiteral("autoReload"))
-                                       .toBool(m_uiModuleAutoReloadEnabled);
-            setUiModuleAutoReloadEnabled(autoReload);
+            const bool autoReload = modulesObj.value(QStringLiteral("autoReload")).toBool(false);
+            Q_UNUSED(autoReload);
         }
 
-        if (!m_uiModuleDirectoriesExplicit && modulesObj.value(QStringLiteral("directories")).isArray()) {
+        if (modulesObj.value(QStringLiteral("directories")).isArray()) {
             const QJsonArray directoriesArray = modulesObj.value(QStringLiteral("directories")).toArray();
             QStringList directories;
             QSet<QString> seen;
             for (const QJsonValue& value : directoriesArray) {
                 if (!value.isString())
                     continue;
-                const QString normalized = normalizeUiModulePath(value.toString());
+                const QString rawPath = value.toString().trimmed();
+                if (rawPath.isEmpty())
+                    continue;
+                const QString resolvedInput = expandPath(rawPath);
+                QFileInfo info(resolvedInput.isEmpty() ? rawPath : resolvedInput);
+                QString normalized = QDir::cleanPath(info.absoluteFilePath());
+                if (info.exists()) {
+                    const QString canonicalPath = info.canonicalFilePath();
+                    if (!canonicalPath.isEmpty())
+                        normalized = QDir::cleanPath(canonicalPath);
+                }
                 if (normalized.isEmpty() || seen.contains(normalized))
                     continue;
                 seen.insert(normalized);
@@ -3812,7 +3846,7 @@ void Application::handleActivationFingerprintChanged()
 {
     processSecurityArtifactsUpdate();
     if (m_updateManager && m_licenseController)
-        m_updateManager->setFingerprintOverride(m_licenseController->fingerprint().value(QStringLiteral("hash")).toString());
+        m_updateManager->setFingerprintOverride(m_licenseController->licenseFingerprint());
 }
 
 void Application::handleActivationLicensesChanged()
@@ -3916,6 +3950,7 @@ void Application::exposeToQml() {
     m_engine.rootContext()->setContextProperty(QStringLiteral("decisionMonitorController"), &m_decisionMonitor);
     m_engine.rootContext()->setContextProperty(QStringLiteral("moduleManager"), m_moduleManager.get());
     m_engine.rootContext()->setContextProperty(QStringLiteral("moduleViewsModel"), m_moduleViewsModel.get());
+    m_engine.rootContext()->setContextProperty(QStringLiteral("moduleServicesModel"), m_moduleServicesModel.get());
     m_engine.rootContext()->setContextProperty(QStringLiteral("marketplaceController"), m_marketplaceController.get());
     m_engine.rootContext()->setContextProperty(QStringLiteral("portfolioController"), m_portfolioController.get());
     m_engine.rootContext()->setContextProperty(QStringLiteral("hypercareController"), m_hypercareController.get());
@@ -4016,6 +4051,21 @@ QObject* Application::userProfiles() const
     return m_userProfiles.get();
 }
 
+bool Application::reloadUiModules()
+{
+    if (!m_moduleManager)
+        return false;
+
+    m_moduleManager->unloadPlugins();
+    m_moduleManager->setPluginPaths(m_uiModuleDirectories);
+    const bool success = m_moduleManager->loadPlugins();
+    const QVariantMap report = m_moduleManager->lastLoadReport();
+    updateUiModuleWatchTargets(m_uiModuleDirectories,
+                               report.value(QStringLiteral("loadedPlugins")).toStringList());
+    emit uiModulesReloaded(success, report);
+    return success;
+}
+
 void Application::setModuleManagerForTesting(std::unique_ptr<UiModuleManager> manager)
 {
     if (manager)
@@ -4024,6 +4074,8 @@ void Application::setModuleManagerForTesting(std::unique_ptr<UiModuleManager> ma
     m_moduleManager = std::move(manager);
     if (m_moduleViewsModel)
         m_moduleViewsModel->setModuleManager(m_moduleManager.get());
+    if (m_moduleServicesModel)
+        m_moduleServicesModel->setModuleManager(m_moduleManager.get());
 
     if (m_moduleManager)
         registerBuiltinModules();
@@ -4032,6 +4084,8 @@ void Application::setModuleManagerForTesting(std::unique_ptr<UiModuleManager> ma
         m_engine.rootContext()->setContextProperty(QStringLiteral("moduleManager"), m_moduleManager.get());
     if (m_started)
         m_engine.rootContext()->setContextProperty(QStringLiteral("moduleViewsModel"), m_moduleViewsModel.get());
+    if (m_started)
+        m_engine.rootContext()->setContextProperty(QStringLiteral("moduleServicesModel"), m_moduleServicesModel.get());
 }
 
 void Application::ensureFrameMonitor() {

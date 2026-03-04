@@ -54,6 +54,7 @@ class HealthStatusController;          // forward decl (health/HealthStatusContr
 class OfflineRuntimeBridge;            // forward decl (runtime/OfflineRuntimeBridge.hpp)
 class UiModuleManager;                 // forward decl (app/UiModuleManager.hpp)
 class UiModuleViewsModel;              // forward decl (app/UiModuleViewsModel.hpp)
+class UiModuleServicesModel;           // forward decl (app/UiModuleServicesModel.hpp)
 class UiModuleInterface;               // forward decl (app/UiModuleInterface.hpp)
 class MetricsClientInterface;          // forward decl (grpc/MetricsClient.hpp)
 class HealthClientInterface;           // forward decl (grpc/HealthClient.hpp)
@@ -393,6 +394,18 @@ private:
     void applyRiskHistoryCliOverrides(const QCommandLineParser& parser);
     void configureStrategyBridge(const QCommandLineParser& parser);
     void configureSupportBundle(const QCommandLineParser& parser);
+    void updateSupportBundleMetadata();
+    void ensureLicenseRefreshTimerConfigured();
+    void initializeSecurityRefresh();
+    void refreshSecurityArtifacts();
+    void processSecurityArtifactsUpdate();
+    void loadSecurityCache();
+    void persistSecurityCache();
+    void raiseSecurityAlert(const QString& id,
+                            AlertsModel::Severity severity,
+                            const QString& title,
+                            const QString& description);
+    void clearSecurityAlert(const QString& id);
     void configureRegimeThresholds(const QCommandLineParser& parser);
     void configureDecisionLog(const QCommandLineParser& parser);
     void configureUiModules(const QCommandLineParser& parser);
@@ -518,6 +531,7 @@ private:
     std::unique_ptr<UserProfileController>     m_userProfiles;
     std::unique_ptr<UiModuleManager>           m_moduleManager;
     std::unique_ptr<UiModuleViewsModel>        m_moduleViewsModel;
+    std::unique_ptr<UiModuleServicesModel>     m_moduleServicesModel;
     std::unique_ptr<RuntimeDecisionBridge>     m_runtimeBridge;
     std::vector<std::unique_ptr<UiModuleInterface>> m_builtinModules;
 
@@ -585,6 +599,10 @@ private:
     QDateTime                          m_nextLicenseRefreshUtc;
     QString                            m_licenseCachePath;
     QVariantMap                        m_securityCache;
+    QVariantMap                        m_supportMetadataOverrides;
+    std::shared_ptr<MetricsClientInterface> m_metricsClientOverride;
+    std::weak_ptr<MetricsClientInterface>   m_activeMetricsClient;
+    std::shared_ptr<MetricsClientInterface> m_grpcMetricsClient;
     bool                               m_loadingSecurityCache = false;
     QString                            m_lastSecurityError;
     bool                               m_licenseRefreshTimerConfigured = false;
@@ -614,6 +632,7 @@ private:
     QFileSystemWatcher                                 m_metricsTlsWatcher;
     QFileSystemWatcher                                 m_healthTlsWatcher;
     QFileSystemWatcher                                 m_regimeThresholdWatcher;
+    QFileSystemWatcher                                 m_uiModuleWatcher;
     QString                                            m_tradingTokenWatcherFile;
     QStringList                                        m_tradingTokenWatcherDirs;
     QString                                            m_metricsTokenWatcherFile;
@@ -626,6 +645,11 @@ private:
     QStringList                                        m_metricsTlsWatcherDirs;
     QStringList                                        m_healthTlsWatcherFiles;
     QStringList                                        m_healthTlsWatcherDirs;
+    QString                                            m_regimeThresholdWatcherFile;
+    QStringList                                        m_regimeThresholdWatcherDirs;
+    QString                                            m_regimeThresholdPath;
+    QStringList                                        m_watchedUiModuleDirectories;
+    QStringList                                        m_watchedUiModuleFiles;
     QStringList                                        m_uiModuleDirectories;
     quint64                                            m_tradingTlsReloadGeneration = 0;
     quint64                                            m_metricsTlsReloadGeneration = 0;

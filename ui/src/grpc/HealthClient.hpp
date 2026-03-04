@@ -35,6 +35,7 @@ public:
     virtual void setAuthToken(const QString& token) = 0;
     virtual void setRbacRole(const QString& role) = 0;
     virtual void setRbacScopes(const QStringList& scopes) = 0;
+    virtual void setDatasetPath(const QString&) {}
 
     virtual QVector<QPair<QByteArray, QByteArray>> authMetadataForTesting() const = 0;
     virtual HealthCheckResult check() = 0;
@@ -81,4 +82,3 @@ private:
     std::shared_ptr<grpc::Channel>                                    m_channel;
     std::unique_ptr<botcore::trading::v1::HealthService::Stub>        m_stub;
 };
-

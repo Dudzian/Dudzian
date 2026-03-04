@@ -245,3 +245,5 @@ void DecisionMonitorController::rebuildSummaries()
         m_lastUpdated = normalized;
         Q_EMIT lastUpdatedChanged();
     }
+
+}

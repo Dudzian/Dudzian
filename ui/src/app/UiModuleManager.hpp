@@ -46,6 +46,7 @@ public:
 
     Q_INVOKABLE QVariantList availableViews(const QString& category = QString()) const;
     Q_INVOKABLE QObject* resolveService(const QString& serviceId) const;
+    Q_INVOKABLE QVariantMap lastLoadReport() const { return m_lastLoadReport; }
 
     bool hasService(const QString& serviceId) const;
 
@@ -84,5 +85,6 @@ private:
     QHash<QString, ServiceEntry> m_services;
     QStringList m_pluginPaths;
     std::vector<std::unique_ptr<QPluginLoader>> m_pluginLoaders;
+    QVariantMap m_lastLoadReport;
 };
 
