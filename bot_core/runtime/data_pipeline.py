@@ -350,6 +350,8 @@ class StreamingStrategyFeed(StrategyDataFeed):
         if _is_test_mode_enabled():
             self._disabled = True
             self._stop_event.set()
+            if self._async_task is not None and not self._async_task.done():
+                return self._async_task
             if loop is None:
                 try:
                     loop = asyncio.get_running_loop()

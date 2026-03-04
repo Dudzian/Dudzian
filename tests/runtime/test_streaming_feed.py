@@ -253,7 +253,9 @@ def test_streaming_strategy_feed_start_async_consumes(monkeypatch: pytest.Monkey
     asyncio.run(_run())
 
 
-def test_streaming_strategy_feed_start_async_idempotent() -> None:
+def test_streaming_strategy_feed_start_async_idempotent(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("DUDZIAN_TEST_MODE", "1")
+    monkeypatch.delenv("DUDZIAN_ALLOW_LONG_POLL", raising=False)
     history = _DummyHistoryFeed()
 
     def _factory() -> _AsyncBatchStream:
