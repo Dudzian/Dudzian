@@ -27,8 +27,9 @@ PYTHON_BIN=${PYTHON_BIN:-python3}
 VENV_DIR=${VENV_DIR:-.venv-${JOB}}
 
 run() {
-  echo "[run] $*" | tee -a "${LOG_FILE}"
-  "$@" 2>&1 | tee -a "${LOG_FILE}"
+  echo "[run] $*" | tee -a "${LOG_FILE:-/dev/stderr}"
+  "$@" 2>&1 | tee -a "${LOG_FILE:-/dev/stderr}"
+  return "${PIPESTATUS[0]}"
 }
 
 activate_venv() {
@@ -68,6 +69,23 @@ prepare_pyside6_wheel() {
 
 ui_packaging_linux() {
   install_dev_deps
+  if [[ "${SKIP_APT_DEPS:-0}" == "1" ]]; then
+    echo "[warn] SKIP_APT_DEPS=1 — pomijam instalację zależności systemowych" | tee -a "${LOG_FILE:-/dev/stderr}"
+  elif command -v apt-get >/dev/null 2>&1; then
+    run sudo apt-get update
+    run sudo apt-get install -y \
+      build-essential \
+      ninja-build \
+      pkg-config \
+      libprotobuf-dev \
+      protobuf-compiler \
+      protobuf-compiler-grpc \
+      libgrpc-dev \
+      libgrpc++-dev \
+      libarchive-dev
+  else
+    echo "[warn] apt-get not found; zainstaluj ręcznie zależności protobuf/grpc/libarchive" | tee -a "${LOG_FILE:-/dev/stderr}"
+  fi
   QT_PREFIX=${Qt6_DIR:-${QT_ROOT_DIR:-}}  # optional override
   export QT_DESKTOP_MODULES=${QT_DESKTOP_MODULES:-"qtcharts qtdeclarative qtquickcontrols2"}
   mkdir -p ui/build-linux ui/install-linux "${ARTIFACT_ROOT}"
@@ -157,15 +175,15 @@ qml_collect_only() {
   install_dev_deps
   set +e
   local output
-  output=$(python -m pytest --collect-only -q tests/ui/qml/test_risk_panels.py 2>&1 | tee -a "${LOG_FILE}")
+  output=$(python -m pytest --collect-only -q tests/ui/qml/test_risk_panels.py 2>&1 | tee -a "${LOG_FILE:-/dev/stderr}")
   local status=${PIPESTATUS[0]}
   set -e
   if echo "${output}" | grep -Fq "found no collectors"; then
-    echo "QML collect-only failed: found no collectors" | tee -a "${LOG_FILE}" >&2
+    echo "QML collect-only failed: found no collectors" | tee -a "${LOG_FILE:-/dev/stderr}" >&2
     exit 1
   fi
   if [[ ${status} -ne 0 && ${status} -ne 5 ]]; then
-    echo "QML collect-only failed with status ${status}" | tee -a "${LOG_FILE}" >&2
+    echo "QML collect-only failed with status ${status}" | tee -a "${LOG_FILE:-/dev/stderr}" >&2
     exit "${status}"
   fi
 }
@@ -196,9 +214,9 @@ case "${JOB}" in
     qml_collect_only
     ;;
   *)
-    echo "Unknown job: ${JOB}" | tee -a "${LOG_FILE}"
+    echo "Unknown job: ${JOB}" | tee -a "${LOG_FILE:-/dev/stderr}"
     exit 1
     ;;
  esac
 
-echo "Logs saved to ${LOG_FILE}" | tee -a "${LOG_FILE}"
+echo "Logs saved to ${LOG_FILE}" | tee -a "${LOG_FILE:-/dev/stderr}"
