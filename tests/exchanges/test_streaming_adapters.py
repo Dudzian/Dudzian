@@ -2399,7 +2399,10 @@ def test_local_long_poll_stream_close_all_active_stops_worker_waiting_for_token(
 
     monkeypatch.setattr("bot_core.exchanges.streaming.urlopen", _never_poll)
     monkeypatch.delenv("DUDZIAN_TEST_MODE", raising=False)
-    monkeypatch.delenv("DUDZIAN_ALLOW_LONG_POLL", raising=False)
+    # LocalLongPollStream is disabled by default under pytest; opt in explicitly
+    # because this test validates close_all_active() behavior with a worker
+    # waiting for a long-poll token.
+    monkeypatch.setenv("DUDZIAN_ALLOW_LONG_POLL", "1")
 
     stream = LocalLongPollStream(
         base_url="http://127.0.0.1:9109",
