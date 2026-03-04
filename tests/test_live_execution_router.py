@@ -25,6 +25,13 @@ from bot_core.runtime.frontend import _ExchangeManagerAdapter
 
 from tests._exchange_adapter_helpers import StubExchangeAdapter
 
+
+@pytest.fixture(autouse=True)
+def _allow_live_router(monkeypatch: pytest.MonkeyPatch) -> None:
+    # LiveExecutionRouter jest domyślnie wyłączany przy DUDZIAN_TEST_MODE,
+    # chyba że jawnie pozwolimy na jego uruchomienie.
+    monkeypatch.setenv("DUDZIAN_ALLOW_LIVE_ROUTER", "1")
+
 @dataclass(slots=True)
 class FakeClock:
     value: float = 1000.0
@@ -1604,4 +1611,3 @@ def test_router_validates_adapter_result(tmp_path: Path) -> None:
 
     with pytest.raises(ExchangeAPIError):
         router.execute(build_request(), build_context())
-

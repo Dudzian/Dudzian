@@ -18,6 +18,13 @@ from bot_core.exchanges.errors import ExchangeNetworkError
 from bot_core.observability.metrics import MetricsRegistry
 
 
+@pytest.fixture(autouse=True)
+def _allow_live_router(monkeypatch: pytest.MonkeyPatch) -> None:
+    # LiveExecutionRouter jest domyślnie wyłączany przy DUDZIAN_TEST_MODE,
+    # chyba że jawnie pozwolimy na jego uruchomienie.
+    monkeypatch.setenv("DUDZIAN_ALLOW_LIVE_ROUTER", "1")
+
+
 class _DummyAdapter(ExchangeAdapter):
     def __init__(self, name: str, *, should_fail: bool = False) -> None:
         super().__init__(ExchangeCredentials(key_id="dummy"))
