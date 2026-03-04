@@ -10,6 +10,8 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
+from scripts._cli_stdio import configure_cli_stdio
+
 from bot_core.config import load_core_config
 from bot_core.market_intel import MarketIntelSnapshot
 from bot_core.risk.stress_lab_calibration import (
@@ -256,4 +258,5 @@ def main(argv: list[str] | None = None) -> int:
 
 
 if __name__ == "__main__":  # pragma: no cover
+    configure_cli_stdio()
     raise SystemExit(main())
