@@ -79,6 +79,18 @@ def _gather_available_modules(qt_prefix: Path) -> set[str]:
     return {path.name.lower() for path in cmake_dir.iterdir() if path.is_dir()}
 
 
+def _norm_module(name: str) -> str:
+    normalized = name.strip().lower()
+    if normalized.startswith("qt6"):
+        return "qt" + normalized[3:]
+    return normalized
+
+
+_MODULE_ALIASES: dict[str, tuple[str, ...]] = {
+    "qtdeclarative": ("qtqml", "qtquick"),
+}
+
+
 def _probe_protobuf_dir(base: Path | str | None) -> str | None:
     if not base:
         return None
@@ -156,12 +168,18 @@ def preflight(qt_prefix: str | None, required_modules: Sequence[str]) -> Path:
         )
 
     available_modules = _gather_available_modules(qt_prefix_path)
+    available_modules_normalized = {_norm_module(module) for module in available_modules}
     missing_modules = []
     for module in required_modules:
-        normalized = module.strip().lower()
+        normalized = _norm_module(module)
         if not normalized:
             continue
-        if not any(normalized in candidate for candidate in available_modules):
+        aliases = _MODULE_ALIASES.get(normalized)
+        if aliases:
+            if not any(alias in available_modules_normalized for alias in aliases):
+                missing_modules.append(module)
+            continue
+        if normalized not in available_modules_normalized:
             missing_modules.append(module)
 
     if missing_modules:
