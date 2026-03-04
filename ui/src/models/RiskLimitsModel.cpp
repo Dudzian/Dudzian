@@ -61,41 +61,39 @@ QHash<int, QByteArray> RiskLimitsModel::roleNames() const
     };
 }
 
-const QVector<RiskLimitsModel::Definition>& RiskLimitsModel::knownDefinitions()
+QVector<RiskLimitsModel::Definition> RiskLimitsModel::knownDefinitions()
 {
-    static const QVector<Definition> kDefinitions = [] {
-        auto makeDefinition = [](const QString& key,
-                                 const QString& label,
-                                 double defaultValue,
-                                 double minValue,
-                                 double maxValue,
-                                 double step,
-                                 bool isPercent,
-                                 bool editable = true) {
-            Definition def;
-            def.key = key;
-            def.label = label;
-            def.defaultValue = defaultValue;
-            def.minValue = minValue;
-            def.maxValue = maxValue;
-            def.step = step;
-            def.isPercent = isPercent;
-            def.editable = editable;
-            return def;
-        };
+    auto makeDefinition = [](const QString& key,
+                             const QString& label,
+                             double defaultValue,
+                             double minValue,
+                             double maxValue,
+                             double step,
+                             bool isPercent,
+                             bool editable = true) {
+        Definition def;
+        def.key = key;
+        def.label = label;
+        def.defaultValue = defaultValue;
+        def.minValue = minValue;
+        def.maxValue = maxValue;
+        def.step = step;
+        def.isPercent = isPercent;
+        def.editable = editable;
+        return def;
+    };
 
-        return QVector<Definition>{
-            makeDefinition(QStringLiteral("max_positions"), RiskLimitsModel::tr("Liczba pozycji"), 0.0, 0.0, 200.0, 1.0, false),
-            makeDefinition(QStringLiteral("max_leverage"), RiskLimitsModel::tr("Maksymalna dźwignia"), 1.0, 0.0, 100.0, 0.1, false),
-            makeDefinition(QStringLiteral("max_position_pct"), RiskLimitsModel::tr("Limit ekspozycji"), 0.0, 0.0, 1.0, 0.01, true),
-            makeDefinition(QStringLiteral("daily_loss_limit"), RiskLimitsModel::tr("Limit dzienny"), 0.0, 0.0, 1.0, 0.01, true),
-            makeDefinition(QStringLiteral("drawdown_limit"), RiskLimitsModel::tr("Limit obsunięcia"), 0.0, 0.0, 1.0, 0.01, true),
-            makeDefinition(QStringLiteral("target_volatility"), RiskLimitsModel::tr("Docelowa zmienność"), 0.0, 0.0, 1.0, 0.01, true),
-            makeDefinition(QStringLiteral("stop_loss_atr_multiple"), RiskLimitsModel::tr("Stop loss (ATR)"), 0.0, 0.0, 10.0, 0.1, false),
-        };
-    }();
-    return kDefinitions;
+    return QVector<Definition>{
+        makeDefinition(QStringLiteral("max_positions"), RiskLimitsModel::tr("Liczba pozycji"), 0.0, 0.0, 200.0, 1.0, false),
+        makeDefinition(QStringLiteral("max_leverage"), RiskLimitsModel::tr("Maksymalna dźwignia"), 1.0, 0.0, 100.0, 0.1, false),
+        makeDefinition(QStringLiteral("max_position_pct"), RiskLimitsModel::tr("Limit ekspozycji"), 0.0, 0.0, 1.0, 0.01, true),
+        makeDefinition(QStringLiteral("daily_loss_limit"), RiskLimitsModel::tr("Limit dzienny"), 0.0, 0.0, 1.0, 0.01, true),
+        makeDefinition(QStringLiteral("drawdown_limit"), RiskLimitsModel::tr("Limit obsunięcia"), 0.0, 0.0, 1.0, 0.01, true),
+        makeDefinition(QStringLiteral("target_volatility"), RiskLimitsModel::tr("Docelowa zmienność"), 0.0, 0.0, 1.0, 0.01, true),
+        makeDefinition(QStringLiteral("stop_loss_atr_multiple"), RiskLimitsModel::tr("Stop loss (ATR)"), 0.0, 0.0, 10.0, 0.1, false),
+    };
 }
+
 
 void RiskLimitsModel::updateFromSnapshot(const RiskSnapshotData& snapshot)
 {
@@ -147,6 +145,41 @@ int RiskLimitsModel::findEntryIndex(const QString& key) const
             return i;
     }
     return -1;
+}
+
+
+bool RiskLimitsModel::event(QEvent* event)
+{
+    if (event != nullptr && event->type() == QEvent::LanguageChange)
+        retranslateEntries();
+    return QAbstractListModel::event(event);
+}
+
+void RiskLimitsModel::retranslateEntries()
+{
+    if (m_entries.isEmpty())
+        return;
+
+    const auto defs = knownDefinitions();
+    QHash<QString, QString> labelsByKey;
+    labelsByKey.reserve(defs.size());
+    for (const Definition& def : defs)
+        labelsByKey.insert(def.key, def.label);
+
+    bool changed = false;
+    for (Entry& entry : m_entries) {
+        const QString translated = labelsByKey.value(entry.key, entry.label);
+        if (translated != entry.label) {
+            entry.label = translated;
+            changed = true;
+        }
+    }
+
+    if (changed) {
+        const QModelIndex first = createIndex(0, 0);
+        const QModelIndex last = createIndex(m_entries.size() - 1, 0);
+        Q_EMIT dataChanged(first, last, {LabelRole});
+    }
 }
 
 void RiskLimitsModel::rebuildFromMap(const QVariantMap& limits)

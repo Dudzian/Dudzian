@@ -103,7 +103,10 @@ def _build_definition() -> StrategyDefinition:
     )
 
 
-def test_streaming_matches_walk_forward_history() -> None:
+def test_streaming_matches_walk_forward_history(monkeypatch: pytest.MonkeyPatch) -> None:
+    # LocalLongPollStream blocks worker startup under pytest unless explicitly enabled.
+    monkeypatch.setenv("DUDZIAN_ALLOW_LONG_POLL", "1")
+
     history = _build_history()
     frame = _history_frame(history)
     dataset = {"BTCUSDT": frame}
@@ -129,30 +132,30 @@ def test_streaming_matches_walk_forward_history() -> None:
 
     batches = history_to_stream_batches(history, channel="ohlcv", batch_size=5)
     server, thread = _start_stream_server(batches)
+    stream = LocalLongPollStream(
+        base_url=f"http://127.0.0.1:{server.server_port}",
+        path="/stream",
+        channels=["ohlcv"],
+        adapter="demo",
+        scope="public",
+        environment="paper",
+        poll_interval=0.0,
+        timeout=1.0,
+        max_retries=1,
+        backoff_base=0.0,
+        backoff_cap=0.0,
+        jitter=(0.0, 0.0),
+        buffer_size=8,
+    )
     try:
-        stream = LocalLongPollStream(
-            base_url=f"http://127.0.0.1:{server.server_port}",
-            path="/stream",
-            channels=["ohlcv"],
-            adapter="demo",
-            scope="public",
-            environment="paper",
-            poll_interval=0.0,
-            timeout=1.0,
-            max_retries=1,
-            backoff_base=0.0,
-            backoff_cap=0.0,
-            jitter=(0.0, 0.0),
-            buffer_size=8,
-        )
         collected: list = []
         for batch in stream:
             collected.append(batch)
             total = sum(len(item.events) for item in collected)
             if total >= len(history):
                 break
-        stream.close()
     finally:
+        stream.close()
         _stop_stream_server(server, thread)
 
     stream_frame = stream_batches_to_frame(collected)
@@ -167,4 +170,3 @@ def test_streaming_matches_walk_forward_history() -> None:
         == pytest.approx(baseline.cost_summary.total_notional, rel=1e-6)
     )
     assert streamed_report.cost_summary.total_trades == baseline.cost_summary.total_trades
-

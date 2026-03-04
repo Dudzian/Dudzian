@@ -642,6 +642,16 @@ if(BUILD_TESTING)
     target_link_libraries(risk_history_model_tests PRIVATE Qt6::Core Qt6::Test)
     add_test(NAME risk_history_model_tests COMMAND risk_history_model_tests)
 
+
+    add_executable(risk_models_translation_refresh_tests
+        tests/RiskModelsTranslationRefreshTest.cpp
+        src/models/RiskLimitsModel.cpp
+        src/models/RiskCostModel.cpp
+    )
+    target_include_directories(risk_models_translation_refresh_tests PRIVATE src)
+    target_link_libraries(risk_models_translation_refresh_tests PRIVATE Qt6::Core Qt6::Test)
+    add_test(NAME risk_models_translation_refresh_tests COMMAND risk_models_translation_refresh_tests)
+
     add_executable(decision_log_model_tests
         tests/DecisionLogModelTest.cpp
         src/models/DecisionLogModel.cpp

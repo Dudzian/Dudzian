@@ -355,4 +355,67 @@
       <translation>Strategies – builder</translation>
     </message>
   </context>
+
+  <context>
+    <name>RiskLimitsModel</name>
+    <message>
+      <source>Liczba pozycji</source>
+      <translation>Number of positions</translation>
+    </message>
+    <message>
+      <source>Maksymalna dźwignia</source>
+      <translation>Maximum leverage</translation>
+    </message>
+    <message>
+      <source>Limit ekspozycji</source>
+      <translation>Exposure limit</translation>
+    </message>
+    <message>
+      <source>Limit dzienny</source>
+      <translation>Daily limit</translation>
+    </message>
+    <message>
+      <source>Limit obsunięcia</source>
+      <translation>Drawdown limit</translation>
+    </message>
+    <message>
+      <source>Docelowa zmienność</source>
+      <translation>Target volatility</translation>
+    </message>
+    <message>
+      <source>Stop loss (ATR)</source>
+      <translation>Stop loss (ATR)</translation>
+    </message>
+  </context>
+  <context>
+    <name>RiskCostModel</name>
+    <message>
+      <source>Zrealizowany wynik (dzień)</source>
+      <translation>Realized PnL (day)</translation>
+    </message>
+    <message>
+      <source>Wartość brutto pozycji</source>
+      <translation>Gross notional position value</translation>
+    </message>
+    <message>
+      <source>Aktywne pozycje</source>
+      <translation>Active positions</translation>
+    </message>
+    <message>
+      <source>Strata dzienna</source>
+      <translation>Daily loss</translation>
+    </message>
+    <message>
+      <source>Obsunięcie kapitału</source>
+      <translation>Capital drawdown</translation>
+    </message>
+    <message>
+      <source>Średni koszt (bps)</source>
+      <translation>Average cost (bps)</translation>
+    </message>
+    <message>
+      <source>Łączny koszt (bps)</source>
+      <translation>Total cost (bps)</translation>
+    </message>
+  </context>
 </TS>

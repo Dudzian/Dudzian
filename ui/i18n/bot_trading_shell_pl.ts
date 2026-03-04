@@ -1029,4 +1029,67 @@
       <translation>Strategie – kreator</translation>
     </message>
   </context>
+
+  <context>
+    <name>RiskLimitsModel</name>
+    <message>
+      <source>Liczba pozycji</source>
+      <translation>Liczba pozycji</translation>
+    </message>
+    <message>
+      <source>Maksymalna dźwignia</source>
+      <translation>Maksymalna dźwignia</translation>
+    </message>
+    <message>
+      <source>Limit ekspozycji</source>
+      <translation>Limit ekspozycji</translation>
+    </message>
+    <message>
+      <source>Limit dzienny</source>
+      <translation>Limit dzienny</translation>
+    </message>
+    <message>
+      <source>Limit obsunięcia</source>
+      <translation>Limit obsunięcia</translation>
+    </message>
+    <message>
+      <source>Docelowa zmienność</source>
+      <translation>Docelowa zmienność</translation>
+    </message>
+    <message>
+      <source>Stop loss (ATR)</source>
+      <translation>Stop loss (ATR)</translation>
+    </message>
+  </context>
+  <context>
+    <name>RiskCostModel</name>
+    <message>
+      <source>Zrealizowany wynik (dzień)</source>
+      <translation>Zrealizowany wynik (dzień)</translation>
+    </message>
+    <message>
+      <source>Wartość brutto pozycji</source>
+      <translation>Wartość brutto pozycji</translation>
+    </message>
+    <message>
+      <source>Aktywne pozycje</source>
+      <translation>Aktywne pozycje</translation>
+    </message>
+    <message>
+      <source>Strata dzienna</source>
+      <translation>Strata dzienna</translation>
+    </message>
+    <message>
+      <source>Obsunięcie kapitału</source>
+      <translation>Obsunięcie kapitału</translation>
+    </message>
+    <message>
+      <source>Średni koszt (bps)</source>
+      <translation>Średni koszt (bps)</translation>
+    </message>
+    <message>
+      <source>Łączny koszt (bps)</source>
+      <translation>Łączny koszt (bps)</translation>
+    </message>
+  </context>
 </TS>
