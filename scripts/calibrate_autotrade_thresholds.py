@@ -18,7 +18,6 @@ from decimal import Decimal
 from pathlib import Path
 from typing import Callable, Iterable, Iterator, Literal, Mapping, TextIO
 
-import yaml
 
 _STREAM_READ_SIZE = 65536
 _JSON_STREAM_CHUNK_SIZE = 32768
@@ -51,6 +50,7 @@ from bot_core.ai.config_loader import load_risk_thresholds
 from bot_core.trading.signal_thresholds import (
     SUPPORTED_SIGNAL_THRESHOLD_METRICS as _SUPPORTED_SIGNAL_THRESHOLD_METRICS,
 )
+from scripts._cli_stdio import configure_cli_stdio
 
 
 def _normalize_metric_key(key: str) -> str:
@@ -2152,6 +2152,12 @@ def _write_threshold_config(config: Mapping[str, object], destination: Path) -> 
     destination.parent.mkdir(parents=True, exist_ok=True)
     suffix = destination.suffix.lower()
     if suffix in {".yaml", ".yml"}:
+        try:
+            import yaml  # type: ignore
+        except ModuleNotFoundError as exc:  # pragma: no cover - zależy od środowiska
+            raise SystemExit(
+                "Obsługa plików YAML wymaga zainstalowania biblioteki PyYAML"
+            ) from exc
         with destination.open("w", encoding="utf-8") as handle:
             yaml.safe_dump(config, handle, sort_keys=False, allow_unicode=True)
     else:
@@ -3873,6 +3879,7 @@ def _build_parser() -> argparse.ArgumentParser:
 
 
 def main(argv: list[str] | None = None) -> int:
+    configure_cli_stdio()
     parser = _build_parser()
     args = parser.parse_args(argv)
 
