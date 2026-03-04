@@ -2399,9 +2399,7 @@ def test_local_long_poll_stream_close_all_active_stops_worker_waiting_for_token(
 
     monkeypatch.setattr("bot_core.exchanges.streaming.urlopen", _never_poll)
     monkeypatch.delenv("DUDZIAN_TEST_MODE", raising=False)
-    # LocalLongPollStream is disabled by default under pytest; opt in explicitly
-    # because this test validates close_all_active() behavior with a worker
-    # waiting for a long-poll token.
+    # pytest detection disables long-poll workers by default; this test requires one.
     monkeypatch.setenv("DUDZIAN_ALLOW_LONG_POLL", "1")
 
     stream = LocalLongPollStream(
@@ -2419,22 +2417,35 @@ def test_local_long_poll_stream_close_all_active_stops_worker_waiting_for_token(
         jitter=(0.0, 0.0),
     )
 
-    stream._ensure_worker()
+    try:
+        stream._ensure_worker()
 
-    deadline = time.monotonic() + 1.0
-    while time.monotonic() < deadline:
+        deadline = time.monotonic() + 1.0
+        while time.monotonic() < deadline:
+            worker = stream._worker_thread
+            if worker and worker.is_alive():
+                break
+            time.sleep(0.01)
+
         worker = stream._worker_thread
-        if worker and worker.is_alive():
-            break
-        time.sleep(0.01)
+        assert worker is not None and worker.is_alive()
 
-    worker = stream._worker_thread
-    assert worker is not None and worker.is_alive()
+        LocalLongPollStream.close_all_active()
 
-    LocalLongPollStream.close_all_active()
+        deadline = time.monotonic() + 1.0
+        while time.monotonic() < deadline:
+            worker_after_close = stream._worker_thread
+            if worker_after_close is None or not worker_after_close.is_alive():
+                break
+            time.sleep(0.01)
 
-    worker_after_close = stream._worker_thread
-    assert worker_after_close is None or not worker_after_close.is_alive()
+        worker_after_close = stream._worker_thread
+        assert worker_after_close is None or not worker_after_close.is_alive()
+
+        worker.join(timeout=1.0)
+        assert not worker.is_alive()
+    finally:
+        LocalLongPollStream.close_all_active()
 
 
 def test_local_long_poll_stream_prefill_does_not_poll_before_wait_until() -> None:
