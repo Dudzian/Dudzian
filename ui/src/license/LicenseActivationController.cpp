@@ -23,6 +23,25 @@ Q_LOGGING_CATEGORY(lcActivation, "bot.shell.license")
 using bot::shell::utils::watchableDirectories;
 
 namespace {
+QByteArray stripBase64Whitespace(const QByteArray& input)
+{
+    QByteArray out;
+    out.reserve(input.size());
+    for (char c : input) {
+        switch (c) {
+        case ' ':
+        case '\n':
+        case '\r':
+        case '\t':
+            break;
+        default:
+            out.append(c);
+            break;
+        }
+    }
+    return out;
+}
+
 QString normalizeFingerprint(const QString& value)
 {
     QString trimmed = value.trimmed().toUpper();
@@ -55,7 +74,7 @@ QString extractFingerprintFromDocument(const QJsonDocument& doc)
     const QJsonObject root = doc.object();
     const QString payloadB64 = root.value(QStringLiteral("payload_b64")).toString();
     if (!payloadB64.isEmpty()) {
-        const QByteArray decoded = QByteArray::fromBase64(payloadB64.toUtf8(), QByteArray::IgnoreBase64Whitespace);
+        const QByteArray decoded = QByteArray::fromBase64(stripBase64Whitespace(payloadB64.toUtf8()));
         if (!decoded.isEmpty()) {
             QString parseError;
             const QJsonDocument payloadDoc = parseJson(decoded, &parseError);
@@ -98,7 +117,7 @@ QString extractFingerprintFromBytes(const QByteArray& data)
 QByteArray tryDecodeBase64(const QString& text)
 {
     const QByteArray raw = text.toUtf8();
-    QByteArray decoded = QByteArray::fromBase64(raw, QByteArray::IgnoreBase64Whitespace);
+    QByteArray decoded = QByteArray::fromBase64(stripBase64Whitespace(raw));
     if (decoded.isEmpty())
         return {};
     return decoded;
@@ -616,29 +635,14 @@ bool LicenseActivationController::activateFromDocument(const QJsonDocument& docu
     if (persist && !persistLicense(document))
         return false;
 
-    if (persist && !primeBindingSecret(info.fingerprint)) {
-        QFile::remove(resolveLicenseOutputPath());
-        setStatusMessage(tr("Nie udało się zabezpieczyć sekretu licencji."), true);
-        return false;
-    }
+    if (persist)
+        Q_EMIT licensePersisted(resolveLicenseOutputPath());
 
-    const bool wasActive = m_licenseActive;
-    m_licenseActive = true;
-    m_licenseFingerprint = info.fingerprint;
-    m_licenseEdition = info.edition;
-    m_licenseLicenseId = info.licenseId;
-    m_licenseIssuedAt = info.issuedAtIso;
-    m_licenseMaintenanceUntil = info.maintenanceUntilIso;
-    m_licenseMaintenanceActive = info.maintenanceActive;
-    m_licenseHolderName = info.holderName;
-    m_licenseHolderEmail = info.holderEmail;
-    m_licenseSeats = info.seats;
-    m_licenseTrialActive = info.trialActive;
-    m_licenseTrialExpiresAt = info.trialExpiresIso;
-    m_licenseModules = info.modules;
-    m_licenseEnvironments = info.environments;
-    m_licenseRuntime = info.runtime;
-    m_lastDocument = info.document;
+    if (persist) {
+        m_pendingActivation = std::make_unique<PendingActivation>();
+        m_pendingActivation->info = info;
+        m_pendingActivation->sourceDescription = sourceDescription;
+        m_pendingActivation->persist = true;
 
         if (!primeBindingSecret(info.fingerprint)) {
             QFile::remove(resolveLicenseOutputPath());
@@ -669,7 +673,7 @@ bool LicenseActivationController::parseLicenseDocument(const QJsonDocument& docu
             error = tr("Licencja musi zawierać pole 'signature_b64'");
             return false;
         }
-        const QByteArray payloadBytes = QByteArray::fromBase64(payloadB64.toUtf8(), QByteArray::IgnoreBase64Whitespace);
+        const QByteArray payloadBytes = QByteArray::fromBase64(stripBase64Whitespace(payloadB64.toUtf8()));
         if (payloadBytes.isEmpty()) {
             error = tr("Nie można zdekodować sekcji payload_b64 (base64)");
             return false;
@@ -713,10 +717,7 @@ bool LicenseActivationController::parseLicenseDocument(const QJsonDocument& docu
         const QJsonObject holderObj = payload.value(QStringLiteral("holder")).toObject();
         info.holderName = holderObj.value(QStringLiteral("name")).toString();
         info.holderEmail = holderObj.value(QStringLiteral("email")).toString();
-        bool okSeats = false;
-        info.seats = payload.value(QStringLiteral("seats")).toInt(&okSeats);
-        if (!okSeats)
-            info.seats = 0;
+        info.seats = payload.value(QStringLiteral("seats")).toInt();
 
         const QJsonObject trialObj = payload.value(QStringLiteral("trial")).toObject();
         info.trialActive = trialObj.value(QStringLiteral("enabled")).toBool();
@@ -759,13 +760,13 @@ bool LicenseActivationController::parseLicenseDocument(const QJsonDocument& docu
     }
 
     const QJsonValue payloadValue = root.value(QStringLiteral("payload"));
-    const QJsonValue signatureValue = root.value(QStringLiteral("signature"));
-    if (!payloadValue.isObject() || !signatureValue.isObject()) {
+    const QJsonValue signatureSection = root.value(QStringLiteral("signature"));
+    if (!payloadValue.isObject() || !signatureSection.isObject()) {
         error = tr("Licencja musi zawierać sekcje 'payload' oraz 'signature'");
         return false;
     }
     const QJsonObject payload = payloadValue.toObject();
-    const QJsonObject signature = signatureValue.toObject();
+    const QJsonObject signature = signatureSection.toObject();
 
     const QString schema = payload.value(QStringLiteral("schema")).toString();
     if (schema != QStringLiteral("core.oem.license")) {
@@ -845,8 +846,8 @@ bool LicenseActivationController::parseLicenseDocument(const QJsonDocument& docu
         error = tr("Nieobsługiwany algorytm podpisu licencji: %1").arg(algorithm);
         return false;
     }
-    const QString signatureValue = signature.value(QStringLiteral("value")).toString();
-    if (signatureValue.trimmed().isEmpty()) {
+    const QString signatureText = signature.value(QStringLiteral("value")).toString();
+    if (signatureText.trimmed().isEmpty()) {
         error = tr("Podpis licencji jest pusty");
         return false;
     }
@@ -1270,8 +1271,44 @@ void LicenseActivationController::clearLicenseState()
         setStatusMessage(tr("Brak aktywnej licencji"), false);
 }
 
+void LicenseActivationController::finalizeLicenseActivation(const LicenseInfo& info,
+                                                          bool persisted,
+                                                          const QString& sourceDescription)
+{
+    const bool wasActive = m_licenseActive;
+    m_licenseActive = true;
+    m_licenseFingerprint = info.fingerprint;
+    m_licenseEdition = info.edition;
+    m_licenseLicenseId = info.licenseId;
+    m_licenseIssuedAt = info.issuedAtIso;
+    m_licenseMaintenanceUntil = info.maintenanceUntilIso;
+    m_licenseMaintenanceActive = info.maintenanceActive;
+    m_licenseHolderName = info.holderName;
+    m_licenseHolderEmail = info.holderEmail;
+    m_licenseSeats = info.seats;
+    m_licenseTrialActive = info.trialActive;
+    m_licenseTrialExpiresAt = info.trialExpiresIso;
+    m_licenseModules = info.modules;
+    m_licenseEnvironments = info.environments;
+    m_licenseRuntime = info.runtime;
+    m_lastDocument = info.document;
+
+    if (!wasActive)
+        Q_EMIT licenseActiveChanged();
+    Q_EMIT licenseDataChanged();
+
+    Q_UNUSED(persisted);
+    Q_UNUSED(sourceDescription);
+    setStatusMessage(tr("Licencja aktywna (%1)").arg(info.edition), false);
+}
+
 bool LicenseActivationController::primeBindingSecret(const QString& fingerprint)
 {
+    if (!m_bindingSecretJobFactory)
+        return false;
+    if (m_bindingSecretJob)
+        return false;
+
     QString program = m_pythonExecutable.trimmed();
     if (program.isEmpty())
         program = QStringLiteral("python3");
@@ -1288,49 +1325,112 @@ bool LicenseActivationController::primeBindingSecret(const QString& fingerprint)
     if (!normalized.isEmpty())
         args << QStringLiteral("--fingerprint") << normalized;
 
-    QProcess process;
-    process.setProgram(program);
-    process.setArguments(args);
-    process.start();
-    if (!process.waitForFinished()) {
-        qCWarning(lcActivation) << "Nie udało się uruchomić ensure-binding-secret" << program
-                               << process.errorString();
+    m_bindingSecretJob = m_bindingSecretJobFactory(this);
+    if (!m_bindingSecretJob)
         return false;
-    }
 
-    const QByteArray stdoutData = process.readAllStandardOutput();
-    const QByteArray stderrData = process.readAllStandardError();
-    if (!stderrData.isEmpty())
-        qCDebug(lcActivation) << "ensure-binding-secret stderr:" << QString::fromUtf8(stderrData);
+    m_bindingSecretAbortReason = BindingSecretAbortReason::None;
+    m_bindingSecretStdout.clear();
+    m_bindingSecretStderr.clear();
 
-    if (process.exitStatus() != QProcess::NormalExit || process.exitCode() != 0) {
-        qCWarning(lcActivation) << "ensure-binding-secret zakończył się kodem" << process.exitCode()
-                               << QString::fromUtf8(stdoutData);
-        return false;
-    }
+    connect(m_bindingSecretJob, &BindingSecretJob::started, this, [this]() {
+        if (m_bindingSecretTimeoutMs > 0)
+            m_bindingSecretTimeoutTimer.start(m_bindingSecretTimeoutMs);
+        Q_EMIT bindingSecretPrimingStarted();
+    });
 
-    if (stdoutData.isEmpty())
-        return true;
+    connect(m_bindingSecretJob,
+            &BindingSecretJob::completed,
+            this,
+            [this](bool success, const QString& message, const QByteArray& stdoutData, const QByteArray& stderrData) {
+                handleBindingSecretCompleted(success, message, stdoutData, stderrData);
+            });
 
-    QJsonParseError parseError{};
-    const QJsonDocument doc = QJsonDocument::fromJson(stdoutData, &parseError);
-    if (parseError.error != QJsonParseError::NoError || !doc.isObject()) {
-        qCWarning(lcActivation) << "ensure-binding-secret zwrócił niepoprawny JSON"
-                               << parseError.errorString();
-        return false;
-    }
-
-    const QJsonObject root = doc.object();
-    const QString status = root.value(QStringLiteral("status")).toString();
-    if (status.compare(QStringLiteral("ok"), Qt::CaseInsensitive) == 0)
-        return true;
-
-    const QString errorMessage = root.value(QStringLiteral("error")).toString();
-    if (!errorMessage.isEmpty())
-        qCWarning(lcActivation) << "ensure-binding-secret zgłosił błąd" << errorMessage;
-    else
-        qCWarning(lcActivation) << "ensure-binding-secret zwrócił status" << status;
-    return false;
+    m_bindingSecretJob->start(program, args);
+    return true;
 }
+
+void LicenseActivationController::handleBindingSecretCompleted(bool success,
+                                                               const QString& message,
+                                                               const QByteArray& stdoutData,
+                                                               const QByteArray& stderrData)
+{
+    m_bindingSecretTimeoutTimer.stop();
+    m_bindingSecretStdout = stdoutData;
+    m_bindingSecretStderr = stderrData;
+
+    bool finalSuccess = success;
+    QString finalMessage = message.trimmed();
+
+    if (m_bindingSecretAbortReason == BindingSecretAbortReason::TimedOut) {
+        finalSuccess = false;
+        finalMessage = tr("Przekroczono limit czasu zabezpieczania sekretu licencji.");
+    } else if (m_bindingSecretAbortReason == BindingSecretAbortReason::Cancelled) {
+        finalSuccess = false;
+        finalMessage = tr("Anulowano zabezpieczanie sekretu licencji.");
+    }
+
+    if (finalSuccess && !stdoutData.isEmpty()) {
+        QJsonParseError parseError{};
+        const QJsonDocument responseDoc = QJsonDocument::fromJson(stdoutData, &parseError);
+        if (parseError.error != QJsonParseError::NoError || !responseDoc.isObject()) {
+            finalSuccess = false;
+            finalMessage = tr("ensure-binding-secret zwrócił niepoprawny JSON");
+        } else {
+            const QJsonObject root = responseDoc.object();
+            const QString status = root.value(QStringLiteral("status")).toString();
+            if (status.compare(QStringLiteral("ok"), Qt::CaseInsensitive) != 0) {
+                finalSuccess = false;
+                const QString responseError = root.value(QStringLiteral("error")).toString().trimmed();
+                finalMessage = responseError.isEmpty()
+                    ? tr("ensure-binding-secret zwrócił status %1").arg(status)
+                    : responseError;
+            }
+        }
+    }
+
+    if (finalSuccess) {
+        if (m_pendingActivation)
+            finalizeLicenseActivation(m_pendingActivation->info,
+                                      m_pendingActivation->persist,
+                                      m_pendingActivation->sourceDescription);
+        if (finalMessage.isEmpty())
+            finalMessage = tr("Sekret licencji został zabezpieczony.");
+    } else {
+        if (m_pendingActivation && m_pendingActivation->persist)
+            QFile::remove(resolveLicenseOutputPath());
+        if (finalMessage.isEmpty())
+            finalMessage = tr("Nie udało się zabezpieczyć sekretu licencji.");
+        setStatusMessage(finalMessage, true);
+    }
+
+    m_pendingActivation.reset();
+    m_bindingSecretAbortReason = BindingSecretAbortReason::None;
+    if (m_bindingSecretJob) {
+        m_bindingSecretJob->deleteLater();
+        m_bindingSecretJob = nullptr;
+    }
+
+    Q_EMIT bindingSecretPrimingFinished(finalSuccess, finalMessage);
+}
+
+void LicenseActivationController::cancelBindingSecretPriming()
+{
+    if (!m_bindingSecretJob)
+        return;
+    m_bindingSecretAbortReason = BindingSecretAbortReason::Cancelled;
+    m_bindingSecretJob->cancel();
+}
+
+void LicenseActivationController::setBindingSecretJobFactory(const std::function<BindingSecretJob*(QObject*)>& factory)
+{
+    m_bindingSecretJobFactory = factory;
+}
+
+void LicenseActivationController::setBindingSecretTimeout(int timeoutMs)
+{
+    m_bindingSecretTimeoutMs = std::max(0, timeoutMs);
+}
+
 
 #include "LicenseActivationController.moc"
