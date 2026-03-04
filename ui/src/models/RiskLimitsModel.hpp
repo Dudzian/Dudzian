@@ -1,6 +1,7 @@
 #pragma once
 
 #include <QAbstractListModel>
+#include <QEvent>
 #include <QVariantMap>
 
 #include "RiskTypes.hpp"
@@ -65,8 +66,10 @@ private:
     QVector<Entry> m_entries;
     QVariantMap m_limits;
 
-    static const QVector<Definition>& knownDefinitions();
+    static QVector<Definition> knownDefinitions();
     int findEntryIndex(const QString& key) const;
+    bool event(QEvent* event) override;
+    void retranslateEntries();
     void rebuildFromMap(const QVariantMap& limits);
 };
 

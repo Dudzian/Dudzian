@@ -1,6 +1,7 @@
 #pragma once
 
 #include <QAbstractListModel>
+#include <QEvent>
 #include <QVariantMap>
 
 #include "RiskTypes.hpp"
@@ -50,7 +51,9 @@ private:
     QVector<Entry> m_entries;
     QVariantMap m_summary;
 
-    static const QVector<MetricDefinition>& metricDefinitions();
+    static QVector<MetricDefinition> metricDefinitions();
     static QString formatValue(const MetricDefinition& def, const QVariant& value);
+    bool event(QEvent* event) override;
+    void retranslateEntries();
 };
 

@@ -47,30 +47,28 @@ QHash<int, QByteArray> RiskCostModel::roleNames() const
     };
 }
 
-const QVector<RiskCostModel::MetricDefinition>& RiskCostModel::metricDefinitions()
+QVector<RiskCostModel::MetricDefinition> RiskCostModel::metricDefinitions()
 {
-    static const QVector<MetricDefinition> kMetrics = [] {
-        auto makeMetric = [](const QString& key, const QString& label, bool percent = false, int decimals = 2) {
-            MetricDefinition def;
-            def.key = key;
-            def.label = label;
-            def.percent = percent;
-            def.decimals = decimals;
-            return def;
-        };
+    auto makeMetric = [](const QString& key, const QString& label, bool percent = false, int decimals = 2) {
+        MetricDefinition def;
+        def.key = key;
+        def.label = label;
+        def.percent = percent;
+        def.decimals = decimals;
+        return def;
+    };
 
-        return QVector<MetricDefinition>{
-            makeMetric(QStringLiteral("dailyRealizedPnl"), RiskCostModel::tr("Zrealizowany wynik (dzień)"), false, 2),
-            makeMetric(QStringLiteral("grossNotional"), RiskCostModel::tr("Wartość brutto pozycji"), false, 2),
-            makeMetric(QStringLiteral("activePositions"), RiskCostModel::tr("Aktywne pozycje"), false, 0),
-            makeMetric(QStringLiteral("dailyLossPct"), RiskCostModel::tr("Strata dzienna"), true, 2),
-            makeMetric(QStringLiteral("drawdownPct"), RiskCostModel::tr("Obsunięcie kapitału"), true, 2),
-            makeMetric(QStringLiteral("averageCostBps"), RiskCostModel::tr("Średni koszt (bps)"), false, 2),
-            makeMetric(QStringLiteral("totalCostBps"), RiskCostModel::tr("Łączny koszt (bps)"), false, 2),
-        };
-    }();
-    return kMetrics;
+    return QVector<MetricDefinition>{
+        makeMetric(QStringLiteral("dailyRealizedPnl"), RiskCostModel::tr("Zrealizowany wynik (dzień)"), false, 2),
+        makeMetric(QStringLiteral("grossNotional"), RiskCostModel::tr("Wartość brutto pozycji"), false, 2),
+        makeMetric(QStringLiteral("activePositions"), RiskCostModel::tr("Aktywne pozycje"), false, 0),
+        makeMetric(QStringLiteral("dailyLossPct"), RiskCostModel::tr("Strata dzienna"), true, 2),
+        makeMetric(QStringLiteral("drawdownPct"), RiskCostModel::tr("Obsunięcie kapitału"), true, 2),
+        makeMetric(QStringLiteral("averageCostBps"), RiskCostModel::tr("Średni koszt (bps)"), false, 2),
+        makeMetric(QStringLiteral("totalCostBps"), RiskCostModel::tr("Łączny koszt (bps)"), false, 2),
+    };
 }
+
 
 QString RiskCostModel::formatValue(const MetricDefinition& def, const QVariant& value)
 {
@@ -96,7 +94,7 @@ void RiskCostModel::updateFromSnapshot(const RiskSnapshotData& snapshot)
     m_entries.clear();
     m_summary.clear();
 
-    const QVector<MetricDefinition>& defs = metricDefinitions();
+    const QVector<MetricDefinition> defs = metricDefinitions();
     for (const MetricDefinition& def : defs) {
         QVariant metricValue;
         if (snapshot.statistics.contains(def.key))
@@ -130,6 +128,45 @@ void RiskCostModel::updateFromSnapshot(const RiskSnapshotData& snapshot)
 
     endResetModel();
     Q_EMIT summaryChanged();
+}
+
+
+bool RiskCostModel::event(QEvent* event)
+{
+    if (event != nullptr && event->type() == QEvent::LanguageChange)
+        retranslateEntries();
+    return QAbstractListModel::event(event);
+}
+
+void RiskCostModel::retranslateEntries()
+{
+    if (m_entries.isEmpty())
+        return;
+
+    const auto defs = metricDefinitions();
+    QHash<QString, MetricDefinition> defsByKey;
+    defsByKey.reserve(defs.size());
+    for (const MetricDefinition& def : defs)
+        defsByKey.insert(def.key, def);
+
+    bool changed = false;
+    for (Entry& entry : m_entries) {
+        const auto it = defsByKey.constFind(entry.key);
+        const bool knownDefinition = it != defsByKey.constEnd();
+        const QString translated = knownDefinition ? it->label : entry.label;
+        const QString formatted = knownDefinition ? formatValue(*it, entry.value) : entry.formatted;
+        if (translated != entry.label || formatted != entry.formatted) {
+            entry.label = translated;
+            entry.formatted = formatted;
+            changed = true;
+        }
+    }
+
+    if (changed) {
+        const QModelIndex first = createIndex(0, 0);
+        const QModelIndex last = createIndex(m_entries.size() - 1, 0);
+        Q_EMIT dataChanged(first, last, {LabelRole, FormattedRole});
+    }
 }
 
 void RiskCostModel::clear()
