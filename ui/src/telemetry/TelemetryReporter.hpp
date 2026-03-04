@@ -6,6 +6,8 @@
 #include "telemetry/TelemetryTlsConfig.hpp"
 #include "utils/PerformanceGuard.hpp"
 
+class QObject;
+
 class TelemetryReporter {
 public:
     virtual ~TelemetryReporter() = default;
@@ -34,6 +36,9 @@ public:
     virtual void setScreenInfo(const ScreenInfo& info) = 0;
     virtual void clearScreenInfo() = 0;
     virtual bool isEnabled() const = 0;
+
+    virtual QObject* asQObject() { return nullptr; }
+    virtual const QObject* asQObject() const { return nullptr; }
 
     virtual void reportReduceMotion(const PerformanceGuard& guard,
                                     bool active,

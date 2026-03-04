@@ -14,7 +14,7 @@ PerformanceTelemetryController::PerformanceTelemetryController(QObject* parent)
 void PerformanceTelemetryController::setTelemetryReporter(TelemetryReporter* reporter)
 {
     m_reporter = reporter;
-    m_uiReporter = qobject_cast<UiTelemetryReporter*>(reporter);
+    m_uiReporter = reporter ? qobject_cast<UiTelemetryReporter*>(reporter->asQObject()) : nullptr;
 }
 
 void PerformanceTelemetryController::setFrameRateMonitor(FrameRateMonitor* monitor)
@@ -58,7 +58,7 @@ void PerformanceTelemetryController::publishSnapshot(double fps)
 
     QJsonObject notes;
     notes.insert(QStringLiteral("fps_target"), m_guard.fpsTarget);
-    notes.insert(QStringLiteral("reduce_motion_budget"), m_guard.reduceMotionSeconds);
+    notes.insert(QStringLiteral("reduce_motion_budget"), m_guard.reduceMotionAfterSeconds);
     notes.insert(QStringLiteral("overlay_limit"), m_guard.maxOverlayCount);
     notes.insert(QStringLiteral("cpu_util"), m_lastCpu);
     notes.insert(QStringLiteral("gpu_util"), m_lastGpu);

@@ -33,6 +33,9 @@ public:
     void clearScreenInfo() override;
     bool isEnabled() const override { return m_enabled && !m_endpoint.isEmpty(); }
 
+    QObject* asQObject() override { return this; }
+    const QObject* asQObject() const override { return this; }
+
     void reportReduceMotion(const PerformanceGuard& guard,
                             bool active,
                             double fps,

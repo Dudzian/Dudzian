@@ -220,5 +220,8 @@ private:
     void scheduleLicenseReload(int delayMs = 0);
     void scheduleFingerprintReload(int delayMs = 0);
     void clearLicenseState();
+    void finalizeLicenseActivation(const LicenseInfo& info, bool persisted, const QString& sourceDescription);
     bool primeBindingSecret(const QString& fingerprint);
+    void handleBindingSecretCompleted(bool success, const QString& message,
+                                      const QByteArray& stdoutData, const QByteArray& stderrData);
 };
