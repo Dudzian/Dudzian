@@ -28,7 +28,7 @@
 Q_LOGGING_CATEGORY(lcOfflineService, "bot.shell.offline.service")
 
 namespace {
-constexpr auto kDefaultDatasetPath = "data/sample_ohlcv/trend.csv";
+const QString kDefaultDatasetPath = QStringLiteral("data/sample_ohlcv/trend.csv");
 
 constexpr auto kPresetDirectoryEnv = "BOT_CORE_UI_PRESETS_DIR";
 
@@ -334,7 +334,7 @@ void OfflineRuntimeService::ensureDatasetLoaded()
 {
     QString candidate = m_datasetPath;
     if (candidate.trimmed().isEmpty())
-        candidate = QStringLiteral(kDefaultDatasetPath);
+        candidate = kDefaultDatasetPath;
     candidate = bot::shell::utils::expandPath(candidate);
 
     if (!m_datasetDirty && candidate == m_loadedDatasetPath)
