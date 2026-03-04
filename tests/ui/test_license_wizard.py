@@ -20,6 +20,7 @@ except ImportError as exc:  # pragma: no cover - brak bibliotek systemowych
     pytest.skip(f"Brak zależności QtWidgets: {exc}", allow_module_level=True)
 
 from core.security.license_verifier import LicenseVerificationOutcome
+from tests.ui._qt_utils import qt_wait
 from ui.backend.licensing_controller import LicensingController
 
 
@@ -211,6 +212,13 @@ def test_license_wizard_happy_path(tmp_path: Path) -> None:
     assert license_input is not None and apply_button is not None
 
     license_input.setProperty("text", "VALID LICENSE JSON")
+    assert "VALID" in (license_input.property("text") or "")
+    for _ in range(20):
+        app.processEvents()
+        if apply_button.property("enabled"):
+            break
+        qt_wait(10)
+    assert apply_button.property("enabled") is True
     QMetaObject.invokeMethod(apply_button, "click", Qt.DirectConnection)
     app.processEvents()
 
@@ -254,6 +262,12 @@ def test_license_wizard_shows_error_on_invalid_payload(tmp_path: Path) -> None:
     assert license_input is not None and apply_button is not None
 
     license_input.setProperty("text", "BŁĘDNA LICENCJA")
+    for _ in range(20):
+        app.processEvents()
+        if apply_button.property("enabled"):
+            break
+        qt_wait(10)
+    assert apply_button.property("enabled") is True
     QMetaObject.invokeMethod(apply_button, "click", Qt.DirectConnection)
 
     pending_status_id = "licenseWizard.status.pending"
