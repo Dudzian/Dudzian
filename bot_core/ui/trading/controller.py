@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import logging
 from datetime import datetime
-from typing import Any, Callable, Mapping, Optional
+from typing import TYPE_CHECKING, Any, Callable, Mapping, Optional
 
 from bot_core.security.guards import (
     CapabilityGuard,
@@ -11,6 +11,9 @@ from bot_core.security.guards import (
 )
 
 from .state import AppState
+
+if TYPE_CHECKING:
+    from bot_core.runtime.journal import TradingDecisionJournal
 
 __all__ = ["TradingSessionController"]
 
@@ -71,7 +74,9 @@ class TradingSessionController:
 
     # ------------------------------------------------------------------
     def _ensure_license_allows_start(self, guard: CapabilityGuard) -> str:
-        network_text = _tk_value(getattr(self.state, "network", None), default="paper").strip().lower()
+        network_text = (
+            _tk_value(getattr(self.state, "network", None), default="paper").strip().lower()
+        )
         if network_text == "live":
             message = "Tryb live wymaga edycji Pro. Skontaktuj się z opiekunem licencji."
             if not guard.capabilities.is_environment_allowed("live"):
@@ -121,7 +126,9 @@ class TradingSessionController:
                     try:
                         notice_var.set(str(exc))
                     except Exception:  # pragma: no cover - defensywne logowanie
-                        logger.debug("Nie udało się zaktualizować komunikatu licencji", exc_info=True)
+                        logger.debug(
+                            "Nie udało się zaktualizować komunikatu licencji", exc_info=True
+                        )
                 self._notify_error("Licencja", str(exc))
                 return
 

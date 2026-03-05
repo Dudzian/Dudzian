@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Mapping
+from typing import Any, Mapping
 
 import anyio
 import asyncio
@@ -43,7 +43,9 @@ def _query(request: httpx.Request) -> Mapping[str, str]:
     return dict(request.url.params)
 
 
-def test_fetch_account_forwards_headers(api_mock: "respx.Router", client: NowaGieldaHTTPClient) -> None:
+def test_fetch_account_forwards_headers(
+    api_mock: "respx.Router", client: NowaGieldaHTTPClient
+) -> None:
     route = api_mock.get("/private/account").mock(
         return_value=httpx.Response(200, json={"balances": []})
     )
@@ -56,7 +58,9 @@ def test_fetch_account_forwards_headers(api_mock: "respx.Router", client: NowaGi
     assert request.method == "GET"
 
 
-def test_fetch_account_does_not_mutate_headers(api_mock: "respx.Router", client: NowaGieldaHTTPClient) -> None:
+def test_fetch_account_does_not_mutate_headers(
+    api_mock: "respx.Router", client: NowaGieldaHTTPClient
+) -> None:
     api_mock.get("/private/account").mock(return_value=httpx.Response(200, json={"balances": []}))
 
     headers = {"X-Auth": "abc"}
@@ -66,7 +70,9 @@ def test_fetch_account_does_not_mutate_headers(api_mock: "respx.Router", client:
     assert headers == {"X-Auth": "abc"}
 
 
-def test_fetch_ohlcv_builds_query_from_arguments(api_mock: "respx.Router", client: NowaGieldaHTTPClient) -> None:
+def test_fetch_ohlcv_builds_query_from_arguments(
+    api_mock: "respx.Router", client: NowaGieldaHTTPClient
+) -> None:
     route = api_mock.get("/public/ohlcv").mock(
         return_value=httpx.Response(200, json={"symbol": "BTCUSDT", "candles": []})
     )
@@ -109,7 +115,9 @@ def test_fetch_trades_forwards_params_and_headers(
     assert params == {"symbol": "BTCUSDT", "limit": 10, "start": None}
 
 
-def test_fetch_open_orders_forwards_params(api_mock: "respx.Router", client: NowaGieldaHTTPClient) -> None:
+def test_fetch_open_orders_forwards_params(
+    api_mock: "respx.Router", client: NowaGieldaHTTPClient
+) -> None:
     route = api_mock.get("/private/orders").mock(
         return_value=httpx.Response(200, json={"orders": []})
     )
@@ -141,7 +149,9 @@ def test_fetch_order_history_forwards_params(
     assert params == {"symbol": "BTCUSDT", "start": 1, "end": 2, "limit": None}
 
 
-def test_fetch_account_strips_none_params(api_mock: "respx.Router", client: NowaGieldaHTTPClient) -> None:
+def test_fetch_account_strips_none_params(
+    api_mock: "respx.Router", client: NowaGieldaHTTPClient
+) -> None:
     route = api_mock.get("/private/account").mock(
         return_value=httpx.Response(200, json={"balances": []})
     )
@@ -184,7 +194,9 @@ def test_fetch_account_without_params_does_not_append_query(
     assert request.headers["X-Auth"] == "abc"
 
 
-def test_fetch_ohlcv_does_not_mutate_params(api_mock: "respx.Router", client: NowaGieldaHTTPClient) -> None:
+def test_fetch_ohlcv_does_not_mutate_params(
+    api_mock: "respx.Router", client: NowaGieldaHTTPClient
+) -> None:
     api_mock.get("/public/ohlcv").mock(
         return_value=httpx.Response(200, json={"symbol": "BTCUSDT", "candles": []})
     )
@@ -196,7 +208,9 @@ def test_fetch_ohlcv_does_not_mutate_params(api_mock: "respx.Router", client: No
     assert params == {"foo": "bar", "symbol": None}
 
 
-def test_fetch_trades_does_not_mutate_params(api_mock: "respx.Router", client: NowaGieldaHTTPClient) -> None:
+def test_fetch_trades_does_not_mutate_params(
+    api_mock: "respx.Router", client: NowaGieldaHTTPClient
+) -> None:
     api_mock.get("/private/trades").mock(return_value=httpx.Response(200, json={"trades": []}))
 
     params = {"symbol": "BTCUSDT", "limit": 10, "start": None}
@@ -219,7 +233,9 @@ def test_client_sync_calls_work_in_thread_with_running_loop(
     assert result == {"balances": []}
 
 
-def test_create_order_sends_json_payload(api_mock: "respx.Router", client: NowaGieldaHTTPClient) -> None:
+def test_create_order_sends_json_payload(
+    api_mock: "respx.Router", client: NowaGieldaHTTPClient
+) -> None:
     route = api_mock.post("/private/orders").mock(
         return_value=httpx.Response(200, json={"orderId": "1"})
     )
@@ -233,7 +249,9 @@ def test_create_order_sends_json_payload(api_mock: "respx.Router", client: NowaG
     assert json.loads(request.content) == payload
 
 
-def test_cancel_order_builds_query_with_symbol(api_mock: "respx.Router", client: NowaGieldaHTTPClient) -> None:
+def test_cancel_order_builds_query_with_symbol(
+    api_mock: "respx.Router", client: NowaGieldaHTTPClient
+) -> None:
     route = api_mock.delete("/private/orders").mock(
         return_value=httpx.Response(200, json={"success": True})
     )
@@ -245,7 +263,9 @@ def test_cancel_order_builds_query_with_symbol(api_mock: "respx.Router", client:
     assert query == {"orderId": "1", "symbol": "BTCUSDT"}
 
 
-def test_cancel_order_without_symbol(api_mock: "respx.Router", client: NowaGieldaHTTPClient) -> None:
+def test_cancel_order_without_symbol(
+    api_mock: "respx.Router", client: NowaGieldaHTTPClient
+) -> None:
     route = api_mock.delete("/private/orders").mock(
         return_value=httpx.Response(200, json={"success": True})
     )
@@ -256,7 +276,9 @@ def test_cancel_order_without_symbol(api_mock: "respx.Router", client: NowaGield
     assert query == {"orderId": "1"}
 
 
-def test_fetch_account_raises_on_auth_error(api_mock: "respx.Router", client: NowaGieldaHTTPClient) -> None:
+def test_fetch_account_raises_on_auth_error(
+    api_mock: "respx.Router", client: NowaGieldaHTTPClient
+) -> None:
     api_mock.get("/private/account").mock(
         return_value=httpx.Response(401, json={"message": "auth", "code": "INVALID_SIGNATURE"})
     )
@@ -265,9 +287,13 @@ def test_fetch_account_raises_on_auth_error(api_mock: "respx.Router", client: No
         client.fetch_account(headers={"X-Auth": "abc"})
 
 
-def test_fetch_account_maps_rate_limit(api_mock: "respx.Router", client: NowaGieldaHTTPClient) -> None:
+def test_fetch_account_maps_rate_limit(
+    api_mock: "respx.Router", client: NowaGieldaHTTPClient
+) -> None:
     api_mock.get("/private/account").mock(
-        return_value=httpx.Response(429, json={"message": "Too many", "code": "RATE_LIMIT_EXCEEDED"})
+        return_value=httpx.Response(
+            429, json={"message": "Too many", "code": "RATE_LIMIT_EXCEEDED"}
+        )
     )
 
     with pytest.raises(ExchangeThrottlingError):
@@ -292,7 +318,9 @@ def test_fetch_account_wraps_network_errors(
         client.fetch_account(headers={"X-Auth": "abc"})
 
 
-def test_fetch_ticker_raises_for_invalid_json(api_mock: "respx.Router", client: NowaGieldaHTTPClient) -> None:
+def test_fetch_ticker_raises_for_invalid_json(
+    api_mock: "respx.Router", client: NowaGieldaHTTPClient
+) -> None:
     api_mock.get("/public/ticker").mock(return_value=httpx.Response(200, text="not-json"))
 
     with pytest.raises(ExchangeAPIError):

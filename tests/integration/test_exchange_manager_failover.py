@@ -30,7 +30,7 @@ class _DummyCCXTModule:
         self.ticker_price = ticker_price
         self.clients: dict[str, list[object]] = {}
 
-    def __getattr__(self, exchange_id: str) -> type["_Client"]:
+    def __getattr__(self, exchange_id: str) -> type[object]:
         if exchange_id.startswith("__"):
             raise AttributeError(exchange_id)
 
@@ -44,7 +44,9 @@ class _DummyCCXTModule:
                 self.orders: list[tuple] = []
                 self.sandbox_enabled = False
 
-            def setSandboxMode(self, enabled: bool) -> None:  # pragma: no cover - konfiguracja testowa
+            def setSandboxMode(
+                self, enabled: bool
+            ) -> None:  # pragma: no cover - konfiguracja testowa
                 self.sandbox_enabled = bool(enabled)
 
             def set_sandbox_mode(self, enabled: bool) -> None:  # pragma: no cover - alias
@@ -158,7 +160,9 @@ def cleanup_native_adapter(exchange_id: str):
 
 
 @pytest.mark.integration
-def test_exchange_manager_failover_to_ccxt_backend(manager: ExchangeManager, exchange_id: str) -> None:
+def test_exchange_manager_failover_to_ccxt_backend(
+    manager: ExchangeManager, exchange_id: str
+) -> None:
     captured: list[_FailingNativeAdapter] = []
     manager.configure_native_adapter(settings={"decision_journal": {"signed": True}})
     _register_failing_native(
@@ -170,9 +174,13 @@ def test_exchange_manager_failover_to_ccxt_backend(manager: ExchangeManager, exc
     result = manager.create_order("BTC/USDT", "BUY", "MARKET", 0.01)
 
     assert result.extra["order_id"] == 1
-    assert result.extra["raw_response"]["orderId"].startswith(f"{exchange_id}-order-"), "Fallback CCXT order ID expected"
+    assert result.extra["raw_response"]["orderId"].startswith(f"{exchange_id}-order-"), (
+        "Fallback CCXT order ID expected"
+    )
     assert captured and captured[0].calls == 1, "Native adapter should be attempted exactly once"
-    assert "rate_limit_rules" in captured[0].settings, "Shared rate limit rules should be passed to native adapter"
+    assert "rate_limit_rules" in captured[0].settings, (
+        "Shared rate limit rules should be passed to native adapter"
+    )
     assert captured[0].settings.get("decision_journal", {}).get("signed") is True
     assert manager._active_backend == "ccxt"
 
@@ -193,7 +201,9 @@ def test_exchange_manager_stays_on_ccxt_after_rate_limit(
 
     assert first.extra["order_id"] == 1
     assert second.extra["order_id"] == 2, "Subsequent orders should reuse CCXT fallback"
-    assert captured and captured[0].calls == 1, "Rate limit failure should switch permanently to CCXT during cooldown"
+    assert captured and captured[0].calls == 1, (
+        "Rate limit failure should switch permanently to CCXT during cooldown"
+    )
     assert manager._active_backend == "ccxt"
 
 

@@ -1,4 +1,5 @@
 """Komponenty budujące feed danych dla runtime strategii."""
+
 from __future__ import annotations
 
 import asyncio
@@ -11,7 +12,17 @@ import weakref
 from collections import deque
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, AsyncIterable, AsyncIterator, Callable, Iterable, Mapping, MutableMapping, Sequence
+from typing import (
+    Any,
+    AsyncIterable,
+    AsyncIterator,
+    Awaitable,
+    Callable,
+    Iterable,
+    Mapping,
+    MutableMapping,
+    Sequence,
+)
 
 from bot_core.data import CachedOHLCVSource, resolve_cache_namespace, create_cached_ohlcv_source
 from bot_core.data.base import OHLCVRequest, OHLCVResponse
@@ -144,9 +155,7 @@ async def consume_stream_async(
     heartbeat_interval = max(0.0, float(heartbeat_interval))
     timeout_value = None if idle_timeout is None else max(0.0, float(idle_timeout))
 
-    async def _call_maybe_async(
-        func: Callable[..., object] | None, *args: object
-    ) -> object | None:
+    async def _call_maybe_async(func: Callable[..., object] | None, *args: object) -> object | None:
         if func is None:
             return None
         result = func(*args)
@@ -284,11 +293,7 @@ class StreamingStrategyFeed(StrategyDataFeed):
         self._async_task: asyncio.Task[None] | None = None
         self._disabled = False
         self._buffers: dict[str, deque[MarketSnapshot]] = {}
-        self._known_symbols = {
-            symbol
-            for values in self._symbols_map.values()
-            for symbol in values
-        }
+        self._known_symbols = {symbol for values in self._symbols_map.values() for symbol in values}
         for symbol in self._known_symbols:
             self._buffers[symbol] = deque(maxlen=self._buffer_size)
         self._last_event_at: float | None = None
@@ -301,11 +306,15 @@ class StreamingStrategyFeed(StrategyDataFeed):
         if self._disabled:
             return
         if self._async_task and not self._async_task.done():
-            raise RuntimeError("StreamingStrategyFeed jest już uruchomiony w trybie asynchronicznym.")
+            raise RuntimeError(
+                "StreamingStrategyFeed jest już uruchomiony w trybie asynchronicznym."
+            )
         if self._thread and self._thread.is_alive():
             return
         self._stop_event.clear()
-        self._thread = threading.Thread(target=self._run_loop, name=_PIPELINE_THREAD_NAME, daemon=True)
+        self._thread = threading.Thread(
+            target=self._run_loop, name=_PIPELINE_THREAD_NAME, daemon=True
+        )
         self._thread.start()
         self._register_instance()
 
@@ -327,7 +336,9 @@ class StreamingStrategyFeed(StrategyDataFeed):
             try:
                 snapshot = self._event_to_snapshot(event)
             except Exception:
-                self._logger.debug("Nie udało się sparsować zdarzenia streamu: %s", event, exc_info=True)
+                self._logger.debug(
+                    "Nie udało się sparsować zdarzenia streamu: %s", event, exc_info=True
+                )
                 continue
             if snapshot is None:
                 continue
@@ -376,7 +387,9 @@ class StreamingStrategyFeed(StrategyDataFeed):
             self._async_task = None
             self._disabled = False
         if self._thread and self._thread.is_alive():
-            raise RuntimeError("StreamingStrategyFeed jest już uruchomiony w trybie synchronicznym.")
+            raise RuntimeError(
+                "StreamingStrategyFeed jest już uruchomiony w trybie synchronicznym."
+            )
         if self._async_task and not self._async_task.done():
             return self._async_task
 
@@ -469,7 +482,9 @@ class StreamingStrategyFeed(StrategyDataFeed):
                 except TypeError:
                     raise
                 except TimeoutError:
-                    self._logger.warning("Brak nowych danych w streamie strategii przez dłuższy czas")
+                    self._logger.warning(
+                        "Brak nowych danych w streamie strategii przez dłuższy czas"
+                    )
                 except Exception:  # pragma: no cover
                     self._logger.exception("Błąd podczas przetwarzania streamu strategii")
 
@@ -527,10 +542,7 @@ class StreamingStrategyFeed(StrategyDataFeed):
             return None
         symbol = str(symbol_raw)
         timestamp_raw = (
-            event.get("timestamp")
-            or event.get("time")
-            or event.get("ts")
-            or time.time()
+            event.get("timestamp") or event.get("time") or event.get("ts") or time.time()
         )
         try:
             timestamp_value = float(timestamp_raw)
@@ -543,17 +555,26 @@ class StreamingStrategyFeed(StrategyDataFeed):
         else:
             timestamp_ms = int(timestamp_value * 1000.0)
 
-        last_price = StreamingStrategyFeed._float(event.get("last_price") or event.get("price") or event.get("close"))
+        last_price = StreamingStrategyFeed._float(
+            event.get("last_price") or event.get("price") or event.get("close")
+        )
         if last_price is None:
             return None
-        open_price = StreamingStrategyFeed._float(event.get("open_price") or event.get("open")) or last_price
-        high_price = StreamingStrategyFeed._float(event.get("high_24h") or event.get("high")) or max(open_price, last_price)
-        low_price = StreamingStrategyFeed._float(event.get("low_24h") or event.get("low")) or min(open_price, last_price)
-        volume = StreamingStrategyFeed._float(
-            event.get("volume_24h_base")
-            or event.get("volume")
-            or event.get("base_volume")
-        ) or 0.0
+        open_price = (
+            StreamingStrategyFeed._float(event.get("open_price") or event.get("open")) or last_price
+        )
+        high_price = StreamingStrategyFeed._float(
+            event.get("high_24h") or event.get("high")
+        ) or max(open_price, last_price)
+        low_price = StreamingStrategyFeed._float(event.get("low_24h") or event.get("low")) or min(
+            open_price, last_price
+        )
+        volume = (
+            StreamingStrategyFeed._float(
+                event.get("volume_24h_base") or event.get("volume") or event.get("base_volume")
+            )
+            or 0.0
+        )
 
         indicators: dict[str, float] = {}
         for key in (
@@ -663,10 +684,7 @@ def _build_streaming_feed(
 
     channels = stream_config.get("channels")
     if not channels:
-        channels = [
-            channel_param.join(values)
-            for values in symbols_map.values()
-        ]
+        channels = [channel_param.join(values) for values in symbols_map.values()]
 
     exchange_factory = stream_config.get("exchange_factory")
     if callable(exchange_factory):
@@ -699,6 +717,7 @@ def _build_streaming_feed(
         "params",
         "param",
     )
+
     def _build_params() -> Mapping[str, object] | None:
         base_params = {}
         for key in params_keys:
@@ -710,7 +729,9 @@ def _build_streaming_feed(
             base_params.update(scope_params)
         return base_params or None
 
-    serializer = stream_settings.get("public_channel_serializer") or stream_settings.get("channel_serializer")
+    serializer = stream_settings.get("public_channel_serializer") or stream_settings.get(
+        "channel_serializer"
+    )
     channel_serializer = serializer if callable(serializer) else None
     if channel_serializer is None:
         separator = stream_settings.get("public_channel_separator")
@@ -750,9 +771,17 @@ def _build_streaming_feed(
     backoff_base = float(stream_settings.get("backoff_base", 0.25))
     backoff_cap = float(stream_settings.get("backoff_cap", 2.0))
     http_method = stream_settings.get("public_method") or stream_settings.get("method", "GET")
-    params_in_body = bool(stream_settings.get("public_params_in_body", stream_settings.get("params_in_body", False)))
-    channels_in_body = bool(stream_settings.get("public_channels_in_body", stream_settings.get("channels_in_body", False)))
-    cursor_in_body = bool(stream_settings.get("public_cursor_in_body", stream_settings.get("cursor_in_body", False)))
+    params_in_body = bool(
+        stream_settings.get("public_params_in_body", stream_settings.get("params_in_body", False))
+    )
+    channels_in_body = bool(
+        stream_settings.get(
+            "public_channels_in_body", stream_settings.get("channels_in_body", False)
+        )
+    )
+    cursor_in_body = bool(
+        stream_settings.get("public_cursor_in_body", stream_settings.get("cursor_in_body", False))
+    )
 
     buffer_size_raw = stream_settings.get("buffer_size", 256)
     try:

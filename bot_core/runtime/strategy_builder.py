@@ -1,12 +1,18 @@
 """Budowanie i opis strategii z konfiguracji core."""
+
 from __future__ import annotations
 
+from pathlib import Path
 from typing import Any, Mapping, Sequence
 
 from bot_core.config.loader import load_core_config
 from bot_core.config.models import CoreConfig
 from bot_core.security.guards import get_capability_guard
-from bot_core.strategies.catalog import DEFAULT_STRATEGY_CATALOG, StrategyCatalog, StrategyDefinition
+from bot_core.strategies.catalog import (
+    DEFAULT_STRATEGY_CATALOG,
+    StrategyCatalog,
+    StrategyDefinition,
+)
 from bot_core.strategies.base import StrategyEngine
 
 
@@ -212,10 +218,7 @@ def instantiate_strategies(
         if guard is not None and spec.capability:
             guard.require_strategy(
                 spec.capability,
-                message=(
-                    f"Strategia '{name}' wymaga aktywnej licencji "
-                    f"{spec.capability}."
-                ),
+                message=(f"Strategia '{name}' wymaga aktywnej licencji {spec.capability}."),
             )
         registry[name] = catalog.create(definition)
 
@@ -309,4 +312,3 @@ def describe_multi_strategy_configuration(
             include_metadata=True,
         )
     return result
-

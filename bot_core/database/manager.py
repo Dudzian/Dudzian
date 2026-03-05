@@ -6,6 +6,7 @@ wykorzystywanego przez pipeline tradingowy i backtestowy. Zachowuje ten sam
 interfejs co dotychczasowa wersja z monolitu, zapewniając transakcje,
 eksporty i logowanie metryk/zdarzeń.
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -400,7 +401,9 @@ def shutdown_background_loop(timeout: float | None = None) -> None:
                 try:
                     pending = [task for task in asyncio.all_tasks(loop) if not task.done()]
                 except Exception as exc:  # pragma: no cover - defensywne
-                    logger.debug("DatabaseManager background loop pending tasks check failed: %s", exc)
+                    logger.debug(
+                        "DatabaseManager background loop pending tasks check failed: %s", exc
+                    )
                 else:
                     if pending:
                         logger.debug(
@@ -529,7 +532,9 @@ def _log_close_timeout(instance: "DatabaseManager", loop: asyncio.AbstractEventL
     )
 
 
-def _log_background_timeout(instance: "DatabaseManager", loop: asyncio.AbstractEventLoop | None) -> None:
+def _log_background_timeout(
+    instance: "DatabaseManager", loop: asyncio.AbstractEventLoop | None
+) -> None:
     logger.debug(
         "DatabaseManager background close timeout (instance=%s thread=%s loop=%s running=%s closed=%s)",
         id(instance),
@@ -579,12 +584,15 @@ def _schedule_close(instance: "DatabaseManager", *, blocking: bool, timeout: flo
                         _log_close_request_inflight(instance, "instance_loop")
                         # Deterministycznie NIE anulujemy coroutine.
                         # Jeśli blocking=True, timeout jest twardym błędem (teardown ma być przewidywalny).
-                        raise RuntimeError("DatabaseManager close timed out on instance loop.") from None
+                        raise RuntimeError(
+                            "DatabaseManager close timed out on instance loop."
+                        ) from None
                     except Exception as exc:  # pragma: no cover - defensywne
                         logger.debug("close_all_active: close failed: %s", exc)
                         return
             else:
                 try:
+
                     def _schedule_on_loop() -> None:
                         task = asyncio.create_task(instance.close())
 
@@ -669,6 +677,7 @@ def _snapshot_active_instances() -> List["DatabaseManager"]:
     with _active_lock:
         return list(_active_instances)
 
+
 # --- SQLAlchemy Base ---
 class Base(DeclarativeBase):
     pass
@@ -679,7 +688,9 @@ class SchemaVersion(Base):
     __tablename__ = "schema_version"
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     version: Mapped[int] = mapped_column(Integer, nullable=False, unique=True)
-    applied_at: Mapped[dt.datetime] = mapped_column(DateTime, default=dt.datetime.utcnow, nullable=False)
+    applied_at: Mapped[dt.datetime] = mapped_column(
+        DateTime, default=dt.datetime.utcnow, nullable=False
+    )
 
 
 class EngineUser(Base):
@@ -687,7 +698,9 @@ class EngineUser(Base):
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     email: Mapped[str] = mapped_column(String(254), unique=True, nullable=False, index=True)
-    created_at: Mapped[dt.datetime] = mapped_column(DateTime, default=dt.datetime.utcnow, nullable=False)
+    created_at: Mapped[dt.datetime] = mapped_column(
+        DateTime, default=dt.datetime.utcnow, nullable=False
+    )
 
 
 class Order(Base):
@@ -699,7 +712,9 @@ class Order(Base):
     type: Mapped[str] = mapped_column(String(10))  # MARKET/LIMIT/STOP/STOP_LIMIT
     quantity: Mapped[float] = mapped_column(Float)
     price: Mapped[Optional[float]] = mapped_column(Float, nullable=True)  # dla LIMIT/STOP
-    status: Mapped[str] = mapped_column(String(20), default="NEW", index=True)  # NEW/FILLED/PARTIALLY_FILLED/CANCELED
+    status: Mapped[str] = mapped_column(
+        String(20), default="NEW", index=True
+    )  # NEW/FILLED/PARTIALLY_FILLED/CANCELED
     exchange_order_id: Mapped[Optional[str]] = mapped_column(String(128), nullable=True, index=True)
     client_order_id: Mapped[Optional[str]] = mapped_column(String(128), nullable=True, index=True)
     mode: Mapped[str] = mapped_column(String(10), default="live")  # live/paper
@@ -725,15 +740,15 @@ class Trade(Base):
     mode: Mapped[str] = mapped_column(String(10), default="live")
     extra: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
 
-    __table_args__ = (
-        Index("ix_trades_symbol_ts", "symbol", "ts"),
-    )
+    __table_args__ = (Index("ix_trades_symbol_ts", "symbol", "ts"),)
 
 
 class Position(Base):
     __tablename__ = "positions"
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
-    updated_at: Mapped[dt.datetime] = mapped_column(DateTime, default=dt.datetime.utcnow, onupdate=dt.datetime.utcnow)
+    updated_at: Mapped[dt.datetime] = mapped_column(
+        DateTime, default=dt.datetime.utcnow, onupdate=dt.datetime.utcnow
+    )
     symbol: Mapped[str] = mapped_column(String(50), index=True, unique=True)
     side: Mapped[str] = mapped_column(String(5))  # LONG/SHORT/FLAT
     quantity: Mapped[float] = mapped_column(Float)
@@ -741,18 +756,16 @@ class Position(Base):
     unrealized_pnl: Mapped[float] = mapped_column(Float, default=0.0)
     mode: Mapped[str] = mapped_column(String(10), default="live")
 
-    __table_args__ = (
-        Index("ix_positions_symbol_mode", "symbol", "mode"),
-    )
+    __table_args__ = (Index("ix_positions_symbol_mode", "symbol", "mode"),)
 
 
 class EquityCurve(Base):
     __tablename__ = "equity_curve"
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     ts: Mapped[dt.datetime] = mapped_column(DateTime, default=dt.datetime.utcnow, index=True)
-    equity: Mapped[float] = mapped_column(Float)    # wartość portfela
-    balance: Mapped[float] = mapped_column(Float)   # wolne środki
-    pnl: Mapped[float] = mapped_column(Float)       # dzienny/okresowy PnL
+    equity: Mapped[float] = mapped_column(Float)  # wartość portfela
+    balance: Mapped[float] = mapped_column(Float)  # wolne środki
+    pnl: Mapped[float] = mapped_column(Float)  # dzienny/okresowy PnL
     mode: Mapped[str] = mapped_column(String(10), default="live")
 
 
@@ -760,8 +773,10 @@ class LogEntry(Base):
     __tablename__ = "logs"
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     ts: Mapped[dt.datetime] = mapped_column(DateTime, default=dt.datetime.utcnow, index=True)
-    level: Mapped[str] = mapped_column(String(10), index=True)   # INFO/WARN/ERROR
-    source: Mapped[str] = mapped_column(String(50), index=True)  # trading_engine/strategy/exchange/...
+    level: Mapped[str] = mapped_column(String(10), index=True)  # INFO/WARN/ERROR
+    source: Mapped[str] = mapped_column(
+        String(50), index=True
+    )  # trading_engine/strategy/exchange/...
     message: Mapped[str] = mapped_column(Text)
     extra: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     user_id: Mapped[Optional[int]] = mapped_column(Integer, nullable=True, index=True)
@@ -1033,17 +1048,17 @@ class RiskAuditIn(BaseModel):
     state: str
     fraction: float
     # opcjonalne pola
-    side: str | None = None              # BUY/SELL
+    side: str | None = None  # BUY/SELL
     reason: str | None = None
     price: float | None = None
-    mode: str = "live"                   # akceptujemy też 'demo' w walidatorze
+    mode: str = "live"  # akceptujemy też 'demo' w walidatorze
     schema_version: int = 1
     limit_events: List[str] | None = None
     details: Dict[str, Any] | None = None
     stop_loss_pct: float | None = None
     take_profit_pct: float | None = None
     should_trade: bool | None = None
-    ts: float | None = None              # epoch seconds
+    ts: float | None = None  # epoch seconds
 
     @field_validator("symbol")
     @classmethod
@@ -1141,6 +1156,10 @@ class SecurityAuditEventIn(BaseModel):
         return v
 
 
+_DispatchT = TypeVar("_DispatchT")
+_TrackT = TypeVar("_TrackT")
+
+
 # --- Database Manager ---
 @dataclass
 class _EngineState:
@@ -1149,7 +1168,7 @@ class _EngineState:
 
 
 def _allow_when_closing(
-    method: Callable[..., Coroutine[Any, Any, Any]]
+    method: Callable[..., Coroutine[Any, Any, Any]],
 ) -> Callable[..., Coroutine[Any, Any, Any]]:
     setattr(method, "_allow_when_closing", True)
     return method
@@ -1161,8 +1180,6 @@ class DatabaseManager:
     """
 
     _ASYNC_DISPATCH_TIMEOUT_BASE = 5.0
-    _DispatchT = TypeVar("_DispatchT")
-    _TrackT = TypeVar("_TrackT")
     _CLOSE_INFLIGHT_TIMEOUT_BASE = 5.0
     _CLOSE_INFLIGHT_GRACE_PERIOD = 0.5
     _CLOSE_INFLIGHT_POLL_INTERVAL = 0.05
@@ -1186,12 +1203,10 @@ class DatabaseManager:
     # ---------- Inicjalizacja ----------
     @staticmethod
     def _dispatch_to_db_loop(
-        method: Callable[..., Coroutine[Any, Any, _DispatchT]]
+        method: Callable[..., Coroutine[Any, Any, _DispatchT]],
     ) -> Callable[..., Coroutine[Any, Any, _DispatchT]]:
         @functools.wraps(method)
-        async def _wrapper(
-            self: "DatabaseManager", *args: Any, **kwargs: Any
-        ) -> _DispatchT:
+        async def _wrapper(self: "DatabaseManager", *args: Any, **kwargs: Any) -> _DispatchT:
             allow_when_closing = bool(getattr(method, "_allow_when_closing", False))
             return await self._dispatch(
                 method(self, *args, **kwargs),
@@ -1303,7 +1318,9 @@ class DatabaseManager:
         try:
             future = asyncio.run_coroutine_threadsafe(self._track(coro), db_loop)
         except Exception as exc:  # pragma: no cover - defensywne
-            raise RuntimeError("DatabaseManager failed to schedule async call on background loop.") from exc
+            raise RuntimeError(
+                "DatabaseManager failed to schedule async call on background loop."
+            ) from exc
         instance_id = id(self)
 
         def _consume_future_result(done_future: concurrent.futures.Future[Any]) -> None:
@@ -1465,7 +1482,8 @@ class DatabaseManager:
         try:
             while True:
                 pending = [
-                    task for task in self._snapshot_inflight_tasks()
+                    task
+                    for task in self._snapshot_inflight_tasks()
                     if current_task is None or task is not current_task
                 ]
                 if not pending:
@@ -1515,9 +1533,7 @@ class DatabaseManager:
             return
 
         async with self.session() as session:
-            existing = (
-                await session.execute(select(SchemaVersion.version))
-            ).scalars().all()
+            existing = (await session.execute(select(SchemaVersion.version))).scalars().all()
             applied = set(int(v) for v in existing)
             current = max(applied) if applied else 0
             target = int(CURRENT_SCHEMA_VERSION)
@@ -1630,18 +1646,22 @@ class DatabaseManager:
             return rec.id
 
     @_dispatch_to_db_loop
-    async def get_positions(self, user_id: Optional[int], *, mode: Optional[str] = None) -> List[Dict[str, Any]]:
+    async def get_positions(
+        self, user_id: Optional[int], *, mode: Optional[str] = None
+    ) -> List[Dict[str, Any]]:
         """Compatibility helper used by TradingEngine/GUI."""
         rows = await self.get_open_positions(mode=mode)
         out: List[Dict[str, Any]] = []
         for row in rows:
-            out.append({
-                "symbol": row.get("symbol"),
-                "qty": row.get("quantity"),
-                "avg_entry": row.get("avg_price"),
-                "side": row.get("side"),
-                "mode": row.get("mode"),
-            })
+            out.append(
+                {
+                    "symbol": row.get("symbol"),
+                    "qty": row.get("quantity"),
+                    "avg_entry": row.get("avg_price"),
+                    "side": row.get("side"),
+                    "mode": row.get("mode"),
+                }
+            )
         return out
 
     # ---------- OPERACJE: Orders ----------
@@ -1837,7 +1857,9 @@ class DatabaseManager:
             return rec.id
 
     @_dispatch_to_db_loop
-    async def fetch_equity_curve(self, *, limit: int = 1000, mode: Optional[str] = None) -> List[Dict[str, Any]]:
+    async def fetch_equity_curve(
+        self, *, limit: int = 1000, mode: Optional[str] = None
+    ) -> List[Dict[str, Any]]:
         async with self.session() as s:
             stmt = select(EquityCurve).order_by(EquityCurve.ts.asc()).limit(limit)
             if mode:
@@ -1851,7 +1873,9 @@ class DatabaseManager:
         self, metric: Union[PerformanceMetricIn, Dict[str, Any]]
     ) -> int:
         try:
-            payload = metric if isinstance(metric, PerformanceMetricIn) else PerformanceMetricIn(**metric)
+            payload = (
+                metric if isinstance(metric, PerformanceMetricIn) else PerformanceMetricIn(**metric)
+            )
         except ValidationError as exc:
             logger.error("Performance metric validation error: %s", exc)
             raise
@@ -1888,9 +1912,7 @@ class DatabaseManager:
 
     # ---------- OPERACJE: Risk limits ----------
     @_dispatch_to_db_loop
-    async def log_risk_limit(
-        self, snapshot: Union[RiskLimitIn, Dict[str, Any]]
-    ) -> int:
+    async def log_risk_limit(self, snapshot: Union[RiskLimitIn, Dict[str, Any]]) -> int:
         try:
             payload = snapshot if isinstance(snapshot, RiskLimitIn) else RiskLimitIn(**snapshot)
         except ValidationError as exc:
@@ -1952,10 +1974,16 @@ class DatabaseManager:
                 price=float(payload.price) if payload.price is not None else None,
                 mode=payload.mode,
                 schema_version=int(payload.schema_version),
-                limit_events=json.dumps(payload.limit_events) if payload.limit_events is not None else None,
+                limit_events=json.dumps(payload.limit_events)
+                if payload.limit_events is not None
+                else None,
                 details=json.dumps(payload.details) if payload.details is not None else None,
-                stop_loss_pct=float(payload.stop_loss_pct) if payload.stop_loss_pct is not None else None,
-                take_profit_pct=float(payload.take_profit_pct) if payload.take_profit_pct is not None else None,
+                stop_loss_pct=float(payload.stop_loss_pct)
+                if payload.stop_loss_pct is not None
+                else None,
+                take_profit_pct=float(payload.take_profit_pct)
+                if payload.take_profit_pct is not None
+                else None,
                 should_trade=payload.should_trade,
             )
             session.add(rec)
@@ -2042,7 +2070,9 @@ class DatabaseManager:
         limit: int = 100,
     ) -> List[Dict[str, Any]]:
         async with self.session() as session:
-            stmt = select(ApiRateLimitSnapshot).order_by(ApiRateLimitSnapshot.ts.desc()).limit(limit)
+            stmt = (
+                select(ApiRateLimitSnapshot).order_by(ApiRateLimitSnapshot.ts.desc()).limit(limit)
+            )
             if bucket:
                 stmt = stmt.where(ApiRateLimitSnapshot.bucket_name == bucket)
             if endpoint:
@@ -2071,7 +2101,9 @@ class DatabaseManager:
                 detail=payload.detail,
                 actor=payload.actor,
                 user_id=payload.user_id,
-                metadata_json=json.dumps(payload.metadata) if payload.metadata is not None else None,
+                metadata_json=json.dumps(payload.metadata)
+                if payload.metadata is not None
+                else None,
             )
             session.add(rec)
             await session.flush()
@@ -2096,7 +2128,9 @@ class DatabaseManager:
 
     # ---------- OPERACJE: Logi ----------
     @_dispatch_to_db_loop
-    async def add_log(self, *, level: str, source: str, message: str, extra: Optional[Dict[str, Any]] = None) -> int:
+    async def add_log(
+        self, *, level: str, source: str, message: str, extra: Optional[Dict[str, Any]] = None
+    ) -> int:
         payload = extra or {}
         async with self.transaction() as s:
             rec = LogEntry(
@@ -2134,7 +2168,19 @@ class DatabaseManager:
             if rows:
                 headers = list(rows[0].keys())
             else:
-                headers = ["id", "ts", "symbol", "side", "quantity", "price", "fee", "order_id", "pnl", "mode", "extra"]
+                headers = [
+                    "id",
+                    "ts",
+                    "symbol",
+                    "side",
+                    "quantity",
+                    "price",
+                    "fee",
+                    "order_id",
+                    "pnl",
+                    "mode",
+                    "extra",
+                ]
             w = csv.DictWriter(f, fieldnames=headers)
             w.writeheader()
             for r in rows:
@@ -2188,7 +2234,12 @@ class DatabaseManager:
                 if attr_name.endswith("_json"):
                     target_name = attr_name[:-5]
                     json_fields.add(attr_name)
-                if attr_name in json_fields or target_name in {"extra", "details", "context", "metadata"}:
+                if attr_name in json_fields or target_name in {
+                    "extra",
+                    "details",
+                    "context",
+                    "metadata",
+                }:
                     try:
                         out[target_name] = json.loads(val)
                         continue
@@ -2218,6 +2269,7 @@ class DatabaseManager:
                 timeout = _default_timeout(self._DEFAULT_TIMEOUT_BASE, test=30.0, windows=45.0)
 
             if _disable_background_loop():
+
                 async def _runner():
                     self._outer._loop = asyncio.get_running_loop()
                     try:
@@ -2246,7 +2298,9 @@ class DatabaseManager:
                     background_loop,
                 )
             except Exception as exc:  # pragma: no cover - defensywne
-                raise RuntimeError("DatabaseManager failed to schedule sync call on background loop.") from exc
+                raise RuntimeError(
+                    "DatabaseManager failed to schedule sync call on background loop."
+                ) from exc
 
             try:
                 return future.result(timeout=timeout)
@@ -2282,7 +2336,9 @@ class DatabaseManager:
             category: str = "general",
             context: Optional[Dict[str, Any]] = None,
         ) -> int:
-            return self._run(self._outer.log(user_id, level, message, category=category, context=context))
+            return self._run(
+                self._outer.log(user_id, level, message, category=category, context=context)
+            )
 
         def record_order(self, order: Union[OrderIn, Dict[str, Any]]) -> int:
             return self._run(self._outer.record_order(order))
@@ -2297,14 +2353,16 @@ class DatabaseManager:
             exchange_order_id: Optional[str] = None,
             extra: Optional[Dict[str, Any]] = None,
         ) -> None:
-            return self._run(self._outer.update_order_status(
-                order_id=order_id,
-                client_order_id=client_order_id,
-                status=status,
-                price=price,
-                exchange_order_id=exchange_order_id,
-                extra=extra,
-            ))
+            return self._run(
+                self._outer.update_order_status(
+                    order_id=order_id,
+                    client_order_id=client_order_id,
+                    status=status,
+                    price=price,
+                    exchange_order_id=exchange_order_id,
+                    extra=extra,
+                )
+            )
 
         def record_trade(self, trade: Union[TradeIn, Dict[str, Any]]) -> int:
             return self._run(self._outer.record_trade(trade))
@@ -2317,7 +2375,9 @@ class DatabaseManager:
             limit: int = 1000,
             since: Optional[dt.datetime] = None,
         ) -> List[Dict[str, Any]]:
-            return self._run(self._outer.fetch_trades(symbol=symbol, mode=mode, limit=limit, since=since))
+            return self._run(
+                self._outer.fetch_trades(symbol=symbol, mode=mode, limit=limit, since=since)
+            )
 
         def upsert_position(self, pos: Union[PositionIn, Dict[str, Any]]) -> int:
             return self._run(self._outer.upsert_position(pos))
@@ -2328,13 +2388,17 @@ class DatabaseManager:
         def get_open_positions(self, *, mode: Optional[str] = None) -> List[Dict[str, Any]]:
             return self._run(self._outer.get_open_positions(mode=mode))
 
-        def get_positions(self, user_id: Optional[int], *, mode: Optional[str] = None) -> List[Dict[str, Any]]:
+        def get_positions(
+            self, user_id: Optional[int], *, mode: Optional[str] = None
+        ) -> List[Dict[str, Any]]:
             return self._run(self._outer.get_positions(user_id, mode=mode))
 
         def log_equity(self, equity: Union[EquityIn, Dict[str, Any]]) -> int:
             return self._run(self._outer.log_equity(equity))
 
-        def fetch_equity_curve(self, *, limit: int = 1000, mode: Optional[str] = None) -> List[Dict[str, Any]]:
+        def fetch_equity_curve(
+            self, *, limit: int = 1000, mode: Optional[str] = None
+        ) -> List[Dict[str, Any]]:
             return self._run(self._outer.fetch_equity_curve(limit=limit, mode=mode))
 
         def log_performance_metric(self, metric: Union[PerformanceMetricIn, Dict[str, Any]]) -> int:
@@ -2391,9 +2455,7 @@ class DatabaseManager:
                 )
             )
 
-        def log_security_audit(
-            self, event: Union[SecurityAuditEventIn, Dict[str, Any]]
-        ) -> int:
+        def log_security_audit(self, event: Union[SecurityAuditEventIn, Dict[str, Any]]) -> int:
             return self._run(self._outer.log_security_audit(event))
 
         def fetch_security_audit(
@@ -2404,16 +2466,18 @@ class DatabaseManager:
             limit: int = 100,
         ) -> List[Dict[str, Any]]:
             return self._run(
-                self._outer.fetch_security_audit(
-                    action=action, status=status, limit=limit
-                )
+                self._outer.fetch_security_audit(action=action, status=status, limit=limit)
             )
 
         def get_schema_version(self) -> int:
             return self._run(self._outer.get_schema_version())
 
-        def add_log(self, *, level: str, source: str, message: str, extra: Optional[Dict[str, Any]] = None) -> int:
-            return self._run(self._outer.add_log(level=level, source=source, message=message, extra=extra))
+        def add_log(
+            self, *, level: str, source: str, message: str, extra: Optional[Dict[str, Any]] = None
+        ) -> int:
+            return self._run(
+                self._outer.add_log(level=level, source=source, message=message, extra=extra)
+            )
 
         def export_trades_csv(self, *, path: Union[str, Path]) -> Path:
             return self._run(self._outer.export_trades_csv(path=path))
@@ -2447,8 +2511,7 @@ class DatabaseManager:
                 instance_loop = instance._loop
                 if instance_loop is None:
                     logger.debug(
-                        "db_manager/blocking_close_no_instance_loop: "
-                        "instance=%s thread=%s",
+                        "db_manager/blocking_close_no_instance_loop: instance=%s thread=%s",
                         id(instance),
                         threading.current_thread().name,
                     )
@@ -2479,8 +2542,7 @@ class DatabaseManager:
                         logger.debug("close_all_active: close failed: %s", exc)
                 else:
                     logger.debug(
-                        "db_manager/blocking_close_loop_not_running: "
-                        "instance=%s loop=%s closed=%s",
+                        "db_manager/blocking_close_loop_not_running: instance=%s loop=%s closed=%s",
                         id(instance),
                         _loop_name(instance_loop) or instance_loop,
                         loop_closed,

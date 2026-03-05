@@ -110,7 +110,9 @@ def _verify_signature(
         problems.append(f"{sig_path.name}: oczekiwano key_id {hmac_key_id} dla HMAC")
     else:
         try:
-            expected = base64.b64encode(hmac.new(hmac_key, content, sha256).digest()).decode("ascii")
+            expected = base64.b64encode(hmac.new(hmac_key, content, sha256).digest()).decode(
+                "ascii"
+            )
             if hmac_body.get("value") != expected:
                 problems.append(f"{sig_path.name}: niepoprawny podpis HMAC")
         except Exception as exc:  # noqa: BLE001
