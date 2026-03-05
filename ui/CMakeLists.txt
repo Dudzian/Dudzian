@@ -490,14 +490,12 @@ if(BUILD_TESTING)
 
     add_executable(performance_telemetry_controller_tests
         tests/PerformanceTelemetryControllerTest.cpp
-        src/telemetry/PerformanceTelemetryController.cpp
-        src/telemetry/UiTelemetryReporter.cpp
-        src/utils/PerformanceGuard.cpp
     )
     target_include_directories(performance_telemetry_controller_tests PRIVATE src ${GENERATED_DIR})
     target_link_libraries(performance_telemetry_controller_tests
-        PRIVATE ui_tests_qt_base protobuf::libprotobuf gRPC::grpc++)
+        PRIVATE ui_core Qt6::Test)
     add_test(NAME performance_telemetry_controller_tests COMMAND performance_telemetry_controller_tests)
+    append_ui_telemetry_test_env(performance_telemetry_controller_tests)
 
     # CandlestickChartView tests (needs QML/Charts)
     add_executable(candlestick_chart_view_tests
@@ -507,6 +505,7 @@ if(BUILD_TESTING)
     target_include_directories(candlestick_chart_view_tests PRIVATE src ${GENERATED_DIR})
     qt_add_resources(candlestick_chart_view_tests candlestick_chart_view_qml
         PREFIX "/qml/components"
+        BASE "qml/components"
         FILES qml/components/CandlestickChartView.qml
     )
     target_link_libraries(candlestick_chart_view_tests
