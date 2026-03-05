@@ -5,6 +5,8 @@ repos:
       - id: ruff
         args: ["--fix", "--exit-non-zero-on-fix"]
       - id: ruff-format
+        files: '^(bot_core|core|scripts|tests|deploy|stage6_samples|ui)/.*\.(py|pyi)$'
+        exclude: '^ui/(?:(?:vendor|generated|dist)/|(?:.*/)?node_modules/)'
   - repo: https://github.com/pre-commit/mirrors-mypy
     rev: v1.10.0
     hooks:
