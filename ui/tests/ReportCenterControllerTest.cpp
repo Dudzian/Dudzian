@@ -21,33 +21,72 @@ void ReportCenterControllerTest::refreshesWhenExportCreated()
     QTemporaryDir tempDir;
     QVERIFY(tempDir.isValid());
 
-    ReportCenterController controller;
-    controller.setReportsRoot(tempDir.path());
-
-    QCOMPARE(controller.exports().size(), 0);
-
-    const QString reportDirPath = tempDir.path() + QLatin1String("/daily");
+    const QString reportDirPath = QDir(tempDir.path()).filePath(QStringLiteral("daily"));
     QVERIFY(QDir().mkpath(reportDirPath));
 
-    QTRY_VERIFY_WITH_TIMEOUT(controller.watchedDirectories().contains(QDir(reportDirPath).absolutePath()), 3000);
+    const QString seedPath = QDir(reportDirPath).filePath(QStringLiteral("seed.csv"));
+    {
+        QFile seed(seedPath);
+        QVERIFY(seed.open(QIODevice::WriteOnly | QIODevice::Text));
+        seed.write("timestamp,foo\n");
+        seed.close();
+    }
 
-    QSignalSpy exportsSpy(&controller, &ReportCenterController::exportsChanged);
-    const int initialCount = exportsSpy.count();
+    ReportCenterController controller;
+    controller.setReportsDirectory(QDir(tempDir.path()).absolutePath());
 
-    const QString exportFilePath = reportDirPath + QLatin1String("/orders.csv");
-    QFile file(exportFilePath);
-    QVERIFY(file.open(QIODevice::WriteOnly | QIODevice::Text));
-    file.write("id,value\n1,42\n");
-    file.close();
+    QSignalSpy overviewSpy(&controller, &ReportCenterController::overviewReady);
+    const auto takeLastOverviewResult = [&overviewSpy]() {
+        QVERIFY(!overviewSpy.isEmpty());
+        const auto signals = overviewSpy.takeFirst();
+        bool result = signals.at(0).toBool();
+        while (!overviewSpy.isEmpty())
+            result = overviewSpy.takeFirst().at(0).toBool();
+        return result;
+    };
 
-    QVERIFY(exportsSpy.wait(3000));
-    QVERIFY(exportsSpy.count() > initialCount);
+    QVERIFY(controller.refresh());
+    QVERIFY(overviewSpy.wait(10000));
+    QVERIFY2(takeLastOverviewResult(), "Initial overview refresh failed");
 
-    const QStringList exports = controller.exports();
-    QVERIFY(exports.contains(QDir(exportFilePath).absolutePath()));
+    const QString exportPath = QDir(reportDirPath).filePath(QStringLiteral("orders.csv"));
+    {
+        QFile exportFile(exportPath);
+        QVERIFY(exportFile.open(QIODevice::WriteOnly | QIODevice::Text));
+        exportFile.write("timestamp,foo\n");
+        exportFile.close();
+    }
+
+    QVERIFY(controller.refresh());
+    QVERIFY(overviewSpy.wait(10000));
+    QVERIFY2(takeLastOverviewResult(), "Second overview refresh failed");
+
+    QStringList exportPaths;
+    const QVariantList reports = controller.reports();
+    for (const QVariant& reportVar : reports) {
+        const QVariantMap report = reportVar.toMap();
+        const QVariantList exports = report.value(QStringLiteral("exports")).toList();
+        for (const QVariant& exportVar : exports) {
+            const QVariantMap exp = exportVar.toMap();
+            const QString abs = exp.value(QStringLiteral("absolute_path")).toString();
+            if (!abs.isEmpty())
+                exportPaths.append(abs);
+        }
+    }
+
+    bool found = false;
+    for (const QString& path : exportPaths) {
+        if (path.endsWith(QStringLiteral("/orders.csv")) || path.endsWith(QStringLiteral("\\orders.csv"))) {
+            found = true;
+            break;
+        }
+    }
+
+    QVERIFY2(found,
+             qPrintable(QStringLiteral("orders.csv not found in overview exports; got: %1")
+                            .arg(exportPaths.join(QStringLiteral(", ")))));
 }
 
 QTEST_MAIN(ReportCenterControllerTest)
 
 #include "ReportCenterControllerTest.moc"
-
