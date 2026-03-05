@@ -37,7 +37,7 @@ QString writeCertificate(const QTemporaryDir& dir, const QString& name = QString
     const QString path = dir.filePath(name);
     QFile file(path);
     if (!file.open(QIODevice::WriteOnly | QIODevice::Text)) {
-        QFAIL("Nie udało się zapisać przykładowego certyfikatu TLS");
+        QTest::qFail("Nie udało się zapisać przykładowego certyfikatu TLS", __FILE__, __LINE__);
         return {};
     }
     file.write(kSampleCertificatePem);
@@ -49,14 +49,14 @@ QString computeFingerprintSha256(const QString& path)
 {
     QFile file(path);
     if (!file.open(QIODevice::ReadOnly)) {
-        QFAIL("Nie udało się odczytać certyfikatu TLS do obliczenia fingerprintu");
+        QTest::qFail("Nie udało się odczytać certyfikatu TLS do obliczenia fingerprintu", __FILE__, __LINE__);
         return {};
     }
     const QByteArray data = file.readAll();
     file.close();
     const QList<QSslCertificate> certs = QSslCertificate::fromData(data, QSsl::Pem);
     if (certs.isEmpty()) {
-        QFAIL("Brak certyfikatów w pliku testowym TLS");
+        QTest::qFail("Brak certyfikatów w pliku testowym TLS", __FILE__, __LINE__);
         return {};
     }
     return QString::fromLatin1(certs.first().digest(QCryptographicHash::Sha256).toHex());
@@ -158,6 +158,7 @@ void TradingClientAuthMetadataTest::checklistDetectsFingerprintMismatch()
     QTemporaryDir dir;
     QVERIFY(dir.isValid());
     const QString certPath = writeCertificate(dir);
+    QVERIFY(!certPath.isEmpty());
 
     TradingClient client;
     client.setEndpoint(QStringLiteral("localhost:50051"));
@@ -178,7 +179,9 @@ void TradingClientAuthMetadataTest::checklistAcceptsPinnedFingerprint()
     QTemporaryDir dir;
     QVERIFY(dir.isValid());
     const QString certPath = writeCertificate(dir);
+    QVERIFY(!certPath.isEmpty());
     const QString fingerprint = computeFingerprintSha256(certPath);
+    QVERIFY(!fingerprint.isEmpty());
 
     TradingClient client;
     client.setEndpoint(QStringLiteral("localhost:50051"));
@@ -209,9 +212,6 @@ void TradingClientAuthMetadataTest::checklistRequiresClientCertificateWhenMtls()
     QVERIFY(!result.ok);
     QVERIFY(containsErrorLike(result.errors, QStringLiteral("mTLS wymaga")));
 }
-
-QTEST_MAIN(TradingClientAuthMetadataTest)
-#include "TradingClientAuthMetadataTest.moc"
 
 QTEST_MAIN(TradingClientAuthMetadataTest)
 #include "TradingClientAuthMetadataTest.moc"

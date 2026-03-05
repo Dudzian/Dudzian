@@ -24,7 +24,10 @@ QString writeJsonFile(const QString& path, const QJsonObject& object)
 {
     QFile file(path);
     if (!file.open(QIODevice::WriteOnly | QIODevice::Text)) {
-        QFAIL(qPrintable(QStringLiteral("Nie można zapisać pliku testowego %1: %2").arg(path, file.errorString())));
+        QTest::qFail(qPrintable(QStringLiteral("Nie można zapisać pliku testowego %1: %2")
+                                    .arg(path, file.errorString())),
+                     __FILE__, __LINE__);
+        return {};
     }
     file.write(QJsonDocument(object).toJson(QJsonDocument::Compact));
     file.close();
