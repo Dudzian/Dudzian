@@ -18,7 +18,6 @@ class MarketMultiStreamViewTest : public QObject {
 private slots:
     static void initTestCase()
     {
-        Q_INIT_RESOURCE(qml);
         Q_INIT_RESOURCE(market_multi_stream_view_qml);
         qmlRegisterUncreatableType<PerformanceGuard>(
             "BotCore", 1, 0, "PerformanceGuard", QStringLiteral("PerformanceGuard is injected by the application"));
