@@ -16,3 +16,4 @@ repos:
           - types-requests
           - grpcio>=1.62
           - protobuf>=4.24
+          - packaging
