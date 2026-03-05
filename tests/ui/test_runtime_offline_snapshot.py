@@ -1,12 +1,15 @@
 from __future__ import annotations
 
 import json
-import subprocess
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
 
 import pytest
+
+pytest.importorskip("cryptography", reason="cryptography is required by bot_core.ai imports")
+
+from tests._subprocess import run_cli_utf8
 
 from bot_core.ai.repository import FilesystemModelRepository, ModelRepository
 from bot_core.ai.models import ModelArtifact
@@ -113,7 +116,8 @@ def test_offline_snapshot_matches_champion_registry(tmp_path: Path) -> None:
         "--quality-dir",
         str(quality_dir),
     ]
-    result = subprocess.run(command, check=True, capture_output=True, text=True)
+    root = Path(__file__).resolve().parents[2]
+    result = run_cli_utf8(command, check=True, capture_output=True, cwd=root)
     parsed = json.loads(result.stdout)
     assert parsed["decision_summary"]["version"] == champion["version"]
     assert parsed["controller_history"][0]["event"] == "champion"

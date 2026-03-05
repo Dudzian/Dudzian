@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import contextlib
 import json
 import os
 import sys
@@ -18,6 +19,16 @@ DEFAULT_PERFORMANCE_GUARD: MutableMapping[str, object] = {
     "max_overlay_count": 3,
     "disable_secondary_when_fps_below": 0,
 }
+
+
+def _configure_cli_stdio() -> None:
+    """Wymuś UTF-8 na wyjściu CLI dla środowisk Windows z cp1252."""
+
+    for stream in (sys.stdout, sys.stderr):
+        reconfigure = getattr(stream, "reconfigure", None)
+        if callable(reconfigure):
+            with contextlib.suppress(OSError, ValueError):
+                reconfigure(encoding="utf-8", errors="backslashreplace")
 
 
 def _normalize_value(value: object) -> object:
@@ -237,4 +248,5 @@ __all__ = ["build_auto_mode_snapshot", "main"]
 
 
 if __name__ == "__main__":  # pragma: no cover - wejście CLI
+    _configure_cli_stdio()
     raise SystemExit(main())
