@@ -39,9 +39,7 @@ def test_collect_pipeline_compliance_summary_flags_missing_sign_offs(tmp_path, m
             "category": "completeness",
             "status": "alert",
             "policy": {"enforce": True},
-            "issues": [
-                {"code": "missing_bars", "message": "Brak danych", "severity": "critical"}
-            ],
+            "issues": [{"code": "missing_bars", "message": "Brak danych", "severity": "critical"}],
         }
     )
     export_drift_alert_report(
@@ -91,9 +89,7 @@ def test_collect_pipeline_compliance_summary_ignores_archive_alert_without_polic
         {
             "category": "completeness",
             "status": "alert",
-            "issues": [
-                {"code": "missing_bars", "message": "Brak danych", "severity": "critical"}
-            ],
+            "issues": [{"code": "missing_bars", "message": "Brak danych", "severity": "critical"}],
         }
     )
     export_drift_alert_report(
@@ -124,9 +120,7 @@ def test_collect_pipeline_compliance_summary_ignores_archive_alert_without_polic
         update_sign_off(report, role="risk", status="approved", signed_by="RiskOps")
         update_sign_off(report, role="compliance", status="approved", signed_by="CompOps")
 
-    summary = collect_pipeline_compliance_summary(
-        audit_root=audit_root, include_scheduler=False
-    )
+    summary = collect_pipeline_compliance_summary(audit_root=audit_root, include_scheduler=False)
 
     dq_summary = summary["data_quality"]
     assert dq_summary["alerts"] == 1
@@ -208,9 +202,7 @@ def test_collect_pipeline_compliance_summary_when_ready(tmp_path, monkeypatch) -
     assert scheduler["paused"] is False
 
 
-def test_collect_pipeline_compliance_summary_with_all_sign_off_roles(
-    tmp_path, monkeypatch
-) -> None:
+def test_collect_pipeline_compliance_summary_with_all_sign_off_roles(tmp_path, monkeypatch) -> None:
     audit_root = tmp_path / "audit"
     monkeypatch.setenv("AI_DECISION_AUDIT_ROOT", str(audit_root))
     dataset = _dataset()
@@ -260,9 +252,7 @@ def test_collect_pipeline_compliance_summary_with_all_sign_off_roles(
                 signed_by=_signed_by(role),
             )
 
-    summary = collect_pipeline_compliance_summary(
-        audit_root=audit_root, include_scheduler=False
-    )
+    summary = collect_pipeline_compliance_summary(audit_root=audit_root, include_scheduler=False)
 
     assert summary["ready"] is True
     assert summary["issues"] == ()
@@ -284,9 +274,7 @@ def test_collect_pipeline_compliance_summary_includes_additional_roles(
             "category": "completeness",
             "status": "alert",
             "policy": {"enforce": True},
-            "issues": [
-                {"code": "missing_bars", "message": "Brak danych", "severity": "critical"}
-            ],
+            "issues": [{"code": "missing_bars", "message": "Brak danych", "severity": "critical"}],
             "sign_off": {
                 "risk": {"status": "approved"},
                 "compliance": {"status": "approved"},
@@ -312,9 +300,7 @@ def test_collect_pipeline_compliance_summary_includes_additional_roles(
         },
     )
 
-    summary = collect_pipeline_compliance_summary(
-        audit_root=audit_root, include_scheduler=False
-    )
+    summary = collect_pipeline_compliance_summary(audit_root=audit_root, include_scheduler=False)
 
     pending = summary["pending_sign_off"]
     assert pending["risk"] == ()

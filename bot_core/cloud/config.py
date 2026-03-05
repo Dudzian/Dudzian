@@ -126,10 +126,14 @@ def _load_shared_secret(entry: Mapping[str, Any], base: Path) -> tuple[bytes, st
     if inline_value:
         text = str(inline_value)
         return decode_secret(text), "inline"
-    raise CloudConfigError("Każdy klient cloud musi określać shared_secret/shared_secret_env/shared_secret_path")
+    raise CloudConfigError(
+        "Każdy klient cloud musi określać shared_secret/shared_secret_env/shared_secret_path"
+    )
 
 
-def _parse_allowed_clients(entries: Sequence[Any], base: Path) -> tuple[CloudAllowedClientConfig, ...]:
+def _parse_allowed_clients(
+    entries: Sequence[Any], base: Path
+) -> tuple[CloudAllowedClientConfig, ...]:
     if isinstance(entries, (str, bytes)):
         raise CloudConfigError("Sekcja allowed_clients musi być listą obiektów, nie tekstem.")
     allowed: list[CloudAllowedClientConfig] = []
@@ -139,7 +143,9 @@ def _parse_allowed_clients(entries: Sequence[Any], base: Path) -> tuple[CloudAll
         license_id = str(raw.get("license_id") or "").strip()
         fingerprint = str(raw.get("fingerprint") or "").strip()
         if not license_id or not fingerprint:
-            raise CloudConfigError("Definicja klienta cloud musi zawierać license_id oraz fingerprint")
+            raise CloudConfigError(
+                "Definicja klienta cloud musi zawierać license_id oraz fingerprint"
+            )
         secret_bytes, source = _load_shared_secret(raw, base)
         bundle_path = _resolve_optional_path(base, raw.get("license_bundle_path"))
         allowed.append(
@@ -207,12 +213,18 @@ def load_cloud_server_config(path: str | Path) -> CloudServerConfig:
     security_section = payload.get("security", {}) or {}
     if not isinstance(security_section, Mapping):
         security_section = {}
-    audit_path = _resolve_path(config_path.parent, security_section.get("audit_log_path", "logs/security_admin.log"))
+    audit_path = _resolve_path(
+        config_path.parent, security_section.get("audit_log_path", "logs/security_admin.log")
+    )
     allowed_entries = security_section.get("allowed_clients") or ()
     if isinstance(allowed_entries, (str, bytes)):
-        raise CloudConfigError("Sekcja security.allowed_clients musi być listą obiektów, nie tekstem.")
+        raise CloudConfigError(
+            "Sekcja security.allowed_clients musi być listą obiektów, nie tekstem."
+        )
     if not isinstance(allowed_entries, Sequence):
-        raise CloudConfigError("Sekcja security.allowed_clients musi być sekwencją wpisów konfiguracyjnych")
+        raise CloudConfigError(
+            "Sekcja security.allowed_clients musi być sekwencją wpisów konfiguracyjnych"
+        )
     security_cfg = CloudSecurityConfig(
         require_handshake=bool(security_section.get("require_handshake", False)),
         session_ttl_seconds=max(60, int(security_section.get("session_ttl_seconds", 900) or 900)),

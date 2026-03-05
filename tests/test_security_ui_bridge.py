@@ -13,7 +13,9 @@ from bot_core.security.signing import build_hmac_signature
 
 def _write_offline_license(base: Path, payload: dict[str, Any]) -> Path:
     bundle = {
-        "payload_b64": base64.b64encode(json.dumps(payload, ensure_ascii=False).encode("utf-8")).decode("ascii"),
+        "payload_b64": base64.b64encode(
+            json.dumps(payload, ensure_ascii=False).encode("utf-8")
+        ).decode("ascii"),
         "signature_b64": base64.b64encode(b"dummy-signature").decode("ascii"),
     }
     path = base / "license.json"
@@ -91,7 +93,9 @@ def _write_signed_license(base: Path) -> dict[str, Path]:
     )
     revocation_document = {"payload": revocation_payload, "signature": revocation_signature}
     revocation_path = base / "revocations.json"
-    revocation_path.write_text(json.dumps(revocation_document, ensure_ascii=False), encoding="utf-8")
+    revocation_path.write_text(
+        json.dumps(revocation_document, ensure_ascii=False), encoding="utf-8"
+    )
 
     revocation_keys = base / "revocation_keys.json"
     revocation_keys.write_text(
@@ -297,7 +301,11 @@ def test_assign_profile_updates_store_and_logs(tmp_path):
     assert stored_profiles[0]["user_id"] == "alice"
     assert stored_profiles[0]["roles"] == ["metrics.read", "metrics.write"]
 
-    log_entries = [json.loads(line) for line in log_path.read_text(encoding="utf-8").splitlines() if line.strip()]
+    log_entries = [
+        json.loads(line)
+        for line in log_path.read_text(encoding="utf-8").splitlines()
+        if line.strip()
+    ]
     assert len(log_entries) == 1
     assert "admin" in log_entries[0]["message"]
 
@@ -322,7 +330,11 @@ def test_assign_profile_expands_tilde(tmp_path, monkeypatch):
     data = json.loads(profiles.read_text(encoding="utf-8"))
     assert data[0]["user_id"] == "bob"
 
-    log_records = [json.loads(line) for line in log_file.read_text(encoding="utf-8").splitlines() if line.strip()]
+    log_records = [
+        json.loads(line)
+        for line in log_file.read_text(encoding="utf-8").splitlines()
+        if line.strip()
+    ]
     assert log_records
 
 
@@ -352,7 +364,11 @@ def test_remove_profile_entry_deletes_and_logs(tmp_path):
     assert len(data) == 1
     assert data[0]["user_id"] == "alice"
 
-    log_records = [json.loads(line) for line in log_path.read_text(encoding="utf-8").splitlines() if line.strip()]
+    log_records = [
+        json.loads(line)
+        for line in log_path.read_text(encoding="utf-8").splitlines()
+        if line.strip()
+    ]
     assert len(log_records) == 1
     assert "qa removed profile bob" in log_records[0]["message"]
 

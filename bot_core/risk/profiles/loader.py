@@ -41,7 +41,9 @@ class RiskProfileLoader:
             ordered.append(self.manual_profile_name)
         return tuple(ordered)
 
-    def build(self, profile_name: str, *, manual_overrides: Mapping[str, object] | None = None) -> RiskProfile:
+    def build(
+        self, profile_name: str, *, manual_overrides: Mapping[str, object] | None = None
+    ) -> RiskProfile:
         normalized = profile_name.strip().lower()
         if normalized == self.manual_profile_name:
             return self._build_manual(manual_overrides)

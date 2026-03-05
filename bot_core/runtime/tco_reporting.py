@@ -93,7 +93,9 @@ class RuntimeTCOReporter:
         self._events: list[TradeCostEvent] = []
         self._output_dir = Path(self.output_dir).expanduser() if self.output_dir else None
         self._formats = _normalize_formats(self.export_formats)
-        self._flush_every = self.flush_events if self.flush_events and self.flush_events > 0 else None
+        self._flush_every = (
+            self.flush_events if self.flush_events and self.flush_events > 0 else None
+        )
         self._metadata = dict(self.metadata)
         self._basename = self.basename
         self._signing_key = self.signing_key
@@ -182,7 +184,9 @@ class RuntimeTCOReporter:
             artifacts["json"] = json_path
         if self._signing_key and artifacts:
             try:
-                signed = writer.sign_artifacts(artifacts, signing_key=self._signing_key, key_id=self._signing_key_id)
+                signed = writer.sign_artifacts(
+                    artifacts, signing_key=self._signing_key, key_id=self._signing_key_id
+                )
             except Exception:  # pragma: no cover - signing errors should be visible but non-fatal
                 _LOGGER.exception("Failed to sign runtime TCO artifacts")
             else:

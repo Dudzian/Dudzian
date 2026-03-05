@@ -182,8 +182,7 @@ def _normalize_scheduler_scope_entries(
         default=("runtime.schedule.read", "runtime.schedule.write"),
     )
     normalized_overrides = {
-        name: normalize_scopes(values, default=default_scopes)
-        for name, values in overrides.items()
+        name: normalize_scopes(values, default=default_scopes) for name, values in overrides.items()
     }
     return default_scopes, normalized_overrides
 
@@ -255,9 +254,7 @@ def _load_summary_signing_key(args: argparse.Namespace) -> tuple[bytes | None, s
         key_material = args.summary_hmac_key
     elif getattr(args, "summary_hmac_key_file", None):
         try:
-            key_material = (
-                Path(args.summary_hmac_key_file).expanduser().read_text(encoding="utf-8")
-            )
+            key_material = Path(args.summary_hmac_key_file).expanduser().read_text(encoding="utf-8")
         except FileNotFoundError as exc:
             print(
                 f"Nie znaleziono pliku z kluczem HMAC: {args.summary_hmac_key_file}",
@@ -372,4 +369,3 @@ def main(argv: list[str] | None = None) -> int:
 
 if __name__ == "__main__":  # pragma: no cover - obsługa CLI
     raise SystemExit(main())
-

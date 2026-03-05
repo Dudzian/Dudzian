@@ -84,7 +84,9 @@ def test_withdrawal_requires_hardware_signature() -> None:
     )
 
     try:
-        metadata = require_hardware_wallet_metadata({}, account_id="primary", operation="withdrawal")
+        metadata = require_hardware_wallet_metadata(
+            {}, account_id="primary", operation="withdrawal"
+        )
         request = OrderRequest(
             symbol="WITHDRAWAL",
             side="withdraw",
@@ -184,7 +186,9 @@ def test_missing_signer_with_required_wallet_raises() -> None:
     )
 
     try:
-        metadata = require_hardware_wallet_metadata({}, account_id="primary", operation="withdrawal")
+        metadata = require_hardware_wallet_metadata(
+            {}, account_id="primary", operation="withdrawal"
+        )
         request = OrderRequest(
             symbol="WITHDRAWAL",
             side="withdraw",

@@ -1,4 +1,5 @@
 """Próbki danych dla symulacji portfolio_stress Stage6."""
+
 from __future__ import annotations
 
 from pathlib import Path

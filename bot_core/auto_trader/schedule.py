@@ -1,4 +1,5 @@
 """Trading schedule utilities for AutoTrader runtime."""
+
 from __future__ import annotations
 
 from dataclasses import dataclass, field
@@ -149,10 +150,7 @@ class ScheduleWindow:
 
         weekday = moment.weekday()
         seconds = (
-            moment.hour * 3600
-            + moment.minute * 60
-            + moment.second
-            + moment.microsecond / 1_000_000
+            moment.hour * 3600 + moment.minute * 60 + moment.second + moment.microsecond / 1_000_000
         )
 
         if self.start == self.end:
@@ -181,10 +179,7 @@ class ScheduleWindow:
         start_seconds = self._start_seconds
         end_seconds = self._end_seconds
         current_seconds = (
-            moment.hour * 3600
-            + moment.minute * 60
-            + moment.second
-            + moment.microsecond / 1_000_000
+            moment.hour * 3600 + moment.minute * 60 + moment.second + moment.microsecond / 1_000_000
         )
         base_date = moment.date()
         if self.crosses_midnight:
@@ -300,7 +295,13 @@ class ScheduleOverride:
         allow_raw = payload.get("allow_trading", True)
         label_raw = payload.get("label")
         label = None if label_raw is None else str(label_raw)
-        return cls(start=start, end=end, mode=str(mode_raw), allow_trading=_parse_bool(allow_raw), label=label)
+        return cls(
+            start=start,
+            end=end,
+            mode=str(mode_raw),
+            allow_trading=_parse_bool(allow_raw),
+            label=label,
+        )
 
     def to_mapping(self) -> dict[str, object]:
         payload: dict[str, object] = {
@@ -522,7 +523,9 @@ class TradingSchedule:
             now = now.astimezone(self._tz)
         return now
 
-    def _describe_base(self, reference: datetime) -> tuple[str, bool, ScheduleWindow | None, datetime | None]:
+    def _describe_base(
+        self, reference: datetime
+    ) -> tuple[str, bool, ScheduleWindow | None, datetime | None]:
         intervals = self._build_intervals(reference.date())
 
         for start, end, window in intervals:
@@ -556,7 +559,9 @@ class TradingSchedule:
                     break
         return active, upcoming
 
-    def _build_intervals(self, anchor_date: date) -> list[tuple[datetime, datetime, ScheduleWindow]]:
+    def _build_intervals(
+        self, anchor_date: date
+    ) -> list[tuple[datetime, datetime, ScheduleWindow]]:
         intervals: list[tuple[datetime, datetime, ScheduleWindow]] = []
         start_date = anchor_date - timedelta(days=1)
         for offset in range(0, 10):

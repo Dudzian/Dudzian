@@ -66,9 +66,7 @@ def _inject_packaging_stub(env: dict[str, str], workspace: Path) -> Path:
         encoding="utf-8",
     )
     pythonpath = env.get("PYTHONPATH") or ""
-    env["PYTHONPATH"] = (
-        f"{stub_root}{os.pathsep}{pythonpath}" if pythonpath else str(stub_root)
-    )
+    env["PYTHONPATH"] = f"{stub_root}{os.pathsep}{pythonpath}" if pythonpath else str(stub_root)
     return stub_root
 
 

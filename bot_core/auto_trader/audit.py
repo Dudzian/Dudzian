@@ -1,4 +1,5 @@
 """Runtime decision audit log for AutoTrader."""
+
 from __future__ import annotations
 
 from collections import Counter, defaultdict
@@ -420,9 +421,7 @@ class DecisionAuditLog:
 
         with self._lock:
             original_len = len(self._entries)
-            self._entries = [
-                record for record in self._entries if record.timestamp >= threshold
-            ]
+            self._entries = [record for record in self._entries if record.timestamp >= threshold]
             removed = original_len - len(self._entries)
         return removed
 
@@ -520,8 +519,7 @@ class DecisionAuditLog:
                 portfolio_snapshot=dict(entry.get("portfolio_snapshot", {})) or None,
                 metadata=dict(entry.get("metadata", {})) or None,
                 decision_id=self._normalize_single_token(
-                    entry.get("decision_id")
-                    or entry.get("payload", {}).get("decision_id")
+                    entry.get("decision_id") or entry.get("payload", {}).get("decision_id")
                 ),
             )
             parsed.append(record)
@@ -681,8 +679,7 @@ class DecisionAuditLog:
             if mode_filter and record.mode.lower() not in mode_filter:
                 continue
             if decision_filter and (
-                record.decision_id is None
-                or record.decision_id not in decision_filter
+                record.decision_id is None or record.decision_id not in decision_filter
             ):
                 continue
             if has_risk_snapshot is True and record.risk_snapshot is None:
@@ -710,9 +707,7 @@ class DecisionAuditLog:
     def _enforce_retention(self) -> None:
         if self._max_age_s:
             threshold = datetime.now(timezone.utc) - timedelta(seconds=self._max_age_s)
-            self._entries = [
-                record for record in self._entries if record.timestamp >= threshold
-            ]
+            self._entries = [record for record in self._entries if record.timestamp >= threshold]
         if len(self._entries) > self._max_entries:
             excess = len(self._entries) - self._max_entries
             del self._entries[0:excess]

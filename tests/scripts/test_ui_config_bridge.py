@@ -99,9 +99,7 @@ def test_describe_regime_workflow_reports_availability_and_history(tmp_path: Pat
     config_path = Path("config/core.yaml")
     env = os.environ.copy()
     pythonpath = env.get("PYTHONPATH")
-    env["PYTHONPATH"] = os.pathsep.join(
-        tuple(filter(None, [str(Path.cwd()), pythonpath]))
-    )
+    env["PYTHONPATH"] = os.pathsep.join(tuple(filter(None, [str(Path.cwd()), pythonpath])))
 
     result = run_cli_utf8(
         [

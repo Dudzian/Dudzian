@@ -88,7 +88,9 @@ def test_cli_reports_single_instance_event(tmp_path: Path) -> None:
 
 
 @pytest.mark.timeout(5)
-def test_report_single_instance_event_normalizes_metadata(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_report_single_instance_event_normalizes_metadata(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     from bot_core.security import fingerprint as fp_module
 
     monkeypatch.setattr(fp_module, "get_local_fingerprint", lambda: "abc123")

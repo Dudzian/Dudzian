@@ -29,7 +29,9 @@ def test_cli_parses_minimal_config(tmp_path: Path, monkeypatch: pytest.MonkeyPat
         encoding="utf-8",
     )
 
-    def fake_cycle_factory(config: run_stage6_hypercare_cycle.Stage6HypercareConfig, **_: object) -> object:
+    def fake_cycle_factory(
+        config: run_stage6_hypercare_cycle.Stage6HypercareConfig, **_: object
+    ) -> object:
         assert config.output_path == summary_path
 
         class _FakeCycle:
@@ -77,7 +79,9 @@ def test_resolve_market_intel_accepts_direct_file(tmp_path: Path) -> None:
     assert resolved == target
 
 
-def test_resolve_market_intel_prefers_latest_from_directory(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+def test_resolve_market_intel_prefers_latest_from_directory(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
     directory = tmp_path / "market_intel"
     directory.mkdir()
     older = directory / "market_intel_stage6_core_20240101T000000Z.json"
@@ -131,7 +135,9 @@ def test_resolve_market_intel_missing_file_suggests_command(tmp_path: Path) -> N
     assert "--output" in message
 
 
-def test_resolve_market_intel_uses_default_when_missing(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+def test_resolve_market_intel_uses_default_when_missing(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
     monkeypatch.chdir(tmp_path)
     target = Path("var/market_intel/market_intel_stage6_core_20240501T010203Z.json")
     target.parent.mkdir(parents=True, exist_ok=True)

@@ -1,4 +1,5 @@
 """Tests for decision engine utility helpers."""
+
 from __future__ import annotations
 
 import importlib.util

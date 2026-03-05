@@ -5,4 +5,3 @@ from bot_core.exchanges.coinbase.margin import CoinbaseMarginAdapter
 from bot_core.exchanges.coinbase.spot import CoinbaseSpotAdapter
 
 __all__ = ["CoinbaseSpotAdapter", "CoinbaseMarginAdapter", "CoinbaseFuturesAdapter"]
-

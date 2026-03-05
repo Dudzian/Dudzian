@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 """Synchronizes marketplace catalog assets with installer bundles."""
+
 from __future__ import annotations
 
 import argparse
@@ -13,6 +14,7 @@ from typing import Iterable, Mapping, Sequence
 REPO_ROOT = Path(__file__).resolve().parents[1]
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
+
 
 def _strip_conflicting_paths() -> None:
     conflict_dirs = {REPO_ROOT / "scripts", REPO_ROOT / "deploy", REPO_ROOT / "tests"}
@@ -31,6 +33,7 @@ def _strip_conflicting_paths() -> None:
 _strip_conflicting_paths()
 import packaging.version  # ensure zależność dostępna zanim załadujemy bot_core
 from bot_core.security.catalog_signatures import verify_catalog_signature_file
+
 DEFAULT_MARKETPLACE_DIR = REPO_ROOT / "config" / "marketplace"
 DEFAULT_INSTALLER_ROOT = REPO_ROOT / "deploy" / "packaging" / "samples"
 _QA_REVIEW_TOKENS = ("qa", "quality")
@@ -85,7 +88,9 @@ def packages_with_qa_reviews(packages: Iterable[Mapping[str, object]]) -> list[s
         reviewers = release.get("reviewers") or []
         if not isinstance(reviewers, Sequence):
             continue
-        if any(isinstance(reviewer, Mapping) and _is_qa_reviewer(reviewer) for reviewer in reviewers):
+        if any(
+            isinstance(reviewer, Mapping) and _is_qa_reviewer(reviewer) for reviewer in reviewers
+        ):
             approved.append(package_id)
     return approved
 
@@ -155,7 +160,12 @@ def copy_catalog_assets(
     installer_config.mkdir(parents=True, exist_ok=True)
     outputs: list[Path] = []
 
-    for source in (catalog_path, _signature_path(catalog_path), markdown_path, _signature_path(markdown_path)):
+    for source in (
+        catalog_path,
+        _signature_path(catalog_path),
+        markdown_path,
+        _signature_path(markdown_path),
+    ):
         if not source.exists():
             raise ReleaseBundleError(f"Brak wymaganego pliku katalogu: {source}")
         target = installer_config / source.name
@@ -244,9 +254,12 @@ def main(argv: Sequence[str] | None = None) -> int:
     catalog_path = args.catalog.expanduser().resolve()
     markdown_path = args.markdown.expanduser().resolve()
     packages_dir = args.packages.expanduser().resolve()
-    hmac_key = _load_key(args.catalog_hmac_key.expanduser().resolve(), "Klucz HMAC katalogu Marketplace")
+    hmac_key = _load_key(
+        args.catalog_hmac_key.expanduser().resolve(), "Klucz HMAC katalogu Marketplace"
+    )
     ed25519_key = _load_key(
-        args.catalog_ed25519_key.expanduser().resolve(), "Publiczny klucz Ed25519 katalogu Marketplace"
+        args.catalog_ed25519_key.expanduser().resolve(),
+        "Publiczny klucz Ed25519 katalogu Marketplace",
     )
 
     catalog = _load_catalog(catalog_path)

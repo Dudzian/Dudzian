@@ -127,12 +127,16 @@ class ExecutionModeSelector:
     """Kompozytor polityk wybierających tryb egzekucji."""
 
     def __init__(self, policies: Iterable[ExecutionModePolicy] | None = None) -> None:
-        self._policies = tuple(policies) if policies is not None else (
-            OfflinePaperPolicy(),
-            PaperPolicy(),
-            LivePolicy(),
-            AutoPolicy(),
-            FallbackPolicy(),
+        self._policies = (
+            tuple(policies)
+            if policies is not None
+            else (
+                OfflinePaperPolicy(),
+                PaperPolicy(),
+                LivePolicy(),
+                AutoPolicy(),
+                FallbackPolicy(),
+            )
         )
 
     @staticmethod

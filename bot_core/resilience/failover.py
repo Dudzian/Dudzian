@@ -112,6 +112,7 @@ class FailoverDrillReport(HmacSignedReportMixin):
             handle.write("\n")
         return path
 
+
 class ResilienceFailoverDrill:
     """Wykonuje drille failover na podstawie konfiguracji resilience Stage6."""
 
@@ -136,18 +137,14 @@ class ResilienceFailoverDrill:
                 f"max_latency_ms={metrics.max_latency_ms:.2f}>{thresholds.max_latency_ms:.2f}"
             )
         if metrics.error_rate > thresholds.max_error_rate:
-            failures.append(
-                f"error_rate={metrics.error_rate:.4f}>{thresholds.max_error_rate:.4f}"
-            )
+            failures.append(f"error_rate={metrics.error_rate:.4f}>{thresholds.max_error_rate:.4f}")
         if metrics.failover_duration_seconds > thresholds.max_failover_duration_seconds:
             failures.append(
                 "failover_duration_seconds="
                 f"{metrics.failover_duration_seconds:.2f}>{thresholds.max_failover_duration_seconds:.2f}"
             )
         if metrics.orders_failed > thresholds.max_orders_failed:
-            failures.append(
-                f"orders_failed={metrics.orders_failed}>{thresholds.max_orders_failed}"
-            )
+            failures.append(f"orders_failed={metrics.orders_failed}>{thresholds.max_orders_failed}")
 
         status = "failed" if failures else "passed"
         return FailoverDrillResult(
@@ -174,9 +171,7 @@ class ResilienceFailoverDrill:
             value = dataset.get(key, default)
             if isinstance(value, Mapping):
                 numeric_values = [
-                    float(item)
-                    for item in value.values()
-                    if isinstance(item, (int, float))
+                    float(item) for item in value.values() if isinstance(item, (int, float))
                 ]
                 if numeric_values:
                     value = max(numeric_values)

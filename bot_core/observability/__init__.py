@@ -1,4 +1,5 @@
 """Pakiet narzędzi obserwowalności (metryki, eksport)."""
+
 from importlib import import_module
 import importlib.util
 from typing import TYPE_CHECKING, Any
@@ -26,6 +27,7 @@ from bot_core.observability.metrics import (
     get_data_feed_metrics,
     get_global_metrics_registry,
 )
+
 if importlib.util.find_spec("cryptography") is not None:
     from bot_core.observability.exporters import (
         LocalPrometheusExporter,
@@ -39,6 +41,8 @@ else:  # pragma: no cover - fallback dla środowisk testowych bez cryptography
 
     def start_http_server(*args: object, **kwargs: object) -> object:
         raise RuntimeError("start_http_server wymaga zależności security (cryptography).")
+
+
 if importlib.util.find_spec("cryptography") is not None:
     from bot_core.observability.ui_metrics import UiTelemetryPrometheusExporter
 else:  # pragma: no cover - fallback dla środowisk testowych bez cryptography
@@ -84,6 +88,7 @@ def __getattr__(name: str) -> Any:  # pragma: no cover - mechanizm leniwy
         globals()[name] = value
         return value
     raise AttributeError(name)
+
 
 __all__ = [
     "CounterMetric",

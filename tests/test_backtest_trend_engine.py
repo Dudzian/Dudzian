@@ -28,7 +28,7 @@ class StubExchange:
     def quantize_amount(self, symbol: str, amount: float) -> float:
         if amount <= 0:
             return 0.0
-        factor = 10 ** self._precision
+        factor = 10**self._precision
         return math.floor(amount * factor) / factor
 
     def min_notional(self, symbol: str) -> float | None:
@@ -48,7 +48,9 @@ def _make_trend_bars(count: int = 120, *, start_price: float = 100.0):
         high_price = max(open_price, close_price) + 0.2
         low_price = min(open_price, close_price) - 0.2
         volume = 100 + idx
-        candles.append([base_ts + idx * 60_000, open_price, high_price, low_price, close_price, volume])
+        candles.append(
+            [base_ts + idx * 60_000, open_price, high_price, low_price, close_price, volume]
+        )
         price = close_price
     return candles
 
@@ -79,7 +81,9 @@ def test_trend_engine_executes_trade_with_take_profits():
         trail_activate_pct=0.02,
         trail_dist_pct=0.01,
     )
-    cfg = BacktestConfig(symbols=[symbol], strategy=strategy, entry=entry, exit=exit_params, start_index_pad=8)
+    cfg = BacktestConfig(
+        symbols=[symbol], strategy=strategy, entry=entry, exit=exit_params, start_index_pad=8
+    )
 
     trades, summary = engine.run_symbol(symbol, cfg)
 
@@ -114,7 +118,9 @@ def test_risk_sizing_honours_min_notional():
     engine = TrendBacktestEngine(exchange)
 
     cfg = BacktestConfig(symbols=[symbol])
-    cfg = replace(cfg, entry=EntryParams(capital_usdt=100.0, risk_pct=0.01, k_sl_atr=1.5, fee_rate=0.0))
+    cfg = replace(
+        cfg, entry=EntryParams(capital_usdt=100.0, risk_pct=0.01, k_sl_atr=1.5, fee_rate=0.0)
+    )
 
     qty, sl_price, sl_pct = engine._risk_size_long(symbol, price=10.0, atr=0.2, cfg=cfg)
 

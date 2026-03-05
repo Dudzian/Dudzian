@@ -1,4 +1,5 @@
 """Uruchamia cykl hypercare PortfolioGovernora Stage6."""
+
 from __future__ import annotations
 
 import argparse
@@ -54,7 +55,9 @@ def _parse_key_value(items: Sequence[str] | None) -> dict[str, Any]:
 def _load_signing_key(value: str | None, path: str | None, env: str | None) -> bytes | None:
     provided = [item for item in (value, path, env) if item]
     if len(provided) > 1:
-        raise ValueError("Klucz HMAC podaj jako wartość, plik lub zmienną środowiskową – wybierz jedną opcję")
+        raise ValueError(
+            "Klucz HMAC podaj jako wartość, plik lub zmienną środowiskową – wybierz jedną opcję"
+        )
     if value:
         return value.encode("utf-8")
     if env:
@@ -71,32 +74,52 @@ def _load_signing_key(value: str | None, path: str | None, env: str | None) -> b
 
 
 def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(description="Wykonuje cykl hypercare PortfolioGovernora Stage6")
+    parser = argparse.ArgumentParser(
+        description="Wykonuje cykl hypercare PortfolioGovernora Stage6"
+    )
     parser.add_argument("--config", default="config/core.yaml", help="Ścieżka do pliku core.yaml")
     parser.add_argument("--environment", required=True, help="Środowisko z pliku konfiguracyjnego")
     parser.add_argument("--governor", required=True, help="Nazwa PortfolioGovernora w konfiguracji")
-    parser.add_argument("--allocations", required=True, help="Plik JSON/YAML z aktualnymi alokacjami")
-    parser.add_argument("--portfolio-value", type=float, required=True, help="Wartość portfela w USD")
+    parser.add_argument(
+        "--allocations", required=True, help="Plik JSON/YAML z aktualnymi alokacjami"
+    )
+    parser.add_argument(
+        "--portfolio-value", type=float, required=True, help="Wartość portfela w USD"
+    )
     parser.add_argument("--market-intel", required=True, help="Raport Market Intel (JSON)")
     parser.add_argument("--slo-report", help="Raport SLO (JSON)")
     parser.add_argument("--stress-report", help="Raport Stress Lab (JSON)")
-    parser.add_argument("--fallback-dir", action="append", help="Katalog fallback dla raportów SLO/Stress")
-    parser.add_argument("--market-intel-required", action="append", help="Symbol wymagany w raporcie Market Intel")
-    parser.add_argument("--market-intel-max-age", type=float, help="Maksymalny wiek Market Intel (min)")
+    parser.add_argument(
+        "--fallback-dir", action="append", help="Katalog fallback dla raportów SLO/Stress"
+    )
+    parser.add_argument(
+        "--market-intel-required", action="append", help="Symbol wymagany w raporcie Market Intel"
+    )
+    parser.add_argument(
+        "--market-intel-max-age", type=float, help="Maksymalny wiek Market Intel (min)"
+    )
     parser.add_argument("--slo-max-age", type=float, help="Maksymalny wiek raportu SLO (min)")
-    parser.add_argument("--stress-max-age", type=float, help="Maksymalny wiek raportu Stress Lab (min)")
+    parser.add_argument(
+        "--stress-max-age", type=float, help="Maksymalny wiek raportu Stress Lab (min)"
+    )
     parser.add_argument("--summary", help="Ścieżka raportu podsumowania (JSON)")
     parser.add_argument("--summary-signature", help="Ścieżka podpisu HMAC dla podsumowania")
     parser.add_argument("--summary-csv", help="Opcjonalny CSV z korektami alokacji")
     parser.add_argument("--summary-pretty", action="store_true", help="Formatuj JSON z wcięciami")
-    parser.add_argument("--metadata", action="append", help="Metadane raportu w formacie klucz=wartość")
-    parser.add_argument("--log-context", action="append", help="Dodatkowy kontekst logowania klucz=wartość")
+    parser.add_argument(
+        "--metadata", action="append", help="Metadane raportu w formacie klucz=wartość"
+    )
+    parser.add_argument(
+        "--log-context", action="append", help="Dodatkowy kontekst logowania klucz=wartość"
+    )
     parser.add_argument("--signing-key", help="Klucz HMAC dla raportu podsumowania")
     parser.add_argument("--signing-key-env", help="Zmienna środowiskowa z kluczem HMAC")
     parser.add_argument("--signing-key-path", help="Plik z kluczem HMAC")
     parser.add_argument("--signing-key-id", help="Identyfikator klucza HMAC")
     parser.add_argument("--decision-log", help="Ścieżka pliku JSONL decision logu")
-    parser.add_argument("--skip-decision-log", action="store_true", help="Pomiń zapis do decision logu")
+    parser.add_argument(
+        "--skip-decision-log", action="store_true", help="Pomiń zapis do decision logu"
+    )
     return parser
 
 
@@ -118,7 +141,9 @@ def run(argv: Sequence[str] | None = None) -> int:
         log_context = {"environment": args.environment, "governor": args.governor}
         log_context.update(_parse_key_value(args.log_context))
 
-        signing_key = _load_signing_key(args.signing_key, args.signing_key_path, args.signing_key_env)
+        signing_key = _load_signing_key(
+            args.signing_key, args.signing_key_path, args.signing_key_env
+        )
 
         fallback_dirs = tuple(Path(item).expanduser() for item in args.fallback_dir or [])
         raw_market_intel = args.market_intel
@@ -137,18 +162,28 @@ def run(argv: Sequence[str] | None = None) -> int:
             market_intel_path=market_intel_path,
             portfolio_value=float(args.portfolio_value),
             slo_report_path=Path(args.slo_report).expanduser() if args.slo_report else None,
-            stress_report_path=Path(args.stress_report).expanduser() if args.stress_report else None,
+            stress_report_path=Path(args.stress_report).expanduser()
+            if args.stress_report
+            else None,
             fallback_directories=fallback_dirs,
-            market_intel_required_symbols=tuple(args.market_intel_required) if args.market_intel_required else None,
+            market_intel_required_symbols=tuple(args.market_intel_required)
+            if args.market_intel_required
+            else None,
             market_intel_max_age=_minutes_to_timedelta(args.market_intel_max_age),
             slo_max_age=_minutes_to_timedelta(args.slo_max_age),
             stress_max_age=_minutes_to_timedelta(args.stress_max_age),
         )
 
-        summary_path = Path(args.summary).expanduser() if args.summary else _default_summary_path(args.governor)
+        summary_path = (
+            Path(args.summary).expanduser()
+            if args.summary
+            else _default_summary_path(args.governor)
+        )
         output = PortfolioCycleOutputConfig(
             summary_path=summary_path,
-            signature_path=Path(args.summary_signature).expanduser() if args.summary_signature else None,
+            signature_path=Path(args.summary_signature).expanduser()
+            if args.summary_signature
+            else None,
             csv_path=Path(args.summary_csv).expanduser() if args.summary_csv else None,
             pretty_json=bool(args.summary_pretty),
         )
@@ -167,9 +202,7 @@ def run(argv: Sequence[str] | None = None) -> int:
         if not args.skip_decision_log:
             configured_path, log_kwargs = resolve_decision_log_config(core_config)
             decision_log_path = (
-                Path(args.decision_log).expanduser()
-                if args.decision_log
-                else configured_path
+                Path(args.decision_log).expanduser() if args.decision_log else configured_path
             )
             if decision_log_path is None:
                 decision_log_path = default_decision_log_path(args.governor)

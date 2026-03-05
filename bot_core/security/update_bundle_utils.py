@@ -1,4 +1,5 @@
 """Wspólne funkcje dla obsługi pakietów aktualizacji offline."""
+
 from __future__ import annotations
 
 import hashlib
@@ -53,7 +54,11 @@ def describe_update_directory(package_dir: Path) -> dict[str, Any]:
 
     fingerprint = raw_payload.get("fingerprint")
     if fingerprint is None:
-        fingerprint = raw_payload.get("metadata", {}).get("fingerprint") if isinstance(raw_payload.get("metadata"), Mapping) else None
+        fingerprint = (
+            raw_payload.get("metadata", {}).get("fingerprint")
+            if isinstance(raw_payload.get("metadata"), Mapping)
+            else None
+        )
 
     signature = raw_payload.get("signature")
     signature_str: str | None
@@ -65,8 +70,12 @@ def describe_update_directory(package_dir: Path) -> dict[str, Any]:
         signature_str = signature if isinstance(signature, str) else None
         signature_obj = None
 
-    diff_artifact = next((artifact for artifact in manifest.artifacts if artifact.kind == "diff"), None)
-    full_artifact = next((artifact for artifact in manifest.artifacts if artifact.kind != "diff"), None)
+    diff_artifact = next(
+        (artifact for artifact in manifest.artifacts if artifact.kind == "diff"), None
+    )
+    full_artifact = next(
+        (artifact for artifact in manifest.artifacts if artifact.kind != "diff"), None
+    )
 
     integrity_manifest = raw_payload.get("integrity_manifest")
     if integrity_manifest is None:
@@ -74,7 +83,9 @@ def describe_update_directory(package_dir: Path) -> dict[str, Any]:
     if integrity_manifest is not None and not isinstance(integrity_manifest, Mapping):
         raise UpdateDescriptionError("Pole integrity_manifest musi być mapą")
 
-    metadata = raw_payload.get("metadata") if isinstance(raw_payload.get("metadata"), Mapping) else {}
+    metadata = (
+        raw_payload.get("metadata") if isinstance(raw_payload.get("metadata"), Mapping) else {}
+    )
 
     base_id = None
     if diff_artifact is not None:

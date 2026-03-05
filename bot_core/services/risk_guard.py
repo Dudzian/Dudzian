@@ -15,10 +15,10 @@ log = logging.getLogger("services.risk_guard")
 @dataclass
 class RiskGuardConfig:
     symbol: str = "BTCUSDT"
-    max_daily_loss_pct: float = 5.0        # pauza jeśli equity spadnie o X% od startu dnia
-    max_drawdown_pct: float = 20.0         # pauza jeśli DD od szczytu >= X%
+    max_daily_loss_pct: float = 5.0  # pauza jeśli equity spadnie o X% od startu dnia
+    max_drawdown_pct: float = 20.0  # pauza jeśli DD od szczytu >= X%
     auto_resume_cooldown_sec: float = 300  # po ilu sekundach spróbować wznowić
-    publish_every_n: int = 5               # co ile PNL_UPDATE publikować status
+    publish_every_n: int = 5  # co ile PNL_UPDATE publikować status
 
 
 class RiskGuard:
@@ -28,6 +28,7 @@ class RiskGuard:
     - jeśli spadek przekroczy progi -> publikuje AUTOTRADE_STATUS (action=trading_pause),
     - po cooldownie próbuje wznowić (action=trading_resume).
     """
+
     def __init__(self, bus: EventBus, cfg: RiskGuardConfig) -> None:
         self.bus = bus
         self.cfg = cfg
@@ -84,22 +85,27 @@ class RiskGuard:
             # metryki
             daily_dd = 0.0
             if self._session_start_equity and self._session_start_equity > 0:
-                daily_dd = (self._session_start_equity - equity) / self._session_start_equity * 100.0
+                daily_dd = (
+                    (self._session_start_equity - equity) / self._session_start_equity * 100.0
+                )
             peak_dd = 0.0
             if self._equity_peak and self._equity_peak > 0:
                 peak_dd = (self._equity_peak - equity) / self._equity_peak * 100.0
 
             # publikacja statusów co N update'ów
             if self._since_pub >= max(1, self.cfg.publish_every_n):
-                self.bus.publish(EventType.AUTOTRADE_STATUS, {
-                    "component": "RiskGuard",
-                    "action": "status",
-                    "symbol": self.cfg.symbol,
-                    "daily_dd_pct": daily_dd,
-                    "peak_dd_pct": peak_dd,
-                    "paused": self._paused,
-                    "ts": now
-                })
+                self.bus.publish(
+                    EventType.AUTOTRADE_STATUS,
+                    {
+                        "component": "RiskGuard",
+                        "action": "status",
+                        "symbol": self.cfg.symbol,
+                        "daily_dd_pct": daily_dd,
+                        "peak_dd_pct": peak_dd,
+                        "paused": self._paused,
+                        "ts": now,
+                    },
+                )
                 self._since_pub = 0
 
             # logika pauzy
@@ -107,23 +113,31 @@ class RiskGuard:
                 if not self._paused:
                     self._paused = True
                     self._last_pause_ts = now
-                    self.bus.publish(EventType.AUTOTRADE_STATUS, {
-                        "component": "RiskGuard",
-                        "action": "trading_pause",
-                        "symbol": self.cfg.symbol,
-                        "reason": "risk_breach",
-                        "daily_dd_pct": daily_dd,
-                        "peak_dd_pct": peak_dd,
-                        "ts": now
-                    })
+                    self.bus.publish(
+                        EventType.AUTOTRADE_STATUS,
+                        {
+                            "component": "RiskGuard",
+                            "action": "trading_pause",
+                            "symbol": self.cfg.symbol,
+                            "reason": "risk_breach",
+                            "daily_dd_pct": daily_dd,
+                            "peak_dd_pct": peak_dd,
+                            "ts": now,
+                        },
+                    )
             else:
                 # jeśli jesteśmy po pauzie i minął cooldown -> wznowienie
-                if self._paused and (now - self._last_pause_ts) >= max(0.0, float(self.cfg.auto_resume_cooldown_sec)):
+                if self._paused and (now - self._last_pause_ts) >= max(
+                    0.0, float(self.cfg.auto_resume_cooldown_sec)
+                ):
                     self._paused = False
-                    self.bus.publish(EventType.AUTOTRADE_STATUS, {
-                        "component": "RiskGuard",
-                        "action": "trading_resume",
-                        "symbol": self.cfg.symbol,
-                        "reason": "cooldown_elapsed",
-                        "ts": now
-                    })
+                    self.bus.publish(
+                        EventType.AUTOTRADE_STATUS,
+                        {
+                            "component": "RiskGuard",
+                            "action": "trading_resume",
+                            "symbol": self.cfg.symbol,
+                            "reason": "cooldown_elapsed",
+                            "ts": now,
+                        },
+                    )

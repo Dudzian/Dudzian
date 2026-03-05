@@ -1,4 +1,5 @@
 """Walidacja podsumowania smoke testu paper tradingu."""
+
 from __future__ import annotations
 
 import argparse
@@ -89,16 +90,13 @@ def _validate_summary(
         environment = payload.get("environment")
         if environment != require_environment:
             errors.append(
-                "environment: oczekiwano "
-                f"{require_environment!r}, otrzymano {environment!r}"
+                f"environment: oczekiwano {require_environment!r}, otrzymano {environment!r}"
             )
 
     if require_operator is not None:
         operator = payload.get("operator")
         if operator != require_operator:
-            errors.append(
-                f"operator: oczekiwano {require_operator!r}, otrzymano {operator!r}"
-            )
+            errors.append(f"operator: oczekiwano {require_operator!r}, otrzymano {operator!r}")
 
     publish = payload.get("publish")
     if require_publish_success:
@@ -107,10 +105,7 @@ def _validate_summary(
         else:
             publish_status = publish.get("status")
             if publish_status != "ok":
-                errors.append(
-                    "publish.status: oczekiwano 'ok', otrzymano "
-                    f"{publish_status!r}"
-                )
+                errors.append(f"publish.status: oczekiwano 'ok', otrzymano {publish_status!r}")
 
     if require_publish_required:
         if not isinstance(publish, dict):
@@ -135,15 +130,11 @@ def _validate_summary(
                     )
                 else:
                     if coerced != 0:
-                        errors.append(
-                            f"publish.exit_code: oczekiwano 0, otrzymano {coerced}"
-                        )
+                        errors.append(f"publish.exit_code: oczekiwano 0, otrzymano {coerced}")
 
     def _require_step_ok(step_key: str) -> None:
         if not isinstance(publish, dict):
-            errors.append(
-                f"publish: brak sekcji publish pomimo wymogu {step_key}.status=='ok'"
-            )
+            errors.append(f"publish: brak sekcji publish pomimo wymogu {step_key}.status=='ok'")
             return
         step = publish.get(step_key)
         if not isinstance(step, dict):
@@ -151,9 +142,7 @@ def _validate_summary(
             return
         status = step.get("status")
         if status != "ok":
-            errors.append(
-                f"publish.{step_key}.status: oczekiwano 'ok', otrzymano {status!r}"
-            )
+            errors.append(f"publish.{step_key}.status: oczekiwano 'ok', otrzymano {status!r}")
 
     if require_json_sync_ok:
         _require_step_ok("json_sync")
@@ -196,11 +185,13 @@ def main(argv: Sequence[str] | None = None) -> int:
         require_archive_upload_ok=args.require_archive_upload_ok,
     )
 
-    result.update({
-        "status": "ok" if not errors else "failed",
-        "summary": payload,
-        "errors": errors,
-    })
+    result.update(
+        {
+            "status": "ok" if not errors else "failed",
+            "summary": payload,
+            "errors": errors,
+        }
+    )
 
     print(json.dumps(result, indent=2, ensure_ascii=False))
     return 0 if not errors else 1

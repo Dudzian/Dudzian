@@ -56,9 +56,9 @@ def test_plugin_signing_roundtrip_registers_package() -> None:
     assert entry.manifest.identifier == manifest.identifier
     assert entry.signature.key_id == "unit-test"
     assert entry.review.status is ReviewStatus.ACCEPTED
-    assert any(
-        finding.message.startswith("note:") for finding in entry.review.findings
-    ), "Oczekiwano przeniesienia notatek review do wyników"
+    assert any(finding.message.startswith("note:") for finding in entry.review.findings), (
+        "Oczekiwano przeniesienia notatek review do wyników"
+    )
 
 
 def test_plugin_registry_rejects_invalid_manifest() -> None:

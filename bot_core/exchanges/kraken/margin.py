@@ -1,9 +1,16 @@
 """Adapter margin dla giełdy Kraken."""
+
 from __future__ import annotations
 
 from typing import Mapping, MutableMapping, Optional, Sequence
 
-from bot_core.exchanges.base import AccountSnapshot, Environment, ExchangeCredentials, OrderRequest, OrderResult
+from bot_core.exchanges.base import (
+    AccountSnapshot,
+    Environment,
+    ExchangeCredentials,
+    OrderRequest,
+    OrderResult,
+)
 from bot_core.exchanges.error_mapping import raise_for_kraken_error
 from bot_core.exchanges.health import Watchdog
 from bot_core.exchanges.kraken.spot import (
@@ -41,7 +48,9 @@ class KrakenMarginAdapter(KrakenSpotAdapter):
 
     def fetch_account_snapshot(self) -> AccountSnapshot:
         def _call() -> AccountSnapshot:
-            balance_payload = self._private_request(_RequestContext(path="/0/private/Balance", params={}))
+            balance_payload = self._private_request(
+                _RequestContext(path="/0/private/Balance", params={})
+            )
             if not isinstance(balance_payload, Mapping):
                 raise RuntimeError("Niepoprawna odpowiedź Kraken Balance")
             raise_for_kraken_error(payload=balance_payload, default_message="Kraken balance error")
@@ -59,11 +68,21 @@ class KrakenMarginAdapter(KrakenSpotAdapter):
             )
             if not isinstance(trade_payload, Mapping):
                 raise RuntimeError("Niepoprawna odpowiedź Kraken TradeBalance")
-            raise_for_kraken_error(payload=trade_payload, default_message="Kraken trade balance error")
-            trade_result = trade_payload.get("result") if isinstance(trade_payload, Mapping) else None
-            total_equity = _to_float(trade_result.get("eb")) if isinstance(trade_result, Mapping) else 0.0
-            available_margin = _to_float(trade_result.get("tb")) if isinstance(trade_result, Mapping) else 0.0
-            maintenance_margin = _to_float(trade_result.get("m")) if isinstance(trade_result, Mapping) else 0.0
+            raise_for_kraken_error(
+                payload=trade_payload, default_message="Kraken trade balance error"
+            )
+            trade_result = (
+                trade_payload.get("result") if isinstance(trade_payload, Mapping) else None
+            )
+            total_equity = (
+                _to_float(trade_result.get("eb")) if isinstance(trade_result, Mapping) else 0.0
+            )
+            available_margin = (
+                _to_float(trade_result.get("tb")) if isinstance(trade_result, Mapping) else 0.0
+            )
+            maintenance_margin = (
+                _to_float(trade_result.get("m")) if isinstance(trade_result, Mapping) else 0.0
+            )
             return AccountSnapshot(
                 balances=balances,
                 total_equity=total_equity,
@@ -97,7 +116,9 @@ class KrakenMarginAdapter(KrakenSpotAdapter):
                 params["timeinforce"] = request.time_in_force.upper()
             if request.client_order_id:
                 params["userref"] = request.client_order_id
-            payload = self._private_request(_RequestContext(path="/0/private/AddOrder", params=params))
+            payload = self._private_request(
+                _RequestContext(path="/0/private/AddOrder", params=params)
+            )
             if not isinstance(payload, Mapping):
                 raise RuntimeError("Niepoprawna odpowiedź Kraken AddOrder")
             raise_for_kraken_error(payload=payload, default_message="Kraken margin order error")
@@ -123,7 +144,9 @@ class KrakenMarginAdapter(KrakenSpotAdapter):
             if "trade" not in self._permission_set:
                 raise PermissionError("Poświadczenia Kraken nie mają uprawnień tradingowych.")
             params: Mapping[str, object] = {"txid": order_id}
-            payload = self._private_request(_RequestContext(path="/0/private/CancelOrder", params=params))
+            payload = self._private_request(
+                _RequestContext(path="/0/private/CancelOrder", params=params)
+            )
             if not isinstance(payload, Mapping):
                 raise RuntimeError("Niepoprawna odpowiedź Kraken CancelOrder")
             raise_for_kraken_error(payload=payload, default_message="Kraken margin cancel error")

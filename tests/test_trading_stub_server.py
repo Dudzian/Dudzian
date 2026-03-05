@@ -7,6 +7,7 @@ from itertools import islice
 from pathlib import Path
 
 import pytest
+
 grpc = pytest.importorskip("grpc")
 pytest.importorskip("grpc_tools")
 from google.protobuf import empty_pb2
@@ -109,9 +110,7 @@ def test_runtime_service_streams_decisions(trading_modules) -> None:
         grpc.channel_ready_future(channel).result(timeout=5)
         runtime_stub = trading_pb2_grpc.RuntimeServiceStub(channel)
 
-        stream = runtime_stub.StreamDecisions(
-            trading_pb2.StreamDecisionsRequest(limit=1)
-        )
+        stream = runtime_stub.StreamDecisions(trading_pb2.StreamDecisionsRequest(limit=1))
         updates = list(islice(stream, 3))
         assert updates[0].HasField("snapshot")
         assert len(updates[0].snapshot.records) == 1
@@ -194,7 +193,9 @@ def test_orders_risk_metrics_and_health(trading_modules) -> None:
         )
         assert ack.accepted is True
 
-        metrics = list(metrics_stub.StreamMetrics(trading_pb2.MetricsRequest(include_ui_metrics=True)))
+        metrics = list(
+            metrics_stub.StreamMetrics(trading_pb2.MetricsRequest(include_ui_metrics=True))
+        )
         assert metrics
 
         health = health_stub.Check(empty_pb2.Empty())
@@ -245,23 +246,20 @@ def test_tradable_instruments_rpc(trading_modules) -> None:
             trading_pb2.ListTradableInstrumentsRequest(exchange="BINANCE")
         )
         assert len(binance_response.instruments) >= 2
-        assert {
-            item.instrument.symbol for item in binance_response.instruments
-        } >= {"BTC/USDT", "ETH/USDT"}
+        assert {item.instrument.symbol for item in binance_response.instruments} >= {
+            "BTC/USDT",
+            "ETH/USDT",
+        }
 
         coinbase_response = market_stub.ListTradableInstruments(
             trading_pb2.ListTradableInstrumentsRequest(exchange="coinbase")
         )
-        assert [item.instrument.symbol for item in coinbase_response.instruments] == [
-            "SOL/USD"
-        ]
+        assert [item.instrument.symbol for item in coinbase_response.instruments] == ["SOL/USD"]
 
         fallback_response = market_stub.ListTradableInstruments(
             trading_pb2.ListTradableInstrumentsRequest(exchange="UNKNOWN")
         )
-        assert [item.instrument.symbol for item in fallback_response.instruments] == [
-            "BCH/USDT"
-        ]
+        assert [item.instrument.symbol for item in fallback_response.instruments] == ["BCH/USDT"]
         channel.close()
 
 

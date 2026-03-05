@@ -1,4 +1,5 @@
 """Narzędzia do wyboru i budowy usług egzekucji na potrzeby runtime."""
+
 from __future__ import annotations
 
 import logging
@@ -14,6 +15,7 @@ from bot_core.exchanges.base import ExchangeAdapter, OrderRequest
 from bot_core.security import build_transaction_signer_selector
 
 _LOGGER = logging.getLogger(__name__)
+
 
 def resolve_execution_mode(
     settings: RuntimeExecutionSettings | None,
@@ -59,7 +61,9 @@ def _load_decision_log_key(
     return None
 
 
-def _normalize_signer_entry(config: Mapping[str, Any], *, base: str | None = None) -> dict[str, Any]:
+def _normalize_signer_entry(
+    config: Mapping[str, Any], *, base: str | None = None
+) -> dict[str, Any]:
     normalized: dict[str, Any] = {str(key): value for key, value in config.items()}
     key_path = normalized.get("key_path")
     if isinstance(key_path, (str, os.PathLike)):
@@ -72,7 +76,9 @@ def _normalize_signer_entry(config: Mapping[str, Any], *, base: str | None = Non
     return normalized
 
 
-def _normalize_signer_config(config: Mapping[str, Any], *, base: str | None = None) -> dict[str, Any]:
+def _normalize_signer_config(
+    config: Mapping[str, Any], *, base: str | None = None
+) -> dict[str, Any]:
     result: dict[str, Any] = {}
     default_cfg = config.get("default")
     if isinstance(default_cfg, Mapping):
@@ -104,9 +110,7 @@ def _collect_adapters(bootstrap_ctx: Any) -> MutableMapping[str, ExchangeAdapter
             primary = None
     if isinstance(primary, ExchangeAdapter):
         adapters[
-            str(getattr(primary, "name", ""))
-            or getattr(primary, "exchange", "")
-            or "primary"
+            str(getattr(primary, "name", "")) or getattr(primary, "exchange", "") or "primary"
         ] = primary
 
     for attr_name in ("exchange_adapters", "adapters", "adapter_pool"):
@@ -192,7 +196,9 @@ def build_live_execution_service(
 
     qos_cfg = getattr(live_cfg, "qos", None)
     if qos_cfg is not None:
-        per_exchange = {str(name): int(value) for name, value in qos_cfg.per_exchange_concurrency.items()}
+        per_exchange = {
+            str(name): int(value) for name, value in qos_cfg.per_exchange_concurrency.items()
+        }
 
         priority_key = qos_cfg.priority_metadata_key
 

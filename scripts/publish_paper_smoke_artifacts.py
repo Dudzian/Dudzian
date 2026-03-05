@@ -1,4 +1,5 @@
 """Automatyzuje publikację artefaktów smoke testu paper tradingu."""
+
 from __future__ import annotations
 
 import argparse
@@ -98,7 +99,9 @@ def _parse_args(argv: Sequence[str] | None) -> argparse.Namespace:
         action="store_true",
         help="Pomiń wysyłkę archiwum smoke testu",
     )
-    parser.add_argument("--dry-run", action="store_true", help="Tylko waliduj parametry, bez publikacji")
+    parser.add_argument(
+        "--dry-run", action="store_true", help="Tylko waliduj parametry, bez publikacji"
+    )
     parser.add_argument("--json", action="store_true", help="Zwróć wynik w formacie JSON")
     parser.add_argument(
         "--log-level",
@@ -475,9 +478,13 @@ def main(argv: Sequence[str] | None = None) -> int:
                     timestamp = timestamp.replace(tzinfo=timezone.utc)
                 timestamp = timestamp.astimezone(timezone.utc)
             except ValueError:
-                _LOGGER.warning("Nieprawidłowy format znacznika czasu w rekordzie JSONL: %s", timestamp_value)
+                _LOGGER.warning(
+                    "Nieprawidłowy format znacznika czasu w rekordzie JSONL: %s", timestamp_value
+                )
 
-    window_source = summary_data.get("window", {}) if isinstance(summary_data.get("window"), Mapping) else {}
+    window_source = (
+        summary_data.get("window", {}) if isinstance(summary_data.get("window"), Mapping) else {}
+    )
     if not window_source and structured_summary is not None:
         structured_window = structured_summary.get("window")
         if isinstance(structured_window, Mapping):
@@ -514,7 +521,9 @@ def main(argv: Sequence[str] | None = None) -> int:
         json_result = _build_step("error", reason="missing_record", backend=json_cfg.backend)
         exit_code = exit_code or 4
     elif secret_manager is None and json_cfg.backend.lower() == "s3":
-        json_result = _build_step("error", reason="secret_manager_unavailable", backend=json_cfg.backend)
+        json_result = _build_step(
+            "error", reason="secret_manager_unavailable", backend=json_cfg.backend
+        )
         exit_code = exit_code or 5
     else:
         try:
@@ -549,7 +558,9 @@ def main(argv: Sequence[str] | None = None) -> int:
     if archive_cfg is None:
         archive_result = _build_step("skipped", reason="no_config")
     elif args.skip_archive_upload:
-        archive_result = _build_step("skipped", reason="skipped_by_flag", backend=archive_cfg.backend)
+        archive_result = _build_step(
+            "skipped", reason="skipped_by_flag", backend=archive_cfg.backend
+        )
     elif args.dry_run:
         archive_result = _build_step("skipped", reason="dry_run", backend=archive_cfg.backend)
     elif archive_path is None:
@@ -557,7 +568,9 @@ def main(argv: Sequence[str] | None = None) -> int:
         archive_result = _build_step("error", reason="missing_archive", backend=archive_cfg.backend)
         exit_code = exit_code or 7
     elif secret_manager is None and archive_cfg.backend.lower() == "s3":
-        archive_result = _build_step("error", reason="secret_manager_unavailable", backend=archive_cfg.backend)
+        archive_result = _build_step(
+            "error", reason="secret_manager_unavailable", backend=archive_cfg.backend
+        )
         exit_code = exit_code or 5
     else:
         try:

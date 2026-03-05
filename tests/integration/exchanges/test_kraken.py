@@ -24,15 +24,9 @@ def test_kraken_spot_rate_limit_and_retry(monkeypatch, rate_limiter_registry):
 
     responses = {
         "/0/private/Balance": {"result": {"ZUSD": "900"}},
-        "/0/private/TradeBalance": {
-            "result": {"eb": "1000", "mf": "900", "m": "50"}
-        },
-        "/0/public/AssetPairs": {
-            "result": {"XBTUSDT": {"altname": "BTC/USDT"}}
-        },
-        "/0/public/OHLC": {
-            "result": {"XBTUSDT": [[1_700_000_000, 100, 110, 90, 105, 5]]}
-        },
+        "/0/private/TradeBalance": {"result": {"eb": "1000", "mf": "900", "m": "50"}},
+        "/0/public/AssetPairs": {"result": {"XBTUSDT": {"altname": "BTC/USDT"}}},
+        "/0/public/OHLC": {"result": {"XBTUSDT": [[1_700_000_000, 100, 110, 90, 105, 5]]}},
         "/0/private/AddOrder": {"result": {"txid": ["order-123"]}},
     }
     order_attempts = {"count": 0}

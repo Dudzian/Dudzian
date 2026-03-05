@@ -1,4 +1,5 @@
 """Adapter REST dla Kraken Futures zgodny z interfejsem ``ExchangeAdapter``."""
+
 from __future__ import annotations
 
 import base64
@@ -104,7 +105,9 @@ class KrakenFuturesAdapter(ExchangeAdapter):
     def _build_stream(self, scope: str, channels: Sequence[str]) -> LocalLongPollStream:
         stream_settings = dict(self._stream_settings())
         base_url = str(
-            stream_settings.get("base_url", self._settings.get("stream_base_url", "http://127.0.0.1:8765"))
+            stream_settings.get(
+                "base_url", self._settings.get("stream_base_url", "http://127.0.0.1:8765")
+            )
         )
         default_path = f"/stream/{self.name}/{scope}"
         path = str(
@@ -121,7 +124,9 @@ class KrakenFuturesAdapter(ExchangeAdapter):
             )
         )
         timeout = float(stream_settings.get("timeout", self._settings.get("stream_timeout", 10.0)))
-        max_retries = int(stream_settings.get("max_retries", self._settings.get("stream_max_retries", 3)))
+        max_retries = int(
+            stream_settings.get("max_retries", self._settings.get("stream_max_retries", 3))
+        )
         backoff_base = float(
             stream_settings.get("backoff_base", self._settings.get("stream_backoff_base", 0.25))
         )
@@ -341,7 +346,9 @@ class KrakenFuturesAdapter(ExchangeAdapter):
                     for candle in data:
                         if isinstance(candle, Sequence) and len(candle) >= 6:
                             ts, o, h, l, c, v = candle[:6]
-                            candles.append([float(ts), float(o), float(h), float(l), float(c), float(v)])
+                            candles.append(
+                                [float(ts), float(o), float(h), float(l), float(c), float(v)]
+                            )
                 break
         if limit is not None:
             candles = candles[:limit]
@@ -435,7 +442,9 @@ class KrakenFuturesAdapter(ExchangeAdapter):
 
     def stream_private_data(self, *, channels: Sequence[str]):  # type: ignore[override]
         if not ({"read", "trade"} & self._permission_set):
-            raise PermissionError("Poświadczenia Kraken Futures nie pozwalają na prywatny stream danych.")
+            raise PermissionError(
+                "Poświadczenia Kraken Futures nie pozwalają na prywatny stream danych."
+            )
         return self._build_stream("private", channels)
 
     # ------------------------------------------------------------------
@@ -455,7 +464,9 @@ class KrakenFuturesAdapter(ExchangeAdapter):
 
     def _private_request(self, context: _RequestContext) -> Mapping[str, Any]:
         if not self.credentials.secret:
-            raise PermissionError("Poświadczenia Kraken Futures wymagają sekretu do wywołań prywatnych.")
+            raise PermissionError(
+                "Poświadczenia Kraken Futures wymagają sekretu do wywołań prywatnych."
+            )
 
         path = context.path
         query = f"?{urlencode(context.params)}" if context.params else ""
@@ -483,7 +494,9 @@ class KrakenFuturesAdapter(ExchangeAdapter):
             "Nonce": nonce,
         }
         self._ensure_network_access(url)
-        request = Request(url, data=body_bytes if body_bytes else None, headers=headers, method=context.method)
+        request = Request(
+            url, data=body_bytes if body_bytes else None, headers=headers, method=context.method
+        )
         with urlopen(request, timeout=self._http_timeout) as response:
             payload = json.loads(response.read().decode("utf-8"))
         _ensure_success(payload)

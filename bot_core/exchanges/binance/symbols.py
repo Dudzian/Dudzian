@@ -1,4 +1,5 @@
 """Mapowanie i normalizacja symboli dla adaptera Binance Spot."""
+
 from __future__ import annotations
 
 from typing import Iterable, Mapping
@@ -92,4 +93,3 @@ __all__ = [
     "supported_symbols",
     "to_exchange_symbol",
 ]
-

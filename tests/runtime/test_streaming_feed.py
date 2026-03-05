@@ -102,7 +102,9 @@ class _StubAsyncStreamFeed:
             await task
 
 
-def test_build_streaming_feed_uses_adapter_metrics_registry(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_build_streaming_feed_uses_adapter_metrics_registry(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     registry = MetricsRegistry()
 
     class _StubAdapter:
@@ -531,9 +533,18 @@ def test_decision_aware_sink_respects_min_probability_threshold() -> None:
         def __init__(self) -> None:
             self.invocations: list = []
 
-        def evaluate_candidate(self, candidate, _context):  # pragma: no cover - nie powinien zostać wywołany
+        def evaluate_candidate(
+            self, candidate, _context
+        ):  # pragma: no cover - nie powinien zostać wywołany
             self.invocations.append(candidate)
-            return SimpleNamespace(accepted=False, reasons=(), risk_flags=(), stress_failures=(), cost_bps=None, net_edge_bps=None)
+            return SimpleNamespace(
+                accepted=False,
+                reasons=(),
+                risk_flags=(),
+                stress_failures=(),
+                cost_bps=None,
+                net_edge_bps=None,
+            )
 
     orchestrator = _StubOrchestrator()
     journal = _DummyJournal()
@@ -740,9 +751,7 @@ def test_decision_aware_sink_exposes_history_and_summary() -> None:
                 "model_expected_return_bps": 9.0,
                 "model_success_probability": 0.72,
                 "model_name": "gbm_v2",
-                "model_selection": SimpleNamespace(
-                    to_mapping=lambda: {"selected": "gbm_v2"}
-                ),
+                "model_selection": SimpleNamespace(to_mapping=lambda: {"selected": "gbm_v2"}),
                 "thresholds_snapshot": {
                     "min_probability": 0.6,
                     "max_cost_bps": 15.0,
@@ -963,9 +972,7 @@ def test_decision_aware_sink_exposes_history_and_summary() -> None:
     )
     assert summary["net_edge_threshold_breaches"] == 1
     assert summary["accepted_net_edge_threshold_margin_count"] == 2
-    assert summary["accepted_avg_net_edge_threshold_margin"] == pytest.approx(
-        (1.0 + 2.1) / 2
-    )
+    assert summary["accepted_avg_net_edge_threshold_margin"] == pytest.approx((1.0 + 2.1) / 2)
     assert summary["accepted_net_edge_threshold_breaches"] == 0
     assert summary["accepted_min_net_edge_threshold_margin"] == pytest.approx(1.0)
     assert summary["accepted_max_net_edge_threshold_margin"] == pytest.approx(2.1)
@@ -988,9 +995,7 @@ def test_decision_aware_sink_exposes_history_and_summary() -> None:
     )
     assert summary["latency_threshold_breaches"] == 1
     assert summary["accepted_latency_threshold_margin_count"] == 2
-    assert summary["accepted_avg_latency_threshold_margin"] == pytest.approx(
-        (19.0 + 17.5) / 2
-    )
+    assert summary["accepted_avg_latency_threshold_margin"] == pytest.approx((19.0 + 17.5) / 2)
     assert summary["accepted_latency_threshold_breaches"] == 0
     assert summary["accepted_min_latency_threshold_margin"] == pytest.approx(17.5)
     assert summary["accepted_max_latency_threshold_margin"] == pytest.approx(19.0)
@@ -1013,9 +1018,7 @@ def test_decision_aware_sink_exposes_history_and_summary() -> None:
     )
     assert summary["notional_threshold_breaches"] == 1
     assert summary["accepted_notional_threshold_margin_count"] == 2
-    assert summary["accepted_avg_notional_threshold_margin"] == pytest.approx(
-        (500.0 + 200.0) / 2
-    )
+    assert summary["accepted_avg_notional_threshold_margin"] == pytest.approx((500.0 + 200.0) / 2)
     assert summary["accepted_notional_threshold_breaches"] == 0
     assert summary["accepted_min_notional_threshold_margin"] == pytest.approx(200.0)
     assert summary["accepted_max_notional_threshold_margin"] == pytest.approx(500.0)
@@ -1182,47 +1185,25 @@ def test_decision_aware_sink_exposes_history_and_summary() -> None:
     assert summary["rejected_std_model_expected_value_bps"] == pytest.approx(0.0)
     assert summary["rejected_sum_model_expected_value_bps"] == pytest.approx(1.47)
     assert summary["rejected_model_expected_value_bps_count"] == 1
-    assert summary["accepted_avg_model_expected_value_minus_cost_bps"] == pytest.approx(
-        4.592
-    )
-    assert summary["accepted_median_model_expected_value_minus_cost_bps"] == pytest.approx(
-        4.592
-    )
+    assert summary["accepted_avg_model_expected_value_minus_cost_bps"] == pytest.approx(4.592)
+    assert summary["accepted_median_model_expected_value_minus_cost_bps"] == pytest.approx(4.592)
     assert summary["accepted_p90_model_expected_value_minus_cost_bps"] == pytest.approx(
         4.9824, rel=1e-3
     )
-    assert summary["accepted_min_model_expected_value_minus_cost_bps"] == pytest.approx(
-        4.104
-    )
-    assert summary["accepted_max_model_expected_value_minus_cost_bps"] == pytest.approx(
-        5.08
-    )
+    assert summary["accepted_min_model_expected_value_minus_cost_bps"] == pytest.approx(4.104)
+    assert summary["accepted_max_model_expected_value_minus_cost_bps"] == pytest.approx(5.08)
     assert summary["accepted_std_model_expected_value_minus_cost_bps"] == pytest.approx(
         0.488, rel=1e-3
     )
-    assert summary["accepted_sum_model_expected_value_minus_cost_bps"] == pytest.approx(
-        9.184
-    )
+    assert summary["accepted_sum_model_expected_value_minus_cost_bps"] == pytest.approx(9.184)
     assert summary["accepted_model_expected_value_minus_cost_bps_count"] == 2
-    assert summary["rejected_avg_model_expected_value_minus_cost_bps"] == pytest.approx(
-        -1.03
-    )
-    assert summary["rejected_median_model_expected_value_minus_cost_bps"] == pytest.approx(
-        -1.03
-    )
-    assert summary["rejected_p90_model_expected_value_minus_cost_bps"] == pytest.approx(
-        -1.03
-    )
-    assert summary["rejected_min_model_expected_value_minus_cost_bps"] == pytest.approx(
-        -1.03
-    )
-    assert summary["rejected_max_model_expected_value_minus_cost_bps"] == pytest.approx(
-        -1.03
-    )
+    assert summary["rejected_avg_model_expected_value_minus_cost_bps"] == pytest.approx(-1.03)
+    assert summary["rejected_median_model_expected_value_minus_cost_bps"] == pytest.approx(-1.03)
+    assert summary["rejected_p90_model_expected_value_minus_cost_bps"] == pytest.approx(-1.03)
+    assert summary["rejected_min_model_expected_value_minus_cost_bps"] == pytest.approx(-1.03)
+    assert summary["rejected_max_model_expected_value_minus_cost_bps"] == pytest.approx(-1.03)
     assert summary["rejected_std_model_expected_value_minus_cost_bps"] == pytest.approx(0.0)
-    assert summary["rejected_sum_model_expected_value_minus_cost_bps"] == pytest.approx(
-        -1.03
-    )
+    assert summary["rejected_sum_model_expected_value_minus_cost_bps"] == pytest.approx(-1.03)
     assert summary["rejected_model_expected_value_minus_cost_bps_count"] == 1
     assert summary["median_expected_value_minus_cost_bps"] == pytest.approx(6.6)
     assert summary["min_expected_value_minus_cost_bps"] == pytest.approx(-1.3)

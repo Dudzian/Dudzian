@@ -11,7 +11,6 @@ sys_path_added = False
 if not sys_path_added:
     import sys
 
-    
     sys_path_added = True
 
 from scripts import publish_paper_smoke_artifacts as publish_script  # noqa: E402
@@ -57,11 +56,15 @@ def _build_config(tmp_path: Path, *, reporting: dict | None = None) -> Path:
     if reporting is not None:
         config_payload["reporting"] = reporting
     config_path = tmp_path / "core.yaml"
-    config_path.write_text(yaml.safe_dump(config_payload, allow_unicode=True, sort_keys=False), encoding="utf-8")
+    config_path.write_text(
+        yaml.safe_dump(config_payload, allow_unicode=True, sort_keys=False), encoding="utf-8"
+    )
     return config_path
 
 
-def _write_json_log(json_log_path: Path, *, summary_sha: str, timestamp: str = "2025-01-02T03:04:05+00:00") -> None:
+def _write_json_log(
+    json_log_path: Path, *, summary_sha: str, timestamp: str = "2025-01-02T03:04:05+00:00"
+) -> None:
     record = {
         "record_id": "J-20250102T030405-deadbeef",
         "timestamp": timestamp,
@@ -178,7 +181,9 @@ def test_publish_success_local_backends(tmp_path: Path, capsys: pytest.CaptureFi
     assert archived_files[0].is_file()
 
 
-def test_missing_reporting_config_skips_operations(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+def test_missing_reporting_config_skips_operations(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
     report_dir = tmp_path / "report"
     report_dir.mkdir()
     _write_summary(report_dir)
@@ -260,7 +265,9 @@ def test_missing_record_returns_error(tmp_path: Path, capsys: pytest.CaptureFixt
     assert output["json_sync"]["reason"] == "missing_record"
 
 
-def test_publish_uses_structured_summary_defaults(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+def test_publish_uses_structured_summary_defaults(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
     report_dir = tmp_path / "report"
     report_dir.mkdir()
     _write_summary(report_dir)

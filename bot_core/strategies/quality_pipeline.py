@@ -90,7 +90,9 @@ class StrategyQualityPipeline:
                 scenarios.append(scenario)
         return tuple(scenarios)
 
-    def _parse_scenario(self, payload: Mapping[str, Any], *, source_path: Path) -> StrategyQualityScenario:
+    def _parse_scenario(
+        self, payload: Mapping[str, Any], *, source_path: Path
+    ) -> StrategyQualityScenario:
         engine = str(payload.get("engine") or "").strip()
         if not engine:
             raise ValueError(f"Scenario in {source_path} is missing engine key")
@@ -105,8 +107,7 @@ class StrategyQualityPipeline:
         name = str(payload.get("name") or engine).strip()
         parameters = dict(payload.get("parameters") or {})
         calibration_metrics = {
-            key: float(value)
-            for key, value in (payload.get("calibration_metrics") or {}).items()
+            key: float(value) for key, value in (payload.get("calibration_metrics") or {}).items()
         }
 
         acceptance_payload: MutableMapping[str, Mapping[str, float]] = {}
@@ -164,7 +165,9 @@ class StrategyQualityPipeline:
 
     def _save_report(self, report: StrategyQualityReport) -> None:
         destination = self._report_dir / f"{report.scenario.name}.json"
-        destination.write_text(json.dumps(report.to_dict(), indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+        destination.write_text(
+            json.dumps(report.to_dict(), indent=2, ensure_ascii=False) + "\n", encoding="utf-8"
+        )
 
     def _save_summary(self, reports: Sequence[StrategyQualityReport]) -> None:
         summary = {
@@ -182,7 +185,9 @@ class StrategyQualityPipeline:
             ],
         }
         summary_path = self._report_dir / "summary.json"
-        summary_path.write_text(json.dumps(summary, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+        summary_path.write_text(
+            json.dumps(summary, indent=2, ensure_ascii=False) + "\n", encoding="utf-8"
+        )
 
 
 __all__ = [
@@ -207,4 +212,3 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-

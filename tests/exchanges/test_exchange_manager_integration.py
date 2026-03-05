@@ -139,7 +139,9 @@ class _RecordingJournal:
 
 
 @pytest.mark.parametrize("config_path", sorted(Path("config/exchanges").glob("*.yaml")))
-def test_exchange_profiles_spawn_backends(config_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_exchange_profiles_spawn_backends(
+    config_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     payload = yaml.safe_load(config_path.read_text(encoding="utf-8")) or {}
     for env_name in _collect_env_names(payload):
         monkeypatch.setenv(env_name, f"stub-{env_name.lower()}")
@@ -195,5 +197,9 @@ def test_paper_futures_simulator_records_risk_journal(monkeypatch: pytest.Monkey
     manager.load_markets()
     manager.create_order("BTC/USDT", OrderSide.BUY, OrderType.MARKET, 0.01)
 
-    assert any(getattr(event, "event_type", "") == "simulator_cost_validation" for event in journal.events)
-    assert any(getattr(event, "event_type", "") == "simulator_trade_costs" for event in journal.events)
+    assert any(
+        getattr(event, "event_type", "") == "simulator_cost_validation" for event in journal.events
+    )
+    assert any(
+        getattr(event, "event_type", "") == "simulator_trade_costs" for event in journal.events
+    )

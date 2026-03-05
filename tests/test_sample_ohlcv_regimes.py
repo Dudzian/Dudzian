@@ -14,7 +14,9 @@ from tests.sample_data_loader import (
 
 
 @pytest.mark.parametrize("name", sorted(SAMPLE_EXPECTATIONS))
-def test_sample_series_align_with_calibrated_regimes(name: str, caplog: pytest.LogCaptureFixture) -> None:
+def test_sample_series_align_with_calibrated_regimes(
+    name: str, caplog: pytest.LogCaptureFixture
+) -> None:
     expectations = SAMPLE_EXPECTATIONS[name]
     classifier = MarketRegimeClassifier(min_history=30)
     df = load_sample_ohlcv(name)

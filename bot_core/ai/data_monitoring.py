@@ -101,9 +101,7 @@ _SIGN_OFF_DEFAULT_NOTES = {
     "risk": "Awaiting Risk review",
     "compliance": "Awaiting Compliance sign-off",
 }
-_POLICY_ENFORCE_TRUE_VALUES = frozenset(
-    {"1", "true", "yes", "on", "enforce", "enforced"}
-)
+_POLICY_ENFORCE_TRUE_VALUES = frozenset({"1", "true", "yes", "on", "enforce", "enforced"})
 _POLICY_ENFORCE_FALSE_VALUES = frozenset(
     {"0", "false", "no", "off", "skip", "not_enforced", "not-enforced"}
 )
@@ -495,9 +493,7 @@ def _extract_sign_off_statuses(
     """Ekstrahuje statusy podpisów z raportu z opcjonalnym filtrem ról."""
 
     allowed_roles = {
-        normalized
-        for normalized in (_normalize_role(role) for role in (roles or ()))
-        if normalized
+        normalized for normalized in (_normalize_role(role) for role in (roles or ())) if normalized
     }
     sign_off_statuses: dict[str, str] = {}
     raw_sign_off = report.get("sign_off")
@@ -585,9 +581,7 @@ def update_sign_off(
     sign_off_map[normalized_role] = entry
     _update_report_file(
         report,
-        lambda payload: _apply_sign_off_to_payload(
-            payload, normalized_role, entry
-        ),
+        lambda payload: _apply_sign_off_to_payload(payload, normalized_role, entry),
     )
     return report
 
@@ -772,14 +766,10 @@ def filter_audit_reports_by_sign_off_status(
     """
 
     include_set = {
-        status
-        for status in (normalize_sign_off_status(item) for item in (include or ()))
-        if status
+        status for status in (normalize_sign_off_status(item) for item in (include or ())) if status
     }
     exclude_set = {
-        status
-        for status in (normalize_sign_off_status(item) for item in (exclude or ()))
-        if status
+        status for status in (normalize_sign_off_status(item) for item in (exclude or ())) if status
     }
 
     filtered: list[Mapping[str, Any]] = []
@@ -804,14 +794,10 @@ def filter_audit_reports_by_status(
     """Filtruje raporty na podstawie ich głównego statusu (np. ``alert``)."""
 
     include_set = {
-        status
-        for status in (normalize_report_status(item) for item in (include or ()))
-        if status
+        status for status in (normalize_report_status(item) for item in (include or ())) if status
     }
     exclude_set = {
-        status
-        for status in (normalize_report_status(item) for item in (exclude or ()))
-        if status
+        status for status in (normalize_report_status(item) for item in (exclude or ())) if status
     }
 
     filtered: list[Mapping[str, Any]] = []
@@ -836,14 +822,10 @@ def filter_audit_reports_by_source(
     """Filtruje raporty na podstawie pola ``source`` (niezależnie od wielkości liter)."""
 
     include_set = {
-        source
-        for source in (normalize_report_source(item) for item in (include or ()))
-        if source
+        source for source in (normalize_report_source(item) for item in (include or ())) if source
     }
     exclude_set = {
-        source
-        for source in (normalize_report_source(item) for item in (exclude or ()))
-        if source
+        source for source in (normalize_report_source(item) for item in (exclude or ())) if source
     }
 
     filtered: list[Mapping[str, Any]] = []
@@ -932,14 +914,10 @@ def filter_audit_reports_by_job_name(
     """Filtruje raporty na podstawie pola ``job_name`` (niezależnie od wielkości liter)."""
 
     include_set = {
-        job
-        for job in (normalize_report_job_name(item) for item in (include or ()))
-        if job
+        job for job in (normalize_report_job_name(item) for item in (include or ())) if job
     }
     exclude_set = {
-        job
-        for job in (normalize_report_job_name(item) for item in (exclude or ()))
-        if job
+        job for job in (normalize_report_job_name(item) for item in (exclude or ())) if job
     }
 
     filtered: list[Mapping[str, Any]] = []
@@ -992,16 +970,8 @@ def filter_audit_reports_by_run(
 ) -> tuple[Mapping[str, Any], ...]:
     """Filtruje raporty na podstawie nazwy ``run``."""
 
-    include_set = {
-        run
-        for run in (normalize_report_run(item) for item in (include or ()))
-        if run
-    }
-    exclude_set = {
-        run
-        for run in (normalize_report_run(item) for item in (exclude or ()))
-        if run
-    }
+    include_set = {run for run in (normalize_report_run(item) for item in (include or ())) if run}
+    exclude_set = {run for run in (normalize_report_run(item) for item in (exclude or ())) if run}
 
     filtered: list[Mapping[str, Any]] = []
     for report in reports or ():
@@ -1050,7 +1020,9 @@ def _collect_report_symbols(report: Mapping[str, Any]) -> set[str]:
             if dataset_symbol is not None:
                 _add(dataset_symbol)
             dataset_symbols = metadata.get("symbols")
-            if isinstance(dataset_symbols, Sequence) and not isinstance(dataset_symbols, (str, bytes)):
+            if isinstance(dataset_symbols, Sequence) and not isinstance(
+                dataset_symbols, (str, bytes)
+            ):
                 for item in dataset_symbols:
                     _add(item)
             elif dataset_symbols is not None:
@@ -1791,14 +1763,10 @@ def filter_audit_reports_by_symbol(
     """Filtruje raporty na podstawie symboli (np. par giełdowych)."""
 
     include_set = {
-        normalize_report_symbol(item)
-        for item in (include or ())
-        if normalize_report_symbol(item)
+        normalize_report_symbol(item) for item in (include or ()) if normalize_report_symbol(item)
     }
     exclude_set = {
-        normalize_report_symbol(item)
-        for item in (exclude or ())
-        if normalize_report_symbol(item)
+        normalize_report_symbol(item) for item in (exclude or ()) if normalize_report_symbol(item)
     }
 
     filtered: list[Mapping[str, Any]] = []
@@ -1826,16 +1794,12 @@ def filter_audit_reports_by_pipeline(
 
     include_set = {
         pipeline
-        for pipeline in (
-            normalize_report_pipeline(item) for item in (include or ())
-        )
+        for pipeline in (normalize_report_pipeline(item) for item in (include or ()))
         if pipeline
     }
     exclude_set = {
         pipeline
-        for pipeline in (
-            normalize_report_pipeline(item) for item in (exclude or ())
-        )
+        for pipeline in (normalize_report_pipeline(item) for item in (exclude or ()))
         if pipeline
     }
 
@@ -1864,16 +1828,12 @@ def filter_audit_reports_by_environment(
 
     include_set = {
         environment
-        for environment in (
-            normalize_report_environment(item) for item in (include or ())
-        )
+        for environment in (normalize_report_environment(item) for item in (include or ()))
         if environment
     }
     exclude_set = {
         environment
-        for environment in (
-            normalize_report_environment(item) for item in (exclude or ())
-        )
+        for environment in (normalize_report_environment(item) for item in (exclude or ()))
         if environment
     }
 
@@ -1940,16 +1900,12 @@ def filter_audit_reports_by_portfolio(
 
     include_set = {
         portfolio
-        for portfolio in (
-            normalize_report_portfolio(item) for item in (include or ())
-        )
+        for portfolio in (normalize_report_portfolio(item) for item in (include or ()))
         if portfolio
     }
     exclude_set = {
         portfolio
-        for portfolio in (
-            normalize_report_portfolio(item) for item in (exclude or ())
-        )
+        for portfolio in (normalize_report_portfolio(item) for item in (exclude or ()))
         if portfolio
     }
 
@@ -2051,14 +2007,10 @@ def filter_audit_reports_by_engine(
     """Filtruje raporty na podstawie silnika strategii."""
 
     include_set = {
-        engine
-        for engine in (normalize_report_engine(item) for item in (include or ()))
-        if engine
+        engine for engine in (normalize_report_engine(item) for item in (include or ())) if engine
     }
     exclude_set = {
-        engine
-        for engine in (normalize_report_engine(item) for item in (exclude or ()))
-        if engine
+        engine for engine in (normalize_report_engine(item) for item in (exclude or ())) if engine
     }
 
     filtered: list[Mapping[str, Any]] = []
@@ -2087,14 +2039,10 @@ def filter_audit_reports_by_issue_code(
     """Filtruje raporty na podstawie kodów problemów."""
 
     include_set = {
-        code
-        for code in (normalize_report_issue_code(item) for item in (include or ()))
-        if code
+        code for code in (normalize_report_issue_code(item) for item in (include or ())) if code
     }
     exclude_set = {
-        code
-        for code in (normalize_report_issue_code(item) for item in (exclude or ()))
-        if code
+        code for code in (normalize_report_issue_code(item) for item in (exclude or ())) if code
     }
 
     filtered: list[Mapping[str, Any]] = []
@@ -2159,14 +2107,10 @@ def filter_audit_reports_by_model(
     """Filtruje raporty na podstawie identyfikatora modelu/artefaktu."""
 
     include_set = {
-        model
-        for model in (normalize_report_model(item) for item in (include or ()))
-        if model
+        model for model in (normalize_report_model(item) for item in (include or ())) if model
     }
     exclude_set = {
-        model
-        for model in (normalize_report_model(item) for item in (exclude or ()))
-        if model
+        model for model in (normalize_report_model(item) for item in (exclude or ())) if model
     }
 
     filtered: list[Mapping[str, Any]] = []
@@ -2230,9 +2174,7 @@ def _extract_sign_off_statuses(
     """Ekstrahuje statusy podpisów z raportu z opcjonalnym filtrem ról."""
 
     allowed_roles = {
-        normalized
-        for normalized in (_normalize_role(role) for role in (roles or ()))
-        if normalized
+        normalized for normalized in (_normalize_role(role) for role in (roles or ())) if normalized
     }
     sign_off_statuses: dict[str, str] = {}
     raw_sign_off = report.get("sign_off")
@@ -2261,16 +2203,12 @@ def filter_audit_reports_by_license_tier(
 
     include_set = {
         license_tier
-        for license_tier in (
-            normalize_report_license_tier(item) for item in (include or ())
-        )
+        for license_tier in (normalize_report_license_tier(item) for item in (include or ()))
         if license_tier
     }
     exclude_set = {
         license_tier
-        for license_tier in (
-            normalize_report_license_tier(item) for item in (exclude or ())
-        )
+        for license_tier in (normalize_report_license_tier(item) for item in (exclude or ()))
         if license_tier
     }
 
@@ -2301,16 +2239,12 @@ def filter_audit_reports_by_risk_class(
 
     include_set = {
         risk_class
-        for risk_class in (
-            normalize_report_risk_class(item) for item in (include or ())
-        )
+        for risk_class in (normalize_report_risk_class(item) for item in (include or ()))
         if risk_class
     }
     exclude_set = {
         risk_class
-        for risk_class in (
-            normalize_report_risk_class(item) for item in (exclude or ())
-        )
+        for risk_class in (normalize_report_risk_class(item) for item in (exclude or ()))
         if risk_class
     }
 
@@ -2340,18 +2274,10 @@ def filter_audit_reports_by_required_data(
     """Filtruje raporty na podstawie wymaganego zestawu danych."""
 
     include_set = {
-        data
-        for data in (
-            normalize_report_required_data(item) for item in (include or ())
-        )
-        if data
+        data for data in (normalize_report_required_data(item) for item in (include or ())) if data
     }
     exclude_set = {
-        data
-        for data in (
-            normalize_report_required_data(item) for item in (exclude or ())
-        )
-        if data
+        data for data in (normalize_report_required_data(item) for item in (exclude or ())) if data
     }
 
     filtered: list[Mapping[str, Any]] = []
@@ -2381,16 +2307,12 @@ def filter_audit_reports_by_capability(
 
     include_set = {
         capability
-        for capability in (
-            normalize_report_capability(item) for item in (include or ())
-        )
+        for capability in (normalize_report_capability(item) for item in (include or ()))
         if capability
     }
     exclude_set = {
         capability
-        for capability in (
-            normalize_report_capability(item) for item in (exclude or ())
-        )
+        for capability in (normalize_report_capability(item) for item in (exclude or ()))
         if capability
     }
 
@@ -2492,9 +2414,7 @@ def summarize_data_quality_reports(
     normalized_roles = _normalize_required_roles(roles)
 
     normalized: list[Mapping[str, Any]] = [
-        report
-        for report in reports or ()
-        if isinstance(report, Mapping)
+        report for report in reports or () if isinstance(report, Mapping)
     ]
 
     summary: MutableMapping[str, Any] = {
@@ -2551,10 +2471,7 @@ def summarize_data_quality_reports(
         key: MappingProxyType(value) if not isinstance(value, MappingProxyType) else value
         for key, value in summary["by_category"].items()
     }
-    pending = {
-        role: tuple(entries)
-        for role, entries in summary["pending_sign_off"].items()
-    }
+    pending = {role: tuple(entries) for role, entries in summary["pending_sign_off"].items()}
     summary["pending_sign_off"] = MappingProxyType(pending)
     if require_sign_off and any(pending.values()):
         raise ComplianceSignOffError(pending)
@@ -2576,9 +2493,7 @@ def summarize_drift_reports(
     normalized_roles = _normalize_required_roles(roles)
 
     normalized: list[Mapping[str, Any]] = [
-        report
-        for report in reports or ()
-        if isinstance(report, Mapping)
+        report for report in reports or () if isinstance(report, Mapping)
     ]
 
     summary: MutableMapping[str, Any] = {
@@ -2614,10 +2529,7 @@ def summarize_drift_reports(
             roles=normalized_roles,
         )
 
-    pending = {
-        role: tuple(entries)
-        for role, entries in summary["pending_sign_off"].items()
-    }
+    pending = {role: tuple(entries) for role, entries in summary["pending_sign_off"].items()}
     summary["pending_sign_off"] = MappingProxyType(pending)
     if require_sign_off and any(pending.values()):
         raise ComplianceSignOffError(pending)
@@ -2741,12 +2653,8 @@ def _normalize_required_roles(roles: Sequence[str] | None) -> tuple[str, ...]:
         if not normalized_role:
             continue
         if normalized_role not in _SUPPORTED_SIGN_OFF_ROLES:
-            logger.warning(
-                "Unsupported compliance sign-off role provided: %s", role
-            )
-            raise ValueError(
-                f"unsupported sign-off role: {role!r}"
-            )
+            logger.warning("Unsupported compliance sign-off role provided: %s", role)
+            raise ValueError(f"unsupported sign-off role: {role!r}")
         if normalized_role in seen:
             continue
         seen.add(normalized_role)
@@ -2780,13 +2688,9 @@ def _collect_pending_sign_off_map(
     """Weryfikuje, czy wymagane role zatwierdziły alerty data-quality oraz dryfu."""
 
     required_roles = _normalize_required_roles(roles)
-    pending: MutableMapping[str, list[Mapping[str, Any]]] = {
-        role: [] for role in required_roles
-    }
+    pending: MutableMapping[str, list[Mapping[str, Any]]] = {role: [] for role in required_roles}
 
-    dq_summary = summarize_data_quality_reports(
-        data_quality_reports, roles=required_roles
-    )
+    dq_summary = summarize_data_quality_reports(data_quality_reports, roles=required_roles)
     drift_summary = summarize_drift_reports(drift_reports, roles=required_roles)
 
     for role in required_roles:
@@ -2841,6 +2745,8 @@ def ensure_compliance_sign_offs(
         roles=roles,
         raise_on_missing=True,
     )
+
+
 def _is_missing(value: object) -> bool:
     if value is None:
         return True
@@ -2990,22 +2896,26 @@ class FeatureBoundsValidator:
             try:
                 value = float(raw)
             except (TypeError, ValueError):
-                violations.append({
-                    "feature": name,
-                    "value": raw,
-                    "min": minimum,
-                    "max": maximum,
-                    "reason": "non_numeric",
-                })
+                violations.append(
+                    {
+                        "feature": name,
+                        "value": raw,
+                        "min": minimum,
+                        "max": maximum,
+                        "reason": "non_numeric",
+                    }
+                )
                 continue
             if value < minimum or value > maximum:
-                violations.append({
-                    "feature": name,
-                    "value": value,
-                    "min": minimum,
-                    "max": maximum,
-                    "reason": "out_of_bounds",
-                })
+                violations.append(
+                    {
+                        "feature": name,
+                        "value": value,
+                        "min": minimum,
+                        "max": maximum,
+                        "reason": "out_of_bounds",
+                    }
+                )
         status = "alert" if violations else "ok"
         report = {
             "category": "bounds",
@@ -3019,6 +2929,7 @@ class FeatureBoundsValidator:
         report["report_path"] = str(self.last_report_path)
         return report
 
+
 class DataQualityException(RuntimeError):
     """Sygnał, że monitoring jakości danych wykrył krytyczne naruszenia."""
 
@@ -3028,8 +2939,7 @@ class DataQualityException(RuntimeError):
         message: str | None = None,
     ) -> None:
         payload: dict[str, Mapping[str, Any]] = {
-            str(name): dict(report)
-            for name, report in reports.items()
+            str(name): dict(report) for name, report in reports.items()
         }
         super().__init__(message or "Data quality checks failed")
         self._reports: Mapping[str, Mapping[str, Any]] = MappingProxyType(payload)
@@ -3046,14 +2956,9 @@ class ComplianceSignOffError(RuntimeError):
 
     def __init__(self, pending: Mapping[str, Sequence[Mapping[str, Any]]]) -> None:
         consolidated = {
-            str(role): tuple(dict(entry) for entry in entries)
-            for role, entries in pending.items()
+            str(role): tuple(dict(entry) for entry in entries) for role, entries in pending.items()
         }
-        missing = {
-            role: tuple(entries)
-            for role, entries in consolidated.items()
-            if entries
-        }
+        missing = {role: tuple(entries) for role, entries in consolidated.items() if entries}
         summary = ", ".join(f"{role}:{len(entries)}" for role, entries in sorted(missing.items()))
         message = "Brak wymaganych podpisów Risk/Compliance dla raportów audytu AI"
         if summary:
@@ -3061,4 +2966,3 @@ class ComplianceSignOffError(RuntimeError):
         super().__init__(message)
         self.pending: Mapping[str, tuple[Mapping[str, Any], ...]] = MappingProxyType(consolidated)
         self.missing: Mapping[str, tuple[Mapping[str, Any], ...]] = MappingProxyType(missing)
-

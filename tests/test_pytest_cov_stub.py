@@ -10,14 +10,20 @@ pytest_plugins = ("pytester",)
 def test_cov_stub_counts_unexecuted_files(pytester):
     package = pytester.mkpydir("sample_pkg")
     (package / "__init__.py").write_text("", encoding="utf-8")
-    (package / "a.py").write_text("""\
+    (package / "a.py").write_text(
+        """\
 def foo():
     return 1
-""", encoding="utf-8")
-    (package / "b.py").write_text("""\
+""",
+        encoding="utf-8",
+    )
+    (package / "b.py").write_text(
+        """\
 def bar():
     return 2
-""", encoding="utf-8")
+""",
+        encoding="utf-8",
+    )
 
     pytester.makepyfile(
         """\
@@ -40,10 +46,12 @@ def test_foo():
         "--cov-fail-under=60",
     )
 
-    result.stdout.fnmatch_lines([
-        "*sample_pkg*50.00%*2/4*",
-        "*ERROR: pokrycie 50.00% poniżej progu 60.00%*",
-    ])
+    result.stdout.fnmatch_lines(
+        [
+            "*sample_pkg*50.00%*2/4*",
+            "*ERROR: pokrycie 50.00% poniżej progu 60.00%*",
+        ]
+    )
     assert result.ret != 0
 
     coverage_xml = pytester.path / "coverage.xml"

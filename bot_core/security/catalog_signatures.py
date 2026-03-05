@@ -43,7 +43,9 @@ def _load_ed25519_public_key(data: bytes) -> ed25519.Ed25519PublicKey:
         raise ValueError("Niepoprawny klucz publiczny Ed25519 dla katalogu Marketplace") from exc
 
 
-def _verify_hmac_block(content: bytes, signature: Mapping[str, Any], key: bytes | None) -> list[str]:
+def _verify_hmac_block(
+    content: bytes, signature: Mapping[str, Any], key: bytes | None
+) -> list[str]:
     if not signature:
         return []
     if key is None:
@@ -60,7 +62,9 @@ def _verify_hmac_block(content: bytes, signature: Mapping[str, Any], key: bytes 
     return []
 
 
-def _verify_ed25519_block(content: bytes, signature: Mapping[str, Any], key: bytes | None) -> list[str]:
+def _verify_ed25519_block(
+    content: bytes, signature: Mapping[str, Any], key: bytes | None
+) -> list[str]:
     if not signature:
         return []
     if key is None:

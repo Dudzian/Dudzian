@@ -48,7 +48,9 @@ def _patch_stress_lab_runner(
 
 
 @pytest.mark.parametrize("fail_on_breach", [False, True])
-def test_run_stress_lab_cli(tmp_path: Path, fail_on_breach: bool, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_run_stress_lab_cli(
+    tmp_path: Path, fail_on_breach: bool, monkeypatch: pytest.MonkeyPatch
+) -> None:
     output_path = tmp_path / ("report_fail.json" if fail_on_breach else "report.json")
     monkeypatch.setenv("STRESS_LAB_SIGNING_KEY", "unit-test-secret")
     _patch_stress_lab_runner(monkeypatch, has_failures=False)
@@ -68,7 +70,9 @@ def test_run_stress_lab_cli(tmp_path: Path, fail_on_breach: bool, monkeypatch: p
     assert output_path.with_suffix(output_path.suffix + ".sig").exists()
 
 
-def test_run_stress_lab_cli_fails_on_breach(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_run_stress_lab_cli_fails_on_breach(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     output_path = tmp_path / "stress_lab_report.json"
     monkeypatch.setenv("STRESS_LAB_SIGNING_KEY", "unit-test-secret")
     module = _patch_stress_lab_runner(monkeypatch, has_failures=True)
@@ -87,7 +91,9 @@ def test_run_stress_lab_cli_fails_on_breach(tmp_path: Path, monkeypatch: pytest.
     assert output_path.exists()
 
 
-def test_run_stress_lab_cli_missing_signing_env(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+def test_run_stress_lab_cli_missing_signing_env(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
     module_calls: list[bool] = []
     module = _patch_stress_lab_runner(monkeypatch, has_failures=False, run_called=module_calls)
     monkeypatch.delenv("STRESS_LAB_SIGNING_KEY", raising=False)
@@ -109,7 +115,9 @@ def test_run_stress_lab_cli_missing_signing_env(monkeypatch: pytest.MonkeyPatch,
     assert not (tmp_path / "report.json").exists()
 
 
-def test_run_stress_lab_cli_missing_signing_file(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+def test_run_stress_lab_cli_missing_signing_file(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
     module_calls: list[bool] = []
     module = _patch_stress_lab_runner(monkeypatch, has_failures=False, run_called=module_calls)
     monkeypatch.delenv("STRESS_LAB_SIGNING_KEY", raising=False)

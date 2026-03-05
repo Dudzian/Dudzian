@@ -20,7 +20,7 @@ def test_validate_fingerprint_missing_file(tmp_path: Path, missing_keys):
 
 def test_validate_fingerprint_invalid_json(tmp_path: Path):
     malformed = tmp_path / "fingerprint.json"
-    malformed.write_text("{\"payload\": 123", encoding="utf-8")
+    malformed.write_text('{"payload": 123', encoding="utf-8")
 
     result = validate_fingerprint_document(document_path=malformed)
 
@@ -31,7 +31,9 @@ def test_validate_fingerprint_invalid_json(tmp_path: Path):
 
 def test_validate_fingerprint_signature_success(tmp_path: Path):
     key = b"x" * 32
-    document = build_fingerprint_document(signing_key=key, key_id="test-key", env={"HOSTNAME": "pytest-host"})
+    document = build_fingerprint_document(
+        signing_key=key, key_id="test-key", env={"HOSTNAME": "pytest-host"}
+    )
     payload = json.loads(document.to_json())
     path = tmp_path / "fingerprint.json"
     path.write_text(document.to_json(), encoding="utf-8")
@@ -47,7 +49,9 @@ def test_validate_fingerprint_signature_success(tmp_path: Path):
 
 def test_validate_fingerprint_signature_mismatch(tmp_path: Path):
     key = b"y" * 32
-    document = build_fingerprint_document(signing_key=key, key_id="expected-key", env={"HOSTNAME": "pytest-host"})
+    document = build_fingerprint_document(
+        signing_key=key, key_id="expected-key", env={"HOSTNAME": "pytest-host"}
+    )
     path = tmp_path / "fingerprint.json"
     path.write_text(document.to_json(), encoding="utf-8")
 

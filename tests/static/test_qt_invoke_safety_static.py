@@ -16,6 +16,7 @@ def _collect_qarg_aliases(tree: ast.AST) -> set[str]:
                     aliases.add(imported.asname or imported.name)
     return aliases
 
+
 def _is_qarg_call(node: ast.Call, qarg_aliases: set[str]) -> bool:
     func = node.func
     if isinstance(func, ast.Name) and func.id in qarg_aliases:
@@ -26,10 +27,15 @@ def _is_qarg_call(node: ast.Call, qarg_aliases: set[str]) -> bool:
 
 
 def _is_qvariant_type(node: ast.AST) -> bool:
-    return isinstance(node, ast.Constant) and isinstance(node.value, str) and node.value in {
-        "QVariant",
-        "QVariantMap",
-    }
+    return (
+        isinstance(node, ast.Constant)
+        and isinstance(node.value, str)
+        and node.value
+        in {
+            "QVariant",
+            "QVariantMap",
+        }
+    )
 
 
 def _is_forbidden_source(node: ast.AST) -> bool:
@@ -74,7 +80,11 @@ def _collect_qvariant_alias_violations(
     while changed:
         changed = False
         for target_name, value in assignments:
-            if isinstance(value, ast.Name) and value.id in forbidden_names and target_name not in forbidden_names:
+            if (
+                isinstance(value, ast.Name)
+                and value.id in forbidden_names
+                and target_name not in forbidden_names
+            ):
                 forbidden_names.add(target_name)
                 changed = True
                 continue
@@ -147,7 +157,7 @@ def test_no_direct_dict_sources_in_qvariant_qarg_calls() -> None:
 
     assert not violations, (
         "Windows-safe invokeMethod rule violated: avoid dict-like sources directly in "
-        "Q_ARG(\"QVariant\"|\"QVariantMap\", ...). "
+        'Q_ARG("QVariant"|"QVariantMap", ...). '
         f"Violations: {violations}"
     )
 

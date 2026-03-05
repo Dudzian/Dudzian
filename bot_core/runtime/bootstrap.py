@@ -1,4 +1,5 @@
 """Procedury rozruchowe spinające konfigurację z modułami runtime."""
+
 from __future__ import annotations
 
 import asyncio
@@ -234,8 +235,7 @@ def _allow_invalid_live_signatures() -> bool:
 
 def _is_test_mode() -> bool:
     return any(
-        os.getenv(name)
-        for name in ("PYTEST_CURRENT_TEST", "PYTEST_ADDOPTS", "BOT_CORE_TEST_MODE")
+        os.getenv(name) for name in ("PYTEST_CURRENT_TEST", "PYTEST_ADDOPTS", "BOT_CORE_TEST_MODE")
     )
 
 
@@ -490,9 +490,7 @@ def _apply_adapter_factory_specs(
 
     for raw_name, spec in specs.items():
         if not isinstance(raw_name, str) or not raw_name.strip():
-            raise ValueError(
-                f"Nazwy fabryk w {source} muszą być niepustymi łańcuchami znaków."
-            )
+            raise ValueError(f"Nazwy fabryk w {source} muszą być niepustymi łańcuchami znaków.")
         name = raw_name.strip()
         factory, remove, override = _normalize_adapter_factory_spec(
             name,
@@ -527,34 +525,24 @@ def parse_adapter_factory_cli_specs(
     result: dict[str, object] = {}
     for index, raw_entry in enumerate(entries, start=1):
         if not isinstance(raw_entry, str):
-            raise TypeError(
-                "Specyfikacje fabryk przekazane przez CLI muszą być łańcuchami znaków."
-            )
+            raise TypeError("Specyfikacje fabryk przekazane przez CLI muszą być łańcuchami znaków.")
 
         entry = raw_entry.strip()
         if not entry:
-            raise ValueError(
-                f"Pusta specyfikacja fabryki na pozycji {index} w argumentach CLI."
-            )
+            raise ValueError(f"Pusta specyfikacja fabryki na pozycji {index} w argumentach CLI.")
 
         if "=" not in entry:
-            raise ValueError(
-                "Każda specyfikacja fabryki musi mieć format 'nazwa=wartość'."
-            )
+            raise ValueError("Każda specyfikacja fabryki musi mieć format 'nazwa=wartość'.")
 
         name_part, spec_part = entry.split("=", 1)
         name = name_part.strip()
         spec = spec_part.strip()
 
         if not name:
-            raise ValueError(
-                f"Specyfikacja fabryki na pozycji {index} nie ma poprawnej nazwy."
-            )
+            raise ValueError(f"Specyfikacja fabryki na pozycji {index} nie ma poprawnej nazwy.")
 
         if not spec:
-            raise ValueError(
-                f"Specyfikacja fabryki '{name}' nie ma zdefiniowanej wartości."
-            )
+            raise ValueError(f"Specyfikacja fabryki '{name}' nie ma zdefiniowanej wartości.")
 
         if name in result:
             raise ValueError(f"Fabryka '{name}' została podana wielokrotnie w argumentach CLI.")
@@ -591,9 +579,7 @@ def parse_adapter_factory_cli_specs(
                     f"Nie udało się zdekodować JSON dla fabryki '{name}' w argumencie CLI."
                 ) from exc
             if not isinstance(decoded, Mapping):
-                raise TypeError(
-                    f"Specyfikacja JSON dla fabryki '{name}' musi być mapowaniem."
-                )
+                raise TypeError(f"Specyfikacja JSON dla fabryki '{name}' musi być mapowaniem.")
             result[name] = dict(decoded)
             continue
 
@@ -643,9 +629,7 @@ def temporary_adapter_factories(
     overlap = [name for name in removals if name in additions]
     if overlap:
         joined = ", ".join(sorted(overlap))
-        raise ValueError(
-            f"Nie można jednocześnie usuwać i dodawać tych samych fabryk: {joined}."
-        )
+        raise ValueError(f"Nie można jednocześnie usuwać i dodawać tych samych fabryk: {joined}.")
 
     snapshot: dict[str, object] = {}
     try:
@@ -707,6 +691,7 @@ def _require_yaml() -> ModuleType:
             "Brak opcjonalnej zależności 'PyYAML'. Zainstaluj pakiet PyYAML, "
             "aby korzystać z konfiguracji YAML."
         ) from exc
+
 
 try:  # pragma: no cover - w środowiskach developerskich manifest może nie istnieć
     verify_bundle_integrity()
@@ -897,9 +882,7 @@ def _build_ui_alert_audit_metadata(
 ) -> dict[str, object]:
     from bot_core.runtime import observability as _observability
 
-    return _observability.build_ui_alert_audit_metadata(
-        router, requested_backend=requested_backend
-    )
+    return _observability.build_ui_alert_audit_metadata(router, requested_backend=requested_backend)
 
 
 def _config_value(source: object, *names: str) -> Any:
@@ -1085,7 +1068,9 @@ def _initialize_runtime_tco_reporter(
     metadata.setdefault("environment", environment.name)
     metadata.setdefault("exchange", environment.exchange)
     metadata.setdefault("risk_profile", risk_profile)
-    metadata.setdefault("controller", getattr(environment, "default_controller", None) or environment.name)
+    metadata.setdefault(
+        "controller", getattr(environment, "default_controller", None) or environment.name
+    )
     cost_limit = getattr(config, "runtime_cost_limit_bps", None)
 
     try:
@@ -1120,7 +1105,9 @@ def _normalize_paper_execution_settings(
     environment: EnvironmentConfig, runtime_paths: RuntimePaths
 ) -> MutableMapping[str, Any]:
     if environment.environment not in {Environment.PAPER, Environment.TESTNET}:
-        raise ValueError("Paper execution settings are available only for paper/testnet environments")
+        raise ValueError(
+            "Paper execution settings are available only for paper/testnet environments"
+        )
 
     raw_adapter = getattr(environment, "adapter_settings", {}) or {}
     raw_settings = raw_adapter.get("paper_trading", {}) or {}
@@ -1159,13 +1146,11 @@ def _normalize_paper_execution_settings(
             ledger_directory = None
         else:
             candidate = Path(text).expanduser()
-            ledger_directory = (
-                candidate
-                if candidate.is_absolute()
-                else (base_path / candidate)
-            )
+            ledger_directory = candidate if candidate.is_absolute() else (base_path / candidate)
 
-    ledger_filename_pattern = str(raw_settings.get("ledger_filename_pattern", "ledger-%Y%m%d.jsonl"))
+    ledger_filename_pattern = str(
+        raw_settings.get("ledger_filename_pattern", "ledger-%Y%m%d.jsonl")
+    )
     ledger_retention_days_raw = raw_settings.get("ledger_retention_days", 730)
     if ledger_retention_days_raw in (None, ""):
         ledger_retention_days = None
@@ -1238,8 +1223,12 @@ def _build_paper_execution_markets(
         market = PaperMarketMetadata(
             base_asset=str(getattr(instrument, "base_asset", "")).upper(),
             quote_asset=quote,
-            min_quantity=float(override.get("min_quantity", default_market.get("min_quantity", 0.0))),
-            min_notional=float(override.get("min_notional", default_market.get("min_notional", 0.0))),
+            min_quantity=float(
+                override.get("min_quantity", default_market.get("min_quantity", 0.0))
+            ),
+            min_notional=float(
+                override.get("min_notional", default_market.get("min_notional", 0.0))
+            ),
             step_size=_optional_float(override.get("step_size", default_market.get("step_size"))),
             tick_size=_optional_float(override.get("tick_size", default_market.get("tick_size"))),
         )
@@ -1473,18 +1462,12 @@ def build_live_readiness_checklist(
     live_checklist_config = getattr(environment, "live_readiness", None)
     if live_checklist_config:
         checklist_signed = bool(_get_value(live_checklist_config, "signed"))
-        checklist_signers = _normalize_sequence(
-            _get_value(live_checklist_config, "signed_by")
-        )
-        checklist_signed_at = _normalize_text(
-            _get_value(live_checklist_config, "signed_at")
-        )
+        checklist_signers = _normalize_sequence(_get_value(live_checklist_config, "signed_by"))
+        checklist_signed_at = _normalize_text(_get_value(live_checklist_config, "signed_at"))
         checklist_signature_path = _normalize_text(
             _get_value(live_checklist_config, "signature_path")
         )
-        checklist_id = _normalize_text(
-            _get_value(live_checklist_config, "checklist_id")
-        )
+        checklist_id = _normalize_text(_get_value(live_checklist_config, "checklist_id"))
         declared_required = set(
             _normalize_sequence(_get_value(live_checklist_config, "required_documents"))
         )
@@ -1498,7 +1481,9 @@ def build_live_readiness_checklist(
             if not doc_name:
                 continue
             document_names.add(doc_name)
-            doc_path = _normalize_text(_get_value(raw_doc, "path") or _get_value(raw_doc, "location"))
+            doc_path = _normalize_text(
+                _get_value(raw_doc, "path") or _get_value(raw_doc, "location")
+            )
             doc_sha = _normalize_text(
                 _get_value(raw_doc, "sha256") or _get_value(raw_doc, "checksum")
             )
@@ -1609,7 +1594,10 @@ def build_live_readiness_checklist(
         except (TypeError, ValueError):
             return False
 
-    limits_ok = all(_is_positive(risk_limits_fields[key]) for key in ("max_daily_loss_pct", "hard_drawdown_pct", "max_position_pct"))
+    limits_ok = all(
+        _is_positive(risk_limits_fields[key])
+        for key in ("max_daily_loss_pct", "hard_drawdown_pct", "max_position_pct")
+    )
 
     checklist.append(
         {
@@ -1627,7 +1615,9 @@ def build_live_readiness_checklist(
     checklist.append(
         {
             "item": "alerting",
-            "status": "ok" if channels_configured and audit_backend and throttle_enabled else "blocked",
+            "status": "ok"
+            if channels_configured and audit_backend and throttle_enabled
+            else "blocked",
             "description": "Upewnij się, że kanały alertów i audyt są aktywne przed startem live.",
             "details": {
                 "channels": tuple(sorted(alert_channels)),
@@ -1703,7 +1693,9 @@ def _extract_payload_sha256(payload: Mapping[str, Any]) -> str | None:
 def _canonicalize_signature_payload(payload: Mapping[str, Any]) -> dict[str, Any]:
     out: dict[str, Any] = dict(payload)
     for key, value in list(out.items()):
-        if isinstance(value, str) and (key == "path" or key == "document_path" or key.endswith("_path")):
+        if isinstance(value, str) and (
+            key == "path" or key == "document_path" or key.endswith("_path")
+        ):
             normalized = value.replace("\\", "/")
             while "//" in normalized:
                 normalized = normalized.replace("//", "/")
@@ -1820,7 +1812,9 @@ def _verify_live_document_signature(
 ) -> Mapping[str, Any]:
     doc_path = _resolve_live_document_path(document.path, document_root=document_root)
     if not doc_path.exists():
-        raise LiveSignatureVerificationError(f"Dokument '{document.name}' nie istnieje w ścieżce {doc_path}.")
+        raise LiveSignatureVerificationError(
+            f"Dokument '{document.name}' nie istnieje w ścieżce {doc_path}."
+        )
 
     actual_sha = _compute_file_sha256(doc_path)
     declared_sha = getattr(document, "sha256", None)
@@ -1914,10 +1908,7 @@ def _normalize_documents_map(
         score += 1 if payload.get("path") else 0
         upper_count = sum(1 for char in name if char.isupper())
         stable_fields = ("name", "sha256", "signature_path", "path", "key_id")
-        payload_fingerprint = tuple(
-            (field, str(payload.get(field, "")))
-            for field in stable_fields
-        )
+        payload_fingerprint = tuple((field, str(payload.get(field, ""))) for field in stable_fields)
         return (score, -upper_count, len(payload), payload_fingerprint, source_key)
 
     merged: dict[str, tuple[str, str, Mapping[str, Any]]] = {}
@@ -2019,7 +2010,9 @@ def _validate_live_signatures(
     failures: list[str] = []
     if duplicate_document_names:
         for duplicate_name in duplicate_document_names:
-            failures.append(f"{duplicate_name}: zduplikowana definicja dokumentu w live_readiness.documents")
+            failures.append(
+                f"{duplicate_name}: zduplikowana definicja dokumentu w live_readiness.documents"
+            )
         raise LiveSignatureVerificationError("; ".join(failures))
     if required_names_ordered:
         missing_required_documents = [
@@ -2029,17 +2022,16 @@ def _validate_live_signatures(
         ]
         if missing_required_documents:
             for missing_name in missing_required_documents:
-                failures.append(f"{missing_name}: brak definicji dokumentu w live_readiness.documents")
+                failures.append(
+                    f"{missing_name}: brak definicji dokumentu w live_readiness.documents"
+                )
             raise LiveSignatureVerificationError("; ".join(failures))
         documents_for_verification = tuple(
-            documents_by_name[name.lower()]
-            for name in required_names_ordered
+            documents_by_name[name.lower()] for name in required_names_ordered
         )
     else:
         documents_for_verification = tuple(
-            document
-            for document in documents_all
-            if getattr(document, "required", True)
+            document for document in documents_all if getattr(document, "required", True)
         )
 
     categories_status = {"compliance": False, "risk": False, "penetration": False}
@@ -2287,7 +2279,9 @@ def bootstrap_environment(
     offline_mode = bool(getattr(environment, "offline_mode", False))
     env_type_raw = getattr(environment, "environment", Environment.LIVE)
     try:
-        env_enum = env_type_raw if isinstance(env_type_raw, Environment) else Environment(env_type_raw)
+        env_enum = (
+            env_type_raw if isinstance(env_type_raw, Environment) else Environment(env_type_raw)
+        )
     except ValueError:  # pragma: no cover - niestandardowe środowisko
         env_enum = Environment.LIVE
     if offline_mode:
@@ -2342,10 +2336,14 @@ def bootstrap_environment(
         try:
             license_result = validate_license_from_config(license_config)
         except LicenseValidationError as exc:
-            context = exc.result.to_context() if exc.result else {
-                "status": "invalid",
-                "license_path": str(Path(license_config.license_path).expanduser()),
-            }
+            context = (
+                exc.result.to_context()
+                if exc.result
+                else {
+                    "status": "invalid",
+                    "license_path": str(Path(license_config.license_path).expanduser()),
+                }
+            )
             emit_alert(
                 "Weryfikacja licencji OEM zakończona błędem – zatrzymuję kontroler.",
                 severity=AlertSeverity.CRITICAL,
@@ -2369,7 +2367,9 @@ def bootstrap_environment(
             license_result.revocation_status or "n/a",
         )
         emit_alert(
-            "Licencja OEM zweryfikowana pomyślnie." if not license_result.warnings else "Licencja OEM zweryfikowana z ostrzeżeniami.",
+            "Licencja OEM zweryfikowana pomyślnie."
+            if not license_result.warnings
+            else "Licencja OEM zweryfikowana z ostrzeżeniami.",
             severity=AlertSeverity.WARNING if license_result.warnings else AlertSeverity.INFO,
             source="security.license",
             context=license_result.to_context(),
@@ -2388,9 +2388,7 @@ def bootstrap_environment(
                     expected_hwid=license_result.fingerprint,
                 )
             except FileNotFoundError:
-                _LOGGER.warning(
-                    "Nie znaleziono pliku licencji offline: %s", offline_license_path
-                )
+                _LOGGER.warning("Nie znaleziono pliku licencji offline: %s", offline_license_path)
             except LicenseServiceError as exc:
                 _LOGGER.error("Błąd podczas ładowania licencji offline: %s", exc)
             else:
@@ -2398,9 +2396,7 @@ def bootstrap_environment(
                 license_result.capabilities = snapshot.capabilities
                 license_result.capability_guard = guard
                 enabled_modules = [
-                    name
-                    for name, enabled in snapshot.capabilities.modules.items()
-                    if enabled
+                    name for name, enabled in snapshot.capabilities.modules.items() if enabled
                 ]
                 _LOGGER.info(
                     "Załadowano licencję offline (edition=%s, modules=%s)",
@@ -2451,7 +2447,9 @@ def bootstrap_environment(
             portfolio_governor = None
             _LOGGER.exception("Nie udało się zainicjalizować PortfolioGovernora")
     elif portfolio_governor_config:
-        _LOGGER.debug("Konfiguracja portfolio_governor jest dostępna, ale moduł nie został załadowany")
+        _LOGGER.debug(
+            "Konfiguracja portfolio_governor jest dostępna, ale moduł nie został załadowany"
+        )
     tco_config = getattr(decision_engine_config, "tco", None)
 
     if tco_config is not None:
@@ -2465,10 +2463,7 @@ def bootstrap_environment(
             tco_reporter = reporter
 
     orchestrator_cls: Any | None = DecisionOrchestrator
-    if (
-        decision_engine_config
-        and orchestrator_cls is None
-    ):
+    if decision_engine_config and orchestrator_cls is None:
         try:  # pragma: no cover - środowiska z odchudzonym bot_core.decision
             from bot_core.decision.orchestrator import (  # type: ignore
                 DecisionOrchestrator as _DecisionOrchestrator,
@@ -2489,9 +2484,7 @@ def bootstrap_environment(
                 risk_engine.attach_decision_orchestrator(decision_orchestrator)
             except Exception:  # pragma: no cover - diagnostyka integracji
                 decision_orchestrator = None
-                _LOGGER.exception(
-                    "Nie udało się podłączyć DecisionOrchestratora do silnika ryzyka"
-                )
+                _LOGGER.exception("Nie udało się podłączyć DecisionOrchestratora do silnika ryzyka")
             else:
                 report_path, warnings = _load_initial_tco_costs(
                     decision_engine_config,
@@ -2578,9 +2571,7 @@ def bootstrap_environment(
                             binding.path,
                         )
                     except Exception:  # pragma: no cover - logujemy i kontynuujemy bootstrap
-                        _LOGGER.exception(
-                            "Nie udało się załadować modelu AI %s", model_name
-                        )
+                        _LOGGER.exception("Nie udało się załadować modelu AI %s", model_name)
                     else:
                         ai_models_loaded.append(model_name)
                 for preload_entry in environment_ai.preload:
@@ -2637,9 +2628,7 @@ def bootstrap_environment(
                         on_result: Callable[..., Any] | None = None
                         if schedule.result_callback:
                             try:
-                                on_result = _load_callable_from_path(
-                                    schedule.result_callback
-                                )
+                                on_result = _load_callable_from_path(schedule.result_callback)
                             except Exception:
                                 _LOGGER.exception(
                                     "Nie udało się załadować callbacku wynikowego %s (%s)",
@@ -2797,7 +2786,8 @@ def bootstrap_environment(
         overall = HealthMonitor.overall_status(health_results)
         if overall is HealthStatus.UNAVAILABLE:
             blocked = any(
-                "External network access is blocked during tests" in str(getattr(result, "details", ""))
+                "External network access is blocked during tests"
+                in str(getattr(result, "details", ""))
                 for result in health_results
             )
             if blocked:
@@ -2891,9 +2881,7 @@ def bootstrap_environment(
                     if snapshot is not None:
                         risk_metrics_exporter(snapshot)
             except Exception:  # pragma: no cover - diagnostyka snapshotów startowych
-                _LOGGER.debug(
-                    "Nie udało się wygenerować początkowych metryk ryzyka", exc_info=True
-                )
+                _LOGGER.debug("Nie udało się wygenerować początkowych metryk ryzyka", exc_info=True)
         except Exception:  # pragma: no cover - eksporter jest opcjonalny
             risk_metrics_exporter = None
             _LOGGER.debug("Nie udało się zainicjalizować eksportera metryk ryzyka", exc_info=True)
@@ -2930,9 +2918,7 @@ def bootstrap_environment(
                     str(item) for item in tls_report.get("warnings", ())
                 )
             if tls_report.get("errors"):
-                metrics_security_warnings.extend(
-                    str(item) for item in tls_report.get("errors", ())
-                )
+                metrics_security_warnings.extend(str(item) for item in tls_report.get("errors", ()))
         else:
             metrics_tls_enabled = False
         token_value = _config_value(metrics_config, "auth_token", "token")
@@ -2955,9 +2941,7 @@ def bootstrap_environment(
                     token_file_exists = False
                 if token_file_exists:
                     try:
-                        token_file_meta = file_reference_metadata(
-                            token_file_path, role="token"
-                        )
+                        token_file_meta = file_reference_metadata(token_file_path, role="token")
                         mode_octal = token_file_meta.get("mode_octal")
                         if isinstance(mode_octal, str):
                             file_mode = int(mode_octal, 8)
@@ -2987,7 +2971,12 @@ def bootstrap_environment(
                 )
             else:
                 metrics_security_payload["rbac_tokens"] = metrics_token_validator.metadata()
-        token_configured = bool(token_str) or token_env_present or token_file_exists or bool(metrics_token_validator)
+        token_configured = (
+            bool(token_str)
+            or token_env_present
+            or token_file_exists
+            or bool(metrics_token_validator)
+        )
         metrics_auth_metadata = {
             "token_configured": token_configured,
         }
@@ -3048,18 +3037,12 @@ def bootstrap_environment(
             try:
                 metrics_jsonl_path = Path(jsonl_candidate).expanduser()
             except Exception:  # pragma: no cover - diagnostyka pomocnicza
-                _LOGGER.debug(
-                    "Nie udało się znormalizować ścieżki JSONL telemetrii", exc_info=True
-                )
+                _LOGGER.debug("Nie udało się znormalizować ścieżki JSONL telemetrii", exc_info=True)
                 metrics_jsonl_path = Path(str(jsonl_candidate))
             try:
-                metrics_jsonl_metadata = file_reference_metadata(
-                    metrics_jsonl_path, role="jsonl"
-                )
+                metrics_jsonl_metadata = file_reference_metadata(metrics_jsonl_path, role="jsonl")
             except Exception:  # pragma: no cover - diagnostyka pomocnicza
-                _LOGGER.debug(
-                    "Nie udało się zebrać metadanych JSONL telemetrii", exc_info=True
-                )
+                _LOGGER.debug("Nie udało się zebrać metadanych JSONL telemetrii", exc_info=True)
             else:
                 metrics_security_payload["metrics_jsonl"] = metrics_jsonl_metadata
     if UiTelemetryAlertSink is not None:
@@ -3071,7 +3054,8 @@ def bootstrap_environment(
                     base_dir = Path(base_dir_value).expanduser()
                 except Exception:  # pragma: no cover - diagnostyka pomocnicza
                     _LOGGER.debug(
-                        "Nie udało się znormalizować katalogu konfiguracji: %s", base_dir_value,
+                        "Nie udało się znormalizować katalogu konfiguracji: %s",
+                        base_dir_value,
                         exc_info=True,
                     )
             default_path = DEFAULT_UI_ALERTS_JSONL_PATH.expanduser()
@@ -3094,22 +3078,29 @@ def bootstrap_environment(
             # --- Risk profile resolver (opcjonalny) ---
             risk_profile_meta: Mapping[str, Any] | None = None
             resolver: "MetricsRiskProfileResolver" | None = None
-            if metrics_config is not None and getattr(metrics_config, "ui_alerts_risk_profile", None):
+            if metrics_config is not None and getattr(
+                metrics_config, "ui_alerts_risk_profile", None
+            ):
                 normalized_profile = str(metrics_config.ui_alerts_risk_profile).strip().lower()
                 if MetricsRiskProfileResolver is None:
-                    risk_profile_meta = {"name": normalized_profile, "warning": "resolver_unavailable"}
+                    risk_profile_meta = {
+                        "name": normalized_profile,
+                        "warning": "resolver_unavailable",
+                    }
                 else:
                     try:
                         resolver = MetricsRiskProfileResolver(normalized_profile, metrics_config)
                     except KeyError:
                         risk_profile_meta = {"name": normalized_profile, "error": "unknown_profile"}
                         _LOGGER.warning(
-                            "Nieznany profil ryzyka telemetrii UI w bootstrapie: %s", normalized_profile
+                            "Nieznany profil ryzyka telemetrii UI w bootstrapie: %s",
+                            normalized_profile,
                         )
                     except Exception:  # pragma: no cover - diagnostyka
                         risk_profile_meta = {"name": normalized_profile}
                         _LOGGER.exception(
-                            "Nie udało się zastosować profilu ryzyka %s w bootstrapie", normalized_profile
+                            "Nie udało się zastosować profilu ryzyka %s w bootstrapie",
+                            normalized_profile,
                         )
 
             def _resolve_metrics_value(field_name: str, default: Any) -> Any:
@@ -3133,7 +3124,9 @@ def bootstrap_environment(
                     reduce_mode = candidate
             elif metrics_config is not None:
                 reduce_mode = (
-                    "enable" if bool(_resolve_metrics_value("reduce_motion_alerts", True)) else "disable"
+                    "enable"
+                    if bool(_resolve_metrics_value("reduce_motion_alerts", True))
+                    else "disable"
                 )
 
             overlay_candidate = _resolve_metrics_value("overlay_alert_mode", None)
@@ -3156,9 +3149,7 @@ def bootstrap_environment(
                     "enable" if bool(_resolve_metrics_value("jank_alerts", False)) else "disable"
                 )
 
-            performance_candidate = _resolve_metrics_value(
-                "performance_alert_mode", None
-            )
+            performance_candidate = _resolve_metrics_value("performance_alert_mode", None)
             if performance_candidate is not None:
                 candidate = str(performance_candidate).lower()
                 if candidate in {"enable", "jsonl", "disable"}:
@@ -3195,42 +3186,24 @@ def bootstrap_environment(
             jank_critical = _resolve_metrics_value("jank_alert_severity_critical", None)
             jank_threshold_raw = _resolve_metrics_value("jank_alert_critical_over_ms", None)
 
-            performance_category = _resolve_metrics_value(
-                "performance_category", "ui.performance"
-            )
-            performance_warning = _resolve_metrics_value(
-                "performance_severity_warning", "warning"
-            )
+            performance_category = _resolve_metrics_value("performance_category", "ui.performance")
+            performance_warning = _resolve_metrics_value("performance_severity_warning", "warning")
             performance_critical = _resolve_metrics_value(
                 "performance_severity_critical", "critical"
             )
-            performance_recovered = _resolve_metrics_value(
-                "performance_severity_recovered", "info"
-            )
+            performance_recovered = _resolve_metrics_value("performance_severity_recovered", "info")
             performance_event_warning_raw = _resolve_metrics_value(
                 "performance_event_to_frame_warning_ms", 45.0
             )
             performance_event_critical_raw = _resolve_metrics_value(
                 "performance_event_to_frame_critical_ms", 60.0
             )
-            cpu_warning_raw = _resolve_metrics_value(
-                "cpu_utilization_warning_percent", 85.0
-            )
-            cpu_critical_raw = _resolve_metrics_value(
-                "cpu_utilization_critical_percent", 95.0
-            )
-            gpu_warning_raw = _resolve_metrics_value(
-                "gpu_utilization_warning_percent", None
-            )
-            gpu_critical_raw = _resolve_metrics_value(
-                "gpu_utilization_critical_percent", None
-            )
-            ram_warning_raw = _resolve_metrics_value(
-                "ram_usage_warning_megabytes", None
-            )
-            ram_critical_raw = _resolve_metrics_value(
-                "ram_usage_critical_megabytes", None
-            )
+            cpu_warning_raw = _resolve_metrics_value("cpu_utilization_warning_percent", 85.0)
+            cpu_critical_raw = _resolve_metrics_value("cpu_utilization_critical_percent", 95.0)
+            gpu_warning_raw = _resolve_metrics_value("gpu_utilization_warning_percent", None)
+            gpu_critical_raw = _resolve_metrics_value("gpu_utilization_critical_percent", None)
+            ram_warning_raw = _resolve_metrics_value("ram_usage_warning_megabytes", None)
+            ram_critical_raw = _resolve_metrics_value("ram_usage_critical_megabytes", None)
 
             sink_kwargs: dict[str, object] = {
                 "jsonl_path": telemetry_log,
@@ -3263,7 +3236,8 @@ def bootstrap_environment(
                     overlay_threshold_value = int(overlay_threshold_raw)
                 except (TypeError, ValueError):
                     _LOGGER.debug(
-                        "Nieprawidłowy próg overlay_alert_critical_threshold=%s", overlay_threshold_raw
+                        "Nieprawidłowy próg overlay_alert_critical_threshold=%s",
+                        overlay_threshold_raw,
                     )
                 else:
                     sink_kwargs["overlay_critical_threshold"] = overlay_threshold_value
@@ -3316,12 +3290,8 @@ def bootstrap_environment(
                 ram_critical_raw, field_name="ram_usage_critical_megabytes"
             )
 
-            sink_kwargs["performance_event_to_frame_warning_ms"] = (
-                performance_event_warning
-            )
-            sink_kwargs["performance_event_to_frame_critical_ms"] = (
-                performance_event_critical
-            )
+            sink_kwargs["performance_event_to_frame_warning_ms"] = performance_event_warning
+            sink_kwargs["performance_event_to_frame_critical_ms"] = performance_event_critical
             sink_kwargs["cpu_utilization_warning_percent"] = cpu_warning_percent
             sink_kwargs["cpu_utilization_critical_percent"] = cpu_critical_percent
             sink_kwargs["gpu_utilization_warning_percent"] = gpu_warning_percent
@@ -3410,9 +3380,7 @@ def bootstrap_environment(
                     telemetry_log, role="ui_alerts_jsonl"
                 )
             except Exception:  # pragma: no cover - diagnostyka pomocnicza
-                _LOGGER.debug(
-                    "Nie udało się zebrać metadanych logu alertów UI", exc_info=True
-                )
+                _LOGGER.debug("Nie udało się zebrać metadanych logu alertów UI", exc_info=True)
             else:
                 metrics_security_payload["metrics_ui_alerts"] = metrics_ui_alerts_metadata
         except Exception:  # pragma: no cover - nie blokujemy startu runtime
@@ -3422,7 +3390,9 @@ def bootstrap_environment(
         if metrics_ui_alerts_settings is None and risk_profile_meta is not None:
             metrics_ui_alerts_settings = {"risk_profile": dict(risk_profile_meta)}
             if risk_profile_meta.get("summary"):
-                metrics_ui_alerts_settings["risk_profile_summary"] = dict(risk_profile_meta["summary"])  # type: ignore[index]
+                metrics_ui_alerts_settings["risk_profile_summary"] = dict(
+                    risk_profile_meta["summary"]
+                )  # type: ignore[index]
 
         if metrics_risk_profiles_file is not None:
             if metrics_ui_alerts_settings is None:
@@ -3431,9 +3401,7 @@ def bootstrap_environment(
                 }
             else:
                 metrics_ui_alerts_settings = dict(metrics_ui_alerts_settings)
-                metrics_ui_alerts_settings["risk_profiles_file"] = dict(
-                    metrics_risk_profiles_file
-                )
+                metrics_ui_alerts_settings["risk_profiles_file"] = dict(metrics_risk_profiles_file)
 
     if metrics_security_payload:
         warnings_detected = log_security_warnings(
@@ -3444,9 +3412,7 @@ def bootstrap_environment(
         )
         if warnings_detected:
             for entry in collect_security_warnings(metrics_security_payload):
-                metrics_security_warnings.extend(
-                    str(item) for item in entry.get("warnings", [])
-                )
+                metrics_security_warnings.extend(str(item) for item in entry.get("warnings", []))
 
     if metrics_service_enabled:
         if metrics_auth_metadata and not metrics_auth_metadata.get("token_configured"):
@@ -3539,13 +3505,9 @@ def bootstrap_environment(
             risk_tls_enabled = bool(tls_report.get("enabled"))
             risk_security_payload["tls"] = tls_report
             if tls_report.get("warnings"):
-                risk_security_warnings.extend(
-                    str(item) for item in tls_report.get("warnings", ())
-                )
+                risk_security_warnings.extend(str(item) for item in tls_report.get("warnings", ()))
             if tls_report.get("errors"):
-                risk_security_warnings.extend(
-                    str(item) for item in tls_report.get("errors", ())
-                )
+                risk_security_warnings.extend(str(item) for item in tls_report.get("errors", ()))
         else:
             risk_tls_enabled = False
         token_value = _config_value(risk_config, "auth_token", "token")
@@ -3597,7 +3559,9 @@ def bootstrap_environment(
                 try:
                     candidate.start()
                 except Exception:  # pragma: no cover - brak krytyczny, kontynuujemy bez serwera
-                    _LOGGER.exception("Nie udało się uruchomić RiskService – kontynuuję bez serwera ryzyka")
+                    _LOGGER.exception(
+                        "Nie udało się uruchomić RiskService – kontynuuję bez serwera ryzyka"
+                    )
                 else:
                     risk_server = candidate
                     risk_snapshot_store = getattr(candidate, "store", None)
@@ -3638,9 +3602,7 @@ def bootstrap_environment(
                             raw_profiles = getattr(risk_config, "profiles", ()) or ()
                             normalized_profiles = tuple(
                                 dict.fromkeys(
-                                    str(name).strip()
-                                    for name in raw_profiles
-                                    if str(name).strip()
+                                    str(name).strip() for name in raw_profiles if str(name).strip()
                                 )
                             )
                             try:
@@ -3679,9 +3641,7 @@ def bootstrap_environment(
         )
         if warnings_detected:
             for entry in collect_security_warnings(risk_security_payload):
-                risk_security_warnings.extend(
-                    str(item) for item in entry.get("warnings", [])
-                )
+                risk_security_warnings.extend(str(item) for item in entry.get("warnings", []))
 
     if risk_service_enabled:
         if risk_auth_metadata and not risk_auth_metadata.get("token_configured"):
@@ -3838,9 +3798,7 @@ def bootstrap_environment(
         decision_engine_config=decision_engine_config,
         decision_orchestrator=decision_orchestrator,
         decision_tco_report_path=decision_tco_report_path,
-        decision_tco_warnings=tuple(decision_tco_warnings)
-        if decision_tco_warnings
-        else None,
+        decision_tco_warnings=tuple(decision_tco_warnings) if decision_tco_warnings else None,
         tco_reporter=tco_reporter,
         portfolio_governor_config=portfolio_governor_config,
         portfolio_governor=portfolio_governor,
@@ -3870,12 +3828,8 @@ def bootstrap_environment(
         ai_models_loaded=tuple(ai_models_loaded) if ai_models_loaded else None,
         ai_threshold_bps=ai_threshold_bps,
         ai_model_bindings=ai_model_bindings,
-        ai_ensembles_registered=tuple(ai_ensembles_registered)
-        if ai_ensembles_registered
-        else None,
-        ai_pipeline_schedules=tuple(ai_pipeline_schedules)
-        if ai_pipeline_schedules
-        else None,
+        ai_ensembles_registered=tuple(ai_ensembles_registered) if ai_ensembles_registered else None,
+        ai_pipeline_schedules=tuple(ai_pipeline_schedules) if ai_pipeline_schedules else None,
         ai_pipeline_pending=tuple(ai_pipeline_pending) if ai_pipeline_pending else None,
         execution_service=execution_service,
         live_readiness_checklist=live_readiness_checklist,
@@ -4030,9 +3984,7 @@ def _load_risk_decision_log_key(config: object) -> bytes | None:
         env_value = os.environ.get(str(env_name))
         if env_value:
             return env_value.encode("utf-8")
-        _LOGGER.warning(
-            "RiskDecisionLog: zmienna środowiskowa %s nie jest ustawiona", env_name
-        )
+        _LOGGER.warning("RiskDecisionLog: zmienna środowiskowa %s nie jest ustawiona", env_name)
 
     key_path = getattr(config, "signing_key_path", None)
     if key_path:
@@ -4090,7 +4042,9 @@ def _build_decision_journal(
     if backend == "memory":
         return InMemoryTradingDecisionJournal()
     if backend == "file":
-        directory = runtime_paths.resolve_data_path(getattr(config, "directory", None), default="decisions")
+        directory = runtime_paths.resolve_data_path(
+            getattr(config, "directory", None), default="decisions"
+        )
         return JsonlTradingDecisionJournal(
             directory=directory,
             filename_pattern=config.filename_pattern,
@@ -4145,13 +4099,9 @@ def _load_portfolio_decision_log_key(config: object) -> bytes | None:
             stripped = content.strip()
             if stripped:
                 return stripped
-            _LOGGER.warning(
-                "PortfolioDecisionLog: plik %s nie zawiera klucza", key_path
-            )
+            _LOGGER.warning("PortfolioDecisionLog: plik %s nie zawiera klucza", key_path)
         except Exception as exc:  # pragma: no cover - diagnostyka konfiguracji
-            _LOGGER.warning(
-                "PortfolioDecisionLog: błąd odczytu klucza z %s: %s", key_path, exc
-            )
+            _LOGGER.warning("PortfolioDecisionLog: błąd odczytu klucza z %s: %s", key_path, exc)
 
     key_value = getattr(config, "signing_key_value", None)
     if key_value not in (None, ""):
@@ -4173,6 +4123,7 @@ _validate_e164_number = _observability._validate_e164_number
 
 def _install_sms_provider_stub() -> None:
     _observability._install_sms_provider_stub()
+
 
 __all__ = [
     "BootstrapContext",

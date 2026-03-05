@@ -1,4 +1,5 @@
 """Adapter do wysyłki alertów przez WhatsApp Business API."""
+
 from __future__ import annotations
 
 import json
@@ -11,6 +12,7 @@ from urllib import request
 from bot_core.alerts.base import AlertChannel, AlertDeliveryError, AlertMessage
 from bot_core.alerts.channels._http import HttpOpener, default_opener
 
+
 @dataclass(slots=True)
 class WhatsAppChannel(AlertChannel):
     """Integracja z Graph API dla WhatsApp Business."""
@@ -22,15 +24,15 @@ class WhatsAppChannel(AlertChannel):
     api_version: str = "v16.0"
     name: str = "whatsapp"
     timeout: float = 10.0
-    logger: logging.Logger = field(default_factory=lambda: logging.getLogger("bot_core.alerts.whatsapp"))
+    logger: logging.Logger = field(
+        default_factory=lambda: logging.getLogger("bot_core.alerts.whatsapp")
+    )
     _opener: HttpOpener = field(default=default_opener, repr=False)
     _last_success: datetime | None = field(default=None, init=False, repr=False)
     _last_error: str | None = field(default=None, init=False, repr=False)
 
     def send(self, message: AlertMessage) -> None:
-        url = (
-            f"{self.api_base_url.rstrip('/')}/{self.api_version}/{self.phone_number_id}/messages"
-        )
+        url = f"{self.api_base_url.rstrip('/')}/{self.api_version}/{self.phone_number_id}/messages"
         payload = {
             "messaging_product": "whatsapp",
             "type": "text",
@@ -57,7 +59,9 @@ class WhatsAppChannel(AlertChannel):
         except Exception as exc:  # noqa: BLE001
             self._last_error = str(exc)
             self.logger.exception("Błąd wysyłki przez WhatsApp")
-            raise AlertDeliveryError(f"WhatsApp: nie udało się wysłać powiadomienia ({exc})") from exc
+            raise AlertDeliveryError(
+                f"WhatsApp: nie udało się wysłać powiadomienia ({exc})"
+            ) from exc
 
         if status >= 400:
             detail = raw.decode("utf-8", errors="ignore") if raw else ""

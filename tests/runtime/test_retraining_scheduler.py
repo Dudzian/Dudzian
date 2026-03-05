@@ -69,7 +69,9 @@ def test_drift_scenario_runs_training_and_emits_event():
     drift_events = [event for event in captured if isinstance(event, DataDriftDetected)]
     assert drift_events, "powinien zostać wygenerowany event dryfu"
     assert drift_events[0].drift_threshold == pytest.approx(0.4)
-    assert outcome.drift_score is not None and outcome.drift_score >= drift_events[0].drift_threshold
+    assert (
+        outcome.drift_score is not None and outcome.drift_score >= drift_events[0].drift_threshold
+    )
     completed = [event for event in captured if isinstance(event, RetrainingCycleCompleted)]
     assert completed, "powinien zostać wygenerowany raport zakończenia retrainingu"
     assert completed[0].status == "completed"

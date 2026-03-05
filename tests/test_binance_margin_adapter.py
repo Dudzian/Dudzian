@@ -16,7 +16,10 @@ def _credentials() -> ExchangeCredentials:
 
 
 def _watchdog() -> Watchdog:
-    return Watchdog(retry_policy=RetryPolicy(max_attempts=3, base_delay=0.0, max_delay=0.0, jitter=(0.0, 0.0)), sleep=lambda _: None)
+    return Watchdog(
+        retry_policy=RetryPolicy(max_attempts=3, base_delay=0.0, max_delay=0.0, jitter=(0.0, 0.0)),
+        sleep=lambda _: None,
+    )
 
 
 def test_fetch_account_snapshot_valuates_balances(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -25,7 +28,13 @@ def test_fetch_account_snapshot_valuates_balances(monkeypatch: pytest.MonkeyPatc
         return {
             "userAssets": [
                 {"asset": "USDT", "free": "500", "locked": "100", "borrowed": "0"},
-                {"asset": "BTC", "free": "0.1", "locked": "0.0", "borrowed": "0.01", "netAsset": "0.09"},
+                {
+                    "asset": "BTC",
+                    "free": "0.1",
+                    "locked": "0.0",
+                    "borrowed": "0.01",
+                    "netAsset": "0.09",
+                },
             ],
             "marginLevel": "3.5",
         }

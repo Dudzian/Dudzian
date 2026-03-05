@@ -1,4 +1,5 @@
 """Strategia kontroli zmienności portfela."""
+
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -90,7 +91,11 @@ class VolatilityTargetStrategy(StrategyEngine):
 
     def _target_allocation(self, realized_vol: float) -> float:
         effective_vol = max(realized_vol, self._settings.floor_volatility)
-        raw = self._settings.target_volatility / effective_vol if effective_vol else self._settings.max_allocation
+        raw = (
+            self._settings.target_volatility / effective_vol
+            if effective_vol
+            else self._settings.max_allocation
+        )
         return min(self._settings.max_allocation, max(self._settings.min_allocation, raw))
 
     def _should_rebalance(self, target: float, diff: float) -> bool:

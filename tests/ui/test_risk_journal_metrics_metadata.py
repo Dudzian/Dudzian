@@ -10,9 +10,7 @@ def test_risk_journal_metric_metadata_matches_qml() -> None:
     exporter = RiskJournalMetricsExporter()
     metadata = exporter.metadata()
 
-    qml_text = Path("ui/qml/dashboard/RiskJournalPanel.qml").read_text(
-        encoding="utf-8"
-    )
+    qml_text = Path("ui/qml/dashboard/RiskJournalPanel.qml").read_text(encoding="utf-8")
     qml_metric_keys = set(re.findall(r"metricValue\(\"([A-Za-z0-9_]+)\"", qml_text))
 
     qml_metric_keys_required = {"incompleteEntries", "riskFlagCounts"}

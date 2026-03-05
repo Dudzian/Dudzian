@@ -47,10 +47,22 @@ def _write_core_yaml(path: Path, *, with_rbac: bool) -> Path:
 def _stub_core_config(with_rbac: bool) -> SimpleNamespace:
     if with_rbac:
         metrics_tokens = (
-            SimpleNamespace(token_id="metrics-reader", token_value="secret", token_env=None, token_hash=None, scopes=("metrics.read",)),
+            SimpleNamespace(
+                token_id="metrics-reader",
+                token_value="secret",
+                token_env=None,
+                token_hash=None,
+                scopes=("metrics.read",),
+            ),
         )
         risk_tokens = (
-            SimpleNamespace(token_id="risk-reader", token_value="secret", token_env=None, token_hash=None, scopes=("risk.read",)),
+            SimpleNamespace(
+                token_id="risk-reader",
+                token_value="secret",
+                token_env=None,
+                token_hash=None,
+                scopes=("risk.read",),
+            ),
         )
         metrics = SimpleNamespace(enabled=True, auth_token=None, rbac_tokens=metrics_tokens)
         risk = SimpleNamespace(enabled=True, auth_token=None, rbac_tokens=risk_tokens)
@@ -60,7 +72,9 @@ def _stub_core_config(with_rbac: bool) -> SimpleNamespace:
     return SimpleNamespace(metrics_service=metrics, risk_service=risk)
 
 
-def test_audit_service_tokens_script_success(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_audit_service_tokens_script_success(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     config_path = _write_core_yaml(tmp_path / "core.yaml", with_rbac=True)
     stub = _stub_core_config(with_rbac=True)
     monkeypatch.setattr(audit_service_tokens_script, "load_core_config", lambda path: stub)
@@ -84,7 +98,9 @@ def test_audit_service_tokens_script_success(tmp_path: Path, monkeypatch: pytest
     assert any(service["service"] == "metrics_service" for service in payload["services"])
 
 
-def test_audit_service_tokens_script_warns_on_shared_secret(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]) -> None:
+def test_audit_service_tokens_script_warns_on_shared_secret(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
     config_path = _write_core_yaml(tmp_path / "core.yaml", with_rbac=False)
     stub = _stub_core_config(with_rbac=False)
     monkeypatch.setattr(audit_service_tokens_script, "load_core_config", lambda path: stub)

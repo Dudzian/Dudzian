@@ -1,4 +1,5 @@
 """Walidacja spójności konfiguracji CoreConfig."""
+
 from __future__ import annotations
 
 import argparse
@@ -16,7 +17,9 @@ from bot_core.config.validation import validate_core_config
 
 
 def _parse_args(argv: Sequence[str] | None) -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Waliduje config/core.yaml i zależności środowisk.")
+    parser = argparse.ArgumentParser(
+        description="Waliduje config/core.yaml i zależności środowisk."
+    )
     parser.add_argument(
         "--config",
         default="config/core.yaml",

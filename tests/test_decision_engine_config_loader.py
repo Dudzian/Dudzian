@@ -187,6 +187,8 @@ def test_load_core_config_maps_thresholds_and_overrides(tmp_path: Path) -> None:
 
     tco_config = decision_config.tco
     assert tco_config is not None
-    normalized_paths = getattr(tco_config, "report_paths", None) or getattr(tco_config, "reports", ())
+    normalized_paths = getattr(tco_config, "report_paths", None) or getattr(
+        tco_config, "reports", ()
+    )
     assert len(normalized_paths) == 1
     assert Path(normalized_paths[0]).resolve() == report_path.resolve()

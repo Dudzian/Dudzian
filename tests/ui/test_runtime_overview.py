@@ -40,6 +40,7 @@ try:  # pragma: no cover - zależne od środowiska
     from PySide6.QtGui import QImage  # type: ignore[attr-defined]
     from PySide6.QtQuick import QQuickItem, QQuickWindow  # type: ignore[attr-defined]
     from PySide6.QtWidgets import QApplication  # type: ignore[attr-defined]
+
     _QT_READY = True
 except ImportError as exc:  # pragma: no cover - brak PySide6 lub zależności systemowych
     _QT_READY = False
@@ -133,6 +134,7 @@ if _QT_READY:
     from ui.backend.qml_bridge import to_plain_value
     from core.config.ui_settings import UISettingsStore
     from ui.backend.dashboard_settings import DashboardSettingsController
+
     try:  # pragma: no cover - zależne od środowiska
         import shiboken6  # type: ignore[import-not-found]
     except Exception:  # pragma: no cover - brak shiboken6
@@ -147,6 +149,7 @@ else:  # pragma: no cover - brak PySide6 w środowisku collect-only
     UISettingsStore = None  # type: ignore[assignment]
     DashboardSettingsController = None  # type: ignore[assignment]
     shiboken6 = None  # type: ignore[assignment]
+
     def to_plain_value(value: Any) -> Any:  # type: ignore[override]
         return value
 
@@ -162,8 +165,7 @@ def qt_runtime_sanity() -> Iterator[None]:
     except Exception as exc:  # pragma: no cover - awaria pluginu platformy
         qt_qpa_platform = os.getenv("QT_QPA_PLATFORM", "<unset>")
         pytest.skip(
-            f"Qt runtime niedostępny na {sys.platform} "
-            f"(QT_QPA_PLATFORM={qt_qpa_platform}): {exc}"
+            f"Qt runtime niedostępny na {sys.platform} (QT_QPA_PLATFORM={qt_qpa_platform}): {exc}"
         )
     yield
     if created_here and app is not None:
@@ -414,7 +416,9 @@ class _StubRuntimeService(QObject):
         self._feed_sla_report = dict(payload)
         self.feedSlaReportChanged.emit()
 
-    def push_feed_alerts(self, history: list[dict[str, Any]], channels: list[dict[str, Any]]) -> None:
+    def push_feed_alerts(
+        self, history: list[dict[str, Any]], channels: list[dict[str, Any]]
+    ) -> None:
         self._feed_alert_history = [dict(entry) for entry in history]
         self._feed_alert_channels = [dict(entry) for entry in channels]
         self.feedAlertHistoryChanged.emit()
@@ -431,8 +435,6 @@ class _StubRuntimeService(QObject):
         if self._regime_summary != activation:
             self._regime_summary = activation
             self.regimeActivationSummaryChanged.emit()
-
-
 
 
 def _safe_prop(obj: QObject, name: str) -> object:
@@ -646,7 +648,9 @@ def test_runtime_overview_renders_snapshot(tmp_path: Path) -> None:
     settings_store = UISettingsStore(tmp_path / "ui_settings.json")
     dashboard_controller = DashboardSettingsController(store=settings_store, parent=engine)
     engine.rootContext().setContextProperty("dashboardSettingsController", dashboard_controller)
-    qml_path = Path(__file__).resolve().parents[2] / "ui" / "qml" / "dashboard" / "RuntimeOverview.qml"
+    qml_path = (
+        Path(__file__).resolve().parents[2] / "ui" / "qml" / "dashboard" / "RuntimeOverview.qml"
+    )
     initial_properties = {
         "dashboardSettingsController": dashboard_controller,
         "complianceController": None,
@@ -684,8 +688,7 @@ def test_runtime_overview_renders_snapshot(tmp_path: Path) -> None:
             error_list = component.errors() if hasattr(component, "errors") else []
             status = component.status() if hasattr(component, "status") else None
             pytest.fail(
-                "Nie udało się załadować RuntimeOverview.qml: "
-                f"errors={error_list}, status={status}"
+                f"Nie udało się załadować RuntimeOverview.qml: errors={error_list}, status={status}"
             )
     created_window = not (hasattr(root, "contentItem") and hasattr(root, "show"))
     quick_window = root if not created_window else QQuickWindow()
@@ -738,7 +741,9 @@ def test_runtime_overview_renders_snapshot(tmp_path: Path) -> None:
         qt_wait(50)
         app.processEvents()
         injected_controller = root.property("dashboardSettingsController")
-        assert injected_controller is not None, "dashboardSettingsController jest None – QML nie zbuduje kart."
+        assert injected_controller is not None, (
+            "dashboardSettingsController jest None – QML nie zbuduje kart."
+        )
         if shiboken6 is not None:
             injected_ptr = shiboken6.getCppPointer(injected_controller)[0]
             controller_ptr = shiboken6.getCppPointer(dashboard_controller)[0]
@@ -803,7 +808,9 @@ def test_runtime_overview_renders_snapshot(tmp_path: Path) -> None:
         ok = provider.refreshTelemetry()
         assert ok is True
         app.processEvents()
-        assert provider.lastUpdated, "TelemetryProvider.lastUpdated pozostał pusty po refreshTelemetry()."
+        assert provider.lastUpdated, (
+            "TelemetryProvider.lastUpdated pozostał pusty po refreshTelemetry()."
+        )
 
         summary = provider.complianceSummary
         assert summary["totalViolations"] == 1.0
@@ -996,7 +1003,9 @@ def test_runtime_overview_renders_snapshot(tmp_path: Path) -> None:
                         return current
                 if _looks_like_loader_by_props(current) or _is_loader_like(current):
                     return current
-                current = current.parentItem() if hasattr(current, "parentItem") else current.parent()
+                current = (
+                    current.parentItem() if hasattr(current, "parentItem") else current.parent()
+                )
             return None
 
         def _find_guardrail_loader(aliases: set[str], deadline: float) -> QObject | None:
@@ -1024,7 +1033,9 @@ def test_runtime_overview_renders_snapshot(tmp_path: Path) -> None:
                         return loader
                     if status == LOADER_READY:
                         item = _safe_prop(loader, "item")
-                        if item is not None and not (isinstance(item, str) and item.startswith("<")):
+                        if item is not None and not (
+                            isinstance(item, str) and item.startswith("<")
+                        ):
                             try:
                                 if isinstance(item, QObject) or hasattr(item, "property"):
                                     if str(item.property("objectName")) == target_object_name:
@@ -1189,9 +1200,13 @@ def test_runtime_overview_renders_snapshot(tmp_path: Path) -> None:
                 break
             qt_wait(50)
         guardrail_deadline = time.monotonic() + 20.0
-        guardrail_loader = _wait_for_guardrail_loader(guardrail_aliases, deadline=guardrail_deadline)
+        guardrail_loader = _wait_for_guardrail_loader(
+            guardrail_aliases, deadline=guardrail_deadline
+        )
         if guardrail_loader is None:
-            guardrail_loader = _find_guardrail_loader(guardrail_aliases, deadline=guardrail_deadline)
+            guardrail_loader = _find_guardrail_loader(
+                guardrail_aliases, deadline=guardrail_deadline
+            )
 
         guardrail_card = None
         if guardrail_loader is not None:
@@ -1214,7 +1229,9 @@ def test_runtime_overview_renders_snapshot(tmp_path: Path) -> None:
                 guardrail_card = _find_quick_item_by_object_name("runtimeOverviewGuardrailCard")
 
             if guardrail_card is None:
-                guardrail_loader = guardrail_loader or _find_guardrail_loader_by_object_name(guardrail_aliases)
+                guardrail_loader = guardrail_loader or _find_guardrail_loader_by_object_name(
+                    guardrail_aliases
+                )
                 if guardrail_loader is not None:
                     guardrail_card = _wait_for_loader_item(
                         guardrail_loader,
@@ -1229,7 +1246,10 @@ def test_runtime_overview_renders_snapshot(tmp_path: Path) -> None:
                 for child in all_children:
                     object_name = _safe_object_name(child)
                     prop_object_name = str(_safe_prop(child, "objectName") or "")
-                    if object_name == "runtimeOverviewGuardrailCard" or prop_object_name == "runtimeOverviewGuardrailCard":
+                    if (
+                        object_name == "runtimeOverviewGuardrailCard"
+                        or prop_object_name == "runtimeOverviewGuardrailCard"
+                    ):
                         direct_match.append(
                             {
                                 "class": _class_name(child),
@@ -1387,7 +1407,9 @@ def test_runtime_overview_ai_card_populates_decisions() -> None:
     engine = QQmlApplicationEngine()
     engine.rootContext().setContextProperty("telemetryProvider", provider)
     engine.rootContext().setContextProperty("runtimeService", runtime_service)
-    qml_path = Path(__file__).resolve().parents[2] / "ui" / "qml" / "dashboard" / "RuntimeOverview.qml"
+    qml_path = (
+        Path(__file__).resolve().parents[2] / "ui" / "qml" / "dashboard" / "RuntimeOverview.qml"
+    )
     engine.load(QUrl.fromLocalFile(str(qml_path)))
     assert engine.rootObjects(), "Nie udało się załadować RuntimeOverview.qml"
     root = engine.rootObjects()[0]
@@ -1430,7 +1452,9 @@ def test_runtime_overview_ai_card_handles_errors() -> None:
     engine = QQmlApplicationEngine()
     engine.rootContext().setContextProperty("telemetryProvider", provider)
     engine.rootContext().setContextProperty("runtimeService", runtime_service)
-    qml_path = Path(__file__).resolve().parents[2] / "ui" / "qml" / "dashboard" / "RuntimeOverview.qml"
+    qml_path = (
+        Path(__file__).resolve().parents[2] / "ui" / "qml" / "dashboard" / "RuntimeOverview.qml"
+    )
     engine.load(QUrl.fromLocalFile(str(qml_path)))
     assert engine.rootObjects(), "Nie udało się załadować RuntimeOverview.qml"
     root = engine.rootObjects()[0]
@@ -1458,7 +1482,9 @@ def test_runtime_overview_risk_panel_filters_and_actions() -> None:
     engine = QQmlApplicationEngine()
     engine.rootContext().setContextProperty("telemetryProvider", provider)
     engine.rootContext().setContextProperty("runtimeService", runtime_service)
-    qml_path = Path(__file__).resolve().parents[2] / "ui" / "qml" / "dashboard" / "RuntimeOverview.qml"
+    qml_path = (
+        Path(__file__).resolve().parents[2] / "ui" / "qml" / "dashboard" / "RuntimeOverview.qml"
+    )
     engine.load(QUrl.fromLocalFile(str(qml_path)))
     assert engine.rootObjects(), "Nie udało się załadować RuntimeOverview.qml"
     root = engine.rootObjects()[0]
@@ -1659,7 +1685,9 @@ def test_runtime_overview_cards_react_to_live_signals(tmp_path: Path) -> None:
         settings_store = UISettingsStore(tmp_path / "ui_settings_live.json")
         dashboard_controller = DashboardSettingsController(store=settings_store, parent=engine)
         engine.rootContext().setContextProperty("dashboardSettingsController", dashboard_controller)
-        qml_path = Path(__file__).resolve().parents[2] / "ui" / "qml" / "dashboard" / "RuntimeOverview.qml"
+        qml_path = (
+            Path(__file__).resolve().parents[2] / "ui" / "qml" / "dashboard" / "RuntimeOverview.qml"
+        )
 
         initial_properties = {
             "dashboardSettingsController": dashboard_controller,
@@ -1815,7 +1843,9 @@ def test_runtime_overview_cards_react_to_live_signals(tmp_path: Path) -> None:
             if _is_real_loader(item):
                 return True
             item_prop = _safe_prop(item, "item")
-            if item_prop is not None and not (isinstance(item_prop, str) and item_prop.startswith("<")):
+            if item_prop is not None and not (
+                isinstance(item_prop, str) and item_prop.startswith("<")
+            ):
                 return True
             source_component = _safe_prop(item, "sourceComponent")
             if source_component is not None and not (
@@ -1867,19 +1897,25 @@ def test_runtime_overview_cards_react_to_live_signals(tmp_path: Path) -> None:
 
             by_name = _find_object(prefixed_name)
             if by_name is not None:
-                by_name_loader = _preferred_real_loader(by_name) or _find_loader_like_descendant(by_name)
+                by_name_loader = _preferred_real_loader(by_name) or _find_loader_like_descendant(
+                    by_name
+                )
                 if by_name_loader is not None:
                     return by_name_loader
 
             for item in _iter_quick_items(_quick_root_item()):
                 object_name = _safe_object_name(item)
                 if object_name == prefixed_name:
-                    nested_loader = _preferred_real_loader(item) or _find_loader_like_descendant(item)
+                    nested_loader = _preferred_real_loader(item) or _find_loader_like_descendant(
+                        item
+                    )
                     if nested_loader is not None:
                         return nested_loader
                     return item
                 if str(_safe_prop(item, "cardId") or "") == card_id:
-                    by_card_loader = _preferred_real_loader(item) or _find_loader_like_descendant(item)
+                    by_card_loader = _preferred_real_loader(item) or _find_loader_like_descendant(
+                        item
+                    )
                     if by_card_loader is not None:
                         return by_card_loader
             return None
@@ -1954,7 +1990,9 @@ def test_runtime_overview_cards_react_to_live_signals(tmp_path: Path) -> None:
                         return parent
                     grandparent = parent.parent()
                     if isinstance(grandparent, QObject):
-                        if _safe_object_name(grandparent) == object_name and not _is_quick_text(grandparent):
+                        if _safe_object_name(grandparent) == object_name and not _is_quick_text(
+                            grandparent
+                        ):
                             return grandparent
                 return None
             return obj
@@ -1995,7 +2033,7 @@ def test_runtime_overview_cards_react_to_live_signals(tmp_path: Path) -> None:
                 object_name = _safe_object_name(item)
                 has_loader_prefix = object_name.startswith(prefix)
                 if has_loader_prefix:
-                    loader_card_id = object_name[len(prefix):]
+                    loader_card_id = object_name[len(prefix) :]
                     loaders[loader_card_id] = item
                     loader_card_id_candidates.add(loader_card_id)
 
@@ -2087,7 +2125,9 @@ def test_runtime_overview_cards_react_to_live_signals(tmp_path: Path) -> None:
                     )
 
             try:
-                host_children = len(list(host_item.childItems() or [])) if host_item is not None else 0
+                host_children = (
+                    len(list(host_item.childItems() or [])) if host_item is not None else 0
+                )
             except Exception:
                 host_children = 0
 
@@ -2140,7 +2180,6 @@ def test_runtime_overview_cards_react_to_live_signals(tmp_path: Path) -> None:
             app.processEvents()
             qt_wait(50)
             app.processEvents()
-
 
         assert quick_window is not None
         quick_window.setWidth(1280)
@@ -2225,10 +2264,7 @@ def test_runtime_overview_cards_react_to_live_signals(tmp_path: Path) -> None:
             or _find_loader_by_card_id("feed_sla") is not None
             or _wait_for_child(card_name, timeout_ms=0) is not None,
             timeout_ms=10000,
-        ), (
-            "Nie znaleziono loadera SLA ani karty SLA. "
-            f"{_sla_debug_snapshot()}"
-        )
+        ), f"Nie znaleziono loadera SLA ani karty SLA. {_sla_debug_snapshot()}"
 
         assert _wait_until(
             lambda: _feed_sla_ready_via_loader()
@@ -2256,7 +2292,9 @@ def test_runtime_overview_cards_react_to_live_signals(tmp_path: Path) -> None:
                 has_item = item_prop is not None and not (
                     isinstance(item_prop, str) and item_prop.startswith("<")
                 )
-                item_object_name = _safe_object_name(item_prop) if isinstance(item_prop, QObject) else ""
+                item_object_name = (
+                    _safe_object_name(item_prop) if isinstance(item_prop, QObject) else ""
+                )
                 return (
                     f"status={status}, "
                     f"statusPropMissing={status_prop_missing}, "
@@ -2287,8 +2325,7 @@ def test_runtime_overview_cards_react_to_live_signals(tmp_path: Path) -> None:
             )
 
         assert _wait_for_feed_sla_object(card_name, timeout_ms=5000) is not None, (
-            "Karta SLA nie została utworzona w zadanym czasie. "
-            f"{_sla_debug_snapshot()}"
+            f"Karta SLA nie została utworzona w zadanym czasie. {_sla_debug_snapshot()}"
         )
 
         provider.refreshTelemetry()
@@ -2389,7 +2426,9 @@ def test_runtime_overview_cards_react_to_live_signals(tmp_path: Path) -> None:
         assert sla_retry is not None and "1.5" in sla_retry.property("text")
         alert_list = _wait_for_feed_sla_object("runtimeOverviewSlaAlertList", timeout_ms=5000)
         assert alert_list is not None and alert_list.property("count") == 2
-        escalation_label = _wait_for_feed_sla_object("runtimeOverviewSlaEscalationStatus", timeout_ms=5000)
+        escalation_label = _wait_for_feed_sla_object(
+            "runtimeOverviewSlaEscalationStatus", timeout_ms=5000
+        )
         assert escalation_label is not None
         assert "cloud-escalation" in escalation_label.property("text")
 
@@ -2505,7 +2544,9 @@ def test_runtime_overview_cards_react_to_live_signals(tmp_path: Path) -> None:
         latency_label = longpoll_entries[0].findChild(QObject, "runtimeOverviewLongPollLatency")
         assert latency_label is not None
         assert "0.480" in latency_label.property("text")
-        reconnect_label = longpoll_entries[0].findChild(QObject, "runtimeOverviewLongPollReconnects")
+        reconnect_label = longpoll_entries[0].findChild(
+            QObject, "runtimeOverviewLongPollReconnects"
+        )
         assert reconnect_label is not None
         assert "próby 3" in reconnect_label.property("text")
     finally:
@@ -2538,7 +2579,9 @@ def test_telemetry_provider_reports_errors() -> None:
     assert len(calls) == 1
 
 
-def test_runtime_service_attaches_to_live_decision_log(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_runtime_service_attaches_to_live_decision_log(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     log_file = tmp_path / "audit" / "decision_logs" / "live_execution.jsonl"
     log_file.parent.mkdir(parents=True, exist_ok=True)
     log_file.write_text(json.dumps(_sample_decisions()[0]) + "\n", encoding="utf-8")
@@ -2551,7 +2594,9 @@ def test_runtime_service_attaches_to_live_decision_log(tmp_path: Path, monkeypat
 
     monkeypatch.setenv("BOT_CORE_UI_CORE_CONFIG_PATH", str(config_path))
     monkeypatch.setattr(runtime_service_module, "load_core_config", lambda path: dummy_config)
-    monkeypatch.setattr(runtime_service_module, "resolve_decision_log_config", lambda _cfg: (log_file, {}))
+    monkeypatch.setattr(
+        runtime_service_module, "resolve_decision_log_config", lambda _cfg: (log_file, {})
+    )
 
     service = RuntimeService()
     assert service.attachToLiveDecisionLog("alpha") is True
@@ -2563,7 +2608,9 @@ def test_runtime_service_attaches_to_live_decision_log(tmp_path: Path, monkeypat
     assert Path(service.activeDecisionLogPath) == log_file
 
 
-def test_runtime_service_attach_reports_missing_log(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_runtime_service_attach_reports_missing_log(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     config_path = tmp_path / "config" / "core.yaml"
     config_path.parent.mkdir(parents=True, exist_ok=True)
     config_path.write_text("{}", encoding="utf-8")
@@ -2573,7 +2620,9 @@ def test_runtime_service_attach_reports_missing_log(tmp_path: Path, monkeypatch:
 
     monkeypatch.setenv("BOT_CORE_UI_CORE_CONFIG_PATH", str(config_path))
     monkeypatch.setattr(runtime_service_module, "load_core_config", lambda path: dummy_config)
-    monkeypatch.setattr(runtime_service_module, "resolve_decision_log_config", lambda _cfg: (missing, {}))
+    monkeypatch.setattr(
+        runtime_service_module, "resolve_decision_log_config", lambda _cfg: (missing, {})
+    )
 
     service = RuntimeService()
     assert service.attachToLiveDecisionLog("stage6") is False
@@ -2631,12 +2680,16 @@ def test_runtime_service_feed_health_exports_alerts(monkeypatch: pytest.MonkeyPa
     registry = exporter._registry  # type: ignore[attr-defined]
     sla_latency_gauge = registry.get("bot_ui_feed_sla_latency_p95_ms")
     assert (
-        sla_latency_gauge.value(labels={"adapter": "grpc", "transport": "grpc", "environment": "default"})
+        sla_latency_gauge.value(
+            labels={"adapter": "grpc", "transport": "grpc", "environment": "default"}
+        )
         > 0.0
     )
     sla_reconnects = registry.get("bot_ui_feed_sla_reconnects_total")
     assert (
-        sla_reconnects.value(labels={"adapter": "grpc", "transport": "grpc", "environment": "default"})
+        sla_reconnects.value(
+            labels={"adapter": "grpc", "transport": "grpc", "environment": "default"}
+        )
         >= 0.0
     )
 
@@ -2648,7 +2701,9 @@ def test_feed_alert_sink_survives_runtime_metadata_refresh(monkeypatch: pytest.M
     events: list[dict[str, object]] = []
 
     class _Sink:
-        def emit_feed_health_event(self, **payload: object) -> None:  # pragma: no cover - prosty stub
+        def emit_feed_health_event(
+            self, **payload: object
+        ) -> None:  # pragma: no cover - prosty stub
             events.append(dict(payload))
 
     service = RuntimeService(feed_alert_sink=_Sink())
@@ -2673,7 +2728,9 @@ def test_runtime_service_uses_injected_feed_alert_sink(monkeypatch: pytest.Monke
         return object()
 
     class _Sink:
-        def emit_feed_health_event(self, **payload: object) -> None:  # pragma: no cover - prosty stub
+        def emit_feed_health_event(
+            self, **payload: object
+        ) -> None:  # pragma: no cover - prosty stub
             emitted_events.append(payload)
 
     injected_sink = _Sink()
@@ -2745,7 +2802,9 @@ def test_risk_journal_metrics_exporter_records_state(monkeypatch: pytest.MonkeyP
     captured: list[dict[str, object]] = []
 
     class _Sink:
-        def emit_feed_health_event(self, **kwargs: object) -> None:  # pragma: no cover - prosta implementacja
+        def emit_feed_health_event(
+            self, **kwargs: object
+        ) -> None:  # pragma: no cover - prosta implementacja
             captured.append(kwargs)
 
     service = RuntimeService(feed_alert_sink=_Sink())
@@ -2805,9 +2864,7 @@ def test_risk_journal_metrics_exporter_normalizes_snake_case() -> None:
 def test_risk_journal_metrics_exporter_tracks_risk_flag_counts() -> None:
     registry = MetricsRegistry()
     service = RuntimeService(feed_alert_sink=None)
-    service._risk_journal_metrics_exporter = RiskJournalMetricsExporter(
-        registry=registry
-    )
+    service._risk_journal_metrics_exporter = RiskJournalMetricsExporter(registry=registry)
 
     diagnostics = {
         "incompleteEntries": 1,
@@ -2841,9 +2898,7 @@ def test_risk_journal_metrics_exporter_tracks_risk_flag_counts() -> None:
 def test_risk_journal_metrics_exporter_accepts_numeric_samples() -> None:
     registry = MetricsRegistry()
     service = RuntimeService(feed_alert_sink=None)
-    service._risk_journal_metrics_exporter = RiskJournalMetricsExporter(
-        registry=registry
-    )
+    service._risk_journal_metrics_exporter = RiskJournalMetricsExporter(registry=registry)
 
     diagnostics = {"incomplete_entries": 1, "incomplete_samples": 5}
     service._maybe_emit_risk_journal_alert(diagnostics)
@@ -2865,9 +2920,7 @@ def test_risk_journal_metrics_exporter_accepts_numeric_samples() -> None:
 def test_risk_journal_metrics_exporter_prefers_explicit_sample_count() -> None:
     registry = MetricsRegistry()
     service = RuntimeService(feed_alert_sink=None)
-    service._risk_journal_metrics_exporter = RiskJournalMetricsExporter(
-        registry=registry
-    )
+    service._risk_journal_metrics_exporter = RiskJournalMetricsExporter(registry=registry)
 
     diagnostics = {
         "incompleteEntries": 4,
@@ -2893,7 +2946,9 @@ def test_runtime_overview_strategy_ai_panel_tracks_transport() -> None:
     engine = QQmlApplicationEngine()
     engine.rootContext().setContextProperty("telemetryProvider", provider)
     engine.rootContext().setContextProperty("runtimeService", runtime_service)
-    qml_path = Path(__file__).resolve().parents[2] / "ui" / "qml" / "dashboard" / "RuntimeOverview.qml"
+    qml_path = (
+        Path(__file__).resolve().parents[2] / "ui" / "qml" / "dashboard" / "RuntimeOverview.qml"
+    )
     engine.load(QUrl.fromLocalFile(str(qml_path)))
     assert engine.rootObjects(), "Nie udało się załadować RuntimeOverview.qml"
     root = engine.rootObjects()[0]
@@ -2951,7 +3006,9 @@ def test_runtime_overview_feed_sla_exposes_anti_flap_counters(tmp_path: Path) ->
     engine.rootContext().setContextProperty("dashboardSettingsController", dashboard_controller)
     engine.rootContext().setContextProperty("telemetryProvider", provider)
     engine.rootContext().setContextProperty("runtimeService", runtime_service)
-    qml_path = Path(__file__).resolve().parents[2] / "ui" / "qml" / "dashboard" / "RuntimeOverview.qml"
+    qml_path = (
+        Path(__file__).resolve().parents[2] / "ui" / "qml" / "dashboard" / "RuntimeOverview.qml"
+    )
 
     initial_properties = {
         "dashboardSettingsController": dashboard_controller,
@@ -3162,8 +3219,7 @@ def test_runtime_overview_feed_sla_exposes_anti_flap_counters(tmp_path: Path) ->
             return _loader_item() is not None
 
         assert _wait_until(_loader_is_ready, timeout_s=5.0), (
-            "Loader feed_sla nie osiągnął gotowości (Ready/item). "
-            f"{_loader_debug_info(loader)}"
+            f"Loader feed_sla nie osiągnął gotowości (Ready/item). {_loader_debug_info(loader)}"
         )
 
         def _find_in_subtree(start: QObject, name: str) -> QObject | None:
@@ -3212,7 +3268,9 @@ def test_runtime_overview_feed_sla_exposes_anti_flap_counters(tmp_path: Path) ->
 
 
 def test_runtime_overview_reference_screenshot_exists() -> None:
-    reference_path = Path(__file__).resolve().parent / "screenshots" / "runtime_overview_reference.json"
+    reference_path = (
+        Path(__file__).resolve().parent / "screenshots" / "runtime_overview_reference.json"
+    )
     assert reference_path.exists(), "Brak referencyjnego zrzutu RuntimeOverview"
 
     payload = json.loads(reference_path.read_text(encoding="utf-8"))
@@ -3221,7 +3279,9 @@ def test_runtime_overview_reference_screenshot_exists() -> None:
     raw_bytes = base64.b64decode("".join(encoded_chunks))
 
     image = QImage()
-    assert image.loadFromData(QByteArray(raw_bytes), payload.get("format", "png")), "Nie udało się odczytać zrzutu"
+    assert image.loadFromData(QByteArray(raw_bytes), payload.get("format", "png")), (
+        "Nie udało się odczytać zrzutu"
+    )
     assert not image.isNull(), "Referencyjny zrzut ekranu jest uszkodzony"
     assert image.width() >= payload.get("width", 32)
     assert image.height() >= payload.get("height", 32)

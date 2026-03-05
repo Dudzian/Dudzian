@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 """CI helper that guards repo layout and import rules."""
+
 from __future__ import annotations
 
 import pathlib

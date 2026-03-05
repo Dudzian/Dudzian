@@ -1,5 +1,6 @@
 #!/usr/bin/env python
 """Build a wheelhouse for offline installs."""
+
 from __future__ import annotations
 
 import argparse
@@ -64,7 +65,9 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     parser.add_argument("--only-binary", default=":all:", help="pip --only-binary value")
     parser.add_argument("--no-binary", help="pip --no-binary value")
     parser.add_argument("--python", default=sys.executable, help="Python executable to use")
-    parser.add_argument("--skip-dev", action="store_true", help="Skip dev extras when downloading project deps")
+    parser.add_argument(
+        "--skip-dev", action="store_true", help="Skip dev extras when downloading project deps"
+    )
     return parser.parse_args(argv)
 
 
@@ -106,7 +109,10 @@ def main(argv: list[str]) -> int:
     download(wheelhouse, build_download_cmd(wheelhouse, args, [project_target], args.python))
 
     if args.requirements:
-        download(wheelhouse, build_download_cmd(wheelhouse, args, [f"-r{args.requirements}"], args.python))
+        download(
+            wheelhouse,
+            build_download_cmd(wheelhouse, args, [f"-r{args.requirements}"], args.python),
+        )
 
     write_manifest(wheelhouse)
     return 0

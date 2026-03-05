@@ -1,4 +1,5 @@
 """Persistent hardware fingerprint lock used during runtime bootstrap."""
+
 from __future__ import annotations
 
 import json
@@ -61,7 +62,9 @@ def load_fingerprint_lock(path: str | os.PathLike[str] | None = None) -> Fingerp
     try:
         payload = json.loads(target.read_text(encoding="utf-8"))
     except json.JSONDecodeError as exc:
-        raise FingerprintLockError(f"Plik blokady fingerprintu {target} ma niepoprawny format JSON.") from exc
+        raise FingerprintLockError(
+            f"Plik blokady fingerprintu {target} ma niepoprawny format JSON."
+        ) from exc
     if not isinstance(payload, Mapping):
         raise FingerprintLockError("Plik blokady fingerprintu powinien zawierać obiekt JSON.")
 
@@ -102,7 +105,9 @@ def write_fingerprint_lock(
     target.parent.mkdir(parents=True, exist_ok=True)
     payload = _build_payload(fingerprint, metadata=metadata)
     tmp_path = target.with_suffix(target.suffix + ".tmp")
-    tmp_path.write_text(json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True), encoding="utf-8")
+    tmp_path.write_text(
+        json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True), encoding="utf-8"
+    )
     os.replace(tmp_path, target)
     return FingerprintLock(
         fingerprint=_canonical_fingerprint(fingerprint),
@@ -123,12 +128,12 @@ def verify_local_hardware(
     try:
         current = hardware.generate_fingerprint()
     except FingerprintError as exc:
-        raise FingerprintLockError("Nie udało się odczytać lokalnego fingerprintu urządzenia.") from exc
+        raise FingerprintLockError(
+            "Nie udało się odczytać lokalnego fingerprintu urządzenia."
+        ) from exc
 
     if _canonical_fingerprint(current) != lock.fingerprint:
-        raise FingerprintLockError(
-            "Fingerprint urządzenia nie zgadza się z blokadą instalacyjną."
-        )
+        raise FingerprintLockError("Fingerprint urządzenia nie zgadza się z blokadą instalacyjną.")
 
 
 __all__ = [

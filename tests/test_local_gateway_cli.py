@@ -63,7 +63,9 @@ def test_main_emits_ready_and_processes_requests(monkeypatch, capfd):
             self.calls.append((method, params))
             return {"echo": params.get("value")}
 
-    monkeypatch.setattr(local_gateway, "build_local_runtime_context", lambda **_kwargs: DummyContext())
+    monkeypatch.setattr(
+        local_gateway, "build_local_runtime_context", lambda **_kwargs: DummyContext()
+    )
     monkeypatch.setattr(local_gateway, "LocalRuntimeGateway", DummyGateway)
 
     stdin = io.StringIO('{"id":1,"method":"echo","params":{"value":42}}\n')

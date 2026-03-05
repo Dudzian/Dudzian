@@ -17,7 +17,9 @@ class ModelRepository(Protocol):
 
     def load(self, artifact: str | Path | Mapping[str, object]) -> ModelArtifact: ...
 
-    def load_model(self, reference: str | Path | Mapping[str, object] | None = None) -> ModelArtifact: ...
+    def load_model(
+        self, reference: str | Path | Mapping[str, object] | None = None
+    ) -> ModelArtifact: ...
 
     def save(
         self,
@@ -61,7 +63,9 @@ class ModelRepository(Protocol):
 
     def promote_version(self, version: str, *, aliases: Sequence[str] | None = None) -> None: ...
 
-    def attach_quality_report(self, version: str, report: Mapping[str, object]) -> Mapping[str, object]: ...
+    def attach_quality_report(
+        self, version: str, report: Mapping[str, object]
+    ) -> Mapping[str, object]: ...
 
     def get_quality_report(self, version: str) -> Mapping[str, object] | None: ...
 
@@ -244,7 +248,9 @@ class FilesystemModelRepository:
 
         relative_path = destination.relative_to(self.base_path)
         now = datetime.now(timezone.utc).isoformat()
-        entry_aliases = tuple({str(alias).strip() for alias in (aliases or ()) if str(alias).strip()})
+        entry_aliases = tuple(
+            {str(alias).strip() for alias in (aliases or ()) if str(alias).strip()}
+        )
         existing_entry = versions.get(version)
         quality_report = None
         if isinstance(existing_entry, Mapping):
@@ -255,14 +261,14 @@ class FilesystemModelRepository:
             "metrics": self._json_safe(artifact.metrics),
             "metadata": self._json_safe(artifact.metadata),
             "aliases": list(entry_aliases),
-            "quality_report": self._json_safe(quality_report) if quality_report is not None else None,
+            "quality_report": self._json_safe(quality_report)
+            if quality_report is not None
+            else None,
         }
         for alias in entry_aliases:
             aliases_map[alias] = version
 
-        if activate is True or (
-            activate is None and (manifest.get("active") in (None, version))
-        ):
+        if activate is True or (activate is None and (manifest.get("active") in (None, version))):
             manifest["active"] = version
 
         self._synchronise_aliases(manifest)
@@ -306,7 +312,9 @@ class FilesystemModelRepository:
             payload = json.load(handle)
         return ModelArtifact.from_dict(payload)
 
-    def load_model(self, reference: str | Path | Mapping[str, object] | None = None) -> ModelArtifact:
+    def load_model(
+        self, reference: str | Path | Mapping[str, object] | None = None
+    ) -> ModelArtifact:
         target = reference if reference is not None else self.resolve()
         return self.load(target)
 
@@ -347,9 +355,7 @@ class FilesystemModelRepository:
         activate: bool | None = None,
     ) -> Path:
         resolved_version = self._extract_version(artifact, version)
-        name = filename or (
-            f"model-{resolved_version}.json" if resolved_version else "model.json"
-        )
+        name = filename or (f"model-{resolved_version}.json" if resolved_version else "model.json")
         if resolved_version:
             return self.publish(
                 artifact,
@@ -446,7 +452,9 @@ class FilesystemModelRepository:
         self._synchronise_aliases(manifest)
         self._write_manifest(manifest)
 
-    def attach_quality_report(self, version: str, report: Mapping[str, object]) -> Mapping[str, object]:
+    def attach_quality_report(
+        self, version: str, report: Mapping[str, object]
+    ) -> Mapping[str, object]:
         version = str(version).strip()
         if not version:
             raise ValueError("version must be a non-empty string")
@@ -504,11 +512,7 @@ class FilesystemModelRepository:
         manifest["active"] = version
 
         if aliases is not None:
-            normalized_aliases = {
-                str(alias).strip()
-                for alias in aliases
-                if str(alias).strip()
-            }
+            normalized_aliases = {str(alias).strip() for alias in aliases if str(alias).strip()}
             if normalized_aliases:
                 for alias in normalized_aliases:
                     aliases_map[alias] = version
@@ -577,11 +581,7 @@ class FilesystemModelRepository:
         for ver, payload in list(versions.items()):
             if not isinstance(payload, Mapping):
                 continue
-            current_aliases = [
-                alias
-                for alias, mapped in aliases_map.items()
-                if mapped == ver
-            ]
+            current_aliases = [alias for alias, mapped in aliases_map.items() if mapped == ver]
             payload = dict(payload)
             payload["aliases"] = current_aliases
             versions[ver] = payload
@@ -594,11 +594,17 @@ class CloudModelRepository:
     bucket: str
     prefix: str
 
-    def load(self, artifact: str | Path | Mapping[str, object]) -> ModelArtifact:  # pragma: no cover - szkic
+    def load(
+        self, artifact: str | Path | Mapping[str, object]
+    ) -> ModelArtifact:  # pragma: no cover - szkic
         raise NotImplementedError("CloudModelRepository.load nie jest jeszcze zaimplementowane")
 
-    def load_model(self, reference: str | Path | Mapping[str, object] | None = None) -> ModelArtifact:  # pragma: no cover - szkic
-        raise NotImplementedError("CloudModelRepository.load_model nie jest jeszcze zaimplementowane")
+    def load_model(
+        self, reference: str | Path | Mapping[str, object] | None = None
+    ) -> ModelArtifact:  # pragma: no cover - szkic
+        raise NotImplementedError(
+            "CloudModelRepository.load_model nie jest jeszcze zaimplementowane"
+        )
 
     def save(
         self,
@@ -620,7 +626,9 @@ class CloudModelRepository:
         aliases: Sequence[str] | None = None,
         activate: bool | None = None,
     ) -> Path:  # pragma: no cover - szkic
-        raise NotImplementedError("CloudModelRepository.save_model nie jest jeszcze zaimplementowane")
+        raise NotImplementedError(
+            "CloudModelRepository.save_model nie jest jeszcze zaimplementowane"
+        )
 
     def publish(
         self,
@@ -637,25 +645,45 @@ class CloudModelRepository:
         raise NotImplementedError("CloudModelRepository.resolve nie jest jeszcze zaimplementowane")
 
     def get_manifest(self) -> Mapping[str, object]:  # pragma: no cover - szkic
-        raise NotImplementedError("CloudModelRepository.get_manifest nie jest jeszcze zaimplementowane")
+        raise NotImplementedError(
+            "CloudModelRepository.get_manifest nie jest jeszcze zaimplementowane"
+        )
 
     def list_versions(self) -> Sequence[str]:  # pragma: no cover - szkic
-        raise NotImplementedError("CloudModelRepository.list_versions nie jest jeszcze zaimplementowane")
+        raise NotImplementedError(
+            "CloudModelRepository.list_versions nie jest jeszcze zaimplementowane"
+        )
 
     def get_active_version(self) -> str | None:  # pragma: no cover - szkic
-        raise NotImplementedError("CloudModelRepository.get_active_version nie jest jeszcze zaimplementowane")
+        raise NotImplementedError(
+            "CloudModelRepository.get_active_version nie jest jeszcze zaimplementowane"
+        )
 
     def set_active_version(self, version: str) -> None:  # pragma: no cover - szkic
-        raise NotImplementedError("CloudModelRepository.set_active_version nie jest jeszcze zaimplementowane")
+        raise NotImplementedError(
+            "CloudModelRepository.set_active_version nie jest jeszcze zaimplementowane"
+        )
 
-    def promote_version(self, version: str, *, aliases: Sequence[str] | None = None) -> None:  # pragma: no cover - szkic
-        raise NotImplementedError("CloudModelRepository.promote_version nie jest jeszcze zaimplementowane")
+    def promote_version(
+        self, version: str, *, aliases: Sequence[str] | None = None
+    ) -> None:  # pragma: no cover - szkic
+        raise NotImplementedError(
+            "CloudModelRepository.promote_version nie jest jeszcze zaimplementowane"
+        )
 
-    def attach_quality_report(self, version: str, report: Mapping[str, object]) -> Mapping[str, object]:  # pragma: no cover - szkic
-        raise NotImplementedError("CloudModelRepository.attach_quality_report nie jest jeszcze zaimplementowane")
+    def attach_quality_report(
+        self, version: str, report: Mapping[str, object]
+    ) -> Mapping[str, object]:  # pragma: no cover - szkic
+        raise NotImplementedError(
+            "CloudModelRepository.attach_quality_report nie jest jeszcze zaimplementowane"
+        )
 
-    def get_quality_report(self, version: str) -> Mapping[str, object] | None:  # pragma: no cover - szkic
-        raise NotImplementedError("CloudModelRepository.get_quality_report nie jest jeszcze zaimplementowane")
+    def get_quality_report(
+        self, version: str
+    ) -> Mapping[str, object] | None:  # pragma: no cover - szkic
+        raise NotImplementedError(
+            "CloudModelRepository.get_quality_report nie jest jeszcze zaimplementowane"
+        )
 
     def remove_version(
         self,
@@ -664,7 +692,9 @@ class CloudModelRepository:
         delete_file: bool = False,
         missing_ok: bool = False,
     ) -> None:  # pragma: no cover - szkic
-        raise NotImplementedError("CloudModelRepository.remove_version nie jest jeszcze zaimplementowane")
+        raise NotImplementedError(
+            "CloudModelRepository.remove_version nie jest jeszcze zaimplementowane"
+        )
 
 
 __all__ = [

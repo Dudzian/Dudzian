@@ -1,4 +1,5 @@
 """Procedura synchronizacji przed migracją środowiska paper → live."""
+
 from __future__ import annotations
 
 import argparse
@@ -29,7 +30,9 @@ class _DummyAuditLog:
         return "<promotion.audit-log>"
 
 
-def _build_alert_stub(environment: EnvironmentConfig) -> tuple[Mapping[str, object], Any, _DummyAuditLog]:
+def _build_alert_stub(
+    environment: EnvironmentConfig,
+) -> tuple[Mapping[str, object], Any, _DummyAuditLog]:
     """Buduje minimalne obiekty kompatybilne z checklistą live."""
 
     channels = {
@@ -48,13 +51,13 @@ def _build_alert_stub(environment: EnvironmentConfig) -> tuple[Mapping[str, obje
     return channels, alert_router, audit_log
 
 
-def _extract_risk_profile(core_config: CoreConfig, environment: EnvironmentConfig) -> RiskProfileConfig | None:
+def _extract_risk_profile(
+    core_config: CoreConfig, environment: EnvironmentConfig
+) -> RiskProfileConfig | None:
     return core_config.risk_profiles.get(environment.risk_profile)
 
 
-def _build_license_summary(
-    core_config: CoreConfig, *, skip_license: bool
-) -> Mapping[str, Any]:
+def _build_license_summary(core_config: CoreConfig, *, skip_license: bool) -> Mapping[str, Any]:
     license_config = getattr(core_config, "license", None)
     if skip_license or not license_config:
         return {"status": "skipped" if skip_license else "not_configured"}
@@ -161,17 +164,13 @@ def build_promotion_report(
         try:
             payload = json.loads(summary_path.read_text(encoding="utf-8"))
         except FileNotFoundError as exc:
-            raise FileNotFoundError(
-                f"Backtest summary '{summary_path}' not found"
-            ) from exc
+            raise FileNotFoundError(f"Backtest summary '{summary_path}' not found") from exc
         guardrails = payload.get("guardrails") if isinstance(payload, Mapping) else None
         if guardrails is not None:
             report["backtest_guardrails"] = guardrails
             if not bool(guardrails.get("allowed", False)):
                 reason = guardrails.get("reason") or "Risk guardrails rejected strategy"
-                raise RuntimeError(
-                    f"Strategia odrzucona przez risk guardrails: {reason}"
-                )
+                raise RuntimeError(f"Strategia odrzucona przez risk guardrails: {reason}")
         else:
             report["backtest_guardrails"] = None
 

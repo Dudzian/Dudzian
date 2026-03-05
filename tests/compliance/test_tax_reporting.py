@@ -127,31 +127,32 @@ def test_cost_basis_methods(sample_trades: list[LedgerEntry]) -> None:
         fifo_event.quantity
     )
     assert fifo_event.long_term_quantity == pytest.approx(0.0)
-    fifo_expected_avg = sum(
-        matched.holding_period_days * matched.quantity for matched in fifo_event.matched_lots
-    ) / fifo_event.quantity
-    assert pytest.approx(
-        fifo_event.average_holding_period_days, rel=1e-6
-    ) == pytest.approx(fifo_expected_avg)
+    fifo_expected_avg = (
+        sum(matched.holding_period_days * matched.quantity for matched in fifo_event.matched_lots)
+        / fifo_event.quantity
+    )
+    assert pytest.approx(fifo_event.average_holding_period_days, rel=1e-6) == pytest.approx(
+        fifo_expected_avg
+    )
     assert pytest.approx(fifo_event.short_term_tax, rel=1e-6) == pytest.approx(
         fifo_event.short_term_gain * PL_TAX_RATE
     )
     assert fifo_event.long_term_tax == pytest.approx(0.0)
-    assert pytest.approx(
-        fifo_event.total_tax_liability, rel=1e-6
-    ) == pytest.approx(fifo_event.short_term_tax)
+    assert pytest.approx(fifo_event.total_tax_liability, rel=1e-6) == pytest.approx(
+        fifo_event.short_term_tax
+    )
     assert pytest.approx(fifo_report.open_lots[0].quantity, rel=1e-6) == 0.25
-    fifo_open_expected = (report_end - datetime(2024, 1, 5, tzinfo=timezone.utc)).total_seconds() / 86400.0
-    assert pytest.approx(
-        fifo_report.open_lots[0].holding_period_days, rel=1e-6
-    ) == pytest.approx(fifo_open_expected)
+    fifo_open_expected = (
+        report_end - datetime(2024, 1, 5, tzinfo=timezone.utc)
+    ).total_seconds() / 86400.0
+    assert pytest.approx(fifo_report.open_lots[0].holding_period_days, rel=1e-6) == pytest.approx(
+        fifo_open_expected
+    )
     fifo_breakdown = {entry.asset: entry for entry in fifo_report.asset_breakdown}
     assert fifo_breakdown["BTC"].disposed_quantity == pytest.approx(0.75)
     assert fifo_breakdown["BTC"].open_quantity == pytest.approx(0.25)
     assert fifo_breakdown["BTC"].realized_gain == pytest.approx(fifo_event.realized_gain)
-    assert fifo_breakdown["BTC"].short_term_gain == pytest.approx(
-        fifo_event.short_term_gain
-    )
+    assert fifo_breakdown["BTC"].short_term_gain == pytest.approx(fifo_event.short_term_gain)
     assert fifo_breakdown["BTC"].short_term_quantity == pytest.approx(
         fifo_event.short_term_quantity
     )
@@ -165,9 +166,9 @@ def test_cost_basis_methods(sample_trades: list[LedgerEntry]) -> None:
         fifo_breakdown["BTC"].average_holding_period_days,
         rel=1e-6,
     ) == pytest.approx(fifo_event.average_holding_period_days)
-    assert pytest.approx(
-        fifo_breakdown["BTC"].open_short_term_quantity, rel=1e-6
-    ) == pytest.approx(fifo_report.open_lots[0].quantity)
+    assert pytest.approx(fifo_breakdown["BTC"].open_short_term_quantity, rel=1e-6) == pytest.approx(
+        fifo_report.open_lots[0].quantity
+    )
     assert fifo_breakdown["BTC"].open_long_term_quantity == pytest.approx(0.0)
     assert pytest.approx(
         fifo_breakdown["BTC"].open_short_term_cost_basis,
@@ -181,20 +182,16 @@ def test_cost_basis_methods(sample_trades: list[LedgerEntry]) -> None:
     fifo_venue = {entry.venue: entry for entry in fifo_report.venue_breakdown}
     assert fifo_venue["KRAKEN"].disposed_quantity == pytest.approx(fifo_event.quantity)
     assert fifo_venue["KRAKEN"].realized_gain == pytest.approx(fifo_event.realized_gain)
-    assert pytest.approx(
-        fifo_venue["KRAKEN"].short_term_quantity, rel=1e-6
-    ) == pytest.approx(fifo_event.short_term_quantity)
-    assert fifo_venue["KRAKEN"].total_tax_liability == pytest.approx(
-        fifo_event.total_tax_liability
+    assert pytest.approx(fifo_venue["KRAKEN"].short_term_quantity, rel=1e-6) == pytest.approx(
+        fifo_event.short_term_quantity
     )
+    assert fifo_venue["KRAKEN"].total_tax_liability == pytest.approx(fifo_event.total_tax_liability)
     assert "COINBASE" in fifo_venue
-    assert fifo_venue["COINBASE"].open_quantity == pytest.approx(
-        fifo_report.open_lots[0].quantity
-    )
+    assert fifo_venue["COINBASE"].open_quantity == pytest.approx(fifo_report.open_lots[0].quantity)
     assert fifo_venue["COINBASE"].disposed_quantity == pytest.approx(0.0)
-    assert pytest.approx(
-        fifo_report.totals.short_term_quantity, rel=1e-6
-    ) == pytest.approx(fifo_event.short_term_quantity)
+    assert pytest.approx(fifo_report.totals.short_term_quantity, rel=1e-6) == pytest.approx(
+        fifo_event.short_term_quantity
+    )
     assert fifo_report.totals.long_term_quantity == pytest.approx(0.0)
     assert pytest.approx(
         fifo_report.totals.average_holding_period_days,
@@ -215,9 +212,9 @@ def test_cost_basis_methods(sample_trades: list[LedgerEntry]) -> None:
         fifo_event.short_term_tax
     )
     assert fifo_report.totals.long_term_tax == pytest.approx(0.0)
-    assert pytest.approx(
-        fifo_report.totals.total_tax_liability, rel=1e-6
-    ) == pytest.approx(fifo_event.total_tax_liability)
+    assert pytest.approx(fifo_report.totals.total_tax_liability, rel=1e-6) == pytest.approx(
+        fifo_event.total_tax_liability
+    )
     assert len(fifo_report.period_breakdown) == 1
     fifo_period = fifo_report.period_breakdown[0]
     assert fifo_period.period == "2024-01"
@@ -227,9 +224,9 @@ def test_cost_basis_methods(sample_trades: list[LedgerEntry]) -> None:
     assert fifo_period.long_term_gain == pytest.approx(0.0)
     assert fifo_period.short_term_quantity == pytest.approx(fifo_event.short_term_quantity)
     assert fifo_period.long_term_quantity == pytest.approx(0.0)
-    assert pytest.approx(
-        fifo_period.average_holding_period_days, rel=1e-6
-    ) == pytest.approx(fifo_event.average_holding_period_days)
+    assert pytest.approx(fifo_period.average_holding_period_days, rel=1e-6) == pytest.approx(
+        fifo_event.average_holding_period_days
+    )
     assert pytest.approx(fifo_period.short_term_tax, rel=1e-6) == pytest.approx(
         fifo_event.short_term_tax
     )
@@ -247,21 +244,22 @@ def test_cost_basis_methods(sample_trades: list[LedgerEntry]) -> None:
         lifo_event.quantity
     )
     assert lifo_event.long_term_quantity == pytest.approx(0.0)
-    assert pytest.approx(
-        lifo_event.short_term_tax, rel=1e-6
-    ) == pytest.approx(max(lifo_event.short_term_gain, 0.0) * USA_SHORT_TAX_RATE)
-    assert pytest.approx(
-        lifo_event.long_term_tax, rel=1e-6
-    ) == pytest.approx(max(lifo_event.long_term_gain, 0.0) * USA_LONG_TAX_RATE)
-    assert pytest.approx(
-        lifo_event.total_tax_liability, rel=1e-6
-    ) == pytest.approx(lifo_event.short_term_tax + lifo_event.long_term_tax)
-    lifo_expected_avg = sum(
-        matched.holding_period_days * matched.quantity for matched in lifo_event.matched_lots
-    ) / lifo_event.quantity
-    assert pytest.approx(
-        lifo_event.average_holding_period_days, rel=1e-6
-    ) == pytest.approx(lifo_expected_avg)
+    assert pytest.approx(lifo_event.short_term_tax, rel=1e-6) == pytest.approx(
+        max(lifo_event.short_term_gain, 0.0) * USA_SHORT_TAX_RATE
+    )
+    assert pytest.approx(lifo_event.long_term_tax, rel=1e-6) == pytest.approx(
+        max(lifo_event.long_term_gain, 0.0) * USA_LONG_TAX_RATE
+    )
+    assert pytest.approx(lifo_event.total_tax_liability, rel=1e-6) == pytest.approx(
+        lifo_event.short_term_tax + lifo_event.long_term_tax
+    )
+    lifo_expected_avg = (
+        sum(matched.holding_period_days * matched.quantity for matched in lifo_event.matched_lots)
+        / lifo_event.quantity
+    )
+    assert pytest.approx(lifo_event.average_holding_period_days, rel=1e-6) == pytest.approx(
+        lifo_expected_avg
+    )
     lifo_breakdown = {entry.asset: entry for entry in lifo_report.asset_breakdown}
     assert lifo_breakdown["BTC"].cost_basis == pytest.approx(lifo_event.cost_basis)
     assert lifo_breakdown["BTC"].short_term_quantity == pytest.approx(
@@ -270,9 +268,9 @@ def test_cost_basis_methods(sample_trades: list[LedgerEntry]) -> None:
     assert lifo_breakdown["BTC"].average_holding_period_days == pytest.approx(
         lifo_event.average_holding_period_days
     )
-    assert pytest.approx(
-        lifo_breakdown["BTC"].open_short_term_quantity, rel=1e-6
-    ) == pytest.approx(lifo_report.open_lots[0].quantity)
+    assert pytest.approx(lifo_breakdown["BTC"].open_short_term_quantity, rel=1e-6) == pytest.approx(
+        lifo_report.open_lots[0].quantity
+    )
     assert lifo_breakdown["BTC"].open_long_term_quantity == pytest.approx(0.0)
     assert pytest.approx(
         lifo_breakdown["BTC"].open_short_term_cost_basis,
@@ -283,30 +281,30 @@ def test_cost_basis_methods(sample_trades: list[LedgerEntry]) -> None:
         lifo_breakdown["BTC"].open_average_holding_period_days,
         rel=1e-6,
     ) == pytest.approx(lifo_report.open_lots[0].holding_period_days)
-    assert pytest.approx(
-        lifo_breakdown["BTC"].short_term_tax, rel=1e-6
-    ) == pytest.approx(lifo_event.short_term_tax)
-    assert pytest.approx(
-        lifo_breakdown["BTC"].total_tax_liability, rel=1e-6
-    ) == pytest.approx(lifo_event.total_tax_liability)
+    assert pytest.approx(lifo_breakdown["BTC"].short_term_tax, rel=1e-6) == pytest.approx(
+        lifo_event.short_term_tax
+    )
+    assert pytest.approx(lifo_breakdown["BTC"].total_tax_liability, rel=1e-6) == pytest.approx(
+        lifo_event.total_tax_liability
+    )
     lifo_venue = {entry.venue: entry for entry in lifo_report.venue_breakdown}
     assert lifo_venue["KRAKEN"].disposed_quantity == pytest.approx(lifo_event.quantity)
     assert pytest.approx(lifo_venue["KRAKEN"].realized_gain, rel=1e-6) == pytest.approx(
         lifo_event.realized_gain
     )
-    assert pytest.approx(
-        lifo_venue["KRAKEN"].short_term_quantity, rel=1e-6
-    ) == pytest.approx(lifo_event.short_term_quantity)
-    assert pytest.approx(
-        lifo_venue["KRAKEN"].total_tax_liability, rel=1e-6
-    ) == pytest.approx(lifo_event.total_tax_liability)
-    assert lifo_venue["BINANCE"].open_quantity == pytest.approx(
-        lifo_report.open_lots[0].quantity
+    assert pytest.approx(lifo_venue["KRAKEN"].short_term_quantity, rel=1e-6) == pytest.approx(
+        lifo_event.short_term_quantity
     )
-    lifo_open_expected = (report_end - datetime(2024, 1, 1, tzinfo=timezone.utc)).total_seconds() / 86400.0
-    assert pytest.approx(
-        lifo_report.open_lots[0].holding_period_days, rel=1e-6
-    ) == pytest.approx(lifo_open_expected)
+    assert pytest.approx(lifo_venue["KRAKEN"].total_tax_liability, rel=1e-6) == pytest.approx(
+        lifo_event.total_tax_liability
+    )
+    assert lifo_venue["BINANCE"].open_quantity == pytest.approx(lifo_report.open_lots[0].quantity)
+    lifo_open_expected = (
+        report_end - datetime(2024, 1, 1, tzinfo=timezone.utc)
+    ).total_seconds() / 86400.0
+    assert pytest.approx(lifo_report.open_lots[0].holding_period_days, rel=1e-6) == pytest.approx(
+        lifo_open_expected
+    )
     assert pytest.approx(
         lifo_report.totals.unrealized_short_term_quantity, rel=1e-6
     ) == pytest.approx(lifo_report.totals.unrealized_quantity)
@@ -324,9 +322,9 @@ def test_cost_basis_methods(sample_trades: list[LedgerEntry]) -> None:
     assert pytest.approx(lifo_report.totals.long_term_tax, rel=1e-6) == pytest.approx(
         lifo_event.long_term_tax
     )
-    assert pytest.approx(
-        lifo_report.totals.total_tax_liability, rel=1e-6
-    ) == pytest.approx(lifo_event.total_tax_liability)
+    assert pytest.approx(lifo_report.totals.total_tax_liability, rel=1e-6) == pytest.approx(
+        lifo_event.total_tax_liability
+    )
     assert len(lifo_report.period_breakdown) == 1
     lifo_period = lifo_report.period_breakdown[0]
     assert lifo_period.period == "2024-01"
@@ -335,9 +333,9 @@ def test_cost_basis_methods(sample_trades: list[LedgerEntry]) -> None:
     assert lifo_period.short_term_gain == pytest.approx(lifo_event.short_term_gain)
     assert lifo_period.short_term_quantity == pytest.approx(lifo_event.short_term_quantity)
     assert lifo_period.long_term_quantity == pytest.approx(0.0)
-    assert pytest.approx(
-        lifo_period.average_holding_period_days, rel=1e-6
-    ) == pytest.approx(lifo_event.average_holding_period_days)
+    assert pytest.approx(lifo_period.average_holding_period_days, rel=1e-6) == pytest.approx(
+        lifo_event.average_holding_period_days
+    )
     assert pytest.approx(lifo_period.short_term_tax, rel=1e-6) == pytest.approx(
         lifo_event.short_term_tax
     )
@@ -350,15 +348,15 @@ def test_cost_basis_methods(sample_trades: list[LedgerEntry]) -> None:
     assert pytest.approx(average_event.cost_basis, rel=1e-6) == pytest.approx(15757.5)
     assert pytest.approx(average_event.realized_gain, rel=1e-6) == pytest.approx(2224.5)
     assert average_event.long_term_gain == pytest.approx(0.0)
-    assert pytest.approx(
-        average_event.short_term_tax, rel=1e-6
-    ) == pytest.approx(max(average_event.short_term_gain, 0.0) * UK_SHORT_TAX_RATE)
-    assert pytest.approx(
-        average_event.long_term_tax, rel=1e-6
-    ) == pytest.approx(max(average_event.long_term_gain, 0.0) * UK_LONG_TAX_RATE)
-    assert pytest.approx(
-        average_event.total_tax_liability, rel=1e-6
-    ) == pytest.approx(average_event.short_term_tax + average_event.long_term_tax)
+    assert pytest.approx(average_event.short_term_tax, rel=1e-6) == pytest.approx(
+        max(average_event.short_term_gain, 0.0) * UK_SHORT_TAX_RATE
+    )
+    assert pytest.approx(average_event.long_term_tax, rel=1e-6) == pytest.approx(
+        max(average_event.long_term_gain, 0.0) * UK_LONG_TAX_RATE
+    )
+    assert pytest.approx(average_event.total_tax_liability, rel=1e-6) == pytest.approx(
+        average_event.short_term_tax + average_event.long_term_tax
+    )
     assert average_report.open_lots[0].quantity == pytest.approx(0.25)
     average_open_expected = (
         report_end - datetime(2024, 1, 1, tzinfo=timezone.utc)
@@ -370,9 +368,7 @@ def test_cost_basis_methods(sample_trades: list[LedgerEntry]) -> None:
     assert average_breakdown["BTC"].open_cost_basis == pytest.approx(
         average_report.open_lots[0].cost_basis + average_report.open_lots[0].fee
     )
-    assert average_breakdown["BTC"].short_term_gain == pytest.approx(
-        average_event.short_term_gain
-    )
+    assert average_breakdown["BTC"].short_term_gain == pytest.approx(average_event.short_term_gain)
     assert pytest.approx(
         average_breakdown["BTC"].short_term_quantity,
         rel=1e-6,
@@ -387,45 +383,39 @@ def test_cost_basis_methods(sample_trades: list[LedgerEntry]) -> None:
     assert pytest.approx(
         average_breakdown["BTC"].open_short_term_cost_basis,
         rel=1e-6,
-    ) == pytest.approx(
-        average_report.open_lots[0].cost_basis + average_report.open_lots[0].fee
-    )
+    ) == pytest.approx(average_report.open_lots[0].cost_basis + average_report.open_lots[0].fee)
     assert average_breakdown["BTC"].open_long_term_cost_basis == pytest.approx(0.0)
     assert pytest.approx(
         average_breakdown["BTC"].open_average_holding_period_days, rel=1e-6
     ) == pytest.approx(average_report.open_lots[0].holding_period_days)
-    assert pytest.approx(
-        average_breakdown["BTC"].short_term_tax, rel=1e-6
-    ) == pytest.approx(average_event.short_term_tax)
-    assert pytest.approx(
-        average_breakdown["BTC"].total_tax_liability, rel=1e-6
-    ) == pytest.approx(average_event.total_tax_liability)
+    assert pytest.approx(average_breakdown["BTC"].short_term_tax, rel=1e-6) == pytest.approx(
+        average_event.short_term_tax
+    )
+    assert pytest.approx(average_breakdown["BTC"].total_tax_liability, rel=1e-6) == pytest.approx(
+        average_event.total_tax_liability
+    )
     average_venue = {entry.venue: entry for entry in average_report.venue_breakdown}
-    assert average_venue["KRAKEN"].disposed_quantity == pytest.approx(
-        average_event.quantity
+    assert average_venue["KRAKEN"].disposed_quantity == pytest.approx(average_event.quantity)
+    assert pytest.approx(average_venue["KRAKEN"].short_term_quantity, rel=1e-6) == pytest.approx(
+        average_event.short_term_quantity
     )
-    assert pytest.approx(
-        average_venue["KRAKEN"].short_term_quantity, rel=1e-6
-    ) == pytest.approx(average_event.short_term_quantity)
-    assert pytest.approx(
-        average_venue["KRAKEN"].total_tax_liability, rel=1e-6
-    ) == pytest.approx(average_event.total_tax_liability)
-    assert average_venue[None].open_quantity == pytest.approx(
-        average_report.open_lots[0].quantity
+    assert pytest.approx(average_venue["KRAKEN"].total_tax_liability, rel=1e-6) == pytest.approx(
+        average_event.total_tax_liability
     )
+    assert average_venue[None].open_quantity == pytest.approx(average_report.open_lots[0].quantity)
     assert pytest.approx(
         average_report.totals.unrealized_short_term_cost_basis, rel=1e-6
     ) == pytest.approx(average_report.totals.unrealized_cost_basis)
     assert average_report.totals.unrealized_long_term_cost_basis == pytest.approx(0.0)
-    assert pytest.approx(
-        average_report.totals.short_term_tax, rel=1e-6
-    ) == pytest.approx(average_event.short_term_tax)
-    assert pytest.approx(
-        average_report.totals.long_term_tax, rel=1e-6
-    ) == pytest.approx(average_event.long_term_tax)
-    assert pytest.approx(
-        average_report.totals.total_tax_liability, rel=1e-6
-    ) == pytest.approx(average_event.total_tax_liability)
+    assert pytest.approx(average_report.totals.short_term_tax, rel=1e-6) == pytest.approx(
+        average_event.short_term_tax
+    )
+    assert pytest.approx(average_report.totals.long_term_tax, rel=1e-6) == pytest.approx(
+        average_event.long_term_tax
+    )
+    assert pytest.approx(average_report.totals.total_tax_liability, rel=1e-6) == pytest.approx(
+        average_event.total_tax_liability
+    )
     assert len(average_report.period_breakdown) == 1
     average_period = average_report.period_breakdown[0]
     assert average_period.period == "2024-01"
@@ -434,9 +424,9 @@ def test_cost_basis_methods(sample_trades: list[LedgerEntry]) -> None:
     assert average_period.short_term_gain == pytest.approx(average_event.short_term_gain)
     assert average_period.short_term_quantity == pytest.approx(average_event.short_term_quantity)
     assert average_period.long_term_quantity == pytest.approx(0.0)
-    assert pytest.approx(
-        average_period.average_holding_period_days, rel=1e-6
-    ) == pytest.approx(average_event.average_holding_period_days)
+    assert pytest.approx(average_period.average_holding_period_days, rel=1e-6) == pytest.approx(
+        average_event.average_holding_period_days
+    )
     assert pytest.approx(average_period.short_term_tax, rel=1e-6) == pytest.approx(
         average_event.short_term_tax
     )
@@ -958,12 +948,8 @@ def test_holding_period_classification() -> None:
     totals = report.totals
     assert pytest.approx(totals.short_term_gain, rel=1e-6) == pytest.approx(980.0)
     assert pytest.approx(totals.long_term_gain, rel=1e-6) == pytest.approx(4470.0)
-    assert pytest.approx(totals.short_term_tax, rel=1e-6) == pytest.approx(
-        event.short_term_tax
-    )
-    assert pytest.approx(totals.long_term_tax, rel=1e-6) == pytest.approx(
-        event.long_term_tax
-    )
+    assert pytest.approx(totals.short_term_tax, rel=1e-6) == pytest.approx(event.short_term_tax)
+    assert pytest.approx(totals.long_term_tax, rel=1e-6) == pytest.approx(event.long_term_tax)
     assert pytest.approx(totals.total_tax_liability, rel=1e-6) == pytest.approx(
         event.total_tax_liability
     )

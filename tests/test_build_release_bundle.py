@@ -29,7 +29,9 @@ def _write_signature(target: Path, *, hmac_key: bytes, ed_key: ed25519.Ed25519Pr
             "algorithm": "HMAC-SHA256",
             "key_id": "test-hmac",
             "signed_at": timestamp,
-            "value": base64.b64encode(hmac.new(hmac_key, content, hashlib.sha256).digest()).decode("ascii"),
+            "value": base64.b64encode(hmac.new(hmac_key, content, hashlib.sha256).digest()).decode(
+                "ascii"
+            ),
         },
         "ed25519": {
             "algorithm": "ed25519",
@@ -121,8 +123,18 @@ def test_copy_catalog_assets(tmp_path: Path) -> None:
     assert (installer_root / "config/marketplace/catalog.json").exists()
     assert (installer_root / "config/marketplace/catalog.md").exists()
     assert (installer_root / "config/marketplace/packages/preset.json").exists()
-    assert (installer_root / "config/marketplace/catalog.json").read_text(encoding="utf-8").strip().startswith("{")
-    assert (installer_root / "config/marketplace/catalog.md").read_text(encoding="utf-8").strip().startswith("# Catalog")
+    assert (
+        (installer_root / "config/marketplace/catalog.json")
+        .read_text(encoding="utf-8")
+        .strip()
+        .startswith("{")
+    )
+    assert (
+        (installer_root / "config/marketplace/catalog.md")
+        .read_text(encoding="utf-8")
+        .strip()
+        .startswith("# Catalog")
+    )
     assert outputs
 
 
@@ -183,7 +195,9 @@ def test_verify_catalog_signatures_rejects_tamper(tmp_path: Path) -> None:
 def test_ensure_git_clean_detects_diff(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     repo = tmp_path / "repo"
     repo.mkdir()
-    subprocess.run(["git", "init"], cwd=repo, check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    subprocess.run(
+        ["git", "init"], cwd=repo, check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE
+    )
     subprocess.run(["git", "config", "user.email", "ci@example.com"], cwd=repo, check=True)
     subprocess.run(["git", "config", "user.name", "CI"], cwd=repo, check=True)
 

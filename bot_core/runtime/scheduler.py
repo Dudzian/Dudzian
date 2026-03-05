@@ -1,4 +1,5 @@
 """Ogólny harmonogram zadań dla operacji multi-portfelowych."""
+
 from __future__ import annotations
 
 import asyncio
@@ -204,11 +205,9 @@ class _QueueState:
 class AsyncIOQueueListener(Protocol):
     """Interfejs powiadomień o zdarzeniach kolejki I/O."""
 
-    def on_rate_limit_wait(self, *, key: str, waited: float, burst: int, pending: int) -> None:
-        ...
+    def on_rate_limit_wait(self, *, key: str, waited: float, burst: int, pending: int) -> None: ...
 
-    def on_timeout(self, *, key: str, duration: float, exception: BaseException) -> None:
-        ...
+    def on_timeout(self, *, key: str, duration: float, exception: BaseException) -> None: ...
 
 
 class AsyncIOTaskQueue:
@@ -260,7 +259,9 @@ class AsyncIOTaskQueue:
             if burst <= 0:
                 raise ValueError("burst musi być dodatnie")
             limits = _QueueLimits(
-                max_concurrency=int(max_concurrency if max_concurrency is not None else limits.max_concurrency),
+                max_concurrency=int(
+                    max_concurrency if max_concurrency is not None else limits.max_concurrency
+                ),
                 burst=int(burst),
             )
         self._queues[normalized] = _QueueState(

@@ -1,4 +1,5 @@
 """CLI raportujący stan manifestu SQLite dla danych OHLCV."""
+
 from __future__ import annotations
 
 import argparse
@@ -19,7 +20,9 @@ def _resolve_environment(config: CoreConfig, environment_name: str) -> Environme
         raise SystemExit(f"Nie znaleziono środowiska '{environment_name}' w konfiguracji") from exc
 
 
-def _resolve_universe(config: CoreConfig, environment: EnvironmentConfig) -> InstrumentUniverseConfig:
+def _resolve_universe(
+    config: CoreConfig, environment: EnvironmentConfig
+) -> InstrumentUniverseConfig:
     if not environment.instrument_universe:
         raise SystemExit(
             "Środowisko nie ma przypisanego instrument_universe – uzupełnij config/core.yaml."
@@ -157,7 +160,13 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.json:
         payload = [entry.__dict__ for entry in entries]
-        print(json.dumps({"entries": payload, "summary": summarize_status(entries)}, indent=2, ensure_ascii=False))
+        print(
+            json.dumps(
+                {"entries": payload, "summary": summarize_status(entries)},
+                indent=2,
+                ensure_ascii=False,
+            )
+        )
         return 0
 
     if not entries:

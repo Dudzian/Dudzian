@@ -1,4 +1,5 @@
 """Modele i struktury danych wykorzystywane przy analizie kosztów TCO."""
+
 from __future__ import annotations
 
 from dataclasses import dataclass, field

@@ -24,8 +24,6 @@ def test_decision_to_order_request_prefers_payload_client_order_id_when_source_b
     assert request.client_order_id == "abc"
 
 
-
-
 def test_decision_to_order_request_prefers_payload_client_order_id_when_source_whitespace() -> None:
     decision = {
         "symbol": "BTCUSDT",
@@ -43,6 +41,7 @@ def test_decision_to_order_request_prefers_payload_client_order_id_when_source_w
     request = decision_to_order_request(decision)
 
     assert request.client_order_id == "abc"
+
 
 def test_decision_to_order_request_prefers_source_client_order_id_when_present() -> None:
     decision = {

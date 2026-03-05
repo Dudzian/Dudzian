@@ -16,15 +16,18 @@ import pytest
 try:
     # Variant with OHLCV-based snapshots
     from bot_core.market_intel import MarketIntelAggregator, MarketIntelQuery  # type: ignore[attr-defined]
+
     _HAVE_MARKET_INTEL_QUERY = True
 except Exception:  # pragma: no cover - environment without OHLCV API
     from bot_core.market_intel import MarketIntelAggregator  # type: ignore
+
     MarketIntelQuery = None  # type: ignore[assignment]
     _HAVE_MARKET_INTEL_QUERY = False
 
 try:
     # Variant with SQLite + config-driven outputs
     from bot_core.config.models import MarketIntelConfig, MarketIntelSqliteConfig  # type: ignore[attr-defined]
+
     _HAVE_MARKET_INTEL_CONFIG = True
 except Exception:  # pragma: no cover - environment without config API
     MarketIntelConfig = None  # type: ignore[assignment]
@@ -36,6 +39,7 @@ try:
         _load_market_intel_snapshots_from_reports,
         _resolve_latest_report,
     )
+
     _HAVE_PIPELINE_HELPERS = True
 except Exception:  # pragma: no cover - pipeline helpers unavailable
     _load_market_intel_snapshots_from_reports = None  # type: ignore[assignment]
@@ -48,6 +52,7 @@ except Exception:  # pragma: no cover - pipeline helpers unavailable
 # =============================================================================
 class MemoryCacheStorage:
     """Minimal in-memory storage used to emulate OHLCV parquet cache API."""
+
     def __init__(self, payloads: Mapping[str, Mapping[str, Sequence[Sequence[float]]]]):
         self._payloads = dict(payloads)
         self._metadata: MutableMapping[str, str] = {}

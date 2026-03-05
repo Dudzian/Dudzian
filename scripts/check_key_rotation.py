@@ -50,7 +50,9 @@ def _parse_args(argv: Sequence[str] | None) -> argparse.Namespace:
     return parser.parse_args(argv)
 
 
-def _resolve_environments(config: CoreConfig, names: Iterable[str] | None) -> list[EnvironmentConfig]:
+def _resolve_environments(
+    config: CoreConfig, names: Iterable[str] | None
+) -> list[EnvironmentConfig]:
     if not names:
         return list(config.environments.values())
 
@@ -127,4 +129,3 @@ def main(argv: Sequence[str] | None = None) -> int:
 
 if __name__ == "__main__":  # pragma: no cover - uruchomienie z CLI
     raise SystemExit(main())
-

@@ -26,7 +26,9 @@ def _snapshot(spread: float, basis: float, funding: float) -> MarketSnapshot:
 
 def test_futures_spread_strategy_generates_entry_and_exit() -> None:
     strategy = FuturesSpreadStrategy(
-        FuturesSpreadSettings(entry_z=1.2, exit_z=0.3, max_bars=10, funding_exit=0.005, basis_exit=0.05)
+        FuturesSpreadSettings(
+            entry_z=1.2, exit_z=0.3, max_bars=10, funding_exit=0.005, basis_exit=0.05
+        )
     )
 
     warmup = [
@@ -45,7 +47,9 @@ def test_futures_spread_strategy_generates_entry_and_exit() -> None:
 
 def test_futures_spread_strategy_triggers_exit_on_funding_risk() -> None:
     strategy = FuturesSpreadStrategy(
-        FuturesSpreadSettings(entry_z=1.0, exit_z=0.3, max_bars=10, funding_exit=0.001, basis_exit=0.05)
+        FuturesSpreadSettings(
+            entry_z=1.0, exit_z=0.3, max_bars=10, funding_exit=0.001, basis_exit=0.05
+        )
     )
     strategy.on_data(_snapshot(spread=1.2, basis=0.0, funding=0.0))
     exit_signals = strategy.on_data(_snapshot(spread=0.8, basis=0.0, funding=0.002))

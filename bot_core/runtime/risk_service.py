@@ -1,4 +1,5 @@
 """Serwis gRPC udostępniający aktualny stan profili ryzyka."""
+
 from __future__ import annotations
 
 from collections import deque
@@ -68,7 +69,9 @@ def _profile_enum(profile_name: str) -> int:
         "aggressive": trading_pb2.RiskProfile.RISK_PROFILE_AGGRESSIVE,
         "manual": trading_pb2.RiskProfile.RISK_PROFILE_MANUAL,
     }
-    return mapping.get(profile_name.strip().lower(), trading_pb2.RiskProfile.RISK_PROFILE_UNSPECIFIED)
+    return mapping.get(
+        profile_name.strip().lower(), trading_pb2.RiskProfile.RISK_PROFILE_UNSPECIFIED
+    )
 
 
 def _default_profile_summary_resolver(profile_name: str) -> Mapping[str, Any] | None:
@@ -199,7 +202,9 @@ class RiskSnapshotBuilder:
                 if math.isfinite(numeric):
                     cost_breakdown[str(key)] = numeric
 
-        equity = _safe_float(state.get("last_equity"), _safe_float(state.get("start_of_day_equity")))
+        equity = _safe_float(
+            state.get("last_equity"), _safe_float(state.get("start_of_day_equity"))
+        )
         gross_notional = _safe_float(state.get("gross_notional"))
         used_leverage = gross_notional / equity if equity > 0 else 0.0
         drawdown = _safe_float(state.get("drawdown_pct"))
@@ -431,7 +436,9 @@ class RiskSnapshotPublisher:
             try:
                 snapshot = self._builder.build(profile_name)
             except Exception:  # pragma: no cover - diagnostyka buildera
-                self._logger.exception("Nie udało się zbudować snapshotu ryzyka", extra={"profile": profile_name})
+                self._logger.exception(
+                    "Nie udało się zbudować snapshotu ryzyka", extra={"profile": profile_name}
+                )
                 continue
             if snapshot is None:
                 continue
@@ -443,7 +450,10 @@ class RiskSnapshotPublisher:
                 except Exception:  # pragma: no cover - defensywne logowanie
                     self._logger.exception(
                         "Sink snapshotu ryzyka zgłosił wyjątek",
-                        extra={"profile": profile_name, "sink": getattr(sink, "__name__", sink.__class__.__name__)},
+                        extra={
+                            "profile": profile_name,
+                            "sink": getattr(sink, "__name__", sink.__class__.__name__),
+                        },
                     )
         return tuple(snapshots)
 
@@ -568,7 +578,9 @@ class RiskServiceServicer(trading_pb2_grpc.RiskServiceServicer if trading_pb2_gr
         token_validator: ServiceTokenValidator | None = None,
     ) -> None:
         if trading_pb2_grpc is None or grpc is None:  # pragma: no cover - brak zależności
-            raise RuntimeError("Uruchomienie RiskService wymaga wygenerowanych stubów oraz biblioteki grpcio")
+            raise RuntimeError(
+                "Uruchomienie RiskService wymaga wygenerowanych stubów oraz biblioteki grpcio"
+            )
         try:
             super().__init__()  # type: ignore[misc]
         except Exception:  # pragma: no cover - kompatybilność z różnymi wersjami gRPC
@@ -675,7 +687,9 @@ def _build_server_credentials(tls_config: Mapping[str, Any] | Any) -> Any | None
     if grpc is None:
         raise RuntimeError("Konfiguracja TLS wymaga biblioteki grpcio")
 
-    certificate_source = _get_value(tls_config, "certificate_path", "certificate", "cert_path", "cert")
+    certificate_source = _get_value(
+        tls_config, "certificate_path", "certificate", "cert_path", "cert"
+    )
     key_source = _get_value(tls_config, "private_key_path", "private_key", "key_path", "key")
     if not certificate_source or not key_source:
         raise ValueError("Konfiguracja TLS wymaga certyfikatu serwera oraz klucza prywatnego")

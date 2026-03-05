@@ -218,9 +218,7 @@ def test_regime_workflow_collect_metadata_uses_aliases() -> None:
     workflow = RegimeSwitchWorkflow(catalog=_AliasCatalog())
     workflow._strategy_metadata_cache.clear()
 
-    metadata = workflow._collect_strategy_metadata(
-        {"intraday_breakout_probing": 1.0}
-    )
+    metadata = workflow._collect_strategy_metadata({"intraday_breakout_probing": 1.0})
 
     strategies = metadata["strategies"]
     probing = dict(strategies["intraday_breakout_probing"])

@@ -1,4 +1,5 @@
 """Kontroler zarządzania strategiami i marketplace dla PySide6."""
+
 from __future__ import annotations
 
 
@@ -91,7 +92,9 @@ def _resolve_catalog_path(repo_root: Path) -> Path:
     return fallback
 
 
-def _resolve_catalog_signature_keys(catalog_path: Path, signing_keys: Mapping[str, bytes]) -> tuple[bytes | None, bytes | None]:
+def _resolve_catalog_signature_keys(
+    catalog_path: Path, signing_keys: Mapping[str, bytes]
+) -> tuple[bytes | None, bytes | None]:
     signature_path = catalog_path.with_suffix(catalog_path.suffix + ".sig")
     if not signature_path.exists():
         return None, None
@@ -106,7 +109,9 @@ def _resolve_catalog_signature_keys(catalog_path: Path, signing_keys: Mapping[st
     return hmac_key, ed25519_key
 
 
-def _verify_catalog_index(catalog_path: Path, signing_keys: Mapping[str, bytes]) -> tuple[bool, str | None]:
+def _verify_catalog_index(
+    catalog_path: Path, signing_keys: Mapping[str, bytes]
+) -> tuple[bool, str | None]:
     if not catalog_path.exists():
         return False, f"Nie znaleziono katalogu Marketplace: {catalog_path}"
     hmac_key, ed25519_key = _resolve_catalog_signature_keys(catalog_path, signing_keys)
@@ -334,9 +339,7 @@ class StrategyManagementController(QObject):
             payload["assignmentError"] = assign_error
         if payload.get("success"):
             if portfolio_id:
-                self._set_status(
-                    f"Zainstalowano {preset_id} i przypisano do {portfolio_id}"
-                )
+                self._set_status(f"Zainstalowano {preset_id} i przypisano do {portfolio_id}")
             else:
                 self._set_status(f"Zainstalowano {preset_id}")
         else:
@@ -352,7 +355,9 @@ class StrategyManagementController(QObject):
         options: Mapping[str, Any] | None = None,
     ) -> dict[str, Any]:
         bundle_name = (bundle_name or "").strip()
-        normalized_name = bundle_name or f"bundle-{datetime.now(timezone.utc).strftime('%Y%m%d%H%M%S')}"
+        normalized_name = (
+            bundle_name or f"bundle-{datetime.now(timezone.utc).strftime('%Y%m%d%H%M%S')}"
+        )
         safe_name = _slugify(normalized_name)
         if not safe_name:
             return {"success": False, "message": "Nazwa bundla jest wymagana"}
@@ -458,12 +463,14 @@ def _normalize_bundle_entries(entries: Iterable[Mapping[str, Any]]) -> list[dict
             order = int(order_value)
         except (TypeError, ValueError):
             order = len(sanitized) + 1
-        sanitized.append({
-            "presetId": preset_id,
-            "label": label,
-            "mode": mode,
-            "order": order,
-        })
+        sanitized.append(
+            {
+                "presetId": preset_id,
+                "label": label,
+                "mode": mode,
+                "order": order,
+            }
+        )
     sanitized.sort(key=lambda item: item.get("order", 0))
     for index, entry in enumerate(sanitized, start=1):
         entry["order"] = index

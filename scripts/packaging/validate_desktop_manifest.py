@@ -1,4 +1,5 @@
 """Validate bundler manifest entries against local artifacts."""
+
 from __future__ import annotations
 
 import argparse
@@ -89,7 +90,9 @@ def _sha256(path: Path) -> str:
     return digest.hexdigest()
 
 
-def _validate_section(section: str, root: Path, entries: Iterable[ManifestEntry]) -> ValidationResult:
+def _validate_section(
+    section: str, root: Path, entries: Iterable[ManifestEntry]
+) -> ValidationResult:
     missing: list[ValidationIssue] = []
     mismatched: list[ValidationIssue] = []
 
@@ -103,11 +106,15 @@ def _validate_section(section: str, root: Path, entries: Iterable[ManifestEntry]
             continue
         size = target.stat().st_size
         if size != entry.size_bytes:
-            mismatched.append(ValidationIssue(path=target, reason=f"rozmiar {size}B != {entry.size_bytes}B"))
+            mismatched.append(
+                ValidationIssue(path=target, reason=f"rozmiar {size}B != {entry.size_bytes}B")
+            )
             continue
         digest = _sha256(target)
         if digest != entry.sha256:
-            mismatched.append(ValidationIssue(path=target, reason=f"hash {digest} != {entry.sha256}"))
+            mismatched.append(
+                ValidationIssue(path=target, reason=f"hash {digest} != {entry.sha256}")
+            )
     return ValidationResult(missing=missing, mismatched=mismatched)
 
 
@@ -148,7 +155,11 @@ def main(argv: Iterable[str] | None = None) -> int:
 
     failures = [result for result in results.values() if not result.ok]
     if failures:
-        details = [f"Sekcja '{section}':\n{result.report()}" for section, result in results.items() if not result.ok]
+        details = [
+            f"Sekcja '{section}':\n{result.report()}"
+            for section, result in results.items()
+            if not result.ok
+        ]
         raise SystemExit("\n".join(details))
 
     return 0

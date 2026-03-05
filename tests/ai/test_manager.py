@@ -68,7 +68,9 @@ def test_manager_aggregate_ensemble_uses_dynamic_weights(tmp_path: Path) -> None
     base = np.asarray([0.9, 0.1], dtype=float)
     meta = np.asarray([0.3, 0.9], dtype=float)
     expected_weights = (base * meta) / np.sum(base * meta)
-    expected = series_alpha.to_numpy() * expected_weights[0] + series_beta.to_numpy() * expected_weights[1]
+    expected = (
+        series_alpha.to_numpy() * expected_weights[0] + series_beta.to_numpy() * expected_weights[1]
+    )
     assert np.allclose(combined.to_numpy(), expected)
 
 

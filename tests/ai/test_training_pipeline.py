@@ -40,7 +40,9 @@ def dataset() -> FeatureDataset:
     return _build_dataset()
 
 
-def test_walk_forward_coordinator_runs_and_publishes(tmp_path: Path, dataset: FeatureDataset) -> None:
+def test_walk_forward_coordinator_runs_and_publishes(
+    tmp_path: Path, dataset: FeatureDataset
+) -> None:
     scheduler_state = tmp_path / "scheduler.json"
     scheduler = RetrainingScheduler(
         interval=timedelta(hours=2),
@@ -103,7 +105,10 @@ def test_walk_forward_coordinator_runs_and_publishes(tmp_path: Path, dataset: Fe
         model_name="demo",
         version=outcome_second.version,
         evaluated_at=datetime.now(timezone.utc),
-        metrics={"mae": outcome_second.report.metrics.get("mae", 0.0) + 1.0, "directional_accuracy": 0.1},
+        metrics={
+            "mae": outcome_second.report.metrics.get("mae", 0.0) + 1.0,
+            "directional_accuracy": 0.1,
+        },
         status="degraded",
         baseline_version=outcome_first.version,
         delta={"mae": 1.0, "directional_accuracy": -0.5},

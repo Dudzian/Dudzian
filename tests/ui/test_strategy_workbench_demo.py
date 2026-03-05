@@ -42,12 +42,15 @@ def test_workbench_demo_mode_roundtrip() -> None:
     view_model = root_object.findChild(QObject, "strategyWorkbenchViewModel")
     assert view_model is not None, "ViewModel nie został odnaleziony"
 
-    assert QMetaObject.invokeMethod(
-        view_model,
-        "activateDemoMode",
-        Qt.DirectConnection,
-        Q_ARG(str, "momentum"),
-    ) is True
+    assert (
+        QMetaObject.invokeMethod(
+            view_model,
+            "activateDemoMode",
+            Qt.DirectConnection,
+            Q_ARG(str, "momentum"),
+        )
+        is True
+    )
     assert view_model.property("demoModeActive") is True
     assert view_model.property("demoModeTitle") == "Momentum Pro"
 
@@ -59,31 +62,40 @@ def test_workbench_demo_mode_roundtrip() -> None:
     portfolio_summary = view_model.property("portfolioSummary")
     assert portfolio_summary["maxExposureUtilization"] == pytest.approx(0.82, rel=1e-3)
 
-    assert QMetaObject.invokeMethod(
-        view_model,
-        "startScheduler",
-        Qt.DirectConnection,
-    ) is True
+    assert (
+        QMetaObject.invokeMethod(
+            view_model,
+            "startScheduler",
+            Qt.DirectConnection,
+        )
+        is True
+    )
 
     control_state = view_model.property("controlState")
     assert control_state["schedulerRunning"] is True
     assert control_state["lastActionSuccess"] is True
 
-    assert QMetaObject.invokeMethod(
-        view_model,
-        "triggerRiskRefresh",
-        Qt.DirectConnection,
-    ) is True
+    assert (
+        QMetaObject.invokeMethod(
+            view_model,
+            "triggerRiskRefresh",
+            Qt.DirectConnection,
+        )
+        is True
+    )
 
     control_state = view_model.property("controlState")
     assert control_state["manualRefreshCount"] == 3
     assert control_state["lastActionMessage"] == "Zainicjowano odświeżenie ryzyka"
 
-    assert QMetaObject.invokeMethod(
-        view_model,
-        "stopScheduler",
-        Qt.DirectConnection,
-    ) is True
+    assert (
+        QMetaObject.invokeMethod(
+            view_model,
+            "stopScheduler",
+            Qt.DirectConnection,
+        )
+        is True
+    )
 
     control_state = view_model.property("controlState")
     assert control_state["schedulerRunning"] is False
@@ -96,7 +108,9 @@ def test_workbench_demo_mode_roundtrip() -> None:
             pytest.skip(f"Brak zainstalowanej przeglądarki Playwright: {exc}")
         page = browser.new_page()
         page.set_content("<html><body><span id='mode'></span></body></html>")
-        page.eval_on_selector("#mode", "(el, value) => el.textContent = value", view_model.property("demoModeTitle"))
+        page.eval_on_selector(
+            "#mode", "(el, value) => el.textContent = value", view_model.property("demoModeTitle")
+        )
         assert page.text_content("#mode") == "Momentum Pro"
         browser.close()
 

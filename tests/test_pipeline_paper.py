@@ -1,4 +1,5 @@
 """Test end-to-end papierowej ścieżki sygnału."""
+
 from __future__ import annotations
 
 import math
@@ -37,6 +38,7 @@ from tests.test_runtime_bootstrap import _prepare_manager, _write_config
 @dataclass(slots=True)
 class _StaticStream:
     """Pusty stream spełniający minimalny kontrakt protokołu."""
+
     channels: Sequence[str]
 
 
@@ -151,9 +153,7 @@ def _position_size(
 def test_paper_pipeline_executes_and_alerts(tmp_path: Path) -> None:
     day_ms = 86_400_000
     base_ts = 1_700_000_000_000
-    candles = [
-        [base_ts + i * day_ms, 100 + i, 101 + i, 99 + i, 100 + i, 10 + i] for i in range(5)
-    ]
+    candles = [[base_ts + i * day_ms, 100 + i, 101 + i, 99 + i, 100 + i, 10 + i] for i in range(5)]
     candles.append([base_ts + 5 * day_ms, 105.0, 108.0, 104.0, 107.0, 20.0])
 
     adapter = _FakePaperAdapter(candles)
@@ -232,8 +232,12 @@ def test_paper_pipeline_executes_and_alerts(tmp_path: Path) -> None:
     assert check.allowed, f"Kontrola ryzyka powinna przepuścić zlecenie: {check.reason}"
 
     markets = {"BTCUSDT": market}
-    execution = PaperTradingExecutionService(markets, initial_balances={"USDT": 100_000.0, "BTC": 0.0})
-    context = ExecutionContext(portfolio_id="paper-test", risk_profile=profile.name, environment="paper", metadata={})
+    execution = PaperTradingExecutionService(
+        markets, initial_balances={"USDT": 100_000.0, "BTC": 0.0}
+    )
+    context = ExecutionContext(
+        portfolio_id="paper-test", risk_profile=profile.name, environment="paper", metadata={}
+    )
 
     result = execution.execute(order, context)
     assert result.status == "filled"
@@ -575,7 +579,9 @@ def test_build_daily_trend_pipeline_reuses_bootstrap_service(
     assert context.price_resolver("BTCUSDT") == pytest.approx(1.0)
 
 
-def test_offline_environment_requires_preloaded_dataset(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_offline_environment_requires_preloaded_dataset(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     ledger_dir = tmp_path / "ledger"
     ledger_dir.mkdir(parents=True, exist_ok=True)
 

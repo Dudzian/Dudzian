@@ -1,4 +1,5 @@
 """Wspólny store stanu runtime udostępniany warstwie QML."""
+
 from __future__ import annotations
 
 import logging

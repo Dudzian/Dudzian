@@ -17,7 +17,9 @@ def runbook_environment(tmp_path: Path) -> tuple[Path, Path]:
     metadata_dir.mkdir()
     actions_dir.mkdir()
 
-    (runbook_dir / "strategy_incident_playbook.md").write_text("# Strategia L1/L2\n", encoding="utf-8")
+    (runbook_dir / "strategy_incident_playbook.md").write_text(
+        "# Strategia L1/L2\n", encoding="utf-8"
+    )
     metadata_dir.joinpath("strategy_incident_playbook.yml").write_text(
         """
         id: strategy_incident_playbook
@@ -44,7 +46,9 @@ from pathlib import Path
     return runbook_dir, actions_dir
 
 
-def test_runbook_controller_executes_action(tmp_path: Path, runbook_environment: tuple[Path, Path]) -> None:
+def test_runbook_controller_executes_action(
+    tmp_path: Path, runbook_environment: tuple[Path, Path]
+) -> None:
     runbook_dir, actions_dir = runbook_environment
     controller = RunbookController(runbook_directory=runbook_dir, actions_directory=actions_dir)
 
@@ -59,12 +63,16 @@ def test_runbook_controller_executes_action(tmp_path: Path, runbook_environment:
     assert (actions_dir / "invoked.txt").exists(), "Skrypt powinien zostać uruchomiony"
 
 
-def test_runbook_controller_missing_action(tmp_path: Path, runbook_environment: tuple[Path, Path]) -> None:
+def test_runbook_controller_missing_action(
+    tmp_path: Path, runbook_environment: tuple[Path, Path]
+) -> None:
     runbook_dir, actions_dir = runbook_environment
     controller = RunbookController(runbook_directory=runbook_dir, actions_directory=actions_dir)
 
     controller.refreshAlerts()
-    assert not controller.runAction("strategy_incident_playbook", "unknown"), "Akcja nie powinna istnieć"
+    assert not controller.runAction("strategy_incident_playbook", "unknown"), (
+        "Akcja nie powinna istnieć"
+    )
     payload = json.loads(controller.actionStatus)
     assert payload["status"] == "error"
     assert "Nie znaleziono akcji" in payload["message"]

@@ -56,7 +56,9 @@ class MonteCarloScenario:
     heston_rho: float = -0.5
     heston_v0: Optional[float] = None
 
-    def calibrate(self, historical: HistoricalPriceSeries, periods_per_year: int = 252) -> "MonteCarloScenario":
+    def calibrate(
+        self, historical: HistoricalPriceSeries, periods_per_year: int = 252
+    ) -> "MonteCarloScenario":
         """Zwraca nowy scenariusz ze skalibrowanymi parametrami."""
 
         drift = self.drift

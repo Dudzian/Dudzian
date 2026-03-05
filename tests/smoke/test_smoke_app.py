@@ -1,4 +1,5 @@
 """Zestaw podstawowych testów smoke dla RC."""
+
 from __future__ import annotations
 
 import os
@@ -42,7 +43,7 @@ def test_qml_runtime_overview_manifest_exists() -> None:
     if not qml_path.exists():
         pytest.fail(f"Brak pliku {qml_path}")
     content = qml_path.read_text(encoding="utf-8").strip()
-    assert 'defaultCardOrder' in content
+    assert "defaultCardOrder" in content
     assert len(content) > 100
 
 
@@ -63,7 +64,7 @@ def test_optional_qt_loading() -> None:
     engine = QQmlApplicationEngine()
     engine.load(Path("ui/qml/onboarding/LicenseWizard.qml"))
     if not engine.rootObjects():
-        errors = [str(err.toString()) for err in getattr(engine, 'errors', lambda: [])()]
-        pytest.skip("Brak wsparcia QtQuick/GL w środowisku testowym: %s" % (errors or 'unknown'))
+        errors = [str(err.toString()) for err in getattr(engine, "errors", lambda: [])()]
+        pytest.skip("Brak wsparcia QtQuick/GL w środowisku testowym: %s" % (errors or "unknown"))
     # Zakończ aplikację, by nie blokować testów.
     app.quit()

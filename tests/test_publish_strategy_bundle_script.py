@@ -13,6 +13,8 @@ from tests._signing_helpers import write_random_hmac_key
 
 
 ROOT = Path(__file__).resolve().parents[1]
+
+
 def _sha256(path: Path) -> str:
     import hashlib
 

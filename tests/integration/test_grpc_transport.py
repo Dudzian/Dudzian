@@ -12,6 +12,7 @@ from types import SimpleNamespace
 from typing import Any, Callable, Iterable, Mapping
 
 import pytest
+
 grpc = pytest.importorskip("grpc", reason="Integracyjne testy transportu wymagają pakietu grpcio.")
 yaml = pytest.importorskip("yaml", reason="Integracyjne testy transportu wymagają PyYAML.")
 
@@ -51,7 +52,9 @@ def _build_stub_context(*, preset_dir: Path | None = None):
             self._markets = markets
 
         def execute(self, *_args, **_kwargs):
-            return SimpleNamespace(order_id="demo-order", raw_response={"exchange_order_id": "demo"})
+            return SimpleNamespace(
+                order_id="demo-order", raw_response={"exchange_order_id": "demo"}
+            )
 
         def cancel(self, *_args, **_kwargs) -> None:  # pragma: no cover - not used in test
             return None
@@ -76,7 +79,9 @@ def _build_stub_context(*, preset_dir: Path | None = None):
                 [request.start + index * 60_000, 100.0, 101.0, 99.5, 100.5, 1.0]
                 for index in range(5)
             ]
-            return SimpleNamespace(columns=("timestamp", "open", "high", "low", "close", "volume"), rows=rows)
+            return SimpleNamespace(
+                columns=("timestamp", "open", "high", "low", "close", "volume"), rows=rows
+            )
 
     class _DummyAutoTrader:
         def configure_controller_runner(self, *_args, **_kwargs) -> None:
@@ -257,9 +262,7 @@ def test_streaming_layer_exposes_long_poll_only() -> None:
     exported = {name for name in dir(exchange_interfaces) if "WebSocket" in name}
     assert not exported
     assert hasattr(exchange_interfaces, "MarketStreamHandle")
-    assert "websocket" not in (
-        exchange_streaming.LocalLongPollStream.__doc__ or ""
-    ).lower()
+    assert "websocket" not in (exchange_streaming.LocalLongPollStream.__doc__ or "").lower()
     assert not hasattr(exchange_streaming, "LocalWebSocketBridge")
     assert not hasattr(exchange_streaming.LocalLongPollStream, "websocket_bridge")
 
@@ -317,8 +320,12 @@ def test_runtime_service_consumes_grpc_stream(
             assert "last_latency_ms" in payload
             assert "p50_ms" in payload and payload["p50_ms"] >= 0.0
             assert "p95_ms" in payload and payload["p95_ms"] >= 0.0
-            assert "latency_p95_ms" in payload and payload["latency_p95_ms"] == pytest.approx(payload["p95_ms"])
-            assert "p95_seconds" in payload and payload["p95_seconds"] == pytest.approx(payload["p95_ms"] / 1000.0)
+            assert "latency_p95_ms" in payload and payload["latency_p95_ms"] == pytest.approx(
+                payload["p95_ms"]
+            )
+            assert "p95_seconds" in payload and payload["p95_seconds"] == pytest.approx(
+                payload["p95_ms"] / 1000.0
+            )
             assert payload["p95_ms"] <= 3000.0
             assert "nextRetrySeconds" in payload
             if payload["nextRetrySeconds"] is not None:
@@ -340,7 +347,9 @@ def test_runtime_service_consumes_grpc_stream(
             assert metrics["strategy_switch_total"] >= 0.0
             assert metrics["guardrail_blocks_total"] >= 0.0
             assert metrics.get("cycle_latency_p95_ms", 0.0) <= 3000.0
-            assert metrics.get("cycle_latency_p50_ms", 0.0) <= metrics.get("cycle_latency_p95_ms", 0.0)
+            assert metrics.get("cycle_latency_p50_ms", 0.0) <= metrics.get(
+                "cycle_latency_p95_ms", 0.0
+            )
 
             registry = get_global_metrics_registry()
             sla_labels = {
@@ -435,8 +444,16 @@ def test_grpc_decision_feed_snapshot_and_reconnect(
         )
 
     snapshot_journal = InMemoryTradingDecisionJournal()
-    _record_event(snapshot_journal, minute_offset=0, event="order_submitted", status="submitted", confidence=0.82)
-    _record_event(snapshot_journal, minute_offset=1, event="order_filled", status="filled", confidence=0.91)
+    _record_event(
+        snapshot_journal,
+        minute_offset=0,
+        event="order_submitted",
+        status="submitted",
+        confidence=0.82,
+    )
+    _record_event(
+        snapshot_journal, minute_offset=1, event="order_filled", status="filled", confidence=0.91
+    )
 
     increments_journal = InMemoryTradingDecisionJournal()
     _record_event(
@@ -550,7 +567,9 @@ def test_grpc_decision_feed_snapshot_and_reconnect(
                 timeout=10.0,
             )
             assert _wait_for(
-                lambda: any(entry.get("event") == reconnect_event_name for entry in service.decisions),
+                lambda: any(
+                    entry.get("event") == reconnect_event_name for entry in service.decisions
+                ),
                 app,
                 timeout=5.0,
             )
@@ -565,12 +584,15 @@ def test_grpc_decision_feed_snapshot_and_reconnect(
             metrics_payload = json.loads(ci_decision_feed_metrics.read_text(encoding="utf-8"))
             assert metrics_payload["reconnects"] >= 1
             assert metrics_payload["p95_ms"] >= metrics_payload["p50_ms"] >= 0.0
-            assert metrics_payload.get("latency_p95_ms", 0.0) == pytest.approx(metrics_payload["p95_ms"])
+            assert metrics_payload.get("latency_p95_ms", 0.0) == pytest.approx(
+                metrics_payload["p95_ms"]
+            )
             assert metrics_payload["p95_ms"] <= 3000.0
     finally:
         service._stop_grpc_stream()
         app.quit()
         monkeypatch.delenv("BOT_CORE_UI_GRPC_ENDPOINT", raising=False)
+
 
 def test_local_runtime_gateway_streams_decision_journal_with_cursor() -> None:
     context = _build_stub_context()
@@ -603,7 +625,9 @@ def test_local_runtime_gateway_streams_decision_journal_with_cursor() -> None:
     )
     assert second_batch["cursor"] == 4
     assert len(second_batch["records"]) == 2
-    assert all(entry["event"] in {"order_submitted", "order_filled"} for entry in second_batch["records"])
+    assert all(
+        entry["event"] in {"order_submitted", "order_filled"} for entry in second_batch["records"]
+    )
 
     filtered = gateway.dispatch(
         "autotrader.stream_decision_journal",
@@ -692,7 +716,10 @@ def test_feed_health_threshold_alerts_and_metrics(monkeypatch: pytest.MonkeyPatc
         service._stop_grpc_stream()
         app.quit()
 
-def test_runtime_service_emits_feed_alerts_when_threshold_crossed(monkeypatch: pytest.MonkeyPatch) -> None:
+
+def test_runtime_service_emits_feed_alerts_when_threshold_crossed(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     pytest.importorskip("PySide6")
     os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
     from PySide6.QtCore import QCoreApplication  # type: ignore[attr-defined]
@@ -700,7 +727,9 @@ def test_runtime_service_emits_feed_alerts_when_threshold_crossed(monkeypatch: p
     events: list[dict[str, object]] = []
 
     class _RecordingSink:
-        def emit_feed_health_event(self, *, severity: str, title: str, body: str, context=None, payload=None) -> None:  # pragma: no cover - pomocnicza struktura
+        def emit_feed_health_event(
+            self, *, severity: str, title: str, body: str, context=None, payload=None
+        ) -> None:  # pragma: no cover - pomocnicza struktura
             events.append(
                 {
                     "severity": severity,
@@ -793,7 +822,9 @@ def test_feed_health_reports_grpc_and_fallback_breakdown(monkeypatch: pytest.Mon
         assert transports["fallback"]["status"] == "fallback"
         assert transports["fallback"]["p50_ms"] == pytest.approx(statistics.median([0.4, 0.6]))
         sla_report = service.feedSlaReport
-        assert sla_report["transports"]["grpc"]["p95_ms"] == pytest.approx(transports["grpc"]["p95_ms"])
+        assert sla_report["transports"]["grpc"]["p95_ms"] == pytest.approx(
+            transports["grpc"]["p95_ms"]
+        )
         assert sla_report["transports"]["fallback"]["status"] == "fallback"
     finally:
         service._longpoll_timer.stop()
@@ -861,7 +892,9 @@ def test_long_fallback_periods_keep_sla_alerts_stable(monkeypatch: pytest.Monkey
     events: list[dict[str, object]] = []
 
     class _RecordingSink:
-        def emit_feed_health_event(self, *, severity: str, title: str, body: str, context=None, payload=None) -> None:  # pragma: no cover - pomocnicza struktura
+        def emit_feed_health_event(
+            self, *, severity: str, title: str, body: str, context=None, payload=None
+        ) -> None:  # pragma: no cover - pomocnicza struktura
             events.append(
                 {
                     "severity": severity,
@@ -902,15 +935,23 @@ def test_long_fallback_periods_keep_sla_alerts_stable(monkeypatch: pytest.Monkey
             service._feed_reconnects = 1
             service._feed_downtime_total = float((hour + 1) * 3600)
             service._update_feed_health(
-                status="fallback", reconnects=service._feed_reconnects, last_error="grpc unavailable"
+                status="fallback",
+                reconnects=service._feed_reconnects,
+                last_error="grpc unavailable",
             )
             assert service.feedSlaReport.get("sla_state") in {"warning", "critical"}
             assert service.feedSlaReport.get("consecutive_degraded_periods", 0) >= hour + 1
 
         assert len(events) == 3
-        assert {entry["context"].get("metric") for entry in events} == {"latency", "reconnects", "downtime"}
+        assert {entry["context"].get("metric") for entry in events} == {
+            "latency",
+            "reconnects",
+            "downtime",
+        }
 
-        fallback_dashboard = [entry for entry in exporter.dashboard() if entry.get("adapter") == "fallback"]
+        fallback_dashboard = [
+            entry for entry in exporter.dashboard() if entry.get("adapter") == "fallback"
+        ]
         assert len(fallback_dashboard) == 1
         fallback_entry = fallback_dashboard[0]
         assert fallback_entry["status"] == "fallback"
@@ -924,8 +965,12 @@ def test_long_fallback_periods_keep_sla_alerts_stable(monkeypatch: pytest.Monkey
             "environment": "default",
             "scope": "decision_feed",
         }
-        assert registry.get("bot_ui_feed_sla_reconnects_total").value(labels=fallback_labels) == pytest.approx(1.0)
-        assert registry.get("bot_ui_feed_sla_downtime_seconds").value(labels=fallback_labels) == pytest.approx(3600.0 * 3, rel=0.01)
+        assert registry.get("bot_ui_feed_sla_reconnects_total").value(
+            labels=fallback_labels
+        ) == pytest.approx(1.0)
+        assert registry.get("bot_ui_feed_sla_downtime_seconds").value(
+            labels=fallback_labels
+        ) == pytest.approx(3600.0 * 3, rel=0.01)
 
         service._active_stream_label = "grpc://demo"
         service._latency_samples_for("fallback").clear()
@@ -933,29 +978,40 @@ def test_long_fallback_periods_keep_sla_alerts_stable(monkeypatch: pytest.Monkey
         fallback_samples.extend([40.0])
         service._feed_downtime_total = 0.0
         service._feed_reconnects = 0
-        service._update_feed_health(status="connected", reconnects=service._feed_reconnects, last_error="")
+        service._update_feed_health(
+            status="connected", reconnects=service._feed_reconnects, last_error=""
+        )
         assert service.feedSlaReport.get("sla_state") == "ok"
         assert len(events) == 6
         recovery_states = [entry for entry in events if entry["severity"] == "info"]
         assert len(recovery_states) == 3
 
         dashboard = exporter.dashboard()
-        assert any(entry.get("adapter") == "grpc" and entry.get("status") == "connected" for entry in dashboard)
+        assert any(
+            entry.get("adapter") == "grpc" and entry.get("status") == "connected"
+            for entry in dashboard
+        )
         grpc_labels = {
             "adapter": "grpc",
             "transport": "grpc",
             "environment": "default",
             "scope": "decision_feed",
         }
-        assert registry.get("bot_ui_feed_sla_reconnects_total").value(labels=grpc_labels) == pytest.approx(0.0)
-        assert registry.get("bot_ui_feed_sla_downtime_seconds").value(labels=grpc_labels) == pytest.approx(0.0)
+        assert registry.get("bot_ui_feed_sla_reconnects_total").value(
+            labels=grpc_labels
+        ) == pytest.approx(0.0)
+        assert registry.get("bot_ui_feed_sla_downtime_seconds").value(
+            labels=grpc_labels
+        ) == pytest.approx(0.0)
     finally:
         service._longpoll_timer.stop()
         service._stop_grpc_stream()
         app.quit()
 
 
-def test_long_horizon_fallback_increments_consecutive_counters(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_long_horizon_fallback_increments_consecutive_counters(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     pytest.importorskip("PySide6")
     os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
     from PySide6.QtCore import QCoreApplication  # type: ignore[attr-defined]
@@ -987,7 +1043,9 @@ def test_long_horizon_fallback_increments_consecutive_counters(monkeypatch: pyte
             service._feed_reconnects = hour + 1
             service._feed_downtime_total = float((hour + 1) * 3600)
             service._update_feed_health(
-                status="fallback", reconnects=service._feed_reconnects, last_error="grpc unavailable"
+                status="fallback",
+                reconnects=service._feed_reconnects,
+                last_error="grpc unavailable",
             )
             report = service.feedSlaReport
             assert report.get("sla_state") in {"warning", "critical"}
@@ -1005,7 +1063,9 @@ def test_long_horizon_fallback_increments_consecutive_counters(monkeypatch: pyte
             grpc_samples = service._latency_samples_for("grpc")
             grpc_samples.clear()
             grpc_samples.extend([55.0])
-            service._update_feed_health(status="connected", reconnects=service._feed_reconnects, last_error="")
+            service._update_feed_health(
+                status="connected", reconnects=service._feed_reconnects, last_error=""
+            )
             report = service.feedSlaReport
             healthy_progression.append(report.get("consecutive_healthy_periods"))
             assert report.get("consecutive_degraded_periods") == 0
@@ -1027,7 +1087,9 @@ def test_frequent_transport_switches_do_not_reset_alert_hysteresis(
     events: list[dict[str, object]] = []
 
     class _RecordingSink:
-        def emit_feed_health_event(self, *, severity: str, title: str, body: str, context=None, payload=None) -> None:  # pragma: no cover - pomocnicza struktura
+        def emit_feed_health_event(
+            self, *, severity: str, title: str, body: str, context=None, payload=None
+        ) -> None:  # pragma: no cover - pomocnicza struktura
             events.append(
                 {
                     "severity": severity,
@@ -1063,7 +1125,9 @@ def test_frequent_transport_switches_do_not_reset_alert_hysteresis(
         grpc_samples.extend([80.0])
         service._feed_reconnects = 0
         service._feed_downtime_total = 0.0
-        service._update_feed_health(status="connected", reconnects=service._feed_reconnects, last_error="")
+        service._update_feed_health(
+            status="connected", reconnects=service._feed_reconnects, last_error=""
+        )
         assert service.feedSlaReport.get("sla_state") == "ok"
 
         consecutive_degraded: list[int] = []
@@ -1102,7 +1166,9 @@ def test_frequent_transport_switches_do_not_reset_alert_hysteresis(
         samples.extend([60.0])
         service._feed_reconnects = 0
         service._feed_downtime_total = 0.0
-        service._update_feed_health(status="connected", reconnects=service._feed_reconnects, last_error="")
+        service._update_feed_health(
+            status="connected", reconnects=service._feed_reconnects, last_error=""
+        )
         assert service.feedSlaReport.get("sla_state") == "ok"
         assert service.feedSlaReport.get("consecutive_healthy_periods") == 1
         recovery_metrics = {
@@ -1163,7 +1229,9 @@ def test_repeated_long_fallback_cycles_preserve_transport_counters(
             assert sla_state in {"warning", "critical"}
             assert service.feedSlaReport.get("consecutive_degraded_periods") >= cycle + 1
 
-        fallback_dashboard = [entry for entry in exporter.dashboard() if entry.get("adapter") == "fallback"]
+        fallback_dashboard = [
+            entry for entry in exporter.dashboard() if entry.get("adapter") == "fallback"
+        ]
         assert len(fallback_dashboard) == 1
         fallback_entry = fallback_dashboard[0]
         assert fallback_entry["reconnects"] == 2
@@ -1176,8 +1244,12 @@ def test_repeated_long_fallback_cycles_preserve_transport_counters(
             "environment": "default",
             "scope": "decision_feed",
         }
-        assert registry.get("bot_ui_feed_sla_reconnects_total").value(labels=fallback_labels) == pytest.approx(2.0)
-        assert registry.get("bot_ui_feed_sla_downtime_seconds").value(labels=fallback_labels) == pytest.approx(3600.0, rel=0.01)
+        assert registry.get("bot_ui_feed_sla_reconnects_total").value(
+            labels=fallback_labels
+        ) == pytest.approx(2.0)
+        assert registry.get("bot_ui_feed_sla_downtime_seconds").value(
+            labels=fallback_labels
+        ) == pytest.approx(3600.0, rel=0.01)
 
         service._active_stream_label = "grpc://demo"
         service._feed_reconnects = 0
@@ -1185,7 +1257,9 @@ def test_repeated_long_fallback_cycles_preserve_transport_counters(
         for key in ("grpc", "fallback"):
             service._latency_samples_for(key).clear()
         service._latency_samples_for("grpc").extend([65.0])
-        service._update_feed_health(status="connected", reconnects=service._feed_reconnects, last_error="")
+        service._update_feed_health(
+            status="connected", reconnects=service._feed_reconnects, last_error=""
+        )
         assert service.feedSlaReport.get("sla_state") == "ok"
 
         dashboard = exporter.dashboard()
@@ -1195,9 +1269,16 @@ def test_repeated_long_fallback_cycles_preserve_transport_counters(
             "environment": "default",
             "scope": "decision_feed",
         }
-        assert any(entry.get("adapter") == "grpc" and entry.get("status") == "connected" for entry in dashboard)
-        assert registry.get("bot_ui_feed_sla_reconnects_total").value(labels=grpc_labels) == pytest.approx(0.0)
-        assert registry.get("bot_ui_feed_sla_downtime_seconds").value(labels=grpc_labels) == pytest.approx(0.0)
+        assert any(
+            entry.get("adapter") == "grpc" and entry.get("status") == "connected"
+            for entry in dashboard
+        )
+        assert registry.get("bot_ui_feed_sla_reconnects_total").value(
+            labels=grpc_labels
+        ) == pytest.approx(0.0)
+        assert registry.get("bot_ui_feed_sla_downtime_seconds").value(
+            labels=grpc_labels
+        ) == pytest.approx(0.0)
 
         payload = json.loads(ci_decision_feed_metrics.read_text(encoding="utf-8"))
         assert payload.get("status") == "connected"
@@ -1261,7 +1342,9 @@ def test_grpc_longpoll_soak_flapping_counters(
                 downtime_seconds_total += 3600.0
                 service._feed_downtime_total = downtime_seconds_total
                 service._update_feed_health(
-                    status="fallback", reconnects=service._feed_reconnects, last_error="grpc unavailable"
+                    status="fallback",
+                    reconnects=service._feed_reconnects,
+                    last_error="grpc unavailable",
                 )
                 report = service.feedSlaReport
                 degraded_streaks.append(report.get("consecutive_degraded_periods", 0))
@@ -1274,7 +1357,9 @@ def test_grpc_longpoll_soak_flapping_counters(
                 grpc_samples = service._latency_samples_for("grpc")
                 grpc_samples.extend([70.0])
                 service._feed_downtime_total = downtime_seconds_total
-                service._update_feed_health(status="connected", reconnects=service._feed_reconnects, last_error="")
+                service._update_feed_health(
+                    status="connected", reconnects=service._feed_reconnects, last_error=""
+                )
                 report = service.feedSlaReport
                 healthy_streaks.append(report.get("consecutive_healthy_periods", 0))
                 peak_healthy = max(peak_healthy, report.get("consecutive_healthy_periods", 0))
@@ -1299,7 +1384,9 @@ def test_grpc_longpoll_soak_flapping_counters(
         assert payload.get("status") == "connected"
         transports = payload.get("transports", {})
         assert set(transports) >= {"grpc", "fallback"}
-        assert transports["fallback"].get("downtimeMs", 0.0) == pytest.approx(downtime_seconds_total * 1000.0)
+        assert transports["fallback"].get("downtimeMs", 0.0) == pytest.approx(
+            downtime_seconds_total * 1000.0
+        )
         assert transports["fallback"].get("status") == "fallback"
         assert transports["grpc"].get("status") == "connected"
         assert transports["fallback"]["reconnects"] >= 6
@@ -1309,7 +1396,9 @@ def test_grpc_longpoll_soak_flapping_counters(
         app.quit()
 
 
-def test_oscillation_between_transports_keeps_counters_balanced(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_oscillation_between_transports_keeps_counters_balanced(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     pytest.importorskip("PySide6")
     os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
     from PySide6.QtCore import QCoreApplication  # type: ignore[attr-defined]
@@ -1361,7 +1450,9 @@ def test_oscillation_between_transports_keeps_counters_balanced(monkeypatch: pyt
             grpc_samples.extend([60.0])
             service._feed_reconnects = 0
             service._feed_downtime_total = 0.0
-            service._update_feed_health(status="connected", reconnects=service._feed_reconnects, last_error="")
+            service._update_feed_health(
+                status="connected", reconnects=service._feed_reconnects, last_error=""
+            )
             recovery_report = service.feedSlaReport
             healthy_history.append(recovery_report.get("consecutive_healthy_periods", 0))
             assert recovery_report.get("consecutive_degraded_periods") == 0

@@ -54,7 +54,9 @@ class SandboxScenarioConfig:
             metrics=self.metrics,
             alerts=self.alerts,
             dashboard_output=dashboard_output or self.dashboard_output,
-            dashboard_pretty=self.dashboard_pretty if dashboard_pretty is None else dashboard_pretty,
+            dashboard_pretty=self.dashboard_pretty
+            if dashboard_pretty is None
+            else dashboard_pretty,
             default_dataset=self.default_dataset,
             metric_labels=dict(metric_labels or self.metric_labels),
         )
@@ -73,9 +75,7 @@ def load_sandbox_config(path: str | Path | None = None) -> SandboxScenarioConfig
     """Ładuje konfigurację sandboxa AI z pliku YAML."""
 
     if yaml is None:
-        raise RuntimeError(
-            "PyYAML is required to load sandbox configuration (pip install pyyaml)"
-        )
+        raise RuntimeError("PyYAML is required to load sandbox configuration (pip install pyyaml)")
 
     config_path = _resolve_config_path(path)
     with config_path.open("r", encoding="utf-8") as handle:
@@ -187,9 +187,17 @@ def load_sandbox_config(path: str | Path | None = None) -> SandboxScenarioConfig
         enabled=bool(alerts_section.get("enabled", True)),
     )
 
-    dashboard_output = output_section.get("dashboard_annotations") if isinstance(output_section, Mapping) else None
-    dashboard_pretty = bool(output_section.get("pretty", False)) if isinstance(output_section, Mapping) else False
-    dashboard_path = Path(dashboard_output) if isinstance(dashboard_output, (str, Path)) else _DEFAULT_DASHBOARD_PATH
+    dashboard_output = (
+        output_section.get("dashboard_annotations") if isinstance(output_section, Mapping) else None
+    )
+    dashboard_pretty = (
+        bool(output_section.get("pretty", False)) if isinstance(output_section, Mapping) else False
+    )
+    dashboard_path = (
+        Path(dashboard_output)
+        if isinstance(dashboard_output, (str, Path))
+        else _DEFAULT_DASHBOARD_PATH
+    )
     if not dashboard_path.is_absolute():
         dashboard_path = (_ROOT / dashboard_path).resolve()
 
@@ -286,7 +294,11 @@ def _extract_risk_state_features(payload: Mapping[str, object]) -> Mapping[str, 
                     features[f"limit_{code_key}_{field}"] = float(value)
             max_value = limit.get("max_value")
             current_value = limit.get("current_value")
-            if isinstance(max_value, (int, float)) and isinstance(current_value, (int, float)) and max_value:
+            if (
+                isinstance(max_value, (int, float))
+                and isinstance(current_value, (int, float))
+                and max_value
+            ):
                 features[f"limit_{code_key}_utilization"] = float(current_value) / float(max_value)
             threshold_value = limit.get("threshold_value")
             if (
@@ -294,7 +306,9 @@ def _extract_risk_state_features(payload: Mapping[str, object]) -> Mapping[str, 
                 and isinstance(current_value, (int, float))
                 and threshold_value
             ):
-                features[f"limit_{code_key}_threshold_utilization"] = float(current_value) / float(threshold_value)
+                features[f"limit_{code_key}_threshold_utilization"] = float(current_value) / float(
+                    threshold_value
+                )
     return features
 
 
@@ -591,8 +605,12 @@ class SandboxScenarioRunner:
                         event=event,
                         features=dict(features),
                         score={
-                            "expected_return_bps": float(getattr(score, "expected_return_bps", 0.0)),
-                            "success_probability": float(getattr(score, "success_probability", 0.0)),
+                            "expected_return_bps": float(
+                                getattr(score, "expected_return_bps", 0.0)
+                            ),
+                            "success_probability": float(
+                                getattr(score, "success_probability", 0.0)
+                            ),
                         },
                     )
                 )

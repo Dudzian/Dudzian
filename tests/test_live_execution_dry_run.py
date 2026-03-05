@@ -14,7 +14,9 @@ def _stub_factory(credentials, *, environment=None, settings=None):  # noqa: ANN
 
 
 @pytest.mark.integration
-def test_live_execution_dry_run_generates_report(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_live_execution_dry_run_generates_report(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     monkeypatch.setattr(
         live_execution_dry_run,
         "_resolve_adapter_factories",

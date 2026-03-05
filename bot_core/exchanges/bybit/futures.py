@@ -1,4 +1,5 @@
 """Adapter futures Bybit zintegrowany z CCXT oraz watchdogiem."""
+
 from __future__ import annotations
 
 from typing import Any, Mapping

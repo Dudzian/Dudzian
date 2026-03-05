@@ -152,6 +152,7 @@ def test_list_models_uses_model_id_as_tie_breaker(tmp_path: Path) -> None:
         "20260228001538000001_aaaaaaaa",
     ]
 
+
 def test_metadata_parser_rejects_invalid_entries() -> None:
     with pytest.raises(ModelRegistryError):
         manage_models._parse_metadata(["invalid-entry"])  # type: ignore[attr-defined]

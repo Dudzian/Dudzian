@@ -1,4 +1,5 @@
 """Dostawca fingerprintu sprzętowego wykorzystywanego przez licencje offline."""
+
 from __future__ import annotations
 
 import logging

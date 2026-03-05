@@ -10,14 +10,18 @@ from pathlib import Path
 
 def _parse_args(argv: list[str] | None = None) -> tuple[argparse.Namespace, list[str]]:
     parser = argparse.ArgumentParser(description="Sprawdza zdrowie runtime'u bota")
-    parser.add_argument("--exchange", required=True, help="Identyfikator giełdy do testu health-check")
+    parser.add_argument(
+        "--exchange", required=True, help="Identyfikator giełdy do testu health-check"
+    )
     parser.add_argument(
         "--credentials-file",
         dest="credentials_file",
         default=str(Path("config/exchanges.json")),
         help="Plik z danymi uwierzytelniającymi (domyślnie config/exchanges.json)",
     )
-    parser.add_argument("--mode", dest="mode", default=None, help="Tryb giełdy (spot/margin/futures)")
+    parser.add_argument(
+        "--mode", dest="mode", default=None, help="Tryb giełdy (spot/margin/futures)"
+    )
     parser.add_argument("--testnet", dest="testnet", action="store_true", help="Wymuś tryb testnet")
     parser.add_argument(
         "--environment-config",
@@ -25,7 +29,12 @@ def _parse_args(argv: list[str] | None = None) -> tuple[argparse.Namespace, list
         default=None,
         help="Opcjonalny plik konfiguracji środowiskowej",
     )
-    parser.add_argument("--environment", dest="environment", default=None, help="Nazwa środowiska z pliku konfiguracyjnego")
+    parser.add_argument(
+        "--environment",
+        dest="environment",
+        default=None,
+        help="Nazwa środowiska z pliku konfiguracyjnego",
+    )
     parser.add_argument(
         "--output",
         dest="output",

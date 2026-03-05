@@ -31,7 +31,9 @@ def test_rotation_registry_persists_entries(registry_path: Path) -> None:
 def test_rotation_registry_reports_missing_as_due(registry_path: Path) -> None:
     registry = RotationRegistry(registry_path)
 
-    status = registry.status("kraken_live", "trading", now=datetime(2024, 5, 1, tzinfo=timezone.utc))
+    status = registry.status(
+        "kraken_live", "trading", now=datetime(2024, 5, 1, tzinfo=timezone.utc)
+    )
 
     assert status.last_rotated is None
     assert status.is_due is True
@@ -60,9 +62,10 @@ def test_due_within_filters_entries(registry_path: Path) -> None:
     registry.mark_rotated("kraken_paper", "trading", timestamp=rotated_old)
 
     statuses = list(
-        registry.due_within(interval_days=90.0, warn_within_days=14.0, now=datetime.now(timezone.utc))
+        registry.due_within(
+            interval_days=90.0, warn_within_days=14.0, now=datetime.now(timezone.utc)
+        )
     )
 
     keys = {status.key for status in statuses}
     assert keys == {"kraken_paper"}
-

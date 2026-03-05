@@ -1,4 +1,5 @@
 """Testy weryfikujące fallback importów w run_daily_trend."""
+
 from __future__ import annotations
 
 import argparse
@@ -219,7 +220,9 @@ def test_run_daily_trend_fallbacks_to_runtime_module(monkeypatch: pytest.MonkeyP
     runtime_build = lambda *args, **kwargs: ("runtime", args, kwargs)
     runtime_controller = lambda *args, **kwargs: ("runtime_controller", args, kwargs)
     monkeypatch.setattr(runtime_module, "build_daily_trend_pipeline", runtime_build, raising=False)
-    monkeypatch.setattr(runtime_module, "create_trading_controller", runtime_controller, raising=False)
+    monkeypatch.setattr(
+        runtime_module, "create_trading_controller", runtime_controller, raising=False
+    )
 
     module = _import_run_daily_trend(monkeypatch)
     try:
@@ -315,10 +318,14 @@ def test_run_daily_trend_allows_runtime_override(monkeypatch: pytest.MonkeyPatch
         pipeline_mod = types.ModuleType("tests.custom_pipeline")
         realtime_mod = types.ModuleType("tests.custom_realtime")
 
-        def _pipeline(*args: object, **kwargs: object) -> tuple[str, tuple[object, ...], dict[str, object]]:
+        def _pipeline(
+            *args: object, **kwargs: object
+        ) -> tuple[str, tuple[object, ...], dict[str, object]]:
             return ("custom_pipeline", args, dict(kwargs))
 
-        def _controller(*args: object, **kwargs: object) -> tuple[str, tuple[object, ...], dict[str, object]]:
+        def _controller(
+            *args: object, **kwargs: object
+        ) -> tuple[str, tuple[object, ...], dict[str, object]]:
             return ("custom_controller", args, dict(kwargs))
 
         class CustomRunner:
@@ -366,13 +373,15 @@ def test_print_runtime_modules_short_circuit(
 
     module = _import_run_daily_trend(monkeypatch)
     try:
-        exit_code = module.main([
-            "--print-runtime-modules",
-            "--pipeline-module",
-            "bot_core.runtime.pipeline",
-            "--realtime-module",
-            "bot_core.runtime.realtime",
-        ])
+        exit_code = module.main(
+            [
+                "--print-runtime-modules",
+                "--pipeline-module",
+                "bot_core.runtime.pipeline",
+                "--realtime-module",
+                "bot_core.runtime.realtime",
+            ]
+        )
         assert exit_code == 0
 
         captured = capsys.readouterr()
@@ -462,11 +471,13 @@ def test_print_risk_profiles_missing_config(
     module = _import_run_daily_trend(monkeypatch)
     try:
         missing_path = tmp_path / "absent.yaml"
-        exit_code = module.main([
-            "--config",
-            str(missing_path),
-            "--print-risk-profiles",
-        ])
+        exit_code = module.main(
+            [
+                "--config",
+                str(missing_path),
+                "--print-risk-profiles",
+            ]
+        )
         assert exit_code == 1
     finally:
         _reset_run_daily_trend(module)
@@ -495,7 +506,9 @@ def test_resolve_runtime_symbols_with_generator_reports_candidates(
         _reset_run_daily_trend(module)
 
 
-def test_environment_overrides_apply_when_cli_missing(monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]) -> None:
+def test_environment_overrides_apply_when_cli_missing(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
     """Zmienne środowiskowe powinny zastępować moduły, gdy brak flag CLI."""
 
     module = _import_run_daily_trend(monkeypatch)
@@ -503,10 +516,14 @@ def test_environment_overrides_apply_when_cli_missing(monkeypatch: pytest.Monkey
         pipeline_mod = types.ModuleType("tests.env_pipeline")
         realtime_mod = types.ModuleType("tests.env_realtime")
 
-        def _pipeline(*args: object, **kwargs: object) -> tuple[str, tuple[object, ...], dict[str, object]]:
+        def _pipeline(
+            *args: object, **kwargs: object
+        ) -> tuple[str, tuple[object, ...], dict[str, object]]:
             return ("env_pipeline", args, dict(kwargs))
 
-        def _controller(*args: object, **kwargs: object) -> tuple[str, tuple[object, ...], dict[str, object]]:
+        def _controller(
+            *args: object, **kwargs: object
+        ) -> tuple[str, tuple[object, ...], dict[str, object]]:
             return ("env_controller", args, dict(kwargs))
 
         class EnvRunner:
@@ -532,12 +549,10 @@ def test_environment_overrides_apply_when_cli_missing(monkeypatch: pytest.Monkey
         assert payload["pipeline_resolved_from"] == pipeline_mod.__name__
         assert payload["realtime_resolved_from"] == realtime_mod.__name__
         assert (
-            payload["pipeline"]["origin"]
-            == "zmienna środowiskowa RUN_DAILY_TREND_PIPELINE_MODULES"
+            payload["pipeline"]["origin"] == "zmienna środowiskowa RUN_DAILY_TREND_PIPELINE_MODULES"
         )
         assert (
-            payload["realtime"]["origin"]
-            == "zmienna środowiskowa RUN_DAILY_TREND_REALTIME_MODULES"
+            payload["realtime"]["origin"] == "zmienna środowiskowa RUN_DAILY_TREND_REALTIME_MODULES"
         )
         assert payload["pipeline"]["resolved_from"] == pipeline_mod.__name__
         assert payload["realtime"]["resolved_from"] == realtime_mod.__name__
@@ -625,19 +640,27 @@ def test_environment_overrides_ignored_when_cli_present(
         env_pipeline_mod = types.ModuleType("tests.env_pipeline_override")
         env_realtime_mod = types.ModuleType("tests.env_realtime_override")
 
-        def _cli_pipeline(*args: object, **kwargs: object) -> tuple[str, tuple[object, ...], dict[str, object]]:
+        def _cli_pipeline(
+            *args: object, **kwargs: object
+        ) -> tuple[str, tuple[object, ...], dict[str, object]]:
             return ("cli_pipeline", args, dict(kwargs))
 
-        def _cli_controller(*args: object, **kwargs: object) -> tuple[str, tuple[object, ...], dict[str, object]]:
+        def _cli_controller(
+            *args: object, **kwargs: object
+        ) -> tuple[str, tuple[object, ...], dict[str, object]]:
             return ("cli_controller", args, dict(kwargs))
 
         class CliRunner:
             pass
 
-        def _env_pipeline(*args: object, **kwargs: object) -> tuple[str, tuple[object, ...], dict[str, object]]:
+        def _env_pipeline(
+            *args: object, **kwargs: object
+        ) -> tuple[str, tuple[object, ...], dict[str, object]]:
             return ("env_pipeline", args, dict(kwargs))
 
-        def _env_controller(*args: object, **kwargs: object) -> tuple[str, tuple[object, ...], dict[str, object]]:
+        def _env_controller(
+            *args: object, **kwargs: object
+        ) -> tuple[str, tuple[object, ...], dict[str, object]]:
             return ("env_controller", args, dict(kwargs))
 
         class EnvRunner:
@@ -1100,7 +1123,9 @@ def test_print_runtime_plan_outputs_snapshot(
         assert config_section["parent_exists"] is True
         assert config_section["parent_is_dir"] is True
         assert Path(config_section["parent_absolute_path"]).is_absolute()
-        assert payload["runtime_modules"]["pipeline"]["resolved_from"].startswith("bot_core.runtime")
+        assert payload["runtime_modules"]["pipeline"]["resolved_from"].startswith(
+            "bot_core.runtime"
+        )
         assert payload["runtime_modules"]["pipeline"]["fallback_used"] is False
         assert payload["runtime_modules"]["realtime"]["fallback_used"] is False
         metrics_section = payload["metrics_service_details"]
@@ -1211,9 +1236,7 @@ def test_env_fail_on_security_warnings_metadata_in_plan(
         assert env_overrides["applied"] is True
         entries = payload["overrides"]["environment"]["entries"]
         fail_entry = next(
-            entry
-            for entry in entries
-            if entry.get("option") == "fail_on_security_warnings"
+            entry for entry in entries if entry.get("option") == "fail_on_security_warnings"
         )
         assert fail_entry["applied"] is True
         assert fail_entry["parsed_value"] is True
@@ -1406,6 +1429,7 @@ def test_environment_module_invalid_value_recorded(
         monkeypatch.delenv("RUN_DAILY_TREND_PIPELINE_MODULES", raising=False)
         _reset_run_daily_trend(module)
 
+
 def test_metrics_details_use_default_ui_alert_path_when_not_configured(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
@@ -1458,9 +1482,7 @@ def test_metrics_details_use_default_ui_alert_path_when_not_configured(
         assert metrics_section["configured"] is True
         assert metrics_section["ui_alerts_source"] == "default"
         expected_relative = str(module.DEFAULT_UI_ALERTS_JSONL_PATH.expanduser())
-        expected_absolute = str(
-            Path(expected_relative).expanduser().resolve(strict=False)
-        )
+        expected_absolute = str(Path(expected_relative).expanduser().resolve(strict=False))
         assert metrics_section["ui_alerts_jsonl_path"] == expected_relative
         ui_alerts_file = metrics_section["ui_alerts_file"]
         assert ui_alerts_file["path"] == expected_relative
@@ -1727,14 +1749,18 @@ def test_main_reports_unknown_risk_profile(
         _reset_run_daily_trend(module)
 
 
-def _prepare_default_secret_manager(module: types.ModuleType, monkeypatch: pytest.MonkeyPatch) -> None:
+def _prepare_default_secret_manager(
+    module: types.ModuleType, monkeypatch: pytest.MonkeyPatch
+) -> None:
     class DummySecretManager:
         pass
 
     monkeypatch.setattr(module, "_create_secret_manager", lambda args: DummySecretManager())
 
 
-def _assert_pipeline_not_called(module: types.ModuleType, monkeypatch: pytest.MonkeyPatch) -> SimpleNamespace:
+def _assert_pipeline_not_called(
+    module: types.ModuleType, monkeypatch: pytest.MonkeyPatch
+) -> SimpleNamespace:
     pipeline_state = SimpleNamespace(called=False)
 
     def _unexpected_pipeline(**kwargs: object) -> None:
@@ -1745,9 +1771,13 @@ def _assert_pipeline_not_called(module: types.ModuleType, monkeypatch: pytest.Mo
     return pipeline_state
 
 
-def _modify_config(path: Path, *, replace: Mapping[str, str] | None = None, remove: Sequence[str] | None = None) -> None:
+def _modify_config(
+    path: Path, *, replace: Mapping[str, str] | None = None, remove: Sequence[str] | None = None
+) -> None:
     lines = path.read_text(encoding="utf-8").splitlines()
-    replace_map = {needle.strip(): replacement.strip() for needle, replacement in (replace or {}).items()}
+    replace_map = {
+        needle.strip(): replacement.strip() for needle, replacement in (replace or {}).items()
+    }
     remove_set = {item.strip() for item in (remove or [])}
 
     new_lines: list[str] = []
@@ -1913,7 +1943,9 @@ def test_main_requires_default_controller_when_not_provided(
 
         assert exit_code == 2
         assert pipeline_state.called is False
-        assert any("domyślnego kontrolera runtime" in record.getMessage() for record in caplog.records)
+        assert any(
+            "domyślnego kontrolera runtime" in record.getMessage() for record in caplog.records
+        )
     finally:
         _reset_run_daily_trend(module)
 
@@ -1953,7 +1985,10 @@ def test_main_reports_unknown_environment_default_controller(
 
         assert exit_code == 2
         assert pipeline_state.called is False
-        assert any("kontrolera runtime missing_controller" in record.getMessage() for record in caplog.records)
+        assert any(
+            "kontrolera runtime missing_controller" in record.getMessage()
+            for record in caplog.records
+        )
     finally:
         _reset_run_daily_trend(module)
 
@@ -1989,6 +2024,9 @@ def test_main_reports_unknown_cli_controller(
 
         assert exit_code == 2
         assert pipeline_state.called is False
-        assert any("Kontroler runtime missing_controller" in record.getMessage() for record in caplog.records)
+        assert any(
+            "Kontroler runtime missing_controller" in record.getMessage()
+            for record in caplog.records
+        )
     finally:
         _reset_run_daily_trend(module)

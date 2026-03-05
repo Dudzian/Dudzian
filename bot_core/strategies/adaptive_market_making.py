@@ -47,7 +47,9 @@ class AdaptiveMarketMakingStrategy(StrategyEngine):
         if snapshot.close <= 0:
             return []
 
-        realized_volatility = float(snapshot.indicators.get("realized_volatility", state.last_volatility))
+        realized_volatility = float(
+            snapshot.indicators.get("realized_volatility", state.last_volatility)
+        )
         inventory = float(snapshot.indicators.get("inventory", state.inventory))
         state.inventory = inventory
         state.last_price = snapshot.close
@@ -61,7 +63,10 @@ class AdaptiveMarketMakingStrategy(StrategyEngine):
         else:
             imbalance_ratio = max(
                 -1.0,
-                min(1.0, (inventory - self._settings.target_inventory) / self._settings.max_inventory),
+                min(
+                    1.0,
+                    (inventory - self._settings.target_inventory) / self._settings.max_inventory,
+                ),
             )
 
         skew = imbalance_ratio * self._settings.inventory_skew_strength
@@ -116,4 +121,3 @@ class AdaptiveMarketMakingStrategy(StrategyEngine):
 
 
 __all__ = ["AdaptiveMarketMakingSettings", "AdaptiveMarketMakingStrategy"]
-

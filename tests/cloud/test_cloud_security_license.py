@@ -65,7 +65,9 @@ def _build_config(tmp_path, *, require_handshake: bool = True) -> CloudServerCon
     )
 
 
-def test_cloud_runtime_service_initializes_license_service_for_client_bundles(tmp_path, monkeypatch):
+def test_cloud_runtime_service_initializes_license_service_for_client_bundles(
+    tmp_path, monkeypatch
+):
     calls: list[str] = []
 
     class _FakeLicenseService:
@@ -82,7 +84,9 @@ def test_cloud_runtime_service_initializes_license_service_for_client_bundles(tm
     )
     try:
         service.start()
-        assert calls == ["init"], "Powinien zostać zainicjalizowany LicenseService dla bundli klientów"
+        assert calls == ["init"], (
+            "Powinien zostać zainicjalizowany LicenseService dla bundli klientów"
+        )
         assert service.security_manager is not None
     finally:
         service.stop()

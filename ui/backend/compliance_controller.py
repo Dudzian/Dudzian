@@ -1,4 +1,5 @@
 """Kontroler udostępniający wyniki audytu zgodności dla QML."""
+
 from __future__ import annotations
 
 
@@ -165,8 +166,8 @@ class ComplianceController(QObject):
         self._context_summary = dict(result.context_summary)
         self.contextSummaryChanged.emit()
 
-        self._last_updated = result.generated_at.astimezone(timezone.utc).astimezone().isoformat(
-            timespec="seconds"
+        self._last_updated = (
+            result.generated_at.astimezone(timezone.utc).astimezone().isoformat(timespec="seconds")
         )
         self.lastUpdatedChanged.emit()
 
@@ -212,7 +213,9 @@ class ComplianceController(QObject):
         for finding in findings:
             text = finding.message
             if finding.metadata:
-                details = ", ".join(f"{key}: {value}" for key, value in sorted(finding.metadata.items()))
+                details = ", ".join(
+                    f"{key}: {value}" for key, value in sorted(finding.metadata.items())
+                )
                 if details:
                     text = f"{text} ({details})"
             recommendations.append(text)
@@ -220,9 +223,7 @@ class ComplianceController(QObject):
             recommendations.append("Brak zaleceń - konfiguracja zgodna")
         return recommendations
 
-    def _severity_for_prefix(
-        self, findings: Sequence[ComplianceFinding], prefix: str
-    ) -> str:
+    def _severity_for_prefix(self, findings: Sequence[ComplianceFinding], prefix: str) -> str:
         levels = {"critical": 4, "high": 3, "error": 3, "warning": 2, "info": 1, "ok": 0}
         best_level = 0
         best_name = "ok"

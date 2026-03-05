@@ -1,4 +1,5 @@
 """Wspólne stałe dla progów sygnałów autotradera."""
+
 from __future__ import annotations
 
 SUPPORTED_SIGNAL_THRESHOLD_METRICS: tuple[str, ...] = (

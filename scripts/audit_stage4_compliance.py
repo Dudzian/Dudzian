@@ -86,6 +86,8 @@ def _parse_args(argv: Sequence[str] | None) -> argparse.Namespace:
         help="Opcjonalna ścieżka zapisu raportu audytu w formacie JSON.",
     )
     return parser.parse_args(argv)
+
+
 def _resolve_path(base_dir: Path, value: str | None) -> Path | None:
     if not value:
         return None
@@ -137,10 +139,18 @@ def _validate_metrics_service(
 ) -> None:
     metrics = raw.get("metrics_service")
     if not isinstance(metrics, Mapping):
-        _record(issues, check="metrics_service", message="Brak sekcji metrics_service w konfiguracji core.")
+        _record(
+            issues,
+            check="metrics_service",
+            message="Brak sekcji metrics_service w konfiguracji core.",
+        )
         return
 
-    auth_sources = [metrics.get("auth_token"), metrics.get("auth_token_env"), metrics.get("auth_token_file")]
+    auth_sources = [
+        metrics.get("auth_token"),
+        metrics.get("auth_token_env"),
+        metrics.get("auth_token_file"),
+    ]
     if not any(auth_sources):
         _record(
             issues,
@@ -169,11 +179,17 @@ def _validate_metrics_service(
 
     tls = metrics.get("tls")
     if not isinstance(tls, Mapping):
-        _record(issues, check="metrics_service.tls", message="Brak sekcji metrics_service.tls lub niepoprawny format.")
+        _record(
+            issues,
+            check="metrics_service.tls",
+            message="Brak sekcji metrics_service.tls lub niepoprawny format.",
+        )
         return
 
     if not tls.get("enabled"):
-        _record(issues, check="metrics_service.tls", message="TLS dla MetricsService musi być włączony.")
+        _record(
+            issues, check="metrics_service.tls", message="TLS dla MetricsService musi być włączony."
+        )
     if not tls.get("require_client_auth"):
         _record(
             issues,
@@ -325,7 +341,11 @@ def _validate_live_router(
 
     mtls = execution.get("mtls") if isinstance(execution, Mapping) else None
     if not isinstance(mtls, Mapping):
-        _record(issues, check="execution.mtls", message="Brak konfiguracji execution.mtls (wymagane dla Stage4).")
+        _record(
+            issues,
+            check="execution.mtls",
+            message="Brak konfiguracji execution.mtls (wymagane dla Stage4).",
+        )
         return
 
     for field in (
@@ -414,8 +434,6 @@ def _validate_live_router(
             message="Konfiguracja mTLS wymaga pola rotation_registry.",
         )
 
-
-
     key_rotation = raw.get("observability", {}).get("key_rotation")
     if not isinstance(key_rotation, Mapping):
         _record(
@@ -462,23 +480,20 @@ def _validate_live_router(
                 message = f"Brak historii rotacji dla {label} – wpis nigdy nie został wykonany."
             else:
                 overdue_days = abs(status.due_in_days)
-                message = (
-                    f"Rotacja {label} jest przeterminowana o {overdue_days:.1f} dnia/dni (interwał {interval_days:.1f} dni)."
-                )
+                message = f"Rotacja {label} jest przeterminowana o {overdue_days:.1f} dnia/dni (interwał {interval_days:.1f} dni)."
             _record(
                 issues,
                 check=f"observability.key_rotation:{label}",
                 message=message,
             )
         elif status.is_due or status.due_in_days <= warn_within:
-            message = (
-                f"Rotacja {label} będzie wymagana w ciągu {status.due_in_days:.1f} dnia/dni (interwał {interval_days:.1f} dni)."
-            )
+            message = f"Rotacja {label} będzie wymagana w ciągu {status.due_in_days:.1f} dnia/dni (interwał {interval_days:.1f} dni)."
             _record(
                 warnings,
                 check=f"observability.key_rotation:{label}",
                 message=message,
             )
+
 
 def _build_report(
     *,
@@ -557,7 +572,10 @@ def run(argv: Sequence[str] | None = None) -> int:
     if args.output_json:
         output_path = Path(args.output_json).expanduser().resolve()
         output_path.parent.mkdir(parents=True, exist_ok=True)
-        output_path.write_text(json.dumps(report, ensure_ascii=False, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+        output_path.write_text(
+            json.dumps(report, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
+            encoding="utf-8",
+        )
 
     return 0 if report["status"] != "fail" else 1
 

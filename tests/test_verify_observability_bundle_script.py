@@ -12,6 +12,8 @@ from scripts.verify_observability_bundle import run as verify_bundle
 
 
 ROOT = Path(__file__).resolve().parents[1]
+
+
 def _prepare_sources(base: Path) -> tuple[Path, Path]:
     dashboards = base / "dashboards"
     alerts = base / "alerts"

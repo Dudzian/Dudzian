@@ -1,4 +1,5 @@
 """Nowoczesne usługi runtime przeniesione z pakietu archiwalnego."""
+
 from __future__ import annotations
 
 from importlib import import_module

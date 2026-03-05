@@ -266,30 +266,22 @@ def create_parser() -> argparse.ArgumentParser:
     health.add_argument(
         "--paper-leverage-limit",
         type=float,
-        help=(
-            "Ustawia limit dźwigni w symulatorze margin/futures (wartość dodatnia)."
-        ),
+        help=("Ustawia limit dźwigni w symulatorze margin/futures (wartość dodatnia)."),
     )
     health.add_argument(
         "--paper-maintenance-margin",
         type=float,
-        help=(
-            "Ustawia współczynnik maintenance margin w symulatorze (wartość dodatnia)."
-        ),
+        help=("Ustawia współczynnik maintenance margin w symulatorze (wartość dodatnia)."),
     )
     health.add_argument(
         "--paper-funding-rate",
         type=float,
-        help=(
-            "Ustawia dzienny funding rate w symulatorze (może być ujemny/zerowy)."
-        ),
+        help=("Ustawia dzienny funding rate w symulatorze (może być ujemny/zerowy)."),
     )
     health.add_argument(
         "--paper-funding-interval",
         type=float,
-        help=(
-            "Ustawia odstęp między naliczeniami funding w sekundach (wartość dodatnia)."
-        ),
+        help=("Ustawia odstęp między naliczeniami funding w sekundach (wartość dodatnia)."),
     )
     health.add_argument(
         "--paper-simulator-setting",
@@ -558,9 +550,7 @@ def create_parser() -> argparse.ArgumentParser:
     )
     tax_report.add_argument(
         "--fx-rates-file",
-        help=(
-            "Ścieżka do pliku JSON zawierającego mapę kursów walutowych, np. {\"USDT\": 4.0}."
-        ),
+        help=('Ścieżka do pliku JSON zawierającego mapę kursów walutowych, np. {"USDT": 4.0}.'),
     )
 
     compliance = subparsers.add_parser(
@@ -585,9 +575,7 @@ def create_parser() -> argparse.ArgumentParser:
     )
     compliance.add_argument(
         "--data-quality-category",
-        help=(
-            "Ogranicza raporty data_quality do wskazanej kategorii (np. completeness)."
-        ),
+        help=("Ogranicza raporty data_quality do wskazanej kategorii (np. completeness)."),
     )
     compliance.add_argument(
         "--role",
@@ -639,9 +627,7 @@ def _register_ai_compliance_filters(parser: argparse.ArgumentParser) -> None:
             help=exclude_help,
         )
 
-    common_note = (
-        "Argument można podać wielokrotnie lub przekazać listę rozdzieloną przecinkami."
-    )
+    common_note = "Argument można podać wielokrotnie lub przekazać listę rozdzieloną przecinkami."
 
     _add(
         ("--include-tag", "--include-tags"),
@@ -649,13 +635,9 @@ def _register_ai_compliance_filters(parser: argparse.ArgumentParser) -> None:
         dest="tags",
         metavar="TAG",
         include_help=(
-            "Wymaga raportów oznaczonych wskazanym tagiem (np. risk_alert). "
-            f"{common_note}"
+            f"Wymaga raportów oznaczonych wskazanym tagiem (np. risk_alert). {common_note}"
         ),
-        exclude_help=(
-            "Pomija raporty oznaczone wskazanym tagiem (np. risk_alert). "
-            f"{common_note}"
-        ),
+        exclude_help=(f"Pomija raporty oznaczone wskazanym tagiem (np. risk_alert). {common_note}"),
     )
     _add(
         ("--include-signoff-status", "--include-sign-off-status"),
@@ -663,12 +645,10 @@ def _register_ai_compliance_filters(parser: argparse.ArgumentParser) -> None:
         dest="statuses",
         metavar="STATUS",
         include_help=(
-            "Wymaga raportów z podpisem w podanym statusie (np. pending, approved). "
-            f"{common_note}"
+            f"Wymaga raportów z podpisem w podanym statusie (np. pending, approved). {common_note}"
         ),
         exclude_help=(
-            "Pomija raporty z podpisem w podanym statusie (np. pending, approved). "
-            f"{common_note}"
+            f"Pomija raporty z podpisem w podanym statusie (np. pending, approved). {common_note}"
         ),
     )
     _add(
@@ -676,14 +656,8 @@ def _register_ai_compliance_filters(parser: argparse.ArgumentParser) -> None:
         ("--exclude-report-status", "--exclude-report-statuses"),
         dest="report_statuses",
         metavar="REPORT_STATUS",
-        include_help=(
-            "Wymaga raportów o wskazanym statusie (np. alert, ok). "
-            f"{common_note}"
-        ),
-        exclude_help=(
-            "Pomija raporty o wskazanym statusie (np. alert, ok). "
-            f"{common_note}"
-        ),
+        include_help=(f"Wymaga raportów o wskazanym statusie (np. alert, ok). {common_note}"),
+        exclude_help=(f"Pomija raporty o wskazanym statusie (np. alert, ok). {common_note}"),
     )
     _add(
         ("--include-issue", "--include-issues"),
@@ -691,12 +665,10 @@ def _register_ai_compliance_filters(parser: argparse.ArgumentParser) -> None:
         dest="issues",
         metavar="ISSUE",
         include_help=(
-            "Wymaga raportów o podanym kodzie problemu (np. dq, scheduler). "
-            f"{common_note}"
+            f"Wymaga raportów o podanym kodzie problemu (np. dq, scheduler). {common_note}"
         ),
         exclude_help=(
-            "Pomija raporty o podanym kodzie problemu (np. dq, scheduler). "
-            f"{common_note}"
+            f"Pomija raporty o podanym kodzie problemu (np. dq, scheduler). {common_note}"
         ),
     )
     _add(
@@ -705,27 +677,17 @@ def _register_ai_compliance_filters(parser: argparse.ArgumentParser) -> None:
         dest="sources",
         metavar="SOURCE",
         include_help=(
-            "Wymaga raportów pochodzących z danego źródła (np. scheduler). "
-            f"{common_note}"
+            f"Wymaga raportów pochodzących z danego źródła (np. scheduler). {common_note}"
         ),
-        exclude_help=(
-            "Pomija raporty pochodzące z danego źródła (np. scheduler). "
-            f"{common_note}"
-        ),
+        exclude_help=(f"Pomija raporty pochodzące z danego źródła (np. scheduler). {common_note}"),
     )
     _add(
         ("--include-schedule", "--include-schedules"),
         ("--exclude-schedule", "--exclude-schedules"),
         dest="schedules",
         metavar="SCHEDULE",
-        include_help=(
-            "Wymaga raportów z określonego harmonogramu (np. nightly). "
-            f"{common_note}"
-        ),
-        exclude_help=(
-            "Pomija raporty z określonego harmonogramu (np. nightly). "
-            f"{common_note}"
-        ),
+        include_help=(f"Wymaga raportów z określonego harmonogramu (np. nightly). {common_note}"),
+        exclude_help=(f"Pomija raporty z określonego harmonogramu (np. nightly). {common_note}"),
     )
     _add(
         ("--include-category", "--include-categories"),
@@ -733,13 +695,9 @@ def _register_ai_compliance_filters(parser: argparse.ArgumentParser) -> None:
         dest="categories",
         metavar="CATEGORY",
         include_help=(
-            "Wymaga raportów z danej kategorii audytu (np. completeness). "
-            f"{common_note}"
+            f"Wymaga raportów z danej kategorii audytu (np. completeness). {common_note}"
         ),
-        exclude_help=(
-            "Pomija raporty z danej kategorii audytu (np. completeness). "
-            f"{common_note}"
-        ),
+        exclude_help=(f"Pomija raporty z danej kategorii audytu (np. completeness). {common_note}"),
     )
     _add(
         ("--include-symbol", "--include-symbols"),
@@ -747,83 +705,49 @@ def _register_ai_compliance_filters(parser: argparse.ArgumentParser) -> None:
         dest="symbols",
         metavar="SYMBOL",
         include_help=(
-            "Wymaga raportów dotyczących wybranych symboli (np. BTC/USDT). "
-            f"{common_note}"
+            f"Wymaga raportów dotyczących wybranych symboli (np. BTC/USDT). {common_note}"
         ),
-        exclude_help=(
-            "Pomija raporty dotyczące wybranych symboli (np. BTC/USDT). "
-            f"{common_note}"
-        ),
+        exclude_help=(f"Pomija raporty dotyczące wybranych symboli (np. BTC/USDT). {common_note}"),
     )
     _add(
         ("--include-pipeline", "--include-pipelines"),
         ("--exclude-pipeline", "--exclude-pipelines"),
         dest="pipelines",
         metavar="PIPELINE",
-        include_help=(
-            "Wymaga raportów dla wskazanego pipeline'u audytowego. "
-            f"{common_note}"
-        ),
-        exclude_help=(
-            "Pomija raporty dla wskazanego pipeline'u audytowego. "
-            f"{common_note}"
-        ),
+        include_help=(f"Wymaga raportów dla wskazanego pipeline'u audytowego. {common_note}"),
+        exclude_help=(f"Pomija raporty dla wskazanego pipeline'u audytowego. {common_note}"),
     )
     _add(
         ("--include-engine", "--include-engines"),
         ("--exclude-engine", "--exclude-engines"),
         dest="engines",
         metavar="ENGINE",
-        include_help=(
-            "Wymaga raportów powiązanych z danym silnikiem strategii. "
-            f"{common_note}"
-        ),
-        exclude_help=(
-            "Pomija raporty powiązane z danym silnikiem strategii. "
-            f"{common_note}"
-        ),
+        include_help=(f"Wymaga raportów powiązanych z danym silnikiem strategii. {common_note}"),
+        exclude_help=(f"Pomija raporty powiązane z danym silnikiem strategii. {common_note}"),
     )
     _add(
         ("--include-capability", "--include-capabilities"),
         ("--exclude-capability", "--exclude-capabilities"),
         dest="capabilities",
         metavar="CAPABILITY",
-        include_help=(
-            "Wymaga raportów przypisanych do wskazanego capability. "
-            f"{common_note}"
-        ),
-        exclude_help=(
-            "Pomija raporty przypisane do wskazanego capability. "
-            f"{common_note}"
-        ),
+        include_help=(f"Wymaga raportów przypisanych do wskazanego capability. {common_note}"),
+        exclude_help=(f"Pomija raporty przypisane do wskazanego capability. {common_note}"),
     )
     _add(
         ("--include-license-tier", "--include-license-tiers"),
         ("--exclude-license-tier", "--exclude-license-tiers"),
         dest="license_tiers",
         metavar="TIER",
-        include_help=(
-            "Wymaga raportów dla podanego poziomu licencji (np. pro). "
-            f"{common_note}"
-        ),
-        exclude_help=(
-            "Pomija raporty dla podanego poziomu licencji (np. pro). "
-            f"{common_note}"
-        ),
+        include_help=(f"Wymaga raportów dla podanego poziomu licencji (np. pro). {common_note}"),
+        exclude_help=(f"Pomija raporty dla podanego poziomu licencji (np. pro). {common_note}"),
     )
     _add(
         ("--include-risk-class", "--include-risk-classes"),
         ("--exclude-risk-class", "--exclude-risk-classes"),
         dest="risk_classes",
         metavar="RISK",
-        include_help=(
-            "Wymaga raportów o określonej klasie ryzyka (np. moderate). "
-            f"{common_note}"
-        ),
-        exclude_help=(
-            "Pomija raporty o określonej klasie ryzyka (np. moderate). "
-            f"{common_note}"
-        ),
+        include_help=(f"Wymaga raportów o określonej klasie ryzyka (np. moderate). {common_note}"),
+        exclude_help=(f"Pomija raporty o określonej klasie ryzyka (np. moderate). {common_note}"),
     )
     _add(
         ("--include-required-data",),
@@ -831,12 +755,10 @@ def _register_ai_compliance_filters(parser: argparse.ArgumentParser) -> None:
         dest="required_data",
         metavar="DATA",
         include_help=(
-            "Wymaga raportów wymagających podanego źródła danych (np. ohlcv). "
-            f"{common_note}"
+            f"Wymaga raportów wymagających podanego źródła danych (np. ohlcv). {common_note}"
         ),
         exclude_help=(
-            "Pomija raporty wymagające podanego źródła danych (np. ohlcv). "
-            f"{common_note}"
+            f"Pomija raporty wymagające podanego źródła danych (np. ohlcv). {common_note}"
         ),
     )
     _add(
@@ -845,12 +767,10 @@ def _register_ai_compliance_filters(parser: argparse.ArgumentParser) -> None:
         dest="exchanges",
         metavar="EXCHANGE",
         include_help=(
-            "Wymaga raportów przypisanych do wskazanej giełdy lub dostawcy danych. "
-            f"{common_note}"
+            f"Wymaga raportów przypisanych do wskazanej giełdy lub dostawcy danych. {common_note}"
         ),
         exclude_help=(
-            "Pomija raporty przypisane do wskazanej giełdy lub dostawcy danych. "
-            f"{common_note}"
+            f"Pomija raporty przypisane do wskazanej giełdy lub dostawcy danych. {common_note}"
         ),
     )
     _add(
@@ -858,42 +778,24 @@ def _register_ai_compliance_filters(parser: argparse.ArgumentParser) -> None:
         ("--exclude-environment", "--exclude-environments"),
         dest="environments",
         metavar="ENV",
-        include_help=(
-            "Wymaga raportów z określonego środowiska (np. prod). "
-            f"{common_note}"
-        ),
-        exclude_help=(
-            "Pomija raporty z określonego środowiska (np. prod). "
-            f"{common_note}"
-        ),
+        include_help=(f"Wymaga raportów z określonego środowiska (np. prod). {common_note}"),
+        exclude_help=(f"Pomija raporty z określonego środowiska (np. prod). {common_note}"),
     )
     _add(
         ("--include-portfolio", "--include-portfolios"),
         ("--exclude-portfolio", "--exclude-portfolios"),
         dest="portfolios",
         metavar="PORTFOLIO",
-        include_help=(
-            "Wymaga raportów powiązanych z podanym portfelem (np. core). "
-            f"{common_note}"
-        ),
-        exclude_help=(
-            "Pomija raporty powiązane z podanym portfelem (np. core). "
-            f"{common_note}"
-        ),
+        include_help=(f"Wymaga raportów powiązanych z podanym portfelem (np. core). {common_note}"),
+        exclude_help=(f"Pomija raporty powiązane z podanym portfelem (np. core). {common_note}"),
     )
     _add(
         ("--include-profile", "--include-profiles"),
         ("--exclude-profile", "--exclude-profiles"),
         dest="profiles",
         metavar="PROFILE",
-        include_help=(
-            "Wymaga raportów dotyczących profili ryzyka (np. balanced). "
-            f"{common_note}"
-        ),
-        exclude_help=(
-            "Pomija raporty dotyczące profili ryzyka (np. balanced). "
-            f"{common_note}"
-        ),
+        include_help=(f"Wymaga raportów dotyczących profili ryzyka (np. balanced). {common_note}"),
+        exclude_help=(f"Pomija raporty dotyczące profili ryzyka (np. balanced). {common_note}"),
     )
     _add(
         ("--include-strategy", "--include-strategies"),
@@ -901,12 +803,10 @@ def _register_ai_compliance_filters(parser: argparse.ArgumentParser) -> None:
         dest="strategies",
         metavar="STRATEGY",
         include_help=(
-            "Wymaga raportów dla wskazanych strategii (np. mean_reversion). "
-            f"{common_note}"
+            f"Wymaga raportów dla wskazanych strategii (np. mean_reversion). {common_note}"
         ),
         exclude_help=(
-            "Pomija raporty dla wskazanych strategii (np. mean_reversion). "
-            f"{common_note}"
+            f"Pomija raporty dla wskazanych strategii (np. mean_reversion). {common_note}"
         ),
     )
     _add(
@@ -914,14 +814,8 @@ def _register_ai_compliance_filters(parser: argparse.ArgumentParser) -> None:
         ("--exclude-dataset", "--exclude-datasets"),
         dest="datasets",
         metavar="DATASET",
-        include_help=(
-            "Wymaga raportów dotyczących wskazanych zbiorów danych. "
-            f"{common_note}"
-        ),
-        exclude_help=(
-            "Pomija raporty dotyczące wskazanych zbiorów danych. "
-            f"{common_note}"
-        ),
+        include_help=(f"Wymaga raportów dotyczących wskazanych zbiorów danych. {common_note}"),
+        exclude_help=(f"Pomija raporty dotyczące wskazanych zbiorów danych. {common_note}"),
     )
     _add(
         ("--include-model", "--include-models"),
@@ -929,27 +823,17 @@ def _register_ai_compliance_filters(parser: argparse.ArgumentParser) -> None:
         dest="models",
         metavar="MODEL",
         include_help=(
-            "Wymaga raportów dotyczących wskazanych modeli lub artefaktów. "
-            f"{common_note}"
+            f"Wymaga raportów dotyczących wskazanych modeli lub artefaktów. {common_note}"
         ),
-        exclude_help=(
-            "Pomija raporty dotyczące wskazanych modeli lub artefaktów. "
-            f"{common_note}"
-        ),
+        exclude_help=(f"Pomija raporty dotyczące wskazanych modeli lub artefaktów. {common_note}"),
     )
     _add(
         ("--include-model-version", "--include-model-versions"),
         ("--exclude-model-version", "--exclude-model-versions"),
         dest="model_versions",
         metavar="VERSION",
-        include_help=(
-            "Wymaga raportów dla podanych wersji modeli (np. v2). "
-            f"{common_note}"
-        ),
-        exclude_help=(
-            "Pomija raporty dla podanych wersji modeli (np. v2). "
-            f"{common_note}"
-        ),
+        include_help=(f"Wymaga raportów dla podanych wersji modeli (np. v2). {common_note}"),
+        exclude_help=(f"Pomija raporty dla podanych wersji modeli (np. v2). {common_note}"),
     )
     _add(
         ("--include-run", "--include-runs"),
@@ -957,27 +841,17 @@ def _register_ai_compliance_filters(parser: argparse.ArgumentParser) -> None:
         dest="runs",
         metavar="RUN",
         include_help=(
-            "Wymaga raportów o konkretnych runach (np. nightly_20240501). "
-            f"{common_note}"
+            f"Wymaga raportów o konkretnych runach (np. nightly_20240501). {common_note}"
         ),
-        exclude_help=(
-            "Pomija raporty o konkretnych runach (np. nightly_20240501). "
-            f"{common_note}"
-        ),
+        exclude_help=(f"Pomija raporty o konkretnych runach (np. nightly_20240501). {common_note}"),
     )
     _add(
         ("--include-job", "--include-jobs"),
         ("--exclude-job", "--exclude-jobs"),
         dest="jobs",
         metavar="JOB",
-        include_help=(
-            "Wymaga raportów pochodzących z podanych zadań audytu. "
-            f"{common_note}"
-        ),
-        exclude_help=(
-            "Pomija raporty pochodzące z podanych zadań audytu. "
-            f"{common_note}"
-        ),
+        include_help=(f"Wymaga raportów pochodzących z podanych zadań audytu. {common_note}"),
+        exclude_help=(f"Pomija raporty pochodzące z podanych zadań audytu. {common_note}"),
     )
     _add(
         ("--include-policy-enforce", "--include-policy-enforcement"),
@@ -1107,7 +981,7 @@ def _parse_native_setting_argument(argument: str) -> tuple[str, object]:
     if not key:
         raise CLIUsageError("Opcja --native-setting wymaga niepustego klucza.")
     value = value_raw.strip()
-    if (value.startswith("\"") and value.endswith("\"")) or (
+    if (value.startswith('"') and value.endswith('"')) or (
         value.startswith("'") and value.endswith("'")
     ):
         value = value[1:-1]
@@ -2530,7 +2404,11 @@ def _summarize_environment(profile: Mapping[str, object]) -> str:
     )
 
     path_raw = profile.get("__path__")
-    path = str(path_raw) if isinstance(path_raw, str) and path_raw else str(DEFAULT_ENVIRONMENT_CONFIG_PATH)
+    path = (
+        str(path_raw)
+        if isinstance(path_raw, str) and path_raw
+        else str(DEFAULT_ENVIRONMENT_CONFIG_PATH)
+    )
 
     summary_parts: list[str] = []
 
@@ -2542,14 +2420,20 @@ def _summarize_environment(profile: Mapping[str, object]) -> str:
     if isinstance(portfolio_raw, str) and portfolio_raw.strip():
         summary_parts.append(f"portfolio={portfolio_raw.strip()}")
 
-    manager_cfg = profile.get("exchange_manager") if isinstance(profile.get("exchange_manager"), Mapping) else None
+    manager_cfg = (
+        profile.get("exchange_manager")
+        if isinstance(profile.get("exchange_manager"), Mapping)
+        else None
+    )
     if isinstance(manager_cfg, Mapping):
         mode_raw = manager_cfg.get("mode")
         if isinstance(mode_raw, str) and mode_raw.strip():
             summary_parts.append(f"mode={mode_raw.strip()}")
 
         if "testnet" in manager_cfg:
-            summary_parts.append(f"testnet={'true' if bool(manager_cfg.get('testnet')) else 'false'}")
+            summary_parts.append(
+                f"testnet={'true' if bool(manager_cfg.get('testnet')) else 'false'}"
+            )
 
         paper_variant = manager_cfg.get("paper_variant")
         if isinstance(paper_variant, str) and paper_variant.strip():
@@ -2591,7 +2475,9 @@ def _resolve_credential(
     ):
         if not isinstance(source, Mapping):
             continue
-        for deprecated in _DEPRECATED_CREDENTIAL_KEYS.get(key, ()):  # pragma: no branch - mało wartości
+        for deprecated in _DEPRECATED_CREDENTIAL_KEYS.get(
+            key, ()
+        ):  # pragma: no branch - mało wartości
             if deprecated in source:
                 raise CLIUsageError(
                     "{label} używa przestarzałego pola '{deprecated}'. Zastąp je wpisem "
@@ -2682,7 +2568,9 @@ def _serialize_watchdog_config(config: Mapping[str, object] | None) -> dict[str,
         payload["circuit_breaker"] = dict(circuit_breaker)
     if "retry_exceptions" in config:
         raw_exceptions = config.get("retry_exceptions")
-        if isinstance(raw_exceptions, Sequence) and not isinstance(raw_exceptions, (bytes, bytearray, str)):
+        if isinstance(raw_exceptions, Sequence) and not isinstance(
+            raw_exceptions, (bytes, bytearray, str)
+        ):
             items = list(raw_exceptions)
         elif raw_exceptions is None:
             items = []
@@ -2747,7 +2635,9 @@ def _build_health_checks(
     checks: list[HealthCheck] = []
     if include_public:
         if public_symbol:
-            checks.append(HealthCheck(name="public_api", check=lambda: manager.fetch_ticker(public_symbol)))
+            checks.append(
+                HealthCheck(name="public_api", check=lambda: manager.fetch_ticker(public_symbol))
+            )
         else:
             checks.append(HealthCheck(name="public_api", check=lambda: manager.load_markets()))
     if include_private:
@@ -2771,7 +2661,10 @@ def _build_health_checks(
                     if isinstance(key, str) and key.upper() == normalized:
                         try:
                             return float(raw_value) if raw_value is not None else None
-                        except (TypeError, ValueError) as exc:  # pragma: no cover - defensywne logowanie
+                        except (
+                            TypeError,
+                            ValueError,
+                        ) as exc:  # pragma: no cover - defensywne logowanie
                             raise RuntimeError(
                                 f"Nie udało się sparsować salda {asset_label} do liczby: {raw_value!r}"
                             ) from exc
@@ -2885,7 +2778,11 @@ def run_health_check(
         print(environment_summary)
 
     profile_mapping = profile if profile else None
-    environment_credentials = environment_profile.get("credentials") if isinstance(environment_profile.get("credentials"), Mapping) else None
+    environment_credentials = (
+        environment_profile.get("credentials")
+        if isinstance(environment_profile.get("credentials"), Mapping)
+        else None
+    )
     api_key = _resolve_credential(
         inline=getattr(args, "key_id", None),
         env_name=getattr(args, "key_id_env", None),
@@ -2919,7 +2816,9 @@ def run_health_check(
             cash_asset = env_manager_cfg.get("paper_cash_asset")
             manager.set_paper_balance(
                 float(initial_cash),
-                asset=str(cash_asset) if isinstance(cash_asset, str) and cash_asset.strip() else None,
+                asset=str(cash_asset)
+                if isinstance(cash_asset, str) and cash_asset.strip()
+                else None,
             )
         elif "paper_cash_asset" in env_manager_cfg:
             cash_asset_only = env_manager_cfg.get("paper_cash_asset")
@@ -2949,7 +2848,11 @@ def run_health_check(
     _configure_mode(manager, mode_choice or profile_mode, testnet=testnet_flag)
 
     profile_mapping = profile if profile else None
-    environment_credentials = environment_profile.get("credentials") if isinstance(environment_profile.get("credentials"), Mapping) else None
+    environment_credentials = (
+        environment_profile.get("credentials")
+        if isinstance(environment_profile.get("credentials"), Mapping)
+        else None
+    )
     api_key = _resolve_credential(
         inline=getattr(args, "key_id", None),
         env_name=getattr(args, "key_id_env", None),
@@ -2983,7 +2886,9 @@ def run_health_check(
             cash_asset = env_manager_cfg.get("paper_cash_asset")
             manager.set_paper_balance(
                 float(initial_cash),
-                asset=str(cash_asset) if isinstance(cash_asset, str) and cash_asset.strip() else None,
+                asset=str(cash_asset)
+                if isinstance(cash_asset, str) and cash_asset.strip()
+                else None,
             )
         elif "paper_cash_asset" in env_manager_cfg:
             cash_asset_only = env_manager_cfg.get("paper_cash_asset")
@@ -2999,7 +2904,9 @@ def run_health_check(
 
     combined_watchdog = _merge_mappings(
         profile.get("watchdog") if isinstance(profile.get("watchdog"), Mapping) else None,
-        env_manager_cfg.get("watchdog") if isinstance(env_manager_cfg.get("watchdog"), Mapping) else None,
+        env_manager_cfg.get("watchdog")
+        if isinstance(env_manager_cfg.get("watchdog"), Mapping)
+        else None,
     )
     if combined_watchdog:
         _configure_watchdog(manager, {"watchdog": combined_watchdog})
@@ -3043,9 +2950,7 @@ def run_health_check(
     cli_maintenance_margin = getattr(args, "paper_maintenance_margin", None)
     if cli_maintenance_margin is not None:
         if cli_maintenance_margin <= 0:
-            raise CLIUsageError(
-                "Opcja --paper-maintenance-margin wymaga dodatniej wartości."
-            )
+            raise CLIUsageError("Opcja --paper-maintenance-margin wymaga dodatniej wartości.")
         simulator_overrides["maintenance_margin_ratio"] = float(cli_maintenance_margin)
 
     cli_funding_rate = getattr(args, "paper_funding_rate", None)
@@ -3073,7 +2978,9 @@ def run_health_check(
 
     combined_watchdog = _merge_mappings(
         profile.get("watchdog") if isinstance(profile.get("watchdog"), Mapping) else None,
-        env_manager_cfg.get("watchdog") if isinstance(env_manager_cfg.get("watchdog"), Mapping) else None,
+        env_manager_cfg.get("watchdog")
+        if isinstance(env_manager_cfg.get("watchdog"), Mapping)
+        else None,
     )
     if combined_watchdog:
         combined_watchdog = dict(combined_watchdog)
@@ -3124,10 +3031,20 @@ def run_health_check(
         raise CLIUsageError("Opcja --watchdog-jitter-max wymaga nieujemnej wartości.")
     if jitter_min_arg is not None or jitter_max_arg is not None:
         existing_jitter = _extract_jitter_pair(retry_policy.get("jitter"))
-        jitter_min = float(jitter_min_arg) if jitter_min_arg is not None else (existing_jitter[0] if existing_jitter else 0.0)
-        jitter_max = float(jitter_max_arg) if jitter_max_arg is not None else (existing_jitter[1] if existing_jitter else 0.2)
+        jitter_min = (
+            float(jitter_min_arg)
+            if jitter_min_arg is not None
+            else (existing_jitter[0] if existing_jitter else 0.0)
+        )
+        jitter_max = (
+            float(jitter_max_arg)
+            if jitter_max_arg is not None
+            else (existing_jitter[1] if existing_jitter else 0.2)
+        )
         if jitter_max < jitter_min:
-            raise CLIUsageError("Opcja --watchdog-jitter-max musi być większa lub równa wartości minimalnej.")
+            raise CLIUsageError(
+                "Opcja --watchdog-jitter-max musi być większa lub równa wartości minimalnej."
+            )
         retry_policy["jitter"] = (jitter_min, jitter_max)
         retry_overridden = True
 
@@ -3135,7 +3052,9 @@ def run_health_check(
         combined_watchdog["retry_policy"] = retry_policy
 
     circuit_cfg = combined_watchdog.get("circuit_breaker")
-    circuit_breaker: dict[str, object] = dict(circuit_cfg) if isinstance(circuit_cfg, Mapping) else {}
+    circuit_breaker: dict[str, object] = (
+        dict(circuit_cfg) if isinstance(circuit_cfg, Mapping) else {}
+    )
     circuit_overridden = False
 
     cli_failure_threshold = getattr(args, "watchdog_failure_threshold", None)
@@ -3200,7 +3119,9 @@ def run_health_check(
         native_settings[key] = value
         cli_native_settings_provided = True
 
-    should_configure_native = bool(native_settings) or native_mode_override is not None or cli_native_settings_provided
+    should_configure_native = (
+        bool(native_settings) or native_mode_override is not None or cli_native_settings_provided
+    )
     if should_configure_native:
         target_mode = native_mode_override
         if target_mode is None and manager.mode in {Mode.MARGIN, Mode.FUTURES}:
@@ -3271,9 +3192,13 @@ def run_health_check(
     private_disabled_reason: str | None = None
 
     if skip_public and (not requested_checks or "public_api" in requested_set):
-        public_disabled_reason = "Test public_api został wyłączony (--skip-public lub konfiguracja)."
+        public_disabled_reason = (
+            "Test public_api został wyłączony (--skip-public lub konfiguracja)."
+        )
     if skip_private and (not requested_checks or "private_api" in requested_set):
-        private_disabled_reason = "Test private_api został wyłączony (--skip-private lub konfiguracja)."
+        private_disabled_reason = (
+            "Test private_api został wyłączony (--skip-private lub konfiguracja)."
+        )
 
     if include_private:
         if manager.mode is Mode.PAPER:
@@ -3287,10 +3212,14 @@ def run_health_check(
 
     if requested_checks:
         if "public_api" in requested_set and not include_public:
-            reason = public_disabled_reason or "Test public_api jest niedostępny w tym uruchomieniu."
+            reason = (
+                public_disabled_reason or "Test public_api jest niedostępny w tym uruchomieniu."
+            )
             raise CLIUsageError(f"Nie można uruchomić testu public_api: {reason}")
         if "private_api" in requested_set and not include_private:
-            reason = private_disabled_reason or "Test private_api jest niedostępny w tym uruchomieniu."
+            reason = (
+                private_disabled_reason or "Test private_api jest niedostępny w tym uruchomieniu."
+            )
             raise CLIUsageError(f"Nie można uruchomić testu private_api: {reason}")
 
     checks = _build_health_checks(
@@ -3369,7 +3298,9 @@ def run_health_check(
                 destination.parent.mkdir(parents=True, exist_ok=True)
                 destination.write_text(rendered_payload + "\n", encoding="utf-8")
             except OSError as exc:
-                raise CLIUsageError(f"Nie udało się zapisać wyniku do pliku {destination}: {exc}") from exc
+                raise CLIUsageError(
+                    f"Nie udało się zapisać wyniku do pliku {destination}: {exc}"
+                ) from exc
     else:
         for result in results:
             latency = f"{result.latency:.3f}s"
@@ -3428,14 +3359,20 @@ def list_environments(args: argparse.Namespace) -> int:
             else default_exchange
         )
 
-        manager_cfg = section.get("exchange_manager") if isinstance(section.get("exchange_manager"), Mapping) else None
-        merged_manager = _merge_mappings(defaults_manager, manager_cfg) if (defaults_manager or manager_cfg) else {}
+        manager_cfg = (
+            section.get("exchange_manager")
+            if isinstance(section.get("exchange_manager"), Mapping)
+            else None
+        )
+        merged_manager = (
+            _merge_mappings(defaults_manager, manager_cfg)
+            if (defaults_manager or manager_cfg)
+            else {}
+        )
 
         mode_raw = merged_manager.get("mode")
         mode = (
-            str(mode_raw).strip()
-            if isinstance(mode_raw, str) and str(mode_raw).strip()
-            else None
+            str(mode_raw).strip() if isinstance(mode_raw, str) and str(mode_raw).strip() else None
         )
 
         summary_parts: list[str] = []
@@ -3464,7 +3401,9 @@ def list_environments(args: argparse.Namespace) -> int:
 def show_environment(args: argparse.Namespace) -> int:
     environment_name = getattr(args, "environment", None)
     if not environment_name:
-        raise CLIUsageError("Komenda show-environment wymaga podania nazwy środowiska (--environment).")
+        raise CLIUsageError(
+            "Komenda show-environment wymaga podania nazwy środowiska (--environment)."
+        )
 
     config_path = getattr(args, "environment_config", None) or str(DEFAULT_ENVIRONMENT_CONFIG_PATH)
     profile = _load_environment_profile(config_path, environment_name)
@@ -3521,9 +3460,7 @@ def show_ai_compliance(args: argparse.Namespace) -> int:
 
     roles_param = _parse_compliance_roles(getattr(args, "roles", None))
     effective_roles = (
-        roles_param
-        if roles_param is not None
-        else normalize_compliance_sign_off_roles(None)
+        roles_param if roles_param is not None else normalize_compliance_sign_off_roles(None)
     )
 
     load_kwargs: dict[str, object] = {"limit": limit}
@@ -3565,11 +3502,7 @@ def show_ai_compliance(args: argparse.Namespace) -> int:
         pending_map = exc.pending
         exit_code = 3
 
-    missing_entries = {
-        role: tuple(entries)
-        for role, entries in pending_map.items()
-        if entries
-    }
+    missing_entries = {role: tuple(entries) for role, entries in pending_map.items() if entries}
 
     if output_format in {"json", "json-pretty"}:
         payload: dict[str, object] = {
@@ -3579,15 +3512,13 @@ def show_ai_compliance(args: argparse.Namespace) -> int:
             "data_quality": _jsonify_payload(dq_summary),
             "drift": _jsonify_payload(drift_summary),
             "pending_sign_off": _jsonify_payload(pending_map),
-            "missing_sign_off": {
-                role: len(entries) for role, entries in missing_entries.items()
-            },
+            "missing_sign_off": {role: len(entries) for role, entries in missing_entries.items()},
         }
         if audit_root is not None:
             payload["audit_root"] = str(audit_root)
         if since_cutoff is not None:
-            payload["since"] = since_cutoff.replace(microsecond=0).isoformat().replace(
-                "+00:00", "Z"
+            payload["since"] = (
+                since_cutoff.replace(microsecond=0).isoformat().replace("+00:00", "Z")
             )
         json_kwargs: dict[str, object] = {"ensure_ascii": False}
         if output_format == "json-pretty":
@@ -3695,8 +3626,7 @@ def _guard_summary_from_counts(
         }
     if reason_counts:
         summary_entry["by_reason"] = {
-            reason: int(reason_counts[reason])
-            for reason in sorted(reason_counts)
+            reason: int(reason_counts[reason]) for reason in sorted(reason_counts)
         }
     return summary_entry
 
@@ -4000,28 +3930,22 @@ def _normalize_guard_summary(summary: Mapping[str, Any]) -> dict[str, object]:
             cleaned_caps = {
                 str(capability): int(value)
                 for capability, value in capabilities.items()
-                if str(capability).strip()
-                and isinstance(value, (int, float))
-                and int(value) > 0
+                if str(capability).strip() and isinstance(value, (int, float)) and int(value) > 0
             }
             if cleaned_caps:
                 entry["by_capability"] = {
-                    capability: cleaned_caps[capability]
-                    for capability in sorted(cleaned_caps)
+                    capability: cleaned_caps[capability] for capability in sorted(cleaned_caps)
                 }
         reasons = payload.get("by_reason")
         if isinstance(reasons, Mapping):
             cleaned_reasons = {
                 str(reason): int(value)
                 for reason, value in reasons.items()
-                if str(reason).strip()
-                and isinstance(value, (int, float))
-                and int(value) > 0
+                if str(reason).strip() and isinstance(value, (int, float)) and int(value) > 0
             }
             if cleaned_reasons:
                 entry["by_reason"] = {
-                    reason: cleaned_reasons[reason]
-                    for reason in sorted(cleaned_reasons)
+                    reason: cleaned_reasons[reason] for reason in sorted(cleaned_reasons)
                 }
         if entry:
             normalized[str(label)] = entry
@@ -4090,7 +4014,7 @@ def _normalize_guard_details(
 
 
 def _build_guard_detail_summary_from_details(
-    details: Mapping[str, Mapping[str, Iterable[Mapping[str, str]]]]
+    details: Mapping[str, Mapping[str, Iterable[Mapping[str, str]]]],
 ) -> dict[str, dict[str, dict[str, object]]]:
     if not isinstance(details, Mapping):
         return {}
@@ -4115,9 +4039,7 @@ def _build_guard_detail_summary_from_details(
         overall_total = 0
         overall_reason_counts: Counter[str] = Counter()
 
-        def _summarize_entries(
-            entries: Iterable[Mapping[str, str]]
-        ) -> tuple[int, Counter[str]]:
+        def _summarize_entries(entries: Iterable[Mapping[str, str]]) -> tuple[int, Counter[str]]:
             total = 0
             reason_counts: Counter[str] = Counter()
             for entry in entries:
@@ -4140,8 +4062,7 @@ def _build_guard_detail_summary_from_details(
             payload: dict[str, object] = {"total": int(total)}
             if reason_counts:
                 payload["by_reason"] = {
-                    reason: int(reason_counts[reason])
-                    for reason in sorted(reason_counts)
+                    reason: int(reason_counts[reason]) for reason in sorted(reason_counts)
                 }
             capability_summary[category] = payload
             processed_categories.add(str(category))
@@ -4160,8 +4081,7 @@ def _build_guard_detail_summary_from_details(
             payload = {"total": int(total)}
             if reason_counts:
                 payload["by_reason"] = {
-                    reason: int(reason_counts[reason])
-                    for reason in sorted(reason_counts)
+                    reason: int(reason_counts[reason]) for reason in sorted(reason_counts)
                 }
             capability_summary[category_label] = payload
             overall_total += total
@@ -4183,7 +4103,7 @@ def _build_guard_detail_summary_from_details(
 
 
 def _build_guard_detail_category_summary_from_details(
-    details: Mapping[str, Mapping[str, Iterable[Mapping[str, str]]]]
+    details: Mapping[str, Mapping[str, Iterable[Mapping[str, str]]]],
 ) -> dict[str, dict[str, object]]:
     if not isinstance(details, Mapping):
         return {}
@@ -4275,9 +4195,7 @@ def _build_guard_detail_category_summary_from_details(
             summary[category] = normalized
 
     extra_categories = {
-        name: counters
-        for name, counters in category_counters.items()
-        if name not in order_set
+        name: counters for name, counters in category_counters.items() if name not in order_set
     }
     for category in sorted(extra_categories):
         normalized = _normalize(extra_categories[category])
@@ -4514,9 +4432,7 @@ def _build_guard_detail_reason_details_from_details(
                 if not normalized_entries:
                     continue
                 normalized_entries.sort(
-                    key=lambda payload, *, _category=category: _sort_key(
-                        str(_category), payload
-                    )
+                    key=lambda payload, *, _category=category: _sort_key(str(_category), payload)
                 )
                 ordered_categories[category] = normalized_entries
             extra_categories = {
@@ -4546,9 +4462,7 @@ def _build_guard_detail_reason_details_from_details(
                 if not normalized_entries:
                     continue
                 normalized_entries.sort(
-                    key=lambda payload, *, _category=category: _sort_key(
-                        str(_category), payload
-                    )
+                    key=lambda payload, *, _category=category: _sort_key(str(_category), payload)
                 )
                 ordered_categories[category] = normalized_entries
             if ordered_categories:
@@ -4576,20 +4490,15 @@ def _normalize_guard_detail_summary_entry(
         cleaned = {
             str(reason): int(value)
             for reason, value in reasons.items()
-            if str(reason).strip()
-            and isinstance(value, (int, float))
-            and int(value) > 0
+            if str(reason).strip() and isinstance(value, (int, float)) and int(value) > 0
         }
         if cleaned:
-            entry["by_reason"] = {
-                reason: cleaned[reason]
-                for reason in sorted(cleaned)
-            }
+            entry["by_reason"] = {reason: cleaned[reason] for reason in sorted(cleaned)}
     return entry
 
 
 def _normalize_guard_detail_summary(
-    summary: Mapping[str, Mapping[str, object]]
+    summary: Mapping[str, Mapping[str, object]],
 ) -> dict[str, dict[str, dict[str, object]]]:
     if not isinstance(summary, Mapping):
         return {}
@@ -4613,9 +4522,7 @@ def _normalize_guard_detail_summary(
             continue
         ordered: dict[str, dict[str, object]] = {}
         for category in category_order:
-            normalized_entry = _normalize_guard_detail_summary_entry(
-                category_map.get(category)
-            )
+            normalized_entry = _normalize_guard_detail_summary_entry(category_map.get(category))
             if normalized_entry:
                 ordered[category] = normalized_entry
         extra_categories = {
@@ -4624,9 +4531,7 @@ def _normalize_guard_detail_summary(
             if str(category) not in order_set
         }
         for category in sorted(extra_categories):
-            normalized_entry = _normalize_guard_detail_summary_entry(
-                extra_categories[category]
-            )
+            normalized_entry = _normalize_guard_detail_summary_entry(extra_categories[category])
             if normalized_entry:
                 ordered[category] = normalized_entry
         if ordered:
@@ -4653,34 +4558,28 @@ def _normalize_guard_detail_category_summary_entry(
         cleaned_caps = {
             str(capability): int(value)
             for capability, value in capabilities.items()
-            if str(capability).strip()
-            and isinstance(value, (int, float))
-            and int(value) > 0
+            if str(capability).strip() and isinstance(value, (int, float)) and int(value) > 0
         }
         if cleaned_caps:
             entry["by_capability"] = {
-                capability: cleaned_caps[capability]
-                for capability in sorted(cleaned_caps)
+                capability: cleaned_caps[capability] for capability in sorted(cleaned_caps)
             }
     reasons = payload.get("by_reason")
     if isinstance(reasons, Mapping):
         cleaned_reasons = {
             str(reason): int(value)
             for reason, value in reasons.items()
-            if str(reason).strip()
-            and isinstance(value, (int, float))
-            and int(value) > 0
+            if str(reason).strip() and isinstance(value, (int, float)) and int(value) > 0
         }
         if cleaned_reasons:
             entry["by_reason"] = {
-                reason: cleaned_reasons[reason]
-                for reason in sorted(cleaned_reasons)
+                reason: cleaned_reasons[reason] for reason in sorted(cleaned_reasons)
             }
     return entry
 
 
 def _normalize_guard_detail_category_summary(
-    summary: Mapping[str, Mapping[str, object]]
+    summary: Mapping[str, Mapping[str, object]],
 ) -> dict[str, dict[str, object]]:
     if not isinstance(summary, Mapping):
         return {}
@@ -4696,9 +4595,7 @@ def _normalize_guard_detail_category_summary(
     order_set = set(category_order)
 
     for category in category_order:
-        normalized_entry = _normalize_guard_detail_category_summary_entry(
-            summary.get(category)
-        )
+        normalized_entry = _normalize_guard_detail_category_summary_entry(summary.get(category))
         if normalized_entry:
             normalized[category] = normalized_entry
 
@@ -4718,7 +4615,7 @@ def _normalize_guard_detail_category_summary(
 
 
 def _normalize_guard_detail_reason_summary_entry(
-    payload: Mapping[str, object]
+    payload: Mapping[str, object],
 ) -> dict[str, object] | None:
     if not isinstance(payload, Mapping):
         return None
@@ -4755,14 +4652,13 @@ def _normalize_guard_detail_reason_summary_entry(
         }
         if cleaned_categories:
             entry["by_category"] = {
-                category: cleaned_categories[category]
-                for category in sorted(cleaned_categories)
+                category: cleaned_categories[category] for category in sorted(cleaned_categories)
             }
     return entry
 
 
 def _normalize_guard_detail_reason_summary(
-    summary: Mapping[str, Mapping[str, object]]
+    summary: Mapping[str, Mapping[str, object]],
 ) -> dict[str, dict[str, object]]:
     if not isinstance(summary, Mapping):
         return {}
@@ -4778,8 +4674,9 @@ def _normalize_guard_detail_reason_summary(
 
     return normalized
 
+
 def _normalize_guard_detail_reason_details(
-    details: Mapping[str, Mapping[str, object]]
+    details: Mapping[str, Mapping[str, object]],
 ) -> dict[str, dict[str, object]]:
     if not isinstance(details, Mapping):
         return {}
@@ -4943,8 +4840,7 @@ def _print_guard_summary(summary: Mapping[str, Any], *, indent: str = "  ") -> N
         capabilities = payload.get("by_capability")
         if isinstance(capabilities, Mapping) and capabilities:
             formatted_caps = ", ".join(
-                f"{capability} ({int(value)})"
-                for capability, value in capabilities.items()
+                f"{capability} ({int(value)})" for capability, value in capabilities.items()
             )
             print(f"{sub_indent}capabilities: {formatted_caps}")
         reasons = payload.get("by_reason")
@@ -5004,9 +4900,7 @@ def _print_guard_details(
                     print(f"{entry_indent}- {kind}:{target}{suffix}")
             else:
                 for entry in entries:
-                    formatted = ", ".join(
-                        f"{key}={value}" for key, value in sorted(entry.items())
-                    )
+                    formatted = ", ".join(f"{key}={value}" for key, value in sorted(entry.items()))
                     print(f"{entry_indent}- {formatted}")
 
 
@@ -5108,8 +5002,7 @@ def _print_guard_detail_category_summary(
         capabilities = payload.get("by_capability")
         if isinstance(capabilities, Mapping) and capabilities:
             formatted_caps = ", ".join(
-                f"{capability} ({int(value)})"
-                for capability, value in capabilities.items()
+                f"{capability} ({int(value)})" for capability, value in capabilities.items()
             )
             print(f"{sub_indent}capabilities: {formatted_caps}")
         reasons = payload.get("by_reason")
@@ -5168,8 +5061,7 @@ def _print_guard_detail_reason_summary(
         capabilities = payload.get("by_capability")
         if isinstance(capabilities, Mapping) and capabilities:
             formatted_caps = ", ".join(
-                f"{capability} ({int(value)})"
-                for capability, value in capabilities.items()
+                f"{capability} ({int(value)})" for capability, value in capabilities.items()
             )
             print(f"{sub_indent}capabilities: {formatted_caps}")
         categories = payload.get("by_category")
@@ -5245,33 +5137,25 @@ def _print_guard_detail_reason_details(
                 for entry in entries:
                     name = entry.get("name", "-")
                     reason_text = entry.get("reason")
-                    suffix_text = (
-                        f" (powód strażnika: {reason_text})" if reason_text else ""
-                    )
+                    suffix_text = f" (powód strażnika: {reason_text})" if reason_text else ""
                     print(f"{entry_indent}- {name}{suffix_text}")
             elif category in {"initial_signal_limits", "signal_limits"}:
                 for entry in entries:
                     strategy = entry.get("strategy", "-")
                     profile = entry.get("profile", "*")
                     reason_text = entry.get("reason")
-                    suffix_text = (
-                        f" (powód strażnika: {reason_text})" if reason_text else ""
-                    )
+                    suffix_text = f" (powód strażnika: {reason_text})" if reason_text else ""
                     print(f"{entry_indent}- {strategy} [{profile}]{suffix_text}")
             elif category == "suspensions":
                 for entry in entries:
                     kind = entry.get("kind", "schedule")
                     target = entry.get("target", "-")
                     reason_text = entry.get("reason")
-                    suffix_text = (
-                        f" (powód strażnika: {reason_text})" if reason_text else ""
-                    )
+                    suffix_text = f" (powód strażnika: {reason_text})" if reason_text else ""
                     print(f"{entry_indent}- {kind}:{target}{suffix_text}")
             else:
                 for entry in entries:
-                    formatted = ", ".join(
-                        f"{key}={value}" for key, value in sorted(entry.items())
-                    )
+                    formatted = ", ".join(f"{key}={value}" for key, value in sorted(entry.items()))
                     print(f"{entry_indent}- {formatted}")
         for category, entries in categories.items():
             if str(category) in processed:
@@ -5282,9 +5166,7 @@ def _print_guard_detail_reason_details(
             for entry in entries:
                 if not isinstance(entry, Mapping):
                     continue
-                formatted = ", ".join(
-                    f"{key}={value}" for key, value in sorted(entry.items())
-                )
+                formatted = ", ".join(f"{key}={value}" for key, value in sorted(entry.items()))
                 print(f"{entry_indent}- {formatted}")
 
 
@@ -5312,12 +5194,8 @@ def show_ai_compliance(args: argparse.Namespace) -> int:
 
     include_tags = _parse_cli_tags(getattr(args, "include_tags", None))
     exclude_tags = _parse_cli_tags(getattr(args, "exclude_tags", None))
-    include_statuses = _parse_cli_sign_off_statuses(
-        getattr(args, "include_statuses", None)
-    )
-    exclude_statuses = _parse_cli_sign_off_statuses(
-        getattr(args, "exclude_statuses", None)
-    )
+    include_statuses = _parse_cli_sign_off_statuses(getattr(args, "include_statuses", None))
+    exclude_statuses = _parse_cli_sign_off_statuses(getattr(args, "exclude_statuses", None))
     include_report_statuses = _parse_cli_report_statuses(
         getattr(args, "include_report_statuses", None)
     )
@@ -5338,38 +5216,18 @@ def show_ai_compliance(args: argparse.Namespace) -> int:
     exclude_pipelines = _parse_cli_pipelines(getattr(args, "exclude_pipelines", None))
     include_engines = _parse_cli_engines(getattr(args, "include_engines", None))
     exclude_engines = _parse_cli_engines(getattr(args, "exclude_engines", None))
-    include_capabilities = _parse_cli_capabilities(
-        getattr(args, "include_capabilities", None)
-    )
-    exclude_capabilities = _parse_cli_capabilities(
-        getattr(args, "exclude_capabilities", None)
-    )
-    include_license_tiers = _parse_cli_license_tiers(
-        getattr(args, "include_license_tiers", None)
-    )
-    exclude_license_tiers = _parse_cli_license_tiers(
-        getattr(args, "exclude_license_tiers", None)
-    )
-    include_risk_classes = _parse_cli_risk_classes(
-        getattr(args, "include_risk_classes", None)
-    )
-    exclude_risk_classes = _parse_cli_risk_classes(
-        getattr(args, "exclude_risk_classes", None)
-    )
-    include_required_data = _parse_cli_required_data(
-        getattr(args, "include_required_data", None)
-    )
-    exclude_required_data = _parse_cli_required_data(
-        getattr(args, "exclude_required_data", None)
-    )
+    include_capabilities = _parse_cli_capabilities(getattr(args, "include_capabilities", None))
+    exclude_capabilities = _parse_cli_capabilities(getattr(args, "exclude_capabilities", None))
+    include_license_tiers = _parse_cli_license_tiers(getattr(args, "include_license_tiers", None))
+    exclude_license_tiers = _parse_cli_license_tiers(getattr(args, "exclude_license_tiers", None))
+    include_risk_classes = _parse_cli_risk_classes(getattr(args, "include_risk_classes", None))
+    exclude_risk_classes = _parse_cli_risk_classes(getattr(args, "exclude_risk_classes", None))
+    include_required_data = _parse_cli_required_data(getattr(args, "include_required_data", None))
+    exclude_required_data = _parse_cli_required_data(getattr(args, "exclude_required_data", None))
     include_exchanges = _parse_cli_exchanges(getattr(args, "include_exchanges", None))
     exclude_exchanges = _parse_cli_exchanges(getattr(args, "exclude_exchanges", None))
-    include_environments = _parse_cli_environments(
-        getattr(args, "include_environments", None)
-    )
-    exclude_environments = _parse_cli_environments(
-        getattr(args, "exclude_environments", None)
-    )
+    include_environments = _parse_cli_environments(getattr(args, "include_environments", None))
+    exclude_environments = _parse_cli_environments(getattr(args, "exclude_environments", None))
     include_portfolios = _parse_cli_portfolios(getattr(args, "include_portfolios", None))
     exclude_portfolios = _parse_cli_portfolios(getattr(args, "exclude_portfolios", None))
     include_profiles = _parse_cli_profiles(getattr(args, "include_profiles", None))
@@ -5390,18 +5248,14 @@ def show_ai_compliance(args: argparse.Namespace) -> int:
     exclude_runs = _parse_cli_runs(getattr(args, "exclude_runs", None))
     include_jobs = _parse_cli_job_names(getattr(args, "include_jobs", None))
     exclude_jobs = _parse_cli_job_names(getattr(args, "exclude_jobs", None))
-    include_policy_enforce = _parse_cli_policy_enforcement(
-        getattr(args, "policy_enforce", None)
-    )
+    include_policy_enforce = _parse_cli_policy_enforcement(getattr(args, "policy_enforce", None))
     exclude_policy_enforce = _parse_cli_policy_enforcement(
         getattr(args, "exclude_policy_enforce", None)
     )
 
     roles_param = _parse_compliance_roles(getattr(args, "roles", None))
     effective_roles = (
-        roles_param
-        if roles_param is not None
-        else normalize_compliance_sign_off_roles(None)
+        roles_param if roles_param is not None else normalize_compliance_sign_off_roles(None)
     )
 
     load_kwargs: dict[str, object] = {"limit": limit}
@@ -5655,11 +5509,7 @@ def show_ai_compliance(args: argparse.Namespace) -> int:
         pending_map = exc.pending
         exit_code = 3
 
-    missing_entries = {
-        role: tuple(entries)
-        for role, entries in pending_map.items()
-        if entries
-    }
+    missing_entries = {role: tuple(entries) for role, entries in pending_map.items() if entries}
 
     if output_format in {"json", "json-pretty"}:
         payload: dict[str, object] = {
@@ -5669,15 +5519,13 @@ def show_ai_compliance(args: argparse.Namespace) -> int:
             "data_quality": _jsonify_payload(dq_summary),
             "drift": _jsonify_payload(drift_summary),
             "pending_sign_off": _jsonify_payload(pending_map),
-            "missing_sign_off": {
-                role: len(entries) for role, entries in missing_entries.items()
-            },
+            "missing_sign_off": {role: len(entries) for role, entries in missing_entries.items()},
         }
         if audit_root is not None:
             payload["audit_root"] = str(audit_root)
         if since_cutoff is not None:
-            payload["since"] = since_cutoff.replace(microsecond=0).isoformat().replace(
-                "+00:00", "Z"
+            payload["since"] = (
+                since_cutoff.replace(microsecond=0).isoformat().replace("+00:00", "Z")
             )
         if include_tags:
             payload["include_tags"] = list(include_tags)
@@ -5814,9 +5662,7 @@ def show_ai_compliance(args: argparse.Namespace) -> int:
         human = ", ".join("enforced" if flag else "not-enforced" for flag in include_policy_enforce)
         print("Wymagane policy.enforce: " + human)
     if exclude_policy_enforce:
-        human = ", ".join(
-            "enforced" if flag else "not-enforced" for flag in exclude_policy_enforce
-        )
+        human = ", ".join("enforced" if flag else "not-enforced" for flag in exclude_policy_enforce)
         print("Wykluczone policy.enforce: " + human)
     if include_statuses:
         print("Wymagane statusy podpisów: " + ", ".join(include_statuses))
@@ -5993,8 +5839,7 @@ def _guard_summary_from_counts(
         }
     if reason_counts:
         summary_entry["by_reason"] = {
-            reason: int(reason_counts[reason])
-            for reason in sorted(reason_counts)
+            reason: int(reason_counts[reason]) for reason in sorted(reason_counts)
         }
     return summary_entry
 
@@ -6298,28 +6143,22 @@ def _normalize_guard_summary(summary: Mapping[str, Any]) -> dict[str, object]:
             cleaned_caps = {
                 str(capability): int(value)
                 for capability, value in capabilities.items()
-                if str(capability).strip()
-                and isinstance(value, (int, float))
-                and int(value) > 0
+                if str(capability).strip() and isinstance(value, (int, float)) and int(value) > 0
             }
             if cleaned_caps:
                 entry["by_capability"] = {
-                    capability: cleaned_caps[capability]
-                    for capability in sorted(cleaned_caps)
+                    capability: cleaned_caps[capability] for capability in sorted(cleaned_caps)
                 }
         reasons = payload.get("by_reason")
         if isinstance(reasons, Mapping):
             cleaned_reasons = {
                 str(reason): int(value)
                 for reason, value in reasons.items()
-                if str(reason).strip()
-                and isinstance(value, (int, float))
-                and int(value) > 0
+                if str(reason).strip() and isinstance(value, (int, float)) and int(value) > 0
             }
             if cleaned_reasons:
                 entry["by_reason"] = {
-                    reason: cleaned_reasons[reason]
-                    for reason in sorted(cleaned_reasons)
+                    reason: cleaned_reasons[reason] for reason in sorted(cleaned_reasons)
                 }
         if entry:
             normalized[str(label)] = entry
@@ -6388,7 +6227,7 @@ def _normalize_guard_details(
 
 
 def _build_guard_detail_summary_from_details(
-    details: Mapping[str, Mapping[str, Iterable[Mapping[str, str]]]]
+    details: Mapping[str, Mapping[str, Iterable[Mapping[str, str]]]],
 ) -> dict[str, dict[str, dict[str, object]]]:
     if not isinstance(details, Mapping):
         return {}
@@ -6413,9 +6252,7 @@ def _build_guard_detail_summary_from_details(
         overall_total = 0
         overall_reason_counts: Counter[str] = Counter()
 
-        def _summarize_entries(
-            entries: Iterable[Mapping[str, str]]
-        ) -> tuple[int, Counter[str]]:
+        def _summarize_entries(entries: Iterable[Mapping[str, str]]) -> tuple[int, Counter[str]]:
             total = 0
             reason_counts: Counter[str] = Counter()
             for entry in entries:
@@ -6438,8 +6275,7 @@ def _build_guard_detail_summary_from_details(
             payload: dict[str, object] = {"total": int(total)}
             if reason_counts:
                 payload["by_reason"] = {
-                    reason: int(reason_counts[reason])
-                    for reason in sorted(reason_counts)
+                    reason: int(reason_counts[reason]) for reason in sorted(reason_counts)
                 }
             capability_summary[category] = payload
             processed_categories.add(str(category))
@@ -6458,8 +6294,7 @@ def _build_guard_detail_summary_from_details(
             payload = {"total": int(total)}
             if reason_counts:
                 payload["by_reason"] = {
-                    reason: int(reason_counts[reason])
-                    for reason in sorted(reason_counts)
+                    reason: int(reason_counts[reason]) for reason in sorted(reason_counts)
                 }
             capability_summary[category_label] = payload
             overall_total += total
@@ -6561,7 +6396,7 @@ def _build_guard_detail_capability_reason_summary_from_details(
 
 
 def _build_guard_detail_category_summary_from_details(
-    details: Mapping[str, Mapping[str, Iterable[Mapping[str, str]]]]
+    details: Mapping[str, Mapping[str, Iterable[Mapping[str, str]]]],
 ) -> dict[str, dict[str, object]]:
     if not isinstance(details, Mapping):
         return {}
@@ -6653,9 +6488,7 @@ def _build_guard_detail_category_summary_from_details(
             summary[category] = normalized
 
     extra_categories = {
-        name: counters
-        for name, counters in category_counters.items()
-        if name not in order_set
+        name: counters for name, counters in category_counters.items() if name not in order_set
     }
     for category in sorted(extra_categories):
         normalized = _normalize(extra_categories[category])
@@ -6892,9 +6725,7 @@ def _build_guard_detail_reason_details_from_details(
                 if not normalized_entries:
                     continue
                 normalized_entries.sort(
-                    key=lambda payload, *, _category=category: _sort_key(
-                        str(_category), payload
-                    )
+                    key=lambda payload, *, _category=category: _sort_key(str(_category), payload)
                 )
                 ordered_categories[category] = normalized_entries
             extra_categories = {
@@ -6924,9 +6755,7 @@ def _build_guard_detail_reason_details_from_details(
                 if not normalized_entries:
                     continue
                 normalized_entries.sort(
-                    key=lambda payload, *, _category=category: _sort_key(
-                        str(_category), payload
-                    )
+                    key=lambda payload, *, _category=category: _sort_key(str(_category), payload)
                 )
                 ordered_categories[category] = normalized_entries
             if ordered_categories:
@@ -6954,20 +6783,15 @@ def _normalize_guard_detail_summary_entry(
         cleaned = {
             str(reason): int(value)
             for reason, value in reasons.items()
-            if str(reason).strip()
-            and isinstance(value, (int, float))
-            and int(value) > 0
+            if str(reason).strip() and isinstance(value, (int, float)) and int(value) > 0
         }
         if cleaned:
-            entry["by_reason"] = {
-                reason: cleaned[reason]
-                for reason in sorted(cleaned)
-            }
+            entry["by_reason"] = {reason: cleaned[reason] for reason in sorted(cleaned)}
     return entry
 
 
 def _normalize_guard_detail_summary(
-    summary: Mapping[str, Mapping[str, object]]
+    summary: Mapping[str, Mapping[str, object]],
 ) -> dict[str, dict[str, dict[str, object]]]:
     if not isinstance(summary, Mapping):
         return {}
@@ -6991,9 +6815,7 @@ def _normalize_guard_detail_summary(
             continue
         ordered: dict[str, dict[str, object]] = {}
         for category in category_order:
-            normalized_entry = _normalize_guard_detail_summary_entry(
-                category_map.get(category)
-            )
+            normalized_entry = _normalize_guard_detail_summary_entry(category_map.get(category))
             if normalized_entry:
                 ordered[category] = normalized_entry
         extra_categories = {
@@ -7002,9 +6824,7 @@ def _normalize_guard_detail_summary(
             if str(category) not in order_set
         }
         for category in sorted(extra_categories):
-            normalized_entry = _normalize_guard_detail_summary_entry(
-                extra_categories[category]
-            )
+            normalized_entry = _normalize_guard_detail_summary_entry(extra_categories[category])
             if normalized_entry:
                 ordered[category] = normalized_entry
         if ordered:
@@ -7031,34 +6851,28 @@ def _normalize_guard_detail_category_summary_entry(
         cleaned_caps = {
             str(capability): int(value)
             for capability, value in capabilities.items()
-            if str(capability).strip()
-            and isinstance(value, (int, float))
-            and int(value) > 0
+            if str(capability).strip() and isinstance(value, (int, float)) and int(value) > 0
         }
         if cleaned_caps:
             entry["by_capability"] = {
-                capability: cleaned_caps[capability]
-                for capability in sorted(cleaned_caps)
+                capability: cleaned_caps[capability] for capability in sorted(cleaned_caps)
             }
     reasons = payload.get("by_reason")
     if isinstance(reasons, Mapping):
         cleaned_reasons = {
             str(reason): int(value)
             for reason, value in reasons.items()
-            if str(reason).strip()
-            and isinstance(value, (int, float))
-            and int(value) > 0
+            if str(reason).strip() and isinstance(value, (int, float)) and int(value) > 0
         }
         if cleaned_reasons:
             entry["by_reason"] = {
-                reason: cleaned_reasons[reason]
-                for reason in sorted(cleaned_reasons)
+                reason: cleaned_reasons[reason] for reason in sorted(cleaned_reasons)
             }
     return entry
 
 
 def _normalize_guard_detail_category_summary(
-    summary: Mapping[str, Mapping[str, object]]
+    summary: Mapping[str, Mapping[str, object]],
 ) -> dict[str, dict[str, object]]:
     if not isinstance(summary, Mapping):
         return {}
@@ -7074,9 +6888,7 @@ def _normalize_guard_detail_category_summary(
     order_set = set(category_order)
 
     for category in category_order:
-        normalized_entry = _normalize_guard_detail_category_summary_entry(
-            summary.get(category)
-        )
+        normalized_entry = _normalize_guard_detail_category_summary_entry(summary.get(category))
         if normalized_entry:
             normalized[category] = normalized_entry
 
@@ -7096,7 +6908,7 @@ def _normalize_guard_detail_category_summary(
 
 
 def _normalize_guard_detail_reason_summary_entry(
-    payload: Mapping[str, object]
+    payload: Mapping[str, object],
 ) -> dict[str, object] | None:
     if not isinstance(payload, Mapping):
         return None
@@ -7133,14 +6945,13 @@ def _normalize_guard_detail_reason_summary_entry(
         }
         if cleaned_categories:
             entry["by_category"] = {
-                category: cleaned_categories[category]
-                for category in sorted(cleaned_categories)
+                category: cleaned_categories[category] for category in sorted(cleaned_categories)
             }
     return entry
 
 
 def _normalize_guard_detail_reason_summary(
-    summary: Mapping[str, Mapping[str, object]]
+    summary: Mapping[str, Mapping[str, object]],
 ) -> dict[str, dict[str, object]]:
     if not isinstance(summary, Mapping):
         return {}
@@ -7158,7 +6969,7 @@ def _normalize_guard_detail_reason_summary(
 
 
 def _normalize_guard_detail_capability_reason_summary_entry(
-    payload: Mapping[str, object]
+    payload: Mapping[str, object],
 ) -> dict[str, object] | None:
     if not isinstance(payload, Mapping):
         return None
@@ -7181,14 +6992,13 @@ def _normalize_guard_detail_capability_reason_summary_entry(
         }
         if cleaned_categories:
             entry["by_category"] = {
-                category: cleaned_categories[category]
-                for category in sorted(cleaned_categories)
+                category: cleaned_categories[category] for category in sorted(cleaned_categories)
             }
     return entry
 
 
 def _normalize_guard_detail_capability_reason_summary(
-    summary: Mapping[str, Mapping[str, object]]
+    summary: Mapping[str, Mapping[str, object]],
 ) -> dict[str, dict[str, dict[str, object]]]:
     if not isinstance(summary, Mapping):
         return {}
@@ -7206,9 +7016,7 @@ def _normalize_guard_detail_capability_reason_summary(
             reason_label = str(reason).strip()
             if not reason_label:
                 continue
-            normalized_entry = _normalize_guard_detail_capability_reason_summary_entry(
-                payload
-            )
+            normalized_entry = _normalize_guard_detail_capability_reason_summary_entry(payload)
             if normalized_entry:
                 normalized_reasons[reason_label] = normalized_entry
         if normalized_reasons:
@@ -7218,7 +7026,7 @@ def _normalize_guard_detail_capability_reason_summary(
 
 
 def _normalize_guard_detail_reason_details(
-    details: Mapping[str, Mapping[str, object]]
+    details: Mapping[str, Mapping[str, object]],
 ) -> dict[str, dict[str, object]]:
     if not isinstance(details, Mapping):
         return {}
@@ -7382,8 +7190,7 @@ def _print_guard_summary(summary: Mapping[str, Any], *, indent: str = "  ") -> N
         capabilities = payload.get("by_capability")
         if isinstance(capabilities, Mapping) and capabilities:
             formatted_caps = ", ".join(
-                f"{capability} ({int(value)})"
-                for capability, value in capabilities.items()
+                f"{capability} ({int(value)})" for capability, value in capabilities.items()
             )
             print(f"{sub_indent}capabilities: {formatted_caps}")
         reasons = payload.get("by_reason")
@@ -7443,9 +7250,7 @@ def _print_guard_details(
                     print(f"{entry_indent}- {kind}:{target}{suffix}")
             else:
                 for entry in entries:
-                    formatted = ", ".join(
-                        f"{key}={value}" for key, value in sorted(entry.items())
-                    )
+                    formatted = ", ".join(f"{key}={value}" for key, value in sorted(entry.items()))
                     print(f"{entry_indent}- {formatted}")
 
 
@@ -7547,8 +7352,7 @@ def _print_guard_detail_category_summary(
         capabilities = payload.get("by_capability")
         if isinstance(capabilities, Mapping) and capabilities:
             formatted_caps = ", ".join(
-                f"{capability} ({int(value)})"
-                for capability, value in capabilities.items()
+                f"{capability} ({int(value)})" for capability, value in capabilities.items()
             )
             print(f"{sub_indent}capabilities: {formatted_caps}")
         reasons = payload.get("by_reason")
@@ -7607,8 +7411,7 @@ def _print_guard_detail_reason_summary(
         capabilities = payload.get("by_capability")
         if isinstance(capabilities, Mapping) and capabilities:
             formatted_caps = ", ".join(
-                f"{capability} ({int(value)})"
-                for capability, value in capabilities.items()
+                f"{capability} ({int(value)})" for capability, value in capabilities.items()
             )
             print(f"{sub_indent}capabilities: {formatted_caps}")
         categories = payload.get("by_category")
@@ -7748,33 +7551,25 @@ def _print_guard_detail_reason_details(
                 for entry in entries:
                     name = entry.get("name", "-")
                     reason_text = entry.get("reason")
-                    suffix_text = (
-                        f" (powód strażnika: {reason_text})" if reason_text else ""
-                    )
+                    suffix_text = f" (powód strażnika: {reason_text})" if reason_text else ""
                     print(f"{entry_indent}- {name}{suffix_text}")
             elif category in {"initial_signal_limits", "signal_limits"}:
                 for entry in entries:
                     strategy = entry.get("strategy", "-")
                     profile = entry.get("profile", "*")
                     reason_text = entry.get("reason")
-                    suffix_text = (
-                        f" (powód strażnika: {reason_text})" if reason_text else ""
-                    )
+                    suffix_text = f" (powód strażnika: {reason_text})" if reason_text else ""
                     print(f"{entry_indent}- {strategy} [{profile}]{suffix_text}")
             elif category == "suspensions":
                 for entry in entries:
                     kind = entry.get("kind", "schedule")
                     target = entry.get("target", "-")
                     reason_text = entry.get("reason")
-                    suffix_text = (
-                        f" (powód strażnika: {reason_text})" if reason_text else ""
-                    )
+                    suffix_text = f" (powód strażnika: {reason_text})" if reason_text else ""
                     print(f"{entry_indent}- {kind}:{target}{suffix_text}")
             else:
                 for entry in entries:
-                    formatted = ", ".join(
-                        f"{key}={value}" for key, value in sorted(entry.items())
-                    )
+                    formatted = ", ".join(f"{key}={value}" for key, value in sorted(entry.items()))
                     print(f"{entry_indent}- {formatted}")
         for category, entries in categories.items():
             if str(category) in processed:
@@ -7785,9 +7580,7 @@ def _print_guard_detail_reason_details(
             for entry in entries:
                 if not isinstance(entry, Mapping):
                     continue
-                formatted = ", ".join(
-                    f"{key}={value}" for key, value in sorted(entry.items())
-                )
+                formatted = ", ".join(f"{key}={value}" for key, value in sorted(entry.items()))
                 print(f"{entry_indent}- {formatted}")
 
 
@@ -7865,9 +7658,7 @@ def show_strategy_catalog(args: argparse.Namespace) -> int:
     normalized_guard_detail_category_summary: dict[str, dict[str, object]] = {}
     normalized_guard_detail_reason_summary: dict[str, dict[str, object]] = {}
     normalized_guard_detail_reason_details: dict[str, dict[str, object]] = {}
-    normalized_guard_detail_capability_reason_summary: dict[
-        str, dict[str, object]
-    ] = {}
+    normalized_guard_detail_capability_reason_summary: dict[str, dict[str, object]] = {}
     if config_path:
         payload["config_path"] = str(Path(config_path).expanduser())
         if scheduler_name:
@@ -7886,9 +7677,7 @@ def show_strategy_catalog(args: argparse.Namespace) -> int:
 
         if plan_summary:
             blocked_schedules = [
-                str(item)
-                for item in plan_summary.get("blocked_schedules", [])
-                if str(item).strip()
+                str(item) for item in plan_summary.get("blocked_schedules", []) if str(item).strip()
             ]
             blocked_strategies = [
                 str(item)
@@ -7897,9 +7686,7 @@ def show_strategy_catalog(args: argparse.Namespace) -> int:
             ]
             blocked_capabilities = {
                 str(strategy): str(capability)
-                for strategy, capability in plan_summary.get(
-                    "blocked_capabilities", {}
-                ).items()
+                for strategy, capability in plan_summary.get("blocked_capabilities", {}).items()
                 if str(strategy).strip() and str(capability).strip()
             }
             blocked_schedule_capabilities = {
@@ -7936,11 +7723,7 @@ def show_strategy_catalog(args: argparse.Namespace) -> int:
                 if str(strategy).strip() and str(capability).strip()
             }
             blocked_suspensions = [
-                {
-                    key: value
-                    for key, value in entry.items()
-                    if key and (value not in (None, ""))
-                }
+                {key: value for key, value in entry.items() if key and (value not in (None, ""))}
                 for entry in plan_summary.get("blocked_suspensions", [])
             ]
             blocked_suspension_capabilities = {
@@ -7967,15 +7750,11 @@ def show_strategy_catalog(args: argparse.Namespace) -> int:
             if blocked_signal_limits:
                 payload["blocked_signal_limits"] = blocked_signal_limits
             if blocked_signal_limit_capabilities:
-                payload["blocked_signal_limit_capabilities"] = (
-                    blocked_signal_limit_capabilities
-                )
+                payload["blocked_signal_limit_capabilities"] = blocked_signal_limit_capabilities
             if blocked_suspensions:
                 payload["blocked_suspensions"] = blocked_suspensions
             if blocked_suspension_capabilities:
-                payload["blocked_suspension_capabilities"] = (
-                    blocked_suspension_capabilities
-                )
+                payload["blocked_suspension_capabilities"] = blocked_suspension_capabilities
 
     if output_format in {"json", "json-pretty"}:
         json_kwargs: dict[str, object] = {"ensure_ascii": False}
@@ -7991,21 +7770,12 @@ def show_strategy_catalog(args: argparse.Namespace) -> int:
         )
         if isinstance(payload_capability_reason_summary, Mapping):
             normalized_guard_detail_capability_reason_summary = (
-                _normalize_guard_detail_capability_reason_summary(
-                    payload_capability_reason_summary
-                )
+                _normalize_guard_detail_capability_reason_summary(payload_capability_reason_summary)
             )
-    capability_reason_summary_for_print = (
-        normalized_guard_detail_capability_reason_summary
-    )
-    if (
-        not capability_reason_summary_for_print
-        and normalized_guard_details
-    ):
+    capability_reason_summary_for_print = normalized_guard_detail_capability_reason_summary
+    if not capability_reason_summary_for_print and normalized_guard_details:
         capability_reason_summary_for_print = (
-            _build_guard_detail_capability_reason_summary_from_details(
-                normalized_guard_details
-            )
+            _build_guard_detail_capability_reason_summary_from_details(normalized_guard_details)
         )
 
     print("Silniki strategii dostępne w katalogu:")
@@ -8044,7 +7814,9 @@ def show_strategy_catalog(args: argparse.Namespace) -> int:
                 capability = entry.get("capability") or "-"
                 license_tier = entry.get("license_tier") or "-"
                 risk_classes = ", ".join(str(item) for item in entry.get("risk_classes", [])) or "-"
-                required_data = ", ".join(str(item) for item in entry.get("required_data", [])) or "-"
+                required_data = (
+                    ", ".join(str(item) for item in entry.get("required_data", [])) or "-"
+                )
                 print(
                     "  * {name} -> {engine} (risk_profile={risk_profile}, capability={capability}, license={license}, risk_classes=[{risk}], required_data=[{data}], tags={tags})".format(
                         name=name,
@@ -8064,52 +7836,50 @@ def show_strategy_catalog(args: argparse.Namespace) -> int:
             or blocked_signal_limits
             or blocked_suspensions
         ):
-                print()
-                print("Pominięte przez strażnika licencji:")
-                if blocked_schedules:
-                    print("  Harmonogramy (zablokowana licencja):")
-                    for name in blocked_schedules:
-                        capability = blocked_schedule_capabilities.get(name)
-                        extra = f" (capability: {capability})" if capability else ""
-                        print(f"    - {name}{extra}")
-                if blocked_strategies:
-                    print("  Strategie (zablokowana licencja):")
-                    for name in blocked_strategies:
-                        capability = blocked_capabilities.get(name)
-                        extra = f" (capability: {capability})" if capability else ""
-                        print(f"    - {name}{extra}")
-                if blocked_initial_limits:
-                    print("  Limity sygnałów (początkowe, zablokowane licencją):")
-                    for strategy, profiles in sorted(blocked_initial_limits.items()):
-                        formatted = ", ".join(sorted(filter(None, profiles))) or "-"
-                        capability = blocked_initial_limit_capabilities.get(strategy)
-                        extra = f" (capability: {capability})" if capability else ""
-                        print(f"    - {strategy}{extra}: {formatted}")
-                if blocked_signal_limits:
-                    print("  Limity sygnałów (zablokowane licencją):")
-                    for strategy, profiles in sorted(blocked_signal_limits.items()):
-                        formatted = ", ".join(sorted(filter(None, profiles))) or "-"
-                        capability = blocked_signal_limit_capabilities.get(strategy)
-                        extra = f" (capability: {capability})" if capability else ""
-                        print(f"    - {strategy}{extra}: {formatted}")
-                if blocked_suspensions:
-                    print("  Zawieszenia (zablokowana licencja):")
-                    for entry in blocked_suspensions:
-                        target = entry.get("target") or "-"
-                        kind = entry.get("kind") or "schedule"
-                        reason = entry.get("reason")
-                        capability = entry.get("capability") or (
-                            blocked_suspension_capabilities.get(f"{kind}:{target}")
-                            if target
-                            else None
-                        )
-                        extras = []
-                        if capability:
-                            extras.append(f"capability: {capability}")
-                        if reason:
-                            extras.append(f"powód: {reason}")
-                        suffix = f" ({', '.join(extras)})" if extras else ""
-                        print(f"    - {kind}:{target}{suffix}")
+            print()
+            print("Pominięte przez strażnika licencji:")
+            if blocked_schedules:
+                print("  Harmonogramy (zablokowana licencja):")
+                for name in blocked_schedules:
+                    capability = blocked_schedule_capabilities.get(name)
+                    extra = f" (capability: {capability})" if capability else ""
+                    print(f"    - {name}{extra}")
+            if blocked_strategies:
+                print("  Strategie (zablokowana licencja):")
+                for name in blocked_strategies:
+                    capability = blocked_capabilities.get(name)
+                    extra = f" (capability: {capability})" if capability else ""
+                    print(f"    - {name}{extra}")
+            if blocked_initial_limits:
+                print("  Limity sygnałów (początkowe, zablokowane licencją):")
+                for strategy, profiles in sorted(blocked_initial_limits.items()):
+                    formatted = ", ".join(sorted(filter(None, profiles))) or "-"
+                    capability = blocked_initial_limit_capabilities.get(strategy)
+                    extra = f" (capability: {capability})" if capability else ""
+                    print(f"    - {strategy}{extra}: {formatted}")
+            if blocked_signal_limits:
+                print("  Limity sygnałów (zablokowane licencją):")
+                for strategy, profiles in sorted(blocked_signal_limits.items()):
+                    formatted = ", ".join(sorted(filter(None, profiles))) or "-"
+                    capability = blocked_signal_limit_capabilities.get(strategy)
+                    extra = f" (capability: {capability})" if capability else ""
+                    print(f"    - {strategy}{extra}: {formatted}")
+            if blocked_suspensions:
+                print("  Zawieszenia (zablokowana licencja):")
+                for entry in blocked_suspensions:
+                    target = entry.get("target") or "-"
+                    kind = entry.get("kind") or "schedule"
+                    reason = entry.get("reason")
+                    capability = entry.get("capability") or (
+                        blocked_suspension_capabilities.get(f"{kind}:{target}") if target else None
+                    )
+                    extras = []
+                    if capability:
+                        extras.append(f"capability: {capability}")
+                    if reason:
+                        extras.append(f"powód: {reason}")
+                    suffix = f" ({', '.join(extras)})" if extras else ""
+                    print(f"    - {kind}:{target}{suffix}")
     return 0
 
 
@@ -8131,14 +7901,10 @@ def show_scheduler_plan(args: argparse.Namespace) -> int:
     normalized_guard_detail_capability_reason_summary: dict[str, dict[str, object]] = {}
 
     blocked_schedules = [
-        str(item)
-        for item in plan.get("blocked_schedules", [])
-        if str(item).strip()
+        str(item) for item in plan.get("blocked_schedules", []) if str(item).strip()
     ]
     blocked_strategies = [
-        str(item)
-        for item in plan.get("blocked_strategies", [])
-        if str(item).strip()
+        str(item) for item in plan.get("blocked_strategies", []) if str(item).strip()
     ]
     blocked_capabilities = {
         str(strategy): str(capability)
@@ -8169,24 +7935,16 @@ def show_scheduler_plan(args: argparse.Namespace) -> int:
     }
     blocked_signal_limit_capabilities = {
         str(strategy): str(capability)
-        for strategy, capability in plan.get(
-            "blocked_signal_limit_capabilities", {}
-        ).items()
+        for strategy, capability in plan.get("blocked_signal_limit_capabilities", {}).items()
         if str(strategy).strip() and str(capability).strip()
     }
     blocked_suspensions = [
-        {
-            key: value
-            for key, value in entry.items()
-            if key and (value not in (None, ""))
-        }
+        {key: value for key, value in entry.items() if key and (value not in (None, ""))}
         for entry in plan.get("blocked_suspensions", [])
     ]
     blocked_suspension_capabilities = {
         str(entry_key): str(capability)
-        for entry_key, capability in plan.get(
-            "blocked_suspension_capabilities", {}
-        ).items()
+        for entry_key, capability in plan.get("blocked_suspension_capabilities", {}).items()
         if str(entry_key).strip() and str(capability).strip()
     }
 
@@ -8201,7 +7959,11 @@ def show_scheduler_plan(args: argparse.Namespace) -> int:
         strategy = str(entry.get("strategy", ""))
         normalized_name = name.lower()
         normalized_strategy = strategy.lower()
-        if filter_strategies and normalized_strategy not in filter_strategies and normalized_name not in filter_strategies:
+        if (
+            filter_strategies
+            and normalized_strategy not in filter_strategies
+            and normalized_name not in filter_strategies
+        ):
             continue
         tags = {str(tag).lower() for tag in entry.get("tags", [])}
         if filter_tags and not (tags & filter_tags):
@@ -8229,17 +7991,10 @@ def show_scheduler_plan(args: argparse.Namespace) -> int:
         print(json.dumps(plan, **json_kwargs))  # type: ignore[arg-type]
         return 0
 
-    capability_reason_summary_for_print = (
-        normalized_guard_detail_capability_reason_summary
-    )
-    if (
-        not capability_reason_summary_for_print
-        and normalized_guard_details
-    ):
+    capability_reason_summary_for_print = normalized_guard_detail_capability_reason_summary
+    if not capability_reason_summary_for_print and normalized_guard_details:
         capability_reason_summary_for_print = (
-            _build_guard_detail_capability_reason_summary_from_details(
-                normalized_guard_details
-            )
+            _build_guard_detail_capability_reason_summary_from_details(normalized_guard_details)
         )
 
     config_path = plan.get("config_path")
@@ -8347,9 +8102,7 @@ def show_scheduler_plan(args: argparse.Namespace) -> int:
                 kind = entry.get("kind") or "schedule"
                 reason = entry.get("reason")
                 capability = entry.get("capability") or (
-                    blocked_suspension_capabilities.get(f"{kind}:{target}")
-                    if target
-                    else None
+                    blocked_suspension_capabilities.get(f"{kind}:{target}") if target else None
                 )
                 extras = []
                 if capability:
@@ -8409,9 +8162,7 @@ def _parse_fx_rate_entry(value: str) -> tuple[str, float]:
     return currency, rate
 
 
-def _configure_fx_provider(
-    generator: TaxReportGenerator, args: argparse.Namespace
-) -> None:
+def _configure_fx_provider(generator: TaxReportGenerator, args: argparse.Namespace) -> None:
     base_currency = getattr(args, "base_currency", None)
     if base_currency:
         generator.set_base_currency(base_currency)
@@ -8434,9 +8185,7 @@ def _configure_fx_provider(
             try:
                 rate = float(value)
             except (TypeError, ValueError) as exc:
-                raise CLIUsageError(
-                    f"Niepoprawna wartość kursu dla waluty {key}: {value}"
-                ) from exc
+                raise CLIUsageError(f"Niepoprawna wartość kursu dla waluty {key}: {value}") from exc
             rates[currency] = rate
     for entry in getattr(args, "fx_rate", []) or []:
         currency, rate = _parse_fx_rate_entry(str(entry))
@@ -8468,7 +8217,9 @@ def run_tax_report(args: argparse.Namespace) -> int:
         except Exception as exc:  # pragma: no cover - zależne od środowiska
             raise CLIUsageError(f"Nie można zainicjalizować bazy zleceń: {exc}") from exc
         try:
-            generator.ingest_local_order_store(store, symbols=getattr(args, "symbol", None), since=since)
+            generator.ingest_local_order_store(
+                store, symbols=getattr(args, "symbol", None), since=since
+            )
         except Exception as exc:
             raise CLIUsageError(f"Nie udało się pobrać transakcji z bazy: {exc}") from exc
     report = generator.generate_report(
@@ -8518,7 +8269,9 @@ def main(
         if args.command == "compliance":
             if getattr(args, "compliance_command", None) == "tax-report":
                 return run_tax_report(args)
-            raise CLIUsageError(f"Nieznana podkomenda compliance: {getattr(args, 'compliance_command', '?')}")
+            raise CLIUsageError(
+                f"Nieznana podkomenda compliance: {getattr(args, 'compliance_command', '?')}"
+            )
         raise CLIUsageError(f"Nieznana komenda: {args.command}")
     except CLIUsageError as exc:
         print(f"Błąd: {exc}", file=sys.stderr)

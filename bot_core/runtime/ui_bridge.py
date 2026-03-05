@@ -219,7 +219,9 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     sub = parser.add_subparsers(dest="command", required=True)
 
-    snap = sub.add_parser("auto-mode-snapshot", help="Buduje snapshot automatyzacji na podstawie champion registry")
+    snap = sub.add_parser(
+        "auto-mode-snapshot", help="Buduje snapshot automatyzacji na podstawie champion registry"
+    )
     snap.add_argument("--model", dest="model", help="Nazwa modelu decision engine")
     snap.add_argument("--repository", dest="repository", help="Ścieżka repozytorium modeli")
     snap.add_argument("--quality-dir", dest="quality_dir", help="Katalog historii jakości")

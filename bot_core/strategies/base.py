@@ -1,4 +1,5 @@
 """Interfejsy strategii oraz kontrakty walk-forward."""
+
 from __future__ import annotations
 
 import abc
@@ -44,8 +45,8 @@ class StrategySignal:
     """Rezultat działania strategii (np. sygnał wejścia/wyjścia)."""
 
     symbol: str
-    side: str               # "BUY" / "SELL" / "FLAT" itp.
-    confidence: float       # 0.0–1.0
+    side: str  # "BUY" / "SELL" / "FLAT" itp.
+    confidence: float  # 0.0–1.0
     quantity: float | None = None
     intent: str = "single"
     legs: Sequence[SignalLeg] = field(default_factory=tuple)
@@ -91,6 +92,7 @@ class StrategyEngine(abc.ABC):
 
     def warm_up(self, history: Sequence[MarketSnapshot]) -> None:
         return self.warmup(history)
+
 
 class BaseStrategy(StrategyEngine):
     """Wspólna baza dla silników strategii.
@@ -169,7 +171,9 @@ def ensure_ratio(
     upper_ok = value <= upper if inclusive_upper else value < upper
     if not (lower_ok and upper_ok):
         bound_repr = (
-            f"[{lower:g}, {upper:g}]" if inclusive_lower or inclusive_upper else f"({lower:g}, {upper:g})"
+            f"[{lower:g}, {upper:g}]"
+            if inclusive_lower or inclusive_upper
+            else f"({lower:g}, {upper:g})"
         )
         raise ValueError(f"{field} must be in the range {bound_repr}")
     return value
@@ -185,11 +189,11 @@ def clamp_range(value: float, *, field: str, lower: float, upper: float) -> floa
 class WalkForwardOptimizer(Protocol):
     """Kontrakt dla optymalizatorów walk-forward."""
 
-    def split(self, data: Sequence[MarketSnapshot]) -> Sequence[tuple[Sequence[MarketSnapshot], Sequence[MarketSnapshot]]]:
-        ...
+    def split(
+        self, data: Sequence[MarketSnapshot]
+    ) -> Sequence[tuple[Sequence[MarketSnapshot], Sequence[MarketSnapshot]]]: ...
 
-    def select_parameters(self, in_sample: Sequence[MarketSnapshot]) -> Mapping[str, float]:
-        ...
+    def select_parameters(self, in_sample: Sequence[MarketSnapshot]) -> Mapping[str, float]: ...
 
 
 __all__ = [

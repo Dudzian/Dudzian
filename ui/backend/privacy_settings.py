@@ -1,4 +1,5 @@
 """Kontroler QML odpowiedzialny za ustawienia prywatności i telemetrii."""
+
 from __future__ import annotations
 
 import json
@@ -115,7 +116,9 @@ class PrivacySettingsController(QObject):
         payload: dict[str, object] = {}
         if key:
             payload[key] = value
-        self._collector.collect_event(event_type or "preview", payload, fingerprint=fingerprint or None)
+        self._collector.collect_event(
+            event_type or "preview", payload, fingerprint=fingerprint or None
+        )
         self.refresh()
         return self.previewJson
 

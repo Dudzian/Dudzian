@@ -442,11 +442,7 @@ def test_stage6_cli_secret_filters_support_glob_patterns(tmp_path: Path, capsys)
 
     secrets_input = tmp_path / "preset_secrets.yaml"
     secrets_input.write_text(
-        (
-            "binance_key_id: keep\n"
-            "binance_secret: remove\n"
-            "slack_token: skip-by-include\n"
-        ),
+        ("binance_key_id: keep\nbinance_secret: remove\nslack_token: skip-by-include\n"),
         encoding="utf-8",
     )
 
@@ -481,10 +477,7 @@ def test_stage6_cli_secret_filters_support_glob_patterns(tmp_path: Path, capsys)
     assert storage.get_secret("slack_token") is None
 
     output = capsys.readouterr().out
-    assert (
-        "Nie znaleziono sekretów wymaganych przez --secrets-include: binance_*"
-        not in output
-    )
+    assert "Nie znaleziono sekretów wymaganych przez --secrets-include: binance_*" not in output
     assert "Pominięto sekrety spoza listy --secrets-include: slack_token" in output
     assert "Pominięto sekrety oznaczone --secrets-exclude: binance_secret" in output
 
@@ -702,28 +695,28 @@ def test_stage6_cli_writes_summary_file(tmp_path: Path) -> None:
     assert payload["core_config_destination"] == str(destination)
     assert payload["core_backup_requested"] is True
     assert payload["core_backup_path"] == str(backup_path)
-    assert payload["core_backup_checksum"] == hashlib.sha256(
-        backup_path.read_bytes()
-    ).hexdigest()
+    assert payload["core_backup_checksum"] == hashlib.sha256(backup_path.read_bytes()).hexdigest()
     assert payload["core_diff_requested"] is True
     assert payload["dry_run"] is False
     assert payload["core_original_checksum"] is None
-    assert payload["core_rendered_checksum"] == hashlib.sha256(
-        destination.read_text(encoding="utf-8").encode("utf-8")
-    ).hexdigest()
+    assert (
+        payload["core_rendered_checksum"]
+        == hashlib.sha256(destination.read_text(encoding="utf-8").encode("utf-8")).hexdigest()
+    )
     assert payload["warnings"] == []
     assert payload["secrets"]["planned"] == 1
     assert payload["secrets"]["written"] == 1
     assert payload["secrets"]["output_path"] == str(vault_path)
     assert payload["secrets"]["source_path"] == str(secrets_input)
-    assert payload["secrets"]["source_checksum"] == hashlib.sha256(
-        secrets_input.read_bytes()
-    ).hexdigest()
+    assert (
+        payload["secrets"]["source_checksum"]
+        == hashlib.sha256(secrets_input.read_bytes()).hexdigest()
+    )
     assert payload["secrets"]["filters"] == {"include": [], "exclude": []}
     assert payload["secrets"]["dry_run_skipped"] is False
-    assert payload["secrets"]["output_checksum"] == hashlib.sha256(
-        vault_path.read_bytes()
-    ).hexdigest()
+    assert (
+        payload["secrets"]["output_checksum"] == hashlib.sha256(vault_path.read_bytes()).hexdigest()
+    )
     assert payload["secrets"]["output_passphrase"] == {
         "provided": True,
         "source": "inline",
@@ -745,9 +738,7 @@ def test_stage6_cli_writes_summary_file(tmp_path: Path) -> None:
     assert "summary-pass" not in invocation["command"]
 
 
-def test_stage6_cli_summary_tracks_secret_passphrase_env(
-    tmp_path: Path, monkeypatch
-) -> None:
+def test_stage6_cli_summary_tracks_secret_passphrase_env(tmp_path: Path, monkeypatch) -> None:
     core_copy = _copy_core_config(tmp_path)
     preset_path = tmp_path / "preset.json"
     preset_path.write_text(json.dumps({"fraction": 0.33}), encoding="utf-8")
@@ -824,9 +815,10 @@ def test_stage6_cli_summary_records_original_checksum(tmp_path: Path) -> None:
 
     summary = json.loads((tmp_path / "summary.json").read_text(encoding="utf-8"))
     assert summary["core_original_checksum"] == hashlib.sha256(original_bytes).hexdigest()
-    assert summary["core_rendered_checksum"] == hashlib.sha256(
-        core_copy.read_text(encoding="utf-8").encode("utf-8")
-    ).hexdigest()
+    assert (
+        summary["core_rendered_checksum"]
+        == hashlib.sha256(core_copy.read_text(encoding="utf-8").encode("utf-8")).hexdigest()
+    )
 
 
 def test_stage6_cli_summary_records_original_checksum_windows_newlines(tmp_path: Path) -> None:
@@ -858,9 +850,10 @@ def test_stage6_cli_summary_records_original_checksum_windows_newlines(tmp_path:
 
     summary = json.loads((tmp_path / "summary.json").read_text(encoding="utf-8"))
     assert summary["core_original_checksum"] == hashlib.sha256(original_bytes).hexdigest()
-    assert summary["core_original_checksum"] != hashlib.sha256(
-        core_copy.read_text(encoding="utf-8").encode("utf-8")
-    ).hexdigest()
+    assert (
+        summary["core_original_checksum"]
+        != hashlib.sha256(core_copy.read_text(encoding="utf-8").encode("utf-8")).hexdigest()
+    )
 
 
 def test_stage6_cli_summary_records_security_source_checksums(tmp_path: Path) -> None:

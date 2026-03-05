@@ -286,7 +286,9 @@ except Exception:  # pragma: no cover - fallback lokalny
             metadata.setdefault("origin", origin)
         return metadata
 
-    def _merge_profile_dicts(base: Mapping[str, Any], overrides: Mapping[str, Any]) -> dict[str, Any]:
+    def _merge_profile_dicts(
+        base: Mapping[str, Any], overrides: Mapping[str, Any]
+    ) -> dict[str, Any]:
         result = deepcopy(base)
         for key, value in overrides.items():
             if key == "extends":
@@ -298,9 +300,7 @@ except Exception:  # pragma: no cover - fallback lokalny
         return result
 
     def register_risk_profiles(
-        profiles: Mapping[str, Mapping[str, Any]]
-        | Iterable[tuple[str, Mapping[str, Any]]]
-        | None,
+        profiles: Mapping[str, Mapping[str, Any]] | Iterable[tuple[str, Mapping[str, Any]]] | None,
         *,
         origin: str = "external",
     ) -> list[str]:
@@ -316,9 +316,7 @@ except Exception:  # pragma: no cover - fallback lokalny
             if not normalized:
                 continue
             if not isinstance(cfg, Mapping):
-                raise ValueError(
-                    f"Profil ryzyka '{name}' musi być mapą, otrzymano {type(cfg)!r}"
-                )
+                raise ValueError(f"Profil ryzyka '{name}' musi być mapą, otrzymano {type(cfg)!r}")
             normalized_profiles[normalized] = deepcopy(dict(cfg))
 
         resolved: dict[str, dict[str, Any]] = {}
@@ -328,9 +326,7 @@ except Exception:  # pragma: no cover - fallback lokalny
             if target in resolved:
                 return resolved[target]
             if target in visiting:
-                raise ValueError(
-                    f"Wykryto cykliczne dziedziczenie profili ryzyka przy '{target}'"
-                )
+                raise ValueError(f"Wykryto cykliczne dziedziczenie profili ryzyka przy '{target}'")
             try:
                 entry = normalized_profiles[target]
             except KeyError as exc:
@@ -341,9 +337,7 @@ except Exception:  # pragma: no cover - fallback lokalny
             if extends_raw:
                 base_name = str(extends_raw).strip().lower()
                 if not base_name:
-                    raise ValueError(
-                        f"Profil ryzyka '{target}' posiada nieprawidłowe pole extends"
-                    )
+                    raise ValueError(f"Profil ryzyka '{target}' posiada nieprawidłowe pole extends")
                 if base_name == target:
                     raise ValueError(
                         f"Profil ryzyka '{target}' nie może dziedziczyć z samego siebie"
@@ -440,9 +434,7 @@ except Exception:  # pragma: no cover - fallback lokalny
         _REGISTERED_SOURCES.append(str(source))
         return registered
 
-    def load_risk_profiles_from_file(
-        path: str | Path, *, origin: str | None = None
-    ) -> list[str]:
+    def load_risk_profiles_from_file(path: str | Path, *, origin: str | None = None) -> list[str]:
         target = Path(path).expanduser()
         if target.is_dir():
             files = list_risk_profile_files(target)
@@ -454,9 +446,7 @@ except Exception:  # pragma: no cover - fallback lokalny
             base_origin = origin or f"dir:{target}"
             for entry in files:
                 entry_origin = f"{base_origin}#{entry.name}" if base_origin else None
-                registered.extend(
-                    _load_risk_profiles_from_single_file(entry, origin=entry_origin)
-                )
+                registered.extend(_load_risk_profiles_from_single_file(entry, origin=entry_origin))
             return registered
 
         return _load_risk_profiles_from_single_file(target, origin=origin)
@@ -476,9 +466,7 @@ except Exception:  # pragma: no cover - fallback lokalny
             base_origin = origin_label or f"dir:{target}"
             for entry in files:
                 entry_origin = f"{base_origin}#{entry.name}" if base_origin else None
-                entry_registered = _load_risk_profiles_from_single_file(
-                    entry, origin=entry_origin
-                )
+                entry_registered = _load_risk_profiles_from_single_file(entry, origin=entry_origin)
                 files_meta.append(
                     {
                         "path": str(entry),
@@ -605,9 +593,7 @@ except Exception:  # pragma: no cover - fallback lokalny
         name = metadata.get("name")
         if name:
             try:
-                summary["recommended_overrides"] = dict(
-                    get_metrics_service_overrides(str(name))
-                )
+                summary["recommended_overrides"] = dict(get_metrics_service_overrides(str(name)))
             except Exception:
                 pass
         return summary
@@ -705,7 +691,9 @@ def _load_core_metadata(path: str | None) -> Mapping[str, Any] | None:
     if getattr(metrics_cfg, "auth_token", None):
         metrics_meta["auth_token_configured"] = True
 
-    metadata["metrics_service"] = {key: value for key, value in metrics_meta.items() if value not in (None, "")}
+    metadata["metrics_service"] = {
+        key: value for key, value in metrics_meta.items() if value not in (None, "")
+    }
     return metadata
 
 
@@ -819,6 +807,7 @@ def _add_shared_arguments(target: argparse.ArgumentParser) -> None:
 # ---------------------------------------------------------------------------
 # Budowa parsera i podkomend
 
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="telemetry_risk_profiles",
@@ -831,7 +820,9 @@ def build_parser() -> argparse.ArgumentParser:
 
     list_parser = subparsers.add_parser("list", help="Wyświetl listę dostępnych profili ryzyka")
     _add_shared_arguments(list_parser)
-    list_parser.add_argument("--verbose", action="store_true", help="Dołącz szczegóły każdego profilu")
+    list_parser.add_argument(
+        "--verbose", action="store_true", help="Dołącz szczegóły każdego profilu"
+    )
     list_parser.add_argument(
         "--format",
         choices=("json", "yaml"),
@@ -868,7 +859,9 @@ def build_parser() -> argparse.ArgumentParser:
     render_parser.add_argument(
         "--include-profile",
         action="store_true",
-        help=("Dołącz pełną definicję profilu do wyniku JSON/YAML (niedostępne dla formatów CLI/env)"),
+        help=(
+            "Dołącz pełną definicję profilu do wyniku JSON/YAML (niedostępne dla formatów CLI/env)"
+        ),
     )
     render_parser.add_argument(
         "--cli-style",
@@ -880,7 +873,9 @@ def build_parser() -> argparse.ArgumentParser:
         "--env-style",
         choices=("dotenv", "export"),
         default="dotenv",
-        help=("Sposób formatowania zmiennych środowiskowych (dotenv: KEY=value, export: export KEY=value)"),
+        help=(
+            "Sposób formatowania zmiennych środowiskowych (dotenv: KEY=value, export: export KEY=value)"
+        ),
     )
     render_parser.add_argument(
         "--section",
@@ -890,8 +885,7 @@ def build_parser() -> argparse.ArgumentParser:
         metavar="NAME",
         help=(
             "Ogranicz wynik JSON/YAML do wskazanych sekcji (można podać wielokrotnie). "
-            "Dostępne: "
-            + ", ".join(RENDER_SECTION_CHOICES)
+            "Dostępne: " + ", ".join(RENDER_SECTION_CHOICES)
         ),
     )
 
@@ -930,7 +924,9 @@ def build_parser() -> argparse.ArgumentParser:
         help="Format pliku konfiguracyjnego MetricsService (yaml lub json)",
     )
 
-    diff_parser = subparsers.add_parser("diff", help="Porównaj dwa profile ryzyka i wypisz różnice w nadpisaniach")
+    diff_parser = subparsers.add_parser(
+        "diff", help="Porównaj dwa profile ryzyka i wypisz różnice w nadpisaniach"
+    )
     _add_shared_arguments(diff_parser)
     diff_parser.add_argument("base", help="Nazwa profilu bazowego")
     diff_parser.add_argument("target", help="Profil, z którym porównujemy")
@@ -941,8 +937,16 @@ def build_parser() -> argparse.ArgumentParser:
             "Format raportu różnic (json lub yaml). Domyślnie json lub zgodnie z rozszerzeniem pliku wyjściowego"
         ),
     )
-    diff_parser.add_argument("--include-profiles", action="store_true", help="Dołącz pełne definicje profili do wyniku JSON/YAML")
-    diff_parser.add_argument("--hide-unchanged", action="store_true", help="Ukryj sekcje niezmienione, aby uprościć raport")
+    diff_parser.add_argument(
+        "--include-profiles",
+        action="store_true",
+        help="Dołącz pełne definicje profili do wyniku JSON/YAML",
+    )
+    diff_parser.add_argument(
+        "--hide-unchanged",
+        action="store_true",
+        help="Ukryj sekcje niezmienione, aby uprościć raport",
+    )
     diff_parser.add_argument(
         "--section",
         dest="sections",
@@ -985,7 +989,9 @@ def build_parser() -> argparse.ArgumentParser:
         help=("Format przypisań środowiskowych w sekcji porównania (dotenv lub export)"),
     )
 
-    validate_parser = subparsers.add_parser("validate", help="Zweryfikuj dostępność zadanych profili")
+    validate_parser = subparsers.add_parser(
+        "validate", help="Zweryfikuj dostępność zadanych profili"
+    )
     _add_shared_arguments(validate_parser)
     validate_parser.add_argument(
         "--require",
@@ -1005,6 +1011,7 @@ def build_parser() -> argparse.ArgumentParser:
 
 # ---------------------------------------------------------------------------
 # Pomocnicze: rendering CLI/env i sekcji
+
 
 def _build_cli_flags(overrides: Mapping[str, Any], *, style: str = "equals") -> list[str]:
     flags: list[str] = []
@@ -1041,7 +1048,9 @@ def _quote_for_dotenv(value: str) -> str:
         return '""'
     if _DOTENV_SAFE_VALUE.match(value):
         return value
-    escaped = value.replace("\\", "\\\\").replace("\n", "\\n").replace("\r", "\\r").replace('"', '\\"')
+    escaped = (
+        value.replace("\\", "\\\\").replace("\n", "\\n").replace("\r", "\\r").replace('"', '\\"')
+    )
     return f'"{escaped}"'
 
 
@@ -1071,7 +1080,9 @@ def _parse_stage_mapping(stage_args: Iterable[str] | None) -> dict[str, str]:
     mapping: dict[str, str] = {}
     for entry in stage_args or []:
         if "=" not in entry:
-            raise ValueError("Opcja --stage wymaga formatu etap=profil (np. --stage demo=conservative)")
+            raise ValueError(
+                "Opcja --stage wymaga formatu etap=profil (np. --stage demo=conservative)"
+            )
         stage, profile = entry.split("=", 1)
         normalized_stage = stage.strip().lower()
         normalized_profile = profile.strip().lower()
@@ -1179,6 +1190,7 @@ def _handle_bundle(
 # ---------------------------------------------------------------------------
 # Handlery podkomend
 
+
 def _handle_list(
     *,
     verbose: bool,
@@ -1191,7 +1203,9 @@ def _handle_list(
         "sources": sources,
     }
     if verbose:
-        payload["profiles"] = {name: risk_profile_metadata(name) for name in list_risk_profile_names()}
+        payload["profiles"] = {
+            name: risk_profile_metadata(name) for name in list_risk_profile_names()
+        }
     if selected:
         payload["selected"] = selected.strip().lower()
     if core_metadata:
@@ -1352,7 +1366,10 @@ def _handle_render(
         for key in selected_sections:
             if key == "env_assignments" and key in payload:
                 filtered[key] = payload[key]
-                if "env_assignments_format" in payload and "env_assignments_format" not in selected_sections:
+                if (
+                    "env_assignments_format" in payload
+                    and "env_assignments_format" not in selected_sections
+                ):
                     filtered["env_assignments_format"] = payload["env_assignments_format"]
             elif key in payload:
                 filtered[key] = payload[key]
@@ -1415,9 +1432,13 @@ def _handle_diff(
 
     selected_sections = {section.strip().lower() for section in sections or [] if section}
 
-    severity_diff = _diff_scalar(base_metadata.get("severity_min"), target_metadata.get("severity_min"))
+    severity_diff = _diff_scalar(
+        base_metadata.get("severity_min"), target_metadata.get("severity_min")
+    )
     extends_diff = _diff_scalar(base_metadata.get("extends"), target_metadata.get("extends"))
-    extends_chain_diff = _diff_scalar(base_metadata.get("extends_chain"), target_metadata.get("extends_chain"))
+    extends_chain_diff = _diff_scalar(
+        base_metadata.get("extends_chain"), target_metadata.get("extends_chain")
+    )
     expect_summary_diff = _diff_scalar(
         base_metadata.get("expect_summary_enabled"), target_metadata.get("expect_summary_enabled")
     )
@@ -1481,13 +1502,17 @@ def _handle_diff(
         "cli": {
             "base": _build_cli_flags(base_cli, style=cli_style),
             "target": _build_cli_flags(target_cli, style=cli_style),
-            "added_or_changed": _build_cli_flags(_collect_added_or_changed(cli_diff), style=cli_style),
+            "added_or_changed": _build_cli_flags(
+                _collect_added_or_changed(cli_diff), style=cli_style
+            ),
             "removed": cli_diff["removed"],
         },
         "env": {
             "base": _build_env_assignments(base_env, style=env_style),
             "target": _build_env_assignments(target_env, style=env_style),
-            "added_or_changed": _build_env_assignments(_collect_added_or_changed(env_diff), style=env_style),
+            "added_or_changed": _build_env_assignments(
+                _collect_added_or_changed(env_diff), style=env_style
+            ),
             "removed": env_diff["removed"],
             "format": env_style,
         },
@@ -1518,7 +1543,9 @@ def _handle_diff(
             if "unchanged" in scalar_section:
                 payload["diff"][scalar_key] = {}
 
-    include_profiles_section = include_profiles or ("profiles" in selected_sections if selected_sections else False)
+    include_profiles_section = include_profiles or (
+        "profiles" in selected_sections if selected_sections else False
+    )
     if include_profiles_section:
         payload["profiles"] = {"base": base_metadata, "target": target_metadata}
 
@@ -1561,6 +1588,7 @@ def _handle_validate(
 # ---------------------------------------------------------------------------
 # Główne wejście CLI
 
+
 def main(argv: list[str] | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
@@ -1590,7 +1618,11 @@ def main(argv: list[str] | None = None) -> int:
         inferred_format = _infer_format_from_output(output_path)
         if getattr(args, "format", None) is None:
             args.format = inferred_format or "json"
-        elif getattr(args, "format") in {"json", "yaml"} and inferred_format is not None and inferred_format != getattr(args, "format"):
+        elif (
+            getattr(args, "format") in {"json", "yaml"}
+            and inferred_format is not None
+            and inferred_format != getattr(args, "format")
+        ):
             parser.error("Rozszerzenie pliku wyjściowego nie zgadza się z wymuszonym formatem")
     elif command == "diff":
         inferred_format = _infer_format_from_output(output_path)
@@ -1608,7 +1640,9 @@ def main(argv: list[str] | None = None) -> int:
             sources=sources,
             core_metadata=core_metadata,
         )
-        _dump_payload(payload, output=getattr(args, "output", None), fmt=str(getattr(args, "format", "json")))
+        _dump_payload(
+            payload, output=getattr(args, "output", None), fmt=str(getattr(args, "format", "json"))
+        )
         return 0
 
     if command == "show":
@@ -1616,7 +1650,9 @@ def main(argv: list[str] | None = None) -> int:
             payload = _handle_show(args.name, sources=sources, core_metadata=core_metadata)
         except (KeyError, ValueError) as exc:
             parser.error(str(exc))
-        _dump_payload(payload, output=getattr(args, "output", None), fmt=str(getattr(args, "format", "json")))
+        _dump_payload(
+            payload, output=getattr(args, "output", None), fmt=str(getattr(args, "format", "json"))
+        )
         return 0
 
     if command == "render":
@@ -1697,7 +1733,9 @@ def main(argv: list[str] | None = None) -> int:
             sources=sources,
             core_metadata=core_metadata,
         )
-        _dump_payload(payload, output=getattr(args, "output", None), fmt=str(getattr(args, "format", "json")))
+        _dump_payload(
+            payload, output=getattr(args, "output", None), fmt=str(getattr(args, "format", "json"))
+        )
         return exit_code
 
     parser.error(f"Nieobsługiwane polecenie: {command}")

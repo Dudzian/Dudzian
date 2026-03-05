@@ -111,14 +111,18 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--slo-signature", help="Opcjonalna ścieżka podpisu raportu SLO")
     parser.add_argument("--slo-pretty", action="store_true", help="Zapisz SLO JSON z wcięciami")
 
-    parser.add_argument("--skip-overrides", action="store_true", help="Pomiń generowanie override'ów")
+    parser.add_argument(
+        "--skip-overrides", action="store_true", help="Pomiń generowanie override'ów"
+    )
     parser.add_argument(
         "--overrides-json",
         default="var/audit/observability/alert_overrides.json",
         help="Plik wynikowy override'ów",
     )
     parser.add_argument("--overrides-signature", help="Ścieżka podpisu override'ów")
-    parser.add_argument("--overrides-ttl", type=int, default=120, help="Czas ważności override'ów w minutach")
+    parser.add_argument(
+        "--overrides-ttl", type=int, default=120, help="Czas ważności override'ów w minutach"
+    )
     parser.add_argument("--skip-warning", action="store_true", help="Pomiń statusy warning")
     parser.add_argument(
         "--overrides-requested-by",
@@ -132,7 +136,9 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("--tag", action="append", help="Dodatkowe tagi dodawane do override'ów")
     parser.add_argument("--severity", action="append", help="Mapowanie status=severity")
-    parser.add_argument("--existing-overrides", help="Plik z istniejącymi override'ami do połączenia")
+    parser.add_argument(
+        "--existing-overrides", help="Plik z istniejącymi override'ami do połączenia"
+    )
 
     parser.add_argument("--dashboard", help="Plik JSON z dashboardem Grafana Stage6")
     parser.add_argument(
@@ -142,20 +148,32 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("--annotations-signature", help="Podpis anotacji dashboardu")
     parser.add_argument("--annotations-panel-id", type=int, help="Panel ID dla anotacji Grafana")
-    parser.add_argument("--annotations-pretty", action="store_true", help="Formatowanie JSON anotacji")
+    parser.add_argument(
+        "--annotations-pretty", action="store_true", help="Formatowanie JSON anotacji"
+    )
 
-    parser.add_argument("--skip-bundle", action="store_true", help="Pomiń budowanie paczki obserwowalności")
+    parser.add_argument(
+        "--skip-bundle", action="store_true", help="Pomiń budowanie paczki obserwowalności"
+    )
     parser.add_argument(
         "--bundle-output-dir",
         default=str(REPO_ROOT / "var" / "observability"),
         help="Katalog docelowy paczki",
     )
-    parser.add_argument("--bundle-name", default="stage6-observability", help="Prefiks nazwy paczki")
-    parser.add_argument("--bundle-source", action="append", help="Źródło paczki w formacie kategoria=ścieżka")
+    parser.add_argument(
+        "--bundle-name", default="stage6-observability", help="Prefiks nazwy paczki"
+    )
+    parser.add_argument(
+        "--bundle-source", action="append", help="Źródło paczki w formacie kategoria=ścieżka"
+    )
     parser.add_argument("--bundle-include", action="append", help="Wzorce plików do uwzględnienia")
     parser.add_argument("--bundle-exclude", action="append", help="Wzorce plików do pominięcia")
-    parser.add_argument("--bundle-metadata", action="append", help="Metadane w formacie klucz=wartość")
-    parser.add_argument("--no-verify-bundle", action="store_true", help="Nie weryfikuj paczki po zbudowaniu")
+    parser.add_argument(
+        "--bundle-metadata", action="append", help="Metadane w formacie klucz=wartość"
+    )
+    parser.add_argument(
+        "--no-verify-bundle", action="store_true", help="Nie weryfikuj paczki po zbudowaniu"
+    )
 
     parser.add_argument("--signing-key", help="Klucz HMAC podany wprost")
     parser.add_argument("--signing-key-env", help="Nazwa zmiennej środowiskowej z kluczem HMAC")
@@ -198,7 +216,9 @@ def run(argv: list[str] | None = None) -> int:
             dashboard_config = DashboardSyncConfig(
                 dashboard_path=Path(args.dashboard),
                 output_path=Path(args.annotations_output),
-                signature_path=Path(args.annotations_signature) if args.annotations_signature else None,
+                signature_path=Path(args.annotations_signature)
+                if args.annotations_signature
+                else None,
                 panel_id=args.annotations_panel_id,
                 pretty=args.annotations_pretty,
             )
@@ -263,4 +283,3 @@ def run(argv: list[str] | None = None) -> int:
 
 if __name__ == "__main__":  # pragma: no cover - CLI entry point
     raise SystemExit(run())
-

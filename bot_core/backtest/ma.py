@@ -1,4 +1,5 @@
 """Proste narzędzia MA-cross wykorzystywane przez testy i adaptery."""
+
 from __future__ import annotations
 
 from typing import Any, Dict, List

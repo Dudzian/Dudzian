@@ -176,4 +176,3 @@ __all__ = [
     "canonical_preset_bytes",
     "normalize_preset_document",
 ]
-

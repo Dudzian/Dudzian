@@ -1,4 +1,5 @@
 """Logika onboardingowa obsługująca wybór strategii i import kluczy API."""
+
 from __future__ import annotations
 
 
@@ -135,7 +136,9 @@ class OnboardingService(QObject):
         return True
 
     @Slot(str, str, str, str, result=bool)
-    def importApiKey(self, exchange: str, api_key: str, api_secret: str, passphrase: str = "") -> bool:
+    def importApiKey(
+        self, exchange: str, api_key: str, api_secret: str, passphrase: str = ""
+    ) -> bool:
         """Zapisuje dane API w magazynie sekretów."""
 
         exchange_id = str(exchange or "").strip()
@@ -195,7 +198,10 @@ class OnboardingService(QObject):
         descriptor = self._find_descriptor(name)
         if descriptor is None:
             return False
-        if descriptor.name != self._selected_strategy or descriptor.title != self._selected_strategy_title:
+        if (
+            descriptor.name != self._selected_strategy
+            or descriptor.title != self._selected_strategy_title
+        ):
             self._selected_strategy = descriptor.name
             self._selected_strategy_title = descriptor.title
             self.selectedStrategyChanged.emit()

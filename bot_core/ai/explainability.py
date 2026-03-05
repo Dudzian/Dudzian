@@ -74,9 +74,7 @@ class ExplainabilityReport:
             "top_features": [attr.name for attr in self.attributions[:5]],
             "top_positive": list(self._top_positive),
             "top_negative": list(self._top_negative),
-            "feature_importance": {
-                attr.name: attr.contribution for attr in self.attributions
-            },
+            "feature_importance": {attr.name: attr.contribution for attr in self.attributions},
             "summary": self.summary,
         }
 
@@ -112,26 +110,16 @@ def _build_from_mapping(
             )
         )
 
-    positives = tuple(
-        attr.name for attr in ranked if attr.contribution > 0
-    )[:top_limit]
-    negatives = tuple(
-        attr.name for attr in ranked if attr.contribution < 0
-    )[:top_limit]
+    positives = tuple(attr.name for attr in ranked if attr.contribution > 0)[:top_limit]
+    negatives = tuple(attr.name for attr in ranked if attr.contribution < 0)[:top_limit]
 
     summary_parts: list[str] = []
     if ranked:
-        summary_parts.append(
-            f"Top cecha: {ranked[0].name} ({ranked[0].contribution:+.4f})"
-        )
+        summary_parts.append(f"Top cecha: {ranked[0].name} ({ranked[0].contribution:+.4f})")
     if positives:
-        summary_parts.append(
-            "Pozytywne: " + ", ".join(positives)
-        )
+        summary_parts.append("Pozytywne: " + ", ".join(positives))
     if negatives:
-        summary_parts.append(
-            "Negatywne: " + ", ".join(negatives)
-        )
+        summary_parts.append("Negatywne: " + ", ".join(negatives))
 
     return ExplainabilityReport(
         model_name=model_name,
@@ -323,4 +311,3 @@ __all__ = [
     "flatten_explainability",
     "parse_explainability_payload",
 ]
-

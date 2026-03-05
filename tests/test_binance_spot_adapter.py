@@ -1,4 +1,5 @@
 """Testy jednostkowe adaptera Binance Spot."""
+
 from __future__ import annotations
 
 import io
@@ -9,7 +10,6 @@ from urllib.error import HTTPError, URLError
 from urllib.request import Request
 
 import pytest
-
 
 
 from bot_core.exchanges.base import AccountSnapshot, Environment, ExchangeCredentials, OrderRequest
@@ -108,7 +108,10 @@ def test_fetch_account_snapshot_uses_watchdog(monkeypatch: pytest.MonkeyPatch) -
     watchdog = _RecordingWatchdog()
 
     credentials = ExchangeCredentials(
-        key_id="watchdog", secret="secret", permissions=("read", "trade"), environment=Environment.LIVE
+        key_id="watchdog",
+        secret="secret",
+        permissions=("read", "trade"),
+        environment=Environment.LIVE,
     )
     adapter = BinanceSpotAdapter(credentials, watchdog=watchdog)
     adapter.configure_network()
@@ -679,7 +682,9 @@ def test_public_request_requires_configure_network(monkeypatch: pytest.MonkeyPat
     credentials = ExchangeCredentials(key_id="key", environment=Environment.LIVE)
     adapter = BinanceSpotAdapter(credentials)
 
-    def fail_urlopen(*_args: object, **_kwargs: object):  # pragma: no cover - powinno zostać zablokowane
+    def fail_urlopen(
+        *_args: object, **_kwargs: object
+    ):  # pragma: no cover - powinno zostać zablokowane
         raise AssertionError("urlopen should not be called when configure_network was skipped")
 
     monkeypatch.setattr("bot_core.exchanges.binance.spot.urlopen", fail_urlopen)
@@ -731,7 +736,9 @@ def test_allowlist_violation_sends_alert(monkeypatch: pytest.MonkeyPatch) -> Non
         lambda self, url: "198.51.100.1",
     )
 
-    def fail_urlopen(*_args: object, **_kwargs: object):  # pragma: no cover - guard powinien zatrzymać
+    def fail_urlopen(
+        *_args: object, **_kwargs: object
+    ):  # pragma: no cover - guard powinien zatrzymać
         raise AssertionError("urlopen should not be executed when allowlist is violated")
 
     monkeypatch.setattr("bot_core.exchanges.binance.spot.urlopen", fail_urlopen)

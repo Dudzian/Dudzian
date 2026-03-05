@@ -1,4 +1,5 @@
 """Bazowe usługi raportowania kosztów transakcyjnych."""
+
 from __future__ import annotations
 
 from dataclasses import dataclass, field
@@ -190,7 +191,9 @@ class CostAggregationContext:
                 component.metadata.get("profile", "default"),
             )
         )
-        strategy_bucket = self.strategies.setdefault(strategy, _StrategyAggregation(strategy=strategy))
+        strategy_bucket = self.strategies.setdefault(
+            strategy, _StrategyAggregation(strategy=strategy)
+        )
         strategy_bucket.add_component(profile, component)
         scheduler_name = self._scheduler_name(component)
         scheduler_bucket = self.schedulers.setdefault(

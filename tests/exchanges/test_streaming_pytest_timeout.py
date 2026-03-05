@@ -18,7 +18,9 @@ def test_local_long_poll_stream_clamps_timeout_when_pytest_running(
         raise URLError("simulated network error")
 
     monkeypatch.delenv("DUDZIAN_TEST_MODE", raising=False)
-    monkeypatch.setenv("PYTEST_CURRENT_TEST", "tests/exchanges/test_streaming_pytest_timeout.py::test")
+    monkeypatch.setenv(
+        "PYTEST_CURRENT_TEST", "tests/exchanges/test_streaming_pytest_timeout.py::test"
+    )
     monkeypatch.setattr("bot_core.exchanges.streaming.urlopen", fake_urlopen)
 
     stream = LocalLongPollStream(

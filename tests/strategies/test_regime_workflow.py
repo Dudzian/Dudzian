@@ -27,7 +27,9 @@ class _SequenceClassifier:
     def __init__(self, regimes: list[MarketRegime]) -> None:
         self._regimes = deque(regimes)
 
-    def assess(self, market_data: pd.DataFrame, *, symbol: str | None = None) -> MarketRegimeAssessment:
+    def assess(
+        self, market_data: pd.DataFrame, *, symbol: str | None = None
+    ) -> MarketRegimeAssessment:
         if not self._regimes:
             regime = MarketRegime.TREND
         elif len(self._regimes) == 1:
@@ -646,7 +648,10 @@ def test_activation_transition_stats_reports_transition_counts() -> None:
     tail_stats = workflow.activation_transition_stats(limit=2)
     assert tail_stats.total == 1
     assert tail_stats.fallback_transitions == 1
-    assert tail_stats.regime_transitions[(MarketRegime.MEAN_REVERSION, MarketRegime.MEAN_REVERSION)] == 1
+    assert (
+        tail_stats.regime_transitions[(MarketRegime.MEAN_REVERSION, MarketRegime.MEAN_REVERSION)]
+        == 1
+    )
     assert tail_stats.blocked_transitions[("missing_data", "license_blocked")] == 1
 
 

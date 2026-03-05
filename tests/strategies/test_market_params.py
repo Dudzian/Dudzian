@@ -22,7 +22,9 @@ def test_quantity_from_notional_spot_respects_fee_and_lot_size() -> None:
     qty = quantity_from_notional(1_000.0, 25_000.0, params=params)
 
     assert qty == pytest.approx(
-        _expected_quantity(1_000.0, 25_000.0, lot_size=params.lot_size, fee_rate=params.taker_fee_rate)
+        _expected_quantity(
+            1_000.0, 25_000.0, lot_size=params.lot_size, fee_rate=params.taker_fee_rate
+        )
     )
     assert qty >= params.lot_size
 
@@ -66,4 +68,3 @@ def test_futures_spread_injects_market_params_into_signals() -> None:
     assert payload.metadata["taker_fee_rate"] == settings.market.taker_fee_rate
     assert payload.metadata["lot_size"] == settings.market.lot_size
     assert payload.legs[0].quantity and payload.legs[0].quantity >= settings.market.lot_size
-

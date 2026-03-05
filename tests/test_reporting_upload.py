@@ -167,6 +167,4 @@ def test_smoke_archive_upload_s3(tmp_path: Path, monkeypatch: pytest.MonkeyPatch
             {"ACL": "private", "Metadata": {"sha256": expected_hash}},
         )
     ]
-    assert head_requests == [
-        ("smoke-bucket", "reports/binance_paper_20240102T123456Z_abc123.zip")
-    ]
+    assert head_requests == [("smoke-bucket", "reports/binance_paper_20240102T123456Z_abc123.zip")]

@@ -35,6 +35,8 @@ def _parser() -> object:
         # ale w testach nie wywołujemy bezpośrednio; zakładamy, że _build_parser istnieje w obu wariantach
         raise RuntimeError("rotate_keys._build_parser not available")
     return build()
+
+
 def _supports_head_cli() -> bool:
     # HEAD wariant: ma m.in. --environment, --operator, --executed-at, --signing-key, --output
     return parser_supports(_parser, "--environment", "--operator", "--executed-at", "--output")
@@ -49,7 +51,9 @@ def _iso(dt: datetime) -> str:
     return dt.isoformat().replace("+00:00", "Z")
 
 
-def _write_minimal_head_config(path: Path, cache_path: Path, tls_registry: Path | None = None) -> None:
+def _write_minimal_head_config(
+    path: Path, cache_path: Path, tls_registry: Path | None = None
+) -> None:
     registry_path = tls_registry or (cache_path / "security" / "tls_rotation.json")
     plan_registry = cache_path / "security" / "rotation_log.json"
     path.write_text(
@@ -166,7 +170,12 @@ def test_rotate_keys_updates_registry_and_writes_report_or_generates_plan(tmp_pa
         payload = json.loads(output_path.read_text(encoding="utf-8"))
         # oczekiwane pola z wariantu HEAD
         assert payload.get("type") in {"key_rotation_report", "rotation_summary"}
-        assert payload["records"][0]["environment"] in {"paper", "demo", "core", payload["records"][0]["environment"]}
+        assert payload["records"][0]["environment"] in {
+            "paper",
+            "demo",
+            "core",
+            payload["records"][0]["environment"],
+        }
         if "signature" in payload:
             assert payload["signature"]["algorithm"].upper().startswith("HMAC-")
 
@@ -187,7 +196,8 @@ def test_rotate_keys_updates_registry_and_writes_report_or_generates_plan(tmp_pa
         registry_path = tmp_path / "registry.json"
         # wpis sprzed 120 dni, żeby było due/overdue
         registry_path.write_text(
-            json.dumps({"api::trading": _iso(datetime.now(timezone.utc) - timedelta(days=120))}) + "\n",
+            json.dumps({"api::trading": _iso(datetime.now(timezone.utc) - timedelta(days=120))})
+            + "\n",
             encoding="utf-8",
         )
         _write_main_config(config_path, registry_path)
@@ -261,7 +271,8 @@ def test_rotate_keys_dry_run_or_plan_only_does_not_touch_registry(tmp_path: Path
         config_path = tmp_path / "core.yaml"
         registry_path = tmp_path / "registry.json"
         registry_path.write_text(
-            json.dumps({"api::trading": _iso(datetime.now(timezone.utc) - timedelta(days=120))}) + "\n",
+            json.dumps({"api::trading": _iso(datetime.now(timezone.utc) - timedelta(days=120))})
+            + "\n",
             encoding="utf-8",
         )
         _write_main_config(config_path, registry_path)
@@ -386,7 +397,11 @@ def test_rotate_keys_status_reports_bundle_summary(
 
     assert payload["bundle"] == "core-oem"
     assert payload["entries_found"] is True
-    states = {entry["purpose"]: entry["state"] for entry in payload["entries"] if entry["key"] == "core-oem"}
+    states = {
+        entry["purpose"]: entry["state"]
+        for entry in payload["entries"]
+        if entry["key"] == "core-oem"
+    }
     assert states.get("ca") == "ok"
     assert states.get("server") in {"warning", "due"}
     assert states.get("client") == "overdue"

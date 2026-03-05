@@ -1,4 +1,5 @@
 """Kontroler odpowiadający za profile i układ paneli w PySide6."""
+
 from __future__ import annotations
 
 import json

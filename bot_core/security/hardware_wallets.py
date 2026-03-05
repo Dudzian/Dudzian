@@ -24,7 +24,10 @@ from typing import Any, Iterable, Mapping, Sequence
 from cryptography.exceptions import InvalidSignature
 from cryptography.hazmat.primitives import hashes, serialization
 from cryptography.hazmat.primitives.asymmetric import ed25519, ec
-from cryptography.hazmat.primitives.asymmetric.utils import decode_dss_signature, encode_dss_signature
+from cryptography.hazmat.primitives.asymmetric.utils import (
+    decode_dss_signature,
+    encode_dss_signature,
+)
 
 from bot_core.security.signing import JsonPayload, TransactionSigner, canonical_json_bytes
 
@@ -119,7 +122,9 @@ def _parse_bip32_path(path: str) -> Sequence[int]:
         try:
             index = int(raw_segment, 10)
         except ValueError as exc:  # pragma: no cover - walidacja konfiguracji
-            raise ValueError(f"Sekcja ścieżki BIP-32 nie jest liczbą całkowitą: {segment!r}") from exc
+            raise ValueError(
+                f"Sekcja ścieżki BIP-32 nie jest liczbą całkowitą: {segment!r}"
+            ) from exc
         if index < 0:
             raise ValueError("Indeks ścieżki BIP-32 nie może być ujemny")
         if index >= 0x80000000:
@@ -213,7 +218,9 @@ class LedgerSigner(_HardwareWalletSigner):
             try:
                 self._transport = getDongle(True)
             except Exception as exc:  # noqa: BLE001
-                raise HardwareWalletError("Nie udało się zainicjalizować połączenia z Ledgerem.") from exc
+                raise HardwareWalletError(
+                    "Nie udało się zainicjalizować połączenia z Ledgerem."
+                ) from exc
             self._backend = None
             self._comm_exception = CommException  # type: ignore[attr-defined]
             self._ledger_dongle: Dongle = self._transport  # type: ignore[assignment]
@@ -313,7 +320,9 @@ class LedgerSigner(_HardwareWalletSigner):
             signed["key_id"] = self.key_id
         return signed
 
-    def _public_key_from_signature(self, signature: Mapping[str, Any]) -> ec.EllipticCurvePublicKey | None:
+    def _public_key_from_signature(
+        self, signature: Mapping[str, Any]
+    ) -> ec.EllipticCurvePublicKey | None:
         x_value = signature.get("device_public_x")
         y_value = signature.get("device_public_y")
         if isinstance(x_value, str) and isinstance(y_value, str):
@@ -395,7 +404,11 @@ class LedgerSigner(_HardwareWalletSigner):
             try:
                 close_method()
             except Exception as exc:  # noqa: BLE001
-                _LOGGER.debug("Zamykanie połączenia z Ledgerem nie powiodło się: %s", exc, exc_info=_LOGGER.isEnabledFor(logging.DEBUG))
+                _LOGGER.debug(
+                    "Zamykanie połączenia z Ledgerem nie powiodło się: %s",
+                    exc,
+                    exc_info=_LOGGER.isEnabledFor(logging.DEBUG),
+                )
 
     def __del__(self):  # pragma: no cover - obrona przed wyciekami deskryptorów
         with contextlib.suppress(Exception):
@@ -499,7 +512,9 @@ class TrezorSigner(_HardwareWalletSigner):
             signed["key_id"] = self.key_id
         return signed
 
-    def _public_key_from_signature(self, signature: Mapping[str, Any]) -> ed25519.Ed25519PublicKey | None:
+    def _public_key_from_signature(
+        self, signature: Mapping[str, Any]
+    ) -> ed25519.Ed25519PublicKey | None:
         key_hex = signature.get("device_public_key")
         if isinstance(key_hex, str):
             text = key_hex.strip()
@@ -566,10 +581,11 @@ class TrezorSigner(_HardwareWalletSigner):
                 close_method()
             except Exception as exc:  # noqa: BLE001
                 _LOGGER.debug(
-                    "Zamykanie klienta Trezor nie powiodło się: %s", exc, exc_info=_LOGGER.isEnabledFor(logging.DEBUG)
+                    "Zamykanie klienta Trezor nie powiodło się: %s",
+                    exc,
+                    exc_info=_LOGGER.isEnabledFor(logging.DEBUG),
                 )
 
     def __del__(self):  # pragma: no cover - obrona przed wyciekami deskryptorów
         with contextlib.suppress(Exception):
             self.close()
-

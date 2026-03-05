@@ -1,4 +1,5 @@
 """Konkretne implementacje źródeł danych oraz magazynów cache."""
+
 from __future__ import annotations
 
 from bot_core.data.sources.ohlcv_cache import (

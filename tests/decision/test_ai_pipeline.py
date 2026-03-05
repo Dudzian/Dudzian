@@ -456,12 +456,8 @@ def test_training_and_inference(tmp_path: Path, ohlcv_rows: list[tuple[float, ..
     assert 0.0 <= sample_features["volume_return_negative_share"] <= 1.0
     assert 0.0 <= sample_features["volume_return_flat_share"] <= 1.0
     assert -1.0 <= sample_features["volume_return_sign_balance"] <= 1.0
-    assert (
-        0.0 <= sample_features["volume_return_positive_magnitude_share"] <= 1.0
-    )
-    assert (
-        0.0 <= sample_features["volume_return_negative_magnitude_share"] <= 1.0
-    )
+    assert 0.0 <= sample_features["volume_return_positive_magnitude_share"] <= 1.0
+    assert 0.0 <= sample_features["volume_return_negative_magnitude_share"] <= 1.0
     assert 0.0 <= sample_features["volume_return_flat_magnitude_share"] <= 1.0
     assert -1.0 <= sample_features["volume_return_magnitude_balance"] <= 1.0
     assert -5.0 <= sample_features["volume_percentile_low_gap"] <= 5.0
@@ -677,9 +673,8 @@ def test_training_and_inference(tmp_path: Path, ohlcv_rows: list[tuple[float, ..
         assert math.isfinite(mean)
         assert stdev >= 0.0
 
-    assert (
-        artifact.training_rows + artifact.validation_rows + artifact.test_rows
-        == len(dataset.vectors)
+    assert artifact.training_rows + artifact.validation_rows + artifact.test_rows == len(
+        dataset.vectors
     )
     assert artifact.validation_rows > 0
     assert artifact.test_rows == 0
@@ -690,9 +685,7 @@ def test_training_and_inference(tmp_path: Path, ohlcv_rows: list[tuple[float, ..
     assert "summary" in artifact.metrics
     assert "train" in artifact.metrics
     assert "expected_pnl" in artifact.metrics["summary"]
-    assert artifact.metrics["summary"]["mae"] == pytest.approx(
-        artifact.metrics["train"]["mae"]
-    )
+    assert artifact.metrics["summary"]["mae"] == pytest.approx(artifact.metrics["train"]["mae"])
     assert "calibration" in artifact.metadata
     calibration = artifact.metadata["calibration"]  # type: ignore[index]
     assert {"slope", "intercept"}.issubset(calibration.keys())

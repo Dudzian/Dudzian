@@ -1,4 +1,5 @@
 """Bezpieczny magazyn kluczy API wykorzystywany w kreatorze onboardingu."""
+
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -54,7 +55,11 @@ class SecretStore:
         if storage is not None:
             self._storage = storage
         else:
-            derived_index = Path(index_path).expanduser() if index_path is not None else base_dir / "secret_index.json"
+            derived_index = (
+                Path(index_path).expanduser()
+                if index_path is not None
+                else base_dir / "secret_index.json"
+            )
             self._storage = KeyringSecretStorage(
                 service_name=service_name or "dudzian.trading.desktop",
                 index_path=derived_index,
@@ -122,9 +127,7 @@ class SecretStore:
 
         prefix = f"{self._STORAGE_NAMESPACE}:"
         exchanges = [
-            key[len(prefix) :]
-            for key in keys
-            if key.startswith(prefix) and key[len(prefix) :]
+            key[len(prefix) :] for key in keys if key.startswith(prefix) and key[len(prefix) :]
         ]
         return tuple(dict.fromkeys(exchanges))
 
@@ -196,4 +199,6 @@ def _default_data_dir() -> Path:
     if override:
         return Path(override).expanduser()
     return Path.home() / ".dudzian"
+
+
 __all__ = ["ExchangeCredentials", "SecretStore", "SecretStoreError"]

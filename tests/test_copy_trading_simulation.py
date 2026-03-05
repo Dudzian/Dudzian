@@ -90,14 +90,18 @@ class PaperHarness:
         self.followers_value: dict[str, float] = {}
         self.price = price
         market = MarketMetadata(base_asset="BTC", quote_asset="USDT")
-        self.master_service = PaperTradingExecutionService({"BTCUSDT": market}, initial_balances={"USDT": 1_000_000.0})
+        self.master_service = PaperTradingExecutionService(
+            {"BTCUSDT": market}, initial_balances={"USDT": 1_000_000.0}
+        )
         self.services: dict[str, PaperTradingExecutionService] = {}
         self.metadata = metadata
 
     def execute_master(self, instruction, *, symbol: str = "BTCUSDT") -> None:
         self._execute(self.master_service, instruction, self.master_value, symbol)
 
-    def execute_follower(self, follower_id: str, instruction, scale: float, *, symbol: str = "BTCUSDT") -> None:
+    def execute_follower(
+        self, follower_id: str, instruction, scale: float, *, symbol: str = "BTCUSDT"
+    ) -> None:
         if follower_id not in self.services:
             self.services[follower_id] = PaperTradingExecutionService(
                 {symbol: MarketMetadata(base_asset="BTC", quote_asset="USDT")},
@@ -108,7 +112,13 @@ class PaperHarness:
         service = self.services[follower_id]
         self._execute(service, instruction, value, symbol)
 
-    def _execute(self, service: PaperTradingExecutionService, instruction, portfolio_value: float, symbol: str) -> None:
+    def _execute(
+        self,
+        service: PaperTradingExecutionService,
+        instruction,
+        portfolio_value: float,
+        symbol: str,
+    ) -> None:
         for adjustment in instruction.adjustments:
             delta = adjustment.proposed_weight - adjustment.current_weight
             if abs(delta) < 1e-9:
@@ -197,4 +207,6 @@ def test_copy_trading_paper_flow() -> None:
         metadata={"strategy_health": "failed", "failure_reason": "volatility-spike"},
     )
     assert fallback_result.active_preset == "ml-ai"
-    assert any(event["message"] == "strategy-self-healing" for event in audit_events if "message" in event)
+    assert any(
+        event["message"] == "strategy-self-healing" for event in audit_events if "message" in event
+    )

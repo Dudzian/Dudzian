@@ -54,7 +54,9 @@ class TrainingPipeline:
         dataset_validator: DatasetValidator | None = None,
         logger: logging.Logger | None = None,
     ) -> None:
-        order = [candidate.strip().lower() for candidate in preferred_backends or () if candidate.strip()]
+        order = [
+            candidate.strip().lower() for candidate in preferred_backends or () if candidate.strip()
+        ]
         if "reference" not in order:
             order.append("reference")
         self._preferred_backends: tuple[str, ...] = tuple(order) or ("reference",)
@@ -75,9 +77,7 @@ class TrainingPipeline:
             raise ValueError("Dataset treningowy jest pusty")
 
         report = self._dataset_validator.validate(dataset)
-        validation_log_path = self._dataset_validator.log_report(
-            report, self._validation_log_dir
-        )
+        validation_log_path = self._dataset_validator.log_report(report, self._validation_log_dir)
         if report.has_errors:
             raise DatasetValidationError(report, validation_log_path)
 
@@ -184,4 +184,3 @@ class TrainingPipeline:
         }
         path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
         return path
-

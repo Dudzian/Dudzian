@@ -6,7 +6,9 @@ from bot_core.runtime.scheduler_load_test import (
 
 
 def test_execute_scheduler_load_test_produces_metrics() -> None:
-    settings = LoadTestSettings(iterations=5, schedules=2, signals_per_snapshot=3, simulated_latency_ms=1.0)
+    settings = LoadTestSettings(
+        iterations=5, schedules=2, signals_per_snapshot=3, simulated_latency_ms=1.0
+    )
     result = execute_scheduler_load_test(settings)
 
     assert isinstance(result, LoadTestResult)

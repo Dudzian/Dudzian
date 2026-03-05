@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 """Konwertuje PNG do pliku SVG z zakodowanym data URI."""
+
 from __future__ import annotations
 
 import argparse
@@ -53,12 +54,12 @@ def main() -> None:
     desc = html.escape(str(args.description)) if args.description else None
 
     svg_lines = [
-        "<?xml version=\"1.0\" encoding=\"UTF-8\"?>",
+        '<?xml version="1.0" encoding="UTF-8"?>',
         (
-            f"<svg xmlns=\"http://www.w3.org/2000/svg\""
-            f" xmlns:xlink=\"http://www.w3.org/1999/xlink\""
-            f" width=\"{width}\" height=\"{height}\""
-            f" viewBox=\"0 0 {width} {height}\">"
+            f'<svg xmlns="http://www.w3.org/2000/svg"'
+            f' xmlns:xlink="http://www.w3.org/1999/xlink"'
+            f' width="{width}" height="{height}"'
+            f' viewBox="0 0 {width} {height}">'
         ),
         f"  <title>{title}</title>",
     ]
@@ -66,8 +67,8 @@ def main() -> None:
         svg_lines.append(f"  <desc>{desc}</desc>")
     svg_lines.append(
         (
-            f"  <image width=\"{width}\" height=\"{height}\""
-            f" xlink:href=\"data:image/png;base64,{encoded}\" />"
+            f'  <image width="{width}" height="{height}"'
+            f' xlink:href="data:image/png;base64,{encoded}" />'
         )
     )
     svg_lines.append("</svg>")

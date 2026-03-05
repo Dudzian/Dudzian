@@ -1,4 +1,5 @@
 """Pomocnicze funkcje do generowania kluczy HMAC w testach."""
+
 from __future__ import annotations
 
 import os

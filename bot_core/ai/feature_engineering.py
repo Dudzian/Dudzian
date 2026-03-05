@@ -112,7 +112,9 @@ class FeatureDataset:
     def feature_stats(self) -> Mapping[str, Mapping[str, float]]:
         raw = self.metadata.get("feature_stats") if isinstance(self.metadata, Mapping) else None
         if isinstance(raw, Mapping):
-            return {str(name): dict(stats) for name, stats in raw.items() if isinstance(stats, Mapping)}
+            return {
+                str(name): dict(stats) for name, stats in raw.items() if isinstance(stats, Mapping)
+            }
         summary: MutableMapping[str, Mapping[str, float]] = {}
         for name in self.feature_names:
             values = [float(vector.features.get(name, 0.0)) for vector in self.vectors]
@@ -196,7 +198,9 @@ class FeatureEngineer:
         return dataset
 
     # ------------------------------------------------------------------ helpers --
-    def _build_symbol_vectors(self, symbol: str, response: OHLCVResponse) -> Iterable[FeatureVector]:
+    def _build_symbol_vectors(
+        self, symbol: str, response: OHLCVResponse
+    ) -> Iterable[FeatureVector]:
         columns = list(response.columns)
         column_map = {name: idx for idx, name in enumerate(columns)}
         required = ["open_time", "open", "high", "low", "close", "volume"]
@@ -260,19 +264,17 @@ class FeatureEngineer:
         previous_hma = self._hma(closes[: self._window], hma_period)
         t3_period = max(5, self._window)
         previous_t3 = self._t3(closes[: self._window], t3_period)
-        heikin_open_prev = float(
-            (opens[self._window - 1] + closes[self._window - 1]) / 2.0
-        )
+        heikin_open_prev = float((opens[self._window - 1] + closes[self._window - 1]) / 2.0)
         heikin_close_prev = float(
-            (opens[self._window - 1]
-            + highs[self._window - 1]
-            + lows[self._window - 1]
-            + closes[self._window - 1])
+            (
+                opens[self._window - 1]
+                + highs[self._window - 1]
+                + lows[self._window - 1]
+                + closes[self._window - 1]
+            )
             / 4.0
         )
-        prev_typical_price = float(
-            (highs[0] + lows[0] + closes[0]) / 3.0
-        )
+        prev_typical_price = float((highs[0] + lows[0] + closes[0]) / 3.0)
         for warm_index in range(self._window):
             high_value = highs[warm_index]
             low_value = lows[warm_index]
@@ -441,11 +443,7 @@ class FeatureEngineer:
 
             current_timestamp = timestamps[index]
             current_dt = datetime.fromtimestamp(current_timestamp, tz=timezone.utc)
-            day_seconds = (
-                current_dt.hour * 3600
-                + current_dt.minute * 60
-                + current_dt.second
-            )
+            day_seconds = current_dt.hour * 3600 + current_dt.minute * 60 + current_dt.second
             session_progress = day_seconds / 86_400.0
             session_progress = max(0.0, min(1.0, session_progress))
             session_angle = 2.0 * math.pi * session_progress
@@ -616,9 +614,7 @@ class FeatureEngineer:
             total_directional_volume = up_volume + down_volume + flat_volume
             volume_flow_imbalance = 0.0
             if total_directional_volume > 0.0:
-                volume_flow_imbalance = (
-                    (up_volume - down_volume) / total_directional_volume
-                )
+                volume_flow_imbalance = (up_volume - down_volume) / total_directional_volume
             volume_flow_imbalance = self._clamp(volume_flow_imbalance, -1.0, 1.0)
             volume_flow_ratio = 0.0
             if down_volume > 0.0:
@@ -683,16 +679,10 @@ class FeatureEngineer:
             )
             atr_history.append(atr)
             atr_ratio_value = atr / current_close if current_close > 0 else 0.0
-            atr_ratio_history.append(
-                self._clamp(atr_ratio_value, 0.0, 10.0)
-            )
+            atr_ratio_history.append(self._clamp(atr_ratio_value, 0.0, 10.0))
             body_length = abs(current_close - opens[index])
-            upper_shadow_length = max(
-                0.0, highs[index] - max(current_close, opens[index])
-            )
-            lower_shadow_length = max(
-                0.0, min(current_close, opens[index]) - lows[index]
-            )
+            upper_shadow_length = max(0.0, highs[index] - max(current_close, opens[index]))
+            lower_shadow_length = max(0.0, min(current_close, opens[index]) - lows[index])
             range_to_atr_ratio = 0.0
             body_to_atr_ratio = 0.0
             upper_shadow_atr_ratio = 0.0
@@ -1017,12 +1007,16 @@ class FeatureEngineer:
             ichimoku_cloud_thickness = self._clamp(ichimoku_cloud_thickness, 0.0, 5.0)
             ichimoku_price_position = self._clamp(ichimoku_price_position, -2.0, 3.0)
 
-            donchian_high, donchian_low = self._donchian_channel(highs, lows, index, self._window * 2)
+            donchian_high, donchian_low = self._donchian_channel(
+                highs, lows, index, self._window * 2
+            )
             donchian_position = 0.0
             donchian_width = 0.0
             if donchian_high > donchian_low:
                 donchian_position = (current_close - donchian_low) / (donchian_high - donchian_low)
-                donchian_width = (donchian_high - donchian_low) / current_close if current_close > 0 else 0.0
+                donchian_width = (
+                    (donchian_high - donchian_low) / current_close if current_close > 0 else 0.0
+                )
             donchian_position = self._clamp(donchian_position, -1.0, 2.0)
             donchian_width = self._clamp(donchian_width, 0.0, 5.0)
 
@@ -1087,8 +1081,16 @@ class FeatureEngineer:
             psar_gap = self._clamp(psar_gap, -5.0, 5.0)
             psar_direction = self._clamp(psar_direction, -1.0, 1.0)
 
-            pivot_high = max(highs[lookback_slice]) if lookback_slice.stop > lookback_slice.start else highs[index - 1]
-            pivot_low = min(lows[lookback_slice]) if lookback_slice.stop > lookback_slice.start else lows[index - 1]
+            pivot_high = (
+                max(highs[lookback_slice])
+                if lookback_slice.stop > lookback_slice.start
+                else highs[index - 1]
+            )
+            pivot_low = (
+                min(lows[lookback_slice])
+                if lookback_slice.stop > lookback_slice.start
+                else lows[index - 1]
+            )
             pivot_close = closes[index - 1]
             pivot_point = (pivot_high + pivot_low + pivot_close) / 3.0
             pivot_resistance = (2.0 * pivot_point) - pivot_low
@@ -1193,7 +1195,8 @@ class FeatureEngineer:
 
             typical_price = (highs[index] + lows[index] + current_close) / 3.0
             lookback_typical = [
-                (highs[pos] + lows[pos] + closes[pos]) / 3.0 for pos in range(index - self._window, index)
+                (highs[pos] + lows[pos] + closes[pos]) / 3.0
+                for pos in range(index - self._window, index)
             ]
             cci = 0.0
             if lookback_typical:
@@ -1245,7 +1248,9 @@ class FeatureEngineer:
                     price_percentile_low_gap = (current_close - price_p25) / price_p25
                 if price_p75 > 0.0:
                     price_percentile_high_gap = (current_close - price_p75) / price_p75
-                percentile_baseline = price_median if price_median > 0.0 else (price_p25 + price_p75) / 2.0
+                percentile_baseline = (
+                    price_median if price_median > 0.0 else (price_p25 + price_p75) / 2.0
+                )
                 if percentile_baseline > 0.0:
                     price_percentile_spread = (price_p75 - price_p25) / percentile_baseline
             price_median_gap = self._clamp(price_median_gap, -5.0, 5.0)
@@ -1289,7 +1294,9 @@ class FeatureEngineer:
                 return_percentile_spread_bps = (return_p75 - return_p25) * 10_000.0
             return_median_gap_bps = self._clamp(return_median_gap_bps, -50.0, 50.0)
             return_mad_ratio = self._clamp(return_mad_ratio, -20.0, 20.0)
-            return_percentile_low_gap_bps = self._clamp(return_percentile_low_gap_bps, -200.0, 200.0)
+            return_percentile_low_gap_bps = self._clamp(
+                return_percentile_low_gap_bps, -200.0, 200.0
+            )
             return_percentile_high_gap_bps = self._clamp(
                 return_percentile_high_gap_bps, -200.0, 200.0
             )
@@ -1304,9 +1311,7 @@ class FeatureEngineer:
             volume_return_percentile_low_gap = 0.0
             volume_return_percentile_high_gap = 0.0
             volume_return_percentile_spread = 0.0
-            volume_return_percent_rank = self._percent_rank(
-                volume_returns, current_volume_return
-            )
+            volume_return_percent_rank = self._percent_rank(volume_returns, current_volume_return)
             if volume_returns:
                 volume_return_median = median(volume_returns)
                 volume_return_median_gap = current_volume_return - volume_return_median
@@ -1321,12 +1326,8 @@ class FeatureEngineer:
                         ) / volume_return_mad
                 volume_return_p25 = self._percentile_value(volume_returns, 25.0)
                 volume_return_p75 = self._percentile_value(volume_returns, 75.0)
-                volume_return_percentile_low_gap = (
-                    current_volume_return - volume_return_p25
-                )
-                volume_return_percentile_high_gap = (
-                    current_volume_return - volume_return_p75
-                )
+                volume_return_percentile_low_gap = current_volume_return - volume_return_p25
+                volume_return_percentile_high_gap = current_volume_return - volume_return_p75
                 volume_return_percentile_spread = volume_return_p75 - volume_return_p25
             volume_return_median_gap = self._clamp(volume_return_median_gap, -5.0, 5.0)
             volume_return_mad_ratio = self._clamp(volume_return_mad_ratio, -20.0, 20.0)
@@ -1336,16 +1337,10 @@ class FeatureEngineer:
             volume_return_percentile_high_gap = self._clamp(
                 volume_return_percentile_high_gap, -5.0, 5.0
             )
-            volume_return_percentile_spread = self._clamp(
-                volume_return_percentile_spread, 0.0, 5.0
-            )
+            volume_return_percentile_spread = self._clamp(volume_return_percentile_spread, 0.0, 5.0)
 
-            price_percent_rank = self._percent_rank(
-                lookback_closes_with_current, current_close
-            )
-            volume_percent_rank = self._percent_rank(
-                lookback_volumes_inclusive, current_volume
-            )
+            price_percent_rank = self._percent_rank(lookback_closes_with_current, current_close)
+            volume_percent_rank = self._percent_rank(lookback_volumes_inclusive, current_volume)
 
             volume_median_gap = 0.0
             volume_mad_ratio = 0.0
@@ -1387,9 +1382,7 @@ class FeatureEngineer:
             range_ratio_current = 0.0
             if current_close > 0.0:
                 range_ratio_current = range_value / current_close
-            range_ratio_history.append(
-                self._clamp(range_ratio_current, 0.0, 10.0)
-            )
+            range_ratio_history.append(self._clamp(range_ratio_current, 0.0, 10.0))
             range_percent_rank = self._percent_rank(range_history, range_value)
             atr_percent_rank = self._percent_rank(atr_history, atr)
 
@@ -1401,12 +1394,8 @@ class FeatureEngineer:
             long_slice = slice(long_start, index)
             short_returns = self._compute_returns(closes, short_slice)
             long_returns = self._compute_returns(closes, long_slice)
-            return_volatility_short = (
-                pstdev(short_returns) if len(short_returns) > 1 else 0.0
-            )
-            return_volatility_long = (
-                pstdev(long_returns) if len(long_returns) > 1 else 0.0
-            )
+            return_volatility_short = pstdev(short_returns) if len(short_returns) > 1 else 0.0
+            return_volatility_long = pstdev(long_returns) if len(long_returns) > 1 else 0.0
             return_volatility_short = self._clamp(return_volatility_short, 0.0, 5.0)
             return_volatility_long = self._clamp(return_volatility_long, 0.0, 5.0)
             if return_volatility_long > 0.0:
@@ -1476,9 +1465,7 @@ class FeatureEngineer:
             if atr_corr_length > 1:
                 returns_for_atr = returns[-atr_corr_length:]
                 atr_ratio_for_corr = atr_ratio_history[-atr_corr_length:]
-                return_atr_correlation = self._correlation(
-                    returns_for_atr, atr_ratio_for_corr
-                )
+                return_atr_correlation = self._correlation(returns_for_atr, atr_ratio_for_corr)
                 return_atr_crosscorr_lag1 = self._cross_correlation(
                     returns_for_atr, atr_ratio_for_corr, 1
                 )
@@ -1490,18 +1477,10 @@ class FeatureEngineer:
                 )
 
             return_volume_correlation = self._correlation(returns, volume_returns)
-            return_volume_crosscorr_lag1 = self._cross_correlation(
-                returns, volume_returns, 1
-            )
-            return_volume_crosscorr_lag3 = self._cross_correlation(
-                returns, volume_returns, 3
-            )
-            return_volume_crosscorr_lag5 = self._cross_correlation(
-                returns, volume_returns, 5
-            )
-            price_volume_correlation = self._correlation(
-                lookback_closes, volume_window
-            )
+            return_volume_crosscorr_lag1 = self._cross_correlation(returns, volume_returns, 1)
+            return_volume_crosscorr_lag3 = self._cross_correlation(returns, volume_returns, 3)
+            return_volume_crosscorr_lag5 = self._cross_correlation(returns, volume_returns, 5)
+            price_volume_correlation = self._correlation(lookback_closes, volume_window)
 
             price_lr_slope, _, price_lr_rvalue = self._linear_regression(
                 lookback_closes_with_current
@@ -1512,9 +1491,7 @@ class FeatureEngineer:
             price_trend_slope = self._clamp(price_trend_slope, -5.0, 5.0)
             price_trend_strength = max(-1.0, min(1.0, price_lr_rvalue))
 
-            volume_lr_slope, _, volume_lr_rvalue = self._linear_regression(
-                volume_inclusive
-            )
+            volume_lr_slope, _, volume_lr_rvalue = self._linear_regression(volume_inclusive)
             volume_scale = avg_volume if avg_volume > 0 else 1.0
             volume_trend_slope = self._clamp(volume_lr_slope / volume_scale, -5.0, 5.0)
             volume_trend_strength = max(-1.0, min(1.0, volume_lr_rvalue))
@@ -1522,9 +1499,7 @@ class FeatureEngineer:
             volume_spike_ratio = 0.0
             if volume_inclusive:
                 inclusive_mean = mean(volume_inclusive)
-                inclusive_stdev = (
-                    pstdev(volume_inclusive) if len(volume_inclusive) > 1 else 0.0
-                )
+                inclusive_stdev = pstdev(volume_inclusive) if len(volume_inclusive) > 1 else 0.0
                 threshold = inclusive_mean + inclusive_stdev
                 if threshold > 0.0:
                     spike_count = sum(1 for value in volume_inclusive if value > threshold)
@@ -1537,9 +1512,7 @@ class FeatureEngineer:
                 range_mean_ratio = range_value / range_mean
             range_mean_ratio = self._clamp(range_mean_ratio, 0.0, 10.0)
 
-            return_volatility_diff = (
-                return_volatility_short - return_volatility_long
-            )
+            return_volatility_diff = return_volatility_short - return_volatility_long
             return_volatility_diff = self._clamp(return_volatility_diff, -5.0, 5.0)
 
             price_short_window = lookback_closes_with_current[-short_window:]
@@ -1548,9 +1521,7 @@ class FeatureEngineer:
             price_long_slope, _, _ = self._linear_regression(price_long_window)
             price_trend_acceleration = 0.0
             if current_close > 0.0:
-                price_trend_acceleration = (
-                    (price_short_slope - price_long_slope) / current_close
-                )
+                price_trend_acceleration = (price_short_slope - price_long_slope) / current_close
             price_trend_acceleration = self._clamp(price_trend_acceleration, -5.0, 5.0)
 
             volume_short_window = volume_inclusive[-short_window:]
@@ -1562,8 +1533,8 @@ class FeatureEngineer:
             if volume_scale_for_acc == 0.0:
                 volume_scale_for_acc = 1.0
             volume_trend_acceleration = (
-                (volume_short_slope - volume_long_slope) / volume_scale_for_acc
-            )
+                volume_short_slope - volume_long_slope
+            ) / volume_scale_for_acc
             volume_trend_acceleration = self._clamp(volume_trend_acceleration, -5.0, 5.0)
 
             drawdown_ratio, drawdown_duration, drawdown_recovery = self._drawdown_metrics(
@@ -1580,9 +1551,7 @@ class FeatureEngineer:
                 atr_mean = mean(atr_window)
                 if atr_mean > 0.0:
                     atr_trend_slope = self._clamp(atr_slope / atr_mean, -5.0, 5.0)
-                    atr_volatility = (
-                        pstdev(atr_window) if len(atr_window) > 1 else 0.0
-                    )
+                    atr_volatility = pstdev(atr_window) if len(atr_window) > 1 else 0.0
                     atr_volatility_ratio = self._clamp(
                         atr_volatility / atr_mean,
                         0.0,
@@ -1977,38 +1946,22 @@ class FeatureEngineer:
                 "volume_mad_ratio": float(volume_mad_ratio),
                 "volume_return_median_gap": float(volume_return_median_gap),
                 "volume_return_mad_ratio": float(volume_return_mad_ratio),
-                "volume_return_percentile_low_gap": float(
-                    volume_return_percentile_low_gap
-                ),
-                "volume_return_percentile_high_gap": float(
-                    volume_return_percentile_high_gap
-                ),
-                "volume_return_percentile_spread": float(
-                    volume_return_percentile_spread
-                ),
+                "volume_return_percentile_low_gap": float(volume_return_percentile_low_gap),
+                "volume_return_percentile_high_gap": float(volume_return_percentile_high_gap),
+                "volume_return_percentile_spread": float(volume_return_percentile_spread),
                 "volume_return_percent_rank": float(volume_return_percent_rank),
-                "volume_return_positive_share": float(
-                    volume_return_positive_share
-                ),
-                "volume_return_negative_share": float(
-                    volume_return_negative_share
-                ),
+                "volume_return_positive_share": float(volume_return_positive_share),
+                "volume_return_negative_share": float(volume_return_negative_share),
                 "volume_return_flat_share": float(volume_return_flat_share),
-                "volume_return_sign_balance": float(
-                    volume_return_sign_balance
-                ),
+                "volume_return_sign_balance": float(volume_return_sign_balance),
                 "volume_return_positive_magnitude_share": float(
                     volume_return_positive_magnitude_share
                 ),
                 "volume_return_negative_magnitude_share": float(
                     volume_return_negative_magnitude_share
                 ),
-                "volume_return_flat_magnitude_share": float(
-                    volume_return_flat_magnitude_share
-                ),
-                "volume_return_magnitude_balance": float(
-                    volume_return_magnitude_balance
-                ),
+                "volume_return_flat_magnitude_share": float(volume_return_flat_magnitude_share),
+                "volume_return_magnitude_balance": float(volume_return_magnitude_balance),
                 "volume_percentile_low_gap": float(volume_percentile_low_gap),
                 "volume_percentile_high_gap": float(volume_percentile_high_gap),
                 "volume_percentile_spread": float(volume_percentile_spread),
@@ -2024,12 +1977,8 @@ class FeatureEngineer:
                 "return_negative_share": float(return_negative_share),
                 "return_flat_share": float(return_flat_share),
                 "return_sign_balance": float(return_sign_balance),
-                "return_positive_magnitude_share": float(
-                    return_positive_magnitude_share
-                ),
-                "return_negative_magnitude_share": float(
-                    return_negative_magnitude_share
-                ),
+                "return_positive_magnitude_share": float(return_positive_magnitude_share),
+                "return_negative_magnitude_share": float(return_negative_magnitude_share),
                 "return_flat_magnitude_share": float(return_flat_magnitude_share),
                 "return_magnitude_balance": float(return_magnitude_balance),
                 "range_percent_rank": float(range_percent_rank),
@@ -2129,9 +2078,7 @@ class FeatureEngineer:
                 "chande_momentum_oscillator": float(chande_momentum),
                 "chande_momentum_change": float(chande_momentum_change),
                 "detrended_price_oscillator": float(detrended_price_oscillator),
-                "detrended_price_oscillator_change": float(
-                    detrended_price_oscillator_change
-                ),
+                "detrended_price_oscillator_change": float(detrended_price_oscillator_change),
                 "aroon_up": float(aroon_up),
                 "aroon_down": float(aroon_down),
                 "aroon_oscillator": float(aroon_up - aroon_down),
@@ -2249,13 +2196,9 @@ class FeatureEngineer:
                 "intraday_intensity": float(intraday_intensity),
                 "intraday_intensity_change": float(intraday_intensity_change),
                 "intraday_intensity_volume": float(intraday_intensity_volume),
-                "intraday_intensity_volume_change": float(
-                    intraday_intensity_volume_change
-                ),
+                "intraday_intensity_volume_change": float(intraday_intensity_volume_change),
                 "market_facilitation_index": float(market_facilitation_index),
-                "market_facilitation_index_change": float(
-                    market_facilitation_index_change
-                ),
+                "market_facilitation_index_change": float(market_facilitation_index_change),
                 "klinger_oscillator": float(klinger_oscillator),
                 "klinger_oscillator_change": float(klinger_oscillator_change),
                 "klinger_signal": float(klinger_signal),
@@ -2351,9 +2294,7 @@ class FeatureEngineer:
 
         return vectors
 
-    def _compute_returns(
-        self, closes: Sequence[float], lookback_slice: slice
-    ) -> list[float]:
+    def _compute_returns(self, closes: Sequence[float], lookback_slice: slice) -> list[float]:
         returns: list[float] = []
         start, stop, step = lookback_slice.start, lookback_slice.stop, lookback_slice.step or 1
         if start is None or stop is None:
@@ -2366,9 +2307,7 @@ class FeatureEngineer:
             returns.append((current - prev) / prev)
         return returns
 
-    def _parkinson_volatility(
-        self, highs: Sequence[float], lows: Sequence[float]
-    ) -> float:
+    def _parkinson_volatility(self, highs: Sequence[float], lows: Sequence[float]) -> float:
         count = 0
         sum_sq = 0.0
         for high_value, low_value in zip(highs, lows, strict=False):
@@ -2784,9 +2723,7 @@ class FeatureEngineer:
         average = sum(values) / len(values)
         return self._clamp(average, -5.0, 5.0)
 
-    def _stochastic_rsi(
-        self, closes: Sequence[float], index: int, current_rsi: float
-    ) -> float:
+    def _stochastic_rsi(self, closes: Sequence[float], index: int, current_rsi: float) -> float:
         if index <= 0:
             return 50.0
         period = min(max(self._window, 5), 14)
@@ -2844,10 +2781,7 @@ class FeatureEngineer:
         current_value = rvi_values[-1]
         if len(rvi_values) >= 4:
             signal = (
-                rvi_values[-1]
-                + 2.0 * rvi_values[-2]
-                + 2.0 * rvi_values[-3]
-                + rvi_values[-4]
+                rvi_values[-1] + 2.0 * rvi_values[-2] + 2.0 * rvi_values[-3] + rvi_values[-4]
             ) / 6.0
         else:
             signal = sum(rvi_values) / len(rvi_values)
@@ -2951,7 +2885,9 @@ class FeatureEngineer:
         value = (float(closes[reference_index]) - sma) / abs(sma)
         return self._clamp(value, -5.0, 5.0)
 
-    def _aroon(self, highs: Sequence[float], lows: Sequence[float], index: int) -> tuple[float, float]:
+    def _aroon(
+        self, highs: Sequence[float], lows: Sequence[float], index: int
+    ) -> tuple[float, float]:
         period = min(max(self._window, 5), 25)
         start = max(0, index - period + 1)
         window_highs = highs[start : index + 1]
@@ -3042,7 +2978,9 @@ class FeatureEngineer:
         start = max(0, index - period + 1)
         window_highs = highs[start : index + 1]
         window_lows = lows[start : index + 1]
-        return max(window_highs) if window_highs else highs[index], min(window_lows) if window_lows else lows[index]
+        return max(window_highs) if window_highs else highs[index], min(
+            window_lows
+        ) if window_lows else lows[index]
 
     def _chaikin_money_flow(
         self,
@@ -3161,9 +3099,7 @@ class FeatureEngineer:
                     last_value = center
         return last_value
 
-    def _true_strength_index(
-        self, closes: Sequence[float], index: int
-    ) -> tuple[float, float]:
+    def _true_strength_index(self, closes: Sequence[float], index: int) -> tuple[float, float]:
         if index < 2:
             return 0.0, 0.0
         short_period = max(2, min(13, index))
@@ -3289,14 +3225,10 @@ class FeatureEngineer:
             kama_slope = (kama - prev_kama) / current_close
         return self._clamp(kama_gap, -5.0, 5.0), self._clamp(kama_slope, -5.0, 5.0)
 
-    def _qstick(
-        self, opens: Sequence[float], closes: Sequence[float], index: int
-    ) -> float:
+    def _qstick(self, opens: Sequence[float], closes: Sequence[float], index: int) -> float:
         period = min(max(3, self._window // 2), index + 1)
         start = max(0, index - period + 1)
-        differences = [
-            float(closes[pos]) - float(opens[pos]) for pos in range(start, index + 1)
-        ]
+        differences = [float(closes[pos]) - float(opens[pos]) for pos in range(start, index + 1)]
         if not differences:
             return 0.0
         average_difference = sum(differences) / len(differences)
@@ -3458,7 +3390,11 @@ class FeatureEngineer:
     ) -> tuple[float, float, float]:
         window = period or max(10, self._window)
         if index < window:
-            return prev_trigger, self._clamp(prev_fisher, -10.0, 10.0), self._clamp(prev_signal, -10.0, 10.0)
+            return (
+                prev_trigger,
+                self._clamp(prev_fisher, -10.0, 10.0),
+                self._clamp(prev_signal, -10.0, 10.0),
+            )
         start = index - window + 1
         window_values = closes[start : index + 1]
         highest = max(window_values)
@@ -3500,9 +3436,7 @@ class FeatureEngineer:
         stc_value = self._clamp(stc_raw, 0.0, 100.0)
         return ema_fast, ema_slow, stoch_ema, stc_raw, stc_value
 
-    def _stochastic_from_history(
-        self, values: Sequence[float], period: int
-    ) -> float:
+    def _stochastic_from_history(self, values: Sequence[float], period: int) -> float:
         if not values:
             return 50.0
         period = max(1, int(period))
@@ -3535,10 +3469,26 @@ class FeatureEngineer:
         start = index - period + 1
         first_slice = slice(start, start + half)
         second_slice = slice(start + half, start + period)
-        first_high = max(highs[first_slice]) if first_slice.stop <= len(highs) else max(highs[start:index + 1])
-        first_low = min(lows[first_slice]) if first_slice.stop <= len(lows) else min(lows[start:index + 1])
-        second_high = max(highs[second_slice]) if second_slice.stop <= len(highs) else max(highs[start:index + 1])
-        second_low = min(lows[second_slice]) if second_slice.stop <= len(lows) else min(lows[start:index + 1])
+        first_high = (
+            max(highs[first_slice])
+            if first_slice.stop <= len(highs)
+            else max(highs[start : index + 1])
+        )
+        first_low = (
+            min(lows[first_slice])
+            if first_slice.stop <= len(lows)
+            else min(lows[start : index + 1])
+        )
+        second_high = (
+            max(highs[second_slice])
+            if second_slice.stop <= len(highs)
+            else max(highs[start : index + 1])
+        )
+        second_low = (
+            min(lows[second_slice])
+            if second_slice.stop <= len(lows)
+            else min(lows[start : index + 1])
+        )
         full_high = max(highs[start : index + 1])
         full_low = min(lows[start : index + 1])
         n1 = float(first_high) - float(first_low)
@@ -3705,7 +3655,7 @@ class FeatureEngineer:
         ema4_last = ema4[-1] if ema4 else ema3_last
         ema5_last = ema5[-1] if ema5 else ema4_last
         ema6_last = ema6[-1] if ema6 else ema5_last
-        c1 = -vf**3
+        c1 = -(vf**3)
         c2 = 3.0 * vf**2 + 3.0 * vf**3
         c3 = -3.0 * vf - 6.0 * vf**2 - 3.0 * vf**3
         c4 = 1.0 + 3.0 * vf + 3.0 * vf**2 + vf**3
@@ -3795,9 +3745,7 @@ class FeatureEngineer:
         correlation = numerator / denominator
         return self._clamp(correlation, -1.0, 1.0)
 
-    def _correlation(
-        self, values_a: Sequence[float], values_b: Sequence[float]
-    ) -> float:
+    def _correlation(self, values_a: Sequence[float], values_b: Sequence[float]) -> float:
         pairs = [
             (float(a), float(b))
             for a, b in zip(values_a, values_b, strict=False)
@@ -3872,9 +3820,7 @@ class FeatureEngineer:
         normalized = entropy / max_entropy
         return self._clamp(normalized, 0.0, 1.0)
 
-    def _sign_distribution(
-        self, values: Sequence[float]
-    ) -> tuple[float, float, float, float]:
+    def _sign_distribution(self, values: Sequence[float]) -> tuple[float, float, float, float]:
         if not values:
             return 0.0, 0.0, 1.0, 0.0
         positive = 0

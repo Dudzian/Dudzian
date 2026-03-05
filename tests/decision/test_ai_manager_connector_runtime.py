@@ -198,9 +198,7 @@ def test_connector_selects_dynamic_risk_profile() -> None:
         risk_profile_map={"high": "aggressive", "income": "income"},
     )
 
-    metadata = {
-        "strategy": {"profile": "scalping_aggressive", "risk_label": "high"}
-    }
+    metadata = {"strategy": {"profile": "scalping_aggressive", "risk_label": "high"}}
 
     candidate = connector.candidate_from_signal(
         symbol="BTCUSDT",

@@ -93,7 +93,9 @@ def _load_keyring(path_or_payload: str | None) -> dict[str, VerifyKey]:
         mapping = document
 
     if not isinstance(mapping, Mapping):
-        raise TpmValidationError("Klucze TPM muszą być obiektem mapującym identyfikator na klucz hex")
+        raise TpmValidationError(
+            "Klucze TPM muszą być obiektem mapującym identyfikator na klucz hex"
+        )
 
     result: dict[str, VerifyKey] = {}
     for key_id, value in mapping.items():
@@ -306,4 +308,3 @@ __all__ = [
     "TpmValidationError",
     "validate_attestation",
 ]
-

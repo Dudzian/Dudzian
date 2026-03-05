@@ -13,6 +13,7 @@ It implements exactly what's exercised in the tests the user shared:
 - Path resolution relative to the config file directory
 - Normalization/validation of UI alert modes
 """
+
 from __future__ import annotations
 
 from dataclasses import dataclass, field
@@ -29,6 +30,7 @@ import yaml
 
 # -------------------------- Helper utilities --------------------------
 
+
 def _to_tuple(seq: Optional[Iterable[Any]]) -> Tuple[Any, ...]:
     if seq is None:
         return tuple()
@@ -42,7 +44,7 @@ def _resolve_path(base_dir: Path, value: Optional[str]) -> Optional[str]:
         return None
     p = Path(str(value))
     if not p.is_absolute():
-        p = (base_dir / p)
+        p = base_dir / p
     # Do not require existence; tests only check semantic resolution
     return str(p.resolve(strict=False))
 
@@ -377,7 +379,9 @@ def _parse_environments_section(
             environment=raw.get("environment"),
             keychain_key=raw.get("keychain_key"),
             credential_purpose=raw.get("credential_purpose"),
-            data_cache_path=_resolve_path(base_dir, raw.get("data_cache_path")) if raw.get("data_cache_path") else None,
+            data_cache_path=_resolve_path(base_dir, raw.get("data_cache_path"))
+            if raw.get("data_cache_path")
+            else None,
             risk_profile=_lc_or_none(raw.get("risk_profile")),
             alert_channels=_to_tuple(raw.get("alert_channels") or []),
             instrument_universe=raw.get("instrument_universe"),
@@ -390,14 +394,18 @@ def _parse_environments_section(
                 backend=str(aa.get("backend") or ""),
                 directory=str(aa.get("directory") or ""),
                 filename_pattern=aa.get("filename_pattern"),
-                retention_days=int(aa.get("retention_days")) if aa.get("retention_days") is not None else None,
+                retention_days=int(aa.get("retention_days"))
+                if aa.get("retention_days") is not None
+                else None,
                 fsync=bool(aa.get("fsync", False)),
             )
 
         # Data quality: inherit from risk profile if not defined
         dq_raw = raw.get("data_quality")
         if dq_raw is None and env_cfg.risk_profile:
-            rp = risk_profiles.get(env_cfg.risk_profile) or risk_profiles.get(str(env_cfg.risk_profile).lower())
+            rp = risk_profiles.get(env_cfg.risk_profile) or risk_profiles.get(
+                str(env_cfg.risk_profile).lower()
+            )
             if isinstance(rp, Mapping):
                 dq_raw = rp.get("data_quality")
         if isinstance(dq_raw, Mapping):
@@ -409,7 +417,9 @@ def _parse_environments_section(
     cfg.environments[name] = env_cfg
 
 
-def _parse_service_tokens(raw_value: Optional[Iterable[Mapping[str, Any]]]) -> Tuple[ServiceTokenConfig, ...]:
+def _parse_service_tokens(
+    raw_value: Optional[Iterable[Mapping[str, Any]]],
+) -> Tuple[ServiceTokenConfig, ...]:
     if raw_value is None:
         return tuple()
     tokens: list[ServiceTokenConfig] = []
@@ -438,7 +448,9 @@ def _parse_metrics_service(ms_raw: Mapping[str, Any], *, base_dir: Path) -> Metr
     ms.enabled = bool(ms_raw.get("enabled", False))
     ms.host = ms_raw.get("host")
     ms.port = int(ms_raw.get("port")) if ms_raw.get("port") is not None else None
-    ms.history_size = int(ms_raw.get("history_size")) if ms_raw.get("history_size") is not None else None
+    ms.history_size = (
+        int(ms_raw.get("history_size")) if ms_raw.get("history_size") is not None else None
+    )
     ms.auth_token = ms_raw.get("auth_token")
     ms.rbac_tokens = _parse_service_tokens(ms_raw.get("rbac_tokens"))
     ms.log_sink = bool(ms_raw.get("log_sink")) if ms_raw.get("log_sink") is not None else None
@@ -446,25 +458,35 @@ def _parse_metrics_service(ms_raw: Mapping[str, Any], *, base_dir: Path) -> Metr
     ms.jsonl_path = _resolve_path(base_dir, ms_raw.get("jsonl_path"))
     ms.ui_alerts_jsonl_path = _resolve_path(base_dir, ms_raw.get("ui_alerts_jsonl_path"))
     ms.ui_alerts_risk_profile = _lc_or_none(ms_raw.get("ui_alerts_risk_profile"))
-    ms.ui_alerts_risk_profiles_file = _resolve_path(base_dir, ms_raw.get("ui_alerts_risk_profiles_file"))
+    ms.ui_alerts_risk_profiles_file = _resolve_path(
+        base_dir, ms_raw.get("ui_alerts_risk_profiles_file")
+    )
 
     # Reduce motion
     ms.reduce_motion_alerts = (
-        bool(ms_raw.get("reduce_motion_alerts")) if ms_raw.get("reduce_motion_alerts") is not None else None
+        bool(ms_raw.get("reduce_motion_alerts"))
+        if ms_raw.get("reduce_motion_alerts") is not None
+        else None
     )
     if "reduce_motion_mode" in ms_raw:
         ms.reduce_motion_mode = _normalize_mode(
-            ms_raw.get("reduce_motion_mode"), allowed=("enable", "disable"), context="reduce_motion_mode"
+            ms_raw.get("reduce_motion_mode"),
+            allowed=("enable", "disable"),
+            context="reduce_motion_mode",
         )
     ms.reduce_motion_category = ms_raw.get("reduce_motion_category")
     ms.reduce_motion_severity_active = ms_raw.get("reduce_motion_severity_active")
     ms.reduce_motion_severity_recovered = ms_raw.get("reduce_motion_severity_recovered")
 
     # Overlay
-    ms.overlay_alerts = bool(ms_raw.get("overlay_alerts")) if ms_raw.get("overlay_alerts") is not None else None
+    ms.overlay_alerts = (
+        bool(ms_raw.get("overlay_alerts")) if ms_raw.get("overlay_alerts") is not None else None
+    )
     if "overlay_alert_mode" in ms_raw:
         ms.overlay_alert_mode = _normalize_mode(
-            ms_raw.get("overlay_alert_mode"), allowed=("enable", "disable", "jsonl"), context="overlay_alert_mode"
+            ms_raw.get("overlay_alert_mode"),
+            allowed=("enable", "disable", "jsonl"),
+            context="overlay_alert_mode",
         )
     ms.overlay_alert_category = ms_raw.get("overlay_alert_category")
     ms.overlay_alert_severity_exceeded = ms_raw.get("overlay_alert_severity_exceeded")
@@ -474,7 +496,9 @@ def _parse_metrics_service(ms_raw: Mapping[str, Any], *, base_dir: Path) -> Metr
         ms.overlay_alert_critical_threshold = int(ms_raw.get("overlay_alert_critical_threshold"))
 
     # Jank
-    ms.jank_alerts = bool(ms_raw.get("jank_alerts")) if ms_raw.get("jank_alerts") is not None else None
+    ms.jank_alerts = (
+        bool(ms_raw.get("jank_alerts")) if ms_raw.get("jank_alerts") is not None else None
+    )
     if "jank_alert_mode" in ms_raw:
         ms.jank_alert_mode = _normalize_mode(
             ms_raw.get("jank_alert_mode"), allowed=("enable", "disable"), context="jank_alert_mode"
@@ -536,7 +560,7 @@ def load_core_config(path: str | Path) -> CoreConfig:
     core.source_path = str(cfg_path)
     core.source_directory = str(base_dir)
 
-    risk_profiles = (data.get("risk_profiles") or {})
+    risk_profiles = data.get("risk_profiles") or {}
 
     # Alerts (channels/providers)
     _parse_alerts_section(core, data.get("alerts") or {})

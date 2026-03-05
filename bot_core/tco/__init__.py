@@ -1,4 +1,5 @@
 """Analiza kosztów transakcyjnych oraz generowanie raportów TCO."""
+
 from .analyzer import TCOAnalyzer
 from .costs import (
     BaseCostComponent,

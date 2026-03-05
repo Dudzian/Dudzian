@@ -1,5 +1,6 @@
 #!/usr/bin/env python
 """Helper to prefer a local wheelhouse for pip installs."""
+
 from __future__ import annotations
 
 import argparse

@@ -10,6 +10,7 @@ environment variable (defaults to `LICENSING_DRIFT_PUSHGATEWAY_AUTH`) to avoid
 leaking credentials in workflow logs. A small timeout protects the job from
 hanging when the Pushgateway endpoint is unreachable.
 """
+
 from __future__ import annotations
 
 import argparse
@@ -26,9 +27,7 @@ def parse_grouping_labels(raw_labels: list[str]) -> Dict[str, str]:
     grouping_labels: Dict[str, str] = {}
     for raw in raw_labels:
         if "=" not in raw:
-            raise argparse.ArgumentTypeError(
-                f"Grouping label '{raw}' must be in key=value format."
-            )
+            raise argparse.ArgumentTypeError(f"Grouping label '{raw}' must be in key=value format.")
         key, value = raw.split("=", 1)
         if not key:
             raise argparse.ArgumentTypeError("Grouping label key cannot be empty.")
@@ -81,9 +80,7 @@ def push_metrics(
         with urllib.request.urlopen(request, timeout=timeout) as response:  # type: ignore[call-arg]
             response.read()
     except urllib.error.HTTPError as exc:  # pragma: no cover - handled in CLI
-        raise RuntimeError(
-            f"Pushgateway responded with HTTP {exc.code}: {exc.reason}"
-        ) from exc
+        raise RuntimeError(f"Pushgateway responded with HTTP {exc.code}: {exc.reason}") from exc
     except urllib.error.URLError as exc:  # pragma: no cover - handled in CLI
         raise RuntimeError(f"Failed to reach Pushgateway: {exc.reason}") from exc
 

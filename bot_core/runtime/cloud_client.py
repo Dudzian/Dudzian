@@ -96,8 +96,12 @@ def load_license_identity(
             LOGGER.warning("Niepoprawny JSON w statusie licencji: %s", exc)
             payload = {}
         if isinstance(payload, Mapping):
-            license_id = str(payload.get("license_id") or payload.get("licenseId") or "").strip() or None
-            fingerprint = str(payload.get("local_hwid") or payload.get("fingerprint") or "").strip() or None
+            license_id = (
+                str(payload.get("license_id") or payload.get("licenseId") or "").strip() or None
+            )
+            fingerprint = (
+                str(payload.get("local_hwid") or payload.get("fingerprint") or "").strip() or None
+            )
             source = str(payload.get("bundle_path") or source_path)
     provider = hwid_provider or HwIdProvider()
     if not fingerprint:
@@ -247,8 +251,14 @@ def _configure_tls(
         return None, None
     if tls_cfg is None:
         return grpc.ssl_channel_credentials(), None
-    root_cert = Path(tls_cfg.ca_certificate).expanduser().read_bytes() if tls_cfg.ca_certificate else None
-    client_cert = Path(tls_cfg.client_certificate).expanduser().read_bytes() if tls_cfg.client_certificate else None
+    root_cert = (
+        Path(tls_cfg.ca_certificate).expanduser().read_bytes() if tls_cfg.ca_certificate else None
+    )
+    client_cert = (
+        Path(tls_cfg.client_certificate).expanduser().read_bytes()
+        if tls_cfg.client_certificate
+        else None
+    )
     client_key = Path(tls_cfg.client_key).expanduser().read_bytes() if tls_cfg.client_key else None
     credentials = grpc.ssl_channel_credentials(
         root_certificates=root_cert,
@@ -260,7 +270,9 @@ def _configure_tls(
 
 def _build_channel(options: CloudClientOptions, channel_options: tuple[tuple[str, str], ...]):
     if options.tls_credentials is not None:
-        return grpc.secure_channel(options.client.address, options.tls_credentials, options=channel_options)
+        return grpc.secure_channel(
+            options.client.address, options.tls_credentials, options=channel_options
+        )
     return grpc.insecure_channel(options.client.address, options=channel_options)
 
 

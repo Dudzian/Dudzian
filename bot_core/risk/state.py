@@ -90,14 +90,20 @@ class RiskState:
             "peak_equity": self.peak_equity,
             "force_liquidation": self.force_liquidation,
             "last_equity": self.last_equity,
-            "positions": {symbol: position.to_mapping() for symbol, position in self.positions.items()},
+            "positions": {
+                symbol: position.to_mapping() for symbol, position in self.positions.items()
+            },
             "start_of_week_equity": self.start_of_week_equity,
             "rolling_profit_30d": self.rolling_profit_30d,
             "rolling_costs_30d": self.rolling_costs_30d,
             "hedge_mode": self.hedge_mode,
             "hedge_reason": self.hedge_reason,
-            "hedge_activated_at": self.hedge_activated_at.isoformat() if self.hedge_activated_at else None,
-            "hedge_cooldown_until": self.hedge_cooldown_until.isoformat() if self.hedge_cooldown_until else None,
+            "hedge_activated_at": self.hedge_activated_at.isoformat()
+            if self.hedge_activated_at
+            else None,
+            "hedge_cooldown_until": self.hedge_cooldown_until.isoformat()
+            if self.hedge_cooldown_until
+            else None,
         }
 
     @classmethod
@@ -106,9 +112,7 @@ class RiskState:
         parsed_day = datetime.fromisoformat(day_str).date()
         start_of_week_str = data.get("start_of_week")
         start_of_week = (
-            datetime.fromisoformat(str(start_of_week_str)).date()
-            if start_of_week_str
-            else None
+            datetime.fromisoformat(str(start_of_week_str)).date() if start_of_week_str else None
         )
         positions_raw = data.get("positions", {})
         positions: Dict[str, PositionState] = {}
@@ -147,7 +151,9 @@ class RiskState:
             rolling_profit_30d=float(data.get("rolling_profit_30d", 0.0)),
             rolling_costs_30d=float(data.get("rolling_costs_30d", 0.0)),
             hedge_mode=bool(data.get("hedge_mode", False)),
-            hedge_reason=str(data.get("hedge_reason")) if data.get("hedge_reason") not in (None, "") else None,
+            hedge_reason=str(data.get("hedge_reason"))
+            if data.get("hedge_reason") not in (None, "")
+            else None,
             hedge_activated_at=hedge_activated_at,
             hedge_cooldown_until=hedge_cooldown_until,
         )
@@ -311,7 +317,13 @@ class RiskSnapshot:
         limits = dict(limits_raw) if isinstance(limits_raw, Mapping) else None
         cost_raw = payload.get("cost_breakdown") if isinstance(payload, Mapping) else None
         cost_breakdown = dict(cost_raw) if isinstance(cost_raw, Mapping) else None
-        return cls(profile=profile, state=dict(payload), metrics=metrics, limits=limits, cost_breakdown=cost_breakdown)
+        return cls(
+            profile=profile,
+            state=dict(payload),
+            metrics=metrics,
+            limits=limits,
+            cost_breakdown=cost_breakdown,
+        )
 
 
 __all__ = [

@@ -1,4 +1,5 @@
 """REST API (FastAPI) prezentujące logi audytu ryzyka."""
+
 from __future__ import annotations
 
 from datetime import datetime
@@ -71,4 +72,3 @@ def _normalise_row(row: Dict[str, Any]) -> Dict[str, Any]:
 
 
 __all__ = ["create_app", "RiskAuditRecord"]
-

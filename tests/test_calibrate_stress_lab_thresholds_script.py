@@ -85,10 +85,12 @@ def test_calibrate_stress_lab_cli(tmp_path: Path) -> None:
 
     segments_path = tmp_path / "segments.json"
     segments_path.write_text(
-        json.dumps([
-            {"name": "core", "symbols": ["BTCUSDT"]},
-            {"name": "alts", "symbols": ["UNIUSDT"]},
-        ]),
+        json.dumps(
+            [
+                {"name": "core", "symbols": ["BTCUSDT"]},
+                {"name": "alts", "symbols": ["UNIUSDT"]},
+            ]
+        ),
         encoding="utf-8",
     )
 

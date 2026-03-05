@@ -52,7 +52,7 @@ def test_resilience_cycle_end_to_end(tmp_path: Path) -> None:
                 "severity": "critical",
                 "actions": [
                     {
-                        "module": "bot_core.runtime", 
+                        "module": "bot_core.runtime",
                         "command": ["echo", "restart"],
                         "delay_seconds": 0,
                         "tags": ["stage6"],

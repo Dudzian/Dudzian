@@ -6,7 +6,9 @@ from bot_core.ai.validation import ModelQualityReport, record_model_quality_repo
 from bot_core.reporting.model_quality import load_champion_overview, promote_challenger
 
 
-def _build_report(version: str, directional: float, mae: float, status: str = "improved") -> ModelQualityReport:
+def _build_report(
+    version: str, directional: float, mae: float, status: str = "improved"
+) -> ModelQualityReport:
     metrics = {
         "summary": {
             "directional_accuracy": directional,
@@ -69,7 +71,9 @@ def test_promote_challenger_replaces_champion(tmp_path) -> None:
     decision_second = record_model_quality_report(second, history_root=history_root)
     assert decision_second.decision == "challenger"
 
-    decision_promote = promote_challenger("demo", "v2", base_dir=history_root, reason="Manual override")
+    decision_promote = promote_challenger(
+        "demo", "v2", base_dir=history_root, reason="Manual override"
+    )
     assert decision_promote.decision == "champion"
     assert decision_promote.reason == "Manual override"
 

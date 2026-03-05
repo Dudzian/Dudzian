@@ -1,4 +1,5 @@
 """Pomocnicze funkcje podpisywania ładunków JSON (HMAC oraz portfele)."""
+
 from __future__ import annotations
 
 import abc
@@ -89,7 +90,9 @@ def verify_hmac_signature(
     if signature.get("algorithm") != algorithm:
         return False
 
-    expected = build_hmac_signature(payload, key=key, algorithm=algorithm, key_id=signature.get("key_id"))
+    expected = build_hmac_signature(
+        payload, key=key, algorithm=algorithm, key_id=signature.get("key_id")
+    )
     actual_value = signature.get("value")
     expected_value = expected.get("value")
     if not isinstance(actual_value, str) or not isinstance(expected_value, str):
@@ -199,7 +202,9 @@ class HmacTransactionSigner(TransactionSigner):
         self.key_id = key_id
 
     def sign(self, payload: JsonPayload) -> Mapping[str, str]:
-        return build_hmac_signature(payload, key=self._key, algorithm=self.algorithm, key_id=self.key_id)
+        return build_hmac_signature(
+            payload, key=self._key, algorithm=self.algorithm, key_id=self.key_id
+        )
 
     def close(self) -> None:  # pragma: no cover - brak zasobów zewnętrznych
         return None
@@ -309,7 +314,10 @@ class TransactionSignerSelector:
                     close_method()
                 except Exception as exc:  # noqa: BLE001
                     _LOGGER.debug(
-                        "Nie udało się zamknąć podpisującego %s: %s", signer, exc, exc_info=_LOGGER.isEnabledFor(logging.DEBUG)
+                        "Nie udało się zamknąć podpisującego %s: %s",
+                        signer,
+                        exc,
+                        exc_info=_LOGGER.isEnabledFor(logging.DEBUG),
                     )
 
     def describe_signers(self) -> Mapping[str | None, Mapping[str, Any]]:
@@ -333,7 +341,9 @@ class TransactionSignerSelector:
                         broken_message = "Nie uda�o si� pobra� opisu podpisuj�cego"
                         logging.getLogger().debug(broken_message)
                         logging.getLogger().debug("Signer.describe() raised", exc_info=True)
-                        logging.getLogger().debug("Nie uda\uFFFDo si\uFFFD pobra\uFFFD opisu podpisuj\uFFFDcego")
+                        logging.getLogger().debug(
+                            "Nie uda\ufffdo si\ufffd pobra\ufffd opisu podpisuj\ufffdcego"
+                        )
                         _LOGGER.warning(
                             "Nie udało się pobrać opisu podpisującego (konto %s, signer %s)",
                             account_id,
@@ -366,7 +376,9 @@ class TransactionSignerSelector:
                 if "algorithm" not in info_dict:
                     info_dict["algorithm"] = getattr(signer, "algorithm", "unknown")
                 if "requires_hardware" not in info_dict:
-                    info_dict["requires_hardware"] = bool(getattr(signer, "requires_hardware", False))
+                    info_dict["requires_hardware"] = bool(
+                        getattr(signer, "requires_hardware", False)
+                    )
                 if "key_id" not in info_dict and getattr(signer, "key_id", None) is not None:
                     info_dict["key_id"] = signer.key_id  # type: ignore[attr-defined]
 
@@ -495,7 +507,9 @@ class TransactionSignerSelector:
                         "type": "missing_key_id",
                         "severity": "warning",
                         "accounts": missing_key_accounts,
-                        "count": int(hardware_summary.get("missing_key_id_count", len(missing_key_accounts))),
+                        "count": int(
+                            hardware_summary.get("missing_key_id_count", len(missing_key_accounts))
+                        ),
                     }
                 )
             )
@@ -508,7 +522,9 @@ class TransactionSignerSelector:
                         "type": "software_signer",
                         "severity": "warning",
                         "accounts": software_accounts,
-                        "count": int(hardware_summary.get("software_account_count", len(software_accounts))),
+                        "count": int(
+                            hardware_summary.get("software_account_count", len(software_accounts))
+                        ),
                     }
                 )
             )
@@ -523,16 +539,22 @@ class TransactionSignerSelector:
                             "severity": "critical",
                             "key_id": key_id,
                             "algorithms": tuple(algorithms),
-                            "accounts": tuple(summary.get("accounts", ())) if isinstance(summary, Mapping) else (),
-                            "signer_count": int(summary.get("signer_count", 0)) if isinstance(summary, Mapping) else 0,
+                            "accounts": tuple(summary.get("accounts", ()))
+                            if isinstance(summary, Mapping)
+                            else (),
+                            "signer_count": int(summary.get("signer_count", 0))
+                            if isinstance(summary, Mapping)
+                            else 0,
                         }
                     )
                 )
 
             hardware_modes = summary.get("hardware_modes") if isinstance(summary, Mapping) else None
             mixed_hardware = summary.get("mixed_hardware") if isinstance(summary, Mapping) else None
-            if isinstance(hardware_modes, (list, tuple)) and len(hardware_modes) > 1 and any(
-                isinstance(mode, bool) for mode in hardware_modes
+            if (
+                isinstance(hardware_modes, (list, tuple))
+                and len(hardware_modes) > 1
+                and any(isinstance(mode, bool) for mode in hardware_modes)
             ):
                 issues.append(
                     MappingProxyType(
@@ -542,8 +564,12 @@ class TransactionSignerSelector:
                             "key_id": key_id,
                             "hardware_modes": tuple(bool(mode) for mode in hardware_modes),
                             "mixed_hardware": bool(mixed_hardware),
-                            "accounts": tuple(summary.get("accounts", ())) if isinstance(summary, Mapping) else (),
-                            "signer_count": int(summary.get("signer_count", 0)) if isinstance(summary, Mapping) else 0,
+                            "accounts": tuple(summary.get("accounts", ()))
+                            if isinstance(summary, Mapping)
+                            else (),
+                            "signer_count": int(summary.get("signer_count", 0))
+                            if isinstance(summary, Mapping)
+                            else 0,
                         }
                     )
                 )
@@ -575,7 +601,7 @@ class TransactionSignerSelector:
                 broken_message = "Nie uda�o si� zweryfikowa� podpisu"
                 logging.getLogger().debug(broken_message)
                 logging.getLogger().debug("Signer.verify() raised", exc_info=True)
-                logging.getLogger().debug("Nie uda\uFFFDo si\uFFFD zweryfikowa\uFFFD podpisu")
+                logging.getLogger().debug("Nie uda\ufffdo si\ufffd zweryfikowa\ufffd podpisu")
                 _LOGGER.debug(
                     "Nie udało się zweryfikować podpisu z użyciem %s: %s",
                     candidate,
@@ -698,7 +724,9 @@ def build_transaction_signer_from_config(config: Mapping[str, Any]) -> Transacti
     raise ValueError(f"Nieznany typ podpisującego: {signer_type}")
 
 
-def build_transaction_signer_selector(config: Mapping[str, Any] | None) -> TransactionSignerSelector | None:
+def build_transaction_signer_selector(
+    config: Mapping[str, Any] | None,
+) -> TransactionSignerSelector | None:
     """Tworzy selektor podpisów na podstawie konfiguracji runtime."""
 
     if not isinstance(config, Mapping) or not config:

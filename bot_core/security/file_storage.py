@@ -1,4 +1,5 @@
 """Magazyn sekretów oparty o zaszyfrowany plik dla środowisk headless."""
+
 from __future__ import annotations
 
 import base64
@@ -98,7 +99,9 @@ class EncryptedFileSecretStorage(SecretStorage):
         try:
             payload = json.loads(decoded.decode("utf-8"))
         except (UnicodeDecodeError, json.JSONDecodeError) as exc:
-            raise SecretStorageError("Nie udało się zdekodować zapasowego magazynu sekretów.") from exc
+            raise SecretStorageError(
+                "Nie udało się zdekodować zapasowego magazynu sekretów."
+            ) from exc
         if not isinstance(payload, dict):
             raise SecretStorageError("Backup magazynu sekretów musi być obiektem JSON.")
 
@@ -166,7 +169,9 @@ class EncryptedFileSecretStorage(SecretStorage):
             try:
                 self._iterations = int(iterations_value)
             except (TypeError, ValueError) as exc:
-                raise SecretStorageError("Pole 'iterations' w magazynie sekretów jest niepoprawne.") from exc
+                raise SecretStorageError(
+                    "Pole 'iterations' w magazynie sekretów jest niepoprawne."
+                ) from exc
 
         key = _derive_key(self._passphrase, self._salt, iterations=self._iterations)
         self._fernet = Fernet(key)
@@ -186,7 +191,9 @@ class EncryptedFileSecretStorage(SecretStorage):
             ) from exc
 
         if not isinstance(raw_dict, dict):
-            raise SecretStorageError("Oczekiwano słownika z parami klucz/wartość w magazynie sekretów.")
+            raise SecretStorageError(
+                "Oczekiwano słownika z parami klucz/wartość w magazynie sekretów."
+            )
 
         self._data = {str(k): str(v) for k, v in raw_dict.items()}
 
@@ -205,14 +212,19 @@ class EncryptedFileSecretStorage(SecretStorage):
             "ciphertext": base64.b64encode(ciphertext).decode("ascii"),
             "iterations": self._iterations,
             "checksum": checksum,
-            "updated_at": datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z"),
+            "updated_at": datetime.now(timezone.utc)
+            .replace(microsecond=0)
+            .isoformat()
+            .replace("+00:00", "Z"),
         }
         return payload
 
     def _persist(self) -> None:
         payload = self._build_payload()
 
-        with NamedTemporaryFile("w", dir=str(self._path.parent), delete=False, encoding="utf-8") as tmp:
+        with NamedTemporaryFile(
+            "w", dir=str(self._path.parent), delete=False, encoding="utf-8"
+        ) as tmp:
             json.dump(payload, tmp, separators=(",", ":"))
             tmp.flush()
             os.fsync(tmp.fileno())

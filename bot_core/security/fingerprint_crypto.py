@@ -20,7 +20,9 @@ class _CryptoBackend(Protocol):
     def current_hwid_digest(self, fingerprint: str) -> str:  # pragma: no cover - interface
         ...
 
-    def derive_encryption_key(self, fingerprint: str, salt: bytes) -> bytes:  # pragma: no cover - interface
+    def derive_encryption_key(
+        self, fingerprint: str, salt: bytes
+    ) -> bytes:  # pragma: no cover - interface
         ...
 
     def encrypt_license_secret(
@@ -251,4 +253,3 @@ __all__ = [
     "encrypt_license_secret",
     "reset_backend",
 ]
-

@@ -1,4 +1,5 @@
 """Pakiet z lekkim event-busem wykorzystywanym w rdzeniu bota."""
+
 from __future__ import annotations
 
 from . import emitter as _emitter

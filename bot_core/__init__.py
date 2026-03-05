@@ -1,4 +1,5 @@
 """Podstawowy pakiet runtime bota handlowego."""
+
 from __future__ import annotations
 
 import importlib
@@ -33,11 +34,14 @@ except Exception:  # pragma: no cover - eksponujemy stabilny interfejs nawet bez
     def get_sms_provider(*_: Any, **__: Any) -> Callable[..., Any]:  # type: ignore[misc]
         raise RuntimeError("SMS providers are not available in this environment")
 
+
 try:  # pragma: no cover - loader konfiguracji może wymagać dodatkowych pakietów
     from .config.loader import load_core_config
 except Exception:  # pragma: no cover
+
     def load_core_config(*_: Any, **__: Any) -> Any:  # type: ignore[misc]
         raise RuntimeError("Core configuration loader is not available")
+
 
 try:  # pragma: no cover - modele konfiguracji są opcjonalne
     from .config.models import CoreConfig
@@ -78,6 +82,7 @@ except Exception:  # pragma: no cover
 
     def bootstrap_environment(*_: Any, **__: Any) -> Any:  # type: ignore[misc]
         raise RuntimeError("Runtime bootstrap is not available")
+
 
 try:  # pragma: no cover - komponenty bezpieczeństwa mogą nie być obecne
     from .security import (

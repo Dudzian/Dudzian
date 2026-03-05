@@ -141,7 +141,9 @@ def test_fetch_account_snapshot_uses_watchdog(monkeypatch: pytest.MonkeyPatch) -
 
 
 def test_fetch_ohlcv_maps_items(monkeypatch: pytest.MonkeyPatch) -> None:
-    adapter = _configured_adapter(ExchangeCredentials(key_id="public", environment=Environment.LIVE))
+    adapter = _configured_adapter(
+        ExchangeCredentials(key_id="public", environment=Environment.LIVE)
+    )
 
     def fake_public_request(self, path: str, *, params=None, method="GET"):
         assert path == "/trading/candle/history/BTC-PLN/86400"
@@ -372,7 +374,10 @@ def test_public_request_retries_throttling(monkeypatch: pytest.MonkeyPatch) -> N
                 BytesIO(body),
             )
         return _FakeResponse(
-            {"status": "Ok", "items": {"BTC-PLN": {"market": {"first": "BTC", "second": "PLN"}, "rate": "100"}}},
+            {
+                "status": "Ok",
+                "items": {"BTC-PLN": {"market": {"first": "BTC", "second": "PLN"}, "rate": "100"}},
+            },
             headers={"X-RateLimit-Remaining": "99"},
         )
 
@@ -567,7 +572,9 @@ def test_public_request_raises_api_error(monkeypatch: pytest.MonkeyPatch) -> Non
 
 
 def test_zonda_spot_adapter_global_throttle_failover(monkeypatch: pytest.MonkeyPatch) -> None:
-    adapter = _configured_adapter(ExchangeCredentials(key_id="k", secret="s", environment=Environment.LIVE))
+    adapter = _configured_adapter(
+        ExchangeCredentials(key_id="k", secret="s", environment=Environment.LIVE)
+    )
 
     monotonic_now = [2_000.0]
 
@@ -609,7 +616,9 @@ def test_zonda_spot_adapter_global_throttle_failover(monkeypatch: pytest.MonkeyP
 
 
 def test_zonda_spot_adapter_reconnect_cooldown(monkeypatch: pytest.MonkeyPatch) -> None:
-    adapter = _configured_adapter(ExchangeCredentials(key_id="k", secret="s", environment=Environment.LIVE))
+    adapter = _configured_adapter(
+        ExchangeCredentials(key_id="k", secret="s", environment=Environment.LIVE)
+    )
 
     monotonic_now = [4_000.0]
 

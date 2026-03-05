@@ -1,4 +1,5 @@
 """Strategia trend-following i momentum na interwale dziennym."""
+
 from __future__ import annotations
 
 from collections import deque
@@ -24,10 +25,7 @@ class DailyTrendMomentumSettings:
     def max_history(self) -> int:
         """Najdłuższe wymagane okno danych."""
 
-        return (
-            max(self.slow_ma, self.breakout_lookback, self.momentum_window, self.atr_window)
-            + 2
-        )
+        return max(self.slow_ma, self.breakout_lookback, self.momentum_window, self.atr_window) + 2
 
 
 @dataclass(slots=True)
@@ -208,7 +206,9 @@ class DailyTrendMomentumStrategy(StrategyEngine):
         confidence = 0.35 + 3.0 * stop_distance + 2.0 * trend_component
         return max(0.1, min(1.0, confidence))
 
-    def _build_metadata(self, metrics: Mapping[str, float], position_flag: float) -> Mapping[str, float]:
+    def _build_metadata(
+        self, metrics: Mapping[str, float], position_flag: float
+    ) -> Mapping[str, float]:
         return {
             "sma_fast": metrics["sma_fast"],
             "sma_slow": metrics["sma_slow"],

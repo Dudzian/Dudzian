@@ -66,7 +66,9 @@ def test_analyzer_aggregates_costs_and_alerts() -> None:
     assert "default" in report.schedulers
     total = report.total
     assert total.trade_count == 2
-    assert float(total.notional) == float(Decimal("0.5") * Decimal("20000") + Decimal("0.4") * Decimal("21000"))
+    assert float(total.notional) == float(
+        Decimal("0.5") * Decimal("20000") + Decimal("0.4") * Decimal("21000")
+    )
     assert float(total.breakdown.commission) == 11.0
     assert float(total.breakdown.slippage) == 5.0
     assert float(total.breakdown.funding) == 1.5

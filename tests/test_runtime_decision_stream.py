@@ -79,10 +79,12 @@ def _ts(value: str) -> timestamp_pb2.Timestamp:
 
 
 def test_stream_resends_snapshot_after_truncation():
-    journal = _DummyJournal([
-        _record("first"),
-        _record("second", "2024-01-01T00:01:00+00:00"),
-    ])
+    journal = _DummyJournal(
+        [
+            _record("first"),
+            _record("second", "2024-01-01T00:01:00+00:00"),
+        ]
+    )
     context = _DummyRuntimeContext(journal)
     servicer = api_server._RuntimeServicer(context)
     request = trading_pb2.StreamDecisionsRequest(limit=1, poll_interval_seconds=0.01)

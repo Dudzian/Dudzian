@@ -97,7 +97,9 @@ def _create_manifest(
 
 
 def test_verify_update_success(tmp_path: Path, license_result: LicenseValidationResult) -> None:
-    manifest_path, signature_path, key = _create_manifest(tmp_path, allowed_profiles=["paper", "live"])
+    manifest_path, signature_path, key = _create_manifest(
+        tmp_path, allowed_profiles=["paper", "live"]
+    )
     bundle_dir = manifest_path.parent
 
     result = verify_update_bundle(
@@ -115,7 +117,9 @@ def test_verify_update_success(tmp_path: Path, license_result: LicenseValidation
     assert result.errors == []
 
 
-def test_verify_update_rejects_profile(tmp_path: Path, license_result: LicenseValidationResult) -> None:
+def test_verify_update_rejects_profile(
+    tmp_path: Path, license_result: LicenseValidationResult
+) -> None:
     manifest_path, signature_path, key = _create_manifest(tmp_path, allowed_profiles=["live"])
     bundle_dir = manifest_path.parent
 
@@ -133,7 +137,9 @@ def test_verify_update_rejects_profile(tmp_path: Path, license_result: LicenseVa
     assert "live" in result.errors[0]
 
 
-def test_verify_update_requires_oem_module(tmp_path: Path, license_result: LicenseValidationResult) -> None:
+def test_verify_update_requires_oem_module(
+    tmp_path: Path, license_result: LicenseValidationResult
+) -> None:
     # usuń moduł OEM Updater z capabilities
     license_result.capabilities = build_capabilities_from_payload(
         {
@@ -162,7 +168,9 @@ def test_verify_update_requires_oem_module(tmp_path: Path, license_result: Licen
     assert "OEM Updater" in " ".join(result.errors)
 
 
-def test_verify_update_respects_maintenance(tmp_path: Path, license_result: LicenseValidationResult) -> None:
+def test_verify_update_respects_maintenance(
+    tmp_path: Path, license_result: LicenseValidationResult
+) -> None:
     license_result.capabilities = build_capabilities_from_payload(
         {
             "edition": "pro",

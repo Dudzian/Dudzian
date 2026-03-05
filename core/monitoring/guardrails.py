@@ -1,4 +1,5 @@
 """Guardrails monitorujące kolejkę I/O, retraining i powiązane alerty."""
+
 from __future__ import annotations
 
 """Guardrails monitorujące kolejkę I/O i retraining."""
@@ -86,8 +87,8 @@ class AsyncIOGuardrails:
         self._timeout_streaks: MutableMapping[str, int] = {}
         self._retraining_metrics = retraining_metrics or RetrainingMetricSet()
         self._retraining_duration_threshold = max(0.0, float(retraining_duration_warning_threshold))
-        self._drift_warning_threshold = None if drift_warning_threshold is None else max(
-            0.0, float(drift_warning_threshold)
+        self._drift_warning_threshold = (
+            None if drift_warning_threshold is None else max(0.0, float(drift_warning_threshold))
         )
         self._compliance_metrics = compliance_metrics or ComplianceMetricSet()
         self._retraining_log_path = Path(
@@ -105,9 +106,7 @@ class AsyncIOGuardrails:
             )
             retraining_handler.setLevel(logging.INFO)
             retraining_handler.setFormatter(
-                logging.Formatter(
-                    "%(asctime)s %(levelname)s %(message)s", "%Y-%m-%dT%H:%M:%S%z"
-                )
+                logging.Formatter("%(asctime)s %(levelname)s %(message)s", "%Y-%m-%dT%H:%M:%S%z")
             )
             self._retraining_logger.addHandler(retraining_handler)
 
@@ -200,7 +199,10 @@ class AsyncIOGuardrails:
             self._retraining_metrics.duration_seconds.observe(duration, labels=labels)
 
             severity = "info"
-            if self._retraining_duration_threshold > 0 and duration >= self._retraining_duration_threshold:
+            if (
+                self._retraining_duration_threshold > 0
+                and duration >= self._retraining_duration_threshold
+            ):
                 severity = "warning"
 
             payload = {
@@ -331,7 +333,9 @@ class AsyncIOGuardrails:
             try:
                 self._ui_notifier(event, payload)
             except Exception:  # pragma: no cover - kanał UI jest opcjonalny
-                logging.getLogger(__name__).debug("Nie udało się wysłać zdarzenia UI", exc_info=True)
+                logging.getLogger(__name__).debug(
+                    "Nie udało się wysłać zdarzenia UI", exc_info=True
+                )
 
 
 __all__ = [

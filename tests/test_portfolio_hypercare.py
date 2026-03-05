@@ -150,9 +150,7 @@ def test_portfolio_hypercare_cycle_generates_signed_summary(tmp_path: Path) -> N
 
     assert decision_log.path is not None
     decision_entries = [
-        line
-        for line in decision_log.path.read_text(encoding="utf-8").splitlines()
-        if line
+        line for line in decision_log.path.read_text(encoding="utf-8").splitlines() if line
     ]
     assert decision_entries, "Decision log powinien zawierać wpis"
 

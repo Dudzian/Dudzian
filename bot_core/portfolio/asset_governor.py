@@ -34,6 +34,7 @@ _SEVERITY_ORDER = {
 @dataclass(slots=True)
 class PortfolioDriftTolerance:
     """Parametry tolerancji dryfu od alokacji docelowej."""
+
     absolute: float = 0.01
     relative: float = 0.25
 
@@ -41,6 +42,7 @@ class PortfolioDriftTolerance:
 @dataclass(slots=True)
 class PortfolioRiskBudgetConfig:
     """Budżety ryzyka przypisane do aktywów."""
+
     name: str
     max_var_pct: float | None = None
     max_drawdown_pct: float | None = None
@@ -52,6 +54,7 @@ class PortfolioRiskBudgetConfig:
 @dataclass(slots=True)
 class PortfolioAssetConfig:
     """Konfiguracja pojedynczego aktywa."""
+
     symbol: str
     target_weight: float
     min_weight: float | None = None
@@ -66,6 +69,7 @@ class PortfolioAssetConfig:
 @dataclass(slots=True)
 class PortfolioSloOverrideConfig:
     """Reguły reagujące na statusy SLO."""
+
     slo_name: str
     apply_on: Sequence[str] = field(default_factory=lambda: ("warning", "breach"))
     weight_multiplier: float | None = None
@@ -79,6 +83,7 @@ class PortfolioSloOverrideConfig:
 @dataclass(slots=True)
 class AssetPortfolioGovernorConfig:
     """Konfiguracja asset-level governora."""
+
     name: str
     portfolio_id: str
     drift_tolerance: PortfolioDriftTolerance = field(default_factory=PortfolioDriftTolerance)
@@ -96,6 +101,7 @@ class AssetPortfolioGovernorConfig:
 @dataclass(slots=True)
 class PortfolioAdjustment:
     """Sugestia korekty alokacji."""
+
     symbol: str
     current_weight: float
     proposed_weight: float
@@ -119,6 +125,7 @@ class PortfolioAdjustment:
 @dataclass(slots=True)
 class PortfolioAdvisory:
     """Informacja o ryzyku."""
+
     code: str
     severity: str
     message: str
@@ -140,6 +147,7 @@ class PortfolioAdvisory:
 @dataclass(slots=True)
 class PortfolioDecision:
     """Wynik ewaluacji alokacji portfela (asset-level)."""
+
     timestamp: datetime
     portfolio_id: str
     portfolio_value: float
@@ -201,7 +209,9 @@ class AssetPortfolioGovernor:
         advisories: list[PortfolioAdvisory] = []
         rebalance_required = False
 
-        overrides_by_symbol, overrides_by_budget, generic_overrides = self._prepare_stress_index(stress_overrides)
+        overrides_by_symbol, overrides_by_budget, generic_overrides = self._prepare_stress_index(
+            stress_overrides
+        )
 
         for symbol, asset in self._asset_map.items():
             current_weight = float(allocations.get(symbol, 0.0))
@@ -320,7 +330,8 @@ class AssetPortfolioGovernor:
         return bounded
 
     def _prepare_stress_index(
-        self, overrides: Sequence[StressOverrideRecommendation] | None,
+        self,
+        overrides: Sequence[StressOverrideRecommendation] | None,
     ) -> tuple[
         Mapping[str, Sequence[StressOverrideRecommendation]],
         Mapping[str, Sequence[StressOverrideRecommendation]],
@@ -374,7 +385,9 @@ class AssetPortfolioGovernor:
         if not overrides:
             return proposed_weight, severity, False
 
-        ordered = sorted(overrides, key=lambda item: self._severity_rank(item.severity), reverse=True)
+        ordered = sorted(
+            overrides, key=lambda item: self._severity_rank(item.severity), reverse=True
+        )
         metadata["stress::count"] = float(len(ordered))
         override_force = False
 
@@ -512,7 +525,11 @@ class AssetPortfolioGovernor:
                 )
         if budget.max_leverage is not None:
             if abs(current_weight) > budget.max_leverage:
-                triggers.append("weight {:.2f} > leverage {:.2f}".format(abs(current_weight), budget.max_leverage))
+                triggers.append(
+                    "weight {:.2f} > leverage {:.2f}".format(
+                        abs(current_weight), budget.max_leverage
+                    )
+                )
 
         if triggers:
             advisories.append(

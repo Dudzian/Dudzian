@@ -28,8 +28,12 @@ def _service_for(
     interval_days: float = 120.0,
 ) -> HardwareFingerprintService:
     registry = RotationRegistry(rotation_path)
-    registry.mark_rotated("key-2023", "hardware-fingerprint", timestamp=FIXED_NOW - timedelta(days=95))
-    registry.mark_rotated("key-2024", "hardware-fingerprint", timestamp=FIXED_NOW - timedelta(days=10))
+    registry.mark_rotated(
+        "key-2023", "hardware-fingerprint", timestamp=FIXED_NOW - timedelta(days=95)
+    )
+    registry.mark_rotated(
+        "key-2024", "hardware-fingerprint", timestamp=FIXED_NOW - timedelta(days=10)
+    )
     provider = RotatingHmacKeyProvider(
         {"key-2023": b"archival-secret", "key-2024": b"fresh-secret"},
         registry,
@@ -100,10 +104,7 @@ def test_fingerprint_deterministic_across_platforms(rotation_path, label, data):
     cpu_entry = components["cpu"]
     assert data["vendor"] in cpu_entry["normalized"]
     assert components["mac"]["raw"].lower().replace("-", ":")
-    assert (
-        record_first.payload["component_digests"]["mac"]
-        == components["mac"]["digest"]
-    )
+    assert record_first.payload["component_digests"]["mac"] == components["mac"]["digest"]
 
     if data.get("tpm") is None:
         assert components["tpm"] is None

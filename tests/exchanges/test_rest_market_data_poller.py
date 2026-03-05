@@ -52,7 +52,9 @@ def test_rest_market_data_poller_collects_snapshot() -> None:
     assert entry["max_amount"] == 5.0
 
 
-def test_rest_market_data_poller_applies_environment_profile(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_rest_market_data_poller_applies_environment_profile(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     applied: list[tuple[str, str | None, Any | None]] = []
 
     class _Manager:

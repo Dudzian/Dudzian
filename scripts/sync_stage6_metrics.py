@@ -57,9 +57,7 @@ def _validate_metrics(path: Path) -> int:
     try:
         json.loads(text)
     except json.JSONDecodeError as exc:  # pragma: no cover - defensywnie
-        raise ValueError(
-            f"Plik {path} nie zawiera prawidłowego JSON z metrykami Stage6"
-        ) from exc
+        raise ValueError(f"Plik {path} nie zawiera prawidłowego JSON z metrykami Stage6") from exc
 
     try:
         measurements = load_slo_measurements(path)
@@ -69,9 +67,7 @@ def _validate_metrics(path: Path) -> int:
         ) from exc
 
     if not measurements:
-        raise ValueError(
-            f"Plik {path} nie zawiera żadnych pomiarów SLO Stage6"
-        )
+        raise ValueError(f"Plik {path} nie zawiera żadnych pomiarów SLO Stage6")
 
     return len(measurements)
 
@@ -120,13 +116,9 @@ def main(argv: list[str] | None = None) -> int:
         print(f"[sync_stage6_metrics] Błąd: {exc}", file=sys.stderr)
         return 1
 
-    message = [
-        f"[sync_stage6_metrics] Zapisano metryki Stage6 do {output} (źródło: {source})."
-    ]
+    message = [f"[sync_stage6_metrics] Zapisano metryki Stage6 do {output} (źródło: {source})."]
     if measurement_count is not None:
-        message.append(
-            f"Zweryfikowano {_format_measurement_phrase(measurement_count)}."
-        )
+        message.append(f"Zweryfikowano {_format_measurement_phrase(measurement_count)}.")
     else:
         message.append("Walidacja struktury pominięta (--skip-validate).")
 
@@ -136,4 +128,3 @@ def main(argv: list[str] | None = None) -> int:
 
 if __name__ == "__main__":  # pragma: no cover - punkt wejścia CLI
     raise SystemExit(main())
-

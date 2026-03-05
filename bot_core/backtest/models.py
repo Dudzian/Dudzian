@@ -1,4 +1,5 @@
 """Czyste modele danych używane w module backtestu."""
+
 from __future__ import annotations
 
 from dataclasses import dataclass, field

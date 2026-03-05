@@ -1,4 +1,5 @@
 """Run CI backtest regressions and export audit artefacts."""
+
 from __future__ import annotations
 
 import argparse
@@ -267,7 +268,9 @@ def _parse_args() -> argparse.Namespace:
 def main() -> int:
     args = _parse_args()
     try:
-        run_backtest_regressions(args.output, scenario=args.scenario, fail_on_block=args.fail_on_block)
+        run_backtest_regressions(
+            args.output, scenario=args.scenario, fail_on_block=args.fail_on_block
+        )
     except RuntimeError as exc:
         print(f"Guardrail failure: {exc}")
         return 2

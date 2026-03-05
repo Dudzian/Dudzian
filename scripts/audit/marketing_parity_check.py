@@ -58,7 +58,9 @@ def _relative_posix(path: Path, root: Path) -> str:
     return PurePosixPath(rel).as_posix()
 
 
-def collect_files(stress_lab_dir: Path | None, signal_quality_index: Path, root: Path) -> List[Tuple[str, Path]]:
+def collect_files(
+    stress_lab_dir: Path | None, signal_quality_index: Path, root: Path
+) -> List[Tuple[str, Path]]:
     files: List[Tuple[str, Path]] = []
 
     if stress_lab_dir:
@@ -113,7 +115,10 @@ def compare_against_mirror(local_hashes: List[FileHash], mirror_root: Path) -> D
 
 
 def render_report(
-    local_hashes: List[FileHash], mirror_root: Path, parity: Dict[str, List[str]], error: str | None = None
+    local_hashes: List[FileHash],
+    mirror_root: Path,
+    parity: Dict[str, List[str]],
+    error: str | None = None,
 ) -> str:
     lines = ["# Marketing bundle parity report", ""]
 
@@ -170,14 +175,17 @@ def render_json_report(
         "missing_in_mirror": missing,
         "mismatched": mismatched,
         "local_hashes": [
-            {"file": entry.key, "sha256": entry.sha256, "source": str(entry.path)} for entry in local_hashes
+            {"file": entry.key, "sha256": entry.sha256, "source": str(entry.path)}
+            for entry in local_hashes
         ],
     }
 
 
 def write_json_report(report_path: Path, payload: Dict[str, object]) -> None:
     report_path.parent.mkdir(parents=True, exist_ok=True)
-    report_path.write_text(json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    report_path.write_text(
+        json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
+    )
 
 
 def run_parity_check(
@@ -212,7 +220,9 @@ def run_parity_check(
     report = render_report(local_hashes, mirror_dir, parity, error=parity_error)
     write_report(report_output, report)
     if json_output:
-        write_json_report(json_output, render_json_report(local_hashes, mirror_dir, parity, error=parity_error))
+        write_json_report(
+            json_output, render_json_report(local_hashes, mirror_dir, parity, error=parity_error)
+        )
 
     if parity_error:
         raise ParityError(parity_error)
@@ -301,7 +311,9 @@ def main(argv: List[str] | None = None) -> int:
         if args.json_output and not json_updated:
             write_json_report(
                 args.json_output,
-                render_json_report(local_hashes=[], mirror_root=args.mirror_dir, parity={}, error=str(exc)),
+                render_json_report(
+                    local_hashes=[], mirror_root=args.mirror_dir, parity={}, error=str(exc)
+                ),
             )
         print(f"ERROR: {exc}")
         return 1

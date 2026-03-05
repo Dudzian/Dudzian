@@ -1,4 +1,5 @@
 """Predefiniowane konfiguracje lokalnych dostawców SMS."""
+
 from __future__ import annotations
 
 from dataclasses import dataclass

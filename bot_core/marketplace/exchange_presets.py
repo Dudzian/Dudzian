@@ -337,9 +337,7 @@ def _load_existing_extra_fields(preset_path: Path) -> Mapping[str, object]:
             data = _yaml.safe_load(raw)
         if not isinstance(data, Mapping):
             return {}
-        return {
-            key: value for key, value in data.items() if key not in {"preset", "signature"}
-        }
+        return {key: value for key, value in data.items() if key not in {"preset", "signature"}}
     except Exception:  # pragma: no cover - defensywna ścieżka podczas zachowywania katalgu
         LOGGER.debug("Nie udało się odczytać dodatkowych pól z %s", preset_path)
         return {}
@@ -556,7 +554,9 @@ def validate_exchange_presets(
                             digest_verified = True
                             current_version = document.version or current_version
                     except Exception:
-                        LOGGER.debug("Nie udało się zweryfikować pliku %s na podstawie .sig", sig_path)
+                        LOGGER.debug(
+                            "Nie udało się zweryfikować pliku %s na podstawie .sig", sig_path
+                        )
         else:
             issues.append("missing-file")
 

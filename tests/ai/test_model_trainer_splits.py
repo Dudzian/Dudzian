@@ -43,13 +43,8 @@ def test_model_trainer_emits_test_metrics() -> None:
     assert "summary" in artifact.metrics
     assert artifact.metrics["validation"].get("mae", 0.0) >= 0.0
     assert artifact.metrics["test"].get("mae", 0.0) >= 0.0
-    assert artifact.metrics["summary"]["mae"] == pytest.approx(
-        artifact.metrics["train"]["mae"]
-    )
-    assert artifact.metrics["summary"]["test_mae"] == pytest.approx(
-        artifact.metrics["test"]["mae"]
-    )
+    assert artifact.metrics["summary"]["mae"] == pytest.approx(artifact.metrics["train"]["mae"])
+    assert artifact.metrics["summary"]["test_mae"] == pytest.approx(artifact.metrics["test"]["mae"])
     assert artifact.metrics["summary"]["validation_mae"] == pytest.approx(
         artifact.metrics["validation"]["mae"]
     )
-

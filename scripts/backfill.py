@@ -1,4 +1,5 @@
 """Automatyczny backfill oraz odświeżanie inkrementalne danych OHLCV."""
+
 from __future__ import annotations
 
 import argparse
@@ -78,7 +79,9 @@ class _IntervalPlan:
 def _build_public_source(exchange: str, environment: Environment) -> PublicAPIDataSource:
     builders: Mapping[str, Callable[[Environment], PublicAPIDataSource]] = {
         "binance_spot": lambda env: PublicAPIDataSource(
-            exchange_adapter=BinanceSpotAdapter(ExchangeCredentials(key_id="public", environment=env))
+            exchange_adapter=BinanceSpotAdapter(
+                ExchangeCredentials(key_id="public", environment=env)
+            )
         ),
         "binance_futures": lambda env: PublicAPIDataSource(
             exchange_adapter=BinanceFuturesAdapter(
@@ -86,7 +89,9 @@ def _build_public_source(exchange: str, environment: Environment) -> PublicAPIDa
             )
         ),
         "kraken_spot": lambda env: PublicAPIDataSource(
-            exchange_adapter=KrakenSpotAdapter(ExchangeCredentials(key_id="public", environment=env), environment=env)
+            exchange_adapter=KrakenSpotAdapter(
+                ExchangeCredentials(key_id="public", environment=env), environment=env
+            )
         ),
         "kraken_futures": lambda env: PublicAPIDataSource(
             exchange_adapter=KrakenFuturesAdapter(
@@ -108,7 +113,9 @@ def _build_public_source(exchange: str, environment: Environment) -> PublicAPIDa
     return builder(environment)
 
 
-def _resolve_universe(core_config: CoreConfig, environment: EnvironmentConfig) -> InstrumentUniverseConfig:
+def _resolve_universe(
+    core_config: CoreConfig, environment: EnvironmentConfig
+) -> InstrumentUniverseConfig:
     if not environment.instrument_universe:
         raise SystemExit(
             "Środowisko nie posiada przypisanego uniwersum instrumentów – zdefiniuj instrument_universe w config/core.yaml."
@@ -159,8 +166,12 @@ def _build_interval_plans(
             start = now_ms - window.lookback_days * _MILLISECONDS_IN_DAY
             plan = plans.get(window.interval)
             if plan is None:
-                refresh_seconds = refresh_cfg.get(window.interval, _DEFAULT_REFRESH_SECONDS.get(window.interval, 0))
-                jitter_seconds = jitter_cfg.get(window.interval, _DEFAULT_JITTER_SECONDS.get(window.interval, 0))
+                refresh_seconds = refresh_cfg.get(
+                    window.interval, _DEFAULT_REFRESH_SECONDS.get(window.interval, 0)
+                )
+                jitter_seconds = jitter_cfg.get(
+                    window.interval, _DEFAULT_JITTER_SECONDS.get(window.interval, 0)
+                )
                 plan = _IntervalPlan(
                     symbols=set(),
                     backfill_start_ms=start,
@@ -172,7 +183,9 @@ def _build_interval_plans(
             plan.symbols.add(symbol)
             plan.backfill_start_ms = min(plan.backfill_start_ms, start)
             effective_days = max(1, min(window.lookback_days, incremental_lookback_days))
-            plan.incremental_lookback_ms = max(plan.incremental_lookback_ms, effective_days * _MILLISECONDS_IN_DAY)
+            plan.incremental_lookback_ms = max(
+                plan.incremental_lookback_ms, effective_days * _MILLISECONDS_IN_DAY
+            )
 
     return plans, symbols
 
@@ -208,7 +221,9 @@ def _format_plan_summary(
             lookback_days = plan.incremental_lookback_ms / _MILLISECONDS_IN_DAY
             lookback_desc = f"{lookback_days:.1f}d"
 
-        refresh_desc = f"{plan.refresh_seconds}s" if plan.refresh_seconds else "dziedziczy (--refresh-seconds)"
+        refresh_desc = (
+            f"{plan.refresh_seconds}s" if plan.refresh_seconds else "dziedziczy (--refresh-seconds)"
+        )
         jitter_desc = f"{plan.jitter_seconds}s" if plan.jitter_seconds else "0s"
 
         symbols_sorted = sorted(plan.symbols)
@@ -401,9 +416,7 @@ def _report_manifest_health(
     ]
     critical_keys = {(status.symbol, status.interval) for status in critical_statuses}
     warning_statuses = [
-        status
-        for status in issue_statuses
-        if (status.symbol, status.interval) not in critical_keys
+        status for status in issue_statuses if (status.symbol, status.interval) not in critical_keys
     ]
 
     worst_gap_payload = coverage_summary.worst_gap
@@ -419,7 +432,9 @@ def _report_manifest_health(
             lines.append("Alert progów jakości danych:")
         for status in list(statuses_seq)[:10]:
             entry = status.manifest_entry
-            gap_display = "-" if entry.gap_minutes is None else f"{float(entry.gap_minutes):.1f} min"
+            gap_display = (
+                "-" if entry.gap_minutes is None else f"{float(entry.gap_minutes):.1f} min"
+            )
             threshold_display = (
                 "-" if entry.threshold_minutes is None else str(entry.threshold_minutes)
             )
@@ -446,9 +461,7 @@ def _report_manifest_health(
         if thresholds and thresholds.thresholds:
             lines.append(
                 "Progi: "
-                + ", ".join(
-                    f"{key}={value}" for key, value in thresholds.thresholds.items()
-                )
+                + ", ".join(f"{key}={value}" for key, value in thresholds.thresholds.items())
             )
         if thresholds and thresholds.issues:
             lines.append(
@@ -471,9 +484,7 @@ def _report_manifest_health(
     if coverage_summary.issue_counts:
         context["issue_counts"] = json.dumps(coverage_summary.issue_counts, ensure_ascii=False)
     if coverage_summary.issue_examples:
-        context["issue_examples"] = json.dumps(
-            coverage_summary.issue_examples, ensure_ascii=False
-        )
+        context["issue_examples"] = json.dumps(coverage_summary.issue_examples, ensure_ascii=False)
     if coverage_summary.worst_gap:
         context["worst_gap"] = json.dumps(coverage_summary.worst_gap, ensure_ascii=False)
     if threshold_issues:
@@ -554,8 +565,12 @@ def _initialize_alerting(
 
 def _parse_args(argv: Sequence[str] | None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Backfill danych OHLCV zgodnie z config/core.yaml")
-    parser.add_argument("--config", default="config/core.yaml", help="Ścieżka do pliku konfiguracyjnego CoreConfig")
-    parser.add_argument("--environment", default="binance_paper", help="Nazwa środowiska do backfillu")
+    parser.add_argument(
+        "--config", default="config/core.yaml", help="Ścieżka do pliku konfiguracyjnego CoreConfig"
+    )
+    parser.add_argument(
+        "--environment", default="binance_paper", help="Nazwa środowiska do backfillu"
+    )
     parser.add_argument(
         "--refresh-seconds",
         type=int,
@@ -636,7 +651,9 @@ def _perform_backfill(
             end=end_timestamp,
         )
         if gap_tracker:
-            gap_tracker.handle_summaries(interval=interval, summaries=summaries, as_of_ms=end_timestamp)
+            gap_tracker.handle_summaries(
+                interval=interval, summaries=summaries, as_of_ms=end_timestamp
+            )
         total = sum(summary.fetched_candles for summary in summaries)
         _LOGGER.info(
             "Zakończono backfill dla interval=%s – pobrano %s nowych świec",
@@ -739,10 +756,9 @@ def main(argv: Sequence[str] | None = None) -> int:
     refresh_overrides: Mapping[str, int] = {}
     jitter_overrides: Mapping[str, int] = {}
     if isinstance(environment.adapter_settings, Mapping):
-        raw_refresh = (
-            environment.adapter_settings.get("ohlcv_refresh_seconds")
-            or environment.adapter_settings.get("ohlcv_refresh_overrides")
-        )
+        raw_refresh = environment.adapter_settings.get(
+            "ohlcv_refresh_seconds"
+        ) or environment.adapter_settings.get("ohlcv_refresh_overrides")
         if isinstance(raw_refresh, Mapping):
             refresh_overrides = raw_refresh
         raw_jitter = environment.adapter_settings.get("ohlcv_refresh_jitter")
@@ -776,7 +792,9 @@ def main(argv: Sequence[str] | None = None) -> int:
     manifest_path = cache_root / "ohlcv_manifest.sqlite"
     manifest_storage = SQLiteCacheStorage(manifest_path, store_rows=False)
     storage = DualCacheStorage(primary=parquet_storage, manifest=manifest_storage)
-    audit_logger = JSONLGapAuditLogger(cache_root / "audit" / f"{environment.name}_ohlcv_gaps.jsonl")
+    audit_logger = JSONLGapAuditLogger(
+        cache_root / "audit" / f"{environment.name}_ohlcv_gaps.jsonl"
+    )
 
     # Alerty + polityka luk
     alert_router, gap_policy, alert_message = _initialize_alerting(

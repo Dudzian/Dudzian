@@ -65,8 +65,5 @@ backends:
     assert payload["selected_backend"] == "reference"
     assert payload["errors"][0]["backend"] == "lightgbm"
     assert result.validation_log_path is not None
-    validation_payload = json.loads(
-        result.validation_log_path.read_text(encoding="utf-8")
-    )
+    validation_payload = json.loads(result.validation_log_path.read_text(encoding="utf-8"))
     assert validation_payload["status"] == "passed"
-

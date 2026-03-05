@@ -1,4 +1,5 @@
 """QA test pilnujący braku historycznych tokenów w kodzie produkcyjnym."""
+
 from __future__ import annotations
 
 import os
@@ -89,9 +90,10 @@ def test_no_historical_tokens_outside_archive():  # pragma: no cover
     violations = _find_hypercare_token_violations(repo_root)
 
     assert not violations, (
-        "Wykryto niedozwolone historyczne tokeny Stage" "5 w kodzie (poza archiwum):\n"
-        + "\n".join(violations)
+        "Wykryto niedozwolone historyczne tokeny Stage"
+        "5 w kodzie (poza archiwum):\n" + "\n".join(violations)
     )
+
 
 @pytest.fixture(params=TOKEN_PATTERNS)
 def forbidden_token(request: pytest.FixtureRequest) -> str:

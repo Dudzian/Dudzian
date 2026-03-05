@@ -1,4 +1,5 @@
 """Agregacja jakości sygnałów giełdowych oraz korelacja z watchdogami."""
+
 from __future__ import annotations
 
 import json
@@ -97,7 +98,9 @@ class SignalQualityReporter:
             raise ValueError("history_limit musi być dodatni")
         self._exchange_id = exchange_id
         self._records: Deque[SignalExecutionRecord] = deque(maxlen=int(history_limit))
-        self._report_dir = Path(report_dir) if report_dir else Path("reports/exchanges/signal_quality")
+        self._report_dir = (
+            Path(report_dir) if report_dir else Path("reports/exchanges/signal_quality")
+        )
         self._report_dir.mkdir(parents=True, exist_ok=True)
         self._enable_csv_export = bool(enable_csv_export)
         self._csv_dir = Path(csv_dir) if csv_dir else self._report_dir
@@ -106,7 +109,11 @@ class SignalQualityReporter:
         self._metrics = metrics_registry or get_global_metrics_registry()
         labels = {"exchange": exchange_id, "component": "signal_quality"}
         self._metric_labels = labels
-        watchdog_limit = watchdog_history_limit if watchdog_history_limit is not None else max(10, int(history_limit))
+        watchdog_limit = (
+            watchdog_history_limit
+            if watchdog_history_limit is not None
+            else max(10, int(history_limit))
+        )
         self._watchdog_events: Deque[WatchdogEvent] = deque(maxlen=watchdog_limit)
         self._fill_ratio_hist = self._metrics.histogram(
             "exchange_signal_fill_ratio",
@@ -165,7 +172,9 @@ class SignalQualityReporter:
         if requested_price and executed_price:
             try:
                 if requested_price > 0:
-                    slippage_bps = abs(executed_price - requested_price) / requested_price * 10_000.0
+                    slippage_bps = (
+                        abs(executed_price - requested_price) / requested_price * 10_000.0
+                    )
             except ZeroDivisionError:
                 slippage_bps = None
         record = SignalExecutionRecord(

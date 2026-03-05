@@ -179,4 +179,3 @@ class RotationRegistry:
 
 
 __all__ = ["RotationRegistry", "RotationStatus"]
-

@@ -1,4 +1,5 @@
 """Magazyn licencji zabezpieczony fingerprintem sprzętowym."""
+
 from __future__ import annotations
 
 import base64
@@ -67,7 +68,9 @@ class LicenseStore:
     # ------------------------------------------------------------------
     def load(self) -> LicenseStoreDocument:
         if not self._path.exists():
-            return LicenseStoreDocument(data={"licenses": {}}, fingerprint_hash=None, migrated=False)
+            return LicenseStoreDocument(
+                data={"licenses": {}}, fingerprint_hash=None, migrated=False
+            )
 
         try:
             raw = self._path.read_text(encoding="utf-8")
@@ -109,7 +112,9 @@ class LicenseStore:
         self._path.parent.mkdir(parents=True, exist_ok=True)
         payload = json.dumps(envelope, ensure_ascii=False, indent=2, sort_keys=True) + "\n"
         self._path.write_text(payload, encoding="utf-8")
-        return LicenseStoreDocument(data=dict(data), fingerprint_hash=fingerprint_hash, migrated=False)
+        return LicenseStoreDocument(
+            data=dict(data), fingerprint_hash=fingerprint_hash, migrated=False
+        )
 
     # ------------------------------------------------------------------
     def _read_fingerprint(self) -> str:
@@ -118,7 +123,9 @@ class LicenseStore:
         except HwIdProviderError as exc:
             raise LicenseStoreFingerprintError(str(exc)) from exc
         except Exception as exc:  # pragma: no cover - defensywne logowanie
-            raise LicenseStoreFingerprintError("Nie udało się pobrać fingerprintu urządzenia.") from exc
+            raise LicenseStoreFingerprintError(
+                "Nie udało się pobrać fingerprintu urządzenia."
+            ) from exc
         cleaned = str(value).strip()
         if not cleaned:
             raise LicenseStoreFingerprintError("Fingerprint urządzenia jest pusty.")
@@ -131,7 +138,9 @@ class LicenseStore:
         nonce_b64 = document.get("nonce")
         ciphertext_b64 = document.get("ciphertext")
         if not isinstance(nonce_b64, str) or not isinstance(ciphertext_b64, str):
-            raise LicenseStoreError("Dokument magazynu jest uszkodzony (brak nonce lub ciphertext).")
+            raise LicenseStoreError(
+                "Dokument magazynu jest uszkodzony (brak nonce lub ciphertext)."
+            )
         try:
             nonce = base64.b64decode(nonce_b64.encode("ascii"))
             ciphertext = base64.b64decode(ciphertext_b64.encode("ascii"))
@@ -147,10 +156,14 @@ class LicenseStore:
         try:
             payload = json.loads(plaintext.decode("utf-8"))
         except json.JSONDecodeError as exc:
-            raise LicenseStoreError("Odszyfrowany magazyn licencji zawiera niepoprawny JSON.") from exc
+            raise LicenseStoreError(
+                "Odszyfrowany magazyn licencji zawiera niepoprawny JSON."
+            ) from exc
         if not isinstance(payload, Mapping):
             raise LicenseStoreError("Odszyfrowany magazyn licencji ma niepoprawny format.")
-        return LicenseStoreDocument(data=dict(payload), fingerprint_hash=fingerprint_hash or None, migrated=False)
+        return LicenseStoreDocument(
+            data=dict(payload), fingerprint_hash=fingerprint_hash or None, migrated=False
+        )
 
 
 def _derive_key(fingerprint: str) -> bytes:

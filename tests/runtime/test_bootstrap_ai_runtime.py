@@ -397,9 +397,7 @@ def test_bootstrap_registers_ai_ensembles_and_pipeline(
     assert default_call["on_result"] is None
 
 
-def test_bootstrap_rejects_invalid_ensemble_weights(
-    tmp_path: Path, temp_model_file: Path
-) -> None:
+def test_bootstrap_rejects_invalid_ensemble_weights(tmp_path: Path, temp_model_file: Path) -> None:
     ai_overrides = {
         "ensembles": [
             {
@@ -426,9 +424,7 @@ def test_bootstrap_rejects_invalid_ensemble_weights(
         )
 
 
-def test_bootstrap_rejects_invalid_pipeline_schedule(
-    tmp_path: Path, temp_model_file: Path
-) -> None:
+def test_bootstrap_rejects_invalid_pipeline_schedule(tmp_path: Path, temp_model_file: Path) -> None:
     ai_overrides = {
         "pipeline_schedules": [
             {

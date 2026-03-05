@@ -1,4 +1,5 @@
 """Bootstrap helpers used by desktop frontends and AutoTrader."""
+
 from __future__ import annotations
 
 import logging
@@ -326,7 +327,9 @@ class _ExchangeManagerAdapter(ExchangeAdapter if ExchangeAdapter is not None els
             if isinstance(free_section, Mapping):
                 try:
                     available_margin = sum(
-                        float(value) for value in free_section.values() if isinstance(value, (int, float))
+                        float(value)
+                        for value in free_section.values()
+                        if isinstance(value, (int, float))
                     )
                 except Exception:
                     available_margin = 0.0
@@ -344,7 +347,9 @@ class _ExchangeManagerAdapter(ExchangeAdapter if ExchangeAdapter is not None els
                 markets = loader() or {}
                 return tuple(str(symbol) for symbol in markets.keys())
             except Exception:
-                logger.debug("Nie udało się pobrać listy rynków w adapterze ExchangeManager", exc_info=True)
+                logger.debug(
+                    "Nie udało się pobrać listy rynków w adapterze ExchangeManager", exc_info=True
+                )
         return ()
 
     def fetch_ohlcv(
@@ -410,10 +415,14 @@ class _ExchangeManagerAdapter(ExchangeAdapter if ExchangeAdapter is not None els
             status=status_value,
             filled_quantity=float(getattr(dto, "quantity", request.quantity)),
             avg_price=avg_price,
-            raw_response=dict(raw_payload) if isinstance(raw_payload, Mapping) else {"payload": raw_payload},
+            raw_response=dict(raw_payload)
+            if isinstance(raw_payload, Mapping)
+            else {"payload": raw_payload},
         )
 
-    def _call_with_optional_symbol(self, fetcher: Any, symbol: str | None, *, include_none: bool = False) -> Any:
+    def _call_with_optional_symbol(
+        self, fetcher: Any, symbol: str | None, *, include_none: bool = False
+    ) -> Any:
         if symbol:
             call_patterns = (
                 ((symbol,), {}),
@@ -422,10 +431,14 @@ class _ExchangeManagerAdapter(ExchangeAdapter if ExchangeAdapter is not None els
             )
         else:
             call_patterns = (
-                ((), {}),
-                ((None,), {}),
-                ((), {"symbol": None}),
-            ) if include_none else (((), {}),)
+                (
+                    ((), {}),
+                    ((None,), {}),
+                    ((), {"symbol": None}),
+                )
+                if include_none
+                else (((), {}),)
+            )
 
         last_error: TypeError | None = None
         for args, kwargs in call_patterns:
@@ -540,7 +553,9 @@ class _ExchangeManagerAdapter(ExchangeAdapter if ExchangeAdapter is not None els
                 order_cid_raw = getattr(order, "client_order_id", None)
                 order_cid = str(order_cid_raw).strip() if order_cid_raw is not None else ""
                 if order_cid == cid:
-                    return self._build_reconciled_result(order, cid=cid, resolved_symbol=resolved_symbol)
+                    return self._build_reconciled_result(
+                        order, cid=cid, resolved_symbol=resolved_symbol
+                    )
 
         for source_name in ("fetch_orders", "fetch_closed_orders", "fetch_open_orders"):
             source = getattr(self._manager, source_name, None)
@@ -552,7 +567,9 @@ class _ExchangeManagerAdapter(ExchangeAdapter if ExchangeAdapter is not None els
                 continue
             order = self._find_order_by_client_id(orders, cid)
             if order is not None:
-                return self._build_reconciled_result(order, cid=cid, resolved_symbol=resolved_symbol)
+                return self._build_reconciled_result(
+                    order, cid=cid, resolved_symbol=resolved_symbol
+                )
         return None
 
     def cancel_order(self, order_id: str, *, symbol: str | None = None) -> None:

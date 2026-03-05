@@ -1,4 +1,5 @@
 """Testy katalogu strategii Multi-Strategy."""
+
 from __future__ import annotations
 
 import os
@@ -214,9 +215,7 @@ def test_catalog_describe_definitions_skips_blocked_capabilities() -> None:
     )
     try:
         _activate_guard({"trend_d1": True, "scalping": False})
-        summary = DEFAULT_STRATEGY_CATALOG.describe_definitions(
-            {definition.name: definition}
-        )
+        summary = DEFAULT_STRATEGY_CATALOG.describe_definitions({definition.name: definition})
         assert summary == []
     finally:
         reset_capability_guard()
@@ -577,7 +576,12 @@ def test_catalog_rejects_invalid_options_parameters() -> None:
 
 
 class _DummyEngine(StrategyEngine):
-    def __init__(self, *, parameters: Mapping[str, Any] | None = None, metadata: Mapping[str, Any] | None = None) -> None:
+    def __init__(
+        self,
+        *,
+        parameters: Mapping[str, Any] | None = None,
+        metadata: Mapping[str, Any] | None = None,
+    ) -> None:
         self.parameters = dict(parameters or {})
         self.metadata = dict(metadata or {})
 
@@ -595,7 +599,9 @@ def test_catalog_validates_config_schema_and_metadata() -> None:
     catalog.register(
         StrategyEngineSpec(
             key="dummy",
-            factory=lambda name, parameters, metadata=None: _DummyEngine(parameters=parameters, metadata=metadata),
+            factory=lambda name, parameters, metadata=None: _DummyEngine(
+                parameters=parameters, metadata=metadata
+            ),
             license_tier="standard",
             risk_classes=("core",),
             required_data=("ohlcv",),
@@ -625,7 +631,9 @@ def test_catalog_rejects_parameters_not_matching_schema() -> None:
     catalog.register(
         StrategyEngineSpec(
             key="dummy_invalid",
-            factory=lambda name, parameters, metadata=None: _DummyEngine(parameters=parameters, metadata=metadata),
+            factory=lambda name, parameters, metadata=None: _DummyEngine(
+                parameters=parameters, metadata=metadata
+            ),
             license_tier="standard",
             risk_classes=("core",),
             required_data=("ohlcv",),

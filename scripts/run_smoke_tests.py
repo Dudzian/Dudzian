@@ -1,4 +1,5 @@
 """Uruchamia zestaw testów smoke i zapisuje raporty do `reports/smoke`."""
+
 from __future__ import annotations
 
 import argparse
@@ -44,9 +45,12 @@ class SmokeReportPlugin:
     def pytest_sessionstart(self, session: pytest.Session) -> None:  # pragma: no cover - hook
         self._start = time.perf_counter()
 
-    def pytest_sessionfinish(self, session: pytest.Session, exitstatus: int) -> None:  # pragma: no cover - hook
+    def pytest_sessionfinish(
+        self, session: pytest.Session, exitstatus: int
+    ) -> None:  # pragma: no cover - hook
         reporter = session.config.pluginmanager.get_plugin("terminalreporter")
         stats = getattr(reporter, "stats", {}) if reporter else {}
+
         def _count(name: str) -> int:
             items = stats.get(name, [])
             return len(items) if isinstance(items, list) else 0
@@ -87,7 +91,9 @@ def _write_reports(summary: SmokeSummary, output_dir: Path) -> tuple[Path, Path]
     json_path = output_dir / f"{base_name}.json"
     md_path = output_dir / f"{base_name}.md"
 
-    json_path.write_text(json.dumps(summary.to_json(), indent=2, ensure_ascii=False), encoding="utf-8")
+    json_path.write_text(
+        json.dumps(summary.to_json(), indent=2, ensure_ascii=False), encoding="utf-8"
+    )
 
     md_content = [
         "# Raport testów smoke",

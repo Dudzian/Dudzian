@@ -1,4 +1,5 @@
 """Model oraz magazyn ustawień interfejsu użytkownika."""
+
 from __future__ import annotations
 
 import json
@@ -29,6 +30,7 @@ def _as_str_sequence(value: object, default: Sequence[str]) -> tuple[str, ...]:
 def _as_mapping(value: object) -> Mapping[str, object]:
     return value if isinstance(value, Mapping) else {}
 
+
 __all__ = [
     "DEFAULT_UI_SETTINGS_PATH",
     "DashboardSettings",
@@ -36,6 +38,7 @@ __all__ = [
     "UISettingsError",
     "UISettingsStore",
 ]
+
 
 def _default_ui_settings_path() -> Path:
     base_override = os.environ.get("DUDZIAN_HOME")
@@ -67,7 +70,11 @@ class DashboardSettings:
         card_order = _as_str_sequence(mapping.get("card_order"), _DEFAULT_CARD_ORDER)
         hidden_cards = _as_str_sequence(mapping.get("hidden_cards"), ())
         refresh_raw = mapping.get("refresh_interval_ms", _DEFAULT_REFRESH_INTERVAL_MS)
-        refresh_interval = int(refresh_raw) if isinstance(refresh_raw, (int, float, str)) else _DEFAULT_REFRESH_INTERVAL_MS
+        refresh_interval = (
+            int(refresh_raw)
+            if isinstance(refresh_raw, (int, float, str))
+            else _DEFAULT_REFRESH_INTERVAL_MS
+        )
         refresh_interval = max(500, refresh_interval)
         theme = str(mapping.get("theme", _DEFAULT_THEME) or _DEFAULT_THEME)
         return cls(

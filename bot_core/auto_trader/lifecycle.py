@@ -1,4 +1,5 @@
 """Lifecycle helpers orchestrating fully autonomous AutoTrader deployments."""
+
 from __future__ import annotations
 
 import logging
@@ -49,7 +50,9 @@ class AutoTraderLifecycleManager(AutoTraderSchedulerHooks):
     decision_journal: TradingDecisionJournal | None = None
     guardrail_alert_severity: str = "warning"
     _lock: threading.Lock = field(default_factory=threading.Lock, init=False, repr=False)
-    _bootstrap_snapshot: LifecycleBootstrapSnapshot | None = field(default=None, init=False, repr=False)
+    _bootstrap_snapshot: LifecycleBootstrapSnapshot | None = field(
+        default=None, init=False, repr=False
+    )
     _bootstrap_applied: bool = field(default=False, init=False, repr=False)
     _guardrail_signature: tuple[tuple[str, ...], tuple[str, ...]] | None = field(
         default=None, init=False, repr=False
@@ -90,7 +93,9 @@ class AutoTraderLifecycleManager(AutoTraderSchedulerHooks):
             try:
                 self.trader.confirm_auto_trade(True)
             except Exception:  # pragma: no cover - defensive guard
-                LOGGER.debug("AutoTraderLifecycleManager failed to confirm auto trade", exc_info=True)
+                LOGGER.debug(
+                    "AutoTraderLifecycleManager failed to confirm auto trade", exc_info=True
+                )
             try:
                 self.trader.apply_lifecycle_bootstrap(
                     risk_profile=snapshot.risk_profile,
@@ -99,7 +104,9 @@ class AutoTraderLifecycleManager(AutoTraderSchedulerHooks):
                     decision_signal=snapshot.decision_signal,
                 )
             except Exception:  # pragma: no cover - defensive guard
-                LOGGER.debug("AutoTraderLifecycleManager bootstrap synchronisation failed", exc_info=True)
+                LOGGER.debug(
+                    "AutoTraderLifecycleManager bootstrap synchronisation failed", exc_info=True
+                )
             self._record_audit_stage("lifecycle_bootstrap", payload=snapshot.to_metadata())
             self._log_lifecycle_event(
                 "scheduler_bootstrap",
@@ -266,7 +273,9 @@ class AutoTraderLifecycleManager(AutoTraderSchedulerHooks):
         except Exception:  # pragma: no cover - defensive logging
             LOGGER.debug("AutoTraderLifecycleManager failed to log lifecycle event", exc_info=True)
 
-    def _record_audit_stage(self, stage: str, *, payload: Mapping[str, object] | None = None) -> None:
+    def _record_audit_stage(
+        self, stage: str, *, payload: Mapping[str, object] | None = None
+    ) -> None:
         recorder = getattr(self.trader, "_record_decision_audit_stage", None)
         if not callable(recorder):
             return

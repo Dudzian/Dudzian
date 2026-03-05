@@ -1,4 +1,5 @@
 """Adapter REST dla kontraktów terminowych Binance (USD-M)."""
+
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -119,6 +120,7 @@ class FundingRateEvent:
     mark_price: float | None = None
     next_funding_time: int | None = None
     interest_rate: float | None = None
+
 
 def _determine_public_base(environment: Environment) -> str:
     """Zwraca bazowy adres REST dla danych publicznych kontraktów USD-M."""
@@ -275,7 +277,9 @@ class BinanceFuturesAdapter(ExchangeAdapter):
     def _build_stream(self, scope: str, channels: Sequence[str]) -> LocalLongPollStream:
         stream_settings = dict(self._stream_settings())
         base_url = str(
-            stream_settings.get("base_url", self._settings.get("stream_base_url", "http://127.0.0.1:8765"))
+            stream_settings.get(
+                "base_url", self._settings.get("stream_base_url", "http://127.0.0.1:8765")
+            )
         )
         default_path = f"/stream/{self.name}/{scope}"
         path = str(
@@ -292,7 +296,9 @@ class BinanceFuturesAdapter(ExchangeAdapter):
             )
         )
         timeout = float(stream_settings.get("timeout", self._settings.get("stream_timeout", 10.0)))
-        max_retries = int(stream_settings.get("max_retries", self._settings.get("stream_max_retries", 3)))
+        max_retries = int(
+            stream_settings.get("max_retries", self._settings.get("stream_max_retries", 3))
+        )
         backoff_base = float(
             stream_settings.get("backoff_base", self._settings.get("stream_backoff_base", 0.25))
         )
@@ -501,7 +507,9 @@ class BinanceFuturesAdapter(ExchangeAdapter):
                     status_code = getattr(response, "status", getattr(response, "code", 200))
                     payload = response.read()
                     headers = {k.lower(): v for k, v in response.headers.items()}
-            except HTTPError as exc:  # pragma: no cover - zachowanie walidowane w testach jednostkowych
+            except (
+                HTTPError
+            ) as exc:  # pragma: no cover - zachowanie walidowane w testach jednostkowych
                 error = self._translate_http_error(exc)
                 if self._should_retry(error.status_code) and attempt < _MAX_RETRIES:
                     self._record_retry(reason=self._retry_reason(error.status_code))
@@ -509,13 +517,17 @@ class BinanceFuturesAdapter(ExchangeAdapter):
                     attempt += 1
                     continue
                 raise error from exc
-            except URLError as exc:  # pragma: no cover - zachowanie walidowane w testach jednostkowych
+            except (
+                URLError
+            ) as exc:  # pragma: no cover - zachowanie walidowane w testach jednostkowych
                 if attempt < _MAX_RETRIES:
                     self._record_retry(reason="network")
                     self._sleep(self._backoff_delay(attempt))
                     attempt += 1
                     continue
-                raise ExchangeNetworkError("Nie udało się połączyć z API Binance Futures", reason=exc) from exc
+                raise ExchangeNetworkError(
+                    "Nie udało się połączyć z API Binance Futures", reason=exc
+                ) from exc
             else:
                 elapsed = max(time.perf_counter() - start, 0.0)
                 labels = dict(self._metric_base_labels)
@@ -645,7 +657,9 @@ class BinanceFuturesAdapter(ExchangeAdapter):
 
     def fetch_account_snapshot(self) -> AccountSnapshot:
         if not ({"read", "trade"} & self._permission_set):
-            raise PermissionError("Poświadczenia nie pozwalają na odczyt danych konta Binance Futures.")
+            raise PermissionError(
+                "Poświadczenia nie pozwalają na odczyt danych konta Binance Futures."
+            )
 
         def _call() -> AccountSnapshot:
             payload = self._signed_request("/fapi/v2/account")
@@ -826,7 +840,9 @@ class BinanceFuturesAdapter(ExchangeAdapter):
             last_update_id = int(payload.get("lastUpdateId", 0))
         except (TypeError, ValueError):
             last_update_id = 0
-        timestamp = _timestamp_ms_to_seconds(payload.get("T") or payload.get("E"), fallback=time.time())
+        timestamp = _timestamp_ms_to_seconds(
+            payload.get("T") or payload.get("E"), fallback=time.time()
+        )
 
         return BinanceFuturesOrderBook(
             symbol=exchange_symbol,
@@ -880,16 +896,24 @@ class BinanceFuturesAdapter(ExchangeAdapter):
                     price=price,
                     orig_quantity=_to_float(entry.get("origQty")),
                     executed_quantity=_to_float(entry.get("executedQty")),
-                    time_in_force=(str(entry.get("timeInForce")) if entry.get("timeInForce") else None),
+                    time_in_force=(
+                        str(entry.get("timeInForce")) if entry.get("timeInForce") else None
+                    ),
                     client_order_id=(
-                        str(entry.get("clientOrderId")) if entry.get("clientOrderId") not in (None, "") else None
+                        str(entry.get("clientOrderId"))
+                        if entry.get("clientOrderId") not in (None, "")
+                        else None
                     ),
                     stop_price=stop_price,
                     reduce_only=_to_bool(entry.get("reduceOnly")),
                     close_position=_to_bool(entry.get("closePosition")),
-                    working_type=(str(entry.get("workingType")) if entry.get("workingType") else None),
+                    working_type=(
+                        str(entry.get("workingType")) if entry.get("workingType") else None
+                    ),
                     price_protect=_to_bool(entry.get("priceProtect")),
-                    position_side=(str(entry.get("positionSide")) if entry.get("positionSide") else None),
+                    position_side=(
+                        str(entry.get("positionSide")) if entry.get("positionSide") else None
+                    ),
                     update_time=timestamp,
                 )
                 orders.append(order)
@@ -984,7 +1008,9 @@ class BinanceFuturesAdapter(ExchangeAdapter):
             status = str(payload_dict.get("status", "UNKNOWN"))
             filled_qty = _to_float(payload_dict.get("executedQty", 0.0))
             avg_price_field = payload_dict.get("avgPrice", payload_dict.get("price"))
-            avg_price = _to_float(avg_price_field) if avg_price_field not in (None, "0", 0, 0.0) else None
+            avg_price = (
+                _to_float(avg_price_field) if avg_price_field not in (None, "0", 0, 0.0) else None
+            )
 
             return OrderResult(
                 order_id=order_id,
@@ -1003,6 +1029,7 @@ class BinanceFuturesAdapter(ExchangeAdapter):
             raise ValueError("Anulowanie na Binance Futures wymaga podania symbolu.")
 
         params: dict[str, object] = {"orderId": order_id, "symbol": symbol}
+
         def _call() -> None:
             response = self._signed_request("/fapi/v1/order", method="DELETE", params=params)
             if isinstance(response, Mapping):
@@ -1107,7 +1134,9 @@ class BinanceFuturesAdapter(ExchangeAdapter):
 
         positions = self.fetch_positions()
         long_notional = sum(position.notional for position in positions if position.side == "long")
-        short_notional = sum(position.notional for position in positions if position.side == "short")
+        short_notional = sum(
+            position.notional for position in positions if position.side == "short"
+        )
         gross_notional = long_notional + short_notional
         net_notional = long_notional - short_notional
 
@@ -1132,11 +1161,15 @@ class BinanceFuturesAdapter(ExchangeAdapter):
 
     def create_listen_key(self) -> str:
         if "trade" not in self._permission_set and "read" not in self._permission_set:
-            raise PermissionError("Poświadczenia nie zezwalają na operacje na listenKey Binance Futures.")
+            raise PermissionError(
+                "Poświadczenia nie zezwalają na operacje na listenKey Binance Futures."
+            )
 
         payload = self._signed_request("/fapi/v1/listenKey", method="POST")
         if not isinstance(payload, Mapping) or "listenKey" not in payload:
-            raise RuntimeError("Odpowiedź utworzenia listenKey Binance Futures ma niepoprawny format")
+            raise RuntimeError(
+                "Odpowiedź utworzenia listenKey Binance Futures ma niepoprawny format"
+            )
 
         listen_key = payload.get("listenKey")
         if not isinstance(listen_key, str) or not listen_key:
@@ -1147,20 +1180,26 @@ class BinanceFuturesAdapter(ExchangeAdapter):
         if not listen_key:
             raise ValueError("listenKey nie może być pusty")
         if "trade" not in self._permission_set and "read" not in self._permission_set:
-            raise PermissionError("Poświadczenia nie zezwalają na operacje na listenKey Binance Futures.")
+            raise PermissionError(
+                "Poświadczenia nie zezwalają na operacje na listenKey Binance Futures."
+            )
 
         params = {"listenKey": listen_key}
         response = self._signed_request("/fapi/v1/listenKey", method="PUT", params=params)
         if isinstance(response, Mapping) and response.get("code") in (None, 0):
             return
         if response not in ({}, None):
-            raise RuntimeError(f"Podtrzymanie listenKey Binance Futures zwróciło nieoczekiwane dane: {response}")
+            raise RuntimeError(
+                f"Podtrzymanie listenKey Binance Futures zwróciło nieoczekiwane dane: {response}"
+            )
 
     def close_listen_key(self, listen_key: str) -> None:
         if not listen_key:
             raise ValueError("listenKey nie może być pusty")
         if "trade" not in self._permission_set and "read" not in self._permission_set:
-            raise PermissionError("Poświadczenia nie zezwalają na operacje na listenKey Binance Futures.")
+            raise PermissionError(
+                "Poświadczenia nie zezwalają na operacje na listenKey Binance Futures."
+            )
 
         params = {"listenKey": listen_key}
         response = self._signed_request("/fapi/v1/listenKey", method="DELETE", params=params)
@@ -1170,14 +1209,18 @@ class BinanceFuturesAdapter(ExchangeAdapter):
                 return
         if response in ({}, None):
             return
-        raise RuntimeError(f"Zamknięcie listenKey Binance Futures zwróciło nieoczekiwane dane: {response}")
+        raise RuntimeError(
+            f"Zamknięcie listenKey Binance Futures zwróciło nieoczekiwane dane: {response}"
+        )
 
     def stream_public_data(self, *, channels: Sequence[str]):  # type: ignore[override]
         return self._build_stream("public", channels)
 
     def stream_private_data(self, *, channels: Sequence[str]):  # type: ignore[override]
         if "trade" not in self._permission_set and "read" not in self._permission_set:
-            raise PermissionError("Poświadczenia nie pozwalają na strumień prywatny Binance Futures.")
+            raise PermissionError(
+                "Poświadczenia nie pozwalają na strumień prywatny Binance Futures."
+            )
         return self._build_stream("private", channels)
 
 

@@ -118,7 +118,9 @@ def _normalize_regime_value(value: Any) -> MarketRegime | None:
         raise SystemExit(f"Nieznany reżim rynku: {value!r}") from exc
 
 
-def _build_version_info_from_payload(payload: Mapping[str, Any], *, field: str) -> PresetVersionInfo:
+def _build_version_info_from_payload(
+    payload: Mapping[str, Any], *, field: str
+) -> PresetVersionInfo:
     if not isinstance(payload, MappingABC):
         raise SystemExit(f"Sekcja {field} musi być słownikiem")
     hash_value = payload.get("hash")
@@ -243,21 +245,11 @@ def _collect_strategy_metadata(
         if not capability and spec and spec.capability:
             capability = spec.capability
 
-        merged_risk = tuple(
-            dict.fromkeys(
-                (*((spec.risk_classes) if spec else ()), *risk_classes)
-            )
-        )
+        merged_risk = tuple(dict.fromkeys((*((spec.risk_classes) if spec else ()), *risk_classes)))
         merged_data = tuple(
-            dict.fromkeys(
-                (*((spec.required_data) if spec else ()), *required_data)
-            )
+            dict.fromkeys((*((spec.required_data) if spec else ()), *required_data))
         )
-        merged_tags = tuple(
-            dict.fromkeys(
-                (*((spec.default_tags) if spec else ()), *tags)
-            )
-        )
+        merged_tags = tuple(dict.fromkeys((*((spec.default_tags) if spec else ()), *tags)))
 
         payload: dict[str, Any] = {
             "engine": engine,
@@ -502,7 +494,9 @@ def _serialize_preset_availability(report: PresetAvailability) -> dict[str, Any]
 def _serialize_activation(activation: RegimePresetActivation) -> dict[str, Any]:
     regime_value = activation.regime.value if isinstance(activation.regime, MarketRegime) else None
     preset_regime_value = (
-        activation.preset_regime.value if isinstance(activation.preset_regime, MarketRegime) else None
+        activation.preset_regime.value
+        if isinstance(activation.preset_regime, MarketRegime)
+        else None
     )
     assessment_payload = {
         "regime": regime_value,
@@ -536,16 +530,11 @@ def _serialize_history_stats(stats: Any) -> dict[str, Any]:
         for key, value in stats.preset_regime_counts.items()
     ]
     blocked_reasons = [
-        {"reason": key, "count": value}
-        for key, value in stats.blocked_reasons.items()
+        {"reason": key, "count": value} for key, value in stats.blocked_reasons.items()
     ]
-    missing_data = [
-        {"name": key, "count": value}
-        for key, value in stats.missing_data.items()
-    ]
+    missing_data = [{"name": key, "count": value} for key, value in stats.missing_data.items()]
     license_issues = [
-        {"issue": key, "count": value}
-        for key, value in stats.license_issue_counts.items()
+        {"issue": key, "count": value} for key, value in stats.license_issue_counts.items()
     ]
     return {
         "total": stats.total,
@@ -916,7 +905,9 @@ def _dump_schedulers(raw: Mapping[str, Any], *, only: str | None = None) -> dict
                                 if capability_id:
                                     blocked_capabilities.setdefault(strategy_key, capability_id)
                             if schedule_name and capability_id:
-                                blocked_schedule_capabilities.setdefault(schedule_name, capability_id)
+                                blocked_schedule_capabilities.setdefault(
+                                    schedule_name, capability_id
+                                )
                             continue
                     except AttributeError:
                         pass
@@ -924,9 +915,7 @@ def _dump_schedulers(raw: Mapping[str, Any], *, only: str | None = None) -> dict
                 schedules.append(entry_payload)
 
         allowed_schedule_names = {
-            str(entry.get("name"))
-            for entry in schedules
-            if entry.get("name") not in (None, "")
+            str(entry.get("name")) for entry in schedules if entry.get("name") not in (None, "")
         }
         allowed_strategies = {
             str(entry.get("strategy"))
@@ -955,10 +944,9 @@ def _dump_schedulers(raw: Mapping[str, Any], *, only: str | None = None) -> dict
                         else:
                             blocked_profiles.add("*")
                     if blocked_capability_targets is not None:
-                        capability_id = (
-                            blocked_capabilities.get(strategy_key)
-                            or strategy_capabilities.get(strategy_key)
-                        )
+                        capability_id = blocked_capabilities.get(
+                            strategy_key
+                        ) or strategy_capabilities.get(strategy_key)
                         if capability_id:
                             blocked_capability_targets.setdefault(strategy_key, capability_id)
                     continue
@@ -1026,10 +1014,9 @@ def _dump_schedulers(raw: Mapping[str, Any], *, only: str | None = None) -> dict
                             or blocked_capabilities.get(target)
                         )
                     else:
-                        capability_id = (
-                            blocked_capabilities.get(target)
-                            or strategy_capabilities.get(target)
-                        )
+                        capability_id = blocked_capabilities.get(
+                            target
+                        ) or strategy_capabilities.get(target)
                     if capability_id:
                         suspension_payload["capability"] = capability_id
                         key = f"{kind}:{target}".strip(":")
@@ -1072,8 +1059,7 @@ def _dump_schedulers(raw: Mapping[str, Any], *, only: str | None = None) -> dict
             entry_result["blocked_strategies"] = sorted(blocked_strategies)
         if blocked_capabilities:
             entry_result["blocked_capabilities"] = {
-                key: blocked_capabilities[key]
-                for key in sorted(blocked_capabilities)
+                key: blocked_capabilities[key] for key in sorted(blocked_capabilities)
             }
         if blocked_schedule_capabilities:
             entry_result["blocked_schedule_capabilities"] = {
@@ -1091,8 +1077,7 @@ def _dump_schedulers(raw: Mapping[str, Any], *, only: str | None = None) -> dict
         merged_initial_capabilities: dict[str, str] = dict(blocked_initial_limit_capabilities)
         if blocked_initial_limits:
             entry_result["blocked_initial_signal_limits"] = {
-                key: sorted(values)
-                for key, values in blocked_initial_limits.items()
+                key: sorted(values) for key, values in blocked_initial_limits.items()
             }
             for key in blocked_initial_limits:
                 capability_id = (
@@ -1104,15 +1089,13 @@ def _dump_schedulers(raw: Mapping[str, Any], *, only: str | None = None) -> dict
                     merged_initial_capabilities[key] = capability_id
         if merged_initial_capabilities:
             entry_result["blocked_initial_signal_limit_capabilities"] = {
-                key: merged_initial_capabilities[key]
-                for key in sorted(merged_initial_capabilities)
+                key: merged_initial_capabilities[key] for key in sorted(merged_initial_capabilities)
             }
 
         merged_signal_capabilities: dict[str, str] = dict(blocked_signal_limit_capabilities)
         if blocked_signal_limits:
             entry_result["blocked_signal_limits"] = {
-                key: sorted(values)
-                for key, values in blocked_signal_limits.items()
+                key: sorted(values) for key, values in blocked_signal_limits.items()
             }
             for key in blocked_signal_limits:
                 capability_id = (
@@ -1124,8 +1107,7 @@ def _dump_schedulers(raw: Mapping[str, Any], *, only: str | None = None) -> dict
                     merged_signal_capabilities[key] = capability_id
         if merged_signal_capabilities:
             entry_result["blocked_signal_limit_capabilities"] = {
-                key: merged_signal_capabilities[key]
-                for key in sorted(merged_signal_capabilities)
+                key: merged_signal_capabilities[key] for key in sorted(merged_signal_capabilities)
             }
 
         result[name] = entry_result
@@ -1224,19 +1206,25 @@ def _apply_scheduler(raw: dict[str, Any], payload: Mapping[str, Any]) -> None:
             schedules = target.get("schedules")
             if not isinstance(schedules, list):
                 raise SystemExit(f"Scheduler {name} nie definiuje listy schedules")
-            index = {str(item.get("name")): idx for idx, item in enumerate(schedules) if isinstance(item, Mapping)}
+            index = {
+                str(item.get("name")): idx
+                for idx, item in enumerate(schedules)
+                if isinstance(item, Mapping)
+            }
             for update in schedules_update:
                 if not isinstance(update, Mapping):
                     continue
                 schedule_name = update.get("name")
                 if schedule_name is None or str(schedule_name) not in index:
                     raise SystemExit(
-                        f"Scheduler {name} nie zawiera zadania o nazwie {schedule_name!r}")
+                        f"Scheduler {name} nie zawiera zadania o nazwie {schedule_name!r}"
+                    )
                 schedule_idx = index[str(schedule_name)]
                 schedule = schedules[schedule_idx]
                 if not isinstance(schedule, dict):
                     raise SystemExit(
-                        f"Scheduler {name}: wpis {schedule_name!r} ma nieprawidłowy format")
+                        f"Scheduler {name}: wpis {schedule_name!r} ma nieprawidłowy format"
+                    )
                 for key in (
                     "strategy",
                     "cadence_seconds",
@@ -1262,15 +1250,21 @@ def apply_updates(path: Path, payload: Mapping[str, Any]) -> None:
 
     load_core_config(path)  # walidacja
 
-    path.write_text(yaml.safe_dump(raw, sort_keys=False, allow_unicode=True, indent=2), encoding="utf-8")
+    path.write_text(
+        yaml.safe_dump(raw, sort_keys=False, allow_unicode=True, indent=2), encoding="utf-8"
+    )
 
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Mostek konfiguracji strategii dla UI")
     parser.add_argument("--config", default="config/core.yaml", help="Ścieżka do pliku core.yaml")
     parser.add_argument("--dump", action="store_true", help="Zrzuca konfigurację w formacie JSON")
-    parser.add_argument("--apply", action="store_true", help="Aktualizuje konfigurację na podstawie JSON")
-    parser.add_argument("--describe-catalog", action="store_true", help="Zwraca opis katalogu strategii")
+    parser.add_argument(
+        "--apply", action="store_true", help="Aktualizuje konfigurację na podstawie JSON"
+    )
+    parser.add_argument(
+        "--describe-catalog", action="store_true", help="Zwraca opis katalogu strategii"
+    )
     parser.add_argument(
         "--describe-regime-workflow",
         action="store_true",

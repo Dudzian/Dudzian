@@ -125,4 +125,3 @@ def test_paper_auto_trade_app_requires_auto_trader_runtime(monkeypatch: pytest.M
 
     for name in ("nacl", "nacl.exceptions", "nacl.signing"):
         monkeypatch.delitem(sys.modules, name, raising=False)
-

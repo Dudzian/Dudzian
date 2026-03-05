@@ -1,4 +1,5 @@
 """Interfejs modułu egzekucji z obsługą retry i sanity-check."""
+
 from __future__ import annotations
 
 import abc
@@ -103,8 +104,7 @@ class ExecutionService(abc.ABC):
 class RetryPolicy(Protocol):
     """Kontrakt polityki retry/backoff."""
 
-    def on_error(self, attempt: int, error: Exception) -> float:
-        ...
+    def on_error(self, attempt: int, error: Exception) -> float: ...
 
 
 __all__ = ["ExecutionContext", "ExecutionService", "RetryPolicy", "PriceResolver"]

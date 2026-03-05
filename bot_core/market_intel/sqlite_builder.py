@@ -63,20 +63,15 @@ class OHLCVBar:
 class MarketIntelDataProvider(Protocol):
     """Dostawca danych źródłowych do budowy bazowych metryk Stage6."""
 
-    def fetch_order_book(self, symbol: str, *, depth: int) -> OrderBookSnapshot:
-        ...
+    def fetch_order_book(self, symbol: str, *, depth: int) -> OrderBookSnapshot: ...
 
-    def fetch_funding(self, symbol: str) -> FundingSnapshot:
-        ...
+    def fetch_funding(self, symbol: str) -> FundingSnapshot: ...
 
-    def fetch_sentiment(self, symbol: str) -> SentimentSnapshot:
-        ...
+    def fetch_sentiment(self, symbol: str) -> SentimentSnapshot: ...
 
-    def fetch_ohlcv(self, symbol: str, *, bars: int) -> Sequence[OHLCVBar]:
-        ...
+    def fetch_ohlcv(self, symbol: str, *, bars: int) -> Sequence[OHLCVBar]: ...
 
-    def resolve_weight(self, symbol: str) -> float | None:
-        ...
+    def resolve_weight(self, symbol: str) -> float | None: ...
 
 
 # ---------------------------------------------------------------------------
@@ -176,12 +171,16 @@ class MarketIntelSqliteBuilder:
                 raise ValueError(
                     "Niepoprawne sumy kontrolne Market Intel (różne symbole): " + ", ".join(missing)
                 )
-            mismatched = [symbol for symbol, digest in expected.items() if actual.get(symbol) != digest]
+            mismatched = [
+                symbol for symbol, digest in expected.items() if actual.get(symbol) != digest
+            ]
             raise ValueError(
                 "Niepoprawne sumy kontrolne Market Intel dla: " + ", ".join(sorted(mismatched))
             )
 
-        self._logger.debug("Zweryfikowano sumy kontrolne Market Intel: %s", json.dumps(actual, indent=2))
+        self._logger.debug(
+            "Zweryfikowano sumy kontrolne Market Intel: %s", json.dumps(actual, indent=2)
+        )
 
     def read_database(self) -> tuple[MarketIntelBaseline, ...]:
         """Odczytuje rekordy z aktualnej bazy SQLite."""
@@ -262,7 +261,9 @@ def _realized_volatility(candles: Sequence[OHLCVBar]) -> float:
 
 
 def _checksum(baseline: MarketIntelBaseline) -> str:
-    payload = json.dumps(baseline.to_mapping(), sort_keys=True, separators=(",", ":"), ensure_ascii=False)
+    payload = json.dumps(
+        baseline.to_mapping(), sort_keys=True, separators=(",", ":"), ensure_ascii=False
+    )
     return hashlib.sha256(payload.encode("utf-8")).hexdigest()
 
 
@@ -289,7 +290,7 @@ def _sql_columns(config: MarketIntelSqliteConfig) -> Mapping[str, str]:
     columns[config.volatility_column] = "REAL NOT NULL"
     if config.weight_column not in (None, ""):
         columns[str(config.weight_column)] = "REAL NOT NULL"
-    return { _validate_identifier(key, "column"): value for key, value in columns.items() }
+    return {_validate_identifier(key, "column"): value for key, value in columns.items()}
 
 
 def _create_table_sql(table: str, columns: Mapping[str, str]) -> str:
@@ -346,4 +347,3 @@ __all__ = [
     "SentimentSnapshot",
     "OHLCVBar",
 ]
-

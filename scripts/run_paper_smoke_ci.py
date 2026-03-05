@@ -1,4 +1,5 @@
 """Orkiestracja smoke testu paper trading na potrzeby pipeline'u CI."""
+
 from __future__ import annotations
 
 import argparse
@@ -305,9 +306,8 @@ def _load_telemetry_requirements(config_path: Path, environment: str) -> dict[st
         or metrics_cfg.get("ui_alerts_log_path")
     )
     risk_profile = metrics_cfg.get("ui_alerts_risk_profile") or metrics_cfg.get("risk_profile")
-    profiles_file_raw = (
-        metrics_cfg.get("ui_alerts_risk_profiles_file")
-        or metrics_cfg.get("risk_profiles_file")
+    profiles_file_raw = metrics_cfg.get("ui_alerts_risk_profiles_file") or metrics_cfg.get(
+        "risk_profiles_file"
     )
 
     env_cfg: Mapping[str, Any] | None = None
@@ -333,7 +333,9 @@ def _load_telemetry_requirements(config_path: Path, environment: str) -> dict[st
         "risk_profile": risk_profile.strip().lower() if isinstance(risk_profile, str) else None,
         "risk_profile_source": profile_source,
         "risk_profiles_file": _resolve_config_path(config_path.parent, profiles_file_raw),
-        "environment_profile": environment_profile.strip().lower() if isinstance(environment_profile, str) else None,
+        "environment_profile": environment_profile.strip().lower()
+        if isinstance(environment_profile, str)
+        else None,
     }
 
 
@@ -509,7 +511,9 @@ def _run_watch_metrics_summary(
         )
 
     if not summary_path.exists():
-        raise RuntimeError("watch_metrics_stream.py nie wygenerował pliku podsumowania telemetrycznego")
+        raise RuntimeError(
+            "watch_metrics_stream.py nie wygenerował pliku podsumowania telemetrycznego"
+        )
 
     try:
         payload = json.loads(summary_path.read_text(encoding="utf-8"))
@@ -686,7 +690,9 @@ def _run_decision_log_verifier(
 
     scopes_argument: list[str] = []
     if required_auth_scopes:
-        for scope in sorted({scope.strip().lower() for scope in required_auth_scopes if scope.strip()}):
+        for scope in sorted(
+            {scope.strip().lower() for scope in required_auth_scopes if scope.strip()}
+        ):
             scopes_argument.extend(["--require-auth-scope", scope])
 
     if scopes_argument:
@@ -808,7 +814,9 @@ def _collect_telemetry_artifacts(
                 if key == "core_config" and isinstance(value, Mapping):
                     for service_key, service_meta in value.items():
                         if isinstance(service_meta, Mapping):
-                            _record_auth_scopes(service_key, service_meta, f"core_config.{service_key}")
+                            _record_auth_scopes(
+                                service_key, service_meta, f"core_config.{service_key}"
+                            )
                     continue
                 if key in {"metrics_service", "risk_service"} and isinstance(value, Mapping):
                     _record_auth_scopes(key, value, "summary")
@@ -850,9 +858,7 @@ def _collect_telemetry_artifacts(
         if normalized_pins:
             risk_requirements_details["expected_server_sha256"] = normalized_pins
             for fingerprint in normalized_pins:
-                risk_cli_args.extend(
-                    ["--expect-risk-service-server-sha256", fingerprint]
-                )
+                risk_cli_args.extend(["--expect-risk-service-server-sha256", fingerprint])
 
         risk_required_scopes: set[str] = set()
         primary_scope = combined_risk_meta.get("auth_token_scope_required")
@@ -973,8 +979,7 @@ def _collect_telemetry_artifacts(
         "risk_service_requirements": {
             "cli_args": list(risk_cli_args) if risk_cli_args else None,
             "metadata": [
-                {"source": source, "metadata": dict(meta)}
-                for source, meta in risk_metadata_sources
+                {"source": source, "metadata": dict(meta)} for source, meta in risk_metadata_sources
             ]
             if risk_metadata_sources
             else None,
@@ -1068,7 +1073,9 @@ def _run_manifest_metrics_export(
     completed = subprocess.run(cmd, text=True, check=False)
 
     if not summary_path.exists():
-        raise RuntimeError("export_manifest_metrics.py nie wygenerował pliku podsumowania manifestu")
+        raise RuntimeError(
+            "export_manifest_metrics.py nie wygenerował pliku podsumowania manifestu"
+        )
     if not metrics_path.exists():
         raise RuntimeError("export_manifest_metrics.py nie wygenerował pliku metryk manifestu")
 
@@ -1158,8 +1165,12 @@ def _run_tls_audit(
         "stderr": _truncate_text(stderr) if stderr else "",
         "stdout_parsed": parsed_stdout,
         "status": status,
-        "warnings": warnings if isinstance(warnings, list) else (list(warnings) if isinstance(warnings, (tuple, set)) else warnings),
-        "errors": errors if isinstance(errors, list) else (list(errors) if isinstance(errors, (tuple, set)) else errors),
+        "warnings": warnings
+        if isinstance(warnings, list)
+        else (list(warnings) if isinstance(warnings, (tuple, set)) else warnings),
+        "errors": errors
+        if isinstance(errors, list)
+        else (list(errors) if isinstance(errors, (tuple, set)) else errors),
     }
 
 
@@ -1231,8 +1242,12 @@ def _run_token_audit(
         "stderr": _truncate_text(stderr) if stderr else "",
         "stdout_parsed": parsed_stdout,
         "status": status,
-        "warnings": warnings_list if isinstance(warnings_list, list) else (list(warnings_list) if isinstance(warnings_list, (tuple, set)) else warnings_list),
-        "errors": errors_list if isinstance(errors_list, list) else (list(errors_list) if isinstance(errors_list, (tuple, set)) else errors_list),
+        "warnings": warnings_list
+        if isinstance(warnings_list, list)
+        else (list(warnings_list) if isinstance(warnings_list, (tuple, set)) else warnings_list),
+        "errors": errors_list
+        if isinstance(errors_list, list)
+        else (list(errors_list) if isinstance(errors_list, (tuple, set)) else errors_list),
     }
 
 
@@ -1297,7 +1312,9 @@ def _run_security_baseline(
     completed = subprocess.run(cmd, text=True, capture_output=True, check=False)
 
     if not report_path.exists():
-        raise RuntimeError("audit_security_baseline.py nie wygenerował raportu JSON z audytu bezpieczeństwa")
+        raise RuntimeError(
+            "audit_security_baseline.py nie wygenerował raportu JSON z audytu bezpieczeństwa"
+        )
 
     try:
         report_payload = json.loads(report_path.read_text(encoding="utf-8"))
@@ -1702,7 +1719,9 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     summary = _load_summary(paths["summary"])
 
-    bundle_dir = Path(args.risk_profile_bundle_dir).expanduser() if args.risk_profile_bundle_dir else None
+    bundle_dir = (
+        Path(args.risk_profile_bundle_dir).expanduser() if args.risk_profile_bundle_dir else None
+    )
 
     try:
         telemetry_artifacts = _collect_telemetry_artifacts(
@@ -1779,9 +1798,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     }
     risk_requirements = telemetry_artifacts.get("risk_service_requirements")
     if isinstance(risk_requirements, Mapping):
-        filtered_requirements = {
-            key: value for key, value in risk_requirements.items() if value
-        }
+        filtered_requirements = {key: value for key, value in risk_requirements.items() if value}
         if filtered_requirements:
             summary["telemetry"]["risk_service_requirements"] = filtered_requirements
     required_auth_scopes = telemetry_artifacts.get("required_auth_scopes") or []
@@ -1819,9 +1836,15 @@ def main(argv: Sequence[str] | None = None) -> int:
         "metrics_path": str(manifest_artifacts["metrics_path"]),
         "summary_path": str(manifest_artifacts["summary_path"]),
         "summary": manifest_summary,
-        "status_counts": manifest_summary.get("status_counts") if isinstance(manifest_summary, Mapping) else None,
-        "total_entries": manifest_summary.get("total_entries") if isinstance(manifest_summary, Mapping) else None,
-        "worst_status": manifest_summary.get("worst_status") if isinstance(manifest_summary, Mapping) else None,
+        "status_counts": manifest_summary.get("status_counts")
+        if isinstance(manifest_summary, Mapping)
+        else None,
+        "total_entries": manifest_summary.get("total_entries")
+        if isinstance(manifest_summary, Mapping)
+        else None,
+        "worst_status": manifest_summary.get("worst_status")
+        if isinstance(manifest_summary, Mapping)
+        else None,
         "summary_signature": manifest_signature,
         "exit_code": int(manifest_artifacts.get("exit_code", 0)),
         "deny_status": manifest_artifacts.get("deny_status"),
@@ -1840,7 +1863,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         _LOGGER.error("Audyt TLS nie powiódł się: %s", exc)
         # Kontynuujemy mimo błędu TLS, ale zarejestrujemy status jako failed
 
-    tls_report = tls_audit_artifacts.get("report") if 'tls_audit_artifacts' in locals() else None
+    tls_report = tls_audit_artifacts.get("report") if "tls_audit_artifacts" in locals() else None
     warnings = []
     errors = []
     if isinstance(tls_report, Mapping):
@@ -1855,7 +1878,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         elif isinstance(err_payload, str):
             errors = [err_payload]
 
-    if 'tls_audit_artifacts' in locals():
+    if "tls_audit_artifacts" in locals():
         summary["tls_audit"] = {
             "report_path": str(tls_audit_artifacts["report_path"]),
             "report": tls_report,
@@ -2040,11 +2063,19 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     validation_exit = int(validation_result.get("exit_code", 0))
     verify_exit = int(decision_log_report.get("exit_code", 0))
-    manifest_exit = int(manifest_section.get("exit_code", 0)) if isinstance(manifest_section, Mapping) else 0
+    manifest_exit = (
+        int(manifest_section.get("exit_code", 0)) if isinstance(manifest_section, Mapping) else 0
+    )
     token_exit = int(token_section.get("exit_code", 0)) if isinstance(token_section, Mapping) else 0
     tls_exit = int(tls_section.get("exit_code", 0)) if isinstance(tls_section, Mapping) else 0
-    baseline_exit = int(security_section.get("exit_code", 0)) if isinstance(security_section, Mapping) else 0
-    baseline_require_signature = bool(security_section.get("require_signature")) if isinstance(security_section, Mapping) else False
+    baseline_exit = (
+        int(security_section.get("exit_code", 0)) if isinstance(security_section, Mapping) else 0
+    )
+    baseline_require_signature = (
+        bool(security_section.get("require_signature"))
+        if isinstance(security_section, Mapping)
+        else False
+    )
     baseline_status_text = (
         str(security_section.get("status") or "").lower()
         if isinstance(security_section, Mapping)
@@ -2096,9 +2127,15 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     _classify("summary_validation", validation_exit, validation_result.get("status"))
     _classify("decision_log", verify_exit, decision_log_report.get("status"))
-    manifest_status = manifest_section.get("worst_status") if isinstance(manifest_section, Mapping) else None
+    manifest_status = (
+        manifest_section.get("worst_status") if isinstance(manifest_section, Mapping) else None
+    )
     _classify("manifest_metrics", manifest_exit, manifest_status, treat_warning_as_warning=False)
-    _classify("token_audit", token_exit, token_section.get("status") if isinstance(token_section, Mapping) else None)
+    _classify(
+        "token_audit",
+        token_exit,
+        token_section.get("status") if isinstance(token_section, Mapping) else None,
+    )
     _classify(
         "tls_audit",
         tls_effective_exit,

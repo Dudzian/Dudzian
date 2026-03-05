@@ -43,10 +43,10 @@ def _bus_emit(bus: Any, event_type: Any, payload: dict) -> None:
 @dataclass
 class ATRConfig:
     symbol: str
-    window: int = 14               # ATR z TR ~ |delta price|
-    ema: bool = True               # EMA zamiast SMA
+    window: int = 14  # ATR z TR ~ |delta price|
+    ema: bool = True  # EMA zamiast SMA
     spike_threshold_pct: float = 50.0  # % wzrostu vs baseline, żeby wysłać alert
-    baseline_ema_alpha: float = 0.1    # jak szybko baseline goni ATR
+    baseline_ema_alpha: float = 0.1  # jak szybko baseline goni ATR
 
 
 class ATRMonitor:
@@ -56,6 +56,7 @@ class ATRMonitor:
       - ATR_UPDATE: {"symbol", "atr", "last_price", "ts"}
       - ATR_SPIKE:  {"symbol", "atr", "baseline", "growth_pct", "ts"}  (jeśli growth_pct >= spike_threshold_pct)
     """
+
     def __init__(self, bus: EventBus, cfg: ATRConfig):
         self.bus = bus
         self.cfg = cfg
@@ -110,29 +111,38 @@ class ATRMonitor:
             if self._atr is not None:
                 self._baseline = self._ema(self._baseline, self._atr, self.cfg.baseline_ema_alpha)
 
-                _bus_emit(self.bus, _ev("ATR_UPDATE"), {
-                    "symbol": self.cfg.symbol,
-                    "atr": self._atr,
-                    "last_price": price,
-                    "ts": ts,
-                })
+                _bus_emit(
+                    self.bus,
+                    _ev("ATR_UPDATE"),
+                    {
+                        "symbol": self.cfg.symbol,
+                        "atr": self._atr,
+                        "last_price": price,
+                        "ts": ts,
+                    },
+                )
 
                 if self._baseline and self._baseline > 0:
                     growth = (self._atr - self._baseline) / self._baseline * 100.0
                     if growth >= self.cfg.spike_threshold_pct:
-                        _bus_emit(self.bus, _ev("ATR_SPIKE"), {
-                            "symbol": self.cfg.symbol,
-                            "atr": self._atr,
-                            "baseline": self._baseline,
-                            "growth_pct": growth,
-                            "ts": ts,
-                        })
+                        _bus_emit(
+                            self.bus,
+                            _ev("ATR_SPIKE"),
+                            {
+                                "symbol": self.cfg.symbol,
+                                "atr": self._atr,
+                                "baseline": self._baseline,
+                                "growth_pct": growth,
+                                "ts": ts,
+                            },
+                        )
 
         self._last_price = price
 
 
 class RollingPF:
     """Lekki licznik Profit Factor na podstawie listy wyników trade'ów."""
+
     def __init__(self, maxlen: int = 200):
         self.returns: Deque[float] = deque(maxlen=maxlen)
 

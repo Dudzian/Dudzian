@@ -107,13 +107,9 @@ class VolatilityEstimator:
         self.lookback = lookback_periods
         self.logger = logging.getLogger(__name__)
 
-    def ewma_volatility(
-        self, returns: pd.Series, lambda_param: float = 0.94
-    ) -> float:
+    def ewma_volatility(self, returns: pd.Series, lambda_param: float = 0.94) -> float:
         try:
-            with capture_pandas_warnings(
-                self.logger, component="risk.volatility.ewma"
-            ):
+            with capture_pandas_warnings(self.logger, component="risk.volatility.ewma"):
                 if returns is None or len(returns) < 2:
                     return 0.02
                 if len(returns) < 10:
@@ -131,9 +127,7 @@ class VolatilityEstimator:
 
     def garch_volatility(self, returns: pd.Series) -> float:
         try:
-            with capture_pandas_warnings(
-                self.logger, component="risk.volatility.garch"
-            ):
+            with capture_pandas_warnings(self.logger, component="risk.volatility.garch"):
                 if returns is None or len(returns) < 50:
                     empty = returns if returns is not None else pd.Series([], dtype=float)
                     return self.ewma_volatility(empty)
@@ -142,11 +136,7 @@ class VolatilityEstimator:
                 variances = [float(returns.var())]
                 limit = min(len(returns), 100)
                 for idx in range(1, limit):
-                    new_var = (
-                        omega
-                        + alpha * (returns.iloc[idx - 1] ** 2)
-                        + beta * variances[-1]
-                    )
+                    new_var = omega + alpha * (returns.iloc[idx - 1] ** 2) + beta * variances[-1]
                     variances.append(float(new_var))
                 return float(np.sqrt(variances[-1] * 252))
         except Exception as exc:  # pragma: no cover - log i fallback
@@ -156,9 +146,7 @@ class VolatilityEstimator:
 
     def realized_volatility(self, returns: pd.Series) -> float:
         try:
-            with capture_pandas_warnings(
-                self.logger, component="risk.volatility.realized"
-            ):
+            with capture_pandas_warnings(self.logger, component="risk.volatility.realized"):
                 if returns is None or len(returns) == 0:
                     return 0.02
                 return float(returns.std() * np.sqrt(252))
@@ -177,9 +165,7 @@ class CorrelationAnalyzer:
         self, returns1: pd.Series, returns2: pd.Series, window: int = 60
     ) -> float:
         try:
-            with capture_pandas_warnings(
-                self.logger, component="risk.correlation.dynamic"
-            ):
+            with capture_pandas_warnings(self.logger, component="risk.correlation.dynamic"):
                 if returns1 is None or returns2 is None:
                     return 0.0
                 if len(returns1) < window or len(returns2) < window:
@@ -194,13 +180,9 @@ class CorrelationAnalyzer:
             self.logger.error("Error calculating dynamic correlation: %s", exc)
             return 0.0
 
-    def portfolio_correlation_risk(
-        self, returns_dict: Mapping[str, pd.Series]
-    ) -> float:
+    def portfolio_correlation_risk(self, returns_dict: Mapping[str, pd.Series]) -> float:
         try:
-            with capture_pandas_warnings(
-                self.logger, component="risk.correlation.portfolio"
-            ):
+            with capture_pandas_warnings(self.logger, component="risk.correlation.portfolio"):
                 symbols = list(returns_dict.keys())
                 if len(symbols) < 2:
                     return 0.0
@@ -236,16 +218,12 @@ class RiskManagement:
         self.max_risk_per_trade = float(self.params.get("max_risk_per_trade", 0.02))
         self.max_portfolio_risk = float(self.params.get("max_portfolio_risk", 0.10))
         self.max_correlation_risk = float(self.params.get("max_correlation_risk", 0.7))
-        self.max_sector_concentration = float(
-            self.params.get("max_sector_concentration", 0.3)
-        )
+        self.max_sector_concentration = float(self.params.get("max_sector_concentration", 0.3))
 
         self.confidence_level = float(self.params.get("confidence_level", 0.95))
         self.lookback_period = int(self.params.get("lookback_period", 252))
         self.max_positions = int(self.params.get("max_positions", 10))
-        self.emergency_stop_drawdown = float(
-            self.params.get("emergency_stop_drawdown", 0.15)
-        )
+        self.emergency_stop_drawdown = float(self.params.get("emergency_stop_drawdown", 0.15))
 
         self.min_stop_loss = float(self.params.get("min_stop_loss", 0.005))
         self.max_stop_loss = float(self.params.get("max_stop_loss", 0.05))
@@ -290,9 +268,7 @@ class RiskManagement:
 
     def _validate_parameters(self) -> None:
         if self.max_portfolio_risk <= self.max_risk_per_trade:
-            raise ValueError(
-                "max_portfolio_risk must be greater than max_risk_per_trade"
-            )
+            raise ValueError("max_portfolio_risk must be greater than max_risk_per_trade")
         if not 0.5 <= self.confidence_level <= 0.99:
             raise ValueError("confidence_level must be between 0.5 and 0.99")
         if self.max_positions < 1:
@@ -309,9 +285,7 @@ class RiskManagement:
         current_portfolio: Mapping[str, Mapping[str, Any]],
     ) -> PositionSizing:
         try:
-            with capture_pandas_warnings(
-                self.logger, component="risk.position_sizing"
-            ):
+            with capture_pandas_warnings(self.logger, component="risk.position_sizing"):
                 signal_strength = float(signal_data.get("strength", 0.5))
                 signal_confidence = float(signal_data.get("confidence", 0.5))
 
@@ -323,17 +297,14 @@ class RiskManagement:
 
                 kelly_size = self._calculate_kelly_criterion(returns, signal_confidence)
                 volatility = self.volatility_estimator.ewma_volatility(returns)
-                vol_adjusted_size = self._volatility_adjusted_size(
-                    volatility, signal_strength
-                )
+                vol_adjusted_size = self._volatility_adjusted_size(volatility, signal_strength)
                 risk_parity_size = self._risk_parity_sizing(current_portfolio, volatility)
                 portfolio_heat = self._calculate_portfolio_heat(current_portfolio)
                 heat_adjusted_size = self._heat_adjusted_sizing(portfolio_heat)
 
                 if portfolio_heat > 0.8:
                     self._emit_alert(
-                        "Wysokie 'portfolio heat' "
-                        f"({portfolio_heat:.2%}) – ograniczam ekspozycję.",
+                        f"Wysokie 'portfolio heat' ({portfolio_heat:.2%}) – ograniczam ekspozycję.",
                         severity=AlertSeverity.WARNING,
                         context={
                             "portfolio_heat": float(portfolio_heat),
@@ -341,9 +312,7 @@ class RiskManagement:
                         },
                     )
 
-                correlation_adjustment = self._correlation_adjustment(
-                    symbol, current_portfolio
-                )
+                correlation_adjustment = self._correlation_adjustment(symbol, current_portfolio)
 
                 sizes = [
                     kelly_size,
@@ -360,8 +329,7 @@ class RiskManagement:
 
                 if recommended_size == 0.0:
                     self._emit_alert(
-                        "Rekomendacja risk engine: brak nowej pozycji "
-                        f"na {symbol} (0%).",
+                        f"Rekomendacja risk engine: brak nowej pozycji na {symbol} (0%).",
                         severity=AlertSeverity.WARNING,
                         context={
                             "symbol": symbol,
@@ -436,7 +404,9 @@ class RiskManagement:
                     if symbol not in self.historical_returns:
                         self.historical_returns[symbol] = cleaned_returns.dropna().tail(252)
                     else:
-                        combined = pd.concat([self.historical_returns[symbol], cleaned_returns]).dropna()
+                        combined = pd.concat(
+                            [self.historical_returns[symbol], cleaned_returns]
+                        ).dropna()
                         self.historical_returns[symbol] = combined.tail(252)
 
                 self.logger.debug(
@@ -542,17 +512,13 @@ class RiskManagement:
                 if new_stop > current_stop:
                     position["stop_loss"] = float(new_stop)
                     position["trailing_updated"] = True
-                    self.logger.info(
-                        "Trailing stop LONG: %.4f -> %.4f", current_stop, new_stop
-                    )
+                    self.logger.info("Trailing stop LONG: %.4f -> %.4f", current_stop, new_stop)
             else:
                 new_stop = current_price + (atr_multiplier * update_threshold)
                 if new_stop < current_stop:
                     position["stop_loss"] = float(new_stop)
                     position["trailing_updated"] = True
-                    self.logger.info(
-                        "Trailing stop SHORT: %.4f -> %.4f", current_stop, new_stop
-                    )
+                    self.logger.info("Trailing stop SHORT: %.4f -> %.4f", current_stop, new_stop)
 
             return position
         except Exception as exc:  # pragma: no cover - log i fallback
@@ -570,9 +536,7 @@ class RiskManagement:
     ) -> Dict[str, Any]:
         try:
             current_drawdown = (
-                (initial_value - portfolio_value) / initial_value
-                if initial_value > 0
-                else 0.0
+                (initial_value - portfolio_value) / initial_value if initial_value > 0 else 0.0
             )
             actions: List[str] = []
             alerts: List[str] = []
@@ -599,9 +563,11 @@ class RiskManagement:
                     context={"portfolio_heat": float(portfolio_heat)},
                 )
 
-            position_sizes = [
-                float(pos.get("size", 0.0)) for pos in current_positions.values()
-            ] if current_positions else []
+            position_sizes = (
+                [float(pos.get("size", 0.0)) for pos in current_positions.values()]
+                if current_positions
+                else []
+            )
             max_position = float(max(position_sizes)) if position_sizes else 0.0
             if max_position > 0.15:
                 actions.append("REDUCE_LARGEST_POSITION")
@@ -668,9 +634,7 @@ class RiskManagement:
 
             if portfolio_data:
                 num_positions = len(portfolio_data)
-                total_exposure = float(
-                    sum(pos.get("size", 0.0) for pos in portfolio_data.values())
-                )
+                total_exposure = float(sum(pos.get("size", 0.0) for pos in portfolio_data.values()))
                 report.append("📋 Portfolio Overview:\n")
                 report.append(f"  • Number of Positions: {num_positions}\n")
                 report.append(f"  • Total Exposure: {total_exposure:.2%}\n")
@@ -692,17 +656,11 @@ class RiskManagement:
 
             if len(portfolio_data) > 1:
                 report.append("\n🔗 Correlation Analysis:\n")
-                report.append(
-                    f"  • Average Correlation: {metrics.correlation_risk:.3f}\n"
-                )
+                report.append(f"  • Average Correlation: {metrics.correlation_risk:.3f}\n")
                 if metrics.correlation_risk > 0.7:
-                    report.append(
-                        "  ⚠️  HIGH CORRELATION: Positions may move together\n"
-                    )
+                    report.append("  ⚠️  HIGH CORRELATION: Positions may move together\n")
                 elif metrics.correlation_risk < 0.3:
-                    report.append(
-                        "  ✅ GOOD DIVERSIFICATION: Low correlation between positions\n"
-                    )
+                    report.append("  ✅ GOOD DIVERSIFICATION: Low correlation between positions\n")
 
             return "".join(report)
         except Exception as exc:  # pragma: no cover - log i fallback
@@ -738,8 +696,7 @@ class RiskManagement:
                     reduction = min(risk_to_reduce, max_reduction)
                     suggested_size = max(
                         0.0,
-                        float(pos.get("size", 0.0))
-                        - reduction / float(pos.get("volatility", 0.2)),
+                        float(pos.get("size", 0.0)) - reduction / float(pos.get("volatility", 0.2)),
                     )
                     suggestions.append(
                         {
@@ -785,9 +742,7 @@ class RiskManagement:
             self.logger.error("Error optimizing portfolio risk: %s", exc)
             return {"optimization_needed": False, "error": str(exc)}
 
-    def _calculate_kelly_criterion(
-        self, returns: pd.Series, signal_confidence: float
-    ) -> float:
+    def _calculate_kelly_criterion(self, returns: pd.Series, signal_confidence: float) -> float:
         try:
             if returns is None or len(returns) < 20:
                 return 0.01
@@ -809,9 +764,7 @@ class RiskManagement:
             self.logger.error("Error in Kelly calculation: %s", exc)
             return 0.01
 
-    def _volatility_adjusted_size(
-        self, volatility: float, signal_strength: float
-    ) -> float:
+    def _volatility_adjusted_size(self, volatility: float, signal_strength: float) -> float:
         try:
             target_vol = 0.15
             if volatility <= 0:
@@ -884,9 +837,7 @@ class RiskManagement:
                 ex_ret = self.historical_returns.get(existing_symbol)
                 if ex_ret is None or len(ex_ret) < 2:
                     continue
-                corr = self.correlation_analyzer.calculate_dynamic_correlation(
-                    sym_ret, ex_ret
-                )
+                corr = self.correlation_analyzer.calculate_dynamic_correlation(sym_ret, ex_ret)
                 correlations.append(abs(float(corr)))
             if not correlations:
                 return 1.0
@@ -951,9 +902,7 @@ class RiskManagement:
             self.logger.error("Error calculating Expected Shortfall: %s", exc)
             return 0.08
 
-    def _calculate_drawdown_risk(
-        self, portfolio_data: Mapping[str, Mapping[str, Any]]
-    ) -> float:
+    def _calculate_drawdown_risk(self, portfolio_data: Mapping[str, Mapping[str, Any]]) -> float:
         try:
             if not self.portfolio_value_history or len(self.portfolio_value_history) < 10:
                 return 0.1
@@ -1033,9 +982,7 @@ class RiskManagement:
     ) -> RiskMetrics:
         try:
             with capture_pandas_warnings(self.logger, component="risk.metrics"):
-                var_95 = float(
-                    self._calculate_var(portfolio_data, market_data, confidence=0.95)
-                )
+                var_95 = float(self._calculate_var(portfolio_data, market_data, confidence=0.95))
                 expected_shortfall = float(
                     self._calculate_expected_shortfall(portfolio_data, market_data)
                 )
@@ -1043,9 +990,7 @@ class RiskManagement:
                 correlation_risk = float(
                     self._calculate_correlation_risk(portfolio_data, market_data)
                 )
-                liquidity_risk = float(
-                    self._calculate_liquidity_risk(portfolio_data, market_data)
-                )
+                liquidity_risk = float(self._calculate_liquidity_risk(portfolio_data, market_data))
 
                 overall_score = (
                     var_95 * 0.3
@@ -1115,9 +1060,7 @@ class MultiAccountRiskManager:
         # Historia zagregowanej wartości portfela na potrzeby obliczeń drawdownów.
         self.portfolio_value_history: list[float] = []
 
-    def _ensure_manager(
-        self, account_id: str, params: Mapping[str, Any] | None
-    ) -> RiskManagement:
+    def _ensure_manager(self, account_id: str, params: Mapping[str, Any] | None) -> RiskManagement:
         if account_id not in self._managers:
             merged = dict(self._base_params)
             if params:
@@ -1183,9 +1126,7 @@ class MultiAccountRiskManager:
                     )
                     continue
 
-                container = aggregated_portfolio.setdefault(
-                    symbol, {"size": 0.0, "notional": 0.0}
-                )
+                container = aggregated_portfolio.setdefault(symbol, {"size": 0.0, "notional": 0.0})
                 size = float(position.get("size") or position.get("quantity") or 0.0)
                 price = float(position.get("price") or position.get("last_price") or 0.0)
                 notional = float(position.get("notional") or size * price)
@@ -1193,14 +1134,19 @@ class MultiAccountRiskManager:
                 container["notional"] += notional
 
         aggregate_manager = RiskManagement(self._base_params)
-        aggregate_metrics = aggregate_manager.calculate_risk_metrics(aggregated_portfolio, market_data)
+        aggregate_metrics = aggregate_manager.calculate_risk_metrics(
+            aggregated_portfolio, market_data
+        )
 
         symbol_limits: Dict[str, float] = {}
         for symbol, payload in aggregated_portfolio.items():
             base_limit = float(
                 max(
                     0.01,
-                    min(1.0, aggregate_metrics.var_95 * 1.2 + aggregate_metrics.correlation_risk * 0.6),
+                    min(
+                        1.0,
+                        aggregate_metrics.var_95 * 1.2 + aggregate_metrics.correlation_risk * 0.6,
+                    ),
                 )
             )
             symbol_limit = base_limit
@@ -1258,9 +1204,7 @@ class MultiAccountRiskManager:
             self.logger.error("Error calculating Expected Shortfall: %s", exc)
             return 0.08
 
-    def _calculate_drawdown_risk(
-        self, portfolio_data: Mapping[str, Mapping[str, Any]]
-    ) -> float:
+    def _calculate_drawdown_risk(self, portfolio_data: Mapping[str, Mapping[str, Any]]) -> float:
         try:
             if not self.portfolio_value_history or len(self.portfolio_value_history) < 10:
                 return 0.1
@@ -1369,17 +1313,13 @@ class MultiAccountRiskManager:
                 if new_stop > current_stop:
                     position["stop_loss"] = float(new_stop)
                     position["trailing_updated"] = True
-                    self.logger.info(
-                        "Trailing stop LONG: %.4f -> %.4f", current_stop, new_stop
-                    )
+                    self.logger.info("Trailing stop LONG: %.4f -> %.4f", current_stop, new_stop)
             else:
                 new_stop = current_price + (atr_multiplier * update_threshold)
                 if new_stop < current_stop:
                     position["stop_loss"] = float(new_stop)
                     position["trailing_updated"] = True
-                    self.logger.info(
-                        "Trailing stop SHORT: %.4f -> %.4f", current_stop, new_stop
-                    )
+                    self.logger.info("Trailing stop SHORT: %.4f -> %.4f", current_stop, new_stop)
 
             return position
         except Exception as exc:  # pragma: no cover - log i fallback
@@ -1397,9 +1337,7 @@ class MultiAccountRiskManager:
     ) -> Dict[str, Any]:
         try:
             current_drawdown = (
-                (initial_value - portfolio_value) / initial_value
-                if initial_value > 0
-                else 0.0
+                (initial_value - portfolio_value) / initial_value if initial_value > 0 else 0.0
             )
             actions: List[str] = []
             alerts: List[str] = []
@@ -1426,9 +1364,11 @@ class MultiAccountRiskManager:
                     context={"portfolio_heat": float(portfolio_heat)},
                 )
 
-            position_sizes = [
-                float(pos.get("size", 0.0)) for pos in current_positions.values()
-            ] if current_positions else []
+            position_sizes = (
+                [float(pos.get("size", 0.0)) for pos in current_positions.values()]
+                if current_positions
+                else []
+            )
             max_position = float(max(position_sizes)) if position_sizes else 0.0
             if max_position > 0.15:
                 actions.append("REDUCE_LARGEST_POSITION")
@@ -1495,9 +1435,7 @@ class MultiAccountRiskManager:
 
             if portfolio_data:
                 num_positions = len(portfolio_data)
-                total_exposure = float(
-                    sum(pos.get("size", 0.0) for pos in portfolio_data.values())
-                )
+                total_exposure = float(sum(pos.get("size", 0.0) for pos in portfolio_data.values()))
                 report.append("📋 Portfolio Overview:\n")
                 report.append(f"  • Number of Positions: {num_positions}\n")
                 report.append(f"  • Total Exposure: {total_exposure:.2%}\n")
@@ -1519,17 +1457,11 @@ class MultiAccountRiskManager:
 
             if len(portfolio_data) > 1:
                 report.append("\n🔗 Correlation Analysis:\n")
-                report.append(
-                    f"  • Average Correlation: {metrics.correlation_risk:.3f}\n"
-                )
+                report.append(f"  • Average Correlation: {metrics.correlation_risk:.3f}\n")
                 if metrics.correlation_risk > 0.7:
-                    report.append(
-                        "  ⚠️  HIGH CORRELATION: Positions may move together\n"
-                    )
+                    report.append("  ⚠️  HIGH CORRELATION: Positions may move together\n")
                 elif metrics.correlation_risk < 0.3:
-                    report.append(
-                        "  ✅ GOOD DIVERSIFICATION: Low correlation between positions\n"
-                    )
+                    report.append("  ✅ GOOD DIVERSIFICATION: Low correlation between positions\n")
 
             return "".join(report)
         except Exception as exc:  # pragma: no cover - log i fallback
@@ -1565,8 +1497,7 @@ class MultiAccountRiskManager:
                     reduction = min(risk_to_reduce, max_reduction)
                     suggested_size = max(
                         0.0,
-                        float(pos.get("size", 0.0))
-                        - reduction / float(pos.get("volatility", 0.2)),
+                        float(pos.get("size", 0.0)) - reduction / float(pos.get("volatility", 0.2)),
                     )
                     suggestions.append(
                         {
@@ -1612,6 +1543,7 @@ class MultiAccountRiskManager:
             self.logger.error("Error optimizing portfolio risk: %s", exc)
             return {"optimization_needed": False, "error": str(exc)}
 
+
 def create_risk_manager(config: Mapping[str, Any]) -> RiskManagement:
     try:
         return RiskManagement(config)
@@ -1642,9 +1574,7 @@ def backtest_risk_strategy(
                 if not isinstance(md, pd.DataFrame):
                     continue
 
-                sizing = risk_manager.calculate_position_size(
-                    symbol, signal, md, portfolio
-                )
+                sizing = risk_manager.calculate_position_size(symbol, signal, md, portfolio)
                 can_trade, reason = risk_manager.check_position_limits(
                     {
                         "symbol": symbol,
@@ -1658,7 +1588,9 @@ def backtest_risk_strategy(
                     entry_price = (
                         signal.get("price")
                         if "price" in signal
-                        else float(md["close"].iloc[-1]) if "close" in md and len(md) else 0.0
+                        else float(md["close"].iloc[-1])
+                        if "close" in md and len(md)
+                        else 0.0
                     )
                     portfolio[symbol] = {
                         "size": sizing.recommended_size,
@@ -1677,9 +1609,7 @@ def backtest_risk_strategy(
                     )
 
                 heat = risk_manager._calculate_portfolio_heat(portfolio)
-                results["max_portfolio_heat"] = max(
-                    results["max_portfolio_heat"], float(heat)
-                )
+                results["max_portfolio_heat"] = max(results["max_portfolio_heat"], float(heat))
 
             results["risk_adjusted_ratio"] = (
                 results["risk_adjusted_trades"] / results["total_trades"]
@@ -1692,9 +1622,7 @@ def backtest_risk_strategy(
         return {"error": str(exc), "total_trades": 0}
 
 
-def calculate_optimal_leverage(
-    returns: pd.Series, target_volatility: float = 0.15
-) -> float:
+def calculate_optimal_leverage(returns: pd.Series, target_volatility: float = 0.15) -> float:
     try:
         with capture_pandas_warnings(_LOGGER, component="risk.leverage"):
             if returns is None or len(returns) < 20:

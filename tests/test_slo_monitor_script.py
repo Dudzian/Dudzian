@@ -17,6 +17,7 @@ from bot_core.security.signing import build_hmac_signature
 # - wariant "HEAD" nie eksportuje run(argv) i używa --definitions/--metrics JSON + podpis HMAC
 try:
     from scripts.slo_monitor import run as slo_monitor_run  # type: ignore[attr-defined]
+
     _HAS_RUN = True
 except Exception:  # pragma: no cover
     slo_monitor_run = None  # type: ignore[assignment]
@@ -25,7 +26,9 @@ except Exception:  # pragma: no cover
 
 # ==================== Test dla wariantu HEAD (definitions + metrics + HMAC) ====================
 @pytest.mark.skipif(_HAS_RUN, reason="Wariant main wykryty – pomijam test CLI definitions/metrics")
-def test_slo_monitor_cli_generates_signed_report(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_slo_monitor_cli_generates_signed_report(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     definitions_path = tmp_path / "definitions.yaml"
     definitions_path.write_text(
         """
@@ -115,7 +118,9 @@ def test_slo_monitor_cli_generates_signed_report(tmp_path: Path, monkeypatch: py
     assert composite_results["core_stack"]["status"] == "breach"
     assert payload["summary"]["composites"]["status_counts"]["breach"] == 1
 
-    expected_signature = build_hmac_signature(payload, key=key_value.encode("utf-8"), key_id="local-stage6")
+    expected_signature = build_hmac_signature(
+        payload, key=key_value.encode("utf-8"), key_id="local-stage6"
+    )
     recorded_signature = json.loads(signature_path.read_text(encoding="utf-8"))
     assert recorded_signature == expected_signature
 
@@ -154,19 +159,19 @@ def test_slo_monitor_generates_report(tmp_path: Path) -> None:
             "    latency:\n"
             "      metric: bot_core_decision_latency_ms\n"
             "      objective: 220\n"
-            "      comparator: \"<=\"\n"
+            '      comparator: "<="\n'
             "      aggregation: p95\n"
             "      window_minutes: 120\n"
             "    cost:\n"
             "      metric: bot_core_trade_cost_bps\n"
             "      objective: 12\n"
-            "      comparator: \"<=\"\n"
+            '      comparator: "<="\n'
             "      aggregation: average\n"
             "      window_minutes: 120\n"
             "    fill:\n"
             "      metric: bot_core_fill_rate_pct\n"
             "      objective: 0.94\n"
-            "      comparator: \">=\"\n"
+            '      comparator: ">="\n'
             "      aggregation: average\n"
             "      window_minutes: 120\n"
             "  key_rotation:\n"

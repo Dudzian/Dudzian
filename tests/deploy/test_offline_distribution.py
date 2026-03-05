@@ -26,7 +26,7 @@ def test_build_offline_distribution_creates_package(tmp_path: Path) -> None:
         fingerprint="HW-123",
         metadata={"channel": "stable"},
         signing_key=b"super-secret",
-        signing_key_id="test", 
+        signing_key_id="test",
         rotation_registry_path=rotation_registry,
         manifest_output=manifest_output,
     )

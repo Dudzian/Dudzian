@@ -14,6 +14,7 @@ try:  # pragma: no cover - zależne od obecności modułu giełdowego
         ExchangeThrottlingError,
     )
 except Exception:  # pragma: no cover - defensywny fallback
+
     class ExchangeAPIError(Exception):
         status_code: int | None = None
         message: str | None = None

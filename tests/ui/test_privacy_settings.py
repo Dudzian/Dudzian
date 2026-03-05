@@ -54,7 +54,9 @@ def test_privacy_settings_qml_loads(tmp_path: Path, qapp: QApplication) -> None:
 
     engine = QQmlApplicationEngine()
     engine.rootContext().setContextProperty("privacySettingsController", controller)
-    qml_path = Path(__file__).resolve().parents[2] / "ui" / "qml" / "settings" / "PrivacySettings.qml"
+    qml_path = (
+        Path(__file__).resolve().parents[2] / "ui" / "qml" / "settings" / "PrivacySettings.qml"
+    )
     engine.load(QUrl.fromLocalFile(str(qml_path)))
 
     assert engine.rootObjects(), "Komponent PrivacySettings powinien się załadować"

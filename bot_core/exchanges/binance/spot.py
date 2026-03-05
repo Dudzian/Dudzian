@@ -1,4 +1,5 @@
 """Adapter REST dla rynku spot Binance do obsługi danych publicznych i prywatnych."""
+
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -149,9 +150,7 @@ def _determine_trading_base(environment: Environment) -> str:
     return "https://api.binance.com"
 
 
-def _direct_conversion_rate(
-    base: str, quote: str, prices: Mapping[str, float]
-) -> Optional[float]:
+def _direct_conversion_rate(base: str, quote: str, prices: Mapping[str, float]) -> Optional[float]:
     """Zwraca kurs wymiany dla pary base/quote na podstawie tickerów."""
     if base == quote:
         return 1.0
@@ -175,15 +174,13 @@ def _determine_intermediaries(target: str, prices: Mapping[str, float]) -> set[s
     target_len = len(target)
     for symbol in prices.keys():
         if symbol.endswith(target) and len(symbol) > target_len:
-            intermediaries.add(symbol[: -target_len])
+            intermediaries.add(symbol[:-target_len])
         elif symbol.startswith(target) and len(symbol) > target_len:
             intermediaries.add(symbol[target_len:])
     return intermediaries
 
 
-def _convert_to_target(
-    asset: str, target: str, prices: Mapping[str, float]
-) -> Optional[float]:
+def _convert_to_target(asset: str, target: str, prices: Mapping[str, float]) -> Optional[float]:
     """Próbuje przeliczyć aktywo na walutę docelową przy użyciu triangulacji."""
     direct_rate = _direct_conversion_rate(asset, target, prices)
     if direct_rate is not None:
@@ -368,7 +365,9 @@ class BinanceSpotAdapter(ExchangeAdapter):
     def _build_stream(self, scope: str, channels: Sequence[str]) -> LocalLongPollStream:
         stream_settings = dict(self._stream_settings())
         base_url = str(
-            stream_settings.get("base_url", self._settings.get("stream_base_url", "http://127.0.0.1:8765"))
+            stream_settings.get(
+                "base_url", self._settings.get("stream_base_url", "http://127.0.0.1:8765")
+            )
         )
         try:
             self._network_guard.ensure_allowed(base_url, check_source_ip=False)
@@ -392,7 +391,9 @@ class BinanceSpotAdapter(ExchangeAdapter):
             )
         )
         timeout = float(stream_settings.get("timeout", self._settings.get("stream_timeout", 10.0)))
-        max_retries = int(stream_settings.get("max_retries", self._settings.get("stream_max_retries", 3)))
+        max_retries = int(
+            stream_settings.get("max_retries", self._settings.get("stream_max_retries", 3))
+        )
         backoff_base = float(
             stream_settings.get("backoff_base", self._settings.get("stream_backoff_base", 0.25))
         )
@@ -776,7 +777,9 @@ class BinanceSpotAdapter(ExchangeAdapter):
             self._rate_limiter.acquire(weight=weight)
             start = time.monotonic()
             if signed:
-                self._metric_signed_requests.inc(labels={**self._metric_base_labels, "method": method})
+                self._metric_signed_requests.inc(
+                    labels={**self._metric_base_labels, "method": method}
+                )
             try:
                 with urlopen(request, timeout=15) as response:  # nosec: B310 - endpoint zaufany
                     status_code = getattr(response, "status", getattr(response, "code", 200))
@@ -862,7 +865,11 @@ class BinanceSpotAdapter(ExchangeAdapter):
 
                 if 500 <= status_code < 600:
                     self._metric_retries.inc(
-                        labels={**metric_labels, "reason": "server_error", "status": str(status_code)}
+                        labels={
+                            **metric_labels,
+                            "reason": "server_error",
+                            "status": str(status_code),
+                        }
                     )
                     delay = self._calculate_backoff(attempt)
                     self._register_reconnect_cooldown(delay, reason=f"server_{status_code}")
@@ -919,7 +926,7 @@ class BinanceSpotAdapter(ExchangeAdapter):
                 raise ExchangeNetworkError(
                     message="Nie udało się uzyskać odpowiedzi od API Binance po wielokrotnych próbach.",
                     reason=None,
-        )
+                )
 
     def _notify_network_error(self, endpoint: str, exc: Exception) -> None:
         if not self._network_error_handler:
@@ -989,7 +996,9 @@ class BinanceSpotAdapter(ExchangeAdapter):
     def _ensure_network_access(self, url: str, *, check_source_ip: bool = True) -> None:
         try:
             self._network_guard.ensure_allowed(url, check_source_ip=check_source_ip)
-        except NetworkAccessViolation as exc:  # pragma: no cover - obsługa błędu walidowana w testach
+        except (
+            NetworkAccessViolation
+        ) as exc:  # pragma: no cover - obsługa błędu walidowana w testach
             raise ExchangeNetworkError(
                 message=f"Naruszenie konfiguracji sieci: {exc.reason}",
                 reason=exc,
@@ -1067,6 +1076,7 @@ class BinanceSpotAdapter(ExchangeAdapter):
 
     def fetch_symbols(self) -> Iterable[str]:
         """Pobiera listę aktywnych symboli spot z Binance."""
+
         def _call() -> Iterable[str]:
             payload = self._public_request("/api/v3/exchangeInfo")
             if not isinstance(payload, dict) or "symbols" not in payload:
@@ -1138,9 +1148,7 @@ class BinanceSpotAdapter(ExchangeAdapter):
             raise ValueError(f"Symbol {symbol!r} nie jest wspierany przez Binance Spot.")
 
         canonical_symbol = (
-            normalize_symbol(symbol)
-            or normalize_symbol(exchange_symbol)
-            or exchange_symbol
+            normalize_symbol(symbol) or normalize_symbol(exchange_symbol) or exchange_symbol
         )
         return exchange_symbol, canonical_symbol
 
@@ -1150,7 +1158,9 @@ class BinanceSpotAdapter(ExchangeAdapter):
         exchange_symbol, canonical_symbol = self._resolve_symbol(symbol)
 
         def _call() -> BinanceTicker:
-            payload = self._public_request("/api/v3/ticker/24hr", params={"symbol": exchange_symbol})
+            payload = self._public_request(
+                "/api/v3/ticker/24hr", params={"symbol": exchange_symbol}
+            )
             if not isinstance(payload, Mapping):
                 raise ExchangeAPIError(
                     "Binance Spot zwrócił niepoprawną strukturę tickera.",
@@ -1191,6 +1201,7 @@ class BinanceSpotAdapter(ExchangeAdapter):
 
         normalized_depth = _normalize_depth(depth)
         params = {"symbol": exchange_symbol, "limit": normalized_depth}
+
         def _call() -> BinanceOrderBook:
             payload = self._public_request("/api/v3/depth", params=params)
             if not isinstance(payload, Mapping):
@@ -1279,9 +1290,13 @@ class BinanceSpotAdapter(ExchangeAdapter):
                     price=price,
                     orig_quantity=_to_float(entry.get("origQty")),
                     executed_quantity=_to_float(entry.get("executedQty")),
-                    time_in_force=(str(entry.get("timeInForce")) if entry.get("timeInForce") else None),
+                    time_in_force=(
+                        str(entry.get("timeInForce")) if entry.get("timeInForce") else None
+                    ),
                     client_order_id=(
-                        str(entry.get("clientOrderId")) if entry.get("clientOrderId") not in (None, "") else None
+                        str(entry.get("clientOrderId"))
+                        if entry.get("clientOrderId") not in (None, "")
+                        else None
                     ),
                     stop_price=stop_price,
                     iceberg_quantity=iceberg,
@@ -1302,9 +1317,7 @@ class BinanceSpotAdapter(ExchangeAdapter):
 
         exchange_symbol = to_exchange_symbol(request.symbol)
         if exchange_symbol is None:
-            raise ValueError(
-                "Symbol zlecenia nie jest wspierany lub posiada niepoprawny format."
-            )
+            raise ValueError("Symbol zlecenia nie jest wspierany lub posiada niepoprawny format.")
 
         params: dict[str, object] = {
             "symbol": exchange_symbol,
@@ -1351,6 +1364,7 @@ class BinanceSpotAdapter(ExchangeAdapter):
             if exchange_symbol is None:
                 raise ValueError("Symbol anulowanego zlecenia ma niepoprawny format.")
             params["symbol"] = exchange_symbol
+
         def _call() -> None:
             response = self._signed_request("/api/v3/order", method="DELETE", params=params)
             if isinstance(response, Mapping):

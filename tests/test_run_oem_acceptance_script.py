@@ -12,6 +12,8 @@ from scripts.run_oem_acceptance import main as run_acceptance
 
 
 ROOT = Path(__file__).resolve().parents[1]
+
+
 def _write_signing_key(path: Path) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_bytes(os.urandom(48))
@@ -364,7 +366,17 @@ def test_run_oem_acceptance_end_to_end(tmp_path: Path) -> None:
     assert exit_code == 0
 
     summary = json.loads(summary_path.read_text(encoding="utf-8"))
-    expected_steps = {"bundle", "license", "risk", "mtls", "tco", "decision", "slo", "rotation", "observability"}
+    expected_steps = {
+        "bundle",
+        "license",
+        "risk",
+        "mtls",
+        "tco",
+        "decision",
+        "slo",
+        "rotation",
+        "observability",
+    }
     assert {entry["step"] for entry in summary} == expected_steps
     assert all(entry["status"] == "ok" for entry in summary)
 
@@ -441,8 +453,12 @@ def test_run_oem_acceptance_end_to_end(tmp_path: Path) -> None:
     key_bytes = decision_key.read_bytes().strip()
     entry_copy = dict(decision_entry)
     entry_copy.pop("signature", None)
-    canonical = json.dumps(entry_copy, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode("utf-8")
-    expected = base64.b64encode(hmac.new(key_bytes, canonical, hashlib.sha256).digest()).decode("ascii")
+    canonical = json.dumps(
+        entry_copy, ensure_ascii=False, sort_keys=True, separators=(",", ":")
+    ).encode("utf-8")
+    expected = base64.b64encode(hmac.new(key_bytes, canonical, hashlib.sha256).digest()).decode(
+        "ascii"
+    )
     assert signature["value"] == expected
 
     artifact_runs = list(artifact_root.iterdir())

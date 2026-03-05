@@ -1,4 +1,5 @@
 """Profil konserwatywny zgodny z wymaganiami klienta."""
+
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -20,7 +21,9 @@ class ConservativeProfile(StaticRiskProfile):
     _max_leverage: float = 2.0
     _drawdown_limit: float = 0.05
     _daily_loss_limit: float = 0.04
-    _max_position_pct: float = 0.30  # patrz docstring: cap utrzymany wysoko, bo ryzyko ogranicza sizing
+    _max_position_pct: float = (
+        0.30  # patrz docstring: cap utrzymany wysoko, bo ryzyko ogranicza sizing
+    )
     _target_volatility: float = 0.07
     _stop_loss_atr_multiple: float = 1.0
     _trade_risk_pct_range: tuple[float, float] = (0.005, 0.0075)
@@ -36,5 +39,6 @@ class ConservativeProfile(StaticRiskProfile):
     min_omega_ratio: float = 1.3
     max_risk_of_ruin_pct: float = 4.0
     min_hit_ratio_pct: float = 55.0
+
 
 __all__ = ["ConservativeProfile"]

@@ -1,4 +1,5 @@
 """Testy symulatora paper trading."""
+
 from __future__ import annotations
 
 import itertools
@@ -315,4 +316,6 @@ def test_ledger_retention_removes_old_files(tmp_path: Path) -> None:
     filenames = {path.name for path in files_after_second}
     assert all(name.startswith("ledger-") for name in filenames)
     assert any("20240104" in name for name in filenames)
-    assert not any("20240101" in name for name in filenames), "Plik starszy niż retencja powinien zostać usunięty"
+    assert not any("20240101" in name for name in filenames), (
+        "Plik starszy niż retencja powinien zostać usunięty"
+    )

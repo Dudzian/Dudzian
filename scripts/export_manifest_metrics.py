@@ -115,9 +115,7 @@ def _load_summary_signing_key(args: argparse.Namespace) -> tuple[bytes | None, s
         key_material = args.summary_hmac_key
     elif args.summary_hmac_key_file:
         try:
-            key_material = (
-                Path(args.summary_hmac_key_file).expanduser().read_text(encoding="utf-8")
-            )
+            key_material = Path(args.summary_hmac_key_file).expanduser().read_text(encoding="utf-8")
         except FileNotFoundError as exc:
             print(
                 f"Nie znaleziono pliku z kluczem HMAC: {args.summary_hmac_key_file}",
@@ -170,10 +168,14 @@ def _resolve_environment(config: CoreConfig, name: str) -> EnvironmentConfig:
         raise SystemExit(f"Środowisko '{name}' nie istnieje w konfiguracji") from exc
 
 
-def _resolve_universe(config: CoreConfig, environment: EnvironmentConfig) -> InstrumentUniverseConfig:
+def _resolve_universe(
+    config: CoreConfig, environment: EnvironmentConfig
+) -> InstrumentUniverseConfig:
     universe_name = environment.instrument_universe
     if not universe_name:
-        raise SystemExit("Środowisko nie ma przypisanego instrument_universe – uzupełnij konfigurację.")
+        raise SystemExit(
+            "Środowisko nie ma przypisanego instrument_universe – uzupełnij konfigurację."
+        )
     try:
         return config.instrument_universes[universe_name]
     except KeyError as exc:  # pragma: no cover - defensywne

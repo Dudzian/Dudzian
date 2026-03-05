@@ -1,4 +1,5 @@
 """Eksportuje podsumowanie jakości Decision Engine na podstawie dziennika decyzji."""
+
 from __future__ import annotations
 
 import argparse
@@ -18,20 +19,42 @@ from bot_core.decision.schemas import DecisionEngineSummary
 
 def _parse_args(argv: Sequence[str]) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--ledger", type=Path, required=True, help="Ścieżka do katalogu lub pliku JSONL z decyzjami")
+    parser.add_argument(
+        "--ledger", type=Path, required=True, help="Ścieżka do katalogu lub pliku JSONL z decyzjami"
+    )
     parser.add_argument("--output", type=Path, required=True, help="Plik wyjściowy z podsumowaniem")
-    parser.add_argument("--pattern", default="*.jsonl", help="Wzorzec plików w katalogu dziennika (domyślnie *.jsonl)")
+    parser.add_argument(
+        "--pattern",
+        default="*.jsonl",
+        help="Wzorzec plików w katalogu dziennika (domyślnie *.jsonl)",
+    )
     parser.add_argument("--environment")
     parser.add_argument("--portfolio")
     parser.add_argument("--risk-profile")
     parser.add_argument("--strategy")
     parser.add_argument("--schedule")
     parser.add_argument("--symbol")
-    parser.add_argument("--history-limit", type=int, default=512, help="Maksymalna liczba ewaluacji branych do podsumowania")
-    parser.add_argument("--include-history", action="store_true", help="Dołącz szczegóły ostatnich ewaluacji")
-    parser.add_argument("--history-size", type=int, default=50, help="Liczba rekordów historii dołączenia przy --include-history")
+    parser.add_argument(
+        "--history-limit",
+        type=int,
+        default=512,
+        help="Maksymalna liczba ewaluacji branych do podsumowania",
+    )
+    parser.add_argument(
+        "--include-history", action="store_true", help="Dołącz szczegóły ostatnich ewaluacji"
+    )
+    parser.add_argument(
+        "--history-size",
+        type=int,
+        default=50,
+        help="Liczba rekordów historii dołączenia przy --include-history",
+    )
     parser.add_argument("--pretty", action="store_true", help="Formatuj JSON z wcięciami")
-    parser.add_argument("--require-evaluations", action="store_true", help="Zwróć kod wyjścia 2, gdy nie znaleziono żadnych ewaluacji")
+    parser.add_argument(
+        "--require-evaluations",
+        action="store_true",
+        help="Zwróć kod wyjścia 2, gdy nie znaleziono żadnych ewaluacji",
+    )
     return parser.parse_args(argv)
 
 
@@ -137,7 +160,9 @@ def _event_matches_filters(event: Mapping[str, object], args: argparse.Namespace
     return True
 
 
-def _event_to_payload(event: Mapping[str, object]) -> tuple[datetime | None, Mapping[str, object]] | None:
+def _event_to_payload(
+    event: Mapping[str, object],
+) -> tuple[datetime | None, Mapping[str, object]] | None:
     if str(event.get("event")) != "decision_evaluation":
         return None
 
@@ -197,19 +222,31 @@ def _event_to_payload(event: Mapping[str, object]) -> tuple[datetime | None, Map
     if notional is not None:
         candidate["notional"] = notional
 
-    metadata_fields = ("generated_at", "signal_id", "schedule_run_id", "strategy_instance_id", "model_request_id")
-    metadata = {field: event.get(field) for field in metadata_fields if event.get(field) is not None}
+    metadata_fields = (
+        "generated_at",
+        "signal_id",
+        "schedule_run_id",
+        "strategy_instance_id",
+        "model_request_id",
+    )
+    metadata = {
+        field: event.get(field) for field in metadata_fields if event.get(field) is not None
+    }
     if metadata:
         candidate["metadata"] = metadata
 
     if candidate:
         payload["candidate"] = candidate
 
-    timestamp = _parse_timestamp(event.get("evaluated_at")) or _parse_timestamp(event.get("timestamp"))
+    timestamp = _parse_timestamp(event.get("evaluated_at")) or _parse_timestamp(
+        event.get("timestamp")
+    )
     return timestamp, payload
 
 
-def _collect_evaluations(args: argparse.Namespace) -> list[tuple[datetime | None, Mapping[str, object]]]:
+def _collect_evaluations(
+    args: argparse.Namespace,
+) -> list[tuple[datetime | None, Mapping[str, object]]]:
     evaluations: list[tuple[datetime | None, Mapping[str, object]]] = []
     for event in _load_events(args.ledger.expanduser(), args.pattern):
         if not _event_matches_filters(event, args):
@@ -225,11 +262,11 @@ def _collect_evaluations(args: argparse.Namespace) -> list[tuple[datetime | None
     return evaluations
 
 
-def _build_summary(args: argparse.Namespace, evaluations: list[tuple[datetime | None, Mapping[str, object]]]) -> Mapping[str, object]:
+def _build_summary(
+    args: argparse.Namespace, evaluations: list[tuple[datetime | None, Mapping[str, object]]]
+) -> Mapping[str, object]:
     payloads = [payload for _, payload in evaluations]
-    summary_model = summarize_evaluation_payloads(
-        payloads, history_limit=args.history_limit
-    )
+    summary_model = summarize_evaluation_payloads(payloads, history_limit=args.history_limit)
     summary_metrics = summary_model.model_dump(exclude_none=True)
     filters = {
         key: value

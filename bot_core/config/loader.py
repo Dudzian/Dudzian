@@ -1,4 +1,5 @@
 """Ładowanie konfiguracji z plików YAML."""
+
 from __future__ import annotations
 
 import base64
@@ -90,6 +91,7 @@ from bot_core.config.models import (
 )
 from bot_core.exchanges.base import Environment
 from bot_core.exchanges.core import Mode
+
 try:
     from bot_core.strategies.catalog import DEFAULT_STRATEGY_CATALOG as _DEFAULT_STRATEGY_CATALOG
 except Exception:  # pragma: no cover - niektóre gałęzie mają niekompletne strategie
@@ -365,7 +367,11 @@ def _env_has(field_name: str) -> bool:
 
 
 def _load_instrument_universes(raw: Mapping[str, Any]):
-    if InstrumentUniverseConfig is None or InstrumentConfig is None or InstrumentBackfillWindow is None:
+    if (
+        InstrumentUniverseConfig is None
+        or InstrumentConfig is None
+        or InstrumentBackfillWindow is None
+    ):
         return {}
     universes: dict[str, InstrumentUniverseConfig] = {}
     for name, entry in (raw.get("instrument_universes", {}) or {}).items():
@@ -436,14 +442,15 @@ def _load_permission_profiles(raw: Mapping[str, Any]) -> Mapping[str, Permission
                 str(value).lower() for value in (entry.get("required_permissions", ()) or ())
             ),
             forbidden_permissions=tuple(
-                str(value).lower()
-                for value in (entry.get("forbidden_permissions", ()) or ())
+                str(value).lower() for value in (entry.get("forbidden_permissions", ()) or ())
             ),
         )
     return profiles
 
 
-def _load_exchange_accounts(raw: Mapping[str, Any]) -> Mapping[str, Mapping[str, ExchangeAccountConfig]]:
+def _load_exchange_accounts(
+    raw: Mapping[str, Any],
+) -> Mapping[str, Mapping[str, ExchangeAccountConfig]]:
     accounts_raw = raw.get("exchange_accounts") or {}
     accounts: dict[str, dict[str, ExchangeAccountConfig]] = {}
     if not isinstance(accounts_raw, Mapping):
@@ -473,7 +480,9 @@ def _load_exchange_accounts(raw: Mapping[str, Any]) -> Mapping[str, Mapping[str,
     return accounts
 
 
-def _load_exchange_adapters(raw: Mapping[str, Any]) -> Mapping[str, Mapping[Mode, NativeExchangeAdapterConfig]]:
+def _load_exchange_adapters(
+    raw: Mapping[str, Any],
+) -> Mapping[str, Mapping[Mode, NativeExchangeAdapterConfig]]:
     adapters_raw = raw.get("exchange_adapters") or {}
     adapters: dict[str, dict[Mode, NativeExchangeAdapterConfig]] = {}
     if not isinstance(adapters_raw, Mapping):
@@ -792,9 +801,7 @@ def _load_strategy_definitions(raw: Mapping[str, Any]):
             iterable = values
         else:
             raise TypeError("Strategy definition field must be a sequence of strings")
-        return tuple(
-            dict.fromkeys(str(item).strip() for item in iterable if str(item).strip())
-        )
+        return tuple(dict.fromkeys(str(item).strip() for item in iterable if str(item).strip()))
 
     definitions: dict[str, StrategyDefinitionConfig] = {}
 
@@ -946,11 +953,15 @@ def _parse_initial_suspensions(entry: Any) -> tuple[MultiStrategySuspensionConfi
     if isinstance(entry, Mapping):
         items = (entry,)
     else:
-        items = tuple(item for item in entry if isinstance(item, Mapping)) if isinstance(entry, Sequence) else tuple()
+        items = (
+            tuple(item for item in entry if isinstance(item, Mapping))
+            if isinstance(entry, Sequence)
+            else tuple()
+        )
     suspensions: list[MultiStrategySuspensionConfig] = []
     for item in items:
         kind_raw = _format_optional_text(item.get("kind"))
-        kind = (kind_raw.strip().lower() if kind_raw else "")
+        kind = kind_raw.strip().lower() if kind_raw else ""
         schedule_target = _format_optional_text(item.get("schedule"))
         tag_target = _format_optional_text(item.get("tag"))
         target_raw = _format_optional_text(item.get("target"))
@@ -999,9 +1010,7 @@ def _parse_signal_limit_spec(value: Any) -> SignalLimitOverrideConfig | None:
             return None
         reason = _format_optional_text(value.get("reason"))
         until = _parse_datetime_value(value.get("until") or value.get("expires_at"))
-        duration = _parse_duration_seconds(
-            value.get("duration_seconds") or value.get("duration")
-        )
+        duration = _parse_duration_seconds(value.get("duration_seconds") or value.get("duration"))
         return SignalLimitOverrideConfig(
             limit=max(0, int(limit_value)),
             reason=reason,
@@ -1061,16 +1070,19 @@ def _load_multi_strategy_schedulers(raw: Mapping[str, Any]):
             inputs_entry = entry.get("portfolio_inputs")
             inputs_config = None
             if isinstance(inputs_entry, Mapping):
-                slo_path_value = inputs_entry.get("slo_report_path") or inputs_entry.get("slo_report")
+                slo_path_value = inputs_entry.get("slo_report_path") or inputs_entry.get(
+                    "slo_report"
+                )
                 stress_path_value = (
                     inputs_entry.get("stress_lab_report_path")
                     or inputs_entry.get("stress_lab_report")
                     or inputs_entry.get("stress_report")
                 )
-                slo_age_value = inputs_entry.get("slo_max_age_minutes") or inputs_entry.get("slo_max_age")
-                stress_age_value = (
-                    inputs_entry.get("stress_max_age_minutes")
-                    or inputs_entry.get("stress_max_age")
+                slo_age_value = inputs_entry.get("slo_max_age_minutes") or inputs_entry.get(
+                    "slo_max_age"
+                )
+                stress_age_value = inputs_entry.get("stress_max_age_minutes") or inputs_entry.get(
+                    "stress_max_age"
                 )
                 inputs_config = PortfolioRuntimeInputsConfig(
                     slo_report_path=_format_optional_text(slo_path_value),
@@ -1109,21 +1121,16 @@ def _load_multi_strategy_schedulers(raw: Mapping[str, Any]):
             else:
                 capital_policy = str(capital_policy_entry)
 
-            allocation_rebalance_value = (
-                entry.get("allocation_rebalance_seconds")
-                or entry.get("capital_rebalance_seconds")
+            allocation_rebalance_value = entry.get("allocation_rebalance_seconds") or entry.get(
+                "capital_rebalance_seconds"
             )
             suspensions_entry = entry.get("initial_suspensions") or entry.get("suspensions")
             initial_suspensions = _parse_initial_suspensions(suspensions_entry)
             schedulers[name] = MultiStrategySchedulerConfig(
                 name=name,
                 schedules=tuple(schedules),
-                telemetry_namespace=str(
-                    entry.get("telemetry_namespace", f"scheduler.{name}")
-                ),
-                decision_log_category=str(
-                    entry.get("decision_log_category", "runtime.scheduler")
-                ),
+                telemetry_namespace=str(entry.get("telemetry_namespace", f"scheduler.{name}")),
+                decision_log_category=str(entry.get("decision_log_category", "runtime.scheduler")),
                 health_check_interval=int(entry.get("health_check_interval", 300)),
                 rbac_tokens=_load_service_tokens(entry.get("rbac_tokens")),
                 portfolio_governor=(
@@ -1184,31 +1191,27 @@ def _load_portfolio_governors(raw: Mapping[str, Any]):
             risk_budgets[budget_name] = PortfolioRiskBudgetConfig(
                 name=budget_name,
                 max_var_pct=_maybe_float(
-                    budget_entry.get("max_var_pct")
-                    or budget_entry.get("max_var_percent")
+                    budget_entry.get("max_var_pct") or budget_entry.get("max_var_percent")
                 ),
                 max_drawdown_pct=_maybe_float(
-                    budget_entry.get("max_drawdown_pct")
-                    or budget_entry.get("max_drawdown_percent")
+                    budget_entry.get("max_drawdown_pct") or budget_entry.get("max_drawdown_percent")
                 ),
                 max_leverage=_maybe_float(budget_entry.get("max_leverage")),
                 severity=str(budget_entry.get("severity", "warning")),
-                tags=tuple(
-                    str(tag) for tag in (budget_entry.get("tags", ()) or ())
-                ),
+                tags=tuple(str(tag) for tag in (budget_entry.get("tags", ()) or ())),
             )
 
         slo_overrides: list[PortfolioSloOverrideConfig] = []
-        for override_entry in (entry.get("slo_overrides") or ()):  # type: ignore[arg-type]
+        for override_entry in entry.get("slo_overrides") or ():  # type: ignore[arg-type]
             if not isinstance(override_entry, Mapping):
                 continue
             name_value = override_entry.get("slo") or override_entry.get("slo_name")
             if name_value in (None, ""):
                 continue
             apply_on_source = override_entry.get("apply_on") or override_entry.get("statuses")
-            apply_on = (
-                tuple(str(item) for item in (apply_on_source or ("warning", "breach")))
-                or ("warning", "breach")
+            apply_on = tuple(str(item) for item in (apply_on_source or ("warning", "breach"))) or (
+                "warning",
+                "breach",
             )
             slo_overrides.append(
                 PortfolioSloOverrideConfig(
@@ -1222,15 +1225,13 @@ def _load_portfolio_governors(raw: Mapping[str, Any]):
                         if override_entry.get("severity") not in (None, "")
                         else None
                     ),
-                    tags=tuple(
-                        str(tag) for tag in (override_entry.get("tags", ()) or ())
-                    ),
+                    tags=tuple(str(tag) for tag in (override_entry.get("tags", ()) or ())),
                     force_rebalance=bool(override_entry.get("force_rebalance", False)),
                 )
             )
 
         assets: list[PortfolioAssetConfig] = []
-        for asset_entry in (entry.get("assets") or ()):  # type: ignore[arg-type]
+        for asset_entry in entry.get("assets") or ():  # type: ignore[arg-type]
             if not isinstance(asset_entry, Mapping):
                 continue
             symbol = asset_entry.get("symbol")
@@ -1238,11 +1239,7 @@ def _load_portfolio_governors(raw: Mapping[str, Any]):
             if symbol is None or target_weight is None:
                 continue
             risk_budget_value = asset_entry.get("risk_budget")
-            risk_budget = (
-                str(risk_budget_value)
-                if risk_budget_value not in (None, "")
-                else None
-            )
+            risk_budget = str(risk_budget_value) if risk_budget_value not in (None, "") else None
             notes_value = asset_entry.get("notes")
             notes = str(notes_value) if notes_value not in (None, "") else None
             assets.append(
@@ -1256,29 +1253,26 @@ def _load_portfolio_governors(raw: Mapping[str, Any]):
                         or asset_entry.get("max_volatility_percent")
                     ),
                     min_liquidity_usd=_maybe_float(
-                        asset_entry.get("min_liquidity_usd")
-                        or asset_entry.get("min_liquidity")
+                        asset_entry.get("min_liquidity_usd") or asset_entry.get("min_liquidity")
                     ),
                     risk_budget=risk_budget,
                     notes=notes,
-                    tags=tuple(
-                        str(tag) for tag in (asset_entry.get("tags", ()) or ())
-                    ),
+                    tags=tuple(str(tag) for tag in (asset_entry.get("tags", ()) or ())),
                 )
             )
 
-        intel_entry = entry.get("market_intel") if isinstance(entry.get("market_intel"), Mapping) else {}
+        intel_entry = (
+            entry.get("market_intel") if isinstance(entry.get("market_intel"), Mapping) else {}
+        )
         interval_value = entry.get("market_intel_interval")
         if isinstance(intel_entry, Mapping):
             interval_value = interval_value or intel_entry.get("interval")
-        interval = (
-            str(interval_value).strip()
-            if interval_value not in (None, "")
-            else None
-        )
+        interval = str(interval_value).strip() if interval_value not in (None, "") else None
         lookback_value = entry.get("market_intel_lookback_bars")
         if isinstance(intel_entry, Mapping):
-            lookback_value = lookback_value or intel_entry.get("lookback_bars") or intel_entry.get("lookback")
+            lookback_value = (
+                lookback_value or intel_entry.get("lookback_bars") or intel_entry.get("lookback")
+            )
         try:
             lookback_bars = int(lookback_value) if lookback_value not in (None, "") else 168
         except (TypeError, ValueError):  # pragma: no cover - diagnostyka konfiguracji
@@ -1298,9 +1292,7 @@ def _load_portfolio_governors(raw: Mapping[str, Any]):
             ),
             "assets": tuple(assets),
             "risk_budgets": risk_budgets,
-            "risk_overrides": tuple(
-                str(item) for item in (entry.get("risk_overrides", ()) or ())
-            ),
+            "risk_overrides": tuple(str(item) for item in (entry.get("risk_overrides", ()) or ())),
             "slo_overrides": tuple(override for override in slo_overrides if override.slo_name),
             "market_intel_interval": interval,
             "market_intel_lookback_bars": lookback_bars,
@@ -1323,7 +1315,9 @@ def _load_runtime_resource_limits(runtime_section: Mapping[str, Any]):
     memory_mb = float(entry.get("memory_mb", entry.get("memory", 0.0)))
     io_read = float(entry.get("io_read_mb_s", entry.get("io_read", 0.0)))
     io_write = float(entry.get("io_write_mb_s", entry.get("io_write", 0.0)))
-    warning_threshold = float(entry.get("headroom_warning_threshold", entry.get("warning_threshold", 0.85)))
+    warning_threshold = float(
+        entry.get("headroom_warning_threshold", entry.get("warning_threshold", 0.85))
+    )
     return RuntimeResourceLimitsConfig(
         cpu_percent=cpu_percent,
         memory_mb=memory_mb,
@@ -1395,22 +1389,24 @@ def _load_license_config(section: Mapping[str, Any] | None):
 
     return LicenseValidationConfig(
         license_path=license_path,
-        fingerprint_path=_normalize_path(section.get("fingerprint_path")) or defaults.fingerprint_path,
+        fingerprint_path=_normalize_path(section.get("fingerprint_path"))
+        or defaults.fingerprint_path,
         license_keys_path=_normalize_path(section.get("license_keys_path")),
         fingerprint_keys_path=_normalize_path(section.get("fingerprint_keys_path")),
         allowed_profiles=_normalize_sequence(section.get("allowed_profiles")),
         allowed_issuers=_normalize_sequence(section.get("allowed_issuers")),
         max_validity_days=_normalize_float(section.get("max_validity_days")),
-        required_schema=_normalize_string(section.get("required_schema")) or defaults.required_schema,
+        required_schema=_normalize_string(section.get("required_schema"))
+        or defaults.required_schema,
         allowed_schema_versions=_normalize_sequence(section.get("allowed_schema_versions"))
         or defaults.allowed_schema_versions,
         revocation_list_path=_normalize_path(section.get("revocation_list_path")),
         revocation_required=_normalize_bool(section.get("revocation_required")),
-        revocation_list_max_age_hours=_normalize_float(section.get("revocation_list_max_age_hours")),
-        revocation_keys_path=_normalize_path(section.get("revocation_keys_path")),
-        revocation_signature_required=_normalize_bool(
-            section.get("revocation_signature_required")
+        revocation_list_max_age_hours=_normalize_float(
+            section.get("revocation_list_max_age_hours")
         ),
+        revocation_keys_path=_normalize_path(section.get("revocation_keys_path")),
+        revocation_signature_required=_normalize_bool(section.get("revocation_signature_required")),
     )
 
 
@@ -1420,8 +1416,12 @@ def _load_alert_throttle(entry: Optional[Mapping[str, Any]]) -> AlertThrottleCon
     window_seconds = float(entry.get("window_seconds", entry.get("window", 0.0)))
     if window_seconds <= 0:
         raise ValueError("alert_throttle.window_seconds musi być dodatnie")
-    exclude_severities = tuple(str(value).lower() for value in (entry.get("exclude_severities", ()) or ()))
-    exclude_categories = tuple(str(value).lower() for value in (entry.get("exclude_categories", ()) or ()))
+    exclude_severities = tuple(
+        str(value).lower() for value in (entry.get("exclude_severities", ()) or ())
+    )
+    exclude_categories = tuple(
+        str(value).lower() for value in (entry.get("exclude_categories", ()) or ())
+    )
     max_entries = int(entry.get("max_entries", 2048))
     return AlertThrottleConfig(
         window_seconds=window_seconds,
@@ -1702,18 +1702,12 @@ def _load_environment_ai(
     threshold_bps = float(threshold_raw) if threshold_raw not in (None, "") else 5.0
     model_dir = _resolve_optional_path(entry.get("model_dir"), base_dir=base_dir)
     default_strategy_value = entry.get("default_strategy")
-    default_strategy = (
-        str(default_strategy_value).strip() if default_strategy_value else None
-    )
+    default_strategy = str(default_strategy_value).strip() if default_strategy_value else None
     default_profile_value = entry.get("default_risk_profile")
-    default_risk_profile = (
-        str(default_profile_value).strip() if default_profile_value else None
-    )
+    default_risk_profile = str(default_profile_value).strip() if default_profile_value else None
     default_notional_raw = entry.get("default_notional")
     default_notional = (
-        float(default_notional_raw)
-        if default_notional_raw not in (None, "")
-        else None
+        float(default_notional_raw) if default_notional_raw not in (None, "") else None
     )
     default_action_value = entry.get("default_action", "enter")
     default_action = str(default_action_value) or "enter"
@@ -1729,9 +1723,7 @@ def _load_environment_ai(
         model_type_raw = model_entry.get("model_type", model_entry.get("type"))
         path_raw = model_entry.get("path")
         if not symbol_raw or not model_type_raw or not path_raw:
-            raise ValueError(
-                "Każdy model AI musi mieć pola 'symbol', 'model_type' oraz 'path'"
-            )
+            raise ValueError("Każdy model AI musi mieć pola 'symbol', 'model_type' oraz 'path'")
         symbol = str(symbol_raw)
         model_type = str(model_type_raw)
         path = _resolve_optional_path(path_raw, base_dir=base_dir)
@@ -1747,14 +1739,8 @@ def _load_environment_ai(
                 model_type=model_type,
                 path=path,
                 strategy=str(strategy_value).strip() if strategy_value else None,
-                risk_profile=(
-                    str(risk_profile_value).strip() if risk_profile_value else None
-                ),
-                notional=(
-                    float(notional_raw)
-                    if notional_raw not in (None, "")
-                    else None
-                ),
+                risk_profile=(str(risk_profile_value).strip() if risk_profile_value else None),
+                notional=(float(notional_raw) if notional_raw not in (None, "") else None),
                 action=str(action_value) if action_value else None,
             )
         )
@@ -1769,9 +1755,7 @@ def _load_environment_ai(
         if not name_raw or not components_raw:
             raise ValueError("Każdy zespół AI musi mieć pola 'name' oraz 'components'")
         components = [
-            str(component).strip()
-            for component in (components_raw or ())
-            if str(component).strip()
+            str(component).strip() for component in (components_raw or ()) if str(component).strip()
         ]
         if not components:
             raise ValueError("environment.ai.ensembles[].components nie może być puste")
@@ -1785,14 +1769,16 @@ def _load_environment_ai(
             )
         weights_raw = ensemble_entry.get("weights")
         weights = (
-            tuple(float(value) for value in weights_raw)
-            if weights_raw not in (None, ())
-            else None
+            tuple(float(value) for value in weights_raw) if weights_raw not in (None, ()) else None
         )
         if weights is not None and len(weights) != len(components):
-            raise ValueError("environment.ai.ensembles[].weights musi odpowiadać liczbie komponentów")
+            raise ValueError(
+                "environment.ai.ensembles[].weights musi odpowiadać liczbie komponentów"
+            )
         if weights is not None and aggregation != "weighted":
-            raise ValueError("environment.ai.ensembles[].weights można podać tylko dla agregacji 'weighted'")
+            raise ValueError(
+                "environment.ai.ensembles[].weights można podać tylko dla agregacji 'weighted'"
+            )
         if weights is None and aggregation == "weighted":
             raise ValueError("environment.ai.ensembles[].aggregation='weighted' wymaga listy wag")
         ensembles.append(
@@ -1822,9 +1808,7 @@ def _load_environment_ai(
     schedules: list[EnvironmentAIPipelineScheduleConfig] = []
     for schedule_entry in schedules_raw:
         if not isinstance(schedule_entry, Mapping):
-            raise ValueError(
-                "environment.ai.pipeline_schedules musi zawierać obiekty mapujące"
-            )
+            raise ValueError("environment.ai.pipeline_schedules musi zawierać obiekty mapujące")
         symbol_raw = schedule_entry.get("symbol")
         model_types_raw = schedule_entry.get("model_types") or schedule_entry.get("models")
         data_source_raw = schedule_entry.get("data_source")
@@ -1837,12 +1821,12 @@ def _load_environment_ai(
             raise ValueError("environment.ai.pipeline_schedules[].model_types nie może być puste")
         interval_raw = schedule_entry.get("interval_seconds", schedule_entry.get("interval"))
         interval_seconds = (
-            float(interval_raw)
-            if interval_raw not in (None, "")
-            else interval_default
+            float(interval_raw) if interval_raw not in (None, "") else interval_default
         )
         if interval_seconds <= 0:
-            raise ValueError("environment.ai.pipeline_schedules[].interval_seconds musi być dodatnie")
+            raise ValueError(
+                "environment.ai.pipeline_schedules[].interval_seconds musi być dodatnie"
+            )
         seq_len_raw = schedule_entry.get("seq_len")
         seq_len = int(seq_len_raw) if seq_len_raw not in (None, "") else seq_len_default
         if seq_len <= 0:
@@ -1853,15 +1837,11 @@ def _load_environment_ai(
             raise ValueError("environment.ai.pipeline_schedules[].folds musi być dodatnie")
         baseline_source_value = schedule_entry.get("baseline_source")
         baseline_source = (
-            str(baseline_source_value).strip()
-            if baseline_source_value not in (None, "")
-            else None
+            str(baseline_source_value).strip() if baseline_source_value not in (None, "") else None
         )
         result_callback_value = schedule_entry.get("result_callback")
         result_callback = (
-            str(result_callback_value).strip()
-            if result_callback_value not in (None, "")
-            else None
+            str(result_callback_value).strip() if result_callback_value not in (None, "") else None
         )
         schedules.append(
             EnvironmentAIPipelineScheduleConfig(
@@ -1891,9 +1871,7 @@ def _load_environment_ai(
     )
 
 
-def _load_ai_model_management(
-    payload: object, *, base_dir: Path
-) -> AIModelManagementConfig | None:
+def _load_ai_model_management(payload: object, *, base_dir: Path) -> AIModelManagementConfig | None:
     if payload in (None, False):
         return None
     if not isinstance(payload, Mapping):
@@ -1948,9 +1926,7 @@ def _load_ai_model_management(
         )
 
     min_probability_raw = payload.get("online_min_probability", payload.get("min_probability"))
-    min_probability = (
-        float(min_probability_raw) if min_probability_raw not in (None, "") else 0.55
-    )
+    min_probability = float(min_probability_raw) if min_probability_raw not in (None, "") else 0.55
     return AIModelManagementConfig(
         repository=repo_config,
         models=tuple(models),
@@ -2024,9 +2000,7 @@ def _normalize_alert_mode(value: Any | None, *, field_name: str) -> str | None:
     if normalized in {"enable", "jsonl", "disable"}:
         return normalized
 
-    raise ValueError(
-        f"{field_name} musi należeć do {{enable,jsonl,disable}} (otrzymano {value!r})"
-    )
+    raise ValueError(f"{field_name} musi należeć do {{enable,jsonl,disable}} (otrzymano {value!r})")
 
 
 _UI_ALERT_AUDIT_BACKEND_ALLOWED = {"auto", "file", "memory"}
@@ -2052,7 +2026,9 @@ def _load_smoke_archive_upload(entry: Optional[Mapping[str, Any]]):
         raw_local = entry.get("local") or {}
         directory_value = raw_local.get("directory")
         if not directory_value:
-            raise ValueError("smoke_archive_upload.local.directory jest wymagane dla backendu 'local'")
+            raise ValueError(
+                "smoke_archive_upload.local.directory jest wymagane dla backendu 'local'"
+            )
         filename_pattern = str(raw_local.get("filename_pattern", "{environment}_{date}_{hash}.zip"))
         fsync = bool(raw_local.get("fsync", False))
         local_cfg = SmokeArchiveLocalConfig(
@@ -2074,8 +2050,7 @@ def _load_smoke_archive_upload(entry: Optional[Mapping[str, Any]]):
         region = _format_optional_text(raw_s3.get("region"))
         use_ssl = bool(raw_s3.get("use_ssl", True))
         extra_args = {
-            str(key): str(value)
-            for key, value in (raw_s3.get("extra_args", {}) or {}).items()
+            str(key): str(value) for key, value in (raw_s3.get("extra_args", {}) or {}).items()
         }
         s3_cfg = SmokeArchiveS3Config(
             bucket=str(bucket_value),
@@ -2102,9 +2077,7 @@ def _load_paper_smoke_json_sync(entry: Optional[Mapping[str, Any]]):
     if backend in {"disabled", "none"}:
         return None
     if backend not in {"local", "s3"}:
-        raise ValueError(
-            "paper_smoke_json_sync.backend musi być 'local', 's3' lub 'disabled'"
-        )
+        raise ValueError("paper_smoke_json_sync.backend musi być 'local', 's3' lub 'disabled'")
 
     credential_secret = entry.get("credential_secret")
     credential_value = str(credential_secret) if credential_secret not in (None, "") else None
@@ -2134,16 +2107,13 @@ def _load_paper_smoke_json_sync(entry: Optional[Mapping[str, Any]]):
         raw_s3 = entry.get("s3") or {}
         bucket_value = raw_s3.get("bucket")
         if not bucket_value:
-            raise ValueError(
-                "paper_smoke_json_sync.s3.bucket jest wymagane dla backendu 's3'"
-            )
+            raise ValueError("paper_smoke_json_sync.s3.bucket jest wymagane dla backendu 's3'")
         prefix_value = raw_s3.get("prefix")
         endpoint_url = _format_optional_text(raw_s3.get("endpoint_url"))
         region = _format_optional_text(raw_s3.get("region"))
         use_ssl = bool(raw_s3.get("use_ssl", True))
         extra_args = {
-            str(key): str(value)
-            for key, value in (raw_s3.get("extra_args", {}) or {}).items()
+            str(key): str(value) for key, value in (raw_s3.get("extra_args", {}) or {}).items()
         }
         s3_cfg = PaperSmokeJsonSyncS3Config(
             bucket=str(bucket_value),
@@ -2177,7 +2147,7 @@ def _load_reporting(entry: Optional[Mapping[str, Any]]):
 
 
 def _load_coverage_monitoring(
-    entry: Optional[Mapping[str, Any]]
+    entry: Optional[Mapping[str, Any]],
 ) -> CoverageMonitoringConfig | None:
     if not entry:
         return None
@@ -2304,9 +2274,7 @@ def _load_market_intel_config(
     required_raw = section.get("required_symbols") or ()
     if not isinstance(required_raw, Sequence):
         raise ValueError("market_intel.required_symbols musi być listą")
-    required_symbols = tuple(
-        str(value).strip() for value in required_raw if str(value).strip()
-    )
+    required_symbols = tuple(str(value).strip() for value in required_raw if str(value).strip())
 
     sqlite_cfg: MarketIntelSqliteConfig | None = None
     sqlite_raw = section.get("sqlite")
@@ -2338,15 +2306,11 @@ def _load_market_intel_config(
                 continue
             value = sqlite_raw[column_name]
             if column_name == "weight_column":
-                sqlite_kwargs[column_name] = (
-                    None if value in (None, "", False) else str(value)
-                )
+                sqlite_kwargs[column_name] = None if value in (None, "", False) else str(value)
                 continue
             text = str(value).strip()
             if not text:
-                raise ValueError(
-                    f"market_intel.sqlite.{column_name} nie może być puste"
-                )
+                raise ValueError(f"market_intel.sqlite.{column_name} nie może być puste")
             sqlite_kwargs[column_name] = text
 
         sqlite_cfg = MarketIntelSqliteConfig(**sqlite_kwargs)  # type: ignore[arg-type]
@@ -2380,9 +2344,7 @@ def _load_service_tokens(raw_value: Any) -> tuple[ServiceTokenConfig, ...]:
         if not token_id:
             raise ValueError("Każdy wpis rbac_tokens wymaga pola token_id")
         token_env = _normalize_env_var(
-            entry.get("token_env")
-            or entry.get("env")
-            or entry.get("token_env_var")
+            entry.get("token_env") or entry.get("env") or entry.get("token_env_var")
         )
         token_value = entry.get("token_value") or entry.get("value")
         if token_value in (None, ""):
@@ -2400,9 +2362,7 @@ def _load_service_tokens(raw_value: Any) -> tuple[ServiceTokenConfig, ...]:
         else:
             scopes_iter = list(scopes_raw)
         scopes = tuple(
-            str(scope).strip()
-            for scope in scopes_iter
-            if isinstance(scope, str) and scope.strip()
+            str(scope).strip() for scope in scopes_iter if isinstance(scope, str) and scope.strip()
         )
         tokens.append(
             ServiceTokenConfig(
@@ -2446,9 +2406,7 @@ def _normalize_grpc_metadata(
         if key_str != normalized_key:
             raise ValueError("grpc_metadata klucz musi być zapisany małymi literami")
         if not _GRPC_METADATA_KEY_PATTERN.fullmatch(normalized_key):
-            raise ValueError(
-                "grpc_metadata klucz może zawierać wyłącznie [0-9a-z._-]"
-            )
+            raise ValueError("grpc_metadata klucz może zawierać wyłącznie [0-9a-z._-]")
         if isinstance(value, (bytes, bytearray)):
             normalized_value: str | bytes
             raw_bytes = bytes(value)
@@ -2486,21 +2444,15 @@ def _normalize_grpc_metadata(
             return os.environ[env_name], f"env:{env_name}"
         if "value_env_base64" in entry or "env_base64" in entry or "value_env64" in entry:
             env_name = _normalize_env_var(
-                entry.get("value_env_base64")
-                or entry.get("env_base64")
-                or entry.get("value_env64")
+                entry.get("value_env_base64") or entry.get("env_base64") or entry.get("value_env64")
             )
             if not env_name:
-                raise ValueError(
-                    "grpc_metadata value_env_base64 wymaga niepustej nazwy zmiennej"
-                )
+                raise ValueError("grpc_metadata value_env_base64 wymaga niepustej nazwy zmiennej")
             if env_name not in os.environ:
                 raise ValueError(
                     f"grpc_metadata value_env_base64 '{env_name}' nie jest ustawione w środowisku"
                 )
-            decoded = _decode_grpc_base64(
-                os.environ[env_name], key=key, source=f"env:{env_name}"
-            )
+            decoded = _decode_grpc_base64(os.environ[env_name], key=key, source=f"env:{env_name}")
             return decoded, f"env:{env_name}"
         if "value_file" in entry or "value_path" in entry:
             raw_path = entry.get("value_file") or entry.get("value_path")
@@ -2527,9 +2479,7 @@ def _normalize_grpc_metadata(
                 raise ValueError(
                     f"grpc_metadata value_file_base64 '{normalized_path}' nie istnieje"
                 ) from exc
-            decoded = _decode_grpc_base64(
-                contents, key=key, source=f"file:{normalized_path}"
-            )
+            decoded = _decode_grpc_base64(contents, key=key, source=f"file:{normalized_path}")
             return decoded, f"file:{normalized_path}"
         if "value_base64" in entry or "value_b64" in entry:
             raw_value = entry.get("value_base64") or entry.get("value_b64")
@@ -2582,9 +2532,7 @@ def _normalize_grpc_metadata(
     return tuple(entries), sources
 
 
-def _normalize_grpc_metadata_files(
-    raw_value: object, *, base_dir: Path | None
-) -> tuple[str, ...]:
+def _normalize_grpc_metadata_files(raw_value: object, *, base_dir: Path | None) -> tuple[str, ...]:
     """Normalizuje listę plików z nagłówkami gRPC względem katalogu konfiguracyjnego."""
 
     if raw_value in (None, False, ""):
@@ -2633,9 +2581,7 @@ def _normalize_grpc_metadata_directories(
     elif isinstance(raw_value, Sequence):
         entries = raw_value
     else:
-        raise TypeError(
-            "grpc_metadata_directories musi być listą ścieżek lub pojedynczą ścieżką"
-        )
+        raise TypeError("grpc_metadata_directories musi być listą ścieżek lub pojedynczą ścieżką")
 
     normalized: list[str] = []
     for entry in entries:
@@ -2702,10 +2648,7 @@ def _load_metrics_service(
         env_token = os.environ.get(token_env_value)
         if env_token:
             kwargs["auth_token"] = env_token
-    if (
-        kwargs.get("auth_token") is None
-        and token_file_path
-    ):
+    if kwargs.get("auth_token") is None and token_file_path:
         try:
             file_token = Path(token_file_path).expanduser().read_text(encoding="utf-8").strip()
         except OSError:
@@ -2739,7 +2682,9 @@ def _load_metrics_service(
     if "log_sink" in available_fields:
         kwargs["log_sink"] = bool(metrics_raw.get("log_sink", True))
     if "jsonl_path" in available_fields:
-        kwargs["jsonl_path"] = _normalize_runtime_path(metrics_raw.get("jsonl_path"), base_dir=base_dir)
+        kwargs["jsonl_path"] = _normalize_runtime_path(
+            metrics_raw.get("jsonl_path"), base_dir=base_dir
+        )
     if "jsonl_fsync" in available_fields:
         kwargs["jsonl_fsync"] = bool(metrics_raw.get("jsonl_fsync", False))
 
@@ -2760,9 +2705,7 @@ def _load_metrics_service(
             elif normalized_backend in _UI_ALERT_AUDIT_BACKEND_ALLOWED:
                 kwargs["ui_alerts_audit_backend"] = normalized_backend
             else:
-                raise ValueError(
-                    "ui_alerts_audit_backend musi należeć do {auto,file,memory}"
-                )
+                raise ValueError("ui_alerts_audit_backend musi należeć do {auto,file,memory}")
     if "ui_alerts_risk_profile" in available_fields:
         profile_value = _format_optional_text(metrics_raw.get("ui_alerts_risk_profile"))
         if profile_value is None:
@@ -2778,9 +2721,15 @@ def _load_metrics_service(
     if "tls" in available_fields and MetricsServiceTlsConfig is not None:
         tls_raw = metrics_raw.get("tls") or {}
         if isinstance(tls_raw, Mapping) and tls_raw:
-            certificate_raw = _normalize_runtime_path(tls_raw.get("certificate_path"), base_dir=base_dir)
-            private_key_raw = _normalize_runtime_path(tls_raw.get("private_key_path"), base_dir=base_dir)
-            client_ca_raw = _normalize_runtime_path(tls_raw.get("client_ca_path"), base_dir=base_dir)
+            certificate_raw = _normalize_runtime_path(
+                tls_raw.get("certificate_path"), base_dir=base_dir
+            )
+            private_key_raw = _normalize_runtime_path(
+                tls_raw.get("private_key_path"), base_dir=base_dir
+            )
+            client_ca_raw = _normalize_runtime_path(
+                tls_raw.get("client_ca_path"), base_dir=base_dir
+            )
             kwargs["tls"] = MetricsServiceTlsConfig(
                 enabled=bool(tls_raw.get("enabled", False)),
                 certificate_path=certificate_raw,
@@ -2797,9 +2746,7 @@ def _load_metrics_service(
 
     sentinel = object()
 
-    def _normalize_optional_float_field(
-        field_name: str, default: float | None
-    ) -> float | None:
+    def _normalize_optional_float_field(field_name: str, default: float | None) -> float | None:
         raw_value = metrics_raw.get(field_name, sentinel)
         if raw_value is sentinel:
             return default
@@ -2892,15 +2839,11 @@ def _load_metrics_service(
             try:
                 kwargs["jank_alert_critical_over_ms"] = float(jank_threshold)
             except (TypeError, ValueError) as exc:  # pragma: no cover - walidacja wejścia
-                raise ValueError(
-                    "jank_alert_critical_over_ms musi być liczbą"
-                ) from exc
+                raise ValueError("jank_alert_critical_over_ms musi być liczbą") from exc
 
     # Opcjonalne: alerty wydajności
     if "performance_alerts" in available_fields:
-        kwargs["performance_alerts"] = bool(
-            metrics_raw.get("performance_alerts", False)
-        )
+        kwargs["performance_alerts"] = bool(metrics_raw.get("performance_alerts", False))
     if "performance_alert_mode" in available_fields:
         kwargs["performance_alert_mode"] = _normalize_alert_mode(
             metrics_raw.get("performance_alert_mode"), field_name="performance_alert_mode"
@@ -2970,12 +2913,12 @@ def _load_live_routing(
 
     enabled = bool(raw.get("enabled", False))
     default_route = tuple(
-        str(entry).strip()
-        for entry in raw.get("default_route", [])
-        if str(entry).strip()
+        str(entry).strip() for entry in raw.get("default_route", []) if str(entry).strip()
     )
     if enabled and not default_route:
-        raise ValueError("runtime.live_routing.default_route musi zawierać co najmniej jedną giełdę")
+        raise ValueError(
+            "runtime.live_routing.default_route musi zawierać co najmniej jedną giełdę"
+        )
 
     overrides_raw = raw.get("route_overrides") or {}
     overrides: dict[str, tuple[str, ...]] = {}
@@ -2983,11 +2926,7 @@ def _load_live_routing(
         for symbol, route in overrides_raw.items():
             if not route:
                 continue
-            normalized = tuple(
-                str(entry).strip()
-                for entry in route
-                if str(entry).strip()
-            )
+            normalized = tuple(str(entry).strip() for entry in route if str(entry).strip())
             if normalized:
                 overrides[str(symbol)] = normalized
 
@@ -3123,9 +3062,7 @@ def _load_security_baseline(
         if env_value:
             signing_kwargs["signing_key_env"] = env_value
 
-        path_value = _normalize_runtime_path(
-            signing_raw.get("signing_key_path"), base_dir=base_dir
-        )
+        path_value = _normalize_runtime_path(signing_raw.get("signing_key_path"), base_dir=base_dir)
         if path_value:
             signing_kwargs["signing_key_path"] = path_value
 
@@ -3175,9 +3112,7 @@ def _build_decision_threshold(
         elif fallback is not None:
             raw_value = getattr(fallback, key)
         else:
-            raise ValueError(
-                f"Brak wymaganego pola '{key}' w konfiguracji decision orchestratora"
-            )
+            raise ValueError(f"Brak wymaganego pola '{key}' w konfiguracji decision orchestratora")
         if key == "max_open_positions":
             values[key] = int(raw_value)
         else:
@@ -3232,7 +3167,9 @@ def _load_decision_engine_config(
         try:
             evaluation_history_limit = max(1, int(float(history_limit_raw)))
         except (TypeError, ValueError) as exc:
-            raise ValueError("decision_engine.evaluation_history_limit musi być liczbą całkowitą") from exc
+            raise ValueError(
+                "decision_engine.evaluation_history_limit musi być liczbą całkowitą"
+            ) from exc
     tco_config: DecisionEngineTCOConfig | None = None
     tco_raw = raw.get("tco")
     if DecisionEngineTCOConfig is not None and tco_raw:
@@ -3247,14 +3184,10 @@ def _load_decision_engine_config(
             reports_source: Sequence[str] = [str(paths_raw)]
         else:
             if not isinstance(paths_raw, Sequence):
-                raise ValueError(
-                    "Pole decision_engine.tco.reports musi być listą ścieżek"
-                )
+                raise ValueError("Pole decision_engine.tco.reports musi być listą ścieżek")
             reports_source = [str(entry) for entry in paths_raw if str(entry).strip()]
         if not reports_source:
-            raise ValueError(
-                "Pole decision_engine.tco.reports nie może być puste"
-            )
+            raise ValueError("Pole decision_engine.tco.reports nie może być puste")
         normalized_reports = tuple(
             str(_normalize_runtime_path(path, base_dir=base_dir)) for path in reports_source
         )
@@ -3277,19 +3210,32 @@ def _load_decision_engine_config(
                 )
         if "runtime_report_basename" in tco_fields and tco_raw.get("runtime_report_basename"):
             tco_kwargs["runtime_report_basename"] = str(tco_raw["runtime_report_basename"])
-        if "runtime_export_formats" in tco_fields and tco_raw.get("runtime_export_formats") is not None:
+        if (
+            "runtime_export_formats" in tco_fields
+            and tco_raw.get("runtime_export_formats") is not None
+        ):
             formats_raw = tco_raw.get("runtime_export_formats")
             if isinstance(formats_raw, (str, bytes)):
                 formats = [str(formats_raw)]
             elif isinstance(formats_raw, Sequence):
                 formats = [str(entry) for entry in formats_raw]
             else:
-                raise ValueError("decision_engine.tco.runtime_export_formats must be a string or sequence")
+                raise ValueError(
+                    "decision_engine.tco.runtime_export_formats must be a string or sequence"
+                )
             tco_kwargs["runtime_export_formats"] = tuple(formats)
-        if "runtime_flush_events" in tco_fields and tco_raw.get("runtime_flush_events") not in (None, ""):
+        if "runtime_flush_events" in tco_fields and tco_raw.get("runtime_flush_events") not in (
+            None,
+            "",
+        ):
             tco_kwargs["runtime_flush_events"] = int(float(tco_raw.get("runtime_flush_events", 0)))
-        if "runtime_clear_after_export" in tco_fields and tco_raw.get("runtime_clear_after_export") is not None:
-            tco_kwargs["runtime_clear_after_export"] = bool(tco_raw.get("runtime_clear_after_export"))
+        if (
+            "runtime_clear_after_export" in tco_fields
+            and tco_raw.get("runtime_clear_after_export") is not None
+        ):
+            tco_kwargs["runtime_clear_after_export"] = bool(
+                tco_raw.get("runtime_clear_after_export")
+            )
         if "runtime_signing_key_env" in tco_fields:
             env_value = _normalize_env_var(tco_raw.get("runtime_signing_key_env"))
             if env_value:
@@ -3303,7 +3249,10 @@ def _load_decision_engine_config(
             if not isinstance(metadata_raw, Mapping):
                 raise ValueError("decision_engine.tco.runtime_metadata must be a mapping")
             tco_kwargs["runtime_metadata"] = dict(metadata_raw)
-        if "runtime_cost_limit_bps" in tco_fields and tco_raw.get("runtime_cost_limit_bps") not in (None, ""):
+        if "runtime_cost_limit_bps" in tco_fields and tco_raw.get("runtime_cost_limit_bps") not in (
+            None,
+            "",
+        ):
             tco_kwargs["runtime_cost_limit_bps"] = float(tco_raw.get("runtime_cost_limit_bps"))
         warn_age_raw = tco_raw.get("warn_report_age_hours")
         if "warn_report_age_hours" in tco_fields and warn_age_raw not in (None, ""):
@@ -3361,12 +3310,8 @@ def _load_key_rotation_config(
             KeyRotationEntryConfig(
                 key=key_value,
                 purpose=purpose_value,
-                interval_days=(
-                    None if interval_value in (None, "") else float(interval_value)
-                ),
-                warn_within_days=(
-                    None if warn_value in (None, "") else float(warn_value)
-                ),
+                interval_days=(None if interval_value in (None, "") else float(interval_value)),
+                warn_within_days=(None if warn_value in (None, "") else float(warn_value)),
             )
         )
 
@@ -3378,7 +3323,12 @@ def _load_key_rotation_config(
         "audit_directory": audit_directory,
     }
 
-    for field_name in ("signing_key_env", "signing_key_path", "signing_key_value", "signing_key_id"):
+    for field_name in (
+        "signing_key_env",
+        "signing_key_path",
+        "signing_key_value",
+        "signing_key_id",
+    ):
         if field_name in raw and raw[field_name] not in (None, ""):
             value = raw[field_name]
             if field_name.endswith("_path"):
@@ -3398,11 +3348,7 @@ def _load_observability_config(
     slo_entries: dict[str, SLOThresholdConfig] = {}
     combined_slo_raw: dict[str, Any] = {}
 
-    slo_path_value = (
-        raw.get("slo_definitions_path")
-        or raw.get("slo_file")
-        or raw.get("slo_path")
-    )
+    slo_path_value = raw.get("slo_definitions_path") or raw.get("slo_file") or raw.get("slo_path")
     if slo_path_value not in (None, "", False):
         normalized_path = _normalize_runtime_path(slo_path_value, base_dir=base_dir)
         if normalized_path:
@@ -3418,9 +3364,7 @@ def _load_observability_config(
                 _yaml = _require_yaml()
                 slo_payload = _yaml.safe_load(raw_text) or {}
             if not isinstance(slo_payload, Mapping):
-                raise ValueError(
-                    f"Plik definicji SLO {slo_path} musi zawierać mapę z wpisami"
-                )
+                raise ValueError(f"Plik definicji SLO {slo_path} musi zawierać mapę z wpisami")
             file_slo_raw = (
                 slo_payload.get("slo")
                 or slo_payload.get("slos")
@@ -3428,9 +3372,7 @@ def _load_observability_config(
                 or slo_payload
             )
             if not isinstance(file_slo_raw, Mapping):
-                raise ValueError(
-                    f"Sekcja SLO w {slo_path} musi być mapą nazwa -> parametry"
-                )
+                raise ValueError(f"Sekcja SLO w {slo_path} musi być mapą nazwa -> parametry")
             combined_slo_raw.update({str(name): entry for name, entry in file_slo_raw.items()})
 
     inline_slo_raw = raw.get("slo") or {}
@@ -3588,9 +3530,7 @@ def _parse_stress_lab_thresholds(
             try:
                 numeric = float(value)
             except (TypeError, ValueError) as exc:
-                raise ValueError(
-                    f"{context}: wartość '{field.name}' musi być liczbą"
-                ) from exc
+                raise ValueError(f"{context}: wartość '{field.name}' musi być liczbą") from exc
             values[field.name] = max(0.0, numeric)
 
     return StressLabThresholdsConfig(**values)
@@ -3692,9 +3632,7 @@ def _load_stress_lab_config(
                 )
             shock_type = str(shock_entry.get("type", "")).strip().lower()
             if not shock_type:
-                raise ValueError(
-                    f"Scenariusz '{name}' wymaga pola 'type' dla shock nr {index}"
-                )
+                raise ValueError(f"Scenariusz '{name}' wymaga pola 'type' dla shock nr {index}")
             try:
                 intensity = float(shock_entry.get("intensity", 1.0))
             except (TypeError, ValueError) as exc:
@@ -3749,9 +3687,7 @@ def _load_stress_lab_config(
             )
         )
 
-    thresholds = _parse_stress_lab_thresholds(
-        section.get("thresholds"), context="stress_lab"
-    )
+    thresholds = _parse_stress_lab_thresholds(section.get("thresholds"), context="stress_lab")
 
     config_kwargs: dict[str, Any] = {
         "enabled": enabled,
@@ -3826,9 +3762,7 @@ def _load_portfolio_stress_config(
     baseline_sources: list[PortfolioStressDataSourceConfig] = []
     for index, entry in enumerate(sources_raw, start=1):
         if not isinstance(entry, Mapping):
-            raise ValueError(
-                f"Element portfolio_stress.baseline_sources[{index}] musi być mapą"
-            )
+            raise ValueError(f"Element portfolio_stress.baseline_sources[{index}] musi być mapą")
         name_raw = entry.get("name")
         name = (
             str(name_raw).strip()
@@ -3868,14 +3802,10 @@ def _load_portfolio_stress_config(
     scenarios: list[PortfolioStressScenarioConfig] = []
     for index, entry in enumerate(scenarios_raw, start=1):
         if not isinstance(entry, Mapping):
-            raise ValueError(
-                f"Element portfolio_stress.scenarios[{index}] musi być mapą"
-            )
+            raise ValueError(f"Element portfolio_stress.scenarios[{index}] musi być mapą")
         name_raw = entry.get("name")
         if not isinstance(name_raw, str) or not name_raw.strip():
-            raise ValueError(
-                f"portfolio_stress.scenarios[{index}] wymaga pola 'name'"
-            )
+            raise ValueError(f"portfolio_stress.scenarios[{index}] wymaga pola 'name'")
         name = name_raw.strip()
         title_value = entry.get("title")
         title = (
@@ -3912,9 +3842,7 @@ def _load_portfolio_stress_config(
 
         factors_raw = entry.get("factors") or []
         if not isinstance(factors_raw, Sequence):
-            raise ValueError(
-                f"portfolio_stress.scenarios['{name}'].factors musi być listą"
-            )
+            raise ValueError(f"portfolio_stress.scenarios['{name}'].factors musi być listą")
         factors: list[PortfolioStressFactorShockConfig] = []
         for pos, factor_entry in enumerate(factors_raw, start=1):
             if not isinstance(factor_entry, Mapping):
@@ -3959,9 +3887,7 @@ def _load_portfolio_stress_config(
 
         assets_raw = entry.get("assets") or []
         if not isinstance(assets_raw, Sequence):
-            raise ValueError(
-                f"portfolio_stress.scenarios['{name}'].assets musi być listą"
-            )
+            raise ValueError(f"portfolio_stress.scenarios['{name}'].assets musi być listą")
         assets: list[PortfolioStressAssetShockConfig] = []
         for pos, asset_entry in enumerate(assets_raw, start=1):
             if not isinstance(asset_entry, Mapping):
@@ -4011,11 +3937,7 @@ def _load_portfolio_stress_config(
             tags = ()
 
         metadata_entry = entry.get("metadata")
-        scenario_metadata = (
-            dict(metadata_entry)
-            if isinstance(metadata_entry, Mapping)
-            else {}
-        )
+        scenario_metadata = dict(metadata_entry) if isinstance(metadata_entry, Mapping) else {}
 
         cash_return_raw = entry.get("cash_return_pct")
         if cash_return_raw in (None, ""):
@@ -4095,9 +4017,7 @@ def _parse_resilience_thresholds(
                     numeric_float = float(value)
                     values[field.name] = max(0.0, numeric_float)
             except (TypeError, ValueError) as exc:
-                raise ValueError(
-                    f"{context}: wartość '{field.name}' musi być liczbą"
-                ) from exc
+                raise ValueError(f"{context}: wartość '{field.name}' musi być liczbą") from exc
 
     return ResilienceDrillThresholdsConfig(**values)
 
@@ -4149,24 +4069,14 @@ def _load_resilience_config(
             raise ValueError(f"resilience.drills['{name}'] wymaga pola 'primary'")
         dataset_path_raw = entry.get("dataset_path")
         if dataset_path_raw in (None, ""):
-            raise ValueError(
-                f"resilience.drills['{name}'] wymaga pola 'dataset_path'"
-            )
+            raise ValueError(f"resilience.drills['{name}'] wymaga pola 'dataset_path'")
         dataset_path = _normalize_runtime_path(dataset_path_raw, base_dir=base_dir)
         if dataset_path is None:
-            raise ValueError(
-                f"resilience.drills['{name}']: niepoprawna ścieżka datasetu"
-            )
+            raise ValueError(f"resilience.drills['{name}']: niepoprawna ścieżka datasetu")
         fallbacks_raw = entry.get("fallbacks") or ()
         if not isinstance(fallbacks_raw, Sequence):
-            raise ValueError(
-                f"resilience.drills['{name}']: pole 'fallbacks' musi być listą"
-            )
-        fallbacks = tuple(
-            str(value).strip()
-            for value in fallbacks_raw
-            if str(value).strip()
-        )
+            raise ValueError(f"resilience.drills['{name}']: pole 'fallbacks' musi być listą")
+        fallbacks = tuple(str(value).strip() for value in fallbacks_raw if str(value).strip())
         thresholds = _parse_resilience_thresholds(
             entry.get("thresholds"), context=f"resilience.drills['{name}']"
         )
@@ -4235,9 +4145,7 @@ def _load_risk_decision_log(
         )
     if "signing_key_value" in available_fields:
         value = log_raw.get("signing_key_value")
-        kwargs["signing_key_value"] = (
-            str(value) if value not in (None, "") else None
-        )
+        kwargs["signing_key_value"] = str(value) if value not in (None, "") else None
     if "signing_key_id" in available_fields:
         key_id = log_raw.get("signing_key_id")
         kwargs["signing_key_id"] = str(key_id) if key_id not in (None, "") else None
@@ -4325,21 +4233,17 @@ def load_core_config(path: str | Path) -> CoreConfig:
         if raw_required is None:
             required_permissions = tuple(profile_required)
         else:
-            required_permissions = tuple(
-                str(value).lower() for value in (raw_required or ())
-            )
+            required_permissions = tuple(str(value).lower() for value in (raw_required or ()))
             if not required_permissions and profile_required:
                 required_permissions = tuple(profile_required)
         raw_forbidden = entry.get("forbidden_permissions")
         if raw_forbidden is None:
             forbidden_permissions = tuple(profile_forbidden)
         else:
-            forbidden_permissions = tuple(
-                str(value).lower() for value in (raw_forbidden or ())
-            )
+            forbidden_permissions = tuple(str(value).lower() for value in (raw_forbidden or ()))
             if not forbidden_permissions and profile_forbidden:
                 forbidden_permissions = tuple(profile_forbidden)
-        adapter_settings_raw = (entry.get("adapter_settings", {}) or {})
+        adapter_settings_raw = entry.get("adapter_settings", {}) or {}
         adapter_settings: dict[str, Any] = {
             str(key): value for key, value in adapter_settings_raw.items()
         }
@@ -4357,12 +4261,10 @@ def load_core_config(path: str | Path) -> CoreConfig:
             "instrument_universe": entry.get("instrument_universe"),
             "adapter_settings": adapter_settings,
             "adapter_factories": {
-                str(key): value
-                for key, value in (entry.get("adapter_factories", {}) or {}).items()
+                str(key): value for key, value in (entry.get("adapter_factories", {}) or {}).items()
             },
             "adapter_factories": {
-                str(key): value
-                for key, value in (entry.get("adapter_factories", {}) or {}).items()
+                str(key): value for key, value in (entry.get("adapter_factories", {}) or {}).items()
             },
             "required_permissions": required_permissions,
             "forbidden_permissions": forbidden_permissions,
@@ -4409,9 +4311,7 @@ def load_core_config(path: str | Path) -> CoreConfig:
                     stream_section.setdefault("poll_interval", float(stream_config.poll_interval))
                 adapter_settings["stream"] = stream_section
         if _env_has("live_readiness"):
-            env_kwargs["live_readiness"] = _load_live_readiness(
-                entry.get("live_readiness")
-            )
+            env_kwargs["live_readiness"] = _load_live_readiness(entry.get("live_readiness"))
         environments[name] = EnvironmentConfig(**env_kwargs)
 
     risk_profiles = {
@@ -4468,7 +4368,7 @@ def load_core_config(path: str | Path) -> CoreConfig:
 
     reporting = _load_reporting(raw.get("reporting"))
     runtime_section = raw.get("runtime") or {}
-    alerts = (raw.get("alerts", {}) or {})
+    alerts = raw.get("alerts", {}) or {}
     sms_providers = _load_sms_providers(alerts)
     signal_channels = _load_signal_channels(alerts)
     whatsapp_channels = _load_whatsapp_channels(alerts)
@@ -4550,7 +4450,7 @@ def load_core_config(path: str | Path) -> CoreConfig:
     if _core_has("messenger_channels"):
         core_kwargs["messenger_channels"] = messenger_channels
     if _core_has("runtime_controllers") and ControllerRuntimeConfig is not None:
-        controllers_raw = (runtime_section.get("controllers") or {})
+        controllers_raw = runtime_section.get("controllers") or {}
         core_kwargs["runtime_controllers"] = {
             name: ControllerRuntimeConfig(
                 tick_seconds=float(entry.get("tick_seconds", entry.get("tick", 60.0))),
@@ -4578,9 +4478,7 @@ def load_core_config(path: str | Path) -> CoreConfig:
     if resource_limits_config is not None and _core_has("runtime_resource_limits"):
         core_kwargs["runtime_resource_limits"] = resource_limits_config
 
-    risk_decision_log_config = _load_risk_decision_log(
-        runtime_section, base_dir=config_base_dir
-    )
+    risk_decision_log_config = _load_risk_decision_log(runtime_section, base_dir=config_base_dir)
     if risk_decision_log_config is not None:
         core_kwargs["risk_decision_log"] = risk_decision_log_config
 
@@ -4590,9 +4488,7 @@ def load_core_config(path: str | Path) -> CoreConfig:
     if portfolio_decision_log_config is not None:
         core_kwargs["portfolio_decision_log"] = portfolio_decision_log_config
 
-    security_baseline_config = _load_security_baseline(
-        runtime_section, base_dir=config_base_dir
-    )
+    security_baseline_config = _load_security_baseline(runtime_section, base_dir=config_base_dir)
     if security_baseline_config is not None:
         core_kwargs["security_baseline"] = security_baseline_config
 
@@ -4619,9 +4515,7 @@ def load_core_config(path: str | Path) -> CoreConfig:
     if portfolio_governor_config is not None and _core_has("portfolio_governor"):
         core_kwargs["portfolio_governor"] = portfolio_governor_config
 
-    portfolio_stress_config = _load_portfolio_stress_config(
-        raw, base_dir=config_base_dir
-    )
+    portfolio_stress_config = _load_portfolio_stress_config(raw, base_dir=config_base_dir)
     if portfolio_stress_config is not None and _core_has("portfolio_stress"):
         core_kwargs["portfolio_stress"] = portfolio_stress_config
 
@@ -4687,9 +4581,7 @@ def load_runtime_app_config(path: str | Path) -> RuntimeAppConfig:
         return str(normalized)
 
     def _normalize_native_path(value: object | None) -> str | None:
-        normalized = _normalize_runtime_path(
-            value, base_dir=config_base_dir, posix=False
-        )
+        normalized = _normalize_runtime_path(value, base_dir=config_base_dir, posix=False)
         if normalized is None:
             return None
         return str(normalized)
@@ -4741,7 +4633,9 @@ def load_runtime_app_config(path: str | Path) -> RuntimeAppConfig:
         signed_flag: RuntimeCloudSignedFlagConfig | None = None
         if isinstance(signed_section, Mapping) and signed_section:
             flag_path_value = signed_section.get("flag_path") or signed_section.get("flag")
-            signature_path_value = signed_section.get("signature_path") or signed_section.get("signature")
+            signature_path_value = signed_section.get("signature_path") or signed_section.get(
+                "signature"
+            )
             normalized_flag = _normalize_path(flag_path_value)
             normalized_signature = _normalize_path(signature_path_value)
             if not normalized_flag or not normalized_signature:
@@ -4878,7 +4772,9 @@ def load_runtime_app_config(path: str | Path) -> RuntimeAppConfig:
             try:
                 latency_buckets.append(float(entry))
             except (TypeError, ValueError) as exc:
-                raise ValueError("execution.live.latency_histogram_buckets musi zawierać wartości liczbowe") from exc
+                raise ValueError(
+                    "execution.live.latency_histogram_buckets musi zawierać wartości liczbowe"
+                ) from exc
         decision_log_path = _normalize_path(live_section.get("decision_log_path"))
         live_settings = RuntimeExecutionLiveSettings(
             enabled=bool(live_section.get("enabled", False)),
@@ -4889,7 +4785,9 @@ def load_runtime_app_config(path: str | Path) -> RuntimeAppConfig:
             decision_log_key_path=_normalize_path(live_section.get("decision_log_key_path")),
             decision_log_key_value=_as_optional_str(live_section.get("decision_log_key_value")),
             decision_log_key_id=_as_optional_str(live_section.get("decision_log_key_id")),
-            decision_log_rotate_bytes=int(live_section.get("decision_log_rotate_bytes", 8 * 1024 * 1024)),
+            decision_log_rotate_bytes=int(
+                live_section.get("decision_log_rotate_bytes", 8 * 1024 * 1024)
+            ),
             decision_log_keep=int(live_section.get("decision_log_keep", 3)),
             latency_histogram_buckets=tuple(latency_buckets),
         )
@@ -4987,9 +4885,7 @@ def load_runtime_app_config(path: str | Path) -> RuntimeAppConfig:
         decision_log=decision_log,
         portfolio_log=portfolio_log,
         max_drawdown_alert_pct=(
-            float(max_drawdown_alert_pct)
-            if max_drawdown_alert_pct not in (None, "")
-            else None
+            float(max_drawdown_alert_pct) if max_drawdown_alert_pct not in (None, "") else None
         ),
     )
 
@@ -4997,9 +4893,7 @@ def load_runtime_app_config(path: str | Path) -> RuntimeAppConfig:
     grace_raw = licensing_section.get("grace_period_hours")
     licensing_settings = RuntimeLicensingSettings(
         enforcement=bool(licensing_section.get("enforcement", True)),
-        grace_period_hours=(
-            float(grace_raw) if grace_raw not in (None, "") else None
-        ),
+        grace_period_hours=(float(grace_raw) if grace_raw not in (None, "") else None),
         offline_activation_required=bool(
             licensing_section.get("offline_activation_required", True)
         ),
@@ -5012,16 +4906,16 @@ def load_runtime_app_config(path: str | Path) -> RuntimeAppConfig:
         workspace_root=_normalize_path(ui_section.get("workspace_root")),
         enable_advanced_mode=bool(ui_section.get("enable_advanced_mode", False)),
         auto_connect_runtime=bool(ui_section.get("auto_connect_runtime", True)),
-        restore_layout_on_start=bool(
-            ui_section.get("restore_layout_on_start", True)
-        ),
+        restore_layout_on_start=bool(ui_section.get("restore_layout_on_start", True)),
         telemetry_sink=_normalize_path(ui_section.get("telemetry_sink")),
     )
 
     observability_section = raw.get("observability") or {}
     observability_settings: RuntimeObservabilitySettings | None = None
     if isinstance(observability_section, Mapping) and observability_section:
-        metrics_raw = observability_section.get("prometheus") or observability_section.get("metrics")
+        metrics_raw = observability_section.get("prometheus") or observability_section.get(
+            "metrics"
+        )
         metrics_config: RuntimeObservabilityMetricsSettings | None = None
         if isinstance(metrics_raw, Mapping) and metrics_raw.get("enabled", True):
             host_value = str(metrics_raw.get("host", "127.0.0.1")).strip() or "127.0.0.1"
@@ -5077,9 +4971,7 @@ def load_runtime_app_config(path: str | Path) -> RuntimeAppConfig:
                 reconnects_warning=_threshold(feed_sla_raw.get("reconnects_warning")),
                 reconnects_critical=_threshold(feed_sla_raw.get("reconnects_critical")),
                 downtime_warning_seconds=_threshold(feed_sla_raw.get("downtime_warning_seconds")),
-                downtime_critical_seconds=_threshold(
-                    feed_sla_raw.get("downtime_critical_seconds")
-                ),
+                downtime_critical_seconds=_threshold(feed_sla_raw.get("downtime_critical_seconds")),
             )
 
         enable_log_metrics = bool(observability_section.get("enable_log_metrics", True))
@@ -5213,7 +5105,9 @@ def load_runtime_app_config(path: str | Path) -> RuntimeAppConfig:
                 strategy = str(entry.get("strategy") or entry.get("preset") or "").strip()
                 if not name or not strategy:
                     continue
-                algorithm_value = entry.get("algorithm") or optimization_section.get("default_algorithm")
+                algorithm_value = entry.get("algorithm") or optimization_section.get(
+                    "default_algorithm"
+                )
                 max_trials_value = entry.get("max_trials")
                 if max_trials_value in (None, ""):
                     max_trials_value = optimization_section.get("default_max_trials")
@@ -5224,9 +5118,13 @@ def load_runtime_app_config(path: str | Path) -> RuntimeAppConfig:
                     strategy=strategy,
                     algorithm=str(algorithm_value or "grid"),
                     max_trials=int(max_trials_value or 0),
-                    random_seed=int(random_seed_value) if random_seed_value not in (None, "") else None,
+                    random_seed=int(random_seed_value)
+                    if random_seed_value not in (None, "")
+                    else None,
                     tags=_as_tuple(tags_value),
-                    search_space=_parse_search_space(entry.get("search_space") or entry.get("space") or {}),
+                    search_space=_parse_search_space(
+                        entry.get("search_space") or entry.get("space") or {}
+                    ),
                     objective=_parse_objective(entry.get("objective") or {}),
                     schedule=_parse_schedule(entry.get("schedule")),
                     evaluation=_parse_evaluation(entry.get("evaluation")),
@@ -5347,12 +5245,8 @@ def load_cloud_client_config(path: str | Path) -> CloudClientConfig:
                 client_key=_normalize_runtime_path(
                     tls_raw.get("client_key"), base_dir=config_path.parent
                 ),
-                client_key_password_env=_normalize_env_var(
-                    tls_raw.get("client_key_password_env")
-                ),
-                override_authority=_format_optional_text(
-                    tls_raw.get("override_authority")
-                ),
+                client_key_password_env=_normalize_env_var(tls_raw.get("client_key_password_env")),
+                override_authority=_format_optional_text(tls_raw.get("override_authority")),
             )
 
     return CloudClientConfig(

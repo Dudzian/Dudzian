@@ -1,4 +1,5 @@
 """Testy jednostkowe adaptera Kraken Spot."""
+
 from __future__ import annotations
 
 import base64
@@ -13,7 +14,6 @@ from urllib.parse import parse_qsl
 from urllib.request import Request
 
 import pytest
-
 
 
 from bot_core.exchanges.base import AccountSnapshot, Environment, ExchangeCredentials, OrderRequest
@@ -104,7 +104,9 @@ def test_fetch_account_snapshot_uses_private_signed_calls(monkeypatch: pytest.Mo
         "kraken_spot_signed_requests_total",
         "Liczba podpisanych zapytań HTTP wysłanych do API Kraken Spot.",
     )
-    assert signed_counter.value(labels={"exchange": "kraken_spot", "environment": "live"}) == pytest.approx(2.0)
+    assert signed_counter.value(
+        labels={"exchange": "kraken_spot", "environment": "live"}
+    ) == pytest.approx(2.0)
 
 
 def test_fetch_account_snapshot_respects_custom_valuation_asset(
@@ -144,7 +146,10 @@ def test_place_order_builds_payload_with_signature(monkeypatch: pytest.MonkeyPat
     def fake_urlopen(request: Request, timeout: int = 15):  # type: ignore[override]
         nonlocal captured_request
         captured_request = request
-        payload = {"error": [], "result": {"txid": ["OID123"], "descr": {"order": "buy 0.1 XBTUSD"}}}
+        payload = {
+            "error": [],
+            "result": {"txid": ["OID123"], "descr": {"order": "buy 0.1 XBTUSD"}},
+        }
         return _FakeResponse(payload)
 
     monkeypatch.setattr("bot_core.exchanges.kraken.spot.urlopen", fake_urlopen)
@@ -182,7 +187,9 @@ def test_place_order_builds_payload_with_signature(monkeypatch: pytest.MonkeyPat
         secret=_build_credentials().secret or "",
     )
     assert signature == expected_signature
-    body = captured_request.data.decode("utf-8") if captured_request and captured_request.data else ""
+    body = (
+        captured_request.data.decode("utf-8") if captured_request and captured_request.data else ""
+    )
     assert "pair=XBTUSD" in body
     assert "ordertype=limit" in body
     assert "userref=cli-1" in body
@@ -347,7 +354,9 @@ def test_private_request_propagates_api_errors(monkeypatch: pytest.MonkeyPatch) 
         adapter.cancel_order("OID123")
 
 
-def test_fetch_open_orders_returns_sorted_orders_and_metrics(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_fetch_open_orders_returns_sorted_orders_and_metrics(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     call_count = 0
 
     def fake_urlopen(request: Request, timeout: int = 15):  # type: ignore[override]
@@ -358,7 +367,12 @@ def test_fetch_open_orders_returns_sorted_orders_and_metrics(monkeypatch: pytest
             "result": {
                 "open": {
                     "OID1": {
-                        "descr": {"pair": "XBTUSD", "type": "buy", "ordertype": "limit", "price": "25000"},
+                        "descr": {
+                            "pair": "XBTUSD",
+                            "type": "buy",
+                            "ordertype": "limit",
+                            "price": "25000",
+                        },
                         "vol": "0.2",
                         "vol_exec": "0.05",
                         "opentm": 1_700_000_100.0,
@@ -408,7 +422,9 @@ def test_fetch_open_orders_returns_sorted_orders_and_metrics(monkeypatch: pytest
     assert call_count == 1
 
 
-def test_fetch_trades_history_paginates_and_updates_counter(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_fetch_trades_history_paginates_and_updates_counter(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     responses = [
         {
             "error": [],
@@ -571,7 +587,9 @@ def test_fetch_ticker_parses_payload_and_updates_metrics(monkeypatch: pytest.Mon
 def test_fetch_order_book_normalizes_levels_and_metrics(monkeypatch: pytest.MonkeyPatch) -> None:
     def fake_urlopen(request: Request, timeout: int = 15):  # type: ignore[override]
         assert "/0/public/Depth" in request.full_url
-        query = dict(parse_qsl(request.full_url.split("?", 1)[1])) if "?" in request.full_url else {}
+        query = (
+            dict(parse_qsl(request.full_url.split("?", 1)[1])) if "?" in request.full_url else {}
+        )
         assert query.get("count") == "10"
         payload = {
             "error": [],
@@ -634,6 +652,7 @@ def test_fetch_account_snapshot_uses_watchdog(monkeypatch: pytest.MonkeyPatch) -
     adapter = KrakenSpotAdapter(credentials, environment=Environment.LIVE, watchdog=watchdog)
 
     adapter.configure_network()
+
     def fake_private(context):
         if "TradeBalance" in context.path:
             return {"result": {"eb": "10", "mf": "3", "m": "1"}}

@@ -1,4 +1,5 @@
 """Wspólny limiter żądań HTTP dla adapterów giełdowych."""
+
 from __future__ import annotations
 
 import logging
@@ -115,7 +116,9 @@ class RateLimiter:
                         self._last_limiting_rule = bucket["rule"]
                     bucket["tokens"] = tokens
                     bucket["updated"] = now
-                    self._metrics_gauge.set(tokens, labels={**self._metric_labels, "rule": f"{rate}/{per}"})
+                    self._metrics_gauge.set(
+                        tokens, labels={**self._metric_labels, "rule": f"{rate}/{per}"}
+                    )
 
                 if ready:
                     if waited:
@@ -129,7 +132,9 @@ class RateLimiter:
                             waited,
                             self._metric_labels.get("exchange", "unknown"),
                             weight,
-                            f"{limiting_rule[0]}/{limiting_rule[1]}" if limiting_rule else "unknown",
+                            f"{limiting_rule[0]}/{limiting_rule[1]}"
+                            if limiting_rule
+                            else "unknown",
                         )
                         try:
                             record_rate_limit_wait(
@@ -138,7 +143,9 @@ class RateLimiter:
                                 weight=weight,
                                 rule=limiting_rule,
                             )
-                        except Exception:  # pragma: no cover - monitorowanie nie powinno psuć limitera
+                        except (
+                            Exception
+                        ):  # pragma: no cover - monitorowanie nie powinno psuć limitera
                             _LOGGER.debug("record_rate_limit_wait failed", exc_info=True)
                         finally:
                             self._last_limiting_rule = None

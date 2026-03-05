@@ -1,4 +1,5 @@
 """Pomocnicze API do ekstrakcji metryk runtime na potrzeby UI."""
+
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -73,9 +74,7 @@ class RuntimeTelemetrySnapshot:
     compliance: ComplianceTelemetry
 
 
-def load_runtime_snapshot(
-    *, registry: MetricsRegistry | None = None
-) -> RuntimeTelemetrySnapshot:
+def load_runtime_snapshot(*, registry: MetricsRegistry | None = None) -> RuntimeTelemetrySnapshot:
     """Buduje zrzut telemetryczny z rejestru metryk."""
 
     registry = registry or get_global_metrics_registry()
@@ -262,7 +261,7 @@ def _parse_labels(segment: str | None) -> Mapping[str, str]:
             value_chars.append(char)
             cursor += 1
         labels[key] = bytes("".join(value_chars), "utf-8").decode("unicode_escape")
-        if cursor < len(segment) and segment[cursor] == ',':
+        if cursor < len(segment) and segment[cursor] == ",":
             cursor += 1
     return labels
 

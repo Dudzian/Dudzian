@@ -19,7 +19,16 @@ def _timestamp(year: int, month: int, day: int) -> float:
 def _payload(*timestamps: float) -> dict[str, object]:
     rows = []
     for index, ts in enumerate(timestamps, start=1):
-        rows.append([ts, float(index), float(index + 1), float(index + 2), float(index + 3), float(index + 4)])
+        rows.append(
+            [
+                ts,
+                float(index),
+                float(index + 1),
+                float(index + 2),
+                float(index + 3),
+                float(index + 4),
+            ]
+        )
     return {
         "columns": ("open_time", "open", "high", "low", "close", "volume"),
         "rows": rows,
@@ -31,8 +40,12 @@ def test_parquet_storage_writes_partitioned_files(tmp_path) -> None:
     key = "BTCUSDT::1d"
     storage.write(key, _payload(_timestamp(2024, 1, 1), _timestamp(2024, 2, 1)))
 
-    jan_file = tmp_path / "binance_spot" / "BTCUSDT" / "1d" / "year=2024" / "month=01" / "data.parquet"
-    feb_file = tmp_path / "binance_spot" / "BTCUSDT" / "1d" / "year=2024" / "month=02" / "data.parquet"
+    jan_file = (
+        tmp_path / "binance_spot" / "BTCUSDT" / "1d" / "year=2024" / "month=01" / "data.parquet"
+    )
+    feb_file = (
+        tmp_path / "binance_spot" / "BTCUSDT" / "1d" / "year=2024" / "month=02" / "data.parquet"
+    )
 
     assert jan_file.exists()
     assert feb_file.exists()
@@ -87,7 +100,16 @@ def test_dual_cache_storage_updates_manifest(tmp_path) -> None:
     assert storage.latest_timestamp(key) == ts
 
     # Plik Parquet istnieje i zawiera pojedynczy rekord.
-    parquet_file = tmp_path / "parquet" / "zonda_spot" / "BTCPLN" / "1d" / "year=2024" / "month=05" / "data.parquet"
+    parquet_file = (
+        tmp_path
+        / "parquet"
+        / "zonda_spot"
+        / "BTCPLN"
+        / "1d"
+        / "year=2024"
+        / "month=05"
+        / "data.parquet"
+    )
     table = pq.read_table(parquet_file)
     assert table.num_rows == 1
 

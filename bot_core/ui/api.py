@@ -414,7 +414,9 @@ def _exchange_statuses_from_execution(execution_service: Any) -> list[ExchangeSt
                 details["failure_count"] = getattr(breaker, "failure_count", None)
         status = _status_from_breaker(breaker_state)
         statuses.append(
-            ExchangeStatus(name=str(name), status=status, breaker_state=breaker_state, details=details)
+            ExchangeStatus(
+                name=str(name), status=status, breaker_state=breaker_state, details=details
+            )
         )
     return statuses
 
@@ -634,7 +636,9 @@ class MarketplaceService:
     def _plan_license_entry(
         cls, preset_id: str, preview: MarketplaceInstallResult
     ) -> Mapping[str, Any]:
-        license_payload = preview.license_payload if isinstance(preview.license_payload, Mapping) else None
+        license_payload = (
+            preview.license_payload if isinstance(preview.license_payload, Mapping) else None
+        )
         summary = {
             "presetId": preset_id,
             "success": preview.success,
@@ -733,14 +737,11 @@ class MarketplaceService:
         warning_messages: list[str] = []
         if unlicensed:
             warning_codes.append("assignment-unlicensed")
-            warning_messages.append(
-                "Brak licencji dla portfeli: " + ", ".join(unlicensed)
-            )
+            warning_messages.append("Brak licencji dla portfeli: " + ", ".join(unlicensed))
         if pending_assignments:
             warning_codes.append("assignment-pending")
             warning_messages.append(
-                "Portfele oczekują na zatwierdzenie w licencji: "
-                + ", ".join(pending_assignments)
+                "Portfele oczekują na zatwierdzenie w licencji: " + ", ".join(pending_assignments)
             )
         if seat_shortfall:
             warning_codes.append("assignment-seat-shortfall")
@@ -875,7 +876,9 @@ class MarketplaceService:
             preference_profiles: Sequence[Mapping[str, object]] = ()
             if marketplace_entry is not None:
                 dependencies = [dep.to_payload() for dep in marketplace_entry.dependencies]
-                update_channels = [channel.to_payload() for channel in marketplace_entry.update_channels]
+                update_channels = [
+                    channel.to_payload() for channel in marketplace_entry.update_channels
+                ]
                 preferred_channel = marketplace_entry.preferred_channel
                 available_version = marketplace_entry.version or available_version
                 preference_profiles = marketplace_entry.preference_profiles
@@ -941,7 +944,9 @@ class MarketplaceService:
     def remove_preset(self, preset_id: str) -> bool:
         return self._repository.remove(preset_id)
 
-    def export_preset(self, preset_id: str, *, format: str = "json") -> tuple[dict[str, Any], bytes]:
+    def export_preset(
+        self, preset_id: str, *, format: str = "json"
+    ) -> tuple[dict[str, Any], bytes]:
         document, payload = self._repository.export_preset(preset_id, format=format)
         return document.payload, payload
 
@@ -1025,7 +1030,9 @@ class MarketplaceService:
 
             warning_messages = assignment_summary.get("warningMessages")
             if warning_messages:
-                existing_messages = self._normalize_message_list(license_entry.get("warningMessages"))
+                existing_messages = self._normalize_message_list(
+                    license_entry.get("warningMessages")
+                )
                 for message in warning_messages:
                     if message not in existing_messages:
                         existing_messages.append(message)
@@ -1077,9 +1084,7 @@ class MarketplaceService:
     ) -> Mapping[str, object]:
         result = self.install_from_catalog(preset_id)
         normalized_portfolios = [
-            str(portfolio).strip()
-            for portfolio in portfolios
-            if str(portfolio).strip()
+            str(portfolio).strip() for portfolio in portfolios if str(portfolio).strip()
         ]
 
         assignments: dict[str, list[str]] = {}
@@ -1147,4 +1152,3 @@ __all__ = [
     "build_runtime_snapshot",
     "describe_strategy_catalog",
 ]
-

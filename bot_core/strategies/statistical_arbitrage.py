@@ -1,4 +1,5 @@
 """Strategia arbitrażu statystycznego (pairs trading)."""
+
 from __future__ import annotations
 
 from collections import deque
@@ -6,7 +7,11 @@ from dataclasses import dataclass, field
 from typing import Any, Deque, Dict, List, Mapping, Sequence
 
 from bot_core.strategies.base import MarketSnapshot, SignalLeg, StrategyEngine, StrategySignal
-from bot_core.strategies.market_params import DEFAULT_SPOT_PARAMS, MarketParams, quantity_from_notional
+from bot_core.strategies.market_params import (
+    DEFAULT_SPOT_PARAMS,
+    MarketParams,
+    quantity_from_notional,
+)
 
 
 @dataclass(slots=True)
@@ -93,7 +98,7 @@ class StatisticalArbitrageStrategy(StrategyEngine):
         spreads = list(state.spreads)
         mean_spread = sum(spreads) / len(spreads)
         variance = sum((value - mean_spread) ** 2 for value in spreads) / max(1, len(spreads) - 1)
-        std_spread = variance ** 0.5
+        std_spread = variance**0.5
         if std_spread == 0:
             return []
 

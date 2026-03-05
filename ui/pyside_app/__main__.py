@@ -1,4 +1,5 @@
 """Punkt wejścia modułu `python -m ui.pyside_app`."""
+
 from .app import main
 
 

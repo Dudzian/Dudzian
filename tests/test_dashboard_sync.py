@@ -96,5 +96,6 @@ def test_load_overrides_from_document_requires_schema() -> None:
 
 def test_load_overrides_from_document_requires_iterable() -> None:
     with pytest.raises(ValueError):
-        load_overrides_from_document({"schema": "stage6.observability.alert_overrides", "overrides": None})
-
+        load_overrides_from_document(
+            {"schema": "stage6.observability.alert_overrides", "overrides": None}
+        )

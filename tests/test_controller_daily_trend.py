@@ -6,7 +6,6 @@ from typing import Iterable, Mapping, MutableMapping, Sequence
 from unittest import mock
 
 
-
 import pytest
 
 from bot_core.config.models import ControllerRuntimeConfig
@@ -22,6 +21,7 @@ from bot_core.runtime.controller import ControllerSignal, DailyTrendController
 from bot_core.strategies.base import MarketSnapshot, StrategySignal
 from bot_core.strategies.daily_trend import DailyTrendMomentumSettings, DailyTrendMomentumStrategy
 from tests._daily_trend_helpers import FixtureSource, InMemoryStorage, build_core_config
+
 
 def test_daily_trend_controller_executes_signal() -> None:
     day_ms = 86_400_000
@@ -368,7 +368,9 @@ def test_handle_signals_preserves_metadata_for_adjustments() -> None:
         },
     )
 
-    with mock.patch.object(risk_engine, "apply_pre_trade_checks", wraps=risk_engine.apply_pre_trade_checks) as patched:
+    with mock.patch.object(
+        risk_engine, "apply_pre_trade_checks", wraps=risk_engine.apply_pre_trade_checks
+    ) as patched:
         results = controller._handle_signals(snapshot, (signal,))
 
     assert patched.call_count == 2

@@ -181,9 +181,7 @@ def _parse_pinned_fingerprint(entry: object) -> tuple[str, str] | None:
     if not fingerprint:
         return None
     if any(char not in _HEX_DIGITS for char in fingerprint):
-        LOGGER.warning(
-            "Wpis pinningu TLS '%s' zawiera znaki spoza zakresu hex – pomijam", entry
-        )
+        LOGGER.warning("Wpis pinningu TLS '%s' zawiera znaki spoza zakresu hex – pomijam", entry)
         return None
     return algorithm, fingerprint
 
@@ -198,9 +196,7 @@ def _select_sha256_fingerprint(entries: Sequence[object]) -> str | None:
         algorithm, fingerprint = parsed
         if algorithm == "sha256":
             return fingerprint
-        LOGGER.warning(
-            "Pomijam wpis pinningu TLS %r – obsługiwany jest wyłącznie SHA-256", entry
-        )
+        LOGGER.warning("Pomijam wpis pinningu TLS %r – obsługiwany jest wyłącznie SHA-256", entry)
     return None
 
 
@@ -369,39 +365,27 @@ def _resolve_metadata_value(
 
     if directive_lower == "file":
         if not target:
-            parser.error(
-                f"Nagłówek '{key}' wskazuje pusty plik w wpisie '{entry}'"
-            )
+            parser.error(f"Nagłówek '{key}' wskazuje pusty plik w wpisie '{entry}'")
         file_path = Path(target).expanduser()
         try:
             content = file_path.read_text(encoding="utf-8")
         except FileNotFoundError:
-            parser.error(
-                f"Nie znaleziono pliku '{file_path}' dla nagłówka '{key}'"
-            )
+            parser.error(f"Nie znaleziono pliku '{file_path}' dla nagłówka '{key}'")
         except OSError as exc:  # pragma: no cover - zależne od środowiska
-            parser.error(
-                f"Nie można odczytać pliku '{file_path}' dla nagłówka '{key}': {exc}"
-            )
+            parser.error(f"Nie można odczytać pliku '{file_path}' dla nagłówka '{key}': {exc}")
         # Usuwamy typowe końcówki linii pozostawiając resztę wartości bez zmian.
         return content.rstrip("\r\n"), f"file:{file_path}"
 
     if directive_lower in {"file64", "fileb64", "file-base64"}:
         if not target:
-            parser.error(
-                f"Nagłówek '{key}' wskazuje pusty plik w wpisie '{entry}'"
-            )
+            parser.error(f"Nagłówek '{key}' wskazuje pusty plik w wpisie '{entry}'")
         file_path = Path(target).expanduser()
         try:
             content = file_path.read_text(encoding="utf-8")
         except FileNotFoundError:
-            parser.error(
-                f"Nie znaleziono pliku '{file_path}' dla nagłówka '{key}'"
-            )
+            parser.error(f"Nie znaleziono pliku '{file_path}' dla nagłówka '{key}'")
         except OSError as exc:  # pragma: no cover - zależne od środowiska
-            parser.error(
-                f"Nie można odczytać pliku '{file_path}' dla nagłówka '{key}': {exc}"
-            )
+            parser.error(f"Nie można odczytać pliku '{file_path}' dla nagłówka '{key}': {exc}")
         decoded = _decode_base64_payload(
             content,
             parser=parser,
@@ -413,9 +397,7 @@ def _resolve_metadata_value(
 
     if directive_lower == "env":
         if not target:
-            parser.error(
-                f"Nagłówek '{key}' wskazuje pustą zmienną środowiskową w wpisie '{entry}'"
-            )
+            parser.error(f"Nagłówek '{key}' wskazuje pustą zmienną środowiskową w wpisie '{entry}'")
         env_map = dict(env or os.environ)
         if target not in env_map:
             parser.error(
@@ -425,9 +407,7 @@ def _resolve_metadata_value(
 
     if directive_lower in {"env64", "envb64", "env-base64"}:
         if not target:
-            parser.error(
-                f"Nagłówek '{key}' wskazuje pustą zmienną środowiskową w wpisie '{entry}'"
-            )
+            parser.error(f"Nagłówek '{key}' wskazuje pustą zmienną środowiskową w wpisie '{entry}'")
         env_map = dict(env or os.environ)
         if target not in env_map:
             parser.error(
@@ -477,16 +457,15 @@ def _parse_metadata_entries(
             key, value = entry.split(":", 1)
         else:
             parser.error(
-                "Nieprawidłowy nagłówek gRPC '%s'. Użyj formatu klucz=wartość lub klucz:wartość." % raw_entry
+                "Nieprawidłowy nagłówek gRPC '%s'. Użyj formatu klucz=wartość lub klucz:wartość."
+                % raw_entry
             )
         stripped_key = key.strip()
         normalized_key = stripped_key.lower()
         if not normalized_key:
             parser.error("Nagłówek gRPC o pustym kluczu jest niedozwolony")
         if stripped_key != normalized_key:
-            parser.error(
-                "Nagłówek gRPC '%s' musi używać małych liter" % stripped_key
-            )
+            parser.error("Nagłówek gRPC '%s' musi używać małych liter" % stripped_key)
         if not _METADATA_KEY_PATTERN.fullmatch(normalized_key):
             parser.error(
                 "Nagłówek gRPC '%s' zawiera niedozwolone znaki – dozwolone są małe litery, cyfry, '-', '_' i '.'"
@@ -516,7 +495,8 @@ def _parse_metadata_entries(
                 resolved_value = resolved_value.decode("utf-8")
             except UnicodeDecodeError:
                 parser.error(
-                    "Nagłówek gRPC '%s' oczekuje tekstowej wartości UTF-8, otrzymano dane binarne" % normalized_key
+                    "Nagłówek gRPC '%s' oczekuje tekstowej wartości UTF-8, otrzymano dane binarne"
+                    % normalized_key
                 )
         if isinstance(resolved_value, str) and normalized_key.endswith("-bin"):
             resolved_value = _decode_base64_payload(
@@ -538,7 +518,7 @@ def _parse_metadata_entries(
 
 
 def _merge_metadata_entries(
-    entries: Sequence[tuple[str, MetadataValue]]
+    entries: Sequence[tuple[str, MetadataValue]],
 ) -> list[tuple[str, MetadataValue]]:
     """Zwraca listę metadanych z usuniętymi duplikatami kluczy.
 
@@ -694,9 +674,7 @@ def _load_grpc_components():
     try:
         import grpc  # type: ignore
     except ImportError as exc:  # pragma: no cover
-        raise SystemExit(
-            "Pakiet grpcio jest wymagany do połączenia z MetricsService."
-        ) from exc
+        raise SystemExit("Pakiet grpcio jest wymagany do połączenia z MetricsService.") from exc
 
     try:
         from bot_core.generated import trading_pb2, trading_pb2_grpc  # type: ignore
@@ -945,9 +923,7 @@ def _load_jsonl_manifest_entries(path: Path) -> list[str]:
             if normalized:
                 entries.append(_normalize_manifest_entry(normalized, base_dir))
         if not entries:
-            raise _JsonlManifestError(
-                f"Manifest JSONL {path} nie zawiera ścieżek JSONL."
-            )
+            raise _JsonlManifestError(f"Manifest JSONL {path} nie zawiera ścieżek JSONL.")
         return entries
 
     for line in content.splitlines():
@@ -1029,13 +1005,10 @@ def _open_zip_jsonl_handle(path: Path):
         candidates = [
             info
             for info in archive.infolist()
-            if not info.is_dir()
-            and info.filename.lower().endswith((".jsonl", ".json"))
+            if not info.is_dir() and info.filename.lower().endswith((".jsonl", ".json"))
         ]
         if not candidates:
-            raise _JsonlDecompressionError(
-                "Archiwum ZIP nie zawiera plików JSON ani JSONL"
-            )
+            raise _JsonlDecompressionError("Archiwum ZIP nie zawiera plików JSON ani JSONL")
         selected = sorted(
             candidates,
             key=lambda info: (
@@ -1076,13 +1049,10 @@ def _open_tar_jsonl_handle(path: Path):
         candidates = [
             member
             for member in archive.getmembers()
-            if member.isfile()
-            and member.name.lower().endswith((".jsonl", ".json"))
+            if member.isfile() and member.name.lower().endswith((".jsonl", ".json"))
         ]
         if not candidates:
-            raise _JsonlDecompressionError(
-                "Archiwum TAR nie zawiera plików JSON ani JSONL"
-            )
+            raise _JsonlDecompressionError("Archiwum TAR nie zawiera plików JSON ani JSONL")
         selected = sorted(
             candidates,
             key=lambda member: (
@@ -1092,9 +1062,7 @@ def _open_tar_jsonl_handle(path: Path):
         )[0]
         raw_handle = archive.extractfile(selected)
         if raw_handle is None:
-            raise _JsonlDecompressionError(
-                f"Nie można odczytać {selected.name} z archiwum TAR"
-            )
+            raise _JsonlDecompressionError(f"Nie można odczytać {selected.name} z archiwum TAR")
         text_handle = io.TextIOWrapper(raw_handle, encoding="utf-8")
 
         original_close = text_handle.close
@@ -1267,9 +1235,7 @@ def _iter_jsonl_snapshots(source: str) -> Iterable[_OfflineSnapshot]:
                 LOGGER.error("Nie znaleziono pliku JSONL: %s", artifact)
                 raise SystemExit(2) from exc
             except _JsonlDecompressionError as exc:
-                LOGGER.error(
-                    "Nie udało się zdekompresować pliku JSONL %s: %s", artifact, exc
-                )
+                LOGGER.error("Nie udało się zdekompresować pliku JSONL %s: %s", artifact, exc)
                 raise SystemExit(2) from exc
             except OSError as exc:  # pragma: no cover - zależne od platformy
                 LOGGER.error("Nie udało się odczytać pliku JSONL %s: %s", artifact, exc)
@@ -1354,10 +1320,14 @@ class _SummaryCollector:
             stats["fps_count"] += 1
             stats["fps_total"] += fps_value
             stats["fps_min"] = (
-                fps_value if stats["fps_min"] is None or fps_value < stats["fps_min"] else stats["fps_min"]
+                fps_value
+                if stats["fps_min"] is None or fps_value < stats["fps_min"]
+                else stats["fps_min"]
             )
             stats["fps_max"] = (
-                fps_value if stats["fps_max"] is None or fps_value > stats["fps_max"] else stats["fps_max"]
+                fps_value
+                if stats["fps_max"] is None or fps_value > stats["fps_max"]
+                else stats["fps_max"]
             )
 
         screen_ctx = _screen_context(notes_payload)
@@ -1379,9 +1349,7 @@ class _SummaryCollector:
                     "samples": stats["fps_count"],
                 }
             if stats["screens"]:
-                payload["screens"] = [
-                    json.loads(encoded) for encoded in sorted(stats["screens"])
-                ]
+                payload["screens"] = [json.loads(encoded) for encoded in sorted(stats["screens"])]
             if stats["severity_counts"]:
                 payload["severity"] = {
                     "counts": {
@@ -1402,8 +1370,7 @@ class _SummaryCollector:
             summary["last_timestamp"] = self._last_ts.isoformat()
         if self._severity_totals:
             summary["severity_counts"] = {
-                level: self._severity_totals[level]
-                for level in sorted(self._severity_totals)
+                level: self._severity_totals[level] for level in sorted(self._severity_totals)
             }
         return summary
 
@@ -1616,7 +1583,9 @@ def _parse_cli_datetime(
         parser.error(f"{flag} wymaga niepustej wartości ISO 8601")
     dt = _parse_iso_datetime(candidate)
     if dt is None:
-        parser.error(f"Niepoprawny format czasu dla {flag}; oczekiwano ISO 8601 (np. 2024-02-01T12:00:00Z)")
+        parser.error(
+            f"Niepoprawny format czasu dla {flag}; oczekiwano ISO 8601 (np. 2024-02-01T12:00:00Z)"
+        )
     return dt
 
 
@@ -1832,9 +1801,7 @@ def _verify_fingerprint(data: bytes | None, expected_hex: str | None) -> None:
     if not expected_hex:
         return
     if data is None:
-        LOGGER.error(
-            "Nie można zweryfikować odcisku SHA-256 certyfikatu serwera bez --root-cert"
-        )
+        LOGGER.error("Nie można zweryfikować odcisku SHA-256 certyfikatu serwera bez --root-cert")
         raise SystemExit(2)
     digest = hashlib.sha256(data).hexdigest()
     if digest.lower() != expected_hex.lower():
@@ -2004,9 +1971,7 @@ def _apply_environment_overrides(
             return
         paths = _split_header_file_specs(raw_value)
         if not paths:
-            parser.error(
-                f"Zmienna {env_key} nie zawiera żadnych ścieżek nagłówków gRPC"
-            )
+            parser.error(f"Zmienna {env_key} nie zawiera żadnych ścieżek nagłówków gRPC")
         setattr(args, attr, paths)
 
     def _override_header_dirs(attr: str, suffix: str, flag: str) -> None:
@@ -2026,9 +1991,7 @@ def _apply_environment_overrides(
             return
         directories = _split_header_directory_specs(raw_value)
         if not directories:
-            parser.error(
-                f"Zmienna {env_key} nie zawiera żadnych katalogów nagłówków gRPC"
-            )
+            parser.error(f"Zmienna {env_key} nie zawiera żadnych katalogów nagłówków gRPC")
         setattr(args, attr, directories)
 
     _override_simple("host", "HOST", "--host")
@@ -2059,7 +2022,9 @@ def _apply_environment_overrides(
     )
     _override_simple("core_config", "CORE_CONFIG", "--core-config", allow_none=True)
     _override_numeric("screen_index", "SCREEN_INDEX", "--screen-index", int, allow_none=True)
-    _override_simple("screen_name", "SCREEN_NAME", "--screen-name", allow_none=True, strip_value=True)
+    _override_simple(
+        "screen_name", "SCREEN_NAME", "--screen-name", allow_none=True, strip_value=True
+    )
     _override_simple("since", "SINCE", "--since", allow_none=True, strip_value=True)
     _override_simple("until", "UNTIL", "--until", allow_none=True, strip_value=True)
     _override_simple("from_jsonl", "FROM_JSONL", "--from-jsonl", allow_none=True)
@@ -2071,20 +2036,28 @@ def _apply_environment_overrides(
         if env_key in env:
             args.summary = _parse_env_bool(env[env_key], variable=env_key, parser=parser)
 
-    if "--print-risk-profiles" not in provided_flags and not getattr(args, "print_risk_profiles", False):
+    if "--print-risk-profiles" not in provided_flags and not getattr(
+        args, "print_risk_profiles", False
+    ):
         env_key = f"{_ENV_PREFIX}PRINT_RISK_PROFILES"
         if env_key in env:
-            args.print_risk_profiles = _parse_env_bool(env[env_key], variable=env_key, parser=parser)
+            args.print_risk_profiles = _parse_env_bool(
+                env[env_key], variable=env_key, parser=parser
+            )
 
     if "--headers-report" not in provided_flags and not getattr(args, "headers_report", False):
         env_key = f"{_ENV_PREFIX}HEADERS_REPORT"
         if env_key in env:
             args.headers_report = _parse_env_bool(env[env_key], variable=env_key, parser=parser)
 
-    if "--headers-report-only" not in provided_flags and not getattr(args, "headers_report_only", False):
+    if "--headers-report-only" not in provided_flags and not getattr(
+        args, "headers_report_only", False
+    ):
         env_key = f"{_ENV_PREFIX}HEADERS_REPORT_ONLY"
         if env_key in env:
-            args.headers_report_only = _parse_env_bool(env[env_key], variable=env_key, parser=parser)
+            args.headers_report_only = _parse_env_bool(
+                env[env_key], variable=env_key, parser=parser
+            )
 
     _override_simple(
         "summary_output",
@@ -2126,9 +2099,13 @@ def _apply_environment_overrides(
             args.format = candidate
 
     _override_simple("root_cert", "ROOT_CERT", "--root-cert", allow_none=True, strip_value=True)
-    _override_simple("client_cert", "CLIENT_CERT", "--client-cert", allow_none=True, strip_value=True)
+    _override_simple(
+        "client_cert", "CLIENT_CERT", "--client-cert", allow_none=True, strip_value=True
+    )
     _override_simple("client_key", "CLIENT_KEY", "--client-key", allow_none=True, strip_value=True)
-    _override_simple("server_name", "SERVER_NAME", "--server-name", allow_none=True, strip_value=True)
+    _override_simple(
+        "server_name", "SERVER_NAME", "--server-name", allow_none=True, strip_value=True
+    )
     _override_simple(
         "server_sha256",
         "SERVER_SHA256",
@@ -2199,9 +2176,7 @@ def _apply_core_config_defaults(
         "host": getattr(metrics_config, "host", None),
         "port": getattr(metrics_config, "port", None),
         "risk_profile": getattr(metrics_config, "ui_alerts_risk_profile", None),
-        "risk_profiles_file": getattr(
-            metrics_config, "ui_alerts_risk_profiles_file", None
-        ),
+        "risk_profiles_file": getattr(metrics_config, "ui_alerts_risk_profiles_file", None),
     }
     metrics_meta["auth_token_scope_required"] = _REQUIRED_METRICS_SCOPE
     metrics_meta["auth_token_scope_checked"] = False
@@ -2304,9 +2279,7 @@ def _apply_core_config_defaults(
                         directory_removal_sources.update(parsed_removal_sources)
                     else:
                         for key in removal_keys:
-                            directory_removal_sources.setdefault(
-                                key, f"config-dir:{resolved_path}"
-                            )
+                            directory_removal_sources.setdefault(key, f"config-dir:{resolved_path}")
 
     if config_metadata_files and not headers_disabled:
         for file_path in config_metadata_files:
@@ -2397,8 +2370,7 @@ def _apply_core_config_defaults(
         metrics_meta["grpc_metadata_sources"] = dict(combined_sources)
     if directory_files_map:
         metrics_meta["grpc_metadata_directory_files"] = {
-            directory: list(files)
-            for directory, files in directory_files_map.items()
+            directory: list(files) for directory, files in directory_files_map.items()
         }
         metrics_meta["grpc_metadata_directory_files_total"] = sum(
             len(files) for files in directory_files_map.values()
@@ -2434,9 +2406,7 @@ def _apply_core_config_defaults(
     tls_cfg = getattr(metrics_config, "tls", None)
     if tls_cfg is not None and getattr(tls_cfg, "enabled", False):
         if not args.use_tls:
-            LOGGER.info(
-                "Konfiguracja core.yaml wymaga TLS – automatycznie włączam --use-tls"
-            )
+            LOGGER.info("Konfiguracja core.yaml wymaga TLS – automatycznie włączam --use-tls")
             args.use_tls = True
         if not args.root_cert and getattr(tls_cfg, "client_ca_path", None):
             args.root_cert = tls_cfg.client_ca_path
@@ -2479,10 +2449,7 @@ def _apply_core_config_defaults(
                 metrics_meta["auth_token_scope_reason"] = "shared_secret_token_file"
             else:
                 metrics_meta.setdefault("auth_token_configured", False)
-        elif (
-            rbac_tokens
-            and resolve_service_token is not None
-        ):
+        elif rbac_tokens and resolve_service_token is not None:
             token_entry = resolve_service_token(
                 rbac_tokens,
                 scope=_REQUIRED_METRICS_SCOPE,
@@ -2495,9 +2462,7 @@ def _apply_core_config_defaults(
                 scopes = sorted(token_entry.scopes)
                 if scopes:
                     metrics_meta["auth_token_scopes"] = scopes
-                token_scope_match = bool(
-                    not scopes or _REQUIRED_METRICS_SCOPE in scopes
-                )
+                token_scope_match = bool(not scopes or _REQUIRED_METRICS_SCOPE in scopes)
                 metrics_meta["auth_token_scope_match"] = token_scope_match
                 metrics_meta["auth_token_token_id"] = token_entry.token_id
             elif resolve_service_token_secret is not None:
@@ -2549,13 +2514,13 @@ def _apply_core_config_defaults(
         )
         profiles = getattr(risk_config, "profiles", None)
         if profiles:
-            risk_meta["profiles"] = sorted({str(profile).strip() for profile in profiles if profile})
+            risk_meta["profiles"] = sorted(
+                {str(profile).strip() for profile in profiles if profile}
+            )
         if getattr(risk_config, "auth_token", None):
             risk_meta["auth_token_configured"] = True
 
-        required_scopes: dict[str, list[str]] = {
-            _REQUIRED_RISK_SCOPE: ["core_config.risk_service"]
-        }
+        required_scopes: dict[str, list[str]] = {_REQUIRED_RISK_SCOPE: ["core_config.risk_service"]}
 
         rbac_tokens_risk = tuple(getattr(risk_config, "rbac_tokens", ()) or ())
         if rbac_tokens_risk:
@@ -2589,9 +2554,7 @@ def _apply_core_config_defaults(
                 risk_meta["pinned_fingerprints"] = list(pinned)
 
     metadata["risk_service"] = {
-        key: value
-        for key, value in risk_meta.items()
-        if value not in (None, "", [], {})
+        key: value for key, value in risk_meta.items() if value not in (None, "", [], {})
     }
     args._core_config_metadata = metadata
 
@@ -2603,16 +2566,16 @@ def _load_custom_risk_profiles(args: argparse.Namespace, parser: argparse.Argume
 
     target = Path(path_value).expanduser()
     try:
-        registered, _meta = load_risk_profiles_with_metadata(target, origin_label=f"watcher:{target}")
+        registered, _meta = load_risk_profiles_with_metadata(
+            target, origin_label=f"watcher:{target}"
+        )
     except FileNotFoundError as exc:
         parser.error(str(exc))
     except Exception as exc:
         parser.error(f"Nie udało się wczytać profili ryzyka z {target}: {exc}")
     else:
         if registered:
-            LOGGER.info(
-                "Załadowano %s profil(e) ryzyka telemetrii z %s", len(registered), target
-            )
+            LOGGER.info("Załadowano %s profil(e) ryzyka telemetrii z %s", len(registered), target)
 
 
 def _apply_risk_profile_settings(args: argparse.Namespace, parser: argparse.ArgumentParser) -> None:
@@ -2629,7 +2592,8 @@ def _apply_risk_profile_settings(args: argparse.Namespace, parser: argparse.Argu
     except KeyError:
         available = list_risk_profile_names()
         parser.error(
-            f"Profil ryzyka {profile_name!r} nie jest obsługiwany." + (f" Dostępne: {', '.join(available)}" if available else "")
+            f"Profil ryzyka {profile_name!r} nie jest obsługiwany."
+            + (f" Dostępne: {', '.join(available)}" if available else "")
         )
 
     args.risk_profile = normalized
@@ -2697,9 +2661,7 @@ def _emit_summary(
             metadata_section["core_config"] = dict(core_metadata)
             metrics_section = core_metadata.get("metrics_service")
             if isinstance(metrics_section, Mapping):
-                metadata_section.setdefault(
-                    "metrics_service", dict(metrics_section)
-                )
+                metadata_section.setdefault("metrics_service", dict(metrics_section))
             risk_section = core_metadata.get("risk_service")
             if isinstance(risk_section, Mapping):
                 metadata_section.setdefault("risk_service", dict(risk_section))
@@ -2839,7 +2801,9 @@ def build_arg_parser() -> argparse.ArgumentParser:
         default=None,
         help="Maksymalna liczba snapshotów do wypisania; domyślnie stream bez końca",
     )
-    parser.add_argument("--event", default=None, help="Filtruj snapshoty po polu event w notes (np. reduce_motion)")
+    parser.add_argument(
+        "--event", default=None, help="Filtruj snapshoty po polu event w notes (np. reduce_motion)"
+    )
     parser.add_argument(
         "--severity",
         action="append",
@@ -2880,19 +2844,58 @@ def build_arg_parser() -> argparse.ArgumentParser:
             "preset pliku z profilami, TLS, host/port)."
         ),
     )
-    parser.add_argument("--since", default=None, help="Odfiltruj snapshoty starsze niż podany znacznik czasu ISO 8601 (UTC)")
-    parser.add_argument("--until", default=None, help="Odfiltruj snapshoty nowsze niż podany znacznik czasu ISO 8601 (UTC)")
-    parser.add_argument("--screen-index", type=int, default=None, help="Ogranicz snapshoty do monitora o określonym indeksie")
-    parser.add_argument("--screen-name", default=None, help="Filtruj snapshoty po fragmencie nazwy monitora (case-insensitive)")
-    parser.add_argument("--format", choices=("table", "json"), default="table", help="Format wypisywanych danych")
-    parser.add_argument("--auth-token", default=None, help="Opcjonalny token autoryzacyjny (wysyłany w nagłówku authorization)")
-    parser.add_argument("--auth-token-file", default=None, help="Ścieżka do pliku z tokenem Bearer (jedna linia). Wyklucza --auth-token")
+    parser.add_argument(
+        "--since",
+        default=None,
+        help="Odfiltruj snapshoty starsze niż podany znacznik czasu ISO 8601 (UTC)",
+    )
+    parser.add_argument(
+        "--until",
+        default=None,
+        help="Odfiltruj snapshoty nowsze niż podany znacznik czasu ISO 8601 (UTC)",
+    )
+    parser.add_argument(
+        "--screen-index",
+        type=int,
+        default=None,
+        help="Ogranicz snapshoty do monitora o określonym indeksie",
+    )
+    parser.add_argument(
+        "--screen-name",
+        default=None,
+        help="Filtruj snapshoty po fragmencie nazwy monitora (case-insensitive)",
+    )
+    parser.add_argument(
+        "--format", choices=("table", "json"), default="table", help="Format wypisywanych danych"
+    )
+    parser.add_argument(
+        "--auth-token",
+        default=None,
+        help="Opcjonalny token autoryzacyjny (wysyłany w nagłówku authorization)",
+    )
+    parser.add_argument(
+        "--auth-token-file",
+        default=None,
+        help="Ścieżka do pliku z tokenem Bearer (jedna linia). Wyklucza --auth-token",
+    )
     parser.add_argument("--use-tls", action="store_true", help="Wymusza połączenie TLS z serwerem")
-    parser.add_argument("--root-cert", default=None, help="Ścieżka do zaufanego certyfikatu root CA (PEM) używanego do walidacji")
+    parser.add_argument(
+        "--root-cert",
+        default=None,
+        help="Ścieżka do zaufanego certyfikatu root CA (PEM) używanego do walidacji",
+    )
     parser.add_argument("--client-cert", default=None, help="Certyfikat klienta (PEM) dla mTLS")
     parser.add_argument("--client-key", default=None, help="Klucz prywatny klienta (PEM) dla mTLS")
-    parser.add_argument("--server-name", default=None, help="Nazwa serwera TLS (override SNI) – przydatne dla IP lub testów")
-    parser.add_argument("--server-sha256", default=None, help="Oczekiwany odcisk SHA-256 certyfikatu serwera (pinning)")
+    parser.add_argument(
+        "--server-name",
+        default=None,
+        help="Nazwa serwera TLS (override SNI) – przydatne dla IP lub testów",
+    )
+    parser.add_argument(
+        "--server-sha256",
+        default=None,
+        help="Oczekiwany odcisk SHA-256 certyfikatu serwera (pinning)",
+    )
     parser.add_argument(
         "--from-jsonl",
         dest="from_jsonl",
@@ -3046,12 +3049,8 @@ def main(argv: list[str] | None = None) -> int:
     env_header_files_obj = getattr(args, "headers_files", None)
     env_header_dirs_obj = getattr(args, "headers_dirs", None)
     env_headers_list = env_headers_obj if isinstance(env_headers_obj, list) else None
-    env_header_files_list = (
-        env_header_files_obj if isinstance(env_header_files_obj, list) else None
-    )
-    env_header_dirs_list = (
-        env_header_dirs_obj if isinstance(env_header_dirs_obj, list) else None
-    )
+    env_header_files_list = env_header_files_obj if isinstance(env_header_files_obj, list) else None
+    env_header_dirs_list = env_header_dirs_obj if isinstance(env_header_dirs_obj, list) else None
 
     env_lists = [
         candidate
@@ -3102,9 +3101,7 @@ def main(argv: list[str] | None = None) -> int:
 
     if header_dirs_args:
         dir_source_prefix = (
-            _CLI_HEADER_DIR_SOURCE
-            if "--headers-dir" in provided_flags
-            else _ENV_HEADER_DIR_SOURCE
+            _CLI_HEADER_DIR_SOURCE if "--headers-dir" in provided_flags else _ENV_HEADER_DIR_SOURCE
         )
         for directory_path in header_dirs_args:
             trimmed_dir = directory_path.strip()
@@ -3112,9 +3109,7 @@ def main(argv: list[str] | None = None) -> int:
                 parser.error("Podano pustą ścieżkę w --headers-dir")
             files, resolved_dir = _resolve_headers_directory(trimmed_dir, parser=parser)
             if not files:
-                LOGGER.warning(
-                    "Katalog nagłówków gRPC %s nie zawiera żadnych plików", resolved_dir
-                )
+                LOGGER.warning("Katalog nagłówków gRPC %s nie zawiera żadnych plików", resolved_dir)
                 continue
             for file_path in files:
                 entries, resolved_path = _load_headers_file_entries(file_path, parser=parser)
@@ -3179,8 +3174,12 @@ def main(argv: list[str] | None = None) -> int:
     if args.decision_log_key_id is not None:
         args.decision_log_key_id = args.decision_log_key_id.strip() or None
 
-    since_dt = _parse_cli_datetime(args.since, parser=parser, flag="--since") if args.since else None
-    until_dt = _parse_cli_datetime(args.until, parser=parser, flag="--until") if args.until else None
+    since_dt = (
+        _parse_cli_datetime(args.since, parser=parser, flag="--since") if args.since else None
+    )
+    until_dt = (
+        _parse_cli_datetime(args.until, parser=parser, flag="--until") if args.until else None
+    )
     if since_dt and until_dt and until_dt < since_dt:
         parser.error("--until nie może być wcześniejsze niż --since")
 

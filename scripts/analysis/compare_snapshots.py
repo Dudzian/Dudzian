@@ -1,4 +1,5 @@
 """Porównanie wyników strategii przed i po migracji do warstwy async."""
+
 from __future__ import annotations
 
 import argparse

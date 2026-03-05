@@ -1,4 +1,5 @@
 """Testy pomocniczych funkcji polityk kapitału w pipeline."""
+
 from __future__ import annotations
 
 from types import SimpleNamespace
@@ -87,7 +88,9 @@ def test_resolve_capital_policy_fixed_weight_returns_allocator() -> None:
     assert interval == 42
 
     schedules = [
-        SimpleNamespace(name="trend_schedule", strategy_name="trend_engine", risk_profile="balanced"),
+        SimpleNamespace(
+            name="trend_schedule", strategy_name="trend_engine", risk_profile="balanced"
+        ),
         SimpleNamespace(name="grid_schedule", strategy_name="grid_engine", risk_profile="balanced"),
     ]
 
@@ -276,8 +279,12 @@ def test_tag_quota_policy_uses_fallback_when_no_tags() -> None:
     policy, _ = _resolve_capital_policy(spec)
 
     schedules = [
-        SimpleNamespace(name="trend", strategy_name="trend", tags=tuple(), primary_tag=None, metrics={}),
-        SimpleNamespace(name="grid", strategy_name="grid", tags=tuple(), primary_tag=None, metrics={}),
+        SimpleNamespace(
+            name="trend", strategy_name="trend", tags=tuple(), primary_tag=None, metrics={}
+        ),
+        SimpleNamespace(
+            name="grid", strategy_name="grid", tags=tuple(), primary_tag=None, metrics={}
+        ),
     ]
 
     allocation = policy.allocate(schedules)

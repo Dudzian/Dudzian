@@ -1,4 +1,5 @@
 """Testy porównywania snapshotów strategii."""
+
 from __future__ import annotations
 
 import json
@@ -9,7 +10,9 @@ import pytest
 from scripts.analysis.compare_snapshots import compare_snapshots
 
 
-def _write_snapshot(directory: Path, payload: dict[str, object], filename: str = "snapshot.json") -> None:
+def _write_snapshot(
+    directory: Path, payload: dict[str, object], filename: str = "snapshot.json"
+) -> None:
     directory.mkdir(parents=True, exist_ok=True)
     (directory / filename).write_text(json.dumps(payload), encoding="utf-8")
 
@@ -24,7 +27,9 @@ def sample_payload() -> dict[str, object]:
     }
 
 
-def test_compare_snapshots_within_tolerance(tmp_path: Path, sample_payload: dict[str, object]) -> None:
+def test_compare_snapshots_within_tolerance(
+    tmp_path: Path, sample_payload: dict[str, object]
+) -> None:
     baseline_dir = tmp_path / "baseline"
     async_dir = tmp_path / "async"
 
@@ -49,7 +54,9 @@ def test_compare_snapshots_within_tolerance(tmp_path: Path, sample_payload: dict
     assert not result.deviations
 
 
-def test_compare_snapshots_detects_large_deviation(tmp_path: Path, sample_payload: dict[str, object]) -> None:
+def test_compare_snapshots_detects_large_deviation(
+    tmp_path: Path, sample_payload: dict[str, object]
+) -> None:
     baseline_dir = tmp_path / "baseline"
     async_dir = tmp_path / "async"
 

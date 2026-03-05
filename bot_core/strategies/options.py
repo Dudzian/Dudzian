@@ -1,4 +1,5 @@
 """Strategia opcyjna typu covered-call generująca dochód z premii."""
+
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -11,6 +12,8 @@ from bot_core.strategies.base import (
     clamp_range,
     ensure_positive_int,
 )
+
+
 @dataclass(slots=True)
 class OptionsIncomeSettings:
     """Parametry strategii covered-call."""
@@ -31,7 +34,9 @@ class OptionsIncomeSettings:
         )
 
     @classmethod
-    def from_parameters(cls, parameters: Mapping[str, Any] | None = None) -> "OptionsIncomeSettings":
+    def from_parameters(
+        cls, parameters: Mapping[str, Any] | None = None
+    ) -> "OptionsIncomeSettings":
         params = dict(parameters or {})
         defaults = cls()
         return cls(
@@ -124,7 +129,11 @@ class OptionsIncomeStrategy(BaseStrategy):
         return self._states[symbol]
 
     def _should_open(self, iv: float, delta: float, days: int) -> bool:
-        return iv >= self._settings.min_iv and delta <= self._settings.max_delta and days >= self._settings.min_days_to_expiry
+        return (
+            iv >= self._settings.min_iv
+            and delta <= self._settings.max_delta
+            and days >= self._settings.min_days_to_expiry
+        )
 
     def _should_close(self, state: _OptionsState, iv: float, days: int) -> bool:
         iv_condition = iv <= self._settings.roll_threshold_iv or iv <= state.entry_iv * 0.6

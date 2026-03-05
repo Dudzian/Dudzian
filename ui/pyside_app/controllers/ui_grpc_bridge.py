@@ -1,4 +1,5 @@
 """Cienki adapter pomiędzy QML a warstwą gRPC backendu."""
+
 from __future__ import annotations
 
 from PySide6.QtCore import QObject, Property

@@ -1,4 +1,5 @@
 """Eksport metryk ryzyka do rejestru Prometheusa."""
+
 from __future__ import annotations
 
 from dataclasses import dataclass, field
@@ -158,9 +159,7 @@ class RiskMetricsExporter:
             labels["stage"] = str(self.stage)
         return labels
 
-    def _reset_missing_exposures(
-        self, active_labels: set[tuple[tuple[str, str], ...]]
-    ) -> None:
+    def _reset_missing_exposures(self, active_labels: set[tuple[tuple[str, str], ...]]) -> None:
         stale = self._known_exposures - active_labels
         for label_tuple in stale:
             labels = dict(label_tuple)

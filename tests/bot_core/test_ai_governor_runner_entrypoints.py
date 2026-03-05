@@ -27,7 +27,9 @@ def _summary(
 
 
 def test_run_cycle_exposes_public_entrypoint() -> None:
-    snapshot = {"scalping_alpha": _summary(regime=MarketRegime.TREND, hit_rate=0.8, pnl=10.0, sharpe=1.5)}
+    snapshot = {
+        "scalping_alpha": _summary(regime=MarketRegime.TREND, hit_rate=0.8, pnl=10.0, sharpe=1.5)
+    }
     orchestrator = SimpleNamespace(strategy_performance_snapshot=lambda: snapshot)
 
     runner = AutoTraderAIGovernorRunner(orchestrator)

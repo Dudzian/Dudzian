@@ -64,29 +64,33 @@ def test_cli_sign_and_verify(tmp_path, capsys) -> None:
     package_path = tmp_path / "package.json"
 
     with pytest.raises(SystemExit) as sign_exit:
-        cli_main([
-            "sign",
-            "--manifest",
-            str(manifest_path),
-            "--key",
-            "top-secret",
-            "--key-id",
-            "cli-test",
-            "--output",
-            str(package_path),
-            "--note",
-            "QA:passed",
-        ])
+        cli_main(
+            [
+                "sign",
+                "--manifest",
+                str(manifest_path),
+                "--key",
+                "top-secret",
+                "--key-id",
+                "cli-test",
+                "--output",
+                str(package_path),
+                "--note",
+                "QA:passed",
+            ]
+        )
     assert sign_exit.value.code == 0
 
     with pytest.raises(SystemExit) as verify_exit:
-        cli_main([
-            "verify",
-            "--package",
-            str(package_path),
-            "--key",
-            "top-secret",
-        ])
+        cli_main(
+            [
+                "verify",
+                "--package",
+                str(package_path),
+                "--key",
+                "top-secret",
+            ]
+        )
     assert verify_exit.value.code == 0
     output = capsys.readouterr().out
     assert "OK" in output.splitlines()[-1]
@@ -101,13 +105,15 @@ def test_cli_verify_failure(tmp_path, capsys) -> None:
     dump_package(signer.build_package(_manifest()), package)
 
     with pytest.raises(SystemExit) as exc:
-        cli_main([
-            "verify",
-            "--package",
-            str(package),
-            "--key",
-            "invalid",
-        ])
+        cli_main(
+            [
+                "verify",
+                "--package",
+                str(package),
+                "--key",
+                "invalid",
+            ]
+        )
     assert exc.value.code == 1
     output = capsys.readouterr().out
     assert "INVALID" in output.splitlines()[-1]
@@ -122,13 +128,14 @@ def test_cli_describe_outputs_metadata(tmp_path, capsys) -> None:
     package_path.write_text(package.to_json(), encoding="utf-8")
 
     with pytest.raises(SystemExit) as exc:
-        cli_main([
-            "describe",
-            "--package",
-            str(package_path),
-        ])
+        cli_main(
+            [
+                "describe",
+                "--package",
+                str(package_path),
+            ]
+        )
     assert exc.value.code == 0
     output = capsys.readouterr().out
     assert "id" in output
     assert "QA: ok" in output
-

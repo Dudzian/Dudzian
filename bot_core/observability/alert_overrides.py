@@ -87,7 +87,9 @@ class AlertOverride:
             except ValueError:
                 return None
 
-        metadata = _to_float_mapping(payload.get("metadata") if isinstance(payload, Mapping) else None)
+        metadata = _to_float_mapping(
+            payload.get("metadata") if isinstance(payload, Mapping) else None
+        )
         tags_value = payload.get("tags") if isinstance(payload, Mapping) else None
         if isinstance(tags_value, Sequence) and not isinstance(tags_value, (str, bytes)):
             tags = tuple(str(tag) for tag in tags_value)
@@ -97,7 +99,9 @@ class AlertOverride:
             alert=str(payload.get("alert")),
             status=str(payload.get("status", "unknown")),
             severity=str(payload.get("severity", "warning")),
-            reason=(str(payload.get("reason")) if payload.get("reason") not in (None, "") else None),
+            reason=(
+                str(payload.get("reason")) if payload.get("reason") not in (None, "") else None
+            ),
             indicator=(
                 str(payload.get("indicator"))
                 if payload.get("indicator") not in (None, "")
@@ -306,4 +310,3 @@ __all__ = [
     "AlertOverrideBuilder",
     "load_overrides_document",
 ]
-

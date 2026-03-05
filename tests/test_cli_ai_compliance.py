@@ -83,15 +83,9 @@ def test_show_ai_compliance_prints_pending_sign_offs(
     def _fail_ensure(**_kwargs):
         raise AssertionError("ensure_compliance_sign_offs should not be invoked")
 
-    monkeypatch.setattr(
-        "bot_core.cli.load_recent_data_quality_reports", _fake_load_dq
-    )
-    monkeypatch.setattr(
-        "bot_core.cli.load_recent_drift_reports", _fake_load_drift
-    )
-    monkeypatch.setattr(
-        "bot_core.cli.collect_pending_compliance_sign_offs", _fake_collect
-    )
+    monkeypatch.setattr("bot_core.cli.load_recent_data_quality_reports", _fake_load_dq)
+    monkeypatch.setattr("bot_core.cli.load_recent_drift_reports", _fake_load_drift)
+    monkeypatch.setattr("bot_core.cli.collect_pending_compliance_sign_offs", _fake_collect)
     monkeypatch.setattr("bot_core.cli.ensure_compliance_sign_offs", _fail_ensure)
 
     args = _build_args(limit=5, roles=["risk"], audit_root="/tmp/audit")
@@ -130,15 +124,9 @@ def test_show_ai_compliance_json_enforce(monkeypatch: pytest.MonkeyPatch, capfd)
             }
         )
 
-    monkeypatch.setattr(
-        "bot_core.cli.load_recent_data_quality_reports", _fake_load_dq
-    )
-    monkeypatch.setattr(
-        "bot_core.cli.load_recent_drift_reports", _fake_load_drift
-    )
-    monkeypatch.setattr(
-        "bot_core.cli.collect_pending_compliance_sign_offs", _fake_collect
-    )
+    monkeypatch.setattr("bot_core.cli.load_recent_data_quality_reports", _fake_load_dq)
+    monkeypatch.setattr("bot_core.cli.load_recent_drift_reports", _fake_load_drift)
+    monkeypatch.setattr("bot_core.cli.collect_pending_compliance_sign_offs", _fake_collect)
     monkeypatch.setattr("bot_core.cli.ensure_compliance_sign_offs", _fake_ensure)
 
     args = _build_args(output_format="json-pretty", enforce=True)

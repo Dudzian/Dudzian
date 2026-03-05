@@ -61,9 +61,7 @@ def _now_utc() -> str:
 
 def _git_revision() -> Optional[str]:
     try:
-        result = subprocess.check_output(
-            ["git", "rev-parse", "HEAD"], cwd=REPO_ROOT
-        )
+        result = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=REPO_ROOT)
     except (subprocess.CalledProcessError, FileNotFoundError):
         return None
     return result.decode("ascii").strip()
@@ -127,8 +125,7 @@ def _load_signing_key(path: Path) -> bytes:
         mode = resolved.stat().st_mode
         if mode & (stat.S_IRWXG | stat.S_IRWXO):
             raise ValueError(
-                "Signing key file permissions must restrict access to the owner: "
-                f"{resolved}"
+                f"Signing key file permissions must restrict access to the owner: {resolved}"
             )
     return resolved.read_bytes()
 
@@ -159,8 +156,7 @@ def _default_stage4_assets() -> tuple[List[StrategyAsset], List[DatasetAsset]]:
         ),
         StrategyAsset(
             name="cross_exchange_arbitrage",
-            source=REPO_ROOT
-            / "bot_core/strategies/cross_exchange_arbitrage.py",
+            source=REPO_ROOT / "bot_core/strategies/cross_exchange_arbitrage.py",
             module="bot_core.strategies.cross_exchange_arbitrage",
         ),
     ]
@@ -182,8 +178,7 @@ def _default_stage4_assets() -> tuple[List[StrategyAsset], List[DatasetAsset]]:
         ),
         DatasetAsset(
             name="cross_exchange_arbitrage_dataset",
-            source=REPO_ROOT
-            / "data/backtests/normalized/cross_exchange_arbitrage.csv",
+            source=REPO_ROOT / "data/backtests/normalized/cross_exchange_arbitrage.csv",
             format="csv",
         ),
     ]
@@ -272,13 +267,9 @@ class StrategyBundleBuilder:
     def _prepare_output_dir(self) -> Path:
         if self._output_dir.exists():
             if self._output_dir.is_symlink():
-                raise ValueError(
-                    f"Output directory must not be a symlink: {self._output_dir}"
-                )
+                raise ValueError(f"Output directory must not be a symlink: {self._output_dir}")
             if not self._output_dir.is_dir():
-                raise ValueError(
-                    f"Output directory must be a directory: {self._output_dir}"
-                )
+                raise ValueError(f"Output directory must be a directory: {self._output_dir}")
         else:
             self._output_dir.mkdir(parents=True, exist_ok=True)
         _ensure_windows_safe_tree(self._output_dir, label="Output directory")
@@ -349,8 +340,7 @@ class StrategyBundleBuilder:
 
             manifest_path = bundle_root / "manifest.json"
             manifest_path.write_text(
-                json.dumps(manifest, ensure_ascii=False, indent=2, sort_keys=True)
-                + "\n",
+                json.dumps(manifest, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
                 encoding="utf-8",
             )
 
@@ -426,9 +416,7 @@ def build_from_cli(argv: Optional[Sequence[str]] = None) -> Path:
 
     strategies, datasets = _default_stage4_assets()
     if args.strategy:
-        strategies = _extend_with_custom_assets(
-            strategies, args.strategy, label="Strategy"
-        )
+        strategies = _extend_with_custom_assets(strategies, args.strategy, label="Strategy")
     if args.dataset:
         datasets = _extend_datasets(datasets, args.dataset, label="Dataset")
 

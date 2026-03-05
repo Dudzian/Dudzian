@@ -1,4 +1,5 @@
 """Testy profili ryzyka z wykorzystaniem rzeczywistych wartości ATR."""
+
 from __future__ import annotations
 
 import statistics
@@ -18,12 +19,26 @@ from bot_core.risk.profiles.conservative import ConservativeProfile
 def btc_daily_atr_series() -> list[float]:
     """Wycinek 14-dniowego ATR BTC/USDT z kwietnia 2024 (dzienny interwał)."""
     return [
-        727.61, 715.42, 708.33, 699.12, 684.55, 672.48, 665.91,
-        659.77, 648.35, 640.28, 633.14, 629.77, 624.83, 618.44,
+        727.61,
+        715.42,
+        708.33,
+        699.12,
+        684.55,
+        672.48,
+        665.91,
+        659.77,
+        648.35,
+        640.28,
+        633.14,
+        629.77,
+        624.83,
+        618.44,
     ]
 
 
-def _recommended_quantity(*, profile, atr: float, equity: float, price: float, risk_pct: float) -> float:
+def _recommended_quantity(
+    *, profile, atr: float, equity: float, price: float, risk_pct: float
+) -> float:
     stop_distance = atr * profile.stop_loss_atr_multiple()
     risk_amount = equity * risk_pct
     raw_quantity = max(risk_amount / stop_distance, 0.0)
@@ -51,10 +66,14 @@ def test_profiles_scale_position_sizes_with_risk(btc_daily_atr_series: list[floa
         max_notional = profile.max_position_exposure() * equity
         assert qty * price <= max_notional + 1e-6
 
-    exposure_caps = [profile.max_position_exposure() for profile in (conservative, balanced, aggressive)]
+    exposure_caps = [
+        profile.max_position_exposure() for profile in (conservative, balanced, aggressive)
+    ]
     assert exposure_caps[0] <= exposure_caps[1] <= exposure_caps[2]
 
-    stop_distances = [atr * profile.stop_loss_atr_multiple() for profile in (conservative, balanced, aggressive)]
+    stop_distances = [
+        atr * profile.stop_loss_atr_multiple() for profile in (conservative, balanced, aggressive)
+    ]
     assert stop_distances[0] < stop_distances[1] < stop_distances[2]
 
 
@@ -74,7 +93,9 @@ def test_risk_engine_accepts_atr_informed_order(btc_daily_atr_series: list[float
         maintenance_margin=0.0,
     )
 
-    quantity = _recommended_quantity(profile=profile, atr=atr, equity=equity, price=price, risk_pct=0.01)
+    quantity = _recommended_quantity(
+        profile=profile, atr=atr, equity=equity, price=price, risk_pct=0.01
+    )
 
     order = OrderRequest(
         symbol="BTCUSDT",
@@ -100,6 +121,8 @@ def test_risk_engine_accepts_atr_informed_order(btc_daily_atr_series: list[float
         atr=atr,
     )
 
-    denial = engine.apply_pre_trade_checks(oversized_order, account=account, profile_name=profile.name)
+    denial = engine.apply_pre_trade_checks(
+        oversized_order, account=account, profile_name=profile.name
+    )
     assert not denial.allowed
     assert "limit" in (denial.reason or "").lower()

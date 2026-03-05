@@ -34,7 +34,6 @@ except Exception:  # pragma: no cover - fallback dla środowisk testowych
     def apply_runtime_risk_context(*_args: object, **_kwargs: object) -> None:
         return None
 
-
     def refresh_runtime_risk_context(*_args: object, **_kwargs: object) -> None:
         return None
 
@@ -117,7 +116,9 @@ class HeadlessTradingStub:
     def is_live_trading_allowed(self) -> bool:
         return True
 
-    def get_portfolio_snapshot(self, symbol: str) -> dict[str, float | str | dict[str, dict[str, float]]]:
+    def get_portfolio_snapshot(
+        self, symbol: str
+    ) -> dict[str, float | str | dict[str, dict[str, float]]]:
         position = self._open_positions.get(symbol.upper(), {})
         position_notional = position.get("qty", 0.0)
         if position.get("side") == "sell":
@@ -155,9 +156,7 @@ class HeadlessTradingStub:
         try:
             self._balance_listeners.remove(callback)
         except ValueError:  # pragma: no cover - defensywne logowanie
-            logger.debug(
-                "Próba usunięcia niezarejestrowanego listenera salda", exc_info=True
-            )
+            logger.debug("Próba usunięcia niezarejestrowanego listenera salda", exc_info=True)
 
     def _bridge_execute_trade(self, symbol: str, side: str, price: float) -> None:
         """Symuluje wykonanie transakcji na potrzeby AutoTradera."""
@@ -182,7 +181,9 @@ class HeadlessTradingStub:
             notional = max(self.paper_balance * fraction, 0.0)
             qty = notional / price_f if price_f > 0 else 0.0
             if qty <= 0:
-                logger.warning("Headless stub nie mógł obliczyć wielkości pozycji dla %s", symbol_key)
+                logger.warning(
+                    "Headless stub nie mógł obliczyć wielkości pozycji dla %s", symbol_key
+                )
                 return
             self._open_positions[symbol_key] = {"side": "buy", "qty": qty, "entry": price_f}
             logger.info("Headless stub BUY %s qty=%.6f @ %.2f", symbol_key, qty, price_f)
@@ -276,9 +277,7 @@ class PaperAutoTradeApp:
         initial_settings_loaded = loaded_settings is not None
         self.risk_manager_settings = loaded_settings or _default_risk_settings()
         if self.risk_profile_name:
-            logger.info(
-                "Profil ryzyka dla launchera paper: %s", self.risk_profile_name
-            )
+            logger.info("Profil ryzyka dla launchera paper: %s", self.risk_profile_name)
         else:
             logger.info("Launcher paper korzysta z domyślnego profilu ryzyka")
 
@@ -286,9 +285,7 @@ class PaperAutoTradeApp:
         wire_gui_logs_to_adapter(self.adapter)
 
         self._gui_risk_listener_active = False
-        self._listeners: list[
-            Callable[[RiskManagerSettings, str | None, object | None], None]
-        ] = []
+        self._listeners: list[Callable[[RiskManagerSettings, str | None, object | None], None]] = []
         self._provided_gui = gui
         self.headless_stub = headless_stub
         services = bootstrap_frontend_services(config_path=self.core_config_path)
@@ -380,18 +377,12 @@ class PaperAutoTradeApp:
                     service = LicenseService(verify_key_hex=public_key)
                     snapshot = service.load_from_file(candidate_path)
                 except FileNotFoundError:
-                    notice = (
-                        f"Nie znaleziono pliku licencji: {candidate_path}. Skontaktuj się z opiekunem licencji."
-                    )
+                    notice = f"Nie znaleziono pliku licencji: {candidate_path}. Skontaktuj się z opiekunem licencji."
                 except LicenseServiceError as exc:
                     notice = f"Nie udało się zweryfikować licencji offline: {exc}"
                 except Exception:
-                    logger.exception(
-                        "Nieoczekiwany błąd podczas ładowania licencji offline"
-                    )
-                    notice = (
-                        "Wystąpił nieoczekiwany błąd podczas ładowania licencji offline."
-                    )
+                    logger.exception("Nieoczekiwany błąd podczas ładowania licencji offline")
+                    notice = "Wystąpił nieoczekiwany błąd podczas ładowania licencji offline."
                 else:
                     capabilities = snapshot.capabilities
                     guard = install_capability_guard(capabilities)
@@ -491,7 +482,9 @@ class PaperAutoTradeApp:
         exchange_hint = ""
         if context is not None:
             environment = getattr(context, "environment", None)
-            exchange_hint = str(getattr(environment, "exchange", "")) if environment is not None else ""
+            exchange_hint = (
+                str(getattr(environment, "exchange", "")) if environment is not None else ""
+            )
             if not exchange_hint and isinstance(environment, Mapping):
                 raw = environment.get("exchange") or environment.get("adapter")  # type: ignore[index]
                 if isinstance(raw, str):
@@ -662,9 +655,7 @@ class PaperAutoTradeApp:
         profile_payload = getattr(context, "risk_profile_config", None)
         return effective_profile, profile_payload, settings
 
-    def _coerce_risk_settings(
-        self, candidate: object
-    ) -> RiskManagerSettings | None:
+    def _coerce_risk_settings(self, candidate: object) -> RiskManagerSettings | None:
         if isinstance(candidate, RiskManagerSettings):
             return candidate
 
@@ -892,9 +883,7 @@ class PaperAutoTradeApp:
         try:
             value = float(balance)
         except Exception:  # pragma: no cover - defensywne logowanie
-            logger.debug(
-                "Headless stub przekazał niepoprawne saldo: %r", balance, exc_info=True
-            )
+            logger.debug("Headless stub przekazał niepoprawne saldo: %r", balance, exc_info=True)
             return
 
         self.paper_balance = value
@@ -903,9 +892,7 @@ class PaperAutoTradeApp:
             try:
                 setattr(gui, "paper_balance", value)
             except Exception:  # pragma: no cover - defensywne logowanie
-                logger.debug(
-                    "Nie udało się zsynchronizować salda na GUI headless", exc_info=True
-                )
+                logger.debug("Nie udało się zsynchronizować salda na GUI headless", exc_info=True)
 
         self._update_trader_balance(value)
         self._refresh_runtime_risk_context()
@@ -1024,16 +1011,19 @@ class PaperAutoTradeApp:
                     try:
                         gui.frontend_services = self.frontend_services  # type: ignore[attr-defined]
                     except Exception:  # pragma: no cover - defensywne
-                        logger.debug("Nie udało się ustawić frontend_services na przekazanym GUI", exc_info=True)
+                        logger.debug(
+                            "Nie udało się ustawić frontend_services na przekazanym GUI",
+                            exc_info=True,
+                        )
                 market_intel = getattr(self.frontend_services, "market_intel", None)
-                if (
-                    market_intel is not None
-                    and getattr(gui, "market_intel", None) is None
-                ):
+                if market_intel is not None and getattr(gui, "market_intel", None) is None:
                     try:
                         gui.market_intel = market_intel  # type: ignore[attr-defined]
                     except Exception:  # pragma: no cover - defensywne
-                        logger.debug("Nie udało się wstrzyknąć market_intel do przekazanego GUI", exc_info=True)
+                        logger.debug(
+                            "Nie udało się wstrzyknąć market_intel do przekazanego GUI",
+                            exc_info=True,
+                        )
             self._gui_risk_listener_active = False
             register_listener = getattr(gui, "add_risk_reload_listener", None)
             if callable(register_listener):
@@ -1047,7 +1037,9 @@ class PaperAutoTradeApp:
                 try:
                     setattr(gui, "paper_balance", self.paper_balance)
                 except Exception:  # pragma: no cover - defensywne
-                    logger.debug("Nie udało się ustawić paper_balance na przekazanym GUI", exc_info=True)
+                    logger.debug(
+                        "Nie udało się ustawić paper_balance na przekazanym GUI", exc_info=True
+                    )
 
             self._apply_runtime_risk_context(gui)
 
@@ -1059,7 +1051,9 @@ class PaperAutoTradeApp:
                         if value:
                             return value
                     except Exception:  # pragma: no cover - defensywne
-                        logger.debug("Nie udało się pobrać symbolu z przekazanego GUI", exc_info=True)
+                        logger.debug(
+                            "Nie udało się pobrać symbolu z przekazanego GUI", exc_info=True
+                        )
                 getter_method = getattr(gui, "get_symbol", None)
                 if callable(getter_method):
                     try:
@@ -1118,7 +1112,9 @@ class PaperAutoTradeApp:
                 )
                 self.enable_gui = False
 
-        stub = provided_stub or HeadlessTradingStub(symbol=self.symbol, paper_balance=self.paper_balance)
+        stub = provided_stub or HeadlessTradingStub(
+            symbol=self.symbol, paper_balance=self.paper_balance
+        )
         if hasattr(stub, "symbol"):
             try:
                 setattr(stub, "symbol", self.symbol)
@@ -1151,9 +1147,7 @@ class PaperAutoTradeApp:
             try:
                 register_balance_listener(self._handle_headless_balance_change)
             except Exception:  # pragma: no cover - defensywne logowanie
-                logger.debug(
-                    "Nie udało się podpiąć listenera salda headless stuba", exc_info=True
-                )
+                logger.debug("Nie udało się podpiąć listenera salda headless stuba", exc_info=True)
 
         previous_gui = getattr(self, "gui", None)
         try:
@@ -1181,7 +1175,9 @@ class PaperAutoTradeApp:
     def _build_feed(self) -> Optional[DummyMarketFeed]:
         if not self.use_dummy_feed:
             return None
-        cfg = DummyMarketFeedConfig(symbol=self.symbol.replace("/", ""), start_price=30_000.0, interval_sec=1.0)
+        cfg = DummyMarketFeedConfig(
+            symbol=self.symbol.replace("/", ""), start_price=30_000.0, interval_sec=1.0
+        )
         return DummyMarketFeed(self.adapter, cfg=cfg)
 
     def start(self) -> None:
@@ -1198,7 +1194,9 @@ class PaperAutoTradeApp:
             self._stopped = True
             self._release_license_slots()
             raise
-        logger.info("AutoTrader paper app started (symbol=%s, gui=%s)", self.symbol, self.enable_gui)
+        logger.info(
+            "AutoTrader paper app started (symbol=%s, gui=%s)", self.symbol, self.enable_gui
+        )
 
     def stop(self, *_: object) -> None:
         if self._stopped:
@@ -1522,7 +1520,9 @@ class PaperAutoTradeApp:
                     profile_name=self.risk_profile_name,
                 )
             except Exception:  # pragma: no cover - defensywne
-                logger.exception("Przekazany stub nie przyjął ustawień ryzyka via update_risk_limits")
+                logger.exception(
+                    "Przekazany stub nie przyjął ustawień ryzyka via update_risk_limits"
+                )
 
     def _update_bootstrap_context(
         self,
@@ -1534,15 +1534,21 @@ class PaperAutoTradeApp:
         try:
             setattr(self.bootstrap_context, "risk_profile_name", self.risk_profile_name)
         except Exception:  # pragma: no cover - kontekst może być tylko-do-odczytu
-            logger.debug("Nie udało się ustawić risk_profile_name na BootstrapContext", exc_info=True)
+            logger.debug(
+                "Nie udało się ustawić risk_profile_name na BootstrapContext", exc_info=True
+            )
         try:
             setattr(self.bootstrap_context, "risk_profile_config", profile_payload)
         except Exception:  # pragma: no cover - kontekst może być tylko-do-odczytu
-            logger.debug("Nie udało się ustawić risk_profile_config na BootstrapContext", exc_info=True)
+            logger.debug(
+                "Nie udało się ustawić risk_profile_config na BootstrapContext", exc_info=True
+            )
         try:
             setattr(self.bootstrap_context, "risk_manager_settings", settings)
         except Exception:  # pragma: no cover - kontekst może być tylko-do-odczytu
-            logger.debug("Nie udało się ustawić risk_manager_settings na BootstrapContext", exc_info=True)
+            logger.debug(
+                "Nie udało się ustawić risk_manager_settings na BootstrapContext", exc_info=True
+            )
 
 
 def parse_cli_args(argv: Iterable[str]) -> PaperAutoTradeOptions:

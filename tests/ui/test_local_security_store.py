@@ -1,4 +1,5 @@
 """Testy sprawdzające fallback LocalSecurityStore w trybie pamięciowym."""
+
 from __future__ import annotations
 
 from pathlib import Path
@@ -63,7 +64,10 @@ def test_memory_fallback_trims_to_max_rows(store_engine: QJSEngine) -> None:
     assert _eval(store_engine, "isMemoryMode()").toBool() is True
     assert _eval(store_engine, "totalAuditCount()").toInt() == 200
     assert _eval(store_engine, "fetchAudit()[0].fingerprint").toString() == "row-249"
-    assert _eval(store_engine, "fetchAudit()[fetchAudit().length - 1].fingerprint").toString() == "row-50"
+    assert (
+        _eval(store_engine, "fetchAudit()[fetchAudit().length - 1].fingerprint").toString()
+        == "row-50"
+    )
 
 
 def test_clear_audit_resets_memory_state(store_engine: QJSEngine) -> None:

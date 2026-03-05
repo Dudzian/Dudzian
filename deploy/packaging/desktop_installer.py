@@ -96,9 +96,7 @@ class DesktopInstallerBuilder:
             wheels_dir.mkdir(parents=True, exist_ok=True)
             for wheel in config.wheels:
                 if not wheel.exists():
-                    raise FileNotFoundError(
-                        f"Zadeklarowany pakiet wheel nie istnieje: {wheel}"
-                    )
+                    raise FileNotFoundError(f"Zadeklarowany pakiet wheel nie istnieje: {wheel}")
                 if wheel.is_dir():
                     destination = wheels_dir / wheel.name
                     if destination.exists():
@@ -121,13 +119,17 @@ class DesktopInstallerBuilder:
 
         manifest = self._write_manifest(stage_dir, config)
         config.metadata_path.parent.mkdir(parents=True, exist_ok=True)
-        config.metadata_path.write_text(json.dumps(manifest, indent=2, ensure_ascii=False), encoding="utf-8")
+        config.metadata_path.write_text(
+            json.dumps(manifest, indent=2, ensure_ascii=False), encoding="utf-8"
+        )
 
         config.output_dir.mkdir(parents=True, exist_ok=True)
         archive_prefix = config.output_dir / f"desktop-installer-{self._version}-{platform}"
         archive_path = Path(shutil.make_archive(str(archive_prefix), "zip", root_dir=stage_dir))
         manifest["archive"] = archive_path.name
-        config.metadata_path.write_text(json.dumps(manifest, indent=2, ensure_ascii=False), encoding="utf-8")
+        config.metadata_path.write_text(
+            json.dumps(manifest, indent=2, ensure_ascii=False), encoding="utf-8"
+        )
 
         if self._verify_hook:
             self._verify_archive(archive_path)
@@ -205,7 +207,9 @@ class DesktopInstallerBuilder:
         include_specs: list[IncludeSpec] = []
         for entry in bundle_section.get("include", []):
             if not isinstance(entry, str) or "=" not in entry:
-                raise SystemExit(f"Pozycja include musi mieć postać nazwa=ścieżka, otrzymano: {entry!r}")
+                raise SystemExit(
+                    f"Pozycja include musi mieć postać nazwa=ścieżka, otrzymano: {entry!r}"
+                )
             name, raw_path = entry.split("=", 1)
             name = name.strip()
             if not name:
@@ -224,8 +228,12 @@ class DesktopInstallerBuilder:
         qt_dist = bundle_section.get("qt_dist")
         qt_path = _normalize_path(qt_dist, base_dir) if isinstance(qt_dist, str) else None
 
-        output_dir = _coerce_path(bundle_section.get("output_dir"), base_dir, default="var/dist/installers")
-        work_dir = _coerce_path(bundle_section.get("work_dir"), base_dir, default="var/build/installers")
+        output_dir = _coerce_path(
+            bundle_section.get("output_dir"), base_dir, default="var/dist/installers"
+        )
+        work_dir = _coerce_path(
+            bundle_section.get("work_dir"), base_dir, default="var/build/installers"
+        )
         metadata_path = _coerce_path(
             bundle_section.get("metadata_path"), base_dir, default="installer_metadata.json"
         )
@@ -330,7 +338,9 @@ def _hash_file(path: Path) -> str:
 
 def build_from_cli(args: Sequence[str] | None = None) -> None:
     parser = argparse.ArgumentParser(description="Buduje paczki instalatora desktopowego.")
-    parser.add_argument("--version", required=True, help="Wersja instalatora umieszczona w nazwach plików")
+    parser.add_argument(
+        "--version", required=True, help="Wersja instalatora umieszczona w nazwach plików"
+    )
     parser.add_argument(
         "--platform",
         choices=("linux", "windows", "macos", "all"),
@@ -349,8 +359,16 @@ def build_from_cli(args: Sequence[str] | None = None) -> None:
         type=Path,
         help="Źródłowy skrypt walidacji HWID kopiowany do instalatora",
     )
-    parser.add_argument("--no-clean", action="store_true", help="Nie usuwaj wcześniejszych buildów w katalogu roboczym")
-    parser.add_argument("--verify-hook", action="store_true", help="Uruchom walidację hooka HWID na zbudowanym archiwum")
+    parser.add_argument(
+        "--no-clean",
+        action="store_true",
+        help="Nie usuwaj wcześniejszych buildów w katalogu roboczym",
+    )
+    parser.add_argument(
+        "--verify-hook",
+        action="store_true",
+        help="Uruchom walidację hooka HWID na zbudowanym archiwum",
+    )
 
     parsed = parser.parse_args(args=args)
     builder = DesktopInstallerBuilder(

@@ -67,9 +67,13 @@ def test_cost_guard_exceeds_budget() -> None:
     base_config = load_sandbox_config()
     metrics_registry = MetricsRegistry()
     guard = SandboxCostGuard(
-        budgets=SandboxBudgetConfig(wall_time_seconds=0.05, cpu_utilization_percent=5.0, gpu_utilization_percent=None),
+        budgets=SandboxBudgetConfig(
+            wall_time_seconds=0.05, cpu_utilization_percent=5.0, gpu_utilization_percent=None
+        ),
         metrics=base_config.metrics,
-        alerts=SandboxAlertConfig(enabled=False, source=base_config.alerts.source, severity=base_config.alerts.severity),
+        alerts=SandboxAlertConfig(
+            enabled=False, source=base_config.alerts.source, severity=base_config.alerts.severity
+        ),
         metrics_registry=metrics_registry,
         sampler=lambda: SandboxResourceSample(cpu_percent=12.0, elapsed_seconds=0.1),
         metric_labels={"scenario": "test"},
@@ -77,7 +81,9 @@ def test_cost_guard_exceeds_budget() -> None:
     guard.start()
     with pytest.raises(SandboxBudgetExceeded):
         guard.update()
-    counter = metrics_registry.counter(base_config.metrics.cpu_counter[0], base_config.metrics.cpu_counter[1])
+    counter = metrics_registry.counter(
+        base_config.metrics.cpu_counter[0], base_config.metrics.cpu_counter[1]
+    )
     assert counter.value(labels={"scenario": "test"}) >= 12.0
 
 
@@ -166,11 +172,21 @@ def test_manager_run_sandbox_with_instrument_filter() -> None:
     gauge_config = config.metrics.risk_limit_utilization_gauge
     assert gauge_config is not None
     utilization_gauge = metrics_registry.gauge(gauge_config[0], gauge_config[1])
-    assert utilization_gauge.value(labels={**base_labels, "dimension": "current_value"}) == pytest.approx(210000.0)
-    assert utilization_gauge.value(labels={**base_labels, "dimension": "max_value"}) == pytest.approx(400000.0)
-    assert utilization_gauge.value(labels={**base_labels, "dimension": "threshold_value"}) == pytest.approx(300000.0)
-    assert utilization_gauge.value(labels={**base_labels, "dimension": "hard_utilization"}) == pytest.approx(210000.0 / 400000.0)
-    assert utilization_gauge.value(labels={**base_labels, "dimension": "threshold_utilization"}) == pytest.approx(210000.0 / 300000.0)
+    assert utilization_gauge.value(
+        labels={**base_labels, "dimension": "current_value"}
+    ) == pytest.approx(210000.0)
+    assert utilization_gauge.value(
+        labels={**base_labels, "dimension": "max_value"}
+    ) == pytest.approx(400000.0)
+    assert utilization_gauge.value(
+        labels={**base_labels, "dimension": "threshold_value"}
+    ) == pytest.approx(300000.0)
+    assert utilization_gauge.value(
+        labels={**base_labels, "dimension": "hard_utilization"}
+    ) == pytest.approx(210000.0 / 400000.0)
+    assert utilization_gauge.value(
+        labels={**base_labels, "dimension": "threshold_utilization"}
+    ) == pytest.approx(210000.0 / 300000.0)
     breach_config = config.metrics.risk_limit_breach_counter
     assert breach_config is not None
     breach_counter = metrics_registry.counter(breach_config[0], breach_config[1])

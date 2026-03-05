@@ -41,12 +41,8 @@ def test_stage6_thresholds_aligned_with_workshop(config_path: Path) -> None:
 
     market_intel = getattr(core_config, "market_intel", None)
     assert market_intel is not None, "market_intel section missing"
-    assert market_intel.default_weight == pytest.approx(
-        EXPECTED_MARKET_INTEL["default_weight"]
-    )
-    assert tuple(market_intel.required_symbols or ()) == EXPECTED_MARKET_INTEL[
-        "required_symbols"
-    ]
+    assert market_intel.default_weight == pytest.approx(EXPECTED_MARKET_INTEL["default_weight"])
+    assert tuple(market_intel.required_symbols or ()) == EXPECTED_MARKET_INTEL["required_symbols"]
 
     governor = getattr(core_config, "portfolio_governor", None)
     assert governor is not None, "portfolio_governor section missing"
@@ -100,7 +96,9 @@ def test_stage6_threshold_verifier_cli() -> None:
     stdout = result.stdout.strip()
     stderr = result.stderr.strip()
 
-    assert result.returncode == 0, f"Skrypt zwrócił {result.returncode}:\nSTDOUT: {stdout}\nSTDERR: {stderr}"
+    assert result.returncode == 0, (
+        f"Skrypt zwrócił {result.returncode}:\nSTDOUT: {stdout}\nSTDERR: {stderr}"
+    )
     assert "[OK]" in stdout
 
 
@@ -125,7 +123,9 @@ def test_stage6_threshold_verifier_cli_json_report(tmp_path: Path) -> None:
     stdout = result.stdout.strip()
     stderr = result.stderr.strip()
 
-    assert result.returncode == 0, f"Skrypt zwrócił {result.returncode}:\nSTDOUT: {stdout}\nSTDERR: {stderr}"
+    assert result.returncode == 0, (
+        f"Skrypt zwrócił {result.returncode}:\nSTDOUT: {stdout}\nSTDERR: {stderr}"
+    )
     assert report_path.exists(), f"Brak raportu JSON: {report_path}"
 
     payload = json.loads(report_path.read_text(encoding="utf-8"))
@@ -141,7 +141,9 @@ def test_stage6_threshold_verifier_cli_json_report_mismatch(tmp_path: Path) -> N
     """Raport JSON zawiera rozbieżności, gdy konfiguracja odbiega od progów."""
     config_copy = tmp_path / "core.yaml"
     original = Path("config/core.yaml").read_text(encoding="utf-8")
-    config_copy.write_text(original.replace("default_weight: 1.15", "default_weight: 1.42"), encoding="utf-8")
+    config_copy.write_text(
+        original.replace("default_weight: 1.15", "default_weight: 1.42"), encoding="utf-8"
+    )
 
     observability_dir = tmp_path / "observability"
     observability_dir.mkdir(parents=True, exist_ok=True)
@@ -168,7 +170,9 @@ def test_stage6_threshold_verifier_cli_json_report_mismatch(tmp_path: Path) -> N
     stdout = result.stdout.strip()
     stderr = result.stderr.strip()
 
-    assert result.returncode == 1, f"Skrypt zwrócił {result.returncode}:\nSTDOUT: {stdout}\nSTDERR: {stderr}"
+    assert result.returncode == 1, (
+        f"Skrypt zwrócił {result.returncode}:\nSTDOUT: {stdout}\nSTDERR: {stderr}"
+    )
     assert "[FAIL]" in stdout
     assert report_path.exists()
 

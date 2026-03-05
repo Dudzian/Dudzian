@@ -5,6 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Final
 
+
 @dataclass(frozen=True)
 class ModelPreset:
     """Opisuje nazwany preset modelu wraz z etykietą wersji."""

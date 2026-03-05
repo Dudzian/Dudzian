@@ -1,4 +1,5 @@
 """Helpers zapewniające dostępność libGL dla testów Qt."""
+
 from __future__ import annotations
 
 import ctypes
@@ -68,8 +69,7 @@ def _download_deb(url: str, target: Path, expected_sha256: str) -> None:
     digest = hashlib.sha256(target.read_bytes()).hexdigest()
     if digest != expected_sha256:
         raise RuntimeError(
-            "Niepoprawna suma SHA256 dla pobranego pakietu libGL: "
-            f"{digest} != {expected_sha256}"
+            f"Niepoprawna suma SHA256 dla pobranego pakietu libGL: {digest} != {expected_sha256}"
         )
 
 
@@ -164,9 +164,7 @@ def ensure_libgl_available(cache_root: Path | None = None) -> Path | None:
     lib_dir_str = str(lib_dir)
     paths = [p for p in current.split(":") if p]
     if lib_dir_str not in paths:
-        os.environ["LD_LIBRARY_PATH"] = (
-            ":".join([lib_dir_str, *paths]) if paths else lib_dir_str
-        )
+        os.environ["LD_LIBRARY_PATH"] = ":".join([lib_dir_str, *paths]) if paths else lib_dir_str
 
     try:
         for dependency in (

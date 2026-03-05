@@ -1,4 +1,5 @@
 """Cykl hypercare dla PortfolioGovernora Stage6."""
+
 from __future__ import annotations
 
 import csv
@@ -101,7 +102,9 @@ class PortfolioHypercareCycle:
                 "allocations": str(inputs.allocations_path),
                 "market_intel": str(inputs.market_intel_path),
                 "slo_report": str(inputs.slo_report_path) if inputs.slo_report_path else None,
-                "stress_report": str(inputs.stress_report_path) if inputs.stress_report_path else None,
+                "stress_report": str(inputs.stress_report_path)
+                if inputs.stress_report_path
+                else None,
                 "portfolio_stress": str(inputs.portfolio_stress_report_path)
                 if inputs.portfolio_stress_report_path
                 else None,
@@ -153,16 +156,14 @@ class PortfolioHypercareCycle:
                 required = [asset.symbol for asset in getattr(governor_config, "assets", ())]
         missing = [symbol for symbol in required or () if symbol not in market_data]
         if missing:
-            raise ValueError(
-                "Brak metryk Market Intel dla: " + ", ".join(sorted(missing))
-            )
+            raise ValueError("Brak metryk Market Intel dla: " + ", ".join(sorted(missing)))
         max_age = inputs.market_intel_max_age
         generated_at = market_meta.get("generated_at")
         if max_age and isinstance(generated_at, datetime):
             now = datetime.now(timezone.utc)
             if now - generated_at > max_age:
                 raise ValueError(
-                    "Raport Market Intel jest przestarzały (" "wiek {} min)".format(
+                    "Raport Market Intel jest przestarzały (wiek {} min)".format(
                         round((now - generated_at).total_seconds() / 60.0, 1)
                     )
                 )

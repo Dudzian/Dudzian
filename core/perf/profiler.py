@@ -1,4 +1,5 @@
 """Lightweight CPU/GPU profilers with structured reporting."""
+
 from __future__ import annotations
 
 import cProfile
@@ -47,12 +48,8 @@ class ProfileReport:
                     "primitive_calls": int(entry.get("primitive_calls", 0)),
                     "total_calls": int(entry.get("total_calls", 0)),
                     "total_time": round(float(entry.get("total_time", 0.0)), 6),
-                    "total_time_per_call": round(
-                        float(entry.get("total_time_per_call", 0.0)), 6
-                    ),
-                    "cumulative_time": round(
-                        float(entry.get("cumulative_time", 0.0)), 6
-                    ),
+                    "total_time_per_call": round(float(entry.get("total_time_per_call", 0.0)), 6),
+                    "cumulative_time": round(float(entry.get("cumulative_time", 0.0)), 6),
                     "cumulative_time_per_call": round(
                         float(entry.get("cumulative_time_per_call", 0.0)), 6
                     ),
@@ -77,9 +74,7 @@ def _safe_divide(numerator: float, denominator: int) -> float:
     return numerator / float(denominator)
 
 
-def _extract_top_stats(
-    stats_obj: pstats.Stats, limit: int
-) -> tuple[dict[str, object], ...]:
+def _extract_top_stats(stats_obj: pstats.Stats, limit: int) -> tuple[dict[str, object], ...]:
     ordered = list(getattr(stats_obj, "fcn_list", ())) or list(stats_obj.stats.keys())
     entries: list[dict[str, object]] = []
     for key in ordered[:limit]:
@@ -95,9 +90,7 @@ def _extract_top_stats(
                 "total_time": float(total_time),
                 "total_time_per_call": _safe_divide(float(total_time), int(total)),
                 "cumulative_time": float(cumulative_time),
-                "cumulative_time_per_call": _safe_divide(
-                    float(cumulative_time), int(total)
-                ),
+                "cumulative_time_per_call": _safe_divide(float(cumulative_time), int(total)),
             }
         )
     return tuple(entries)
@@ -125,7 +118,9 @@ class ProfilerSession:
 
     def __enter__(self) -> "ProfilerSession":
         self._start = time.perf_counter()
-        if torch is not None and self._enable_gpu and torch.cuda.is_available():  # pragma: no cover - depends on CUDA
+        if (
+            torch is not None and self._enable_gpu and torch.cuda.is_available()
+        ):  # pragma: no cover - depends on CUDA
             try:
                 torch.cuda.synchronize()
                 torch.cuda.reset_peak_memory_stats()
@@ -154,7 +149,9 @@ class ProfilerSession:
             top_entries = None
         gpu_delta: int | None = None
         gpu_peak: int | None = None
-        if torch is not None and self._enable_gpu and torch.cuda.is_available():  # pragma: no cover - depends on CUDA
+        if (
+            torch is not None and self._enable_gpu and torch.cuda.is_available()
+        ):  # pragma: no cover - depends on CUDA
             try:
                 torch.cuda.synchronize()
                 peak = int(torch.cuda.max_memory_allocated())

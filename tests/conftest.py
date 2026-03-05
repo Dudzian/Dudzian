@@ -356,10 +356,7 @@ def _guard_network_connections() -> None:
 
 @pytest.fixture(autouse=True)
 def block_external_network() -> None:
-    if (
-        os.environ.get("ALLOW_NETWORK_TESTS") == "1"
-        or os.environ.get("RUN_NETWORK_TESTS") == "1"
-    ):
+    if os.environ.get("ALLOW_NETWORK_TESTS") == "1" or os.environ.get("RUN_NETWORK_TESTS") == "1":
         # Explicit opt-in for integration runs.
         yield
         return

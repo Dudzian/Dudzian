@@ -1,4 +1,5 @@
 """Testy workflow publikacji presetów Marketplace."""
+
 from __future__ import annotations
 
 import base64
@@ -54,7 +55,9 @@ def test_marketplace_review_signature_supports_unicode(tmp_path: Path) -> None:
     signing_key = (repo_root / "config" / "marketplace" / "keys" / "dev-hmac.key").read_bytes()
 
     catalog = load_catalog(catalog_path)
-    preset = next(pkg for pkg in catalog.packages if pkg.release.review_status.lower() == "approved")
+    preset = next(
+        pkg for pkg in catalog.packages if pkg.release.review_status.lower() == "approved"
+    )
 
     review_payload = {
         "preset_id": preset.package_id,
@@ -97,6 +100,8 @@ def test_marketplace_review_signature_supports_unicode(tmp_path: Path) -> None:
     )
 
     payload = workflow.build_ui_payload()
-    preset_entry = next(item for item in payload["presets"] if item["packageId"] == preset.package_id)
+    preset_entry = next(
+        item for item in payload["presets"] if item["packageId"] == preset.package_id
+    )
 
     assert any(review["signatureValid"] for review in preset_entry["reviews"])

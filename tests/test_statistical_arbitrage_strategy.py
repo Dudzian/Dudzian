@@ -29,7 +29,10 @@ def test_statistical_arbitrage_opens_and_closes_position() -> None:
         (99.9, 100.2),
         (100.1, 99.95),
     ]
-    history = [_snapshot(close=close, paired=paired, ts=idx) for idx, (close, paired) in enumerate(history_points)]
+    history = [
+        _snapshot(close=close, paired=paired, ts=idx)
+        for idx, (close, paired) in enumerate(history_points)
+    ]
     strategy.warm_up(history)
 
     entry = strategy.on_data(_snapshot(close=120.0, paired=100.0, ts=10))

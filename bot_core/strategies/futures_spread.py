@@ -1,4 +1,5 @@
 """Futures spread hedging engine."""
+
 from __future__ import annotations
 
 from dataclasses import dataclass, field
@@ -40,7 +41,9 @@ class FuturesSpreadStrategy(StrategyEngine):
 
     def on_data(self, snapshot: MarketSnapshot) -> Sequence[StrategySignal]:
         state = self._ensure_state(snapshot.symbol)
-        zscore = float(snapshot.indicators.get("spread_zscore", snapshot.indicators.get("spread_z", 0.0)))
+        zscore = float(
+            snapshot.indicators.get("spread_zscore", snapshot.indicators.get("spread_z", 0.0))
+        )
         basis = float(snapshot.indicators.get("basis", 0.0))
         funding = float(snapshot.indicators.get("funding_rate", 0.0))
         front_symbol = str(snapshot.indicators.get("front_contract", snapshot.symbol))
@@ -62,13 +65,17 @@ class FuturesSpreadStrategy(StrategyEngine):
                     SignalLeg(
                         symbol=front_symbol,
                         side="SELL" if direction < 0 else "BUY",
-                        quantity=quantity_from_notional(1.0, front_price, params=self._settings.market),
+                        quantity=quantity_from_notional(
+                            1.0, front_price, params=self._settings.market
+                        ),
                         metadata={"leg": "front", "price": front_price},
                     ),
                     SignalLeg(
                         symbol=back_symbol,
                         side="BUY" if direction < 0 else "SELL",
-                        quantity=quantity_from_notional(1.0, back_price, params=self._settings.market),
+                        quantity=quantity_from_notional(
+                            1.0, back_price, params=self._settings.market
+                        ),
                         metadata={"leg": "back", "price": back_price},
                     ),
                 )
@@ -94,7 +101,9 @@ class FuturesSpreadStrategy(StrategyEngine):
         state.bars_open += 1
         exit_due_to_z = abs(zscore) <= self._settings.exit_z
         exit_due_to_funding = abs(funding) >= self._settings.funding_exit
-        exit_due_to_basis = abs(basis) >= self._settings.basis_exit and (basis * state.direction) > 0
+        exit_due_to_basis = (
+            abs(basis) >= self._settings.basis_exit and (basis * state.direction) > 0
+        )
         exit_due_to_time = state.bars_open >= self._settings.max_bars
 
         if exit_due_to_z or exit_due_to_funding or exit_due_to_basis or exit_due_to_time:

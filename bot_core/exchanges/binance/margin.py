@@ -1,4 +1,5 @@
 """Adapter margin Binance oparty na implementacji spot."""
+
 from __future__ import annotations
 
 from typing import Mapping, Optional, Sequence
@@ -48,7 +49,6 @@ class BinanceMarginAdapter(BinanceSpotAdapter):
         self._margin_type = margin_type
         self._watchdog = watchdog or Watchdog()
 
-
     # ------------------------------------------------------------------
     # ExchangeAdapter API
     # ------------------------------------------------------------------
@@ -78,7 +78,9 @@ class BinanceMarginAdapter(BinanceSpotAdapter):
                     free_amount = _to_float(entry.get("free", 0.0))
                     locked_amount = _to_float(entry.get("locked", 0.0))
                     borrowed = _to_float(entry.get("borrowed", 0.0))
-                    net_asset = _to_float(entry.get("netAsset", free_amount + locked_amount - borrowed))
+                    net_asset = _to_float(
+                        entry.get("netAsset", free_amount + locked_amount - borrowed)
+                    )
                     balances[asset] = max(net_asset + borrowed, 0.0)
                     free_balances[asset] = max(free_amount, 0.0)
             ticker_payload = self._public_request("/api/v3/ticker/price")
@@ -129,7 +131,9 @@ class BinanceMarginAdapter(BinanceSpotAdapter):
         def _call() -> OrderResult:
             exchange_symbol = to_exchange_symbol(request.symbol)
             if exchange_symbol is None:
-                raise ValueError(f"Symbol {request.symbol!r} nie jest obsługiwany przez Binance margin")
+                raise ValueError(
+                    f"Symbol {request.symbol!r} nie jest obsługiwany przez Binance margin"
+                )
             params = {
                 "symbol": exchange_symbol,
                 "side": request.side.upper(),

@@ -1,4 +1,5 @@
 """Raport stanu manifestu danych OHLCV na podstawie SQLite."""
+
 from __future__ import annotations
 
 import sqlite3
@@ -13,6 +14,7 @@ else:  # pragma: no cover - fallback podczas wczesnego bootstrapu
     InstrumentUniverseConfig = object  # type: ignore[assignment]
 
 from bot_core.data.ohlcv.utils import interval_to_minutes
+
 
 @dataclass(slots=True)
 class ManifestEntry:

@@ -17,7 +17,9 @@ _LOG = logging.getLogger(__name__)
 _DEFAULT_OUTPUT = Path("var/cache/market_data")
 
 
-def _write_snapshots(poller: RestMarketDataPoller, exchanges: Iterable[str], output_dir: Path) -> None:
+def _write_snapshots(
+    poller: RestMarketDataPoller, exchanges: Iterable[str], output_dir: Path
+) -> None:
     """Zapisuje ostatnie snapshoty instrumentów do pojedynczych plików JSON."""
 
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -28,9 +30,13 @@ def _write_snapshots(poller: RestMarketDataPoller, exchanges: Iterable[str], out
         aggregated[normalized] = snapshot
         file_path = output_dir / f"{exchange.lower()}.json"
         file_path.write_text(json.dumps(snapshot, ensure_ascii=False, indent=2), encoding="utf-8")
-        _LOG.debug("Zapisano snapshot %s (%d instrumentów) do %s", normalized, len(snapshot), file_path)
+        _LOG.debug(
+            "Zapisano snapshot %s (%d instrumentów) do %s", normalized, len(snapshot), file_path
+        )
     aggregate_path = output_dir / "snapshots.json"
-    aggregate_path.write_text(json.dumps(aggregated, ensure_ascii=False, indent=2), encoding="utf-8")
+    aggregate_path.write_text(
+        json.dumps(aggregated, ensure_ascii=False, indent=2), encoding="utf-8"
+    )
     _LOG.debug("Zapisano zagregowany snapshot do %s", aggregate_path)
 
 

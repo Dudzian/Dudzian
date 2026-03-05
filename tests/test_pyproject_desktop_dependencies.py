@@ -1,4 +1,5 @@
 """Assercje pilnujące spójności zależności w `pyproject.toml`."""
+
 from __future__ import annotations
 
 from pathlib import Path
@@ -30,8 +31,7 @@ def test_numeric_stack_is_declared_in_core_dependencies() -> None:
         found = _find_dependency(deps, package.split(">=", 1)[0])
         assert found is not None, f"Brak pakietu {package} w zależnościach podstawowych"
         assert found.startswith(package), (
-            "Zależność ma inną wersję niż oczekiwana: "
-            f"{package} (znaleziono: {found})"
+            f"Zależność ma inną wersję niż oczekiwana: {package} (znaleziono: {found})"
         )
 
 
@@ -44,8 +44,7 @@ def test_dev_extra_keeps_numeric_stack() -> None:
         found = _find_dependency(dev, package.split(">=", 1)[0])
         assert found is not None, f"Brak pakietu {package} w extras.dev"
         assert found.startswith(package), (
-            "Pakiet ma inną wersję niż oczekiwana: "
-            f"{package} (znaleziono: {found})"
+            f"Pakiet ma inną wersję niż oczekiwana: {package} (znaleziono: {found})"
         )
 
 
@@ -58,6 +57,5 @@ def test_desktop_extra_contains_bundling_tools() -> None:
         found = _find_dependency(desktop, package.split(">=", 1)[0])
         assert found is not None, f"Brak pakietu {package} w extras.desktop"
         assert found.startswith(package), (
-            "Pakiet ma inną wersję niż oczekiwana: "
-            f"{package} (znaleziono: {found})"
+            f"Pakiet ma inną wersję niż oczekiwana: {package} (znaleziono: {found})"
         )

@@ -42,12 +42,16 @@ def test_load_profiles_roundtrip(tmp_path):
 
 def test_upsert_profile_adds_and_updates(tmp_path):
     profiles: list[UserProfile] = []
-    created = upsert_profile(profiles, user_id="alice", display_name="Alice", roles=["metrics.write", "metrics.read"])
+    created = upsert_profile(
+        profiles, user_id="alice", display_name="Alice", roles=["metrics.write", "metrics.read"]
+    )
     assert created.user_id == "alice"
     assert created.roles == ("metrics.read", "metrics.write")
     assert len(profiles) == 1
 
-    updated = upsert_profile(profiles, user_id="alice", display_name="Alice Ops", roles=["metrics.read"])
+    updated = upsert_profile(
+        profiles, user_id="alice", display_name="Alice Ops", roles=["metrics.read"]
+    )
     assert updated.display_name == "Alice Ops"
     assert updated.roles == ("metrics.read",)
     assert profiles[0] is updated
@@ -58,7 +62,9 @@ def test_upsert_profile_adds_and_updates(tmp_path):
 
 def test_remove_profile_removes_and_returns_entry():
     profiles = [
-        UserProfile(user_id="alice", display_name="Alice", roles=("metrics.read",), updated_at="ts"),
+        UserProfile(
+            user_id="alice", display_name="Alice", roles=("metrics.read",), updated_at="ts"
+        ),
         UserProfile(user_id="bob", display_name="Bob", roles=("metrics.write",), updated_at="ts"),
     ]
 

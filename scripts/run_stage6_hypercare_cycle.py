@@ -101,7 +101,9 @@ def _default_portfolio_summary_path(governor: str) -> Path:
     return Path("var/audit/portfolio") / f"portfolio_cycle_{governor}.json"
 
 
-def _resolve_signing(section: Mapping[str, Any] | None, *, allow_key_id: bool = True) -> tuple[bytes | None, str | None]:
+def _resolve_signing(
+    section: Mapping[str, Any] | None, *, allow_key_id: bool = True
+) -> tuple[bytes | None, str | None]:
     if not section:
         return None, None
     key_value = section.get("key")
@@ -146,7 +148,9 @@ def _parse_observability(config: Mapping[str, Any] | None) -> ObservabilityCycle
             Path("var/audit/observability/metrics.json"),
             Path("var/audit/observability/metrics.json").resolve(),
         ]
-        fallback = next((candidate for candidate in fallback_candidates if candidate.exists()), None)
+        fallback = next(
+            (candidate for candidate in fallback_candidates if candidate.exists()), None
+        )
 
         if fallback is not None:
             print(
@@ -175,7 +179,8 @@ def _parse_observability(config: Mapping[str, Any] | None) -> ObservabilityCycle
 
     slo_cfg = config.get("slo") or {}
     slo_output = SLOOutputConfig(
-        json_path=_expand_path(slo_cfg.get("json")) or Path("var/audit/observability/slo_report.json"),
+        json_path=_expand_path(slo_cfg.get("json"))
+        or Path("var/audit/observability/slo_report.json"),
         csv_path=_expand_path(slo_cfg.get("csv")),
         signature_path=_expand_path(slo_cfg.get("signature")),
         pretty_json=bool(slo_cfg.get("pretty", False)),
@@ -329,7 +334,9 @@ def _parse_resilience(config: Mapping[str, Any] | None) -> ResilienceCycleConfig
     )
 
 
-def _parse_portfolio(config: Mapping[str, Any] | None) -> tuple[PortfolioCycleConfig | None, PortfolioGovernor | None]:
+def _parse_portfolio(
+    config: Mapping[str, Any] | None,
+) -> tuple[PortfolioCycleConfig | None, PortfolioGovernor | None]:
     if not config:
         return None, None
 
@@ -452,7 +459,9 @@ def _parse_portfolio(config: Mapping[str, Any] | None) -> tuple[PortfolioCycleCo
     return cycle_config, governor
 
 
-def _build_hypercare_config(data: Mapping[str, Any]) -> tuple[Stage6HypercareConfig, PortfolioGovernor | None]:
+def _build_hypercare_config(
+    data: Mapping[str, Any],
+) -> tuple[Stage6HypercareConfig, PortfolioGovernor | None]:
     summary_cfg = data.get("summary") or {}
     output_path = _expand_path(summary_cfg.get("path")) or _default_summary_path()
     signature_path = _expand_path(summary_cfg.get("signature"))
@@ -536,4 +545,3 @@ def run(argv: Sequence[str] | None = None) -> int:
 
 if __name__ == "__main__":  # pragma: no cover - punkt wejścia CLI
     raise SystemExit(run())
-

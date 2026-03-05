@@ -120,7 +120,10 @@ def test_provision_license_usb_flow(tmp_path, capsys):
     entry = json.loads(registry_content[0])
     assert entry["signature"]["key_id"] == "lic-2024"
     assert entry["payload"]["fingerprint_signature"]["key_id"] == "fp-key"
-    assert entry["payload"]["fingerprint_payload"]["fingerprint"]["value"] == record.payload["fingerprint"]["value"]
+    assert (
+        entry["payload"]["fingerprint_payload"]["fingerprint"]["value"]
+        == record.payload["fingerprint"]["value"]
+    )
 
     artifacts = list(usb_dir.glob("*.json"))
     assert artifacts, "CLI powinno zapisać artefakt licencji na USB"

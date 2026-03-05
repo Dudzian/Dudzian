@@ -1,4 +1,5 @@
 """Smoke testy pipeline'u danych dla nowych giełd CCXT."""
+
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -70,7 +71,9 @@ class _StaticAdapter(ExchangeAdapter):
         return rows
 
     def place_order(self, request: OrderRequest) -> OrderResult:
-        order = _StaticOrder(order_id=f"{request.symbol}-1", status="open", filled=request.quantity / 2)
+        order = _StaticOrder(
+            order_id=f"{request.symbol}-1", status="open", filled=request.quantity / 2
+        )
         self._orders[order.order_id] = order
         return OrderResult(
             order_id=order.order_id,

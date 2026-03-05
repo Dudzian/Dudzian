@@ -1,4 +1,5 @@
 """Wspólne narzędzia do introspekcji parserów CLI w testach."""
+
 from __future__ import annotations
 
 from typing import Callable, Iterable

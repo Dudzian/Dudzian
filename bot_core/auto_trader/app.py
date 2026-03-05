@@ -8,6 +8,7 @@ Stage6 (np. ``RiskDecision`` przy serializacji decyzji).  Udostępniamy tylko
 publiczne API wymagane przez testy i narzędzia Stage6, zachowując spójność ze
 schematem decyzji używanym w środowiskach produkcyjnych.
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -220,7 +221,6 @@ _CONTROLLER_HISTORY_DEFAULT_LIMIT = 32
 _SCHEDULE_SYMBOL = "<schedule>"
 
 
-
 _GUARDRAIL_TRIGGER_FIELDS = ("name", "label", "comparator", "threshold", "unit", "value")
 _GUARDRAIL_TRIGGER_FIELD_SET = set(_GUARDRAIL_TRIGGER_FIELDS)
 
@@ -278,7 +278,11 @@ def _build_guardrail_trigger_payload(entry: Mapping[str, Any]) -> dict[str, Any]
     for key in _GUARDRAIL_TRIGGER_FIELDS:
         if key in entry:
             value = entry[key]
-            if key in {"name", "label", "comparator", "unit"} and value is not None and not isinstance(value, str):
+            if (
+                key in {"name", "label", "comparator", "unit"}
+                and value is not None
+                and not isinstance(value, str)
+            ):
                 payload[key] = str(value)
             else:
                 payload[key] = value
@@ -331,6 +335,7 @@ def normalize_guardrail_triggers(
         normalized.append((namespace, fallback_payload))
     return normalized
 
+
 class GuardrailTimelineRecords(list):
     """Lista kubełków timeline'u guardrail wraz z metadanymi podsumowania."""
 
@@ -373,7 +378,9 @@ def _extract_guardrail_timeline_metadata(summary: Mapping[str, Any]) -> dict[str
 class _ServiceDecisionTotals(dict[str, Any]):
     """Rozszerzone statystyki usług z tolerancyjnym porównaniem słowników."""
 
-    def __eq__(self, other: object) -> bool:  # pragma: no cover - try to reuse dict impl when possible
+    def __eq__(
+        self, other: object
+    ) -> bool:  # pragma: no cover - try to reuse dict impl when possible
         if isinstance(other, Mapping):
             for key, value in other.items():
                 if self.get(key) != value:
@@ -385,17 +392,19 @@ class _ServiceDecisionTotals(dict[str, Any]):
 class EmitterLike(Protocol):
     """Minimal protocol expected from GUI/event emitter integrations."""
 
-    def on(self, event: str, callback: Callable[..., Any], *, tag: str | None = None) -> None:
-        ...  # pragma: no cover - optional interface used by runtime only
+    def on(
+        self, event: str, callback: Callable[..., Any], *, tag: str | None = None
+    ) -> None: ...  # pragma: no cover - optional interface used by runtime only
 
-    def off(self, event: str, *, tag: str | None = None) -> None:
-        ...  # pragma: no cover - optional interface used by runtime only
+    def off(
+        self, event: str, *, tag: str | None = None
+    ) -> None: ...  # pragma: no cover - optional interface used by runtime only
 
-    def emit(self, event: str, **payload: Any) -> None:
-        ...  # pragma: no cover - optional interface used by runtime only
+    def emit(
+        self, event: str, **payload: Any
+    ) -> None: ...  # pragma: no cover - optional interface used by runtime only
 
-    def log(self, message: str, *args: Any, **kwargs: Any) -> None:
-        ...
+    def log(self, message: str, *args: Any, **kwargs: Any) -> None: ...
 
 
 def _serialize_schedule_window(window: ScheduleWindow) -> dict[str, Any]:
@@ -492,23 +501,17 @@ class DecisionCycleRequest:
         if self.execution_context is not None and not isinstance(
             self.execution_context, ExecutionContext
         ):
-            raise TypeError(
-                "execution_context musi być instancją ExecutionContext lub None"
-            )
+            raise TypeError("execution_context musi być instancją ExecutionContext lub None")
         if self.schedule_state is not None:
             from bot_core.auto_trader.schedule import ScheduleState
 
             if not isinstance(self.schedule_state, ScheduleState):
-                raise TypeError(
-                    "schedule_state musi być instancją ScheduleState lub None"
-                )
+                raise TypeError("schedule_state musi być instancją ScheduleState lub None")
         if self.auto_trade_interval_s is not None:
             try:
                 normalized = float(self.auto_trade_interval_s)
             except (TypeError, ValueError) as exc:
-                raise TypeError(
-                    "auto_trade_interval_s musi być liczbą lub None"
-                ) from exc
+                raise TypeError("auto_trade_interval_s musi być liczbą lub None") from exc
             if normalized < 0:
                 raise ValueError("auto_trade_interval_s nie może być ujemne")
             object.__setattr__(self, "auto_trade_interval_s", normalized)
@@ -543,7 +546,9 @@ class DecisionLifecycleSnapshot:
 class DecisionCycleRunner(Protocol):
     """Publiczny interfejs wywołania pojedynczego cyklu decyzyjnego."""
 
-    def run_cycle(self, request: DecisionCycleRequest | None = None) -> DecisionCycleReport:  # pragma: no cover - interface
+    def run_cycle(
+        self, request: DecisionCycleRequest | None = None
+    ) -> DecisionCycleReport:  # pragma: no cover - interface
         ...
 
 
@@ -687,10 +692,7 @@ class AutoTrader:
     def get_profile_reports(self) -> Mapping[str, tuple[ProfileReport, ...]]:
         """Return collected profiling reports for the current instance."""
 
-        return {
-            name: tuple(reports)
-            for name, reports in self._profiling_reports.items()
-        }
+        return {name: tuple(reports) for name, reports in self._profiling_reports.items()}
 
     def summarize_hotspots(self, limit: int = 10) -> list[dict[str, object]]:
         """Aggregate CPU hot spot statistics across collected profile reports.
@@ -769,9 +771,7 @@ class AutoTrader:
         signal_service: Optional[Any] = None,
         risk_service: Optional[Any] = None,
         execution_service: Optional[Any] = None,
-        execution_context: ExecutionContext
-        | Callable[[], ExecutionContext]
-        | None = None,
+        execution_context: ExecutionContext | Callable[[], ExecutionContext] | None = None,
         data_provider: Optional[Any] = None,
         bootstrap_context: Any | None = None,
         core_risk_engine: Any | None = None,
@@ -822,9 +822,7 @@ class AutoTrader:
         self._alias_resolver_override: StrategyAliasResolver | None = (
             None if override_resolver is base_resolver else override_resolver
         )
-        self._strategy_alias_map_override: Mapping[str, str] | None = (
-            alias_override or None
-        )
+        self._strategy_alias_map_override: Mapping[str, str] | None = alias_override or None
         self._strategy_alias_suffix_override: tuple[str, ...] | None = (
             tuple(suffix_override) if suffix_override is not None else None
         )
@@ -856,9 +854,7 @@ class AutoTrader:
         self.auto_trade_interval_s = float(auto_trade_interval_s)
 
         profiling_env = str(os.getenv("AUTO_TRADER_PROFILING", "")).strip().lower()
-        self._profiling_enabled = bool(
-            enable_profiling or profiling_env in {"1", "true", "yes"}
-        )
+        self._profiling_enabled = bool(enable_profiling or profiling_env in {"1", "true", "yes"})
         self._profiling_top_stats = max(1, int(profiling_top_stats))
         self._profiling_reports: dict[str, list[ProfileReport]] = {}
         self._champion_registry_dir = (
@@ -1148,11 +1144,15 @@ class AutoTrader:
         self._exchange_degradation_alert_active = False
         self._exchange_degradation_score = 0.0
         self._exchange_degradation_payload: Mapping[str, object] = {}
-        self._exchange_weight_providers: dict[tuple[str, str], Callable[[], Mapping[str, object] | None]] = {}
+        self._exchange_weight_providers: dict[
+            tuple[str, str], Callable[[], Mapping[str, object] | None]
+        ] = {}
         self._exchange_key_registry: dict[tuple[str, str], tuple[str, str]] = {}
         self._exchange_preference_weights: dict[tuple[str, str], float] = {}
         self._exchange_preference_defaults: dict[str, float] = {}
-        self._exchange_weight_cache: tuple[float, dict[tuple[str, str], dict[str, Any]]] | None = None
+        self._exchange_weight_cache: tuple[float, dict[tuple[str, str], dict[str, Any]]] | None = (
+            None
+        )
         self._exchange_selection_log: deque[dict[str, Any]] = deque()
         self._last_exchange_selection: Mapping[str, Any] | None = None
 
@@ -1230,7 +1230,10 @@ class AutoTrader:
                 predictions = predict_series(market_data, symbol=symbol)
             except Exception as exc:
                 self._log(
-                    "AI manager prediction failed", level=logging.DEBUG, symbol=symbol, error=repr(exc)
+                    "AI manager prediction failed",
+                    level=logging.DEBUG,
+                    symbol=symbol,
+                    error=repr(exc),
                 )
                 predictions = None
 
@@ -1578,9 +1581,7 @@ class AutoTrader:
         if columns:
             self.configure_ai_feature_columns(columns)
 
-    def _feature_column_metadata(
-        self, selected: Iterable[str] | None = None
-    ) -> dict[str, Any]:
+    def _feature_column_metadata(self, selected: Iterable[str] | None = None) -> dict[str, Any]:
         metadata: dict[str, Any] = {}
         configured = self._ai_feature_column_names
         if configured:
@@ -1719,7 +1720,9 @@ class AutoTrader:
     def _log(self, message: str, *, level: int = logging.INFO, **kwargs: Any) -> None:
         if hasattr(self.emitter, "log"):
             try:
-                self.emitter.log(message, level=logging.getLevelName(level), component="AutoTrader", **kwargs)
+                self.emitter.log(
+                    message, level=logging.getLevelName(level), component="AutoTrader", **kwargs
+                )
                 return
             except Exception:  # pragma: no cover - defensive logging
                 LOGGER.log(level, "Emitter logging failed", exc_info=True)
@@ -1739,7 +1742,9 @@ class AutoTrader:
                     symbol=_SCHEDULE_SYMBOL,
                     payload={"attempt": self._restart_attempts, "delay": delay, "error": str(exc)},
                 )
-                self._auto_restart_backoff_s = min(self._auto_restart_backoff_s * 2.0, self._auto_restart_backoff_max_s)
+                self._auto_restart_backoff_s = min(
+                    self._auto_restart_backoff_s * 2.0, self._auto_restart_backoff_max_s
+                )
                 self._auto_trade_thread_active = False
                 if self._auto_trade_stop.wait(delay) or self._stop.is_set():
                     break
@@ -1808,7 +1813,9 @@ class AutoTrader:
             try:
                 self._apply_risk_profile_transition(risk_profile, silent=True)
             except Exception:  # pragma: no cover - zachowawcze logowanie
-                LOGGER.debug("Nie udało się odtworzyć profilu ryzyka podczas bootstrapa", exc_info=True)
+                LOGGER.debug(
+                    "Nie udało się odtworzyć profilu ryzyka podczas bootstrapa", exc_info=True
+                )
 
         metadata = dict(self._decision_cycle_metadata or {})
         changed = False
@@ -2068,9 +2075,7 @@ class AutoTrader:
     # ------------------------------------------------------------------
     # Champion synchronisation helpers --------------------------------
     # ------------------------------------------------------------------
-    def _resolve_champion_repository_root(
-        self, override: Path | str | None
-    ) -> Path:
+    def _resolve_champion_repository_root(self, override: Path | str | None) -> Path:
         if override is not None:
             candidate = Path(override).expanduser()
         else:
@@ -2483,10 +2488,10 @@ class AutoTrader:
             penalty_cost_bps=0.0,
         )
 
-
-
     def _metric_label_payload(self, **extra: Any) -> Mapping[str, str]:
-        payload: Dict[str, str] = {str(key): str(value) for key, value in self._base_metric_labels.items()}
+        payload: Dict[str, str] = {
+            str(key): str(value) for key, value in self._base_metric_labels.items()
+        }
         for key, value in extra.items():
             payload[str(key)] = str(value)
         return payload
@@ -2533,9 +2538,7 @@ class AutoTrader:
         """Aktualizuje lokalne mapowanie aliasów i sufiksów strategii."""
 
         normalized_map = canonical_alias_map(alias_map)
-        normalized_suffixes = (
-            normalise_suffixes(suffixes) if suffixes is not None else None
-        )
+        normalized_suffixes = normalise_suffixes(suffixes) if suffixes is not None else None
 
         base_resolver = type(self)._alias_resolver()
         new_resolver = base_resolver.extend(
@@ -2543,14 +2546,10 @@ class AutoTrader:
             suffixes=normalized_suffixes,
         )
 
-        self._alias_resolver_override = (
-            None if new_resolver is base_resolver else new_resolver
-        )
+        self._alias_resolver_override = None if new_resolver is base_resolver else new_resolver
         self._strategy_alias_map_override = normalized_map or None
         self._strategy_alias_suffix_override = (
-            tuple(normalized_suffixes)
-            if normalized_suffixes is not None
-            else None
+            tuple(normalized_suffixes) if normalized_suffixes is not None else None
         )
 
     def _strategy_metadata_candidates(self, name: str | None) -> tuple[str, ...]:
@@ -2560,9 +2559,7 @@ class AutoTrader:
         resolver = self._alias_resolver_instance()
         return resolver.candidates(base)
 
-    def _strategy_metadata_summary(
-        self, metadata: Mapping[str, object]
-    ) -> dict[str, list[str]]:
+    def _strategy_metadata_summary(self, metadata: Mapping[str, object]) -> dict[str, list[str]]:
         summary: dict[str, list[str]] = {}
 
         def _extract(key: str) -> list[str]:
@@ -2891,8 +2888,10 @@ class AutoTrader:
                 selected = model_selection.get("selected")
                 if selected:
                     model_from_evaluation = str(selected)
-        active_model = decision_model or model_from_evaluation or self._resolve_active_model_label(
-            ai_manager, symbol
+        active_model = (
+            decision_model
+            or model_from_evaluation
+            or self._resolve_active_model_label(ai_manager, symbol)
         )
         if active_model:
             cycle_metadata["decision_model"] = active_model
@@ -3057,8 +3056,6 @@ class AutoTrader:
             return None
         return max(0.0, value)
 
-
-
     def _ensure_work_schedule(self) -> TradingSchedule:
         schedule = getattr(self, "_work_schedule", None)
         if schedule is None:
@@ -3100,8 +3097,6 @@ class AutoTrader:
             reference_time=reference,
         )
 
-
-
     def describe_work_schedule(self) -> dict[str, Any]:
         schedule = self._ensure_work_schedule()
         state = self._describe_schedule(schedule)
@@ -3110,8 +3105,6 @@ class AutoTrader:
         description = schedule.to_payload()
         description["state"] = _serialize_schedule_state(state)
         return description
-
-
 
     def set_schedule_overrides(
         self,
@@ -3146,9 +3139,7 @@ class AutoTrader:
         elif isinstance(override, ScheduleOverride):
             override_obj = override
         else:
-            raise TypeError(
-                "Override must be ScheduleOverride instance or mapping payload"
-            )
+            raise TypeError("Override must be ScheduleOverride instance or mapping payload")
 
         overrides = list(schedule.overrides)
         overlapping_indexes: list[int] = []
@@ -3211,12 +3202,6 @@ class AutoTrader:
             reason=reason or "override_removed",
         )
 
-
-
-
-
-
-
     def _handle_schedule_transition(self, state: ScheduleState, *, reason: str) -> None:
         gauge_value = 1.0 if state.is_open else 0.0
         self._metric_schedule_open_gauge.set(gauge_value, labels=self._base_metric_labels)
@@ -3230,7 +3215,9 @@ class AutoTrader:
             if reason in {"transition", "blocked"} and self._schedule_last_alert_state is not False:
                 context = {"mode": state.mode}
                 if state.next_transition is not None:
-                    context["next_transition"] = state.next_transition.astimezone(timezone.utc).isoformat()
+                    context["next_transition"] = state.next_transition.astimezone(
+                        timezone.utc
+                    ).isoformat()
                 self._emit_alert(
                     "auto_trader.schedule",
                     "Harmonogram handlu zamknięty",
@@ -3250,16 +3237,6 @@ class AutoTrader:
                     context=context,
                 )
             self._schedule_last_alert_state = True
-
-
-
-
-
-
-
-
-
-
 
     def _build_decision_orchestrator(self) -> DecisionOrchestrator:
         try:
@@ -3329,7 +3306,9 @@ class AutoTrader:
                     config = self._coerce_mode_profile_config(entry)
                 except Exception:  # pragma: no cover - diagnostyka trybów
                     continue
-                profile_name = str(name).strip() or config.default_strategy or "capital_preservation"
+                profile_name = (
+                    str(name).strip() or config.default_strategy or "capital_preservation"
+                )
                 profile = self._build_mode_profile(profile_name.lower(), config)
                 normalized[profile.name] = profile
         if not normalized:
@@ -3458,8 +3437,7 @@ class AutoTrader:
         leverage = config.leverage or AutoTraderModeParameterRange(min=0.0, max=1.0)
         position = config.position_size or AutoTraderModeParameterRange(min=0.0, max=1.0)
         allowed = tuple(
-            token for token in (str(item).strip() for item in config.allowed_strategies)
-            if token
+            token for token in (str(item).strip() for item in config.allowed_strategies) if token
         )
         if not allowed:
             allowed = (config.default_strategy or "capital_preservation",)
@@ -3665,7 +3643,9 @@ class AutoTrader:
                 version_meta[str(key)] = self._sanitize_metadata_value(value)
         preset_payload = activation.preset if isinstance(activation.preset, Mapping) else {}
         preset_name = str(preset_payload.get("name")) if preset_payload.get("name") else None
-        preset_meta = preset_payload.get("metadata") if isinstance(preset_payload, Mapping) else None
+        preset_meta = (
+            preset_payload.get("metadata") if isinstance(preset_payload, Mapping) else None
+        )
         if isinstance(preset_meta, Mapping):
             version_meta.setdefault("preset_metadata", {})
             preset_metadata = version_meta.get("preset_metadata")
@@ -3676,11 +3656,7 @@ class AutoTrader:
             for key, value in preset_meta.items():
                 combined[str(key)] = self._sanitize_metadata_value(value)
             version_meta["preset_metadata"] = combined
-        preset_id = (
-            str(version_meta.get("name"))
-            or preset_name
-            or activation.version.hash
-        )
+        preset_id = str(version_meta.get("name")) or preset_name or activation.version.hash
         payload: dict[str, Any] = {
             "regime": activation.regime.value,
             "preset_regime": activation.preset_regime.value
@@ -3951,7 +3927,8 @@ class AutoTrader:
         ai_context: Mapping[str, Any] | None,
     ) -> _ModeProfile | None:
         available_inputs = {
-            token.lower() for token in self._build_available_mode_inputs(summary, workflow_summary, ai_context)
+            token.lower()
+            for token in self._build_available_mode_inputs(summary, workflow_summary, ai_context)
         }
         best_profile: _ModeProfile | None = None
         best_score = float("-inf")
@@ -3971,7 +3948,10 @@ class AutoTrader:
             if profile.preferred_regimes:
                 if assessment.regime in profile.preferred_regimes:
                     score += 0.35
-                elif summary is not None and getattr(summary, "regime", None) in profile.preferred_regimes:
+                elif (
+                    summary is not None
+                    and getattr(summary, "regime", None) in profile.preferred_regimes
+                ):
                     score += 0.2
                 elif (
                     workflow_summary is not None
@@ -3979,7 +3959,10 @@ class AutoTrader:
                 ):
                     score += 0.15
             score -= self._guardrail_penalty(profile)
-            if self._mode_transition_history and self._mode_transition_history[-1]["mode"] == profile.name:
+            if (
+                self._mode_transition_history
+                and self._mode_transition_history[-1]["mode"] == profile.name
+            ):
                 score += 0.05
             if hint_mode and governor is not None:
                 score += governor.mode_adjustment(profile.name)
@@ -3990,9 +3973,7 @@ class AutoTrader:
 
     @staticmethod
     def _coerce_schedule_overrides(
-        overrides: ScheduleOverride
-        | Mapping[str, object]
-        | Sequence[object]
+        overrides: ScheduleOverride | Mapping[str, object] | Sequence[object],
     ) -> list[ScheduleOverride]:
         def _convert(item: object) -> list[ScheduleOverride]:
             if isinstance(item, ScheduleOverride):
@@ -4055,9 +4036,7 @@ class AutoTrader:
                 ):
                     schedule = TradingSchedule.from_payload(schedule)
                 else:
-                    raise TypeError(
-                        "schedule must be a TradingSchedule or serialisable payload"
-                    )
+                    raise TypeError("schedule must be a TradingSchedule or serialisable payload")
             if schedule is None:
                 schedule = self._build_default_work_schedule()
                 with self._lock:
@@ -4096,10 +4075,6 @@ class AutoTrader:
             self._emit_schedule_state_event(state, reason=update_reason)
             return state
 
-
-
-
-
     def schedule_strategy_recalibration(
         self,
         strategy: str,
@@ -4108,7 +4083,9 @@ class AutoTrader:
         first_run: datetime | None = None,
     ) -> None:
         orchestrator = self._resolve_decision_orchestrator()
-        scheduler = getattr(orchestrator, "schedule_strategy_recalibration", None) if orchestrator else None
+        scheduler = (
+            getattr(orchestrator, "schedule_strategy_recalibration", None) if orchestrator else None
+        )
         if not callable(scheduler):
             raise RuntimeError("DecisionOrchestrator does not support strategy scheduling")
         interval = timedelta(seconds=float(max(interval_s, 0.0)))
@@ -4121,32 +4098,6 @@ class AutoTrader:
             interval_s=interval.total_seconds(),
             next_run=getattr(next_run, "isoformat", lambda: str(next_run))(),
         )
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 
     def apply_schedule_override(
         self,
@@ -4156,7 +4107,9 @@ class AutoTrader:
         first_run: datetime | None = None,
     ) -> None:
         orchestrator = self._resolve_decision_orchestrator()
-        scheduler = getattr(orchestrator, "schedule_strategy_recalibration", None) if orchestrator else None
+        scheduler = (
+            getattr(orchestrator, "schedule_strategy_recalibration", None) if orchestrator else None
+        )
         if not callable(scheduler):
             raise RuntimeError("DecisionOrchestrator does not support strategy scheduling")
         interval = timedelta(seconds=float(max(interval_s, 0.0)))
@@ -4169,36 +4122,6 @@ class AutoTrader:
             interval_s=interval.total_seconds(),
             next_run=getattr(next_run, "isoformat", lambda: str(next_run))(),
         )
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 
     def schedule_strategy_recalibration(
         self,
@@ -4208,7 +4131,9 @@ class AutoTrader:
         first_run: datetime | None = None,
     ) -> None:
         orchestrator = self._resolve_decision_orchestrator()
-        scheduler = getattr(orchestrator, "schedule_strategy_recalibration", None) if orchestrator else None
+        scheduler = (
+            getattr(orchestrator, "schedule_strategy_recalibration", None) if orchestrator else None
+        )
         if not callable(scheduler):
             raise RuntimeError("DecisionOrchestrator does not support strategy scheduling")
         interval = timedelta(seconds=float(max(interval_s, 0.0)))
@@ -4221,32 +4146,6 @@ class AutoTrader:
             interval_s=interval.total_seconds(),
             next_run=getattr(next_run, "isoformat", lambda: str(next_run))(),
         )
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 
     def apply_schedule_override(
         self,
@@ -4271,10 +4170,7 @@ class AutoTrader:
             state = self.set_work_schedule(updated_schedule, reason=update_reason)
             payload = state.to_mapping()
             payload["reason"] = update_reason
-            payload["overrides_applied"] = [
-                item.to_mapping()
-                for item in overrides_list
-            ]
+            payload["overrides_applied"] = [item.to_mapping() for item in overrides_list]
             payload["override_replace"] = bool(replace)
             self._record_decision_audit_stage(
                 "schedule_override_applied",
@@ -4327,10 +4223,7 @@ class AutoTrader:
             state = self.set_work_schedule(updated_schedule, reason=update_reason)
             payload = state.to_mapping()
             payload["reason"] = update_reason
-            payload["remaining_overrides"] = [
-                item.to_mapping()
-                for item in filtered
-            ]
+            payload["remaining_overrides"] = [item.to_mapping() for item in filtered]
             if label_filter is not None:
                 payload["cleared_labels"] = sorted(label_filter)
             self._record_decision_audit_stage(
@@ -4379,9 +4272,8 @@ class AutoTrader:
         service = self.execution_service or self.core_execution_service
         if service is not None:
             return service
-        if (
-            self._default_execution_service is None
-            or (self._default_execution_symbol is not None and self._default_execution_symbol != symbol)
+        if self._default_execution_service is None or (
+            self._default_execution_symbol is not None and self._default_execution_symbol != symbol
         ):
             try:
                 self._default_execution_service = self._build_default_execution_service(symbol)
@@ -4634,7 +4526,9 @@ class AutoTrader:
         except Exception:  # pragma: no cover - emission should not break trading
             LOGGER.debug("Decision audit emission failed", exc_info=True)
 
-    def _emit_schedule_state_event(self, state: ScheduleState, *, reason: str | None = None) -> None:
+    def _emit_schedule_state_event(
+        self, state: ScheduleState, *, reason: str | None = None
+    ) -> None:
         emitter_emit = getattr(self.emitter, "emit", None)
         if not callable(emitter_emit):
             return
@@ -4740,24 +4634,6 @@ class AutoTrader:
             except Exception:
                 continue
         return None
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 
     def _build_order_request(self, symbol: str, decision: RiskDecision) -> OrderRequest:
         signal = str(decision.details.get("signal", "hold")).lower()
@@ -4986,9 +4862,7 @@ class AutoTrader:
                 normalized.add(token)
         return normalized or None
 
-    def _prepare_string_filter(
-        self, value: str | Iterable[str] | object
-    ) -> set[str] | None:
+    def _prepare_string_filter(self, value: str | Iterable[str] | object) -> set[str] | None:
         if value is _NO_FILTER:
             return None
         normalized: set[str] = set()
@@ -5243,7 +5117,7 @@ class AutoTrader:
 
     @staticmethod
     def _jsonify_risk_evaluation_records(
-        records: Iterable[Mapping[str, Any]]
+        records: Iterable[Mapping[str, Any]],
     ) -> list[dict[str, Any]]:
         def _convert(value: Any) -> Any:
             if value is pd.NA:
@@ -5381,10 +5255,7 @@ class AutoTrader:
         if is_dataclass(value):
             return self._normalize_decision_entry(asdict(value), decision_lookup=decision_lookup)
         if isinstance(value, Mapping):
-            record = {
-                str(key): copy.deepcopy(val)
-                for key, val in value.items()
-            }
+            record = {str(key): copy.deepcopy(val) for key, val in value.items()}
             normalized_id = self._normalize_decision_id(record.get("decision_id"))
             if not normalized_id:
                 return None
@@ -5415,8 +5286,7 @@ class AutoTrader:
                             fallback = decision_lookup.get(normalized_id)
                         if fallback:
                             record["decision"] = {
-                                str(key): copy.deepcopy(val)
-                                for key, val in fallback.items()
+                                str(key): copy.deepcopy(val) for key, val in fallback.items()
                             }
                         else:
                             record.pop("decision", None)
@@ -5448,10 +5318,7 @@ class AutoTrader:
             if decision_lookup:
                 payload = decision_lookup.get(normalized_id)
                 if payload:
-                    return {
-                        str(key): copy.deepcopy(val)
-                        for key, val in payload.items()
-                    }
+                    return {str(key): copy.deepcopy(val) for key, val in payload.items()}
             return {"decision_id": normalized_id}
         if hasattr(value, "to_dict"):
             try:
@@ -5507,10 +5374,7 @@ class AutoTrader:
                 decision_lookup=decision_lookup,
             )
         if isinstance(entry, Mapping):
-            record = {
-                str(key): copy.deepcopy(value)
-                for key, value in entry.items()
-            }
+            record = {str(key): copy.deepcopy(value) for key, value in entry.items()}
         elif hasattr(entry, "to_dict"):
             try:
                 payload = entry.to_dict()
@@ -5632,10 +5496,7 @@ class AutoTrader:
                 decision_lookup=decision_lookup,
             )
         if isinstance(entry, Mapping):
-            record = {
-                str(key): copy.deepcopy(value)
-                for key, value in entry.items()
-            }
+            record = {str(key): copy.deepcopy(value) for key, value in entry.items()}
         elif hasattr(entry, "to_dict"):
             try:
                 payload = entry.to_dict()
@@ -5742,10 +5603,7 @@ class AutoTrader:
                 decision_id = entry.get("decision_id")
                 if not decision_id:
                     continue
-                normalized_entry = {
-                    str(key): copy.deepcopy(value)
-                    for key, value in entry.items()
-                }
+                normalized_entry = {str(key): copy.deepcopy(value) for key, value in entry.items()}
                 existing = lookup.get(decision_id)
                 if existing is None:
                     lookup[decision_id] = normalized_entry
@@ -5757,10 +5615,7 @@ class AutoTrader:
                             merged[key] = copy.deepcopy(value)
                     lookup[decision_id] = merged
                     continue
-                merged = {
-                    str(key): copy.deepcopy(value)
-                    for key, value in existing.items()
-                }
+                merged = {str(key): copy.deepcopy(value) for key, value in existing.items()}
                 for key, value in normalized_entry.items():
                     if key not in merged or merged[key] in (None, "", [], {}):
                         merged[key] = copy.deepcopy(value)
@@ -5783,10 +5638,7 @@ class AutoTrader:
             for key, value in decision_lookup.items():
                 if not key:
                     continue
-                lookup[key] = {
-                    str(k): copy.deepcopy(v)
-                    for k, v in value.items()
-                }
+                lookup[key] = {str(k): copy.deepcopy(v) for k, v in value.items()}
 
         def _coerce_cycle(entry: Any) -> dict[str, Any]:
             if isinstance(entry, Mapping):
@@ -5837,10 +5689,7 @@ class AutoTrader:
             if is_dataclass(value):
                 return _normalize_decision_entry(asdict(value))
             if isinstance(value, Mapping):
-                record = {
-                    str(key): copy.deepcopy(val)
-                    for key, val in value.items()
-                }
+                record = {str(key): copy.deepcopy(val) for key, val in value.items()}
                 normalized_id = self._normalize_decision_id(record.get("decision_id"))
                 if normalized_id:
                     record["decision_id"] = normalized_id
@@ -6044,9 +5893,7 @@ class AutoTrader:
         if isinstance(services, Counter):
             bucket["services"] = {
                 name: int(count)
-                for name, count in sorted(
-                    services.items(), key=lambda item: (-item[1], item[0])
-                )
+                for name, count in sorted(services.items(), key=lambda item: (-item[1], item[0]))
             }
         elif isinstance(services, Mapping):
             bucket["services"] = dict(services)
@@ -6064,7 +5911,7 @@ class AutoTrader:
 
     @staticmethod
     def _sort_decision_dimension(
-        payload: Mapping[str, dict[str, Any]]
+        payload: Mapping[str, dict[str, Any]],
     ) -> dict[str, dict[str, Any]]:
         sorted_payload: dict[str, dict[str, Any]] = {}
         for key, bucket in sorted(
@@ -6194,13 +6041,9 @@ class AutoTrader:
             "reason": self._serialize_filter_snapshot(reason_filter),
             "trigger": self._serialize_filter_snapshot(trigger_filter),
             "trigger_label": self._serialize_filter_snapshot(trigger_label_filter),
-            "trigger_comparator": self._serialize_filter_snapshot(
-                trigger_comparator_filter
-            ),
+            "trigger_comparator": self._serialize_filter_snapshot(trigger_comparator_filter),
             "trigger_unit": self._serialize_filter_snapshot(trigger_unit_filter),
-            "trigger_threshold": self._serialize_numeric_filter_snapshot(
-                trigger_threshold_filter
-            ),
+            "trigger_threshold": self._serialize_numeric_filter_snapshot(trigger_threshold_filter),
             "trigger_threshold_min": trigger_threshold_min,
             "trigger_threshold_max": trigger_threshold_max,
             "trigger_value": self._serialize_numeric_filter_snapshot(trigger_value_filter),
@@ -6280,7 +6123,6 @@ class AutoTrader:
             payload["timestamp"] = dt.isoformat() if dt is not None else None
             json_ready.append(payload)
         return json_ready
-
 
     def _snapshot_guardrail_timeline_filters(
         self,
@@ -6325,13 +6167,9 @@ class AutoTrader:
             "reason": self._serialize_filter_snapshot(reason_filter),
             "trigger": self._serialize_filter_snapshot(trigger_filter),
             "trigger_label": self._serialize_filter_snapshot(trigger_label_filter),
-            "trigger_comparator": self._serialize_filter_snapshot(
-                trigger_comparator_filter
-            ),
+            "trigger_comparator": self._serialize_filter_snapshot(trigger_comparator_filter),
             "trigger_unit": self._serialize_filter_snapshot(trigger_unit_filter),
-            "trigger_threshold": self._serialize_numeric_filter_snapshot(
-                trigger_threshold_filter
-            ),
+            "trigger_threshold": self._serialize_numeric_filter_snapshot(trigger_threshold_filter),
             "trigger_threshold_min": trigger_threshold_min,
             "trigger_threshold_max": trigger_threshold_max,
             "trigger_value": self._serialize_numeric_filter_snapshot(trigger_value_filter),
@@ -6411,7 +6249,6 @@ class AutoTrader:
             payload["timestamp"] = dt.isoformat() if dt is not None else None
             json_ready.append(payload)
         return json_ready
-
 
     def _normalize_ai_context(
         self,
@@ -6701,12 +6538,8 @@ class AutoTrader:
             "model": getattr(evaluation, "model_name", None),
             "net_edge_bps": getattr(evaluation, "net_edge_bps", None),
             "cost_bps": getattr(evaluation, "cost_bps", None),
-            "model_expected_return_bps": getattr(
-                evaluation, "model_expected_return_bps", None
-            ),
-            "model_success_probability": getattr(
-                evaluation, "model_success_probability", None
-            ),
+            "model_expected_return_bps": getattr(evaluation, "model_expected_return_bps", None),
+            "model_success_probability": getattr(evaluation, "model_success_probability", None),
         }
         candidate = getattr(evaluation, "candidate", None)
         if candidate is not None:
@@ -6858,15 +6691,25 @@ class AutoTrader:
             return "hold"
         if summary is not None and summary.risk_trend > float(cfg.get("risk_trend", 0.15)):
             return "hold"
-        if summary is not None and summary.risk_volatility > float(cfg.get("risk_volatility", 0.18)):
+        if summary is not None and summary.risk_volatility > float(
+            cfg.get("risk_volatility", 0.18)
+        ):
             return "hold"
-        if summary is not None and summary.regime_persistence < float(cfg.get("regime_persistence", 0.25)):
+        if summary is not None and summary.regime_persistence < float(
+            cfg.get("regime_persistence", 0.25)
+        ):
             return "hold"
-        if summary is not None and summary.transition_rate > float(cfg.get("transition_rate", 0.55)):
+        if summary is not None and summary.transition_rate > float(
+            cfg.get("transition_rate", 0.55)
+        ):
             return "hold"
-        if summary is not None and summary.confidence_trend < float(cfg.get("confidence_trend", -0.15)):
+        if summary is not None and summary.confidence_trend < float(
+            cfg.get("confidence_trend", -0.15)
+        ):
             return "hold"
-        if summary is not None and summary.confidence_volatility >= float(cfg.get("confidence_volatility", 0.15)):
+        if summary is not None and summary.confidence_volatility >= float(
+            cfg.get("confidence_volatility", 0.15)
+        ):
             return "hold"
         if (
             summary is not None
@@ -6874,35 +6717,59 @@ class AutoTrader:
             and summary.stability < float(cfg.get("stability_for_short_streak", 0.7))
         ):
             return "hold"
-        if summary is not None and summary.resilience_score <= float(cfg.get("resilience_score", 0.3)):
+        if summary is not None and summary.resilience_score <= float(
+            cfg.get("resilience_score", 0.3)
+        ):
             return "hold"
         if summary is not None and summary.stress_balance <= float(cfg.get("stress_balance", 0.35)):
             return "hold"
         if summary is not None and summary.regime_entropy >= float(cfg.get("regime_entropy", 0.75)):
             return "hold"
-        if summary is not None and summary.instability_score > float(cfg.get("instability_score", 0.65)):
+        if summary is not None and summary.instability_score > float(
+            cfg.get("instability_score", 0.65)
+        ):
             return "hold"
-        if summary is not None and summary.confidence_decay > float(cfg.get("confidence_decay", 0.2)):
+        if summary is not None and summary.confidence_decay > float(
+            cfg.get("confidence_decay", 0.2)
+        ):
             return "hold"
-        if summary is not None and summary.drawdown_pressure >= float(cfg.get("drawdown_pressure", 0.6)):
+        if summary is not None and summary.drawdown_pressure >= float(
+            cfg.get("drawdown_pressure", 0.6)
+        ):
             return "hold"
-        if summary is not None and summary.liquidity_pressure >= float(cfg.get("liquidity_pressure", 0.65)):
+        if summary is not None and summary.liquidity_pressure >= float(
+            cfg.get("liquidity_pressure", 0.65)
+        ):
             return "hold"
-        if summary is not None and summary.volatility_ratio >= float(cfg.get("volatility_ratio", 1.55)):
+        if summary is not None and summary.volatility_ratio >= float(
+            cfg.get("volatility_ratio", 1.55)
+        ):
             return "hold"
-        if summary is not None and summary.degradation_score >= float(cfg.get("degradation_score", 0.55)):
+        if summary is not None and summary.degradation_score >= float(
+            cfg.get("degradation_score", 0.55)
+        ):
             return "hold"
-        if summary is not None and summary.stability_projection <= float(cfg.get("stability_projection", 0.4)):
+        if summary is not None and summary.stability_projection <= float(
+            cfg.get("stability_projection", 0.4)
+        ):
             return "hold"
-        if summary is not None and summary.volume_trend_volatility >= float(cfg.get("volume_trend_volatility", 0.18)):
+        if summary is not None and summary.volume_trend_volatility >= float(
+            cfg.get("volume_trend_volatility", 0.18)
+        ):
             return "hold"
         if summary is not None and summary.liquidity_gap >= float(cfg.get("liquidity_gap", 0.6)):
             return "hold"
-        if summary is not None and summary.stress_projection >= float(cfg.get("stress_projection", 0.6)):
+        if summary is not None and summary.stress_projection >= float(
+            cfg.get("stress_projection", 0.6)
+        ):
             return "hold"
-        if summary is not None and summary.confidence_resilience <= float(cfg.get("confidence_resilience", 0.4)):
+        if summary is not None and summary.confidence_resilience <= float(
+            cfg.get("confidence_resilience", 0.4)
+        ):
             return "hold"
-        if summary is not None and summary.distribution_pressure >= float(cfg.get("distribution_pressure", 0.55)):
+        if summary is not None and summary.distribution_pressure >= float(
+            cfg.get("distribution_pressure", 0.55)
+        ):
             return "hold"
         if (
             summary is not None
@@ -6922,7 +6789,9 @@ class AutoTrader:
             and summary.liquidity_pressure >= float(cfg.get("liquidity_pressure_support", 0.45))
         ):
             return "hold"
-        if summary is not None and summary.volatility_trend > float(cfg.get("volatility_trend", 0.02)):
+        if summary is not None and summary.volatility_trend > float(
+            cfg.get("volatility_trend", 0.02)
+        ):
             return "hold"
         if summary is not None and summary.drawdown_trend > float(cfg.get("drawdown_trend", 0.08)):
             return "hold"
@@ -6939,9 +6808,7 @@ class AutoTrader:
             return "sell"
         return "hold"
 
-    def _apply_orchestrator_strategy_selection(
-        self, assessment: MarketRegimeAssessment
-    ) -> None:
+    def _apply_orchestrator_strategy_selection(self, assessment: MarketRegimeAssessment) -> None:
         orchestrator = self._resolve_decision_orchestrator()
         if orchestrator is None:
             return
@@ -6979,9 +6846,11 @@ class AutoTrader:
     ) -> None:
         risk = float(aggregated_risk) if aggregated_risk is not None else assessment.risk_score
         cfg = self._thresholds["auto_trader"]["adjust_strategy_parameters"]
+
         def _t(name: str, default: float) -> float:
             value = cfg.get(name, default)
             return float(value if isinstance(value, (int, float)) else default)
+
         if risk >= float(cfg.get("high_risk", 0.75)):
             self.current_strategy = "capital_preservation"
             self.current_leverage = 0.0
@@ -6990,18 +6859,32 @@ class AutoTrader:
         elif assessment.regime is MarketRegime.TREND:
             self.current_strategy = "trend_following"
             self.current_leverage = 2.0 if risk < float(cfg.get("trend_low_risk", 0.4)) else 1.5
-            self.current_stop_loss_pct = 0.03 if risk < float(cfg.get("trend_low_risk", 0.4)) else 0.04
-            self.current_take_profit_pct = 0.06 if risk < float(cfg.get("trend_low_risk", 0.4)) else 0.04
+            self.current_stop_loss_pct = (
+                0.03 if risk < float(cfg.get("trend_low_risk", 0.4)) else 0.04
+            )
+            self.current_take_profit_pct = (
+                0.06 if risk < float(cfg.get("trend_low_risk", 0.4)) else 0.04
+            )
         elif assessment.regime is MarketRegime.MEAN_REVERSION:
             self.current_strategy = "mean_reversion"
-            self.current_leverage = 1.0 if risk < float(cfg.get("mean_reversion_low_risk", 0.4)) else 0.7
-            self.current_stop_loss_pct = 0.015 if risk < float(cfg.get("mean_reversion_low_risk", 0.4)) else 0.02
-            self.current_take_profit_pct = 0.03 if risk < float(cfg.get("mean_reversion_low_risk", 0.4)) else 0.025
+            self.current_leverage = (
+                1.0 if risk < float(cfg.get("mean_reversion_low_risk", 0.4)) else 0.7
+            )
+            self.current_stop_loss_pct = (
+                0.015 if risk < float(cfg.get("mean_reversion_low_risk", 0.4)) else 0.02
+            )
+            self.current_take_profit_pct = (
+                0.03 if risk < float(cfg.get("mean_reversion_low_risk", 0.4)) else 0.025
+            )
         else:
             self.current_strategy = "intraday_breakout"
             self.current_leverage = 0.8 if risk < float(cfg.get("intraday_low_risk", 0.5)) else 0.5
-            self.current_stop_loss_pct = 0.02 if risk < float(cfg.get("intraday_low_risk", 0.5)) else 0.03
-            self.current_take_profit_pct = 0.025 if risk < float(cfg.get("intraday_low_risk", 0.5)) else 0.02
+            self.current_stop_loss_pct = (
+                0.02 if risk < float(cfg.get("intraday_low_risk", 0.5)) else 0.03
+            )
+            self.current_take_profit_pct = (
+                0.025 if risk < float(cfg.get("intraday_low_risk", 0.5)) else 0.02
+            )
 
         if summary is not None:
             if summary.risk_level is RiskLevel.CRITICAL:
@@ -7015,20 +6898,25 @@ class AutoTrader:
                     0.8 if assessment.regime is MarketRegime.TREND else 0.5,
                 )
                 self.current_stop_loss_pct = max(
-                    self.current_stop_loss_pct * float(cfg.get("risk_level_elevated_stop_loss", 0.85)),
+                    self.current_stop_loss_pct
+                    * float(cfg.get("risk_level_elevated_stop_loss", 0.85)),
                     0.01,
                 )
                 self.current_take_profit_pct = max(
-                    self.current_take_profit_pct * float(cfg.get("risk_level_elevated_take_profit", 0.9)),
+                    self.current_take_profit_pct
+                    * float(cfg.get("risk_level_elevated_take_profit", 0.9)),
                     self.current_stop_loss_pct * 1.4,
                 )
-            elif summary.risk_level is RiskLevel.CALM and risk < float(cfg.get("risk_level_calm", 0.5)):
+            elif summary.risk_level is RiskLevel.CALM and risk < float(
+                cfg.get("risk_level_calm", 0.5)
+            ):
                 self.current_leverage = min(
                     self.current_leverage * float(cfg.get("risk_level_calm_leverage", 1.2)),
                     2.5,
                 )
                 self.current_take_profit_pct = min(
-                    self.current_take_profit_pct * float(cfg.get("risk_level_calm_take_profit", 1.1)),
+                    self.current_take_profit_pct
+                    * float(cfg.get("risk_level_calm_take_profit", 1.1)),
                     0.08,
                 )
 
@@ -7039,7 +6927,9 @@ class AutoTrader:
                 elif not self.current_strategy.endswith("_probing"):
                     self.current_strategy = f"{self.current_strategy}_probing"
                 self.current_stop_loss_pct = max(self.current_stop_loss_pct * 0.88, 0.01)
-                self.current_take_profit_pct = max(self.current_take_profit_pct * 0.92, self.current_stop_loss_pct * 1.35)
+                self.current_take_profit_pct = max(
+                    self.current_take_profit_pct * 0.92, self.current_stop_loss_pct * 1.35
+                )
             elif (
                 summary.resilience_score >= float(cfg.get("resilience_high", 0.65))
                 and summary.stress_balance >= float(cfg.get("stress_balance_high", 0.6))
@@ -7056,7 +6946,9 @@ class AutoTrader:
                 elif not self.current_strategy.endswith("_probing"):
                     self.current_strategy = f"{self.current_strategy}_probing"
                 self.current_stop_loss_pct = max(self.current_stop_loss_pct * 0.9, 0.01)
-                self.current_take_profit_pct = max(self.current_take_profit_pct * 0.92, self.current_stop_loss_pct * 1.35)
+                self.current_take_profit_pct = max(
+                    self.current_take_profit_pct * 0.92, self.current_stop_loss_pct * 1.35
+                )
             elif (
                 summary.regime_entropy <= float(cfg.get("entropy_low", 0.45))
                 and summary.resilience_score >= float(cfg.get("resilience_high", 0.65))
@@ -7069,7 +6961,9 @@ class AutoTrader:
             if summary.risk_volatility >= float(cfg.get("risk_volatility_high", 0.2)):
                 self.current_leverage = min(self.current_leverage, 0.6)
                 self.current_stop_loss_pct = max(self.current_stop_loss_pct * 0.9, 0.01)
-                self.current_take_profit_pct = max(self.current_take_profit_pct * 0.95, self.current_stop_loss_pct * 1.3)
+                self.current_take_profit_pct = max(
+                    self.current_take_profit_pct * 0.95, self.current_stop_loss_pct * 1.3
+                )
 
             if summary.regime_persistence <= float(cfg.get("regime_persistence_low", 0.3)):
                 self.current_leverage = min(self.current_leverage, 0.4)
@@ -7079,7 +6973,9 @@ class AutoTrader:
                     if not self.current_strategy.endswith("_probing"):
                         self.current_strategy = f"{self.current_strategy}_probing"
                 self.current_stop_loss_pct = max(self.current_stop_loss_pct * 0.85, 0.01)
-                self.current_take_profit_pct = max(self.current_take_profit_pct * 0.9, self.current_stop_loss_pct * 1.4)
+                self.current_take_profit_pct = max(
+                    self.current_take_profit_pct * 0.9, self.current_stop_loss_pct * 1.4
+                )
             elif (
                 summary.regime_persistence >= float(cfg.get("regime_persistence_high", 0.65))
                 and summary.risk_level in {RiskLevel.CALM, RiskLevel.BALANCED}
@@ -7092,7 +6988,9 @@ class AutoTrader:
             if summary.confidence_volatility >= float(cfg.get("confidence_volatility_high", 0.15)):
                 self.current_leverage = min(self.current_leverage, 0.5)
                 self.current_stop_loss_pct = max(self.current_stop_loss_pct * 0.9, 0.01)
-                self.current_take_profit_pct = max(self.current_take_profit_pct * 0.92, self.current_stop_loss_pct * 1.35)
+                self.current_take_profit_pct = max(
+                    self.current_take_profit_pct * 0.92, self.current_stop_loss_pct * 1.35
+                )
 
             if summary.confidence_trend < float(cfg.get("confidence_trend_low", -0.1)):
                 self.current_leverage = min(self.current_leverage, 0.6)
@@ -7101,7 +6999,9 @@ class AutoTrader:
                 elif not self.current_strategy.endswith("_probing"):
                     self.current_strategy = f"{self.current_strategy}_probing"
                 self.current_stop_loss_pct = max(self.current_stop_loss_pct * 0.85, 0.01)
-                self.current_take_profit_pct = max(self.current_take_profit_pct * 0.9, self.current_stop_loss_pct * 1.4)
+                self.current_take_profit_pct = max(
+                    self.current_take_profit_pct * 0.9, self.current_stop_loss_pct * 1.4
+                )
 
             if summary.regime_streak <= int(cfg.get("regime_streak_low", 1)):
                 self.current_leverage = min(self.current_leverage, 0.4)
@@ -7110,11 +7010,14 @@ class AutoTrader:
                 elif not self.current_strategy.endswith("_probing"):
                     self.current_strategy = f"{self.current_strategy}_probing"
                 self.current_stop_loss_pct = max(self.current_stop_loss_pct * 0.85, 0.01)
-                self.current_take_profit_pct = max(self.current_take_profit_pct * 0.9, self.current_stop_loss_pct * 1.4)
+                self.current_take_profit_pct = max(
+                    self.current_take_profit_pct * 0.9, self.current_stop_loss_pct * 1.4
+                )
 
             if (
                 summary.confidence_trend > float(cfg.get("confidence_trend_high", 0.12))
-                and summary.confidence_volatility <= float(cfg.get("confidence_volatility_low", 0.08))
+                and summary.confidence_volatility
+                <= float(cfg.get("confidence_volatility_low", 0.08))
                 and summary.risk_level in {RiskLevel.CALM, RiskLevel.BALANCED}
                 and summary.regime_persistence >= float(cfg.get("regime_persistence_high", 0.65))
                 and summary.instability_score <= float(cfg.get("instability_ceiling", 0.4))
@@ -7129,7 +7032,9 @@ class AutoTrader:
                 elif not self.current_strategy.endswith("_probing"):
                     self.current_strategy = f"{self.current_strategy}_probing"
                 self.current_stop_loss_pct = max(self.current_stop_loss_pct * 0.85, 0.01)
-                self.current_take_profit_pct = max(self.current_take_profit_pct * 0.9, self.current_stop_loss_pct * 1.4)
+                self.current_take_profit_pct = max(
+                    self.current_take_profit_pct * 0.9, self.current_stop_loss_pct * 1.4
+                )
 
             if summary.instability_score >= _t("instability_critical", 0.75):
                 self.current_strategy = "capital_preservation"
@@ -7143,8 +7048,12 @@ class AutoTrader:
                 elif not self.current_strategy.endswith("_probing"):
                     self.current_strategy = f"{self.current_strategy}_probing"
                 self.current_stop_loss_pct = max(self.current_stop_loss_pct * 0.85, 0.01)
-                self.current_take_profit_pct = max(self.current_take_profit_pct * 0.92, self.current_stop_loss_pct * 1.4)
-            elif summary.instability_score <= _t("instability_low", 0.25) and summary.risk_level in {RiskLevel.CALM, RiskLevel.BALANCED}:
+                self.current_take_profit_pct = max(
+                    self.current_take_profit_pct * 0.92, self.current_stop_loss_pct * 1.4
+                )
+            elif summary.instability_score <= _t(
+                "instability_low", 0.25
+            ) and summary.risk_level in {RiskLevel.CALM, RiskLevel.BALANCED}:
                 self.current_leverage = min(self.current_leverage * 1.08, 3.2)
                 self.current_take_profit_pct = min(self.current_take_profit_pct * 1.07, 0.095)
 
@@ -7160,11 +7069,13 @@ class AutoTrader:
                 elif not self.current_strategy.endswith("_probing"):
                     self.current_strategy = f"{self.current_strategy}_probing"
                 self.current_stop_loss_pct = max(self.current_stop_loss_pct * 0.85, 0.01)
-                self.current_take_profit_pct = max(self.current_take_profit_pct * 0.9, self.current_stop_loss_pct * 1.4)
-            elif (
-                summary.drawdown_pressure <= _t("drawdown_low", 0.3)
-                and summary.risk_level in {RiskLevel.CALM, RiskLevel.BALANCED}
-            ):
+                self.current_take_profit_pct = max(
+                    self.current_take_profit_pct * 0.9, self.current_stop_loss_pct * 1.4
+                )
+            elif summary.drawdown_pressure <= _t("drawdown_low", 0.3) and summary.risk_level in {
+                RiskLevel.CALM,
+                RiskLevel.BALANCED,
+            }:
                 self.current_leverage = min(self.current_leverage * 1.06, 3.1)
                 self.current_take_profit_pct = min(self.current_take_profit_pct * 1.05, 0.09)
 
@@ -7175,7 +7086,9 @@ class AutoTrader:
                 elif not self.current_strategy.endswith("_probing"):
                     self.current_strategy = f"{self.current_strategy}_probing"
                 self.current_stop_loss_pct = max(self.current_stop_loss_pct * 0.88, 0.01)
-                self.current_take_profit_pct = max(self.current_take_profit_pct * 0.9, self.current_stop_loss_pct * 1.35)
+                self.current_take_profit_pct = max(
+                    self.current_take_profit_pct * 0.9, self.current_stop_loss_pct * 1.35
+                )
             elif (
                 summary.liquidity_pressure <= _t("liquidity_pressure_low", 0.35)
                 and summary.risk_level in {RiskLevel.CALM, RiskLevel.BALANCED}
@@ -7191,7 +7104,9 @@ class AutoTrader:
                 elif not self.current_strategy.endswith("_probing"):
                     self.current_strategy = f"{self.current_strategy}_probing"
                 self.current_stop_loss_pct = max(self.current_stop_loss_pct * 0.85, 0.01)
-                self.current_take_profit_pct = max(self.current_take_profit_pct * 0.9, self.current_stop_loss_pct * 1.4)
+                self.current_take_profit_pct = max(
+                    self.current_take_profit_pct * 0.9, self.current_stop_loss_pct * 1.4
+                )
 
             if summary.degradation_score >= _t("degradation_critical", 0.6):
                 self.current_strategy = "capital_preservation"
@@ -7205,7 +7120,9 @@ class AutoTrader:
                 elif not self.current_strategy.endswith("_probing"):
                     self.current_strategy = f"{self.current_strategy}_probing"
                 self.current_stop_loss_pct = max(self.current_stop_loss_pct * 0.84, 0.01)
-                self.current_take_profit_pct = max(self.current_take_profit_pct * 0.9, self.current_stop_loss_pct * 1.35)
+                self.current_take_profit_pct = max(
+                    self.current_take_profit_pct * 0.9, self.current_stop_loss_pct * 1.35
+                )
             elif (
                 summary.degradation_score <= _t("degradation_low", 0.25)
                 and summary.stability_projection >= _t("stability_projection_high", 0.65)
@@ -7222,7 +7139,9 @@ class AutoTrader:
                 elif not self.current_strategy.endswith("_probing"):
                     self.current_strategy = f"{self.current_strategy}_probing"
                 self.current_stop_loss_pct = max(self.current_stop_loss_pct * 0.84, 0.01)
-                self.current_take_profit_pct = max(self.current_take_profit_pct * 0.9, self.current_stop_loss_pct * 1.35)
+                self.current_take_profit_pct = max(
+                    self.current_take_profit_pct * 0.9, self.current_stop_loss_pct * 1.35
+                )
             elif (
                 summary.stability_projection >= _t("stability_projection_high", 0.65)
                 and summary.degradation_score <= _t("degradation_positive_cap", 0.3)
@@ -7239,7 +7158,9 @@ class AutoTrader:
                 elif not self.current_strategy.endswith("_probing"):
                     self.current_strategy = f"{self.current_strategy}_probing"
                 self.current_stop_loss_pct = max(self.current_stop_loss_pct * 0.83, 0.01)
-                self.current_take_profit_pct = max(self.current_take_profit_pct * 0.9, self.current_stop_loss_pct * 1.35)
+                self.current_take_profit_pct = max(
+                    self.current_take_profit_pct * 0.9, self.current_stop_loss_pct * 1.35
+                )
             elif (
                 summary.volume_trend_volatility <= _t("volume_trend_volatility_low", 0.1)
                 and summary.degradation_score <= _t("degradation_positive_cap", 0.3)
@@ -7255,7 +7176,9 @@ class AutoTrader:
                 elif not self.current_strategy.endswith("_probing"):
                     self.current_strategy = f"{self.current_strategy}_probing"
                 self.current_stop_loss_pct = max(self.current_stop_loss_pct * 0.85, 0.01)
-                self.current_take_profit_pct = max(self.current_take_profit_pct * 0.9, self.current_stop_loss_pct * 1.35)
+                self.current_take_profit_pct = max(
+                    self.current_take_profit_pct * 0.9, self.current_stop_loss_pct * 1.35
+                )
             elif (
                 summary.volatility_trend <= _t("volatility_trend_relief", 0.0)
                 and summary.degradation_score <= _t("degradation_positive_cap", 0.3)
@@ -7271,7 +7194,9 @@ class AutoTrader:
                 elif not self.current_strategy.endswith("_probing"):
                     self.current_strategy = f"{self.current_strategy}_probing"
                 self.current_stop_loss_pct = max(self.current_stop_loss_pct * 0.82, 0.01)
-                self.current_take_profit_pct = max(self.current_take_profit_pct * 0.88, self.current_stop_loss_pct * 1.35)
+                self.current_take_profit_pct = max(
+                    self.current_take_profit_pct * 0.88, self.current_stop_loss_pct * 1.35
+                )
             elif (
                 summary.drawdown_trend <= _t("drawdown_trend_relief", 0.0)
                 and summary.degradation_score <= _t("degradation_positive_cap", 0.3)
@@ -7292,7 +7217,9 @@ class AutoTrader:
                 elif not self.current_strategy.endswith("_probing"):
                     self.current_strategy = f"{self.current_strategy}_probing"
                 self.current_stop_loss_pct = max(self.current_stop_loss_pct * 0.82, 0.01)
-                self.current_take_profit_pct = max(self.current_take_profit_pct * 0.88, self.current_stop_loss_pct * 1.35)
+                self.current_take_profit_pct = max(
+                    self.current_take_profit_pct * 0.88, self.current_stop_loss_pct * 1.35
+                )
             elif (
                 summary.stress_index <= _t("stress_index_low", 0.28)
                 and summary.risk_level in {RiskLevel.CALM, RiskLevel.BALANCED}
@@ -7308,7 +7235,9 @@ class AutoTrader:
                 elif not self.current_strategy.endswith("_probing"):
                     self.current_strategy = f"{self.current_strategy}_probing"
                 self.current_stop_loss_pct = max(self.current_stop_loss_pct * 0.82, 0.01)
-                self.current_take_profit_pct = max(self.current_take_profit_pct * 0.88, self.current_stop_loss_pct * 1.35)
+                self.current_take_profit_pct = max(
+                    self.current_take_profit_pct * 0.88, self.current_stop_loss_pct * 1.35
+                )
             elif (
                 summary.stress_momentum <= _t("stress_momentum_low", 0.35)
                 and summary.stress_index <= _t("stress_index_relief", 0.35)
@@ -7325,7 +7254,9 @@ class AutoTrader:
                 elif not self.current_strategy.endswith("_probing"):
                     self.current_strategy = f"{self.current_strategy}_probing"
                 self.current_stop_loss_pct = max(self.current_stop_loss_pct * 0.84, 0.01)
-                self.current_take_profit_pct = max(self.current_take_profit_pct * 0.9, self.current_stop_loss_pct * 1.35)
+                self.current_take_profit_pct = max(
+                    self.current_take_profit_pct * 0.9, self.current_stop_loss_pct * 1.35
+                )
             elif (
                 summary.tail_risk_index <= _t("tail_risk_low", 0.2)
                 and summary.stress_index <= _t("stress_index_tail_relief", 0.3)
@@ -7342,7 +7273,9 @@ class AutoTrader:
                 elif not self.current_strategy.endswith("_probing"):
                     self.current_strategy = f"{self.current_strategy}_probing"
                 self.current_stop_loss_pct = max(self.current_stop_loss_pct * 0.82, 0.01)
-                self.current_take_profit_pct = max(self.current_take_profit_pct * 0.88, self.current_stop_loss_pct * 1.35)
+                self.current_take_profit_pct = max(
+                    self.current_take_profit_pct * 0.88, self.current_stop_loss_pct * 1.35
+                )
             elif (
                 summary.shock_frequency <= _t("shock_frequency_low", 0.25)
                 and summary.regime_persistence >= _t("regime_persistence_positive", 0.6)
@@ -7357,8 +7290,7 @@ class AutoTrader:
                 or abs(summary.skewness_bias) >= _t("skewness_bias_adjust_high", 1.3)
                 or summary.kurtosis_excess >= _t("kurtosis_adjust_high", 1.8)
                 or (
-                    abs(summary.volume_imbalance)
-                    >= _t("volume_imbalance_adjust_high", 0.55)
+                    abs(summary.volume_imbalance) >= _t("volume_imbalance_adjust_high", 0.55)
                     and summary.liquidity_pressure
                     >= float(cfg.get("liquidity_pressure_support", 0.45))
                 )
@@ -7369,7 +7301,9 @@ class AutoTrader:
                 elif not self.current_strategy.endswith("_probing"):
                     self.current_strategy = f"{self.current_strategy}_probing"
                 self.current_stop_loss_pct = max(self.current_stop_loss_pct * 0.82, 0.01)
-                self.current_take_profit_pct = max(self.current_take_profit_pct * 0.88, self.current_stop_loss_pct * 1.35)
+                self.current_take_profit_pct = max(
+                    self.current_take_profit_pct * 0.88, self.current_stop_loss_pct * 1.35
+                )
             elif (
                 summary.distribution_pressure <= _t("distribution_pressure_adjust_low", 0.3)
                 and abs(summary.skewness_bias) <= _t("skewness_bias_adjust_low", 0.8)
@@ -7388,7 +7322,9 @@ class AutoTrader:
                 elif not self.current_strategy.endswith("_probing"):
                     self.current_strategy = f"{self.current_strategy}_probing"
                 self.current_stop_loss_pct = max(self.current_stop_loss_pct * 0.84, 0.01)
-                self.current_take_profit_pct = max(self.current_take_profit_pct * 0.9, self.current_stop_loss_pct * 1.35)
+                self.current_take_profit_pct = max(
+                    self.current_take_profit_pct * 0.9, self.current_stop_loss_pct * 1.35
+                )
             elif (
                 summary.liquidity_gap <= _t("liquidity_gap_low", 0.35)
                 and summary.risk_level in {RiskLevel.CALM, RiskLevel.BALANCED}
@@ -7405,7 +7341,9 @@ class AutoTrader:
                 elif not self.current_strategy.endswith("_probing"):
                     self.current_strategy = f"{self.current_strategy}_probing"
                 self.current_stop_loss_pct = max(self.current_stop_loss_pct * 0.84, 0.01)
-                self.current_take_profit_pct = max(self.current_take_profit_pct * 0.9, self.current_stop_loss_pct * 1.35)
+                self.current_take_profit_pct = max(
+                    self.current_take_profit_pct * 0.9, self.current_stop_loss_pct * 1.35
+                )
             elif (
                 summary.liquidity_trend <= _t("liquidity_trend_low", 0.35)
                 and summary.liquidity_gap <= _t("liquidity_gap_relief", 0.4)
@@ -7427,7 +7365,9 @@ class AutoTrader:
                 elif not self.current_strategy.endswith("_probing"):
                     self.current_strategy = f"{self.current_strategy}_probing"
                 self.current_stop_loss_pct = max(self.current_stop_loss_pct * 0.84, 0.01)
-                self.current_take_profit_pct = max(self.current_take_profit_pct * 0.9, self.current_stop_loss_pct * 1.35)
+                self.current_take_profit_pct = max(
+                    self.current_take_profit_pct * 0.9, self.current_stop_loss_pct * 1.35
+                )
             elif (
                 summary.stress_projection <= _t("stress_projection_low", 0.35)
                 and summary.stress_index <= _t("stress_index_relief", 0.35)
@@ -7444,7 +7384,9 @@ class AutoTrader:
                 elif not self.current_strategy.endswith("_probing"):
                     self.current_strategy = f"{self.current_strategy}_probing"
                 self.current_stop_loss_pct = max(self.current_stop_loss_pct * 0.85, 0.01)
-                self.current_take_profit_pct = max(self.current_take_profit_pct * 0.9, self.current_stop_loss_pct * 1.35)
+                self.current_take_profit_pct = max(
+                    self.current_take_profit_pct * 0.9, self.current_stop_loss_pct * 1.35
+                )
             elif (
                 summary.confidence_resilience >= _t("confidence_resilience_high", 0.65)
                 and summary.risk_level in {RiskLevel.CALM, RiskLevel.BALANCED}
@@ -7461,7 +7403,9 @@ class AutoTrader:
                 elif not self.current_strategy.endswith("_probing"):
                     self.current_strategy = f"{self.current_strategy}_probing"
                 self.current_stop_loss_pct = max(self.current_stop_loss_pct * 0.84, 0.01)
-                self.current_take_profit_pct = max(self.current_take_profit_pct * 0.9, self.current_stop_loss_pct * 1.35)
+                self.current_take_profit_pct = max(
+                    self.current_take_profit_pct * 0.9, self.current_stop_loss_pct * 1.35
+                )
             elif (
                 summary.confidence_fragility <= _t("confidence_fragility_low", 0.35)
                 and summary.confidence_resilience >= _t("confidence_resilience_mid", 0.6)
@@ -7478,7 +7422,9 @@ class AutoTrader:
                 elif not self.current_strategy.endswith("_probing"):
                     self.current_strategy = f"{self.current_strategy}_probing"
                 self.current_stop_loss_pct = max(self.current_stop_loss_pct * 0.85, 0.01)
-                self.current_take_profit_pct = max(self.current_take_profit_pct * 0.9, self.current_stop_loss_pct * 1.35)
+                self.current_take_profit_pct = max(
+                    self.current_take_profit_pct * 0.9, self.current_stop_loss_pct * 1.35
+                )
             elif (
                 summary.volatility_of_volatility <= _t("volatility_of_volatility_low", 0.015)
                 and summary.stress_index <= _t("stress_index_relief", 0.35)
@@ -7491,7 +7437,9 @@ class AutoTrader:
             if summary.risk_trend > _t("summary_risk_trend_high", 0.05):
                 self.current_leverage = max(0.0, self.current_leverage - 0.3)
                 self.current_stop_loss_pct = max(self.current_stop_loss_pct * 0.8, 0.01)
-                self.current_take_profit_pct = max(self.current_take_profit_pct * 0.9, self.current_stop_loss_pct * 1.5)
+                self.current_take_profit_pct = max(
+                    self.current_take_profit_pct * 0.9, self.current_stop_loss_pct * 1.5
+                )
             if summary.stability < _t("summary_stability_floor", 0.4):
                 self.current_leverage = min(self.current_leverage, 0.5)
                 if self.current_leverage == 0:
@@ -7510,7 +7458,9 @@ class AutoTrader:
 
         self.current_leverage = float(max(self.current_leverage, 0.0))
         self.current_stop_loss_pct = float(max(self.current_stop_loss_pct, 0.005))
-        self.current_take_profit_pct = float(max(self.current_take_profit_pct, self.current_stop_loss_pct * 1.2))
+        self.current_take_profit_pct = float(
+            max(self.current_take_profit_pct, self.current_stop_loss_pct * 1.2)
+        )
         self._update_strategy_metrics(self.current_strategy)
 
     def set_signal_quality_provider(
@@ -7617,11 +7567,7 @@ class AutoTrader:
             return {}
 
         now = time.monotonic()
-        if (
-            not force_refresh
-            and cache is not None
-            and now - cache[0] <= 5.0
-        ):
+        if not force_refresh and cache is not None and now - cache[0] <= 5.0:
             return {key: dict(value) for key, value in cache[1].items()}
 
         snapshots: dict[tuple[str, str], dict[str, Any]] = {}
@@ -7630,7 +7576,8 @@ class AutoTrader:
                 snapshot = provider()
             except Exception:
                 LOGGER.debug(
-                    "Nie udało się pobrać wag giełdowych od dostawcy %s", key,
+                    "Nie udało się pobrać wag giełdowych od dostawcy %s",
+                    key,
                     exc_info=True,
                 )
                 continue
@@ -7671,9 +7618,7 @@ class AutoTrader:
             degradation_payload = entry.get("degradation")
             if isinstance(degradation_payload, Mapping):
                 try:
-                    degradation_score = float(
-                        degradation_payload.get("rolling_score", 0.0) or 0.0
-                    )
+                    degradation_score = float(degradation_payload.get("rolling_score", 0.0) or 0.0)
                 except (TypeError, ValueError):
                     degradation_score = 0.0
             else:
@@ -7688,15 +7633,9 @@ class AutoTrader:
         total_score = sum(combined_scores.values())
         if total_score <= 0.0:
             count = len(snapshots)
-            allocations = {
-                key: 1.0 / count
-                for key in snapshots
-            } if count else {}
+            allocations = {key: 1.0 / count for key in snapshots} if count else {}
         else:
-            allocations = {
-                key: value / total_score
-                for key, value in combined_scores.items()
-            }
+            allocations = {key: value / total_score for key, value in combined_scores.items()}
 
         for key, allocation in allocations.items():
             snapshots[key]["allocation"] = allocation
@@ -7772,11 +7711,7 @@ class AutoTrader:
             snapshot = dict(snapshot)
 
         degradation_raw = snapshot.get("degradation") if isinstance(snapshot, Mapping) else None
-        degradation_payload = (
-            dict(degradation_raw)
-            if isinstance(degradation_raw, Mapping)
-            else {}
-        )
+        degradation_payload = dict(degradation_raw) if isinstance(degradation_raw, Mapping) else {}
 
         score = 0.0
         for key in ("rolling_score", "last_score", "max_score"):
@@ -7820,9 +7755,7 @@ class AutoTrader:
 
         degradation_score, degradation_payload = self._resolve_signal_quality_degradation()
         degradation_cfg = (
-            guardrails.get("signal_quality_degradation")
-            if isinstance(guardrails, Mapping)
-            else {}
+            guardrails.get("signal_quality_degradation") if isinstance(guardrails, Mapping) else {}
         )
         if isinstance(degradation_cfg, Mapping):
             degrade_threshold = _coerce_float(degradation_cfg.get("rolling_score"), 0.6)
@@ -7831,7 +7764,9 @@ class AutoTrader:
                 degradation_cfg.get("release"),
                 min(0.5, max(0.0, degrade_threshold * 0.5)),
             )
-            degrade_max_leverage = max(0.0, _coerce_float(degradation_cfg.get("max_leverage"), 0.35))
+            degrade_max_leverage = max(
+                0.0, _coerce_float(degradation_cfg.get("max_leverage"), 0.35)
+            )
         else:
             degrade_threshold = 0.6
             degrade_kill = 0.85
@@ -7846,13 +7781,10 @@ class AutoTrader:
 
         if degradation_hold:
             label = "exchange degradation"
-            comparator_threshold = (
-                degrade_threshold if degradation_triggered else degrade_release
-            )
+            comparator_threshold = degrade_threshold if degradation_triggered else degrade_release
             comparator = ">=" if degradation_triggered else ">"
             reason = (
-                f"{label} {comparator} {comparator_threshold:.3f}"
-                f" (value={degradation_score:.3f})"
+                f"{label} {comparator} {comparator_threshold:.3f} (value={degradation_score:.3f})"
             )
             reasons.append(reason)
             trigger = GuardrailTrigger(
@@ -7870,15 +7802,21 @@ class AutoTrader:
                 "rolling_score": float(degradation_score),
                 "threshold": float(comparator_threshold),
             }
-            recent = degradation_payload.get("recent") if isinstance(degradation_payload, Mapping) else None
+            recent = (
+                degradation_payload.get("recent")
+                if isinstance(degradation_payload, Mapping)
+                else None
+            )
             if isinstance(recent, Sequence) and recent:
                 latest = recent[-1]
                 if isinstance(latest, Mapping):
-                    context.update({
-                        "check": latest.get("check"),
-                        "backend": latest.get("backend"),
-                        "status": latest.get("status"),
-                    })
+                    context.update(
+                        {
+                            "check": latest.get("check"),
+                            "backend": latest.get("backend"),
+                            "status": latest.get("status"),
+                        }
+                    )
             severity = "warning" if degradation_triggered else "info"
             if degradation_score >= degrade_kill:
                 self._exchange_degradation_kill_switch = True
@@ -7905,7 +7843,10 @@ class AutoTrader:
             self._exchange_degradation_alert_active = True
             return _finalise("hold")
 
-        if getattr(self, "_exchange_degradation_alert_active", False) and degradation_score <= degrade_release:
+        if (
+            getattr(self, "_exchange_degradation_alert_active", False)
+            and degradation_score <= degrade_release
+        ):
             self._exchange_degradation_guardrail_active = False
             self._exchange_degradation_kill_switch = False
             self._exchange_degradation_alert_active = False
@@ -7923,7 +7864,9 @@ class AutoTrader:
         def _label(name: str) -> str:
             return name.replace("_", " ")
 
-        def _add_reason(name: str, comparator: str, threshold: float, value: float | None = None) -> None:
+        def _add_reason(
+            name: str, comparator: str, threshold: float, value: float | None = None
+        ) -> None:
             label = _label(name)
             message = f"{label} {comparator} {threshold:.3f}"
             if value is not None:
@@ -8026,14 +7969,10 @@ class AutoTrader:
             return None
 
         config = (
-            self._thresholds.get("auto_trader", {})
-            if isinstance(self._thresholds, Mapping)
-            else {}
+            self._thresholds.get("auto_trader", {}) if isinstance(self._thresholds, Mapping) else {}
         )
         adjust_cfg = (
-            config.get("adjust_strategy_parameters", {})
-            if isinstance(config, Mapping)
-            else {}
+            config.get("adjust_strategy_parameters", {}) if isinstance(config, Mapping) else {}
         )
         try:
             window = int(adjust_cfg.get("journal_window", 120))
@@ -8043,11 +7982,7 @@ class AutoTrader:
 
         cache = self._journal_analytics_cache
         now = time.monotonic()
-        if (
-            not force_refresh
-            and cache is not None
-            and now - cache[0] <= 15.0
-        ):
+        if not force_refresh and cache is not None and now - cache[0] <= 15.0:
             analytics = cache[1]
         else:
             try:
@@ -8073,10 +8008,7 @@ class AutoTrader:
 
         current_state = self._journal_performance_state
         current_strategy = self.current_strategy
-        if (
-            current_state == previous_state
-            and current_strategy == previous_strategy
-        ):
+        if current_state == previous_state and current_strategy == previous_strategy:
             return previous_state, previous_strategy
 
         entry = {
@@ -8115,9 +8047,7 @@ class AutoTrader:
     ) -> None:
         config = self._thresholds.get("auto_trader", {})
         adjust_cfg = (
-            config.get("adjust_strategy_parameters", {})
-            if isinstance(config, Mapping)
-            else {}
+            config.get("adjust_strategy_parameters", {}) if isinstance(config, Mapping) else {}
         )
         try:
             window = max(1, int(adjust_cfg.get("journal_window", analytics.window)))
@@ -8156,9 +8086,7 @@ class AutoTrader:
         )
         defensive_win_rate = _cfg_float("journal_defensive_win_rate", 0.48)
         recovery_win_rate = _cfg_float("journal_recovery_win_rate", 0.6)
-        recovery_drawdown = _cfg_float(
-            "journal_recovery_drawdown_pct", defensive_drawdown * 0.5
-        )
+        recovery_drawdown = _cfg_float("journal_recovery_drawdown_pct", defensive_drawdown * 0.5)
         accuracy_floor = _cfg_float("journal_accuracy_floor", 0.5)
         negative_avg_pnl = _cfg_float("journal_negative_avg_pnl", 0.0)
         negative_rolling_pnl = _cfg_float("journal_negative_rolling_pnl", 0.0)
@@ -8177,14 +8105,8 @@ class AutoTrader:
             or accuracy <= accuracy_floor
             or negative_trend
         )
-        critical = (
-            drawdown_pct >= critical_drawdown
-            or accuracy <= max(0.0, accuracy_floor * 0.75)
-        )
-        if (
-            summary is not None
-            and getattr(summary, "risk_level", None) is RiskLevel.CRITICAL
-        ):
+        critical = drawdown_pct >= critical_drawdown or accuracy <= max(0.0, accuracy_floor * 0.75)
+        if summary is not None and getattr(summary, "risk_level", None) is RiskLevel.CRITICAL:
             critical = True
 
         def _add_suffix(name: str, suffix: str) -> str:
@@ -8336,7 +8258,9 @@ class AutoTrader:
             return
         unique_guardrails: set[str] = set()
         for trigger in triggers:
-            guardrail_name = str(getattr(trigger, "name", None) or getattr(trigger, "label", "unknown"))
+            guardrail_name = str(
+                getattr(trigger, "name", None) or getattr(trigger, "label", "unknown")
+            )
             unique_guardrails.add(guardrail_name)
         if not unique_guardrails:
             unique_guardrails.add("unknown")
@@ -8380,23 +8304,16 @@ class AutoTrader:
             stability_gap = float(cooldown_cfg.get("stability_projection_gap", 0.45))
             confidence_gap = float(cooldown_cfg.get("confidence_resilience_gap", 0.6))
             severity = max(
-                summary.cooldown_score
-                * float(severity_weights.get("cooldown_score", 1.0)),
-                summary.severe_event_rate
-                * float(severity_weights.get("severe_event_rate", 0.8)),
+                summary.cooldown_score * float(severity_weights.get("cooldown_score", 1.0)),
+                summary.severe_event_rate * float(severity_weights.get("severe_event_rate", 0.8)),
                 summary.stress_index * float(severity_weights.get("stress_index", 0.7)),
-                summary.stress_projection
-                * float(severity_weights.get("stress_projection", 0.75)),
-                summary.stress_momentum
-                * float(severity_weights.get("stress_momentum", 0.7)),
-                summary.degradation_score
-                * float(severity_weights.get("degradation_score", 0.75)),
+                summary.stress_projection * float(severity_weights.get("stress_projection", 0.75)),
+                summary.stress_momentum * float(severity_weights.get("stress_momentum", 0.7)),
+                summary.degradation_score * float(severity_weights.get("degradation_score", 0.75)),
                 max(0.0, stability_gap - summary.stability_projection)
                 * float(severity_weights.get("stability_projection_gap", 0.6)),
-                summary.liquidity_gap
-                * float(severity_weights.get("liquidity_gap", 0.65)),
-                summary.liquidity_trend
-                * float(severity_weights.get("liquidity_trend", 0.6)),
+                summary.liquidity_gap * float(severity_weights.get("liquidity_gap", 0.65)),
+                summary.liquidity_trend * float(severity_weights.get("liquidity_trend", 0.6)),
                 max(0.0, confidence_gap - summary.confidence_resilience)
                 * float(severity_weights.get("confidence_resilience_gap", 0.6)),
                 summary.confidence_fragility
@@ -8409,8 +8326,7 @@ class AutoTrader:
                 * float(distribution_weights.get("distribution_pressure", 1.0)),
                 min(
                     1.0,
-                    abs(summary.skewness_bias)
-                    / float(normalisers.get("skewness_bias", 1.6)),
+                    abs(summary.skewness_bias) / float(normalisers.get("skewness_bias", 1.6)),
                 ),
                 min(
                     1.0,
@@ -8425,17 +8341,19 @@ class AutoTrader:
             )
             severity = max(
                 severity,
-                distribution_flags
-                * float(severity_weights.get("distribution_flags_weight", 0.75)),
+                distribution_flags * float(severity_weights.get("distribution_flags_weight", 0.75)),
                 max(0.0, float(cooldown_cfg.get("resilience_gap", 0.55)) - summary.resilience_score)
                 * float(severity_weights.get("resilience_gap_weight", 0.65)),
-                max(0.0, float(cooldown_cfg.get("stress_balance_gap", 0.5)) - summary.stress_balance)
+                max(
+                    0.0, float(cooldown_cfg.get("stress_balance_gap", 0.5)) - summary.stress_balance
+                )
                 * float(severity_weights.get("stress_balance_gap_weight", 0.6)),
                 summary.stress_projection * float(severity_weights.get("stress_projection", 0.7)),
                 summary.liquidity_gap * float(severity_weights.get("liquidity_gap", 0.65)),
                 summary.stress_momentum * float(severity_weights.get("stress_momentum", 0.7)),
                 summary.liquidity_trend * float(severity_weights.get("liquidity_trend", 0.6)),
-                summary.confidence_fragility * float(severity_weights.get("confidence_fragility", 0.65)),
+                summary.confidence_fragility
+                * float(severity_weights.get("confidence_fragility", 0.65)),
                 max(0.0, summary.regime_entropy - float(cooldown_cfg.get("entropy_gap", 0.65)))
                 * float(severity_weights.get("entropy_excess_weight", 0.6)),
             )
@@ -8445,8 +8363,10 @@ class AutoTrader:
                 or summary.risk_level is RiskLevel.CRITICAL
                 or severity >= float(critical_cfg.get("severity", 0.75))
                 or summary.degradation_score >= float(critical_cfg.get("degradation", 0.7))
-                or summary.stability_projection <= float(critical_cfg.get("stability_projection", 0.25))
-                or summary.distribution_pressure >= float(critical_cfg.get("distribution_pressure", 0.8))
+                or summary.stability_projection
+                <= float(critical_cfg.get("stability_projection", 0.25))
+                or summary.distribution_pressure
+                >= float(critical_cfg.get("distribution_pressure", 0.8))
                 or distribution_flags >= float(critical_cfg.get("distribution_flags", 0.85))
                 or summary.resilience_score <= float(critical_cfg.get("resilience_score", 0.25))
                 or summary.stress_balance <= float(critical_cfg.get("stress_balance", 0.25))
@@ -8455,11 +8375,14 @@ class AutoTrader:
                 or summary.liquidity_gap >= float(critical_cfg.get("liquidity_gap", 0.75))
                 or summary.stress_momentum >= float(critical_cfg.get("stress_momentum", 0.75))
                 or summary.liquidity_trend >= float(critical_cfg.get("liquidity_trend", 0.7))
-                or summary.confidence_resilience <= float(critical_cfg.get("confidence_resilience", 0.25))
-                or summary.confidence_fragility >= float(critical_cfg.get("confidence_fragility", 0.7))
+                or summary.confidence_resilience
+                <= float(critical_cfg.get("confidence_resilience", 0.25))
+                or summary.confidence_fragility
+                >= float(critical_cfg.get("confidence_fragility", 0.7))
             ):
                 duration = max(
-                    self.auto_trade_interval_s * float(critical_cfg.get("duration_multiplier", 5.0)),
+                    self.auto_trade_interval_s
+                    * float(critical_cfg.get("duration_multiplier", 5.0)),
                     float(critical_cfg.get("duration_min", 300.0)),
                 )
                 self._cooldown_until = max(self._cooldown_until, now + duration)
@@ -8468,25 +8391,40 @@ class AutoTrader:
                 severity >= float(cooldown_cfg.get("elevated", {}).get("severity", 0.55))
                 or (
                     summary.risk_level is RiskLevel.ELEVATED
-                    and summary.stress_index >= float(cooldown_cfg.get("elevated", {}).get("stress_index", 0.6))
+                    and summary.stress_index
+                    >= float(cooldown_cfg.get("elevated", {}).get("stress_index", 0.6))
                 )
-                or summary.degradation_score >= float(cooldown_cfg.get("elevated", {}).get("degradation", 0.55))
-                or summary.stability_projection <= float(cooldown_cfg.get("elevated", {}).get("stability_projection", 0.35))
-                or summary.distribution_pressure >= float(cooldown_cfg.get("elevated", {}).get("distribution_pressure", 0.6))
-                or distribution_flags >= float(cooldown_cfg.get("elevated", {}).get("distribution_flags", 0.65))
-                or summary.resilience_score <= float(cooldown_cfg.get("elevated", {}).get("resilience_score", 0.4))
-                or summary.stress_balance <= float(cooldown_cfg.get("elevated", {}).get("stress_balance", 0.4))
-                or summary.regime_entropy >= float(cooldown_cfg.get("elevated", {}).get("regime_entropy", 0.75))
-                or summary.stress_projection >= float(cooldown_cfg.get("elevated", {}).get("stress_projection", 0.6))
-                or summary.liquidity_gap >= float(cooldown_cfg.get("elevated", {}).get("liquidity_gap", 0.6))
-                or summary.stress_momentum >= float(cooldown_cfg.get("elevated", {}).get("stress_momentum", 0.6))
-                or summary.liquidity_trend >= float(cooldown_cfg.get("elevated", {}).get("liquidity_trend", 0.6))
-                or summary.confidence_resilience <= float(cooldown_cfg.get("elevated", {}).get("confidence_resilience", 0.35))
-                or summary.confidence_fragility >= float(cooldown_cfg.get("elevated", {}).get("confidence_fragility", 0.6))
+                or summary.degradation_score
+                >= float(cooldown_cfg.get("elevated", {}).get("degradation", 0.55))
+                or summary.stability_projection
+                <= float(cooldown_cfg.get("elevated", {}).get("stability_projection", 0.35))
+                or summary.distribution_pressure
+                >= float(cooldown_cfg.get("elevated", {}).get("distribution_pressure", 0.6))
+                or distribution_flags
+                >= float(cooldown_cfg.get("elevated", {}).get("distribution_flags", 0.65))
+                or summary.resilience_score
+                <= float(cooldown_cfg.get("elevated", {}).get("resilience_score", 0.4))
+                or summary.stress_balance
+                <= float(cooldown_cfg.get("elevated", {}).get("stress_balance", 0.4))
+                or summary.regime_entropy
+                >= float(cooldown_cfg.get("elevated", {}).get("regime_entropy", 0.75))
+                or summary.stress_projection
+                >= float(cooldown_cfg.get("elevated", {}).get("stress_projection", 0.6))
+                or summary.liquidity_gap
+                >= float(cooldown_cfg.get("elevated", {}).get("liquidity_gap", 0.6))
+                or summary.stress_momentum
+                >= float(cooldown_cfg.get("elevated", {}).get("stress_momentum", 0.6))
+                or summary.liquidity_trend
+                >= float(cooldown_cfg.get("elevated", {}).get("liquidity_trend", 0.6))
+                or summary.confidence_resilience
+                <= float(cooldown_cfg.get("elevated", {}).get("confidence_resilience", 0.35))
+                or summary.confidence_fragility
+                >= float(cooldown_cfg.get("elevated", {}).get("confidence_fragility", 0.6))
             ):
                 elevated_cfg = cooldown_cfg.get("elevated", {})
                 duration = max(
-                    self.auto_trade_interval_s * float(elevated_cfg.get("duration_multiplier", 3.0)),
+                    self.auto_trade_interval_s
+                    * float(elevated_cfg.get("duration_multiplier", 3.0)),
                     float(elevated_cfg.get("duration_min", 180.0)),
                 )
                 self._cooldown_until = max(self._cooldown_until, now + duration)
@@ -8494,45 +8432,75 @@ class AutoTrader:
             elif (
                 severity >= float(cooldown_cfg.get("instability", {}).get("severity", 0.45))
                 and summary.risk_level in {RiskLevel.ELEVATED, RiskLevel.WATCH}
-                or summary.degradation_score >= float(cooldown_cfg.get("instability", {}).get("degradation", 0.45))
-                or summary.distribution_pressure >= float(cooldown_cfg.get("instability", {}).get("distribution_pressure", 0.5))
-                or distribution_flags >= float(cooldown_cfg.get("instability", {}).get("distribution_flags", 0.55))
-                or summary.resilience_score <= float(cooldown_cfg.get("instability", {}).get("resilience_score", 0.45))
-                or summary.stress_balance <= float(cooldown_cfg.get("instability", {}).get("stress_balance", 0.4))
-                or summary.regime_entropy >= float(cooldown_cfg.get("instability", {}).get("regime_entropy", 0.65))
-                or summary.stress_projection >= float(cooldown_cfg.get("instability", {}).get("stress_projection", 0.5))
-                or summary.liquidity_gap >= float(cooldown_cfg.get("instability", {}).get("liquidity_gap", 0.5))
-                or summary.stress_momentum >= float(cooldown_cfg.get("instability", {}).get("stress_momentum", 0.5))
-                or summary.liquidity_trend >= float(cooldown_cfg.get("instability", {}).get("liquidity_trend", 0.5))
-                or summary.confidence_resilience <= float(cooldown_cfg.get("instability", {}).get("confidence_resilience", 0.4))
-                or summary.confidence_fragility >= float(cooldown_cfg.get("instability", {}).get("confidence_fragility", 0.5))
+                or summary.degradation_score
+                >= float(cooldown_cfg.get("instability", {}).get("degradation", 0.45))
+                or summary.distribution_pressure
+                >= float(cooldown_cfg.get("instability", {}).get("distribution_pressure", 0.5))
+                or distribution_flags
+                >= float(cooldown_cfg.get("instability", {}).get("distribution_flags", 0.55))
+                or summary.resilience_score
+                <= float(cooldown_cfg.get("instability", {}).get("resilience_score", 0.45))
+                or summary.stress_balance
+                <= float(cooldown_cfg.get("instability", {}).get("stress_balance", 0.4))
+                or summary.regime_entropy
+                >= float(cooldown_cfg.get("instability", {}).get("regime_entropy", 0.65))
+                or summary.stress_projection
+                >= float(cooldown_cfg.get("instability", {}).get("stress_projection", 0.5))
+                or summary.liquidity_gap
+                >= float(cooldown_cfg.get("instability", {}).get("liquidity_gap", 0.5))
+                or summary.stress_momentum
+                >= float(cooldown_cfg.get("instability", {}).get("stress_momentum", 0.5))
+                or summary.liquidity_trend
+                >= float(cooldown_cfg.get("instability", {}).get("liquidity_trend", 0.5))
+                or summary.confidence_resilience
+                <= float(cooldown_cfg.get("instability", {}).get("confidence_resilience", 0.4))
+                or summary.confidence_fragility
+                >= float(cooldown_cfg.get("instability", {}).get("confidence_fragility", 0.5))
             ):
                 instability_cfg = cooldown_cfg.get("instability", {})
                 duration = max(
-                    self.auto_trade_interval_s * float(instability_cfg.get("duration_multiplier", 2.0)),
+                    self.auto_trade_interval_s
+                    * float(instability_cfg.get("duration_multiplier", 2.0)),
                     float(instability_cfg.get("duration_min", 120.0)),
                 )
                 self._cooldown_until = max(self._cooldown_until, now + duration)
                 self._cooldown_reason = "instability_spike"
             elif (
-                summary.cooldown_score <= float(cooldown_cfg.get("release", {}).get("cooldown_score", 0.35))
-                and summary.recovery_potential >= float(cooldown_cfg.get("release", {}).get("recovery_potential", 0.6))
+                summary.cooldown_score
+                <= float(cooldown_cfg.get("release", {}).get("cooldown_score", 0.35))
+                and summary.recovery_potential
+                >= float(cooldown_cfg.get("release", {}).get("recovery_potential", 0.6))
                 and effective_risk <= float(cooldown_cfg.get("release", {}).get("risk", 0.55))
-                and summary.degradation_score <= float(cooldown_cfg.get("release", {}).get("degradation_score", 0.35))
-                and summary.stability_projection >= float(cooldown_cfg.get("release", {}).get("stability_projection", 0.45))
-                and summary.distribution_pressure <= float(cooldown_cfg.get("release", {}).get("distribution_pressure", 0.4))
-                and abs(summary.skewness_bias) <= float(cooldown_cfg.get("release", {}).get("skewness_bias", 0.9))
-                and summary.kurtosis_excess <= float(cooldown_cfg.get("release", {}).get("kurtosis_excess", 1.2))
-                and abs(summary.volume_imbalance) <= float(cooldown_cfg.get("release", {}).get("volume_imbalance", 0.4))
-                and summary.resilience_score >= float(cooldown_cfg.get("release", {}).get("resilience_score", 0.55))
-                and summary.stress_balance >= float(cooldown_cfg.get("release", {}).get("stress_balance", 0.5))
-                and summary.regime_entropy <= float(cooldown_cfg.get("release", {}).get("regime_entropy", 0.55))
-                and summary.liquidity_gap <= float(cooldown_cfg.get("release", {}).get("liquidity_gap", 0.4))
-                and summary.stress_projection <= float(cooldown_cfg.get("release", {}).get("stress_projection", 0.4))
-                and summary.stress_momentum <= float(cooldown_cfg.get("release", {}).get("stress_momentum", 0.4))
-                and summary.liquidity_trend <= float(cooldown_cfg.get("release", {}).get("liquidity_trend", 0.4))
-                and summary.confidence_resilience >= float(cooldown_cfg.get("release", {}).get("confidence_resilience", 0.55))
-                and summary.confidence_fragility <= float(cooldown_cfg.get("release", {}).get("confidence_fragility", 0.4))
+                and summary.degradation_score
+                <= float(cooldown_cfg.get("release", {}).get("degradation_score", 0.35))
+                and summary.stability_projection
+                >= float(cooldown_cfg.get("release", {}).get("stability_projection", 0.45))
+                and summary.distribution_pressure
+                <= float(cooldown_cfg.get("release", {}).get("distribution_pressure", 0.4))
+                and abs(summary.skewness_bias)
+                <= float(cooldown_cfg.get("release", {}).get("skewness_bias", 0.9))
+                and summary.kurtosis_excess
+                <= float(cooldown_cfg.get("release", {}).get("kurtosis_excess", 1.2))
+                and abs(summary.volume_imbalance)
+                <= float(cooldown_cfg.get("release", {}).get("volume_imbalance", 0.4))
+                and summary.resilience_score
+                >= float(cooldown_cfg.get("release", {}).get("resilience_score", 0.55))
+                and summary.stress_balance
+                >= float(cooldown_cfg.get("release", {}).get("stress_balance", 0.5))
+                and summary.regime_entropy
+                <= float(cooldown_cfg.get("release", {}).get("regime_entropy", 0.55))
+                and summary.liquidity_gap
+                <= float(cooldown_cfg.get("release", {}).get("liquidity_gap", 0.4))
+                and summary.stress_projection
+                <= float(cooldown_cfg.get("release", {}).get("stress_projection", 0.4))
+                and summary.stress_momentum
+                <= float(cooldown_cfg.get("release", {}).get("stress_momentum", 0.4))
+                and summary.liquidity_trend
+                <= float(cooldown_cfg.get("release", {}).get("liquidity_trend", 0.4))
+                and summary.confidence_resilience
+                >= float(cooldown_cfg.get("release", {}).get("confidence_resilience", 0.55))
+                and summary.confidence_fragility
+                <= float(cooldown_cfg.get("release", {}).get("confidence_fragility", 0.4))
             ):
                 self._cooldown_until = 0.0
                 self._cooldown_reason = None
@@ -8550,22 +8518,32 @@ class AutoTrader:
         if active and summary is not None:
             release_active_cfg = cooldown_cfg.get("release_active", {})
             if (
-                summary.recovery_potential >= float(release_active_cfg.get("recovery_potential", 0.7))
+                summary.recovery_potential
+                >= float(release_active_cfg.get("recovery_potential", 0.7))
                 and summary.cooldown_score <= float(release_active_cfg.get("cooldown_score", 0.4))
-                and summary.severe_event_rate <= float(release_active_cfg.get("severe_event_rate", 0.4))
+                and summary.severe_event_rate
+                <= float(release_active_cfg.get("severe_event_rate", 0.4))
                 and effective_risk <= float(release_active_cfg.get("risk", 0.55))
-                and summary.degradation_score <= float(release_active_cfg.get("degradation_score", 0.35))
-                and summary.stability_projection >= float(release_active_cfg.get("stability_projection", 0.5))
-                and summary.distribution_pressure <= float(release_active_cfg.get("distribution_pressure", 0.4))
-                and abs(summary.skewness_bias) <= float(release_active_cfg.get("skewness_bias", 0.9))
+                and summary.degradation_score
+                <= float(release_active_cfg.get("degradation_score", 0.35))
+                and summary.stability_projection
+                >= float(release_active_cfg.get("stability_projection", 0.5))
+                and summary.distribution_pressure
+                <= float(release_active_cfg.get("distribution_pressure", 0.4))
+                and abs(summary.skewness_bias)
+                <= float(release_active_cfg.get("skewness_bias", 0.9))
                 and summary.kurtosis_excess <= float(release_active_cfg.get("kurtosis_excess", 1.2))
-                and abs(summary.volume_imbalance) <= float(release_active_cfg.get("volume_imbalance", 0.4))
-                and summary.resilience_score >= float(release_active_cfg.get("resilience_score", 0.6))
+                and abs(summary.volume_imbalance)
+                <= float(release_active_cfg.get("volume_imbalance", 0.4))
+                and summary.resilience_score
+                >= float(release_active_cfg.get("resilience_score", 0.6))
                 and summary.stress_balance >= float(release_active_cfg.get("stress_balance", 0.55))
                 and summary.regime_entropy <= float(release_active_cfg.get("regime_entropy", 0.5))
                 and summary.liquidity_gap <= float(release_active_cfg.get("liquidity_gap", 0.4))
-                and summary.stress_projection <= float(release_active_cfg.get("stress_projection", 0.35))
-                and summary.confidence_resilience >= float(release_active_cfg.get("confidence_resilience", 0.6))
+                and summary.stress_projection
+                <= float(release_active_cfg.get("stress_projection", 0.35))
+                and summary.confidence_resilience
+                >= float(release_active_cfg.get("confidence_resilience", 0.6))
             ):
                 self._cooldown_until = 0.0
                 self._cooldown_reason = None
@@ -8598,10 +8576,16 @@ class AutoTrader:
         else:
             state = "risk_off" if effective_risk >= 0.75 else "ready"
 
-        if signal not in {"buy", "sell"} or state == "halted" or self.current_strategy == "capital_preservation":
+        if (
+            signal not in {"buy", "sell"}
+            or state == "halted"
+            or self.current_strategy == "capital_preservation"
+        ):
             self.current_leverage = 0.0
 
-        should_trade = signal in {"buy", "sell"} and self.current_leverage > 0 and not cooldown_active
+        should_trade = (
+            signal in {"buy", "sell"} and self.current_leverage > 0 and not cooldown_active
+        )
         reason = f"Regime {assessment.regime.value}"
         details = {
             "symbol": symbol,
@@ -8776,13 +8760,19 @@ class AutoTrader:
     ) -> None:
         if not self._enforce_work_schedule(schedule_state):
             return
-        interval = self.auto_trade_interval_s if auto_trade_interval_s is None else auto_trade_interval_s
+        interval = (
+            self.auto_trade_interval_s if auto_trade_interval_s is None else auto_trade_interval_s
+        )
         self._metric_cycle_total.inc(labels=self._base_metric_labels)
         self._process_orchestrator_recalibrations()
         runner = self._resolve_controller_runner()
         if runner is not None:
             self._execute_controller_runner_cycle(runner)
-            interval = self.auto_trade_interval_s if auto_trade_interval_s is None else auto_trade_interval_s
+            interval = (
+                self.auto_trade_interval_s
+                if auto_trade_interval_s is None
+                else auto_trade_interval_s
+            )
             self._auto_trade_stop.wait(interval)
             return
 
@@ -8956,8 +8946,7 @@ class AutoTrader:
                     effective_risk,
                     min(
                         1.0,
-                        assessment.risk_score
-                        + min(summary.volatility_ratio - 1.0, 1.0) * 0.3,
+                        assessment.risk_score + min(summary.volatility_ratio - 1.0, 1.0) * 0.3,
                     ),
                 )
             if summary.stress_index >= 0.6:
@@ -8999,8 +8988,7 @@ class AutoTrader:
                     effective_risk,
                     min(
                         1.0,
-                        assessment.risk_score
-                        + max(0.0, 0.45 - summary.stability_projection) * 0.6,
+                        assessment.risk_score + max(0.0, 0.45 - summary.stability_projection) * 0.6,
                     ),
                 )
             if summary.volume_trend_volatility >= 0.18:
@@ -9017,8 +9005,7 @@ class AutoTrader:
                     effective_risk,
                     min(
                         1.0,
-                        assessment.risk_score
-                        + min(summary.volatility_trend / 0.03, 1.0) * 0.25,
+                        assessment.risk_score + min(summary.volatility_trend / 0.03, 1.0) * 0.25,
                     ),
                 )
             if summary.drawdown_trend > 0.05:
@@ -9026,8 +9013,7 @@ class AutoTrader:
                     effective_risk,
                     min(
                         1.0,
-                        assessment.risk_score
-                        + min(summary.drawdown_trend / 0.2, 1.0) * 0.35,
+                        assessment.risk_score + min(summary.drawdown_trend / 0.2, 1.0) * 0.35,
                     ),
                 )
             if summary.distribution_pressure >= 0.55:
@@ -9035,8 +9021,7 @@ class AutoTrader:
                     effective_risk,
                     min(
                         1.0,
-                        assessment.risk_score
-                        + min(summary.distribution_pressure, 1.0) * 0.4,
+                        assessment.risk_score + min(summary.distribution_pressure, 1.0) * 0.4,
                     ),
                 )
             if summary.liquidity_gap >= 0.55:
@@ -9044,8 +9029,7 @@ class AutoTrader:
                     effective_risk,
                     min(
                         1.0,
-                        assessment.risk_score
-                        + min(summary.liquidity_gap, 1.0) * 0.35,
+                        assessment.risk_score + min(summary.liquidity_gap, 1.0) * 0.35,
                     ),
                 )
             if summary.stress_projection >= 0.5:
@@ -9053,8 +9037,7 @@ class AutoTrader:
                     effective_risk,
                     min(
                         1.0,
-                        assessment.risk_score
-                        + min(summary.stress_projection, 1.0) * 0.4,
+                        assessment.risk_score + min(summary.stress_projection, 1.0) * 0.4,
                     ),
                 )
             if summary.stress_momentum >= 0.55:
@@ -9062,8 +9045,7 @@ class AutoTrader:
                     effective_risk,
                     min(
                         1.0,
-                        assessment.risk_score
-                        + min(summary.stress_momentum, 1.0) * 0.38,
+                        assessment.risk_score + min(summary.stress_momentum, 1.0) * 0.38,
                     ),
                 )
             if summary.liquidity_trend >= 0.6:
@@ -9071,8 +9053,7 @@ class AutoTrader:
                     effective_risk,
                     min(
                         1.0,
-                        assessment.risk_score
-                        + min(summary.liquidity_trend, 1.0) * 0.35,
+                        assessment.risk_score + min(summary.liquidity_trend, 1.0) * 0.35,
                     ),
                 )
             if summary.confidence_fragility >= 0.5:
@@ -9080,8 +9061,7 @@ class AutoTrader:
                     effective_risk,
                     min(
                         1.0,
-                        assessment.risk_score
-                        + min(summary.confidence_fragility, 1.0) * 0.35,
+                        assessment.risk_score + min(summary.confidence_fragility, 1.0) * 0.35,
                     ),
                 )
             if summary.resilience_score <= 0.35:
@@ -9108,8 +9088,7 @@ class AutoTrader:
                     effective_risk,
                     min(
                         1.0,
-                        assessment.risk_score
-                        + min((0.4 - summary.stress_balance) * 0.65, 0.22),
+                        assessment.risk_score + min((0.4 - summary.stress_balance) * 0.65, 0.22),
                     ),
                 )
             if summary.regime_entropy >= 0.7:
@@ -9117,8 +9096,7 @@ class AutoTrader:
                     effective_risk,
                     min(
                         1.0,
-                        assessment.risk_score
-                        + min(summary.regime_entropy * 0.35, 0.25),
+                        assessment.risk_score + min(summary.regime_entropy * 0.35, 0.25),
                     ),
                 )
             elif (
@@ -9158,8 +9136,7 @@ class AutoTrader:
                     effective_risk,
                     min(
                         1.0,
-                        assessment.risk_score
-                        + min(abs(summary.skewness_bias) / 1.8, 1.0) * 0.25,
+                        assessment.risk_score + min(abs(summary.skewness_bias) / 1.8, 1.0) * 0.25,
                     ),
                 )
             if summary.kurtosis_excess >= 1.5:
@@ -9167,14 +9144,10 @@ class AutoTrader:
                     effective_risk,
                     min(
                         1.0,
-                        assessment.risk_score
-                        + min(summary.kurtosis_excess / 3.5, 1.0) * 0.25,
+                        assessment.risk_score + min(summary.kurtosis_excess / 3.5, 1.0) * 0.25,
                     ),
                 )
-            if (
-                abs(summary.volume_imbalance) >= 0.5
-                and summary.liquidity_pressure >= 0.45
-            ):
+            if abs(summary.volume_imbalance) >= 0.5 and summary.liquidity_pressure >= 0.45:
                 effective_risk = max(
                     effective_risk,
                     min(
@@ -9238,20 +9211,21 @@ class AutoTrader:
                 confidence_penalty += min(abs(summary.skewness_bias) / 2.0, 0.18)
             if summary.kurtosis_excess >= 1.4:
                 confidence_penalty += min(summary.kurtosis_excess / 3.2, 0.18)
-            if (
-                abs(summary.volume_imbalance) >= 0.45
-                and summary.liquidity_pressure >= 0.45
-            ):
+            if abs(summary.volume_imbalance) >= 0.45 and summary.liquidity_pressure >= 0.45:
                 confidence_penalty += min(abs(summary.volume_imbalance) / 0.7, 0.15)
         if confidence_penalty:
-            effective_risk = max(effective_risk, min(1.0, assessment.risk_score + confidence_penalty))
+            effective_risk = max(
+                effective_risk, min(1.0, assessment.risk_score + confidence_penalty)
+            )
 
         self._update_risk_profile_from_assessment(assessment, summary)
         cooldown_active, cooldown_remaining = self._update_cooldown(
             summary=summary,
             effective_risk=effective_risk,
         )
-        self._adjust_strategy_parameters(assessment, aggregated_risk=effective_risk, summary=summary)
+        self._adjust_strategy_parameters(
+            assessment, aggregated_risk=effective_risk, summary=summary
+        )
         self._apply_active_mode_overrides()
         self._apply_orchestrator_strategy_selection(assessment)
         signal = self._map_regime_to_signal(assessment, last_return, summary=summary)
@@ -9589,9 +9563,7 @@ class AutoTrader:
                 metadata={"reason": "risk_rejected"},
             )
 
-    def _snapshot_decision_metrics(
-        self, labels: Mapping[str, str]
-    ) -> dict[str, float]:
+    def _snapshot_decision_metrics(self, labels: Mapping[str, str]) -> dict[str, float]:
         guardrail_total = 0.0
         guardrail_values = getattr(self._metric_guardrail_blocks_total, "_values", {})
         for label_tuple, value in getattr(guardrail_values, "items", lambda: [])():
@@ -9600,9 +9572,7 @@ class AutoTrader:
                 guardrail_total += float(value)
         return {
             "cycles_total": float(self._metric_cycle_total.value(labels=labels)),
-            "strategy_switch_total": float(
-                self._metric_strategy_switch_total.value(labels=labels)
-            ),
+            "strategy_switch_total": float(self._metric_strategy_switch_total.value(labels=labels)),
             "guardrail_blocks_total": guardrail_total,
         }
 
@@ -9712,9 +9682,7 @@ class AutoTrader:
         return payload
 
     @staticmethod
-    def _normalize_decision_journal_entry(
-        entry: Mapping[str, Any]
-    ) -> DecisionJournalEntry:
+    def _normalize_decision_journal_entry(entry: Mapping[str, Any]) -> DecisionJournalEntry:
         return normalize_decision_journal_entry(entry)
 
     def run_cycle(self, request: DecisionCycleRequest | None = None) -> DecisionCycleReport:
@@ -9741,9 +9709,7 @@ class AutoTrader:
     ) -> DecisionCycleReport:
         """Execute a single decision cycle and return a structured report."""
 
-        metadata_revision_before = getattr(
-            self, "_decision_cycle_metadata_revision", 0
-        )
+        metadata_revision_before = getattr(self, "_decision_cycle_metadata_revision", 0)
         decision_revision_before = getattr(self, "_last_decision_revision", 0)
         label_snapshot = self.metric_labels
         with self._profile_section("cycle") as profiler:
@@ -9881,9 +9847,7 @@ class AutoTrader:
             if interval > 0:
                 time.sleep(interval)
 
-    def export_decision_journal(
-        self, *, limit: int | None = None
-    ) -> list[DecisionJournalEntry]:
+    def export_decision_journal(self, *, limit: int | None = None) -> list[DecisionJournalEntry]:
         """Expose a normalized snapshot of the decision journal.
 
         The export avoids accessing private journal internals and provides a
@@ -9937,9 +9901,7 @@ class AutoTrader:
             return result
         return evaluator(decision)
 
-    def _apply_risk_evaluation_limit_locked(
-        self, limit: int | None
-    ) -> int:
+    def _apply_risk_evaluation_limit_locked(self, limit: int | None) -> int:
         history = self._risk_evaluations
         if limit is None or limit < 0 or not history:
             return 0
@@ -9953,9 +9915,7 @@ class AutoTrader:
             return overflow
         return 0
 
-    def _prune_risk_evaluations_locked(
-        self, *, reference_time: float | None = None
-    ) -> int:
+    def _prune_risk_evaluations_locked(self, *, reference_time: float | None = None) -> int:
         history = self._risk_evaluations
         ttl = self._risk_evaluations_ttl_s
         if ttl is None or ttl <= 0 or not history:
@@ -10064,9 +10024,7 @@ class AutoTrader:
             except Exception:  # pragma: no cover - listeners should not break trading
                 LOGGER.debug("Risk evaluation listener failed", exc_info=True)
 
-    def add_risk_evaluation_listener(
-        self, listener: Callable[[Mapping[str, Any]], None]
-    ) -> None:
+    def add_risk_evaluation_listener(self, listener: Callable[[Mapping[str, Any]], None]) -> None:
         """Rejestruje obserwatora nowych wpisów historii ocen ryzyka."""
 
         if not callable(listener):
@@ -10094,8 +10052,7 @@ class AutoTrader:
     ) -> None:
         normalized_value = normalized if normalized is not None else approved
         active_decision_id = (
-            self._normalize_decision_id(self._active_decision_id)
-            or self._generate_decision_id()
+            self._normalize_decision_id(self._active_decision_id) or self._generate_decision_id()
         )
         entry: dict[str, Any] = {
             "timestamp": time.time(),
@@ -10234,9 +10191,30 @@ class AutoTrader:
             return None
         if isinstance(candidate, str):
             value = candidate.strip().lower()
-            if value in {"true", "yes", "y", "allow", "allowed", "approve", "approved", "accept", "accepted", "ok"}:
+            if value in {
+                "true",
+                "yes",
+                "y",
+                "allow",
+                "allowed",
+                "approve",
+                "approved",
+                "accept",
+                "accepted",
+                "ok",
+            }:
                 return True
-            if value in {"false", "no", "n", "deny", "denied", "block", "blocked", "reject", "rejected"}:
+            if value in {
+                "false",
+                "no",
+                "n",
+                "deny",
+                "denied",
+                "block",
+                "blocked",
+                "reject",
+                "rejected",
+            }:
                 return False
             return None
         return None
@@ -10265,7 +10243,6 @@ class AutoTrader:
         else:
             summary["repr"] = repr(response)
         return summary
-
 
     def get_grouped_decision_audit_entries(
         self,
@@ -10339,9 +10316,7 @@ class AutoTrader:
             include_metadata=include_metadata,
         )
 
-    def add_decision_audit_listener(
-        self, listener: Callable[[DecisionAuditRecord], None]
-    ) -> bool:
+    def add_decision_audit_listener(self, listener: Callable[[DecisionAuditRecord], None]) -> bool:
         log = getattr(self, "_decision_audit_log", None)
         if log is None:
             return False
@@ -10463,7 +10438,6 @@ class AutoTrader:
             timezone_hint=timezone_hint,
         )
 
-
     def trim_decision_audit_log(
         self,
         *,
@@ -10492,6 +10466,7 @@ class AutoTrader:
     ) -> Mapping[str, object]:
         log = getattr(self, "_decision_audit_log", None)
         if log is None:
+
             def _normalize_filter(
                 value: str | Iterable[object] | None,
             ) -> tuple[str, ...] | None:
@@ -10548,14 +10523,6 @@ class AutoTrader:
         if log is None:
             return 0
         return log.load(payload, merge=merge, notify_listeners=notify_listeners)
-
-
-
-
-
-
-
-
 
     def _collect_guardrail_events(
         self,
@@ -10704,9 +10671,7 @@ class AutoTrader:
             if name_raw is not None:
                 export_entry["name"] = str(name_raw)
             export_entry["label"] = label_raw if label_raw is not None else None
-            export_entry["comparator"] = (
-                comparator_raw if comparator_raw is not None else None
-            )
+            export_entry["comparator"] = comparator_raw if comparator_raw is not None else None
             if threshold_raw is not None:
                 export_entry["threshold"] = threshold_raw
             if unit_raw is not None:
@@ -10751,15 +10716,9 @@ class AutoTrader:
                 else _MISSING_GUARDRAIL_UNIT
             )
             normalized_threshold = (
-                self._coerce_float(threshold_raw)
-                if threshold_raw is not None
-                else None
+                self._coerce_float(threshold_raw) if threshold_raw is not None else None
             )
-            normalized_value = (
-                self._coerce_float(value_raw)
-                if value_raw is not None
-                else None
-            )
+            normalized_value = self._coerce_float(value_raw) if value_raw is not None else None
             trigger_tokens.append(
                 {
                     "name": name_token,
@@ -10791,15 +10750,9 @@ class AutoTrader:
                 if reason is not None and str(reason).strip()
             )
             triggers_tuple = tuple(
-                dict(trigger)
-                for trigger in cached_triggers
-                if isinstance(trigger, Mapping)
+                dict(trigger) for trigger in cached_triggers if isinstance(trigger, Mapping)
             )
-            tokens_list = [
-                dict(token)
-                for token in cached_tokens
-                if isinstance(token, Mapping)
-            ]
+            tokens_list = [dict(token) for token in cached_tokens if isinstance(token, Mapping)]
             if reasons_tuple or triggers_tuple:
                 return reasons_tuple, triggers_tuple, tokens_list
 
@@ -10841,19 +10794,14 @@ class AutoTrader:
         for trigger in trigger_tokens:
             name_token = str(trigger.get("name", _UNKNOWN_SERVICE))
             label_token = str(trigger.get("label", _MISSING_GUARDRAIL_LABEL))
-            comparator_token = str(
-                trigger.get("comparator", _MISSING_GUARDRAIL_COMPARATOR)
-            )
+            comparator_token = str(trigger.get("comparator", _MISSING_GUARDRAIL_COMPARATOR))
             unit_token = str(trigger.get("unit", _MISSING_GUARDRAIL_UNIT))
             threshold_value = trigger.get("threshold")
             value_value = trigger.get("value")
 
             if trigger_filter is not None and name_token not in trigger_filter:
                 continue
-            if (
-                trigger_label_filter is not None
-                and label_token not in trigger_label_filter
-            ):
+            if trigger_label_filter is not None and label_token not in trigger_label_filter:
                 continue
             if (
                 trigger_comparator_filter is not None
@@ -10871,20 +10819,12 @@ class AutoTrader:
                 elif threshold_value not in value_set:
                     continue
 
-            if (
-                trigger_threshold_min is not None
-                and (
-                    threshold_value is None
-                    or threshold_value < trigger_threshold_min
-                )
+            if trigger_threshold_min is not None and (
+                threshold_value is None or threshold_value < trigger_threshold_min
             ):
                 continue
-            if (
-                trigger_threshold_max is not None
-                and (
-                    threshold_value is None
-                    or threshold_value > trigger_threshold_max
-                )
+            if trigger_threshold_max is not None and (
+                threshold_value is None or threshold_value > trigger_threshold_max
             ):
                 continue
 
@@ -10896,14 +10836,12 @@ class AutoTrader:
                 elif value_value not in value_set:
                     continue
 
-            if (
-                trigger_value_min is not None
-                and (value_value is None or value_value < trigger_value_min)
+            if trigger_value_min is not None and (
+                value_value is None or value_value < trigger_value_min
             ):
                 continue
-            if (
-                trigger_value_max is not None
-                and (value_value is None or value_value > trigger_value_max)
+            if trigger_value_max is not None and (
+                value_value is None or value_value > trigger_value_max
             ):
                 continue
 
@@ -10946,9 +10884,7 @@ class AutoTrader:
 
             decision_id_value = entry.get("decision_id")
             decision_id_token = (
-                str(decision_id_value)
-                if decision_id_value is not None
-                else _MISSING_DECISION_ID
+                str(decision_id_value) if decision_id_value is not None else _MISSING_DECISION_ID
             )
             if decision_id_filter is not None and decision_id_token not in decision_id_filter:
                 continue
@@ -10978,8 +10914,6 @@ class AutoTrader:
             filtered.append(copy.deepcopy(dict(entry)))
 
         return filtered
-
-
 
     def _resolve_risk_evaluation_filters(
         self,
@@ -11076,9 +11010,7 @@ class AutoTrader:
         )
         return filtered_records, trimmed_by_ttl, ttl_snapshot, history_size
 
-    def _normalize_history_export_limit(
-        self, limit: Any
-    ) -> int | None:
+    def _normalize_history_export_limit(self, limit: Any) -> int | None:
         if limit is None or limit is _NO_FILTER:
             return None
         if isinstance(limit, bool):
@@ -11169,29 +11101,19 @@ class AutoTrader:
             trigger_unit,
             missing_token=_MISSING_GUARDRAIL_UNIT,
         )
-        trigger_threshold_filter = self._prepare_guardrail_numeric_filter(
-            trigger_threshold
-        )
+        trigger_threshold_filter = self._prepare_guardrail_numeric_filter(trigger_threshold)
         trigger_value_filter = self._prepare_guardrail_numeric_filter(trigger_value)
         trigger_threshold_min_value = (
-            self._coerce_float(trigger_threshold_min)
-            if trigger_threshold_min is not None
-            else None
+            self._coerce_float(trigger_threshold_min) if trigger_threshold_min is not None else None
         )
         trigger_threshold_max_value = (
-            self._coerce_float(trigger_threshold_max)
-            if trigger_threshold_max is not None
-            else None
+            self._coerce_float(trigger_threshold_max) if trigger_threshold_max is not None else None
         )
         trigger_value_min_value = (
-            self._coerce_float(trigger_value_min)
-            if trigger_value_min is not None
-            else None
+            self._coerce_float(trigger_value_min) if trigger_value_min is not None else None
         )
         trigger_value_max_value = (
-            self._coerce_float(trigger_value_max)
-            if trigger_value_max is not None
-            else None
+            self._coerce_float(trigger_value_max) if trigger_value_max is not None else None
         )
         since_ts = self._normalize_time_bound(since)
         until_ts = self._normalize_time_bound(until)
@@ -11389,7 +11311,6 @@ class AutoTrader:
 
         return [copy.deepcopy(record) for record in ordered_records]
 
-
     def get_decision_audit_entries(
         self,
         limit: int = 20,
@@ -11409,8 +11330,6 @@ class AutoTrader:
         log = getattr(self, "_decision_audit_log", None)
         if log is not None:
             log.clear()
-
-
 
     def summarize_risk_evaluations(
         self,
@@ -11753,9 +11672,7 @@ class AutoTrader:
             for trigger_entry in triggers:
                 trigger_name_raw = trigger_entry.get("name")
                 trigger_name = (
-                    str(trigger_name_raw)
-                    if trigger_name_raw is not None
-                    else "<unknown>"
+                    str(trigger_name_raw) if trigger_name_raw is not None else "<unknown>"
                 )
                 trigger_bucket = trigger_buckets.setdefault(
                     trigger_name,
@@ -11789,9 +11706,7 @@ class AutoTrader:
                 threshold_float = AutoTrader._coerce_float(threshold_value)
                 if trigger_bucket["threshold"] is None:
                     trigger_bucket["threshold"] = (
-                        threshold_float
-                        if threshold_float is not None
-                        else threshold_value
+                        threshold_float if threshold_float is not None else threshold_value
                     )
 
                 value_raw = trigger_entry.get("value")
@@ -11928,16 +11843,8 @@ class AutoTrader:
             mode_raw = decision_payload.get("mode")
 
             state_key = str(state_raw) if state_raw is not None else _MISSING_DECISION_STATE
-            reason_key = (
-                _MISSING_DECISION_REASON
-                if reason_raw is None
-                else str(reason_raw)
-            )
-            mode_key = (
-                _MISSING_DECISION_MODE
-                if mode_raw is None
-                else str(mode_raw)
-            )
+            reason_key = _MISSING_DECISION_REASON if reason_raw is None else str(reason_raw)
+            mode_key = _MISSING_DECISION_MODE if mode_raw is None else str(mode_raw)
 
             normalized_value = entry.get("normalized")
             if normalized_value is True:
@@ -11960,9 +11867,7 @@ class AutoTrader:
             service_name = str(service_key)
             services_counter[service_name] += 1
 
-            state_bucket = states_summary.setdefault(
-                state_key, self._create_decision_bucket()
-            )
+            state_bucket = states_summary.setdefault(state_key, self._create_decision_bucket())
             self._update_decision_bucket(
                 state_bucket,
                 normalized_value=normalized_state,
@@ -11971,9 +11876,7 @@ class AutoTrader:
                 service_key=service_name,
             )
 
-            reason_bucket = reasons_summary.setdefault(
-                reason_key, self._create_decision_bucket()
-            )
+            reason_bucket = reasons_summary.setdefault(reason_key, self._create_decision_bucket())
             self._update_decision_bucket(
                 reason_bucket,
                 normalized_value=normalized_state,
@@ -11982,9 +11885,7 @@ class AutoTrader:
                 service_key=service_name,
             )
 
-            mode_bucket = modes_summary.setdefault(
-                mode_key, self._create_decision_bucket()
-            )
+            mode_bucket = modes_summary.setdefault(mode_key, self._create_decision_bucket())
             self._update_decision_bucket(
                 mode_bucket,
                 normalized_value=normalized_state,
@@ -12046,8 +11947,6 @@ class AutoTrader:
         summary["last_timestamp"] = filtered_records[-1].get("timestamp")
 
         return summary
-
-
 
     def _build_risk_decision_timeline(
         self,
@@ -12237,11 +12136,7 @@ class AutoTrader:
 
             if include_decision_dimensions:
                 decision_payload = entry.get("decision")
-                decision_map = (
-                    decision_payload
-                    if isinstance(decision_payload, Mapping)
-                    else {}
-                )
+                decision_map = decision_payload if isinstance(decision_payload, Mapping) else {}
                 state_value = self._normalize_decision_dimension_value(
                     decision_map.get("state"),
                     missing_token=_MISSING_DECISION_STATE,
@@ -12320,12 +12215,8 @@ class AutoTrader:
         summary["last_timestamp"] = last_ts
         summary.update(summary_totals)
         total_count = summary.get("total", 0) or 0
-        summary["approval_rate"] = (
-            summary_totals["approved"] / total_count if total_count else 0.0
-        )
-        summary["error_rate"] = (
-            summary_totals["errors"] / total_count if total_count else 0.0
-        )
+        summary["approval_rate"] = summary_totals["approved"] / total_count if total_count else 0.0
+        summary["error_rate"] = summary_totals["errors"] / total_count if total_count else 0.0
 
         if total_services is not None:
             summary["services"] = {
@@ -12456,7 +12347,6 @@ class AutoTrader:
             since_ts=since_ts,
             until_ts=until_ts,
         )
-
 
     def risk_decision_timeline_to_records(
         self,
@@ -12701,9 +12591,7 @@ class AutoTrader:
             record["error"] = copy.deepcopy(entry.get("error"))
         if include_guardrail_dimensions:
             normalized_reasons = tuple(reasons)
-            normalized_triggers = tuple(
-                copy.deepcopy(trigger) for trigger in triggers
-            )
+            normalized_triggers = tuple(copy.deepcopy(trigger) for trigger in triggers)
             record["guardrail_reasons"] = normalized_reasons
             record["guardrail_triggers"] = normalized_triggers
             record["guardrail_reason_count"] = len(reasons)
@@ -12938,7 +12826,6 @@ class AutoTrader:
             return pd.DataFrame()
         return pd.DataFrame.from_records(records)
 
-
     def export_guardrail_events(
         self,
         *,
@@ -13138,14 +13025,10 @@ class AutoTrader:
             ),
             "trigger_value": _serialize_numeric_filter(trigger_value_filter),
             "trigger_value_min": (
-                float(trigger_value_min_value)
-                if trigger_value_min_value is not None
-                else None
+                float(trigger_value_min_value) if trigger_value_min_value is not None else None
             ),
             "trigger_value_max": (
-                float(trigger_value_max_value)
-                if trigger_value_max_value is not None
-                else None
+                float(trigger_value_max_value) if trigger_value_max_value is not None else None
             ),
             "since": _serialize_bound(since_ts),
             "until": _serialize_bound(until_ts),
@@ -13439,9 +13322,7 @@ class AutoTrader:
         previous_timestamp = first_timestamp
 
         timeline: list[Mapping[str, Any]] = []
-        for index, (entry, reasons, triggers, trigger_tokens) in enumerate(
-            guardrail_records
-        ):
+        for index, (entry, reasons, triggers, trigger_tokens) in enumerate(guardrail_records):
             record = self._build_guardrail_event_record(
                 entry,
                 reasons,
@@ -13763,14 +13644,10 @@ class AutoTrader:
             return summary
 
         total_threshold_stats = (
-            self._init_guardrail_numeric_stats()
-            if include_guardrail_dimensions
-            else None
+            self._init_guardrail_numeric_stats() if include_guardrail_dimensions else None
         )
         total_value_stats = (
-            self._init_guardrail_numeric_stats()
-            if include_guardrail_dimensions
-            else None
+            self._init_guardrail_numeric_stats() if include_guardrail_dimensions else None
         )
 
         def build_bucket() -> dict[str, Any]:
@@ -13788,12 +13665,8 @@ class AutoTrader:
                 bucket["guardrail_trigger_labels"] = Counter()
                 bucket["guardrail_trigger_comparators"] = Counter()
                 bucket["guardrail_trigger_units"] = Counter()
-                bucket["guardrail_trigger_thresholds"] = (
-                    self._init_guardrail_numeric_stats()
-                )
-                bucket["guardrail_trigger_values"] = (
-                    self._init_guardrail_numeric_stats()
-                )
+                bucket["guardrail_trigger_thresholds"] = self._init_guardrail_numeric_stats()
+                bucket["guardrail_trigger_values"] = self._init_guardrail_numeric_stats()
             if include_decision_dimensions:
                 bucket["decision_states"] = Counter()
                 bucket["decision_reasons"] = Counter()
@@ -13835,9 +13708,7 @@ class AutoTrader:
             approval_state = self._normalize_approval_flag(entry.get("approved"))
             bucket_payload.setdefault("approval_states", Counter())[approval_state] += 1
             total_approval_states[approval_state] += 1
-            normalization_state = self._normalize_normalization_flag(
-                entry.get("normalized")
-            )
+            normalization_state = self._normalize_normalization_flag(entry.get("normalized"))
             bucket_payload.setdefault("normalization_states", Counter())[normalization_state] += 1
             total_normalization_states[normalization_state] += 1
 
@@ -13877,49 +13748,33 @@ class AutoTrader:
                     service_totals["guardrail_events"] += 1
 
             if include_guardrail_dimensions:
-                reasons_counter = bucket_payload.setdefault(
-                    "guardrail_reasons", Counter()
-                )
+                reasons_counter = bucket_payload.setdefault("guardrail_reasons", Counter())
                 for reason_value in reasons:
                     normalized_reason = str(reason_value)
                     reasons_counter[normalized_reason] += 1
                     if total_guardrail_reasons is not None:
                         total_guardrail_reasons[normalized_reason] += 1
 
-                triggers_counter = bucket_payload.setdefault(
-                    "guardrail_triggers", Counter()
-                )
+                triggers_counter = bucket_payload.setdefault("guardrail_triggers", Counter())
                 for trigger_entry in triggers:
                     trigger_name_raw = trigger_entry.get("name")
                     trigger_name = (
-                        str(trigger_name_raw)
-                        if trigger_name_raw is not None
-                        else "<unknown>"
+                        str(trigger_name_raw) if trigger_name_raw is not None else "<unknown>"
                     )
                     triggers_counter[trigger_name] += 1
                     if total_guardrail_triggers is not None:
                         total_guardrail_triggers[trigger_name] += 1
 
-                labels_counter = bucket_payload.setdefault(
-                    "guardrail_trigger_labels", Counter()
-                )
+                labels_counter = bucket_payload.setdefault("guardrail_trigger_labels", Counter())
                 comparators_counter = bucket_payload.setdefault(
                     "guardrail_trigger_comparators", Counter()
                 )
-                units_counter = bucket_payload.setdefault(
-                    "guardrail_trigger_units", Counter()
-                )
-                threshold_stats = bucket_payload.get(
-                    "guardrail_trigger_thresholds"
-                )
+                units_counter = bucket_payload.setdefault("guardrail_trigger_units", Counter())
+                threshold_stats = bucket_payload.get("guardrail_trigger_thresholds")
                 value_stats = bucket_payload.get("guardrail_trigger_values")
                 for trigger_entry in triggers:
                     label_raw = trigger_entry.get("label")
-                    label_value = (
-                        _MISSING_GUARDRAIL_LABEL
-                        if label_raw is None
-                        else str(label_raw)
-                    )
+                    label_value = _MISSING_GUARDRAIL_LABEL if label_raw is None else str(label_raw)
                     labels_counter[label_value] += 1
                     if total_guardrail_trigger_labels is not None:
                         total_guardrail_trigger_labels[label_value] += 1
@@ -13932,16 +13787,10 @@ class AutoTrader:
                     )
                     comparators_counter[comparator_value] += 1
                     if total_guardrail_trigger_comparators is not None:
-                        total_guardrail_trigger_comparators[
-                            comparator_value
-                        ] += 1
+                        total_guardrail_trigger_comparators[comparator_value] += 1
 
                     unit_raw = trigger_entry.get("unit")
-                    unit_value = (
-                        _MISSING_GUARDRAIL_UNIT
-                        if unit_raw is None
-                        else str(unit_raw)
-                    )
+                    unit_value = _MISSING_GUARDRAIL_UNIT if unit_raw is None else str(unit_raw)
                     units_counter[unit_value] += 1
                     if total_guardrail_trigger_units is not None:
                         total_guardrail_trigger_units[unit_value] += 1
@@ -13969,11 +13818,7 @@ class AutoTrader:
 
             if include_decision_dimensions:
                 decision_payload = entry.get("decision")
-                decision_map = (
-                    decision_payload
-                    if isinstance(decision_payload, Mapping)
-                    else {}
-                )
+                decision_map = decision_payload if isinstance(decision_payload, Mapping) else {}
                 state_value = self._normalize_decision_dimension_value(
                     decision_map.get("state"),
                     missing_token=_MISSING_DECISION_STATE,
@@ -13987,15 +13832,9 @@ class AutoTrader:
                     missing_token=_MISSING_DECISION_MODE,
                 )
 
-                states_counter = bucket_payload.setdefault(
-                    "decision_states", Counter()
-                )
-                reasons_counter = bucket_payload.setdefault(
-                    "decision_reasons", Counter()
-                )
-                modes_counter = bucket_payload.setdefault(
-                    "decision_modes", Counter()
-                )
+                states_counter = bucket_payload.setdefault("decision_states", Counter())
+                reasons_counter = bucket_payload.setdefault("decision_reasons", Counter())
+                modes_counter = bucket_payload.setdefault("decision_modes", Counter())
 
                 states_counter[state_value] += 1
                 if total_decision_states is not None:
@@ -14062,19 +13901,13 @@ class AutoTrader:
                 bucket_summary["guardrail_triggers"] = self._finalize_dimension_counter(
                     bucket_payload.get("guardrail_triggers")
                 )
-                bucket_summary[
-                    "guardrail_trigger_labels"
-                ] = self._finalize_dimension_counter(
+                bucket_summary["guardrail_trigger_labels"] = self._finalize_dimension_counter(
                     bucket_payload.get("guardrail_trigger_labels")
                 )
-                bucket_summary[
-                    "guardrail_trigger_comparators"
-                ] = self._finalize_dimension_counter(
+                bucket_summary["guardrail_trigger_comparators"] = self._finalize_dimension_counter(
                     bucket_payload.get("guardrail_trigger_comparators")
                 )
-                bucket_summary[
-                    "guardrail_trigger_units"
-                ] = self._finalize_dimension_counter(
+                bucket_summary["guardrail_trigger_units"] = self._finalize_dimension_counter(
                     bucket_payload.get("guardrail_trigger_units")
                 )
                 bucket_summary["guardrail_trigger_thresholds"] = (
@@ -14082,10 +13915,8 @@ class AutoTrader:
                         bucket_payload.get("guardrail_trigger_thresholds")
                     )
                 )
-                bucket_summary["guardrail_trigger_values"] = (
-                    self._finalize_guardrail_numeric_stats(
-                        bucket_payload.get("guardrail_trigger_values")
-                    )
+                bucket_summary["guardrail_trigger_values"] = self._finalize_guardrail_numeric_stats(
+                    bucket_payload.get("guardrail_trigger_values")
                 )
 
             if include_decision_dimensions:
@@ -14107,13 +13938,9 @@ class AutoTrader:
         total_guardrail_events = summary.get("total", 0) or 0
         total_evaluations = summary.get("evaluations", 0) or 0
         summary["guardrail_rate"] = (
-            total_guardrail_events / total_evaluations
-            if total_evaluations
-            else 0.0
+            total_guardrail_events / total_evaluations if total_evaluations else 0.0
         )
-        summary["approval_states"] = self._finalize_dimension_counter(
-            total_approval_states
-        )
+        summary["approval_states"] = self._finalize_dimension_counter(total_approval_states)
         summary["normalization_states"] = self._finalize_dimension_counter(
             total_normalization_states
         )
@@ -14126,42 +13953,33 @@ class AutoTrader:
                 for service_name, totals in sorted(total_services.items())
             }
         if include_guardrail_dimensions:
-            summary["guardrail_trigger_thresholds"] = (
-                self._finalize_guardrail_numeric_stats(total_threshold_stats)
+            summary["guardrail_trigger_thresholds"] = self._finalize_guardrail_numeric_stats(
+                total_threshold_stats
             )
-            summary["guardrail_trigger_values"] = (
-                self._finalize_guardrail_numeric_stats(total_value_stats)
+            summary["guardrail_trigger_values"] = self._finalize_guardrail_numeric_stats(
+                total_value_stats
             )
-            summary["guardrail_reasons"] = self._finalize_dimension_counter(
-                total_guardrail_reasons
-            )
+            summary["guardrail_reasons"] = self._finalize_dimension_counter(total_guardrail_reasons)
             summary["guardrail_triggers"] = self._finalize_dimension_counter(
                 total_guardrail_triggers
             )
             summary["guardrail_trigger_labels"] = self._finalize_dimension_counter(
                 total_guardrail_trigger_labels
             )
-            summary["guardrail_trigger_comparators"] = (
-                self._finalize_dimension_counter(total_guardrail_trigger_comparators)
+            summary["guardrail_trigger_comparators"] = self._finalize_dimension_counter(
+                total_guardrail_trigger_comparators
             )
             summary["guardrail_trigger_units"] = self._finalize_dimension_counter(
                 total_guardrail_trigger_units
             )
 
         if include_decision_dimensions:
-            summary["decision_states"] = self._finalize_dimension_counter(
-                total_decision_states
-            )
-            summary["decision_reasons"] = self._finalize_dimension_counter(
-                total_decision_reasons
-            )
-            summary["decision_modes"] = self._finalize_dimension_counter(
-                total_decision_modes
-            )
+            summary["decision_states"] = self._finalize_dimension_counter(total_decision_states)
+            summary["decision_reasons"] = self._finalize_dimension_counter(total_decision_reasons)
+            summary["decision_modes"] = self._finalize_dimension_counter(total_decision_modes)
 
         if missing_bucket is not None and (
-            missing_bucket.get("guardrail_events", 0)
-            or missing_bucket.get("evaluations", 0)
+            missing_bucket.get("guardrail_events", 0) or missing_bucket.get("evaluations", 0)
         ):
             missing_summary: dict[str, Any] = {
                 "index": None,
@@ -14173,9 +13991,7 @@ class AutoTrader:
             missing_guardrail_events = missing_summary["guardrail_events"]
             missing_evaluations = missing_summary["evaluations"]
             missing_summary["guardrail_rate"] = (
-                missing_guardrail_events / missing_evaluations
-                if missing_evaluations
-                else 0.0
+                missing_guardrail_events / missing_evaluations if missing_evaluations else 0.0
             )
             missing_summary["approval_states"] = self._finalize_dimension_counter(
                 missing_bucket.get("approval_states")
@@ -14199,19 +14015,13 @@ class AutoTrader:
                 missing_summary["guardrail_triggers"] = self._finalize_dimension_counter(
                     missing_bucket.get("guardrail_triggers")
                 )
-                missing_summary[
-                    "guardrail_trigger_labels"
-                ] = self._finalize_dimension_counter(
+                missing_summary["guardrail_trigger_labels"] = self._finalize_dimension_counter(
                     missing_bucket.get("guardrail_trigger_labels")
                 )
-                missing_summary[
-                    "guardrail_trigger_comparators"
-                ] = self._finalize_dimension_counter(
+                missing_summary["guardrail_trigger_comparators"] = self._finalize_dimension_counter(
                     missing_bucket.get("guardrail_trigger_comparators")
                 )
-                missing_summary[
-                    "guardrail_trigger_units"
-                ] = self._finalize_dimension_counter(
+                missing_summary["guardrail_trigger_units"] = self._finalize_dimension_counter(
                     missing_bucket.get("guardrail_trigger_units")
                 )
                 missing_summary["guardrail_trigger_thresholds"] = (
@@ -14257,9 +14067,7 @@ class AutoTrader:
         if ttl is not None and ttl > 0.0 and history:
             try:
                 cutoff_reference = (
-                    float(reference_time)
-                    if reference_time is not None
-                    else float(time.time())
+                    float(reference_time) if reference_time is not None else float(time.time())
                 )
             except (TypeError, ValueError):  # pragma: no cover - defensive guard
                 cutoff_reference = float(time.time())
@@ -14308,12 +14116,7 @@ class AutoTrader:
             duration = self._controller_cycle_last_duration
             orders = self._controller_cycle_last_orders
 
-        if (
-            not signals
-            and not results
-            and started_at is None
-            and finished_at is None
-        ):
+        if not signals and not results and started_at is None and finished_at is None:
             return None
 
         return {
@@ -14688,9 +14491,6 @@ class AutoTrader:
         )
         return summary
 
-
-
-
     def _filtered_controller_cycle_history(
         self,
         *,
@@ -14978,9 +14778,7 @@ class AutoTrader:
             trigger_unit,
             missing_token=_MISSING_GUARDRAIL_UNIT,
         )
-        trigger_threshold_filter = self._prepare_guardrail_numeric_filter(
-            trigger_threshold
-        )
+        trigger_threshold_filter = self._prepare_guardrail_numeric_filter(trigger_threshold)
         trigger_value_filter = self._prepare_guardrail_numeric_filter(trigger_value)
         decision_state_filter = self._prepare_decision_filter(
             decision_state,
@@ -15000,24 +14798,16 @@ class AutoTrader:
         )
 
         trigger_threshold_min_value = (
-            self._coerce_float(trigger_threshold_min)
-            if trigger_threshold_min is not None
-            else None
+            self._coerce_float(trigger_threshold_min) if trigger_threshold_min is not None else None
         )
         trigger_threshold_max_value = (
-            self._coerce_float(trigger_threshold_max)
-            if trigger_threshold_max is not None
-            else None
+            self._coerce_float(trigger_threshold_max) if trigger_threshold_max is not None else None
         )
         trigger_value_min_value = (
-            self._coerce_float(trigger_value_min)
-            if trigger_value_min is not None
-            else None
+            self._coerce_float(trigger_value_min) if trigger_value_min is not None else None
         )
         trigger_value_max_value = (
-            self._coerce_float(trigger_value_max)
-            if trigger_value_max is not None
-            else None
+            self._coerce_float(trigger_value_max) if trigger_value_max is not None else None
         )
 
         since_ts = self._normalize_time_bound(since)
@@ -15159,8 +14949,7 @@ class AutoTrader:
         if include_missing_bucket:
             missing_entry = summary.get("missing_timestamp")
             if isinstance(missing_entry, Mapping) and (
-                missing_entry.get("guardrail_events")
-                or missing_entry.get("evaluations")
+                missing_entry.get("guardrail_events") or missing_entry.get("evaluations")
             ):
                 missing_record = copy.deepcopy(missing_entry)
                 missing_record.setdefault("bucket_type", "missing")
@@ -15187,9 +14976,7 @@ class AutoTrader:
 
         if include_summary_metadata:
             summary_record = {
-                key: copy.deepcopy(value)
-                for key, value in summary.items()
-                if key != "buckets"
+                key: copy.deepcopy(value) for key, value in summary.items() if key != "buckets"
             }
             summary_record.setdefault("bucket_type", "summary")
             summary_record.setdefault("index", None)
@@ -15215,12 +15002,10 @@ class AutoTrader:
             if coerce_timestamps:
                 for timestamp_key in ("first_timestamp", "last_timestamp"):
                     if timestamp_key in summary_record:
-                        summary_record[timestamp_key] = (
-                            self._normalize_timestamp_for_export(
-                                summary_record[timestamp_key],
-                                coerce=True,
-                                tz=tz,
-                            )
+                        summary_record[timestamp_key] = self._normalize_timestamp_for_export(
+                            summary_record[timestamp_key],
+                            coerce=True,
+                            tz=tz,
                         )
             records.append(summary_record)
 
@@ -15340,9 +15125,7 @@ class AutoTrader:
                     }
                 )
             if not include_decision_dimensions:
-                drop_columns.update(
-                    {"decision_states", "decision_reasons", "decision_modes"}
-                )
+                drop_columns.update({"decision_states", "decision_reasons", "decision_modes"})
 
             if drop_columns:
                 sanitized_records = [
@@ -15359,9 +15142,7 @@ class AutoTrader:
             df = pd.DataFrame(sanitized_records)
 
         if summary_metadata is not None and (
-            include_services
-            and include_guardrail_dimensions
-            and include_decision_dimensions
+            include_services and include_guardrail_dimensions and include_decision_dimensions
         ):
             df.attrs["guardrail_summary"] = copy.deepcopy(summary_metadata)
         else:
@@ -15449,22 +15230,16 @@ class AutoTrader:
 
         with self._lock:
             last_guardrail_reasons = list(self._last_guardrail_reasons)
-            last_guardrail_triggers = [trigger.to_dict() for trigger in self._last_guardrail_triggers]
+            last_guardrail_triggers = [
+                trigger.to_dict() for trigger in self._last_guardrail_triggers
+            ]
             last_decision = (
-                self._last_risk_decision.to_dict()
-                if self._last_risk_decision is not None
-                else None
+                self._last_risk_decision.to_dict() if self._last_risk_decision is not None else None
             )
-            last_regime = (
-                self._last_regime.to_dict()
-                if self._last_regime is not None
-                else None
-            )
+            last_regime = self._last_regime.to_dict() if self._last_regime is not None else None
             last_signal = self._last_signal
             ai_context = (
-                copy.deepcopy(self._last_ai_context)
-                if self._last_ai_context is not None
-                else None
+                copy.deepcopy(self._last_ai_context) if self._last_ai_context is not None else None
             )
             ai_degraded = bool(self._ai_degraded)
             cooldown_until = self._cooldown_until
@@ -15572,8 +15347,12 @@ class AutoTrader:
 
         regime_section: dict[str, Any] = {
             "regime": last_regime.get("regime") if isinstance(last_regime, Mapping) else None,
-            "confidence": last_regime.get("confidence") if isinstance(last_regime, Mapping) else None,
-            "risk_score": last_regime.get("risk_score") if isinstance(last_regime, Mapping) else None,
+            "confidence": last_regime.get("confidence")
+            if isinstance(last_regime, Mapping)
+            else None,
+            "risk_score": last_regime.get("risk_score")
+            if isinstance(last_regime, Mapping)
+            else None,
             "risk_profile": self._risk_profile_name,
         }
         if isinstance(last_regime, Mapping):
@@ -15590,7 +15369,9 @@ class AutoTrader:
             decision_section_extra = {
                 key: value
                 for key, value in self._decision_cycle_metadata.items()
-                if key.startswith("decision_") or key.startswith("ai_") or key == "strategy_recommendation"
+                if key.startswith("decision_")
+                or key.startswith("ai_")
+                or key == "strategy_recommendation"
                 or key == "strategy_recommendation_regime"
                 or key == "decision_model"
             }
@@ -15661,14 +15442,18 @@ class AutoTrader:
 
         controller = lifecycle.get("controller", {}) if isinstance(lifecycle, Mapping) else {}
         guardrails = lifecycle.get("guardrails", {}) if isinstance(lifecycle, Mapping) else {}
-        risk_decisions = lifecycle.get("risk_decisions", {}) if isinstance(lifecycle, Mapping) else {}
+        risk_decisions = (
+            lifecycle.get("risk_decisions", {}) if isinstance(lifecycle, Mapping) else {}
+        )
         cooldown = lifecycle.get("cooldown", {}) if isinstance(lifecycle, Mapping) else {}
         strategy = lifecycle.get("strategy", {}) if isinstance(lifecycle, Mapping) else {}
         metrics = lifecycle.get("metrics", {}) if isinstance(lifecycle, Mapping) else {}
 
         auto_trade = controller.get("auto_trade", {}) if isinstance(controller, Mapping) else {}
         schedule_state = lifecycle.get("schedule", {}) if isinstance(lifecycle, Mapping) else {}
-        schedule_alert = controller.get("schedule_last_alert") if isinstance(controller, Mapping) else None
+        schedule_alert = (
+            controller.get("schedule_last_alert") if isinstance(controller, Mapping) else None
+        )
 
         reasons: list[dict[str, Any]] = []
 
@@ -15682,7 +15467,9 @@ class AutoTrader:
                 }
             )
 
-        guardrail_reasons = guardrails.get("last_reasons") if isinstance(guardrails, Mapping) else None
+        guardrail_reasons = (
+            guardrails.get("last_reasons") if isinstance(guardrails, Mapping) else None
+        )
         if isinstance(guardrail_reasons, Sequence):
             for entry in guardrail_reasons:
                 if not entry:
@@ -15695,7 +15482,9 @@ class AutoTrader:
                 payload.setdefault("type", "guardrail")
                 reasons.append(payload)
 
-        last_decision = risk_decisions.get("last_decision") if isinstance(risk_decisions, Mapping) else None
+        last_decision = (
+            risk_decisions.get("last_decision") if isinstance(risk_decisions, Mapping) else None
+        )
         if isinstance(last_decision, Mapping):
             reasons.append(
                 {
@@ -15721,11 +15510,14 @@ class AutoTrader:
         if isinstance(controller, Mapping):
             history_raw = controller.get("history")
             if isinstance(history_raw, Sequence):
-                controller_history = [dict(entry) for entry in history_raw if isinstance(entry, Mapping)]
+                controller_history = [
+                    dict(entry) for entry in history_raw if isinstance(entry, Mapping)
+                ]
 
         decision_summary = (
             dict(risk_decisions.get("summary"))
-            if isinstance(risk_decisions, Mapping) and isinstance(risk_decisions.get("summary"), Mapping)
+            if isinstance(risk_decisions, Mapping)
+            and isinstance(risk_decisions.get("summary"), Mapping)
             else {}
         )
 
@@ -15739,7 +15531,9 @@ class AutoTrader:
             "active": bool(self._exchange_degradation_guardrail_active),
             "kill_switch": bool(self._exchange_degradation_kill_switch),
         }
-        guardrail_reasons_raw = guardrails.get("last_reasons") if isinstance(guardrails, Mapping) else None
+        guardrail_reasons_raw = (
+            guardrails.get("last_reasons") if isinstance(guardrails, Mapping) else None
+        )
         if isinstance(guardrail_reasons_raw, Sequence):
             guardrail_state["reasons"] = [str(reason) for reason in guardrail_reasons_raw if reason]
         degradation_payload: dict[str, Any] = {}
@@ -15818,7 +15612,9 @@ class AutoTrader:
             try:
                 exported_records = list(journal.export())
             except Exception:  # pragma: no cover - defensywne logowanie
-                LOGGER.debug("Nie udało się wyeksportować historii dziennika decyzji", exc_info=True)
+                LOGGER.debug(
+                    "Nie udało się wyeksportować historii dziennika decyzji", exc_info=True
+                )
             else:
                 for record in exported_records[-64:]:
                     if isinstance(record, Mapping):
@@ -15846,15 +15642,11 @@ class AutoTrader:
 
         analytics_snapshot: dict[str, Any] = {"mode": self._journal_performance_state}
         if isinstance(self._last_journal_analytics, JournalAnalytics):
-            analytics_snapshot.update(
-                self._last_journal_analytics.to_mapping()
-            )
+            analytics_snapshot.update(self._last_journal_analytics.to_mapping())
         result["journal_performance"] = analytics_snapshot
         guardrail_trace_raw: list[dict[str, Any]] = []
         decision_id = (
-            last_decision.get("decision_id")
-            if isinstance(last_decision, Mapping)
-            else None
+            last_decision.get("decision_id") if isinstance(last_decision, Mapping) else None
         )
         if decision_id:
             try:
@@ -15874,9 +15666,7 @@ class AutoTrader:
                 )
             else:
                 guardrail_trace_raw = [
-                    dict(entry)
-                    for entry in trace_records
-                    if isinstance(entry, Mapping)
+                    dict(entry) for entry in trace_records if isinstance(entry, Mapping)
                 ]
         guardrail_state["last_decision_id"] = self._normalize_decision_id(decision_id)
 
@@ -15927,9 +15717,7 @@ class AutoTrader:
                 records_raw = signal_quality_snapshot.get("records")
                 if isinstance(records_raw, Sequence):
                     signal_quality_snapshot["records"] = [
-                        dict(entry)
-                        for entry in records_raw[-10:]
-                        if isinstance(entry, Mapping)
+                        dict(entry) for entry in records_raw[-10:] if isinstance(entry, Mapping)
                     ]
                 watchdog_raw = signal_quality_snapshot.get("watchdog")
                 if isinstance(watchdog_raw, Mapping):
@@ -15993,7 +15781,9 @@ class AutoTrader:
             model_events_raw = []
             for entry in raw_model_events:
                 if isinstance(entry, Mapping):
-                    model_events_raw.append({str(key): copy.deepcopy(value) for key, value in entry.items()})
+                    model_events_raw.append(
+                        {str(key): copy.deepcopy(value) for key, value in entry.items()}
+                    )
                 else:
                     model_events_raw.append(entry)
             retraining_cycles_raw = list(getattr(self, "_retraining_cycle_log", tuple()))
@@ -16081,15 +15871,20 @@ class AutoTrader:
                     }
                 elif hasattr(decision_value, "__dict__"):
                     decision_record = {
-                        str(key): copy.deepcopy(value) for key, value in vars(decision_value).items()
+                        str(key): copy.deepcopy(value)
+                        for key, value in vars(decision_value).items()
                     }
                 else:
                     decision_record = None
                 if decision_record is not None:
                     decision_timestamp = decision_record.get("timestamp")
                     if isinstance(decision_timestamp, datetime):
-                        decision_record["timestamp"] = decision_timestamp.astimezone(timezone.utc).isoformat()
-                    elif hasattr(decision_timestamp, "isoformat") and not isinstance(decision_timestamp, str):
+                        decision_record["timestamp"] = decision_timestamp.astimezone(
+                            timezone.utc
+                        ).isoformat()
+                    elif hasattr(decision_timestamp, "isoformat") and not isinstance(
+                        decision_timestamp, str
+                    ):
                         try:
                             decision_record["timestamp"] = decision_timestamp.isoformat()
                         except Exception:  # pragma: no cover - defensywne formatowanie
@@ -16154,10 +15949,9 @@ class AutoTrader:
             telemetry_payload: dict[str, object] = {}
             existing_telemetry = governor_snapshot.get("telemetry")
             if isinstance(existing_telemetry, Mapping):
-                telemetry_payload.update({
-                    str(key): copy.deepcopy(value)
-                    for key, value in existing_telemetry.items()
-                })
+                telemetry_payload.update(
+                    {str(key): copy.deepcopy(value) for key, value in existing_telemetry.items()}
+                )
             telemetry_payload["riskMetrics"] = dict(self._ai_governor_risk_metrics)
             telemetry_payload["cycleMetrics"] = dict(self._ai_governor_cycle_metrics)
             if self._ai_governor_extra_telemetry:
@@ -16233,9 +16027,7 @@ class AutoTrader:
 
         with self._lock:
             adaptation_history = [
-                dict(entry)
-                for entry in self._strategy_adaptation_log
-                if isinstance(entry, Mapping)
+                dict(entry) for entry in self._strategy_adaptation_log if isinstance(entry, Mapping)
             ]
         if adaptation_history:
             adaptation_history.sort(
@@ -16256,8 +16048,7 @@ class AutoTrader:
         exchange_section = result.get("exchange_allocation")
         if isinstance(exchange_section, Mapping):
             exchange_indicator = {
-                str(key): copy.deepcopy(value)
-                for key, value in exchange_section.items()
+                str(key): copy.deepcopy(value) for key, value in exchange_section.items()
             }
         else:
             exchange_indicator = {
@@ -16288,9 +16079,7 @@ class AutoTrader:
             except Exception:
                 risk_snapshot = {}
             positions = (
-                risk_snapshot.get("positions")
-                if isinstance(risk_snapshot, Mapping)
-                else None
+                risk_snapshot.get("positions") if isinstance(risk_snapshot, Mapping) else None
             )
             if isinstance(positions, Mapping):
                 heatmap = []
@@ -16464,14 +16253,10 @@ class AutoTrader:
         if not filtered_records:
             empty_columns = list(base_columns)
             if drop_decision_column:
-                empty_columns = [
-                    column for column in empty_columns if column != "decision"
-                ]
+                empty_columns = [column for column in empty_columns if column != "decision"]
             if flatten_decision and normalized_decision_fields:
                 prefix = str(decision_prefix)
-                empty_columns.extend(
-                    f"{prefix}{field}" for field in normalized_decision_fields
-                )
+                empty_columns.extend(f"{prefix}{field}" for field in normalized_decision_fields)
             return pd.DataFrame(columns=empty_columns)
 
         rows = [copy.deepcopy(entry) for entry in filtered_records]
@@ -16783,7 +16568,9 @@ class AutoTrader:
         timeline: list[Mapping[str, Any]] = []
         for index, entry in enumerate(filtered_records):
             record = copy.deepcopy(entry)
-            record["decision_id"] = self._normalize_decision_id(record.get("decision_id")) or normalized_id
+            record["decision_id"] = (
+                self._normalize_decision_id(record.get("decision_id")) or normalized_id
+            )
             record["timestamp"] = self._normalize_timestamp_for_export(
                 record.get("timestamp"),
                 coerce=coerce_timestamps,
@@ -16817,8 +16604,6 @@ class AutoTrader:
             previous_timestamp = timestamp_value
 
         return tuple(timeline)
-
-
 
     def export_risk_evaluations(
         self,
@@ -16924,9 +16709,7 @@ class AutoTrader:
             "flatten_decision": bool(flatten_decision),
             "decision_prefix": str(decision_prefix),
             "decision_fields": (
-                list(normalized_decision_fields)
-                if normalized_decision_fields is not None
-                else None
+                list(normalized_decision_fields) if normalized_decision_fields is not None else None
             ),
             "drop_decision_column": bool(drop_decision_column),
             "fill_value_repr": repr(fill_value),
@@ -17033,7 +16816,9 @@ class AutoTrader:
         else:
             decision_fields = [raw_decision_fields]
 
-        decision_fields = [field if isinstance(field, str) else str(field) for field in decision_fields]
+        decision_fields = [
+            field if isinstance(field, str) else str(field) for field in decision_fields
+        ]
 
         records: list[dict[str, Any]] = []
         for entry in entries_payload:
@@ -17088,7 +16873,9 @@ class AutoTrader:
             normalized_decision_id = self._normalize_decision_id(decision_id_value)
             if normalized_decision_id is not None or decision_id_value is not None:
                 record["decision_id"] = (
-                    normalized_decision_id if normalized_decision_id is not None else copy.deepcopy(decision_id_value)
+                    normalized_decision_id
+                    if normalized_decision_id is not None
+                    else copy.deepcopy(decision_id_value)
                 )
 
             metadata_payload = entry.get("metadata")
@@ -17147,9 +16934,7 @@ class AutoTrader:
                     "triggers": tuple(
                         copy.deepcopy(trigger) for trigger in guardrail_triggers_cache
                     ),
-                    "tokens": tuple(
-                        copy.deepcopy(token) for token in guardrail_tokens_cache
-                    ),
+                    "tokens": tuple(copy.deepcopy(token) for token in guardrail_tokens_cache),
                 }
 
             records.append(record)

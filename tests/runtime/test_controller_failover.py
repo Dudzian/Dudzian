@@ -29,7 +29,9 @@ def _signal(*, mode: str, side: str = "BUY") -> StrategySignal:
     )
 
 
-def _controller(monitor: ModelHealthMonitor) -> tuple[TradingController, DummyExecutionService, CollectingDecisionJournal]:
+def _controller(
+    monitor: ModelHealthMonitor,
+) -> tuple[TradingController, DummyExecutionService, CollectingDecisionJournal]:
     risk_engine = DummyRiskEngine()
     execution = DummyExecutionService()
     router, _channel, _audit = _router_with_channel()
@@ -70,9 +72,13 @@ def test_controller_skips_ai_signals_during_failover() -> None:
     controller.process_signals([_signal(mode="rules"), _signal(mode="ai")])
 
     assert [request.metadata.get("mode") for request in execution.requests] == ["rules"]
-    assert any(event.event_type == "ai_failover" and event.status == "activated" for event in journal.events)
     assert any(
-        event.event_type == "signal_skipped" and event.metadata.get("reason") == "ai_failover_active"
+        event.event_type == "ai_failover" and event.status == "activated"
+        for event in journal.events
+    )
+    assert any(
+        event.event_type == "signal_skipped"
+        and event.metadata.get("reason") == "ai_failover_active"
         for event in journal.events
     )
 
@@ -92,4 +98,6 @@ def test_controller_restores_ai_after_failover() -> None:
     modes = [request.metadata.get("mode") for request in execution.requests]
     assert modes.count("ai") == 1
     assert modes.count("rules") == 1
-    assert any(event.event_type == "ai_failover" and event.status == "cleared" for event in journal.events)
+    assert any(
+        event.event_type == "ai_failover" and event.status == "cleared" for event in journal.events
+    )

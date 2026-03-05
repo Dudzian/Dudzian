@@ -9,7 +9,12 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from bot_core.ai import DataQualityCheck, FeatureDataset, FeatureVector, manager as ai_manager_module
+from bot_core.ai import (
+    DataQualityCheck,
+    FeatureDataset,
+    FeatureVector,
+    manager as ai_manager_module,
+)
 from bot_core.ai.monitoring import DataCompletenessWatcher
 from bot_core.runtime.journal import InMemoryTradingDecisionJournal
 from tests._ai_manager_helpers import make_stub_model, positive_negative_predict
@@ -76,7 +81,11 @@ def test_ai_manager_rank_and_train_multiple_models(tmp_path, monkeypatch):
     assert results["alpha"].hit_rate >= results["beta"].hit_rate
 
     with lock:
-        init_dirs = {entry for action, model_type, entry in calls if action == "init" and model_type == "alpha"}
+        init_dirs = {
+            entry
+            for action, model_type, entry in calls
+            if action == "init" and model_type == "alpha"
+        }
     assert tmp_path in init_dirs
 
 
@@ -166,7 +175,9 @@ def test_schedule_pipeline_runs_and_updates_active_model(tmp_path, monkeypatch):
 
 def test_pipeline_history_captures_improving_model(tmp_path, monkeypatch):
     class AdaptiveModel:
-        def __init__(self, input_size: int, seq_len: int, model_type: str, *, model_dir: Path | None = None):
+        def __init__(
+            self, input_size: int, seq_len: int, model_type: str, *, model_dir: Path | None = None
+        ):
             self.input_size = input_size
             self.seq_len = seq_len
             self.model_type = model_type
@@ -500,7 +511,9 @@ def test_pipeline_history_formatting_and_logging(tmp_path, monkeypatch, caplog):
     assert record is not None
     assert selection.best_model == record.best_model
 
-    record_text = ai_manager_module.format_pipeline_execution_record(record, include_evaluations=True)
+    record_text = ai_manager_module.format_pipeline_execution_record(
+        record, include_evaluations=True
+    )
     assert f"Najlepszy model: {record.best_model}" in record_text
     assert "Ewaluacje modeli" in record_text
 
@@ -695,8 +708,8 @@ def test_detect_drift_falls_back_to_python_math(tmp_path, monkeypatch, exception
 
     base = _make_df(16)
     recent = base.copy()
-    recent.loc[recent.index[-4]:, "close"] *= 6
-    recent.loc[recent.index[-6]:, "volume"] *= 3
+    recent.loc[recent.index[-4] :, "close"] *= 6
+    recent.loc[recent.index[-6] :, "volume"] *= 3
 
     base_obj = base.astype(str)
     recent_obj = recent.astype(str)

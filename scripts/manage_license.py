@@ -98,7 +98,9 @@ def _command_export(args: argparse.Namespace) -> int:
     basename = args.basename.strip() or "license_audit"
 
     json_path = output_dir / f"{basename}.json"
-    json_path.write_text(json.dumps(report.to_dict(), ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    json_path.write_text(
+        json.dumps(report.to_dict(), ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
+    )
 
     markdown_path = output_dir / f"{basename}.md"
     markdown_path.write_text(report.to_markdown(), encoding="utf-8")
@@ -138,4 +140,3 @@ def main(argv: Sequence[str] | None = None) -> int:
 
 if __name__ == "__main__":  # pragma: no cover - wejście z CLI
     raise SystemExit(main())
-

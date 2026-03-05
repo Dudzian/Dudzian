@@ -85,7 +85,9 @@ class LoopbackExchangeAdapter(ExchangeAdapter):
     def fetch_account_snapshot(self) -> AccountSnapshot:
         response = self._request("GET", self._endpoints["account"])
         payload = response.json()
-        balances = {str(asset): float(value) for asset, value in payload.get("balances", {}).items()}
+        balances = {
+            str(asset): float(value) for asset, value in payload.get("balances", {}).items()
+        }
         return AccountSnapshot(
             balances=balances,
             total_equity=float(payload.get("total_equity", 0.0)),

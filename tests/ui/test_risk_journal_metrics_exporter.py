@@ -27,20 +27,26 @@ def test_risk_flag_counts_clear_missing_series() -> None:
     )
 
     metric = registry.get("bot_ui_risk_journal_risk_flag_entries_total")
-    assert metric.value(
-        labels={
-            "channel": "risk_journal",
-            "environment": "prod",
-            "riskFlag": "drawdown_watch",
-        }
-    ) == 0.0
-    assert metric.value(
-        labels={
-            "channel": "risk_journal",
-            "environment": "prod",
-            "riskFlag": "stress_override",
-        }
-    ) == 3.0
+    assert (
+        metric.value(
+            labels={
+                "channel": "risk_journal",
+                "environment": "prod",
+                "riskFlag": "drawdown_watch",
+            }
+        )
+        == 0.0
+    )
+    assert (
+        metric.value(
+            labels={
+                "channel": "risk_journal",
+                "environment": "prod",
+                "riskFlag": "stress_override",
+            }
+        )
+        == 3.0
+    )
 
 
 def test_risk_flag_counts_clear_when_payload_missing() -> None:
@@ -66,10 +72,13 @@ def test_risk_flag_counts_clear_when_payload_missing() -> None:
     )
 
     metric = registry.get("bot_ui_risk_journal_risk_flag_entries_total")
-    assert metric.value(
-        labels={
-            "channel": "risk_journal",
-            "environment": "dev",
-            "riskFlag": "fat_finger",
-        }
-    ) == 0.0
+    assert (
+        metric.value(
+            labels={
+                "channel": "risk_journal",
+                "environment": "dev",
+                "riskFlag": "fat_finger",
+            }
+        )
+        == 0.0
+    )

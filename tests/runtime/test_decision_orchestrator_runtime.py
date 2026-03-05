@@ -44,7 +44,9 @@ class _StubRiskEngine:
         self._snapshot = dict(snapshot or {})
         self.requested_profiles: list[str] = []
 
-    def snapshot_state(self, profile: str) -> Mapping[str, object]:  # pragma: no cover - prosty stub
+    def snapshot_state(
+        self, profile: str
+    ) -> Mapping[str, object]:  # pragma: no cover - prosty stub
         self.requested_profiles.append(profile)
         return dict(self._snapshot)
 
@@ -76,7 +78,9 @@ def test_decision_orchestrator_runtime_filters_and_summarizes() -> None:
             },
         )
     )
-    risk_engine = _StubRiskEngine({"equity": 100_000, "positions": {"BTCUSDT": {"notional": 5_000}}})
+    risk_engine = _StubRiskEngine(
+        {"equity": 100_000, "positions": {"BTCUSDT": {"notional": 5_000}}}
+    )
     base_sink = InMemoryStrategySignalSink()
     sink = DecisionAwareSignalSink(
         base_sink=base_sink,
@@ -299,19 +303,11 @@ def test_decision_orchestrator_runtime_filters_and_summarizes() -> None:
     assert summary["rejected_avg_model_expected_value_bps"] == pytest.approx(5.22)
     assert summary["rejected_sum_model_expected_value_bps"] == pytest.approx(5.22)
     assert summary["rejected_model_expected_value_bps_count"] == 1
-    assert summary["accepted_avg_model_expected_value_minus_cost_bps"] == pytest.approx(
-        11.71
-    )
-    assert summary["accepted_sum_model_expected_value_minus_cost_bps"] == pytest.approx(
-        11.71
-    )
+    assert summary["accepted_avg_model_expected_value_minus_cost_bps"] == pytest.approx(11.71)
+    assert summary["accepted_sum_model_expected_value_minus_cost_bps"] == pytest.approx(11.71)
     assert summary["accepted_model_expected_value_minus_cost_bps_count"] == 1
-    assert summary["rejected_avg_model_expected_value_minus_cost_bps"] == pytest.approx(
-        3.12
-    )
-    assert summary["rejected_sum_model_expected_value_minus_cost_bps"] == pytest.approx(
-        3.12
-    )
+    assert summary["rejected_avg_model_expected_value_minus_cost_bps"] == pytest.approx(3.12)
+    assert summary["rejected_sum_model_expected_value_minus_cost_bps"] == pytest.approx(3.12)
     assert summary["rejected_model_expected_value_minus_cost_bps_count"] == 1
     assert summary["median_expected_value_minus_cost_bps"] == pytest.approx(8.205)
     assert summary["min_expected_value_minus_cost_bps"] == pytest.approx(4.7)
@@ -337,4 +333,3 @@ def test_decision_orchestrator_runtime_filters_and_summarizes() -> None:
     assert summary["std_model_expected_return_bps"] == pytest.approx(4.5)
     assert summary["std_model_expected_value_bps"] == pytest.approx(3.87)
     assert summary["std_model_expected_value_minus_cost_bps"] == pytest.approx(4.295)
-

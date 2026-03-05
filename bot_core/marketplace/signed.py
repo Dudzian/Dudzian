@@ -1,4 +1,5 @@
 """Obsługa lokalnego marketplace'u podpisanych presetów."""
+
 from __future__ import annotations
 
 from dataclasses import dataclass, field
@@ -82,4 +83,3 @@ class SignedPresetMarketplace:
 
 
 __all__ = ["SignedPresetMarketplace", "MarketplaceSyncResult"]
-

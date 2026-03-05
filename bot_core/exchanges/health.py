@@ -1,4 +1,5 @@
 """Narzędzia do monitorowania kondycji adapterów giełdowych."""
+
 from __future__ import annotations
 
 from dataclasses import dataclass, field
@@ -268,11 +269,17 @@ class HealthMonitor:
             finally:
                 if results:
                     latest = results[-1]
-                    labels = {**self._metric_labels, "check": check.name, "status": latest.status.value}
+                    labels = {
+                        **self._metric_labels,
+                        "check": check.name,
+                        "status": latest.status.value,
+                    }
                     try:
                         self._latency_hist.observe(latest.latency, labels=labels)
                         self._status_counter.inc(labels=labels)
-                    except Exception:  # pragma: no cover - metryki nie powinny przerywać health-checku
+                    except (
+                        Exception
+                    ):  # pragma: no cover - metryki nie powinny przerywać health-checku
                         _LOGGER.debug("health metrics update failed", exc_info=True)
         return results
 

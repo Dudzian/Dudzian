@@ -1,4 +1,5 @@
 """Testy strategii trend/momentum na danych dziennych."""
+
 from __future__ import annotations
 
 from pathlib import Path
@@ -11,7 +12,9 @@ from bot_core.strategies.daily_trend import (
 )
 
 
-def _snapshot(ts: int, price: float, high: float | None = None, low: float | None = None) -> MarketSnapshot:
+def _snapshot(
+    ts: int, price: float, high: float | None = None, low: float | None = None
+) -> MarketSnapshot:
     high = high if high is not None else price
     low = low if low is not None else price
     return MarketSnapshot(
@@ -96,7 +99,9 @@ def test_daily_trend_strategy_generates_exit_on_stop() -> None:
 
 def test_daily_trend_strategy_requires_history() -> None:
     strategy = DailyTrendMomentumStrategy(
-        DailyTrendMomentumSettings(fast_ma=3, slow_ma=5, breakout_lookback=4, momentum_window=3, atr_window=3)
+        DailyTrendMomentumSettings(
+            fast_ma=3, slow_ma=5, breakout_lookback=4, momentum_window=3, atr_window=3
+        )
     )
     snapshot = _snapshot(1, 100, high=101, low=99)
 

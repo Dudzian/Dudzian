@@ -20,7 +20,9 @@ from bot_core.reporting.model_quality import (
     update_champion_registry,
 )
 
-_SCHEMA_PATH = Path(__file__).resolve().parents[2] / "docs" / "schemas" / "model_artifact.schema.json"
+_SCHEMA_PATH = (
+    Path(__file__).resolve().parents[2] / "docs" / "schemas" / "model_artifact.schema.json"
+)
 
 
 @dataclass(slots=True)
@@ -158,6 +160,7 @@ class ModelQualityReport:
     validation: Mapping[str, object] | None = None
     dataset_rows: int | None = None
     trained_at: datetime | None = None
+
     def to_dict(self) -> Mapping[str, object]:
         payload: MutableMapping[str, object] = {
             "model_name": self.model_name,
@@ -378,4 +381,3 @@ __all__ = [
     "record_model_quality_report",
     "validate_model_artifact_schema",
 ]
-

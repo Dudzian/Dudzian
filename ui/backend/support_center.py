@@ -97,7 +97,9 @@ class SupportArticleLoader:
         metadata, body = _split_front_matter(raw)
 
         article_id = metadata.get("id") or path.stem
-        title = metadata.get("title") or _extract_heading(body) or path.stem.replace("_", " ").title()
+        title = (
+            metadata.get("title") or _extract_heading(body) or path.stem.replace("_", " ").title()
+        )
         summary = metadata.get("summary") or body.splitlines()[0].strip() if body.strip() else ""
         tags = _split_list(metadata.get("tags", ""))
         category = metadata.get("category", "")
@@ -121,7 +123,9 @@ class SupportSearchIndex:
 
     def __init__(self, articles: Sequence[SupportArticle]) -> None:
         self._articles = list(articles)
-        self._index = {article.article_id: self._tokenize_article(article) for article in self._articles}
+        self._index = {
+            article.article_id: self._tokenize_article(article) for article in self._articles
+        }
 
     def _tokenize_article(self, article: SupportArticle) -> set[str]:
         text = " ".join(

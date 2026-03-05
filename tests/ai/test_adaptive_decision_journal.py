@@ -110,10 +110,7 @@ def test_adaptive_learner_build_dynamic_preset_uses_metrics(tmp_path) -> None:
     assert preset is not None
     assert preset["regime"] == "trend"
     assert "generated_at" in preset
-    strategies = {
-        entry["name"]: entry["weight"]
-        for entry in preset["strategies"]
-    }
+    strategies = {entry["name"]: entry["weight"] for entry in preset["strategies"]}
     assert "trend_following" in strategies
     assert pytest.approx(sum(strategies.values()), rel=1e-9) == 1.0
     assert strategies["trend_following"] > strategies["mean_reversion"]

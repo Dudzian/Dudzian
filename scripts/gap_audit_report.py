@@ -1,4 +1,5 @@
 """Raportuje stan luk danych na podstawie logów audytowych JSONL."""
+
 from __future__ import annotations
 
 import argparse
@@ -180,7 +181,9 @@ def format_summary_table(summaries: Sequence[GapSummary]) -> str:
 
 
 def _parse_args(argv: Sequence[str] | None) -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Raport luk danych OHLCV na podstawie pliku audytu JSONL")
+    parser = argparse.ArgumentParser(
+        description="Raport luk danych OHLCV na podstawie pliku audytu JSONL"
+    )
     parser.add_argument("audit_file", help="Ścieżka do pliku JSONL z logami audytu luk")
     parser.add_argument("--environment", help="Filtruj wpisy po nazwie środowiska")
     parser.add_argument("--exchange", help="Filtruj wpisy po nazwie giełdy")
@@ -216,4 +219,3 @@ def main(argv: Sequence[str] | None = None) -> int:
 
 if __name__ == "__main__":  # pragma: no cover - punkt wejścia CLI
     sys.exit(main())
-

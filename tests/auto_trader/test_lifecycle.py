@@ -19,7 +19,9 @@ class DummyEmitter:
     def emit(self, event: str, **payload: object) -> None:
         self.events.append((event, dict(payload)))
 
-    def log(self, *_args: object, **_kwargs: object) -> None:  # pragma: no cover - not used in tests
+    def log(
+        self, *_args: object, **_kwargs: object
+    ) -> None:  # pragma: no cover - not used in tests
         return None
 
 
@@ -39,13 +41,17 @@ class SequencedAIManager:
         self.ai_threshold_bps = 5.0
         self.is_degraded = False
 
-    def assess_market_regime(self, symbol: str, market_data: pd.DataFrame) -> MarketRegimeAssessment:
+    def assess_market_regime(
+        self, symbol: str, market_data: pd.DataFrame
+    ) -> MarketRegimeAssessment:
         return self._scenarios[0]["assessment"]  # type: ignore[return-value]
 
     def get_regime_summary(self, symbol: str):
         return self._scenarios[0].get("summary")
 
-    def predict_series(self, symbol: str, market_data: pd.DataFrame, feature_cols: list[str] | None = None) -> pd.Series:
+    def predict_series(
+        self, symbol: str, market_data: pd.DataFrame, feature_cols: list[str] | None = None
+    ) -> pd.Series:
         scenario = self._scenarios[0]
         index = market_data.index[-1:]
         series = pd.Series([scenario.get("prediction", 0.0)], index=index)
@@ -86,8 +92,12 @@ class SequencedOrchestrator:
             return None
         return self._strategies.popleft()
 
-    def schedule_strategy_recalibration(self, strategy: str, interval, *, first_run: datetime | None = None) -> SimpleSchedule:
-        schedule = SimpleSchedule(strategy=strategy, interval=interval, next_run=first_run or datetime.now(timezone.utc))
+    def schedule_strategy_recalibration(
+        self, strategy: str, interval, *, first_run: datetime | None = None
+    ) -> SimpleSchedule:
+        schedule = SimpleSchedule(
+            strategy=strategy, interval=interval, next_run=first_run or datetime.now(timezone.utc)
+        )
         self._schedules.append(schedule)
         return schedule
 
@@ -122,9 +132,18 @@ def test_auto_trader_lifecycle_with_guardrails_and_recalibrations() -> None:
     metrics_module._GLOBAL_REGISTRY = metrics_module.MetricsRegistry()
 
     frames = [
-        pd.DataFrame({"close": [100, 101, 102, 103, 104]}, index=pd.date_range("2024-01-01", periods=5, freq="h")),
-        pd.DataFrame({"close": [105, 104, 103, 102, 101]}, index=pd.date_range("2024-01-02", periods=5, freq="h")),
-        pd.DataFrame({"close": [100, 101, 100, 99, 98]}, index=pd.date_range("2024-01-03", periods=5, freq="h")),
+        pd.DataFrame(
+            {"close": [100, 101, 102, 103, 104]},
+            index=pd.date_range("2024-01-01", periods=5, freq="h"),
+        ),
+        pd.DataFrame(
+            {"close": [105, 104, 103, 102, 101]},
+            index=pd.date_range("2024-01-02", periods=5, freq="h"),
+        ),
+        pd.DataFrame(
+            {"close": [100, 101, 100, 99, 98]},
+            index=pd.date_range("2024-01-03", periods=5, freq="h"),
+        ),
     ]
 
     scenarios = [
@@ -145,11 +164,13 @@ def test_auto_trader_lifecycle_with_guardrails_and_recalibrations() -> None:
         },
     ]
 
-    orchestrator = SequencedOrchestrator([
-        "trend_following",
-        "mean_reversion",
-        "capital_preservation",
-    ])
+    orchestrator = SequencedOrchestrator(
+        [
+            "trend_following",
+            "mean_reversion",
+            "capital_preservation",
+        ]
+    )
 
     provider = SequenceMarketDataProvider(frames)
     ai_manager = SequencedAIManager(scenarios)
@@ -198,14 +219,17 @@ def test_auto_trader_lifecycle_with_guardrails_and_recalibrations() -> None:
     assert guardrail_metric.value(labels=expected_labels) == 1.0
 
     recalibration_metric = registry.get("auto_trader_recalibrations_triggered_total")
-    assert recalibration_metric.value(
-        labels={
-            "environment": "paper",
-            "portfolio": "autotrader",
-            "risk_profile": "paper",
-            "strategy": "mean_reversion",
-        }
-    ) == 1.0
+    assert (
+        recalibration_metric.value(
+            labels={
+                "environment": "paper",
+                "portfolio": "autotrader",
+                "risk_profile": "paper",
+                "strategy": "mean_reversion",
+            }
+        )
+        == 1.0
+    )
 
     categories = {message.category for message in alert_router.messages}
     assert "auto_trader.guardrail" in categories

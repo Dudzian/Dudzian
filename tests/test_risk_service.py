@@ -104,12 +104,16 @@ def test_risk_snapshot_builder_generates_exposures() -> None:
     assert "averageCostBps" in cost_meta
 
     stat_exposures = {
-        exposure.code: exposure for exposure in snapshot.exposures if exposure.code.startswith("stat:")
+        exposure.code: exposure
+        for exposure in snapshot.exposures
+        if exposure.code.startswith("stat:")
     }
     assert "stat:dailyRealizedPnl" in stat_exposures
 
     cost_exposures = {
-        exposure.code: exposure for exposure in snapshot.exposures if exposure.code.startswith("cost:")
+        exposure.code: exposure
+        for exposure in snapshot.exposures
+        if exposure.code.startswith("cost:")
     }
     assert "cost:totalCostBps" in cost_exposures
 
@@ -126,8 +130,14 @@ def test_risk_snapshot_builder_includes_recent_decisions(tmp_path) -> None:
         stop_loss_atr_multiple=2.0,
     )
 
-    decision_log = RiskDecisionLog(max_entries=5, jsonl_path=tmp_path / "decisions.jsonl", clock=lambda: datetime(2024, 1, 1, 12, 0, 0, tzinfo=timezone.utc))
-    engine = ThresholdRiskEngine(clock=lambda: datetime(2024, 1, 1, 12, 0, 0), decision_log=decision_log)
+    decision_log = RiskDecisionLog(
+        max_entries=5,
+        jsonl_path=tmp_path / "decisions.jsonl",
+        clock=lambda: datetime(2024, 1, 1, 12, 0, 0, tzinfo=timezone.utc),
+    )
+    engine = ThresholdRiskEngine(
+        clock=lambda: datetime(2024, 1, 1, 12, 0, 0), decision_log=decision_log
+    )
     engine.register_profile(profile)
 
     account = _snapshot(5_000.0)
@@ -136,8 +146,12 @@ def test_risk_snapshot_builder_includes_recent_decisions(tmp_path) -> None:
     denied_request.stop_price = denied_request.price  # wymuś błąd stop loss
     denied_request.metadata = {"atr": denied_request.atr, "stop_price": denied_request.stop_price}
 
-    assert engine.apply_pre_trade_checks(allowed_request, account=account, profile_name=profile.name).allowed
-    denied_result = engine.apply_pre_trade_checks(denied_request, account=account, profile_name=profile.name)
+    assert engine.apply_pre_trade_checks(
+        allowed_request, account=account, profile_name=profile.name
+    ).allowed
+    denied_result = engine.apply_pre_trade_checks(
+        denied_request, account=account, profile_name=profile.name
+    )
     assert denied_result.allowed is False
 
     builder = RiskSnapshotBuilder(

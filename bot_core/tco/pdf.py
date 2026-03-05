@@ -1,4 +1,5 @@
 """Minimalistyczny generator PDF używany do raportów TCO."""
+
 from __future__ import annotations
 
 from typing import Iterable

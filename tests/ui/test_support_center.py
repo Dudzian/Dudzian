@@ -80,7 +80,9 @@ def test_support_center_loads_and_filters(article_directory: Path) -> None:
     engine.warnings.connect(_collect)  # type: ignore[attr-defined]
     engine.load(QUrl.fromLocalFile(str(qml_path)))
     if qml_warnings or not engine.rootObjects():
-        warnings_text = "; ".join(warning.toString() for warning in qml_warnings) or "brak obiektów root"
+        warnings_text = (
+            "; ".join(warning.toString() for warning in qml_warnings) or "brak obiektów root"
+        )
         pytest.skip(
             f"Nie udało się załadować SupportCenter.qml: {warnings_text}",
             allow_module_level=False,

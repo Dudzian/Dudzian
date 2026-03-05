@@ -1,4 +1,5 @@
 """High-level packaging pipeline helpers (notarization, delta updates, fingerprint checks)."""
+
 from __future__ import annotations
 
 import base64
@@ -17,7 +18,11 @@ from pathlib import Path
 from typing import Iterable, Mapping, MutableMapping, Sequence
 
 from bot_core.security.hwid import HwIdProvider, HwIdProviderError
-from bot_core.security.signing import build_hmac_signature, canonical_json_bytes, validate_hmac_signature
+from bot_core.security.signing import (
+    build_hmac_signature,
+    canonical_json_bytes,
+    validate_hmac_signature,
+)
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -104,7 +109,9 @@ class HardwareFingerprintValidator:
         payload = document.get("payload")
         signature = document.get("signature")
         if not isinstance(payload, Mapping) or not isinstance(signature, Mapping):
-            raise ValueError("fingerprint.expected.json must contain 'payload' and 'signature' objects")
+            raise ValueError(
+                "fingerprint.expected.json must contain 'payload' and 'signature' objects"
+            )
 
         fingerprint_raw = payload.get("fingerprint")
         fingerprint = str(fingerprint_raw).strip() if isinstance(fingerprint_raw, str) else None
@@ -112,7 +119,10 @@ class HardwareFingerprintValidator:
 
         if fingerprint is None:
             issues.append("missing-fingerprint")
-        elif not self._allow_placeholder and fingerprint.upper() in {"UNPROVISIONED", "PLACEHOLDER"}:
+        elif not self._allow_placeholder and fingerprint.upper() in {
+            "UNPROVISIONED",
+            "PLACEHOLDER",
+        }:
             issues.append("placeholder-fingerprint")
 
         signature_valid: bool | None = None
@@ -125,7 +135,9 @@ class HardwareFingerprintValidator:
                 if not isinstance(algorithm, str):
                     issues.append("signature-missing-algorithm")
                 else:
-                    errors = _verify_hmac_signature(payload, signature_mapping, key=self._signature_key, algorithm=algorithm)
+                    errors = _verify_hmac_signature(
+                        payload, signature_mapping, key=self._signature_key, algorithm=algorithm
+                    )
                     signature_valid = not errors
                     issues.extend(errors)
 
@@ -302,7 +314,12 @@ class DeltaUpdateBuilder:
 
         delta_name = _delta_archive_name(context, base_version, self._compression)
         delta_path = self._output_dir / delta_name
-        _LOGGER.info("Building delta update: base=%s target=%s -> %s", base_version, context.version, delta_path)
+        _LOGGER.info(
+            "Building delta update: base=%s target=%s -> %s",
+            base_version,
+            context.version,
+            delta_path,
+        )
         if delta_path.exists():
             delta_path.unlink()
 
@@ -326,13 +343,20 @@ class DeltaUpdateBuilder:
                 metadata["changed_files"].append(relative_path)
 
             metadata_path = temp_dir_path / "delta.json"
-            metadata_path.write_text(json.dumps(metadata, ensure_ascii=False, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+            metadata_path.write_text(
+                json.dumps(metadata, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
+                encoding="utf-8",
+            )
 
             if self._compression == "zip":
-                with zipfile.ZipFile(delta_path, mode="w", compression=zipfile.ZIP_DEFLATED) as archive:
+                with zipfile.ZipFile(
+                    delta_path, mode="w", compression=zipfile.ZIP_DEFLATED
+                ) as archive:
                     for file_path in sorted(temp_dir_path.rglob("*")):
                         if file_path.is_file():
-                            archive.write(file_path, file_path.relative_to(temp_dir_path).as_posix())
+                            archive.write(
+                                file_path, file_path.relative_to(temp_dir_path).as_posix()
+                            )
             elif self._compression == "tar.gz":
                 with tarfile.open(delta_path, mode="w:gz") as archive:
                     archive.add(temp_dir_path, arcname=".")
@@ -393,11 +417,14 @@ class DeltaManifestPublisher:
 
             signature_path: Path | None = None
             if self._signing_key is not None:
-                signature = build_hmac_signature(metadata, key=self._signing_key, key_id=self._signing_key_id)
+                signature = build_hmac_signature(
+                    metadata, key=self._signing_key, key_id=self._signing_key_id
+                )
                 signature_path = manifest_path.with_suffix(manifest_path.suffix + ".sig")
                 signature_payload = {"signature": signature}
                 signature_path.write_text(
-                    json.dumps(signature_payload, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
+                    json.dumps(signature_payload, ensure_ascii=False, indent=2, sort_keys=True)
+                    + "\n",
                     encoding="utf-8",
                 )
 
@@ -536,19 +563,25 @@ class UpdatePackageBuilder:
         signature_path: Path | None = None
         manifest_payload_with_signature: MutableMapping[str, object]
         if self._signing_key is not None:
-            signature = build_hmac_signature(manifest_payload, key=self._signing_key, key_id=self._signing_key_id)
+            signature = build_hmac_signature(
+                manifest_payload, key=self._signing_key, key_id=self._signing_key_id
+            )
             manifest_payload_with_signature = dict(manifest_payload)
             manifest_payload_with_signature["signature"] = signature
             signature_path = package_root / "manifest.sig"
             signature_path.write_text(
-                json.dumps({"signature": signature}, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
+                json.dumps({"signature": signature}, ensure_ascii=False, indent=2, sort_keys=True)
+                + "\n",
                 encoding="utf-8",
             )
         else:
             manifest_payload_with_signature = manifest_payload
 
         manifest_path.write_text(
-            json.dumps(manifest_payload_with_signature, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
+            json.dumps(
+                manifest_payload_with_signature, ensure_ascii=False, indent=2, sort_keys=True
+            )
+            + "\n",
             encoding="utf-8",
         )
 
@@ -584,7 +617,9 @@ class CodeSigningService:
         self._dry_run = dry_run
         self._timeout = timeout_seconds
 
-    def sign(self, context: PackagingContext, report: "PackagingPipelineReport") -> list[CodeSigningResult]:
+    def sign(
+        self, context: PackagingContext, report: "PackagingPipelineReport"
+    ) -> list[CodeSigningResult]:
         targets = self._resolve_targets(context, report)
         results: list[CodeSigningResult] = []
         for target in targets:
@@ -623,11 +658,15 @@ class CodeSigningService:
             )
             if completed.returncode != 0:
                 raise RuntimeError(
-                    "Code signing command failed for {}: {}".format(target, completed.stderr.strip())
+                    "Code signing command failed for {}: {}".format(
+                        target, completed.stderr.strip()
+                    )
                 )
         return results
 
-    def _resolve_targets(self, context: PackagingContext, report: "PackagingPipelineReport") -> list[Path]:
+    def _resolve_targets(
+        self, context: PackagingContext, report: "PackagingPipelineReport"
+    ) -> list[Path]:
         resolved: list[Path] = []
         for selector in self._targets:
             normalized = selector.lower()
@@ -642,11 +681,15 @@ class CodeSigningService:
             elif normalized == "update_manifests":
                 resolved.extend(package.manifest_path for package in report.update_packages)
             else:
-                resolved.append(Path(selector.format(
-                    bundle=context.bundle_name,
-                    version=context.version,
-                    platform=context.platform,
-                )))
+                resolved.append(
+                    Path(
+                        selector.format(
+                            bundle=context.bundle_name,
+                            version=context.version,
+                            platform=context.platform,
+                        )
+                    )
+                )
         unique: list[Path] = []
         seen: set[Path] = set()
         for path in resolved:
@@ -733,7 +776,9 @@ def _verify_hmac_signature(
 
     algorithm_upper = declared_algorithm.upper()
     if not algorithm_upper.startswith("HMAC-"):
-        fallback_errors = validate_hmac_signature(payload, {"signature": signature}, key=key, algorithm=algorithm)
+        fallback_errors = validate_hmac_signature(
+            payload, {"signature": signature}, key=key, algorithm=algorithm
+        )
         return [f"signature-{error}" for error in fallback_errors] if fallback_errors else []
 
     digest_name = algorithm_upper.split("-", 1)[-1].lower()
@@ -741,7 +786,9 @@ def _verify_hmac_signature(
         return ["signature-unsupported-algorithm"]
 
     digest_func = getattr(hashlib, digest_name)
-    expected_value = base64.b64encode(hmac.new(key, canonical_json_bytes(payload), digest_func).digest()).decode("ascii")
+    expected_value = base64.b64encode(
+        hmac.new(key, canonical_json_bytes(payload), digest_func).digest()
+    ).decode("ascii")
     actual_value = signature.get("value")
     if not isinstance(actual_value, str):
         return ["signature-missing-value"]
@@ -795,7 +842,11 @@ class NotarizationService:
         self._team_id = team_id
         self._staple = staple
         self._dry_run = dry_run
-        self._log_path = log_path.expanduser() if isinstance(log_path, Path) else (Path(log_path).expanduser() if log_path else None)
+        self._log_path = (
+            log_path.expanduser()
+            if isinstance(log_path, Path)
+            else (Path(log_path).expanduser() if log_path else None)
+        )
         self._timeout = timeout_seconds
 
     def notarize(self, context: PackagingContext) -> NotarizationResult:
@@ -823,7 +874,9 @@ class NotarizationService:
                     + "\n",
                     encoding="utf-8",
                 )
-            return NotarizationResult(command=command, stapled=False, ticket_path=None, dry_run=True, log_path=log_path)
+            return NotarizationResult(
+                command=command, stapled=False, ticket_path=None, dry_run=True, log_path=log_path
+            )
 
         _LOGGER.info("Submitting archive for notarization: %s", context.archive_path)
         result = subprocess.run(
@@ -835,7 +888,9 @@ class NotarizationService:
         )
         if result.returncode != 0:
             raise RuntimeError(
-                "Notarization command failed with exit code {}: {}".format(result.returncode, result.stderr.strip())
+                "Notarization command failed with exit code {}: {}".format(
+                    result.returncode, result.stderr.strip()
+                )
             )
         if log_path:
             log_path.write_text(result.stdout, encoding="utf-8")
@@ -844,23 +899,41 @@ class NotarizationService:
         ticket_path: Path | None = None
         if self._staple:
             stapled, ticket_path = self._staple_ticket(context.archive_path)
-        return NotarizationResult(command=command, stapled=stapled, ticket_path=ticket_path, dry_run=False, log_path=log_path)
+        return NotarizationResult(
+            command=command,
+            stapled=stapled,
+            ticket_path=ticket_path,
+            dry_run=False,
+            log_path=log_path,
+        )
 
     def _build_command(self, archive_path: Path) -> list[str]:
-        command = [self._tool, "notarytool", "submit", str(archive_path), "--wait", "--bundle-id", self._bundle_id]
+        command = [
+            self._tool,
+            "notarytool",
+            "submit",
+            str(archive_path),
+            "--wait",
+            "--bundle-id",
+            self._bundle_id,
+        ]
         if self._profile:
             command.extend(["--keychain-profile", self._profile])
         else:
             if not (self._apple_id and self._password and self._team_id):
-                raise ValueError("Notarization requires either keychain profile or Apple ID credentials")
-            command.extend([
-                "--apple-id",
-                self._apple_id,
-                "--password",
-                self._password,
-                "--team-id",
-                self._team_id,
-            ])
+                raise ValueError(
+                    "Notarization requires either keychain profile or Apple ID credentials"
+                )
+            command.extend(
+                [
+                    "--apple-id",
+                    self._apple_id,
+                    "--password",
+                    self._password,
+                    "--team-id",
+                    self._team_id,
+                ]
+            )
         return command
 
     def _staple_ticket(self, archive_path: Path) -> tuple[bool, Path | None]:
@@ -935,7 +1008,10 @@ class PackagingPipeline:
             self._logger.debug("Validating hardware fingerprint document")
             report.fingerprint = self._fingerprint_validator.validate(context)
             if report.fingerprint.issues:
-                self._logger.warning("Fingerprint validation reported issues: %s", ", ".join(report.fingerprint.issues))
+                self._logger.warning(
+                    "Fingerprint validation reported issues: %s",
+                    ", ".join(report.fingerprint.issues),
+                )
             else:
                 self._logger.info("Fingerprint document verified for %s", context.version)
 
@@ -952,7 +1028,9 @@ class PackagingPipeline:
 
         if self._delta_manifest_publisher and report.delta_updates:
             self._logger.debug("Exporting delta manifests")
-            report.delta_manifests = self._delta_manifest_publisher.publish(context, report.delta_updates)
+            report.delta_manifests = self._delta_manifest_publisher.publish(
+                context, report.delta_updates
+            )
             for manifest in report.delta_manifests:
                 self._logger.info("Wrote delta manifest %s", manifest.manifest_path)
 
@@ -983,7 +1061,9 @@ class PackagingPipeline:
         return report
 
 
-def build_pipeline_from_mapping(config: Mapping[str, object], *, base_dir: Path | None = None) -> PackagingPipeline:
+def build_pipeline_from_mapping(
+    config: Mapping[str, object], *, base_dir: Path | None = None
+) -> PackagingPipeline:
     """Create a :class:`PackagingPipeline` from a configuration mapping."""
 
     base_dir = base_dir or Path.cwd()
@@ -1012,7 +1092,9 @@ def build_pipeline_from_mapping(config: Mapping[str, object], *, base_dir: Path 
         if output_dir_entry:
             output_dir = _resolve_path(str(output_dir_entry), base_dir=base_dir)
             compression = str(delta_cfg.get("compression", "zip"))
-            delta_builder = DeltaUpdateBuilder(base_manifests=base_paths, output_dir=output_dir, compression=compression)
+            delta_builder = DeltaUpdateBuilder(
+                base_manifests=base_paths, output_dir=output_dir, compression=compression
+            )
         manifest_dir_entry = delta_cfg.get("manifest_dir")
         if manifest_dir_entry:
             manifest_dir = _resolve_path(str(manifest_dir_entry), base_dir=base_dir)
@@ -1057,7 +1139,11 @@ def build_pipeline_from_mapping(config: Mapping[str, object], *, base_dir: Path 
             else:
                 targets = ["archive"]
             env_cfg = code_signing_cfg.get("env")
-            environment = {str(k): str(v) for k, v in env_cfg.items()} if isinstance(env_cfg, Mapping) else None
+            environment = (
+                {str(k): str(v) for k, v in env_cfg.items()}
+                if isinstance(env_cfg, Mapping)
+                else None
+            )
             code_signing_service = CodeSigningService(
                 command=command,
                 targets=targets,
@@ -1080,7 +1166,9 @@ def build_pipeline_from_mapping(config: Mapping[str, object], *, base_dir: Path 
                 team_id=_get_str(notarization_cfg, "team_id"),
                 staple=bool(notarization_cfg.get("staple", True)),
                 dry_run=bool(notarization_cfg.get("dry_run", False)),
-                log_path=_resolve_optional_path(notarization_cfg.get("log_path"), base_dir=base_dir),
+                log_path=_resolve_optional_path(
+                    notarization_cfg.get("log_path"), base_dir=base_dir
+                ),
                 timeout_seconds=_get_int(notarization_cfg, "timeout_seconds"),
             )
 

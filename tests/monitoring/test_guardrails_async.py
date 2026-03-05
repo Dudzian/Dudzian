@@ -1,4 +1,5 @@
 """Testy guardrails kolejki I/O bazujące na asynchronicznym dispatcherze."""
+
 from __future__ import annotations
 
 import asyncio

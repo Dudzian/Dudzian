@@ -56,7 +56,9 @@ def _make_args(entrypoint: Path, workdir: Path, **overrides: object) -> _ArgsNam
     return _ArgsNamespace(**base)
 
 
-def _patch_pyinstaller(monkeypatch: pytest.MonkeyPatch, workdir: Path, *, binary_name: str = "bot_core_runtime") -> None:
+def _patch_pyinstaller(
+    monkeypatch: pytest.MonkeyPatch, workdir: Path, *, binary_name: str = "bot_core_runtime"
+) -> None:
     """Podmienia ``subprocess.run`` tak, by symulować udane wywołanie PyInstaller."""
 
     def fake_run(cmd, check, cwd=None, env=None):  # noqa: ANN001 - pomocniczy stub
@@ -233,7 +235,9 @@ def test_build_bundle_with_qt_dist(tmp_path, monkeypatch) -> None:
 
     _patch_pyinstaller(monkeypatch, workdir)
 
-    args = _make_args(entrypoint, workdir,
+    args = _make_args(
+        entrypoint,
+        workdir,
         qt_dist=qt_dist,
         briefcase_project=None,
         platform="linux",
@@ -245,7 +249,7 @@ def test_build_bundle_with_qt_dist(tmp_path, monkeypatch) -> None:
         signing_key=None,
         signing_key_id=None,
         allowed_profile=["demo", "paper"],
-        metadata=["channel=stable", "features=[\"risk\", \"hedge\"]"],
+        metadata=["channel=stable", 'features=["risk", "hedge"]'],
         metadata_file=None,
         metadata_yaml=None,
     )
@@ -271,7 +275,9 @@ def test_build_bundle_rejects_invalid_metadata(tmp_path, monkeypatch) -> None:
 
     _patch_pyinstaller(monkeypatch, workdir)
 
-    args = _make_args(entrypoint, workdir,
+    args = _make_args(
+        entrypoint,
+        workdir,
         qt_dist=None,
         briefcase_project=None,
         platform="linux",
@@ -303,7 +309,9 @@ def test_build_bundle_loads_metadata_from_file(tmp_path, monkeypatch) -> None:
     metadata_file = tmp_path / "metadata.json"
     metadata_file.write_text(json.dumps({"channel": "stable", "build": 123}), encoding="utf-8")
 
-    args = _make_args(entrypoint, workdir,
+    args = _make_args(
+        entrypoint,
+        workdir,
         qt_dist=None,
         briefcase_project=None,
         platform="linux",
@@ -348,7 +356,9 @@ def test_build_bundle_loads_metadata_from_yaml(tmp_path, monkeypatch) -> None:
         encoding="utf-8",
     )
 
-    args = _make_args(entrypoint, workdir,
+    args = _make_args(
+        entrypoint,
+        workdir,
         qt_dist=None,
         briefcase_project=None,
         platform="linux",
@@ -366,7 +376,9 @@ def test_build_bundle_loads_metadata_from_yaml(tmp_path, monkeypatch) -> None:
     )
 
     archive_path = build_bundle(args)
-    manifest = json.loads((archive_path.with_suffix("") / "manifest.json").read_text(encoding="utf-8"))
+    manifest = json.loads(
+        (archive_path.with_suffix("") / "manifest.json").read_text(encoding="utf-8")
+    )
     assert manifest["metadata"] == {
         "channel": "stable",
         "release": {"commit": "abc123", "branch": "main"},
@@ -388,7 +400,7 @@ def test_build_bundle_loads_metadata_from_ini(tmp_path, monkeypatch) -> None:
                 "channel = stable",
                 "",
                 "[release]",
-                "commit = \"abc123\"",
+                'commit = "abc123"',
                 "build = 42",
                 "",
                 "[release.branch]",
@@ -398,7 +410,9 @@ def test_build_bundle_loads_metadata_from_ini(tmp_path, monkeypatch) -> None:
         encoding="utf-8",
     )
 
-    args = _make_args(entrypoint, workdir,
+    args = _make_args(
+        entrypoint,
+        workdir,
         qt_dist=None,
         briefcase_project=None,
         platform="linux",
@@ -418,7 +432,9 @@ def test_build_bundle_loads_metadata_from_ini(tmp_path, monkeypatch) -> None:
     )
 
     archive_path = build_bundle(args)
-    manifest = json.loads((archive_path.with_suffix("") / "manifest.json").read_text(encoding="utf-8"))
+    manifest = json.loads(
+        (archive_path.with_suffix("") / "manifest.json").read_text(encoding="utf-8")
+    )
     assert manifest["metadata"] == {
         "channel": "stable",
         "release": {"commit": "abc123", "build": 42, "branch": {"name": "main", "region": "eu"}},
@@ -445,7 +461,9 @@ def test_build_bundle_loads_metadata_from_toml(tmp_path, monkeypatch) -> None:
         encoding="utf-8",
     )
 
-    args = _make_args(entrypoint, workdir,
+    args = _make_args(
+        entrypoint,
+        workdir,
         qt_dist=None,
         briefcase_project=None,
         platform="linux",
@@ -464,7 +482,9 @@ def test_build_bundle_loads_metadata_from_toml(tmp_path, monkeypatch) -> None:
     )
 
     archive_path = build_bundle(args)
-    manifest = json.loads((archive_path.with_suffix("") / "manifest.json").read_text(encoding="utf-8"))
+    manifest = json.loads(
+        (archive_path.with_suffix("") / "manifest.json").read_text(encoding="utf-8")
+    )
     assert manifest["metadata"] == {
         "channel": "beta",
         "release": {"commit": "abc123", "branch": "main", "build": 42},
@@ -484,7 +504,9 @@ def test_build_bundle_allows_nested_metadata_keys(tmp_path, monkeypatch) -> None
         json.dumps({"release": {"commit": "abc123"}}, ensure_ascii=False), encoding="utf-8"
     )
 
-    args = _make_args(entrypoint, workdir,
+    args = _make_args(
+        entrypoint,
+        workdir,
         qt_dist=None,
         briefcase_project=None,
         platform="linux",
@@ -502,7 +524,9 @@ def test_build_bundle_allows_nested_metadata_keys(tmp_path, monkeypatch) -> None
     )
 
     archive_path = build_bundle(args)
-    manifest = json.loads((archive_path.with_suffix("") / "manifest.json").read_text(encoding="utf-8"))
+    manifest = json.loads(
+        (archive_path.with_suffix("") / "manifest.json").read_text(encoding="utf-8")
+    )
     assert manifest["metadata"] == {
         "release": {
             "commit": "abc123",
@@ -520,11 +544,11 @@ def test_build_bundle_rejects_nested_conflicts(tmp_path, monkeypatch) -> None:
     _patch_pyinstaller(monkeypatch, workdir)
 
     metadata_file = tmp_path / "metadata.json"
-    metadata_file.write_text(
-        json.dumps({"release": "1.2.3"}, ensure_ascii=False), encoding="utf-8"
-    )
+    metadata_file.write_text(json.dumps({"release": "1.2.3"}, ensure_ascii=False), encoding="utf-8")
 
-    args = _make_args(entrypoint, workdir,
+    args = _make_args(
+        entrypoint,
+        workdir,
         qt_dist=None,
         briefcase_project=None,
         platform="linux",
@@ -556,7 +580,9 @@ def test_build_bundle_rejects_invalid_metadata_file(tmp_path, monkeypatch) -> No
     metadata_file = tmp_path / "metadata.json"
     metadata_file.write_text("[]", encoding="utf-8")
 
-    args = _make_args(entrypoint, workdir,
+    args = _make_args(
+        entrypoint,
+        workdir,
         qt_dist=None,
         briefcase_project=None,
         platform="linux",
@@ -588,7 +614,9 @@ def test_build_bundle_rejects_invalid_metadata_ini(tmp_path, monkeypatch) -> Non
     metadata_ini = tmp_path / "metadata.ini"
     metadata_ini.write_text("[broken\nvalue", encoding="utf-8")
 
-    args = _make_args(entrypoint, workdir,
+    args = _make_args(
+        entrypoint,
+        workdir,
         qt_dist=None,
         briefcase_project=None,
         platform="linux",
@@ -622,7 +650,9 @@ def test_build_bundle_rejects_invalid_metadata_toml(tmp_path, monkeypatch) -> No
     metadata_toml = tmp_path / "metadata.toml"
     metadata_toml.write_text("channel = [", encoding="utf-8")
 
-    args = _make_args(entrypoint, workdir,
+    args = _make_args(
+        entrypoint,
+        workdir,
         qt_dist=None,
         briefcase_project=None,
         platform="linux",
@@ -655,7 +685,9 @@ def test_build_bundle_rejects_invalid_metadata_yaml(tmp_path, monkeypatch) -> No
     metadata_yaml = tmp_path / "metadata.yaml"
     metadata_yaml.write_text("- item", encoding="utf-8")
 
-    args = _make_args(entrypoint, workdir,
+    args = _make_args(
+        entrypoint,
+        workdir,
         qt_dist=None,
         briefcase_project=None,
         platform="linux",
@@ -690,7 +722,9 @@ def test_build_bundle_rejects_toml_conflicts(tmp_path, monkeypatch) -> None:
     metadata_toml = tmp_path / "metadata.toml"
     metadata_toml.write_text('channel = "beta"', encoding="utf-8")
 
-    args = _make_args(entrypoint, workdir,
+    args = _make_args(
+        entrypoint,
+        workdir,
         qt_dist=None,
         briefcase_project=None,
         platform="linux",
@@ -726,7 +760,9 @@ def test_build_bundle_rejects_yaml_conflicts(tmp_path, monkeypatch) -> None:
     metadata_yaml = tmp_path / "metadata.yaml"
     metadata_yaml.write_text("channel: beta", encoding="utf-8")
 
-    args = _make_args(entrypoint, workdir,
+    args = _make_args(
+        entrypoint,
+        workdir,
         qt_dist=None,
         briefcase_project=None,
         platform="linux",
@@ -755,7 +791,9 @@ def test_build_bundle_loads_metadata_from_environment(tmp_path, monkeypatch) -> 
 
     _patch_pyinstaller(monkeypatch, workdir)
 
-    args = _make_args(entrypoint, workdir,
+    args = _make_args(
+        entrypoint,
+        workdir,
         qt_dist=None,
         briefcase_project=None,
         platform="linux",
@@ -795,7 +833,9 @@ def test_build_bundle_loads_metadata_from_dotenv(tmp_path, monkeypatch) -> None:
         encoding="utf-8",
     )
 
-    args = _make_args(entrypoint, workdir,
+    args = _make_args(
+        entrypoint,
+        workdir,
         qt_dist=None,
         briefcase_project=None,
         platform="linux",
@@ -815,7 +855,9 @@ def test_build_bundle_loads_metadata_from_dotenv(tmp_path, monkeypatch) -> None:
     )
 
     archive_path = build_bundle(args)
-    manifest = json.loads((archive_path.with_suffix("") / "manifest.json").read_text(encoding="utf-8"))
+    manifest = json.loads(
+        (archive_path.with_suffix("") / "manifest.json").read_text(encoding="utf-8")
+    )
     assert manifest["metadata"] == {
         "channel": "stable",
         "release": {"commit": "abc123", "build": 42},
@@ -833,7 +875,9 @@ def test_build_bundle_rejects_invalid_dotenv_line(tmp_path, monkeypatch) -> None
     dotenv = tmp_path / "metadata.env"
     dotenv.write_text("BROKEN_LINE", encoding="utf-8")
 
-    args = _make_args(entrypoint, workdir,
+    args = _make_args(
+        entrypoint,
+        workdir,
         qt_dist=None,
         briefcase_project=None,
         platform="linux",
@@ -867,7 +911,9 @@ def test_build_bundle_rejects_dotenv_conflicts(tmp_path, monkeypatch) -> None:
     dotenv = tmp_path / "metadata.env"
     dotenv.write_text("channel=stable", encoding="utf-8")
 
-    args = _make_args(entrypoint, workdir,
+    args = _make_args(
+        entrypoint,
+        workdir,
         qt_dist=None,
         briefcase_project=None,
         platform="linux",
@@ -927,28 +973,30 @@ def test_build_bundle_loads_metadata_from_url(tmp_path, monkeypatch) -> None:
     url = f"http://127.0.0.1:{server.server_address[1]}/metadata.json"
 
     try:
-        args = _make_args(entrypoint, workdir,
-        qt_dist=None,
-        briefcase_project=None,
-        platform="linux",
-        version="1.0.0",
-        output_dir=tmp_path / "out",
-        hidden_import=None,
-        runtime_name=None,
-        include=None,
-        signing_key=None,
-        signing_key_id=None,
-        allowed_profile=None,
-        metadata=["release.build=42"],
-        metadata_file=None,
-        metadata_yaml=None,
-        metadata_url=[url],
-        metadata_url_header=["Authorization=Bearer token"],
-        metadata_url_timeout=None,
-        metadata_url_max_size=None,
-        metadata_url_allow_http=True,
-        metadata_url_allowed_host=None,
-    )
+        args = _make_args(
+            entrypoint,
+            workdir,
+            qt_dist=None,
+            briefcase_project=None,
+            platform="linux",
+            version="1.0.0",
+            output_dir=tmp_path / "out",
+            hidden_import=None,
+            runtime_name=None,
+            include=None,
+            signing_key=None,
+            signing_key_id=None,
+            allowed_profile=None,
+            metadata=["release.build=42"],
+            metadata_file=None,
+            metadata_yaml=None,
+            metadata_url=[url],
+            metadata_url_header=["Authorization=Bearer token"],
+            metadata_url_timeout=None,
+            metadata_url_max_size=None,
+            metadata_url_allow_http=True,
+            metadata_url_allowed_host=None,
+        )
 
         archive_path = build_bundle(args)
     finally:
@@ -956,7 +1004,9 @@ def test_build_bundle_loads_metadata_from_url(tmp_path, monkeypatch) -> None:
         thread.join()
         server.server_close()
 
-    manifest = json.loads((archive_path.with_suffix("") / "manifest.json").read_text(encoding="utf-8"))
+    manifest = json.loads(
+        (archive_path.with_suffix("") / "manifest.json").read_text(encoding="utf-8")
+    )
     assert manifest["metadata"] == {
         "channel": "stable",
         "release": {"commit": "abc123", "branch": "main", "build": 42},
@@ -980,7 +1030,9 @@ def test_build_bundle_rejects_http_metadata_url_without_flag(tmp_path, monkeypat
 
     monkeypatch.setattr(bundle_module.urlrequest, "urlopen", fake_urlopen)
 
-    args = _make_args(entrypoint, workdir,
+    args = _make_args(
+        entrypoint,
+        workdir,
         qt_dist=None,
         briefcase_project=None,
         platform="linux",
@@ -1022,7 +1074,9 @@ def test_build_bundle_enforces_metadata_url_allowed_hosts(tmp_path, monkeypatch)
 
     monkeypatch.setattr(bundle_module.urlrequest, "urlopen", fake_urlopen)
 
-    args = _make_args(entrypoint, workdir,
+    args = _make_args(
+        entrypoint,
+        workdir,
         qt_dist=None,
         briefcase_project=None,
         platform="linux",
@@ -1074,7 +1128,9 @@ def test_build_bundle_accepts_allowed_metadata_url_hosts(tmp_path, monkeypatch) 
 
     archive_path = build_bundle(args)
 
-    manifest = json.loads((archive_path.with_suffix("") / "manifest.json").read_text(encoding="utf-8"))
+    manifest = json.loads(
+        (archive_path.with_suffix("") / "manifest.json").read_text(encoding="utf-8")
+    )
     assert manifest["metadata"] == {"channel": "stable"}
     assert observed_urls == ["https://updates.example.com/meta.json"]
 
@@ -1119,7 +1175,9 @@ def test_build_bundle_configures_metadata_url_ssl_context(tmp_path, monkeypatch)
 
     _install_metadata_stub(monkeypatch, on_call=recorder)
 
-    args = _make_args(entrypoint, workdir,
+    args = _make_args(
+        entrypoint,
+        workdir,
         qt_dist=None,
         briefcase_project=None,
         platform="linux",
@@ -1148,7 +1206,9 @@ def test_build_bundle_configures_metadata_url_ssl_context(tmp_path, monkeypatch)
 
     archive_path = build_bundle(args)
 
-    manifest = json.loads((archive_path.with_suffix("") / "manifest.json").read_text(encoding="utf-8"))
+    manifest = json.loads(
+        (archive_path.with_suffix("") / "manifest.json").read_text(encoding="utf-8")
+    )
     assert manifest["metadata"] == {"channel": "stable"}
     assert observed_create_calls == [(str(ca_file), str(ca_dir))]
     assert fake_context.loaded == [(str(client_cert), str(client_key))]
@@ -1169,7 +1229,9 @@ def test_build_bundle_accepts_metadata_url_cert_fingerprint(tmp_path, monkeypatc
     socket = _FakeSocket(binary_cert=cert_bytes, require_binary_form=True)
     _install_metadata_stub(monkeypatch, socket=socket)
 
-    args = _make_args(entrypoint, workdir,
+    args = _make_args(
+        entrypoint,
+        workdir,
         qt_dist=None,
         briefcase_project=None,
         platform="linux",
@@ -1196,7 +1258,9 @@ def test_build_bundle_accepts_metadata_url_cert_fingerprint(tmp_path, monkeypatc
 
     archive_path = build_bundle(args)
 
-    manifest = json.loads((archive_path.with_suffix("") / "manifest.json").read_text(encoding="utf-8"))
+    manifest = json.loads(
+        (archive_path.with_suffix("") / "manifest.json").read_text(encoding="utf-8")
+    )
     assert manifest["metadata"] == {"channel": "stable"}
 
 
@@ -1213,7 +1277,9 @@ def test_build_bundle_rejects_metadata_url_cert_fingerprint_mismatch(tmp_path, m
     socket = _FakeSocket(binary_cert=cert_bytes, require_binary_form=True)
     _install_metadata_stub(monkeypatch, socket=socket)
 
-    args = _make_args(entrypoint, workdir,
+    args = _make_args(
+        entrypoint,
+        workdir,
         qt_dist=None,
         briefcase_project=None,
         platform="linux",
@@ -1291,9 +1357,7 @@ def test_parse_cert_san_requirements_accepts_entries() -> None:
 
 def test_parse_cert_san_requirements_rejects_invalid_format() -> None:
     with pytest.raises(SystemExit):
-        bundle_module._parse_cert_san_requirements(
-            ["invalid"], option="--metadata-url-cert-san"
-        )
+        bundle_module._parse_cert_san_requirements(["invalid"], option="--metadata-url-cert-san")
 
 
 def test_parse_cert_extended_key_usage_accepts_alias_and_oid() -> None:
@@ -1335,9 +1399,7 @@ def test_parse_cert_serial_requirements_accepts_multiple_formats() -> None:
 
 def test_parse_cert_serial_requirements_rejects_invalid_input() -> None:
     with pytest.raises(SystemExit):
-        bundle_module._parse_cert_serial_requirements(
-            ["XYZ"], option="--metadata-url-cert-serial"
-        )
+        bundle_module._parse_cert_serial_requirements(["XYZ"], option="--metadata-url-cert-serial")
 
 
 def test_build_bundle_accepts_metadata_url_cert_subject(tmp_path, monkeypatch) -> None:
@@ -1358,7 +1420,9 @@ def test_build_bundle_accepts_metadata_url_cert_subject(tmp_path, monkeypatch) -
         lambda data: {"commonname": ["updates.example.com"], "o": ["BotCore"]},
     )
 
-    args = _make_args(entrypoint, workdir,
+    args = _make_args(
+        entrypoint,
+        workdir,
         qt_dist=None,
         briefcase_project=None,
         platform="linux",
@@ -1386,7 +1450,9 @@ def test_build_bundle_accepts_metadata_url_cert_subject(tmp_path, monkeypatch) -
 
     archive_path = build_bundle(args)
 
-    manifest = json.loads((archive_path.with_suffix("") / "manifest.json").read_text(encoding="utf-8"))
+    manifest = json.loads(
+        (archive_path.with_suffix("") / "manifest.json").read_text(encoding="utf-8")
+    )
     assert manifest["metadata"] == {"channel": "stable"}
 
 
@@ -1408,7 +1474,9 @@ def test_build_bundle_accepts_metadata_url_cert_issuer(tmp_path, monkeypatch) ->
         lambda data: {"organizationname": ["Trusted CA"], "commonname": ["Root"]},
     )
 
-    args = _make_args(entrypoint, workdir,
+    args = _make_args(
+        entrypoint,
+        workdir,
         qt_dist=None,
         briefcase_project=None,
         platform="linux",
@@ -1437,11 +1505,15 @@ def test_build_bundle_accepts_metadata_url_cert_issuer(tmp_path, monkeypatch) ->
 
     archive_path = build_bundle(args)
 
-    manifest = json.loads((archive_path.with_suffix("") / "manifest.json").read_text(encoding="utf-8"))
+    manifest = json.loads(
+        (archive_path.with_suffix("") / "manifest.json").read_text(encoding="utf-8")
+    )
     assert manifest["metadata"] == {"channel": "stable"}
 
 
-def test_build_bundle_rejects_metadata_url_cert_subject_missing_attribute(tmp_path, monkeypatch) -> None:
+def test_build_bundle_rejects_metadata_url_cert_subject_missing_attribute(
+    tmp_path, monkeypatch
+) -> None:
     entrypoint = tmp_path / "entry.py"
     entrypoint.write_text("print('hello')", encoding="utf-8")
 
@@ -1459,7 +1531,9 @@ def test_build_bundle_rejects_metadata_url_cert_subject_missing_attribute(tmp_pa
         lambda data: {"organizationname": ["BotCore"]},
     )
 
-    args = _make_args(entrypoint, workdir,
+    args = _make_args(
+        entrypoint,
+        workdir,
         qt_dist=None,
         briefcase_project=None,
         platform="linux",
@@ -1507,7 +1581,9 @@ def test_build_bundle_rejects_metadata_url_cert_subject_mismatch(tmp_path, monke
         lambda data: {"commonname": ["other.example.com"]},
     )
 
-    args = _make_args(entrypoint, workdir,
+    args = _make_args(
+        entrypoint,
+        workdir,
         qt_dist=None,
         briefcase_project=None,
         platform="linux",
@@ -1537,7 +1613,9 @@ def test_build_bundle_rejects_metadata_url_cert_subject_mismatch(tmp_path, monke
         build_bundle(args)
 
 
-def test_build_bundle_rejects_metadata_url_cert_issuer_missing_attribute(tmp_path, monkeypatch) -> None:
+def test_build_bundle_rejects_metadata_url_cert_issuer_missing_attribute(
+    tmp_path, monkeypatch
+) -> None:
     entrypoint = tmp_path / "entry.py"
     entrypoint.write_text("print('hello')", encoding="utf-8")
 
@@ -1555,7 +1633,9 @@ def test_build_bundle_rejects_metadata_url_cert_issuer_missing_attribute(tmp_pat
         lambda data: {"organizationname": ["Trusted CA"]},
     )
 
-    args = _make_args(entrypoint, workdir,
+    args = _make_args(
+        entrypoint,
+        workdir,
         qt_dist=None,
         briefcase_project=None,
         platform="linux",
@@ -1604,7 +1684,9 @@ def test_build_bundle_rejects_metadata_url_cert_issuer_mismatch(tmp_path, monkey
         lambda data: {"commonname": ["Other"]},
     )
 
-    args = _make_args(entrypoint, workdir,
+    args = _make_args(
+        entrypoint,
+        workdir,
         qt_dist=None,
         briefcase_project=None,
         platform="linux",
@@ -1650,10 +1732,15 @@ def test_build_bundle_accepts_metadata_url_cert_san(tmp_path, monkeypatch) -> No
     monkeypatch.setattr(
         bundle_module,
         "_extract_certificate_subject_alternative_names",
-        lambda data: {"dns": ["updates.example.com"], "uri": ["https://updates.example.com/meta.json"]},
+        lambda data: {
+            "dns": ["updates.example.com"],
+            "uri": ["https://updates.example.com/meta.json"],
+        },
     )
 
-    args = _make_args(entrypoint, workdir,
+    args = _make_args(
+        entrypoint,
+        workdir,
         qt_dist=None,
         briefcase_project=None,
         platform="linux",
@@ -1684,7 +1771,9 @@ def test_build_bundle_accepts_metadata_url_cert_san(tmp_path, monkeypatch) -> No
 
     archive_path = build_bundle(args)
 
-    manifest = json.loads((archive_path.with_suffix("") / "manifest.json").read_text(encoding="utf-8"))
+    manifest = json.loads(
+        (archive_path.with_suffix("") / "manifest.json").read_text(encoding="utf-8")
+    )
     assert manifest["metadata"] == {"channel": "stable"}
 
 
@@ -1706,7 +1795,9 @@ def test_build_bundle_rejects_metadata_url_cert_san_missing_entry(tmp_path, monk
         lambda data: {"uri": ["https://updates.example.com/meta.json"]},
     )
 
-    args = _make_args(entrypoint, workdir,
+    args = _make_args(
+        entrypoint,
+        workdir,
         qt_dist=None,
         briefcase_project=None,
         platform="linux",
@@ -1757,7 +1848,9 @@ def test_build_bundle_rejects_metadata_url_cert_san_mismatch(tmp_path, monkeypat
         lambda data: (False, set()),
     )
 
-    args = _make_args(entrypoint, workdir,
+    args = _make_args(
+        entrypoint,
+        workdir,
         qt_dist=None,
         briefcase_project=None,
         platform="linux",
@@ -1806,7 +1899,9 @@ def test_build_bundle_rejects_metadata_url_cert_eku_mismatch(tmp_path, monkeypat
         lambda data: (True, {"1.3.6.1.5.5.7.3.2"}),
     )
 
-    args = _make_args(entrypoint, workdir,
+    args = _make_args(
+        entrypoint,
+        workdir,
         qt_dist=None,
         briefcase_project=None,
         platform="linux",
@@ -1855,7 +1950,9 @@ def test_build_bundle_accepts_metadata_url_cert_policy(tmp_path, monkeypatch) ->
         lambda data: (True, {"2.5.29.32.0", "1.2.3.4.5"}),
     )
 
-    args = _make_args(entrypoint, workdir,
+    args = _make_args(
+        entrypoint,
+        workdir,
         qt_dist=None,
         briefcase_project=None,
         platform="linux",
@@ -1885,11 +1982,15 @@ def test_build_bundle_accepts_metadata_url_cert_policy(tmp_path, monkeypatch) ->
 
     archive_path = build_bundle(args)
 
-    manifest = json.loads((archive_path.with_suffix("") / "manifest.json").read_text(encoding="utf-8"))
+    manifest = json.loads(
+        (archive_path.with_suffix("") / "manifest.json").read_text(encoding="utf-8")
+    )
     assert manifest["metadata"] == {"channel": "stable"}
 
 
-def test_build_bundle_rejects_metadata_url_cert_policy_missing_extension(tmp_path, monkeypatch) -> None:
+def test_build_bundle_rejects_metadata_url_cert_policy_missing_extension(
+    tmp_path, monkeypatch
+) -> None:
     entrypoint = tmp_path / "entry.py"
     entrypoint.write_text("print('hello')", encoding="utf-8")
 
@@ -1907,7 +2008,9 @@ def test_build_bundle_rejects_metadata_url_cert_policy_missing_extension(tmp_pat
         lambda data: (False, set()),
     )
 
-    args = _make_args(entrypoint, workdir,
+    args = _make_args(
+        entrypoint,
+        workdir,
         qt_dist=None,
         briefcase_project=None,
         platform="linux",
@@ -1957,7 +2060,9 @@ def test_build_bundle_rejects_metadata_url_cert_policy_mismatch(tmp_path, monkey
         lambda data: (True, {"1.3.6.1.5.5.7.3.1"}),
     )
 
-    args = _make_args(entrypoint, workdir,
+    args = _make_args(
+        entrypoint,
+        workdir,
         qt_dist=None,
         briefcase_project=None,
         platform="linux",
@@ -2003,7 +2108,9 @@ def test_build_bundle_accepts_metadata_url_cert_serial(tmp_path, monkeypatch) ->
     _install_metadata_stub(monkeypatch, socket=socket)
     monkeypatch.setattr(bundle_module, "_extract_certificate_serial_number", lambda data: "abcd")
 
-    args = _make_args(entrypoint, workdir,
+    args = _make_args(
+        entrypoint,
+        workdir,
         qt_dist=None,
         briefcase_project=None,
         platform="linux",
@@ -2034,7 +2141,9 @@ def test_build_bundle_accepts_metadata_url_cert_serial(tmp_path, monkeypatch) ->
 
     archive_path = build_bundle(args)
 
-    manifest = json.loads((archive_path.with_suffix("") / "manifest.json").read_text(encoding="utf-8"))
+    manifest = json.loads(
+        (archive_path.with_suffix("") / "manifest.json").read_text(encoding="utf-8")
+    )
     assert manifest["metadata"] == {"channel": "stable"}
 
 
@@ -2052,7 +2161,9 @@ def test_build_bundle_rejects_metadata_url_cert_serial_mismatch(tmp_path, monkey
     _install_metadata_stub(monkeypatch, socket=socket)
     monkeypatch.setattr(bundle_module, "_extract_certificate_serial_number", lambda data: "beef")
 
-    args = _make_args(entrypoint, workdir,
+    args = _make_args(
+        entrypoint,
+        workdir,
         qt_dist=None,
         briefcase_project=None,
         platform="linux",
@@ -2085,7 +2196,9 @@ def test_build_bundle_rejects_metadata_url_cert_serial_mismatch(tmp_path, monkey
         build_bundle(args)
 
 
-def test_build_bundle_rejects_metadata_url_cert_fingerprint_algorithm(tmp_path, monkeypatch) -> None:
+def test_build_bundle_rejects_metadata_url_cert_fingerprint_algorithm(
+    tmp_path, monkeypatch
+) -> None:
     entrypoint = tmp_path / "entry.py"
     entrypoint.write_text("print('hello')", encoding="utf-8")
 
@@ -2094,11 +2207,15 @@ def test_build_bundle_rejects_metadata_url_cert_fingerprint_algorithm(tmp_path, 
     _patch_pyinstaller(monkeypatch, workdir)
 
     def fake_urlopen(request, timeout=None, context=None):  # noqa: ANN001 - should not be used
-        raise AssertionError("metadata download should not be attempted when fingerprint is invalid")
+        raise AssertionError(
+            "metadata download should not be attempted when fingerprint is invalid"
+        )
 
     monkeypatch.setattr(bundle_module.urlrequest, "urlopen", fake_urlopen)
 
-    args = _make_args(entrypoint, workdir,
+    args = _make_args(
+        entrypoint,
+        workdir,
         qt_dist=None,
         briefcase_project=None,
         platform="linux",
@@ -2138,11 +2255,15 @@ def test_build_bundle_rejects_metadata_url_client_key_without_cert(tmp_path, mon
     _patch_pyinstaller(monkeypatch, workdir)
 
     def fake_urlopen(request, timeout=None, context=None):  # noqa: ANN001 - should not be used
-        raise AssertionError("metadata download should not be attempted when client cert is invalid")
+        raise AssertionError(
+            "metadata download should not be attempted when client cert is invalid"
+        )
 
     monkeypatch.setattr(bundle_module.urlrequest, "urlopen", fake_urlopen)
 
-    args = _make_args(entrypoint, workdir,
+    args = _make_args(
+        entrypoint,
+        workdir,
         qt_dist=None,
         briefcase_project=None,
         platform="linux",
@@ -2181,7 +2302,9 @@ def test_build_bundle_rejects_missing_metadata_url_ca(tmp_path, monkeypatch) -> 
 
     _patch_pyinstaller(monkeypatch, workdir)
 
-    args = _make_args(entrypoint, workdir,
+    args = _make_args(
+        entrypoint,
+        workdir,
         qt_dist=None,
         briefcase_project=None,
         platform="linux",
@@ -2238,28 +2361,30 @@ def test_build_bundle_rejects_invalid_metadata_url_payload(tmp_path, monkeypatch
     url = f"http://127.0.0.1:{server.server_address[1]}/metadata.json"
 
     try:
-        args = _make_args(entrypoint, workdir,
-        qt_dist=None,
-        briefcase_project=None,
-        platform="linux",
-        version="1.0.0",
-        output_dir=tmp_path / "out",
-        hidden_import=None,
-        runtime_name=None,
-        include=None,
-        signing_key=None,
-        signing_key_id=None,
-        allowed_profile=None,
-        metadata=None,
-        metadata_file=None,
-        metadata_yaml=None,
-        metadata_url=[url],
-        metadata_url_header=None,
-        metadata_url_timeout=None,
-        metadata_url_max_size=None,
-        metadata_url_allow_http=True,
-        metadata_url_allowed_host=None,
-    )
+        args = _make_args(
+            entrypoint,
+            workdir,
+            qt_dist=None,
+            briefcase_project=None,
+            platform="linux",
+            version="1.0.0",
+            output_dir=tmp_path / "out",
+            hidden_import=None,
+            runtime_name=None,
+            include=None,
+            signing_key=None,
+            signing_key_id=None,
+            allowed_profile=None,
+            metadata=None,
+            metadata_file=None,
+            metadata_yaml=None,
+            metadata_url=[url],
+            metadata_url_header=None,
+            metadata_url_timeout=None,
+            metadata_url_max_size=None,
+            metadata_url_allow_http=True,
+            metadata_url_allowed_host=None,
+        )
 
         with pytest.raises(SystemExit):
             build_bundle(args)
@@ -2282,7 +2407,9 @@ def test_build_bundle_rejects_unreachable_metadata_url(tmp_path, monkeypatch) ->
 
     monkeypatch.setattr(bundle_module.urlrequest, "urlopen", failing_urlopen)
 
-    args = _make_args(entrypoint, workdir,
+    args = _make_args(
+        entrypoint,
+        workdir,
         qt_dist=None,
         briefcase_project=None,
         platform="linux",
@@ -2314,7 +2441,9 @@ def test_build_bundle_rejects_invalid_metadata_url_header(tmp_path, monkeypatch)
 
     _patch_pyinstaller(monkeypatch, workdir)
 
-    args = _make_args(entrypoint, workdir,
+    args = _make_args(
+        entrypoint,
+        workdir,
         qt_dist=None,
         briefcase_project=None,
         platform="linux",
@@ -2346,7 +2475,9 @@ def test_build_bundle_rejects_duplicate_metadata_url_header(tmp_path, monkeypatc
 
     _patch_pyinstaller(monkeypatch, workdir)
 
-    args = _make_args(entrypoint, workdir,
+    args = _make_args(
+        entrypoint,
+        workdir,
         qt_dist=None,
         briefcase_project=None,
         platform="linux",
@@ -2378,7 +2509,9 @@ def test_build_bundle_rejects_nonpositive_metadata_url_timeout(tmp_path, monkeyp
 
     _patch_pyinstaller(monkeypatch, workdir)
 
-    args = _make_args(entrypoint, workdir,
+    args = _make_args(
+        entrypoint,
+        workdir,
         qt_dist=None,
         briefcase_project=None,
         platform="linux",
@@ -2429,28 +2562,30 @@ def test_build_bundle_rejects_non_json_metadata_url_content_type(tmp_path, monke
     url = f"http://127.0.0.1:{server.server_address[1]}/metadata.json"
 
     try:
-        args = _make_args(entrypoint, workdir,
-        qt_dist=None,
-        briefcase_project=None,
-        platform="linux",
-        version="1.0.0",
-        output_dir=tmp_path / "out",
-        hidden_import=None,
-        runtime_name=None,
-        include=None,
-        signing_key=None,
-        signing_key_id=None,
-        allowed_profile=None,
-        metadata=None,
-        metadata_file=None,
-        metadata_yaml=None,
-        metadata_url=[url],
-        metadata_url_header=None,
-        metadata_url_timeout=None,
-        metadata_url_max_size=None,
-        metadata_url_allow_http=True,
-        metadata_url_allowed_host=None,
-    )
+        args = _make_args(
+            entrypoint,
+            workdir,
+            qt_dist=None,
+            briefcase_project=None,
+            platform="linux",
+            version="1.0.0",
+            output_dir=tmp_path / "out",
+            hidden_import=None,
+            runtime_name=None,
+            include=None,
+            signing_key=None,
+            signing_key_id=None,
+            allowed_profile=None,
+            metadata=None,
+            metadata_file=None,
+            metadata_yaml=None,
+            metadata_url=[url],
+            metadata_url_header=None,
+            metadata_url_timeout=None,
+            metadata_url_max_size=None,
+            metadata_url_allow_http=True,
+            metadata_url_allowed_host=None,
+        )
 
         with pytest.raises(SystemExit):
             build_bundle(args)
@@ -2460,7 +2595,9 @@ def test_build_bundle_rejects_non_json_metadata_url_content_type(tmp_path, monke
         server.server_close()
 
 
-def test_build_bundle_rejects_metadata_url_larger_than_limit_via_header(tmp_path, monkeypatch) -> None:
+def test_build_bundle_rejects_metadata_url_larger_than_limit_via_header(
+    tmp_path, monkeypatch
+) -> None:
     entrypoint = tmp_path / "entry.py"
     entrypoint.write_text("print('hello')", encoding="utf-8")
 
@@ -2486,28 +2623,30 @@ def test_build_bundle_rejects_metadata_url_larger_than_limit_via_header(tmp_path
     url = f"http://127.0.0.1:{server.server_address[1]}/metadata.json"
 
     try:
-        args = _make_args(entrypoint, workdir,
-        qt_dist=None,
-        briefcase_project=None,
-        platform="linux",
-        version="1.0.0",
-        output_dir=tmp_path / "out",
-        hidden_import=None,
-        runtime_name=None,
-        include=None,
-        signing_key=None,
-        signing_key_id=None,
-        allowed_profile=None,
-        metadata=None,
-        metadata_file=None,
-        metadata_yaml=None,
-        metadata_url=[url],
-        metadata_url_header=None,
-        metadata_url_timeout=None,
-        metadata_url_max_size=64,
-        metadata_url_allow_http=True,
-        metadata_url_allowed_host=None,
-    )
+        args = _make_args(
+            entrypoint,
+            workdir,
+            qt_dist=None,
+            briefcase_project=None,
+            platform="linux",
+            version="1.0.0",
+            output_dir=tmp_path / "out",
+            hidden_import=None,
+            runtime_name=None,
+            include=None,
+            signing_key=None,
+            signing_key_id=None,
+            allowed_profile=None,
+            metadata=None,
+            metadata_file=None,
+            metadata_yaml=None,
+            metadata_url=[url],
+            metadata_url_header=None,
+            metadata_url_timeout=None,
+            metadata_url_max_size=64,
+            metadata_url_allow_http=True,
+            metadata_url_allowed_host=None,
+        )
 
         with pytest.raises(SystemExit):
             build_bundle(args)
@@ -2517,7 +2656,9 @@ def test_build_bundle_rejects_metadata_url_larger_than_limit_via_header(tmp_path
         server.server_close()
 
 
-def test_build_bundle_rejects_metadata_url_larger_than_limit_without_header(tmp_path, monkeypatch) -> None:
+def test_build_bundle_rejects_metadata_url_larger_than_limit_without_header(
+    tmp_path, monkeypatch
+) -> None:
     entrypoint = tmp_path / "entry.py"
     entrypoint.write_text("print('hello')", encoding="utf-8")
 
@@ -2542,28 +2683,30 @@ def test_build_bundle_rejects_metadata_url_larger_than_limit_without_header(tmp_
     url = f"http://127.0.0.1:{server.server_address[1]}/metadata.json"
 
     try:
-        args = _make_args(entrypoint, workdir,
-        qt_dist=None,
-        briefcase_project=None,
-        platform="linux",
-        version="1.0.0",
-        output_dir=tmp_path / "out",
-        hidden_import=None,
-        runtime_name=None,
-        include=None,
-        signing_key=None,
-        signing_key_id=None,
-        allowed_profile=None,
-        metadata=None,
-        metadata_file=None,
-        metadata_yaml=None,
-        metadata_url=[url],
-        metadata_url_header=None,
-        metadata_url_timeout=None,
-        metadata_url_max_size=64,
-        metadata_url_allow_http=True,
-        metadata_url_allowed_host=None,
-    )
+        args = _make_args(
+            entrypoint,
+            workdir,
+            qt_dist=None,
+            briefcase_project=None,
+            platform="linux",
+            version="1.0.0",
+            output_dir=tmp_path / "out",
+            hidden_import=None,
+            runtime_name=None,
+            include=None,
+            signing_key=None,
+            signing_key_id=None,
+            allowed_profile=None,
+            metadata=None,
+            metadata_file=None,
+            metadata_yaml=None,
+            metadata_url=[url],
+            metadata_url_header=None,
+            metadata_url_timeout=None,
+            metadata_url_max_size=64,
+            metadata_url_allow_http=True,
+            metadata_url_allowed_host=None,
+        )
 
         with pytest.raises(SystemExit):
             build_bundle(args)
@@ -2573,7 +2716,9 @@ def test_build_bundle_rejects_metadata_url_larger_than_limit_without_header(tmp_
         server.server_close()
 
 
-def test_build_bundle_rejects_invalid_metadata_url_content_length_header(tmp_path, monkeypatch) -> None:
+def test_build_bundle_rejects_invalid_metadata_url_content_length_header(
+    tmp_path, monkeypatch
+) -> None:
     entrypoint = tmp_path / "entry.py"
     entrypoint.write_text("print('hello')", encoding="utf-8")
 
@@ -2599,28 +2744,30 @@ def test_build_bundle_rejects_invalid_metadata_url_content_length_header(tmp_pat
     url = f"http://127.0.0.1:{server.server_address[1]}/metadata.json"
 
     try:
-        args = _make_args(entrypoint, workdir,
-        qt_dist=None,
-        briefcase_project=None,
-        platform="linux",
-        version="1.0.0",
-        output_dir=tmp_path / "out",
-        hidden_import=None,
-        runtime_name=None,
-        include=None,
-        signing_key=None,
-        signing_key_id=None,
-        allowed_profile=None,
-        metadata=None,
-        metadata_file=None,
-        metadata_yaml=None,
-        metadata_url=[url],
-        metadata_url_header=None,
-        metadata_url_timeout=None,
-        metadata_url_max_size=64,
-        metadata_url_allow_http=True,
-        metadata_url_allowed_host=None,
-    )
+        args = _make_args(
+            entrypoint,
+            workdir,
+            qt_dist=None,
+            briefcase_project=None,
+            platform="linux",
+            version="1.0.0",
+            output_dir=tmp_path / "out",
+            hidden_import=None,
+            runtime_name=None,
+            include=None,
+            signing_key=None,
+            signing_key_id=None,
+            allowed_profile=None,
+            metadata=None,
+            metadata_file=None,
+            metadata_yaml=None,
+            metadata_url=[url],
+            metadata_url_header=None,
+            metadata_url_timeout=None,
+            metadata_url_max_size=64,
+            metadata_url_allow_http=True,
+            metadata_url_allowed_host=None,
+        )
 
         with pytest.raises(SystemExit):
             build_bundle(args)
@@ -2652,7 +2799,9 @@ def test_build_bundle_uses_metadata_url_timeout(tmp_path, monkeypatch) -> None:
 
     _stub_urlopen(monkeypatch, factory)
 
-    args = _make_args(entrypoint, workdir,
+    args = _make_args(
+        entrypoint,
+        workdir,
         qt_dist=None,
         briefcase_project=None,
         platform="linux",
@@ -2674,7 +2823,9 @@ def test_build_bundle_uses_metadata_url_timeout(tmp_path, monkeypatch) -> None:
     )
 
     archive_path = build_bundle(args)
-    manifest = json.loads((archive_path.with_suffix("") / "manifest.json").read_text(encoding="utf-8"))
+    manifest = json.loads(
+        (archive_path.with_suffix("") / "manifest.json").read_text(encoding="utf-8")
+    )
     assert manifest["metadata"] == {"channel": "stable"}
     assert observed_timeout == [0.5]
     assert observed_header == ["Bearer token"]
@@ -2689,7 +2840,9 @@ def test_build_bundle_rejects_nonpositive_metadata_url_max_size(tmp_path, monkey
 
     _patch_pyinstaller(monkeypatch, workdir)
 
-    args = _make_args(entrypoint, workdir,
+    args = _make_args(
+        entrypoint,
+        workdir,
         qt_dist=None,
         briefcase_project=None,
         platform="linux",

@@ -8,7 +8,11 @@ from types import SimpleNamespace
 
 import pytest
 
-from bot_core.observability.hypercare import ObservabilityCycleConfig, ObservabilityHypercareCycle, SLOOutputConfig
+from bot_core.observability.hypercare import (
+    ObservabilityCycleConfig,
+    ObservabilityHypercareCycle,
+    SLOOutputConfig,
+)
 from bot_core.observability.server import start_http_server
 from bot_core.observability.ui_metrics import UiTelemetryPrometheusExporter
 from bot_core.runtime.metrics_alerts import UiTelemetryAlertSink

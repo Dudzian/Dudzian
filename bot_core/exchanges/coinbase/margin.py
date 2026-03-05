@@ -1,4 +1,5 @@
 """Adapter margin Coinbase Advanced Trade z watchdogiem."""
+
 from __future__ import annotations
 
 from typing import Any, Mapping

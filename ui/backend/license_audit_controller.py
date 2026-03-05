@@ -1,4 +1,3 @@
-
 from __future__ import annotations
 import json
 from datetime import datetime, timezone
@@ -39,8 +38,14 @@ class LicenseAuditController(QObject):
         self._status_document: dict[str, object] = {}
         self._last_updated = ""
         self._error_message = ""
-        self._status_path = Path(status_path).expanduser() if status_path else Path("var/security/license_status.json")
-        self._audit_log_path = Path(audit_log_path).expanduser() if audit_log_path else Path("logs/security_admin.log")
+        self._status_path = (
+            Path(status_path).expanduser()
+            if status_path
+            else Path("var/security/license_status.json")
+        )
+        self._audit_log_path = (
+            Path(audit_log_path).expanduser() if audit_log_path else Path("logs/security_admin.log")
+        )
 
     # ------------------------------------------------------------------
     @Property(bool, notify=busyChanged)
@@ -189,4 +194,3 @@ class LicenseAuditController(QObject):
 
 
 __all__ = ["LicenseAuditController"]
-

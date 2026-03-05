@@ -246,12 +246,8 @@ class RiskJournalMetricsExporter:
 
         value = self._STATE_TO_VALUE.get(state, 0.0)
         self._state.set(value, labels=metric_labels)
-        self._incomplete_entries.set(
-            float(max(0, incomplete_entries)), labels=metric_labels
-        )
-        self._incomplete_samples.set(
-            float(max(0, incomplete_samples)), labels=metric_labels
-        )
+        self._incomplete_entries.set(float(max(0, incomplete_entries)), labels=metric_labels)
+        self._incomplete_samples.set(float(max(0, incomplete_samples)), labels=metric_labels)
 
         with self._lock:
             active_flags: set[str] = set()
@@ -267,9 +263,7 @@ class RiskJournalMetricsExporter:
                     except (TypeError, ValueError):
                         continue
                     active_flags.add(normalized_flag)
-                    self._risk_flag_counts.set(
-                        numeric_count, labels=metric_risk_labels
-                    )
+                    self._risk_flag_counts.set(numeric_count, labels=metric_risk_labels)
 
             self._clear_missing_risk_flags(metric_labels, active_flags)
 
@@ -454,11 +448,9 @@ class UiTelemetryPrometheusExporter:
             "bot_ui_performance_incidents_total",
             "Łączna liczba incydentów metryk wydajności UI",
         )
-        self._performance_severity_transitions_total: CounterMetric = (
-            self._registry.counter(
-                "bot_ui_performance_severity_transitions_total",
-                "Przejścia stanów surowości metryk wydajności UI",
-            )
+        self._performance_severity_transitions_total: CounterMetric = self._registry.counter(
+            "bot_ui_performance_severity_transitions_total",
+            "Przejścia stanów surowości metryk wydajności UI",
         )
         self._performance_incident_active: GaugeMetric = self._registry.gauge(
             "bot_ui_performance_incident_active",
@@ -468,18 +460,14 @@ class UiTelemetryPrometheusExporter:
             "bot_ui_performance_incident_age_seconds",
             "Czas trwania bieżącego incydentu metryki wydajności UI",
         )
-        self._performance_incident_started_at_seconds: GaugeMetric = (
-            self._registry.gauge(
-                "bot_ui_performance_incident_started_at_seconds",
-                "Znacznik czasu rozpoczęcia incydentu metryki wydajności UI (epoch s)",
-            )
+        self._performance_incident_started_at_seconds: GaugeMetric = self._registry.gauge(
+            "bot_ui_performance_incident_started_at_seconds",
+            "Znacznik czasu rozpoczęcia incydentu metryki wydajności UI (epoch s)",
         )
-        self._performance_incident_duration_histogram: HistogramMetric = (
-            self._registry.histogram(
-                "bot_ui_performance_incident_duration_seconds",
-                "Czas trwania incydentów metryk wydajności UI",
-                buckets=(5.0, 10.0, 30.0, 60.0, 120.0, 300.0, 600.0, 1800.0, 3600.0),
-            )
+        self._performance_incident_duration_histogram: HistogramMetric = self._registry.histogram(
+            "bot_ui_performance_incident_duration_seconds",
+            "Czas trwania incydentów metryk wydajności UI",
+            buckets=(5.0, 10.0, 30.0, 60.0, 120.0, 300.0, 600.0, 1800.0, 3600.0),
         )
         self._reduce_motion_state: GaugeMetric = self._registry.gauge(
             "bot_ui_reduce_motion_state", "Stan reduce-motion (1=aktywne,0=nieaktywne)"
@@ -499,12 +487,10 @@ class UiTelemetryPrometheusExporter:
             "bot_ui_reduce_motion_incident_started_at_seconds",
             "Znacznik czasu rozpoczęcia incydentu reduce-motion (epoch s)",
         )
-        self._reduce_motion_incident_duration_histogram: HistogramMetric = (
-            self._registry.histogram(
-                "bot_ui_reduce_motion_incident_duration_seconds",
-                "Czas trwania incydentów reduce-motion",
-                buckets=(5.0, 15.0, 30.0, 60.0, 120.0, 300.0, 600.0, 1800.0),
-            )
+        self._reduce_motion_incident_duration_histogram: HistogramMetric = self._registry.histogram(
+            "bot_ui_reduce_motion_incident_duration_seconds",
+            "Czas trwania incydentów reduce-motion",
+            buckets=(5.0, 15.0, 30.0, 60.0, 120.0, 300.0, 600.0, 1800.0),
         )
         self._overlay_active: GaugeMetric = self._registry.gauge(
             "bot_ui_overlay_active", "Liczba aktywnych nakładek"
@@ -540,12 +526,10 @@ class UiTelemetryPrometheusExporter:
             "bot_ui_overlay_incident_events_total",
             "Liczba przejść incydentu budżetu nakładek z podziałem na surowość",
         )
-        self._overlay_capacity_ratio_overrun: HistogramMetric = (
-            self._registry.histogram(
-                "bot_ui_overlay_capacity_ratio_overrun",
-                "Rozkład przekroczeń budżetu nakładek względem limitu (ratio-1)",
-                buckets=(0.05, 0.1, 0.25, 0.5, 1.0, 2.0, 5.0),
-            )
+        self._overlay_capacity_ratio_overrun: HistogramMetric = self._registry.histogram(
+            "bot_ui_overlay_capacity_ratio_overrun",
+            "Rozkład przekroczeń budżetu nakładek względem limitu (ratio-1)",
+            buckets=(0.05, 0.1, 0.25, 0.5, 1.0, 2.0, 5.0),
         )
         self._overlay_incident_active: GaugeMetric = self._registry.gauge(
             "bot_ui_overlay_incident_active",
@@ -555,18 +539,14 @@ class UiTelemetryPrometheusExporter:
             "bot_ui_overlay_incident_age_seconds",
             "Czas trwania aktywnego incydentu przekroczenia budżetu nakładek",
         )
-        self._overlay_incident_started_at_seconds: GaugeMetric = (
-            self._registry.gauge(
-                "bot_ui_overlay_incident_started_at_seconds",
-                "Znacznik czasu (epoch s) rozpoczęcia incydentu budżetu nakładek",
-            )
+        self._overlay_incident_started_at_seconds: GaugeMetric = self._registry.gauge(
+            "bot_ui_overlay_incident_started_at_seconds",
+            "Znacznik czasu (epoch s) rozpoczęcia incydentu budżetu nakładek",
         )
-        self._overlay_incident_duration_histogram: HistogramMetric = (
-            self._registry.histogram(
-                "bot_ui_overlay_incident_duration_seconds",
-                "Czas trwania incydentów przekroczenia budżetu nakładek",
-                buckets=(5.0, 10.0, 30.0, 60.0, 120.0, 300.0, 600.0, 1800.0),
-            )
+        self._overlay_incident_duration_histogram: HistogramMetric = self._registry.histogram(
+            "bot_ui_overlay_incident_duration_seconds",
+            "Czas trwania incydentów przekroczenia budżetu nakładek",
+            buckets=(5.0, 10.0, 30.0, 60.0, 120.0, 300.0, 600.0, 1800.0),
         )
         self._window_count: GaugeMetric = self._registry.gauge(
             "bot_ui_window_count", "Liczba aktywnych okien UI"
@@ -639,12 +619,10 @@ class UiTelemetryPrometheusExporter:
             "bot_ui_jank_incident_started_at_seconds",
             "Znacznik czasu rozpoczęcia aktywnego incydentu janku (epoch s)",
         )
-        self._jank_incident_duration_histogram: HistogramMetric = (
-            self._registry.histogram(
-                "bot_ui_jank_incident_duration_seconds",
-                "Czas trwania incydentów janku",
-                buckets=(1.0, 5.0, 10.0, 30.0, 60.0, 120.0, 300.0),
-            )
+        self._jank_incident_duration_histogram: HistogramMetric = self._registry.histogram(
+            "bot_ui_jank_incident_duration_seconds",
+            "Czas trwania incydentów janku",
+            buckets=(1.0, 5.0, 10.0, 30.0, 60.0, 120.0, 300.0),
         )
         self._jank_incidents_total: CounterMetric = self._registry.counter(
             "bot_ui_jank_incidents_total",
@@ -659,18 +637,12 @@ class UiTelemetryPrometheusExporter:
             "bot_ui_jank_severity_state",
             "Stan surowości aktywnego incydentu janku (0/1)",
         )
-        self._jank_severity_transitions_total: CounterMetric = (
-            self._registry.counter(
-                "bot_ui_jank_severity_transitions_total",
-                "Liczba zmian stanu surowości incydentu janku",
-            )
+        self._jank_severity_transitions_total: CounterMetric = self._registry.counter(
+            "bot_ui_jank_severity_transitions_total",
+            "Liczba zmian stanu surowości incydentu janku",
         )
-        event_to_frame_warning = _normalize_threshold(
-            performance_event_to_frame_warning_ms
-        )
-        event_to_frame_critical = _normalize_threshold(
-            performance_event_to_frame_critical_ms
-        )
+        event_to_frame_warning = _normalize_threshold(performance_event_to_frame_warning_ms)
+        event_to_frame_critical = _normalize_threshold(performance_event_to_frame_critical_ms)
         cpu_warning = _normalize_threshold(cpu_utilization_warning_percent)
         cpu_critical = _normalize_threshold(cpu_utilization_critical_percent)
         gpu_warning = _normalize_threshold(gpu_utilization_warning_percent)
@@ -724,9 +696,7 @@ class UiTelemetryPrometheusExporter:
             self._overlay_critical_difference_threshold: float | None = None
         else:
             threshold = float(overlay_critical_difference_threshold)
-            self._overlay_critical_difference_threshold = (
-                threshold if threshold > 0 else None
-            )
+            self._overlay_critical_difference_threshold = threshold if threshold > 0 else None
         if overlay_critical_duration_threshold_seconds is None:
             self._overlay_critical_duration_threshold_seconds: float | None = None
         else:
@@ -749,9 +719,7 @@ class UiTelemetryPrometheusExporter:
         self._jank_incident_last_seen_epoch_by_tag: dict[str, float] = {}
         self._jank_incident_quiet_seconds = max(0.0, float(jank_incident_quiet_seconds))
         self._jank_critical_over_ms = (
-            float(jank_critical_over_ms)
-            if jank_critical_over_ms is not None
-            else None
+            float(jank_critical_over_ms) if jank_critical_over_ms is not None else None
         )
         self._jank_last_severity: str | None = None
         self._jank_last_severity_by_tag: dict[str, str] = {}
@@ -826,9 +794,7 @@ class UiTelemetryPrometheusExporter:
             self._event_to_frame_histogram.observe(event_to_frame_value)
             if tag_labels:
                 self._event_to_frame_p95_ms.set(event_to_frame_value, labels=tag_labels)
-                self._event_to_frame_histogram.observe(
-                    event_to_frame_value, labels=tag_labels
-                )
+                self._event_to_frame_histogram.observe(event_to_frame_value, labels=tag_labels)
 
         cpu_value: float | None = None
         cpu_utilization = getattr(snapshot, "cpu_utilization", None)
@@ -866,9 +832,7 @@ class UiTelemetryPrometheusExporter:
             processed_value = max(0.0, float(processed_messages))
             self._processed_messages_per_second.set(processed_value)
             if tag_labels:
-                self._processed_messages_per_second.set(
-                    processed_value, labels=tag_labels
-                )
+                self._processed_messages_per_second.set(processed_value, labels=tag_labels)
 
         if event == "performance" and self._performance_configs:
             performance_values = {
@@ -877,9 +841,7 @@ class UiTelemetryPrometheusExporter:
                 "gpu_utilization": gpu_value,
                 "ram_usage_megabytes": ram_value,
             }
-            now_epoch = (
-                timestamp_seconds if timestamp_seconds is not None else time.time()
-            )
+            now_epoch = timestamp_seconds if timestamp_seconds is not None else time.time()
             self._handle_performance_incident_states(performance_values, now_epoch)
             if tag_value:
                 self._handle_performance_incident_states(
@@ -953,11 +915,7 @@ class UiTelemetryPrometheusExporter:
                 self._overlay_allowed.set(allowed_value)
                 if tag_labels:
                     self._overlay_allowed.set(allowed_value, labels=tag_labels)
-            if (
-                active_value is not None
-                and allowed_value is not None
-                and allowed_value > 0
-            ):
+            if active_value is not None and allowed_value is not None and allowed_value > 0:
                 ratio = active_value / allowed_value
                 self._overlay_capacity_ratio.set(ratio)
                 if tag_labels:
@@ -974,15 +932,17 @@ class UiTelemetryPrometheusExporter:
             if active_value is not None and allowed_value is not None:
                 excess_value = max(0.0, active_value - allowed_value)
                 violation_active = excess_value > 0.0
-            now_epoch = (
-                timestamp_seconds if timestamp_seconds is not None else time.time()
-            )
+            now_epoch = timestamp_seconds if timestamp_seconds is not None else time.time()
             severity: str | None = None
             severity_reason: str | None = None
             if violation_active:
                 severity = "warning"
                 severity_reason = "violation"
-                difference = active_value - allowed_value if active_value is not None and allowed_value is not None else 0.0
+                difference = (
+                    active_value - allowed_value
+                    if active_value is not None and allowed_value is not None
+                    else 0.0
+                )
                 if (
                     self._overlay_critical_difference_threshold is not None
                     and difference >= self._overlay_critical_difference_threshold
@@ -1009,13 +969,9 @@ class UiTelemetryPrometheusExporter:
             self._last_overlay_violation_state = violation_active
 
             if severity is not None:
-                self._record_overlay_severity_transition(
-                    severity, reason=severity_reason
-                )
+                self._record_overlay_severity_transition(severity, reason=severity_reason)
             else:
-                self._record_overlay_severity_transition(
-                    None, reason="recovered"
-                )
+                self._record_overlay_severity_transition(None, reason="recovered")
 
             if tag_labels:
                 self._overlay_violation_state.set(violation_value, labels=tag_labels)
@@ -1067,9 +1023,7 @@ class UiTelemetryPrometheusExporter:
             if severity is not None:
                 self._record_jank_severity_transition(severity, reason="spike")
                 if tag_value:
-                    self._record_jank_severity_transition(
-                        severity, tag=tag_value, reason="spike"
-                    )
+                    self._record_jank_severity_transition(severity, tag=tag_value, reason="spike")
             now_epoch = timestamp_seconds if timestamp_seconds is not None else time.time()
             self._update_jank_incident_metrics(now_epoch)
             if tag_value:
@@ -1134,9 +1088,7 @@ class UiTelemetryPrometheusExporter:
                     tagged_height["tag"] = tag
                     self._screen_resolution_px.set(height_value, labels=tagged_height)
 
-    def _get_performance_last_severity(
-        self, metric: str, tag: str | None
-    ) -> str | None:
+    def _get_performance_last_severity(self, metric: str, tag: str | None) -> str | None:
         if tag is not None:
             return self._performance_last_severity_by_tag.get(metric, {}).get(tag)
         return self._performance_last_severity.get(metric)
@@ -1307,9 +1259,7 @@ class UiTelemetryPrometheusExporter:
                 self._record_performance_severity_transition(
                     metric_name, None, tag=tag, reason="recovered"
                 )
-                self._finalize_performance_incident(
-                    metric_name, tag=tag, end_epoch=now_epoch
-                )
+                self._finalize_performance_incident(metric_name, tag=tag, end_epoch=now_epoch)
                 continue
 
             if previous is None:
@@ -1331,9 +1281,7 @@ class UiTelemetryPrometheusExporter:
                     incident_labels["tag"] = tag
                 self._performance_incidents_total.inc(labels=incident_labels)
 
-            self._start_or_update_performance_incident(
-                metric_name, now_epoch, tag=tag
-            )
+            self._start_or_update_performance_incident(metric_name, now_epoch, tag=tag)
 
     def _finalize_performance_incidents_for_tag(
         self,
@@ -1351,9 +1299,7 @@ class UiTelemetryPrometheusExporter:
                 self._record_performance_severity_transition(
                     metric_name, None, tag=tag, reason=reason
                 )
-            self._finalize_performance_incident(
-                metric_name, tag=tag, end_epoch=end_epoch
-            )
+            self._finalize_performance_incident(metric_name, tag=tag, end_epoch=end_epoch)
 
     def _update_tag_activity(self, now_monotonic: float) -> None:
         if not self._tag_last_seen_monotonic:
@@ -1395,9 +1341,7 @@ class UiTelemetryPrometheusExporter:
                     self._tag_inactive_age_seconds.set(0.0, labels=labels)
                     self._tag_is_active.pop(tag, None)
                     last_seen_epoch = self._tag_last_seen_epoch.get(tag)
-                    self._finalize_reduce_motion_incident_for_tag(
-                        tag, end_epoch=last_seen_epoch
-                    )
+                    self._finalize_reduce_motion_incident_for_tag(tag, end_epoch=last_seen_epoch)
                     self._finalize_overlay_incident_for_tag(
                         tag, end_epoch=last_seen_epoch, reason="expired"
                     )
@@ -1414,9 +1358,7 @@ class UiTelemetryPrometheusExporter:
                     inactive_tags += 1
                     self._tag_is_active[tag] = False
                     last_seen_epoch = self._tag_last_seen_epoch.get(tag)
-                    self._finalize_reduce_motion_incident_for_tag(
-                        tag, end_epoch=last_seen_epoch
-                    )
+                    self._finalize_reduce_motion_incident_for_tag(tag, end_epoch=last_seen_epoch)
                     self._finalize_overlay_incident_for_tag(
                         tag, end_epoch=last_seen_epoch, reason="inactive"
                     )
@@ -1495,9 +1437,7 @@ class UiTelemetryPrometheusExporter:
 
         if started is not None:
             duration = max(0.0, now_epoch - started)
-            self._reduce_motion_incident_duration_histogram.observe(
-                duration, labels=labels
-            )
+            self._reduce_motion_incident_duration_histogram.observe(duration, labels=labels)
         self._reduce_motion_incident_active.set(0.0, labels=labels)
         self._reduce_motion_incident_age_seconds.set(0.0, labels=labels)
         self._reduce_motion_incident_started_at_seconds.set(0.0, labels=labels)
@@ -1643,9 +1583,7 @@ class UiTelemetryPrometheusExporter:
         allowed: float | None,
         now_epoch: float,
     ) -> None:
-        exceeded = (
-            active is not None and allowed is not None and active > allowed
-        )
+        exceeded = active is not None and allowed is not None and active > allowed
         if exceeded:
             if (
                 self._overlay_incident_started_epoch is None
@@ -1660,9 +1598,7 @@ class UiTelemetryPrometheusExporter:
             self._overlay_incident_active.set(1.0)
             self._overlay_incident_age_seconds.set(age)
             if self._overlay_incident_started_epoch is not None:
-                self._overlay_incident_started_at_seconds.set(
-                    self._overlay_incident_started_epoch
-                )
+                self._overlay_incident_started_at_seconds.set(self._overlay_incident_started_epoch)
             return
 
         if self._overlay_incident_started_epoch is not None:
@@ -1686,9 +1622,7 @@ class UiTelemetryPrometheusExporter:
         now_epoch: float,
     ) -> None:
         labels = {"tag": tag}
-        exceeded = (
-            active is not None and allowed is not None and active > allowed
-        )
+        exceeded = active is not None and allowed is not None and active > allowed
         started = self._overlay_incident_started_epoch_by_tag.get(tag)
 
         if exceeded:
@@ -1704,9 +1638,7 @@ class UiTelemetryPrometheusExporter:
 
         if started is not None:
             duration = max(0.0, now_epoch - started)
-            self._overlay_incident_duration_histogram.observe(
-                duration, labels=labels
-            )
+            self._overlay_incident_duration_histogram.observe(duration, labels=labels)
         self._overlay_incident_active.set(0.0, labels=labels)
         self._overlay_incident_age_seconds.set(0.0, labels=labels)
         self._overlay_incident_started_at_seconds.set(0.0, labels=labels)
@@ -1714,9 +1646,7 @@ class UiTelemetryPrometheusExporter:
         self._overlay_violation_state.set(0.0, labels=labels)
         self._overlay_excess.set(0.0, labels=labels)
         self._overlay_violation_state_by_tag.pop(tag, None)
-        self._record_overlay_severity_transition(
-            None, tag=tag, reason="recovered"
-        )
+        self._record_overlay_severity_transition(None, tag=tag, reason="recovered")
 
     def _finalize_overlay_incident_for_tag(
         self,
@@ -1742,9 +1672,7 @@ class UiTelemetryPrometheusExporter:
         self._overlay_violation_state.set(0.0, labels=labels)
         self._overlay_excess.set(0.0, labels=labels)
         self._overlay_violation_state_by_tag.pop(tag, None)
-        self._record_overlay_severity_transition(
-            None, tag=tag, reason=reason
-        )
+        self._record_overlay_severity_transition(None, tag=tag, reason=reason)
 
     def _update_jank_incident_metrics(self, now_epoch: float) -> None:
         if self._jank_incident_started_epoch is None or (
@@ -1761,13 +1689,9 @@ class UiTelemetryPrometheusExporter:
         self._jank_incident_active.set(1.0)
         self._jank_incident_age_seconds.set(age)
         if self._jank_incident_started_epoch is not None:
-            self._jank_incident_started_at_seconds.set(
-                self._jank_incident_started_epoch
-            )
+            self._jank_incident_started_at_seconds.set(self._jank_incident_started_epoch)
 
-    def _update_jank_incident_metrics_for_tag(
-        self, tag: str, now_epoch: float
-    ) -> None:
+    def _update_jank_incident_metrics_for_tag(self, tag: str, now_epoch: float) -> None:
         labels = {"tag": tag}
         started = self._jank_incident_started_epoch_by_tag.get(tag)
         if started is None or started > now_epoch:
@@ -1852,9 +1776,7 @@ class UiTelemetryPrometheusExporter:
 
         for tag, last_seen in list(self._jank_incident_last_seen_epoch_by_tag.items()):
             if now_epoch - last_seen >= quiet:
-                self._finalize_jank_incident_for_tag(
-                    tag, end_epoch=last_seen, reason="quiet"
-                )
+                self._finalize_jank_incident_for_tag(tag, end_epoch=last_seen, reason="quiet")
 
     def _update_retry_incident_metrics(self, snapshot, backlog_after: float | None) -> None:
         if backlog_after is None:
@@ -1957,16 +1879,24 @@ class LongPollStreamMetricsCache:
                 "scope": scope,
                 "environment": environment,
             }
-            latency_summary = snapshot.get("requestLatency", {}) if isinstance(snapshot, Mapping) else {}
+            latency_summary = (
+                snapshot.get("requestLatency", {}) if isinstance(snapshot, Mapping) else {}
+            )
             try:
-                self._latency_p50.set(float(latency_summary.get("p50", 0.0) or 0.0), labels=metric_labels)
-                self._latency_p95.set(float(latency_summary.get("p95", 0.0) or 0.0), labels=metric_labels)
+                self._latency_p50.set(
+                    float(latency_summary.get("p50", 0.0) or 0.0), labels=metric_labels
+                )
+                self._latency_p95.set(
+                    float(latency_summary.get("p95", 0.0) or 0.0), labels=metric_labels
+                )
             except Exception:
                 self._latency_p50.set(0.0, labels=metric_labels)
                 self._latency_p95.set(0.0, labels=metric_labels)
 
             reconnects = 0.0
-            reconnects_payload = snapshot.get("reconnects") if isinstance(snapshot, Mapping) else None
+            reconnects_payload = (
+                snapshot.get("reconnects") if isinstance(snapshot, Mapping) else None
+            )
             if isinstance(reconnects_payload, Mapping):
                 attempts_val = reconnects_payload.get("attempts")
                 try:
@@ -1976,7 +1906,9 @@ class LongPollStreamMetricsCache:
             self._reconnects_total.set(reconnects, labels=metric_labels)
 
             downtime_seconds = 0.0
-            downtime_payload = snapshot.get("downtimeSeconds") if isinstance(snapshot, Mapping) else None
+            downtime_payload = (
+                snapshot.get("downtimeSeconds") if isinstance(snapshot, Mapping) else None
+            )
             try:
                 downtime_seconds = float(downtime_payload) if downtime_payload is not None else 0.0
             except (TypeError, ValueError):
@@ -2022,4 +1954,3 @@ __all__ = [
     "reset_feed_health_metrics_exporter",
     "get_long_poll_metrics_cache",
 ]
-

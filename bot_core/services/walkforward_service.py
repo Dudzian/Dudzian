@@ -19,7 +19,7 @@ class ObjectiveWeights:
     w_pf: float = 1.0
     w_expectancy: float = 1.0
     w_sharpe: float = 0.2
-    w_maxdd: float = 0.5   # kara za DD (odejmowana)
+    w_maxdd: float = 0.5  # kara za DD (odejmowana)
     pf_cap: float = 3.0
 
 
@@ -51,6 +51,7 @@ class WalkForwardService:
       - liczy PF, Expectancy, Sharpe (z PnL), MaxDD na prostym modelu transakcji,
       - publikuje WFO_STATUS i przy auto_apply emituje AUTOTRADE_STATUS(action=strategy_update).
     """
+
     def __init__(self, bus: EventBus, cfg: WFOServiceConfig) -> None:
         self.bus = bus
         self.cfg = cfg
@@ -61,7 +62,11 @@ class WalkForwardService:
         self.bus.subscribe(EventType.WFO_TRIGGER, self._on_trigger)
         self.bus.subscribe(EventType.ATR_SPIKE, self._on_trigger)
 
-        log.info("WalkForwardService ready (symbol=%s, cooldown=%ss)", cfg.symbol, cfg.cooldown_sec or "n/a")
+        log.info(
+            "WalkForwardService ready (symbol=%s, cooldown=%ss)",
+            cfg.symbol,
+            cfg.cooldown_sec or "n/a",
+        )
 
     # --- utils -----------------------------------------------------------------------------------
 
@@ -145,9 +150,12 @@ class WalkForwardService:
         pf_c = min(pf, ow.pf_cap)
         return ow.w_pf * pf_c + ow.w_expectancy * exp + ow.w_sharpe * sharpe - ow.w_maxdd * maxdd
 
-    def _backtest_macross(self, prices: List[float], fast: int, slow: int, qty: float) -> Dict[str, float]:
+    def _backtest_macross(
+        self, prices: List[float], fast: int, slow: int, qty: float
+    ) -> Dict[str, float]:
         if slow <= 1 or fast <= 1 or fast >= slow or len(prices) < (slow + 5):
             return {"pf": 1.0, "exp": 0.0, "sharpe": 0.0, "maxdd": 1.0, "trades": 0}
+
         # EWMAs dla stabilności
         def ewm(prev, v, n):
             alpha = 2.0 / (n + 1.0)
@@ -206,7 +214,7 @@ class WalkForwardService:
         # IS/OOS split (prosty jednorazowy podział)
         is_len = self.cfg.min_is_bars
         oos_len = self.cfg.min_oos_bars
-        is_prices = prices[-(is_len + oos_len):-oos_len]
+        is_prices = prices[-(is_len + oos_len) : -oos_len]
         oos_prices = prices[-oos_len:]
 
         best_score = -1e18
@@ -223,7 +231,9 @@ class WalkForwardService:
                     if res_is["trades"] < max(3, is_len // 200):
                         continue
                     res_oos = self._backtest_macross(oos_prices, fast, slow, qty)
-                    score = self._score(res_oos["pf"], res_oos["exp"], res_oos["sharpe"], res_oos["maxdd"])
+                    score = self._score(
+                        res_oos["pf"], res_oos["exp"], res_oos["sharpe"], res_oos["maxdd"]
+                    )
                     tested += 1
                     if score > best_score:
                         best_score = score
@@ -233,7 +243,7 @@ class WalkForwardService:
                             "qty": qty,
                             "score": score,
                             "is": res_is,
-                            "oos": res_oos
+                            "oos": res_oos,
                         }
 
         self._status("wfo_completed", extra={"tested": tested, "best": best})
@@ -241,18 +251,21 @@ class WalkForwardService:
 
     def _apply_preset(self, preset: Dict[str, Any]) -> None:
         # publikujemy dla StrategyEngine, by zaktualizował parametry
-        self.bus.publish(EventType.AUTOTRADE_STATUS, {
-            "component": "WFO",
-            "action": "strategy_update",
-            "symbol": self.cfg.symbol,
-            "params": {
-                "fast_len": preset.get("fast_len"),
-                "slow_len": preset.get("slow_len"),
-                "qty": preset.get("qty"),
-                "order_cooldown_sec": 10.0
+        self.bus.publish(
+            EventType.AUTOTRADE_STATUS,
+            {
+                "component": "WFO",
+                "action": "strategy_update",
+                "symbol": self.cfg.symbol,
+                "params": {
+                    "fast_len": preset.get("fast_len"),
+                    "slow_len": preset.get("slow_len"),
+                    "qty": preset.get("qty"),
+                    "order_cooldown_sec": 10.0,
+                },
+                "ts": time.time(),
             },
-            "ts": time.time()
-        })
+        )
         self._status("preset_applied", extra={"preset": preset})
 
     def _status(self, phase: str, extra: Optional[Dict[str, Any]] = None) -> None:

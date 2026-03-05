@@ -102,10 +102,14 @@ class DeribitSpotAdapter(CCXTLongPollMixin, CCXTSpotAdapter):
     def stream_fills(self, symbol: str) -> LocalLongPollStream:
         return self.stream_private_data(channels=[f"fills:{symbol}"])
 
-    def fetch_order_book(self, symbol: str, *, limit: int | None = None, params: Mapping[str, Any] | None = None) -> Mapping[str, Any]:
+    def fetch_order_book(
+        self, symbol: str, *, limit: int | None = None, params: Mapping[str, Any] | None = None
+    ) -> Mapping[str, Any]:
         return self._call_client("fetch_order_book", symbol, limit=limit, params=params or None)
 
-    def fetch_ticker(self, symbol: str, *, params: Mapping[str, Any] | None = None) -> Mapping[str, Any]:
+    def fetch_ticker(
+        self, symbol: str, *, params: Mapping[str, Any] | None = None
+    ) -> Mapping[str, Any]:
         return self._call_client("fetch_ticker", symbol, params=params or None)
 
     def fetch_my_trades(
@@ -116,8 +120,9 @@ class DeribitSpotAdapter(CCXTLongPollMixin, CCXTSpotAdapter):
         since: int | None = None,
         params: Mapping[str, Any] | None = None,
     ) -> Sequence[Mapping[str, Any]]:
-        return self._call_client("fetch_my_trades", symbol, since=since, limit=limit, params=params or None)
+        return self._call_client(
+            "fetch_my_trades", symbol, since=since, limit=limit, params=params or None
+        )
 
 
 __all__ = ["DeribitSpotAdapter"]
-

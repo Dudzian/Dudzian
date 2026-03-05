@@ -117,11 +117,15 @@ class SelfHealingRule:
             raise ValueError("Pole 'name' musi być niepustym napisem lub None")
         statuses = _ensure_statuses(document.get("statuses"), field="statuses")
         severity_value = document.get("severity")
-        if severity_value is not None and (not isinstance(severity_value, str) or not severity_value.strip()):
+        if severity_value is not None and (
+            not isinstance(severity_value, str) or not severity_value.strip()
+        ):
             raise ValueError("Pole 'severity' musi być niepustym napisem lub None")
         tags = _ensure_tags(document.get("tags"), field="tags")
         metadata_value = document.get("metadata")
-        metadata = dict(_ensure_mapping(metadata_value, context="metadata")) if metadata_value else {}
+        metadata = (
+            dict(_ensure_mapping(metadata_value, context="metadata")) if metadata_value else {}
+        )
 
         actions_value = document.get("actions")
         actions_seq = _ensure_sequence(actions_value, context="actions")
@@ -145,7 +149,9 @@ class SelfHealingRule:
                 if not parts:
                     raise ValueError("Pole 'command' nie może być puste")
                 command = tuple(parts)
-            delay_seconds = _ensure_float(mapping.get("delay_seconds"), field="delay_seconds", default=0.0)
+            delay_seconds = _ensure_float(
+                mapping.get("delay_seconds"), field="delay_seconds", default=0.0
+            )
             action_tags = _ensure_tags(mapping.get("tags"), field="action.tags")
             action_metadata_value = mapping.get("metadata")
             action_metadata = (
@@ -359,7 +365,9 @@ class SelfHealingReport:
 class SelfHealingExecutor(Protocol):
     """Prosty interfejs restartu modułów runtime."""
 
-    def __call__(self, action: SelfHealingAction) -> SelfHealingExecution:  # pragma: no cover - protokół
+    def __call__(
+        self, action: SelfHealingAction
+    ) -> SelfHealingExecution:  # pragma: no cover - protokół
         raise NotImplementedError
 
 

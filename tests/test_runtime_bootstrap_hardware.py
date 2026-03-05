@@ -24,7 +24,9 @@ def _patch_generator(monkeypatch: pytest.MonkeyPatch, fingerprint: str) -> None:
     )
 
 
-def test_hardware_enforcement_accepts_matching_lock(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+def test_hardware_enforcement_accepts_matching_lock(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
     lock_path = tmp_path / "fingerprint.json"
     write_fingerprint_lock("AAAA-BBBB", path=lock_path)
     monkeypatch.setenv("BOT_CORE_FINGERPRINT_LOCK", str(lock_path))
@@ -34,7 +36,9 @@ def test_hardware_enforcement_accepts_matching_lock(monkeypatch: pytest.MonkeyPa
     bootstrap._enforce_installation_hardware()  # type: ignore[attr-defined]
 
 
-def test_hardware_enforcement_rejects_foreign_host(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+def test_hardware_enforcement_rejects_foreign_host(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
     lock_path = tmp_path / "fingerprint.json"
     write_fingerprint_lock("AAAA-BBBB", path=lock_path)
     monkeypatch.setenv("BOT_CORE_FINGERPRINT_LOCK", str(lock_path))

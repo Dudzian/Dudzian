@@ -31,7 +31,7 @@ def test_apply_offline_update_copies_payload(tmp_path: Path, monkeypatch: pytest
     wizard = InstallerWizard(session)
 
     manifest = tmp_path / "update.json"
-    manifest.write_text("{\"version\": \"1.0.0\"}", encoding="utf-8")
+    manifest.write_text('{"version": "1.0.0"}', encoding="utf-8")
     payload_dir = tmp_path / "payload"
     payload_dir.mkdir()
     (payload_dir / "binary.bin").write_bytes(b"data")
@@ -79,7 +79,7 @@ def test_apply_offline_update_tries_all_keys(tmp_path: Path, monkeypatch: pytest
     wizard = InstallerWizard(session)
 
     manifest = tmp_path / "update.json"
-    manifest.write_text("{\"version\": \"1.0.0\"}", encoding="utf-8")
+    manifest.write_text('{"version": "1.0.0"}', encoding="utf-8")
     payload_dir = tmp_path / "payload"
     payload_dir.mkdir()
     (payload_dir / "binary.bin").write_bytes(b"data")
@@ -87,7 +87,13 @@ def test_apply_offline_update_tries_all_keys(tmp_path: Path, monkeypatch: pytest
     attempts: list[bytes | None] = []
 
     class DummyResult:
-        def __init__(self, success: bool, *, warnings: list[str] | None = None, errors: list[str] | None = None):
+        def __init__(
+            self,
+            success: bool,
+            *,
+            warnings: list[str] | None = None,
+            errors: list[str] | None = None,
+        ):
             self.is_successful = success
             self.warnings = warnings or []
             self.errors = errors or []
@@ -123,7 +129,7 @@ def test_apply_offline_update_accepts_archive(tmp_path: Path, monkeypatch: pytes
     wizard = InstallerWizard(session)
 
     manifest = tmp_path / "update.json"
-    manifest.write_text("{\"version\": \"1.0.0\"}", encoding="utf-8")
+    manifest.write_text('{"version": "1.0.0"}', encoding="utf-8")
 
     archive_source = tmp_path / "archive_source"
     payload_dir = archive_source / "payload"
@@ -131,7 +137,11 @@ def test_apply_offline_update_accepts_archive(tmp_path: Path, monkeypatch: pytes
     nested_dir.mkdir(parents=True)
     (nested_dir / "binary.bin").write_bytes(b"data")
 
-    archive_path = Path(shutil.make_archive(str(tmp_path / "payload"), "zip", root_dir=archive_source, base_dir="payload"))
+    archive_path = Path(
+        shutil.make_archive(
+            str(tmp_path / "payload"), "zip", root_dir=archive_source, base_dir="payload"
+        )
+    )
 
     recorded_base_dir: list[Path] = []
 
@@ -169,7 +179,9 @@ def test_apply_offline_update_missing_manifest(tmp_path: Path):
     payload_dir.mkdir()
 
     with pytest.raises(FileNotFoundError):
-        wizard.apply_offline_update(manifest_path=tmp_path / "missing.json", payload_dir=payload_dir)
+        wizard.apply_offline_update(
+            manifest_path=tmp_path / "missing.json", payload_dir=payload_dir
+        )
 
 
 def test_apply_offline_update_records_errors(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
@@ -177,7 +189,7 @@ def test_apply_offline_update_records_errors(tmp_path: Path, monkeypatch: pytest
     wizard = InstallerWizard(session)
 
     manifest = tmp_path / "update.json"
-    manifest.write_text("{\"version\": \"1.0.0\"}", encoding="utf-8")
+    manifest.write_text('{"version": "1.0.0"}', encoding="utf-8")
     payload_dir = tmp_path / "payload"
     payload_dir.mkdir()
 
@@ -298,7 +310,11 @@ def test_main_supports_update_archive(monkeypatch: pytest.MonkeyPatch, tmp_path:
     inner.mkdir(parents=True)
     (inner / "file.bin").write_bytes(b"data")
 
-    archive_path = Path(shutil.make_archive(str(tmp_path / "payload_archive"), "zip", root_dir=tmp_path, base_dir="payload"))
+    archive_path = Path(
+        shutil.make_archive(
+            str(tmp_path / "payload_archive"), "zip", root_dir=tmp_path, base_dir="payload"
+        )
+    )
 
     captured_args: dict[str, object] = {}
 

@@ -1,4 +1,5 @@
 """Utility helpers for preparing sequential datasets for AI models."""
+
 from __future__ import annotations
 
 from typing import Sequence, Tuple

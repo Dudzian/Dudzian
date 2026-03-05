@@ -1,4 +1,5 @@
 """Testy procesu backfillu OHLCV."""
+
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -8,7 +9,6 @@ from typing import Iterable, Mapping, MutableMapping, Sequence
 import pytest
 
 from bot_core.observability.metrics import MetricsRegistry
-
 
 
 from bot_core.data.base import CacheStorage, DataSource, OHLCVRequest, OHLCVResponse
@@ -57,9 +57,13 @@ class StubSource(DataSource):
         while current <= request.end and len(rows) < limit:
             rows.append([float(current), 1.0, 2.0, 0.5, 1.5, 10.0])
             current += self.interval_ms
-        return OHLCVResponse(columns=("open_time", "open", "high", "low", "close", "volume"), rows=rows)
+        return OHLCVResponse(
+            columns=("open_time", "open", "high", "low", "close", "volume"), rows=rows
+        )
 
-    def warm_cache(self, symbols: Iterable[str], intervals: Iterable[str]) -> None:  # pragma: no cover
+    def warm_cache(
+        self, symbols: Iterable[str], intervals: Iterable[str]
+    ) -> None:  # pragma: no cover
         del symbols, intervals
 
 
@@ -118,9 +122,13 @@ class FixedSource(DataSource):
 
     def fetch_ohlcv(self, request: OHLCVRequest) -> OHLCVResponse:
         del request
-        return OHLCVResponse(columns=("open_time", "open", "high", "low", "close", "volume"), rows=self._rows)
+        return OHLCVResponse(
+            columns=("open_time", "open", "high", "low", "close", "volume"), rows=self._rows
+        )
 
-    def warm_cache(self, symbols: Iterable[str], intervals: Iterable[str]) -> None:  # pragma: no cover
+    def warm_cache(
+        self, symbols: Iterable[str], intervals: Iterable[str]
+    ) -> None:  # pragma: no cover
         del symbols, intervals
 
 
@@ -175,7 +183,9 @@ class FlakySource(DataSource):
             rows=[[float(request.start), 1.0, 2.0, 0.5, 1.5, 10.0]],
         )
 
-    def warm_cache(self, symbols: Iterable[str], intervals: Iterable[str]) -> None:  # pragma: no cover
+    def warm_cache(
+        self, symbols: Iterable[str], intervals: Iterable[str]
+    ) -> None:  # pragma: no cover
         del symbols, intervals
 
 
@@ -225,7 +235,9 @@ class AlwaysFailingSource(DataSource):
     def fetch_ohlcv(self, request: OHLCVRequest) -> OHLCVResponse:
         raise RuntimeError("permanent failure")
 
-    def warm_cache(self, symbols: Iterable[str], intervals: Iterable[str]) -> None:  # pragma: no cover
+    def warm_cache(
+        self, symbols: Iterable[str], intervals: Iterable[str]
+    ) -> None:  # pragma: no cover
         del symbols, intervals
 
 
@@ -278,6 +290,8 @@ def test_cached_source_emits_feed_metrics(monkeypatch: pytest.MonkeyPatch) -> No
     assert missing_metric.value(labels={"symbol": "btcusdt", "interval": "1m"}) == 1
 
     latency_metric = registry.get("bot_data_feed_fetch_latency_seconds")
-    sample = latency_metric.sample(labels={"symbol": "btcusdt", "interval": "1m", "source": "upstream"})
+    sample = latency_metric.sample(
+        labels={"symbol": "btcusdt", "interval": "1m", "source": "upstream"}
+    )
     assert sample.count == 1
     assert sample.sum == pytest.approx(0.25)

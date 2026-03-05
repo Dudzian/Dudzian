@@ -1,4 +1,5 @@
 """Wspólny sink metryk i alertów ryzyka używany przez silnik i warstwę UI."""
+
 from __future__ import annotations
 
 from copy import deepcopy
@@ -52,7 +53,11 @@ class RiskMetricsSink:
     _lock: threading.Lock = field(default_factory=threading.Lock, init=False)
 
     def publish_snapshot(
-        self, profile: str, snapshot: Mapping[str, object], *, metadata: Mapping[str, object] | None = None
+        self,
+        profile: str,
+        snapshot: Mapping[str, object],
+        *,
+        metadata: Mapping[str, object] | None = None,
     ) -> None:
         payload: dict[str, object] = {"snapshot": dict(snapshot)}
         if metadata:

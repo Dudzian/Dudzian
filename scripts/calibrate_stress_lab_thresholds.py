@@ -120,7 +120,9 @@ def _load_segments(
 
         segments_by_tag: dict[str, set[str]] = {}
         for asset in governor.assets:
-            segment_tags = [tag.split(":", 1)[1] for tag in asset.tags if tag.startswith("segment:")]
+            segment_tags = [
+                tag.split(":", 1)[1] for tag in asset.tags if tag.startswith("segment:")
+            ]
             if not segment_tags:
                 continue
             for tag in segment_tags:
@@ -156,9 +158,14 @@ def _build_parser() -> argparse.ArgumentParser:
         description="Kalibruje progi Stress Lab Stage6 na podstawie Market Intel i raportów ryzyka"
     )
     parser.add_argument("--market-intel", required=True, help="Ścieżka do pliku JSON Market Intel")
-    parser.add_argument("--risk-report", help="Opcjonalny raport risk_simulation_report.json dla kalibracji latencji")
+    parser.add_argument(
+        "--risk-report",
+        help="Opcjonalny raport risk_simulation_report.json dla kalibracji latencji",
+    )
     parser.add_argument("--segments", help="Plik JSON z definicjami segmentów kalibracyjnych")
-    parser.add_argument("--config", help="Ścieżka do config/core.yaml w celu automatycznych segmentów")
+    parser.add_argument(
+        "--config", help="Ścieżka do config/core.yaml w celu automatycznych segmentów"
+    )
     parser.add_argument("--governor", help="Nazwa PortfolioGovernora z configu dla segmentów")
     parser.add_argument(
         "--volume-buckets",
@@ -184,7 +191,9 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--output-csv", help="Ścieżka raportu CSV z segmentami")
     parser.add_argument("--signing-key", help="Ścieżka do klucza HMAC dla podpisu raportu")
     parser.add_argument("--signing-key-id", help="Opcjonalny identyfikator klucza HMAC")
-    parser.add_argument("--signature-path", help="Ścieżka pliku podpisu (domyślnie raport.json.sig)")
+    parser.add_argument(
+        "--signature-path", help="Ścieżka pliku podpisu (domyślnie raport.json.sig)"
+    )
     return parser
 
 
@@ -218,7 +227,9 @@ def main(argv: list[str] | None = None) -> int:
         volume_risk_budget_prefix=args.volume_risk_budget_prefix,
     )
 
-    risk_report = _load_risk_report(Path(args.risk_report).expanduser().resolve() if args.risk_report else None)
+    risk_report = _load_risk_report(
+        Path(args.risk_report).expanduser().resolve() if args.risk_report else None
+    )
 
     calibrator = StressLabCalibrator()
     report: StressLabCalibrationReport = calibrator.calibrate(

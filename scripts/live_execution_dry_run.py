@@ -233,7 +233,9 @@ def _derive_markets(
     if universe_name and universe_name in getattr(config, "instrument_universes", {}):
         universe = config.instrument_universes[universe_name]
         for instrument in universe.instruments:
-            mapping = getattr(instrument, "exchange_symbols", None) or getattr(instrument, "exchanges", {})
+            mapping = getattr(instrument, "exchange_symbols", None) or getattr(
+                instrument, "exchanges", {}
+            )
             if not isinstance(mapping, Mapping):
                 continue
             symbol = mapping.get(env_cfg.exchange)
@@ -293,7 +295,9 @@ def _simulate_orders(
             )
             result = service.execute(request, context)
         except Exception as exc:
-            LOGGER.error("Symulacja zlecenia %s w środowisku %s nie powiodła się: %s", symbol, env_name, exc)
+            LOGGER.error(
+                "Symulacja zlecenia %s w środowisku %s nie powiodła się: %s", symbol, env_name, exc
+            )
             continue
         executed += 1
         if result.avg_price:

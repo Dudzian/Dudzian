@@ -1,4 +1,5 @@
 """Auto-trading helpers exposed by the bot_core namespace."""
+
 from __future__ import annotations
 
 from .ai_governor import AIGovernorDecision, AutoTraderAIGovernor, AutoTraderAIGovernorRunner

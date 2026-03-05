@@ -30,7 +30,9 @@ class _AdapterInit:
 class _FakeMarginAdapter:
     last_init: _AdapterInit | None = None
 
-    def __init__(self, credentials, *, environment, settings=None, watchdog=None, network_guard=None):
+    def __init__(
+        self, credentials, *, environment, settings=None, watchdog=None, network_guard=None
+    ):
         self.credentials = credentials
         self.environment = environment
         self.settings = dict(settings or {})
@@ -216,8 +218,12 @@ def test_list_exchange_adapters_reports_futures_columns(tmp_path):
 
     signal_quality_dir = tmp_path / "signal_quality"
     signal_quality_dir.mkdir(parents=True)
-    (signal_quality_dir / "deribit_futures.json").write_text(json.dumps({"total": 3}), encoding="utf-8")
-    (signal_quality_dir / "bitmex_futures.json").write_text(json.dumps({"total": 2}), encoding="utf-8")
+    (signal_quality_dir / "deribit_futures.json").write_text(
+        json.dumps({"total": 3}), encoding="utf-8"
+    )
+    (signal_quality_dir / "bitmex_futures.json").write_text(
+        json.dumps({"total": 2}), encoding="utf-8"
+    )
     os.utime(signal_quality_dir / "deribit_futures.json", None)
     os.utime(signal_quality_dir / "bitmex_futures.json", None)
 
@@ -255,7 +261,9 @@ def test_list_exchange_adapters_reports_futures_columns(tmp_path):
 
     deribit_live = _pick("deribit", "live")
     assert "futures_margin_mode" in deribit_live
-    assert "liquidation_feed" in deribit_live and "deribit" in (deribit_live["liquidation_feed"] or "")
+    assert "liquidation_feed" in deribit_live and "deribit" in (
+        deribit_live["liquidation_feed"] or ""
+    )
     assert deribit_live["hypercare_checklist_signed"] is True
     assert deribit_live["hypercare_checklist_status"] == "signed"
     assert deribit_live["hypercare_checklist_id"]
@@ -458,12 +466,18 @@ def test_kucoin_config_and_preset_alignment() -> None:
 
     testnet_cfg = config["testnet"]["exchange_manager"]
     preset_testnet = _extract_preset_environment(preset, "testnet")["exchange_manager"]
-    assert preset_testnet["failover"]["cooldown_seconds"] == testnet_cfg["failover"]["cooldown_seconds"]
+    assert (
+        preset_testnet["failover"]["cooldown_seconds"]
+        == testnet_cfg["failover"]["cooldown_seconds"]
+    )
     assert preset_testnet["rate_limit_rules"] == testnet_cfg["rate_limit_rules"]
 
     live_cfg = config["live"]["exchange_manager"]
     preset_live = _extract_preset_environment(preset, "live")["exchange_manager"]
-    assert preset_live["native_adapter"]["settings"]["margin_mode"] == live_cfg["native_adapter"]["settings"]["margin_mode"]
+    assert (
+        preset_live["native_adapter"]["settings"]["margin_mode"]
+        == live_cfg["native_adapter"]["settings"]["margin_mode"]
+    )
 
 
 def test_huobi_config_and_preset_alignment() -> None:
@@ -472,17 +486,25 @@ def test_huobi_config_and_preset_alignment() -> None:
 
     paper_cfg = config["paper"]["exchange_manager"]
     preset_paper = _extract_preset_environment(preset, "paper")["exchange_manager"]
-    assert preset_paper["paper_fee_rate"] == pytest.approx(config["paper"]["exchange_manager"]["paper_fee_rate"])
+    assert preset_paper["paper_fee_rate"] == pytest.approx(
+        config["paper"]["exchange_manager"]["paper_fee_rate"]
+    )
     assert preset_paper["paper_cash_asset"] == paper_cfg["paper_cash_asset"]
 
     testnet_cfg = config["testnet"]["exchange_manager"]
     preset_testnet = _extract_preset_environment(preset, "testnet")["exchange_manager"]
-    assert preset_testnet["failover"]["failure_threshold"] == testnet_cfg["failover"]["failure_threshold"]
+    assert (
+        preset_testnet["failover"]["failure_threshold"]
+        == testnet_cfg["failover"]["failure_threshold"]
+    )
     assert preset_testnet["rate_limit_rules"] == testnet_cfg["rate_limit_rules"]
 
     live_cfg = config["live"]["exchange_manager"]
     preset_live = _extract_preset_environment(preset, "live")["exchange_manager"]
-    assert preset_live["watchdog"]["retry_policy"]["max_attempts"] == live_cfg["watchdog"]["retry_policy"]["max_attempts"]
+    assert (
+        preset_live["watchdog"]["retry_policy"]["max_attempts"]
+        == live_cfg["watchdog"]["retry_policy"]["max_attempts"]
+    )
 
 
 def test_gemini_config_and_preset_alignment() -> None:
@@ -496,7 +518,10 @@ def test_gemini_config_and_preset_alignment() -> None:
 
     testnet_cfg = config["testnet"]["exchange_manager"]
     preset_testnet = _extract_preset_environment(preset, "testnet")["exchange_manager"]
-    assert preset_testnet["failover"]["cooldown_seconds"] == testnet_cfg["failover"]["cooldown_seconds"]
+    assert (
+        preset_testnet["failover"]["cooldown_seconds"]
+        == testnet_cfg["failover"]["cooldown_seconds"]
+    )
     assert preset_testnet["rate_limit_rules"] == testnet_cfg["rate_limit_rules"]
 
     live_cfg = config["live"]["exchange_manager"]

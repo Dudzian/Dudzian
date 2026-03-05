@@ -1,4 +1,5 @@
 """Adapter kanału e-mail bazujący na SMTP."""
+
 from __future__ import annotations
 
 import logging
@@ -23,8 +24,12 @@ class EmailChannel(AlertChannel):
     use_tls: bool = True
     timeout: float = 10.0
     name: str = "email"
-    logger: logging.Logger = field(default_factory=lambda: logging.getLogger("bot_core.alerts.email"))
-    _smtp_factory: Callable[[str, int, float], smtplib.SMTP] = field(default=smtplib.SMTP, repr=False)
+    logger: logging.Logger = field(
+        default_factory=lambda: logging.getLogger("bot_core.alerts.email")
+    )
+    _smtp_factory: Callable[[str, int, float], smtplib.SMTP] = field(
+        default=smtplib.SMTP, repr=False
+    )
     _last_error: str | None = field(default=None, init=False, repr=False)
     _last_success: str | None = field(default=None, init=False, repr=False)
 
@@ -75,4 +80,3 @@ class EmailChannel(AlertChannel):
 
 
 __all__ = ["EmailChannel"]
-

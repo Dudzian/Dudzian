@@ -493,39 +493,25 @@ def test_export_decision_engine_summary(tmp_path: Path) -> None:
     assert summary["rejected_std_model_expected_value_bps"] == pytest.approx(0.0)
     assert summary["rejected_sum_model_expected_value_bps"] == pytest.approx(1.025)
     assert summary["rejected_model_expected_value_bps_count"] == 1
-    assert summary["accepted_avg_model_expected_value_minus_cost_bps"] == pytest.approx(
-        4.92
-    )
-    assert summary["accepted_median_model_expected_value_minus_cost_bps"] == pytest.approx(
-        4.92
-    )
-    assert summary["accepted_p90_model_expected_value_minus_cost_bps"] == pytest.approx(
-        4.92
-    )
+    assert summary["accepted_avg_model_expected_value_minus_cost_bps"] == pytest.approx(4.92)
+    assert summary["accepted_median_model_expected_value_minus_cost_bps"] == pytest.approx(4.92)
+    assert summary["accepted_p90_model_expected_value_minus_cost_bps"] == pytest.approx(4.92)
     assert summary["accepted_std_model_expected_value_minus_cost_bps"] == pytest.approx(0.0)
-    assert summary["accepted_sum_model_expected_value_minus_cost_bps"] == pytest.approx(
-        4.92
-    )
+    assert summary["accepted_sum_model_expected_value_minus_cost_bps"] == pytest.approx(4.92)
     assert summary["accepted_model_expected_value_minus_cost_bps_count"] == 1
-    assert summary["rejected_avg_model_expected_value_minus_cost_bps"] == pytest.approx(
-        -1.475
-    )
-    assert summary["rejected_median_model_expected_value_minus_cost_bps"] == pytest.approx(
-        -1.475
-    )
-    assert summary["rejected_p90_model_expected_value_minus_cost_bps"] == pytest.approx(
-        -1.475
-    )
+    assert summary["rejected_avg_model_expected_value_minus_cost_bps"] == pytest.approx(-1.475)
+    assert summary["rejected_median_model_expected_value_minus_cost_bps"] == pytest.approx(-1.475)
+    assert summary["rejected_p90_model_expected_value_minus_cost_bps"] == pytest.approx(-1.475)
     assert summary["rejected_std_model_expected_value_minus_cost_bps"] == pytest.approx(0.0)
-    assert summary["rejected_sum_model_expected_value_minus_cost_bps"] == pytest.approx(
-        -1.475
-    )
+    assert summary["rejected_sum_model_expected_value_minus_cost_bps"] == pytest.approx(-1.475)
     assert summary["rejected_model_expected_value_minus_cost_bps_count"] == 1
     assert summary["action_usage"] == {"BUY": 1, "SELL": 1}
     assert summary["unique_actions"] == 2
     assert summary["actions_with_accepts"] == 1
     action_breakdown = summary["action_breakdown"]
-    assert action_breakdown["BUY"]["metrics"]["expected_value_minus_cost_bps"]["accepted_sum"] == pytest.approx(6.96)
+    assert action_breakdown["BUY"]["metrics"]["expected_value_minus_cost_bps"][
+        "accepted_sum"
+    ] == pytest.approx(6.96)
     assert action_breakdown["SELL"]["metrics"]["net_edge_bps"]["rejected_sum"] == pytest.approx(1.0)
     assert summary["strategy_usage"] == {"daily": 2}
     assert summary["unique_strategies"] == 1
@@ -541,8 +527,12 @@ def test_export_decision_engine_summary(tmp_path: Path) -> None:
     assert summary["unique_symbols"] == 2
     assert summary["symbols_with_accepts"] == 1
     symbol_breakdown = summary["symbol_breakdown"]
-    assert symbol_breakdown["BTC/USDT"]["metrics"]["notional"]["accepted_sum"] == pytest.approx(1000)
-    assert symbol_breakdown["ETH/USDT"]["metrics"]["expected_value_minus_cost_bps"]["rejected_sum"] == pytest.approx(-1.3)
+    assert symbol_breakdown["BTC/USDT"]["metrics"]["notional"]["accepted_sum"] == pytest.approx(
+        1000
+    )
+    assert symbol_breakdown["ETH/USDT"]["metrics"]["expected_value_minus_cost_bps"][
+        "rejected_sum"
+    ] == pytest.approx(-1.3)
     assert summary["latest_candidate"]["expected_value_bps"] == pytest.approx(1.2)
     assert summary["latest_expected_value_bps"] == pytest.approx(1.2)
     assert summary["latest_expected_value_minus_cost_bps"] == pytest.approx(-1.3)

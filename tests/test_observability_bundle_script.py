@@ -13,6 +13,8 @@ from scripts.export_observability_bundle import run as export_bundle
 
 
 ROOT = Path(__file__).resolve().parents[1]
+
+
 def _write(path: Path, data: str) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(data, encoding="utf-8")

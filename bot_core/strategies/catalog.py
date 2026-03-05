@@ -1,4 +1,5 @@
 """Katalog strategii i wspólne interfejsy fabryk."""
+
 from __future__ import annotations
 
 import json
@@ -75,8 +76,7 @@ class StrategyFactory(Protocol):
         name: str,
         parameters: Mapping[str, Any],
         metadata: Mapping[str, Any] | None = None,
-    ) -> StrategyEngine:
-        ...
+    ) -> StrategyEngine: ...
 
 
 def _normalize_non_empty_str(value: str, *, field_name: str) -> str:
@@ -176,7 +176,9 @@ class StrategyPresetValidationError(ValueError):
         super().__init__(message)
 
     @classmethod
-    def from_validation(cls, exc: ValidationError, *, preset_id: str | None = None) -> "StrategyPresetValidationError":
+    def from_validation(
+        cls, exc: ValidationError, *, preset_id: str | None = None
+    ) -> "StrategyPresetValidationError":
         details: list[str] = []
         for error in exc.errors():
             location = ".".join(str(part) for part in error.get("loc", ()))
@@ -197,7 +199,9 @@ class _PresetStrategySchema(BaseModel):
 
     name: str = Field(..., min_length=1, description="Nazwa strategii wyświetlana w UI")
     engine: str = Field(..., min_length=1, description="Klucz zarejestrowanego silnika strategii")
-    parameters: Mapping[str, Any] = Field(default_factory=dict, description="Parametry przekazywane do silnika")
+    parameters: Mapping[str, Any] = Field(
+        default_factory=dict, description="Parametry przekazywane do silnika"
+    )
     license_tier: str | None = Field(default=None)
     risk_classes: tuple[str, ...] = Field(default_factory=tuple)
     required_data: tuple[str, ...] = Field(default_factory=tuple)
@@ -254,7 +258,9 @@ class StrategyPresetSchema(BaseModel):
     model_config = ConfigDict(extra="allow")
 
     name: str = Field(..., min_length=1, description="Nazwa presetu wyświetlana w UI")
-    strategies: tuple[_PresetStrategySchema, ...] = Field(..., min_length=1, description="Lista strategii wchodzących w skład presetu")
+    strategies: tuple[_PresetStrategySchema, ...] = Field(
+        ..., min_length=1, description="Lista strategii wchodzących w skład presetu"
+    )
     metadata: _PresetMetadataSchema | Mapping[str, Any] = Field(default_factory=dict)
 
     @field_validator("metadata", mode="before")
@@ -268,9 +274,12 @@ class StrategyPresetSchema(BaseModel):
 
     @model_validator(mode="after")
     def _normalize_metadata(self) -> "StrategyPresetSchema":
-        if isinstance(self.metadata, Mapping) and not isinstance(self.metadata, _PresetMetadataSchema):
+        if isinstance(self.metadata, Mapping) and not isinstance(
+            self.metadata, _PresetMetadataSchema
+        ):
             self.metadata = _PresetMetadataSchema.model_validate(self.metadata)
         return self
+
 
 class StrategyPresetProfile(str, Enum):
     GRID = "grid"
@@ -361,7 +370,9 @@ class StrategyPresetDescriptor:
             "preset_id": self.preset_id,
             "name": self.name,
             "profile": self.profile.value,
-            "required_parameters": {key: list(values) for key, values in self.required_parameters.items()},
+            "required_parameters": {
+                key: list(values) for key, values in self.required_parameters.items()
+            },
             "license": self.license_status.as_dict(),
             "signature_verified": self.signature_verified,
             "metadata": dict(self.metadata),
@@ -390,11 +401,27 @@ class StrategyDefinition:
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "name", _normalize_non_empty_str(self.name, field_name="name"))
-        object.__setattr__(self, "engine", _normalize_non_empty_str(self.engine, field_name="engine"))
-        object.__setattr__(self, "license_tier", _normalize_non_empty_str(self.license_tier, field_name="license_tier"))
-        object.__setattr__(self, "risk_classes", _normalize_str_sequence(self.risk_classes, field_name="risk_classes"))
-        object.__setattr__(self, "required_data", _normalize_str_sequence(self.required_data, field_name="required_data"))
-        object.__setattr__(self, "risk_hooks", tuple(_normalize_optional_str_sequence(self.risk_hooks)))
+        object.__setattr__(
+            self, "engine", _normalize_non_empty_str(self.engine, field_name="engine")
+        )
+        object.__setattr__(
+            self,
+            "license_tier",
+            _normalize_non_empty_str(self.license_tier, field_name="license_tier"),
+        )
+        object.__setattr__(
+            self,
+            "risk_classes",
+            _normalize_str_sequence(self.risk_classes, field_name="risk_classes"),
+        )
+        object.__setattr__(
+            self,
+            "required_data",
+            _normalize_str_sequence(self.required_data, field_name="required_data"),
+        )
+        object.__setattr__(
+            self, "risk_hooks", tuple(_normalize_optional_str_sequence(self.risk_hooks))
+        )
         object.__setattr__(
             self,
             "tags",
@@ -422,10 +449,24 @@ class StrategyEngineSpec:
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "key", _normalize_non_empty_str(self.key, field_name="key"))
-        object.__setattr__(self, "license_tier", _normalize_non_empty_str(self.license_tier, field_name="license_tier"))
-        object.__setattr__(self, "risk_classes", _normalize_str_sequence(self.risk_classes, field_name="risk_classes"))
-        object.__setattr__(self, "required_data", _normalize_str_sequence(self.required_data, field_name="required_data"))
-        object.__setattr__(self, "risk_hooks", tuple(_normalize_optional_str_sequence(self.risk_hooks)))
+        object.__setattr__(
+            self,
+            "license_tier",
+            _normalize_non_empty_str(self.license_tier, field_name="license_tier"),
+        )
+        object.__setattr__(
+            self,
+            "risk_classes",
+            _normalize_str_sequence(self.risk_classes, field_name="risk_classes"),
+        )
+        object.__setattr__(
+            self,
+            "required_data",
+            _normalize_str_sequence(self.required_data, field_name="required_data"),
+        )
+        object.__setattr__(
+            self, "risk_hooks", tuple(_normalize_optional_str_sequence(self.risk_hooks))
+        )
         object.__setattr__(
             self,
             "default_tags",
@@ -457,7 +498,9 @@ class StrategyEngineSpec:
         return model.model_dump()
 
 
-def _ensure_capability_allowed(spec: StrategyEngineSpec, *, strategy_name: str | None = None) -> None:
+def _ensure_capability_allowed(
+    spec: StrategyEngineSpec, *, strategy_name: str | None = None
+) -> None:
     guard = get_capability_guard()
     if guard is None or not spec.capability:
         return
@@ -508,7 +551,9 @@ class StrategyCatalog:
         fingerprint_value = license_payload.get("fingerprint")
         if isinstance(fingerprint_value, str) and fingerprint_value.strip():
             candidates.append(fingerprint_value.strip())
-        alternate = license_payload.get("fingerprints") or license_payload.get("allowed_fingerprints")
+        alternate = license_payload.get("fingerprints") or license_payload.get(
+            "allowed_fingerprints"
+        )
         if isinstance(alternate, Iterable) and not isinstance(alternate, (str, bytes)):
             for item in alternate:
                 text = str(item).strip()
@@ -550,7 +595,9 @@ class StrategyCatalog:
                     )
             if missing:
                 metadata_candidate = normalized.get("metadata")
-                metadata_payload = metadata_candidate if isinstance(metadata_candidate, Mapping) else {}
+                metadata_payload = (
+                    metadata_candidate if isinstance(metadata_candidate, Mapping) else {}
+                )
                 preset_id_value: str | None = None
                 if isinstance(metadata_payload, Mapping):
                     candidate = metadata_payload.get("id") or metadata_payload.get("preset_id")
@@ -588,7 +635,9 @@ class StrategyCatalog:
             if license_identifier is None:
                 metadata_license = metadata.get("license")
                 if isinstance(metadata_license, Mapping):
-                    license_identifier = _coerce_license_identifier(metadata_license.get("license_id"))
+                    license_identifier = _coerce_license_identifier(
+                        metadata_license.get("license_id")
+                    )
 
         if payload:
             module_id_value = payload.get("module_id") or metadata.get("module_id") or preset_id
@@ -668,7 +717,8 @@ class StrategyCatalog:
                     )
                 else:
                     fingerprint_verified = any(
-                        _match_fingerprint(hwid_value, candidate) for candidate in fingerprint_candidates
+                        _match_fingerprint(hwid_value, candidate)
+                        for candidate in fingerprint_candidates
                     )
                     status = (
                         PresetLicenseState.ACTIVE
@@ -754,12 +804,20 @@ class StrategyCatalog:
                 validation_payload: dict[str, Any] = {}
                 if validation_errors:
                     validation_payload["errors"] = [entry.to_dict() for entry in validation_errors]
-                    validation_payload["error_messages"] = [entry.message for entry in validation_errors]
+                    validation_payload["error_messages"] = [
+                        entry.message for entry in validation_errors
+                    ]
                     validation_payload["error_codes"] = [entry.code for entry in validation_errors]
                 if validation_warnings:
-                    validation_payload["warnings"] = [entry.to_dict() for entry in validation_warnings]
-                    validation_payload["warning_messages"] = [entry.message for entry in validation_warnings]
-                    validation_payload["warning_codes"] = [entry.code for entry in validation_warnings]
+                    validation_payload["warnings"] = [
+                        entry.to_dict() for entry in validation_warnings
+                    ]
+                    validation_payload["warning_messages"] = [
+                        entry.message for entry in validation_warnings
+                    ]
+                    validation_payload["warning_codes"] = [
+                        entry.code for entry in validation_warnings
+                    ]
                 if validation_payload:
                     existing_validation = normalized_metadata.get("validation")
                     if isinstance(existing_validation, Mapping):
@@ -870,8 +928,12 @@ class StrategyCatalog:
                 "name": name,
                 "engine": engine,
                 "license_tier": str(raw_entry.get("license_tier") or "").strip(),
-                "risk_classes": list(_normalize_optional_str_sequence(raw_entry.get("risk_classes"))),
-                "required_data": list(_normalize_optional_str_sequence(raw_entry.get("required_data"))),
+                "risk_classes": list(
+                    _normalize_optional_str_sequence(raw_entry.get("risk_classes"))
+                ),
+                "required_data": list(
+                    _normalize_optional_str_sequence(raw_entry.get("required_data"))
+                ),
                 "parameters": parameters,
                 "tags": list(_normalize_optional_str_sequence(raw_entry.get("tags"))),
             }
@@ -915,14 +977,20 @@ class StrategyCatalog:
         raw_preset_id = metadata.get("id") or metadata.get("preset_id") or name
         preset_id = _normalize_non_empty_str(str(raw_preset_id), field_name="preset_id")
 
-        profile = StrategyPresetProfile.from_value(metadata.get("profile") or metadata.get("preset_profile"))
+        profile = StrategyPresetProfile.from_value(
+            metadata.get("profile") or metadata.get("preset_profile")
+        )
 
-        strategies, required_parameters, strategy_issues = self._parse_preset_strategies(validated_payload)
+        strategies, required_parameters, strategy_issues = self._parse_preset_strategies(
+            validated_payload
+        )
 
         issues = list(additional_issues)
         issues.extend(strategy_issues)
 
-        license_payload = metadata.get("license") if isinstance(metadata.get("license"), Mapping) else None
+        license_payload = (
+            metadata.get("license") if isinstance(metadata.get("license"), Mapping) else None
+        )
 
         status = self._compute_license_status(
             preset_id,
@@ -964,7 +1032,9 @@ class StrategyCatalog:
 
         try:
             document = json.loads(raw_text)
-        except json.JSONDecodeError as exc:  # pragma: no cover - walidowane w testach integracyjnych
+        except (
+            json.JSONDecodeError
+        ) as exc:  # pragma: no cover - walidowane w testach integracyjnych
             raise ValueError(f"Preset file {path} contains invalid JSON: {exc}") from exc
 
         signature_doc: Mapping[str, Any] | None = None
@@ -1198,7 +1268,8 @@ class StrategyCatalog:
             validated_parameters = spec.validate_parameters(definition.parameters)
         except ValidationError as exc:
             details = [
-                ".".join(str(part) for part in error.get("loc", ())) + f": {error.get('msg', 'invalid')}"
+                ".".join(str(part) for part in error.get("loc", ()))
+                + f": {error.get('msg', 'invalid')}"
                 if error.get("loc")
                 else error.get("msg", "invalid configuration")
                 for error in exc.errors()
@@ -1714,13 +1785,19 @@ class StrategyPresetWizard:
                 f"Preset entry '{name}' declares license tier '{license_tier}' incompatible with engine '{spec.key}'"
             )
         risk_classes = tuple(
-            dict.fromkeys((*spec.risk_classes, *_normalize_optional_str_sequence(entry.get("risk_classes"))))
+            dict.fromkeys(
+                (*spec.risk_classes, *_normalize_optional_str_sequence(entry.get("risk_classes")))
+            )
         )
         required_data = tuple(
-            dict.fromkeys((*spec.required_data, *_normalize_optional_str_sequence(entry.get("required_data"))))
+            dict.fromkeys(
+                (*spec.required_data, *_normalize_optional_str_sequence(entry.get("required_data")))
+            )
         )
         risk_hooks = tuple(
-            dict.fromkeys((*spec.risk_hooks, *_normalize_optional_str_sequence(entry.get("risk_hooks"))))
+            dict.fromkeys(
+                (*spec.risk_hooks, *_normalize_optional_str_sequence(entry.get("risk_hooks")))
+            )
         )
         metadata = dict(entry.get("metadata") or {})
         metadata.setdefault("license_tier", spec.license_tier)
@@ -1762,7 +1839,9 @@ class StrategyPresetWizard:
         if not isinstance(signing_key, (bytes, bytearray)):
             raise TypeError("signing_key must be raw bytes")
         preset_payload = dict(preset)
-        signature = build_hmac_signature(preset_payload, key=bytes(signing_key), key_id=key_id, algorithm=algorithm)
+        signature = build_hmac_signature(
+            preset_payload, key=bytes(signing_key), key_id=key_id, algorithm=algorithm
+        )
         return {"preset": preset_payload, "signature": signature}
 
     def export_signed(
@@ -1774,10 +1853,15 @@ class StrategyPresetWizard:
         key_id: str | None = None,
         algorithm: str = "HMAC-SHA256",
     ) -> Path:
-        document = self.build_document(preset, signing_key=signing_key, key_id=key_id, algorithm=algorithm)
+        document = self.build_document(
+            preset, signing_key=signing_key, key_id=key_id, algorithm=algorithm
+        )
         destination = Path(path).expanduser()
         destination.parent.mkdir(parents=True, exist_ok=True)
-        destination.write_text(json.dumps(document, ensure_ascii=False, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+        destination.write_text(
+            json.dumps(document, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
+            encoding="utf-8",
+        )
         return destination
 
 

@@ -39,7 +39,9 @@ def test_load_runtime_entrypoint_metadata_handles_missing_entrypoint(
     core_config_path: Path, caplog: pytest.LogCaptureFixture
 ) -> None:
     caplog.set_level(logging.DEBUG)
-    metadata = load_runtime_entrypoint_metadata("missing", config_path=core_config_path, logger=logging.getLogger(__name__))
+    metadata = load_runtime_entrypoint_metadata(
+        "missing", config_path=core_config_path, logger=logging.getLogger(__name__)
+    )
     assert metadata is None
     assert any("missing" in record.getMessage() for record in caplog.records)
 
@@ -112,7 +114,9 @@ def test_load_risk_profile_config_falls_back_to_yaml(
 
 
 def test_load_risk_manager_settings_combines_sources(core_config_path: Path) -> None:
-    name, profile, settings = load_risk_manager_settings("auto_trader", config_path=core_config_path)
+    name, profile, settings = load_risk_manager_settings(
+        "auto_trader", config_path=core_config_path
+    )
     assert name == "balanced"
     assert profile is not None
     assert isinstance(settings, RiskManagerSettings)

@@ -1,4 +1,5 @@
 """Tworzenie paczek diagnostycznych dla wsparcia technicznego."""
+
 from __future__ import annotations
 
 import json
@@ -148,4 +149,6 @@ def create_diagnostics_package(
     except OSError as exc:  # pragma: no cover - zależności środowiskowe
         raise DiagnosticsError(f"Nie udało się utworzyć archiwum {archive_path}: {exc}") from exc
 
-    return DiagnosticsPackage(archive_path=archive_path, included_files=included, metadata=metadata or {})
+    return DiagnosticsPackage(
+        archive_path=archive_path, included_files=included, metadata=metadata or {}
+    )

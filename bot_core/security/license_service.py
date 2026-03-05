@@ -1,4 +1,5 @@
 """Obsługa licencji offline podpisanych kluczem Ed25519."""
+
 from __future__ import annotations
 
 import base64
@@ -87,7 +88,9 @@ class LicenseSnapshot:
         self.effective_date = effective_date
         self.local_hwid = local_hwid
         self.requires_hardware_wallet = bool(
-            requires_hardware_wallet if requires_hardware_wallet is not None else capabilities.require_hardware_wallet_for_outgoing
+            requires_hardware_wallet
+            if requires_hardware_wallet is not None
+            else capabilities.require_hardware_wallet_for_outgoing
         )
         digest = payload_sha256 or hashlib.sha256(payload_bytes).hexdigest()
         self.payload_sha256 = digest.lower()
@@ -141,14 +144,14 @@ class LicenseService:
                 today_provider=today_provider,
             )
         self._hwid_provider = hwid_provider or HwIdProvider()
-        self._status_path = Path(status_path).expanduser() if status_path else self.DEFAULT_STATUS_PATH
+        self._status_path = (
+            Path(status_path).expanduser() if status_path else self.DEFAULT_STATUS_PATH
+        )
         self._audit_log_path = (
             Path(audit_log_path).expanduser() if audit_log_path else self.DEFAULT_AUDIT_LOG_PATH
         )
         self._binding_secret_path = (
-            Path(binding_secret_path).expanduser()
-            if binding_secret_path is not None
-            else None
+            Path(binding_secret_path).expanduser() if binding_secret_path is not None else None
         )
 
     # --- API publiczne ---------------------------------------------------------
@@ -201,7 +204,9 @@ class LicenseService:
                     f"Fingerprint urządzenia ({reference_hwid}) nie pasuje do licencji ({hwid})."
                 )
 
-        license_id = str(payload.get("license_id") or payload.get("licenseId") or "").strip() or None
+        license_id = (
+            str(payload.get("license_id") or payload.get("licenseId") or "").strip() or None
+        )
         effective_date = self._compute_effective_date(license_id)
         capabilities = build_capabilities_from_payload(payload, effective_date=effective_date)
         self._store_effective_date(license_id, effective_date)
@@ -222,7 +227,6 @@ class LicenseService:
         self._append_audit_log(snapshot)
 
         return snapshot
-
 
     # --- obsługa plików --------------------------------------------------------
     def _read_bundle(self, path: Path) -> dict[str, Any]:
@@ -382,7 +386,9 @@ class LicenseService:
             raw = snapshot.payload.get("issued_at") or snapshot.payload.get("issuedAt")
             if isinstance(raw, str) and raw.strip():
                 try:
-                    issued_at = datetime.fromisoformat(raw.replace("Z", "+00:00")).astimezone(timezone.utc)
+                    issued_at = datetime.fromisoformat(raw.replace("Z", "+00:00")).astimezone(
+                        timezone.utc
+                    )
                 except ValueError:
                     issued_at = None
         if issued_at:
@@ -556,7 +562,9 @@ class LicenseService:
                         try:
                             record = json.loads(line)
                         except json.JSONDecodeError:
-                            LOGGER.warning("Nie udało się sparsować wpisu audytowego licencji: %s", line)
+                            LOGGER.warning(
+                                "Nie udało się sparsować wpisu audytowego licencji: %s", line
+                            )
                             continue
                         if record.get("local_hwid_hash") == local_hwid_hash:
                             previous_activations += 1
@@ -569,7 +577,9 @@ class LicenseService:
             "license_id": snapshot.capabilities.license_id,
             "edition": snapshot.capabilities.edition,
             "trial_active": snapshot.capabilities.is_trial_active(snapshot.effective_date),
-            "maintenance_active": snapshot.capabilities.is_maintenance_active(snapshot.effective_date),
+            "maintenance_active": snapshot.capabilities.is_maintenance_active(
+                snapshot.effective_date
+            ),
             "bundle_path": str(snapshot.bundle_path),
             "payload_sha256": snapshot.payload_sha256,
             "local_hwid_hash": local_hwid_hash,

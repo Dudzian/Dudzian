@@ -1,4 +1,5 @@
 """Buduje pakiet instalacyjny do dystrybucji offline."""
+
 from __future__ import annotations
 
 import argparse
@@ -119,13 +120,17 @@ def build_offline_bundle(args: argparse.Namespace) -> Path:
     manifest_path = offline_root / "MANIFEST.json"
     manifest_path.write_text(json.dumps(manifest, ensure_ascii=False, indent=2), encoding="utf-8")
 
-    archive_path = shutil.make_archive(str(output_root / "offline_bundle"), "gztar", root_dir=offline_root)
+    archive_path = shutil.make_archive(
+        str(output_root / "offline_bundle"), "gztar", root_dir=offline_root
+    )
     return Path(archive_path)
 
 
 def main(argv: Sequence[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Build offline deployment bundle")
-    parser.add_argument("--ui-build", required=True, help="Ścieżka do katalogu zbudowanej aplikacji Qt (Release)")
+    parser.add_argument(
+        "--ui-build", required=True, help="Ścieżka do katalogu zbudowanej aplikacji Qt (Release)"
+    )
     parser.add_argument(
         "--output",
         default=str(DEFAULT_OFFLINE_OUTPUT),

@@ -1,4 +1,5 @@
 """Abstrakcje przechowywania sekretów wykorzystywane przez adaptery giełdowe."""
+
 from __future__ import annotations
 
 import abc
@@ -39,9 +40,7 @@ class SecretPayload:
     environment: Environment
 
     @classmethod
-    def from_exchange_credentials(
-        cls, credentials: ExchangeCredentials
-    ) -> "SecretPayload":
+    def from_exchange_credentials(cls, credentials: ExchangeCredentials) -> "SecretPayload":
         return cls(
             key_id=credentials.key_id,
             secret=credentials.secret or "",
@@ -102,7 +101,9 @@ class SecretManager:
 
         if required_permissions:
             required = {str(permission).lower() for permission in required_permissions}
-            missing = sorted(permission for permission in required if permission not in stored_permissions)
+            missing = sorted(
+                permission for permission in required if permission not in stored_permissions
+            )
             if missing:
                 missing_str = ", ".join(missing)
                 raise SecretStorageError(
@@ -112,7 +113,9 @@ class SecretManager:
 
         if forbidden_permissions:
             forbidden = {str(permission).lower() for permission in forbidden_permissions}
-            present = sorted(permission for permission in stored_permissions if permission in forbidden)
+            present = sorted(
+                permission for permission in stored_permissions if permission in forbidden
+            )
             if present:
                 present_str = ", ".join(present)
                 raise SecretStorageError(
@@ -160,7 +163,9 @@ class SecretManager:
             )
         return raw_value
 
-    def store_secret_value(self, keychain_key: str, value: str, *, purpose: str = "generic") -> None:
+    def store_secret_value(
+        self, keychain_key: str, value: str, *, purpose: str = "generic"
+    ) -> None:
         """Zapisuje arbitralny sekret w magazynie."""
 
         storage_key = self._format_key(keychain_key, purpose)
@@ -240,7 +245,9 @@ class SecretManager:
             secret=str(secret_value),
             passphrase=str(passphrase) if passphrase is not None else None,
             permissions=tuple(
-                str(permission).lower() for permission in (permissions or ()) if permission is not None
+                str(permission).lower()
+                for permission in (permissions or ())
+                if permission is not None
             ),
             environment=environment,
         )

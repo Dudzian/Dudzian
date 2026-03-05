@@ -1,4 +1,5 @@
 """Strategia arbitrażu między giełdami."""
+
 from __future__ import annotations
 
 from dataclasses import dataclass, field
@@ -6,7 +7,11 @@ from datetime import datetime, timezone
 from typing import Dict, List, Sequence
 
 from bot_core.strategies.base import MarketSnapshot, SignalLeg, StrategyEngine, StrategySignal
-from bot_core.strategies.market_params import DEFAULT_SPOT_PARAMS, MarketParams, quantity_from_notional
+from bot_core.strategies.market_params import (
+    DEFAULT_SPOT_PARAMS,
+    MarketParams,
+    quantity_from_notional,
+)
 
 
 @dataclass(slots=True)

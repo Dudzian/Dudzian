@@ -7,6 +7,7 @@ Subcommands:
   - evaluate : Stage6-style — definicje SLO (YAML/JSON) + pomiary (JSON) → raport + (opcjonalnie) CSV i podpis HMAC
   - scan     : historical Stage 5-style — JSONL z metrykami + progi z core.yaml → raport + (opcjonalnie) podpis HMAC
 """
+
 from __future__ import annotations
 
 import argparse
@@ -94,9 +95,13 @@ def _handle_evaluate(args: argparse.Namespace) -> int:
     if key:
         sig = build_hmac_signature(payload, key=key, key_id=key_id)
         signature_path.parent.mkdir(parents=True, exist_ok=True)
-        signature_path.write_text(json.dumps(sig, ensure_ascii=False, separators=(",", ":")) + "\n", encoding="utf-8")
+        signature_path.write_text(
+            json.dumps(sig, ensure_ascii=False, separators=(",", ":")) + "\n", encoding="utf-8"
+        )
 
-    msg = f"Zapisano raport SLO do {output_path}" + (" wraz z podpisem " + str(signature_path) if key else " (bez podpisu HMAC)")
+    msg = f"Zapisano raport SLO do {output_path}" + (
+        " wraz z podpisem " + str(signature_path) if key else " (bez podpisu HMAC)"
+    )
     if csv_path:
         msg += f"; raport CSV: {csv_path}"
     print(msg)
@@ -107,7 +112,7 @@ def _build_evaluate_parser(sub: argparse._SubParsersAction) -> argparse.Argument
     p = sub.add_parser(
         "evaluate",
         help="Oblicz SLO z definicji i pomiarów (Stage6-style).",
-        description="Wczytuje definicje SLO (YAML/JSON) i pomiary (JSON), generuje raport JSON (+ opcjonalnie CSV) i podpis HMAC."
+        description="Wczytuje definicje SLO (YAML/JSON) i pomiary (JSON), generuje raport JSON (+ opcjonalnie CSV) i podpis HMAC.",
     )
     p.add_argument(
         "--definitions",
@@ -115,7 +120,10 @@ def _build_evaluate_parser(sub: argparse._SubParsersAction) -> argparse.Argument
         help="Plik z definicjami SLO (YAML/JSON); domyślnie config/observability/slo.yml",
     )
     p.add_argument("--metrics", required=True, help="Plik z pomiarami metryk (JSON)")
-    p.add_argument("--output", help="Ścieżka raportu JSON (domyślnie var/audit/observability/slo_report_*.json)")
+    p.add_argument(
+        "--output",
+        help="Ścieżka raportu JSON (domyślnie var/audit/observability/slo_report_*.json)",
+    )
     p.add_argument("--output-csv", help="Ścieżka raportu CSV (opcjonalnie)")
     p.add_argument("--pretty", action="store_true", help="Formatowanie JSON z wcięciami")
     p.add_argument("--signature", help="Ścieżka pliku z podpisem HMAC (domyślnie <output>.sig)")
@@ -186,13 +194,19 @@ def _load_samples(paths: Sequence[Path]) -> List[MetricSample]:
             try:
                 value = float(payload.get("value"))
             except (TypeError, ValueError) as exc:
-                raise ValueError(f"Nieprawidłowa wartość dla {metric} w {path}:{line_number}") from exc
-            timestamp = _parse_timestamp(payload.get("timestamp"), path=path, line_number=line_number)
+                raise ValueError(
+                    f"Nieprawidłowa wartość dla {metric} w {path}:{line_number}"
+                ) from exc
+            timestamp = _parse_timestamp(
+                payload.get("timestamp"), path=path, line_number=line_number
+            )
             labels_raw = payload.get("labels") or {}
             if not isinstance(labels_raw, Mapping):
                 raise ValueError(f"Pole labels musi być mapą w {path}:{line_number}")
             labels = {str(k): str(v) for k, v in labels_raw.items()}
-            samples.append(MetricSample(metric=metric, value=value, timestamp=timestamp, labels=labels))
+            samples.append(
+                MetricSample(metric=metric, value=value, timestamp=timestamp, labels=labels)
+            )
     return samples
 
 
@@ -240,7 +254,8 @@ def _evaluate_slo_main(
 ) -> dict[str, object]:
     window_start = now - timedelta(minutes=definition.window_minutes)
     filtered = [
-        s for s in samples
+        s
+        for s in samples
         if s.metric == definition.metric
         and s.timestamp >= window_start
         and _labels_match(s.labels, definition.label_filters)
@@ -252,8 +267,15 @@ def _evaluate_slo_main(
     if len(filtered) >= definition.min_samples and filtered:
         values = [s.value for s in filtered]
         observed_value = _aggregate(values, definition.aggregation)
-        status = "pass" if _compare(observed_value, definition.comparator, definition.objective) else "fail"
-        violations = sum(0 if _compare(s.value, definition.comparator, definition.objective) else 1 for s in filtered)
+        status = (
+            "pass"
+            if _compare(observed_value, definition.comparator, definition.objective)
+            else "fail"
+        )
+        violations = sum(
+            0 if _compare(s.value, definition.comparator, definition.objective) else 1
+            for s in filtered
+        )
     return {
         "name": definition.name,
         "metric": definition.metric,
@@ -314,14 +336,20 @@ def _handle_scan(args: argparse.Namespace) -> int:
 
     output_root = Path(args.output_dir)
     output_root.mkdir(parents=True, exist_ok=True)
-    report_path = output_root / (f"{args.basename}.json" if args.basename else f"slo_report_{_now_ts()}.json")
-    report_path.write_text(json.dumps(report, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    report_path = output_root / (
+        f"{args.basename}.json" if args.basename else f"slo_report_{_now_ts()}.json"
+    )
+    report_path.write_text(
+        json.dumps(report, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
+    )
 
     if args.signing_key_path:
         signing_key = _read_signing_key_path(Path(args.signing_key_path))
         signature = build_hmac_signature(report, key=signing_key, key_id=args.signing_key_id)
         sig_path = report_path.with_suffix(report_path.suffix + ".sig")
-        sig_path.write_text(json.dumps(signature, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+        sig_path.write_text(
+            json.dumps(signature, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
+        )
 
     print(f"Raport SLO zapisany w {report_path}")
     return 0
@@ -331,15 +359,40 @@ def _build_scan_parser(sub: argparse._SubParsersAction) -> argparse.ArgumentPars
     p = sub.add_parser(
         "scan",
         help="Skanuj JSONL z metrykami i oceń SLO z core.yaml (tryb historyczny).",
-        description="Wczytuje JSONL z metrykami, bierze progi SLO z config/core.yaml i generuje raport JSON + (opcjonalny) podpis."
+        description="Wczytuje JSONL z metrykami, bierze progi SLO z config/core.yaml i generuje raport JSON + (opcjonalny) podpis.",
     )
-    p.add_argument("--metrics", action="append", required=True, help="Plik JSONL z metrykami (można podać wiele razy)")
+    p.add_argument(
+        "--metrics",
+        action="append",
+        required=True,
+        help="Plik JSONL z metrykami (można podać wiele razy)",
+    )
     p.add_argument("--config", default="config/core.yaml", help="Ścieżka do pliku core.yaml")
-    p.add_argument("--output-dir", default="var/audit/slo", help="Katalog docelowy raportu (domyślnie var/audit/slo)")
-    p.add_argument("--basename", default=None, help="Opcjonalna nazwa bazowa plików (bez rozszerzeń)")
-    p.add_argument("--metadata", action="append", default=[], help="Dodatkowe metadane w formacie klucz=wartość")
-    p.add_argument("--signing-key-path", dest="signing_key_path", help="Ścieżka do klucza HMAC podpisującego raport")
-    p.add_argument("--signing-key-id", dest="signing_key_id", default=None, help="Identyfikator klucza podpisującego")
+    p.add_argument(
+        "--output-dir",
+        default="var/audit/slo",
+        help="Katalog docelowy raportu (domyślnie var/audit/slo)",
+    )
+    p.add_argument(
+        "--basename", default=None, help="Opcjonalna nazwa bazowa plików (bez rozszerzeń)"
+    )
+    p.add_argument(
+        "--metadata",
+        action="append",
+        default=[],
+        help="Dodatkowe metadane w formacie klucz=wartość",
+    )
+    p.add_argument(
+        "--signing-key-path",
+        dest="signing_key_path",
+        help="Ścieżka do klucza HMAC podpisującego raport",
+    )
+    p.add_argument(
+        "--signing-key-id",
+        dest="signing_key_id",
+        default=None,
+        help="Identyfikator klucza podpisującego",
+    )
     p.set_defaults(_handler=_handle_scan)
     return p
 

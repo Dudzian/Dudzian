@@ -1,4 +1,5 @@
 """DecisionOrchestrator oceniający kandydatów decyzji inwestycyjnych."""
+
 from __future__ import annotations
 
 import logging
@@ -108,9 +109,7 @@ class DecisionOrchestrator(DecisionProvider):
             tuple[str, str], MutableMapping[str, ModelPerformanceSummary]
         ] = {}
         self._performance_half_life_hours = (
-            float(performance_half_life_hours)
-            if performance_half_life_hours is not None
-            else None
+            float(performance_half_life_hours) if performance_half_life_hours is not None else None
         )
         self._performance_history_limit = max(1, int(performance_history_limit))
         self._clock: Callable[[], datetime] = clock or (lambda: datetime.now(timezone.utc))
@@ -180,14 +179,18 @@ class DecisionOrchestrator(DecisionProvider):
                     baseline = None
             if baseline:
                 _LOGGER.warning(
-                    "Rolling back model %s to baseline %s after degraded quality", model_name, baseline
+                    "Rolling back model %s to baseline %s after degraded quality",
+                    model_name,
+                    baseline,
                 )
                 reference = baseline
 
         inference = DecisionModelInference(repository)
         inference.model_label = model_name
         inference.load_weights(reference)
-        self.attach_named_inference(inference_name, inference, set_default=(inference_name == "__default__"))
+        self.attach_named_inference(
+            inference_name, inference, set_default=(inference_name == "__default__")
+        )
         return reference, report
 
     def update_model_performance(
@@ -235,7 +238,9 @@ class DecisionOrchestrator(DecisionProvider):
         previous = self._strategy_performance.get(key)
         if previous is not None and previous.regime == regime:
             total_obs = max(previous.observations + observations, 1)
-            hit_rate = (previous.hit_rate * previous.observations + hit_rate * observations) / total_obs
+            hit_rate = (
+                previous.hit_rate * previous.observations + hit_rate * observations
+            ) / total_obs
             pnl = (previous.pnl * previous.observations + pnl * observations) / total_obs
             sharpe = (previous.sharpe * previous.observations + sharpe * observations) / total_obs
             observations = total_obs
@@ -284,7 +289,9 @@ class DecisionOrchestrator(DecisionProvider):
     ) -> StrategyRecalibrationSchedule:
         key = strategy.lower()
         next_run = (first_run or self._now()) + interval
-        schedule = StrategyRecalibrationSchedule(strategy=strategy, interval=interval, next_run=next_run)
+        schedule = StrategyRecalibrationSchedule(
+            strategy=strategy, interval=interval, next_run=next_run
+        )
         self._strategy_schedules[key] = schedule
         return schedule
 
@@ -292,7 +299,11 @@ class DecisionOrchestrator(DecisionProvider):
         self, now: datetime | None = None
     ) -> Sequence[StrategyRecalibrationSchedule]:
         reference = now or self._now()
-        return tuple(schedule for schedule in self._strategy_schedules.values() if schedule.next_run <= reference)
+        return tuple(
+            schedule
+            for schedule in self._strategy_schedules.values()
+            if schedule.next_run <= reference
+        )
 
     def mark_recalibrated(
         self,
@@ -312,9 +323,7 @@ class DecisionOrchestrator(DecisionProvider):
         )
 
     # ------------------------------------------------------------------ koszty --
-    def update_costs_from_report(
-        self, report: TCOReport | Mapping[str, object]
-    ) -> None:
+    def update_costs_from_report(self, report: TCOReport | Mapping[str, object]) -> None:
         """Buduje indeks kosztów (bps) na podstawie raportu TCO."""
 
         self._cost_resolver.update_costs_from_report(report)
@@ -360,9 +369,7 @@ class DecisionOrchestrator(DecisionProvider):
         return self._resolve_regime(candidate)
 
     # ----------------------------------------------------------------- helpery --
-    def _thresholds_for_profile(
-        self, profile: str
-    ) -> DecisionOrchestratorThresholds:
+    def _thresholds_for_profile(self, profile: str) -> DecisionOrchestratorThresholds:
         overrides = self._config.profile_overrides
         if overrides and profile in overrides:
             return overrides[profile]

@@ -43,12 +43,14 @@ groups:
 def test_validation_passes_for_valid_rules(
     rules_file: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    exit_code = validate_prometheus_rules.main([
-        "--rules",
-        str(rules_file),
-        "--metric-prefix",
-        "bot_core_multi_strategy",
-    ])
+    exit_code = validate_prometheus_rules.main(
+        [
+            "--rules",
+            str(rules_file),
+            "--metric-prefix",
+            "bot_core_multi_strategy",
+        ]
+    )
     assert exit_code == 0
     assert "Walidacja reguł" in capsys.readouterr().out
 
@@ -60,10 +62,12 @@ def test_validation_fails_without_required_label(rules_file: Path) -> None:
         yaml.safe_dump(data, allow_unicode=True, sort_keys=False),
         encoding="utf-8",
     )
-    exit_code = validate_prometheus_rules.main([
-        "--rules",
-        str(rules_file),
-    ])
+    exit_code = validate_prometheus_rules.main(
+        [
+            "--rules",
+            str(rules_file),
+        ]
+    )
     assert exit_code == 1
 
 
@@ -72,21 +76,25 @@ def test_validation_errors_on_missing_metric_prefix(rules_file: Path) -> None:
         "bot_core_multi_strategy_latency_ms", "custom_metric_latency_ms"
     )
     rules_file.write_text(content, encoding="utf-8")
-    exit_code = validate_prometheus_rules.main([
-        "--rules",
-        str(rules_file),
-        "--metric-prefix",
-        "bot_core_multi_strategy",
-    ])
+    exit_code = validate_prometheus_rules.main(
+        [
+            "--rules",
+            str(rules_file),
+            "--metric-prefix",
+            "bot_core_multi_strategy",
+        ]
+    )
     assert exit_code == 1
 
 
 def test_validation_returns_error_when_file_missing(tmp_path: Path) -> None:
     missing = tmp_path / "absent.yml"
-    exit_code = validate_prometheus_rules.main([
-        "--rules",
-        str(missing),
-    ])
+    exit_code = validate_prometheus_rules.main(
+        [
+            "--rules",
+            str(missing),
+        ]
+    )
     assert exit_code == 2
 
 
@@ -110,12 +118,14 @@ groups:
         encoding="utf-8",
     )
 
-    exit_code = validate_prometheus_rules.main([
-        "--rules",
-        str(path),
-        "--metric-prefix",
-        "bot_cloud_worker",
-    ])
+    exit_code = validate_prometheus_rules.main(
+        [
+            "--rules",
+            str(path),
+            "--metric-prefix",
+            "bot_cloud_worker",
+        ]
+    )
 
     assert exit_code == 1
 

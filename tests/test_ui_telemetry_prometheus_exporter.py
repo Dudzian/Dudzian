@@ -81,8 +81,7 @@ def _make_exporter(
         alert_sink=sink,
         tag_activity_ttl_seconds=tag_activity_ttl_seconds,
         overlay_critical_difference_threshold=overlay_critical_difference_threshold,
-        overlay_critical_duration_threshold_seconds=
-        overlay_critical_duration_threshold_seconds,
+        overlay_critical_duration_threshold_seconds=overlay_critical_duration_threshold_seconds,
         jank_incident_quiet_seconds=jank_incident_quiet_seconds,
         jank_critical_over_ms=jank_critical_over_ms,
     )
@@ -107,7 +106,9 @@ def test_updates_fps_and_window_count_gauges() -> None:
     fps_value = registry.gauge("bot_ui_fps", "").value()
     window_count = registry.gauge("bot_ui_window_count", "").value()
     reduce_motion_state = registry.gauge("bot_ui_reduce_motion_state", "").value()
-    reduce_motion_events = registry.counter("bot_ui_reduce_motion_events_total", "").value(labels={"state": "active"})
+    reduce_motion_events = registry.counter("bot_ui_reduce_motion_events_total", "").value(
+        labels={"state": "active"}
+    )
 
     assert fps_value == 55.5
     assert window_count == 2
@@ -116,7 +117,9 @@ def test_updates_fps_and_window_count_gauges() -> None:
 
     # Drugi snapshot z tą samą flagą nie powinien zwiększyć licznika
     exporter.handle_snapshot(snapshot)
-    reduce_motion_events_after = registry.counter("bot_ui_reduce_motion_events_total", "").value(labels={"state": "active"})
+    reduce_motion_events_after = registry.counter("bot_ui_reduce_motion_events_total", "").value(
+        labels={"state": "active"}
+    )
     assert reduce_motion_events_after == 1
 
     assert alert_sink.received, "Eksporter powinien przekazać snapshot do sinka alertów"
@@ -175,18 +178,14 @@ def test_updates_resource_utilization_metrics_with_clamping() -> None:
     cpu_tag_value = registry.gauge("bot_ui_cpu_utilization_percent", "").value(
         labels={"tag": "desk-b"}
     )
-    gpu_value = registry.gauge("bot_ui_gpu_utilization_percent", "").value(
-        labels={"tag": "desk-b"}
-    )
-    ram_value = registry.gauge("bot_ui_ram_usage_megabytes", "").value(
-        labels={"tag": "desk-b"}
-    )
+    gpu_value = registry.gauge("bot_ui_gpu_utilization_percent", "").value(labels={"tag": "desk-b"})
+    ram_value = registry.gauge("bot_ui_ram_usage_megabytes", "").value(labels={"tag": "desk-b"})
     dropped_value = registry.gauge("bot_ui_dropped_frames_total", "").value(
         labels={"tag": "desk-b"}
     )
-    processed_value = registry.gauge(
-        "bot_ui_processed_messages_per_second", ""
-    ).value(labels={"tag": "desk-b"})
+    processed_value = registry.gauge("bot_ui_processed_messages_per_second", "").value(
+        labels={"tag": "desk-b"}
+    )
 
     assert cpu_value == 0.0
     assert cpu_tag_value == 0.0
@@ -220,9 +219,9 @@ def test_performance_severity_metrics_and_recovery(
     state_value = registry.gauge("bot_ui_performance_metric_state", "").value(
         labels={"metric": "event_to_frame_p95_ms"}
     )
-    incidents_total = registry.counter(
-        "bot_ui_performance_incidents_total", ""
-    ).value(labels={"metric": "event_to_frame_p95_ms", "severity": "critical"})
+    incidents_total = registry.counter("bot_ui_performance_incidents_total", "").value(
+        labels={"metric": "event_to_frame_p95_ms", "severity": "critical"}
+    )
     active_value = registry.gauge("bot_ui_performance_incident_active", "").value(
         labels={"metric": "event_to_frame_p95_ms"}
     )
@@ -248,9 +247,7 @@ def test_performance_severity_metrics_and_recovery(
     )
     duration_metric = registry.get("bot_ui_performance_incident_duration_seconds")
     assert isinstance(duration_metric, HistogramMetric)
-    duration_histogram = duration_metric.snapshot(
-        labels={"metric": "event_to_frame_p95_ms"}
-    )
+    duration_histogram = duration_metric.snapshot(labels={"metric": "event_to_frame_p95_ms"})
     critical_transitions = registry.counter(
         "bot_ui_performance_severity_transitions_total", ""
     ).value(
@@ -302,9 +299,7 @@ def test_performance_severity_transitions_with_tag(
     warning_state = registry.gauge("bot_ui_performance_metric_state", "").value(
         labels={"metric": "cpu_utilization", "tag": "desk-7"}
     )
-    warning_incidents = registry.counter(
-        "bot_ui_performance_incidents_total", ""
-    ).value(
+    warning_incidents = registry.counter("bot_ui_performance_incidents_total", "").value(
         labels={
             "metric": "cpu_utilization",
             "severity": "warning",
@@ -391,12 +386,8 @@ def test_performance_severity_transitions_with_tag(
     )
     duration_metric = registry.get("bot_ui_performance_incident_duration_seconds")
     assert isinstance(duration_metric, HistogramMetric)
-    tag_histogram = duration_metric.snapshot(
-        labels={"metric": "cpu_utilization", "tag": "desk-7"}
-    )
-    critical_incidents = registry.counter(
-        "bot_ui_performance_incidents_total", ""
-    ).value(
+    tag_histogram = duration_metric.snapshot(labels={"metric": "cpu_utilization", "tag": "desk-7"})
+    critical_incidents = registry.counter("bot_ui_performance_incidents_total", "").value(
         labels={
             "metric": "cpu_utilization",
             "severity": "critical",
@@ -409,6 +400,7 @@ def test_performance_severity_transitions_with_tag(
     assert tag_histogram.count == 1
     assert tag_histogram.sum == pytest.approx(20.0)
     assert critical_incidents == 0.0
+
 
 def test_records_screen_metrics_with_labels() -> None:
     exporter, registry = _make_exporter()
@@ -484,9 +476,7 @@ def test_overlay_incident_metrics_track_duration_and_histogram() -> None:
 
     active_value = registry.gauge("bot_ui_overlay_incident_active", "").value()
     age_value = registry.gauge("bot_ui_overlay_incident_age_seconds", "").value()
-    started_value = registry.gauge(
-        "bot_ui_overlay_incident_started_at_seconds", ""
-    ).value()
+    started_value = registry.gauge("bot_ui_overlay_incident_started_at_seconds", "").value()
 
     assert active_value == 1
     assert age_value == 0
@@ -521,9 +511,7 @@ def test_overlay_incident_metrics_track_duration_and_histogram() -> None:
 
     final_active = registry.gauge("bot_ui_overlay_incident_active", "").value()
     final_age = registry.gauge("bot_ui_overlay_incident_age_seconds", "").value()
-    final_started = registry.gauge(
-        "bot_ui_overlay_incident_started_at_seconds", ""
-    ).value()
+    final_started = registry.gauge("bot_ui_overlay_incident_started_at_seconds", "").value()
 
     assert final_active == 0
     assert final_age == 0
@@ -569,9 +557,7 @@ def test_overlay_violation_metrics_increment_counter_and_histogram() -> None:
     assert histogram.counts[0.5] == 1
 
     exporter.handle_snapshot(first_violation)
-    incident_total_after = registry.counter(
-        "bot_ui_overlay_incidents_total", ""
-    ).value()
+    incident_total_after = registry.counter("bot_ui_overlay_incidents_total", "").value()
     histogram_after = registry.histogram(
         "bot_ui_overlay_capacity_ratio_overrun",
         "",
@@ -589,17 +575,13 @@ def test_overlay_violation_metrics_increment_counter_and_histogram() -> None:
     )
     exporter.handle_snapshot(recovery)
 
-    violation_state_after = registry.gauge(
-        "bot_ui_overlay_violation_state", ""
-    ).value()
+    violation_state_after = registry.gauge("bot_ui_overlay_violation_state", "").value()
     excess_after = registry.gauge("bot_ui_overlay_excess", "").value()
     assert violation_state_after == 0.0
     assert excess_after == 0.0
 
     exporter.handle_snapshot(first_violation)
-    incident_total_final = registry.counter(
-        "bot_ui_overlay_incidents_total", ""
-    ).value()
+    incident_total_final = registry.counter("bot_ui_overlay_incidents_total", "").value()
     assert incident_total_final == 2
 
 
@@ -617,15 +599,9 @@ def test_overlay_violation_metrics_with_tags() -> None:
     exporter.handle_snapshot(violation)
 
     tag_labels = {"tag": "desk-a"}
-    violation_state = registry.gauge(
-        "bot_ui_overlay_violation_state", ""
-    ).value(labels=tag_labels)
-    excess_value = registry.gauge("bot_ui_overlay_excess", "").value(
-        labels=tag_labels
-    )
-    incident_total = registry.counter(
-        "bot_ui_overlay_incidents_total", ""
-    ).value(labels=tag_labels)
+    violation_state = registry.gauge("bot_ui_overlay_violation_state", "").value(labels=tag_labels)
+    excess_value = registry.gauge("bot_ui_overlay_excess", "").value(labels=tag_labels)
+    incident_total = registry.counter("bot_ui_overlay_incidents_total", "").value(labels=tag_labels)
     histogram = registry.histogram(
         "bot_ui_overlay_capacity_ratio_overrun",
         "",
@@ -649,12 +625,10 @@ def test_overlay_violation_metrics_with_tags() -> None:
         )
     )
 
-    violation_state_after = registry.gauge(
-        "bot_ui_overlay_violation_state", ""
-    ).value(labels=tag_labels)
-    excess_after = registry.gauge("bot_ui_overlay_excess", "").value(
+    violation_state_after = registry.gauge("bot_ui_overlay_violation_state", "").value(
         labels=tag_labels
     )
+    excess_after = registry.gauge("bot_ui_overlay_excess", "").value(labels=tag_labels)
     assert violation_state_after == 0.0
     assert excess_after == 0.0
 
@@ -671,27 +645,27 @@ def test_overlay_severity_metrics_track_transitions() -> None:
     )
     exporter.handle_snapshot(warning_snapshot)
 
-    warning_gauge = registry.gauge(
-        "bot_ui_overlay_violation_severity_state", ""
-    ).value(labels={"severity": "warning"})
-    critical_gauge = registry.gauge(
-        "bot_ui_overlay_violation_severity_state", ""
-    ).value(labels={"severity": "critical"})
-    warning_events = registry.counter(
-        "bot_ui_overlay_incident_events_total", ""
-    ).value(labels={"severity": "warning"})
-    critical_events = registry.counter(
-        "bot_ui_overlay_incident_events_total", ""
-    ).value(labels={"severity": "critical"})
+    warning_gauge = registry.gauge("bot_ui_overlay_violation_severity_state", "").value(
+        labels={"severity": "warning"}
+    )
+    critical_gauge = registry.gauge("bot_ui_overlay_violation_severity_state", "").value(
+        labels={"severity": "critical"}
+    )
+    warning_events = registry.counter("bot_ui_overlay_incident_events_total", "").value(
+        labels={"severity": "warning"}
+    )
+    critical_events = registry.counter("bot_ui_overlay_incident_events_total", "").value(
+        labels={"severity": "critical"}
+    )
 
     assert warning_gauge == 1.0
     assert critical_gauge == 0.0
     assert warning_events == 1
     assert critical_events == 0
 
-    warning_transition = registry.counter(
-        "bot_ui_overlay_severity_transitions_total", ""
-    ).value(labels={"state": "warning", "reason": "violation"})
+    warning_transition = registry.counter("bot_ui_overlay_severity_transitions_total", "").value(
+        labels={"state": "warning", "reason": "violation"}
+    )
     assert warning_transition == 1
 
     critical_snapshot = FakeSnapshot(
@@ -703,29 +677,29 @@ def test_overlay_severity_metrics_track_transitions() -> None:
     )
     exporter.handle_snapshot(critical_snapshot)
 
-    warning_gauge_after = registry.gauge(
-        "bot_ui_overlay_violation_severity_state", ""
-    ).value(labels={"severity": "warning"})
-    critical_gauge_after = registry.gauge(
-        "bot_ui_overlay_violation_severity_state", ""
-    ).value(labels={"severity": "critical"})
-    critical_events_after = registry.counter(
-        "bot_ui_overlay_incident_events_total", ""
-    ).value(labels={"severity": "critical"})
+    warning_gauge_after = registry.gauge("bot_ui_overlay_violation_severity_state", "").value(
+        labels={"severity": "warning"}
+    )
+    critical_gauge_after = registry.gauge("bot_ui_overlay_violation_severity_state", "").value(
+        labels={"severity": "critical"}
+    )
+    critical_events_after = registry.counter("bot_ui_overlay_incident_events_total", "").value(
+        labels={"severity": "critical"}
+    )
 
     assert warning_gauge_after == 0.0
     assert critical_gauge_after == 1.0
     assert critical_events_after == 1
 
-    critical_transition = registry.counter(
-        "bot_ui_overlay_severity_transitions_total", ""
-    ).value(labels={"state": "critical", "reason": "difference_threshold"})
+    critical_transition = registry.counter("bot_ui_overlay_severity_transitions_total", "").value(
+        labels={"state": "critical", "reason": "difference_threshold"}
+    )
     assert critical_transition == 1
 
     exporter.handle_snapshot(critical_snapshot)
-    critical_events_again = registry.counter(
-        "bot_ui_overlay_incident_events_total", ""
-    ).value(labels={"severity": "critical"})
+    critical_events_again = registry.counter("bot_ui_overlay_incident_events_total", "").value(
+        labels={"severity": "critical"}
+    )
     assert critical_events_again == 1
 
     critical_transition_again = registry.counter(
@@ -742,18 +716,18 @@ def test_overlay_severity_metrics_track_transitions() -> None:
     )
     exporter.handle_snapshot(recovery_snapshot)
 
-    warning_recovered = registry.gauge(
-        "bot_ui_overlay_violation_severity_state", ""
-    ).value(labels={"severity": "warning"})
-    critical_recovered = registry.gauge(
-        "bot_ui_overlay_violation_severity_state", ""
-    ).value(labels={"severity": "critical"})
+    warning_recovered = registry.gauge("bot_ui_overlay_violation_severity_state", "").value(
+        labels={"severity": "warning"}
+    )
+    critical_recovered = registry.gauge("bot_ui_overlay_violation_severity_state", "").value(
+        labels={"severity": "critical"}
+    )
     assert warning_recovered == 0.0
     assert critical_recovered == 0.0
 
-    recovery_transition = registry.counter(
-        "bot_ui_overlay_severity_transitions_total", ""
-    ).value(labels={"state": "recovered", "reason": "recovered"})
+    recovery_transition = registry.counter("bot_ui_overlay_severity_transitions_total", "").value(
+        labels={"state": "recovered", "reason": "recovered"}
+    )
     assert recovery_transition == 1
 
 
@@ -773,19 +747,19 @@ def test_overlay_severity_metrics_with_tags() -> None:
     warning_labels = {"severity": "warning", "tag": "desk-a"}
     critical_labels = {"severity": "critical", "tag": "desk-a"}
 
-    warning_gauge = registry.gauge(
-        "bot_ui_overlay_violation_severity_state", ""
-    ).value(labels=warning_labels)
-    warning_events = registry.counter(
-        "bot_ui_overlay_incident_events_total", ""
-    ).value(labels=warning_labels)
+    warning_gauge = registry.gauge("bot_ui_overlay_violation_severity_state", "").value(
+        labels=warning_labels
+    )
+    warning_events = registry.counter("bot_ui_overlay_incident_events_total", "").value(
+        labels=warning_labels
+    )
 
     assert warning_gauge == 1.0
     assert warning_events == 1
 
-    warning_transition = registry.counter(
-        "bot_ui_overlay_severity_transitions_total", ""
-    ).value(labels={"state": "warning", "reason": "violation", "tag": "desk-a"})
+    warning_transition = registry.counter("bot_ui_overlay_severity_transitions_total", "").value(
+        labels={"state": "warning", "reason": "violation", "tag": "desk-a"}
+    )
     assert warning_transition == 1
 
     critical = FakeSnapshot(
@@ -798,23 +772,21 @@ def test_overlay_severity_metrics_with_tags() -> None:
     )
     exporter.handle_snapshot(critical)
 
-    critical_gauge = registry.gauge(
-        "bot_ui_overlay_violation_severity_state", ""
-    ).value(labels=critical_labels)
-    critical_events = registry.counter(
-        "bot_ui_overlay_incident_events_total", ""
-    ).value(labels=critical_labels)
-    warning_gauge_after = registry.gauge(
-        "bot_ui_overlay_violation_severity_state", ""
-    ).value(labels=warning_labels)
+    critical_gauge = registry.gauge("bot_ui_overlay_violation_severity_state", "").value(
+        labels=critical_labels
+    )
+    critical_events = registry.counter("bot_ui_overlay_incident_events_total", "").value(
+        labels=critical_labels
+    )
+    warning_gauge_after = registry.gauge("bot_ui_overlay_violation_severity_state", "").value(
+        labels=warning_labels
+    )
 
     assert critical_gauge == 1.0
     assert critical_events == 1
     assert warning_gauge_after == 0.0
 
-    critical_transition = registry.counter(
-        "bot_ui_overlay_severity_transitions_total", ""
-    ).value(
+    critical_transition = registry.counter("bot_ui_overlay_severity_transitions_total", "").value(
         labels={
             "state": "critical",
             "reason": "difference_threshold",
@@ -833,18 +805,16 @@ def test_overlay_severity_metrics_with_tags() -> None:
     )
     exporter.handle_snapshot(recovery)
 
-    warning_final = registry.gauge(
-        "bot_ui_overlay_violation_severity_state", ""
-    ).value(labels=warning_labels)
-    critical_final = registry.gauge(
-        "bot_ui_overlay_violation_severity_state", ""
-    ).value(labels=critical_labels)
+    warning_final = registry.gauge("bot_ui_overlay_violation_severity_state", "").value(
+        labels=warning_labels
+    )
+    critical_final = registry.gauge("bot_ui_overlay_violation_severity_state", "").value(
+        labels=critical_labels
+    )
     assert warning_final == 0.0
     assert critical_final == 0.0
 
-    recovery_transition = registry.counter(
-        "bot_ui_overlay_severity_transitions_total", ""
-    ).value(
+    recovery_transition = registry.counter("bot_ui_overlay_severity_transitions_total", "").value(
         labels={"state": "recovered", "reason": "recovered", "tag": "desk-a"}
     )
     assert recovery_transition == 1
@@ -878,43 +848,43 @@ def test_overlay_severity_escalates_after_duration(
 
     exporter.handle_snapshot(make_snapshot())
 
-    warning_gauge = registry.gauge(
-        "bot_ui_overlay_violation_severity_state", ""
-    ).value(labels={"severity": "warning"})
+    warning_gauge = registry.gauge("bot_ui_overlay_violation_severity_state", "").value(
+        labels={"severity": "warning"}
+    )
     assert warning_gauge == 1.0
 
     clock["value"] += 8.0
     exporter.handle_snapshot(make_snapshot())
 
-    warning_after = registry.gauge(
-        "bot_ui_overlay_violation_severity_state", ""
-    ).value(labels={"severity": "warning"})
-    critical_after = registry.gauge(
-        "bot_ui_overlay_violation_severity_state", ""
-    ).value(labels={"severity": "critical"})
+    warning_after = registry.gauge("bot_ui_overlay_violation_severity_state", "").value(
+        labels={"severity": "warning"}
+    )
+    critical_after = registry.gauge("bot_ui_overlay_violation_severity_state", "").value(
+        labels={"severity": "critical"}
+    )
     assert warning_after == 1.0
     assert critical_after == 0.0
 
     clock["value"] += 5.0
     exporter.handle_snapshot(make_snapshot())
 
-    warning_final = registry.gauge(
-        "bot_ui_overlay_violation_severity_state", ""
-    ).value(labels={"severity": "warning"})
-    critical_final = registry.gauge(
-        "bot_ui_overlay_violation_severity_state", ""
-    ).value(labels={"severity": "critical"})
-    critical_events = registry.counter(
-        "bot_ui_overlay_incident_events_total", ""
-    ).value(labels={"severity": "critical"})
+    warning_final = registry.gauge("bot_ui_overlay_violation_severity_state", "").value(
+        labels={"severity": "warning"}
+    )
+    critical_final = registry.gauge("bot_ui_overlay_violation_severity_state", "").value(
+        labels={"severity": "critical"}
+    )
+    critical_events = registry.counter("bot_ui_overlay_incident_events_total", "").value(
+        labels={"severity": "critical"}
+    )
 
     assert warning_final == 0.0
     assert critical_final == 1.0
     assert critical_events == 1
 
-    duration_transition = registry.counter(
-        "bot_ui_overlay_severity_transitions_total", ""
-    ).value(labels={"state": "critical", "reason": "duration_threshold"})
+    duration_transition = registry.counter("bot_ui_overlay_severity_transitions_total", "").value(
+        labels={"state": "critical", "reason": "duration_threshold"}
+    )
     assert duration_transition == 1
 
 
@@ -946,10 +916,7 @@ def test_overlay_incident_metrics_finalized_on_tag_ttl(monkeypatch) -> None:
     exporter.handle_snapshot(first_snapshot)
 
     tag_labels = {"tag": "desk-a"}
-    assert (
-        registry.gauge("bot_ui_overlay_incident_active", "").value(labels=tag_labels)
-        == 1
-    )
+    assert registry.gauge("bot_ui_overlay_incident_active", "").value(labels=tag_labels) == 1
 
     monotonic_time += 10.0
     wall_time += 10.0
@@ -966,9 +933,7 @@ def test_overlay_incident_metrics_finalized_on_tag_ttl(monkeypatch) -> None:
         )
     )
 
-    age_value = registry.gauge("bot_ui_overlay_incident_age_seconds", "").value(
-        labels=tag_labels
-    )
+    age_value = registry.gauge("bot_ui_overlay_incident_age_seconds", "").value(labels=tag_labels)
     assert age_value == pytest.approx(10.0, rel=1e-6)
 
     monotonic_time += 120.0
@@ -983,15 +948,11 @@ def test_overlay_incident_metrics_finalized_on_tag_ttl(monkeypatch) -> None:
         )
     )
 
-    final_active = registry.gauge("bot_ui_overlay_incident_active", "").value(
+    final_active = registry.gauge("bot_ui_overlay_incident_active", "").value(labels=tag_labels)
+    final_age = registry.gauge("bot_ui_overlay_incident_age_seconds", "").value(labels=tag_labels)
+    final_started = registry.gauge("bot_ui_overlay_incident_started_at_seconds", "").value(
         labels=tag_labels
     )
-    final_age = registry.gauge("bot_ui_overlay_incident_age_seconds", "").value(
-        labels=tag_labels
-    )
-    final_started = registry.gauge(
-        "bot_ui_overlay_incident_started_at_seconds", ""
-    ).value(labels=tag_labels)
 
     assert final_active == 0
     assert final_age == 0
@@ -1007,18 +968,14 @@ def test_overlay_incident_metrics_finalized_on_tag_ttl(monkeypatch) -> None:
     assert histogram_state.sum == pytest.approx(10.0, rel=1e-6)
     assert histogram_state.counts[10.0] == 1
 
-    critical_transition = registry.counter(
-        "bot_ui_overlay_severity_transitions_total", ""
-    ).value(
+    critical_transition = registry.counter("bot_ui_overlay_severity_transitions_total", "").value(
         labels={
             "state": "critical",
             "reason": "difference_threshold",
             "tag": "desk-a",
         }
     )
-    inactive_transition = registry.counter(
-        "bot_ui_overlay_severity_transitions_total", ""
-    ).value(
+    inactive_transition = registry.counter("bot_ui_overlay_severity_transitions_total", "").value(
         labels={
             "state": "recovered",
             "reason": "inactive",
@@ -1043,7 +1000,9 @@ def test_retry_backlog_gauge_updates_from_payload() -> None:
 
     exporter.handle_snapshot(snapshot)
 
-    before_value = registry.gauge("bot_ui_retry_backlog", "").value(labels={"phase": "before_flush"})
+    before_value = registry.gauge("bot_ui_retry_backlog", "").value(
+        labels={"phase": "before_flush"}
+    )
     after_value = registry.gauge("bot_ui_retry_backlog", "").value(labels={"phase": "after_flush"})
 
     assert before_value == 4
@@ -1120,9 +1079,7 @@ def test_tag_activity_metrics_follow_ttl(monkeypatch: pytest.MonkeyPatch) -> Non
     tag_labels = {"tag": "desk-a"}
     assert registry.gauge("bot_ui_tag_active", "").value(labels=tag_labels) == 1
     assert registry.gauge("bot_ui_tag_inactive", "").value(labels=tag_labels) == 0
-    assert (
-        registry.gauge("bot_ui_tag_last_seen_seconds", "").value(labels=tag_labels) == wall_time
-    )
+    assert registry.gauge("bot_ui_tag_last_seen_seconds", "").value(labels=tag_labels) == wall_time
     assert registry.gauge("bot_ui_tag_active_count", "").value() == 1
     assert registry.gauge("bot_ui_tag_inactive_count", "").value() == 0
 
@@ -1259,8 +1216,7 @@ def test_reduce_motion_incident_metrics_track_duration() -> None:
 
     assert registry.gauge("bot_ui_reduce_motion_incident_active", "").value() == 1
     assert (
-        registry.gauge("bot_ui_reduce_motion_incident_started_at_seconds", "").value()
-        == start_ts
+        registry.gauge("bot_ui_reduce_motion_incident_started_at_seconds", "").value() == start_ts
     )
 
     later_ts = start_ts + 12.5
@@ -1283,13 +1239,8 @@ def test_reduce_motion_incident_metrics_track_duration() -> None:
     )
 
     assert registry.gauge("bot_ui_reduce_motion_incident_active", "").value() == 0
-    assert (
-        registry.gauge("bot_ui_reduce_motion_incident_age_seconds", "").value() == 0
-    )
-    assert (
-        registry.gauge("bot_ui_reduce_motion_incident_started_at_seconds", "").value()
-        == 0
-    )
+    assert registry.gauge("bot_ui_reduce_motion_incident_age_seconds", "").value() == 0
+    assert registry.gauge("bot_ui_reduce_motion_incident_started_at_seconds", "").value() == 0
 
     histogram = registry.histogram(
         "bot_ui_reduce_motion_incident_duration_seconds",
@@ -1331,10 +1282,7 @@ def test_reduce_motion_incident_metrics_per_tag_follow_ttl(
     )
 
     tag_labels = {"tag": "desk-a"}
-    assert (
-        registry.gauge("bot_ui_reduce_motion_incident_active", "").value(labels=tag_labels)
-        == 1
-    )
+    assert registry.gauge("bot_ui_reduce_motion_incident_active", "").value(labels=tag_labels) == 1
 
     wall_time["value"] += 30.0
     monotonic_time["value"] += 30.0
@@ -1346,23 +1294,20 @@ def test_reduce_motion_incident_metrics_per_tag_follow_ttl(
         )
     )
 
-    age_value = registry.gauge(
-        "bot_ui_reduce_motion_incident_age_seconds", ""
-    ).value(labels=tag_labels)
+    age_value = registry.gauge("bot_ui_reduce_motion_incident_age_seconds", "").value(
+        labels=tag_labels
+    )
     assert age_value == pytest.approx(30.0, rel=1e-6)
 
     wall_time["value"] += 70.0
     monotonic_time["value"] += 70.0
     exporter.handle_snapshot(FakeSnapshot({"event": "overlay_budget"}))
 
+    assert registry.gauge("bot_ui_reduce_motion_incident_active", "").value(labels=tag_labels) == 0
     assert (
-        registry.gauge("bot_ui_reduce_motion_incident_active", "").value(labels=tag_labels)
-        == 0
-    )
-    assert (
-        registry.gauge(
-            "bot_ui_reduce_motion_incident_started_at_seconds", ""
-        ).value(labels=tag_labels)
+        registry.gauge("bot_ui_reduce_motion_incident_started_at_seconds", "").value(
+            labels=tag_labels
+        )
         == 0
     )
 
@@ -1429,9 +1374,7 @@ def test_jank_incident_metrics_finalize_after_quiet_period(
     )
 
     active_value = registry.gauge("bot_ui_jank_incident_active", "").value()
-    started_value = registry.gauge(
-        "bot_ui_jank_incident_started_at_seconds", ""
-    ).value()
+    started_value = registry.gauge("bot_ui_jank_incident_started_at_seconds", "").value()
     assert active_value == 1.0
     assert started_value == start_ts
 
@@ -1451,15 +1394,11 @@ def test_jank_incident_metrics_finalize_after_quiet_period(
     assert age_value == pytest.approx(2.0, rel=1e-6)
 
     clock["value"] += 6.0
-    exporter.handle_snapshot(
-        FakeSnapshot({}, generated_at=clock["value"])
-    )
+    exporter.handle_snapshot(FakeSnapshot({}, generated_at=clock["value"]))
 
     final_active = registry.gauge("bot_ui_jank_incident_active", "").value()
     final_age = registry.gauge("bot_ui_jank_incident_age_seconds", "").value()
-    final_started = registry.gauge(
-        "bot_ui_jank_incident_started_at_seconds", ""
-    ).value()
+    final_started = registry.gauge("bot_ui_jank_incident_started_at_seconds", "").value()
     assert final_active == 0.0
     assert final_age == 0.0
     assert final_started == 0.0
@@ -1473,9 +1412,7 @@ def test_jank_incident_metrics_finalize_after_quiet_period(
     assert hist_state.count == 1
     assert hist_state.sum == pytest.approx(2.0, rel=1e-6)
 
-    incidents_total = registry.counter(
-        "bot_ui_jank_incidents_total", ""
-    ).value()
+    incidents_total = registry.counter("bot_ui_jank_incidents_total", "").value()
     assert incidents_total == 1
 
 
@@ -1506,14 +1443,8 @@ def test_jank_incident_metrics_per_tag_follow_quiet_timeout(
     )
 
     labels = {"tag": "desk-a"}
-    assert (
-        registry.gauge("bot_ui_jank_incident_active", "").value(labels=labels)
-        == 1.0
-    )
-    assert (
-        registry.counter("bot_ui_jank_incidents_total", "").value(labels=labels)
-        == 1
-    )
+    assert registry.gauge("bot_ui_jank_incident_active", "").value(labels=labels) == 1.0
+    assert registry.counter("bot_ui_jank_incidents_total", "").value(labels=labels) == 1
 
     clock["value"] += 1.0
     exporter.handle_snapshot(
@@ -1528,9 +1459,7 @@ def test_jank_incident_metrics_per_tag_follow_quiet_timeout(
         )
     )
 
-    age_value = registry.gauge(
-        "bot_ui_jank_incident_age_seconds", ""
-    ).value(labels=labels)
+    age_value = registry.gauge("bot_ui_jank_incident_age_seconds", "").value(labels=labels)
     assert age_value == pytest.approx(1.0, rel=1e-6)
 
     clock["value"] += 6.0
@@ -1541,15 +1470,11 @@ def test_jank_incident_metrics_per_tag_follow_quiet_timeout(
         )
     )
 
-    final_active = registry.gauge(
-        "bot_ui_jank_incident_active", ""
-    ).value(labels=labels)
-    final_age = registry.gauge(
-        "bot_ui_jank_incident_age_seconds", ""
-    ).value(labels=labels)
-    final_started = registry.gauge(
-        "bot_ui_jank_incident_started_at_seconds", ""
-    ).value(labels=labels)
+    final_active = registry.gauge("bot_ui_jank_incident_active", "").value(labels=labels)
+    final_age = registry.gauge("bot_ui_jank_incident_age_seconds", "").value(labels=labels)
+    final_started = registry.gauge("bot_ui_jank_incident_started_at_seconds", "").value(
+        labels=labels
+    )
 
     assert final_active == 0.0
     assert final_age == 0.0
@@ -1563,8 +1488,6 @@ def test_jank_incident_metrics_per_tag_follow_quiet_timeout(
     hist_state = histogram.snapshot(labels=labels)
     assert hist_state.count == 1
     assert hist_state.sum == pytest.approx(1.0, rel=1e-6)
-
-
 
 
 def test_jank_severity_metrics_track_transitions(
@@ -1597,18 +1520,14 @@ def test_jank_severity_metrics_track_transitions(
 
     critical_labels = {"severity": "critical"}
     warning_labels = {"severity": "warning"}
-    critical_state = registry.gauge(
-        "bot_ui_jank_severity_state", ""
-    ).value(labels=critical_labels)
-    warning_state = registry.gauge(
-        "bot_ui_jank_severity_state", ""
-    ).value(labels=warning_labels)
+    critical_state = registry.gauge("bot_ui_jank_severity_state", "").value(labels=critical_labels)
+    warning_state = registry.gauge("bot_ui_jank_severity_state", "").value(labels=warning_labels)
     assert critical_state == 1.0
     assert warning_state == 0.0
 
-    critical_transition = registry.counter(
-        "bot_ui_jank_severity_transitions_total", ""
-    ).value(labels={"state": "critical", "reason": "spike"})
+    critical_transition = registry.counter("bot_ui_jank_severity_transitions_total", "").value(
+        labels={"state": "critical", "reason": "spike"}
+    )
     assert critical_transition == 1
 
     clock["value"] += 1.0
@@ -1623,18 +1542,18 @@ def test_jank_severity_metrics_track_transitions(
         )
     )
 
-    warning_state_after = registry.gauge(
-        "bot_ui_jank_severity_state", ""
-    ).value(labels=warning_labels)
-    critical_state_after = registry.gauge(
-        "bot_ui_jank_severity_state", ""
-    ).value(labels=critical_labels)
+    warning_state_after = registry.gauge("bot_ui_jank_severity_state", "").value(
+        labels=warning_labels
+    )
+    critical_state_after = registry.gauge("bot_ui_jank_severity_state", "").value(
+        labels=critical_labels
+    )
     assert warning_state_after == 1.0
     assert critical_state_after == 0.0
 
-    warning_transition = registry.counter(
-        "bot_ui_jank_severity_transitions_total", ""
-    ).value(labels={"state": "warning", "reason": "spike"})
+    warning_transition = registry.counter("bot_ui_jank_severity_transitions_total", "").value(
+        labels={"state": "warning", "reason": "spike"}
+    )
     assert warning_transition == 1
 
     clock["value"] += 5.0
@@ -1645,18 +1564,16 @@ def test_jank_severity_metrics_track_transitions(
         )
     )
 
-    critical_recovery = registry.gauge(
-        "bot_ui_jank_severity_state", ""
-    ).value(labels=critical_labels)
-    warning_recovery = registry.gauge(
-        "bot_ui_jank_severity_state", ""
-    ).value(labels=warning_labels)
+    critical_recovery = registry.gauge("bot_ui_jank_severity_state", "").value(
+        labels=critical_labels
+    )
+    warning_recovery = registry.gauge("bot_ui_jank_severity_state", "").value(labels=warning_labels)
     assert critical_recovery == 0.0
     assert warning_recovery == 0.0
 
-    recovery_transition = registry.counter(
-        "bot_ui_jank_severity_transitions_total", ""
-    ).value(labels={"state": "recovered", "reason": "quiet"})
+    recovery_transition = registry.counter("bot_ui_jank_severity_transitions_total", "").value(
+        labels={"state": "recovered", "reason": "quiet"}
+    )
     assert recovery_transition == 1
 
 
@@ -1691,14 +1608,11 @@ def test_jank_severity_metrics_with_tags(
     )
 
     critical_labels = {"severity": "critical", "tag": tag}
+    assert registry.gauge("bot_ui_jank_severity_state", "").value(labels=critical_labels) == 1.0
     assert (
-        registry.gauge("bot_ui_jank_severity_state", "").value(labels=critical_labels)
-        == 1.0
-    )
-    assert (
-        registry.counter(
-            "bot_ui_jank_severity_transitions_total", ""
-        ).value(labels={"state": "critical", "reason": "spike", "tag": tag})
+        registry.counter("bot_ui_jank_severity_transitions_total", "").value(
+            labels={"state": "critical", "reason": "spike", "tag": tag}
+        )
         == 1
     )
 
@@ -1710,16 +1624,14 @@ def test_jank_severity_metrics_with_tags(
         )
     )
 
+    assert registry.gauge("bot_ui_jank_severity_state", "").value(labels=critical_labels) == 0.0
     assert (
-        registry.gauge("bot_ui_jank_severity_state", "").value(labels=critical_labels)
-        == 0.0
-    )
-    assert (
-        registry.counter(
-            "bot_ui_jank_severity_transitions_total", ""
-        ).value(labels={"state": "recovered", "reason": "quiet", "tag": tag})
+        registry.counter("bot_ui_jank_severity_transitions_total", "").value(
+            labels={"state": "recovered", "reason": "quiet", "tag": tag}
+        )
         == 1
     )
+
 
 def test_ignores_events_without_numeric_payload() -> None:
     exporter, registry = _make_exporter()

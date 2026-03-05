@@ -82,7 +82,9 @@ def stubbed_datasets(monkeypatch: pytest.MonkeyPatch) -> None:
         )
         dataset.performance_guard.update({"fps_target": 60, "overlay_allowed": 4})
         dataset.metrics = [SimpleNamespace(notes="{}", fps=60.0, generated_at=None)]
-        dataset.health = SimpleNamespace(version="stub", git_commit="dev", started_at="2024-01-01T00:00:00Z")
+        dataset.health = SimpleNamespace(
+            version="stub", git_commit="dev", started_at="2024-01-01T00:00:00Z"
+        )
         return dataset
 
     def fake_load_dataset_from_yaml(path: str | Path):
@@ -98,8 +100,12 @@ def stubbed_datasets(monkeypatch: pytest.MonkeyPatch) -> None:
             dataset.add_history(instrument, granularity, candles)
         return dataset
 
-    monkeypatch.setattr(run_trading_stub_server, "build_default_dataset", fake_build_default_dataset)
-    monkeypatch.setattr(run_trading_stub_server, "load_dataset_from_yaml", fake_load_dataset_from_yaml)
+    monkeypatch.setattr(
+        run_trading_stub_server, "build_default_dataset", fake_build_default_dataset
+    )
+    monkeypatch.setattr(
+        run_trading_stub_server, "load_dataset_from_yaml", fake_load_dataset_from_yaml
+    )
 
 
 class _DummyServer:
@@ -154,7 +160,9 @@ class _DummyMetricsServer:
         return True
 
 
-def test_runs_with_default_dataset(monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]) -> None:
+def test_runs_with_default_dataset(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
     server = _DummyServer(None, "", 0, 0)
 
     def factory(dataset, host: str, port: int, max_workers: int, **kwargs):
@@ -244,7 +252,9 @@ def test_keyboard_interrupt_stops_server(monkeypatch: pytest.MonkeyPatch) -> Non
         raise KeyboardInterrupt
 
     server.wait_for_termination = fake_wait  # type: ignore[assignment]
-    monkeypatch.setattr(run_trading_stub_server, "TradingStubServer", lambda *args, **kwargs: server)
+    monkeypatch.setattr(
+        run_trading_stub_server, "TradingStubServer", lambda *args, **kwargs: server
+    )
 
     exit_code = run_trading_stub_server.main(["--shutdown-after", "0.5"])
 
@@ -297,7 +307,9 @@ def test_metrics_server_optional(monkeypatch: pytest.MonkeyPatch, tmp_path: Path
         created_kwargs = kwargs
         return dummy_metrics
 
-    monkeypatch.setattr(run_trading_stub_server, "create_metrics_server", fake_create_metrics_server)
+    monkeypatch.setattr(
+        run_trading_stub_server, "create_metrics_server", fake_create_metrics_server
+    )
     monkeypatch.setattr(
         run_trading_stub_server,
         "JsonlSink",
@@ -307,7 +319,9 @@ def test_metrics_server_optional(monkeypatch: pytest.MonkeyPatch, tmp_path: Path
     monkeypatch.setattr(run_trading_stub_server, "UiTelemetryAlertSink", UiSinkStub)
 
     server = _DummyServer(None, "127.0.0.1", 0, 0)
-    monkeypatch.setattr(run_trading_stub_server, "TradingStubServer", lambda *args, **kwargs: server)
+    monkeypatch.setattr(
+        run_trading_stub_server, "TradingStubServer", lambda *args, **kwargs: server
+    )
 
     metrics_jsonl = tmp_path / "metrics.jsonl"
     alerts_jsonl = tmp_path / "alerts.jsonl"
@@ -353,7 +367,9 @@ def test_metrics_ui_alert_cli_forwarding(monkeypatch: pytest.MonkeyPatch, tmp_pa
         captured_kwargs = kwargs
         return dummy_metrics
 
-    monkeypatch.setattr(run_trading_stub_server, "create_metrics_server", fake_create_metrics_server)
+    monkeypatch.setattr(
+        run_trading_stub_server, "create_metrics_server", fake_create_metrics_server
+    )
     monkeypatch.setattr(
         run_trading_stub_server,
         "JsonlSink",
@@ -361,7 +377,11 @@ def test_metrics_ui_alert_cli_forwarding(monkeypatch: pytest.MonkeyPatch, tmp_pa
     )
 
     monkeypatch.setattr(run_trading_stub_server, "UiTelemetryAlertSink", UiSinkStub)
-    monkeypatch.setattr(run_trading_stub_server, "TradingStubServer", lambda *args, **kwargs: _DummyServer(None, "127.0.0.1", 0, 0))
+    monkeypatch.setattr(
+        run_trading_stub_server,
+        "TradingStubServer",
+        lambda *args, **kwargs: _DummyServer(None, "127.0.0.1", 0, 0),
+    )
 
     alerts_jsonl = tmp_path / "alerts.jsonl"
 
@@ -503,7 +523,9 @@ def test_metrics_tls_configuration(monkeypatch: pytest.MonkeyPatch, tmp_path: Pa
         created_kwargs = kwargs
         return dummy_metrics
 
-    monkeypatch.setattr(run_trading_stub_server, "create_metrics_server", fake_create_metrics_server)
+    monkeypatch.setattr(
+        run_trading_stub_server, "create_metrics_server", fake_create_metrics_server
+    )
     monkeypatch.setattr(
         run_trading_stub_server,
         "TradingStubServer",
@@ -551,13 +573,15 @@ def test_metrics_tls_requires_key_and_cert(tmp_path: Path, monkeypatch: pytest.M
     cert.write_text("dummy", encoding="utf-8")
 
     with pytest.raises(SystemExit):
-        run_trading_stub_server.main([
-            "--enable-metrics",
-            "--metrics-tls-cert",
-            str(cert),
-            "--shutdown-after",
-            "0.01",
-        ])
+        run_trading_stub_server.main(
+            [
+                "--enable-metrics",
+                "--metrics-tls-cert",
+                str(cert),
+                "--shutdown-after",
+                "0.01",
+            ]
+        )
 
 
 def test_print_runtime_plan(monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys) -> None:
@@ -752,7 +776,9 @@ def test_runtime_plan_risk_profiles_directory(tmp_path: Path, capsys) -> None:
     assert ui_section["risk_profile_summary"]["name"] == "ops_dir"
 
 
-def test_runtime_plan_memory_backend_flag(monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys) -> None:
+def test_runtime_plan_memory_backend_flag(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys
+) -> None:
     exit_code = run_trading_stub_server.main(
         [
             "--enable-metrics",
@@ -775,7 +801,12 @@ def test_runtime_plan_memory_backend_flag(monkeypatch: pytest.MonkeyPatch, tmp_p
 def test_runtime_plan_file_backend_requires_directory(monkeypatch: pytest.MonkeyPatch) -> None:
     with pytest.raises(SystemExit):
         run_trading_stub_server.main(
-            ["--enable-metrics", "--metrics-ui-alerts-audit-backend", "file", "--print-runtime-plan"]
+            [
+                "--enable-metrics",
+                "--metrics-ui-alerts-audit-backend",
+                "file",
+                "--print-runtime-plan",
+            ]
         )
 
 
@@ -829,7 +860,9 @@ def test_runtime_plan_jsonl_written(monkeypatch: pytest.MonkeyPatch, tmp_path: P
     def fake_create_metrics_server(**kwargs):
         return dummy_metrics
 
-    monkeypatch.setattr(run_trading_stub_server, "create_metrics_server", fake_create_metrics_server)
+    monkeypatch.setattr(
+        run_trading_stub_server, "create_metrics_server", fake_create_metrics_server
+    )
     monkeypatch.setattr(
         run_trading_stub_server,
         "JsonlSink",
@@ -838,7 +871,9 @@ def test_runtime_plan_jsonl_written(monkeypatch: pytest.MonkeyPatch, tmp_path: P
 
     monkeypatch.setattr(run_trading_stub_server, "UiTelemetryAlertSink", UiSinkStub)
     server = _DummyServer(None, "127.0.0.1", 0, 0)
-    monkeypatch.setattr(run_trading_stub_server, "TradingStubServer", lambda *args, **kwargs: server)
+    monkeypatch.setattr(
+        run_trading_stub_server, "TradingStubServer", lambda *args, **kwargs: server
+    )
 
     exit_code = run_trading_stub_server.main(
         [
@@ -856,7 +891,11 @@ def test_runtime_plan_jsonl_written(monkeypatch: pytest.MonkeyPatch, tmp_path: P
 
     assert exit_code == 0
     assert plan_path.exists()
-    payloads = [json.loads(line) for line in plan_path.read_text(encoding="utf-8").splitlines() if line.strip()]
+    payloads = [
+        json.loads(line)
+        for line in plan_path.read_text(encoding="utf-8").splitlines()
+        if line.strip()
+    ]
     assert payloads, "powinien istnieć co najmniej jeden wpis planu runtime"
     payload = payloads[-1]
     assert payload["metrics"]["enabled"] is True
@@ -868,7 +907,11 @@ def test_runtime_plan_jsonl_written(monkeypatch: pytest.MonkeyPatch, tmp_path: P
     security = get_security_section(payload)
     assert security["enabled"] is False
     assert security["source"] == "default"
-def test_environment_overrides_apply(monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys) -> None:
+
+
+def test_environment_overrides_apply(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys
+) -> None:
     metrics_jsonl = tmp_path / "metrics_env.jsonl"
     dataset_a = tmp_path / "dataset_a.yaml"
     dataset_b = tmp_path / "dataset_b.yaml"
@@ -948,11 +991,13 @@ def test_environment_override_fail_on_security_warnings(
 def test_environment_override_ignored_by_cli(monkeypatch: pytest.MonkeyPatch, capsys) -> None:
     monkeypatch.setenv("RUN_TRADING_STUB_PORT", "60000")
 
-    exit_code = run_trading_stub_server.main([
-        "--port",
-        "60010",
-        "--print-runtime-plan",
-    ])
+    exit_code = run_trading_stub_server.main(
+        [
+            "--port",
+            "60010",
+            "--print-runtime-plan",
+        ]
+    )
 
     assert exit_code == 0
     captured = capsys.readouterr()
@@ -976,7 +1021,4 @@ def test_trading_stub_print_risk_profiles(capsys: pytest.CaptureFixture[str]) ->
     payload = json.loads(capsys.readouterr().out)
     assert "risk_profiles" in payload
     assert "conservative" in payload["risk_profiles"]
-    assert (
-        payload["risk_profiles"]["conservative"]["summary"]["name"]
-        == "conservative"
-    )
+    assert payload["risk_profiles"]["conservative"]["summary"]["name"] == "conservative"

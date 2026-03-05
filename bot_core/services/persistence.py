@@ -24,6 +24,7 @@ class PersistenceService:
       - WFO_STATUS      -> wfo_status
       - AUTOTRADE_STATUS-> autotrade_status
     """
+
     def __init__(self, bus: EventBus, db_path: str = "data/runtime.db") -> None:
         self.bus = bus
         self.db_path = db_path
@@ -92,15 +93,17 @@ class PersistenceService:
         rows = []
         for ev in self._iter_events(evs):
             p = ev.payload or {}
-            rows.append((
-                float(p.get("ts", time.time())),
-                str(p.get("symbol", "")),
-                str(p.get("side", "")),
-                float(p.get("qty", 0.0)),
-                float(p.get("price", 0.0)),
-                float(p.get("realized_pnl", 0.0)),
-                str(p.get("order_id", ""))
-            ))
+            rows.append(
+                (
+                    float(p.get("ts", time.time())),
+                    str(p.get("symbol", "")),
+                    str(p.get("side", "")),
+                    float(p.get("qty", 0.0)),
+                    float(p.get("price", 0.0)),
+                    float(p.get("realized_pnl", 0.0)),
+                    str(p.get("order_id", "")),
+                )
+            )
         if rows:
             cur.executemany("INSERT INTO trades VALUES (?,?,?,?,?,?,?)", rows)
             self.conn.commit()
@@ -110,15 +113,17 @@ class PersistenceService:
         rows = []
         for ev in self._iter_events(evs):
             p = ev.payload or {}
-            rows.append((
-                float(p.get("ts", time.time())),
-                str(p.get("order_id", "")),
-                str(p.get("status", "")),
-                str(p.get("symbol", "")),
-                str(p.get("side", "")),
-                float(p.get("qty", 0.0)),
-                float(p.get("price", 0.0)),
-            ))
+            rows.append(
+                (
+                    float(p.get("ts", time.time())),
+                    str(p.get("order_id", "")),
+                    str(p.get("status", "")),
+                    str(p.get("symbol", "")),
+                    str(p.get("side", "")),
+                    float(p.get("qty", 0.0)),
+                    float(p.get("price", 0.0)),
+                )
+            )
         if rows:
             cur.executemany("INSERT INTO order_status VALUES (?,?,?,?,?,?,?)", rows)
             self.conn.commit()
@@ -128,12 +133,14 @@ class PersistenceService:
         rows = []
         for ev in self._iter_events(evs):
             p = ev.payload or {}
-            rows.append((
-                float(p.get("ts", time.time())),
-                str(p.get("symbol", "")),
-                float(p.get("qty", 0.0)),
-                float(p.get("avg_price", 0.0)),
-            ))
+            rows.append(
+                (
+                    float(p.get("ts", time.time())),
+                    str(p.get("symbol", "")),
+                    float(p.get("qty", 0.0)),
+                    float(p.get("avg_price", 0.0)),
+                )
+            )
         if rows:
             cur.executemany("INSERT INTO positions VALUES (?,?,?,?)", rows)
             self.conn.commit()
@@ -143,17 +150,19 @@ class PersistenceService:
         rows = []
         for ev in self._iter_events(evs):
             p = ev.payload or {}
-            rows.append((
-                float(p.get("ts", time.time())),
-                str(p.get("symbol", "")),
-                float(p.get("cash", 0.0)),
-                float(p.get("position_qty", 0.0)),
-                float(p.get("avg_price", 0.0)),
-                float(p.get("last_price", 0.0)),
-                float(p.get("realized_pnl", 0.0)),
-                float(p.get("unrealized_pnl", 0.0)),
-                float(p.get("equity", 0.0)),
-            ))
+            rows.append(
+                (
+                    float(p.get("ts", time.time())),
+                    str(p.get("symbol", "")),
+                    float(p.get("cash", 0.0)),
+                    float(p.get("position_qty", 0.0)),
+                    float(p.get("avg_price", 0.0)),
+                    float(p.get("last_price", 0.0)),
+                    float(p.get("realized_pnl", 0.0)),
+                    float(p.get("unrealized_pnl", 0.0)),
+                    float(p.get("equity", 0.0)),
+                )
+            )
         if rows:
             cur.executemany("INSERT INTO pnl VALUES (?,?,?,?,?,?,?,?,?)", rows)
             self.conn.commit()
@@ -164,12 +173,14 @@ class PersistenceService:
         for ev in self._iter_events(evs):
             p = ev.payload or {}
             payload_json = json.dumps(p, ensure_ascii=False)
-            rows.append((
-                float(p.get("ts", time.time())),
-                str(p.get("symbol", "")),
-                str(p.get("phase", "")),
-                payload_json,
-            ))
+            rows.append(
+                (
+                    float(p.get("ts", time.time())),
+                    str(p.get("symbol", "")),
+                    str(p.get("phase", "")),
+                    payload_json,
+                )
+            )
         if rows:
             cur.executemany("INSERT INTO wfo_status VALUES (?,?,?,?)", rows)
             self.conn.commit()
@@ -180,13 +191,15 @@ class PersistenceService:
         for ev in self._iter_events(evs):
             p = ev.payload or {}
             payload_json = json.dumps(p, ensure_ascii=False)
-            rows.append((
-                float(p.get("ts", time.time())),
-                str(p.get("component", "")),
-                str(p.get("action", "")),
-                str(p.get("symbol", p.get("sym", ""))),
-                payload_json,
-            ))
+            rows.append(
+                (
+                    float(p.get("ts", time.time())),
+                    str(p.get("component", "")),
+                    str(p.get("action", "")),
+                    str(p.get("symbol", p.get("sym", ""))),
+                    payload_json,
+                )
+            )
         if rows:
             cur.executemany("INSERT INTO autotrade_status VALUES (?,?,?,?,?)", rows)
             self.conn.commit()

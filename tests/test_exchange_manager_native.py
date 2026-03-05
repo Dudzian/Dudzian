@@ -100,7 +100,9 @@ class _DummyExchange:
 class _StubMarginAdapter:
     instances: List["_StubMarginAdapter"] = []
 
-    def __init__(self, credentials, *, environment, settings=None, network_guard=None, **kwargs) -> None:
+    def __init__(
+        self, credentials, *, environment, settings=None, network_guard=None, **kwargs
+    ) -> None:
         self.credentials = credentials
         self.environment = environment
         self.settings = settings or {}
@@ -163,6 +165,7 @@ class _StubFuturesAdapter(_StubMarginAdapter):
                 unrealized_pnl=12.5,
             )
         ]
+
 
 @pytest.fixture(autouse=True)
 def stub_ccxt(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -259,7 +262,9 @@ def test_margin_mode_uses_native_adapter() -> None:
     manager.configure_native_adapter(settings={"margin_type": "isolated"})
     manager.set_credentials("key", "secret")
     manager.load_markets()
-    order = manager.create_order("BTC/USDT", "BUY", "LIMIT", 0.1, price=101.0, client_order_id="margin-open")
+    order = manager.create_order(
+        "BTC/USDT", "BUY", "LIMIT", 0.1, price=101.0, client_order_id="margin-open"
+    )
     assert order.mode is Mode.MARGIN
     balance = manager.fetch_balance()
     assert balance["total_equity"] == pytest.approx(1500.0)
@@ -292,7 +297,11 @@ def test_configure_watchdog_builds_custom_policy() -> None:
     manager.set_credentials("key", "secret")
     manager.configure_watchdog(
         retry_policy={"max_attempts": 5, "base_delay": 0.1, "max_delay": 0.2, "jitter": (0.0, 0.0)},
-        circuit_breaker={"failure_threshold": 2, "recovery_timeout": 1.0, "half_open_success_threshold": 1},
+        circuit_breaker={
+            "failure_threshold": 2,
+            "recovery_timeout": 1.0,
+            "half_open_success_threshold": 1,
+        },
     )
     manager.fetch_balance()
 
@@ -313,7 +322,9 @@ def test_set_watchdog_replaces_existing_instance() -> None:
 
     custom_watchdog = Watchdog(
         retry_policy=RetryPolicy(max_attempts=2, base_delay=0.0, max_delay=0.0, jitter=(0.0, 0.0)),
-        circuit_breaker=CircuitBreaker(failure_threshold=1, recovery_timeout=0.5, half_open_success_threshold=1),
+        circuit_breaker=CircuitBreaker(
+            failure_threshold=1, recovery_timeout=0.5, half_open_success_threshold=1
+        ),
         sleep=lambda _: None,
     )
     manager.set_watchdog(custom_watchdog)
@@ -340,7 +351,9 @@ def test_create_health_monitor_uses_shared_watchdog() -> None:
     manager = ExchangeManager(exchange_id="binance")
     custom_watchdog = Watchdog(
         retry_policy=RetryPolicy(max_attempts=1, base_delay=0.0, max_delay=0.0, jitter=(0.0, 0.0)),
-        circuit_breaker=CircuitBreaker(failure_threshold=2, recovery_timeout=0.1, half_open_success_threshold=1),
+        circuit_breaker=CircuitBreaker(
+            failure_threshold=2, recovery_timeout=0.1, half_open_success_threshold=1
+        ),
         sleep=lambda _: None,
     )
     manager.set_watchdog(custom_watchdog)
@@ -373,4 +386,3 @@ def test_futures_mode_uses_native_adapter() -> None:
     assert balance["available_margin"] == pytest.approx(1000.0)
     positions = manager.fetch_positions()
     assert positions and positions[0].mode is Mode.FUTURES
-

@@ -1,4 +1,5 @@
 """Testy skryptu synchronizującego dziennik JSONL smoke testów."""
+
 from __future__ import annotations
 
 import json
@@ -13,7 +14,6 @@ sys_path_added = False
 if not sys_path_added:
     import sys
 
-    
     sys_path_added = True
 
 from scripts import sync_paper_smoke_json as sync_script  # noqa: E402
@@ -56,7 +56,9 @@ def test_missing_json_log_returns_error(tmp_path: Path, capsys) -> None:
     assert error_value == "missing_json_log"
 
 
-def test_missing_config_returns_error(tmp_path: Path, capsys, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_missing_config_returns_error(
+    tmp_path: Path, capsys, monkeypatch: pytest.MonkeyPatch
+) -> None:
     log_path = tmp_path / "log.jsonl"
     _write_log(log_path)
 
@@ -85,7 +87,9 @@ def test_missing_config_returns_error(tmp_path: Path, capsys, monkeypatch: pytes
     assert error_value == "missing_config"
 
 
-def test_successful_sync_uses_latest_record(monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys) -> None:
+def test_successful_sync_uses_latest_record(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys
+) -> None:
     log_path = tmp_path / "log.jsonl"
     _write_log(
         log_path,
@@ -151,7 +155,9 @@ def test_successful_sync_uses_latest_record(monkeypatch: pytest.MonkeyPatch, tmp
     assert calls["timestamp"] == datetime(2025, 2, 3, 4, 5, 6, tzinfo=timezone.utc)
 
 
-def test_dry_run_skips_synchronizer(monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys) -> None:
+def test_dry_run_skips_synchronizer(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys
+) -> None:
     log_path = tmp_path / "log.jsonl"
     _write_log(log_path)
 
@@ -191,4 +197,3 @@ def test_dry_run_skips_synchronizer(monkeypatch: pytest.MonkeyPatch, tmp_path: P
     assert output["status"] == "skipped"
     assert output["backend"] == "local"
     assert DummySynchronizer.called is False
-

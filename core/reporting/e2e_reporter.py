@@ -1,4 +1,5 @@
 """Raportowanie scenariuszy przejścia demo → paper."""
+
 from __future__ import annotations
 
 from collections.abc import Mapping as AbcMapping, Sequence as AbcSequence
@@ -104,7 +105,9 @@ class DemoPaperReport:
         validation_details = {
             "entrypoint": payload.get("entrypoint"),
             "environment": _as_mapping(payload.get("validation")).get("environment"),
-            "expected_environment": _as_mapping(payload.get("validation")).get("expected_environment"),
+            "expected_environment": _as_mapping(payload.get("validation")).get(
+                "expected_environment"
+            ),
             "symbols": _as_mapping(payload.get("validation")).get("symbols"),
         }
 
@@ -172,7 +175,14 @@ class DemoPaperReport:
         ]
 
         for step in self.steps:
-            details = ", ".join(f"{key}: {value}" for key, value in step.details.items() if value not in (None, "")) or "brak"
+            details = (
+                ", ".join(
+                    f"{key}: {value}"
+                    for key, value in step.details.items()
+                    if value not in (None, "")
+                )
+                or "brak"
+            )
             lines.append(f"| {step.name} | {step.status} | {details} |")
 
         lines.extend(["", "## Ostrzeżenia", ""])

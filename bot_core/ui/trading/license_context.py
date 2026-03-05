@@ -96,7 +96,9 @@ def build_license_ui_context(
         messages.append("Dodaj moduł Futures, aby aktywować handel kontraktami.")
 
     if not auto_trader_enabled:
-        messages.append("Licencja nie obejmuje modułu AutoTrader. Skontaktuj się z opiekunem licencji.")
+        messages.append(
+            "Licencja nie obejmuje modułu AutoTrader. Skontaktuj się z opiekunem licencji."
+        )
 
     if not capabilities.is_module_enabled("observability_ui"):
         messages.append("Moduł telemetry UI jest niedostępny w tej licencji.")

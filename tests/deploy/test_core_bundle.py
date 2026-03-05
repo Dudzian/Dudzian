@@ -26,6 +26,8 @@ from bot_core.security.signing import canonical_json_bytes
 
 
 ROOT = Path(__file__).resolve().parents[2]
+
+
 def _write_signing_key(path: Path, *, mode: int = 0o600) -> Path:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_bytes(os.urandom(48))
@@ -34,7 +36,9 @@ def _write_signing_key(path: Path, *, mode: int = 0o600) -> Path:
     return path
 
 
-@pytest.mark.parametrize("platform,extension", [("linux", ".tar.gz"), ("macos", ".tar.gz"), ("windows", ".zip")])
+@pytest.mark.parametrize(
+    "platform,extension", [("linux", ".tar.gz"), ("macos", ".tar.gz"), ("windows", ".zip")]
+)
 def test_core_bundle_structure_and_signatures(tmp_path, platform, extension):
     daemon_dir = tmp_path / "daemon"
     daemon_dir.mkdir()
@@ -102,9 +106,10 @@ def test_core_bundle_structure_and_signatures(tmp_path, platform, extension):
 
     manifest_sig_doc = json.loads((bundle_root / "manifest.sig").read_text(encoding="utf-8"))
     assert manifest_sig_doc["payload"]["path"] == "manifest.json"
-    assert manifest_sig_doc["payload"]["sha384"] == hashlib.sha384(
-        manifest_path.read_bytes()
-    ).hexdigest()
+    assert (
+        manifest_sig_doc["payload"]["sha384"]
+        == hashlib.sha384(manifest_path.read_bytes()).hexdigest()
+    )
     expected_sig = base64.b64encode(
         hmac.new(
             key,
@@ -335,6 +340,7 @@ def _is_case_sensitive_filesystem(base_dir: Path) -> bool:
             and second.read_text(encoding="utf-8") == "two"
         )
     finally:
+
         def _retry_remove(path: Path, *, is_dir: bool = False) -> None:
             attempts = 5
             for attempt in range(attempts):
@@ -1088,7 +1094,9 @@ def test_build_from_cli_rejects_config_file_with_control_character(tmp_path):
         build_core_bundle_from_cli(args)
 
 
-@pytest.mark.skipif(sys.platform.startswith("win"), reason="'|' is invalid on Windows but accepted on POSIX")
+@pytest.mark.skipif(
+    sys.platform.startswith("win"), reason="'|' is invalid on Windows but accepted on POSIX"
+)
 def test_build_from_cli_accepts_posix_config_file_with_windows_invalid_character(tmp_path):
     env = _create_basic_cli_environment(tmp_path)
     config_file = tmp_path / "core|ok.yaml"
@@ -1362,9 +1370,7 @@ def test_build_from_cli_rejects_casefold_ui_directory_contents(tmp_path):
     # so we cannot create the intended collision test fixture.
     try:
         if primary.exists() and secondary.exists() and primary.samefile(secondary):
-            pytest.skip(
-                "filesystem is case-insensitive; cannot create case-colliding UI filenames"
-            )
+            pytest.skip("filesystem is case-insensitive; cannot create case-colliding UI filenames")
     except OSError:
         # If the FS/OS cannot determine sameness, fall through to the normal assertion.
         pass
@@ -1577,6 +1583,7 @@ def test_build_from_cli_rejects_resource_directory_casefold_contents(tmp_path):
         )
     else:
         build_core_bundle_from_cli(args)
+
 
 def test_build_from_cli_rejects_empty_fingerprint_placeholder(tmp_path):
     env = _create_basic_cli_environment(tmp_path)

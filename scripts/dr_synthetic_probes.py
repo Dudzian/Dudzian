@@ -136,7 +136,9 @@ def _probe_alertmanager(alertmanager_url: str | None) -> tuple[dict[str, Any], b
         relevant = []
         for alert in alerts:
             labels = alert.get("labels") or {}
-            if labels.get("service") == "cloud-orchestrator" or "CloudWorker" in labels.get("alertname", ""):
+            if labels.get("service") == "cloud-orchestrator" or "CloudWorker" in labels.get(
+                "alertname", ""
+            ):
                 relevant.append(alert)
         payload["alerts"] = relevant
         payload["firing"] = len(relevant)
@@ -159,13 +161,23 @@ def _probe_prometheus(prometheus_url: str | None) -> tuple[dict[str, Any], bool]
             url = prometheus_url.rstrip("/") + f"/api/v1/query?{query}"
             response = _http_json(url)
             payload["samples"][metric] = response
-        health_samples = payload["samples"].get("bot_cloud_health_status", {}).get("data", {}).get("result") or []
-        last_error_samples = payload["samples"].get("bot_cloud_last_error", {}).get("data", {}).get("result") or []
+        health_samples = (
+            payload["samples"].get("bot_cloud_health_status", {}).get("data", {}).get("result")
+            or []
+        )
+        last_error_samples = (
+            payload["samples"].get("bot_cloud_last_error", {}).get("data", {}).get("result") or []
+        )
         payload["validation"] = {
             "healthValues": [float(sample.get("value", [0, 0])[1]) for sample in health_samples],
-            "lastErrorValues": [float(sample.get("value", [0, 0])[1]) for sample in last_error_samples],
+            "lastErrorValues": [
+                float(sample.get("value", [0, 0])[1]) for sample in last_error_samples
+            ],
         }
-        health_ok = bool(payload["validation"]["healthValues"] and all(v >= 1.0 for v in payload["validation"]["healthValues"]))
+        health_ok = bool(
+            payload["validation"]["healthValues"]
+            and all(v >= 1.0 for v in payload["validation"]["healthValues"])
+        )
         last_error_ok = not payload["validation"]["lastErrorValues"] or all(
             v <= 0.0 for v in payload["validation"]["lastErrorValues"]
         )

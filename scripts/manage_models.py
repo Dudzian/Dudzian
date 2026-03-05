@@ -83,7 +83,9 @@ def _parse_metadata(entries: Sequence[str]) -> Mapping[str, str]:
     metadata: dict[str, str] = {}
     for entry in entries:
         if "=" not in entry:
-            raise ModelRegistryError(f"Niepoprawny format metadanych: '{entry}' (oczekiwano KEY=VALUE)")
+            raise ModelRegistryError(
+                f"Niepoprawny format metadanych: '{entry}' (oczekiwano KEY=VALUE)"
+            )
         key, value = entry.split("=", 1)
         metadata[key.strip()] = value.strip()
     return metadata
@@ -157,4 +159,3 @@ def main(argv: Sequence[str] | None = None) -> int:
 
 if __name__ == "__main__":  # pragma: no cover - wywołanie z CLI
     raise SystemExit(main())
-

@@ -1,4 +1,5 @@
 """Narzędzia do optymalizacji parametrów strategii."""
+
 from __future__ import annotations
 
 from .optimizer import (

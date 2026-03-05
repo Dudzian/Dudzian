@@ -112,7 +112,9 @@ def run(argv: list[str] | None = None) -> int:
         key, key_id = _load_hmac_key(args)
         if key:
             signature_payload = build_hmac_signature(payload, key=key, key_id=key_id)
-            signature_path = Path(args.signature) if args.signature else output_path.with_suffix(".sig")
+            signature_path = (
+                Path(args.signature) if args.signature else output_path.with_suffix(".sig")
+            )
             signature_path.parent.mkdir(parents=True, exist_ok=True)
             with signature_path.open("w", encoding="utf-8") as handle:
                 json.dump(signature_payload, handle, ensure_ascii=False, separators=(",", ":"))
@@ -132,4 +134,3 @@ def run(argv: list[str] | None = None) -> int:
 
 if __name__ == "__main__":  # pragma: no cover - CLI entry point
     raise SystemExit(run())
-

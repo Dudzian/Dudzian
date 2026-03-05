@@ -1,9 +1,10 @@
-"""""Uruchamia lokalny backend bota (AutoTrader + serwer gRPC) na potrzeby UI.
+""" ""Uruchamia lokalny backend bota (AutoTrader + serwer gRPC) na potrzeby UI.
 
 Uzupełnienie: nowy klient PySide6 można wystartować poleceniem
 `python -m ui.pyside_app --config ui/config/example.yaml [--enable-cloud-runtime]`
 po otrzymaniu komunikatu `ready` z tego skryptu.
 """
+
 from __future__ import annotations
 
 import argparse
@@ -36,6 +37,7 @@ from bot_core.runtime.cloud_client import (
     load_license_identity,
     perform_cloud_handshake,
 )
+
 try:  # pragma: no cover - opcjonalny manifest cloudowy
     from bot_core.runtime.cloud_profiles import resolve_runtime_cloud_client
 except Exception:  # pragma: no cover - fallback gdy moduł nie jest dostępny
@@ -48,6 +50,8 @@ from core.reporting import DemoPaperReport, GuardrailReport
 from scripts._cli_stdio import configure_cli_stdio
 
 _LOGGER = logging.getLogger(__name__)
+
+
 class _CloudFallbackSentinel:
     pass
 
@@ -61,7 +65,6 @@ def _configure_logging(level: str) -> None:
         level=numeric_level,
         format="[%(asctime)s] [%(levelname)s] %(name)s: %(message)s",
     )
-
 
 
 def _build_demo_ai_snapshot() -> Mapping[str, Any] | None:
@@ -153,7 +156,9 @@ def _validate_runtime_context(context: Any, mode: str) -> dict[str, Any]:
     runtime_environment = getattr(bootstrap, "environment", None)
     keychain_key = getattr(runtime_environment, "keychain_key", None)
     credential_purpose = getattr(runtime_environment, "credential_purpose", "trading")
-    expected_env = _normalize_environment(getattr(runtime_environment, "environment", ExchangeEnvironment.PAPER))
+    expected_env = _normalize_environment(
+        getattr(runtime_environment, "environment", ExchangeEnvironment.PAPER)
+    )
     details["keychain_key"] = keychain_key
     details["expected_environment"] = expected_env.value
 
@@ -435,12 +440,16 @@ def _run_cloud_proxy(
 def _parse_args(argv: list[str] | None) -> argparse.Namespace:
     configure_cli_stdio()
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--config", default="config/runtime.yaml", help="Ścieżka do pliku runtime.yaml")
+    parser.add_argument(
+        "--config", default="config/runtime.yaml", help="Ścieżka do pliku runtime.yaml"
+    )
     parser.add_argument("--entrypoint", help="Nazwa punktu wejścia z sekcji trading.entrypoints")
     parser.add_argument("--host", default="127.0.0.1", help="Adres nasłuchiwania serwera gRPC")
     parser.add_argument("--port", default=0, type=int, help="Port serwera gRPC (0 = automatyczny)")
     parser.add_argument("--log-level", default="INFO", help="Poziom logowania")
-    parser.add_argument("--ready-file", help="Opcjonalny plik, do którego zostanie zapisany adres serwera")
+    parser.add_argument(
+        "--ready-file", help="Opcjonalny plik, do którego zostanie zapisany adres serwera"
+    )
     parser.add_argument(
         "--mode",
         choices=("demo", "paper", "live"),
@@ -570,7 +579,9 @@ def main(argv: list[str] | None = None) -> int:
                 entrypoint=args.entrypoint,
             )
 
-            entrypoint_name = _determine_entrypoint_name(context.config, context.entrypoint, args.entrypoint)
+            entrypoint_name = _determine_entrypoint_name(
+                context.config, context.entrypoint, args.entrypoint
+            )
             report_payload["entrypoint"] = entrypoint_name
 
             validation = _validate_runtime_context(context, args.mode)
@@ -605,9 +616,7 @@ def main(argv: list[str] | None = None) -> int:
                     )
 
             if exit_code == 0:
-                runtime_snapshot = _build_runtime_ai_governor_snapshot(
-                    context, history_limit=12
-                )
+                runtime_snapshot = _build_runtime_ai_governor_snapshot(context, history_limit=12)
                 if runtime_snapshot is not None:
                     ai_governor_snapshot = runtime_snapshot
                     report_payload["ai_governor"] = ai_governor_snapshot
@@ -619,9 +628,7 @@ def main(argv: list[str] | None = None) -> int:
                 observability_cfg = getattr(context.config, "observability", None)
                 enable_metrics_handler = True
                 if observability_cfg is not None:
-                    enable_metrics_handler = getattr(
-                        observability_cfg, "enable_log_metrics", True
-                    )
+                    enable_metrics_handler = getattr(observability_cfg, "enable_log_metrics", True)
                 if enable_metrics_handler:
                     install_metrics_logging_handler()
 
@@ -683,9 +690,7 @@ def main(argv: list[str] | None = None) -> int:
             try:
                 live_metrics_summary = _collect_live_execution_metrics(context)
             except Exception:  # pragma: no cover - defensywne
-                _LOGGER.debug(
-                    "Nie udało się zebrać metryk egzekucji live", exc_info=True
-                )
+                _LOGGER.debug("Nie udało się zebrać metryk egzekucji live", exc_info=True)
                 live_metrics_summary = {}
 
         if server is not None:
@@ -710,7 +715,9 @@ def main(argv: list[str] | None = None) -> int:
                     },
                 )
             except Exception:  # pragma: no cover - defensywne
-                _LOGGER.debug("Nie udało się zapisać checkpointu po scenariuszu demo", exc_info=True)
+                _LOGGER.debug(
+                    "Nie udało się zapisać checkpointu po scenariuszu demo", exc_info=True
+                )
         if checkpoint is not None:
             report_payload["checkpoint"] = checkpoint.to_dict()
 
@@ -718,21 +725,31 @@ def main(argv: list[str] | None = None) -> int:
         report_payload["finished_at"] = datetime.now(timezone.utc).isoformat()
         guardrail_payload: dict[str, Any] | None = None
         try:
-            demo_report = DemoPaperReport.from_payload(report_payload, decision_events=decision_events)
+            demo_report = DemoPaperReport.from_payload(
+                report_payload, decision_events=decision_events
+            )
             markdown_path = demo_report.write_markdown(report_markdown_dir)
             report_payload["report_markdown"] = str(markdown_path.resolve())
         except Exception:  # pragma: no cover - defensywne
             _LOGGER.debug("Nie udało się wygenerować raportu Markdown", exc_info=True)
         try:
             registry = getattr(context, "metrics_registry", None) if context is not None else None
-            io_queue_cfg = getattr(getattr(context, "config", None), "io_queue", None) if context is not None else None
-            log_directory = getattr(io_queue_cfg, "log_directory", None) if io_queue_cfg is not None else None
+            io_queue_cfg = (
+                getattr(getattr(context, "config", None), "io_queue", None)
+                if context is not None
+                else None
+            )
+            log_directory = (
+                getattr(io_queue_cfg, "log_directory", None) if io_queue_cfg is not None else None
+            )
             if not log_directory:
                 log_directory = "logs/guardrails"
             raw_validation = report_payload.get("validation")
             validation_details = raw_validation if isinstance(raw_validation, Mapping) else {}
-            environment_hint = (
-                str(validation_details.get("expected_environment") or validation_details.get("environment") or "")
+            environment_hint = str(
+                validation_details.get("expected_environment")
+                or validation_details.get("environment")
+                or ""
             )
             guardrail_report = GuardrailReport.from_sources(
                 registry=registry,

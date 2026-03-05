@@ -64,7 +64,9 @@ def test_compliance_panel_renders_and_triggers_audit(tmp_path: Path) -> None:
     engine = QQmlApplicationEngine()
     engine.rootContext().setContextProperty("telemetryProvider", provider)
     engine.rootContext().setContextProperty("complianceController", controller)
-    qml_path = Path(__file__).resolve().parents[2] / "ui" / "qml" / "dashboard" / "CompliancePanel.qml"
+    qml_path = (
+        Path(__file__).resolve().parents[2] / "ui" / "qml" / "dashboard" / "CompliancePanel.qml"
+    )
     engine.load(QUrl.fromLocalFile(str(qml_path)))
     assert engine.rootObjects(), "Nie udało się załadować CompliancePanel.qml"
     root = engine.rootObjects()[0]

@@ -143,7 +143,9 @@ class MarketDataServiceServicer(
         logger: logging.Logger | None = None,
     ) -> None:
         if trading_pb2 is None or trading_pb2_grpc is None:
-            raise RuntimeError("Uruchomienie MarketDataService wymaga wygenerowanych stubów trading_pb2*")
+            raise RuntimeError(
+                "Uruchomienie MarketDataService wymaga wygenerowanych stubów trading_pb2*"
+            )
         if grpc is None:
             raise RuntimeError("Uruchomienie MarketDataService wymaga biblioteki grpcio")
         try:  # pragma: no cover - zależne od wersji gRPC
@@ -178,7 +180,11 @@ class MarketDataServiceServicer(
             raise RuntimeError("Brak modułu trading_pb2")
         exchange = (request.exchange or "").strip()
         if not exchange:
-            return self._abort(context, grpc.StatusCode.INVALID_ARGUMENT if grpc else None, "exchange jest wymagany")
+            return self._abort(
+                context,
+                grpc.StatusCode.INVALID_ARGUMENT if grpc else None,
+                "exchange jest wymagany",
+            )
 
         exchange_upper = exchange.upper()
         now = time.monotonic()
@@ -196,7 +202,9 @@ class MarketDataServiceServicer(
                 try:
                     manager = self._default_provider(exchange_upper)
                 except Exception as exc:  # pragma: no cover - diagnostyka
-                    self._logger.debug("Nie udało się utworzyć ExchangeManager dla %s: %s", exchange_upper, exc)
+                    self._logger.debug(
+                        "Nie udało się utworzyć ExchangeManager dla %s: %s", exchange_upper, exc
+                    )
                     manager = None
         if manager is None:
             return self._abort(
@@ -208,7 +216,9 @@ class MarketDataServiceServicer(
         try:
             entries = self._build_instrument_list(manager, exchange_upper)
         except Exception as exc:
-            self._logger.exception("ListTradableInstruments nie powiodło się dla %s", exchange_upper)
+            self._logger.exception(
+                "ListTradableInstruments nie powiodło się dla %s", exchange_upper
+            )
             return self._abort(context, grpc.StatusCode.UNAVAILABLE if grpc else None, str(exc))
 
         if self._cache_ttl > 0:
@@ -263,7 +273,9 @@ class MarketDataServiceServicer(
         base, quote = self._split_symbol(symbol)
         if market_meta:
             base = str(market_meta.get("base") or market_meta.get("baseId") or base or "").upper()
-            quote = str(market_meta.get("quote") or market_meta.get("quoteId") or quote or "").upper()
+            quote = str(
+                market_meta.get("quote") or market_meta.get("quoteId") or quote or ""
+            ).upper()
         venue = str(
             market_meta.get("id")
             or market_meta.get("symbol")
@@ -301,7 +313,9 @@ class MarketDataServiceServicer(
         return _split_symbol_text(symbol)
 
     @staticmethod
-    def _clone_metadata(metadata: trading_pb2.TradableInstrumentMetadata) -> trading_pb2.TradableInstrumentMetadata:
+    def _clone_metadata(
+        metadata: trading_pb2.TradableInstrumentMetadata,
+    ) -> trading_pb2.TradableInstrumentMetadata:
         clone = trading_pb2.TradableInstrumentMetadata()
         clone.CopyFrom(metadata)
         return clone
@@ -327,7 +341,9 @@ class MarketDataServer(GrpcServerLifecycleMixin):
         server_credentials: Any | None = None,
     ) -> None:
         if grpc is None or trading_pb2_grpc is None:
-            raise RuntimeError("Uruchomienie MarketDataServer wymaga pakietów grpcio oraz trading_pb2*")
+            raise RuntimeError(
+                "Uruchomienie MarketDataServer wymaga pakietów grpcio oraz trading_pb2*"
+            )
         self._servicer = MarketDataServiceServicer(manager_lookup, cache_ttl=cache_ttl)
         self._server = grpc.server(futures.ThreadPoolExecutor(max_workers=max_workers))
         trading_pb2_grpc.add_MarketDataServiceServicer_to_server(self._servicer, self._server)
@@ -409,7 +425,9 @@ class RestMarketDataPoller:
         if self._thread and self._thread.is_alive():
             return
         self._stop_event.clear()
-        self._thread = threading.Thread(target=self._run, name="rest-market-data-poller", daemon=True)
+        self._thread = threading.Thread(
+            target=self._run, name="rest-market-data-poller", daemon=True
+        )
         self._thread.start()
 
     def stop(self) -> None:
@@ -446,10 +464,14 @@ class RestMarketDataPoller:
             try:
                 manager = self._default_provider(exchange_upper)
             except Exception as exc:  # pragma: no cover - logowanie diagnostyczne
-                self._logger.debug("Nie udało się utworzyć ExchangeManager dla %s: %s", exchange_upper, exc)
+                self._logger.debug(
+                    "Nie udało się utworzyć ExchangeManager dla %s: %s", exchange_upper, exc
+                )
                 manager = None
         if manager is None:
-            self._logger.warning("Pominięto odświeżenie danych dla nieznanej giełdy: %s", exchange_upper)
+            self._logger.warning(
+                "Pominięto odświeżenie danych dla nieznanej giełdy: %s", exchange_upper
+            )
             return
 
         try:

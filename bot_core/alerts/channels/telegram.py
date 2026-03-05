@@ -1,4 +1,5 @@
 """Adapter kanału powiadomień dla Telegrama."""
+
 from __future__ import annotations
 
 import json
@@ -11,6 +12,7 @@ from urllib import request
 from bot_core.alerts.base import AlertChannel, AlertDeliveryError, AlertMessage
 from bot_core.alerts.channels._http import HttpOpener, default_opener
 
+
 @dataclass(slots=True)
 class TelegramChannel(AlertChannel):
     """Publikuje alerty wykorzystując oficjalne API Telegram Bot."""
@@ -20,7 +22,9 @@ class TelegramChannel(AlertChannel):
     parse_mode: str = "MarkdownV2"
     name: str = "telegram"
     timeout: float = 10.0
-    logger: logging.Logger = field(default_factory=lambda: logging.getLogger("bot_core.alerts.telegram"))
+    logger: logging.Logger = field(
+        default_factory=lambda: logging.getLogger("bot_core.alerts.telegram")
+    )
     _opener: HttpOpener = field(default=default_opener, repr=False)
     _last_success: datetime | None = field(default=None, init=False, repr=False)
     _last_error: str | None = field(default=None, init=False, repr=False)
@@ -35,7 +39,11 @@ class TelegramChannel(AlertChannel):
             payload["parse_mode"] = self.parse_mode
 
         url = f"https://api.telegram.org/bot{self.bot_token}/sendMessage"
-        req = request.Request(url, data=json.dumps(payload).encode("utf-8"), headers={"Content-Type": "application/json"})
+        req = request.Request(
+            url,
+            data=json.dumps(payload).encode("utf-8"),
+            headers={"Content-Type": "application/json"},
+        )
 
         try:
             with self._opener(req, timeout=self.timeout) as response:
@@ -54,7 +62,9 @@ class TelegramChannel(AlertChannel):
 
         try:
             parsed: Dict[str, object] = json.loads(data) if data else {"ok": True}
-        except json.JSONDecodeError as exc:  # pragma: no cover - powinno się udać dla poprawnych odpowiedzi
+        except (
+            json.JSONDecodeError
+        ) as exc:  # pragma: no cover - powinno się udać dla poprawnych odpowiedzi
             self._last_error = str(exc)
             raise AlertDeliveryError("Niepoprawna odpowiedź Telegrama") from exc
 
@@ -78,7 +88,9 @@ class TelegramChannel(AlertChannel):
 
     def _format_message(self, message: AlertMessage) -> str:
         header = f"*{message.title}*" if self.parse_mode == "MarkdownV2" else message.title
-        context_lines = "\n".join(f"• {key}: {value}" for key, value in sorted(message.context.items()))
+        context_lines = "\n".join(
+            f"• {key}: {value}" for key, value in sorted(message.context.items())
+        )
         parts = [header, message.body]
         if context_lines:
             parts.append(context_lines)
@@ -87,4 +99,3 @@ class TelegramChannel(AlertChannel):
 
 
 __all__ = ["TelegramChannel"]
-

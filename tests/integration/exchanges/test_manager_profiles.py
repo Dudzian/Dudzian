@@ -5,7 +5,11 @@ from typing import Any, Sequence
 import pytest
 
 import bot_core.exchanges.manager as manager_module
-from bot_core.exchanges.manager import ExchangeManager, register_native_adapter, unregister_native_adapter
+from bot_core.exchanges.manager import (
+    ExchangeManager,
+    register_native_adapter,
+    unregister_native_adapter,
+)
 from bot_core.exchanges.base import AccountSnapshot, OrderRequest, OrderResult
 from bot_core.exchanges.core import Mode, OrderDTO, OrderSide, OrderStatus, OrderType
 from bot_core.exchanges.errors import ExchangeNetworkError
@@ -41,7 +45,9 @@ class _StaticPublicFeed:
     def fetch_ticker(self, symbol: str) -> dict[str, float]:
         return {"last": 100.0, "bid": 99.5, "ask": 100.5}
 
-    def fetch_order_book(self, symbol: str, limit: int = 50) -> dict[str, Sequence[tuple[float, float]]]:
+    def fetch_order_book(
+        self, symbol: str, limit: int = 50
+    ) -> dict[str, Sequence[tuple[float, float]]]:
         return {
             "asks": [(100.0 + i * 0.1, 0.05) for i in range(limit)],
             "bids": [(100.0 - i * 0.1, 0.05) for i in range(limit)],
@@ -148,7 +154,9 @@ class _CCXTFallback:
         ("bybit", "paper", "spot"),
     ],
 )
-def test_paper_profiles_cover_major_exchanges(exchange_id: str, profile: str, expected_variant: str, monkeypatch, tmp_path):
+def test_paper_profiles_cover_major_exchanges(
+    exchange_id: str, profile: str, expected_variant: str, monkeypatch, tmp_path
+):
     monkeypatch.setattr(manager_module, "_CCXTPublicFeed", _StaticPublicFeed)
 
     class ReporterProxy(BaseSignalQualityReporter):
@@ -188,7 +196,9 @@ def test_failover_switches_to_ccxt_and_emits_signal_report(monkeypatch, tmp_path
         default_settings={},
         supports_testnet=True,
     )
-    request.addfinalizer(lambda: unregister_native_adapter(exchange_id="binance", mode=Mode.FUTURES))
+    request.addfinalizer(
+        lambda: unregister_native_adapter(exchange_id="binance", mode=Mode.FUTURES)
+    )
     manager = ExchangeManager(exchange_id="binance")
     manager.configure_failover(enabled=True, failure_threshold=1, cooldown_seconds=0.0)
     manager.apply_environment_profile("testnet", exchange="binance")
@@ -234,4 +244,3 @@ def test_failover_switches_to_ccxt_and_emits_signal_report(monkeypatch, tmp_path
     assert private_backend is not None
     assert private_backend.cancel_calls == 1
     assert private_backend.fetch_open_orders_calls == 1
-

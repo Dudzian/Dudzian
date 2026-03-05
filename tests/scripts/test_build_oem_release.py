@@ -8,7 +8,9 @@ from scripts import build_oem_release
 
 
 def _write_json(path: Path, payload: dict[str, object]) -> None:
-    path.write_text(json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    path.write_text(
+        json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+    )
 
 
 def test_build_oem_release_generates_release_manifest(tmp_path, capsys):

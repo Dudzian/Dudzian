@@ -23,7 +23,9 @@ def test_failover_snapshots_capture_rehydration_and_rule_sync(tmp_path: Path) ->
     after_state = _extract_state(after_payload)
 
     prefix = tmp_path / "weekly_failover"
-    before_path = _write_state_snapshot(prefix.with_name(f"{prefix.name}_before.json"), before_state)
+    before_path = _write_state_snapshot(
+        prefix.with_name(f"{prefix.name}_before.json"), before_state
+    )
     after_path = _write_state_snapshot(prefix.with_name(f"{prefix.name}_after.json"), after_state)
 
     comparison = compare_last_error(before_state, after_state)

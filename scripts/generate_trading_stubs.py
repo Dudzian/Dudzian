@@ -221,7 +221,9 @@ def build_parser() -> argparse.ArgumentParser:
         default="core/generated",
         help="Katalog docelowy dla stubów C++ (domyślnie core/generated)",
     )
-    parser.add_argument("--skip-python", action="store_true", help="Pomiń generowanie stubów Python")
+    parser.add_argument(
+        "--skip-python", action="store_true", help="Pomiń generowanie stubów Python"
+    )
     parser.add_argument("--skip-cpp", action="store_true", help="Pomiń generowanie stubów C++")
     parser.add_argument(
         "--protoc",
@@ -233,7 +235,9 @@ def build_parser() -> argparse.ArgumentParser:
         default=None,
         help="Ścieżka do pluginu grpc_cpp_plugin (gdy nie znajduje się w PATH)",
     )
-    parser.add_argument("--dry-run", action="store_true", help="Nie uruchamiaj protoc, jedynie wypisz komendy")
+    parser.add_argument(
+        "--dry-run", action="store_true", help="Nie uruchamiaj protoc, jedynie wypisz komendy"
+    )
     return parser
 
 

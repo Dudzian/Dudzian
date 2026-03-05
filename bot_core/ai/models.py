@@ -93,7 +93,6 @@ def _normalize_feature_scalers(
     return MappingProxyType(normalized)
 
 
-
 class _MetricsView(Mapping[str, object]):
     """Structured Stage6 view over model metric payloads."""
 
@@ -281,8 +280,7 @@ class ModelMetrics(_MetricsView):
         if isinstance(other, Mapping):
             if not other:
                 return all(
-                    not isinstance(block, Mapping) or not block
-                    for block in self._base.values()
+                    not isinstance(block, Mapping) or not block for block in self._base.values()
                 )
             return dict(self.items()) == dict(other.items())
         return dict(self.items()) == other
@@ -606,7 +604,9 @@ class ModelArtifact:
         object.__setattr__(self, "validation_rows", int(self.validation_rows))
         object.__setattr__(self, "test_rows", int(self.test_rows))
         if self.decision_journal_entry_id is not None:
-            object.__setattr__(self, "decision_journal_entry_id", str(self.decision_journal_entry_id))
+            object.__setattr__(
+                self, "decision_journal_entry_id", str(self.decision_journal_entry_id)
+            )
         object.__setattr__(self, "backend", str(self.backend))
 
     def to_dict(self) -> Mapping[str, object]:
@@ -631,8 +631,6 @@ class ModelArtifact:
         if self.decision_journal_entry_id:
             payload["decision_journal_entry_id"] = str(self.decision_journal_entry_id)
         return payload
-
-
 
     @classmethod
     def from_dict(cls, raw: Mapping[str, object]) -> "ModelArtifact":
@@ -685,7 +683,10 @@ class ModelArtifact:
             model.load_state(self.model_state)
             if not model.feature_names:
                 model.feature_names = list(self.feature_names)
-            if self.feature_scalers and getattr(model, "feature_scalers", None) != self.feature_scalers:
+            if (
+                self.feature_scalers
+                and getattr(model, "feature_scalers", None) != self.feature_scalers
+            ):
                 model.feature_scalers = dict(self.feature_scalers)
             elif not getattr(model, "feature_scalers", None):
                 scalers_raw = self.metadata.get("feature_scalers")
@@ -1010,9 +1011,7 @@ def generate_model_artifact_bundle(
         (metadata_path.name, _hash_file(metadata_path)),
     ]
     if written_signature_path is not None:
-        checksum_entries.append(
-            (written_signature_path.name, _hash_file(written_signature_path))
-        )
+        checksum_entries.append((written_signature_path.name, _hash_file(written_signature_path)))
 
     with checksums_path.open("w", encoding="utf-8") as handle:
         for filename, digest in checksum_entries:

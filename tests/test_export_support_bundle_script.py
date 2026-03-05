@@ -1,4 +1,5 @@
 """Integration tests for the export_support_bundle CLI."""
+
 from __future__ import annotations
 
 import json
@@ -85,7 +86,9 @@ def test_export_support_bundle_creates_archive(sample_root: Path, tmp_path: Path
         assert "bundle_manifest.json" in members
 
 
-def test_export_support_bundle_respects_disable_and_dry_run(sample_root: Path, tmp_path: Path) -> None:
+def test_export_support_bundle_respects_disable_and_dry_run(
+    sample_root: Path, tmp_path: Path
+) -> None:
     output_dir = tmp_path / "dist"
     args = [
         "--root",
@@ -130,4 +133,3 @@ def test_export_support_bundle_respects_disable_and_dry_run(sample_root: Path, t
         assert "metrics/fps.prom" not in members
         assert "licenses/oem.lic" in members
         assert "bundle_manifest.json" in members
-

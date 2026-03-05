@@ -159,14 +159,18 @@ def write_report(output_path: Path, *, timeout_seconds: float | None = None) -> 
                 "scenarios": [],
             }
         matrix["timed_out"] = timed_out
-        output_path.write_text(json.dumps(matrix, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+        output_path.write_text(
+            json.dumps(matrix, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
+        )
         return matrix
     finally:
         signal.signal(signal.SIGTERM, previous_handler)
 
 
 def main(argv: list[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(description="Generuje raport dryfu HWID w oparciu o scenariusze tolerancji.")
+    parser = argparse.ArgumentParser(
+        description="Generuje raport dryfu HWID w oparciu o scenariusze tolerancji."
+    )
     parser.add_argument(
         "--output",
         default="reports/ci/licensing_drift/compatibility.json",

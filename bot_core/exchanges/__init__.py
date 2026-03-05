@@ -14,6 +14,7 @@ from bot_core.exchanges.base import (
     OrderResult,
 )
 from bot_core.exchanges.factory import ExchangeAdapterConfig, build_exchange_adapter
+
 try:  # pragma: no cover - środowisko testowe może nie zawierać pełnej konfiguracji managera
     from bot_core.exchanges.manager import (
         ExchangeManager,
@@ -53,6 +54,7 @@ from bot_core.exchanges.health import (
     RetryPolicy,
     Watchdog,
 )
+
 _LAZY_EXCHANGE_PACKAGES = {
     "binance",
     "bitfinex",
@@ -125,9 +127,7 @@ def __getattr__(name: str):
 
 
 def __dir__() -> list[str]:
-    return sorted(
-        set(globals().keys()) | set(_LAZY_EXCHANGE_PACKAGES) | set(_LAZY_EXPORTS.keys())
-    )
+    return sorted(set(globals().keys()) | set(_LAZY_EXCHANGE_PACKAGES) | set(_LAZY_EXPORTS.keys()))
 
 
 BinanceFuturesAdapter = _optional_adapter(
@@ -136,68 +136,38 @@ BinanceFuturesAdapter = _optional_adapter(
 BinanceMarginAdapter = _optional_adapter(
     "bot_core.exchanges.binance.margin", "BinanceMarginAdapter"
 )
-BinanceSpotAdapter = _optional_adapter(
-    "bot_core.exchanges.binance.spot", "BinanceSpotAdapter"
-)
-BitfinexSpotAdapter = _optional_adapter(
-    "bot_core.exchanges.bitfinex.spot", "BitfinexSpotAdapter"
-)
+BinanceSpotAdapter = _optional_adapter("bot_core.exchanges.binance.spot", "BinanceSpotAdapter")
+BitfinexSpotAdapter = _optional_adapter("bot_core.exchanges.bitfinex.spot", "BitfinexSpotAdapter")
 BitmexFuturesAdapter = _optional_adapter(
     "bot_core.exchanges.bitmex.futures", "BitmexFuturesAdapter"
 )
-BitmexSpotAdapter = _optional_adapter(
-    "bot_core.exchanges.bitmex.spot", "BitmexSpotAdapter"
-)
-BitgetSpotAdapter = _optional_adapter(
-    "bot_core.exchanges.bitget.spot", "BitgetSpotAdapter"
-)
-BitstampSpotAdapter = _optional_adapter(
-    "bot_core.exchanges.bitstamp.spot", "BitstampSpotAdapter"
-)
+BitmexSpotAdapter = _optional_adapter("bot_core.exchanges.bitmex.spot", "BitmexSpotAdapter")
+BitgetSpotAdapter = _optional_adapter("bot_core.exchanges.bitget.spot", "BitgetSpotAdapter")
+BitstampSpotAdapter = _optional_adapter("bot_core.exchanges.bitstamp.spot", "BitstampSpotAdapter")
 DeribitFuturesAdapter = _optional_adapter(
     "bot_core.exchanges.deribit.futures", "DeribitFuturesAdapter"
 )
-DeribitSpotAdapter = _optional_adapter(
-    "bot_core.exchanges.deribit.spot", "DeribitSpotAdapter"
-)
-BybitFuturesAdapter = _optional_adapter(
-    "bot_core.exchanges.bybit.futures", "BybitFuturesAdapter"
-)
-BybitMarginAdapter = _optional_adapter(
-    "bot_core.exchanges.bybit.margin", "BybitMarginAdapter"
-)
-BybitSpotAdapter = _optional_adapter(
-    "bot_core.exchanges.bybit.spot", "BybitSpotAdapter"
-)
+DeribitSpotAdapter = _optional_adapter("bot_core.exchanges.deribit.spot", "DeribitSpotAdapter")
+BybitFuturesAdapter = _optional_adapter("bot_core.exchanges.bybit.futures", "BybitFuturesAdapter")
+BybitMarginAdapter = _optional_adapter("bot_core.exchanges.bybit.margin", "BybitMarginAdapter")
+BybitSpotAdapter = _optional_adapter("bot_core.exchanges.bybit.spot", "BybitSpotAdapter")
 CoinbaseFuturesAdapter = _optional_adapter(
     "bot_core.exchanges.coinbase.futures", "CoinbaseFuturesAdapter"
 )
 CoinbaseMarginAdapter = _optional_adapter(
     "bot_core.exchanges.coinbase.margin", "CoinbaseMarginAdapter"
 )
-CoinbaseSpotAdapter = _optional_adapter(
-    "bot_core.exchanges.coinbase.spot", "CoinbaseSpotAdapter"
-)
-GateIOSpotAdapter = _optional_adapter(
-    "bot_core.exchanges.gateio.spot", "GateIOSpotAdapter"
-)
-GeminiSpotAdapter = _optional_adapter(
-    "bot_core.exchanges.gemini.spot", "GeminiSpotAdapter"
-)
+CoinbaseSpotAdapter = _optional_adapter("bot_core.exchanges.coinbase.spot", "CoinbaseSpotAdapter")
+GateIOSpotAdapter = _optional_adapter("bot_core.exchanges.gateio.spot", "GateIOSpotAdapter")
+GeminiSpotAdapter = _optional_adapter("bot_core.exchanges.gemini.spot", "GeminiSpotAdapter")
 HuobiSpotAdapter = _optional_adapter("bot_core.exchanges.huobi.spot", "HuobiSpotAdapter")
 MexcSpotAdapter = _optional_adapter("bot_core.exchanges.mexc.spot", "MexcSpotAdapter")
-KuCoinSpotAdapter = _optional_adapter(
-    "bot_core.exchanges.kucoin.spot", "KuCoinSpotAdapter"
-)
+KuCoinSpotAdapter = _optional_adapter("bot_core.exchanges.kucoin.spot", "KuCoinSpotAdapter")
 KrakenFuturesAdapter = _optional_adapter(
     "bot_core.exchanges.kraken.futures", "KrakenFuturesAdapter"
 )
-KrakenMarginAdapter = _optional_adapter(
-    "bot_core.exchanges.kraken.margin", "KrakenMarginAdapter"
-)
-KrakenSpotAdapter = _optional_adapter(
-    "bot_core.exchanges.kraken.spot", "KrakenSpotAdapter"
-)
+KrakenMarginAdapter = _optional_adapter("bot_core.exchanges.kraken.margin", "KrakenMarginAdapter")
+KrakenSpotAdapter = _optional_adapter("bot_core.exchanges.kraken.spot", "KrakenSpotAdapter")
 NowaGieldaSpotAdapter = _optional_adapter(
     "bot_core.exchanges.nowa_gielda.spot", "NowaGieldaSpotAdapter"
 )
@@ -209,12 +179,12 @@ ZondaSpotAdapter = _optional_adapter("bot_core.exchanges.zonda.spot", "ZondaSpot
 __all__ = [
     "AccountSnapshot",
     "Environment",
-    "ExchangeAdapter", 
-    "ExchangeBackend", 
-    "ExchangeAdapterConfig", 
-    "build_exchange_adapter", 
-    "ExchangeIOLayer", 
-    "ExchangeCredentials", 
+    "ExchangeAdapter",
+    "ExchangeBackend",
+    "ExchangeAdapterConfig",
+    "build_exchange_adapter",
+    "ExchangeIOLayer",
+    "ExchangeCredentials",
     "OrderRequest",
     "OrderResult",
     "ExchangeError",

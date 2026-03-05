@@ -96,9 +96,7 @@ def test_report_writer_builds_csv_pdf_and_json(sample_report: TCOReport) -> None
     assert json_payload == sample_report.to_dict()
 
 
-def test_report_writer_writes_and_signs_artifacts(
-    tmp_path: Path, sample_report: TCOReport
-) -> None:
+def test_report_writer_writes_and_signs_artifacts(tmp_path: Path, sample_report: TCOReport) -> None:
     writer = TCOReportWriter(sample_report)
 
     artifacts = writer.write_outputs(tmp_path, basename="custom_report")

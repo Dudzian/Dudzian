@@ -24,8 +24,16 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 require_pyside6()
 
 import PySide6
-from PySide6.QtCore import (QAbstractListModel, QModelIndex, QObject, Property,
-                            Qt, QUrl, Slot, QMetaObject)
+from PySide6.QtCore import (
+    QAbstractListModel,
+    QModelIndex,
+    QObject,
+    Property,
+    Qt,
+    QUrl,
+    Slot,
+    QMetaObject,
+)
 from PySide6.QtQml import QQmlApplicationEngine, QQmlComponent
 
 try:  # pragma: no cover - zależy od środowiska CI
@@ -126,8 +134,18 @@ def test_portfolio_dashboard_builds_exposures_and_history(tmp_path: Path) -> Non
     )
     risk_model = StubRiskModel(
         [
-            {"code": "exchange:BINANCE", "currentValue": 12000.0, "maxValue": 25000.0, "thresholdValue": 18000.0},
-            {"code": "strategy:theta_income_balanced", "currentValue": 8000.0, "maxValue": 15000.0, "thresholdValue": 0.0},
+            {
+                "code": "exchange:BINANCE",
+                "currentValue": 12000.0,
+                "maxValue": 25000.0,
+                "thresholdValue": 18000.0,
+            },
+            {
+                "code": "strategy:theta_income_balanced",
+                "currentValue": 8000.0,
+                "maxValue": 15000.0,
+                "thresholdValue": 0.0,
+            },
         ]
     )
     alerts_model = StubAlertsModel(
@@ -148,7 +166,9 @@ def test_portfolio_dashboard_builds_exposures_and_history(tmp_path: Path) -> Non
     context.setContextProperty("alertsModel", alerts_model)
     context.setContextProperty("uiTestMode", True)
 
-    view_path = Path(__file__).resolve().parents[2] / "ui" / "qml" / "views" / "PortfolioDashboard.qml"
+    view_path = (
+        Path(__file__).resolve().parents[2] / "ui" / "qml" / "views" / "PortfolioDashboard.qml"
+    )
     qml_warnings = []
 
     def collect_warnings(warnings: list[object]) -> None:
@@ -161,13 +181,10 @@ def test_portfolio_dashboard_builds_exposures_and_history(tmp_path: Path) -> Non
             if not threads:
                 return
             if time.monotonic() >= deadline:
-                thread_details = [
-                    f"{t.name} (ident={t.ident}, daemon={t.daemon})" for t in threads
-                ]
+                thread_details = [f"{t.name} (ident={t.ident}, daemon={t.daemon})" for t in threads]
                 logger.error("Lingering aiosqlite threads: %s", "; ".join(thread_details))
                 pytest.fail(
-                    "Pozostały aktywne wątki aiosqlite po sprzątaniu: "
-                    + "; ".join(thread_details)
+                    "Pozostały aktywne wątki aiosqlite po sprzątaniu: " + "; ".join(thread_details)
                 )
             time.sleep(poll_interval)
 
@@ -192,7 +209,9 @@ def test_portfolio_dashboard_builds_exposures_and_history(tmp_path: Path) -> Non
             if engine_warnings:
                 warning_lines.extend(f"- {warning}" for warning in engine_warnings)
             warnings_message = (
-                "\n".join(warning_lines) if warning_lines else "Brak zarejestrowanych ostrzeżeń QML."
+                "\n".join(warning_lines)
+                if warning_lines
+                else "Brak zarejestrowanych ostrzeżeń QML."
             )
 
             if sys.platform == "win32":
@@ -232,9 +251,13 @@ def test_portfolio_dashboard_builds_exposures_and_history(tmp_path: Path) -> Non
                                     component_errors = []
                     except Exception:
                         component_errors = []
-                    component_error_details = "\n".join(
-                        getattr(error, "toString", lambda: str(error))() for error in component_errors
-                    ) or "(none)"
+                    component_error_details = (
+                        "\n".join(
+                            getattr(error, "toString", lambda: str(error))()
+                            for error in component_errors
+                        )
+                        or "(none)"
+                    )
                     error_string_method = getattr(component, "errorString", None)
                     if callable(error_string_method):
                         try:

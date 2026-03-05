@@ -154,4 +154,3 @@ class PresetPreferenceStore:
 
 
 __all__ = ["PresetPreferenceStore"]
-

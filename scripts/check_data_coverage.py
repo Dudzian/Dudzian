@@ -1,4 +1,5 @@
 """CLI do weryfikacji pokrycia danych OHLCV względem wymagań backfillu."""
+
 from __future__ import annotations
 
 import argparse
@@ -88,7 +89,9 @@ def _parse_as_of(arg: str | None) -> datetime:
     return dt.astimezone(timezone.utc)
 
 
-def _resolve_thresholds(config: CoreConfig, environment: EnvironmentConfig) -> tuple[float | None, float | None]:
+def _resolve_thresholds(
+    config: CoreConfig, environment: EnvironmentConfig
+) -> tuple[float | None, float | None]:
     max_gap_minutes: float | None = None
     min_ok_ratio: float | None = None
 
@@ -99,11 +102,16 @@ def _resolve_thresholds(config: CoreConfig, environment: EnvironmentConfig) -> t
         if getattr(data_quality, "min_ok_ratio", None) is not None:
             min_ok_ratio = float(data_quality.min_ok_ratio)  # type: ignore[arg-type]
 
-    if (max_gap_minutes is None or min_ok_ratio is None) and getattr(environment, "risk_profile", None):
+    if (max_gap_minutes is None or min_ok_ratio is None) and getattr(
+        environment, "risk_profile", None
+    ):
         profile = config.risk_profiles.get(environment.risk_profile)
         if profile and profile.data_quality:
             profile_quality = profile.data_quality
-            if max_gap_minutes is None and getattr(profile_quality, "max_gap_minutes", None) is not None:
+            if (
+                max_gap_minutes is None
+                and getattr(profile_quality, "max_gap_minutes", None) is not None
+            ):
                 max_gap_minutes = float(profile_quality.max_gap_minutes)  # type: ignore[arg-type]
             if min_ok_ratio is None and getattr(profile_quality, "min_ok_ratio", None) is not None:
                 min_ok_ratio = float(profile_quality.min_ok_ratio)  # type: ignore[arg-type]
@@ -128,7 +136,9 @@ def _filter_statuses_by_symbols(
         if symbol:
             alias_map[instrument.name.upper()] = symbol
 
-    available_symbols: dict[str, str] = {status.symbol.upper(): status.symbol for status in statuses}
+    available_symbols: dict[str, str] = {
+        status.symbol.upper(): status.symbol for status in statuses
+    }
 
     resolved: set[str] = set()
     unknown: list[str] = []

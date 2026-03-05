@@ -11,8 +11,8 @@ from bot_core.events import EventBus, EmitterAdapter, Event, EventType
 @dataclass
 class ATRMonitorConfig:
     atr_period: int = 14
-    growth_threshold_pct: float = 40.0   # % wzrostu ATR vs baseline
-    min_bars_after_baseline: int = 50    # minimum barów po resecie baseline ATR
+    growth_threshold_pct: float = 40.0  # % wzrostu ATR vs baseline
+    min_bars_after_baseline: int = 50  # minimum barów po resecie baseline ATR
     symbol: str = "BTCUSDT"
 
 
@@ -23,6 +23,7 @@ class ATRMonitor:
     - Gdy ATR rośnie > threshold, publikuje RISK_ALERT (kind='atr_spike').
     - Przechowuje bufor barów do odczytu przez WFO (data_provider).
     """
+
     def __init__(self, adapter: EmitterAdapter, cfg: Optional[ATRMonitorConfig] = None) -> None:
         self.adapter = adapter
         self.bus: EventBus = adapter.bus
@@ -61,7 +62,9 @@ class ATRMonitor:
                 if cur_atr and cur_atr == cur_atr:
                     self._baseline_atr = cur_atr
                     self._bars_since_baseline = 0
-                    self.adapter.push_log(f"ATR baseline reset to {cur_atr:.6f} (WFO {st}).", level="INFO")
+                    self.adapter.push_log(
+                        f"ATR baseline reset to {cur_atr:.6f} (WFO {st}).", level="INFO"
+                    )
 
     def _on_ticks_batch(self, events: List[Event]) -> None:
         for ev in events:

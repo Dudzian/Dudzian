@@ -31,7 +31,9 @@ def test_paper_broker_executes_and_tracks_state(paper_broker: PaperBroker) -> No
     assert pnls, "Powinien zostać opublikowany przynajmniej jeden update PnL"
 
 
-def _capture_payloads(event: Event | Iterable[Event] | None, container: List[Dict[str, Any]]) -> None:
+def _capture_payloads(
+    event: Event | Iterable[Event] | None, container: List[Dict[str, Any]]
+) -> None:
     if event is None:
         return
     events: Iterable[Event]

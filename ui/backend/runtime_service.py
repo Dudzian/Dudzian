@@ -1,4 +1,5 @@
 """Serwis runtime dostarczający dane dziennika decyzji do QML."""
+
 from __future__ import annotations
 
 
@@ -51,7 +52,11 @@ from bot_core.runtime.cloud_client import (
 from bot_core.runtime.journal import TradingDecisionJournal
 from .ai_governor_demo import build_demo_ai_governor_snapshot
 from .demo_data import load_demo_decisions
-from .decision_payload_normalizer import DecisionRecord, RuntimeDecisionEntry, parse_runtime_decision_entry
+from .decision_payload_normalizer import (
+    DecisionRecord,
+    RuntimeDecisionEntry,
+    parse_runtime_decision_entry,
+)
 from .qml_bridge import to_plain_dict, to_plain_list, to_plain_text, to_plain_value
 
 try:  # pragma: no cover - moduł może nie być dostępny w wersjach light
@@ -78,6 +83,7 @@ except Exception:  # pragma: no cover - fallback gdy brak infrastruktury alertó
     def get_feed_health_alert_sink(*_args: object, **_kwargs: object) -> None:
         return None
 
+
 if TYPE_CHECKING:  # pragma: no cover - adnotacje tylko w czasie statycznym
     from bot_core.config.models import RuntimeAppConfig
 
@@ -92,6 +98,7 @@ def _require_yaml() -> None:
             "Do obsługi konfiguracji YAML w warstwie UI wymagany jest pakiet PyYAML;"
             " zainstaluj go poleceniem `pip install pyyaml`."
         )
+
 
 try:  # pragma: no cover - gRPC może nie być dostępne w trybach light
     import grpc
@@ -121,8 +128,6 @@ def _load_from_journal(journal: TradingDecisionJournal, limit: int) -> Iterable[
     if limit > 0:
         exported = exported[-limit:]
     return reversed(exported)
-
-
 
 
 def _parse_entry(record: DecisionRecord) -> RuntimeDecisionEntry:
@@ -277,7 +282,7 @@ def _contains_keyword_token(value: str, keywords: set[str]) -> bool:
 
 
 def _build_risk_context(
-    entries: Iterable[Mapping[str, object]]
+    entries: Iterable[Mapping[str, object]],
 ) -> tuple[dict[str, object], list[dict[str, object]], dict[str, object]]:
     block_keywords = {"block", "blocked", "risk_block", "reject", "rejected"}
     freeze_keywords = {"freeze", "frozen", "lock"}
@@ -329,9 +334,13 @@ def _build_risk_context(
             or decision.get("stress_failures")
         )
 
-        stress_overrides_payload = metadata.get("stressOverrides") or metadata.get("stress_overrides")
+        stress_overrides_payload = metadata.get("stressOverrides") or metadata.get(
+            "stress_overrides"
+        )
         if not stress_overrides_payload:
-            stress_overrides_payload = decision.get("stressOverrides") or decision.get("stress_overrides")
+            stress_overrides_payload = decision.get("stressOverrides") or decision.get(
+                "stress_overrides"
+            )
         stress_overrides = _normalize_sequence(stress_overrides_payload)
 
         missing_fields: list[str] = []
@@ -340,7 +349,11 @@ def _build_risk_context(
         if not risk_flags and not stress_overrides:
             missing_fields.append("risk_flags|stress_overrides")
 
-        is_block = any(keyword in risk_action.lower() for keyword in block_keywords) if risk_action else False
+        is_block = (
+            any(keyword in risk_action.lower() for keyword in block_keywords)
+            if risk_action
+            else False
+        )
         if not is_block and status:
             is_block = any(keyword in status.lower() for keyword in block_keywords)
 
@@ -445,9 +458,9 @@ def _build_risk_context(
                         "strategy": strategy,
                     }
                 if summary_bucket is not None:
-                    summary_bucket["stressOverrideCount"] = int(
-                        summary_bucket.get("stressOverrideCount", 0)
-                    ) + 1
+                    summary_bucket["stressOverrideCount"] = (
+                        int(summary_bucket.get("stressOverrideCount", 0)) + 1
+                    )
 
             if summary_bucket is not None:
                 if risk_action:
@@ -643,8 +656,7 @@ def _normalize_ai_snapshot(snapshot: Mapping[str, object] | None) -> dict[str, o
         if cycle_latency:
             telemetry["cycleLatency"] = cycle_latency
         mode_transitions = _normalize_mode_transitions(
-            telemetry_payload.get("modeTransitions")
-            or telemetry_payload.get("mode_transitions")
+            telemetry_payload.get("modeTransitions") or telemetry_payload.get("mode_transitions")
         )
         if mode_transitions:
             telemetry["modeTransitions"] = mode_transitions
@@ -774,9 +786,7 @@ def _normalize_guardrail_snapshot(payload: Mapping[str, object] | None) -> dict[
     if not isinstance(payload, Mapping):
         return {}
     active = bool(_normalize_bool(payload.get("active")))
-    kill_switch = bool(
-        _normalize_bool(payload.get("killSwitch") or payload.get("kill_switch"))
-    )
+    kill_switch = bool(_normalize_bool(payload.get("killSwitch") or payload.get("kill_switch")))
     snapshot: dict[str, object] = {
         "active": active,
         "killSwitch": kill_switch,
@@ -811,10 +821,7 @@ def _normalize_ai_governor_record(payload: Mapping[str, object] | None) -> dict[
     mode = str(record.get("mode") or record.get("Mode") or "").strip()
     reason = str(record.get("reason") or record.get("Reason") or "").strip()
     timestamp = str(
-        record.get("timestamp")
-        or record.get("generated_at")
-        or record.get("ts")
-        or ""
+        record.get("timestamp") or record.get("generated_at") or record.get("ts") or ""
     ).strip()
     if not mode and not reason:
         return None
@@ -823,10 +830,7 @@ def _normalize_ai_governor_record(payload: Mapping[str, object] | None) -> dict[
     regime_value = record.get("regime") or record.get("Regime") or ""
     if isinstance(regime_value, Mapping):
         regime = str(
-            regime_value.get("label")
-            or regime_value.get("value")
-            or regime_value.get("name")
-            or ""
+            regime_value.get("label") or regime_value.get("value") or regime_value.get("name") or ""
         ).strip()
     else:
         regime = str(regime_value).strip()
@@ -837,9 +841,7 @@ def _normalize_ai_governor_record(payload: Mapping[str, object] | None) -> dict[
         or record.get("cost_bps")
     )
     recommended_modes = _coerce_mode_sequence(
-        record.get("recommendedModes")
-        or record.get("recommended_modes")
-        or record.get("modes")
+        record.get("recommendedModes") or record.get("recommended_modes") or record.get("modes")
     )
 
     telemetry_payload = record.get("telemetry")
@@ -872,7 +874,9 @@ def _normalize_ai_governor_record(payload: Mapping[str, object] | None) -> dict[
     decision_should_trade: bool | None = None
     if isinstance(decision_payload, Mapping):
         decision_state_value = decision_payload.get("state") or decision_payload.get("outcome")
-        decision_state = str(decision_state_value).strip() if decision_state_value is not None else ""
+        decision_state = (
+            str(decision_state_value).strip() if decision_state_value is not None else ""
+        )
         decision_signal_label = decision_payload.get("signal") or decision_payload.get("label")
         decision_should_trade = _normalize_bool(
             decision_payload.get("shouldTrade") or decision_payload.get("should_trade")
@@ -1000,11 +1004,15 @@ class RuntimeService(QObject):
         self._active_profile: str | None = None
         self._active_log_path: Path | None = None
         self._active_stream_label: str | None = None
-        self._runtime_config_path = Path(runtime_config_path).expanduser() if runtime_config_path else None
+        self._runtime_config_path = (
+            Path(runtime_config_path).expanduser() if runtime_config_path else None
+        )
         self._runtime_config_cache: "RuntimeAppConfig | None" = None
         self._cloud_runtime_enabled = bool(cloud_runtime_enabled)
         cloud_config_env = os.environ.get("BOT_CORE_UI_CLOUD_CLIENT_CONFIG")
-        config_candidate = cloud_client_config_path or cloud_config_env or "config/cloud/client.yaml"
+        config_candidate = (
+            cloud_client_config_path or cloud_config_env or "config/cloud/client.yaml"
+        )
         self._cloud_client_config_path = Path(config_candidate).expanduser()
         self._cloud_client_options: CloudClientOptions | None = None
         self._cloud_client_mtime: float | None = None
@@ -1055,14 +1063,22 @@ class RuntimeService(QObject):
         self._grpc_limit = self._default_limit
         self._grpc_retry_attempts = 0
         self._grpc_retry_limit = max(0, int(os.environ.get("BOT_CORE_UI_GRPC_RETRY_LIMIT", "3")))
-        self._grpc_retry_base = max(0.1, float(os.environ.get("BOT_CORE_UI_GRPC_RETRY_BASE_SECONDS", "1.0")))
-        self._grpc_retry_multiplier = max(1.0, float(os.environ.get("BOT_CORE_UI_GRPC_RETRY_MULTIPLIER", "2.0")))
+        self._grpc_retry_base = max(
+            0.1, float(os.environ.get("BOT_CORE_UI_GRPC_RETRY_BASE_SECONDS", "1.0"))
+        )
+        self._grpc_retry_multiplier = max(
+            1.0, float(os.environ.get("BOT_CORE_UI_GRPC_RETRY_MULTIPLIER", "2.0"))
+        )
         self._grpc_retry_max = max(
             self._grpc_retry_base,
             float(os.environ.get("BOT_CORE_UI_GRPC_RETRY_MAX_SECONDS", "15.0")),
         )
-        self._grpc_ready_timeout = max(1.0, float(os.environ.get("BOT_CORE_UI_GRPC_READY_TIMEOUT", "5.0")))
-        self._grpc_idle_timeout = max(1.0, float(os.environ.get("BOT_CORE_UI_GRPC_IDLE_TIMEOUT", "3.0")))
+        self._grpc_ready_timeout = max(
+            1.0, float(os.environ.get("BOT_CORE_UI_GRPC_READY_TIMEOUT", "5.0"))
+        )
+        self._grpc_idle_timeout = max(
+            1.0, float(os.environ.get("BOT_CORE_UI_GRPC_IDLE_TIMEOUT", "3.0"))
+        )
         self._grpc_reconnect_timer: QTimer | None = None
         self._active_grpc_metadata: list[tuple[str, str]] = list(self._grpc_metadata)
         self._grpc_ssl_credentials = None
@@ -1080,7 +1096,9 @@ class RuntimeService(QObject):
         self._ai_feed_last_update = 0.0
         ai_history_limit_env = os.environ.get("BOT_CORE_UI_AI_HISTORY_LIMIT")
         try:
-            configured_limit = int(ai_history_limit_env) if ai_history_limit_env else _AI_HISTORY_LIMIT
+            configured_limit = (
+                int(ai_history_limit_env) if ai_history_limit_env else _AI_HISTORY_LIMIT
+            )
         except (TypeError, ValueError):
             configured_limit = _AI_HISTORY_LIMIT
         self._ai_history_limit = max(_AI_HISTORY_LIMIT, configured_limit)
@@ -1129,7 +1147,9 @@ class RuntimeService(QObject):
             "downtimeMs": 0.0,
             "lastError": "",
             "channels": list(self._feed_channels),
-            "channelStates": {channel: dict(state) for channel, state in self._feed_channel_status.items()},
+            "channelStates": {
+                channel: dict(state) for channel, state in self._feed_channel_status.items()
+            },
             "transports": {key: dict(value) for key, value in self._feed_transport_stats.items()},
         }
         self._feed_sla_report: dict[str, object] = {}
@@ -1142,7 +1162,9 @@ class RuntimeService(QObject):
             "reconnects": 0,
             "lastError": "",
             "channels": list(self._feed_channels),
-            "channelStates": {channel: dict(state) for channel, state in self._feed_channel_status.items()},
+            "channelStates": {
+                channel: dict(state) for channel, state in self._feed_channel_status.items()
+            },
         }
         resolved_feed_metrics = feed_metrics_exporter or get_feed_health_metrics_exporter()
         self._feed_metrics_exporter: FeedHealthMetricsExporter = resolved_feed_metrics
@@ -1185,7 +1207,9 @@ class RuntimeService(QObject):
             try:
                 self._refresh_cloud_handshake(force=False)
             except Exception:  # pragma: no cover - diagnostyka
-                _LOGGER.debug("Nie udało się przeprowadzić początkowego handshake'u cloud", exc_info=True)
+                _LOGGER.debug(
+                    "Nie udało się przeprowadzić początkowego handshake'u cloud", exc_info=True
+                )
         self._auto_connect_grpc()
         self._refresh_long_poll_metrics()
 
@@ -1296,7 +1320,9 @@ class RuntimeService(QObject):
         return self.strategyConfigs
 
     @Slot(str, "QVariantMap", result="QVariantMap")
-    def saveStrategyConfig(self, strategy_id: str, payload: Mapping[str, object]) -> dict[str, object]:
+    def saveStrategyConfig(
+        self, strategy_id: str, payload: Mapping[str, object]
+    ) -> dict[str, object]:
         payload = to_plain_dict(payload)
         result = self._sanitize_strategy_config(strategy_id, payload)
         if not result["success"]:
@@ -1316,7 +1342,9 @@ class RuntimeService(QObject):
         self._strategy_configs = updated
         self._persist_strategy_configs()
         self.strategyConfigsChanged.emit()
-        message = "Zaktualizowano strategię" if strategy_id in existing_ids else "Dodano nową strategię"
+        message = (
+            "Zaktualizowano strategię" if strategy_id in existing_ids else "Dodano nową strategię"
+        )
         return {"success": True, "message": message, "strategy": deepcopy(sanitized)}
 
     @Slot(result="QVariantMap")
@@ -1331,7 +1359,11 @@ class RuntimeService(QObject):
         self._risk_controls = sanitized
         self._persist_risk_controls()
         self.riskControlsChanged.emit()
-        return {"success": True, "message": "Zapisano limity ryzyka", "riskControls": deepcopy(sanitized)}
+        return {
+            "success": True,
+            "message": "Zapisano limity ryzyka",
+            "riskControls": deepcopy(sanitized),
+        }
 
     def _update_feed_health(
         self,
@@ -1418,11 +1450,15 @@ class RuntimeService(QObject):
             "retryAttempts": self._grpc_retry_attempts,
             "queueDepth": self._grpc_queue.qsize() if self._grpc_queue is not None else 0,
             "channels": list(self._feed_channels),
-            "channelStates": {channel: dict(state) for channel, state in self._feed_channel_status.items()},
+            "channelStates": {
+                channel: dict(state) for channel, state in self._feed_channel_status.items()
+            },
             "transports": self._serialize_transport_stats(),
         }
         if self._grpc_stream_active:
-            snapshot["secondsSinceLastMessage"] = max(0.0, time.monotonic() - self._last_grpc_update)
+            snapshot["secondsSinceLastMessage"] = max(
+                0.0, time.monotonic() - self._last_grpc_update
+            )
         else:
             snapshot["secondsSinceLastMessage"] = None
         if self._cloud_runtime_enabled:
@@ -1760,11 +1796,15 @@ class RuntimeService(QObject):
         elif severity == "warning" and warning is not None:
             threshold_value = warning
         elif previous in {"critical", "warning"}:
-            threshold_value = critical if previous == "critical" and critical is not None else warning
+            threshold_value = (
+                critical if previous == "critical" and critical is not None else warning
+            )
 
         body_parts: list[str] = []
         metric_value_text = self._format_feed_metric(value, unit)
-        threshold_text = self._format_feed_metric(threshold_value, unit) if threshold_value is not None else None
+        threshold_text = (
+            self._format_feed_metric(threshold_value, unit) if threshold_value is not None else None
+        )
         if severity == "ok":
             title = f"{metric_label} w normie"
             body_parts.append(f"{metric_label} powróciła do normy ({metric_value_text}).")
@@ -1874,9 +1914,7 @@ class RuntimeService(QObject):
         incomplete_samples_count = int(
             normalized_diagnostics.get("incompleteSamplesCount", len(samples)) or 0
         )
-        risk_flag_counts = _to_mapping(
-            normalized_diagnostics.get("riskFlagCounts", {})
-        )
+        risk_flag_counts = _to_mapping(normalized_diagnostics.get("riskFlagCounts", {}))
         severity = "warning" if incomplete_entries else "ok"
         previous = self._risk_journal_alert_state
         if severity == previous:
@@ -2083,7 +2121,9 @@ class RuntimeService(QObject):
     def _refresh_alert_channels(self, router: object | None) -> None:
         channels: list[dict[str, object]] = []
         try:
-            health_snapshot = router.health_snapshot() if router and hasattr(router, "health_snapshot") else {}
+            health_snapshot = (
+                router.health_snapshot() if router and hasattr(router, "health_snapshot") else {}
+            )
         except Exception:
             health_snapshot = {}
         if isinstance(health_snapshot, Mapping):
@@ -2110,7 +2150,9 @@ class RuntimeService(QObject):
         self._grpc_retry_attempts = 0
         self._cancel_grpc_reconnect()
         self._set_channel_status("decision_journal", "connected", last_error="")
-        self._update_feed_health(status="connected", reconnects=self._feed_reconnects, last_error="")
+        self._update_feed_health(
+            status="connected", reconnects=self._feed_reconnects, last_error=""
+        )
 
     # ------------------------------------------------------------------
     def _refresh_long_poll_metrics(self) -> None:
@@ -2174,10 +2216,14 @@ class RuntimeService(QObject):
         telemetry = dict(self._ai_governor_snapshot.get("telemetry", {}))
         updated = False
         if cycle_metrics:
-            telemetry["cycleMetrics"] = {str(key): float(value) for key, value in cycle_metrics.items()}
+            telemetry["cycleMetrics"] = {
+                str(key): float(value) for key, value in cycle_metrics.items()
+            }
             updated = True
         if risk_metrics:
-            telemetry["riskMetrics"] = {str(key): float(value) for key, value in risk_metrics.items()}
+            telemetry["riskMetrics"] = {
+                str(key): float(value) for key, value in risk_metrics.items()
+            }
             updated = True
         if extra:
             telemetry.update(_clone_variant(extra))
@@ -2229,9 +2275,7 @@ class RuntimeService(QObject):
                 "status": entry.get("status"),
                 "activation": activation_block,
             }
-            guardrail_block = self._coerce_metadata_mapping(
-                metadata.get("guardrail_transition")
-            )
+            guardrail_block = self._coerce_metadata_mapping(metadata.get("guardrail_transition"))
             if guardrail_block:
                 record["guardrails"] = guardrail_block
                 guardrail_trace.append(guardrail_block)
@@ -2370,9 +2414,7 @@ class RuntimeService(QObject):
         return self._record_operator_action(action, entry)
 
     # ------------------------------------------------------------------
-    def _build_live_loader(
-        self, profile: str | None
-    ) -> tuple[DecisionLoader, Path]:
+    def _build_live_loader(self, profile: str | None) -> tuple[DecisionLoader, Path]:
         core_config = self._load_core_config()
         configured_path, _kwargs = resolve_decision_log_config(core_config)
         if configured_path is None:
@@ -2413,7 +2455,9 @@ class RuntimeService(QObject):
                             data = json.loads(payload)
                         except json.JSONDecodeError:
                             _LOGGER.warning(
-                                "Pominięto uszkodzony wpis decision logu %s", log_path, exc_info=True
+                                "Pominięto uszkodzony wpis decision logu %s",
+                                log_path,
+                                exc_info=True,
                             )
                             continue
                         if isinstance(data, Mapping):
@@ -2770,7 +2814,10 @@ class RuntimeService(QObject):
         def _track_dropped_requeue_event() -> None:
             nonlocal dropped_requeue_events
             dropped_requeue_events += 1
-            if dropped_requeue_events == 1 or dropped_requeue_events % dropped_requeue_log_every == 0:
+            if (
+                dropped_requeue_events == 1
+                or dropped_requeue_events % dropped_requeue_log_every == 0
+            ):
                 _LOGGER.debug(
                     "Utracono %s zdarzeń sterujących gRPC podczas ponownego kolejkowania.",
                     dropped_requeue_events,
@@ -3045,7 +3092,9 @@ class RuntimeService(QObject):
                 options = []
                 if self._grpc_authority_override:
                     options.append(("grpc.ssl_target_name_override", self._grpc_authority_override))
-                channel = grpc.secure_channel(target, self._grpc_ssl_credentials, options=options or None)
+                channel = grpc.secure_channel(
+                    target, self._grpc_ssl_credentials, options=options or None
+                )
             else:
                 channel = grpc.insecure_channel(target)
             ready_future = grpc.channel_ready_future(channel)
@@ -3262,7 +3311,10 @@ class RuntimeService(QObject):
                 )
                 self._error_message = message
                 self.errorMessageChanged.emit()
-                if self._grpc_retry_limit == 0 or self._grpc_retry_attempts > self._grpc_retry_limit:
+                if (
+                    self._grpc_retry_limit == 0
+                    or self._grpc_retry_attempts > self._grpc_retry_limit
+                ):
                     fallback_reason = message
                 queue_obj.task_done()
                 continue
@@ -3279,7 +3331,10 @@ class RuntimeService(QObject):
                     status="retrying",
                     last_error=message,
                 )
-                if self._grpc_retry_limit == 0 or self._grpc_retry_attempts > self._grpc_retry_limit:
+                if (
+                    self._grpc_retry_limit == 0
+                    or self._grpc_retry_attempts > self._grpc_retry_limit
+                ):
                     fallback_reason = message
                 queue_obj.task_done()
                 continue
@@ -3387,7 +3442,9 @@ class RuntimeService(QObject):
                 return
             if parsed.tzinfo is None:
                 parsed = parsed.replace(tzinfo=timezone.utc)
-            latency_ms = (datetime.now(timezone.utc) - parsed.astimezone(timezone.utc)).total_seconds() * 1000.0
+            latency_ms = (
+                datetime.now(timezone.utc) - parsed.astimezone(timezone.utc)
+            ).total_seconds() * 1000.0
             if latency_ms < 0:
                 latency_ms = 0.0
             latency_value = float(latency_ms)
@@ -3399,7 +3456,9 @@ class RuntimeService(QObject):
         self._grpc_idle_flag = False
         self._latency_samples_for("grpc").append(latency_value)
         self._mark_feed_connected()
-        self._update_feed_health(latest_latency=latency_value, reconnects=self._feed_reconnects, last_error="")
+        self._update_feed_health(
+            latest_latency=latency_value, reconnects=self._feed_reconnects, last_error=""
+        )
 
     def _write_feed_metrics(self, *, force: bool = False) -> None:
         source_key = "grpc"
@@ -3500,7 +3559,12 @@ class RuntimeService(QObject):
         reconnects_value = self._feed_reconnects
         status_changed = status_value != self._metrics_last_status
         reconnects_changed = reconnects_value != self._metrics_last_reconnects
-        if not force and not status_changed and not reconnects_changed and now < self._metrics_next_write:
+        if (
+            not force
+            and not status_changed
+            and not reconnects_changed
+            and now < self._metrics_next_write
+        ):
             return
         try:
             self._feed_metrics_path.parent.mkdir(parents=True, exist_ok=True)
@@ -3703,7 +3767,9 @@ class RuntimeService(QObject):
                         sanitized: list[dict[str, object]] = []
                         for entry in payload:
                             if isinstance(entry, Mapping):
-                                normalized = self._sanitize_strategy_config(entry.get("id", ""), entry)
+                                normalized = self._sanitize_strategy_config(
+                                    entry.get("id", ""), entry
+                                )
                                 if normalized.get("success"):
                                     sanitized.append(normalized["strategy"])
                         if sanitized:
@@ -3753,10 +3819,16 @@ class RuntimeService(QObject):
             },
         ]
 
-    def _sanitize_strategy_config(self, strategy_id: str, payload: Mapping[str, object]) -> dict[str, object]:
+    def _sanitize_strategy_config(
+        self, strategy_id: str, payload: Mapping[str, object]
+    ) -> dict[str, object]:
         identifier = str(strategy_id or payload.get("id") or "").strip()
         if not identifier:
-            return {"success": False, "message": "Identyfikator strategii jest wymagany", "strategy": {}}
+            return {
+                "success": False,
+                "message": "Identyfikator strategii jest wymagany",
+                "strategy": {},
+            }
         name = str(payload.get("name") or identifier).strip()
         mode = str(payload.get("mode") or "custom").strip()
         profile = str(payload.get("profile") or "balanced").strip()
@@ -3769,7 +3841,13 @@ class RuntimeService(QObject):
                     params[key_str] = float(value)
                 else:
                     params[key_str] = value
-        strategy = {"id": identifier, "name": name, "mode": mode, "profile": profile, "params": params}
+        strategy = {
+            "id": identifier,
+            "name": name,
+            "mode": mode,
+            "profile": profile,
+            "params": params,
+        }
         return {"success": True, "strategy": strategy}
 
     def _load_risk_controls(self) -> dict[str, object]:
@@ -4152,7 +4230,9 @@ class RuntimeService(QObject):
         schedule: str | None = None
         retrain_cfg = getattr(runtime_config.ai, "retrain", None)
         if retrain_cfg and getattr(retrain_cfg, "enabled", False):
-            schedule = getattr(retrain_cfg, "schedule", None) or getattr(runtime_config.ai, "retrain_schedule", None)
+            schedule = getattr(retrain_cfg, "schedule", None) or getattr(
+                runtime_config.ai, "retrain_schedule", None
+            )
         else:
             schedule = getattr(runtime_config.ai, "retrain_schedule", None)
         if not schedule:

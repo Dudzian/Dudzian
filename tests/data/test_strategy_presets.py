@@ -6,22 +6,22 @@ def test_preset_wizard_handles_intraday_engines() -> None:
     preset = wizard.build_preset(
         "intraday-bundle",
         [
-                {
-                    "engine": "scalping",
-                    "name": "scalping-alpha",
-                    "risk_classes": ["custom"],
-                    "required_data": ["latency_feed"],
-                    "tags": ["custom"],
-                    "parameters": {"min_price_change": 0.0006},
-                },
-                {
-                    "engine": "day_trading",
-                    "name": "day-momentum",
-                    "risk_classes": ["momentum"],
-                    "required_data": ["ohlcv"],
-                    "tags": ["session_open"],
-                    "parameters": {"momentum_window": 3},
-                },
+            {
+                "engine": "scalping",
+                "name": "scalping-alpha",
+                "risk_classes": ["custom"],
+                "required_data": ["latency_feed"],
+                "tags": ["custom"],
+                "parameters": {"min_price_change": 0.0006},
+            },
+            {
+                "engine": "day_trading",
+                "name": "day-momentum",
+                "risk_classes": ["momentum"],
+                "required_data": ["ohlcv"],
+                "tags": ["session_open"],
+                "parameters": {"momentum_window": 3},
+            },
         ],
     )
 
@@ -41,4 +41,3 @@ def test_preset_wizard_handles_intraday_engines() -> None:
     assert day_entry["risk_classes"] == ["intraday", "momentum"]
     assert day_entry["metadata"]["risk_classes"] == ("intraday", "momentum")
     assert day_entry["metadata"]["tags"] == ("intraday", "momentum", "session_open")
-

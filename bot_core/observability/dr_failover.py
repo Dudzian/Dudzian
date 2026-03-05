@@ -68,7 +68,9 @@ def _normalize(state: Mapping[str, object] | FailoverState) -> FailoverState:
     )
 
 
-def compare_last_error(before: Mapping[str, object] | FailoverState, after: Mapping[str, object] | FailoverState) -> FailoverComparison:
+def compare_last_error(
+    before: Mapping[str, object] | FailoverState, after: Mapping[str, object] | FailoverState
+) -> FailoverComparison:
     before_state = _normalize(before)
     after_state = _normalize(after)
 
@@ -80,10 +82,7 @@ def compare_last_error(before: Mapping[str, object] | FailoverState, after: Mapp
     )
     regression = bool(
         after_state.last_error
-        and (
-            before_state.last_error is None
-            or after_state.last_error != before_state.last_error
-        )
+        and (before_state.last_error is None or after_state.last_error != before_state.last_error)
     )
     cleared = bool(before_state.last_error and after_state.last_error is None)
     unchanged = before_state.last_error == after_state.last_error

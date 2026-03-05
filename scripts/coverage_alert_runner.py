@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 """Uruchamia kontrolę pokrycia OHLCV i opcjonalnie wysyła alerty."""
+
 from __future__ import annotations
 
 import argparse
@@ -338,7 +339,9 @@ def main(argv: Sequence[str] | None = None) -> int:
                     )
                     return 2
                 target_dispatch = (
-                    monitoring.default_dispatch if target.dispatch is None else bool(target.dispatch)
+                    monitoring.default_dispatch
+                    if target.dispatch is None
+                    else bool(target.dispatch)
                 )
                 run_specs.append(
                     _RunSpec(
@@ -469,7 +472,9 @@ def main(argv: Sequence[str] | None = None) -> int:
                 dispatch_requested=spec.dispatch_requested,
                 dispatched=dispatched,
             )
-            output_path.write_text(json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+            output_path.write_text(
+                json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
+            )
         elif args.output:
             runs_payload = [
                 _serialize_report(
@@ -487,13 +492,21 @@ def main(argv: Sequence[str] | None = None) -> int:
                 if not any(run.get("issues") or run.get("threshold_issues") for run in runs_payload)
                 else "error",
             }
-            output_path.write_text(json.dumps(aggregated, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+            output_path.write_text(
+                json.dumps(aggregated, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
+            )
 
         if len(results) > 1:
-            print(f"Kontrola {len(results)} środowisk — dispatch globalny: {'TAK' if args.dispatch else 'NIE'}")
+            print(
+                f"Kontrola {len(results)} środowisk — dispatch globalny: {'TAK' if args.dispatch else 'NIE'}"
+            )
         for idx, (spec, report, dispatched) in enumerate(results, start=1):
             if len(results) > 1:
-                print("\n=== Środowisko #{idx}: {name} ===".format(idx=idx, name=spec.environment.name))
+                print(
+                    "\n=== Środowisko #{idx}: {name} ===".format(
+                        idx=idx, name=spec.environment.name
+                    )
+                )
             _print_text_report(
                 report,
                 dispatched=dispatched,

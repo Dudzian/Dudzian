@@ -105,4 +105,3 @@ def test_format_summary_table_renders_rows() -> None:
     assert "1700012345000" in table
     assert "2" in table
     assert "1" in table
-

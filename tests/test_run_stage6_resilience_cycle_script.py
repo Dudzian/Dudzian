@@ -33,12 +33,8 @@ def test_run_stage6_resilience_cycle_script(tmp_path: Path) -> None:
     _write_json(plan_path, plan_payload)
 
     policy_payload = {
-        "required_patterns": [
-            {"pattern": "artifacts/*.txt", "description": "snapshots"}
-        ],
-        "metadata": [
-            {"key": "audit_report", "description": "audit metadata"}
-        ],
+        "required_patterns": [{"pattern": "artifacts/*.txt", "description": "snapshots"}],
+        "metadata": [{"key": "audit_report", "description": "audit metadata"}],
     }
     policy_path = tmp_path / "policy.json"
     _write_json(policy_path, policy_payload)

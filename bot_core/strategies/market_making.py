@@ -1,4 +1,5 @@
 """Lekki silnik market-making dla katalogu strategii."""
+
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -97,4 +98,3 @@ class MarketMakingStrategy(StrategyEngine):
 
 
 __all__ = ["MarketMakingSettings", "MarketMakingStrategy"]
-

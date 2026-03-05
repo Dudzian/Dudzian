@@ -1,4 +1,5 @@
 """Konfiguracja wspólna dla testów QML."""
+
 from __future__ import annotations
 
 import io
@@ -17,6 +18,7 @@ import pytest
 
 try:  # pragma: no cover - zależne od środowiska CI
     import PySide6  # type: ignore[import-not-found]  # noqa: F401
+
     _PYSIDE6_AVAILABLE = True
 except Exception:  # pragma: no cover - zależne od środowiska CI
     _PYSIDE6_AVAILABLE = False
@@ -26,9 +28,7 @@ logger = logging.getLogger(__name__)
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 if "QML_IMPORT_TRACE" not in os.environ:
-    if os.getenv("QML_DIAGNOSTICS_DIR") or (
-        os.getenv("CI") and os.getenv("QML_TRACE") == "1"
-    ):
+    if os.getenv("QML_DIAGNOSTICS_DIR") or (os.getenv("CI") and os.getenv("QML_TRACE") == "1"):
         os.environ["QML_IMPORT_TRACE"] = "1"
 if sys.platform == "win32":
     os.environ.setdefault("QT_QUICK_BACKEND", "software")
@@ -53,7 +53,9 @@ def _flush_qt_deferred_deletes_best_effort() -> None:
     default_flush = "0" if os.getenv("CI") else "1"
     flush_enabled = os.getenv("DUDZIAN_QML_FLUSH_DELETES", default_flush).strip().lower()
     if flush_enabled not in {"1", "true", "yes", "on"}:
-        logger.debug("Skipping Qt deferred-delete flush: DUDZIAN_QML_FLUSH_DELETES=%s", flush_enabled)
+        logger.debug(
+            "Skipping Qt deferred-delete flush: DUDZIAN_QML_FLUSH_DELETES=%s", flush_enabled
+        )
         gc.collect()
         return
     if threading.current_thread() is not threading.main_thread():
@@ -121,8 +123,6 @@ def _flush_qt_deferred_deletes_best_effort() -> None:
     gc.collect()
 
 
-
-
 def pytest_ignore_collect(collection_path: Path, config: pytest.Config) -> bool:
     """Pomiń import modułów z tests/ui przy braku PySide6 (unikamy collection errors)."""
 
@@ -145,7 +145,6 @@ def pytest_collection_modifyitems(config: pytest.Config, items: list[pytest.Item
     skip_qml = pytest.mark.skip(reason="UI/QML tests require PySide6")
     for item in items:
         item.add_marker(skip_qml)
-
 
 
 @pytest.fixture(scope="session")
@@ -184,7 +183,9 @@ def qml_diagnostics_root(pytestconfig: pytest.Config) -> Path:
                     try:
                         path_value = QLibraryInfo.path(path_id)
                     except Exception as path_exc:  # pragma: no cover - tylko logowanie
-                        lines.append(f"QLibraryInfo[{getattr(path_id, 'name', path_id)}]: {path_exc}")
+                        lines.append(
+                            f"QLibraryInfo[{getattr(path_id, 'name', path_id)}]: {path_exc}"
+                        )
                     else:
                         lines.append(
                             f"QLibraryInfo[{getattr(path_id, 'name', path_id)}]={path_value}"
@@ -227,9 +228,7 @@ def shutdown_db_background_loop_at_session_end() -> Generator[None, None, None]:
     try:
         from bot_core.database.manager import DatabaseManager
     except Exception as exc:
-        logger.debug(
-            "Skipping DatabaseManager session shutdown fixture (import failed): %r", exc
-        )
+        logger.debug("Skipping DatabaseManager session shutdown fixture (import failed): %r", exc)
         return
 
     # deterministycznie domknij instancje zanim zatrzymasz loop/thread
@@ -251,7 +250,9 @@ def shutdown_db_background_loop_at_session_end() -> Generator[None, None, None]:
             ],
         )
 
-    assert not still_alive, "DatabaseManager background loop thread still alive after session shutdown"
+    assert not still_alive, (
+        "DatabaseManager background loop thread still alive after session shutdown"
+    )
 
 
 @pytest.fixture(autouse=True)
@@ -503,13 +504,13 @@ def capture_qml_artifacts(
 
         if screenshot_count == 0:
             placeholder = screenshots_dir / f"{node_id}_no_window.txt"
-            placeholder.write_text(
-                "Brak widocznych okien do zrzutu ekranu." "\n", encoding="utf-8"
-            )
+            placeholder.write_text("Brak widocznych okien do zrzutu ekranu.\n", encoding="utf-8")
 
 
 @pytest.hookimpl(hookwrapper=True)
-def pytest_runtest_makereport(item: pytest.Item, call: pytest.CallInfo) -> Generator[None, None, None]:
+def pytest_runtest_makereport(
+    item: pytest.Item, call: pytest.CallInfo
+) -> Generator[None, None, None]:
     outcome = yield
     report = outcome.get_result()
     if "qml" in item.keywords:

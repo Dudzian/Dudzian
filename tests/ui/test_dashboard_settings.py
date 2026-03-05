@@ -68,7 +68,9 @@ def test_dashboard_settings_qml_loads(tmp_path: Path, qapp: QApplication) -> Non
 
     engine = QQmlApplicationEngine()
     engine.rootContext().setContextProperty("settingsController", controller)
-    qml_path = Path(__file__).resolve().parents[2] / "ui" / "qml" / "settings" / "DashboardSettings.qml"
+    qml_path = (
+        Path(__file__).resolve().parents[2] / "ui" / "qml" / "settings" / "DashboardSettings.qml"
+    )
     engine.load(QUrl.fromLocalFile(str(qml_path)))
 
     assert engine.rootObjects(), "Komponent DashboardSettings powinien się załadować"

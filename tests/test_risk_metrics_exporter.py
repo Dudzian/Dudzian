@@ -92,5 +92,7 @@ def test_risk_metrics_exporter_resets_missing_limits() -> None:
 
     positions_labels = dict(base_labels)
     positions_labels["limit"] = "active_positions"
-    assert registry.get("risk_exposure_current").value(labels=positions_labels) == pytest.approx(1.0)
+    assert registry.get("risk_exposure_current").value(labels=positions_labels) == pytest.approx(
+        1.0
+    )
     assert registry.get("risk_exposure_max").value(labels=positions_labels) == pytest.approx(4.0)

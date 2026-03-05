@@ -60,9 +60,7 @@ def generate_security_baseline_report(
     warn_expiring_within_days: float = 30.0,
     metrics_required_scopes: Sequence[str] | None = None,
     risk_required_scopes: Sequence[str] | None = None,
-    scheduler_required_scopes: Mapping[str, Sequence[str]]
-    | Sequence[str]
-    | None = None,
+    scheduler_required_scopes: Mapping[str, Sequence[str]] | Sequence[str] | None = None,
     warn_on_shared_secret_tokens: bool = True,
 ) -> SecurityBaselineReport:
     """Generuje zbiorczy raport bezpieczeństwa dla runtime.

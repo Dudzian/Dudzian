@@ -144,7 +144,9 @@ def _sample_summary() -> dict:
                 "status": "warning",
                 "warnings": ["MetricsService działa bez TLS"],
                 "errors": [],
-                "tls": {"services": {"metrics_service": {"warnings": ["MetricsService działa bez TLS"]}}},
+                "tls": {
+                    "services": {"metrics_service": {"warnings": ["MetricsService działa bez TLS"]}}
+                },
                 "tokens": {"services": []},
             },
         },
@@ -202,14 +204,16 @@ def test_cli_integration(tmp_path: Path) -> None:
     summary_path.write_text(json.dumps(_sample_summary()), encoding="utf-8")
     output_path = tmp_path / "report.md"
 
-    exit_code = module.main([
-        "--summary-json",
-        str(summary_path),
-        "--output",
-        str(output_path),
-        "--max-json-chars",
-        "500",
-    ])
+    exit_code = module.main(
+        [
+            "--summary-json",
+            str(summary_path),
+            "--output",
+            str(output_path),
+            "--max-json-chars",
+            "500",
+        ]
+    )
 
     assert exit_code == 0
     report = output_path.read_text(encoding="utf-8")

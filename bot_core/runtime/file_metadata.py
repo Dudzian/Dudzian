@@ -134,7 +134,11 @@ def file_reference_metadata(path: Path | str, *, role: str | None = None) -> Map
                 warnings.append(
                     "Katalog nadrzędny jest zapisywalny dla wszystkich użytkowników – ogranicz prawa zapisu."
                 )
-            if permissions_supported and role == "tls_key" and bool(parent_flags.get("group_writable")):
+            if (
+                permissions_supported
+                and role == "tls_key"
+                and bool(parent_flags.get("group_writable"))
+            ):
                 warnings.append(
                     "Katalog z materiałem TLS ma uprawnienia zapisu dla grupy – rozważ zaostrzenie chmod."
                 )
@@ -152,7 +156,9 @@ def file_reference_metadata(path: Path | str, *, role: str | None = None) -> Map
         metadata["exists"] = False
         metadata["stat_error"] = str(exc)
         if role in {"tls_cert", "tls_key", "tls_client_ca"}:
-            warnings.append("Plik materiału TLS jest niedostępny – konfiguracja nie będzie kompletna.")
+            warnings.append(
+                "Plik materiału TLS jest niedostępny – konfiguracja nie będzie kompletna."
+            )
         if role in {"jsonl", "ui_alerts_jsonl"}:
             warnings.append(
                 "Plik logu nie istnieje – zostanie utworzony przy pierwszym zapisie, upewnij się, że katalog jest poprawny."
@@ -238,7 +244,8 @@ def file_reference_metadata(path: Path | str, *, role: str | None = None) -> Map
         metadata["sha256"] = hasher.hexdigest()
     except OSError:
         LOGGER.warning(
-            "Nie udało się obliczyć sumy kontrolnej SHA-256 dla pliku %s", candidate,
+            "Nie udało się obliczyć sumy kontrolnej SHA-256 dla pliku %s",
+            candidate,
             exc_info=True,
         )
 

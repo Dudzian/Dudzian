@@ -1,4 +1,5 @@
 """Walidacja spójności `requirements-desktop.txt` z `pyproject.toml`."""
+
 from __future__ import annotations
 
 from pathlib import Path

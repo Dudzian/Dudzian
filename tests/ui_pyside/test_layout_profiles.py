@@ -9,11 +9,26 @@ def _panel_specs() -> list[dict[str, object]]:
     return [
         {"panelId": "sidePanel", "title": "Licencja", "defaultColumn": 0, "defaultOrder": 0},
         {"panelId": "chartView", "title": "Chart", "defaultColumn": 1, "defaultOrder": 0},
-        {"panelId": "strategyWorkbench", "title": "Strategie", "defaultColumn": 1, "defaultOrder": 1},
+        {
+            "panelId": "strategyWorkbench",
+            "title": "Strategie",
+            "defaultColumn": 1,
+            "defaultOrder": 1,
+        },
         {"panelId": "modeWizardPanel", "title": "Tryby", "defaultColumn": 1, "defaultOrder": 2},
-        {"panelId": "strategyManagerPanel", "title": "Marketplace", "defaultColumn": 1, "defaultOrder": 3},
+        {
+            "panelId": "strategyManagerPanel",
+            "title": "Marketplace",
+            "defaultColumn": 1,
+            "defaultOrder": 3,
+        },
         {"panelId": "telemetryPanel", "title": "Telemetria", "defaultColumn": 0, "defaultOrder": 1},
-        {"panelId": "diagnosticsPanel", "title": "Diagnostyka", "defaultColumn": 0, "defaultOrder": 2},
+        {
+            "panelId": "diagnosticsPanel",
+            "title": "Diagnostyka",
+            "defaultColumn": 0,
+            "defaultOrder": 2,
+        },
     ]
 
 
@@ -28,7 +43,9 @@ def test_layout_profiles_roundtrip(tmp_path: Path) -> None:
     controller.setColumnCount(3)
 
     catalog = controller.availablePanels
-    assert any(entry["panelId"] == "strategyWorkbench" and entry["visible"] is False for entry in catalog)
+    assert any(
+        entry["panelId"] == "strategyWorkbench" and entry["visible"] is False for entry in catalog
+    )
 
     controller2 = LayoutProfileController(storage_path=storage)
     controller2.registerPanels(_panel_specs())

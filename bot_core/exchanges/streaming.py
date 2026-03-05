@@ -1,4 +1,5 @@
 """Wspólne narzędzia do lokalnego streamingu opartego o long-polle REST/gRPC."""
+
 from __future__ import annotations
 
 import asyncio
@@ -200,11 +201,7 @@ def _histogram_quantile(*, snapshot: HistogramState, quantile: float) -> float |
             lower = previous_boundary
             upper = float(boundary)
             if math.isinf(upper):
-                upper = (
-                    float(snapshot.maximum)
-                    if snapshot.maximum is not None
-                    else lower
-                )
+                upper = float(snapshot.maximum) if snapshot.maximum is not None else lower
             interpolated = lower + max(0.0, min(1.0, ratio)) * (upper - lower)
             return interpolated
         previous_cumulative = cumulative
@@ -499,9 +496,7 @@ def export_long_poll_metrics_snapshot(
     except KeyError:
         lag_latest_metric = None
     if isinstance(lag_latest_metric, GaugeMetric):
-        summary.setdefault("deliveryLag", {})["latest"] = lag_latest_metric.value(
-            labels=labels
-        )
+        summary.setdefault("deliveryLag", {})["latest"] = lag_latest_metric.value(labels=labels)
 
     return summary
 
@@ -729,7 +724,9 @@ class LocalLongPollStream(Iterable[StreamBatch]):
             try:
                 stream._signal_stop(force=True)
             except Exception:  # pragma: no cover - defensywnie w teardownie
-                _LOGGER.debug("Nie udało się zasygnalizować stop dla LocalLongPollStream", exc_info=True)
+                _LOGGER.debug(
+                    "Nie udało się zasygnalizować stop dla LocalLongPollStream", exc_info=True
+                )
         if not blocking:
             for stream in active:
                 try:
@@ -807,9 +804,7 @@ class LocalLongPollStream(Iterable[StreamBatch]):
                                 stack_dump,
                             )
             except Exception:  # pragma: no cover - defensywnie w teardownie
-                _LOGGER.debug(
-                    "Nie udało się ponownie zamknąć LocalLongPollStream", exc_info=True
-                )
+                _LOGGER.debug("Nie udało się ponownie zamknąć LocalLongPollStream", exc_info=True)
         for stream in active:
             try:
                 stream._unregister_if_stopped()
@@ -1050,7 +1045,11 @@ class LocalLongPollStream(Iterable[StreamBatch]):
                 self._DEFAULT_JOIN_TIMEOUT if timeout is None else max(0.0, float(timeout))
             )
             worker.join(timeout=join_timeout)
-        if self._worker_thread is worker and self._worker_thread and not self._worker_thread.is_alive():
+        if (
+            self._worker_thread is worker
+            and self._worker_thread
+            and not self._worker_thread.is_alive()
+        ):
             self._worker_thread = None
 
     def _unregister_if_stopped(self) -> None:
@@ -1182,9 +1181,7 @@ class LocalLongPollStream(Iterable[StreamBatch]):
                     self._poll_once()
                     with self._pending_condition:
                         if self._prefill_enabled:
-                            next_interval = (
-                                self._poll_interval if self._poll_interval > 0 else 0.01
-                            )
+                            next_interval = self._poll_interval if self._poll_interval > 0 else 0.01
                             self._next_poll_at = self._clock() + next_interval
                         else:
                             self._next_poll_at = None
@@ -1377,9 +1374,7 @@ class LocalLongPollStream(Iterable[StreamBatch]):
                 )
             else:
                 query_params = [item for item in query_params if item[0] != self._channel_param]
-                self._extend_params(
-                    query_params, self._channel_param, self._serialize_channels()
-                )
+                self._extend_params(query_params, self._channel_param, self._serialize_channels())
 
         if self._cursor is not None and self._cursor_param:
             if self._cursor_in_body:
@@ -1389,9 +1384,7 @@ class LocalLongPollStream(Iterable[StreamBatch]):
                 self._extend_params(query_params, self._cursor_param, self._cursor)
 
         filtered_params = [
-            (key, value)
-            for key, value in query_params
-            if key and not self._is_empty_value(value)
+            (key, value) for key, value in query_params if key and not self._is_empty_value(value)
         ]
         query = urlencode(filtered_params, doseq=True)
         url = f"{self._base_url}{self._path}"
@@ -1439,9 +1432,7 @@ class LocalLongPollStream(Iterable[StreamBatch]):
         self._detect_errors(parsed)
         return parsed
 
-    def _decode_payload(
-        self, payload: bytes, headers: Mapping[str, Any] | None
-    ) -> bytes:
+    def _decode_payload(self, payload: bytes, headers: Mapping[str, Any] | None) -> bytes:
         if not payload:
             return b""
         encoding_header: object | None = None
@@ -1612,7 +1603,9 @@ class LocalLongPollStream(Iterable[StreamBatch]):
             return json.dumps(value, ensure_ascii=False)[:120]
         return str(value)
 
-    def _enqueue_batches(self, payload: Mapping[str, Any], *, received_at: float | None = None) -> float:
+    def _enqueue_batches(
+        self, payload: Mapping[str, Any], *, received_at: float | None = None
+    ) -> float:
         cursor = self._extract_cursor(payload)
         if cursor is not None:
             self._cursor = cursor
@@ -1620,7 +1613,9 @@ class LocalLongPollStream(Iterable[StreamBatch]):
         raw_batches = payload.get("batches")
         if isinstance(raw_batches, Mapping):
             batches_iterable: Sequence[Mapping[str, Any]] = (raw_batches,)
-        elif isinstance(raw_batches, Sequence) and not isinstance(raw_batches, (str, bytes, bytearray)):
+        elif isinstance(raw_batches, Sequence) and not isinstance(
+            raw_batches, (str, bytes, bytearray)
+        ):
             batches_iterable = [entry for entry in raw_batches if isinstance(entry, Mapping)]
         elif payload.get("events") is not None:
             batches_iterable = (payload,)  # pojedynczy kanał
@@ -1635,7 +1630,9 @@ class LocalLongPollStream(Iterable[StreamBatch]):
             events: list[Mapping[str, Any]] = []
             if isinstance(events_raw, Mapping):
                 events.append(dict(events_raw))
-            elif isinstance(events_raw, Sequence) and not isinstance(events_raw, (str, bytes, bytearray)):
+            elif isinstance(events_raw, Sequence) and not isinstance(
+                events_raw, (str, bytes, bytearray)
+            ):
                 for item in events_raw:
                     if isinstance(item, Mapping):
                         events.append(dict(item))
@@ -1752,9 +1749,7 @@ class LocalLongPollStream(Iterable[StreamBatch]):
         else:
             payload[key] = [existing, value]
 
-    def _encode_body_payload(
-        self, payload: Mapping[str, object]
-    ) -> tuple[bytes, str | None]:
+    def _encode_body_payload(self, payload: Mapping[str, object]) -> tuple[bytes, str | None]:
         encoder = self._body_encoder
         if encoder is None:
             encoder_mode = "json"
@@ -1778,9 +1773,7 @@ class LocalLongPollStream(Iterable[StreamBatch]):
             for key, value in payload.items():
                 self._extend_params(items, key, value)
             filtered = [
-                (key, value)
-                for key, value in items
-                if key and not self._is_empty_value(value)
+                (key, value) for key, value in items if key and not self._is_empty_value(value)
             ]
             encoded = urlencode(filtered, doseq=True).encode("utf-8")
             return encoded, "application/x-www-form-urlencoded"
@@ -1832,7 +1825,9 @@ class LocalLongPollStream(Iterable[StreamBatch]):
     def _is_empty_value(value: object) -> bool:
         if value in (None, ""):
             return True
-        if isinstance(value, (Sequence, Mapping)) and not isinstance(value, (str, bytes, bytearray)):
+        if isinstance(value, (Sequence, Mapping)) and not isinstance(
+            value, (str, bytes, bytearray)
+        ):
             if isinstance(value, Mapping):
                 return not any(not LocalLongPollStream._is_empty_value(v) for v in value.values())
             return not any(not LocalLongPollStream._is_empty_value(item) for item in value)
@@ -1850,7 +1845,11 @@ class LocalLongPollStream(Iterable[StreamBatch]):
                 if isinstance(item, Mapping):
                     for sub_key, sub_value in item.items():
                         self._extend_params(params, str(sub_key), sub_value)
-                elif isinstance(item, Sequence) and not isinstance(item, (str, bytes, bytearray)) and len(item) == 2:
+                elif (
+                    isinstance(item, Sequence)
+                    and not isinstance(item, (str, bytes, bytearray))
+                    and len(item) == 2
+                ):
                     sub_key, sub_value = item
                     self._extend_params(params, str(sub_key), sub_value)
                 else:
@@ -1954,4 +1953,6 @@ class LocalLongPollStream(Iterable[StreamBatch]):
         if numeric <= 0:
             return None
         return numeric
+
+
 __all__ = ["LocalLongPollStream", "StreamBatch"]

@@ -49,7 +49,9 @@ class BackendUnavailableError(RuntimeError):
         self.install_hint: Final[str | None] = install_hint
 
 
-_DEFAULT_CONFIG_PATH: Final[Path] = Path(__file__).resolve().parents[2] / "config" / "ml" / "backends.yml"
+_DEFAULT_CONFIG_PATH: Final[Path] = (
+    Path(__file__).resolve().parents[2] / "config" / "ml" / "backends.yml"
+)
 
 # Domyślne mapowanie backendów na moduły importowe. Zostanie nadpisane przez
 # konfigurację, jeżeli taka istnieje.
@@ -133,9 +135,7 @@ def _is_backend_disabled(backend: str) -> bool:
 
 
 def _is_backend_import_error_simulated(backend: str) -> bool:
-    simulated = _parse_backend_list(
-        os.environ.get("BOT_CORE_SIMULATE_BACKEND_IMPORT_OSERROR")
-    )
+    simulated = _parse_backend_list(os.environ.get("BOT_CORE_SIMULATE_BACKEND_IMPORT_OSERROR"))
     if "all" in simulated:
         return True
     return backend.strip().lower() in simulated

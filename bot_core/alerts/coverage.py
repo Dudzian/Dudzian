@@ -1,4 +1,5 @@
 """Pomocnicze funkcje do budowy kontekstu alertów dla jakości danych."""
+
 from __future__ import annotations
 
 import json
@@ -139,11 +140,16 @@ def _resolve_thresholds(
         if getattr(data_quality, "min_ok_ratio", None) is not None:
             min_ok_ratio = float(data_quality.min_ok_ratio)  # type: ignore[arg-type]
 
-    if (max_gap_minutes is None or min_ok_ratio is None) and getattr(environment, "risk_profile", None):
+    if (max_gap_minutes is None or min_ok_ratio is None) and getattr(
+        environment, "risk_profile", None
+    ):
         profile = config.risk_profiles.get(environment.risk_profile)
         if profile and profile.data_quality:
             profile_quality = profile.data_quality
-            if max_gap_minutes is None and getattr(profile_quality, "max_gap_minutes", None) is not None:
+            if (
+                max_gap_minutes is None
+                and getattr(profile_quality, "max_gap_minutes", None) is not None
+            ):
                 max_gap_minutes = float(profile_quality.max_gap_minutes)  # type: ignore[arg-type]
             if min_ok_ratio is None and getattr(profile_quality, "min_ok_ratio", None) is not None:
                 min_ok_ratio = float(profile_quality.min_ok_ratio)  # type: ignore[arg-type]
@@ -180,9 +186,7 @@ def build_environment_coverage_report(
 
     universe = config.instrument_universes.get(environment.instrument_universe)
     if universe is None:
-        raise KeyError(
-            f"Brak definicji uniwersum instrumentów: {environment.instrument_universe}"
-        )
+        raise KeyError(f"Brak definicji uniwersum instrumentów: {environment.instrument_universe}")
 
     evaluation_time = (as_of or datetime.now(timezone.utc)).astimezone(timezone.utc)
     manifest_path = Path(environment.data_cache_path) / "ohlcv_manifest.sqlite"

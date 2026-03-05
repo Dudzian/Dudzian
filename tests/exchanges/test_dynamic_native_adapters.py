@@ -200,12 +200,22 @@ class FakePublicFeed:
         return dict(self._markets)
 
     def fetch_ticker(self, symbol: str) -> Mapping[str, float]:
-        return {"symbol": symbol, "last": 20_050.0, "close": 20_040.0, "bid": 20_030.0, "ask": 20_060.0}
+        return {
+            "symbol": symbol,
+            "last": 20_050.0,
+            "close": 20_040.0,
+            "bid": 20_030.0,
+            "ask": 20_060.0,
+        }
 
-    def fetch_ohlcv(self, symbol: str, timeframe: str, limit: int = 500) -> Sequence[Sequence[float]]:
+    def fetch_ohlcv(
+        self, symbol: str, timeframe: str, limit: int = 500
+    ) -> Sequence[Sequence[float]]:
         return [[0.0, 20_000.0, 20_200.0, 19_950.0, 20_050.0, 12.0]]
 
-    def fetch_order_book(self, symbol: str, limit: int = 50) -> Mapping[str, Sequence[Sequence[float]]]:
+    def fetch_order_book(
+        self, symbol: str, limit: int = 50
+    ) -> Mapping[str, Sequence[Sequence[float]]]:
         return {
             "bids": [[20_030.0, 1.5], [20_020.0, 1.0]],
             "asks": [[20_060.0, 1.2], [20_070.0, 0.9]],
@@ -278,9 +288,7 @@ def test_iter_registered_native_adapters_exposes_metadata(reset_registry: None) 
     assert len(infos) >= 10
 
     coinbase_margin = next(
-        info
-        for info in infos
-        if info.exchange_id == "coinbase" and info.mode is Mode.MARGIN
+        info for info in infos if info.exchange_id == "coinbase" and info.mode is Mode.MARGIN
     )
     assert coinbase_margin.supports_testnet is False
     assert coinbase_margin.dynamic is True
@@ -333,7 +341,9 @@ def test_exchange_manager_integration_for_configured_adapters(
     balance = manager.fetch_balance()
     assert balance["total_equity"] == pytest.approx(100_000.0)
 
-    order = manager.create_order("BTC_USDT", "BUY", "LIMIT", 1.0, price=20_050.0, client_order_id="client-1")
+    order = manager.create_order(
+        "BTC_USDT", "BUY", "LIMIT", 1.0, price=20_050.0, client_order_id="client-1"
+    )
     assert order.client_order_id == "client-1"
 
     open_orders = manager.fetch_open_orders()

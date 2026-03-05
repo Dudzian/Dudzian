@@ -49,15 +49,11 @@ class DecisionEvaluationService(DecisionEvaluator):
         thresholds = self._provider.thresholds_for_profile(candidate.risk_profile)
         thresholds_snapshot = self._provider.threshold_snapshot(thresholds)
         snapshot = self._provider.ensure_snapshot(candidate.risk_profile, risk_snapshot)
-        model_name, model_score, selection_metadata = self._provider.score_with_model(
-            candidate
-        )
+        model_name, model_score, selection_metadata = self._provider.score_with_model(candidate)
 
         if model_score is not None:
             expected_probability = model_score.success_probability
-            expected_value_bps = (
-                model_score.expected_return_bps * model_score.success_probability
-            )
+            expected_value_bps = model_score.expected_return_bps * model_score.success_probability
             expected_return_bps = model_score.expected_return_bps
         else:
             expected_probability = candidate.expected_probability
@@ -69,9 +65,9 @@ class DecisionEvaluationService(DecisionEvaluator):
 
         if expected_probability < self._config.min_probability:
             reasons.append(
-                (
-                    "prawdopodobieństwo {p:.3f} poniżej progu {threshold:.3f}"
-                ).format(p=expected_probability, threshold=self._config.min_probability)
+                ("prawdopodobieństwo {p:.3f} poniżej progu {threshold:.3f}").format(
+                    p=expected_probability, threshold=self._config.min_probability
+                )
             )
 
         cost_bps, missing_cost = self._provider.resolve_cost(candidate)
@@ -81,25 +77,25 @@ class DecisionEvaluationService(DecisionEvaluator):
 
         if cost_bps is not None and cost_bps > thresholds.max_cost_bps:
             reasons.append(
-                (
-                    "koszt {cost:.2f} bps przekracza limit {limit:.2f} bps"
-                ).format(cost=cost_bps, limit=thresholds.max_cost_bps)
+                ("koszt {cost:.2f} bps przekracza limit {limit:.2f} bps").format(
+                    cost=cost_bps, limit=thresholds.max_cost_bps
+                )
             )
 
         net_edge = expected_value_bps - effective_cost
         if net_edge < thresholds.min_net_edge_bps:
             reasons.append(
-                (
-                    "net edge {edge:.2f} bps poniżej progu {limit:.2f} bps"
-                ).format(edge=net_edge, limit=thresholds.min_net_edge_bps)
+                ("net edge {edge:.2f} bps poniżej progu {limit:.2f} bps").format(
+                    edge=net_edge, limit=thresholds.min_net_edge_bps
+                )
             )
 
         if thresholds.max_latency_ms is not None and candidate.latency_ms is not None:
             if candidate.latency_ms > thresholds.max_latency_ms:
                 reasons.append(
-                    (
-                        "latencja {lat:.1f} ms przekracza limit {limit:.1f} ms"
-                    ).format(lat=candidate.latency_ms, limit=thresholds.max_latency_ms)
+                    ("latencja {lat:.1f} ms przekracza limit {limit:.1f} ms").format(
+                        lat=candidate.latency_ms, limit=thresholds.max_latency_ms
+                    )
                 )
 
         self._check_risk_limits(candidate, snapshot, thresholds, reasons, risk_flags)
@@ -132,9 +128,7 @@ class DecisionEvaluationService(DecisionEvaluator):
             risk_flags=tuple(risk_flags),
             stress_failures=tuple(stress_failures),
             model_expected_return_bps=(model_score.expected_return_bps if model_score else None),
-            model_success_probability=(
-                model_score.success_probability if model_score else None
-            ),
+            model_success_probability=(model_score.success_probability if model_score else None),
             model_name=model_name if model_score else None,
             model_selection=selection_metadata,
             thresholds_snapshot=thresholds_snapshot,
@@ -202,17 +196,17 @@ class DecisionEvaluationService(DecisionEvaluator):
         if snapshot.daily_loss_pct > thresholds.max_daily_loss_pct:
             risk_flags.append("daily_loss_limit")
             reasons.append(
-                (
-                    "przekroczony dzienny limit straty: {value:.4f} > {limit:.4f}"
-                ).format(value=snapshot.daily_loss_pct, limit=thresholds.max_daily_loss_pct)
+                ("przekroczony dzienny limit straty: {value:.4f} > {limit:.4f}").format(
+                    value=snapshot.daily_loss_pct, limit=thresholds.max_daily_loss_pct
+                )
             )
 
         if snapshot.drawdown_pct > thresholds.max_drawdown_pct:
             risk_flags.append("drawdown_limit")
             reasons.append(
-                (
-                    "przekroczony limit obsunięcia: {value:.4f} > {limit:.4f}"
-                ).format(value=snapshot.drawdown_pct, limit=thresholds.max_drawdown_pct)
+                ("przekroczony limit obsunięcia: {value:.4f} > {limit:.4f}").format(
+                    value=snapshot.drawdown_pct, limit=thresholds.max_drawdown_pct
+                )
             )
 
         equity = max(snapshot.start_of_day_equity, 1.0)
@@ -221,9 +215,9 @@ class DecisionEvaluationService(DecisionEvaluator):
         if position_ratio > thresholds.max_position_ratio:
             risk_flags.append("gross_notional_limit")
             reasons.append(
-                (
-                    "ekspozycja {ratio:.4f} przekracza limit {limit:.4f}"
-                ).format(ratio=position_ratio, limit=thresholds.max_position_ratio)
+                ("ekspozycja {ratio:.4f} przekracza limit {limit:.4f}").format(
+                    ratio=position_ratio, limit=thresholds.max_position_ratio
+                )
             )
 
         new_positions = snapshot.active_positions
@@ -232,9 +226,9 @@ class DecisionEvaluationService(DecisionEvaluator):
         if new_positions > thresholds.max_open_positions:
             risk_flags.append("open_positions_limit")
             reasons.append(
-                (
-                    "liczba pozycji {count} przekracza limit {limit}"
-                ).format(count=new_positions, limit=thresholds.max_open_positions)
+                ("liczba pozycji {count} przekracza limit {limit}").format(
+                    count=new_positions, limit=thresholds.max_open_positions
+                )
             )
 
         if (
@@ -243,9 +237,7 @@ class DecisionEvaluationService(DecisionEvaluator):
         ):
             risk_flags.append("trade_notional_limit")
             reasons.append(
-                (
-                    "wartość zlecenia {notional:.2f} przekracza limit {limit:.2f}"
-                ).format(
+                ("wartość zlecenia {notional:.2f} przekracza limit {limit:.2f}").format(
                     notional=candidate.notional,
                     limit=thresholds.max_trade_notional,
                 )
@@ -267,20 +259,17 @@ class DecisionEvaluationService(DecisionEvaluator):
         stressed_net_edge = candidate.expected_value_bps - stressed_cost
         if stressed_net_edge < thresholds.min_net_edge_bps:
             failures.append(
-                (
-                    "stress cost edge {edge:.2f} bps poniżej progu {limit:.2f} bps"
-                ).format(edge=stressed_net_edge, limit=thresholds.min_net_edge_bps)
+                ("stress cost edge {edge:.2f} bps poniżej progu {limit:.2f} bps").format(
+                    edge=stressed_net_edge, limit=thresholds.min_net_edge_bps
+                )
             )
         if (
             thresholds.max_latency_ms is not None
             and candidate.latency_ms is not None
-            and candidate.latency_ms + stress_config.latency_spike_ms
-            > thresholds.max_latency_ms
+            and candidate.latency_ms + stress_config.latency_spike_ms > thresholds.max_latency_ms
         ):
             failures.append(
-                (
-                    "latency stress {lat:.1f} ms przekracza limit {limit:.1f} ms"
-                ).format(
+                ("latency stress {lat:.1f} ms przekracza limit {limit:.1f} ms").format(
                     lat=candidate.latency_ms + stress_config.latency_spike_ms,
                     limit=thresholds.max_latency_ms,
                 )

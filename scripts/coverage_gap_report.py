@@ -1,4 +1,5 @@
 """Raport statystyk luk pokrycia danych OHLCV."""
+
 from __future__ import annotations
 
 import argparse
@@ -68,9 +69,7 @@ def _resolve_environments(config: CoreConfig, args: argparse.Namespace) -> list[
         if monitoring and monitoring.targets:
             environments = [target.environment for target in monitoring.targets]
         else:
-            raise SystemExit(
-                "Brak zdefiniowanych targetów coverage_monitoring w konfiguracji."
-            )
+            raise SystemExit("Brak zdefiniowanych targetów coverage_monitoring w konfiguracji.")
 
     if args.environments:
         environments.extend(args.environments)
@@ -127,8 +126,7 @@ def _report_to_mapping(
         if not interval_source:
             interval_source = compute_gap_statistics_by_interval(report.statuses)
         interval_stats = {
-            interval: stats.to_mapping()
-            for interval, stats in interval_source.items()
+            interval: stats.to_mapping() for interval, stats in interval_source.items()
         }
         payload["gap_statistics_by_interval"] = interval_stats
     return payload
@@ -214,4 +212,3 @@ def main(argv: Iterable[str] | None = None) -> int:
 
 if __name__ == "__main__":  # pragma: no cover - punkt wejścia CLI
     raise SystemExit(main())
-

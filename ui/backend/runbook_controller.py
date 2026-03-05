@@ -1,4 +1,5 @@
 """Kontroler odpowiedzialny za mapowanie alertów guardrail na runbooki."""
+
 from __future__ import annotations
 
 
@@ -90,7 +91,9 @@ class RunbookController(QObject):
         self._last_updated = ""
         self._error_message = ""
         self._action_status = ""
-        self._actions_directory = Path(actions_directory).expanduser() if actions_directory else _DEFAULT_ACTION_DIRECTORY
+        self._actions_directory = (
+            Path(actions_directory).expanduser() if actions_directory else _DEFAULT_ACTION_DIRECTORY
+        )
         self._logger = get_runbook_logger()
         self._runbooks = self._load_runbooks(runbook_directory)
 
@@ -187,7 +190,12 @@ class RunbookController(QObject):
 
         try:
             self._logger.info(
-                "Uruchamiam akcję runbooka", extra={"runbook_id": runbook_id, "action_id": action_id, "script": str(script_path)}
+                "Uruchamiam akcję runbooka",
+                extra={
+                    "runbook_id": runbook_id,
+                    "action_id": action_id,
+                    "script": str(script_path),
+                },
             )
             result = subprocess.run(
                 [sys.executable, str(script_path)],
@@ -197,7 +205,12 @@ class RunbookController(QObject):
             )
         except subprocess.CalledProcessError as exc:
             self._logger.error(
-                "Skrypt runbooka zakończył się błędem", extra={"runbook_id": runbook_id, "action_id": action_id, "returncode": exc.returncode}
+                "Skrypt runbooka zakończył się błędem",
+                extra={
+                    "runbook_id": runbook_id,
+                    "action_id": action_id,
+                    "returncode": exc.returncode,
+                },
             )
             self._set_action_status(
                 json.dumps(
@@ -232,7 +245,11 @@ class RunbookController(QObject):
         self._set_action_status(json.dumps(payload, ensure_ascii=False))
         self._logger.info(
             "Akcja runbooka zakończona sukcesem",
-            extra={"runbook_id": runbook_id, "action_id": action_id, "stdout": result.stdout.strip()},
+            extra={
+                "runbook_id": runbook_id,
+                "action_id": action_id,
+                "stdout": result.stdout.strip(),
+            },
         )
         return True
 
@@ -361,7 +378,11 @@ class RunbookController(QObject):
 
     # ------------------------------------------------------------------
     def _load_runbooks(self, directory: str | Path | None) -> MutableMapping[str, RunbookMetadata]:
-        search_dir = Path(directory).expanduser() if directory else Path(__file__).resolve().parents[2] / "docs" / "operations" / "runbooks"
+        search_dir = (
+            Path(directory).expanduser()
+            if directory
+            else Path(__file__).resolve().parents[2] / "docs" / "operations" / "runbooks"
+        )
         results: MutableMapping[str, RunbookMetadata] = {}
         if not search_dir.exists():
             return results
@@ -399,19 +420,27 @@ class RunbookController(QObject):
             try:
                 raw = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
             except yaml.YAMLError as exc:  # pragma: no cover - błędy składniowe YAML
-                logging.getLogger(__name__).warning("Nie udało się sparsować metadanych runbooka %s: %s", path, exc)
+                logging.getLogger(__name__).warning(
+                    "Nie udało się sparsować metadanych runbooka %s: %s", path, exc
+                )
                 continue
 
             identifier = str(raw.get("id") or path.stem)
             manual_steps = tuple(str(step) for step in raw.get("manual_steps", []) if step)
-            actions = tuple(self._parse_action(identifier, entry, path) for entry in raw.get("automatic_actions", []) if entry)
+            actions = tuple(
+                self._parse_action(identifier, entry, path)
+                for entry in raw.get("automatic_actions", [])
+                if entry
+            )
             payload[identifier] = {
                 "manual_steps": manual_steps,
                 "actions": tuple(action for action in actions if action is not None),
             }
         return payload
 
-    def _parse_action(self, runbook_id: str, entry: Mapping[str, Any], origin: Path) -> RunbookAction | None:
+    def _parse_action(
+        self, runbook_id: str, entry: Mapping[str, Any], origin: Path
+    ) -> RunbookAction | None:
         identifier = str(entry.get("id") or "").strip()
         label = str(entry.get("label") or "").strip()
         script_name = str(entry.get("script") or "").strip()
@@ -424,7 +453,13 @@ class RunbookController(QObject):
         confirm = entry.get("confirm")
         confirm_message = str(confirm).strip() if confirm else None
         script_path = Path(script_name)
-        return RunbookAction(identifier=identifier, label=label, script=script_path, description=description, confirm=confirm_message)
+        return RunbookAction(
+            identifier=identifier,
+            label=label,
+            script=script_path,
+            description=description,
+            confirm=confirm_message,
+        )
 
     @staticmethod
     def _extract_title(path: Path) -> str:

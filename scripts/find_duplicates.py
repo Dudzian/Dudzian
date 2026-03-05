@@ -228,7 +228,10 @@ def _find_definition_node(tree: ast.AST, path: List[str]) -> ast.AST | None:
         return tree
     current, *rest = path
     for child in getattr(tree, "body", []) or []:
-        if isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)) and child.name == current:
+        if (
+            isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef))
+            and child.name == current
+        ):
             if rest:
                 return _find_definition_node(child, rest)
             return child

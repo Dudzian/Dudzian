@@ -9,12 +9,16 @@ from bot_core.exchanges.nowa_gielda.spot import NowaGieldaSpotAdapter
 from bot_core.exchanges.zonda.spot import ZondaSpotAdapter
 
 
-def test_zonda_public_request_requires_network_configuration(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_zonda_public_request_requires_network_configuration(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     credentials = ExchangeCredentials(key_id="zonda-public", environment=Environment.LIVE)
     adapter = ZondaSpotAdapter(credentials)
 
     def _fail(*_args, **_kwargs):  # pragma: no cover - zabezpieczenie przed realnym ruchem
-        raise AssertionError("ZondaSpotAdapter nie powinien wysyłać żądania HTTP bez configure_network")
+        raise AssertionError(
+            "ZondaSpotAdapter nie powinien wysyłać żądania HTTP bez configure_network"
+        )
 
     monkeypatch.setattr("bot_core.exchanges.zonda.spot.urlopen", _fail)
 
@@ -52,7 +56,9 @@ def test_zonda_signed_request_propagates_guard_violation(monkeypatch: pytest.Mon
     assert excinfo.value.reason is violation
 
 
-def test_kraken_public_request_requires_network_configuration(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_kraken_public_request_requires_network_configuration(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     credentials = ExchangeCredentials(
         key_id="kraken-public",
         secret=base64.b64encode(b"secret").decode("utf-8"),
@@ -62,7 +68,9 @@ def test_kraken_public_request_requires_network_configuration(monkeypatch: pytes
     adapter = KrakenFuturesAdapter(credentials, environment=Environment.LIVE)
 
     def _fail(*_args, **_kwargs):  # pragma: no cover - zabezpieczenie
-        raise AssertionError("KrakenFuturesAdapter nie powinien wysyłać zapytania bez configure_network")
+        raise AssertionError(
+            "KrakenFuturesAdapter nie powinien wysyłać zapytania bez configure_network"
+        )
 
     monkeypatch.setattr("bot_core.exchanges.kraken.futures.urlopen", _fail)
 
@@ -81,7 +89,9 @@ def test_nowa_gielda_requests_require_network_configuration(
     adapter = NowaGieldaSpotAdapter(credentials)
 
     def _fail(*_args, **_kwargs):  # pragma: no cover - zabezpieczenie przed ruchem HTTP
-        raise AssertionError("NowaGieldaSpotAdapter nie powinien wykonywać requestu bez configure_network")
+        raise AssertionError(
+            "NowaGieldaSpotAdapter nie powinien wykonywać requestu bez configure_network"
+        )
 
     monkeypatch.setattr("bot_core.exchanges.nowa_gielda.spot.run_sync", _fail)
 

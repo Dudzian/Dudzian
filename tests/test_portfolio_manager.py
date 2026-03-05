@@ -12,7 +12,9 @@ import pytest
 from bot_core.trading.engine import PortfolioManager, TradingEngine, TradingParameters
 
 
-def _build_price_frame(returns: Dict[str, float] | list[float], start: float = 100.0) -> pd.DataFrame:
+def _build_price_frame(
+    returns: Dict[str, float] | list[float], start: float = 100.0
+) -> pd.DataFrame:
     """Tworzy ramkę cenową z zadaną listą zwrotów dziennych."""
 
     if isinstance(returns, dict):  # pragma: no cover - defensywnie

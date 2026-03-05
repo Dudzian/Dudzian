@@ -66,4 +66,3 @@ def test_analyse_decision_journal_requires_positive_window() -> None:
     journal = InMemoryTradingDecisionJournal()
     with pytest.raises(ValueError):
         analyse_decision_journal(journal, window=0)
-

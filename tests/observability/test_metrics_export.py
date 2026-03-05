@@ -19,13 +19,15 @@ def test_metrics_logging_handler_updates_exchange_metrics() -> None:
 
     dispatcher = get_alert_dispatcher()
     captured: list[str] = []
-    token = dispatcher.register(lambda event: captured.append(event.source), name="test-metrics-exchange")
+    token = dispatcher.register(
+        lambda event: captured.append(event.source), name="test-metrics-exchange"
+    )
 
     try:
         for _ in range(5):
             logger.error("API rate limit", extra={"latency_ms": 120, "rate_limited": True})
         payload = registry.render_prometheus()
-        assert 'bot_exchange_requests_total' in payload
+        assert "bot_exchange_requests_total" in payload
         assert 'exchange="binance"' in payload
         assert 'bot_exchange_rate_limited_total{exchange="binance"}' in payload
         assert any(source.startswith("exchange:binance") for source in captured)

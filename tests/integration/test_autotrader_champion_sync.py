@@ -39,7 +39,9 @@ def _make_artifact(*, metadata: dict[str, object] | None = None) -> ModelArtifac
     )
 
 
-def _build_report(version: str, directional: float, mae: float, status: str = "improved") -> ModelQualityReport:
+def _build_report(
+    version: str, directional: float, mae: float, status: str = "improved"
+) -> ModelQualityReport:
     metrics = {
         "summary": {
             "directional_accuracy": directional,
@@ -112,7 +114,9 @@ class _AIManagerChampionStub:
     def run_due_training_jobs(self) -> None:  # pragma: no cover - stub hook
         return None
 
-    def assess_market_regime(self, symbol: str, market_data: pd.DataFrame, **_: object) -> MarketRegimeAssessment:
+    def assess_market_regime(
+        self, symbol: str, market_data: pd.DataFrame, **_: object
+    ) -> MarketRegimeAssessment:
         del market_data
         return MarketRegimeAssessment(
             regime=MarketRegime.TREND,
@@ -228,7 +232,9 @@ def test_autotrader_synchronises_champion_and_fallback(tmp_path: Path) -> None:
     payload = json.loads(champion_path.read_text(encoding="utf-8"))
     if isinstance(payload, dict) and isinstance(payload.get("report"), dict):
         payload["report"]["status"] = "degraded"
-        champion_path.write_text(json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+        champion_path.write_text(
+            json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
+        )
 
     trader.run_cycle_once()
     scheduler._drain_model_change_events()

@@ -44,9 +44,7 @@ class RecordingAdvisor:
 
 
 def test_custom_strategy_advisor_controls_recommendations() -> None:
-    advisor = RecordingAdvisor(
-        _BanditRecommendation(("shadow", "deterministic"), 2_500.0, 0.42)
-    )
+    advisor = RecordingAdvisor(_BanditRecommendation(("shadow", "deterministic"), 2_500.0, 0.42))
     orchestrator = DecisionOrchestrator(
         _make_config(),
         strategy_advisor=advisor,
@@ -79,9 +77,7 @@ def test_custom_strategy_advisor_controls_recommendations() -> None:
 
 
 def test_strategy_advisor_not_invoked_without_snapshot() -> None:
-    advisor = RecordingAdvisor(
-        _BanditRecommendation(("live",), 1_000.0, 0.9)
-    )
+    advisor = RecordingAdvisor(_BanditRecommendation(("live",), 1_000.0, 0.9))
     orchestrator = DecisionOrchestrator(
         _make_config(),
         strategy_advisor=advisor,

@@ -1,4 +1,5 @@
 """Installs a hardware fingerprint lock for runtime bootstrap."""
+
 from __future__ import annotations
 
 import argparse

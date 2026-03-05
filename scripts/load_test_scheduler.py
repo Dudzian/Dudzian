@@ -1,4 +1,5 @@
 """CLI do szybkiego benchmarku scheduler-a multi-strategy."""
+
 from __future__ import annotations
 
 import argparse
@@ -14,9 +15,13 @@ from bot_core.runtime.scheduler_load_test import (
 def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--iterations", type=int, default=10, help="Liczba cykli scheduler-a")
-    parser.add_argument("--schedules", type=int, default=3, help="Liczba rejestrowanych harmonogramów")
+    parser.add_argument(
+        "--schedules", type=int, default=3, help="Liczba rejestrowanych harmonogramów"
+    )
     parser.add_argument("--signals", type=int, default=4, help="Liczba sygnałów na snapshot")
-    parser.add_argument("--latency-ms", type=float, default=2.0, help="Symulowana latencja strategii w ms")
+    parser.add_argument(
+        "--latency-ms", type=float, default=2.0, help="Symulowana latencja strategii w ms"
+    )
     parser.add_argument("--cpu-budget", type=float, default=70.0, help="Budżet CPU w procentach")
     parser.add_argument("--memory-budget", type=float, default=3072.0, help="Budżet pamięci w MB")
     parser.add_argument("--output", help="Opcjonalny plik JSON na wynik load testu")

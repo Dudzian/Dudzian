@@ -1,4 +1,5 @@
 """Synchronizuje dziennik JSONL smoke testów do magazynu audytowego."""
+
 from __future__ import annotations
 
 import argparse
@@ -63,7 +64,9 @@ def _parse_args(argv: Sequence[str] | None) -> argparse.Namespace:
         help="Znacznik czasu ISO8601 użyty przy synchronizacji (domyślnie ostatni wpis lub teraz)",
     )
     parser.add_argument("--json", action="store_true", help="Zwróć wynik w formacie JSON")
-    parser.add_argument("--dry-run", action="store_true", help="Tylko waliduj parametry, bez synchronizacji")
+    parser.add_argument(
+        "--dry-run", action="store_true", help="Tylko waliduj parametry, bez synchronizacji"
+    )
     parser.add_argument(
         "--log-level",
         default="INFO",
@@ -115,9 +118,7 @@ def _load_last_record(json_log_path: Path) -> Mapping[str, object] | None:
     try:
         return json.loads(lines[-1])
     except json.JSONDecodeError:
-        _LOGGER.warning(
-            "Ostatnia linia dziennika JSONL ma nieprawidłowy format JSON (zignorowano)"
-        )
+        _LOGGER.warning("Ostatnia linia dziennika JSONL ma nieprawidłowy format JSON (zignorowano)")
         return None
 
 

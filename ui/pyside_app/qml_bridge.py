@@ -1,4 +1,5 @@
 """Rejestracja kontrolerów PySide6 w kontekście QML."""
+
 from __future__ import annotations
 
 from PySide6.QtQml import QQmlApplicationEngine

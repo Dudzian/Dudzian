@@ -1,4 +1,5 @@
 """Struktury danych opisujące możliwości wynikające z licencji offline."""
+
 from __future__ import annotations
 
 from dataclasses import dataclass

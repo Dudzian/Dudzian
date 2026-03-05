@@ -40,7 +40,9 @@ class _StaticHwIdProvider(HwIdProvider):
 
 
 @pytest.fixture
-def secret_store_factory(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Callable[[], Tuple[SecretStore, _InMemoryKeyring, Path]]:
+def secret_store_factory(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> Callable[[], Tuple[SecretStore, _InMemoryKeyring, Path]]:
     def factory() -> Tuple[SecretStore, _InMemoryKeyring, Path]:
         backend = _InMemoryKeyring()
         module = types.ModuleType("keyring")
@@ -76,7 +78,9 @@ def secret_store_factory(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Cal
     return factory
 
 
-def test_secret_store_saves_and_loads_credentials(secret_store_factory: Callable[[], Tuple[SecretStore, _InMemoryKeyring, Path]]) -> None:
+def test_secret_store_saves_and_loads_credentials(
+    secret_store_factory: Callable[[], Tuple[SecretStore, _InMemoryKeyring, Path]],
+) -> None:
     store, backend, _data_dir = secret_store_factory()
 
     credentials = ExchangeCredentials(
@@ -100,7 +104,9 @@ def test_secret_store_saves_and_loads_credentials(secret_store_factory: Callable
     assert "desktop.exchange:binance" in stored_keys
 
 
-def test_secret_store_rotate_master_key_delegates(secret_store_factory: Callable[[], Tuple[SecretStore, _InMemoryKeyring, Path]]) -> None:
+def test_secret_store_rotate_master_key_delegates(
+    secret_store_factory: Callable[[], Tuple[SecretStore, _InMemoryKeyring, Path]],
+) -> None:
     store, _, _ = secret_store_factory()
 
     called = {"value": False}
@@ -142,7 +148,9 @@ def test_secret_store_errors_are_wrapped(monkeypatch: pytest.MonkeyPatch, tmp_pa
     )
 
     with pytest.raises(SecretStoreError) as excinfo:
-        store.save_exchange_credentials(ExchangeCredentials(exchange="binance", api_key="k", api_secret="s"))
+        store.save_exchange_credentials(
+            ExchangeCredentials(exchange="binance", api_key="k", api_secret="s")
+        )
     assert "błąd zapisu" in str(excinfo.value)
 
     with pytest.raises(SecretStoreError) as excinfo:
@@ -158,6 +166,8 @@ def test_secret_store_errors_are_wrapped(monkeypatch: pytest.MonkeyPatch, tmp_pa
     assert "błąd odczytu" in str(excinfo.value)
 
 
-def test_security_details_token_is_exposed(secret_store_factory: Callable[[], Tuple[SecretStore, _InMemoryKeyring, Path]]) -> None:
+def test_security_details_token_is_exposed(
+    secret_store_factory: Callable[[], Tuple[SecretStore, _InMemoryKeyring, Path]],
+) -> None:
     store, _, _ = secret_store_factory()
     assert store.security_details_token() == "onboarding.strategy.credentials.secured"

@@ -134,7 +134,9 @@ class BitmexFuturesAdapter(CCXTLongPollMixin, WatchdogCCXTAdapter):
     ) -> Mapping[str, Any]:
         return self._call_client("fetch_order_book", symbol, limit=limit, params=params or None)
 
-    def fetch_ticker(self, symbol: str, *, params: Mapping[str, Any] | None = None) -> Mapping[str, Any]:
+    def fetch_ticker(
+        self, symbol: str, *, params: Mapping[str, Any] | None = None
+    ) -> Mapping[str, Any]:
         return self._call_client("fetch_ticker", symbol, params=params or None)
 
     def fetch_my_trades(
@@ -145,7 +147,9 @@ class BitmexFuturesAdapter(CCXTLongPollMixin, WatchdogCCXTAdapter):
         since: int | None = None,
         params: Mapping[str, Any] | None = None,
     ) -> Sequence[Mapping[str, Any]]:
-        return self._call_client("fetch_my_trades", symbol, since=since, limit=limit, params=params or None)
+        return self._call_client(
+            "fetch_my_trades", symbol, since=since, limit=limit, params=params or None
+        )
 
     @staticmethod
     def _decode_error_payload(payload: object) -> Mapping[str, Any] | None:
@@ -198,7 +202,11 @@ class BitmexFuturesAdapter(CCXTLongPollMixin, WatchdogCCXTAdapter):
         load_existing_snapshot: bool = True,
     ) -> tuple[str, str | None]:
         """Publikuje checklistę HyperCare i snapshot jakości sygnałów."""
-        signal_root = Path(signal_quality_dir) if signal_quality_dir else Path("reports/exchanges/signal_quality")
+        signal_root = (
+            Path(signal_quality_dir)
+            if signal_quality_dir
+            else Path("reports/exchanges/signal_quality")
+        )
         signal_root.mkdir(parents=True, exist_ok=True)
         signal_summary: Mapping[str, object] | None = None
         quality_reporter = reporter
@@ -238,9 +246,8 @@ class BitmexFuturesAdapter(CCXTLongPollMixin, WatchdogCCXTAdapter):
             signal_summary = dict(signal_summary)
             signal_summary["total"] = 1
             signal_summary.setdefault(
-                "records", [
-                    {"exchange": cls.name, "status": "synthetic", "source": "hypercare"}
-                ],
+                "records",
+                [{"exchange": cls.name, "status": "synthetic", "source": "hypercare"}],
             )
 
         if isinstance(signal_summary, Mapping):
@@ -263,13 +270,19 @@ class BitmexFuturesAdapter(CCXTLongPollMixin, WatchdogCCXTAdapter):
         if signal_summary is not None:
             if quality_snapshot is None:
                 quality_snapshot = signal_root / f"{cls.name}.json"
-                quality_snapshot.write_text(json.dumps(signal_summary, indent=2, sort_keys=True), encoding="utf-8")
+                quality_snapshot.write_text(
+                    json.dumps(signal_summary, indent=2, sort_keys=True), encoding="utf-8"
+                )
             if reporter_wrote_csv:
-                existing_csv = signal_root / f"{cls.name}-{datetime.now(timezone.utc).date().isoformat()}.csv"
+                existing_csv = (
+                    signal_root / f"{cls.name}-{datetime.now(timezone.utc).date().isoformat()}.csv"
+                )
                 if existing_csv.exists():
                     daily_signal_csv = existing_csv
             if daily_signal_csv is None:
-                daily_signal_csv = cls._write_daily_signal_quality_csv(signal_summary, csv_dir=signal_root)
+                daily_signal_csv = cls._write_daily_signal_quality_csv(
+                    signal_summary, csv_dir=signal_root
+                )
 
         checklist = HypercareChecklistExporter(
             exchange=cls.name,
@@ -318,4 +331,3 @@ class BitmexFuturesAdapter(CCXTLongPollMixin, WatchdogCCXTAdapter):
 
 
 __all__ = ["BitmexFuturesAdapter"]
-

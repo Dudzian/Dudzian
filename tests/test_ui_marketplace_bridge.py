@@ -39,7 +39,9 @@ def _write_preset(
             "license": {
                 "module_id": f"module::{preset_id}",
                 "fingerprint": fingerprint,
-                "expires_at": datetime(2099, 1, 1, tzinfo=timezone.utc).isoformat().replace("+00:00", "Z"),
+                "expires_at": datetime(2099, 1, 1, tzinfo=timezone.utc)
+                .isoformat()
+                .replace("+00:00", "Z"),
             },
         },
     }
@@ -47,7 +49,10 @@ def _write_preset(
     if dependencies is not None:
         payload["metadata"]["dependencies"] = list(dependencies)
     signature = build_hmac_signature(payload, key=signing_key, key_id="catalog")
-    path.write_text(json.dumps({"preset": payload, "signature": signature}, ensure_ascii=False, indent=2), encoding="utf-8")
+    path.write_text(
+        json.dumps({"preset": payload, "signature": signature}, ensure_ascii=False, indent=2),
+        encoding="utf-8",
+    )
 
 
 @pytest.fixture()
@@ -65,7 +70,9 @@ def signing_key() -> bytes:
 
 def test_list_activate_deactivate_flow(capsys, preset_dir, signing_key):
     preset_file = preset_dir / "automation.json"
-    _write_preset(preset_file, preset_id="automation-ai", fingerprint="original", signing_key=signing_key)
+    _write_preset(
+        preset_file, preset_id="automation-ai", fingerprint="original", signing_key=signing_key
+    )
 
     licenses_path = preset_dir.parent / "licenses.json"
 
@@ -93,7 +100,10 @@ def test_list_activate_deactivate_flow(capsys, preset_dir, signing_key):
 
     license_payload = preset_dir.parent / "license_payload.json"
     license_payload.write_text(
-        json.dumps({"fingerprint": "local-override", "expires_at": "2099-01-01T00:00:00Z"}, ensure_ascii=False),
+        json.dumps(
+            {"fingerprint": "local-override", "expires_at": "2099-01-01T00:00:00Z"},
+            ensure_ascii=False,
+        ),
         encoding="utf-8",
     )
 
@@ -282,11 +292,17 @@ presets:
 
 def test_sync_and_submit_reviews(capsys, preset_dir, signing_key):
     preset_file = preset_dir / "automation.json"
-    _write_preset(preset_file, preset_id="automation-ai", fingerprint="community", signing_key=signing_key)
+    _write_preset(
+        preset_file, preset_id="automation-ai", fingerprint="community", signing_key=signing_key
+    )
 
     licenses_path = preset_dir.parent / "licenses_index.json"
     licenses_path.write_text(
-        json.dumps({"licenses": {"automation-ai": {"seatSummary": {"total": 1}}}}, ensure_ascii=False, indent=2),
+        json.dumps(
+            {"licenses": {"automation-ai": {"seatSummary": {"total": 1}}}},
+            ensure_ascii=False,
+            indent=2,
+        ),
         encoding="utf-8",
     )
 

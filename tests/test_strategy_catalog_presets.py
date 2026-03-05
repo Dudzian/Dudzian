@@ -40,7 +40,9 @@ def _build_preset_document(
             "license": {
                 "module_id": f"module::{preset_id}",
                 "fingerprint": fingerprint,
-                "expires_at": expires_at.astimezone(timezone.utc).isoformat().replace("+00:00", "Z"),
+                "expires_at": expires_at.astimezone(timezone.utc)
+                .isoformat()
+                .replace("+00:00", "Z"),
                 "edition": "enterprise",
             },
         },
@@ -133,7 +135,9 @@ def test_describe_presets_filters_profile(tmp_path, signing_key):
         hwid_provider=provider,
     )
 
-    summaries = catalog.describe_presets(profile="grid", include_strategies=False, hwid_provider=provider)
+    summaries = catalog.describe_presets(
+        profile="grid", include_strategies=False, hwid_provider=provider
+    )
     assert len(summaries) == 1
     assert summaries[0]["preset_id"] == "combo-pack"
     assert summaries[0]["profile"] == "grid"

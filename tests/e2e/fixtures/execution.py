@@ -1,4 +1,5 @@
 """Atrapy usług egzekucji wykorzystywane w testach E2E."""
+
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -43,7 +44,9 @@ class FakeExecutionService(ExecutionService):
             raw_response={"source": "fake"},
         )
 
-    def cancel(self, order_id: str, context: ExecutionContext) -> None:  # pragma: no cover - nieużywane w testach
+    def cancel(
+        self, order_id: str, context: ExecutionContext
+    ) -> None:  # pragma: no cover - nieużywane w testach
         self.cancelled.append((order_id, context))
 
     def flush(self) -> None:  # pragma: no cover - nieużywane w testach

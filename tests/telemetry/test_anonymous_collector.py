@@ -65,5 +65,3 @@ def test_clear_queue_removes_file(collector: AnonymousTelemetryCollector) -> Non
     assert collector.queued_events() == 1
     collector.clear_queue()
     assert collector.queued_events() == 0
-
-

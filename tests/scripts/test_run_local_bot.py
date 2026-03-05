@@ -21,7 +21,9 @@ import scripts.run_local_bot as run_local_bot
 
 
 class DummyServer:
-    def __init__(self, context, host: str, port: int, *, interceptors=None) -> None:  # pragma: no cover - prosty stub
+    def __init__(
+        self, context, host: str, port: int, *, interceptors=None
+    ) -> None:  # pragma: no cover - prosty stub
         self.address = f"{host}:{port or 5000}"
 
     def start(self) -> None:  # pragma: no cover - prosty stub
@@ -41,13 +43,15 @@ def _build_context_stub() -> SimpleNamespace:
         required_permissions=("read",),
         forbidden_permissions=(),
     )
-    decision_journal = SimpleNamespace(export=lambda: (
-        {"event": "trade_executed", "symbol": "BTCUSDT"},
-    ))
+    decision_journal = SimpleNamespace(
+        export=lambda: ({"event": "trade_executed", "symbol": "BTCUSDT"},)
+    )
     bootstrap = SimpleNamespace(environment=environment, decision_journal=decision_journal)
     controller = SimpleNamespace(symbols=("BTCUSDT", "ETHUSDT"))
     pipeline = SimpleNamespace(bootstrap=bootstrap, controller=controller)
-    entrypoint_cfg = SimpleNamespace(environment="DemoEnv", strategy="demo_strategy", risk_profile="balanced")
+    entrypoint_cfg = SimpleNamespace(
+        environment="DemoEnv", strategy="demo_strategy", risk_profile="balanced"
+    )
     kraken_entrypoint = SimpleNamespace(
         environment="kraken_paper",
         strategy="multi_strategy_default",
@@ -116,7 +120,9 @@ def _build_context_stub() -> SimpleNamespace:
             },
         },
     )
-    config = SimpleNamespace(trading=trading_cfg, observability=observability_cfg, execution=execution_cfg)
+    config = SimpleNamespace(
+        trading=trading_cfg, observability=observability_cfg, execution=execution_cfg
+    )
 
     def _load_credentials(*args, **kwargs):  # pragma: no cover - stub
         del args, kwargs
@@ -267,7 +273,7 @@ def test_cloud_flag_emits_ready_payload(
 
     assert exit_code == 0
     captured = capsys.readouterr().out.strip().splitlines()
-    assert any("\"cloud\"" in line for line in captured), "Brak payloadu cloud w STDOUT"
+    assert any('"cloud"' in line for line in captured), "Brak payloadu cloud w STDOUT"
 
 
 def test_cloud_handshake_failure_falls_back_to_local(
@@ -339,7 +345,9 @@ def test_cloud_handshake_failure_falls_back_to_local(
     assert any("handshake cloudowy" in warn.lower() for warn in payload.get("warnings", []))
 
 
-def test_paper_mode_requires_checkpoint(tmp_path: Path, _stub_dependencies: SimpleNamespace) -> None:
+def test_paper_mode_requires_checkpoint(
+    tmp_path: Path, _stub_dependencies: SimpleNamespace
+) -> None:
     config_file = _create_runtime_file(tmp_path)
     state_dir = tmp_path / "state"
     report_dir = tmp_path / "reports"
@@ -448,7 +456,9 @@ def test_build_runtime_ai_governor_snapshot_uses_runner(monkeypatch: pytest.Monk
 
 
 def test_build_runtime_ai_governor_snapshot_handles_missing_orchestrator() -> None:
-    context = SimpleNamespace(pipeline=SimpleNamespace(bootstrap=SimpleNamespace(decision_orchestrator=None)))
+    context = SimpleNamespace(
+        pipeline=SimpleNamespace(bootstrap=SimpleNamespace(decision_orchestrator=None))
+    )
 
     snapshot = run_local_bot._build_runtime_ai_governor_snapshot(context)
 
@@ -466,7 +476,9 @@ def test_local_mode_prefers_runtime_snapshot(
         del context, history_limit
         return sentinel
 
-    monkeypatch.setattr(run_local_bot, "_build_runtime_ai_governor_snapshot", _fake_runtime_snapshot)
+    monkeypatch.setattr(
+        run_local_bot, "_build_runtime_ai_governor_snapshot", _fake_runtime_snapshot
+    )
 
     config_file = _create_runtime_file(tmp_path)
     state_dir = tmp_path / "state"

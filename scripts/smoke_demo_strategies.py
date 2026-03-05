@@ -279,7 +279,9 @@ def run_demo(
     for schedule_name, signals in sink.export():
         emitted[schedule_name] = emitted.get(schedule_name, 0) + len(signals)
 
-    return SmokeResult(cycles=cycles, telemetry=dict(telemetry_payloads), emitted_signals=dict(emitted))
+    return SmokeResult(
+        cycles=cycles, telemetry=dict(telemetry_payloads), emitted_signals=dict(emitted)
+    )
 
 
 def main(argv: Sequence[str] | None = None) -> int:
@@ -302,11 +304,17 @@ def main(argv: Sequence[str] | None = None) -> int:
         scheduler_name=args.scheduler,
         cycles=max(1, args.cycles),
     )
-    print(json.dumps({
-        "cycles": result.cycles,
-        "telemetry": result.telemetry,
-        "emitted_signals": result.emitted_signals,
-    }, indent=2, sort_keys=True))
+    print(
+        json.dumps(
+            {
+                "cycles": result.cycles,
+                "telemetry": result.telemetry,
+                "emitted_signals": result.emitted_signals,
+            },
+            indent=2,
+            sort_keys=True,
+        )
+    )
     return 0
 
 

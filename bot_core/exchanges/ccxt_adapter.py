@@ -1,4 +1,5 @@
 """Wspólna logika adapterów CCXT dla rynków spot."""
+
 from __future__ import annotations
 
 import logging
@@ -50,20 +51,15 @@ except Exception:  # pragma: no cover - środowiska bez CCXT
 
         symbols: list[str]
 
-    class _CCXTExchangeError(Exception):
-        ...
+    class _CCXTExchangeError(Exception): ...
 
-    class _CCXTAuthenticationError(_CCXTExchangeError):
-        ...
+    class _CCXTAuthenticationError(_CCXTExchangeError): ...
 
-    class _CCXTPermissionDenied(_CCXTAuthenticationError):
-        ...
+    class _CCXTPermissionDenied(_CCXTAuthenticationError): ...
 
-    class _CCXTRateLimitExceeded(_CCXTExchangeError):
-        ...
+    class _CCXTRateLimitExceeded(_CCXTExchangeError): ...
 
-    class _CCXTNetworkError(_CCXTExchangeError):
-        ...
+    class _CCXTNetworkError(_CCXTExchangeError): ...
 
 
 _CCXT_INSTALL_HINT = (
@@ -163,11 +159,7 @@ class CCXTSpotAdapter(ExchangeAdapter):
         )
         self._auth_errors = self._resolve_error_types(
             "auth_error_types",
-            tuple(
-                error
-                for error in (_CCXTAuthenticationError, _CCXTPermissionDenied)
-                if error
-            ),
+            tuple(error for error in (_CCXTAuthenticationError, _CCXTPermissionDenied) if error),
         )
         self._rate_limit_errors = self._resolve_error_types(
             "rate_limit_error_types",
@@ -314,9 +306,7 @@ class CCXTSpotAdapter(ExchangeAdapter):
         used = balance.get("used") or {}
 
         normalized_balances = {
-            str(asset): float(amount)
-            for asset, amount in free.items()
-            if amount is not None
+            str(asset): float(amount) for asset, amount in free.items() if amount is not None
         }
         total_equity = sum(float(amount or 0.0) for amount in total.values())
         available_margin = sum(float(amount or 0.0) for amount in free.values())
@@ -378,7 +368,9 @@ class CCXTSpotAdapter(ExchangeAdapter):
             params=payload["params"],
         )
 
-        filled_quantity = float(response.get("filled") or response.get("amount_filled") or response.get("amount") or 0.0)
+        filled_quantity = float(
+            response.get("filled") or response.get("amount_filled") or response.get("amount") or 0.0
+        )
         remaining = response.get("remaining")
         if remaining is not None:
             try:
@@ -438,7 +430,8 @@ class WatchdogCCXTAdapter(CCXTSpotAdapter):
                 adapter_name=f"{self.name}:{exchange_id}",
                 environment=(environment or credentials.environment or Environment.LIVE).value,
                 rate_limit_rules=normalize_rate_limit_rules(
-                    (settings or {}).get("rate_limit_rules"), (),
+                    (settings or {}).get("rate_limit_rules"),
+                    (),
                 ),
                 default_rules=(RateLimitRule(rate=60, per=60.0),),
                 watchdog=watchdog,
@@ -464,4 +457,3 @@ class WatchdogCCXTAdapter(CCXTSpotAdapter):
 
 
 __all__ = ["CCXTSpotAdapter", "WatchdogCCXTAdapter", "merge_adapter_settings"]
-

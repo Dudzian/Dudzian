@@ -20,13 +20,15 @@ def _build_dataframe(close: np.ndarray, *, noise: float = 0.0) -> pd.DataFrame:
     high = base * (1.0 + 0.002 + noise)
     low = base * (1.0 - 0.002 - noise)
     volume = pd.Series(np.linspace(10_000, 15_000, close.size), index=base.index)
-    return pd.DataFrame({
-        "open": base,
-        "high": high,
-        "low": low,
-        "close": base,
-        "volume": volume,
-    })
+    return pd.DataFrame(
+        {
+            "open": base,
+            "high": high,
+            "low": low,
+            "close": base,
+            "volume": volume,
+        }
+    )
 
 
 def test_build_regime_features_produces_expected_contract() -> None:
@@ -137,13 +139,15 @@ def test_market_regime_classifier_assess_matches_manual_metrics() -> None:
     high = close * 1.004
     low = close * 0.996
     volume = pd.Series(np.linspace(5000.0, 8000.0, index.size), index=index)
-    ohlcv = pd.DataFrame({
-        "open": close,
-        "high": high,
-        "low": low,
-        "close": close,
-        "volume": volume,
-    })
+    ohlcv = pd.DataFrame(
+        {
+            "open": close,
+            "high": high,
+            "low": low,
+            "close": close,
+            "volume": volume,
+        }
+    )
 
     classifier = MarketRegimeClassifier(min_history=30)
     assessment = classifier.assess(ohlcv, symbol="btc")
@@ -160,49 +164,37 @@ def test_market_regime_classifier_assess_matches_manual_metrics() -> None:
         span=max(short_span_min, window // short_span_divisor), adjust=False
     ).mean()
     long = close_series.ewm(span=max(long_span_min, window), adjust=False).mean()
-    trend_strength = float(
-        np.abs(short.iloc[-1] - long.iloc[-1]) / (np.abs(long.iloc[-1]) + 1e-12)
-    )
+    trend_strength = float(np.abs(short.iloc[-1] - long.iloc[-1]) / (np.abs(long.iloc[-1]) + 1e-12))
 
     volatility = float(returns.std())
     momentum = float(returns.tail(window).mean())
     autocorr = float(returns.autocorr(lag=1) or 0.0)
 
     intraday_series = (
-        (ohlcv["high"] - ohlcv["low"])
-        .div(close_series)
-        .rolling(classifier.daily_window)
-        .mean()
+        (ohlcv["high"] - ohlcv["low"]).div(close_series).rolling(classifier.daily_window).mean()
     ).dropna()
     if intraday_series.empty:
-        intraday_vol = float(
-            (ohlcv["high"] - ohlcv["low"]).div(close_series).abs().mean()
-        )
+        intraday_vol = float((ohlcv["high"] - ohlcv["low"]).div(close_series).abs().mean())
     else:
         intraday_vol = float(intraday_series.iloc[-1])
 
     drawdown = float(
         (close_series.cummax() - close_series).div(close_series.cummax() + 1e-12).max()
     )
-    volatility_window = min(
-        max(classifier.daily_window * 5, classifier.trend_window), returns.size
-    )
+    volatility_window = min(max(classifier.daily_window * 5, classifier.trend_window), returns.size)
     rolling_vol = returns.rolling(
         volatility_window, min_periods=max(volatility_window // 2, 10)
     ).std()
     rolling_clean = rolling_vol.dropna()
     baseline_vol = float(rolling_clean.iloc[-1]) if not rolling_clean.empty else volatility
-    volatility_ratio = (
-        float(volatility / (baseline_vol + 1e-12)) if baseline_vol else 1.0
-    )
+    volatility_ratio = float(volatility / (baseline_vol + 1e-12)) if baseline_vol else 1.0
 
     volume_series = ohlcv["volume"].astype(float).sort_index()
     short_vol_ma = volume_series.rolling(classifier.daily_window, min_periods=1).mean()
     long_window = max(classifier.daily_window * 3, 1)
     long_vol_ma = volume_series.rolling(long_window, min_periods=1).mean()
     volume_trend = float(
-        (short_vol_ma.iloc[-1] - long_vol_ma.iloc[-1])
-        / (np.abs(long_vol_ma.iloc[-1]) + 1e-12)
+        (short_vol_ma.iloc[-1] - long_vol_ma.iloc[-1]) / (np.abs(long_vol_ma.iloc[-1]) + 1e-12)
     )
 
     skewness = float(np.nan_to_num(returns.skew(), nan=0.0, posinf=0.0, neginf=0.0))
@@ -213,9 +205,7 @@ def test_market_regime_classifier_assess_matches_manual_metrics() -> None:
     positive_volume = volume_series.where(change > 0.0).mean()
     negative_volume = volume_series.where(change <= 0.0).mean()
     denom = np.abs(positive_volume) + np.abs(negative_volume) + 1e-12
-    volume_imbalance = float(
-        np.nan_to_num((positive_volume - negative_volume) / denom)
-    )
+    volume_imbalance = float(np.nan_to_num((positive_volume - negative_volume) / denom))
 
     expected_metrics = {
         "trend_strength": trend_strength,
@@ -247,18 +237,16 @@ def test_market_regime_classifier_assess_matches_manual_metrics() -> None:
     assert assessment.metrics == feature_set.metrics
 
     score_cfg = classifier._thresholds["market_regime"]["risk_score"]
-    volatility_component = min(1.0, expected_metrics["volatility"] / classifier.volatility_threshold)
+    volatility_component = min(
+        1.0, expected_metrics["volatility"] / classifier.volatility_threshold
+    )
     intraday_component = min(
         1.0,
         expected_metrics["intraday_vol"]
-        / (
-            classifier.intraday_threshold
-            * float(score_cfg.get("intraday_multiplier", 1.5))
-        ),
+        / (classifier.intraday_threshold * float(score_cfg.get("intraday_multiplier", 1.5))),
     )
     drawdown_component = min(
-        1.0,
-        expected_metrics["drawdown"] / float(score_cfg.get("drawdown_threshold", 0.2))
+        1.0, expected_metrics["drawdown"] / float(score_cfg.get("drawdown_threshold", 0.2))
     )
     volatility_ratio_component = min(1.0, expected_metrics.get("volatility_ratio", 1.0))
     volume_component = min(

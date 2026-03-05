@@ -1,4 +1,5 @@
 """Harmonogram uruchamiania audytu zgodności."""
+
 from __future__ import annotations
 
 import logging
@@ -170,7 +171,9 @@ class ComplianceScheduler:
             # okno od północy do end, więc następne otwarcie to kolejny dzień 00:00
             candidate = datetime.combine(timestamp.date(), time(0, 0), tzinfo=tzinfo)
             if candidate <= timestamp:
-                candidate = datetime.combine(timestamp.date() + timedelta(days=1), time(0, 0), tzinfo=tzinfo)
+                candidate = datetime.combine(
+                    timestamp.date() + timedelta(days=1), time(0, 0), tzinfo=tzinfo
+                )
             return candidate
         candidate = datetime.combine(timestamp.date(), start, tzinfo=tzinfo)
         if candidate <= timestamp:

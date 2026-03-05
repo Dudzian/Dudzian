@@ -92,4 +92,3 @@ portfolio_governors:
     assert output_path.exists()
     payload = yaml.safe_load(output_path.read_text(encoding="utf-8"))
     assert payload == {"BTC_USDT": 0.55, "ETH_USDT": 0.45}
-

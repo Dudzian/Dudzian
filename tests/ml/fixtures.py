@@ -30,4 +30,3 @@ def synthetic_feature_dataset() -> FeatureDataset:
     vectors = tuple(_build_vectors())
     metadata = {"source": "synthetic", "target_scale": 1.0}
     return FeatureDataset(vectors=vectors, metadata=metadata)
-

@@ -1,4 +1,5 @@
 """Integration tests for the auto-trader risk bridge helpers."""
+
 from __future__ import annotations
 
 import pytest

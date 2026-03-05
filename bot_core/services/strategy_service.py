@@ -1,4 +1,5 @@
 """Serwis do równoległego uruchamiania strategii i kierowania sygnałów do guardrails."""
+
 from __future__ import annotations
 
 import asyncio
@@ -11,8 +12,7 @@ class Strategy(Protocol):
 
     name: str
 
-    async def generate_signal(self, market_snapshot: Dict[str, Any]) -> "StrategySignal":
-        ...
+    async def generate_signal(self, market_snapshot: Dict[str, Any]) -> "StrategySignal": ...
 
 
 @dataclass(slots=True)

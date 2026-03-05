@@ -117,7 +117,9 @@ class CloudSecurityManager:
                     "fingerprint": normalized_fingerprint,
                 },
             )
-            raise CloudAuthorizationError("Licencja/HWID nie znajdują się na allowliście serwera cloud.")
+            raise CloudAuthorizationError(
+                "Licencja/HWID nie znajdują się na allowliście serwera cloud."
+            )
         self._verify_license_bundle(entry, normalized_fingerprint)
         signature_mapping = _signature_to_mapping(request.signature)
         payload: dict[str, object] = {
@@ -163,7 +165,9 @@ class CloudSecurityManager:
 
     def require_session(self, metadata: Iterable[tuple[str, str]]) -> _AuthorizedSession:
         if not self.requires_handshake:
-            raise CloudSecurityError("Warstwa cloud nie wymaga autoryzacji – interceptor nie powinien być aktywny.")
+            raise CloudSecurityError(
+                "Warstwa cloud nie wymaga autoryzacji – interceptor nie powinien być aktywny."
+            )
         token = self._extract_token(metadata)
         if not token:
             self._append_audit_log(
@@ -235,10 +239,15 @@ class CloudSecurityManager:
                 expected_hwid=fingerprint,
             )
         except FileNotFoundError:
-            LOGGER.warning("Pakiet licencyjny %s nie istnieje – pomijam dodatkową walidację", entry.license_bundle_path)
+            LOGGER.warning(
+                "Pakiet licencyjny %s nie istnieje – pomijam dodatkową walidację",
+                entry.license_bundle_path,
+            )
             return
         except LicenseServiceError as exc:  # pragma: no cover - walidacja konfiguracji
-            LOGGER.error("Nie udało się zweryfikować pakietu licencji dla %s: %s", entry.license_id, exc)
+            LOGGER.error(
+                "Nie udało się zweryfikować pakietu licencji dla %s: %s", entry.license_id, exc
+            )
             raise CloudAuthorizationError("Pakiet licencyjny klienta jest nieprawidłowy.") from exc
         expected_id = getattr(getattr(snapshot, "capabilities", None), "license_id", None)
         if expected_id and expected_id != entry.license_id:

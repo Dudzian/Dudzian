@@ -21,7 +21,9 @@ def _format_ratio(value: float) -> str:
 
 
 def _as_rows(metrics: PerformanceMetrics) -> List[tuple[str, str]]:
-    exposure_value = "∞" if math.isinf(metrics.max_exposure_pct) else f"{metrics.max_exposure_pct:.2f}%"
+    exposure_value = (
+        "∞" if math.isinf(metrics.max_exposure_pct) else f"{metrics.max_exposure_pct:.2f}%"
+    )
     return [
         ("Total return", f"{metrics.total_return_pct:.2f}%"),
         ("CAGR", f"{metrics.cagr_pct:.2f}%"),
@@ -50,30 +52,36 @@ def _render_strategy_metadata(metadata: Mapping[str, object]) -> str:
 
 
 def render_html_report(report: BacktestReport, *, title: str = "Backtest report") -> str:
-    metrics = report.metrics or PerformanceMetrics(0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 100.0, 0.0, 0.0, 0.0)
+    metrics = report.metrics or PerformanceMetrics(
+        0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 100.0, 0.0, 0.0, 0.0
+    )
     metrics_rows = "".join(
         f"<tr><th>{name}</th><td>{value}</td></tr>" for name, value in _as_rows(metrics)
     )
-    trades_rows = "".join(
+    trades_rows = (
         "".join(
-            (
-                "<tr>",
-                f"<td>{trade.direction}</td>",
-                f"<td>{trade.entry_time}</td>",
-                f"<td>{trade.exit_time}</td>",
-                f"<td>{trade.entry_price:.4f}</td>",
-                f"<td>{trade.exit_price:.4f}</td>",
-                f"<td>{trade.quantity:.4f}</td>",
-                f"<td>{trade.pnl:.4f}</td>",
-                f"<td>{trade.pnl_pct:.2f}%</td>",
-                "</tr>",
+            "".join(
+                (
+                    "<tr>",
+                    f"<td>{trade.direction}</td>",
+                    f"<td>{trade.entry_time}</td>",
+                    f"<td>{trade.exit_time}</td>",
+                    f"<td>{trade.entry_price:.4f}</td>",
+                    f"<td>{trade.exit_price:.4f}</td>",
+                    f"<td>{trade.quantity:.4f}</td>",
+                    f"<td>{trade.pnl:.4f}</td>",
+                    f"<td>{trade.pnl_pct:.2f}%</td>",
+                    "</tr>",
+                )
             )
+            for trade in report.trades
         )
-        for trade in report.trades
-    ) or "<tr><td colspan='8'>No completed trades</td></tr>"
+        or "<tr><td colspan='8'>No completed trades</td></tr>"
+    )
     warnings = "".join(f"<li>{w}</li>" for w in report.warnings)
     params_rows = "".join(
-        f"<tr><th>{key}</th><td>{value}</td></tr>" for key, value in sorted(report.parameters.items())
+        f"<tr><th>{key}</th><td>{value}</td></tr>"
+        for key, value in sorted(report.parameters.items())
     )
     metadata_rows = _render_strategy_metadata(report.strategy_metadata)
     html = f"""
@@ -112,7 +120,7 @@ def render_html_report(report: BacktestReport, *, title: str = "Backtest report"
         </section>
         <section>
           <h2>Warnings</h2>
-          <ul>{warnings or '<li>None</li>'}</ul>
+          <ul>{warnings or "<li>None</li>"}</ul>
         </section>
       </body>
     </html>
@@ -144,7 +152,8 @@ def export_report(
         text.textLine(title)
         text.textLine("Performance metrics:")
         for name, value in _as_rows(
-            report.metrics or PerformanceMetrics(0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 100.0, 0.0, 0.0, 0.0)
+            report.metrics
+            or PerformanceMetrics(0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 100.0, 0.0, 0.0, 0.0)
         ):
             text.textLine(f"  {name}: {value}")
         text.textLine("")

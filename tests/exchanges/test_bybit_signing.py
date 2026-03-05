@@ -42,7 +42,7 @@ class _StubBybitClient:
         else:
             payload = json.dumps(body or params, separators=(",", ":"), sort_keys=True)
         message = (
-            f"{self.fixed_timestamp}{self.config.get('apiKey')}" f"{self.recv_window}{payload or ''}"
+            f"{self.fixed_timestamp}{self.config.get('apiKey')}{self.recv_window}{payload or ''}"
         )
         signature = hmac.new(
             str(self.config["secret"]).encode("utf-8"),

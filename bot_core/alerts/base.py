@@ -1,4 +1,5 @@
 """Interfejsy kanałów alertów oraz audytu."""
+
 from __future__ import annotations
 
 import abc
@@ -40,11 +41,9 @@ class AlertChannel(abc.ABC):
 class AlertAuditLog(Protocol):
     """Minimalny kontrakt repozytorium audytowego."""
 
-    def append(self, message: AlertMessage, *, channel: str) -> None:
-        ...
+    def append(self, message: AlertMessage, *, channel: str) -> None: ...
 
-    def export(self) -> Iterable[Mapping[str, str]]:
-        ...
+    def export(self) -> Iterable[Mapping[str, str]]: ...
 
 
 class AlertRouter(abc.ABC):
@@ -53,9 +52,7 @@ class AlertRouter(abc.ABC):
     channels: MutableSequence[AlertChannel]
 
     @abc.abstractmethod
-    def register(self, channel: AlertChannel) -> None:
-        ...
+    def register(self, channel: AlertChannel) -> None: ...
 
     @abc.abstractmethod
-    def dispatch(self, message: AlertMessage) -> None:
-        ...
+    def dispatch(self, message: AlertMessage) -> None: ...

@@ -1,4 +1,5 @@
 """Pipeline przygotowujący cechy dla strategii ML."""
+
 from __future__ import annotations
 
 from collections import deque
@@ -17,7 +18,13 @@ class MLFeaturePipeline:
     window: int = 20
     forecast_horizon: int = 1
     normalise: bool = True
-    feature_names: tuple[str, ...] = ("close_last", "close_change", "close_mean", "close_std", "volume_last")
+    feature_names: tuple[str, ...] = (
+        "close_last",
+        "close_change",
+        "close_mean",
+        "close_std",
+        "volume_last",
+    )
     _history: Deque[MarketSnapshot] = field(default_factory=lambda: deque(maxlen=256), init=False)
     _mean: np.ndarray | None = field(default=None, init=False, repr=False)
     _std: np.ndarray | None = field(default=None, init=False, repr=False)
@@ -39,7 +46,9 @@ class MLFeaturePipeline:
         features = self._compute_features(window_snaps)
         return self._normalise(features)
 
-    def build_training_set(self, history: Sequence[MarketSnapshot]) -> tuple[np.ndarray, np.ndarray]:
+    def build_training_set(
+        self, history: Sequence[MarketSnapshot]
+    ) -> tuple[np.ndarray, np.ndarray]:
         features: list[np.ndarray] = []
         targets: list[float] = []
         last_index = len(history) - self.forecast_horizon + 1

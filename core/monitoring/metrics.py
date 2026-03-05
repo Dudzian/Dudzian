@@ -1,4 +1,5 @@
 """Metryki obserwowalności dla guardrail'i kolejki I/O, retrainingu i onboardingu."""
+
 from __future__ import annotations
 
 from dataclasses import dataclass, field

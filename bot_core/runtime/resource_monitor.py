@@ -1,4 +1,5 @@
 """Monitorowanie budżetów zasobów dla scheduler-a i strategii."""
+
 from __future__ import annotations
 
 from dataclasses import dataclass

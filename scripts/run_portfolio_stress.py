@@ -1,4 +1,5 @@
 """CLI uruchamiające symulator portfolio_stress Stage6."""
+
 from __future__ import annotations
 
 import argparse
@@ -29,8 +30,6 @@ from bot_core.risk.portfolio_stress import (
 _LOGGER = logging.getLogger("portfolio_stress.cli")
 
 
-
-
 def _resolve_signing_key(
     args: argparse.Namespace, config: PortfolioStressConfig
 ) -> tuple[bytes | None, str | None]:
@@ -49,9 +48,7 @@ def _resolve_signing_key(
     return key_bytes, key_id
 
 
-def _select_baseline_path(
-    args_baseline: str | None, config: PortfolioStressConfig
-) -> Path:
+def _select_baseline_path(args_baseline: str | None, config: PortfolioStressConfig) -> Path:
     if args_baseline:
         candidate = Path(args_baseline).expanduser()
         if not candidate.exists():
@@ -78,9 +75,7 @@ def _filter_scenarios(
     wanted = {name.strip().lower() for name in requested if name.strip()}
     filtered = tuple(s for s in scenarios if s.name.lower() in wanted)
     if not filtered:
-        raise SystemExit(
-            "Żaden z żądanych scenariuszy nie istnieje: " + ", ".join(sorted(wanted))
-        )
+        raise SystemExit("Żaden z żądanych scenariuszy nie istnieje: " + ", ".join(sorted(wanted)))
     return filtered
 
 
@@ -178,8 +173,7 @@ def _build_parser() -> argparse.ArgumentParser:
 
 def _summarize(report: PortfolioStressReport) -> str:
     scenario_metrics = ", ".join(
-        f"{scenario.scenario.name}: {scenario.drawdown_pct:.2%} dd"
-        for scenario in report.scenarios
+        f"{scenario.scenario.name}: {scenario.drawdown_pct:.2%} dd" for scenario in report.scenarios
     )
     summary = report.summary
     tag_fragment = ""
@@ -198,21 +192,12 @@ def _summarize(report: PortfolioStressReport) -> str:
         )
         if top_tag:
             tag_fragment = (
-                f", najcięższa kategoria: {top_tag['tag']} "
-                f"({top_tag['max_drawdown_pct']:.2%} dd)"
+                f", najcięższa kategoria: {top_tag['tag']} ({top_tag['max_drawdown_pct']:.2%} dd)"
             )
     var_text = summary.get("var_95_return_pct")
     cvar_text = summary.get("cvar_95_return_pct")
-    var_fragment = (
-        f", VaR95: {var_text:.2%}"
-        if isinstance(var_text, (int, float))
-        else ""
-    )
-    cvar_fragment = (
-        f", CVaR95: {cvar_text:.2%}"
-        if isinstance(cvar_text, (int, float))
-        else ""
-    )
+    var_fragment = f", VaR95: {var_text:.2%}" if isinstance(var_text, (int, float)) else ""
+    cvar_fragment = f", CVaR95: {cvar_text:.2%}" if isinstance(cvar_text, (int, float)) else ""
     max_drawdown = max(
         (scenario.drawdown_pct for scenario in report.scenarios),
         default=0.0,

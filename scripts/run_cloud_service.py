@@ -78,7 +78,9 @@ def _parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     return parser.parse_args(argv)
 
 
-def _emit_ready(payload: Mapping[str, object], *, ready_file: str | None, emit_stdout: bool) -> None:
+def _emit_ready(
+    payload: Mapping[str, object], *, ready_file: str | None, emit_stdout: bool
+) -> None:
     serialized = json.dumps(payload, ensure_ascii=False)
     if ready_file:
         path = Path(ready_file).expanduser()
@@ -193,7 +195,9 @@ def main(argv: Sequence[str] | None = None) -> int:
     try:
         service.start()
     except Exception as exc:  # pragma: no cover - bootstrap
-        logging.getLogger(__name__).exception("Nie udało się uruchomić CloudRuntimeService: %s", exc)
+        logging.getLogger(__name__).exception(
+            "Nie udało się uruchomić CloudRuntimeService: %s", exc
+        )
         return 3
 
     try:

@@ -96,7 +96,9 @@ class TcoSummary:
     ) -> Mapping[str, object]:
         payload: MutableMapping[str, object] = {
             "currency": self.currency,
-            "generated_at": generated_at.astimezone(timezone.utc).isoformat().replace("+00:00", "Z"),
+            "generated_at": generated_at.astimezone(timezone.utc)
+            .isoformat()
+            .replace("+00:00", "Z"),
             "monthly_total": self.monthly_total,
             "annual_total": self.annual_total,
             "categories": [category.to_payload() for category in self.categories],

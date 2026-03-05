@@ -183,8 +183,7 @@ class ResilienceBundleBuilder:
             }
             signature_path = manifest_path.with_suffix(".sig")
             signature_path.write_text(
-                json.dumps(signature_doc, ensure_ascii=False, indent=2, sort_keys=True)
-                + "\n",
+                json.dumps(signature_doc, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
                 encoding="utf-8",
             )
 
@@ -219,11 +218,7 @@ class ResilienceBundleVerifier:
             return ["Manifest nie zawiera listy plików"]
 
         with zipfile.ZipFile(self._bundle_path, "r") as archive:
-            archive_files = {
-                name
-                for name in archive.namelist()
-                if name and not name.endswith("/")
-            }
+            archive_files = {name for name in archive.namelist() if name and not name.endswith("/")}
             for name, (expected_size, expected_digest) in manifest_files.items():
                 try:
                     info = archive.getinfo(name)
@@ -299,4 +294,3 @@ __all__ = [
     "load_signature",
     "verify_signature",
 ]
-

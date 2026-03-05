@@ -107,7 +107,9 @@ def test_load_stress_overrides_parses_entries(tmp_path: Path) -> None:
     assert critical.tags == ("stage6", "latency")
 
 
-def test_build_slo_status_provider_uses_fallback(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_build_slo_status_provider_uses_fallback(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     fallback_dir = tmp_path / "fallback"
     fallback_dir.mkdir()
     now = datetime(2024, 1, 5, tzinfo=timezone.utc)
@@ -126,7 +128,9 @@ def test_build_slo_status_provider_uses_fallback(tmp_path: Path, monkeypatch: py
     assert statuses and "latency" in statuses
 
 
-def test_build_stress_override_provider_returns_latest(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_build_stress_override_provider_returns_latest(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     fallback_dir = tmp_path / "stage6"
     fallback_dir.mkdir()
     (fallback_dir / "stress.json").write_text(
@@ -143,4 +147,3 @@ def test_build_stress_override_provider_returns_latest(tmp_path: Path, monkeypat
     monkeypatch.chdir(tmp_path)
     overrides = provider()
     assert overrides and overrides[0].reason == "latency_spike"
-

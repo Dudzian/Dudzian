@@ -1,4 +1,5 @@
 """Monitorowanie SLO dla Observability Stage6."""
+
 from __future__ import annotations
 
 import csv
@@ -227,9 +228,7 @@ class SLOMonitor:
         }
         self._definitions_by_indicator: dict[str, list[SLODefinition]] = {}
         for definition in definitions:
-            self._definitions_by_indicator.setdefault(definition.indicator, []).append(
-                definition
-            )
+            self._definitions_by_indicator.setdefault(definition.indicator, []).append(definition)
         self._composites: dict[str, SLOCompositeDefinition] = {
             composite.name: composite for composite in composites or []
         }
@@ -291,9 +290,7 @@ class SLOMonitor:
             }
             composite_breached: list[str] = []
             for name, status in composite_statuses.items():
-                composite_counts[status.status] = (
-                    composite_counts.get(status.status, 0) + 1
-                )
+                composite_counts[status.status] = composite_counts.get(status.status, 0) + 1
                 if status.is_breach:
                     composite_breached.append(name)
             summary["composites"] = {
@@ -338,7 +335,9 @@ class SLOMonitor:
                 severity = definition.severity
                 reason = f"{value:.6g} < target {definition.target:.6g}"
                 if definition.target != 0:
-                    error_budget_pct = max(0.0, (definition.target - value) / abs(definition.target))
+                    error_budget_pct = max(
+                        0.0, (definition.target - value) / abs(definition.target)
+                    )
             elif value < warning_threshold:
                 status = "warning"
                 severity = "warning"
@@ -351,7 +350,9 @@ class SLOMonitor:
                 severity = definition.severity
                 reason = f"{value:.6g} > target {definition.target:.6g}"
                 if definition.target != 0:
-                    error_budget_pct = max(0.0, (value - definition.target) / abs(definition.target))
+                    error_budget_pct = max(
+                        0.0, (value - definition.target) / abs(definition.target)
+                    )
             elif value > warning_threshold:
                 status = "warning"
                 severity = "warning"
@@ -424,34 +425,25 @@ class SLOMonitor:
             if breach_count > definition.max_breaches:
                 status_value = "breach"
                 severity = definition.severity
-                reason = (
-                    f"{breach_count}/{total} celów w stanie breach (limit {definition.max_breaches})"
-                )
+                reason = f"{breach_count}/{total} celów w stanie breach (limit {definition.max_breaches})"
             else:
                 tolerated_breach = breach_count > 0
                 effective_ok = ok_like + warning_count
                 if definition.min_ok_ratio is not None and effective_ok < required_ok:
                     status_value = "warning"
                     severity = "warning"
-                    reason = (
-                        f"tylko {effective_ok}/{total} celów spełnia wymagany udział"
-                    )
+                    reason = f"tylko {effective_ok}/{total} celów spełnia wymagany udział"
                 elif (
-                    definition.max_warnings is not None
-                    and warning_count > definition.max_warnings
+                    definition.max_warnings is not None and warning_count > definition.max_warnings
                 ):
                     status_value = "warning"
                     severity = "warning"
-                    reason = (
-                        f"{warning_count}/{total} celów w stanie warning (limit {definition.max_warnings})"
-                    )
+                    reason = f"{warning_count}/{total} celów w stanie warning (limit {definition.max_warnings})"
                 elif warning_count > 0 or tolerated_breach:
                     status_value = "warning"
                     severity = "warning"
                     if tolerated_breach:
-                        reason = (
-                            f"tolerowane breach: {breach_count}/{definition.max_breaches}"
-                        )
+                        reason = f"tolerowane breach: {breach_count}/{definition.max_breaches}"
                     else:
                         reason = f"{warning_count}/{total} celów w stanie warning"
                 elif missing:
@@ -459,13 +451,15 @@ class SLOMonitor:
                     severity = "warning"
                     reason = "brak pełnych danych dla wszystkich celów"
 
-        metadata.update({
-            "counts_ok": float(counts.get("ok", 0)),
-            "counts_warning": float(warning_count),
-            "counts_breach": float(breach_count),
-            "counts_unknown": float(counts.get("unknown", 0)),
-            "evaluated": float(evaluated),
-        })
+        metadata.update(
+            {
+                "counts_ok": float(counts.get("ok", 0)),
+                "counts_warning": float(warning_count),
+                "counts_breach": float(breach_count),
+                "counts_unknown": float(counts.get("unknown", 0)),
+                "evaluated": float(evaluated),
+            }
+        )
 
         return SLOCompositeStatus(
             name=definition.name,
@@ -512,8 +506,7 @@ class SLOReport:
             payload["composites"] = {
                 "definitions": [composite.to_dict() for composite in self.composites],
                 "results": {
-                    name: status.to_dict()
-                    for name, status in self.composite_statuses.items()
+                    name: status.to_dict() for name, status in self.composite_statuses.items()
                 },
             }
         return payload
@@ -557,6 +550,7 @@ def evaluate_slo(
         composites=tuple(composites or ()),
         composite_statuses=dict(composite_statuses),
     )
+
     def _evaluate_single(
         self, definition: SLODefinition, measurement: SLOMeasurement | None
     ) -> SLOStatus:
@@ -592,7 +586,9 @@ def evaluate_slo(
                 severity = definition.severity
                 reason = f"{value:.6g} < target {definition.target:.6g}"
                 if definition.target != 0:
-                    error_budget_pct = max(0.0, (definition.target - value) / abs(definition.target))
+                    error_budget_pct = max(
+                        0.0, (definition.target - value) / abs(definition.target)
+                    )
             elif value < warning_threshold:
                 status = "warning"
                 severity = "warning"
@@ -605,7 +601,9 @@ def evaluate_slo(
                 severity = definition.severity
                 reason = f"{value:.6g} > target {definition.target:.6g}"
                 if definition.target != 0:
-                    error_budget_pct = max(0.0, (value - definition.target) / abs(definition.target))
+                    error_budget_pct = max(
+                        0.0, (value - definition.target) / abs(definition.target)
+                    )
             elif value > warning_threshold:
                 status = "warning"
                 severity = "warning"
@@ -678,34 +676,25 @@ def evaluate_slo(
             if breach_count > definition.max_breaches:
                 status_value = "breach"
                 severity = definition.severity
-                reason = (
-                    f"{breach_count}/{total} celów w stanie breach (limit {definition.max_breaches})"
-                )
+                reason = f"{breach_count}/{total} celów w stanie breach (limit {definition.max_breaches})"
             else:
                 tolerated_breach = breach_count > 0
                 effective_ok = ok_like + warning_count
                 if definition.min_ok_ratio is not None and effective_ok < required_ok:
                     status_value = "warning"
                     severity = "warning"
-                    reason = (
-                        f"tylko {effective_ok}/{total} celów spełnia wymagany udział"
-                    )
+                    reason = f"tylko {effective_ok}/{total} celów spełnia wymagany udział"
                 elif (
-                    definition.max_warnings is not None
-                    and warning_count > definition.max_warnings
+                    definition.max_warnings is not None and warning_count > definition.max_warnings
                 ):
                     status_value = "warning"
                     severity = "warning"
-                    reason = (
-                        f"{warning_count}/{total} celów w stanie warning (limit {definition.max_warnings})"
-                    )
+                    reason = f"{warning_count}/{total} celów w stanie warning (limit {definition.max_warnings})"
                 elif warning_count > 0 or tolerated_breach:
                     status_value = "warning"
                     severity = "warning"
                     if tolerated_breach:
-                        reason = (
-                            f"tolerowane breach: {breach_count}/{definition.max_breaches}"
-                        )
+                        reason = f"tolerowane breach: {breach_count}/{definition.max_breaches}"
                     else:
                         reason = f"{warning_count}/{total} celów w stanie warning"
                 elif missing:
@@ -713,13 +702,15 @@ def evaluate_slo(
                     severity = "warning"
                     reason = "brak pełnych danych dla wszystkich celów"
 
-        metadata.update({
-            "counts_ok": float(counts.get("ok", 0)),
-            "counts_warning": float(warning_count),
-            "counts_breach": float(breach_count),
-            "counts_unknown": float(counts.get("unknown", 0)),
-            "evaluated": float(evaluated),
-        })
+        metadata.update(
+            {
+                "counts_ok": float(counts.get("ok", 0)),
+                "counts_warning": float(warning_count),
+                "counts_breach": float(breach_count),
+                "counts_unknown": float(counts.get("unknown", 0)),
+                "evaluated": float(evaluated),
+            }
+        )
 
         return SLOCompositeStatus(
             name=definition.name,

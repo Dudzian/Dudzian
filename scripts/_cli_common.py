@@ -60,7 +60,9 @@ def normalize_scopes(
     return tuple(default or ())
 
 
-def should_print(prefix: str, *, json_output: str | None, cli_flag: bool, default_when_unspecified: bool) -> bool:
+def should_print(
+    prefix: str, *, json_output: str | None, cli_flag: bool, default_when_unspecified: bool
+) -> bool:
     if cli_flag:
         return True
     return env_flag(prefix, "PRINT", default_when_unspecified)

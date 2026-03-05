@@ -1,4 +1,5 @@
 """Modele komponentów kosztowych wykorzystywane w analizie TCO."""
+
 from .models import (
     BaseCostComponent,
     CommissionCost,

@@ -1,4 +1,5 @@
 """Monotoniczny zegar dla walidacji licencji offline."""
+
 from __future__ import annotations
 
 import json

@@ -1,4 +1,5 @@
 """Pipelines for training and registering Decision Engine models."""
+
 from __future__ import annotations
 
 import argparse
@@ -68,6 +69,7 @@ def _cross_validate(
         accuracies.append(float(metrics.get("directional_accuracy", 0.0)))
 
     return {"mae": tuple(maes), "directional_accuracy": tuple(accuracies)}
+
 
 LOGGER = logging.getLogger(__name__)
 
@@ -230,7 +232,9 @@ def _ensure_sequence(value: object, *, field_name: str) -> tuple[str, ...]:
     raise TypeError(f"Pole {field_name} musi być sekwencją lub stringiem")
 
 
-def _ensure_optional_sequence_of_float(value: object, *, field_name: str) -> tuple[float, ...] | None:
+def _ensure_optional_sequence_of_float(
+    value: object, *, field_name: str
+) -> tuple[float, ...] | None:
     if value is None:
         return None
     if isinstance(value, (int, float)):
@@ -258,16 +262,16 @@ def _load_structured_payload(source: Path | Mapping[str, object]) -> Mapping[str
     return data
 
 
-def _parse_datasets(profile_name: str, payload: Mapping[str, object]) -> dict[str, TrainingDatasetSpec]:
+def _parse_datasets(
+    profile_name: str, payload: Mapping[str, object]
+) -> dict[str, TrainingDatasetSpec]:
     datasets_raw = payload.get("datasets") or {}
     if not isinstance(datasets_raw, Mapping):
         raise TypeError(f"profiles.{profile_name}.datasets musi być mapowaniem")
     datasets: dict[str, TrainingDatasetSpec] = {}
     for dataset_name, dataset_payload in datasets_raw.items():
         if not isinstance(dataset_payload, Mapping):
-            raise TypeError(
-                f"profiles.{profile_name}.datasets.{dataset_name} musi być mapowaniem"
-            )
+            raise TypeError(f"profiles.{profile_name}.datasets.{dataset_name} musi być mapowaniem")
         path_raw = dataset_payload.get("path")
         path = Path(path_raw).expanduser() if path_raw is not None else None
         fmt = str(dataset_payload.get("format", "csv")).lower()
@@ -279,16 +283,16 @@ def _parse_datasets(profile_name: str, payload: Mapping[str, object]) -> dict[st
     return datasets
 
 
-def _parse_models(profile_name: str, payload: Mapping[str, object]) -> tuple[TrainingModelSpec, ...]:
+def _parse_models(
+    profile_name: str, payload: Mapping[str, object]
+) -> tuple[TrainingModelSpec, ...]:
     models_raw = payload.get("models") or ()
     if not isinstance(models_raw, Iterable):
         raise TypeError(f"profiles.{profile_name}.models musi być sekwencją")
     models: list[TrainingModelSpec] = []
     for index, model_payload in enumerate(models_raw):
         if not isinstance(model_payload, Mapping):
-            raise TypeError(
-                f"profiles.{profile_name}.models[{index}] musi być mapowaniem"
-            )
+            raise TypeError(f"profiles.{profile_name}.models[{index}] musi być mapowaniem")
         name = str(model_payload.get("name") or f"model_{index}")
         dataset = str(model_payload.get("dataset") or "")
         if not dataset:
@@ -297,7 +301,9 @@ def _parse_models(profile_name: str, payload: Mapping[str, object]) -> tuple[Tra
         if not target:
             raise ValueError(f"profiles.{profile_name}.models[{index}] wymaga pola target")
         features_raw = model_payload.get("features")
-        features = _ensure_sequence(features_raw, field_name=f"profiles.{profile_name}.models[{index}].features")
+        features = _ensure_sequence(
+            features_raw, field_name=f"profiles.{profile_name}.models[{index}].features"
+        )
         if not features:
             raise ValueError(
                 f"profiles.{profile_name}.models[{index}] wymaga co najmniej jednej cechy"
@@ -305,15 +311,11 @@ def _parse_models(profile_name: str, payload: Mapping[str, object]) -> tuple[Tra
         trainer = str(model_payload.get("trainer", "gradient_boosting"))
         options_raw = model_payload.get("options") or {}
         if not isinstance(options_raw, Mapping):
-            raise TypeError(
-                f"profiles.{profile_name}.models[{index}].options musi być mapowaniem"
-            )
+            raise TypeError(f"profiles.{profile_name}.models[{index}].options musi być mapowaniem")
         options = {str(key): value for key, value in options_raw.items() if key in _GBM_OPTIONS}
         metadata_raw = model_payload.get("metadata") or {}
         if not isinstance(metadata_raw, Mapping):
-            raise TypeError(
-                f"profiles.{profile_name}.models[{index}].metadata musi być mapowaniem"
-            )
+            raise TypeError(f"profiles.{profile_name}.models[{index}].metadata musi być mapowaniem")
         publish_aliases = _ensure_sequence(
             model_payload.get("publish_aliases"),
             field_name=f"profiles.{profile_name}.models[{index}].publish_aliases",
@@ -340,7 +342,9 @@ def _parse_models(profile_name: str, payload: Mapping[str, object]) -> tuple[Tra
     return tuple(models)
 
 
-def _parse_ensembles(profile_name: str, payload: Mapping[str, object]) -> tuple[TrainingEnsembleSpec, ...]:
+def _parse_ensembles(
+    profile_name: str, payload: Mapping[str, object]
+) -> tuple[TrainingEnsembleSpec, ...]:
     raw = payload.get("ensembles") or ()
     if not raw:
         return ()
@@ -349,9 +353,7 @@ def _parse_ensembles(profile_name: str, payload: Mapping[str, object]) -> tuple[
     ensembles: list[TrainingEnsembleSpec] = []
     for index, entry in enumerate(raw):
         if not isinstance(entry, Mapping):
-            raise TypeError(
-                f"profiles.{profile_name}.ensembles[{index}] musi być mapowaniem"
-            )
+            raise TypeError(f"profiles.{profile_name}.ensembles[{index}] musi być mapowaniem")
         name = str(entry.get("name") or f"ensemble_{index}")
         components_raw = entry.get("components")
         components = _ensure_sequence(
@@ -359,9 +361,7 @@ def _parse_ensembles(profile_name: str, payload: Mapping[str, object]) -> tuple[
             field_name=f"profiles.{profile_name}.ensembles[{index}].components",
         )
         if not components:
-            raise ValueError(
-                f"profiles.{profile_name}.ensembles[{index}] wymaga listy komponentów"
-            )
+            raise ValueError(f"profiles.{profile_name}.ensembles[{index}] wymaga listy komponentów")
         aggregation = str(entry.get("aggregation", "mean"))
         weights = _ensure_optional_sequence_of_float(
             entry.get("weights"),
@@ -403,7 +403,9 @@ def _parse_ensembles(profile_name: str, payload: Mapping[str, object]) -> tuple[
     return tuple(ensembles)
 
 
-def _parse_auto_retrain(profile_name: str, payload: Mapping[str, object]) -> AutoRetrainPolicy | None:
+def _parse_auto_retrain(
+    profile_name: str, payload: Mapping[str, object]
+) -> AutoRetrainPolicy | None:
     raw = payload.get("auto_retrain")
     if not raw:
         return None
@@ -411,45 +413,29 @@ def _parse_auto_retrain(profile_name: str, payload: Mapping[str, object]) -> Aut
         raise TypeError(f"profiles.{profile_name}.auto_retrain musi być mapowaniem")
     interval = float(raw.get("interval_seconds", 0.0))
     if interval <= 0:
-        raise ValueError(
-            f"profiles.{profile_name}.auto_retrain.interval_seconds musi być dodatni"
-        )
+        raise ValueError(f"profiles.{profile_name}.auto_retrain.interval_seconds musi być dodatni")
     quality_raw = raw.get("quality") or {}
     quality: QualityThresholds | None
     if quality_raw:
         if not isinstance(quality_raw, Mapping):
-            raise TypeError(
-                f"profiles.{profile_name}.auto_retrain.quality musi być mapowaniem"
-            )
+            raise TypeError(f"profiles.{profile_name}.auto_retrain.quality musi być mapowaniem")
         quality = QualityThresholds(
             min_directional_accuracy=(
                 float(quality_raw["min_directional_accuracy"])
                 if "min_directional_accuracy" in quality_raw
                 else None
             ),
-            max_mae=(
-                float(quality_raw["max_mae"])
-                if "max_mae" in quality_raw
-                else None
-            ),
-            max_rmse=(
-                float(quality_raw["max_rmse"])
-                if "max_rmse" in quality_raw
-                else None
-            ),
+            max_mae=(float(quality_raw["max_mae"]) if "max_mae" in quality_raw else None),
+            max_rmse=(float(quality_raw["max_rmse"]) if "max_rmse" in quality_raw else None),
         )
     else:
         quality = None
     journal_raw = raw.get("journal") or {}
     if not isinstance(journal_raw, Mapping):
-        raise TypeError(
-            f"profiles.{profile_name}.auto_retrain.journal musi być mapowaniem"
-        )
+        raise TypeError(f"profiles.{profile_name}.auto_retrain.journal musi być mapowaniem")
     metadata_raw = raw.get("metadata") or {}
     if metadata_raw and not isinstance(metadata_raw, Mapping):
-        raise TypeError(
-            f"profiles.{profile_name}.auto_retrain.metadata musi być mapowaniem"
-        )
+        raise TypeError(f"profiles.{profile_name}.auto_retrain.metadata musi być mapowaniem")
     return AutoRetrainPolicy(
         interval_seconds=interval,
         quality=quality,
@@ -593,6 +579,7 @@ def register_profile_results(
                 meta_weight_floor=ensemble.meta_weight_floor,
                 override=True,
             )
+
 
 @dataclass(slots=True)
 class _LearningSet:
@@ -751,7 +738,9 @@ def train_gradient_boosting_model(
     validation_rows = len(validation_frame)
     test_rows = len(test_frame)
     structured_metrics: dict[str, dict[str, float]] = {
-        "train": {str(name): float(value) for name, value in subset_metrics.get("train", {}).items()},
+        "train": {
+            str(name): float(value) for name, value in subset_metrics.get("train", {}).items()
+        },
         "validation": {
             str(name): float(value) for name, value in subset_metrics.get("validation", {}).items()
         },
@@ -800,7 +789,7 @@ def train_gradient_boosting_model(
     if test_subset is not None and "test" in subset_predictions:
         test_meta = (subset_predictions["test"], test_subset.targets)
     meta_payload = {
-            "calibration": calibration_report.to_mapping(),
+        "calibration": calibration_report.to_mapping(),
         "cross_validation": {
             "folds": len(cv_payload["mae"]),
             "mae": list(cv_payload["mae"]),
@@ -919,8 +908,14 @@ def register_model_artifact(
             raw_metrics = getattr(artifact, "metrics", {}) or {}
             summary_source: Mapping[str, float] = {}
             if isinstance(raw_metrics, Mapping):
-                summary_candidate = raw_metrics.get("summary") if isinstance(raw_metrics.get("summary"), Mapping) else None
-                source = summary_candidate if isinstance(summary_candidate, Mapping) else raw_metrics
+                summary_candidate = (
+                    raw_metrics.get("summary")
+                    if isinstance(raw_metrics.get("summary"), Mapping)
+                    else None
+                )
+                source = (
+                    summary_candidate if isinstance(summary_candidate, Mapping) else raw_metrics
+                )
                 summary_source = {
                     str(key): float(value)
                     for key, value in source.items()

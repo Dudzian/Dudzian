@@ -47,7 +47,11 @@ from bot_core.risk.portfolio import (
 )
 from bot_core.risk.events import RiskDecisionEvent, RiskDecisionLog
 from bot_core.risk.factory import build_risk_profile_from_config
-from bot_core.risk.repository import FileRiskRepository, InMemoryRiskRepository, RiskProfileRepository
+from bot_core.risk.repository import (
+    FileRiskRepository,
+    InMemoryRiskRepository,
+    RiskProfileRepository,
+)
 from bot_core.risk.simulation import (
     Candle,
     MarketDatasetLoader,
@@ -107,7 +111,7 @@ try:
     from bot_core.risk.stress_lab import (  # type: ignore[no-redef]
         MarketBaseline,
         MarketStressMetrics,
-        StressLab,              # alternatywny konstruktor systemu Stress Lab
+        StressLab,  # alternatywny konstruktor systemu Stress Lab
         StressLabReport as _StressLabReportMain,  # alias lokalny, by uniknąć kolizji
         StressScenarioResult,
     )

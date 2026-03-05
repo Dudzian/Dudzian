@@ -1,4 +1,5 @@
 """Adapter CCXT dla rynku spot Bitstamp."""
+
 from __future__ import annotations
 
 from typing import Any, Mapping

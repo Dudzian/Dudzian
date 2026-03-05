@@ -122,7 +122,10 @@ def test_trend_preset_lifecycle_breakout_entry() -> None:
     engine, definition = _build_engine(entry)
 
     prices = [100.0, 101.0, 102.0, 103.0, 104.0, 105.0]
-    history = [_snapshot("ETHUSDT", price, ts=index, high=price + 0.2, low=price - 0.2) for index, price in enumerate(prices)]
+    history = [
+        _snapshot("ETHUSDT", price, ts=index, high=price + 0.2, low=price - 0.2)
+        for index, price in enumerate(prices)
+    ]
     engine.warmup(history)
 
     decision = engine.decide(_snapshot("ETHUSDT", 106.5, ts=len(prices), high=106.7, low=106.1))

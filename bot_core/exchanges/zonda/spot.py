@@ -1,4 +1,5 @@
 """Adapter REST dla rynku spot Zonda (dawniej BitBay)."""
+
 from __future__ import annotations
 
 import json
@@ -50,7 +51,7 @@ _T = TypeVar("_T")
 
 _BASE_URLS: Mapping[Environment, str] = {
     Environment.LIVE: "https://api.zonda.exchange/rest",
-    Environment.PAPER: "https://api.zonda.exchange/rest",          # brak osobnego paper – użyj produkcyjnego REST
+    Environment.PAPER: "https://api.zonda.exchange/rest",  # brak osobnego paper – użyj produkcyjnego REST
     Environment.TESTNET: "https://api-sandbox.zonda.exchange/rest",
 }
 
@@ -194,6 +195,7 @@ def _convert_with_intermediaries(
 
 # --- Funkcje pomocnicze ------------------------------------------------------
 
+
 def _normalize_interval(interval: str) -> int:
     """Konwertuje interwał tekstowy na sekundy wymagane przez API świec."""
     mapping = {
@@ -279,6 +281,7 @@ class ZondaTrade:
 
 
 # --- Adapter -----------------------------------------------------------------
+
 
 class ZondaSpotAdapter(ExchangeAdapter):
     """Adapter REST obsługujący podstawowe operacje tradingowe Zonda."""
@@ -394,7 +397,9 @@ class ZondaSpotAdapter(ExchangeAdapter):
     def _build_stream(self, scope: str, channels: Sequence[str]) -> LocalLongPollStream:
         stream_settings = dict(self._stream_settings())
         base_url = str(
-            stream_settings.get("base_url", self._settings.get("stream_base_url", "http://127.0.0.1:8765"))
+            stream_settings.get(
+                "base_url", self._settings.get("stream_base_url", "http://127.0.0.1:8765")
+            )
         )
         default_path = f"/stream/{self.name}/{scope}"
         path = str(
@@ -411,7 +416,9 @@ class ZondaSpotAdapter(ExchangeAdapter):
             )
         )
         timeout = float(stream_settings.get("timeout", self._settings.get("stream_timeout", 10.0)))
-        max_retries = int(stream_settings.get("max_retries", self._settings.get("stream_max_retries", 3)))
+        max_retries = int(
+            stream_settings.get("max_retries", self._settings.get("stream_max_retries", 3))
+        )
         backoff_base = float(
             stream_settings.get("backoff_base", self._settings.get("stream_backoff_base", 0.25))
         )
@@ -688,7 +695,9 @@ class ZondaSpotAdapter(ExchangeAdapter):
         normalized_path = normalize_relative_api_path(path)
         http_method = normalize_http_method(method)
         if not self._credentials.secret:
-            raise RuntimeError("Poświadczenia Zonda wymagają secret do podpisywania żądań prywatnych.")
+            raise RuntimeError(
+                "Poświadczenia Zonda wymagają secret do podpisywania żądań prywatnych."
+            )
 
         body = _json_body(data)
         timestamp = str(int(time.time() * 1000))
@@ -950,7 +959,9 @@ class ZondaSpotAdapter(ExchangeAdapter):
                 if fragments:
                     message = "; ".join(fragments)
             if not message:
-                status_text = parsed.get("status") or parsed.get("message") or parsed.get("statusMessage")
+                status_text = (
+                    parsed.get("status") or parsed.get("message") or parsed.get("statusMessage")
+                )
                 if isinstance(status_text, str) and status_text:
                     message = status_text
         elif isinstance(parsed, list):
@@ -970,7 +981,9 @@ class ZondaSpotAdapter(ExchangeAdapter):
         if status in {401, 403}:
             reason = "auth"
             exc_cls = ExchangeAuthError
-            default_message = "Żądanie zostało odrzucone przez API Zonda z powodu błędnych uprawnień."
+            default_message = (
+                "Żądanie zostało odrzucone przez API Zonda z powodu błędnych uprawnień."
+            )
         elif status == 429:
             reason = "throttled"
             exc_cls = ExchangeThrottlingError
@@ -1094,7 +1107,9 @@ class ZondaSpotAdapter(ExchangeAdapter):
                 low_price = _to_float(entry.get("low") or entry.get("l"))
                 close_price = _to_float(entry.get("close") or entry.get("c"))
                 volume = _to_float(entry.get("volume") or entry.get("v"))
-                candles.append([float(timestamp), open_price, high_price, low_price, close_price, volume])
+                candles.append(
+                    [float(timestamp), open_price, high_price, low_price, close_price, volume]
+                )
             return candles
 
         return self._run_with_watchdog("zonda_spot_fetch_ohlcv", _call)
@@ -1167,7 +1182,12 @@ class ZondaSpotAdapter(ExchangeAdapter):
         else:
             order_payload = response
 
-        order_id = str(order_payload.get("id") or order_payload.get("orderId") or order_payload.get("offerId") or "")
+        order_id = str(
+            order_payload.get("id")
+            or order_payload.get("orderId")
+            or order_payload.get("offerId")
+            or ""
+        )
         status = str(order_payload.get("status", "UNKNOWN"))
         filled = _to_float(
             order_payload.get("filled")
@@ -1234,6 +1254,7 @@ class ZondaSpotAdapter(ExchangeAdapter):
 
     def fetch_ticker(self, symbol: str) -> ZondaTicker:
         """Pobiera ticker oraz aktualizuje metryki top-of-book."""
+
         def _call() -> ZondaTicker:
             payload = self._public_request("/trading/ticker")
             if not isinstance(payload, Mapping):
@@ -1256,7 +1277,9 @@ class ZondaSpotAdapter(ExchangeAdapter):
                     payload=payload,
                 )
 
-            ticker_section = entry.get("ticker") if isinstance(entry.get("ticker"), Mapping) else entry
+            ticker_section = (
+                entry.get("ticker") if isinstance(entry.get("ticker"), Mapping) else entry
+            )
             best_bid = _to_float(
                 ticker_section.get("highestBid")
                 or ticker_section.get("bid")
@@ -1311,7 +1334,11 @@ class ZondaSpotAdapter(ExchangeAdapter):
 
             labels = self._labels(symbol=symbol)
             self._metric_ticker_last_price.set(ticker.last_price, labels=labels)
-            spread = max(ticker.best_ask - ticker.best_bid, 0.0) if (ticker.best_ask and ticker.best_bid) else 0.0
+            spread = (
+                max(ticker.best_ask - ticker.best_bid, 0.0)
+                if (ticker.best_ask and ticker.best_bid)
+                else 0.0
+            )
             self._metric_ticker_spread.set(spread, labels=labels)
             return ticker
 
@@ -1340,8 +1367,12 @@ class ZondaSpotAdapter(ExchangeAdapter):
                 if isinstance(entries, Sequence):
                     for record in entries:
                         if isinstance(record, Mapping):
-                            price = _to_float(record.get("ra") or record.get("price") or record.get("r"))
-                            quantity = _to_float(record.get("ca") or record.get("amount") or record.get("q"))
+                            price = _to_float(
+                                record.get("ra") or record.get("price") or record.get("r")
+                            )
+                            quantity = _to_float(
+                                record.get("ca") or record.get("amount") or record.get("q")
+                            )
                         elif isinstance(record, Sequence) and len(record) >= 2:
                             price = _to_float(record[0])
                             quantity = _to_float(record[1])
@@ -1393,14 +1424,13 @@ class ZondaSpotAdapter(ExchangeAdapter):
             for record in items:
                 if isinstance(record, Mapping):
                     trade_id = str(
-                        record.get("id")
-                        or record.get("tid")
-                        or record.get("transactionId")
-                        or ""
+                        record.get("id") or record.get("tid") or record.get("transactionId") or ""
                     )
                     price = _to_float(record.get("rate") or record.get("price"))
                     quantity = _to_float(record.get("amount") or record.get("quantity"))
-                    side_raw = str(record.get("side") or record.get("type") or record.get("direction") or "")
+                    side_raw = str(
+                        record.get("side") or record.get("type") or record.get("direction") or ""
+                    )
                     side = side_raw.lower() if side_raw else "unknown"
                     timestamp_raw = record.get("time") or record.get("timestamp") or 0
                     timestamp = _to_float(timestamp_raw)

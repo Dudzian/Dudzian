@@ -62,8 +62,12 @@ def _format_env(value: object) -> str:
     return str(value)
 
 
-def _signed_entry(payload: dict[str, object], *, key: bytes, key_id: str | None) -> dict[str, object]:
-    canonical = json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode("utf-8")
+def _signed_entry(
+    payload: dict[str, object], *, key: bytes, key_id: str | None
+) -> dict[str, object]:
+    canonical = json.dumps(
+        payload, ensure_ascii=False, sort_keys=True, separators=(",", ":")
+    ).encode("utf-8")
     digest = hmac.new(key, canonical, hashlib.sha256).digest()
     signature = {
         "algorithm": "HMAC-SHA256",
@@ -76,9 +80,13 @@ def _signed_entry(payload: dict[str, object], *, key: bytes, key_id: str | None)
     return signed
 
 
-def _signed_summary_payload(summary: dict[str, object], *, key: bytes, key_id: str | None) -> dict[str, object]:
+def _signed_summary_payload(
+    summary: dict[str, object], *, key: bytes, key_id: str | None
+) -> dict[str, object]:
     payload = {"summary": summary}
-    canonical = json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    canonical = json.dumps(
+        payload, ensure_ascii=False, sort_keys=True, separators=(",", ":")
+    ).encode("utf-8")
     digest = hmac.new(key, canonical, hashlib.sha256).digest()
     signature = {
         "algorithm": "HMAC-SHA256",
@@ -176,15 +184,20 @@ def test_verify_success(tmp_path, caplog):
             key_id=key_id,
         ),
     ]
-    log_path.write_text("\n".join(json.dumps(entry, ensure_ascii=False) for entry in entries) + "\n", encoding="utf-8")
+    log_path.write_text(
+        "\n".join(json.dumps(entry, ensure_ascii=False) for entry in entries) + "\n",
+        encoding="utf-8",
+    )
 
-    exit_code = verify_main([
-        str(log_path),
-        "--hmac-key",
-        key.decode("utf-8"),
-        "--hmac-key-id",
-        key_id,
-    ])
+    exit_code = verify_main(
+        [
+            str(log_path),
+            "--hmac-key",
+            key.decode("utf-8"),
+            "--hmac-key-id",
+            key_id,
+        ]
+    )
 
     assert exit_code == 0
     assert any("OK: zweryfikowano" in message for message in caplog.messages)
@@ -277,11 +290,11 @@ def test_verify_schema_success(tmp_path):
             "status": "paper_ready",
             "artefacts": {
                 "config_hash": "sha384:deadbeef",
-                "paper_labs_report": "reports/paper_labs/2025-01-01.pdf"
+                "paper_labs_report": "reports/paper_labs/2025-01-01.pdf",
             },
             "runtime_flags": {
                 "StrategyContext.require_demo_mode": False,
-                "runtime.compliance_confirmed": False
+                "runtime.compliance_confirmed": False,
             },
             "signatures": {"owner": "hmac:deadbeef"},
         },
@@ -315,9 +328,7 @@ def test_verify_schema_failure(tmp_path, caplog):
             "stage": "demo",
             "status": "demo_ready",
             "artefacts": {"config_hash": "sha384:bead"},
-            "runtime_flags": {
-                "StrategyContext.require_demo_mode": "yes"
-            },
+            "runtime_flags": {"StrategyContext.require_demo_mode": "yes"},
             "signatures": {"owner": "hmac:bad"},
         },
         key=key,
@@ -431,7 +442,9 @@ def test_verify_schema_failure_without_jsonschema(tmp_path, caplog, monkeypatch)
     )
 
     assert exit_code == 2
-    assert any("runtime_flags" in message and "schematu JSON" in message for message in caplog.messages)
+    assert any(
+        "runtime_flags" in message and "schematu JSON" in message for message in caplog.messages
+    )
 
 
 def test_verify_schema_builtin_alias_success(tmp_path):
@@ -556,11 +569,13 @@ def test_verify_schema_builtin_alias_failure_without_jsonschema(tmp_path, caplog
 def test_print_risk_profiles_cli(tmp_path, capsys):
     profiles_path = _write_risk_profile_file(tmp_path, name="desk", severity="notice")
 
-    exit_code = verify_main([
-        "--print-risk-profiles",
-        "--risk-profiles-file",
-        str(profiles_path),
-    ])
+    exit_code = verify_main(
+        [
+            "--print-risk-profiles",
+            "--risk-profiles-file",
+            str(profiles_path),
+        ]
+    )
 
     assert exit_code == 0
     output = capsys.readouterr().out
@@ -642,7 +657,10 @@ def test_verify_creates_report_output(tmp_path):
             key_id=key_id,
         ),
     ]
-    log_path.write_text("\n".join(json.dumps(entry, ensure_ascii=False) for entry in entries) + "\n", encoding="utf-8")
+    log_path.write_text(
+        "\n".join(json.dumps(entry, ensure_ascii=False) for entry in entries) + "\n",
+        encoding="utf-8",
+    )
 
     exit_code = verify_main(
         [
@@ -693,7 +711,10 @@ def test_verify_report_output_env(monkeypatch, tmp_path):
             key_id=None,
         ),
     ]
-    log_path.write_text("\n".join(json.dumps(entry, ensure_ascii=False) for entry in entries) + "\n", encoding="utf-8")
+    log_path.write_text(
+        "\n".join(json.dumps(entry, ensure_ascii=False) for entry in entries) + "\n",
+        encoding="utf-8",
+    )
 
     monkeypatch.setenv("BOT_CORE_VERIFY_DECISION_LOG_PATH", str(log_path))
     monkeypatch.setenv("BOT_CORE_VERIFY_DECISION_LOG_HMAC_KEY", key.decode("utf-8"))
@@ -718,7 +739,10 @@ def test_verify_rejects_signature_mismatch(tmp_path):
         "fps": 30,
         "screen": {},
         "notes": {"severity": "info"},
-        "signature": {"algorithm": "HMAC-SHA256", "value": base64.b64encode(b"wrong").decode("ascii")},
+        "signature": {
+            "algorithm": "HMAC-SHA256",
+            "value": base64.b64encode(b"wrong").decode("ascii"),
+        },
     }
     log_path.write_text(json.dumps(entry) + "\n", encoding="utf-8")
 
@@ -1259,7 +1283,10 @@ def test_verify_metadata_expectations(tmp_path):
         key_id=key_id,
     )
     log_path.write_text(
-        "\n".join(json.dumps(entry, ensure_ascii=False) for entry in (metadata_entry, snapshot_entry)) + "\n",
+        "\n".join(
+            json.dumps(entry, ensure_ascii=False) for entry in (metadata_entry, snapshot_entry)
+        )
+        + "\n",
         encoding="utf-8",
     )
 
@@ -1345,7 +1372,10 @@ def test_verify_metadata_env_expectations(monkeypatch, tmp_path):
         key_id=key_id,
     )
     log_path.write_text(
-        "\n".join(json.dumps(entry, ensure_ascii=False) for entry in (metadata_entry, snapshot_entry)) + "\n",
+        "\n".join(
+            json.dumps(entry, ensure_ascii=False) for entry in (metadata_entry, snapshot_entry)
+        )
+        + "\n",
         encoding="utf-8",
     )
 
@@ -1574,7 +1604,9 @@ def _snapshot_entry(
     )
 
 
-def _tls_metadata_entry(*, key: bytes, fingerprint: str, materials: dict[str, bool], source: str | None = None):
+def _tls_metadata_entry(
+    *, key: bytes, fingerprint: str, materials: dict[str, bool], source: str | None = None
+):
     metadata_payload = {
         "kind": "metadata",
         "timestamp": "2024-03-01T00:00:00+00:00",
@@ -1658,7 +1690,10 @@ def test_verify_tls_requirements_success(tmp_path):
         ),
         _tls_snapshot_entry(key=key),
     ]
-    log_path.write_text("\n".join(json.dumps(entry, ensure_ascii=False) for entry in entries) + "\n", encoding="utf-8")
+    log_path.write_text(
+        "\n".join(json.dumps(entry, ensure_ascii=False) for entry in entries) + "\n",
+        encoding="utf-8",
+    )
 
     exit_code = verify_main(
         [
@@ -1696,7 +1731,10 @@ def test_verify_tls_flag_requires_fingerprint(tmp_path):
         key_id=None,
     )
     entries = [metadata_entry, _tls_snapshot_entry(key=key)]
-    log_path.write_text("\n".join(json.dumps(entry, ensure_ascii=False) for entry in entries) + "\n", encoding="utf-8")
+    log_path.write_text(
+        "\n".join(json.dumps(entry, ensure_ascii=False) for entry in entries) + "\n",
+        encoding="utf-8",
+    )
 
     exit_code = verify_main([str(log_path), "--hmac-key", key.decode("utf-8")])
 
@@ -1722,7 +1760,10 @@ def test_verify_tls_fingerprint_requires_flag(tmp_path):
         key_id=None,
     )
     entries = [metadata_entry, _tls_snapshot_entry(key=key)]
-    log_path.write_text("\n".join(json.dumps(entry, ensure_ascii=False) for entry in entries) + "\n", encoding="utf-8")
+    log_path.write_text(
+        "\n".join(json.dumps(entry, ensure_ascii=False) for entry in entries) + "\n",
+        encoding="utf-8",
+    )
 
     exit_code = verify_main([str(log_path), "--hmac-key", key.decode("utf-8")])
 
@@ -1742,7 +1783,10 @@ def test_verify_tls_requirements_missing_material(tmp_path):
         ),
         _tls_snapshot_entry(key=key),
     ]
-    log_path.write_text("\n".join(json.dumps(entry, ensure_ascii=False) for entry in entries) + "\n", encoding="utf-8")
+    log_path.write_text(
+        "\n".join(json.dumps(entry, ensure_ascii=False) for entry in entries) + "\n",
+        encoding="utf-8",
+    )
 
     exit_code = verify_main(
         [
@@ -1773,11 +1817,14 @@ def test_verify_tls_requirements_env_overrides(monkeypatch, tmp_path):
         ),
         _tls_snapshot_entry(key=key),
     ]
-    log_path.write_text("\n".join(json.dumps(entry, ensure_ascii=False) for entry in entries) + "\n", encoding="utf-8")
+    log_path.write_text(
+        "\n".join(json.dumps(entry, ensure_ascii=False) for entry in entries) + "\n",
+        encoding="utf-8",
+    )
 
     monkeypatch.setenv(
         "BOT_CORE_VERIFY_DECISION_LOG_REQUIRE_TLS_MATERIALS",
-        "[\"root_cert\", \"server_sha256\"]",
+        '["root_cert", "server_sha256"]',
     )
     monkeypatch.setenv(
         "BOT_CORE_VERIFY_DECISION_LOG_EXPECT_SERVER_SHA256",
@@ -2073,7 +2120,9 @@ def test_summary_subcommand_appends_signed_entry(tmp_path):
 
     assert exit_code == 0
 
-    payloads = [json.loads(line) for line in log_path.read_text(encoding="utf-8").splitlines() if line]
+    payloads = [
+        json.loads(line) for line in log_path.read_text(encoding="utf-8").splitlines() if line
+    ]
     assert len(payloads) == 1
     entry = payloads[0]
     assert entry["status"] == "demo_ready"
@@ -2129,7 +2178,9 @@ def test_summary_subcommand_allows_unsigned(tmp_path):
 
     assert exit_code == 0
 
-    entries = [json.loads(line) for line in log_path.read_text(encoding="utf-8").splitlines() if line]
+    entries = [
+        json.loads(line) for line in log_path.read_text(encoding="utf-8").splitlines() if line
+    ]
     assert len(entries) == 1
     entry = entries[0]
     assert entry["status"] == "ops_ready"

@@ -203,4 +203,3 @@ def __getattr__(name: str) -> Any:  # pragma: no cover - prosty mechanizm leniwy
 
 def __dir__() -> list[str]:  # pragma: no cover - mała funkcja użytkowa
     return sorted(list(globals().keys()) + list(__all__))
-

@@ -1,4 +1,5 @@
 """Testy sanity-check dla środowiska bundla desktopowego."""
+
 from __future__ import annotations
 
 import importlib

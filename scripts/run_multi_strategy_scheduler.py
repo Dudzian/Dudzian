@@ -1,4 +1,5 @@
 """Uruchamia scheduler multi-strategy zgodnie z konfiguracją core."""
+
 from __future__ import annotations
 
 import argparse
@@ -73,9 +74,7 @@ def _parse_duration_argument(value: str) -> float:
     try:
         return float(text)
     except ValueError as exc:  # pragma: no cover - błąd parsowania
-        raise argparse.ArgumentTypeError(
-            f"Niepoprawny format czasu trwania: {value!r}"
-        ) from exc
+        raise argparse.ArgumentTypeError(f"Niepoprawny format czasu trwania: {value!r}") from exc
 
 
 def _parse_datetime_argument(value: str) -> datetime:
@@ -99,25 +98,19 @@ def _parse_signal_limit_target(value: str) -> tuple[str, str]:
         raise ValueError("Specyfikacja limitu sygnałów nie może być pusta")
     separator = ":" if ":" in text else ("/" if "/" in text else None)
     if separator is None:
-        raise ValueError(
-            "Oczekiwano formatu STRATEGIA:PROFIL lub STRATEGIA/PROFIL"
-        )
+        raise ValueError("Oczekiwano formatu STRATEGIA:PROFIL lub STRATEGIA/PROFIL")
     strategy, profile = text.split(separator, 1)
     strategy = strategy.strip()
     profile = profile.strip()
     if not strategy or not profile:
-        raise ValueError(
-            "Specyfikacja limitu musi zawierać nazwę strategii i profilu"
-        )
+        raise ValueError("Specyfikacja limitu musi zawierać nazwę strategii i profilu")
     return strategy, profile
 
 
 def _parse_signal_limit_assignment(value: str) -> tuple[str, str, int]:
     text = value.strip()
     if "=" not in text:
-        raise ValueError(
-            "Oczekiwano formatu STRATEGIA:PROFIL=LIMIT przy ustawianiu limitu"
-        )
+        raise ValueError("Oczekiwano formatu STRATEGIA:PROFIL=LIMIT przy ustawianiu limitu")
     target, limit_text = text.split("=", 1)
     strategy, profile = _parse_signal_limit_target(target)
     limit_str = limit_text.strip()
@@ -126,9 +119,7 @@ def _parse_signal_limit_assignment(value: str) -> tuple[str, str, int]:
     try:
         limit = int(float(limit_str))
     except ValueError as exc:
-        raise ValueError(
-            f"Niepoprawna wartość limitu sygnałów: {limit_str!r}"
-        ) from exc
+        raise ValueError(f"Niepoprawna wartość limitu sygnałów: {limit_str!r}") from exc
     return strategy, profile, limit
 
 
@@ -190,10 +181,7 @@ def _print_capital_state(state: Mapping[str, object]) -> None:
         print("Brak danych alokacji kapitału.")
         return
 
-    normalized = {
-        key: _to_serializable(value)
-        for key, value in state.items()
-    }
+    normalized = {key: _to_serializable(value) for key, value in state.items()}
     print("Stan alokacji kapitału:")
     print(json.dumps(normalized, indent=2, sort_keys=True, ensure_ascii=False))
 
@@ -203,10 +191,7 @@ def _print_capital_diagnostics(diagnostics: Mapping[str, object]) -> None:
         print("Brak diagnostyki polityki kapitału.")
         return
 
-    normalized = {
-        key: _to_serializable(value)
-        for key, value in diagnostics.items()
-    }
+    normalized = {key: _to_serializable(value) for key, value in diagnostics.items()}
     print("Diagnostyka polityki kapitału:")
     print(json.dumps(normalized, indent=2, sort_keys=True, ensure_ascii=False))
 
@@ -294,10 +279,7 @@ def _print_schedule_descriptions(descriptions: Mapping[str, Mapping[str, object]
             reason = suspension.get("reason", "unknown")
             origin = suspension.get("origin", "schedule")
             until = suspension.get("until", "bez terminu")
-            print(
-                "    zawieszenie: "
-                f"powód={reason}, źródło={origin}, do={until}"
-            )
+            print(f"    zawieszenie: powód={reason}, źródło={origin}, do={until}")
 
 
 def _load_policy_spec(path_text: str) -> object:
@@ -376,17 +358,11 @@ def _perform_management_actions(scheduler: object, args: argparse.Namespace) -> 
                     )
                     extras.append(f"czas={duration_text}")
                 suffix = f" ({', '.join(extras)})" if extras else ""
-                print(
-                    "Ustawiono limit sygnałów "
-                    f"{strategy}/{profile} = {int(limit)}{suffix}"
-                )
+                print(f"Ustawiono limit sygnałów {strategy}/{profile} = {int(limit)}{suffix}")
             for spec in clear_specs:
                 strategy, profile = _parse_signal_limit_target(spec)
                 configure_limit(strategy, profile, None)
-                print(
-                    "Usunięto nadpisanie limitu sygnałów dla "
-                    f"{strategy}/{profile}"
-                )
+                print(f"Usunięto nadpisanie limitu sygnałów dla {strategy}/{profile}")
         performed = True
 
     for name in getattr(args, "suspend_schedules", []) or []:
@@ -530,10 +506,7 @@ def _perform_management_actions(scheduler: object, args: argparse.Namespace) -> 
             setter = getattr(scheduler, "set_allocation_rebalance_seconds", None)
             if callable(setter):
                 setter(interval)
-                print(
-                    "Ustawiono interwał przeliczeń alokacji na "
-                    f"{float(interval):.2f} s."
-                )
+                print(f"Ustawiono interwał przeliczeń alokacji na {float(interval):.2f} s.")
             else:
                 print("Brak obsługi zmiany interwału alokacji w schedulerze.")
         performed = True
@@ -590,7 +563,9 @@ def _parse_args(argv: Sequence[str] | None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Run the multi-strategy scheduler")
     parser.add_argument("--config", default="config/core.yaml", help="Ścieżka do pliku core.yaml")
     parser.add_argument("--environment", required=True, help="Nazwa środowiska (np. binance_paper)")
-    parser.add_argument("--scheduler", default=None, help="Nazwa schedulera z sekcji multi_strategy_schedulers")
+    parser.add_argument(
+        "--scheduler", default=None, help="Nazwa schedulera z sekcji multi_strategy_schedulers"
+    )
     parser.add_argument(
         "--adapter-factory",
         action="append",
@@ -787,8 +762,7 @@ def _parse_args(argv: Sequence[str] | None) -> argparse.Namespace:
         action="append",
         metavar="STRATEGY=CORES",
         help=(
-            "Przypnij wątki/procesy strategii do rdzeni CPU (np. trend=0,1). "
-            "Opcję można powtarzać."
+            "Przypnij wątki/procesy strategii do rdzeni CPU (np. trend=0,1). Opcję można powtarzać."
         ),
     )
     parser.add_argument(
@@ -810,7 +784,9 @@ def run(argv: Sequence[str] | None = None) -> int:
     cli_adapter_specs = parse_adapter_factory_cli_specs(
         cast(Sequence[str] | None, getattr(args, "adapter_factories", None))
     )
-    adapter_factories: Mapping[str, object] | None = cli_adapter_specs if cli_adapter_specs else None
+    adapter_factories: Mapping[str, object] | None = (
+        cli_adapter_specs if cli_adapter_specs else None
+    )
 
     try:
         scheduler = _build_scheduler(

@@ -318,9 +318,9 @@ class ObservabilityHypercareCycle:
         metadata: MutableMapping[str, Any] = dict(config.metadata or {})
         slo_metadata: MutableMapping[str, Any] = {
             "json": self._config.slo.json_path.expanduser().as_posix(),
-            "generated_at": report.generated_at.astimezone(timezone.utc).isoformat().replace(
-                "+00:00", "Z"
-            ),
+            "generated_at": report.generated_at.astimezone(timezone.utc)
+            .isoformat()
+            .replace("+00:00", "Z"),
         }
         if slo_csv_path:
             slo_metadata["csv"] = slo_csv_path.expanduser().as_posix()
@@ -357,7 +357,9 @@ class ObservabilityHypercareCycle:
         verifier = ObservabilityBundleVerifier(artifacts.bundle_path, manifest)
         errors = verifier.verify_files()
         signature_verified: bool | None = None
-        signature_doc = load_signature(artifacts.signature_path if artifacts.signature_path else None)
+        signature_doc = load_signature(
+            artifacts.signature_path if artifacts.signature_path else None
+        )
         if signature_doc is not None and key is not None:
             sig_errors = verify_signature(manifest, signature_doc, key=key)
             if sig_errors:
@@ -368,7 +370,9 @@ class ObservabilityHypercareCycle:
         elif signature_doc is not None and key is None:
             signature_verified = None
         if errors:
-            raise ValueError("Weryfikacja paczki obserwowalności nie powiodła się: " + "; ".join(errors))
+            raise ValueError(
+                "Weryfikacja paczki obserwowalności nie powiodła się: " + "; ".join(errors)
+            )
         return {
             "bundle": artifacts.bundle_path.as_posix(),
             "manifest": artifacts.manifest_path.as_posix(),
@@ -386,4 +390,3 @@ __all__ = [
     "ObservabilityCycleResult",
     "ObservabilityHypercareCycle",
 ]
-

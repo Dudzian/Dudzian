@@ -56,11 +56,9 @@ _ALPHANUMERIC_SENDER_PATTERN = re.compile(r"^[A-Z0-9 _-]+$", re.IGNORECASE)
 class AlertSink(Protocol):
     """Minimalny interfejs sinka alertów używany w runtime."""
 
-    def dispatch(self, message: AlertMessage) -> None:
-        ...
+    def dispatch(self, message: AlertMessage) -> None: ...
 
-    def health_snapshot(self) -> Mapping[str, Mapping[str, object]]:
-        ...
+    def health_snapshot(self) -> Mapping[str, Mapping[str, object]]: ...
 
 
 class RouterAlertSink(AlertSink):
@@ -222,23 +220,29 @@ def build_alert_channels(
         if guard and channel_type in _ADVANCED_ALERT_TYPES:
             guard.require_module(
                 "alerts_advanced",
-                message=(
-                    "Kanały SMS/Signal/WhatsApp/Messenger wymagają modułu Alerts Advanced."
-                ),
+                message=("Kanały SMS/Signal/WhatsApp/Messenger wymagają modułu Alerts Advanced."),
             )
 
         if channel_type == "telegram":
-            channel = _build_telegram_channel(core_config.telegram_channels, channel_key, secret_manager)
+            channel = _build_telegram_channel(
+                core_config.telegram_channels, channel_key, secret_manager
+            )
         elif channel_type == "email":
             channel = _build_email_channel(core_config.email_channels, channel_key, secret_manager)
         elif channel_type == "sms":
             channel = _build_sms_channel(core_config.sms_providers, channel_key, secret_manager)
         elif channel_type == "signal":
-            channel = _build_signal_channel(core_config.signal_channels, channel_key, secret_manager)
+            channel = _build_signal_channel(
+                core_config.signal_channels, channel_key, secret_manager
+            )
         elif channel_type == "whatsapp":
-            channel = _build_whatsapp_channel(core_config.whatsapp_channels, channel_key, secret_manager)
+            channel = _build_whatsapp_channel(
+                core_config.whatsapp_channels, channel_key, secret_manager
+            )
         elif channel_type == "messenger":
-            channel = _build_messenger_channel(core_config.messenger_channels, channel_key, secret_manager)
+            channel = _build_messenger_channel(
+                core_config.messenger_channels, channel_key, secret_manager
+            )
         else:
             _LOGGER.warning("Nieznany typ kanału alertów: %s", channel_type)
             continue
@@ -252,9 +256,7 @@ def build_alert_channels(
             router.register(channel)
 
     if skipped_offline:
-        _LOGGER.info(
-            "Pominięto kanały alertów w trybie offline: %s", ", ".join(skipped_offline)
-        )
+        _LOGGER.info("Pominięto kanały alertów w trybie offline: %s", ", ".join(skipped_offline))
 
     return channels, router, audit_log
 
@@ -296,7 +298,9 @@ def _build_email_channel(
     username = None
     password = None
     if settings.credential_secret:
-        raw_secret = secret_manager.load_secret_value(settings.credential_secret, purpose="alerts:email")
+        raw_secret = secret_manager.load_secret_value(
+            settings.credential_secret, purpose="alerts:email"
+        )
         try:
             parsed = json.loads(raw_secret) if raw_secret else {}
         except json.JSONDecodeError as exc:  # pragma: no cover
@@ -375,9 +379,7 @@ def _build_sms_channel(
         get_sms_provider_fn,
         channel_key=channel_key,
     )
-    supports_alphanumeric = bool(
-        getattr(provider_config, "supports_alphanumeric_sender", False)
-    )
+    supports_alphanumeric = bool(getattr(provider_config, "supports_alphanumeric_sender", False))
     if wants_alphanumeric and not supports_alphanumeric:
         raise SecretStorageError(
             (
@@ -387,8 +389,10 @@ def _build_sms_channel(
             )
         )
 
-    sender = settings.sender_id or getattr(settings, "from_number", None) or getattr(
-        provider_config, "default_sender", None
+    sender = (
+        settings.sender_id
+        or getattr(settings, "from_number", None)
+        or getattr(provider_config, "default_sender", None)
     )
     if not wants_alphanumeric:
         if not sender:
@@ -456,9 +460,7 @@ def _build_sms_channel(
         sms_kwargs["recipients"] = normalized_recipients
     elif "to" in init_params:
         sms_kwargs["to"] = (
-            normalized_recipients[0]
-            if len(normalized_recipients) == 1
-            else normalized_recipients
+            normalized_recipients[0] if len(normalized_recipients) == 1 else normalized_recipients
         )
 
     if "from_number" in init_params:
@@ -611,8 +613,7 @@ def _resolve_sms_provider(
         )
         base = SimpleNamespace(
             provider_id=settings.provider_key,
-            display_name=settings.display_name
-            or f"{settings.provider_key} (bootstrap)",
+            display_name=settings.display_name or f"{settings.provider_key} (bootstrap)",
             api_base_url=settings.api_base_url,
             iso_country_code=override_iso_code or "ZZ",
             supports_alphanumeric_sender=settings.allow_alphanumeric_sender,
@@ -727,6 +728,7 @@ def _install_sms_provider_stub() -> None:
         )
 
         if not hasattr(providers_module, "SmsProviderConfig"):
+
             @dataclass(slots=True)
             class SmsProviderConfig:  # type: ignore[invalid-annotation]
                 provider_id: str
@@ -740,6 +742,7 @@ def _install_sms_provider_stub() -> None:
             providers_module.SmsProviderConfig = SmsProviderConfig  # type: ignore[attr-defined]
 
         if not hasattr(providers_module, "get_sms_provider"):
+
             def get_sms_provider(key: str):
                 return providers_module.DEFAULT_SMS_PROVIDERS[key]
 
@@ -757,4 +760,3 @@ __all__ = [
     "build_ui_alert_audit_metadata",
     "_install_sms_provider_stub",
 ]
-

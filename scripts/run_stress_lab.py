@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """Stage6 Stress Lab – merged CLI wymagający jawnych sub-komend."""
+
 from __future__ import annotations
 
 import argparse
@@ -38,6 +39,7 @@ _LOGGER = logging.getLogger(__name__)
 # evaluate (HEAD) helpers
 # =====================================================================
 
+
 def _read_hmac_key(path: Path) -> bytes:
     try:
         raw = path.read_bytes()
@@ -61,6 +63,7 @@ def _load_portfolio_assets(config_path: Path, governor_name: str | None):
 # =====================================================================
 # run (main) helpers
 # =====================================================================
+
 
 def _resolve_signing_key_from_config_or_args(
     args: argparse.Namespace, config
@@ -100,6 +103,7 @@ def _resolve_signing_key_from_config_or_args(
 # =====================================================================
 # parsers
 # =====================================================================
+
 
 def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
@@ -164,6 +168,7 @@ def _build_parser() -> argparse.ArgumentParser:
 # handlers
 # =====================================================================
 
+
 def _handle_evaluate(args: argparse.Namespace) -> int:
     risk_report_path = Path(args.risk_report).expanduser().resolve()
     try:
@@ -219,7 +224,9 @@ def _handle_evaluate(args: argparse.Namespace) -> int:
 
 
 def _handle_run(args: argparse.Namespace) -> int:
-    logging.basicConfig(level=args.log_level.upper(), format="%(asctime)s %(levelname)s %(message)s")
+    logging.basicConfig(
+        level=args.log_level.upper(), format="%(asctime)s %(levelname)s %(message)s"
+    )
 
     config = load_core_config(args.config)
     if config.stress_lab is None or not config.stress_lab.enabled:
@@ -264,8 +271,7 @@ def _ensure_packaging_stub() -> None:
     except ModuleNotFoundError:
         version_module = types.ModuleType("packaging.version")
 
-        class _InvalidVersion(Exception):
-            ...
+        class _InvalidVersion(Exception): ...
 
         class _Version:
             def __init__(self, value: str) -> None:

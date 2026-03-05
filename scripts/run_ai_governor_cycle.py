@@ -3,6 +3,7 @@
 Skrypt buduje lekką konfigurację orchestratorem opartym o snapshot JSON lub
 domyślny zestaw strategii demo i wypisuje decyzje w formacie JSON.
 """
+
 from __future__ import annotations
 
 import argparse
@@ -104,7 +105,9 @@ def main(argv: Sequence[str] | None = None) -> int:
     args = parser.parse_args(argv)
 
     snapshot = _load_snapshot(args.snapshot)
-    orchestrator = type("_Orchestrator", (), {"strategy_performance_snapshot": lambda self: snapshot})()
+    orchestrator = type(
+        "_Orchestrator", (), {"strategy_performance_snapshot": lambda self: snapshot}
+    )()
     runner = AutoTraderAIGovernorRunner(orchestrator)
 
     decisions = runner.run_until(

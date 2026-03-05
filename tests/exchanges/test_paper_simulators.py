@@ -9,7 +9,9 @@ from bot_core.exchanges.paper_simulator import PaperFuturesSimulator, PaperMargi
 class _DummyFeed:
     def __init__(self, price: float = 100.0) -> None:
         self.price = float(price)
-        self.rules = MarketRules(symbol="BTC/USDT", price_step=0.1, amount_step=0.001, min_notional=10.0)
+        self.rules = MarketRules(
+            symbol="BTC/USDT", price_step=0.1, amount_step=0.001, min_notional=10.0
+        )
 
     def load_markets(self):
         return {self.rules.symbol: self.rules}
@@ -24,7 +26,9 @@ class _DummyFeed:
             raise ValueError("unknown symbol")
         return {"last": self.price}
 
-    def fetch_ohlcv(self, symbol: str, timeframe: str, limit: int = 500):  # pragma: no cover - unused
+    def fetch_ohlcv(
+        self, symbol: str, timeframe: str, limit: int = 500
+    ):  # pragma: no cover - unused
         raise NotImplementedError
 
 
@@ -133,7 +137,9 @@ def test_futures_simulator_applies_slippage_and_fee_validation():
     assert snapshot_after.balances["BTC/USDT_position"] > 0
 
     assert journal.events
-    assert any(getattr(event, "event_type", "") == "simulator_trade_costs" for event in journal.events)
+    assert any(
+        getattr(event, "event_type", "") == "simulator_trade_costs" for event in journal.events
+    )
     ok_cost_events = [
         event
         for event in journal.events
@@ -149,7 +155,9 @@ def test_futures_simulator_applies_slippage_and_fee_validation():
             _DummyFeed(20_000.0), database=_DummyDB(), fee_rate=-0.1, risk_journal=journal
         )
     with pytest.raises(ValueError):
-        PaperFuturesSimulator(_DummyFeed(20_000.0), database=_DummyDB(), slippage_bps=-1, risk_journal=journal)
+        PaperFuturesSimulator(
+            _DummyFeed(20_000.0), database=_DummyDB(), slippage_bps=-1, risk_journal=journal
+        )
 
     critical_events = [
         event
@@ -167,9 +175,7 @@ def test_futures_simulator_applies_slippage_and_fee_validation():
     )
     warning_simulator.load_markets()
     assert any(
-        {
-            "slippage_high", "fee_rate_high"
-        }
+        {"slippage_high", "fee_rate_high"}
         & set(getattr(event, "metadata", {}).get("risk_flags", []))
         for event in journal.events
     )
@@ -238,8 +244,14 @@ def test_futures_simulator_propagates_risk_journal_flags_during_fill():
         if getattr(event, "event_type", "") == "simulator_trade_costs"
     ]
     assert cost_events
-    assert any("slippage_high" in getattr(event, "metadata", {}).get("risk_flags", []) for event in cost_events)
-    assert any("fee_rate_high" in getattr(event, "metadata", {}).get("risk_flags", []) for event in cost_events)
+    assert any(
+        "slippage_high" in getattr(event, "metadata", {}).get("risk_flags", [])
+        for event in cost_events
+    )
+    assert any(
+        "fee_rate_high" in getattr(event, "metadata", {}).get("risk_flags", [])
+        for event in cost_events
+    )
 
 
 def test_simulator_describe_configuration_reports_runtime_values():

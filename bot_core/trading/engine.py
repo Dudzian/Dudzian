@@ -52,7 +52,7 @@ if TYPE_CHECKING:  # pragma: no cover - tylko dla typowania
 
 
 @lru_cache(maxsize=1)
-def describe_supported_strategies() -> tuple['StrategyDescriptor', ...]:
+def describe_supported_strategies() -> tuple["StrategyDescriptor", ...]:
     """Zwraca zcache'owaną listę strategii dostępnych w katalogu domyślnym."""
 
     from bot_core.strategies.public import list_available_strategies
@@ -73,10 +73,13 @@ def supported_strategy_keys() -> tuple[str, ...]:
         )
     return _SUPPORTED_STRATEGY_KEYS
 
+
 # =================== Enhanced Constants and Types ===================
+
 
 class SignalType(Enum):
     """Trading signal types."""
+
     LONG = 1
     FLAT = 0
     SHORT = -1
@@ -84,39 +87,46 @@ class SignalType(Enum):
 
 class MarketRegime(Enum):
     """Market regime classifications."""
+
     BULL = "bull"
     BEAR = "bear"
     SIDEWAYS = "sideways"
     HIGH_VOL = "high_vol"
     LOW_VOL = "low_vol"
 
+
 class OrderType(Enum):
     """Order execution types."""
+
     MARKET = "market"
     LIMIT = "limit"
     STOP = "stop"
     STOP_LIMIT = "stop_limit"
 
+
 @dataclass(frozen=True)
 class EngineConfig:
     """Configuration for trading engine."""
+
     max_position_size: float = 1.0
     max_portfolio_risk: float = 0.02
     capital_fraction: float = 0.2
     enable_stop_loss: bool = True
     enable_take_profit: bool = True
     enable_position_sizing: bool = True
-    rebalance_frequency: str = 'daily'
+    rebalance_frequency: str = "daily"
     risk_free_rate: float = 0.02
     max_drawdown_threshold: float = 0.15
     volatility_threshold: float = 0.30
     min_data_points: int = 252
     cache_indicators: bool = True
-    log_level: str = 'INFO'
+    log_level: str = "INFO"
+
 
 @dataclass(frozen=True)
 class TechnicalIndicators:
     """Immutable container for technical indicators with validation."""
+
     rsi: pd.Series
     ema_fast: pd.Series
     ema_slow: pd.Series
@@ -129,25 +139,37 @@ class TechnicalIndicators:
     macd_signal: pd.Series
     stochastic_k: pd.Series
     stochastic_d: pd.Series
-    
+
     def __post_init__(self):
         """Validate indicators after creation."""
-        indicators = [self.rsi, self.ema_fast, self.ema_slow, self.sma_trend, 
-                     self.atr, self.bollinger_upper, self.bollinger_lower, 
-                     self.bollinger_middle, self.macd, self.macd_signal,
-                     self.stochastic_k, self.stochastic_d]
-        
+        indicators = [
+            self.rsi,
+            self.ema_fast,
+            self.ema_slow,
+            self.sma_trend,
+            self.atr,
+            self.bollinger_upper,
+            self.bollinger_lower,
+            self.bollinger_middle,
+            self.macd,
+            self.macd_signal,
+            self.stochastic_k,
+            self.stochastic_d,
+        ]
+
         if not all(isinstance(ind, pd.Series) for ind in indicators):
             raise ValueError("All indicators must be pandas Series")
-        
+
         # Check index alignment
         base_index = self.rsi.index
         if not all(ind.index.equals(base_index) for ind in indicators):
             raise ValueError("All indicators must have the same index")
 
+
 @dataclass(frozen=True)
 class Trade:
     """Individual trade record."""
+
     entry_time: pd.Timestamp
     exit_time: pd.Timestamp
     entry_price: float
@@ -160,9 +182,11 @@ class Trade:
     exit_reason: str  # canonical reason such as 'signal', 'stop_loss', 'take_profit', 'momentum_fade', 'time_exit'
     commission: float = 0.0
 
+
 @dataclass(frozen=True)
 class BacktestResult:
     """Enhanced immutable backtest results."""
+
     equity_curve: pd.Series
     trades: pd.DataFrame
     daily_returns: pd.Series
@@ -207,9 +231,11 @@ class MultiSessionBacktestResult:
     sessions: Dict[str, BacktestResult]
     weights: Dict[str, float]
 
+
 @dataclass(frozen=True)
 class TradingParameters:
     """Enhanced immutable trading parameters with validation."""
+
     # Technical indicators
     rsi_period: int = 14
     rsi_oversold: float = 30.0
@@ -223,16 +249,18 @@ class TradingParameters:
     macd_signal_period: int = 9
     stoch_k_period: int = 14
     stoch_d_period: int = 3
-    
+
     # Signal generation
     signal_threshold: float = 0.1
-    ensemble_weights: Dict[str, float] = field(default_factory=lambda: {
-        'trend_following': 0.4,
-        'day_trading': 0.2,
-        'mean_reversion': 0.25,
-        'arbitrage': 0.15,
-    })
-    
+    ensemble_weights: Dict[str, float] = field(
+        default_factory=lambda: {
+            "trend_following": 0.4,
+            "day_trading": 0.2,
+            "mean_reversion": 0.25,
+            "arbitrage": 0.15,
+        }
+    )
+
     # Risk management
     stop_loss_atr_mult: float = 2.0
     take_profit_atr_mult: float = 3.0
@@ -294,61 +322,85 @@ class TradingParameters:
         if self.arbitrage_confirmation_window < 1:
             raise ValueError("arbitrage_confirmation_window must be at least 1")
 
+
 # =================== Enhanced Custom Exceptions ===================
+
 
 class TradingEngineError(Exception):
     """Base exception for trading engine."""
+
     def __init__(self, message: str, error_code: Optional[str] = None):
         super().__init__(message)
         self.error_code = error_code
         self.timestamp = pd.Timestamp.now()
 
+
 class DataValidationError(TradingEngineError):
     """Data validation failed."""
+
     pass
+
 
 class IndicatorComputationError(TradingEngineError):
     """Indicator computation failed."""
+
     pass
+
 
 class BacktestExecutionError(TradingEngineError):
     """Backtest execution failed."""
+
     pass
+
 
 class InsufficientDataError(TradingEngineError):
     """Insufficient data for analysis."""
+
     pass
+
 
 class ConfigurationError(TradingEngineError):
     """Configuration error."""
+
     pass
+
 
 class RiskLimitExceededError(TradingEngineError):
     """Risk limit exceeded."""
+
     pass
+
 
 # =================== Enhanced Protocols (Interfaces) ===================
 
+
 class DataValidator(Protocol):
     """Protocol for data validation."""
-    
+
     def validate_ohlcv(self, data: pd.DataFrame) -> pd.DataFrame:
         """Validate and clean OHLCV data."""
         ...
 
+
 class IndicatorCalculator(Protocol):
     """Protocol for indicator calculations."""
-    
-    def calculate_indicators(self, data: pd.DataFrame, params: TradingParameters) -> TechnicalIndicators:
+
+    def calculate_indicators(
+        self, data: pd.DataFrame, params: TradingParameters
+    ) -> TechnicalIndicators:
         """Calculate technical indicators."""
         ...
 
+
 class SignalGenerator(Protocol):
     """Protocol for signal generation."""
-    
-    def generate_signals(self, indicators: TechnicalIndicators, params: TradingParameters) -> pd.Series:
+
+    def generate_signals(
+        self, indicators: TechnicalIndicators, params: TradingParameters
+    ) -> pd.Series:
         """Generate trading signals."""
         ...
+
 
 class RiskManager(Protocol):
     """Protocol for risk management."""
@@ -362,6 +414,7 @@ class RiskManager(Protocol):
     ) -> pd.DataFrame:
         """Apply risk management rules returning direction and position sizing."""
         ...
+
 
 class BacktestEngine(Protocol):
     """Protocol for backtesting."""
@@ -386,11 +439,13 @@ class BacktestEngine(Protocol):
         """Compute aggregate performance metrics for a backtest run."""
         ...
 
+
 # =================== Enhanced Mathematical Functions ===================
+
 
 class MathUtils:
     """Vectorized mathematical utilities for maximum performance."""
-    
+
     @staticmethod
     @lru_cache(maxsize=256)
     def ema_alpha(span: int) -> float:
@@ -398,41 +453,41 @@ class MathUtils:
         if span <= 0:
             raise ValueError("EMA span must be positive")
         return 2.0 / (span + 1.0)
-    
+
     @staticmethod
     def safe_divide(numerator: NDArray, denominator: NDArray, fill_value: float = 0.0) -> NDArray:
         """Safe division with comprehensive NaN handling."""
-        with np.errstate(divide='ignore', invalid='ignore'):
+        with np.errstate(divide="ignore", invalid="ignore"):
             result = np.divide(numerator, denominator)
             mask = np.isfinite(result)
             return np.where(mask, result, fill_value)
-    
+
     @staticmethod
     def rolling_apply_numba(series: pd.Series, window: int, func: callable) -> pd.Series:
         """Ultra-fast rolling apply using numpy operations."""
         if len(series) < window:
             return pd.Series(index=series.index, dtype=float)
-        
+
         values = series.values
         result = np.full(len(values), np.nan)
-        
+
         # Vectorized rolling computation
         for i in range(window - 1, len(values)):
-            result[i] = func(values[i - window + 1:i + 1])
-        
+            result[i] = func(values[i - window + 1 : i + 1])
+
         return pd.Series(result, index=series.index)
-    
+
     @staticmethod
     def calculate_drawdown_vectorized(equity: pd.Series) -> Tuple[pd.Series, float, pd.Timedelta]:
         """Calculate drawdown metrics using vectorized operations."""
         peak = equity.expanding().max()
         drawdown = (equity - peak) / peak
         max_dd = drawdown.min()
-        
+
         # Calculate max drawdown duration
         is_peak = equity == peak
         peak_indices = equity.index[is_peak]
-        
+
         if len(peak_indices) > 1:
             max_duration = pd.Timedelta(0)
             for i in range(len(peak_indices) - 1):
@@ -440,61 +495,65 @@ class MathUtils:
                 max_duration = max(max_duration, duration)
         else:
             max_duration = pd.Timedelta(0)
-        
+
         return drawdown, max_dd, max_duration
+
 
 # =================== Enhanced Data Validation Service ===================
 
+
 class DataValidationService:
     """Enhanced service for validating and cleaning trading data."""
-    
+
     def __init__(self, logger: logging.Logger, config: EngineConfig):
         self._logger = logger
         self._config = config
-    
+
     def validate_ohlcv(self, data: pd.DataFrame) -> pd.DataFrame:
         """
         Validate and clean OHLCV data with comprehensive checks.
-        
+
         Args:
             data: DataFrame with OHLCV columns
-            
+
         Returns:
             Cleaned and validated DataFrame
-            
+
         Raises:
             DataValidationError: If data validation fails
             InsufficientDataError: If insufficient data points
         """
         if data.empty:
             raise DataValidationError("DataFrame cannot be empty")
-        
+
         if len(data) < self._config.min_data_points:
             raise InsufficientDataError(
                 f"Insufficient data: {len(data)} rows, minimum {self._config.min_data_points} required"
             )
-        
-        required_columns = {'open', 'high', 'low', 'close', 'volume'}
+
+        required_columns = {"open", "high", "low", "close", "volume"}
         missing_columns = required_columns - set(data.columns)
         if missing_columns:
             raise DataValidationError(f"Missing required columns: {missing_columns}")
-        
+
         if not isinstance(data.index, pd.DatetimeIndex):
             try:
                 data.index = pd.to_datetime(data.index)
             except Exception as e:
                 raise DataValidationError(f"Cannot convert index to DatetimeIndex: {e}")
-        
+
         with _capture_pandas_warnings(self._logger, component="trading_engine.data_validation"):
             # Clean and validate data
             cleaned_data = data.copy()
 
             # Remove duplicates and sort
             initial_length = len(cleaned_data)
-            cleaned_data = cleaned_data[~cleaned_data.index.duplicated(keep='last')].sort_index()
+            cleaned_data = cleaned_data[~cleaned_data.index.duplicated(keep="last")].sort_index()
 
             if len(cleaned_data) < initial_length:
-                self._logger.warning(f"Removed {initial_length - len(cleaned_data)} duplicate timestamps")
+                self._logger.warning(
+                    f"Removed {initial_length - len(cleaned_data)} duplicate timestamps"
+                )
 
             # Validate and correct OHLC relationships
             cleaned_data = self._fix_ohlc_relationships(cleaned_data)
@@ -503,77 +562,85 @@ class DataValidationService:
             null_counts = cleaned_data[list(required_columns)].isnull().sum()
             if null_counts.any():
                 self._logger.warning(f"Found null values: {null_counts.to_dict()}")
-                cleaned_data[list(required_columns)] = cleaned_data[list(required_columns)].ffill().bfill()
+                cleaned_data[list(required_columns)] = (
+                    cleaned_data[list(required_columns)].ffill().bfill()
+                )
 
             # Validate volume
-            if (cleaned_data['volume'] < 0).any():
+            if (cleaned_data["volume"] < 0).any():
                 self._logger.warning("Found negative volume values, taking absolute values")
-                cleaned_data['volume'] = cleaned_data['volume'].abs()
+                cleaned_data["volume"] = cleaned_data["volume"].abs()
 
             # Detect and handle price anomalies
             cleaned_data = self._detect_price_anomalies(cleaned_data)
 
         return cleaned_data
-    
+
     def _fix_ohlc_relationships(self, data: pd.DataFrame) -> pd.DataFrame:
         """Fix invalid OHLC relationships."""
         data = data.copy()
-        
+
         # Vectorized OHLC validation
-        max_price = data[['open', 'low', 'close']].max(axis=1)
-        min_price = data[['open', 'high', 'close']].min(axis=1)
-        
-        invalid_high = data['high'] < max_price
-        invalid_low = data['low'] > min_price
-        
+        max_price = data[["open", "low", "close"]].max(axis=1)
+        min_price = data[["open", "high", "close"]].min(axis=1)
+
+        invalid_high = data["high"] < max_price
+        invalid_low = data["low"] > min_price
+
         if invalid_high.any() or invalid_low.any():
             total_invalid = invalid_high.sum() + invalid_low.sum()
             self._logger.warning(f"Correcting {total_invalid} invalid OHLC relationships")
-            
-            data.loc[invalid_high, 'high'] = max_price[invalid_high]
-            data.loc[invalid_low, 'low'] = min_price[invalid_low]
-        
+
+            data.loc[invalid_high, "high"] = max_price[invalid_high]
+            data.loc[invalid_low, "low"] = min_price[invalid_low]
+
         return data
-    
+
     def _detect_price_anomalies(self, data: pd.DataFrame) -> pd.DataFrame:
         """Detect and handle price anomalies using statistical methods."""
         data = data.copy()
-        
-        for col in ['open', 'high', 'low', 'close']:
+
+        for col in ["open", "high", "low", "close"]:
             returns = data[col].pct_change()
             z_scores = np.abs((returns - returns.mean()) / returns.std())
-            
+
             # Mark extreme outliers (>5 standard deviations)
             outliers = z_scores > 5
             if outliers.any():
-                self._logger.warning(f"Found {outliers.sum()} outliers in {col}, applying smoothing")
+                self._logger.warning(
+                    f"Found {outliers.sum()} outliers in {col}, applying smoothing"
+                )
                 # Replace with rolling median
                 data.loc[outliers, col] = data[col].rolling(5, center=True).median()[outliers]
-        
+
         return data
+
 
 # =================== Enhanced Technical Indicators Service ===================
 
+
 class TechnicalIndicatorsService:
     """Optimized service for calculating technical indicators with caching."""
-    
+
     def __init__(self, logger: logging.Logger, config: EngineConfig):
         self._logger = logger
         self._config = config
         self._math = MathUtils()
         self._cache: Dict[str, TechnicalIndicators] = {}
-    
-    def calculate_indicators(self, data: pd.DataFrame, params: TradingParameters) -> TechnicalIndicators:
+
+    def calculate_indicators(
+        self, data: pd.DataFrame, params: TradingParameters
+    ) -> TechnicalIndicators:
         """
         Calculate all technical indicators efficiently with optional caching.
-        
+
         Args:
             data: OHLCV DataFrame
             params: Trading parameters
-            
+
         Returns:
             Technical indicators container
-            
+
         Raises:
             IndicatorComputationError: If indicator calculation fails
         """
@@ -583,12 +650,12 @@ class TechnicalIndicatorsService:
             if cache_key in self._cache:
                 self._logger.debug("Using cached indicators")
                 return self._cache[cache_key]
-        
+
         try:
             with _capture_pandas_warnings(self._logger, component="trading_engine.indicators"):
-                close = data['close']
-                high = data['high']
-                low = data['low']
+                close = data["close"]
+                high = data["high"]
+                low = data["low"]
 
                 # Calculate all indicators using vectorized operations
                 indicators = TechnicalIndicators(
@@ -597,11 +664,18 @@ class TechnicalIndicatorsService:
                     ema_slow=self._calculate_ema_optimized(close, params.ema_slow_period),
                     sma_trend=self._calculate_sma_optimized(close, params.sma_trend_period),
                     atr=self._calculate_atr_optimized(high, low, close, params.atr_period),
-                    **self._calculate_bollinger_bands_optimized(close, params.bb_period, params.bb_std_mult),
-                    **self._calculate_macd_optimized(close, params.ema_fast_period,
-                                                   params.ema_slow_period, params.macd_signal_period),
-                    **self._calculate_stochastic_optimized(high, low, close,
-                                                         params.stoch_k_period, params.stoch_d_period)
+                    **self._calculate_bollinger_bands_optimized(
+                        close, params.bb_period, params.bb_std_mult
+                    ),
+                    **self._calculate_macd_optimized(
+                        close,
+                        params.ema_fast_period,
+                        params.ema_slow_period,
+                        params.macd_signal_period,
+                    ),
+                    **self._calculate_stochastic_optimized(
+                        high, low, close, params.stoch_k_period, params.stoch_d_period
+                    ),
                 )
 
                 # Cache if enabled
@@ -616,124 +690,123 @@ class TechnicalIndicatorsService:
 
         except Exception as e:
             raise IndicatorComputationError(f"Failed to calculate indicators: {e}") from e
-    
+
     def _get_cache_key(self, data: pd.DataFrame, params: TradingParameters) -> str:
         """Generate cache key for indicators."""
         # Use hash of data characteristics and parameters
         data_hash = hashlib.md5(
             (str(data.index[0]) + str(data.index[-1]) + str(len(data))).encode()
         ).hexdigest()[:8]
-        
+
         params_hash = hashlib.md5(str(params).encode()).hexdigest()[:8]
         return f"{data_hash}_{params_hash}"
-    
+
     def _calculate_rsi_optimized(self, series: pd.Series, period: int) -> pd.Series:
         """Calculate RSI using optimized vectorized operations."""
         if len(series) < period + 1:
             return pd.Series(50.0, index=series.index)
-        
+
         delta = series.diff()
         gain = delta.where(delta > 0, 0.0)
         loss = -delta.where(delta < 0, 0.0)
-        
+
         # Use Wilder's smoothing (equivalent to EMA with specific alpha)
         alpha = 1.0 / period
         avg_gain = gain.ewm(alpha=alpha, adjust=False).mean()
         avg_loss = loss.ewm(alpha=alpha, adjust=False).mean()
-        
+
         rs = self._math.safe_divide(avg_gain.values, avg_loss.values, 100.0)
         rsi = 100.0 - (100.0 / (1.0 + rs))
-        
+
         return pd.Series(rsi, index=series.index).fillna(50.0)
-    
+
     def _calculate_ema_optimized(self, series: pd.Series, span: int) -> pd.Series:
         """Calculate EMA with input validation."""
         if span <= 0:
             raise ValueError("EMA span must be positive")
         if len(series) < span:
             return pd.Series(index=series.index, dtype=float)
-        
+
         return series.ewm(span=span, adjust=False).mean()
-    
+
     def _calculate_sma_optimized(self, series: pd.Series, window: int) -> pd.Series:
         """Calculate SMA with validation."""
         if window <= 0:
             raise ValueError("SMA window must be positive")
         if len(series) < window:
             return pd.Series(index=series.index, dtype=float)
-        
+
         return series.rolling(window=window, min_periods=1).mean()
-    
-    def _calculate_atr_optimized(self, high: pd.Series, low: pd.Series, 
-                               close: pd.Series, period: int) -> pd.Series:
+
+    def _calculate_atr_optimized(
+        self, high: pd.Series, low: pd.Series, close: pd.Series, period: int
+    ) -> pd.Series:
         """Calculate Average True Range with enhanced accuracy."""
         if period <= 0:
             raise ValueError("ATR period must be positive")
-        
+
         # True Range calculation
         high_low = high - low
         high_close_prev = (high - close.shift(1)).abs()
         low_close_prev = (low - close.shift(1)).abs()
-        
+
         # Use pandas concat for better performance
         ranges = pd.concat([high_low, high_close_prev, low_close_prev], axis=1)
         true_range = ranges.max(axis=1)
-        
+
         # Use Wilder's smoothing
         alpha = 1.0 / period
         return true_range.ewm(alpha=alpha, adjust=False).mean()
-    
-    def _calculate_bollinger_bands_optimized(self, series: pd.Series, 
-                                           period: int, std_mult: float) -> Dict[str, pd.Series]:
+
+    def _calculate_bollinger_bands_optimized(
+        self, series: pd.Series, period: int, std_mult: float
+    ) -> Dict[str, pd.Series]:
         """Calculate Bollinger Bands with validation."""
         if period <= 0:
             raise ValueError("Bollinger Bands period must be positive")
-        
+
         sma = self._calculate_sma_optimized(series, period)
         std = series.rolling(window=period, min_periods=1).std()
-        
+
         return {
-            'bollinger_upper': sma + (std * std_mult),
-            'bollinger_lower': sma - (std * std_mult),
-            'bollinger_middle': sma
+            "bollinger_upper": sma + (std * std_mult),
+            "bollinger_lower": sma - (std * std_mult),
+            "bollinger_middle": sma,
         }
-    
-    def _calculate_macd_optimized(self, series: pd.Series, fast_period: int, 
-                                slow_period: int, signal_period: int) -> Dict[str, pd.Series]:
+
+    def _calculate_macd_optimized(
+        self, series: pd.Series, fast_period: int, slow_period: int, signal_period: int
+    ) -> Dict[str, pd.Series]:
         """Calculate MACD with validation."""
         if fast_period >= slow_period:
             raise ValueError("Fast period must be less than slow period")
-        
+
         ema_fast = self._calculate_ema_optimized(series, fast_period)
         ema_slow = self._calculate_ema_optimized(series, slow_period)
         macd = ema_fast - ema_slow
         signal = self._calculate_ema_optimized(macd, signal_period)
-        
-        return {
-            'macd': macd,
-            'macd_signal': signal
-        }
-    
-    def _calculate_stochastic_optimized(self, high: pd.Series, low: pd.Series, 
-                                      close: pd.Series, k_period: int, d_period: int) -> Dict[str, pd.Series]:
+
+        return {"macd": macd, "macd_signal": signal}
+
+    def _calculate_stochastic_optimized(
+        self, high: pd.Series, low: pd.Series, close: pd.Series, k_period: int, d_period: int
+    ) -> Dict[str, pd.Series]:
         """Calculate Stochastic Oscillator with validation."""
         if k_period <= 0 or d_period <= 0:
             raise ValueError("Stochastic periods must be positive")
-        
+
         lowest_low = low.rolling(window=k_period, min_periods=1).min()
         highest_high = high.rolling(window=k_period, min_periods=1).max()
-        
+
         # Avoid division by zero
         denominator = highest_high - lowest_low
         k_percent = ((close - lowest_low) / denominator).fillna(0) * 100
         k_percent = k_percent.clip(0, 100)  # Ensure bounds
-        
+
         d_percent = k_percent.rolling(window=d_period, min_periods=1).mean()
-        
-        return {
-            'stochastic_k': k_percent,
-            'stochastic_d': d_percent
-        }
+
+        return {"stochastic_k": k_percent, "stochastic_d": d_percent}
+
 
 # =================== Enhanced Signal Generation Service ===================
 
@@ -750,12 +823,12 @@ class TradingSignalService:
 
         self._catalog.register(plugin)
 
-    def generate_signals(self, indicators: TechnicalIndicators, params: TradingParameters) -> pd.Series:
+    def generate_signals(
+        self, indicators: TechnicalIndicators, params: TradingParameters
+    ) -> pd.Series:
         """Generate ensemble signals from the configured plugin catalog."""
 
-        with _capture_pandas_warnings(
-            self._logger, component="trading_engine.signals"
-        ):
+        with _capture_pandas_warnings(self._logger, component="trading_engine.signals"):
             available_signals: Dict[str, pd.Series] = {}
             active_weights: Dict[str, float] = {}
             for name, weight in params.ensemble_weights.items():
@@ -774,9 +847,7 @@ class TradingSignalService:
                 active_weights[name] = float(weight)
 
             if not available_signals:
-                return pd.Series(
-                    SignalType.FLAT.value, index=indicators.rsi.index, dtype=int
-                )
+                return pd.Series(SignalType.FLAT.value, index=indicators.rsi.index, dtype=int)
 
             weight_sum = sum(active_weights.values())
             if weight_sum <= 0:
@@ -786,41 +857,38 @@ class TradingSignalService:
             ensemble_signal = pd.Series(0.0, index=indicators.rsi.index, dtype=float)
             for name, signal in available_signals.items():
                 normalized_weight = active_weights[name] / weight_sum
-                ensemble_signal = ensemble_signal.add(
-                    signal * normalized_weight, fill_value=0.0
-                )
+                ensemble_signal = ensemble_signal.add(signal * normalized_weight, fill_value=0.0)
 
-            final_signals = pd.Series(
-                SignalType.FLAT.value, index=ensemble_signal.index, dtype=int
-            )
-            final_signals[ensemble_signal > params.signal_threshold] = (
-                SignalType.LONG.value
-            )
-            final_signals[ensemble_signal < -params.signal_threshold] = (
-                SignalType.SHORT.value
-            )
+            final_signals = pd.Series(SignalType.FLAT.value, index=ensemble_signal.index, dtype=int)
+            final_signals[ensemble_signal > params.signal_threshold] = SignalType.LONG.value
+            final_signals[ensemble_signal < -params.signal_threshold] = SignalType.SHORT.value
 
             final_signals = self._smooth_signals(final_signals)
             return final_signals
-    
+
     def _smooth_signals(self, signals: pd.Series, window: int = 3) -> pd.Series:
         """Smooth signals to reduce noise and whipsaws."""
         # Use modal smoothing to reduce signal noise
-        smoothed = signals.rolling(window=window, center=True).apply(
-            lambda x: x.mode().iloc[0] if len(x.mode()) > 0 else x.iloc[len(x)//2], 
-            raw=False
-        ).fillna(signals)
-        
+        smoothed = (
+            signals.rolling(window=window, center=True)
+            .apply(
+                lambda x: x.mode().iloc[0] if len(x.mode()) > 0 else x.iloc[len(x) // 2], raw=False
+            )
+            .fillna(signals)
+        )
+
         return smoothed.astype(int)
+
 
 # =================== Enhanced Risk Management Service ===================
 
+
 class RiskManagementService:
     """Comprehensive risk management with stop-loss, take-profit, and position sizing."""
-    
+
     def __init__(self, logger: logging.Logger):
         self._logger = logger
-    
+
     def apply_risk_management(
         self,
         data: pd.DataFrame,
@@ -833,12 +901,10 @@ class RiskManagementService:
         Returns a DataFrame with directional signal and position sizing that can be
         consumed by vectorized components without additional transformation.
         """
-        with _capture_pandas_warnings(
-            self._logger, component="trading_engine.risk_management"
-        ):
+        with _capture_pandas_warnings(self._logger, component="trading_engine.risk_management"):
             managed_direction = pd.Series(0, index=signals.index, dtype=int)
             position_sizes = pd.Series(0.0, index=signals.index, dtype=float)
-            exit_reasons = pd.Series(pd.NA, index=signals.index, dtype='string')
+            exit_reasons = pd.Series(pd.NA, index=signals.index, dtype="string")
 
             current_position = 0
             current_size = 0.0
@@ -850,7 +916,7 @@ class RiskManagementService:
                 current_signal = (
                     int(np.sign(signals.iloc[i])) if not pd.isna(signals.iloc[i]) else 0
                 )
-                current_price = data.loc[timestamp, 'close']
+                current_price = data.loc[timestamp, "close"]
                 current_atr = indicators.atr.iloc[i]
 
                 # Check for position exit conditions first
@@ -867,9 +933,7 @@ class RiskManagementService:
                         managed_direction.iloc[i] = 0
                         position_sizes.iloc[i] = 0.0
                         exit_reasons.iloc[i] = exit_signal
-                        self._logger.debug(
-                            f"Risk management exit at {timestamp}: {exit_signal}"
-                        )
+                        self._logger.debug(f"Risk management exit at {timestamp}: {exit_signal}")
                         current_position = 0
                         current_size = 0.0
                         entry_price = 0.0
@@ -915,79 +979,86 @@ class RiskManagementService:
 
             managed_frame = pd.DataFrame(
                 {
-                    'direction': managed_direction.astype(int),
-                    'size': position_sizes.astype(float),
+                    "direction": managed_direction.astype(int),
+                    "size": position_sizes.astype(float),
                 }
             )
 
             if exit_reasons.notna().any():
-                managed_frame['exit_reason'] = exit_reasons
+                managed_frame["exit_reason"] = exit_reasons
 
             return managed_frame
-    
-    def _check_exit_conditions(self, position: int, entry_price: float, 
-                             current_price: float, atr: float, params: TradingParameters) -> Optional[str]:
+
+    def _check_exit_conditions(
+        self,
+        position: int,
+        entry_price: float,
+        current_price: float,
+        atr: float,
+        params: TradingParameters,
+    ) -> Optional[str]:
         """Check if position should be exited based on risk management rules."""
         if pd.isna(atr) or atr == 0:
             return None
-        
+
         if position > 0:  # Long position
             # Stop loss
             stop_loss_price = entry_price - (atr * params.stop_loss_atr_mult)
             if current_price <= stop_loss_price:
                 return ExitReason.STOP_LOSS
-            
+
             # Take profit
             take_profit_price = entry_price + (atr * params.take_profit_atr_mult)
             if current_price >= take_profit_price:
                 return ExitReason.TAKE_PROFIT
-                
+
         elif position < 0:  # Short position
             # Stop loss
             stop_loss_price = entry_price + (atr * params.stop_loss_atr_mult)
             if current_price >= stop_loss_price:
                 return ExitReason.STOP_LOSS
-            
+
             # Take profit
             take_profit_price = entry_price - (atr * params.take_profit_atr_mult)
             if current_price <= take_profit_price:
                 return ExitReason.TAKE_PROFIT
-        
+
         return None
-    
-    def _calculate_position_size(self, price: float, atr: float, params: TradingParameters) -> float:
+
+    def _calculate_position_size(
+        self, price: float, atr: float, params: TradingParameters
+    ) -> float:
         """Calculate position size based on volatility and risk parameters."""
         if pd.isna(atr) or atr == 0 or price == 0:
             return 0.0
-        
+
         # Risk per share based on ATR stop loss
         risk_per_share = atr * params.stop_loss_atr_mult
         risk_percentage = risk_per_share / price
-        
+
         # Limit position size based on maximum risk
         if risk_percentage > params.max_position_risk:
             return 0.0
-        
+
         # Volatility-based position sizing
         volatility_adjusted_size = params.volatility_target / risk_percentage
-        
+
         # Apply Kelly fraction for position sizing
-        final_size = min(
-            volatility_adjusted_size * params.kelly_fraction,
-            params.position_size
-        )
-        
+        final_size = min(volatility_adjusted_size * params.kelly_fraction, params.position_size)
+
         return max(0.0, final_size)
+
 
 # =================== Enhanced Vectorized Backtesting Engine ===================
 
+
 class VectorizedBacktestEngine:
     """Ultra-high-performance vectorized backtesting engine with comprehensive metrics."""
-    
+
     def __init__(self, logger: logging.Logger):
         self._logger = logger
         self._math = MathUtils()
-    
+
     def run_backtest(
         self,
         data: pd.DataFrame,
@@ -999,7 +1070,7 @@ class VectorizedBacktestEngine:
     ) -> BacktestResult:
         """
         Run comprehensive vectorized backtest simulation.
-        
+
         Args:
             data: OHLCV DataFrame
             signals: Trading signals
@@ -1007,24 +1078,28 @@ class VectorizedBacktestEngine:
             config: Engine configuration
             initial_capital: Starting capital
             fee_bps: Transaction fees in basis points
-            
+
         Returns:
             Comprehensive backtest results
-            
+
         Raises:
             BacktestExecutionError: If backtest execution fails
         """
         try:
             with _capture_pandas_warnings(self._logger, component="trading_engine.backtest"):
                 # Align data and signals
-                aligned_data = data.reindex(positions.index, method='ffill')
+                aligned_data = data.reindex(positions.index, method="ffill")
 
                 # Calculate returns and equity curve
-                returns = self._calculate_returns_vectorized(aligned_data, positions, params, fee_bps)
+                returns = self._calculate_returns_vectorized(
+                    aligned_data, positions, params, fee_bps
+                )
                 equity_curve = (1 + returns).cumprod() * initial_capital
 
                 # Generate comprehensive trades DataFrame
-                trades_df = self._generate_trades_dataframe_vectorized(aligned_data, positions, params)
+                trades_df = self._generate_trades_dataframe_vectorized(
+                    aligned_data, positions, params
+                )
 
                 # Calculate all performance metrics
                 metrics = self.summarize_backtest(
@@ -1032,15 +1107,12 @@ class VectorizedBacktestEngine:
                 )
 
             return BacktestResult(
-                equity_curve=equity_curve,
-                trades=trades_df,
-                daily_returns=returns,
-                **metrics
+                equity_curve=equity_curve, trades=trades_df, daily_returns=returns, **metrics
             )
 
         except Exception as e:
             raise BacktestExecutionError(f"Backtest execution failed: {e}") from e
-    
+
     def _calculate_returns_vectorized(
         self,
         data: pd.DataFrame,
@@ -1050,8 +1122,10 @@ class VectorizedBacktestEngine:
     ) -> pd.Series:
         """Calculate returns using fully vectorized operations."""
 
-        direction = positions.get('direction', pd.Series(index=positions.index, dtype=float)).astype(float)
-        size = positions.get('size', pd.Series(index=positions.index, dtype=float)).astype(float)
+        direction = positions.get(
+            "direction", pd.Series(index=positions.index, dtype=float)
+        ).astype(float)
+        size = positions.get("size", pd.Series(index=positions.index, dtype=float)).astype(float)
 
         # Shift to avoid look-ahead bias
         shifted_direction = direction.shift(1).fillna(0.0)
@@ -1059,7 +1133,7 @@ class VectorizedBacktestEngine:
         signed_position = shifted_direction * shifted_size
 
         # Calculate price returns
-        price_returns = data['close'].pct_change().fillna(0.0)
+        price_returns = data["close"].pct_change().fillna(0.0)
 
         # Calculate strategy returns
         strategy_returns = signed_position * price_returns
@@ -1081,18 +1155,20 @@ class VectorizedBacktestEngine:
     ) -> pd.DataFrame:
         """Generate trades DataFrame using optimized vectorized operations."""
 
-        direction = positions.get('direction', pd.Series(index=positions.index, dtype=float)).astype(int)
-        size = positions.get('size', pd.Series(index=positions.index, dtype=float)).astype(float)
+        direction = positions.get(
+            "direction", pd.Series(index=positions.index, dtype=float)
+        ).astype(int)
+        size = positions.get("size", pd.Series(index=positions.index, dtype=float)).astype(float)
 
         exit_reasons = self._prepare_exit_reason_series(positions, direction.index)
 
         # Find signal changes
         signal_changes = direction.diff().fillna(direction)
         trade_points = signal_changes != 0
-        
+
         if not trade_points.any():
             return pd.DataFrame()
-        
+
         trades = []
         position = 0
         position_size = 0.0
@@ -1104,20 +1180,24 @@ class VectorizedBacktestEngine:
             if timestamp not in data.index:
                 continue
 
-            current_price = data.loc[timestamp, 'close']
+            current_price = data.loc[timestamp, "close"]
 
             # Position change logic
             if signal != position:
                 # Close existing position
                 if position != 0 and entry_idx is not None:
                     entry_timestamp = direction.index[entry_idx]
-                    entry_price = data.loc[entry_timestamp, 'close']
+                    entry_price = data.loc[entry_timestamp, "close"]
                     entry_size = max(abs(size.iloc[entry_idx]), 0.0)
 
                     # Calculate trade metrics
                     signed_size = position * entry_size
                     pnl = (current_price - entry_price) * signed_size
-                    pnl_pct = ((current_price / entry_price) - 1.0) * position if entry_price != 0 else 0.0
+                    pnl_pct = (
+                        ((current_price / entry_price) - 1.0) * position
+                        if entry_price != 0
+                        else 0.0
+                    )
                     duration = timestamp - entry_timestamp
 
                     # Determine exit reason
@@ -1130,20 +1210,22 @@ class VectorizedBacktestEngine:
                         exit_reason = ExitReason.SIGNAL
                     else:
                         exit_reason = canonical_reason
-                    
-                    trades.append({
-                        'entry_time': entry_timestamp,
-                        'exit_time': timestamp,
-                        'entry_price': entry_price,
-                        'exit_price': current_price,
-                        'position': position,
-                        'quantity': abs(entry_size),
-                        'pnl': pnl,
-                        'pnl_pct': pnl_pct,
-                        'duration': duration,
-                        'exit_reason': exit_reason,
-                        'commission': abs(entry_size) * current_price * 0.0005  # 5 bps
-                    })
+
+                    trades.append(
+                        {
+                            "entry_time": entry_timestamp,
+                            "exit_time": timestamp,
+                            "entry_price": entry_price,
+                            "exit_price": current_price,
+                            "position": position,
+                            "quantity": abs(entry_size),
+                            "pnl": pnl,
+                            "pnl_pct": pnl_pct,
+                            "duration": duration,
+                            "exit_reason": exit_reason,
+                            "commission": abs(entry_size) * current_price * 0.0005,  # 5 bps
+                        }
+                    )
 
                 # Open new position
                 if signal != 0:
@@ -1168,10 +1250,10 @@ class VectorizedBacktestEngine:
     ) -> Optional[pd.Series]:
         """Sanitize optional exit reason metadata from managed positions."""
 
-        if 'exit_reason' not in positions:
+        if "exit_reason" not in positions:
             return None
 
-        raw_exit_reasons = positions.get('exit_reason')
+        raw_exit_reasons = positions.get("exit_reason")
         if raw_exit_reasons is None:
             return None
 
@@ -1197,9 +1279,9 @@ class VectorizedBacktestEngine:
             return None
 
         try:
-            return canonical.astype('string')
+            return canonical.astype("string")
         except (TypeError, ValueError):
-            return canonical.astype('object').astype('string')
+            return canonical.astype("object").astype("string")
 
     def summarize_backtest(
         self,
@@ -1214,38 +1296,47 @@ class VectorizedBacktestEngine:
             equity_curve, trades_df, returns, risk_free_rate
         )
 
-    def _calculate_comprehensive_metrics(self, equity_curve: pd.Series, trades_df: pd.DataFrame,
-                                       returns: pd.Series, risk_free_rate: float) -> Dict[str, Any]:
+    def _calculate_comprehensive_metrics(
+        self,
+        equity_curve: pd.Series,
+        trades_df: pd.DataFrame,
+        returns: pd.Series,
+        risk_free_rate: float,
+    ) -> Dict[str, Any]:
         """Calculate comprehensive performance metrics."""
         if equity_curve.empty or len(equity_curve) < 2:
             return self._empty_comprehensive_metrics()
-        
+
         initial_capital = equity_curve.iloc[0]
         final_capital = equity_curve.iloc[-1]
-        
+
         # Basic return metrics
         total_return = (final_capital / initial_capital) - 1.0
         n_years = len(equity_curve) / 252  # Assuming daily data
-        annualized_return = (1 + total_return) ** (1/n_years) - 1.0 if n_years > 0 else 0.0
-        
+        annualized_return = (1 + total_return) ** (1 / n_years) - 1.0 if n_years > 0 else 0.0
+
         # Risk metrics
         volatility = returns.std() * np.sqrt(252)
-        
+
         # Drawdown analysis
-        drawdown, max_drawdown, max_dd_duration = self._math.calculate_drawdown_vectorized(equity_curve)
-        
+        drawdown, max_drawdown, max_dd_duration = self._math.calculate_drawdown_vectorized(
+            equity_curve
+        )
+
         # Risk-adjusted returns
         excess_returns = returns - (risk_free_rate / 252)  # Daily risk-free rate
-        sharpe_ratio = (excess_returns.mean() / returns.std()) * np.sqrt(252) if returns.std() > 0 else 0.0
-        
+        sharpe_ratio = (
+            (excess_returns.mean() / returns.std()) * np.sqrt(252) if returns.std() > 0 else 0.0
+        )
+
         # Sortino ratio
         downside_returns = returns[returns < 0]
         downside_std = downside_returns.std() * np.sqrt(252)
         sortino_ratio = (returns.mean() * 252) / downside_std if downside_std > 0 else 0.0
-        
+
         # Calmar ratio
         calmar_ratio = annualized_return / abs(max_drawdown) if max_drawdown < 0 else 0.0
-        
+
         # Omega ratio
         threshold = 0.0
         positive_returns = returns[returns > threshold]
@@ -1253,31 +1344,37 @@ class VectorizedBacktestEngine:
         positive_sum = positive_returns.sum()
         negative_sum = negative_returns.sum()
         if len(negative_returns) == 0 or np.isclose(negative_sum, 0.0):
-            omega_ratio = float('inf') if positive_sum > 0 else 0.0
+            omega_ratio = float("inf") if positive_sum > 0 else 0.0
         else:
             omega_ratio = positive_sum / abs(negative_sum)
-        
+
         # VaR and Expected Shortfall
         var_95 = returns.quantile(0.05)
-        expected_shortfall_95 = returns[returns <= var_95].mean() if (returns <= var_95).any() else 0.0
-        
+        expected_shortfall_95 = (
+            returns[returns <= var_95].mean() if (returns <= var_95).any() else 0.0
+        )
+
         # Tail ratio
-        tail_ratio = returns.quantile(0.95) / abs(returns.quantile(0.05)) if returns.quantile(0.05) != 0 else 0.0
-        
+        tail_ratio = (
+            returns.quantile(0.95) / abs(returns.quantile(0.05))
+            if returns.quantile(0.05) != 0
+            else 0.0
+        )
+
         # Trade-based metrics
         if not trades_df.empty:
-            winning_trades = trades_df[trades_df['pnl'] > 0]
-            losing_trades = trades_df[trades_df['pnl'] < 0]
-            
+            winning_trades = trades_df[trades_df["pnl"] > 0]
+            losing_trades = trades_df[trades_df["pnl"] < 0]
+
             win_rate = len(winning_trades) / len(trades_df)
-            
-            gross_profit = winning_trades['pnl'].sum() if not winning_trades.empty else 0.0
-            gross_loss = abs(losing_trades['pnl'].sum()) if not losing_trades.empty else 0.0
-            profit_factor = gross_profit / gross_loss if gross_loss > 0 else float('inf')
-            
-            avg_trade_duration = trades_df['duration'].mean()
-            largest_win = trades_df['pnl'].max()
-            largest_loss = trades_df['pnl'].min()
+
+            gross_profit = winning_trades["pnl"].sum() if not winning_trades.empty else 0.0
+            gross_loss = abs(losing_trades["pnl"].sum()) if not losing_trades.empty else 0.0
+            profit_factor = gross_profit / gross_loss if gross_loss > 0 else float("inf")
+
+            avg_trade_duration = trades_df["duration"].mean()
+            largest_win = trades_df["pnl"].max()
+            largest_loss = trades_df["pnl"].min()
             total_trades = len(trades_df)
         else:
             win_rate = 0.0
@@ -1286,64 +1383,68 @@ class VectorizedBacktestEngine:
             largest_win = 0.0
             largest_loss = 0.0
             total_trades = 0
-        
+
         return {
-            'total_return': total_return,
-            'annualized_return': annualized_return,
-            'volatility': volatility,
-            'sharpe_ratio': sharpe_ratio,
-            'sortino_ratio': sortino_ratio,
-            'calmar_ratio': calmar_ratio,
-            'omega_ratio': omega_ratio,
-            'max_drawdown': max_drawdown,
-            'max_drawdown_duration': max_dd_duration,
-            'win_rate': win_rate,
-            'profit_factor': profit_factor,
-            'tail_ratio': tail_ratio,
-            'var_95': var_95,
-            'expected_shortfall_95': expected_shortfall_95,
-            'total_trades': total_trades,
-            'avg_trade_duration': avg_trade_duration,
-            'largest_win': largest_win,
-            'largest_loss': largest_loss
+            "total_return": total_return,
+            "annualized_return": annualized_return,
+            "volatility": volatility,
+            "sharpe_ratio": sharpe_ratio,
+            "sortino_ratio": sortino_ratio,
+            "calmar_ratio": calmar_ratio,
+            "omega_ratio": omega_ratio,
+            "max_drawdown": max_drawdown,
+            "max_drawdown_duration": max_dd_duration,
+            "win_rate": win_rate,
+            "profit_factor": profit_factor,
+            "tail_ratio": tail_ratio,
+            "var_95": var_95,
+            "expected_shortfall_95": expected_shortfall_95,
+            "total_trades": total_trades,
+            "avg_trade_duration": avg_trade_duration,
+            "largest_win": largest_win,
+            "largest_loss": largest_loss,
         }
-    
+
     def _empty_comprehensive_metrics(self) -> Dict[str, Any]:
         """Return empty comprehensive metrics dictionary."""
         return {
-            'total_return': 0.0,
-            'annualized_return': 0.0,
-            'volatility': 0.0,
-            'sharpe_ratio': 0.0,
-            'sortino_ratio': 0.0,
-            'calmar_ratio': 0.0,
-            'omega_ratio': 0.0,
-            'max_drawdown': 0.0,
-            'max_drawdown_duration': pd.Timedelta(0),
-            'win_rate': 0.0,
-            'profit_factor': 0.0,
-            'tail_ratio': 0.0,
-            'var_95': 0.0,
-            'expected_shortfall_95': 0.0,
-            'total_trades': 0,
-            'avg_trade_duration': pd.Timedelta(0),
-            'largest_win': 0.0,
-            'largest_loss': 0.0
+            "total_return": 0.0,
+            "annualized_return": 0.0,
+            "volatility": 0.0,
+            "sharpe_ratio": 0.0,
+            "sortino_ratio": 0.0,
+            "calmar_ratio": 0.0,
+            "omega_ratio": 0.0,
+            "max_drawdown": 0.0,
+            "max_drawdown_duration": pd.Timedelta(0),
+            "win_rate": 0.0,
+            "profit_factor": 0.0,
+            "tail_ratio": 0.0,
+            "var_95": 0.0,
+            "expected_shortfall_95": 0.0,
+            "total_trades": 0,
+            "avg_trade_duration": pd.Timedelta(0),
+            "largest_win": 0.0,
+            "largest_loss": 0.0,
         }
+
 
 # =================== Enhanced Main Trading Engine ===================
 
+
 class TradingEngine:
     """Enhanced main trading engine with comprehensive dependency injection."""
-    
-    def __init__(self,
-                 config: Optional[EngineConfig] = None,
-                 validator: Optional[DataValidator] = None,
-                 indicator_calculator: Optional[IndicatorCalculator] = None,
-                 signal_generator: Optional[SignalGenerator] = None,
-                 risk_manager: Optional[RiskManager] = None,
-                 backtest_engine: Optional[BacktestEngine] = None,
-                 logger: Optional[logging.Logger] = None):
+
+    def __init__(
+        self,
+        config: Optional[EngineConfig] = None,
+        validator: Optional[DataValidator] = None,
+        indicator_calculator: Optional[IndicatorCalculator] = None,
+        signal_generator: Optional[SignalGenerator] = None,
+        risk_manager: Optional[RiskManager] = None,
+        backtest_engine: Optional[BacktestEngine] = None,
+        logger: Optional[logging.Logger] = None,
+    ):
         """Initialize with comprehensive dependency injection."""
 
         self._config = config or EngineConfig()
@@ -1351,7 +1452,9 @@ class TradingEngine:
 
         # Inject dependencies or use enhanced defaults
         self._validator = validator or DataValidationService(self._logger, self._config)
-        self._indicator_calculator = indicator_calculator or TechnicalIndicatorsService(self._logger, self._config)
+        self._indicator_calculator = indicator_calculator or TechnicalIndicatorsService(
+            self._logger, self._config
+        )
         self._signal_generator = signal_generator or TradingSignalService(self._logger)
         self._risk_manager = risk_manager or RiskManagementService(self._logger)
         self._backtest_engine = backtest_engine or VectorizedBacktestEngine(self._logger)
@@ -1359,7 +1462,7 @@ class TradingEngine:
         self._performance_monitor = PerformanceMonitor(self._logger)
         self._last_optimization_summary: Optional[OptimizationSummary] = None
         self._last_optimization_result: Optional[BacktestResult] = None
-    
+
     def run_strategy(
         self,
         # Mapping is supported only for new-style multi-session runs; legacy path expects DataFrame.
@@ -1395,7 +1498,9 @@ class TradingEngine:
             )
 
         if not isinstance(params, TradingParameters):
-            raise TradingEngineError("Trading parameters must be TradingParameters instance for single run")
+            raise TradingEngineError(
+                "Trading parameters must be TradingParameters instance for single run"
+            )
 
         return self._run_single_strategy(data, params, initial_capital, fee_bps)
 
@@ -1408,7 +1513,9 @@ class TradingEngine:
     ) -> BacktestResult:
         try:
             if initial_capital <= 0:
-                raise TradingEngineError("Initial capital must be positive for single-session backtests")
+                raise TradingEngineError(
+                    "Initial capital must be positive for single-session backtests"
+                )
 
             self._logger.info("Starting enhanced trading strategy execution")
             start_time = pd.Timestamp.now()
@@ -1426,10 +1533,12 @@ class TradingEngine:
                 managed_positions = self._risk_manager.apply_risk_management(
                     validated_data, raw_signals, indicators, params
                 )
-                if not {'direction', 'size'}.issubset(managed_positions.columns):
-                    raise TradingEngineError("Risk manager must return 'direction' and 'size' columns")
+                if not {"direction", "size"}.issubset(managed_positions.columns):
+                    raise TradingEngineError(
+                        "Risk manager must return 'direction' and 'size' columns"
+                    )
 
-                risk_filtered = (managed_positions['direction'] != raw_signals).sum()
+                risk_filtered = (managed_positions["direction"] != raw_signals).sum()
                 self._logger.info(f"Risk management filtered {risk_filtered} signals")
 
                 result = self._backtest_engine.run_backtest(
@@ -1499,16 +1608,14 @@ class TradingEngine:
                 fee_bps,
             )
 
-        with _capture_pandas_warnings(
-            self._logger, component="trading_engine.multi_session"
-        ):
+        with _capture_pandas_warnings(self._logger, component="trading_engine.multi_session"):
             returns_df = pd.DataFrame(
                 {sym: res.daily_returns for sym, res in session_results.items()}
             )
             returns_df = returns_df.sort_index().fillna(0.0)
             weight_series = pd.Series(weights).reindex(returns_df.columns).fillna(0.0)
             weighted_returns = returns_df.mul(weight_series, axis=1).sum(axis=1)
-            weighted_returns.name = 'portfolio_returns'
+            weighted_returns.name = "portfolio_returns"
 
             combined_equity = (1 + weighted_returns).cumprod() * initial_capital
 
@@ -1524,14 +1631,24 @@ class TradingEngine:
             else:
                 combined_trades = pd.DataFrame(
                     columns=[
-                        'entry_time', 'exit_time', 'entry_price', 'exit_price', 'position',
-                        'quantity', 'pnl', 'pnl_pct', 'duration', 'exit_reason', 'commission', 'symbol'
+                        "entry_time",
+                        "exit_time",
+                        "entry_price",
+                        "exit_price",
+                        "position",
+                        "quantity",
+                        "pnl",
+                        "pnl_pct",
+                        "duration",
+                        "exit_reason",
+                        "commission",
+                        "symbol",
                     ]
                 )
 
             metrics = self._backtest_engine.summarize_backtest(
                 combined_equity,
-                combined_trades.drop(columns=['symbol'], errors='ignore'),
+                combined_trades.drop(columns=["symbol"], errors="ignore"),
                 weighted_returns,
                 self._config.risk_free_rate,
             )
@@ -1573,45 +1690,51 @@ class TradingEngine:
             raise TradingEngineError("Session weights must sum to a positive value")
 
         return {symbol: value / total for symbol, value in normalized.items()}
-    
-    def optimize_parameters(self, data: pd.DataFrame, param_ranges: Dict[str, List],
-                           objective: Union[str, Callable[[BacktestResult], Any]] = 'sharpe_ratio',
-                           max_iterations: int = 1000) -> Tuple[TradingParameters, float]:
+
+    def optimize_parameters(
+        self,
+        data: pd.DataFrame,
+        param_ranges: Dict[str, List],
+        objective: Union[str, Callable[[BacktestResult], Any]] = "sharpe_ratio",
+        max_iterations: int = 1000,
+    ) -> Tuple[TradingParameters, float]:
         """
         Enhanced parameter optimization with smart search.
-        
+
         Args:
             data: OHLCV DataFrame
             param_ranges: Dictionary of parameter ranges
             objective: Optimization objective as a BacktestResult attribute name or callable
             max_iterations: Maximum optimization iterations
-            
+
         Returns:
             Tuple of best parameters and best score
         """
         best_params: Optional[TradingParameters] = None
         best_result: Optional[BacktestResult] = None
-        best_score = float('-inf')
+        best_score = float("-inf")
         iterations = 0
         self._last_optimization_summary = None
         fallback_used = False
-        
+
         objective_label = (
-            objective if isinstance(objective, str) else getattr(objective, "__name__", repr(objective))
+            objective
+            if isinstance(objective, str)
+            else getattr(objective, "__name__", repr(objective))
         )
 
         self._logger.info(
             "Starting parameter optimization with objective: %s",
             objective_label,
         )
-        
+
         base_params = TradingParameters()
 
         keys_to_optimize = [
-            'rsi_period',
-            'ema_fast_period',
-            'ema_slow_period',
-            'signal_threshold',
+            "rsi_period",
+            "ema_fast_period",
+            "ema_slow_period",
+            "signal_threshold",
         ]
 
         search_space: Dict[str, List[Any]] = {}
@@ -1635,8 +1758,8 @@ class TradingEngine:
         def parameter_combinations() -> Iterable[Dict[str, Any]]:
             for combo_values in product(*(search_space[name] for name in param_names)):
                 combo = dict(zip(param_names, combo_values))
-                ema_fast_value = combo.get('ema_fast_period')
-                ema_slow_value = combo.get('ema_slow_period')
+                ema_fast_value = combo.get("ema_fast_period")
+                ema_slow_value = combo.get("ema_slow_period")
                 if (
                     ema_fast_value is not None
                     and ema_slow_value is not None
@@ -1779,11 +1902,11 @@ class TradingEngine:
     def get_last_optimization_summary(self) -> Optional[OptimizationSummary]:
         """Return metadata about the most recent optimization run."""
         return self._last_optimization_summary
-    
+
     def get_performance_alerts(self) -> List[str]:
         """Get current performance alerts."""
         return self._performance_monitor.get_alerts()
-    
+
     def _setup_logger(self) -> logging.Logger:
         """Setup enhanced logger with configuration."""
         logger = logging.getLogger(__name__)
@@ -1791,23 +1914,25 @@ class TradingEngine:
         logger.setLevel(getattr(logging, self._config.log_level.upper()))
         return logger
 
+
 # =================== Performance Monitoring ===================
+
 
 class PerformanceMonitor:
     """Enhanced real-time performance monitoring and alerting."""
-    
+
     def __init__(self, logger: logging.Logger):
         self._logger = logger
         self._alerts: List[str] = []
-    
+
     def monitor_drawdown(self, equity_curve: pd.Series, max_dd_threshold: float = 0.15):
         """Monitor for excessive drawdowns with detailed analysis."""
         if len(equity_curve) < 2:
             return
-        
+
         peak = equity_curve.expanding().max()
         current_dd = (equity_curve.iloc[-1] - peak.iloc[-1]) / peak.iloc[-1]
-        
+
         if current_dd < -max_dd_threshold:
             alert = (
                 f"WARNING: Current drawdown {current_dd:.2%} exceeds threshold {max_dd_threshold:.2%}. "
@@ -1815,16 +1940,16 @@ class PerformanceMonitor:
             )
             self._alerts.append(alert)
             self._logger.warning(alert)
-    
+
     def monitor_volatility(self, equity_curve: pd.Series, vol_threshold: float = 0.30):
         """Monitor for excessive volatility with rolling analysis."""
         if len(equity_curve) < 30:
             return
-        
+
         returns = equity_curve.pct_change().dropna()
         recent_returns = returns.tail(30)
         current_vol = recent_returns.std() * np.sqrt(252)
-        
+
         if current_vol > vol_threshold:
             avg_vol = returns.std() * np.sqrt(252)
             alert = (
@@ -1833,160 +1958,174 @@ class PerformanceMonitor:
             )
             self._alerts.append(alert)
             self._logger.warning(alert)
-    
+
     def monitor_consecutive_losses(self, trades_df: pd.DataFrame, max_consecutive: int = 5):
         """Monitor for consecutive losing trades."""
         if trades_df.empty:
             return
-        
-        trades_df = trades_df.sort_values('exit_time')
+
+        trades_df = trades_df.sort_values("exit_time")
         consecutive_losses = 0
         max_consecutive_losses = 0
-        
+
         for _, trade in trades_df.iterrows():
-            if trade['pnl'] < 0:
+            if trade["pnl"] < 0:
                 consecutive_losses += 1
                 max_consecutive_losses = max(max_consecutive_losses, consecutive_losses)
             else:
                 consecutive_losses = 0
-        
+
         if max_consecutive_losses >= max_consecutive:
             alert = f"WARNING: {max_consecutive_losses} consecutive losing trades detected"
             self._alerts.append(alert)
             self._logger.warning(alert)
-    
+
     def get_alerts(self) -> List[str]:
         """Get all alerts."""
         return self._alerts.copy()
-    
+
     def clear_alerts(self):
         """Clear all alerts."""
         self._alerts.clear()
+
 
 # =================== Comprehensive Testing Framework ===================
 
 # =================== Advanced Features ===================
 
+
 class PortfolioManager:
     """Enhanced portfolio management with advanced risk controls."""
-    
+
     def __init__(self, engine: TradingEngine):
         self._engine = engine
         self._logger = engine._logger
         self._risk_budget = {}
-    
-    def run_portfolio_backtest(self, 
-                              assets_data: Dict[str, pd.DataFrame],
-                              params: Dict[str, TradingParameters],
-                              weights: Dict[str, float],
-                              rebalance_freq: str = 'M',
-                              total_capital: float = 100000.0) -> Dict[str, Any]:
+
+    def run_portfolio_backtest(
+        self,
+        assets_data: Dict[str, pd.DataFrame],
+        params: Dict[str, TradingParameters],
+        weights: Dict[str, float],
+        rebalance_freq: str = "M",
+        total_capital: float = 100000.0,
+    ) -> Dict[str, Any]:
         """
         Run comprehensive portfolio backtest across multiple assets.
-        
+
         Args:
             assets_data: Dictionary of asset DataFrames
             params: Dictionary of trading parameters per asset
             weights: Portfolio weights
             rebalance_freq: Rebalancing frequency
             total_capital: Total portfolio capital
-            
+
         Returns:
             Portfolio backtest results
         """
         results = {}
         equity_curves = {}
-        
+
         # Validate weights
         if abs(sum(weights.values()) - 1.0) > 0.001:
             raise ValueError("Portfolio weights must sum to 1.0")
-        
+
         # Run individual asset backtests
         for asset, data in assets_data.items():
             if asset not in weights:
                 continue
-            
+
             try:
                 asset_params = params.get(asset, TradingParameters())
                 capital_allocation = total_capital * weights[asset]
-                
+
                 result = self._engine.run_strategy(data, asset_params, capital_allocation)
                 results[asset] = result
                 equity_curves[asset] = result.equity_curve
-                
-                self._logger.info(f"Completed backtest for {asset}: {result.total_return:.2%} return")
-                
+
+                self._logger.info(
+                    f"Completed backtest for {asset}: {result.total_return:.2%} return"
+                )
+
             except Exception as e:
                 self._logger.error(f"Failed to backtest {asset}: {e}")
                 results[asset] = None
-        
+
         # Calculate portfolio metrics
         portfolio_metrics = self._calculate_portfolio_metrics(equity_curves, weights, total_capital)
-        
+
         return {
-            'individual_results': results,
-            'portfolio_metrics': portfolio_metrics,
-            'portfolio_equity_curve': portfolio_metrics.get('equity_curve'),
-            'correlation_matrix': self._calculate_correlation_matrix(equity_curves)
+            "individual_results": results,
+            "portfolio_metrics": portfolio_metrics,
+            "portfolio_equity_curve": portfolio_metrics.get("equity_curve"),
+            "correlation_matrix": self._calculate_correlation_matrix(equity_curves),
         }
-    
-    def _calculate_portfolio_metrics(self, equity_curves: Dict[str, pd.Series], 
-                                   weights: Dict[str, float], total_capital: float) -> Dict[str, Any]:
+
+    def _calculate_portfolio_metrics(
+        self, equity_curves: Dict[str, pd.Series], weights: Dict[str, float], total_capital: float
+    ) -> Dict[str, Any]:
         """Calculate comprehensive portfolio-level metrics."""
         if not equity_curves:
             return {}
-        
+
         # Align all equity curves to the same time index
-        aligned_curves = pd.DataFrame(equity_curves).fillna(method='ffill').fillna(method='bfill')
-        
+        aligned_curves = pd.DataFrame(equity_curves).fillna(method="ffill").fillna(method="bfill")
+
         # Calculate portfolio equity curve
         portfolio_equity = pd.Series(0.0, index=aligned_curves.index)
         for asset, curve in aligned_curves.items():
             if asset in weights:
                 portfolio_equity += curve * (weights[asset] / curve.iloc[0])
-        
+
         # Normalize to total capital
         portfolio_equity = portfolio_equity * total_capital / portfolio_equity.iloc[0]
-        
+
         # Calculate portfolio returns
         portfolio_returns = portfolio_equity.pct_change().dropna()
-        
+
         # Portfolio metrics
         total_return = (portfolio_equity.iloc[-1] / total_capital) - 1.0
         volatility = portfolio_returns.std() * np.sqrt(252)
-        sharpe_ratio = (portfolio_returns.mean() / portfolio_returns.std()) * np.sqrt(252) if portfolio_returns.std() > 0 else 0.0
-        
+        sharpe_ratio = (
+            (portfolio_returns.mean() / portfolio_returns.std()) * np.sqrt(252)
+            if portfolio_returns.std() > 0
+            else 0.0
+        )
+
         # Portfolio drawdown
         peak = portfolio_equity.expanding().max()
         drawdown = (portfolio_equity - peak) / peak
         max_drawdown = drawdown.min()
-        
+
         return {
-            'equity_curve': portfolio_equity,
-            'total_return': total_return,
-            'annualized_return': (1 + total_return) ** (252 / len(portfolio_equity)) - 1.0,
-            'volatility': volatility,
-            'sharpe_ratio': sharpe_ratio,
-            'max_drawdown': max_drawdown,
-            'calmar_ratio': ((1 + total_return) ** (252 / len(portfolio_equity)) - 1.0) / abs(max_drawdown) if max_drawdown < 0 else 0.0
+            "equity_curve": portfolio_equity,
+            "total_return": total_return,
+            "annualized_return": (1 + total_return) ** (252 / len(portfolio_equity)) - 1.0,
+            "volatility": volatility,
+            "sharpe_ratio": sharpe_ratio,
+            "max_drawdown": max_drawdown,
+            "calmar_ratio": ((1 + total_return) ** (252 / len(portfolio_equity)) - 1.0)
+            / abs(max_drawdown)
+            if max_drawdown < 0
+            else 0.0,
         }
-    
+
     def _calculate_correlation_matrix(self, equity_curves: Dict[str, pd.Series]) -> pd.DataFrame:
         """Calculate correlation matrix of asset returns."""
         if len(equity_curves) < 2:
             return pd.DataFrame()
-        
+
         returns_df = pd.DataFrame()
         for asset, curve in equity_curves.items():
             returns_df[asset] = curve.pct_change()
-        
+
         return returns_df.corr()
-    
+
     def optimize_portfolio_weights(
         self,
         assets_data: Dict[str, pd.DataFrame],
         params: Dict[str, TradingParameters],
-        objective: str = 'sharpe_ratio',
+        objective: str = "sharpe_ratio",
     ) -> Dict[str, float]:
         """Optimize portfolio weights using mean-variance optimization."""
         if not assets_data:
@@ -2032,9 +2171,7 @@ class PortfolioManager:
                 )
                 continue
 
-            returns = (
-                prices.sort_index().pct_change().replace([np.inf, -np.inf], np.nan).dropna()
-            )
+            returns = prices.sort_index().pct_change().replace([np.inf, -np.inf], np.nan).dropna()
             if returns.empty:
                 self._logger.warning(
                     "Pominięto aktywo %s przy optymalizacji portfela – brak zwrotów po czyszczeniu",
@@ -2151,10 +2288,7 @@ class PortfolioManager:
             upper_bounds,
         )
 
-        return {
-            asset: float(weight)
-            for asset, weight in zip(asset_order, normalized_weights)
-        }
+        return {asset: float(weight) for asset, weight in zip(asset_order, normalized_weights)}
 
     def _solve_risk_parity_weights(
         self,
@@ -2270,10 +2404,7 @@ class PortfolioManager:
         if not np.isfinite(total) or total <= 0.0:
             return {asset: 0.0 for asset in asset_order}
 
-        return {
-            asset: float(weight)
-            for asset, weight in zip(asset_order, adjusted)
-        }
+        return {asset: float(weight) for asset, weight in zip(asset_order, adjusted)}
 
     def _apply_weight_bounds(
         self,
@@ -2310,16 +2441,10 @@ class PortfolioManager:
 
             if total > 1.0:
                 excess = total - 1.0
-                candidates = [
-                    idx for idx in range(n_assets)
-                    if weights[idx] > lower[idx] + tol
-                ]
+                candidates = [idx for idx in range(n_assets) if weights[idx] > lower[idx] + tol]
                 if not candidates:
                     break
-                slack = np.array([
-                    max(weights[idx] - lower[idx], 0.0)
-                    for idx in candidates
-                ])
+                slack = np.array([max(weights[idx] - lower[idx], 0.0) for idx in candidates])
                 slack_sum = slack.sum()
                 if slack_sum <= tol:
                     reduction = excess / len(candidates)
@@ -2331,16 +2456,10 @@ class PortfolioManager:
                         weights[idx] = max(weights[idx] - reduction, lower[idx])
             else:
                 deficit = 1.0 - total
-                candidates = [
-                    idx for idx in range(n_assets)
-                    if weights[idx] < upper[idx] - tol
-                ]
+                candidates = [idx for idx in range(n_assets) if weights[idx] < upper[idx] - tol]
                 if not candidates:
                     break
-                slack = np.array([
-                    max(upper[idx] - weights[idx], 0.0)
-                    for idx in candidates
-                ])
+                slack = np.array([max(upper[idx] - weights[idx], 0.0) for idx in candidates])
                 slack_sum = slack.sum()
                 if slack_sum <= tol:
                     addition = deficit / len(candidates)
@@ -2372,46 +2491,50 @@ class PortfolioManager:
 
         return weights
 
+
 # =================== Risk Analytics Service ===================
+
 
 class RiskAnalyticsService:
     """Advanced risk analytics and reporting."""
-    
+
     def __init__(self, logger: logging.Logger):
         self._logger = logger
-    
-    def calculate_risk_metrics(self, equity_curve: pd.Series, benchmark: Optional[pd.Series] = None) -> Dict[str, float]:
+
+    def calculate_risk_metrics(
+        self, equity_curve: pd.Series, benchmark: Optional[pd.Series] = None
+    ) -> Dict[str, float]:
         """Calculate comprehensive risk metrics."""
         if equity_curve.empty:
             return {}
-        
+
         returns = equity_curve.pct_change().dropna()
-        
+
         metrics = {
-            'var_95': self._calculate_var(returns, 0.05),
-            'var_99': self._calculate_var(returns, 0.01),
-            'expected_shortfall_95': self._calculate_expected_shortfall(returns, 0.05),
-            'expected_shortfall_99': self._calculate_expected_shortfall(returns, 0.01),
-            'volatility': returns.std() * np.sqrt(252),
-            'skewness': returns.skew(),
-            'kurtosis': returns.kurtosis(),
-            'downside_deviation': self._calculate_downside_deviation(returns),
-            'ulcer_index': self._calculate_ulcer_index(equity_curve),
-            'pain_index': self._calculate_pain_index(equity_curve)
+            "var_95": self._calculate_var(returns, 0.05),
+            "var_99": self._calculate_var(returns, 0.01),
+            "expected_shortfall_95": self._calculate_expected_shortfall(returns, 0.05),
+            "expected_shortfall_99": self._calculate_expected_shortfall(returns, 0.01),
+            "volatility": returns.std() * np.sqrt(252),
+            "skewness": returns.skew(),
+            "kurtosis": returns.kurtosis(),
+            "downside_deviation": self._calculate_downside_deviation(returns),
+            "ulcer_index": self._calculate_ulcer_index(equity_curve),
+            "pain_index": self._calculate_pain_index(equity_curve),
         }
-        
+
         if benchmark is not None:
             benchmark_returns = benchmark.pct_change().dropna()
             metrics.update(self._calculate_benchmark_metrics(returns, benchmark_returns))
-        
+
         return metrics
-    
+
     def _calculate_var(self, returns: pd.Series, confidence: float = 0.05) -> float:
         """Calculate Value at Risk."""
         if returns.empty:
             return 0.0
         return returns.quantile(confidence)
-    
+
     def _calculate_expected_shortfall(self, returns: pd.Series, confidence: float = 0.05) -> float:
         """Calculate Expected Shortfall (Conditional VaR)."""
         if returns.empty:
@@ -2419,80 +2542,95 @@ class RiskAnalyticsService:
         var = self._calculate_var(returns, confidence)
         tail_returns = returns[returns <= var]
         return tail_returns.mean() if not tail_returns.empty else 0.0
-    
+
     def _calculate_downside_deviation(self, returns: pd.Series, target: float = 0.0) -> float:
         """Calculate downside deviation."""
         downside_returns = returns[returns < target]
         return downside_returns.std() * np.sqrt(252) if not downside_returns.empty else 0.0
-    
+
     def _calculate_ulcer_index(self, equity_curve: pd.Series) -> float:
         """Calculate Ulcer Index."""
         peak = equity_curve.expanding().max()
         drawdown = ((equity_curve - peak) / peak) * 100
-        drawdown_squared = drawdown ** 2
+        drawdown_squared = drawdown**2
         ulcer_index = np.sqrt(drawdown_squared.mean())
         return ulcer_index
-    
+
     def _calculate_pain_index(self, equity_curve: pd.Series) -> float:
         """Calculate Pain Index."""
         peak = equity_curve.expanding().max()
         drawdown = ((equity_curve - peak) / peak) * 100
         pain_index = abs(drawdown.mean())
         return pain_index
-    
-    def _calculate_benchmark_metrics(self, returns: pd.Series, benchmark_returns: pd.Series) -> Dict[str, float]:
+
+    def _calculate_benchmark_metrics(
+        self, returns: pd.Series, benchmark_returns: pd.Series
+    ) -> Dict[str, float]:
         """Calculate benchmark-relative metrics."""
         # Align series
-        aligned_data = pd.concat([returns, benchmark_returns], axis=1, join='inner')
+        aligned_data = pd.concat([returns, benchmark_returns], axis=1, join="inner")
         if aligned_data.empty:
             return {}
-        
+
         strategy_returns = aligned_data.iloc[:, 0]
         bench_returns = aligned_data.iloc[:, 1]
-        
+
         # Active returns
         active_returns = strategy_returns - bench_returns
-        
+
         return {
-            'beta': strategy_returns.cov(bench_returns) / bench_returns.var() if bench_returns.var() > 0 else 0.0,
-            'alpha': (strategy_returns.mean() - bench_returns.mean()) * 252,
-            'information_ratio': active_returns.mean() / active_returns.std() * np.sqrt(252) if active_returns.std() > 0 else 0.0,
-            'tracking_error': active_returns.std() * np.sqrt(252),
-            'up_capture': strategy_returns[bench_returns > 0].mean() / bench_returns[bench_returns > 0].mean() if (bench_returns > 0).any() else 0.0,
-            'down_capture': strategy_returns[bench_returns < 0].mean() / bench_returns[bench_returns < 0].mean() if (bench_returns < 0).any() else 0.0
+            "beta": strategy_returns.cov(bench_returns) / bench_returns.var()
+            if bench_returns.var() > 0
+            else 0.0,
+            "alpha": (strategy_returns.mean() - bench_returns.mean()) * 252,
+            "information_ratio": active_returns.mean() / active_returns.std() * np.sqrt(252)
+            if active_returns.std() > 0
+            else 0.0,
+            "tracking_error": active_returns.std() * np.sqrt(252),
+            "up_capture": strategy_returns[bench_returns > 0].mean()
+            / bench_returns[bench_returns > 0].mean()
+            if (bench_returns > 0).any()
+            else 0.0,
+            "down_capture": strategy_returns[bench_returns < 0].mean()
+            / bench_returns[bench_returns < 0].mean()
+            if (bench_returns < 0).any()
+            else 0.0,
         }
+
 
 # =================== Strategy Tester ===================
 
+
 class StrategyTester:
     """Comprehensive testing framework for trading strategies."""
-    
+
     def __init__(self, engine: TradingEngine):
         self._engine = engine
         self._logger = engine._logger
-    
-    def walk_forward_analysis(self, data: pd.DataFrame,
-                            params: TradingParameters,
-                            train_ratio: float = 0.7,
-                            step_ratio: float = 0.1,
-                            min_train_periods: int = 252) -> pd.DataFrame:
+
+    def walk_forward_analysis(
+        self,
+        data: pd.DataFrame,
+        params: TradingParameters,
+        train_ratio: float = 0.7,
+        step_ratio: float = 0.1,
+        min_train_periods: int = 252,
+    ) -> pd.DataFrame:
         """
         Perform walk-forward analysis with enhanced metrics.
-        
+
         Args:
             data: Historical data
             params: Trading parameters
             train_ratio: Ratio of data for training
             step_ratio: Ratio of data for each step
             min_train_periods: Minimum training periods
-            
+
         Returns:
             DataFrame with walk-forward results
         """
         results: list[dict[str, Any]] = []
-        with _capture_pandas_warnings(
-            self._logger, component="trading_engine.walk_forward"
-        ):
+        with _capture_pandas_warnings(self._logger, component="trading_engine.walk_forward"):
             data_length = len(data)
 
             train_size = max(int(data_length * train_ratio), min_train_periods)
@@ -2513,128 +2651,127 @@ class StrategyTester:
                     # For now, use provided parameters
                     result = self._engine.run_strategy(test_data, params)
 
-                    results.append({
-                        'period_start': test_data.index[0],
-                        'period_end': test_data.index[-1],
-                        'train_periods': len(train_data),
-                        'test_periods': len(test_data),
-                        'total_return': result.total_return,
-                        'annualized_return': result.annualized_return,
-                        'sharpe_ratio': result.sharpe_ratio,
-                        'sortino_ratio': result.sortino_ratio,
-                        'max_drawdown': result.max_drawdown,
-                        'volatility': result.volatility,
-                        'total_trades': result.total_trades,
-                        'win_rate': result.win_rate,
-                        'profit_factor': result.profit_factor
-                    })
+                    results.append(
+                        {
+                            "period_start": test_data.index[0],
+                            "period_end": test_data.index[-1],
+                            "train_periods": len(train_data),
+                            "test_periods": len(test_data),
+                            "total_return": result.total_return,
+                            "annualized_return": result.annualized_return,
+                            "sharpe_ratio": result.sharpe_ratio,
+                            "sortino_ratio": result.sortino_ratio,
+                            "max_drawdown": result.max_drawdown,
+                            "volatility": result.volatility,
+                            "total_trades": result.total_trades,
+                            "win_rate": result.win_rate,
+                            "profit_factor": result.profit_factor,
+                        }
+                    )
 
                 except Exception as e:
-                    self._logger.error(
-                        "Walk-forward test failed for period %s: %s", start_idx, e
-                    )
+                    self._logger.error("Walk-forward test failed for period %s: %s", start_idx, e)
 
         return pd.DataFrame(results)
 
-    def monte_carlo_simulation(self, data: pd.DataFrame,
-                              params: TradingParameters,
-                              n_simulations: int = 1000,
-                              block_length: int = 30) -> Dict[str, np.ndarray]:
+    def monte_carlo_simulation(
+        self,
+        data: pd.DataFrame,
+        params: TradingParameters,
+        n_simulations: int = 1000,
+        block_length: int = 30,
+    ) -> Dict[str, np.ndarray]:
         """
         Run Monte Carlo simulations with block bootstrap.
-        
+
         Args:
             data: Historical data
             params: Trading parameters
             n_simulations: Number of simulations
             block_length: Block length for bootstrap
-            
+
         Returns:
             Dictionary of simulation results
         """
         results: dict[str, list[float | int]] = {
-            'returns': [],
-            'sharpe_ratios': [],
-            'max_drawdowns': [],
-            'volatilities': [],
-            'win_rates': [],
-            'total_trades': []
+            "returns": [],
+            "sharpe_ratios": [],
+            "max_drawdowns": [],
+            "volatilities": [],
+            "win_rates": [],
+            "total_trades": [],
         }
 
-        with _capture_pandas_warnings(
-            self._logger, component="trading_engine.monte_carlo"
-        ):
+        with _capture_pandas_warnings(self._logger, component="trading_engine.monte_carlo"):
             # Calculate returns for block bootstrap
-            returns = data['close'].pct_change().dropna()
+            returns = data["close"].pct_change().dropna()
 
             for i in range(n_simulations):
                 try:
                     # Generate synthetic data using block bootstrap
-                    synthetic_returns = self._block_bootstrap(
-                        returns, len(data), block_length
-                    )
-                    synthetic_data = self._returns_to_ohlcv(
-                        synthetic_returns, data.iloc[0]
-                    )
+                    synthetic_returns = self._block_bootstrap(returns, len(data), block_length)
+                    synthetic_data = self._returns_to_ohlcv(synthetic_returns, data.iloc[0])
 
                     result = self._engine.run_strategy(synthetic_data, params)
 
-                    results['returns'].append(result.total_return)
-                    results['sharpe_ratios'].append(result.sharpe_ratio)
-                    results['max_drawdowns'].append(result.max_drawdown)
-                    results['volatilities'].append(result.volatility)
-                    results['win_rates'].append(result.win_rate)
-                    results['total_trades'].append(result.total_trades)
+                    results["returns"].append(result.total_return)
+                    results["sharpe_ratios"].append(result.sharpe_ratio)
+                    results["max_drawdowns"].append(result.max_drawdown)
+                    results["volatilities"].append(result.volatility)
+                    results["win_rates"].append(result.win_rate)
+                    results["total_trades"].append(result.total_trades)
 
                 except Exception as e:
-                    self._logger.warning(
-                        "Monte Carlo simulation %s failed: %s", i, e
-                    )
+                    self._logger.warning("Monte Carlo simulation %s failed: %s", i, e)
 
         return {k: np.array(v) for k, v in results.items()}
-    
-    def _block_bootstrap(self, returns: pd.Series, target_length: int, block_length: int) -> pd.Series:
+
+    def _block_bootstrap(
+        self, returns: pd.Series, target_length: int, block_length: int
+    ) -> pd.Series:
         """Perform block bootstrap on returns."""
         n_blocks = int(np.ceil(target_length / block_length))
         bootstrapped_returns = []
-        
+
         for _ in range(n_blocks):
             start_idx = np.random.randint(0, len(returns) - block_length + 1)
-            block = returns.iloc[start_idx:start_idx + block_length]
+            block = returns.iloc[start_idx : start_idx + block_length]
             bootstrapped_returns.extend(block.values)
-        
+
         # Trim to target length
         bootstrapped_returns = bootstrapped_returns[:target_length]
-        
+
         return pd.Series(bootstrapped_returns)
-    
+
     def _returns_to_ohlcv(self, returns: pd.Series, initial_data: pd.Series) -> pd.DataFrame:
         """Convert returns to OHLCV format."""
-        prices = initial_data['close'] * (1 + returns).cumprod()
-        
+        prices = initial_data["close"] * (1 + returns).cumprod()
+
         # Simple OHLCV generation
-        data = pd.DataFrame(index=pd.date_range(start='2020-01-01', periods=len(prices), freq='D'))
-        data['close'] = prices.values
-        data['open'] = data['close'].shift(1).fillna(data['close'].iloc[0])
-        
+        data = pd.DataFrame(index=pd.date_range(start="2020-01-01", periods=len(prices), freq="D"))
+        data["close"] = prices.values
+        data["open"] = data["close"].shift(1).fillna(data["close"].iloc[0])
+
         # Generate high/low with some noise
         noise = np.random.normal(0, 0.002, len(prices))
-        data['high'] = data['close'] * (1 + abs(noise))
-        data['low'] = data['close'] * (1 - abs(noise))
-        data['volume'] = np.random.randint(1000, 10000, len(prices))
-        
+        data["high"] = data["close"] * (1 + abs(noise))
+        data["low"] = data["close"] * (1 - abs(noise))
+        data["volume"] = np.random.randint(1000, 10000, len(prices))
+
         return data
+
 
 # =================== Factory and Configuration ===================
 
+
 class TradingEngineFactory:
     """Enhanced factory for creating pre-configured trading engines."""
-    
+
     @staticmethod
     def create_default_engine(config: Optional[EngineConfig] = None) -> TradingEngine:
         """Create engine with default configuration."""
         return TradingEngine(config=config or EngineConfig())
-    
+
     @staticmethod
     def create_conservative_engine() -> TradingEngine:
         """Create conservative engine with low-risk settings."""
@@ -2642,10 +2779,10 @@ class TradingEngineFactory:
             max_position_size=0.5,
             max_portfolio_risk=0.01,
             max_drawdown_threshold=0.10,
-            volatility_threshold=0.20
+            volatility_threshold=0.20,
         )
         return TradingEngine(config=config)
-    
+
     @staticmethod
     def create_aggressive_engine() -> TradingEngine:
         """Create aggressive engine with higher risk tolerance."""
@@ -2653,72 +2790,68 @@ class TradingEngineFactory:
             max_position_size=1.5,
             max_portfolio_risk=0.05,
             max_drawdown_threshold=0.25,
-            volatility_threshold=0.40
+            volatility_threshold=0.40,
         )
         return TradingEngine(config=config)
-    
+
     @staticmethod
     def create_test_engine() -> TradingEngine:
         """Create engine optimized for testing."""
-        config = EngineConfig(
-            cache_indicators=False,
-            log_level='ERROR',
-            min_data_points=50
-        )
+        config = EngineConfig(cache_indicators=False, log_level="ERROR", min_data_points=50)
         return TradingEngine(config=config)
+
 
 # =================== Enhanced Usage Example ===================
 
+
 def enhanced_example_usage():
     """Enhanced example demonstrating all features."""
-    
+
     # Create sample data with more realistic characteristics
-    dates = pd.date_range(start='2020-01-01', end='2023-12-31', freq='D')
+    dates = pd.date_range(start="2020-01-01", end="2023-12-31", freq="D")
     np.random.seed(42)
-    
+
     # Generate more realistic price series with trends and volatility clusters
     n_points = len(dates)
     base_returns = np.random.normal(0.0005, 0.02, n_points)
-    
+
     # Add trend components
-    trend_component = np.sin(np.linspace(0, 4*np.pi, n_points)) * 0.001
+    trend_component = np.sin(np.linspace(0, 4 * np.pi, n_points)) * 0.001
     base_returns += trend_component
-    
+
     # Add volatility clustering
     volatility = np.random.exponential(0.01, n_points)
     returns = base_returns * volatility
-    
+
     prices = 100 * (1 + returns).cumprod()
-    
+
     # Create realistic OHLCV data
-    sample_data = pd.DataFrame({
-        'open': prices * (1 + np.random.normal(0, 0.001, n_points)),
-        'close': prices,
-        'high': prices * (1 + abs(np.random.normal(0, 0.005, n_points))),
-        'low': prices * (1 - abs(np.random.normal(0, 0.005, n_points))),
-        'volume': np.random.lognormal(8, 0.5, n_points).astype(int)
-    }, index=dates)
-    
+    sample_data = pd.DataFrame(
+        {
+            "open": prices * (1 + np.random.normal(0, 0.001, n_points)),
+            "close": prices,
+            "high": prices * (1 + abs(np.random.normal(0, 0.005, n_points))),
+            "low": prices * (1 - abs(np.random.normal(0, 0.005, n_points))),
+            "volume": np.random.lognormal(8, 0.5, n_points).astype(int),
+        },
+        index=dates,
+    )
+
     # Ensure OHLC relationships
-    sample_data['high'] = np.maximum.reduce([
-        sample_data['open'], sample_data['high'], 
-        sample_data['low'], sample_data['close']
-    ])
-    sample_data['low'] = np.minimum.reduce([
-        sample_data['open'], sample_data['high'], 
-        sample_data['low'], sample_data['close']
-    ])
-    
+    sample_data["high"] = np.maximum.reduce(
+        [sample_data["open"], sample_data["high"], sample_data["low"], sample_data["close"]]
+    )
+    sample_data["low"] = np.minimum.reduce(
+        [sample_data["open"], sample_data["high"], sample_data["low"], sample_data["close"]]
+    )
+
     # Create enhanced trading engine
     config = EngineConfig(
-        enable_stop_loss=True,
-        enable_take_profit=True,
-        cache_indicators=True,
-        log_level='INFO'
+        enable_stop_loss=True, enable_take_profit=True, cache_indicators=True, log_level="INFO"
     )
-    
+
     engine = TradingEngineFactory.create_default_engine(config)
-    
+
     # Enhanced parameters with better defaults
     params = TradingParameters(
         rsi_period=14,
@@ -2730,20 +2863,20 @@ def enhanced_example_usage():
         stop_loss_atr_mult=1.5,
         take_profit_atr_mult=2.5,
         ensemble_weights={
-            'trend': 0.35,
-            'mean_reversion': 0.15,
-            'momentum': 0.35,
-            'volatility_breakout': 0.15
-        }
+            "trend": 0.35,
+            "mean_reversion": 0.15,
+            "momentum": 0.35,
+            "volatility_breakout": 0.15,
+        },
     )
-    
+
     print("=" * 80)
     print("ENHANCED TRADING STRATEGY BACKTEST RESULTS")
     print("=" * 80)
-    
+
     # Run comprehensive backtest
     result = engine.run_strategy(sample_data, params, initial_capital=100000, fee_bps=5)
-    
+
     # Display comprehensive results
     print(f"\nPERFORMANCE METRICS:")
     print(f"{'Total Return:':<25} {result.total_return:>8.2%}")
@@ -2753,13 +2886,13 @@ def enhanced_example_usage():
     print(f"{'Sortino Ratio:':<25} {result.sortino_ratio:>8.2f}")
     print(f"{'Calmar Ratio:':<25} {result.calmar_ratio:>8.2f}")
     print(f"{'Omega Ratio:':<25} {result.omega_ratio:>8.2f}")
-    
+
     print(f"\nRISK METRICS:")
     print(f"{'Max Drawdown:':<25} {result.max_drawdown:>8.2%}")
     print(f"{'VaR (95%):':<25} {result.var_95:>8.2%}")
     print(f"{'Expected Shortfall:':<25} {result.expected_shortfall_95:>8.2%}")
     print(f"{'Tail Ratio:':<25} {result.tail_ratio:>8.2f}")
-    
+
     print(f"\nTRADING METRICS:")
     print(f"{'Total Trades:':<25} {result.total_trades:>8d}")
     print(f"{'Win Rate:':<25} {result.win_rate:>8.2%}")
@@ -2767,101 +2900,98 @@ def enhanced_example_usage():
     print(f"{'Avg Trade Duration:':<25} {str(result.avg_trade_duration).split(',')[0]:>8s}")
     print(f"{'Largest Win:':<25} ${result.largest_win:>7,.2f}")
     print(f"{'Largest Loss:':<25} ${result.largest_loss:>7,.2f}")
-    
+
     # Check for alerts
     alerts = engine.get_performance_alerts()
     if alerts:
         print(f"\nPERFORMANCE ALERTS:")
         for alert in alerts:
             print(f"  • {alert}")
-    
+
     # Run parameter optimization
     print(f"\nPARAMETER OPTIMIZATION:")
     param_ranges = {
-        'rsi_period': [10, 14, 20],
-        'ema_fast_period': [8, 12, 16],
-        'ema_slow_period': [21, 26, 30],
-        'signal_threshold': [0.1, 0.15, 0.2]
+        "rsi_period": [10, 14, 20],
+        "ema_fast_period": [8, 12, 16],
+        "ema_slow_period": [21, 26, 30],
+        "signal_threshold": [0.1, 0.15, 0.2],
     }
-    
+
     best_params, best_score = engine.optimize_parameters(
-        sample_data, param_ranges, objective='sharpe_ratio', max_iterations=50
+        sample_data, param_ranges, objective="sharpe_ratio", max_iterations=50
     )
-    
+
     print(f"Best Parameters Found:")
     print(f"  RSI Period: {best_params.rsi_period}")
     print(f"  EMA Fast: {best_params.ema_fast_period}")
     print(f"  EMA Slow: {best_params.ema_slow_period}")
     print(f"  Signal Threshold: {best_params.signal_threshold}")
     print(f"  Best Sharpe Ratio: {best_score:.3f}")
-    
+
     # Demonstrate portfolio management
     print(f"\nPORTFOLIO SIMULATION:")
     portfolio_manager = PortfolioManager(engine)
-    
+
     # Simulate multiple assets
     assets_data = {
-        'ASSET_A': sample_data,
-        'ASSET_B': sample_data * 1.1,  # Slightly different asset
-        'ASSET_C': sample_data * 0.9   # Another variation
+        "ASSET_A": sample_data,
+        "ASSET_B": sample_data * 1.1,  # Slightly different asset
+        "ASSET_C": sample_data * 0.9,  # Another variation
     }
-    
-    portfolio_params = {
-        'ASSET_A': params,
-        'ASSET_B': params,
-        'ASSET_C': params
-    }
-    
-    portfolio_weights = {'ASSET_A': 0.4, 'ASSET_B': 0.35, 'ASSET_C': 0.25}
-    
+
+    portfolio_params = {"ASSET_A": params, "ASSET_B": params, "ASSET_C": params}
+
+    portfolio_weights = {"ASSET_A": 0.4, "ASSET_B": 0.35, "ASSET_C": 0.25}
+
     portfolio_result = portfolio_manager.run_portfolio_backtest(
         assets_data, portfolio_params, portfolio_weights, total_capital=100000
     )
-    
-    portfolio_metrics = portfolio_result['portfolio_metrics']
+
+    portfolio_metrics = portfolio_result["portfolio_metrics"]
     print(f"Portfolio Return: {portfolio_metrics['total_return']:.2%}")
     print(f"Portfolio Sharpe: {portfolio_metrics['sharpe_ratio']:.2f}")
     print(f"Portfolio Max DD: {portfolio_metrics['max_drawdown']:.2%}")
-    
+
     print("=" * 80)
     print("BACKTEST COMPLETED SUCCESSFULLY")
     print("=" * 80)
-    
+
     return result, best_params, portfolio_result
+
 
 # =================== Export Interface ===================
 
 __all__ = [
-    'TradingEngine',
-    'TradingEngineFactory',
-    'TradingParameters',
-    'EngineConfig',
-    'BacktestResult',
-    'MultiSessionBacktestResult',
-    'TechnicalIndicators',
-    'Trade',
-    'SignalType',
-    'MarketRegime',
-    'OrderType',
-    'DataValidationService',
-    'TechnicalIndicatorsService',
-    'TradingSignalService',
-    'RiskManagementService',
-    'PortfolioManager',
-    'RiskAnalyticsService',
-    'PerformanceMonitor',
-    'StrategyTester',
-    'enhanced_example_usage',
-    'describe_supported_strategies',
-    'supported_strategy_keys',
+    "TradingEngine",
+    "TradingEngineFactory",
+    "TradingParameters",
+    "EngineConfig",
+    "BacktestResult",
+    "MultiSessionBacktestResult",
+    "TechnicalIndicators",
+    "Trade",
+    "SignalType",
+    "MarketRegime",
+    "OrderType",
+    "DataValidationService",
+    "TechnicalIndicatorsService",
+    "TradingSignalService",
+    "RiskManagementService",
+    "PortfolioManager",
+    "RiskAnalyticsService",
+    "PerformanceMonitor",
+    "StrategyTester",
+    "enhanced_example_usage",
+    "describe_supported_strategies",
+    "supported_strategy_keys",
     # Exceptions
-    'TradingEngineError',
-    'DataValidationError',
-    'IndicatorComputationError',
-    'BacktestExecutionError',
-    'InsufficientDataError',
-    'ConfigurationError',
-    'RiskLimitExceededError'
+    "TradingEngineError",
+    "DataValidationError",
+    "IndicatorComputationError",
+    "BacktestExecutionError",
+    "InsufficientDataError",
+    "ConfigurationError",
+    "RiskLimitExceededError",
 ]
 
 # === Backward-compat shim for TradingGUI (drop-in, no UI changes) ===
@@ -2873,12 +3003,15 @@ import logging
 # Używamy istniejących bytów z tego modułu:
 # - TradingEngine, TradingEngineFactory, TradingParameters, TradingSignalService
 
+
 class _NoShortSignalService(TradingSignalService):
     """Wariant generatora sygnałów, który usuwa shorty (sygnały < 0 -> 0)."""
+
     def generate_signals(self, indicators, params):
         sig = super().generate_signals(indicators, params)
         # Wyłącz shorty (zachowanie zgodne z allow_short=False w starym GUI)
         return sig.where(sig > 0, 0.0)
+
 
 class TradingStrategies:
     """
@@ -2892,7 +3025,9 @@ class TradingStrategies:
     - Jeśli allow_short=False, korzystamy z wariantu silnika bez shortów (bez zmian w GUI).
     """
 
-    def __init__(self, engine: Optional[TradingEngine] = None, logger: Optional[logging.Logger] = None):
+    def __init__(
+        self, engine: Optional[TradingEngine] = None, logger: Optional[logging.Logger] = None
+    ):
         self._base_engine = engine or TradingEngineFactory.create_default_engine()
         self._logger = logger or logging.getLogger("TradingStrategiesShim")
 
@@ -2907,7 +3042,7 @@ class TradingStrategies:
             signal_generator=_NoShortSignalService(self._logger),
             risk_manager=None,
             backtest_engine=None,
-            logger=self._logger
+            logger=self._logger,
         )
 
     def run_strategy(
@@ -2925,7 +3060,9 @@ class TradingStrategies:
                 if self._is_new_style_params(candidate):
                     params = candidate
                     if len(args) > 1:
-                        raise TypeError("run_strategy() received unexpected positional arguments for new-style call")
+                        raise TypeError(
+                            "run_strategy() received unexpected positional arguments for new-style call"
+                        )
             elif "params" in kwargs and self._is_new_style_params(kwargs["params"]):
                 params = kwargs.pop("params")
 
@@ -2966,7 +3103,9 @@ class TradingStrategies:
         metadata = kwargs.pop("metadata", None) or {}
 
         if kwargs:
-            self._logger.debug("Nieobsługiwane argumenty run_strategy zostały zignorowane: %s", sorted(kwargs))
+            self._logger.debug(
+                "Nieobsługiwane argumenty run_strategy zostały zignorowane: %s", sorted(kwargs)
+            )
 
         result = self._base_engine.run_strategy(
             data=data,
@@ -3042,7 +3181,9 @@ class TradingStrategies:
         ai_threshold_bps = float(kwargs.pop("ai_threshold_bps", 5.0) or 5.0)
 
         if kwargs:
-            self._logger.debug("Nieobsługiwane argumenty run_strategy zostały zignorowane: %s", sorted(kwargs))
+            self._logger.debug(
+                "Nieobsługiwane argumenty run_strategy zostały zignorowane: %s", sorted(kwargs)
+            )
 
         return self.backtest(
             data=data,
@@ -3072,16 +3213,26 @@ class TradingStrategies:
         # 1) Mapowanie GUI -> parametry strategii (bezpieczne domyślne)
         params = TradingParameters(
             # Wskaźniki – domyślne wartości nowego silnika
-            rsi_period=14, rsi_oversold=30.0, rsi_overbought=70.0,
-            ema_fast_period=12, ema_slow_period=26, sma_trend_period=50,
-            bb_period=20, bb_std_mult=2.0, atr_period=14, macd_signal_period=9,
-            stoch_k_period=14, stoch_d_period=3,
+            rsi_period=14,
+            rsi_oversold=30.0,
+            rsi_overbought=70.0,
+            ema_fast_period=12,
+            ema_slow_period=26,
+            sma_trend_period=50,
+            bb_period=20,
+            bb_std_mult=2.0,
+            atr_period=14,
+            macd_signal_period=9,
+            stoch_k_period=14,
+            stoch_d_period=3,
             signal_threshold=0.10,
             # Ryzyko / sizing
-            stop_loss_atr_mult=2.0, take_profit_atr_mult=3.0,
+            stop_loss_atr_mult=2.0,
+            take_profit_atr_mult=3.0,
             position_size=float(max(0.0, min(1.0, fraction))),
             max_position_risk=0.02,
-            volatility_target=0.15, kelly_fraction=0.25,
+            volatility_target=0.15,
+            kelly_fraction=0.25,
         )
 
         # 2) Opłaty w bps (fee + slippage)
@@ -3094,10 +3245,7 @@ class TradingStrategies:
         #    Bez zmian GUI: brak ai_model => czysta TA.
         if ai_model is None or ai_weight <= 0.0:
             result = engine.run_strategy(
-                data=data,
-                params=params,
-                initial_capital=float(initial_capital),
-                fee_bps=fee_bps
+                data=data, params=params, initial_capital=float(initial_capital), fee_bps=fee_bps
             )
         else:
             # Lekki hook: jeśli w przyszłości przekażesz ai_model, zastosuj most (patrz bridges/).
@@ -3107,15 +3255,22 @@ class TradingStrategies:
                 AITradingBridge = None
 
             if AITradingBridge is None:
-                result = engine.run_strategy(data=data, params=params, initial_capital=float(initial_capital), fee_bps=fee_bps)
+                result = engine.run_strategy(
+                    data=data,
+                    params=params,
+                    initial_capital=float(initial_capital),
+                    fee_bps=fee_bps,
+                )
             else:
                 # Uzyskaj wewnętrzne komponenty, policz wskaźniki i surowe sygnały, wstrzyknij fuzję AI, potem risk+backtest.
                 # (Zachowuje semantykę engine.run_strategy, ale z fuzją.)
-                with _capture_pandas_warnings(
-                    engine._logger, component="trading_engine.pipeline"
-                ):
-                    validated_data = engine._validator.validate_ohlcv(data)  # używa istniejących serwisów
-                    indicators = engine._indicator_calculator.calculate_indicators(validated_data, params)
+                with _capture_pandas_warnings(engine._logger, component="trading_engine.pipeline"):
+                    validated_data = engine._validator.validate_ohlcv(
+                        data
+                    )  # używa istniejących serwisów
+                    indicators = engine._indicator_calculator.calculate_indicators(
+                        validated_data, params
+                    )
                     raw_signals = engine._signal_generator.generate_signals(indicators, params)
                     bridge = AITradingBridge(
                         ai_model,
@@ -3161,10 +3316,10 @@ class TradingStrategies:
 
 # Dopiszemy do __all__ bez ręcznej edycji istniejącej listy
 try:
-    if 'TradingStrategies' not in __all__:
-        __all__.append('TradingStrategies')
+    if "TradingStrategies" not in __all__:
+        __all__.append("TradingStrategies")
 except Exception:
-    __all__ = ['TradingStrategies']
+    __all__ = ["TradingStrategies"]
 
 
 if __name__ == "__main__":

@@ -1,4 +1,5 @@
 """Strategy plugin implementations using :class:`TradingParameters`."""
+
 from __future__ import annotations
 
 import logging
@@ -50,6 +51,7 @@ _REGISTERED_ENGINE_KEYS: set[str] = set()
 TStrategy = TypeVar("TStrategy", bound="StrategyPlugin")
 
 _LOGGER = logging.getLogger(__name__)
+
 
 def _normalize_text(value: str | None) -> str | None:
     if value is None:
@@ -311,9 +313,7 @@ class StrategyCatalog:
         metrics_map = _normalize_metrics_map(metrics)
         regime_key = _regime_key(regime)
         try:
-            preset = learner.build_dynamic_preset(
-                regime_key, metrics=metrics_map or None
-            )
+            preset = learner.build_dynamic_preset(regime_key, metrics=metrics_map or None)
         except Exception:  # pragma: no cover - defensywne logowanie
             _LOGGER.debug("Adaptive learner failed to build preset", exc_info=True)
             return None
@@ -385,7 +385,9 @@ class AdaptiveMarketMakingPlugin(StrategyPlugin):
 
         if volatility_series is None:
             atr = indicators.atr.replace(0.0, np.nan)
-            volatility_series = (atr / (indicators.ema_fast.abs() + 1e-12)).rolling(window=5, min_periods=1).mean()
+            volatility_series = (
+                (atr / (indicators.ema_fast.abs() + 1e-12)).rolling(window=5, min_periods=1).mean()
+            )
 
         if inventory_series is None:
             inventory_series = (indicators.stochastic_k - 50.0) / 50.0
@@ -400,9 +402,15 @@ class AdaptiveMarketMakingPlugin(StrategyPlugin):
         inventory_series = inventory_series.ffill().fillna(0.0)
 
         target_inventory = float(getattr(params, "adaptive_mm_target_inventory", 0.0) or 0.0)
-        inventory_scale = max(float(getattr(params, "adaptive_mm_inventory_scale", 0.75) or 0.75), 1e-6)
-        volatility_target = max(float(getattr(params, "adaptive_mm_target_volatility", 0.18) or 0.18), 1e-6)
-        volatility_sensitivity = float(getattr(params, "adaptive_mm_volatility_sensitivity", 1.6) or 1.6)
+        inventory_scale = max(
+            float(getattr(params, "adaptive_mm_inventory_scale", 0.75) or 0.75), 1e-6
+        )
+        volatility_target = max(
+            float(getattr(params, "adaptive_mm_target_volatility", 0.18) or 0.18), 1e-6
+        )
+        volatility_sensitivity = float(
+            getattr(params, "adaptive_mm_volatility_sensitivity", 1.6) or 1.6
+        )
 
         inventory_bias = (inventory_series - target_inventory) / inventory_scale
         inventory_component = -np.tanh(inventory_bias)
@@ -432,7 +440,9 @@ class TrendFollowingStrategy(StrategyPlugin):
         ema_signal = pd.Series(np.where(ema_diff > 0, 1.0, -1.0), index=indicators.ema_fast.index)
 
         price_vs_sma = indicators.ema_fast - indicators.sma_trend
-        trend_signal = pd.Series(np.where(price_vs_sma > 0, 1.0, -1.0), index=indicators.ema_fast.index)
+        trend_signal = pd.Series(
+            np.where(price_vs_sma > 0, 1.0, -1.0), index=indicators.ema_fast.index
+        )
 
         combined = ema_signal * 0.6 + trend_signal * 0.4
         return combined.clip(-1.0, 1.0)
@@ -458,7 +468,9 @@ class DayTradingStrategy(StrategyPlugin):
 
         volatility = (indicators.atr / (indicators.ema_fast.abs() + 1e-12)).clip(lower=0.0)
         volatility_window = max(1, int(params.day_trading_volatility_window))
-        volatility_score = volatility.rolling(window=volatility_window, min_periods=1).mean().replace(0.0, np.nan)
+        volatility_score = (
+            volatility.rolling(window=volatility_window, min_periods=1).mean().replace(0.0, np.nan)
+        )
         median_vol = float(volatility_score.median(skipna=True))
         if not np.isfinite(median_vol) or median_vol <= 0:
             median_vol = 1.0
@@ -770,9 +782,8 @@ class FuturesSpreadStrategy(StrategyPlugin):
                     spread_source = market_data[column]
                     break
         if spread_source is None:
-            spread_source = (
-                (indicators.macd - indicators.macd_signal)
-                / (indicators.atr.replace(0.0, np.nan).ffill().replace(0.0, 1.0))
+            spread_source = (indicators.macd - indicators.macd_signal) / (
+                indicators.atr.replace(0.0, np.nan).ffill().replace(0.0, 1.0)
             )
         spread_source = spread_source.reindex(indicators.macd.index).ffill().fillna(0.0)
 
@@ -835,7 +846,9 @@ class CrossExchangeHedgeStrategy(StrategyPlugin):
             inventory_scale=float(getattr(params, "cross_exchange_inventory_scale", 0.35) or 0.35),
             latency_penalty=float(getattr(params, "cross_exchange_latency_penalty", 0.2) or 0.2),
             hedge_weight=float(getattr(params, "cross_exchange_hedge_weight", 0.55) or 0.55),
-            inventory_weight=float(getattr(params, "cross_exchange_inventory_weight", 0.25) or 0.25),
+            inventory_weight=float(
+                getattr(params, "cross_exchange_inventory_weight", 0.25) or 0.25
+            ),
         )
 
         series = compute_cross_exchange_hedge_signal(
@@ -845,4 +858,3 @@ class CrossExchangeHedgeStrategy(StrategyPlugin):
             config=config,
         )
         return self.ensure_index(series, indicators.ema_fast.index)
-

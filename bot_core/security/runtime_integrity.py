@@ -62,7 +62,9 @@ def _load_manifest(path: Path) -> Mapping[str, object]:
     try:
         raw = path.read_text(encoding="utf-8")
     except OSError as exc:
-        raise RuntimeIntegrityError(f"Nie udało się odczytać manifestu integralności: {exc}") from exc
+        raise RuntimeIntegrityError(
+            f"Nie udało się odczytać manifestu integralności: {exc}"
+        ) from exc
     try:
         manifest = json.loads(raw)
     except json.JSONDecodeError as exc:
@@ -125,9 +127,13 @@ def verify_bundle_integrity(
                 issues.append(IntegrityIssue(path=path_value, expected=expected, actual=actual))
 
         if issues:
-            message = "Wykryto naruszenie integralności zasobów:" + "\n" + "\n".join(
-                f"- {issue.path}: expected={issue.expected} actual={issue.actual or 'missing'}"
-                for issue in issues
+            message = (
+                "Wykryto naruszenie integralności zasobów:"
+                + "\n"
+                + "\n".join(
+                    f"- {issue.path}: expected={issue.expected} actual={issue.actual or 'missing'}"
+                    for issue in issues
+                )
             )
             if strict:
                 raise RuntimeIntegrityError(message)
@@ -139,7 +145,9 @@ def verify_bundle_integrity(
             try:
                 datetime.fromisoformat(str(generated_at).replace("Z", "+00:00"))
             except Exception:  # pragma: no cover - metadane pomocnicze
-                LOGGER.debug("Manifest integralności zawiera niepoprawne pole generated_at: %s", generated_at)
+                LOGGER.debug(
+                    "Manifest integralności zawiera niepoprawne pole generated_at: %s", generated_at
+                )
 
         LOGGER.info("Integralność zasobów zweryfikowana dla katalogu: %s", root)
         return True
@@ -156,4 +164,3 @@ def verify_bundle_integrity(
 
 
 __all__ = ["RuntimeIntegrityError", "verify_bundle_integrity"]
-

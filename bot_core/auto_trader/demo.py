@@ -1,4 +1,5 @@
 """Helpery demowe dla AI Governora wykorzystywane przez UI i skrypty."""
+
 from __future__ import annotations
 
 from typing import Mapping

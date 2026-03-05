@@ -1,4 +1,5 @@
 """Utility to toggle hedge guardrail state for runtime recovery scenarios."""
+
 from __future__ import annotations
 
 import argparse
@@ -72,7 +73,9 @@ def _apply_mode(
 
 
 def main(argv: Sequence[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(description="Rollback hedge guardrail state for runtime profiles")
+    parser = argparse.ArgumentParser(
+        description="Rollback hedge guardrail state for runtime profiles"
+    )
     parser.add_argument(
         "--repository",
         type=Path,

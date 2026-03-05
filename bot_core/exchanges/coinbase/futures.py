@@ -1,4 +1,5 @@
 """Adapter futures Coinbase (Advanced Trade) z integracją watchdog."""
+
 from __future__ import annotations
 
 from typing import Any, Mapping

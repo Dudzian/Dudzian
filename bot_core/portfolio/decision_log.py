@@ -1,4 +1,5 @@
 """Dziennik decyzji PortfolioGovernora z podpisami HMAC."""
+
 from __future__ import annotations
 
 import json
@@ -99,7 +100,9 @@ class PortfolioDecisionLog:
             if self._path is None:
                 return
             self._path.parent.mkdir(parents=True, exist_ok=True)
-            serialized = json.dumps(payload, ensure_ascii=False, separators=(",", ":"), sort_keys=True)
+            serialized = json.dumps(
+                payload, ensure_ascii=False, separators=(",", ":"), sort_keys=True
+            )
             with self._path.open("a", encoding="utf-8") as handle:
                 handle.write(serialized)
                 handle.write("\n")
@@ -115,4 +118,3 @@ class PortfolioDecisionLog:
 
 
 __all__ = ["PortfolioDecisionLog"]
-

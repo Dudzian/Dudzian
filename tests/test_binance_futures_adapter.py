@@ -1,4 +1,5 @@
 """Testy jednostkowe adaptera Binance Futures."""
+
 from __future__ import annotations
 
 import io
@@ -19,7 +20,11 @@ from bot_core.exchanges.binance.futures import (
     FundingRateEvent,
     FuturesPosition,
 )
-from bot_core.exchanges.errors import ExchangeAuthError, ExchangeNetworkError, ExchangeThrottlingError
+from bot_core.exchanges.errors import (
+    ExchangeAuthError,
+    ExchangeNetworkError,
+    ExchangeThrottlingError,
+)
 from bot_core.observability.metrics import MetricsRegistry
 
 
@@ -97,7 +102,9 @@ def test_fetch_account_snapshot_parses_balances(monkeypatch: pytest.MonkeyPatch)
         "binance_futures_signed_requests_total",
         "Łączna liczba podpisanych zapytań HTTP wysłanych do API Binance Futures.",
     )
-    assert signed_counter.value(labels={"exchange": "binance_futures", "environment": "testnet"}) == pytest.approx(1.0)
+    assert signed_counter.value(
+        labels={"exchange": "binance_futures", "environment": "testnet"}
+    ) == pytest.approx(1.0)
 
 
 def test_fetch_symbols_filters_non_trading(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -213,7 +220,9 @@ def test_place_order_builds_signed_payload(monkeypatch: pytest.MonkeyPatch) -> N
 
     adapter = BinanceFuturesAdapter(_build_credentials())
     adapter.configure_network()
-    request = OrderRequest(symbol="BTCUSDT", side="BUY", quantity=1.0, order_type="LIMIT", price=10.0)
+    request = OrderRequest(
+        symbol="BTCUSDT", side="BUY", quantity=1.0, order_type="LIMIT", price=10.0
+    )
     result = adapter.place_order(request)
 
     assert result.order_id == "123"
@@ -321,7 +330,9 @@ def test_close_listen_key_rejects_invalid_payload(monkeypatch: pytest.MonkeyPatc
         adapter.close_listen_key("abc")
 
 
-def test_fetch_positions_parses_payload_and_updates_metrics(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_fetch_positions_parses_payload_and_updates_metrics(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     registry = MetricsRegistry()
     payload = [
         {
@@ -488,7 +499,6 @@ def test_futures_account_snapshot_uses_watchdog(monkeypatch: pytest.MonkeyPatch)
     assert "binance_futures_fetch_account" in watchdog.calls
 
 
-
 def test_build_hedging_report_returns_summary(monkeypatch: pytest.MonkeyPatch) -> None:
     registry = MetricsRegistry()
     adapter = BinanceFuturesAdapter(_build_credentials(), metrics_registry=registry)
@@ -566,8 +576,13 @@ def test_execute_request_handles_throttling(monkeypatch: pytest.MonkeyPatch) -> 
         )
 
     monkeypatch.setattr("bot_core.exchanges.binance.futures.urlopen", fake_urlopen)
-    monkeypatch.setattr("bot_core.exchanges.binance.futures.BinanceFuturesAdapter._sleep", lambda self, s: fake_sleep(s))
-    monkeypatch.setattr("bot_core.exchanges.binance.futures.random.uniform", lambda *_args, **_kwargs: 0.0)
+    monkeypatch.setattr(
+        "bot_core.exchanges.binance.futures.BinanceFuturesAdapter._sleep",
+        lambda self, s: fake_sleep(s),
+    )
+    monkeypatch.setattr(
+        "bot_core.exchanges.binance.futures.random.uniform", lambda *_args, **_kwargs: 0.0
+    )
 
     adapter = BinanceFuturesAdapter(_build_credentials())
     adapter.configure_network()
@@ -585,7 +600,7 @@ def test_execute_request_converts_auth_error(monkeypatch: pytest.MonkeyPatch) ->
             401,
             "Unauthorized",
             hdrs=None,
-            fp=io.BytesIO(b"{\"msg\": \"unauthorized\"}"),
+            fp=io.BytesIO(b'{"msg": "unauthorized"}'),
         )
 
     monkeypatch.setattr("bot_core.exchanges.binance.futures.urlopen", fake_urlopen)
@@ -601,8 +616,12 @@ def test_execute_request_converts_network_errors(monkeypatch: pytest.MonkeyPatch
         raise URLError("connection reset")
 
     monkeypatch.setattr("bot_core.exchanges.binance.futures.urlopen", fake_urlopen)
-    monkeypatch.setattr("bot_core.exchanges.binance.futures.random.uniform", lambda *_args, **_kwargs: 0.0)
-    monkeypatch.setattr("bot_core.exchanges.binance.futures.BinanceFuturesAdapter._sleep", lambda self, s: None)
+    monkeypatch.setattr(
+        "bot_core.exchanges.binance.futures.random.uniform", lambda *_args, **_kwargs: 0.0
+    )
+    monkeypatch.setattr(
+        "bot_core.exchanges.binance.futures.BinanceFuturesAdapter._sleep", lambda self, s: None
+    )
 
     adapter = BinanceFuturesAdapter(_build_credentials())
     adapter.configure_network()
@@ -645,4 +664,6 @@ def test_metrics_recorded_for_public_requests(monkeypatch: pytest.MonkeyPatch) -
         "binance_futures_used_weight",
         "Ostatnie wartości nagłówków X-MBX-USED-WEIGHT z API Binance Futures.",
     )
-    assert gauge.value(labels={"exchange": "binance_futures", "environment": "testnet"}) == pytest.approx(25.0)
+    assert gauge.value(
+        labels={"exchange": "binance_futures", "environment": "testnet"}
+    ) == pytest.approx(25.0)

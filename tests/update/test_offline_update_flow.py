@@ -65,7 +65,10 @@ def test_install_and_rollback_offline_release(tmp_path: Path) -> None:
     assert "strategies" in backups and backups["strategies"].exists()
 
     assert models_target.joinpath("model.bin").read_text(encoding="utf-8") == "MODEL-UPDATED"
-    assert json.loads(strategies_target.joinpath("grid.json").read_text(encoding="utf-8"))["name"] == "grid"
+    assert (
+        json.loads(strategies_target.joinpath("grid.json").read_text(encoding="utf-8"))["name"]
+        == "grid"
+    )
 
     shutil.rmtree(models_target)
     shutil.copytree(backups["models"], models_target)
@@ -73,7 +76,10 @@ def test_install_and_rollback_offline_release(tmp_path: Path) -> None:
     shutil.copytree(backups["strategies"], strategies_target)
 
     assert models_target.joinpath("model.bin").read_text(encoding="utf-8") == "MODEL-ORIGINAL"
-    assert json.loads(strategies_target.joinpath("grid.json").read_text(encoding="utf-8"))["name"] == "sunset"
+    assert (
+        json.loads(strategies_target.joinpath("grid.json").read_text(encoding="utf-8"))["name"]
+        == "sunset"
+    )
 
 
 @pytest.mark.timeout(5)

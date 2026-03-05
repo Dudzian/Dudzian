@@ -1,4 +1,5 @@
 """Utilities for normalising strategy names and generating alias sequences."""
+
 from __future__ import annotations
 
 from collections import deque
@@ -231,9 +232,7 @@ class StrategyAliasResolver:
 
         base_suffixes = tuple(self.base_suffixes or self._suffixes)
         if suffixes is not None:
-            combined_suffixes = normalise_suffixes(
-                base_suffixes + tuple(suffixes)
-            )
+            combined_suffixes = normalise_suffixes(base_suffixes + tuple(suffixes))
         else:
             combined_suffixes = base_suffixes
 

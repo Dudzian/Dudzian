@@ -52,7 +52,9 @@ def _run_cli(argv: list[str], capsys: pytest.CaptureFixture[str]) -> tuple[int, 
     return exit_code, payload
 
 
-def test_runner_without_dispatch_success(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+def test_runner_without_dispatch_success(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
     cache_dir = tmp_path / "cache_runner_success"
     rows = _generate_rows(datetime(2024, 1, 1, tzinfo=timezone.utc), 40)
     _write_cache(cache_dir, rows)
@@ -81,7 +83,9 @@ def test_runner_without_dispatch_success(tmp_path: Path, capsys: pytest.CaptureF
     assert summary["ok"] == 1
 
 
-def test_runner_threshold_violation_sets_exit_code(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+def test_runner_threshold_violation_sets_exit_code(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
     cache_dir = tmp_path / "cache_runner_threshold"
     rows = _generate_rows(datetime(2024, 1, 1, tzinfo=timezone.utc), 40)
     _write_cache(cache_dir, rows)
@@ -114,7 +118,9 @@ def test_runner_threshold_violation_sets_exit_code(tmp_path: Path, capsys: pytes
     assert payload["alert_dispatched"] is False
 
 
-def test_runner_uses_risk_profile_threshold(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+def test_runner_uses_risk_profile_threshold(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
     cache_dir = tmp_path / "cache_runner_profile_threshold"
     rows = _generate_rows(datetime(2024, 1, 1, tzinfo=timezone.utc), 40)
     _write_cache(cache_dir, rows)
@@ -244,7 +250,9 @@ def test_runner_all_configured_targets(tmp_path: Path, capsys: pytest.CaptureFix
             },
         ],
     }
-    config_path.write_text(yaml.safe_dump(payload, allow_unicode=True, sort_keys=False), encoding="utf-8")
+    config_path.write_text(
+        yaml.safe_dump(payload, allow_unicode=True, sort_keys=False), encoding="utf-8"
+    )
 
     future_dt = datetime.fromisoformat(_last_row_iso(rows_gap)) + timedelta(hours=4)
 
@@ -272,7 +280,9 @@ def test_runner_all_configured_targets(tmp_path: Path, capsys: pytest.CaptureFix
     assert output.get("suppressed_dispatch_environments") == ["kraken_smoke"]
 
 
-def test_runner_all_configured_respects_dispatch(monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+def test_runner_all_configured_respects_dispatch(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
     cache_ok = tmp_path / "cache_ok_multi"
     cache_gap = tmp_path / "cache_gap_multi"
     rows_ok = _generate_rows(datetime(2024, 1, 1, tzinfo=timezone.utc), 40)
@@ -308,7 +318,9 @@ def test_runner_all_configured_respects_dispatch(monkeypatch: pytest.MonkeyPatch
     payload["instrument_universes"]["smoke_universe"]["instruments"]["BTC_USDT"]["exchanges"][
         "kraken_spot"
     ] = "BTCUSDT"
-    config_path.write_text(yaml.safe_dump(payload, allow_unicode=True, sort_keys=False), encoding="utf-8")
+    config_path.write_text(
+        yaml.safe_dump(payload, allow_unicode=True, sort_keys=False), encoding="utf-8"
+    )
 
     fake_secret = object()
     monkeypatch.setattr(cli, "_create_secret_manager", lambda *_: fake_secret)
@@ -373,7 +385,9 @@ def test_runner_sample_assets_success(tmp_path: Path, capsys: pytest.CaptureFixt
     assert payload["dispatch_requested"] is False
 
 
-def test_runner_sample_assets_threshold_violation(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+def test_runner_sample_assets_threshold_violation(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
     config_path = _prepare_sample_configuration(tmp_path)
 
     exit_code, payload = _run_cli(

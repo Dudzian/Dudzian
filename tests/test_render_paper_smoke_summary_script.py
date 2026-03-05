@@ -1,4 +1,5 @@
 """Testy dla skryptu render_paper_smoke_summary.py."""
+
 from __future__ import annotations
 
 import json
@@ -61,7 +62,9 @@ def sample_summary(tmp_path: Path) -> Path:
     return path
 
 
-def test_render_summary_stdout_contains_sections(sample_summary: Path, capsys: pytest.CaptureFixture[str]) -> None:
+def test_render_summary_stdout_contains_sections(
+    sample_summary: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
     exit_code = render_paper_smoke_summary.main(
         ["--summary-json", str(sample_summary), "--max-json-chars", "80"]
     )

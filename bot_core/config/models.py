@@ -1,4 +1,5 @@
 """Modele konfiguracji dla nowej architektury."""
+
 from __future__ import annotations
 
 from dataclasses import dataclass, field
@@ -11,9 +12,11 @@ from bot_core.exchanges.core import Mode
 
 # --- Alerty / audyt ----------------------------------------------------------
 
+
 @dataclass(slots=True)
 class AlertThrottleConfig:
     """Parametry okna tłumienia powtarzających się alertów."""
+
     window_seconds: float
     exclude_severities: Sequence[str] = field(default_factory=tuple)
     exclude_categories: Sequence[str] = field(default_factory=tuple)
@@ -23,6 +26,7 @@ class AlertThrottleConfig:
 @dataclass(slots=True)
 class AlertAuditConfig:
     """Konfiguracja repozytorium audytowego alertów."""
+
     backend: str
     directory: str | None = None
     filename_pattern: str = "alerts-%Y%m%d.jsonl"
@@ -33,6 +37,7 @@ class AlertAuditConfig:
 @dataclass(slots=True)
 class DecisionJournalConfig:
     """Konfiguracja dziennika decyzji tradingowych."""
+
     backend: str
     directory: str | None = None
     filename_pattern: str = "decisions-%Y%m%d.jsonl"
@@ -62,6 +67,7 @@ class EnvironmentReportStorageConfig:
 @dataclass(slots=True)
 class ServiceTokenConfig:
     """Definicja tokenu usługowego wykorzystywanego do RBAC."""
+
     token_id: str
     token_env: str | None = None
     token_value: str | None = None
@@ -72,6 +78,7 @@ class ServiceTokenConfig:
 @dataclass(slots=True)
 class MetricsServiceTlsConfig:
     """Opcjonalna konfiguracja TLS/mTLS dla serwera telemetrii."""
+
     enabled: bool = False
     certificate_path: str | None = None
     private_key_path: str | None = None
@@ -84,6 +91,7 @@ class MetricsServiceTlsConfig:
 @dataclass(slots=True)
 class MetricsServiceConfig:
     """Ustawienia serwera telemetrii `MetricsService`."""
+
     enabled: bool = True
     host: str = "127.0.0.1"
     port: int = 0
@@ -150,6 +158,7 @@ class MetricsServiceConfig:
 @dataclass(slots=True)
 class PrometheusAlertRuleConfig:
     """Definicja reguły alertu Prometheusa powiązanego z routerem live."""
+
     name: str
     expr: str
     for_duration: str | None = None
@@ -160,6 +169,7 @@ class PrometheusAlertRuleConfig:
 @dataclass(slots=True)
 class LiveRoutingConfig:
     """Konfiguracja routera egzekucji live."""
+
     enabled: bool = False
     default_route: Sequence[str] = field(default_factory=tuple)
     route_overrides: Mapping[str, Sequence[str]] = field(default_factory=dict)
@@ -170,6 +180,7 @@ class LiveRoutingConfig:
 @dataclass(slots=True)
 class RiskServiceConfig:
     """Ustawienia serwera `RiskService`."""
+
     enabled: bool = True
     host: str = "127.0.0.1"
     port: int = 0
@@ -184,6 +195,7 @@ class RiskServiceConfig:
 @dataclass(slots=True)
 class RiskDecisionLogConfig:
     """Konfiguracja dziennika decyzji silnika ryzyka."""
+
     enabled: bool = True
     path: str | None = None
     max_entries: int = 1_000
@@ -197,6 +209,7 @@ class RiskDecisionLogConfig:
 @dataclass(slots=True)
 class PortfolioDecisionLogConfig:
     """Konfiguracja dziennika decyzji PortfolioGovernora."""
+
     enabled: bool = True
     path: str | None = None
     max_entries: int = 512
@@ -271,6 +284,7 @@ class RuntimeCloudSettings:
 @dataclass(slots=True)
 class SecurityBaselineSigningConfig:
     """Ustawienia podpisywania raportów audytu bezpieczeństwa."""
+
     signing_key_env: str | None = None
     signing_key_path: str | None = None
     signing_key_value: str | None = None
@@ -281,12 +295,14 @@ class SecurityBaselineSigningConfig:
 @dataclass(slots=True)
 class SecurityBaselineConfig:
     """Konfiguracja integracji audytu bezpieczeństwa."""
+
     signing: SecurityBaselineSigningConfig | None = None
 
 
 @dataclass(slots=True)
 class SLOThresholdConfig:
     """Definicja pojedynczego SLO monitorowanego przez Observability Stage6."""
+
     name: str
     metric: str
     objective: float
@@ -300,6 +316,7 @@ class SLOThresholdConfig:
 @dataclass(slots=True)
 class KeyRotationEntryConfig:
     """Pojedynczy wpis w konfiguracji rotacji kluczy."""
+
     key: str
     purpose: str
     interval_days: float | None = None
@@ -309,6 +326,7 @@ class KeyRotationEntryConfig:
 @dataclass(slots=True)
 class KeyRotationConfig:
     """Parametry modułu rotacji kluczy i przypomnień."""
+
     registry_path: str
     default_interval_days: float = 90.0
     default_warn_within_days: float = 14.0
@@ -323,6 +341,7 @@ class KeyRotationConfig:
 @dataclass(slots=True)
 class PortfolioGovernorScoringWeights:
     """Wagi komponentów scoringu PortfolioGovernora."""
+
     alpha: float = 0.9
     cost: float = 1.3
     slo: float = 1.2
@@ -332,6 +351,7 @@ class PortfolioGovernorScoringWeights:
 @dataclass(slots=True)
 class PortfolioGovernorStrategyConfig:
     """Konfiguracja strategii zarządzanej przez PortfolioGovernora."""
+
     baseline_weight: float
     min_weight: float = 0.0
     max_weight: float = 1.0
@@ -344,10 +364,13 @@ class PortfolioGovernorStrategyConfig:
 @dataclass(slots=True)
 class PortfolioGovernorConfig:
     """Ustawienia PortfolioGovernora sterującego alokacją między strategiami w starszych presetach Stage6."""
+
     enabled: bool = False
     rebalance_interval_minutes: float = 20.0
     smoothing: float = 0.55
-    scoring: PortfolioGovernorScoringWeights = field(default_factory=PortfolioGovernorScoringWeights)
+    scoring: PortfolioGovernorScoringWeights = field(
+        default_factory=PortfolioGovernorScoringWeights
+    )
     strategies: Mapping[str, PortfolioGovernorStrategyConfig] = field(default_factory=dict)
     default_baseline_weight: float = 0.28
     default_min_weight: float = 0.08
@@ -361,6 +384,7 @@ class PortfolioGovernorConfig:
 @dataclass(slots=True)
 class MarketIntelSqliteConfig:
     """Źródło danych SQLite wykorzystywane przez agregator Market Intelligence."""
+
     path: str
     table: str = "market_metrics"
     symbol_column: str = "symbol"
@@ -376,6 +400,7 @@ class MarketIntelSqliteConfig:
 @dataclass(slots=True)
 class MarketIntelConfig:
     """Konfiguracja sekcji Market Intelligence Stage6."""
+
     enabled: bool = False
     output_directory: str = "data/stage6/metrics"
     manifest_path: str | None = None
@@ -387,6 +412,7 @@ class MarketIntelConfig:
 @dataclass(slots=True)
 class StressLabDatasetConfig:
     """Źródło danych używane przez Stress Lab dla konkretnego instrumentu."""
+
     symbol: str
     metrics_path: str
     weight: float = 1.0
@@ -396,6 +422,7 @@ class StressLabDatasetConfig:
 @dataclass(slots=True)
 class StressLabShockConfig:
     """Opis pojedynczego szoku w scenariuszu Stress Lab."""
+
     type: str
     intensity: float = 1.0
     duration_minutes: float | None = None
@@ -405,6 +432,7 @@ class StressLabShockConfig:
 @dataclass(slots=True)
 class StressLabThresholdsConfig:
     """Progi oceny scenariuszy Stress Lab."""
+
     max_liquidity_loss_pct: float = 0.55
     max_spread_increase_bps: float = 45.0
     max_volatility_increase_pct: float = 0.8
@@ -418,6 +446,7 @@ class StressLabThresholdsConfig:
 @dataclass(slots=True)
 class StressLabScenarioConfig:
     """Konfiguracja scenariusza Stress Lab dla wielu rynków."""
+
     name: str
     severity: str = "medium"
     markets: Sequence[str] = field(default_factory=tuple)
@@ -429,6 +458,7 @@ class StressLabScenarioConfig:
 @dataclass(slots=True)
 class StressLabConfig:
     """Konfiguracja modułu Stress Lab w Stage6."""
+
     enabled: bool = False
     require_success: bool = True
     report_directory: str = "var/audit/stage6/stress_lab"
@@ -506,6 +536,7 @@ class PortfolioStressConfig:
 @dataclass(slots=True)
 class ResilienceDrillThresholdsConfig:
     """Progi akceptacyjne dla drillów failover w Stage6."""
+
     max_latency_ms: float = 250.0
     max_error_rate: float = 0.05
     max_failover_duration_seconds: float = 120.0
@@ -515,17 +546,21 @@ class ResilienceDrillThresholdsConfig:
 @dataclass(slots=True)
 class ResilienceDrillConfig:
     """Definicja pojedynczego drill'u failover."""
+
     name: str
     primary: str
     fallbacks: Sequence[str] = field(default_factory=tuple)
     dataset_path: str = ""
-    thresholds: ResilienceDrillThresholdsConfig = field(default_factory=ResilienceDrillThresholdsConfig)
+    thresholds: ResilienceDrillThresholdsConfig = field(
+        default_factory=ResilienceDrillThresholdsConfig
+    )
     description: str | None = None
 
 
 @dataclass(slots=True)
 class ResilienceConfig:
     """Konfiguracja modułu resilience & failover (Stage6)."""
+
     enabled: bool = False
     require_success: bool = True
     report_directory: str = "var/audit/stage6/resilience"
@@ -538,6 +573,7 @@ class ResilienceConfig:
 @dataclass(slots=True)
 class ObservabilityConfig:
     """Konfiguracja rozszerzonej obserwowalności kompatybilnej z wcześniejszymi presetami Stage6."""
+
     slo: Mapping[str, SLOThresholdConfig] = field(default_factory=dict)
     key_rotation: KeyRotationConfig | None = None
 
@@ -545,6 +581,7 @@ class ObservabilityConfig:
 @dataclass(slots=True)
 class DecisionOrchestratorThresholds:
     """Progi podejmowania decyzji przez DecisionOrchestrator."""
+
     max_cost_bps: float
     min_net_edge_bps: float
     max_daily_loss_pct: float
@@ -558,6 +595,7 @@ class DecisionOrchestratorThresholds:
 @dataclass(slots=True)
 class DecisionStressTestConfig:
     """Parametry testów stresowych wykorzystywanych przed przejściem live."""
+
     cost_shock_bps: float = 0.0
     latency_spike_ms: float = 0.0
     slippage_multiplier: float = 1.0
@@ -609,6 +647,7 @@ class DecisionEngineTCOConfig:
 @dataclass(slots=True)
 class DecisionEngineConfig:
     """Konfiguracja rozszerzonego decision engine'u (Etap 5)."""
+
     orchestrator: DecisionOrchestratorThresholds
     profile_overrides: Mapping[str, DecisionOrchestratorThresholds] = field(default_factory=dict)
     stress_tests: DecisionStressTestConfig | None = None
@@ -715,6 +754,7 @@ class AIModelManagementConfig:
 @dataclass(slots=True)
 class EnvironmentDataQualityConfig:
     """Progi jakości danych używane przez środowisko."""
+
     max_gap_minutes: float | None = None
     min_ok_ratio: float | None = None
 
@@ -722,6 +762,7 @@ class EnvironmentDataQualityConfig:
 @dataclass(slots=True)
 class CoverageMonitorTargetConfig:
     """Definicja środowiska objętego monitoringiem pokrycia danych."""
+
     environment: str
     dispatch: bool | None = None
     category: str | None = None
@@ -731,6 +772,7 @@ class CoverageMonitorTargetConfig:
 @dataclass(slots=True)
 class CoverageMonitoringConfig:
     """Ustawienia globalnego monitoringu pokrycia danych OHLCV."""
+
     enabled: bool = True
     default_dispatch: bool = True
     default_category: str = "data.ohlcv"
@@ -820,6 +862,7 @@ class LiveReadinessChecklistConfig:
 @dataclass(slots=True)
 class EnvironmentConfig:
     """Konfiguracja środowiska (np. live, paper, testnet)."""
+
     name: str
     exchange: str
     environment: Environment
@@ -852,6 +895,7 @@ class EnvironmentConfig:
 @dataclass(slots=True)
 class RiskProfileConfig:
     """Parametry wykorzystywane do inicjalizacji profili ryzyka."""
+
     name: str
     max_daily_loss_pct: float
     max_position_pct: float
@@ -888,9 +932,11 @@ class NativeExchangeAdapterConfig:
 
 # --- Instrumenty / uniwersa --------------------------------------------------
 
+
 @dataclass(slots=True)
 class InstrumentBackfillWindow:
     """Definicja zakresu danych historycznych dla danego interwału."""
+
     interval: str
     lookback_days: int
 
@@ -898,6 +944,7 @@ class InstrumentBackfillWindow:
 @dataclass(slots=True)
 class InstrumentConfig:
     """Opis pojedynczego instrumentu w uniwersum."""
+
     name: str
     base_asset: str
     quote_asset: str
@@ -909,6 +956,7 @@ class InstrumentConfig:
 @dataclass(slots=True)
 class InstrumentUniverseConfig:
     """Zbiór instrumentów przypisany do środowisk."""
+
     name: str
     description: str
     instruments: Sequence[InstrumentConfig]
@@ -917,6 +965,7 @@ class InstrumentUniverseConfig:
 @dataclass(slots=True)
 class InstrumentBucketConfig:
     """Opis koszyka instrumentów przypisanych do profili ryzyka."""
+
     name: str
     universe: str
     symbols: Sequence[str]
@@ -936,9 +985,11 @@ class PermissionProfileConfig:
 
 # --- Strategie ----------------------------------------------------------------
 
+
 @dataclass(slots=True)
 class DailyTrendMomentumStrategyConfig:
     """Konfiguracja strategii trend/momentum."""
+
     name: str
     fast_ma: int
     slow_ma: int
@@ -953,6 +1004,7 @@ class DailyTrendMomentumStrategyConfig:
 @dataclass(slots=True)
 class MeanReversionStrategyConfig:
     """Parametry strategii powrotu do średniej."""
+
     name: str
     lookback: int
     entry_zscore: float
@@ -1037,6 +1089,7 @@ class CrossExchangeHedgeStrategyConfig:
 @dataclass(slots=True)
 class VolatilityTargetingStrategyConfig:
     """Konfiguracja strategii kontroli zmienności portfela."""
+
     name: str
     target_volatility: float
     lookback: int
@@ -1049,6 +1102,7 @@ class VolatilityTargetingStrategyConfig:
 @dataclass(slots=True)
 class CrossExchangeArbitrageStrategyConfig:
     """Parametry strategii arbitrażowej cross-exchange."""
+
     name: str
     primary_exchange: str
     secondary_exchange: str
@@ -1141,7 +1195,9 @@ class StrategyOptimizationScheduleConfig:
         object.__setattr__(self, "cadence_seconds", max(0.0, float(self.cadence_seconds or 0.0)))
         object.__setattr__(self, "jitter_seconds", max(0.0, float(self.jitter_seconds or 0.0)))
         object.__setattr__(self, "run_immediately", bool(self.run_immediately))
-        object.__setattr__(self, "start_delay_seconds", max(0.0, float(self.start_delay_seconds or 0.0)))
+        object.__setattr__(
+            self, "start_delay_seconds", max(0.0, float(self.start_delay_seconds or 0.0))
+        )
 
 
 @dataclass(slots=True)
@@ -1175,10 +1231,18 @@ class StrategyOptimizationTaskConfig:
     max_trials: int = 25
     random_seed: int | None = None
     tags: Sequence[str] = field(default_factory=tuple)
-    search_space: StrategyOptimizationSearchSpaceConfig = field(default_factory=StrategyOptimizationSearchSpaceConfig)
-    objective: StrategyOptimizationObjectiveConfig = field(default_factory=StrategyOptimizationObjectiveConfig)
-    schedule: StrategyOptimizationScheduleConfig = field(default_factory=StrategyOptimizationScheduleConfig)
-    evaluation: StrategyOptimizationEvaluationConfig = field(default_factory=StrategyOptimizationEvaluationConfig)
+    search_space: StrategyOptimizationSearchSpaceConfig = field(
+        default_factory=StrategyOptimizationSearchSpaceConfig
+    )
+    objective: StrategyOptimizationObjectiveConfig = field(
+        default_factory=StrategyOptimizationObjectiveConfig
+    )
+    schedule: StrategyOptimizationScheduleConfig = field(
+        default_factory=StrategyOptimizationScheduleConfig
+    )
+    evaluation: StrategyOptimizationEvaluationConfig = field(
+        default_factory=StrategyOptimizationEvaluationConfig
+    )
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "name", str(self.name).strip())
@@ -1203,6 +1267,7 @@ class StrategyOptimizationTaskConfig:
 @dataclass(slots=True)
 class StrategyScheduleConfig:
     """Opis pojedynczego zadania harmonogramu strategii."""
+
     name: str
     strategy: str
     cadence_seconds: int
@@ -1237,6 +1302,7 @@ class SignalLimitOverrideConfig:
 @dataclass(slots=True)
 class MultiStrategySchedulerConfig:
     """Konfiguracja scheduler-a wielostrate-gicznego."""
+
     name: str
     schedules: Sequence[StrategyScheduleConfig]
     telemetry_namespace: str
@@ -1259,6 +1325,7 @@ class MultiStrategySchedulerConfig:
 @dataclass(slots=True)
 class PortfolioRuntimeInputsConfig:
     """Ścieżki artefaktów wykorzystywanych przez PortfolioGovernora w runtime."""
+
     slo_report_path: str | None = None
     slo_max_age_minutes: int | None = None
     stress_lab_report_path: str | None = None
@@ -1267,9 +1334,11 @@ class PortfolioRuntimeInputsConfig:
 
 # --- Kanały alertów -----------------------------------------------------------
 
+
 @dataclass(slots=True)
 class SMSProviderSettings:
     """Definicja lokalnego dostawcy SMS z konfiguracji."""
+
     name: str
     provider_key: str
     api_base_url: str
@@ -1287,6 +1356,7 @@ class SMSProviderSettings:
 @dataclass(slots=True)
 class TelegramChannelSettings:
     """Konfiguracja kanału Telegram."""
+
     name: str
     chat_id: str
     token_secret: str
@@ -1296,6 +1366,7 @@ class TelegramChannelSettings:
 @dataclass(slots=True)
 class EmailChannelSettings:
     """Konfiguracja kanału e-mail."""
+
     name: str
     host: str
     port: int
@@ -1308,6 +1379,7 @@ class EmailChannelSettings:
 @dataclass(slots=True)
 class SignalChannelSettings:
     """Konfiguracja kanału Signal opartego o usługę signal-cli."""
+
     name: str
     service_url: str
     sender_number: str
@@ -1319,6 +1391,7 @@ class SignalChannelSettings:
 @dataclass(slots=True)
 class WhatsAppChannelSettings:
     """Konfiguracja kanału WhatsApp wykorzystującego Graph API."""
+
     name: str
     phone_number_id: str
     recipients: Sequence[str]
@@ -1330,6 +1403,7 @@ class WhatsAppChannelSettings:
 @dataclass(slots=True)
 class MessengerChannelSettings:
     """Konfiguracja kanału Facebook Messenger."""
+
     name: str
     page_id: str
     recipients: Sequence[str]
@@ -1340,9 +1414,11 @@ class MessengerChannelSettings:
 
 # --- Runtime (Stage6 – portfel) -----------------------------------------------
 
+
 @dataclass(slots=True)
 class PortfolioDriftToleranceConfig:
     """Parametry dryfu akceptowanego przez PortfolioGovernor."""
+
     absolute: float = 0.01
     relative: float = 0.25
 
@@ -1350,6 +1426,7 @@ class PortfolioDriftToleranceConfig:
 @dataclass(slots=True)
 class PortfolioRiskBudgetConfig:
     """Budżet ryzyka przypisywany do koszyka aktywów."""
+
     name: str
     max_var_pct: float | None = None
     max_drawdown_pct: float | None = None
@@ -1361,6 +1438,7 @@ class PortfolioRiskBudgetConfig:
 @dataclass(slots=True)
 class PortfolioAssetConfig:
     """Konfiguracja aktywa zarządzanego przez PortfolioGovernor."""
+
     symbol: str
     target_weight: float
     min_weight: float | None = None
@@ -1375,6 +1453,7 @@ class PortfolioAssetConfig:
 @dataclass(slots=True)
 class PortfolioSloOverrideConfig:
     """Reguła reagująca na statusy SLO w Observability Stage6."""
+
     slo_name: str
     apply_on: Sequence[str] = field(default_factory=lambda: ("warning", "breach"))
     weight_multiplier: float | None = None
@@ -1388,9 +1467,12 @@ class PortfolioSloOverrideConfig:
 @dataclass(slots=True)
 class PortfolioGovernorV6Config:
     """Deklaracja PortfolioGovernora Stage6 (zarządzanie portfelem)."""
+
     name: str
     portfolio_id: str
-    drift_tolerance: PortfolioDriftToleranceConfig = field(default_factory=PortfolioDriftToleranceConfig)
+    drift_tolerance: PortfolioDriftToleranceConfig = field(
+        default_factory=PortfolioDriftToleranceConfig
+    )
     rebalance_cooldown_seconds: int = 900
     min_rebalance_value: float = 0.0
     min_rebalance_weight: float = 0.0
@@ -1405,6 +1487,7 @@ class PortfolioGovernorV6Config:
 @dataclass(slots=True)
 class ControllerRuntimeConfig:
     """Parametry sterujące cyklem pracy kontrolerów runtime."""
+
     tick_seconds: float
     interval: str
 
@@ -1412,6 +1495,7 @@ class ControllerRuntimeConfig:
 @dataclass(slots=True)
 class RuntimeResourceLimitsConfig:
     """Deklaracja budżetów zasobów dla runtime."""
+
     cpu_percent: float
     memory_mb: float
     io_read_mb_s: float
@@ -1422,6 +1506,7 @@ class RuntimeResourceLimitsConfig:
 @dataclass(slots=True)
 class SmokeArchiveLocalConfig:
     """Konfiguracja lokalnego magazynu archiwów smoke testów."""
+
     directory: str
     filename_pattern: str = "{environment}_{date}_{hash}.zip"
     fsync: bool = False
@@ -1430,6 +1515,7 @@ class SmokeArchiveLocalConfig:
 @dataclass(slots=True)
 class SmokeArchiveS3Config:
     """Konfiguracja wysyłki archiwów smoke testu do S3/MinIO."""
+
     bucket: str
     object_prefix: str | None = None
     endpoint_url: str | None = None
@@ -1441,6 +1527,7 @@ class SmokeArchiveS3Config:
 @dataclass(slots=True)
 class SmokeArchiveUploadConfig:
     """Parametry wysyłki archiwum smoke testu po udanym przebiegu."""
+
     backend: str
     credential_secret: str | None = None
     local: SmokeArchiveLocalConfig | None = None
@@ -1450,6 +1537,7 @@ class SmokeArchiveUploadConfig:
 @dataclass(slots=True)
 class PaperSmokeJsonSyncLocalConfig:
     """Konfiguracja lokalnego archiwum dziennika JSONL smoke testów."""
+
     directory: str
     filename_pattern: str = "{environment}_{date}.jsonl"
     fsync: bool = False
@@ -1458,6 +1546,7 @@ class PaperSmokeJsonSyncLocalConfig:
 @dataclass(slots=True)
 class PaperSmokeJsonSyncS3Config:
     """Konfiguracja wysyłki dziennika JSONL smoke testów do S3/MinIO."""
+
     bucket: str
     object_prefix: str | None = None
     endpoint_url: str | None = None
@@ -1469,6 +1558,7 @@ class PaperSmokeJsonSyncS3Config:
 @dataclass(slots=True)
 class PaperSmokeJsonSyncConfig:
     """Parametry synchronizacji dziennika JSONL smoke testów."""
+
     backend: str
     credential_secret: str | None = None
     local: PaperSmokeJsonSyncLocalConfig | None = None
@@ -1478,6 +1568,7 @@ class PaperSmokeJsonSyncConfig:
 @dataclass(slots=True)
 class CoreReportingConfig:
     """Konfiguracja sekcji reportingowej CoreConfig."""
+
     daily_report_time_utc: str | None = None
     weekly_report_day: str | None = None
     retention_months: str | None = None
@@ -1522,25 +1613,46 @@ class LicenseValidationConfig:
 @dataclass(slots=True)
 class CoreConfig:
     """Najwyższego poziomu konfiguracja aplikacji."""
+
     environments: Mapping[str, EnvironmentConfig]
     risk_profiles: Mapping[str, RiskProfileConfig]
     permission_profiles: Mapping[str, PermissionProfileConfig] = field(default_factory=dict)
-    exchange_accounts: Mapping[str, Mapping[str, ExchangeAccountConfig]] = field(default_factory=dict)
-    exchange_adapters: Mapping[str, Mapping[Mode, NativeExchangeAdapterConfig]] = field(default_factory=dict)
+    exchange_accounts: Mapping[str, Mapping[str, ExchangeAccountConfig]] = field(
+        default_factory=dict
+    )
+    exchange_adapters: Mapping[str, Mapping[Mode, NativeExchangeAdapterConfig]] = field(
+        default_factory=dict
+    )
     instrument_universes: Mapping[str, InstrumentUniverseConfig] = field(default_factory=dict)
     instrument_buckets: Mapping[str, InstrumentBucketConfig] = field(default_factory=dict)
     strategy_definitions: Mapping[str, StrategyDefinitionConfig] = field(default_factory=dict)
     strategies: Mapping[str, DailyTrendMomentumStrategyConfig] = field(default_factory=dict)
-    mean_reversion_strategies: Mapping[str, MeanReversionStrategyConfig] = field(default_factory=dict)
-    volatility_target_strategies: Mapping[str, VolatilityTargetingStrategyConfig] = field(default_factory=dict)
-    cross_exchange_arbitrage_strategies: Mapping[str, CrossExchangeArbitrageStrategyConfig] = field(default_factory=dict)
-    cross_exchange_hedge_strategies: Mapping[str, CrossExchangeHedgeStrategyConfig] = field(default_factory=dict)
+    mean_reversion_strategies: Mapping[str, MeanReversionStrategyConfig] = field(
+        default_factory=dict
+    )
+    volatility_target_strategies: Mapping[str, VolatilityTargetingStrategyConfig] = field(
+        default_factory=dict
+    )
+    cross_exchange_arbitrage_strategies: Mapping[str, CrossExchangeArbitrageStrategyConfig] = field(
+        default_factory=dict
+    )
+    cross_exchange_hedge_strategies: Mapping[str, CrossExchangeHedgeStrategyConfig] = field(
+        default_factory=dict
+    )
     scalping_strategies: Mapping[str, ScalpingStrategyConfig] = field(default_factory=dict)
-    options_income_strategies: Mapping[str, OptionsIncomeStrategyConfig] = field(default_factory=dict)
-    futures_spread_strategies: Mapping[str, FuturesSpreadStrategyConfig] = field(default_factory=dict)
-    statistical_arbitrage_strategies: Mapping[str, StatisticalArbitrageStrategyConfig] = field(default_factory=dict)
+    options_income_strategies: Mapping[str, OptionsIncomeStrategyConfig] = field(
+        default_factory=dict
+    )
+    futures_spread_strategies: Mapping[str, FuturesSpreadStrategyConfig] = field(
+        default_factory=dict
+    )
+    statistical_arbitrage_strategies: Mapping[str, StatisticalArbitrageStrategyConfig] = field(
+        default_factory=dict
+    )
     day_trading_strategies: Mapping[str, DayTradingStrategyConfig] = field(default_factory=dict)
-    multi_strategy_schedulers: Mapping[str, MultiStrategySchedulerConfig] = field(default_factory=dict)
+    multi_strategy_schedulers: Mapping[str, MultiStrategySchedulerConfig] = field(
+        default_factory=dict
+    )
     runtime_entrypoints: Mapping[str, RuntimeEntrypointConfig] = field(default_factory=dict)
 
     # Kompatybilność ze starszymi presetami Stage6
@@ -1845,7 +1957,9 @@ class RuntimeIOQueueSettings:
     rate_limit_warning_seconds: float = 0.75
     timeout_warning_seconds: float = 10.0
     log_directory: str | None = "logs/guardrails"
-    exchanges: Mapping[str, RuntimeIOQueueLimit | Mapping[str, object]] = field(default_factory=dict)
+    exchanges: Mapping[str, RuntimeIOQueueLimit | Mapping[str, object]] = field(
+        default_factory=dict
+    )
 
     @staticmethod
     def _coerce_int(value: object, default: int) -> int:
@@ -1916,7 +2030,9 @@ class RuntimeOptimizationSettings:
             object.__setattr__(self, "report_directory", None)
         else:
             object.__setattr__(self, "report_directory", str(self.report_directory))
-        object.__setattr__(self, "default_history_bars", max(1, int(self.default_history_bars or 256)))
+        object.__setattr__(
+            self, "default_history_bars", max(1, int(self.default_history_bars or 256))
+        )
         normalized = [task for task in self.tasks if getattr(task, "name", "")]  # type: ignore[arg-type]
         object.__setattr__(self, "tasks", tuple(normalized))
 

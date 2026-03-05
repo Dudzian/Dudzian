@@ -1,4 +1,5 @@
 """Benchmark throughput i latencji backtestów dla kluczowych strategii."""
+
 from __future__ import annotations
 
 import argparse
@@ -125,10 +126,7 @@ def _run_benchmark(
 
 def _log_report(result: BenchmarkResult, output_dir: Path) -> None:
     output_dir.mkdir(parents=True, exist_ok=True)
-    commit = (
-        subprocess.check_output(["git", "rev-parse", "--short", "HEAD"], text=True)
-        .strip()
-    )
+    commit = subprocess.check_output(["git", "rev-parse", "--short", "HEAD"], text=True).strip()
     payload = {
         "scenario": result.dataset,
         "dataset": result.dataset,

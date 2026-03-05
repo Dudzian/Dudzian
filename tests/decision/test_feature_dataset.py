@@ -18,7 +18,11 @@ def test_feature_dataset_orders_vectors_and_metadata() -> None:
         metadata={"source": "unit"},
     )
 
-    assert [vector.timestamp for vector in dataset.vectors] == [1_700_000_000, 1_700_000_030, 1_700_000_060]
+    assert [vector.timestamp for vector in dataset.vectors] == [
+        1_700_000_000,
+        1_700_000_030,
+        1_700_000_060,
+    ]
     assert dataset.metadata["row_count"] == 3
     assert dataset.metadata["start_timestamp"] == 1_700_000_000
     assert dataset.metadata["end_timestamp"] == 1_700_000_060

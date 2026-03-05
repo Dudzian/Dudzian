@@ -1,4 +1,5 @@
 """Skrypt obciążeniowy dla adapterów giełdowych."""
+
 from __future__ import annotations
 
 import argparse
@@ -122,8 +123,12 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     )
     parser.add_argument("--interval", default="1m", help="Interwał OHLCV (dla operation=ohlcv)")
     parser.add_argument("--limit", type=int, default=100, help="Limit wyników dla OHLCV/order book")
-    parser.add_argument("--duration", type=float, default=60.0, help="Czas trwania testu w sekundach")
-    parser.add_argument("--concurrency", type=int, default=4, help="Liczba równoległych pracowników")
+    parser.add_argument(
+        "--duration", type=float, default=60.0, help="Czas trwania testu w sekundach"
+    )
+    parser.add_argument(
+        "--concurrency", type=int, default=4, help="Liczba równoległych pracowników"
+    )
     parser.add_argument(
         "--sleep",
         type=float,
@@ -134,7 +139,9 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--secret", default="", help="Sekret API giełdy")
     parser.add_argument("--passphrase", default="", help="Opcjonalne hasło API")
     parser.add_argument("--paper-variant", default="", help="Wariant symulatora papierowego")
-    parser.add_argument("--testnet", action="store_true", help="Włącza tryb testnet dla spot/margin/futures")
+    parser.add_argument(
+        "--testnet", action="store_true", help="Włącza tryb testnet dla spot/margin/futures"
+    )
     parser.add_argument(
         "--log-level",
         default="INFO",

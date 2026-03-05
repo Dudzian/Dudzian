@@ -7,6 +7,7 @@ for market data history, risk snapshots as well as automation helpers.  The
 protocol is intentionally tiny so it can be consumed from QML/Qt Network
 stack without pulling additional dependencies.
 """
+
 from __future__ import annotations
 
 import argparse

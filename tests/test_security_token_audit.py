@@ -53,7 +53,9 @@ def test_audit_service_tokens_success_with_rbac():
 
     assert not payload["errors"]
     assert not payload["warnings"]
-    metrics = next(service for service in payload["services"] if service["service"] == "metrics_service")
+    metrics = next(
+        service for service in payload["services"] if service["service"] == "metrics_service"
+    )
     assert metrics["coverage"]["metrics.read"] == ["metrics-reader"]
     risk = next(service for service in payload["services"] if service["service"] == "risk_service")
     assert risk["coverage"]["risk.read"] == ["risk-reader"]
@@ -116,7 +118,9 @@ def test_audit_warns_when_env_missing_and_shared_secret_only():
     payload = report.as_dict()
 
     assert payload["warnings"]
-    metrics = next(service for service in payload["services"] if service["service"] == "metrics_service")
+    metrics = next(
+        service for service in payload["services"] if service["service"] == "metrics_service"
+    )
     assert any("statycznego" in finding["message"] for finding in metrics["findings"])
     assert any("nie jest ustawiona" in finding["message"] for finding in metrics["findings"])
     risk = next(service for service in payload["services"] if service["service"] == "risk_service")
@@ -136,11 +140,12 @@ def test_audit_reports_missing_metrics_auth_token_env() -> None:
     report = audit_service_tokens(core_config, env={})
     payload = report.as_dict()
 
-    metrics = next(service for service in payload["services"] if service["service"] == "metrics_service")
+    metrics = next(
+        service for service in payload["services"] if service["service"] == "metrics_service"
+    )
     assert metrics["configured"] is False
     assert any(
-        finding["level"] == "error"
-        and "auth_token_env" in (finding.get("message") or "")
+        finding["level"] == "error" and "auth_token_env" in (finding.get("message") or "")
         for finding in metrics["findings"]
     )
 
@@ -161,7 +166,9 @@ def test_audit_accepts_metrics_auth_token_env_present() -> None:
     )
     payload = report.as_dict()
 
-    metrics = next(service for service in payload["services"] if service["service"] == "metrics_service")
+    metrics = next(
+        service for service in payload["services"] if service["service"] == "metrics_service"
+    )
     assert metrics["configured"] is True
     assert not any(
         "auth_token_env" in (finding.get("message") or "") for finding in metrics["findings"]
@@ -185,7 +192,9 @@ def test_audit_reports_over_permissive_auth_token_file(tmp_path: Path) -> None:
     report = audit_service_tokens(core_config, env={})
     payload = report.as_dict()
 
-    metrics = next(service for service in payload["services"] if service["service"] == "metrics_service")
+    metrics = next(
+        service for service in payload["services"] if service["service"] == "metrics_service"
+    )
     assert metrics["configured"] is True
     assert any(
         finding["level"] == "warning"
@@ -224,7 +233,9 @@ def test_audit_reports_error_when_scope_missing():
     payload = report.as_dict()
 
     assert payload["errors"]
-    metrics = next(service for service in payload["services"] if service["service"] == "metrics_service")
+    metrics = next(
+        service for service in payload["services"] if service["service"] == "metrics_service"
+    )
     assert any(
         finding["level"] == "error" and finding["details"]["scope"] == "metrics.read"
         for finding in metrics["findings"]

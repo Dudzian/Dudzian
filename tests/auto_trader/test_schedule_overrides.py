@@ -160,7 +160,9 @@ def test_with_overrides_treats_blank_string_allow_trading_as_false() -> None:
         ("on", True),
     ],
 )
-def test_with_overrides_parses_common_string_boolean_variants(allow_value: str, expected: bool) -> None:
+def test_with_overrides_parses_common_string_boolean_variants(
+    allow_value: str, expected: bool
+) -> None:
     window = ScheduleWindow(start=time(0, 0), end=time(0, 0), mode="live", allow_trading=True)
     schedule = TradingSchedule((window,), timezone_name="UTC")
 

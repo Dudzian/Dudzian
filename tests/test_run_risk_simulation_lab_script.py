@@ -97,7 +97,9 @@ def tco_config(tmp_path: Path) -> tuple[Path, Path]:
     return config_path, tco_path
 
 
-def test_run_risk_simulation_lab_cli(tmp_path: Path, simple_config: Path, capsys: pytest.CaptureFixture[str]) -> None:
+def test_run_risk_simulation_lab_cli(
+    tmp_path: Path, simple_config: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
     output_dir = tmp_path / "output"
     exit_code = run_main(
         [

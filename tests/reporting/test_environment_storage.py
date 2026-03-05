@@ -26,9 +26,11 @@ def environment_cfg(tmp_path: Path) -> EnvironmentConfig:
     )
 
 
-def test_store_environment_report_creates_copy(environment_cfg: EnvironmentConfig, tmp_path: Path) -> None:
+def test_store_environment_report_creates_copy(
+    environment_cfg: EnvironmentConfig, tmp_path: Path
+) -> None:
     summary_path = tmp_path / "summary.json"
-    summary_path.write_text("{\n  \"ok\": true\n}\n", encoding="utf-8")
+    summary_path.write_text('{\n  "ok": true\n}\n', encoding="utf-8")
 
     environment_cfg.report_storage = EnvironmentReportStorageConfig(
         backend="file",
@@ -47,7 +49,9 @@ def test_store_environment_report_creates_copy(environment_cfg: EnvironmentConfi
     assert expected_path.read_text(encoding="utf-8") == summary_path.read_text(encoding="utf-8")
 
 
-def test_store_environment_report_prunes_old_files(environment_cfg: EnvironmentConfig, tmp_path: Path) -> None:
+def test_store_environment_report_prunes_old_files(
+    environment_cfg: EnvironmentConfig, tmp_path: Path
+) -> None:
     target_dir = Path(environment_cfg.data_cache_path) / "reports"
     target_dir.mkdir(parents=True, exist_ok=True)
     old_report = target_dir / "report-20231231.json"
@@ -64,7 +68,7 @@ def test_store_environment_report_prunes_old_files(environment_cfg: EnvironmentC
     )
 
     summary_path = tmp_path / "summary.json"
-    summary_path.write_text("{\n  \"ok\": true\n}\n", encoding="utf-8")
+    summary_path.write_text('{\n  "ok": true\n}\n', encoding="utf-8")
     timestamp = datetime(2024, 1, 10, tzinfo=timezone.utc)
 
     stored = store_environment_report(summary_path, environment_cfg, now=timestamp)
@@ -73,7 +77,9 @@ def test_store_environment_report_prunes_old_files(environment_cfg: EnvironmentC
     assert not old_report.exists()
 
 
-def test_store_environment_report_unsupported_backend(environment_cfg: EnvironmentConfig, tmp_path: Path) -> None:
+def test_store_environment_report_unsupported_backend(
+    environment_cfg: EnvironmentConfig, tmp_path: Path
+) -> None:
     summary_path = tmp_path / "summary.json"
     summary_path.write_text("{}\n", encoding="utf-8")
     environment_cfg.report_storage = EnvironmentReportStorageConfig(backend="s3")
@@ -82,8 +88,13 @@ def test_store_environment_report_unsupported_backend(environment_cfg: Environme
         store_environment_report(summary_path, environment_cfg, now=datetime.now(timezone.utc))
 
 
-def test_store_environment_report_no_config_returns_none(environment_cfg: EnvironmentConfig, tmp_path: Path) -> None:
+def test_store_environment_report_no_config_returns_none(
+    environment_cfg: EnvironmentConfig, tmp_path: Path
+) -> None:
     summary_path = tmp_path / "summary.json"
     summary_path.write_text("{}\n", encoding="utf-8")
 
-    assert store_environment_report(summary_path, environment_cfg, now=datetime.now(timezone.utc)) is None
+    assert (
+        store_environment_report(summary_path, environment_cfg, now=datetime.now(timezone.utc))
+        is None
+    )

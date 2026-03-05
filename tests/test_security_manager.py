@@ -1,4 +1,5 @@
 """Testy warstwy zarządzania sekretami wykorzystującej natywne keychainy."""
+
 from __future__ import annotations
 
 import sys
@@ -113,7 +114,9 @@ def keyring_storage(tmp_path: Path) -> Callable[[str], KeyringSecretStorage]:
     return factory
 
 
-def test_roundtrip_store_and_load_credentials(keyring_storage: Callable[[str], KeyringSecretStorage]) -> None:
+def test_roundtrip_store_and_load_credentials(
+    keyring_storage: Callable[[str], KeyringSecretStorage],
+) -> None:
     storage = keyring_storage()
     manager = SecretManager(storage, namespace="tests")
 
@@ -140,7 +143,9 @@ def test_roundtrip_store_and_load_credentials(keyring_storage: Callable[[str], K
     assert loaded.environment == Environment.PAPER
 
 
-def test_load_missing_secret_raises_error(keyring_storage: Callable[[str], KeyringSecretStorage]) -> None:
+def test_load_missing_secret_raises_error(
+    keyring_storage: Callable[[str], KeyringSecretStorage],
+) -> None:
     storage = keyring_storage()
     manager = SecretManager(storage)
 
@@ -148,7 +153,9 @@ def test_load_missing_secret_raises_error(keyring_storage: Callable[[str], Keyri
         manager.load_exchange_credentials("missing", expected_environment=Environment.LIVE)
 
 
-def test_environment_mismatch_detected(keyring_storage: Callable[[str], KeyringSecretStorage]) -> None:
+def test_environment_mismatch_detected(
+    keyring_storage: Callable[[str], KeyringSecretStorage],
+) -> None:
     storage = keyring_storage()
     manager = SecretManager(storage)
 
@@ -168,7 +175,9 @@ def test_environment_mismatch_detected(keyring_storage: Callable[[str], KeyringS
     assert "nie pasuje" in str(excinfo.value)
 
 
-def test_required_permissions_are_enforced(keyring_storage: Callable[[str], KeyringSecretStorage]) -> None:
+def test_required_permissions_are_enforced(
+    keyring_storage: Callable[[str], KeyringSecretStorage],
+) -> None:
     storage = keyring_storage()
     manager = SecretManager(storage)
 
@@ -192,7 +201,9 @@ def test_required_permissions_are_enforced(keyring_storage: Callable[[str], Keyr
     assert "wymaganych uprawnień" in str(excinfo.value)
 
 
-def test_forbidden_permissions_are_detected(keyring_storage: Callable[[str], KeyringSecretStorage]) -> None:
+def test_forbidden_permissions_are_detected(
+    keyring_storage: Callable[[str], KeyringSecretStorage],
+) -> None:
     storage = keyring_storage()
     manager = SecretManager(storage)
 
@@ -216,7 +227,9 @@ def test_forbidden_permissions_are_detected(keyring_storage: Callable[[str], Key
     assert "zabronione uprawnienia" in str(excinfo.value)
 
 
-def test_store_and_load_generic_secret(keyring_storage: Callable[[str], KeyringSecretStorage]) -> None:
+def test_store_and_load_generic_secret(
+    keyring_storage: Callable[[str], KeyringSecretStorage],
+) -> None:
     storage = keyring_storage()
     manager = SecretManager(storage, namespace="tests")
 
@@ -238,9 +251,7 @@ def test_load_exchange_credentials_missing_environment_raises_error() -> None:
     manager = SecretManager(storage, namespace="tests")
 
     with pytest.raises(SecretStorageError) as excinfo:
-        manager.load_exchange_credentials(
-            "binance", expected_environment=Environment.PAPER
-        )
+        manager.load_exchange_credentials("binance", expected_environment=Environment.PAPER)
 
     cause = excinfo.value.__cause__
     assert isinstance(cause, ValueError)
@@ -252,9 +263,7 @@ def test_load_exchange_credentials_missing_secret_raises_error() -> None:
     manager = SecretManager(storage, namespace="tests")
 
     with pytest.raises(SecretStorageError) as excinfo:
-        manager.load_exchange_credentials(
-            "binance", expected_environment=Environment.PAPER
-        )
+        manager.load_exchange_credentials("binance", expected_environment=Environment.PAPER)
 
     cause = excinfo.value.__cause__
     assert isinstance(cause, ValueError)
@@ -268,9 +277,7 @@ def test_load_exchange_credentials_rejects_archival_api_fields() -> None:
     manager = SecretManager(storage, namespace="tests")
 
     with pytest.raises(SecretStorageError) as excinfo:
-        manager.load_exchange_credentials(
-            "binance", expected_environment=Environment.PAPER
-        )
+        manager.load_exchange_credentials("binance", expected_environment=Environment.PAPER)
 
     assert "niepoprawny format" in str(excinfo.value)
     cause = excinfo.value.__cause__

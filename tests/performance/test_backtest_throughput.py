@@ -87,11 +87,10 @@ def _run_backtest_pair(symbol: str, timeframe: str) -> dict:
     }
 
 
-def _log_report(pair_count: int, timeframe: str, duration_s: float, throughput: float, runs: Iterable[dict]) -> None:
-    commit = (
-        subprocess.check_output(["git", "rev-parse", "--short", "HEAD"], text=True)
-        .strip()
-    )
+def _log_report(
+    pair_count: int, timeframe: str, duration_s: float, throughput: float, runs: Iterable[dict]
+) -> None:
+    commit = subprocess.check_output(["git", "rev-parse", "--short", "HEAD"], text=True).strip()
     payload = {
         "pair_count": pair_count,
         "timeframe": timeframe,

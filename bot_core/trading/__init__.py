@@ -1,4 +1,5 @@
 """Pakiet strategii tradingowych w natywnym rdzeniu bota."""
+
 from __future__ import annotations
 
 import importlib

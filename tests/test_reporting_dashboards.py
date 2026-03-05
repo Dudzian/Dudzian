@@ -76,10 +76,7 @@ def test_dashboard_payload_handles_missing_data() -> None:
 
 def test_dashboard_payload_downsamples_equity_and_keeps_last_point() -> None:
     summary = {
-        "equity_curve": [
-            {"timestamp": index, "value": float(index)}
-            for index in range(1200)
-        ]
+        "equity_curve": [{"timestamp": index, "value": float(index)} for index in range(1200)]
     }
     payload = _build_dashboard_payload([_entry(summary)])
     points = payload["equity_curve"]

@@ -200,7 +200,9 @@ def _verify_external_manifest(
     if signature_doc and signing_key:
         signature_errors = verify_signature(manifest, signature_doc, key=signing_key)
         if signature_errors:
-            raise ValueError("Weryfikacja podpisu manifestu nie powiodła się: " + "; ".join(signature_errors))
+            raise ValueError(
+                "Weryfikacja podpisu manifestu nie powiodła się: " + "; ".join(signature_errors)
+            )
     elif signature_doc and not signing_key:
         message = "Podpis manifestu wykryty, ale nie przekazano klucza HMAC (podpis bez klucza)"
         _LOGGER.warning(message)
@@ -281,12 +283,16 @@ def _load_signing_key_file_without_permissions(file_path: str) -> bytes:
 def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Weryfikacja paczki odporności Stage6")
     parser.add_argument("bundle", nargs="?", help="Ścieżka do archiwum (tar.gz lub zip)")
-    parser.add_argument("--bundle", dest="bundle_option", help="Ścieżka do archiwum (tar.gz lub zip)")
+    parser.add_argument(
+        "--bundle", dest="bundle_option", help="Ścieżka do archiwum (tar.gz lub zip)"
+    )
     parser.add_argument("--manifest", help="Zewnętrzny manifest JSON (dla plików ZIP)")
     parser.add_argument("--signature", help="Plik podpisu manifestu")
     parser.add_argument("--hmac-key", dest="hmac_key", help="Klucz HMAC podany inline")
     parser.add_argument("--hmac-key-file", dest="hmac_key_file", help="Plik z kluczem HMAC")
-    parser.add_argument("--hmac-key-env", dest="hmac_key_env", help="Zmienna środowiskowa z kluczem HMAC")
+    parser.add_argument(
+        "--hmac-key-env", dest="hmac_key_env", help="Zmienna środowiskowa z kluczem HMAC"
+    )
     parser.add_argument(
         "--signing-key-env",
         dest="hmac_key_env",
@@ -320,11 +326,7 @@ def _execute(parser: argparse.ArgumentParser, args: argparse.Namespace, bundle_p
             env_name_alt=args.hmac_key_env_alt,
         )
     except ValueError as exc:
-        if (
-            os.name == "nt"
-            and args.hmac_key_file
-            and "uprawnienia maks. 600" in str(exc)
-        ):
+        if os.name == "nt" and args.hmac_key_file and "uprawnienia maks. 600" in str(exc):
             # Windows nie gwarantuje chmod(0600), więc ignorujemy ten błąd tylko w CLI.
             _LOGGER.warning(
                 "Błąd odczytu klucza HMAC: %s (CLI: ponawiam bez walidacji perms)",
@@ -348,8 +350,12 @@ def _execute(parser: argparse.ArgumentParser, args: argparse.Namespace, bundle_p
         else:
             summary = _verify_external_manifest(
                 bundle_path=bundle_path,
-                manifest_path=Path(args.manifest) if args.manifest else bundle_path.with_suffix(".manifest.json"),
-                signature_path=Path(args.signature) if args.signature else bundle_path.with_suffix(".manifest.sig"),
+                manifest_path=Path(args.manifest)
+                if args.manifest
+                else bundle_path.with_suffix(".manifest.json"),
+                signature_path=Path(args.signature)
+                if args.signature
+                else bundle_path.with_suffix(".manifest.sig"),
                 signing_key=signing_key,
             )
     except ValueError as exc:

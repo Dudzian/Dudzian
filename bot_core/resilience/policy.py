@@ -23,13 +23,9 @@ class PatternRequirement:
 
     def validate(self) -> None:
         if self.min_matches < 1:
-            raise ValueError(
-                f"Wymagane dopasowania muszą być >= 1 dla wzorca {self.pattern}"
-            )
+            raise ValueError(f"Wymagane dopasowania muszą być >= 1 dla wzorca {self.pattern}")
         if self.severity not in _ALLOWED_SEVERITIES:
-            raise ValueError(
-                f"Nieobsługiwany poziom istotności {self.severity} dla {self.pattern}"
-            )
+            raise ValueError(f"Nieobsługiwany poziom istotności {self.severity} dla {self.pattern}")
 
 
 @dataclass(slots=True)
@@ -209,4 +205,3 @@ __all__ = [
     "load_policy",
     "evaluate_policy",
 ]
-

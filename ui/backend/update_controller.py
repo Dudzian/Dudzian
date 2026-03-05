@@ -1,4 +1,5 @@
 """Kontroler importu pakietów `.dudzianpkg` na potrzeby dialogu aktualizacji."""
+
 from __future__ import annotations
 
 import logging

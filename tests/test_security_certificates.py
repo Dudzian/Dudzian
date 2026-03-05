@@ -43,7 +43,10 @@ def test_certificate_reference_metadata_parses_fingerprint(tmp_path: Path, role:
     assert isinstance(certificates, list)
     assert len(certificates) == 1
     entry = certificates[0]
-    assert entry["fingerprint_sha256"] == "a49ede6616a62c76e2affdf692aa103cfeb89ddbd1f0f03b13a8a3166aa63079"
+    assert (
+        entry["fingerprint_sha256"]
+        == "a49ede6616a62c76e2affdf692aa103cfeb89ddbd1f0f03b13a8a3166aa63079"
+    )
     assert entry["subject"]["commonName"] == "test.local"
     assert "not_after" in entry
 

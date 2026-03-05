@@ -1,4 +1,5 @@
 """Signal helpers for cross-exchange hedge strategies."""
+
 from __future__ import annotations
 
 from dataclasses import dataclass

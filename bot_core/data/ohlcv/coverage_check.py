@@ -1,4 +1,5 @@
 """Kontrola pokrycia danych OHLCV względem wymagań backfillu."""
+
 from __future__ import annotations
 
 from collections import Counter
@@ -228,9 +229,7 @@ def evaluate_coverage(
                 if row_count is None:
                     issues.append("missing_row_count")
                 elif row_count < required_rows:
-                    issues.append(
-                        f"insufficient_rows:{row_count}<{required_rows}"
-                    )
+                    issues.append(f"insufficient_rows:{row_count}<{required_rows}")
         statuses.append(
             CoverageStatus(
                 symbol=entry.symbol,

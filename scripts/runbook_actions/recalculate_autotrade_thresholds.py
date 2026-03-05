@@ -1,4 +1,5 @@
 """Przelicza domyślne progi autotrade na podstawie ostatnich metryk."""
+
 from __future__ import annotations
 
 import argparse

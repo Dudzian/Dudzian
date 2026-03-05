@@ -1,4 +1,5 @@
 """Loguje decyzję PortfolioGovernora i zapisuje podpisany wpis JSONL."""
+
 from __future__ import annotations
 
 import argparse
@@ -85,7 +86,9 @@ def main() -> None:
     parser.add_argument("--environment", required=True, help="Nazwa środowiska w core.yaml")
     parser.add_argument("--governor", required=True, help="Nazwa PortfolioGovernora")
     parser.add_argument("--allocations", required=True, help="Plik JSON/YAML z alokacjami")
-    parser.add_argument("--portfolio-value", type=float, required=True, help="Wartość portfela w USD")
+    parser.add_argument(
+        "--portfolio-value", type=float, required=True, help="Wartość portfela w USD"
+    )
     parser.add_argument("--market-intel", required=True, help="Raport Market Intel w formacie JSON")
     parser.add_argument("--slo-status", help="Raport SLO (opcjonalnie) JSON/YAML")
     parser.add_argument(
@@ -107,7 +110,11 @@ def main() -> None:
         raw_core = load_json_or_yaml(Path(args.config))
         if isinstance(raw_core, Mapping):
             raw_governor = (raw_core.get("portfolio_governors") or {}).get(args.governor)  # type: ignore[index]
-            governor_cfg = _fallback_governor_config(raw_governor or {}, args.governor) if raw_governor else None
+            governor_cfg = (
+                _fallback_governor_config(raw_governor or {}, args.governor)
+                if raw_governor
+                else None
+            )
     if governor_cfg is None:
         raise SystemExit(f"PortfolioGovernor {args.governor} nie istnieje w konfiguracji")
     allocations = load_allocations_file(Path(args.allocations))
@@ -130,7 +137,9 @@ def main() -> None:
         stress_overrides = list(parse_stress_overrides_payload(stress_payload))
 
     configured_path, log_kwargs = resolve_decision_log_config(core_config)
-    output_path = Path(args.output) if args.output else configured_path or _default_output(args.governor)
+    output_path = (
+        Path(args.output) if args.output else configured_path or _default_output(args.governor)
+    )
 
     key = None
     key_id = None

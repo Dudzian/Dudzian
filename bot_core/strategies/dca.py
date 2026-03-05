@@ -1,4 +1,5 @@
 """Implementacja strategii Dollar-Cost Averaging (DCA)."""
+
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -64,8 +65,12 @@ class DollarCostAveragingStrategy(StrategyEngine):
         if not due and drawdown < self._settings.min_drawdown:
             return []
 
-        acceleration = 1.0 + min(self._settings.max_drawdown, drawdown) * self._settings.drawdown_acceleration
-        allocation = min(self._settings.max_allocation - state.cumulative_allocation, acceleration * 0.1)
+        acceleration = (
+            1.0 + min(self._settings.max_drawdown, drawdown) * self._settings.drawdown_acceleration
+        )
+        allocation = min(
+            self._settings.max_allocation - state.cumulative_allocation, acceleration * 0.1
+        )
         if allocation <= 0.0:
             return []
 
@@ -95,4 +100,3 @@ class DollarCostAveragingStrategy(StrategyEngine):
 
 
 __all__ = ["DollarCostAveragingSettings", "DollarCostAveragingStrategy"]
-

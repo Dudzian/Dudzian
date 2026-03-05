@@ -48,7 +48,9 @@ def test_local_runtime_gRPC_paper_pipeline():
         markets = getattr(context.pipeline.execution_service, "_markets")
         symbol = context.primary_symbol
         metadata = markets[symbol]
-        iso_duration = _INTERVAL_TO_ISO.get(getattr(context.pipeline.controller, "interval", "1h"), "PT1H")
+        iso_duration = _INTERVAL_TO_ISO.get(
+            getattr(context.pipeline.controller, "interval", "1h"), "PT1H"
+        )
         instrument = trading_pb2.Instrument(
             exchange=(context.exchange_name or "PAPER").upper(),
             symbol=symbol,

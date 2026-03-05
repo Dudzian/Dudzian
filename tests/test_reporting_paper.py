@@ -1,4 +1,5 @@
 """Testy raportowania symulatora paper tradingu."""
+
 from __future__ import annotations
 
 import csv
@@ -65,7 +66,9 @@ def execution_context() -> ExecutionContext:
     )
 
 
-def test_generate_daily_report(tmp_path: Path, paper_service: PaperTradingExecutionService, execution_context: ExecutionContext) -> None:
+def test_generate_daily_report(
+    tmp_path: Path, paper_service: PaperTradingExecutionService, execution_context: ExecutionContext
+) -> None:
     order_buy = OrderRequest(
         symbol="BTCUSDT",
         side="buy",

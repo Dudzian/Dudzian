@@ -66,9 +66,7 @@ class DefaultStrategyBanditAdvisor(StrategyAdvisor):
         modes = self._modes_from_scores(score, risk_score)
         position_size = self._position_from_risk(candidate.notional, risk_score)
         self._pending[id(candidate)] = (key, context, self._extract_meta_label(candidate))
-        return BanditRecommendation(
-            modes=modes, position_size=position_size, risk_score=risk_score
-        )
+        return BanditRecommendation(modes=modes, position_size=position_size, risk_score=risk_score)
 
     def observe(
         self,
@@ -139,12 +137,7 @@ class DefaultStrategyBanditAdvisor(StrategyAdvisor):
             MarketRegime.MEAN_REVERSION.value: 0.55,
             MarketRegime.DAILY.value: 0.45,
         }.get(regime, 0.5)
-        risk = (
-            0.35 * base_mean
-            + 0.25 * meta_component
-            + 0.2 * probability
-            + 0.2 * regime_bias
-        )
+        risk = 0.35 * base_mean + 0.25 * meta_component + 0.2 * probability + 0.2 * regime_bias
         risk = 0.5 * risk + 0.5 * net_component
         return max(0.0, min(1.0, risk))
 
@@ -221,8 +214,7 @@ class DefaultStrategyBanditAdvisor(StrategyAdvisor):
         model_meta = metadata.get("model_metadata")
         if isinstance(model_meta, Mapping):
             candidates.extend(
-                model_meta.get(key)
-                for key in ("confidence", "model_score", "quality")
+                model_meta.get(key) for key in ("confidence", "model_score", "quality")
             )
         for value in candidates:
             try:

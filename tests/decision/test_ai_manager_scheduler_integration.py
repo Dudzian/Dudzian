@@ -22,7 +22,9 @@ from bot_core.decision.orchestrator import DecisionOrchestrator
 class RecordingDecisionOrchestrator(DecisionOrchestrator):
     def __init__(self, *args, **kwargs) -> None:
         super().__init__(*args, **kwargs)
-        self.performance_updates: list[tuple[str, dict[str, float], str | None, str | None, datetime | None]] = []
+        self.performance_updates: list[
+            tuple[str, dict[str, float], str | None, str | None, datetime | None]
+        ] = []
 
     def update_model_performance(
         self,
@@ -33,9 +35,7 @@ class RecordingDecisionOrchestrator(DecisionOrchestrator):
         risk_profile: str | None = None,
         timestamp: datetime | None = None,
     ) -> None:
-        self.performance_updates.append(
-            (name, dict(metrics), strategy, risk_profile, timestamp)
-        )
+        self.performance_updates.append((name, dict(metrics), strategy, risk_profile, timestamp))
         super().update_model_performance(
             name,
             metrics,

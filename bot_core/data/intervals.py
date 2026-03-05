@@ -1,4 +1,5 @@
 """Narzędzia do pracy z interwałami czasowymi strategii/manifestu."""
+
 from __future__ import annotations
 
 _UNIT_SECONDS = {

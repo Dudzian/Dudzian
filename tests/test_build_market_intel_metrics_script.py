@@ -65,9 +65,7 @@ def test_build_market_intel_metrics_ohlcv_respects_cache_namespace(
     monkeypatch.setattr(cli, "_HAS_OHLCV", True)
     monkeypatch.setattr(cli, "OHLCVAggregator", _StubAggregator)
     monkeypatch.setattr(cli, "MarketIntelQuery", _StubQuery)
-    monkeypatch.setattr(
-        "bot_core.data.ohlcv.parquet_storage.ParquetCacheStorage", _StubStorage
-    )
+    monkeypatch.setattr("bot_core.data.ohlcv.parquet_storage.ParquetCacheStorage", _StubStorage)
 
     output_path = tmp_path / "metrics.json"
     exit_code = build_metrics(
@@ -120,7 +118,9 @@ def sqlite_dataset(tmp_path: Path) -> Path:
     return db_path
 
 
-def test_build_market_intel_metrics_cli(tmp_path: Path, sqlite_dataset: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_build_market_intel_metrics_cli(
+    tmp_path: Path, sqlite_dataset: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     output_dir = tmp_path / "metrics"
     manifest_path = tmp_path / "manifest.json"
 
@@ -150,7 +150,9 @@ def test_build_market_intel_metrics_cli(tmp_path: Path, sqlite_dataset: Path, mo
 
 
 @pytest.mark.smoke
-def test_build_market_intel_metrics_populate_sqlite(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_build_market_intel_metrics_populate_sqlite(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     sqlite_path = tmp_path / "market_metrics.sqlite"
     output_dir = tmp_path / "metrics"
     manifest_path = tmp_path / "manifest.json"

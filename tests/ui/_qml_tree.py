@@ -52,4 +52,3 @@ def find_by_object_name(root_obj: object, name: str) -> object | None:
         if object_name == name:
             return obj
     return None
-

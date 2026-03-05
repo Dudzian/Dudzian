@@ -1,4 +1,5 @@
 """Workflow zarządzania presetami strategii w zależności od reżimu rynku."""
+
 from __future__ import annotations
 
 from collections import Counter, deque
@@ -224,9 +225,7 @@ class StrategyRegimeWorkflow:
         if schedule_windows:
             self._schedule = tuple(schedule_windows)
         else:
-            self._schedule = (
-                ScheduleWindow(start=time(0, 0), end=time(0, 0), allow_trading=True),
-            )
+            self._schedule = (ScheduleWindow(start=time(0, 0), end=time(0, 0), allow_trading=True),)
         self._decision_engine = decision_engine
         self._logger = logger or _LOGGER
         self._plugin_catalog = StrategyPluginCatalog.default()
@@ -317,9 +316,7 @@ class StrategyRegimeWorkflow:
         self._history.update(assessment)
         summary = self._history.summarise()
 
-        available = {
-            str(item).strip().lower() for item in available_data if str(item).strip()
-        }
+        available = {str(item).strip().lower() for item in available_data if str(item).strip()}
         allowed = self._is_within_schedule(now)
         missing_data: tuple[str, ...] = ()
         blocked_reason: str | None = None
@@ -451,7 +448,9 @@ class StrategyRegimeWorkflow:
                 return MappingProxyType({})
             return MappingProxyType(dict(counter))
 
-        def _freeze_preset(counter: Counter[MarketRegime | None]) -> Mapping[MarketRegime | None, int]:
+        def _freeze_preset(
+            counter: Counter[MarketRegime | None],
+        ) -> Mapping[MarketRegime | None, int]:
             if not counter:
                 return MappingProxyType({})
             return MappingProxyType(dict(counter))
@@ -692,11 +691,7 @@ class StrategyRegimeWorkflow:
         if now is None:
             now = datetime.now(timezone.utc)
         allowed = self._is_within_schedule(now)
-        available = {
-            str(item).strip().lower()
-            for item in available_data
-            if str(item).strip()
-        }
+        available = {str(item).strip().lower() for item in available_data if str(item).strip()}
 
         reports: list[PresetAvailability] = []
         for preset in self._presets.values():
@@ -899,14 +894,20 @@ class StrategyRegimeWorkflow:
             return moment.astimezone(timezone.utc).replace(tzinfo=None)
         return moment
 
-    def _extract_metadata(self, preset: Mapping[str, object]) -> MutableMapping[str, tuple[str, ...]]:
+    def _extract_metadata(
+        self, preset: Mapping[str, object]
+    ) -> MutableMapping[str, tuple[str, ...]]:
         strategies = tuple(preset.get("strategies", []))
         strategy_keys = _gather_strings([[entry.get("engine", "")] for entry in strategies])
-        strategy_names = _gather_strings([[entry.get("name", entry.get("engine", ""))] for entry in strategies])
+        strategy_names = _gather_strings(
+            [[entry.get("name", entry.get("engine", ""))] for entry in strategies]
+        )
         license_tiers = _gather_strings([[entry.get("license_tier", "")] for entry in strategies])
         risk_classes = _gather_strings([entry.get("risk_classes", []) for entry in strategies])
         required_data = _gather_strings([entry.get("required_data", []) for entry in strategies])
-        capabilities = _gather_strings([[entry.get("capability", "")] for entry in strategies if entry.get("capability")])
+        capabilities = _gather_strings(
+            [[entry.get("capability", "")] for entry in strategies if entry.get("capability")]
+        )
         tags = _gather_strings([entry.get("tags", []) for entry in strategies])
         preset_metadata = preset.get("metadata")
         metadata_payload: MutableMapping[str, object]
@@ -985,9 +986,7 @@ class StrategyRegimeWorkflow:
             schedule_blocked=schedule_blocked,
         )
 
-    def _history_slice(
-        self, limit: int | None
-    ) -> tuple[RegimePresetActivation, ...]:
+    def _history_slice(self, limit: int | None) -> tuple[RegimePresetActivation, ...]:
         entries = tuple(self._activation_history)
         if limit is None:
             return entries
@@ -1028,7 +1027,9 @@ class StrategyRegimeWorkflow:
                 raise RuntimeError(
                     "Missing market data prevents preset activation and no fallback preset is registered"
                 )
-            raise RuntimeError("Decision schedule blocks activation and no fallback preset is registered")
+            raise RuntimeError(
+                "Decision schedule blocks activation and no fallback preset is registered"
+            )
         missing = self._missing_data(self._fallback.required_data, available)
         combined_missing = current_missing
         if missing:
@@ -1048,15 +1049,15 @@ class StrategyRegimeWorkflow:
         preset_name = str(preset.preset.get("name", "preset"))
         issues: list[str] = []
         last_exc: LicenseCapabilityError | None = None
-        current_edition = getattr(guard.capabilities, "edition", "") if hasattr(guard, "capabilities") else ""
+        current_edition = (
+            getattr(guard.capabilities, "edition", "") if hasattr(guard, "capabilities") else ""
+        )
 
         for tier in preset.license_tiers:
             normalized = tier.strip()
             if not normalized:
                 continue
-            message = (
-                f"Preset '{preset_name}' wymaga licencji '{normalized}' (obecna edycja: '{current_edition or 'unknown'}')."
-            )
+            message = f"Preset '{preset_name}' wymaga licencji '{normalized}' (obecna edycja: '{current_edition or 'unknown'}')."
             try:
                 guard.require_license_tier(normalized, message=message)
             except LicenseCapabilityError as exc:
@@ -1097,7 +1098,9 @@ class StrategyRegimeWorkflow:
                     "preset": preset.get("name"),
                     "preset_version": version.hash,
                     "tags": tuple(entry.get("tags", [])) if isinstance(entry, Mapping) else tuple(),
-                    "license_tier": entry.get("license_tier") if isinstance(entry, Mapping) else None,
+                    "license_tier": entry.get("license_tier")
+                    if isinstance(entry, Mapping)
+                    else None,
                 }
             )
             probability = float(metadata.get("expected_probability", 1.0))
@@ -1136,4 +1139,3 @@ __all__ = [
     "StrategyDecision",
     "StrategyRegimeWorkflow",
 ]
-

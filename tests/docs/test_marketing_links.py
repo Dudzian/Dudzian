@@ -34,7 +34,9 @@ def test_marketing_footnotes_point_to_existing_files(marketing_docs: dict[str, P
         text = path.read_text(encoding="utf-8")
         for target in _extract_footnote_paths(text):
             target_path = (REPO_ROOT / target).resolve()
-            assert target_path.exists(), f"Dokument {path} odwołuje się do nieistniejącej ścieżki: {target}"
+            assert target_path.exists(), (
+                f"Dokument {path} odwołuje się do nieistniejącej ścieżki: {target}"
+            )
 
 
 def test_benchmark_references_latest_marketing(marketing_docs: dict[str, Path]) -> None:
@@ -56,4 +58,3 @@ def test_whitepaper_contains_marketing_checklist(marketing_docs: dict[str, Path]
 def test_marketing_bundle_script_exists() -> None:
     script_path = REPO_ROOT / "scripts/export_marketing_bundle.py"
     assert script_path.exists(), "Brak skryptu eksportu bundla marketingowego"
-

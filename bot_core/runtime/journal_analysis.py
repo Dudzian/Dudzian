@@ -3,6 +3,7 @@
 Moduł udostępnia lekkie statystyki oparte na ostatnich wpisach dziennika,
 które pozwalają dynamicznie stroić parametry strategii w AutoTraderze.
 """
+
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -156,9 +157,7 @@ def analyse_decision_journal(
         records = list(journal_or_records)
 
     ordered: list[tuple[int, Mapping[str, object]]] = [
-        (idx, entry)
-        for idx, entry in enumerate(records)
-        if isinstance(entry, Mapping)
+        (idx, entry) for idx, entry in enumerate(records) if isinstance(entry, Mapping)
     ]
     if len(ordered) > window:
         ordered = ordered[-window:]
@@ -219,11 +218,7 @@ def analyse_decision_journal(
     baseline = peak if peak > 0 else max(abs(cumulative), 1.0)
     max_drawdown_pct = max_drawdown / baseline if baseline else 0.0
 
-    accuracy = (
-        approvals_success / approvals_total
-        if approvals_total
-        else 0.0
-    )
+    accuracy = approvals_success / approvals_total if approvals_total else 0.0
 
     last_timestamp = max(timestamps) if timestamps else None
     if last_timestamp is None and now is not None:
@@ -247,4 +242,3 @@ def analyse_decision_journal(
 
 
 __all__ = ["JournalAnalytics", "analyse_decision_journal"]
-

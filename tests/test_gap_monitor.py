@@ -53,7 +53,9 @@ def test_gap_tracker_sends_warning_on_threshold_exceeded() -> None:
         audit_logger=audit,
     )
 
-    tracker.handle_summaries(interval="1h", summaries=[_summary("BTCUSDT", "1h", now_ms)], as_of_ms=now_ms)
+    tracker.handle_summaries(
+        interval="1h", summaries=[_summary("BTCUSDT", "1h", now_ms)], as_of_ms=now_ms
+    )
 
     assert len(router.messages) == 1
     message = router.messages[0]
@@ -93,8 +95,12 @@ def test_gap_tracker_throttles_repeated_warnings() -> None:
         audit_logger=audit,
     )
 
-    tracker.handle_summaries(interval="1h", summaries=[_summary("ETHUSDT", "1h", now_ms)], as_of_ms=now_ms)
-    tracker.handle_summaries(interval="1h", summaries=[_summary("ETHUSDT", "1h", now_ms)], as_of_ms=now_ms)
+    tracker.handle_summaries(
+        interval="1h", summaries=[_summary("ETHUSDT", "1h", now_ms)], as_of_ms=now_ms
+    )
+    tracker.handle_summaries(
+        interval="1h", summaries=[_summary("ETHUSDT", "1h", now_ms)], as_of_ms=now_ms
+    )
 
     assert len(router.messages) == 1
     assert router.messages[0].severity == "warning"
@@ -152,11 +158,11 @@ def test_gap_tracker_escalates_sms_and_recovers() -> None:
     audit = DummyAuditLogger()
     base_time = datetime(2024, 1, 1, tzinfo=timezone.utc)
     clock_times = [
-        base_time,                              # warn #1
-        base_time + timedelta(minutes=2),       # warn #2 (wciąż w throttlingu)
-        base_time + timedelta(minutes=4),       # warn #3 -> incident open
-        base_time + timedelta(minutes=20),      # SMS escalate (>15m)
-        base_time + timedelta(minutes=40),      # recovery
+        base_time,  # warn #1
+        base_time + timedelta(minutes=2),  # warn #2 (wciąż w throttlingu)
+        base_time + timedelta(minutes=4),  # warn #3 -> incident open
+        base_time + timedelta(minutes=20),  # SMS escalate (>15m)
+        base_time + timedelta(minutes=40),  # recovery
     ]
 
     def clock() -> datetime:
@@ -231,7 +237,9 @@ def test_gap_tracker_audit_records_missing_metadata() -> None:
         audit_logger=audit,
     )
 
-    tracker.handle_summaries(interval="1h", summaries=[_summary("BTCPLN", "1h", now_ms)], as_of_ms=now_ms)
+    tracker.handle_summaries(
+        interval="1h", summaries=[_summary("BTCPLN", "1h", now_ms)], as_of_ms=now_ms
+    )
 
     assert router.messages[-1].severity == "critical"
     assert audit.records[-1].status == "missing_metadata"

@@ -13,7 +13,19 @@ from collections.abc import Iterable, Iterator, MutableMapping
 from collections import Counter, deque
 from importlib import import_module
 from pathlib import Path
-from typing import Any, Callable, Dict, List, Mapping, MutableMapping, Optional, Sequence, Tuple, cast, TYPE_CHECKING
+from typing import (
+    Any,
+    Callable,
+    Dict,
+    List,
+    Mapping,
+    MutableMapping,
+    Optional,
+    Sequence,
+    Tuple,
+    cast,
+    TYPE_CHECKING,
+)
 
 from datetime import datetime, timezone
 
@@ -262,9 +274,7 @@ def register_native_adapter(
     """
 
     if mode not in {Mode.MARGIN, Mode.FUTURES}:
-        log.debug(
-            "Pomijam rejestrację adaptera %s (%s) – tryb nieobsługiwany", exchange_id, mode
-        )
+        log.debug("Pomijam rejestrację adaptera %s (%s) – tryb nieobsługiwany", exchange_id, mode)
         return
     key = (mode, exchange_id)
     source_path = Path(source).expanduser() if source is not None else None
@@ -547,7 +557,13 @@ def _iter_exchange_adapter_entries(
                 except Exception:
                     normalized_settings = {}
 
-            yield mode, normalized_exchange, class_path_text, normalized_settings, bool(supports_testnet)
+            yield (
+                mode,
+                normalized_exchange,
+                class_path_text,
+                normalized_settings,
+                bool(supports_testnet),
+            )
 
 
 def _load_dynamic_native_adapters(
@@ -587,7 +603,13 @@ def _load_dynamic_native_adapters(
 
         seen_entries = False
         registered_any = False
-        for mode, exchange, class_path, default_settings, supports_testnet in _iter_exchange_adapter_entries(adapters_payload):
+        for (
+            mode,
+            exchange,
+            class_path,
+            default_settings,
+            supports_testnet,
+        ) in _iter_exchange_adapter_entries(adapters_payload):
             seen_entries = True
             key = (mode, exchange)
             if key in _NATIVE_ADAPTER_REGISTRY:
@@ -657,6 +679,7 @@ def iter_registered_native_adapters(
             source=registration.source,
             dynamic=registration.dynamic,
         )
+
 
 def get_native_adapter_info(*, exchange_id: str, mode: Mode) -> NativeAdapterInfo | None:
     """Zwraca metadane pojedynczego zarejestrowanego adaptera."""
@@ -869,15 +892,19 @@ class _CCXTPublicFeed(BaseBackend):
         self._markets = self.client.load_markets()
         rules: Dict[str, MarketRules] = {}
         for symbol, meta in self._markets.items():
-            limits = (meta.get("limits") or {})
+            limits = meta.get("limits") or {}
             amount_limits = limits.get("amount") or {}
             price_limits = limits.get("price") or {}
             precision = meta.get("precision") or {}
             amount_step = amount_limits.get("step", 0.0) or (
-                (10 ** -float(precision.get("amount", 8))) if precision.get("amount") is not None else 0.0
+                (10 ** -float(precision.get("amount", 8)))
+                if precision.get("amount") is not None
+                else 0.0
             )
             price_step = price_limits.get("step", 0.0) or (
-                (10 ** -float(precision.get("price", 8))) if precision.get("price") is not None else 0.0
+                (10 ** -float(precision.get("price", 8)))
+                if precision.get("price") is not None
+                else 0.0
             )
             min_notional = (limits.get("cost") or {}).get("min", 0.0) or 0.0
             rules[symbol] = MarketRules(
@@ -1030,7 +1057,9 @@ class _CCXTPrivateBackend(_CCXTPublicFeed):
 
         if type == OrderType.MARKET:
             ticker = self.fetch_ticker(symbol) or {}
-            last = ticker.get("last") or ticker.get("close") or ticker.get("bid") or ticker.get("ask")
+            last = (
+                ticker.get("last") or ticker.get("close") or ticker.get("bid") or ticker.get("ask")
+            )
             if not last:
                 raise RuntimeError(f"Brak ceny MARKET dla {symbol}.")
             notional = qty * float(last)
@@ -1106,7 +1135,9 @@ class _CCXTPrivateBackend(_CCXTPublicFeed):
         resolved_price = px if px is not None else avg_price_value
 
         try:
-            parsed_id = int(order_id) if isinstance(order_id, str) and order_id.isdigit() else order_id
+            parsed_id = (
+                int(order_id) if isinstance(order_id, str) and order_id.isdigit() else order_id
+            )
         except Exception:  # pragma: no cover - defensywne rzutowanie
             parsed_id = order_id
 
@@ -1151,9 +1182,7 @@ class _CCXTPrivateBackend(_CCXTPublicFeed):
     def fetch_open_orders(self, symbol: Optional[str] = None) -> List[OrderDTO]:
         try:
             orders = (
-                self.client.fetch_open_orders(symbol)
-                if symbol
-                else self.client.fetch_open_orders()
+                self.client.fetch_open_orders(symbol) if symbol else self.client.fetch_open_orders()
             )
         except Exception as exc:
             log.error("fetch_open_orders failed: %s", exc)
@@ -1191,9 +1220,7 @@ class _CCXTPrivateBackend(_CCXTPublicFeed):
 
             try:
                 avg_extra = (
-                    float(entry.get("average"))
-                    if entry.get("average") not in (None, "")
-                    else None
+                    float(entry.get("average")) if entry.get("average") not in (None, "") else None
                 )
             except (TypeError, ValueError):
                 avg_extra = None
@@ -1247,7 +1274,9 @@ class _CCXTPrivateBackend(_CCXTPublicFeed):
                 return None
             return number
 
-        def _extract_number(entry: Mapping[str, Any], keys: Sequence[str], *, allow_zero: bool = False) -> float | None:
+        def _extract_number(
+            entry: Mapping[str, Any], keys: Sequence[str], *, allow_zero: bool = False
+        ) -> float | None:
             for key in keys:
                 if not key:
                     continue
@@ -1472,7 +1501,9 @@ class ExchangeManager:
             self._futures = False
             self._testnet = bool(testnet)
 
-        log.info("Mode set to %s (futures=%s, testnet=%s)", self.mode.value, self._futures, self._testnet)
+        log.info(
+            "Mode set to %s (futures=%s, testnet=%s)", self.mode.value, self._futures, self._testnet
+        )
         self._private = None
         self._paper = None
         self._native_adapter = None
@@ -1499,17 +1530,13 @@ class ExchangeManager:
             try:
                 float_value = float(value)
             except (TypeError, ValueError) as exc:
-                raise ValueError(
-                    f"Parametr symulatora '{key}' wymaga liczbowej wartości."
-                ) from exc
+                raise ValueError(f"Parametr symulatora '{key}' wymaga liczbowej wartości.") from exc
             if key == "funding_interval_seconds" and float_value <= 0:
                 raise ValueError(
                     "Parametr funding_interval_seconds wymaga dodatniej wartości (sekundy)."
                 )
             if key in {"slippage_bps", "fee_rate"} and float_value < 0:
-                raise ValueError(
-                    f"Parametr symulatora '{key}' wymaga nieujemnej wartości."
-                )
+                raise ValueError(f"Parametr symulatora '{key}' wymaga nieujemnej wartości.")
             normalized[key] = float_value
 
         if not normalized:
@@ -1557,7 +1584,9 @@ class ExchangeManager:
             raise TypeError("Konfiguracja adaptera musi być mapowaniem.")
         target_mode = mode or self.mode
         if target_mode not in {Mode.MARGIN, Mode.FUTURES}:
-            raise ValueError("Konfiguracja natywnego adaptera jest dostępna tylko dla trybów margin/futures.")
+            raise ValueError(
+                "Konfiguracja natywnego adaptera jest dostępna tylko dla trybów margin/futures."
+            )
         self._native_adapter_settings[(target_mode, self.exchange_id)] = dict(settings)
         self._native_adapter = None
 
@@ -1670,8 +1699,12 @@ class ExchangeManager:
         config_dir: str | os.PathLike[str] | None = None,
         overrides: Mapping[str, Any] | None = None,
     ) -> None:
-        config_path = _resolve_exchange_config_path(exchange or self.exchange_id, config_dir=config_dir)
-        profile = dict(self.load_environment_profile(name, exchange=exchange, config_dir=config_dir))
+        config_path = _resolve_exchange_config_path(
+            exchange or self.exchange_id, config_dir=config_dir
+        )
+        profile = dict(
+            self.load_environment_profile(name, exchange=exchange, config_dir=config_dir)
+        )
         if overrides:
             profile = _deep_merge(profile, overrides)
         expanded = _expand_env_values(profile)
@@ -1695,7 +1728,9 @@ class ExchangeManager:
                 credentials_cfg.get("secret"),
                 passphrase=credentials_cfg.get("passphrase"),
             )
-        self._environment_profile = {key: value for key, value in expanded.items() if key != "credentials"}
+        self._environment_profile = {
+            key: value for key, value in expanded.items() if key != "credentials"
+        }
         self._environment_profile_name = (name or "").strip().lower()
 
     def describe_environment_profile(self) -> Mapping[str, Any] | None:
@@ -1744,7 +1779,9 @@ class ExchangeManager:
             environment=normalized_env,
             preset_id=descriptor.preset_id,
             name=descriptor.name,
-            profile=descriptor.profile.value if hasattr(descriptor.profile, "value") else str(descriptor.profile),
+            profile=descriptor.profile.value
+            if hasattr(descriptor.profile, "value")
+            else str(descriptor.profile),
             strategies=strategies,
             license_status=descriptor.license_status.as_dict(),
             metadata=dict(descriptor.metadata),
@@ -1825,7 +1862,9 @@ class ExchangeManager:
             self._strategy_contexts = {}
             return
 
-        descriptors = [descriptor.as_dict(include_strategies=True) for descriptor in catalog.list_presets()]
+        descriptors = [
+            descriptor.as_dict(include_strategies=True) for descriptor in catalog.list_presets()
+        ]
         engines = tuple(catalog.describe_engines())
         environments = self._strategy_context_environments()
 
@@ -1881,7 +1920,9 @@ class ExchangeManager:
         initial_cash = config.get("paper_initial_cash")
         cash_asset = config.get("paper_cash_asset")
         if initial_cash is not None or cash_asset:
-            amount = float(initial_cash if initial_cash is not None else self.get_paper_initial_cash())
+            amount = float(
+                initial_cash if initial_cash is not None else self.get_paper_initial_cash()
+            )
             self.set_paper_balance(amount, asset=str(cash_asset) if cash_asset else None)
 
         fee_rate = config.get("paper_fee_rate")
@@ -1890,7 +1931,9 @@ class ExchangeManager:
 
         simulator_cfg = config.get("simulator")
         if isinstance(simulator_cfg, Mapping) and simulator_cfg:
-            self.configure_paper_simulator(**{key: value for key, value in simulator_cfg.items() if value is not None})
+            self.configure_paper_simulator(
+                **{key: value for key, value in simulator_cfg.items() if value is not None}
+            )
 
         if "rate_limit_rules" in config:
             rate_limit_cfg = config.get("rate_limit_rules")
@@ -1914,7 +1957,9 @@ class ExchangeManager:
                         try:
                             target_mode = Mode(str(raw_mode).lower())
                         except Exception as exc:
-                            raise ValueError(f"Niepoprawny tryb natywnego adaptera: {raw_mode}") from exc
+                            raise ValueError(
+                                f"Niepoprawny tryb natywnego adaptera: {raw_mode}"
+                            ) from exc
                 self.configure_native_adapter(settings=settings, mode=target_mode)
 
         watchdog_cfg = config.get("watchdog")
@@ -1932,7 +1977,9 @@ class ExchangeManager:
             retry_exceptions = watchdog_cfg.get("retry_exceptions")
             if isinstance(retry_exceptions, Sequence):
                 kwargs["retry_exceptions"] = tuple(
-                    exc for exc in retry_exceptions if isinstance(exc, type) and issubclass(exc, Exception)
+                    exc
+                    for exc in retry_exceptions
+                    if isinstance(exc, type) and issubclass(exc, Exception)
                 )
             if kwargs:
                 self.configure_watchdog(**kwargs)
@@ -1942,8 +1989,12 @@ class ExchangeManager:
             if isinstance(failover_cfg, Mapping):
                 self.configure_failover(
                     enabled=bool(failover_cfg.get("enabled", True)),
-                    failure_threshold=int(failover_cfg.get("failure_threshold", self._failover_threshold)),
-                    cooldown_seconds=float(failover_cfg.get("cooldown_seconds", self._failover_cooldown)),
+                    failure_threshold=int(
+                        failover_cfg.get("failure_threshold", self._failover_threshold)
+                    ),
+                    cooldown_seconds=float(
+                        failover_cfg.get("cooldown_seconds", self._failover_cooldown)
+                    ),
                 )
             else:
                 self.configure_failover(enabled=bool(failover_cfg))
@@ -2100,7 +2151,11 @@ class ExchangeManager:
         return self._watchdog
 
     def _ensure_network_guard(
-        self, *, adapter_name: str, environment: Environment, rate_limit_rules: Sequence[RateLimitRule] | None
+        self,
+        *,
+        adapter_name: str,
+        environment: Environment,
+        rate_limit_rules: Sequence[RateLimitRule] | None,
     ) -> ExchangeNetworkGuard:
         labels = {"exchange": adapter_name, "environment": environment.value}
         defaults = tuple(rate_limit_rules or (RateLimitRule(rate=60, per=60.0),))
@@ -2278,13 +2333,17 @@ class ExchangeManager:
                 raise RuntimeError("Wybrany backend nie udostępnia fetch_account_snapshot")
             snapshot = backend.fetch_account_snapshot()  # type: ignore[call-arg]
         elif self.mode in {Mode.MARGIN, Mode.FUTURES}:
+
             def _native_call() -> tuple[AccountSnapshot, Any]:
                 adapter = self._ensure_native_adapter()
                 return adapter.fetch_account_snapshot(), adapter
 
             fallback_call = None
             if self._failover_enabled:
-                fallback_call = lambda: (self._ensure_private().fetch_account_snapshot(), self._ensure_private())
+                fallback_call = lambda: (
+                    self._ensure_private().fetch_account_snapshot(),
+                    self._ensure_private(),
+                )
 
             payload, _backend_used = self._execute_with_failover(
                 "fetch_account_snapshot",
@@ -2416,7 +2475,9 @@ class ExchangeManager:
     def fetch_ticker(self, symbol: str) -> Optional[Dict[str, Any]]:
         return self._ensure_public().fetch_ticker(symbol)
 
-    def fetch_ohlcv(self, symbol: str, timeframe: str, limit: int = 500) -> Optional[List[List[float]]]:
+    def fetch_ohlcv(
+        self, symbol: str, timeframe: str, limit: int = 500
+    ) -> Optional[List[List[float]]]:
         return self._ensure_public().fetch_ohlcv(symbol, timeframe=timeframe, limit=limit)
 
     def fetch_order_book(self, symbol: str, limit: int = 50) -> Optional[Dict[str, Any]]:
@@ -2429,7 +2490,15 @@ class ExchangeManager:
         timeframe: str = "1m",
         use_orderbook: bool = False,
         limit_ohlcv: int = 500,
-    ) -> List[Tuple[str, Optional[List[List[float]]], Optional[Dict[str, Any]], Optional[Dict[str, Any]], Optional[str]]]:
+    ) -> List[
+        Tuple[
+            str,
+            Optional[List[List[float]]],
+            Optional[Dict[str, Any]],
+            Optional[Dict[str, Any]],
+            Optional[str],
+        ]
+    ]:
         results: List[
             Tuple[
                 str,
@@ -2494,7 +2563,9 @@ class ExchangeManager:
     ) -> Tuple[Optional[float], float]:
         try:
             ticker = self.fetch_ticker(symbol) or {}
-            last = ticker.get("last") or ticker.get("close") or ticker.get("bid") or ticker.get("ask")
+            last = (
+                ticker.get("last") or ticker.get("close") or ticker.get("bid") or ticker.get("ask")
+            )
             mid = float(last) if last else None
             if amount is None or amount <= 0:
                 return (mid, float(fallback_bps))
@@ -2585,7 +2656,9 @@ class ExchangeManager:
         type_enum = OrderType.MARKET if type.upper() == "MARKET" else OrderType.LIMIT
 
         if self.mode == Mode.PAPER:
-            return self._ensure_paper().create_order(symbol, side_enum, type_enum, quantity, price, client_order_id)
+            return self._ensure_paper().create_order(
+                symbol, side_enum, type_enum, quantity, price, client_order_id
+            )
 
         if self.mode in {Mode.MARGIN, Mode.FUTURES}:
             rules = self.get_market_rules(symbol)
@@ -2607,7 +2680,12 @@ class ExchangeManager:
 
             if type_enum is OrderType.MARKET:
                 ticker = self.fetch_ticker(symbol) or {}
-                last = ticker.get("last") or ticker.get("close") or ticker.get("bid") or ticker.get("ask")
+                last = (
+                    ticker.get("last")
+                    or ticker.get("close")
+                    or ticker.get("bid")
+                    or ticker.get("ask")
+                )
                 if not last:
                     raise RuntimeError(f"Brak ceny MARKET dla {symbol}.")
                 notional = qty * float(last)
@@ -2620,7 +2698,9 @@ class ExchangeManager:
                     f"Notional {notional:.8f} < minNotional {min_notional:.8f} dla {symbol}"
                 )
 
-            resolved_client_order_id = (str(client_order_id).strip() if client_order_id is not None else "")
+            resolved_client_order_id = (
+                str(client_order_id).strip() if client_order_id is not None else ""
+            )
             if not resolved_client_order_id:
                 resolved_client_order_id = f"svc-{uuid.uuid4().hex}"
             request = OrderRequest(
@@ -2692,7 +2772,11 @@ class ExchangeManager:
                 )
                 return dto
             except Exception as exc:
-                backend_name = "ccxt" if self._failover_enabled and self._active_backend == "ccxt" else "native"
+                backend_name = (
+                    "ccxt"
+                    if self._failover_enabled and self._active_backend == "ccxt"
+                    else "native"
+                )
                 self._signal_reporter.record_failure(
                     backend=backend_name,
                     symbol=symbol,
@@ -2760,6 +2844,7 @@ class ExchangeManager:
                 log.error("cancel_order failed (paper): %s", exc)
                 return False
         if self.mode in {Mode.MARGIN, Mode.FUTURES}:
+
             def _native_call() -> bool:
                 adapter = self._ensure_native_adapter()
                 adapter.cancel_order(str(order_id), symbol=symbol)
@@ -2785,6 +2870,7 @@ class ExchangeManager:
         if self.mode == Mode.PAPER:
             return []
         if self.mode in {Mode.MARGIN, Mode.FUTURES}:
+
             def _native_call() -> Sequence[Any]:
                 adapter = self._ensure_native_adapter()
                 return tuple(adapter.fetch_open_orders() or ())
@@ -2817,7 +2903,9 @@ class ExchangeManager:
                             resolved_price = float(price_value)
                         except Exception:
                             resolved_price = None
-                    quantity_value = getattr(entry, "orig_quantity", getattr(entry, "quantity", 0.0))
+                    quantity_value = getattr(
+                        entry, "orig_quantity", getattr(entry, "quantity", 0.0)
+                    )
                     try:
                         resolved_quantity = float(quantity_value)
                     except Exception:

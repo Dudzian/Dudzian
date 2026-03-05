@@ -1,4 +1,5 @@
 """Utilities for pinning strategy workers and throttling runtime feeds."""
+
 from __future__ import annotations
 
 import asyncio
@@ -218,12 +219,14 @@ class RuntimeResourceManager:
             if handler is None or not callable(handler):
                 continue
             if asyncio.iscoroutinefunction(handler):
+
                 async def async_wrapper(*args, _h=handler, **kwargs):
                     await throttler.acquire()
                     return await _h(*args, **kwargs)
 
                 setattr(feed, attribute, async_wrapper)
             else:
+
                 def sync_wrapper(*args, _h=handler, **kwargs):
                     throttler.blocking_acquire()
                     return _h(*args, **kwargs)
@@ -244,7 +247,9 @@ def parse_strategy_affinity_specs(raw: Sequence[str] | None) -> list[StrategyAff
         if not strategy or not cores_raw:
             continue
         try:
-            cores = tuple(sorted({int(core.strip()) for core in cores_raw.split(",") if core.strip()}))
+            cores = tuple(
+                sorted({int(core.strip()) for core in cores_raw.split(",") if core.strip()})
+            )
         except ValueError:
             continue
         if not cores:

@@ -1,4 +1,5 @@
 """Profil ręczny pozwalający na własne limity."""
+
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -67,7 +68,9 @@ class ManualProfile(StaticRiskProfile):
         self._stop_loss_atr_multiple = stop_loss_atr_multiple
         self._trade_risk_pct_range = trade_risk_pct_range
         self._instrument_alert_pct = instrument_alert_pct
-        self._instrument_limit_pct = max_position_pct if instrument_limit_pct is None else instrument_limit_pct
+        self._instrument_limit_pct = (
+            max_position_pct if instrument_limit_pct is None else instrument_limit_pct
+        )
         self._portfolio_alert_pct = portfolio_alert_pct
         self._portfolio_limit_pct = portfolio_limit_pct
         self._daily_kill_switch_r_multiple = daily_kill_switch_r_multiple
@@ -78,5 +81,6 @@ class ManualProfile(StaticRiskProfile):
         self.min_omega_ratio = min_omega_ratio
         self.max_risk_of_ruin_pct = max_risk_of_ruin_pct
         self.min_hit_ratio_pct = min_hit_ratio_pct
+
 
 __all__ = ["ManualProfile"]

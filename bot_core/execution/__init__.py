@@ -22,10 +22,12 @@ try:
         RouterRuntimeStats,
         RoutingPlan,
     )
+
     RouteDefinition = RoutingPlan  # alias dla kompatybilności
 except ImportError:
     # starsza gałąź
     from bot_core.execution.live_router import LiveExecutionRouter, RouteDefinition  # type: ignore  # noqa: F401
+
     QoSConfig = object  # type: ignore  # noqa: N816 - brak w starszych gałęziach
     RoutingPlan = RouteDefinition  # alias ujednolicający API
     RouterRuntimeStats = object  # type: ignore
@@ -40,6 +42,8 @@ else:  # pragma: no cover - fallback dla środowisk testowych bez pydantic
 
     def decision_to_order_request(*args: object, **kwargs: object) -> object:
         raise RuntimeError("decision_to_order_request wymaga zainstalowanego pakietu 'pydantic'.")
+
+
 from bot_core.execution.paper import (  # noqa: F401 - eksport publiczny
     InsufficientBalanceError,
     LedgerEntry,
@@ -47,17 +51,22 @@ from bot_core.execution.paper import (  # noqa: F401 - eksport publiczny
     PaperTradingExecutionService,
     ShortPosition,
 )
+
 if importlib.util.find_spec("cryptography") is not None:
     from bot_core.execution.execution_service import (  # noqa: F401 - eksport publiczny
         build_live_execution_service,
         resolve_execution_mode,
     )
 else:  # pragma: no cover - fallback dla środowisk testowych bez cryptography
+
     def resolve_execution_mode(*args: object, **kwargs: object) -> object:
         raise RuntimeError("resolve_execution_mode wymaga zależności security (cryptography).")
 
     def build_live_execution_service(*args: object, **kwargs: object) -> object:
-        raise RuntimeError("build_live_execution_service wymaga zależności security (cryptography).")
+        raise RuntimeError(
+            "build_live_execution_service wymaga zależności security (cryptography)."
+        )
+
 
 __all__ = [
     "ExecutionContext",

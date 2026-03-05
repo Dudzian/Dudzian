@@ -27,7 +27,9 @@ class _DummyCatalog:
         return _DummyDescriptor(document.preset_id)
 
 
-def _write_signed_preset(path: Path, payload: dict[str, object], private_key: ed25519.Ed25519PrivateKey) -> None:
+def _write_signed_preset(
+    path: Path, payload: dict[str, object], private_key: ed25519.Ed25519PrivateKey
+) -> None:
     signature = sign_preset_payload(payload, private_key=private_key, key_id="demo")
     document = {
         "preset": payload,

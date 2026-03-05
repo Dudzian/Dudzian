@@ -1,4 +1,5 @@
 """Zestaw danych demonstracyjnych decision logu na potrzeby pierwszego uruchomienia."""
+
 from __future__ import annotations
 
 from datetime import datetime, timezone
@@ -106,4 +107,3 @@ def load_demo_decisions() -> Iterable[DecisionRecord]:
 
 
 __all__ = ["load_demo_decisions"]
-

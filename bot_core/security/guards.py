@@ -1,4 +1,5 @@
 """Mechanizmy sprawdzające uprawnienia wynikające z licencji offline."""
+
 from __future__ import annotations
 
 import logging
@@ -45,6 +46,8 @@ def _edition_rank(value: str) -> int:
     except ValueError:
         LOGGER.warning("Nieznana edycja licencji: %s", value)
         return -1
+
+
 _LIMIT_FIELD_MAP = {
     "paper_controller": "max_paper_controllers",
     "live_controller": "max_live_controllers",
@@ -167,7 +170,9 @@ class CapabilityGuard:
                 self._slots[key] = value
 
     def describe_limits(self) -> dict[str, int | None]:
-        return {key: getattr(self.capabilities.limits, attr) for key, attr in _LIMIT_FIELD_MAP.items()}
+        return {
+            key: getattr(self.capabilities.limits, attr) for key, attr in _LIMIT_FIELD_MAP.items()
+        }
 
     def describe_missing_modules(self, required: Iterable[str]) -> list[str]:
         missing: list[str] = []
@@ -214,9 +219,7 @@ def build_capability_guard(
         summary_items = signals.summary()
         summary_text = "; ".join(summary_items) if summary_items else "nieokreślone sygnały"
         LOGGER.error("Zablokowano utworzenie strażnika licencji: %s", summary_text)
-        raise FingerprintError(
-            "Wykryto podejrzane sygnały środowiska: " + summary_text
-        )
+        raise FingerprintError("Wykryto podejrzane sygnały środowiska: " + summary_text)
     return CapabilityGuard(capabilities)
 
 

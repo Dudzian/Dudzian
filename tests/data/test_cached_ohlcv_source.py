@@ -28,7 +28,9 @@ class _FakeAdapter(ExchangeAdapter):
         super().__init__(ExchangeCredentials(key_id="k"))
         self.calls: list[tuple[str, tuple]] = []
 
-    def configure_network(self, *, ip_allowlist=None) -> None:  # pragma: no cover - niewykorzystywane
+    def configure_network(
+        self, *, ip_allowlist=None
+    ) -> None:  # pragma: no cover - niewykorzystywane
         self.calls.append(("configure_network", tuple(ip_allowlist or ())))
 
     def fetch_account_snapshot(self):  # pragma: no cover - niepotrzebne

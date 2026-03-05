@@ -1,4 +1,5 @@
 """Testy potwierdzające rejestrację metryk przez LiveExecutionRouter."""
+
 from __future__ import annotations
 
 from typing import Iterable, Mapping, Protocol, Sequence
@@ -20,8 +21,7 @@ from bot_core.observability.metrics import (
 
 
 class _StubStream(Protocol):
-    def close(self) -> None:
-        ...
+    def close(self) -> None: ...
 
 
 class _StubAdapter(ExchangeAdapter):

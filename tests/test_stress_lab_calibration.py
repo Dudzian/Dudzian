@@ -82,7 +82,9 @@ def test_calibrator_produces_segment_thresholds() -> None:
         min_liquidity_threshold=0.0,
         min_latency_threshold_ms=0.0,
     )
-    calibrator = StressLabCalibrator(settings=settings, clock=lambda: datetime(2024, 1, 3, tzinfo=timezone.utc))
+    calibrator = StressLabCalibrator(
+        settings=settings, clock=lambda: datetime(2024, 1, 3, tzinfo=timezone.utc)
+    )
 
     report = calibrator.calibrate(
         market_snapshots=snapshots,
@@ -110,7 +112,9 @@ def test_calibrator_produces_segment_thresholds() -> None:
 
 def test_calibrator_handles_missing_metrics() -> None:
     calibrator = StressLabCalibrator(
-        settings=StressLabCalibrationSettings(min_liquidity_threshold=0.0, min_latency_threshold_ms=0.0)
+        settings=StressLabCalibrationSettings(
+            min_liquidity_threshold=0.0, min_latency_threshold_ms=0.0
+        )
     )
     empty_segment = StressLabCalibrationSegment(name="empty", symbols=("UNKNOWN",))
     report = calibrator.calibrate(market_snapshots={}, segments=[empty_segment], risk_report=None)
@@ -152,12 +156,15 @@ def test_build_volume_segments_requires_liquidity_metrics() -> None:
     with pytest.raises(ValueError):
         build_volume_segments({}, buckets=2)
 
+
 def test_calibration_writers_create_signed_payload(tmp_path: Path) -> None:
-    settings = StressLabCalibrationSettings(min_liquidity_threshold=0.0, min_latency_threshold_ms=0.0)
-    segments = (
-        StressLabCalibrationSegment(name="core", symbols=("BTCUSDT",)),
+    settings = StressLabCalibrationSettings(
+        min_liquidity_threshold=0.0, min_latency_threshold_ms=0.0
     )
-    calibrator = StressLabCalibrator(settings=settings, clock=lambda: datetime(2024, 1, 4, tzinfo=timezone.utc))
+    segments = (StressLabCalibrationSegment(name="core", symbols=("BTCUSDT",)),)
+    calibrator = StressLabCalibrator(
+        settings=settings, clock=lambda: datetime(2024, 1, 4, tzinfo=timezone.utc)
+    )
     report = calibrator.calibrate(
         market_snapshots={"BTCUSDT": _snapshot("BTCUSDT", 200_000.0)},
         segments=segments,
@@ -170,7 +177,9 @@ def test_calibration_writers_create_signed_payload(tmp_path: Path) -> None:
 
     payload = write_calibration_json(report, json_path)
     write_calibration_csv(report, csv_path)
-    signature = write_calibration_signature(payload, sig_path, key=b"key", key_id="stage6", target=json_path.name)
+    signature = write_calibration_signature(
+        payload, sig_path, key=b"key", key_id="stage6", target=json_path.name
+    )
 
     assert json_path.exists()
     assert csv_path.exists()

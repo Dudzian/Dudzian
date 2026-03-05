@@ -184,7 +184,9 @@ def test_resolve_additional_paths_merges_env(monkeypatch, tmp_path):
         pb.ENV_ADDITIONAL_PATHS,
         os.pathsep.join([str(env_path), str(repo_root / "lib"), str(repo_root / "local")]),
     )
-    result = pb._resolve_additional_paths(repo_root, ["./local", repo_root / "lib"], include_env=True)
+    result = pb._resolve_additional_paths(
+        repo_root, ["./local", repo_root / "lib"], include_env=True
+    )
     assert str(env_path) in result
     assert result.count(str(env_path)) == 1
     resolved_local = str((repo_root / "local").resolve())

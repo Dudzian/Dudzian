@@ -5,6 +5,7 @@ obsługiwać brakujące lub uszkodzone artefakty (np. gdy etap kompatybilności
 zakończył się błędem). Dzięki temu kolejne kroki CI nie flakują, a diagnostyka
 jest jednoznaczna.
 """
+
 from __future__ import annotations
 
 import argparse
@@ -20,7 +21,9 @@ import pandas as pd
 
 
 def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Konsoliduje artefakty dryfu licencji na potrzeby dashboardów.")
+    parser = argparse.ArgumentParser(
+        description="Konsoliduje artefakty dryfu licencji na potrzeby dashboardów."
+    )
     parser.add_argument(
         "--input-dir",
         default="reports/ci/licensing_drift",
@@ -88,7 +91,9 @@ def _parse_generated_at(matrix: Mapping[str, Any]) -> datetime:
     return datetime.now(timezone.utc)
 
 
-def _collect_records(matrix: Mapping[str, Any], run_id: str, generated_at: datetime) -> list[dict[str, Any]]:
+def _collect_records(
+    matrix: Mapping[str, Any], run_id: str, generated_at: datetime
+) -> list[dict[str, Any]]:
     records: list[dict[str, Any]] = []
 
     def _append(name: str, payload: Mapping[str, Any]) -> None:
@@ -111,7 +116,11 @@ def _collect_records(matrix: Mapping[str, Any], run_id: str, generated_at: datet
     scenarios = matrix.get("scenarios") if isinstance(matrix, Mapping) else None
     if isinstance(scenarios, list):
         for scenario in scenarios:
-            name = str(scenario.get("name", "scenario")) if isinstance(scenario, Mapping) else "scenario"
+            name = (
+                str(scenario.get("name", "scenario"))
+                if isinstance(scenario, Mapping)
+                else "scenario"
+            )
             payload = scenario if isinstance(scenario, Mapping) else {}
             _append(name, payload)
 
@@ -180,7 +189,9 @@ def _write_csv(path: Path, records: list[dict[str, Any]]) -> None:
         writer.writeheader()
         for record in records:
             row = {
-                key: ",".join(record.get(key, [])) if isinstance(record.get(key), list) else record.get(key, "")
+                key: ",".join(record.get(key, []))
+                if isinstance(record.get(key), list)
+                else record.get(key, "")
                 for key in fieldnames
             }
             writer.writerow(row)
@@ -206,7 +217,9 @@ def _write_parquet(path: Path, records: list[dict[str, Any]]) -> None:
     df.to_parquet(path, index=False)
 
 
-def _write_prometheus_metrics(path: Path, *, records: list[dict[str, Any]], generated_at: datetime, run_id: str) -> None:
+def _write_prometheus_metrics(
+    path: Path, *, records: list[dict[str, Any]], generated_at: datetime, run_id: str
+) -> None:
     statuses = ("match", "degraded", "rebind_required")
     totals = {status: 0 for status in statuses}
     lines = [
@@ -221,7 +234,9 @@ def _write_prometheus_metrics(path: Path, *, records: list[dict[str, Any]], gene
             value = 1 if status == candidate else 0
             if status == candidate:
                 totals[candidate] = totals.get(candidate, 0) + 1
-            lines.append(f'licensing_drift_status{{scenario="{scenario}",status="{candidate}"}} {value}')
+            lines.append(
+                f'licensing_drift_status{{scenario="{scenario}",status="{candidate}"}} {value}'
+            )
 
     lines.extend(
         [
@@ -233,7 +248,7 @@ def _write_prometheus_metrics(path: Path, *, records: list[dict[str, Any]], gene
             f"licensing_drift_degraded_total {totals.get('degraded', 0)}",
             "# HELP licensing_drift_run_timestamp Znacznik czasu generacji podsumowania (Unix epoch)",
             "# TYPE licensing_drift_run_timestamp gauge",
-            f"licensing_drift_run_timestamp{{run_id=\"{run_id}\"}} {int(generated_at.timestamp())}",
+            f'licensing_drift_run_timestamp{{run_id="{run_id}"}} {int(generated_at.timestamp())}',
         ]
     )
 
@@ -244,13 +259,25 @@ def _write_prometheus_metrics(path: Path, *, records: list[dict[str, Any]], gene
 def main(argv: list[str] | None = None) -> int:
     args = _parse_args(argv)
     input_dir = Path(args.input_dir)
-    compatibility_path = Path(args.compatibility) if args.compatibility else input_dir / "compatibility.json"
+    compatibility_path = (
+        Path(args.compatibility) if args.compatibility else input_dir / "compatibility.json"
+    )
     pytest_log_path = Path(args.pytest_log) if args.pytest_log else input_dir / "pytest.log"
-    json_output = Path(args.json_output) if args.json_output else input_dir / "licensing_drift_summary.json"
-    csv_output = Path(args.csv_output) if args.csv_output else input_dir / "licensing_drift_summary.csv"
-    parquet_output = Path(args.parquet_output) if args.parquet_output else input_dir / "licensing_drift_summary.parquet"
+    json_output = (
+        Path(args.json_output) if args.json_output else input_dir / "licensing_drift_summary.json"
+    )
+    csv_output = (
+        Path(args.csv_output) if args.csv_output else input_dir / "licensing_drift_summary.csv"
+    )
+    parquet_output = (
+        Path(args.parquet_output)
+        if args.parquet_output
+        else input_dir / "licensing_drift_summary.parquet"
+    )
     dashboard_dir = Path(args.dashboard_dir)
-    prom_output = Path(args.prom_output) if args.prom_output else dashboard_dir / "licensing_drift.prom"
+    prom_output = (
+        Path(args.prom_output) if args.prom_output else dashboard_dir / "licensing_drift.prom"
+    )
 
     diagnostics: list[str] = []
     matrix, matrix_error = _load_matrix(compatibility_path)
@@ -274,8 +301,13 @@ def main(argv: list[str] | None = None) -> int:
         )
 
     if matrix is None:
-        pytest_status = {"status": pytest_status.get("status", "unknown"), "summary": pytest_status.get("summary", "")}
-        compatibility_note = matrix_error or f"Brak pliku {compatibility_path} – wygenerowano puste podsumowanie"
+        pytest_status = {
+            "status": pytest_status.get("status", "unknown"),
+            "summary": pytest_status.get("summary", ""),
+        }
+        compatibility_note = (
+            matrix_error or f"Brak pliku {compatibility_path} – wygenerowano puste podsumowanie"
+        )
         pytest_status["compatibility"] = compatibility_note
         if compatibility_note not in diagnostics:
             diagnostics.append(compatibility_note)
@@ -290,11 +322,17 @@ def main(argv: list[str] | None = None) -> int:
     )
     _write_csv(csv_output, records)
     _write_parquet(parquet_output, records)
-    _write_prometheus_metrics(prom_output, records=records, generated_at=generated_at, run_id=args.run_id)
+    _write_prometheus_metrics(
+        prom_output, records=records, generated_at=generated_at, run_id=args.run_id
+    )
 
     dashboard_dir.mkdir(parents=True, exist_ok=True)
-    (dashboard_dir / json_output.name).write_text(json_output.read_text(encoding="utf-8"), encoding="utf-8")
-    (dashboard_dir / csv_output.name).write_text(csv_output.read_text(encoding="utf-8"), encoding="utf-8")
+    (dashboard_dir / json_output.name).write_text(
+        json_output.read_text(encoding="utf-8"), encoding="utf-8"
+    )
+    (dashboard_dir / csv_output.name).write_text(
+        csv_output.read_text(encoding="utf-8"), encoding="utf-8"
+    )
     (dashboard_dir / parquet_output.name).write_bytes(parquet_output.read_bytes())
 
     return 0

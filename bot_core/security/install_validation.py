@@ -11,6 +11,8 @@ from bot_core.security.license import (
     load_hmac_keys_file,
     validate_license,
 )
+
+
 @dataclass(slots=True)
 class FingerprintValidationResult:
     status: str

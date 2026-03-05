@@ -115,6 +115,5 @@ def test_load_portfolio_stress_summary_includes_aggregates(tmp_path: Path) -> No
     assert "var_95_return_pct" in summary["summary"]
     assert "cvar_95_return_pct" in summary["summary"]
     assert any(
-        entry.get("tag") == "macro"
-        for entry in summary["summary"].get("tag_aggregates", [])
+        entry.get("tag") == "macro" for entry in summary["summary"].get("tag_aggregates", [])
     )

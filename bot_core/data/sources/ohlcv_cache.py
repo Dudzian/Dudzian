@@ -1,4 +1,5 @@
 """Warstwa odpowiedzialna za backfill i lokalny cache OHLCV."""
+
 from __future__ import annotations
 
 import logging
@@ -95,7 +96,9 @@ class CachedOHLCVSource(DataSource):
         snapshot_started_at: float | None = None
 
         snapshot_fetcher = self.snapshot_fetcher
-        if snapshot_fetcher is None and (self.snapshots_enabled or getattr(self.upstream, "exchange_adapter", None)):
+        if snapshot_fetcher is None and (
+            self.snapshots_enabled or getattr(self.upstream, "exchange_adapter", None)
+        ):
             snapshot_fetcher = self._fallback_snapshot_fetcher()
             if snapshot_fetcher is not None:
                 self.snapshot_fetcher = snapshot_fetcher
@@ -113,9 +116,7 @@ class CachedOHLCVSource(DataSource):
                     request, deduped_timestamps
                 )
             else:
-                cache_covers_request = self._cached_rows_cover_range(
-                    request, deduped_timestamps
-                )
+                cache_covers_request = self._cached_rows_cover_range(request, deduped_timestamps)
 
         should_hit_upstream = not cache_covers_request
 
@@ -166,7 +167,9 @@ class CachedOHLCVSource(DataSource):
                 )
                 raw_snapshot_rows = ()
             except Exception as exc:  # pragma: no cover - logowanie diagnostyczne
-                _LOGGER.exception("Nieudany snapshot OHLCV (%s %s): %s", request.symbol, request.interval, exc)
+                _LOGGER.exception(
+                    "Nieudany snapshot OHLCV (%s %s): %s", request.symbol, request.interval, exc
+                )
                 raw_snapshot_rows = ()
 
             snapshot_rows = self._normalize_snapshot_rows(raw_snapshot_rows, request)
@@ -184,11 +187,7 @@ class CachedOHLCVSource(DataSource):
         if not columns:
             columns = _DEFAULT_COLUMNS
 
-        filtered = [
-            row
-            for row in rows
-            if request.start <= float(row[0]) <= request.end
-        ]
+        filtered = [row for row in rows if request.start <= float(row[0]) <= request.end]
         if request.limit is not None and request.limit > 0:
             filtered = filtered[-request.limit :]
 
@@ -294,10 +293,7 @@ class CachedOHLCVSource(DataSource):
         try:
             interval_ms = interval_to_milliseconds(request.interval)
         except (KeyError, ValueError):  # pragma: no cover - brak znanych interwałów
-            return (
-                request.start >= deduped_timestamps[0]
-                and request.end <= deduped_timestamps[-1]
-            )
+            return request.start >= deduped_timestamps[0] and request.end <= deduped_timestamps[-1]
 
         tolerance = max(1.0, interval_ms * 0.05)
         allowed_gap = interval_ms + tolerance
@@ -337,7 +333,11 @@ class CachedOHLCVSource(DataSource):
         metadata = self.storage.metadata()
         metadata["symbols"] = ",".join(sorted(set(symbols)))
         metadata["intervals"] = ",".join(sorted(set(intervals)))
-        _LOGGER.info("Cache OHLCV gotowe dla %s symboli i %s interwałów.", len(set(symbols)), len(set(intervals)))
+        _LOGGER.info(
+            "Cache OHLCV gotowe dla %s symboli i %s interwałów.",
+            len(set(symbols)),
+            len(set(intervals)),
+        )
 
     def _fallback_snapshot_fetcher(self) -> SnapshotFetcher | None:
         """Buduje zapasowy snapshot wykorzystując adapter upstreamowy, jeśli to możliwe."""

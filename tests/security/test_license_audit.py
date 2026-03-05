@@ -105,4 +105,3 @@ def test_activation_limit_applied(tmp_path: Path) -> None:
     assert len(report.activations) == 2
     timestamps = [record.timestamp for record in report.activations]
     assert timestamps[0] > timestamps[1]
-

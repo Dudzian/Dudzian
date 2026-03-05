@@ -17,7 +17,7 @@ from bot_core.reporting.audit import PaperSmokeJsonSynchronizer
 
 def test_sync_local_creates_copy(tmp_path: Path) -> None:
     json_log = tmp_path / "paper_trading_log.jsonl"
-    json_log.write_text("{\"status\": \"ok\"}\n", encoding="utf-8")
+    json_log.write_text('{"status": "ok"}\n', encoding="utf-8")
 
     destination_dir = tmp_path / "remote"
     config = PaperSmokeJsonSyncConfig(
@@ -51,7 +51,9 @@ def test_sync_local_creates_copy(tmp_path: Path) -> None:
 
 
 def test_resolve_config_returns_json_sync() -> None:
-    local_cfg = PaperSmokeJsonSyncLocalConfig(directory="/tmp", filename_pattern="foo.jsonl", fsync=False)
+    local_cfg = PaperSmokeJsonSyncLocalConfig(
+        directory="/tmp", filename_pattern="foo.jsonl", fsync=False
+    )
     config = CoreReportingConfig(
         daily_report_time_utc=None,
         weekly_report_day=None,
@@ -71,7 +73,7 @@ def test_resolve_config_returns_json_sync() -> None:
 
 def test_sync_local_detects_hash_mismatch(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     json_log = tmp_path / "paper_trading_log.jsonl"
-    json_log.write_text("{\"status\": \"ok\"}\n", encoding="utf-8")
+    json_log.write_text('{"status": "ok"}\n', encoding="utf-8")
 
     destination_dir = tmp_path / "remote"
     config = PaperSmokeJsonSyncConfig(
@@ -98,9 +100,11 @@ def test_sync_local_detects_hash_mismatch(monkeypatch: pytest.MonkeyPatch, tmp_p
         )
 
 
-def test_sync_s3_provides_version_and_receipt(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+def test_sync_s3_provides_version_and_receipt(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
     json_log = tmp_path / "paper_trading_log.jsonl"
-    json_log.write_text("{\"status\": \"ok\"}\n", encoding="utf-8")
+    json_log.write_text('{"status": "ok"}\n', encoding="utf-8")
 
     uploads: list[tuple[str, str, str, dict[str, str]]] = []
     head_calls: list[tuple[str, str]] = []

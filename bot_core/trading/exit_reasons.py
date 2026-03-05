@@ -1,4 +1,5 @@
 """Canonical exit reason utilities shared across trading components."""
+
 from __future__ import annotations
 
 import re

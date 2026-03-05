@@ -51,7 +51,12 @@ def _base_metadata() -> dict[str, object]:
             "notes": None,
         },
         "exchange_compatibility": [],
-        "versioning": {"channel": "public", "iteration": "minor", "supersedes": [], "superseded_by": []},
+        "versioning": {
+            "channel": "public",
+            "iteration": "minor",
+            "supersedes": [],
+            "superseded_by": [],
+        },
         "user_preferences": [],
     }
 

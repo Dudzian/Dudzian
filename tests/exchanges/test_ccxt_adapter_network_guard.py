@@ -1,4 +1,5 @@
 """Regresje strażnika sieci dla adapterów CCXT."""
+
 from __future__ import annotations
 
 import pytest
@@ -74,4 +75,3 @@ def test_ccxt_adapter_detects_proxy_changes(monkeypatch: pytest.MonkeyPatch) -> 
 
     assert symbols == ("BTC/USDT",)
     assert client.load_markets_calls == 1
-

@@ -383,7 +383,9 @@ def test_validate_core_config_detects_invalid_backfill_window(base_config: CoreC
     assert any("backfill" in err for err in result.errors)
 
 
-def test_validate_core_config_detects_invalid_backfill_interval_format(base_config: CoreConfig) -> None:
+def test_validate_core_config_detects_invalid_backfill_interval_format(
+    base_config: CoreConfig,
+) -> None:
     universe_config = _config_with_universe(base_config)
     instrument = replace(
         next(iter(universe_config.instrument_universes["core"].instruments)),
@@ -399,7 +401,9 @@ def test_validate_core_config_detects_invalid_backfill_interval_format(base_conf
     assert any("niepoprawny format" in err or "nieobsługiwany" in err for err in result.errors)
 
 
-def test_validate_core_config_detects_universe_without_exchange_mapping(base_config: CoreConfig) -> None:
+def test_validate_core_config_detects_universe_without_exchange_mapping(
+    base_config: CoreConfig,
+) -> None:
     instrument = InstrumentConfig(
         name="BTC_USDT",
         base_asset="BTC",
@@ -577,9 +581,7 @@ def test_validate_core_config_detects_invalid_performance_thresholds(
     result = validate_core_config(config)
 
     assert not result.is_valid()
-    assert any(
-        "performance_event_to_frame_critical_ms" in err for err in result.errors
-    )
+    assert any("performance_event_to_frame_critical_ms" in err for err in result.errors)
 
 
 def test_validate_core_config_detects_nonpositive_performance_threshold(
@@ -706,7 +708,9 @@ def test_validate_core_config_checks_risk_decision_log(base_config: CoreConfig) 
     assert any("brak klucza podpisu" in warn for warn in result_ok.warnings)
 
 
-def test_validate_core_config_detects_multiple_risk_log_key_sources(base_config: CoreConfig) -> None:
+def test_validate_core_config_detects_multiple_risk_log_key_sources(
+    base_config: CoreConfig,
+) -> None:
     invalid = RiskDecisionLogConfig(
         signing_key_env="RISK_KEY",
         signing_key_path="/secure/key.bin",
@@ -791,7 +795,12 @@ def test_live_readiness_required_documents_handles_mapping_values() -> None:
 
 def test_live_readiness_required_documents_ignores_nested_structures() -> None:
     readiness = LiveReadinessChecklistConfig(
-        required_documents=("kyc_packet", {"name": "risk_profile"}, ["penetration_report"], "risk_profile"),
+        required_documents=(
+            "kyc_packet",
+            {"name": "risk_profile"},
+            ["penetration_report"],
+            "risk_profile",
+        ),
     )
 
     assert readiness.required_documents == ("kyc_packet", "risk_profile")

@@ -1,4 +1,5 @@
 """Risk guardrails integrating backtest performance with risk policies."""
+
 from __future__ import annotations
 
 import math
@@ -72,9 +73,7 @@ def _resolve_thresholds(
                 thresholds["max_drawdown_pct"] = None
         if thresholds["max_exposure_pct"] is None:
             try:
-                thresholds["max_exposure_pct"] = float(
-                    risk_profile.max_position_exposure()
-                ) * 100.0
+                thresholds["max_exposure_pct"] = float(risk_profile.max_position_exposure()) * 100.0
                 sources["max_exposure_pct"] = (
                     f"risk_profile:{profile_name}" if profile_name else "risk_profile"
                 )
@@ -220,9 +219,7 @@ def evaluate_backtest_guardrails(
 
     if missing_required:
         readable_missing = ", ".join(missing_required)
-        reasons.append(
-            "Missing required historical data for strategy: " f"{readable_missing}"
-        )
+        reasons.append(f"Missing required historical data for strategy: {readable_missing}")
         violations.append(
             {
                 "metric": "required_data_missing",
@@ -423,7 +420,7 @@ class GuardrailSummary:
 def summarize_guardrail_results(
     results: Mapping[str, RiskCheckResult]
     | Iterable[tuple[str, RiskCheckResult]]
-    | Sequence[tuple[str, RiskCheckResult]]
+    | Sequence[tuple[str, RiskCheckResult]],
 ) -> GuardrailSummary:
     """Collapse multiple guardrail checks into a single summary structure.
 
@@ -498,6 +495,8 @@ __all__ = [
     "RiskGuardrailsService",
     "RiskGuardrailMetricSet",
 ]
+
+
 @dataclass(slots=True)
 class LossGuardrailDecision:
     """Represents the outcome of evaluating loss-based guardrails."""
@@ -778,7 +777,9 @@ class GuardrailsEngine:
                 decision.threshold or 0.0,
             )
             if self._metrics is not None:
-                self._metrics.record_activation(profile_name or snapshot.profile, reason=decision.metric)
+                self._metrics.record_activation(
+                    profile_name or snapshot.profile, reason=decision.metric
+                )
             self._record_alert(
                 profile_name or snapshot.profile,
                 metric=decision.metric,
@@ -790,7 +791,9 @@ class GuardrailsEngine:
         elif decision.deactivate and snapshot.hedge_mode:
             snapshot.deactivate_hedge()
             changed_state = True
-            self._logger.info("Guardrail hedge mode cleared for profile %s", profile_name or snapshot.profile)
+            self._logger.info(
+                "Guardrail hedge mode cleared for profile %s", profile_name or snapshot.profile
+            )
             if self._metrics is not None:
                 self._metrics.record_state(profile_name or snapshot.profile, active=False)
         elif self._metrics is not None:

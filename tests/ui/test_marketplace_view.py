@@ -151,7 +151,9 @@ def test_marketplace_view_refresh_and_actions(tmp_path: Path) -> None:
             engine_warnings = []
         if engine_warnings:
             warning_lines.extend(f"- {warning}" for warning in engine_warnings)
-        warnings_message = "\n".join(warning_lines) if warning_lines else "Brak zarejestrowanych ostrzeżeń QML."
+        warnings_message = (
+            "\n".join(warning_lines) if warning_lines else "Brak zarejestrowanych ostrzeżeń QML."
+        )
 
         component = QQmlComponent(engine)
         component.loadUrl(QUrl.fromLocalFile(str(view_path)))
@@ -163,9 +165,12 @@ def test_marketplace_view_refresh_and_actions(tmp_path: Path) -> None:
                 component_errors = component.errors()
         except Exception:
             component_errors = []
-        component_error_details = "\n".join(
-            getattr(error, "toString", lambda: str(error))() for error in component_errors
-        ) or "(none)"
+        component_error_details = (
+            "\n".join(
+                getattr(error, "toString", lambda: str(error))() for error in component_errors
+            )
+            or "(none)"
+        )
         component_error_string = component.errorString() or "(none)"
 
         exists_message = f"Path exists: {os.path.exists(view_path)}"
@@ -194,7 +199,9 @@ def test_marketplace_view_refresh_and_actions(tmp_path: Path) -> None:
 
     if sys.platform == "win32":
         refresh = getattr(root, "refreshPresets", None)
-        assert callable(refresh), "refreshPresets not callable from Python on win32 (avoid invokeMethod)"
+        assert callable(refresh), (
+            "refreshPresets not callable from Python on win32 (avoid invokeMethod)"
+        )
         refresh()
     else:
         QMetaObject.invokeMethod(root, "refreshPresets", Qt.DirectConnection)
@@ -257,9 +264,9 @@ def test_marketplace_view_refresh_and_actions(tmp_path: Path) -> None:
 
     first_preset_qt = presets_raw[0]
     first_preset_py = _as_py(first_preset_qt)
-    assert isinstance(
-        first_preset_py, dict
-    ), f"first_preset_py type={type(first_preset_py)!r} value={first_preset_py!r}"
+    assert isinstance(first_preset_py, dict), (
+        f"first_preset_py type={type(first_preset_py)!r} value={first_preset_py!r}"
+    )
     preset_candidate = first_preset_qt if sys.platform == "win32" else first_preset_py
     preset_arg = invoke_safe_qml_variant(engine, preset_candidate)
 

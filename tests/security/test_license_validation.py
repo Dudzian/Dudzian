@@ -41,9 +41,13 @@ def _fingerprint_payload(value: str) -> dict[str, object]:
     }
 
 
-def _signed_fingerprint(value: str, *, key_id: str = "fp-1") -> tuple[dict[str, object], dict[str, str]]:
+def _signed_fingerprint(
+    value: str, *, key_id: str = "fp-1"
+) -> tuple[dict[str, object], dict[str, str]]:
     payload = _fingerprint_payload(value)
-    signature = build_hmac_signature(payload, key=FINGERPRINT_KEY, algorithm="HMAC-SHA384", key_id=key_id)
+    signature = build_hmac_signature(
+        payload, key=FINGERPRINT_KEY, algorithm="HMAC-SHA384", key_id=key_id
+    )
     return payload, signature
 
 
@@ -84,7 +88,9 @@ def _signed_license(
 
     fingerprint_path = path / "fingerprint.json"
     fingerprint_document = {"payload": fingerprint_payload, "signature": fingerprint_signature}
-    fingerprint_path.write_text(json.dumps(fingerprint_document, ensure_ascii=False), encoding="utf-8")
+    fingerprint_path.write_text(
+        json.dumps(fingerprint_document, ensure_ascii=False), encoding="utf-8"
+    )
 
     license_keys_path = path / "license_keys.json"
     fingerprint_keys_path = path / "fingerprint_keys.json"
@@ -437,11 +443,15 @@ def test_validate_license_warns_about_missing_revocation_timestamp(tmp_path: Pat
     assert result.revocation_status in {"unknown", "clear"}
     assert result.revocation_reason is None
     assert result.revocation_revoked_at is None
+
+
 def test_validate_license_detects_mismatched_fingerprint_file(tmp_path: Path) -> None:
     license_path, fingerprint_path, license_keys, fingerprint_keys = _signed_license(tmp_path)
     other_payload, other_signature = _signed_fingerprint("other")
     fingerprint_document = {"payload": other_payload, "signature": other_signature}
-    fingerprint_path.write_text(json.dumps(fingerprint_document, ensure_ascii=False), encoding="utf-8")
+    fingerprint_path.write_text(
+        json.dumps(fingerprint_document, ensure_ascii=False), encoding="utf-8"
+    )
 
     result = validate_license(
         license_path=license_path,

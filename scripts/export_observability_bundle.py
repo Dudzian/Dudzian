@@ -14,6 +14,7 @@ Argumenty z obu światów są zachowane:
 - HMAC: --hmac-key / --hmac-key-file / --hmac-key-env / --hmac-key-id
 - overrides: --overrides (JSON Stage6) – z podsumowaniem w metadanych
 """
+
 from __future__ import annotations
 
 import argparse
@@ -68,6 +69,7 @@ try:  # pragma: no cover
         _ensure_windows_safe_tree,
         _validate_bundle_version,
     )
+
     _HAS_SIG_MANAGER = True
 except Exception:  # pragma: no cover
     SignatureManager = None  # type: ignore
@@ -79,6 +81,7 @@ DEFAULT_SOURCES = (
     ("dashboards", REPO_ROOT / "deploy" / "grafana" / "provisioning" / "dashboards"),
     ("alert_rules", REPO_ROOT / "deploy" / "prometheus"),
 )
+
 
 # ------------------------- Utils wspólne -------------------------
 def _now_utc_iso() -> str:
@@ -128,7 +131,7 @@ def _parse_sources(values: list[str] | None) -> list[_SourceDecl]:
                 raise ValueError("Kategoria źródła nie może być pusta")
             out.append(_SourceDecl(category=category, root=Path(raw_path.strip())))
         return out
-    return [ _SourceDecl(category=c, root=p) for c, p in DEFAULT_SOURCES ]
+    return [_SourceDecl(category=c, root=p) for c, p in DEFAULT_SOURCES]
 
 
 def _load_hmac_key(args: argparse.Namespace) -> tuple[bytes | None, str | None]:
@@ -179,6 +182,7 @@ def _glob_match_any(path: str, patterns: Sequence[str] | None) -> bool:
     if not patterns:
         return True
     from fnmatch import fnmatch
+
     return any(fnmatch(path, pat) for pat in patterns)
 
 
@@ -196,8 +200,7 @@ def _run_with_builder(args: argparse.Namespace) -> dict[str, Any]:
     assert AssetSource is not None
 
     sources = [
-        AssetSource(category=decl.category, root=decl.root)
-        for decl in _parse_sources(args.source)
+        AssetSource(category=decl.category, root=decl.root) for decl in _parse_sources(args.source)
     ]
     include = args.include or ["stage6*", "**/stage6*"]
     metadata = _parse_metadata(args.metadata)
@@ -307,8 +310,10 @@ def _collect_assets_fallback(
             rel = root.name
             if not _should_take(rel):
                 continue
-            kind = "dashboard" if decl.category.lower().startswith("dash") else (
-                "alert" if decl.category.lower().startswith("alert") else "asset"
+            kind = (
+                "dashboard"
+                if decl.category.lower().startswith("dash")
+                else ("alert" if decl.category.lower().startswith("alert") else "asset")
             )
             virt = PurePosixPath(decl.category) / root.name
             key = virt.as_posix().casefold()
@@ -324,8 +329,10 @@ def _collect_assets_fallback(
             rel = candidate.relative_to(root).as_posix()
             if not _should_take(rel):
                 continue
-            kind = "dashboard" if decl.category.lower().startswith("dash") else (
-                "alert" if decl.category.lower().startswith("alert") else "asset"
+            kind = (
+                "dashboard"
+                if decl.category.lower().startswith("dash")
+                else ("alert" if decl.category.lower().startswith("alert") else "asset")
             )
             virt = PurePosixPath(decl.category) / PurePosixPath(rel).name
             key = virt.as_posix().casefold()
@@ -536,21 +543,33 @@ def build_parser() -> argparse.ArgumentParser:
         description="Buduje paczkę obserwowalności Stage6 (z manifestem i podpisem HMAC)."
     )
     # wspólne
-    p.add_argument("--output-dir", default=str(REPO_ROOT / "var" / "observability"),
-                   help="Katalog docelowy dla paczki")
+    p.add_argument(
+        "--output-dir",
+        default=str(REPO_ROOT / "var" / "observability"),
+        help="Katalog docelowy dla paczki",
+    )
     p.add_argument(
         "--bundle-name",
         default="observability-bundle",
         help="Prefiks nazwy paczki (domyślnie observability-bundle)",
     )
     p.add_argument("--version", help="Identyfikator wersji paczki (np. 2025.10.16)")
-    p.add_argument("--metadata", action="append", help="Metadane w formacie klucz=wartość (wielokrotnie)")
-    p.add_argument("--source", action="append",
-                   help="Źródło w formacie kategoria=ścieżka (domyślnie Stage6 dashboards/alerts)")
-    p.add_argument("--include", action="append",
-                   help="Wzorce plików do uwzględnienia (glob, wielokrotnie; domyślnie stage6*)")
-    p.add_argument("--exclude", action="append",
-                   help="Wzorce plików do pominięcia (glob, wielokrotnie)")
+    p.add_argument(
+        "--metadata", action="append", help="Metadane w formacie klucz=wartość (wielokrotnie)"
+    )
+    p.add_argument(
+        "--source",
+        action="append",
+        help="Źródło w formacie kategoria=ścieżka (domyślnie Stage6 dashboards/alerts)",
+    )
+    p.add_argument(
+        "--include",
+        action="append",
+        help="Wzorce plików do uwzględnienia (glob, wielokrotnie; domyślnie stage6*)",
+    )
+    p.add_argument(
+        "--exclude", action="append", help="Wzorce plików do pominięcia (glob, wielokrotnie)"
+    )
     p.add_argument("--overrides", help="Ścieżka do pliku override alertów (JSON Stage6)")
     p.add_argument(
         "--mode",
@@ -589,8 +608,9 @@ def build_parser() -> argparse.ArgumentParser:
         help="Algorytm skrótu dla HMAC (sha256/sha384/sha512; domyślnie sha256)",
     )
     # logowanie
-    p.add_argument("--log-level", default="INFO",
-                   choices=["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"])
+    p.add_argument(
+        "--log-level", default="INFO", choices=["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"]
+    )
     return p
 
 
@@ -602,7 +622,9 @@ def run(argv: list[str] | None = None) -> int:
     try:
         if args.mode == "builder":
             if not _HAS_BUILDER:
-                raise RuntimeError("Tryb builder jest niedostępny – brak ObservabilityBundleBuilder")
+                raise RuntimeError(
+                    "Tryb builder jest niedostępny – brak ObservabilityBundleBuilder"
+                )
             summary = _run_with_builder(args)
         else:
             summary = _run_fallback(args)

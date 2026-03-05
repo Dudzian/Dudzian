@@ -71,12 +71,17 @@ def test_cloud_orchestrator_updates_metrics_and_health_snapshot() -> None:
     assert marketplace["lastError"] is None
 
     assert _collect_metric_value(registry, "bot_cloud_worker_status", {"worker": "retrain"}) == 1.0
-    assert _collect_metric_value(registry, "bot_cloud_worker_status", {"worker": "marketplace"}) == 1.0
-    assert _collect_metric_value(
-        registry,
-        "bot_cloud_worker_last_error",
-        {"worker": "retrain", "error": ""},
-    ) == 0.0
+    assert (
+        _collect_metric_value(registry, "bot_cloud_worker_status", {"worker": "marketplace"}) == 1.0
+    )
+    assert (
+        _collect_metric_value(
+            registry,
+            "bot_cloud_worker_last_error",
+            {"worker": "retrain", "error": ""},
+        )
+        == 0.0
+    )
 
     context.retrain_scheduler = _StubScheduler(fail=True)
     context._fail_marketplace = True
@@ -87,21 +92,30 @@ def test_cloud_orchestrator_updates_metrics_and_health_snapshot() -> None:
     assert snapshot["workers"]["retrain"]["lastError"] == "scheduler_failure"
     assert snapshot["workers"]["marketplace"]["lastError"] == "refresh_failed"
 
-    assert _collect_metric_value(
-        registry,
-        "bot_cloud_worker_status",
-        {"worker": "retrain"},
-    ) == 0.0
-    assert _collect_metric_value(
-        registry,
-        "bot_cloud_worker_last_error",
-        {"worker": "retrain", "error": "scheduler_failure"},
-    ) == 1.0
-    assert _collect_metric_value(
-        registry,
-        "bot_cloud_worker_last_error",
-        {"worker": "marketplace", "error": "refresh_failed"},
-    ) == 1.0
+    assert (
+        _collect_metric_value(
+            registry,
+            "bot_cloud_worker_status",
+            {"worker": "retrain"},
+        )
+        == 0.0
+    )
+    assert (
+        _collect_metric_value(
+            registry,
+            "bot_cloud_worker_last_error",
+            {"worker": "retrain", "error": "scheduler_failure"},
+        )
+        == 1.0
+    )
+    assert (
+        _collect_metric_value(
+            registry,
+            "bot_cloud_worker_last_error",
+            {"worker": "marketplace", "error": "refresh_failed"},
+        )
+        == 1.0
+    )
 
 
 def test_health_servicer_exposes_cloud_health_snapshot() -> None:
@@ -149,9 +163,13 @@ def test_synthetic_probe_flags_failover_and_rehydrates_alerts() -> None:
     assert no_prometheus["prometheusOk"] is None
 
     # failure snapshot (np. region primary) i brak failover readiness
-    orchestrator._set_health(status="degraded", workers={"retrain": {"lastError": "scheduler_failure"}})
+    orchestrator._set_health(
+        status="degraded", workers={"retrain": {"lastError": "scheduler_failure"}}
+    )
     failure_snapshot = orchestrator.health_snapshot()
-    failure_probe = orchestrator.run_synthetic_probes(previous_snapshot=baseline["snapshot"], prometheus_ok=False)
+    failure_probe = orchestrator.run_synthetic_probes(
+        previous_snapshot=baseline["snapshot"], prometheus_ok=False
+    )
     assert failure_probe["healthOk"] is False
     assert failure_probe["failoverReady"] is False
     assert failure_probe["effectiveLastError"] == "scheduler_failure"
@@ -159,9 +177,13 @@ def test_synthetic_probe_flags_failover_and_rehydrates_alerts() -> None:
 
     # rehydratacja alertu `_lastError` gdy nowy proces nie ma już błędu
     orchestrator._set_health(status="running", workers={"retrain": {"lastError": None}})
-    recovery_probe = orchestrator.run_synthetic_probes(previous_snapshot=failure_snapshot, prometheus_ok=True)
+    recovery_probe = orchestrator.run_synthetic_probes(
+        previous_snapshot=failure_snapshot, prometheus_ok=True
+    )
     assert recovery_probe["healthOk"] is True
-    assert recovery_probe["failoverReady"] is False  # efektywny błąd pochodzi z poprzedniego snapshotu
+    assert (
+        recovery_probe["failoverReady"] is False
+    )  # efektywny błąd pochodzi z poprzedniego snapshotu
     assert recovery_probe["effectiveLastError"] == "scheduler_failure"
     assert recovery_probe["rehydratedFromPrevious"] is True
     assert recovery_probe["prometheusOk"] is True

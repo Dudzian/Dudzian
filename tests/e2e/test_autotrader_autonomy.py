@@ -42,7 +42,9 @@ class _StaticAIManager:
     probability: float
     model_name: str = "static_model"
 
-    def assess_market_regime(self, symbol: str, market_data: pd.DataFrame) -> MarketRegimeAssessment:
+    def assess_market_regime(
+        self, symbol: str, market_data: pd.DataFrame
+    ) -> MarketRegimeAssessment:
         return self.assessment
 
     def get_regime_summary(self, symbol: str) -> None:
@@ -61,13 +63,15 @@ class _StaticAIManager:
 def _market_data(rows: int = 120) -> pd.DataFrame:
     index = pd.date_range("2024-01-01", periods=rows, freq="h")
     prices = pd.Series(100.0 + pd.Series(range(rows)).rolling(5, min_periods=1).mean(), index=index)
-    return pd.DataFrame({
-        "open": prices,
-        "high": prices + 2.0,
-        "low": prices - 2.0,
-        "close": prices + 1.0,
-        "volume": 1000 + pd.Series(range(rows), index=index),
-    })
+    return pd.DataFrame(
+        {
+            "open": prices,
+            "high": prices + 2.0,
+            "low": prices - 2.0,
+            "close": prices + 1.0,
+            "volume": 1000 + pd.Series(range(rows), index=index),
+        }
+    )
 
 
 def _build_runner() -> AutoTraderAIGovernorRunner:
@@ -215,10 +219,13 @@ def test_autotrader_live_enforces_conservative_profile_on_high_risk() -> None:
     assert trader.risk_profile == "conservative"
     assert trader.active_strategy == "capital_preservation"
     assert report.metadata.get("decision_state") == "hold"
-    decision_events = [event for event in journal.export() if event.get("event") == "decision_composed"]
+    decision_events = [
+        event for event in journal.export() if event.get("event") == "decision_composed"
+    ]
     assert decision_events and decision_events[0].get("risk_profile") == "conservative"
     assert any(
-        event[0] == "auto_trader.decision_audit" and event[1].get("stage") == "risk_profile_transition"
+        event[0] == "auto_trader.decision_audit"
+        and event[1].get("stage") == "risk_profile_transition"
         for event in emitter.events
     )
     assert report.metrics["cycles_total"] >= 1
@@ -597,4 +604,3 @@ def test_e2e_suite_rejects_private_autotrader_fields() -> None:
     if offenders:
         formatted = ", ".join(f"{path}:{token}" for path, token in offenders)
         pytest.fail(f"Private AutoTrader fields referenced in tests: {formatted}")
-

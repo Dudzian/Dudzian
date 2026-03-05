@@ -38,12 +38,19 @@ from bot_core.ai.scheduler import (
     WalkForwardResult,
 )
 from bot_core.ai.data_monitoring import update_sign_off
-from bot_core.ai.training import ExternalModelAdapter, ExternalTrainingContext, ExternalTrainingResult, register_external_model_adapter
+from bot_core.ai.training import (
+    ExternalModelAdapter,
+    ExternalTrainingContext,
+    ExternalTrainingResult,
+    register_external_model_adapter,
+)
 from bot_core.runtime.journal import InMemoryTradingDecisionJournal
 
 
 class _MeanModel:
-    def __init__(self, mean: float, feature_names: Sequence[str], scalers: Mapping[str, tuple[float, float]]):
+    def __init__(
+        self, mean: float, feature_names: Sequence[str], scalers: Mapping[str, tuple[float, float]]
+    ):
         self.mean = float(mean)
         self.feature_names = list(feature_names)
         self.feature_scalers = dict(scalers)
@@ -271,9 +278,7 @@ def test_scheduled_job_persists_state_and_records_journal(tmp_path) -> None:
     payload = json.loads(persistence_path.read_text(encoding="utf-8"))
     assert payload["version"] == RetrainingScheduler.STATE_VERSION
     assert payload["last_run"] == artifact.trained_at.isoformat()
-    assert payload["next_run"] == (
-        artifact.trained_at + timedelta(minutes=30)
-    ).isoformat()
+    assert payload["next_run"] == (artifact.trained_at + timedelta(minutes=30)).isoformat()
     assert payload["interval"] == timedelta(minutes=30).total_seconds()
     assert payload["updated_at"] == artifact.trained_at.isoformat()
     assert payload["last_failure"] is None
@@ -286,9 +291,7 @@ def test_scheduled_job_persists_state_and_records_journal(tmp_path) -> None:
     exported_state = scheduler.export_state()
     assert exported_state["version"] == RetrainingScheduler.STATE_VERSION
     assert exported_state["last_run"] == artifact.trained_at.isoformat()
-    assert exported_state["next_run"] == (
-        artifact.trained_at + timedelta(minutes=30)
-    ).isoformat()
+    assert exported_state["next_run"] == (artifact.trained_at + timedelta(minutes=30)).isoformat()
     assert exported_state["interval"] == timedelta(minutes=30).total_seconds()
     assert exported_state["updated_at"] == artifact.trained_at.isoformat()
     assert exported_state["last_failure"] is None
@@ -323,9 +326,7 @@ def test_scheduled_job_persists_state_and_records_journal(tmp_path) -> None:
             assert key in entry
             assert entry[key] == f"{metric_value:.10f}"
     assert entry["last_run"] == artifact.trained_at.isoformat()
-    assert entry["next_run"] == (
-        artifact.trained_at + timedelta(minutes=30)
-    ).isoformat()
+    assert entry["next_run"] == (artifact.trained_at + timedelta(minutes=30)).isoformat()
     assert entry["scheduler_version"] == str(RetrainingScheduler.STATE_VERSION)
     assert entry["state_updated_at"] == artifact.trained_at.isoformat()
     assert entry["failure_streak"] == "0"
@@ -714,7 +715,10 @@ def test_scheduler_pause_validation(tmp_path) -> None:
         scheduler.pause(until=in_past)
 
     with pytest.raises(ValueError):
-        scheduler.pause(duration=timedelta(minutes=5), until=datetime.now(timezone.utc) + timedelta(minutes=10))
+        scheduler.pause(
+            duration=timedelta(minutes=5), until=datetime.now(timezone.utc) + timedelta(minutes=10)
+        )
+
 
 def test_scheduler_recovers_last_run_from_next_run(tmp_path) -> None:
     persistence_path = tmp_path / "scheduler.json"

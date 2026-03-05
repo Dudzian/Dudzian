@@ -34,17 +34,24 @@ def _serialize_for_signature(manifest: dict) -> bytes:
 def _write_manifest(dest: Path, manifest: dict, signing_key: str | None) -> dict:
     manifest_body = dict(manifest)
     if signing_key:
-        signature = hmac.new(signing_key.encode("utf-8"), _serialize_for_signature(manifest_body), hashlib.sha256).hexdigest()
+        signature = hmac.new(
+            signing_key.encode("utf-8"), _serialize_for_signature(manifest_body), hashlib.sha256
+        ).hexdigest()
         manifest_body["hmac_signature"] = signature
     else:
         manifest_body["hmac_signature"] = None
-    dest.write_text(json.dumps(manifest_body, indent=2, ensure_ascii=False, sort_keys=True) + "\n", encoding="utf-8")
+    dest.write_text(
+        json.dumps(manifest_body, indent=2, ensure_ascii=False, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
     return manifest_body
 
 
 def _validate_manifest(manifest_path: Path, signing_key: str) -> None:
     data = json.loads(manifest_path.read_text(encoding="utf-8"))
-    expected = hmac.new(signing_key.encode("utf-8"), _serialize_for_signature(data), hashlib.sha256).hexdigest()
+    expected = hmac.new(
+        signing_key.encode("utf-8"), _serialize_for_signature(data), hashlib.sha256
+    ).hexdigest()
     if expected != data.get("hmac_signature"):
         raise SystemExit("Podpis HMAC nie zgadza się z zawartością manifestu marketingowego")
 
@@ -79,7 +86,9 @@ def build_marketing_bundle(args: argparse.Namespace) -> dict:
         {
             **entry,
             "category": "stress_lab",
-            "link": f"{args.link_prefix}/stress_lab/{Path(entry['stored_as']).name}" if args.link_prefix else entry["stored_as"],
+            "link": f"{args.link_prefix}/stress_lab/{Path(entry['stored_as']).name}"
+            if args.link_prefix
+            else entry["stored_as"],
         }
         for entry in _copy_artifacts(stress_lab_artifacts, destination_base / "stress_lab")
     )
@@ -87,7 +96,9 @@ def build_marketing_bundle(args: argparse.Namespace) -> dict:
         {
             **entry,
             "category": "signal_quality",
-            "link": f"{args.link_prefix}/signal_quality/{Path(entry['stored_as']).name}" if args.link_prefix else entry["stored_as"],
+            "link": f"{args.link_prefix}/signal_quality/{Path(entry['stored_as']).name}"
+            if args.link_prefix
+            else entry["stored_as"],
         }
         for entry in _copy_artifacts(signal_quality_artifacts, destination_base / "signal_quality")
     )
@@ -110,12 +121,32 @@ def build_marketing_bundle(args: argparse.Namespace) -> dict:
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Eksport bundla marketingowego benchmarku")
-    parser.add_argument("--destination", default="var/marketing/benchmark", help="Katalog docelowy bundla marketingowego")
-    parser.add_argument("--stress-lab-dir", default="reports/stress_lab", help="Katalog z raportami Stress Lab")
-    parser.add_argument("--signal-quality-dir", default="reports/exchanges/signal_quality", help="Katalog z checklistami adapterów")
-    parser.add_argument("--report-range", default="latest", help="Zakres raportu (np. release tag lub przedział dat)")
-    parser.add_argument("--signing-key-env", default=None, help="Nazwa zmiennej środowiskowej z kluczem HMAC")
-    parser.add_argument("--link-prefix", default=None, help="Prefiks URL dla artefaktów (np. https://releases.example/artifacts)")
+    parser.add_argument(
+        "--destination",
+        default="var/marketing/benchmark",
+        help="Katalog docelowy bundla marketingowego",
+    )
+    parser.add_argument(
+        "--stress-lab-dir", default="reports/stress_lab", help="Katalog z raportami Stress Lab"
+    )
+    parser.add_argument(
+        "--signal-quality-dir",
+        default="reports/exchanges/signal_quality",
+        help="Katalog z checklistami adapterów",
+    )
+    parser.add_argument(
+        "--report-range",
+        default="latest",
+        help="Zakres raportu (np. release tag lub przedział dat)",
+    )
+    parser.add_argument(
+        "--signing-key-env", default=None, help="Nazwa zmiennej środowiskowej z kluczem HMAC"
+    )
+    parser.add_argument(
+        "--link-prefix",
+        default=None,
+        help="Prefiks URL dla artefaktów (np. https://releases.example/artifacts)",
+    )
     parser.add_argument(
         "--validate-only",
         action="store_true",

@@ -191,12 +191,16 @@ class _OfflineAdapter(ExchangeAdapter):
         self.calls.append(("configure_network", entries))
 
     def fetch_account_snapshot(self) -> AccountSnapshot:  # pragma: no cover - tryb offline
-        return AccountSnapshot(balances={}, total_equity=0.0, available_margin=0.0, maintenance_margin=0.0)
+        return AccountSnapshot(
+            balances={}, total_equity=0.0, available_margin=0.0, maintenance_margin=0.0
+        )
 
     def fetch_symbols(self):  # pragma: no cover - nieużywane w testach
         return []
 
-    def fetch_ohlcv(self, symbol, interval, start=None, end=None, limit=None):  # pragma: no cover - kontrola offline
+    def fetch_ohlcv(
+        self, symbol, interval, start=None, end=None, limit=None
+    ):  # pragma: no cover - kontrola offline
         self.calls.append(("fetch_ohlcv", (symbol, interval, start, end, limit)))
         raise RuntimeError("Adapter nie powinien wykonywać zapytań sieciowych w trybie offline")
 
@@ -331,9 +335,7 @@ def _wait_for_loopback(port: int, *, timeout: float = 5.0) -> None:
     deadline = time.time() + timeout
     while time.time() < deadline:
         try:
-            with contextlib.closing(
-                socket.create_connection(("127.0.0.1", port), timeout=0.2)
-            ):
+            with contextlib.closing(socket.create_connection(("127.0.0.1", port), timeout=0.2)):
                 return
         except OSError:
             time.sleep(0.05)
@@ -449,7 +451,9 @@ def test_daily_trend_pipeline_offline_uses_cached_source(tmp_path: Path) -> None
     ]
     _write_sample_cache(pipeline.data_source.storage, sample_rows)
 
-    request = OHLCVRequest(symbol="BTC/USDT", interval="1d", start=0, end=1_800_000_000_000, limit=10)
+    request = OHLCVRequest(
+        symbol="BTC/USDT", interval="1d", start=0, end=1_800_000_000_000, limit=10
+    )
     response = pipeline.data_source.fetch_ohlcv(request)
 
     assert response.rows == sample_rows
@@ -458,7 +462,9 @@ def test_daily_trend_pipeline_offline_uses_cached_source(tmp_path: Path) -> None
     assert all(call[0] != "fetch_ohlcv" for call in adapter.calls)
 
 
-def test_multi_strategy_runtime_offline_reuses_cached_feed(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_multi_strategy_runtime_offline_reuses_cached_feed(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     monkeypatch.setattr(
         "bot_core.runtime.pipeline.MarketIntelAggregator",
         lambda storage: _StubMarketIntelAggregator(storage),
@@ -594,7 +600,9 @@ def test_live_pipeline_uses_loopback_adapter(
     # LiveExecutionRouter jest domyślnie wyłączany przy DUDZIAN_TEST_MODE.
     monkeypatch.setenv("DUDZIAN_ALLOW_LIVE_ROUTER", "1")
 
-    core_path, runtime_path = _materialize_loopback_configs(tmp_path, port=loopback_exchange_server.port)
+    core_path, runtime_path = _materialize_loopback_configs(
+        tmp_path, port=loopback_exchange_server.port
+    )
     _, secret_manager = _prepare_manager()
     runtime_cfg = load_runtime_app_config(runtime_path)
 

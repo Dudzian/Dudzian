@@ -1,4 +1,5 @@
 """Adaptery dla klasycznych modeli uczenia nadzorowanego."""
+
 from __future__ import annotations
 
 from typing import Any

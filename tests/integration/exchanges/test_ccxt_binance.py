@@ -26,6 +26,7 @@ def test_ccxt_spot_adapter_operates_on_binance_sandbox(monkeypatch: pytest.Monke
         original_set_sandbox = getattr(client, "set_sandbox_mode", None)
 
         if callable(original_set_sandbox):
+
             def _set_sandbox(enabled: bool) -> None:
                 sandbox_calls.append(bool(enabled))
                 original_set_sandbox(enabled)

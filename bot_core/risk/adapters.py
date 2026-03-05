@@ -8,9 +8,10 @@ from typing import Any, Mapping, MutableMapping, Protocol
 try:  # pragma: no cover - moduł decision może być opcjonalny
     from bot_core.decision.evaluators import DecisionEvaluator
 except Exception:  # pragma: no cover - fallback gdy moduł decision nie jest dostępny
+
     class DecisionEvaluator(Protocol):
-        def evaluate_candidate(self, candidate: Any, context: Any) -> Any:
-            ...
+        def evaluate_candidate(self, candidate: Any, context: Any) -> Any: ...
+
 
 from bot_core.exchanges.base import AccountSnapshot
 from bot_core.risk.state import RiskState, build_risk_snapshot
@@ -74,7 +75,9 @@ class DecisionOrchestratorAdapter:
             runtime["account"] = account_id
         return self._artifacts.context_cls(risk_snapshot=snapshot, runtime=runtime)
 
-    def build_snapshot(self, profile_name: str, state: RiskState, account: AccountSnapshot) -> Mapping[str, object] | Any:
+    def build_snapshot(
+        self, profile_name: str, state: RiskState, account: AccountSnapshot
+    ) -> Mapping[str, object] | Any:
         last_equity = state.last_equity or account.total_equity
         metrics = state.metrics(
             equity=last_equity,
@@ -106,7 +109,11 @@ class DecisionOrchestratorAdapter:
 
     def serialize_evaluation(self, evaluation: Any) -> Mapping[str, object]:
         artifacts = self._artifacts
-        if artifacts and artifacts.evaluation_cls is not None and isinstance(evaluation, artifacts.evaluation_cls):
+        if (
+            artifacts
+            and artifacts.evaluation_cls is not None
+            and isinstance(evaluation, artifacts.evaluation_cls)
+        ):
             payload: dict[str, object] = {
                 "status": "evaluated",
                 "accepted": evaluation.accepted,
@@ -120,7 +127,9 @@ class DecisionOrchestratorAdapter:
                 "model_success_probability": evaluation.model_success_probability,
                 "model_name": evaluation.model_name,
                 "model_selection": (
-                    evaluation.model_selection.to_mapping() if evaluation.model_selection is not None else None
+                    evaluation.model_selection.to_mapping()
+                    if evaluation.model_selection is not None
+                    else None
                 ),
             }
             if evaluation.thresholds_snapshot is not None:
@@ -134,7 +143,11 @@ class DecisionOrchestratorAdapter:
     def format_denial_reason(self, evaluation: Any) -> str:
         artifacts = self._artifacts
         reasons: list[str] = []
-        if artifacts and artifacts.evaluation_cls is not None and isinstance(evaluation, artifacts.evaluation_cls):
+        if (
+            artifacts
+            and artifacts.evaluation_cls is not None
+            and isinstance(evaluation, artifacts.evaluation_cls)
+        ):
             reasons.extend(str(reason) for reason in evaluation.reasons)
             reasons.extend(str(flag) for flag in evaluation.risk_flags)
             reasons.extend(str(flag) for flag in evaluation.stress_failures)

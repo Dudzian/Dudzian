@@ -32,9 +32,7 @@ def test_sync_stage6_metrics_copies_and_validates(tmp_path, capsys):
     destination = tmp_path / "metrics" / "stage6_measurements.json"
     _write_metrics(source)
 
-    exit_code = sync_stage6_metrics.main(
-        ["--source", str(source), "--output", str(destination)]
-    )
+    exit_code = sync_stage6_metrics.main(["--source", str(source), "--output", str(destination)])
 
     assert exit_code == 0
     captured = capsys.readouterr().out
@@ -53,9 +51,7 @@ def test_sync_stage6_metrics_decompresses_gzip(tmp_path):
     with gzip.open(source, "wb") as stream:
         stream.write(buffer.read_bytes())
 
-    exit_code = sync_stage6_metrics.main(
-        ["--source", str(source), "--output", str(destination)]
-    )
+    exit_code = sync_stage6_metrics.main(["--source", str(source), "--output", str(destination)])
 
     assert exit_code == 0
     data = json.loads(destination.read_text(encoding="utf-8"))
@@ -70,9 +66,7 @@ def test_sync_stage6_metrics_rejects_empty_payload(tmp_path, capsys):
     destination = tmp_path / "metrics.json"
     source.write_text("[]", encoding="utf-8")
 
-    exit_code = sync_stage6_metrics.main(
-        ["--source", str(source), "--output", str(destination)]
-    )
+    exit_code = sync_stage6_metrics.main(["--source", str(source), "--output", str(destination)])
 
     assert exit_code == 1
     captured = capsys.readouterr().err

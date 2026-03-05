@@ -96,16 +96,26 @@ class PresetConfigService:
 
         gui_risk = preset.get("risk")
         if isinstance(gui_risk, Mapping):
-            max_daily_loss = _coerce_float(gui_risk.get("max_daily_loss_pct"), base_profile.max_daily_loss_pct)
+            max_daily_loss = _coerce_float(
+                gui_risk.get("max_daily_loss_pct"), base_profile.max_daily_loss_pct
+            )
             max_position = _coerce_float(
                 gui_risk.get("risk_per_trade"),
                 _coerce_float(preset.get("fraction"), base_profile.max_position_pct),
             )
-            target_volatility = _coerce_float(gui_risk.get("portfolio_risk"), base_profile.target_volatility)
+            target_volatility = _coerce_float(
+                gui_risk.get("portfolio_risk"), base_profile.target_volatility
+            )
             max_leverage = _coerce_float(gui_risk.get("max_leverage"), base_profile.max_leverage)
-            stop_loss_atr = _coerce_float(gui_risk.get("stop_loss_atr_multiple"), base_profile.stop_loss_atr_multiple)
-            max_open_positions = _coerce_int(gui_risk.get("max_open_positions"), base_profile.max_open_positions)
-            hard_drawdown = _coerce_float(gui_risk.get("hard_drawdown_pct"), base_profile.hard_drawdown_pct)
+            stop_loss_atr = _coerce_float(
+                gui_risk.get("stop_loss_atr_multiple"), base_profile.stop_loss_atr_multiple
+            )
+            max_open_positions = _coerce_int(
+                gui_risk.get("max_open_positions"), base_profile.max_open_positions
+            )
+            hard_drawdown = _coerce_float(
+                gui_risk.get("hard_drawdown_pct"), base_profile.hard_drawdown_pct
+            )
         else:
             max_daily_loss = base_profile.max_daily_loss_pct
             max_position = _coerce_float(preset.get("fraction"), base_profile.max_position_pct)
@@ -133,9 +143,7 @@ class PresetConfigService:
         entrypoints = dict(config.runtime_entrypoints)
         entry = entrypoints.get(runtime_entrypoint)
         if entry is None:
-            raise KeyError(
-                f"Runtime entrypoint '{runtime_entrypoint}' nie istnieje w konfiguracji"
-            )
+            raise KeyError(f"Runtime entrypoint '{runtime_entrypoint}' nie istnieje w konfiguracji")
         entry = replace(entry, risk_profile=resolved_name)
         entrypoints[runtime_entrypoint] = entry
         config.runtime_entrypoints = entrypoints  # type: ignore[assignment]
@@ -159,7 +167,9 @@ class PresetConfigService:
         merged.pop("source_directory", None)
         return merged
 
-    def save(self, *, destination: str | os.PathLike[str] | None = None, dry_run: bool = False) -> str:
+    def save(
+        self, *, destination: str | os.PathLike[str] | None = None, dry_run: bool = False
+    ) -> str:
         path = Path(destination) if destination else self._path
         payload = self.to_dict()
         text = yaml.safe_dump(payload, sort_keys=False, allow_unicode=True)
@@ -186,9 +196,7 @@ class PresetConfigService:
         return deepcopy(parsed)
 
     # ------------------------------------------------------------------
-    def _propagate_decision_engine(
-        self, profile: RiskProfileConfig, template_name: str
-    ) -> None:
+    def _propagate_decision_engine(self, profile: RiskProfileConfig, template_name: str) -> None:
         config = self.core_config
         engine = getattr(config, "decision_engine", None)
         if engine is None:
@@ -198,7 +206,9 @@ class PresetConfigService:
         base_override = overrides.get(profile.name)
         if base_override is None:
             base_override = overrides.get(template_name)
-        if base_override is None and isinstance(engine.orchestrator, DecisionOrchestratorThresholds):
+        if base_override is None and isinstance(
+            engine.orchestrator, DecisionOrchestratorThresholds
+        ):
             base_override = engine.orchestrator
         if base_override is None:
             return
@@ -360,7 +370,9 @@ def _serialise(value: Any) -> Any:
     return value
 
 
-def _merge_mappings(base: Mapping[str, Any], updates: Mapping[str, Any]) -> MutableMapping[str, Any]:
+def _merge_mappings(
+    base: Mapping[str, Any], updates: Mapping[str, Any]
+) -> MutableMapping[str, Any]:
     if not isinstance(base, Mapping):
         return dict(updates)
     result: MutableMapping[str, Any] = deepcopy(base)

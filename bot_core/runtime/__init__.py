@@ -23,6 +23,7 @@ class _LoggerLike(Protocol):
     def log(self, level: int, msg: str, *args: object, **kwargs: object) -> None:
         """Minimalny protokół loggera używany przez helpery logujące."""
 
+
 _LOGGER = logging.getLogger(__name__)
 _OPTIONAL_EXPORT_LOGGER: _LoggerLike = cast(_LoggerLike, _LOGGER)
 
@@ -81,9 +82,7 @@ def parse_optional_exports_logging_spec(
         payload = remainder.lstrip()
 
         if not payload:
-            raise ValueError(
-                f"{source_description} must provide JSON payload after '{prefix}:'"
-            )
+            raise ValueError(f"{source_description} must provide JSON payload after '{prefix}:'")
 
         return OptionalExportsLoggingSpec(
             kind="json",
@@ -96,9 +95,7 @@ def parse_optional_exports_logging_spec(
         path_spec = remainder.strip()
 
         if not path_spec:
-            raise ValueError(
-                f"{source_description} must provide file path after '{prefix}:'"
-            )
+            raise ValueError(f"{source_description} must provide file path after '{prefix}:'")
 
         return OptionalExportsLoggingSpec(
             kind="file",
@@ -111,9 +108,7 @@ def parse_optional_exports_logging_spec(
         target_spec = remainder.strip()
 
         if not target_spec:
-            raise ValueError(
-                f"{source_description} must provide python target after '{prefix}:'"
-            )
+            raise ValueError(f"{source_description} must provide python target after '{prefix}:'")
 
         module_spec = target_spec
         attribute_spec: str | None = None
@@ -147,9 +142,7 @@ def parse_optional_exports_logging_spec(
     if ":" in normalized:
         possible_prefix, _ = normalized.split(":", 1)
         if possible_prefix.isalpha() and len(possible_prefix) > 1:
-            raise ValueError(
-                f"{source_description} uses unsupported prefix '{possible_prefix}'"
-            )
+            raise ValueError(f"{source_description} uses unsupported prefix '{possible_prefix}'")
 
     return OptionalExportsLoggingSpec(
         kind="file",
@@ -215,10 +208,7 @@ def _configure_optional_exports_logging_from_file_path(
     target_path = Path(path_spec).expanduser()
 
     if not target_path.exists():
-        template = (
-            missing_error_template
-            or "logging configuration file '{path}' does not exist"
-        )
+        template = missing_error_template or "logging configuration file '{path}' does not exist"
         raise FileNotFoundError(template.format(path=target_path))
 
     if target_path.suffix.lower() == ".json":
@@ -325,9 +315,7 @@ def configure_optional_exports_logging(
     if propagate is not None and not isinstance(propagate, bool):
         raise TypeError("propagate must be a boolean")
 
-    target_logger = logger or logging.getLogger(
-        logger_name or f"{__name__}.optional_exports"
-    )
+    target_logger = logger or logging.getLogger(logger_name or f"{__name__}.optional_exports")
 
     if clear_handlers:
         target_logger.handlers.clear()
@@ -341,11 +329,7 @@ def configure_optional_exports_logging(
         target_logger.addHandler(handler_to_add)
 
     if formatter is not None:
-        targets = (
-            [handler_to_add]
-            if handler_to_add is not None
-            else list(target_logger.handlers)
-        )
+        targets = [handler_to_add] if handler_to_add is not None else list(target_logger.handlers)
         if not targets:
             raise ValueError(
                 "formatter provided but no handlers are configured; "
@@ -459,7 +443,6 @@ def configure_optional_exports_logging_from_spec(
     )
 
 
-
 def configure_optional_exports_logging_from_dict(
     config: Mapping[str, Any],
     *,
@@ -477,9 +460,7 @@ def configure_optional_exports_logging_from_dict(
     materialized = _materialize_logging_config(config)
     logging.config.dictConfig(materialized)
 
-    target_logger = logging.getLogger(
-        logger_name or f"{__name__}.optional_exports"
-    )
+    target_logger = logging.getLogger(logger_name or f"{__name__}.optional_exports")
 
     if set_as_default:
         set_optional_exports_logger(target_logger)
@@ -500,9 +481,7 @@ def configure_optional_exports_logging_from_file(
     if defaults is not None and not isinstance(defaults, Mapping):
         raise TypeError("defaults must be a mapping")
 
-    if disable_existing_loggers is not None and not isinstance(
-        disable_existing_loggers, bool
-    ):
+    if disable_existing_loggers is not None and not isinstance(disable_existing_loggers, bool):
         raise TypeError("disable_existing_loggers must be a boolean")
 
     if logger_name is not None and not isinstance(logger_name, str):
@@ -519,9 +498,7 @@ def configure_optional_exports_logging_from_file(
 
     logging.config.fileConfig(config_path, **kwargs)
 
-    target_logger = logging.getLogger(
-        logger_name or f"{__name__}.optional_exports"
-    )
+    target_logger = logging.getLogger(logger_name or f"{__name__}.optional_exports")
 
     if set_as_default:
         set_optional_exports_logger(target_logger)
@@ -582,9 +559,7 @@ def configure_optional_exports_logging_from_python(
     if defaults is not None and not isinstance(defaults, Mapping):
         raise TypeError("defaults must be a mapping")
 
-    if disable_existing_loggers is not None and not isinstance(
-        disable_existing_loggers, bool
-    ):
+    if disable_existing_loggers is not None and not isinstance(disable_existing_loggers, bool):
         raise TypeError("disable_existing_loggers must be a boolean")
 
     if not isinstance(encoding, str):
@@ -702,9 +677,7 @@ def configure_optional_exports_logging_from_env(
     if defaults is not None and not isinstance(defaults, Mapping):
         raise TypeError("defaults must be a mapping")
 
-    if disable_existing_loggers is not None and not isinstance(
-        disable_existing_loggers, bool
-    ):
+    if disable_existing_loggers is not None and not isinstance(disable_existing_loggers, bool):
         raise TypeError("disable_existing_loggers must be a boolean")
 
     raw_value = os.getenv(env_var)
@@ -768,9 +741,7 @@ def _resolve_bootstrap_symbol(name: str) -> Any:
     try:
         module = _load_bootstrap_module()
     except Exception as exc:  # pragma: no cover - propagujemy informację o błędzie
-        raise AttributeError(
-            f"bootstrap symbol '{name}' could not be resolved"
-        ) from exc
+        raise AttributeError(f"bootstrap symbol '{name}' could not be resolved") from exc
 
     value = getattr(module, name)
     globals()[name] = value
@@ -786,9 +757,7 @@ def _make_bootstrap_function(name: str):
 
     _proxy.__name__ = name
     _proxy.__qualname__ = name
-    _proxy.__doc__ = (
-        f"Lazy proxy for bot_core.runtime.bootstrap.{name}"
-    )
+    _proxy.__doc__ = f"Lazy proxy for bot_core.runtime.bootstrap.{name}"
     return _proxy
 
 
@@ -861,6 +830,7 @@ def _install_bootstrap_proxies(import_error: Exception | None) -> None:
         "parse_adapter_factory_cli_specs",
     ):
         globals()[_name] = _make_bootstrap_function(_name)
+
 
 try:  # pragma: no cover - minimalne importy dostępne nawet przy brakach zależności
     from bot_core.runtime.bootstrap import (
@@ -986,7 +956,7 @@ except Exception:
 
 try:
     from bot_core.runtime.realtime import (  # type: ignore
-        DailyTrendRealtimeRunner as _DailyTrendRealtimeRunner
+        DailyTrendRealtimeRunner as _DailyTrendRealtimeRunner,
     )
 except Exception:  # pragma: no cover - starsze gałęzie mogą nie mieć modułu realtime
     _DailyTrendRealtimeRunner = None  # type: ignore
@@ -1110,12 +1080,8 @@ if DailyTrendPipeline is None or build_daily_trend_pipeline is None:
     try:  # pragma: no cover
         _pipeline_module = import_module("bot_core.runtime.pipeline")
         DailyTrendPipeline = getattr(_pipeline_module, "DailyTrendPipeline", None)
-        build_daily_trend_pipeline = getattr(
-            _pipeline_module, "build_daily_trend_pipeline", None
-        )
-        create_trading_controller = getattr(
-            _pipeline_module, "create_trading_controller", None
-        )
+        build_daily_trend_pipeline = getattr(_pipeline_module, "build_daily_trend_pipeline", None)
+        create_trading_controller = getattr(_pipeline_module, "create_trading_controller", None)
     except Exception:  # pragma: no cover
         DailyTrendPipeline = None  # type: ignore
         build_daily_trend_pipeline = None  # type: ignore
@@ -1187,13 +1153,9 @@ def _status_from_dict(name: str, payload: object) -> OptionalExportStatus:
     if not isinstance(entry_name, str):
         raise ValueError("status entry must define a string 'name' field")
     if not isinstance(module, str) or not isinstance(attribute, str):
-        raise ValueError(
-            "status entry must define string 'module' and 'attribute' fields"
-        )
+        raise ValueError("status entry must define string 'module' and 'attribute' fields")
     if not isinstance(available, bool) or not isinstance(cached, bool):
-        raise ValueError(
-            "status entry must define boolean 'available' and 'cached' fields"
-        )
+        raise ValueError("status entry must define boolean 'available' and 'cached' fields")
     if error is not None and not isinstance(error, str):
         raise ValueError("status entry 'error' field must be a string or None")
 
@@ -1223,9 +1185,7 @@ def _target_from_dict(payload: object, *, context: str) -> tuple[str, str]:
     module = payload.get("module")
     attribute = payload.get("attribute")
     if not isinstance(module, str) or not isinstance(attribute, str):
-        raise ValueError(
-            f"{context} entry must define string 'module' and 'attribute' fields"
-        )
+        raise ValueError(f"{context} entry must define string 'module' and 'attribute' fields")
 
     return module, attribute
 
@@ -1244,9 +1204,7 @@ class OptionalExportRegistrySnapshot:
 
         if not self.statuses:
             return frozenset()
-        return frozenset(
-            name for name, status in self.statuses.items() if status.available
-        )
+        return frozenset(name for name, status in self.statuses.items() if status.available)
 
     @property
     def missing(self) -> dict[str, OptionalExportStatus]:
@@ -1254,11 +1212,7 @@ class OptionalExportRegistrySnapshot:
 
         if not self.statuses:
             return {}
-        return {
-            name: status
-            for name, status in self.statuses.items()
-            if not status.available
-        }
+        return {name: status for name, status in self.statuses.items() if not status.available}
 
 
 @dataclass(frozen=True, slots=True)
@@ -1268,9 +1222,7 @@ class OptionalExportRegistryDiff:
     added: dict[str, tuple[str, str]]
     removed: dict[str, tuple[str, str]]
     changed_targets: dict[str, tuple[tuple[str, str], tuple[str, str]]]
-    status_changes: dict[
-        str, tuple[OptionalExportStatus | None, OptionalExportStatus | None]
-    ]
+    status_changes: dict[str, tuple[OptionalExportStatus | None, OptionalExportStatus | None]]
     cache_gained: frozenset[str]
     cache_lost: frozenset[str]
 
@@ -1320,9 +1272,7 @@ def _load_optional_export(name: str, *, cache: bool = True):
     try:
         value = getattr(module, attr_name)
     except AttributeError as exc:  # pragma: no cover - moduł nie posiada atrybutu
-        raise AttributeError(
-            f"module '{module_name}' has no attribute '{attr_name}'"
-        ) from exc
+        raise AttributeError(f"module '{module_name}' has no attribute '{attr_name}'") from exc
 
     if cache:
         globals()[name] = value
@@ -1347,9 +1297,7 @@ def require_optional_export(name: str, *, cache: bool = True):
     """Wymuś załadowanie zadeklarowanego lazy-eksportu lub zgłoś błąd."""
 
     if name not in _LAZY_OPTIONAL_EXPORTS:
-        raise ValueError(
-            f"'{name}' nie jest zarejestrowane jako opcjonalny eksport runtime"
-        )
+        raise ValueError(f"'{name}' nie jest zarejestrowane jako opcjonalny eksport runtime")
 
     try:
         return _load_optional_export(name, cache=cache)
@@ -1396,9 +1344,7 @@ def unregister_optional_export(name: str, *, allow_builtin: bool = False) -> Non
         raise ValueError(f"Optional export '{name}' is not registered")
 
     if name in _BASE_OPTIONAL_EXPORTS and not allow_builtin:
-        raise ValueError(
-            "Cannot unregister built-in optional export without allow_builtin=True"
-        )
+        raise ValueError("Cannot unregister built-in optional export without allow_builtin=True")
 
     _LAZY_OPTIONAL_EXPORTS.pop(name, None)
     globals().pop(name, None)
@@ -1434,9 +1380,7 @@ def temporary_optional_export(
 
     if existed:
         if not override:
-            raise ValueError(
-                f"Optional export '{name}' is already registered – set override=True"
-            )
+            raise ValueError(f"Optional export '{name}' is already registered – set override=True")
         previous_target = _LAZY_OPTIONAL_EXPORTS[name]
         previous_value = globals().get(name, _MISSING)
 
@@ -1569,13 +1513,9 @@ def diff_optional_exports_snapshots(
     """Porównaj dwie migawki rejestru lazy-eksportów."""
 
     if not isinstance(previous, OptionalExportRegistrySnapshot):
-        raise TypeError(
-            "previous snapshot must be an instance of OptionalExportRegistrySnapshot"
-        )
+        raise TypeError("previous snapshot must be an instance of OptionalExportRegistrySnapshot")
     if not isinstance(current, OptionalExportRegistrySnapshot):
-        raise TypeError(
-            "current snapshot must be an instance of OptionalExportRegistrySnapshot"
-        )
+        raise TypeError("current snapshot must be an instance of OptionalExportRegistrySnapshot")
 
     previous_registered = previous.registered
     current_registered = current.registered
@@ -1602,9 +1542,7 @@ def diff_optional_exports_snapshots(
 
     previous_statuses = previous.statuses
     current_statuses = current.statuses
-    status_changes: dict[
-        str, tuple[OptionalExportStatus | None, OptionalExportStatus | None]
-    ] = {}
+    status_changes: dict[str, tuple[OptionalExportStatus | None, OptionalExportStatus | None]] = {}
     for name in sorted(set(previous_statuses) | set(current_statuses)):
         previous_status = previous_statuses.get(name)
         current_status = current_statuses.get(name)
@@ -1632,14 +1570,10 @@ def optional_exports_diff_to_dict(
     """Zserializuj diff rejestru lazy-eksportów do struktury słownikowej."""
 
     if not isinstance(diff, OptionalExportRegistryDiff):
-        raise TypeError(
-            "diff must be an instance of OptionalExportRegistryDiff"
-        )
+        raise TypeError("diff must be an instance of OptionalExportRegistryDiff")
 
     added = {name: _target_to_dict(target) for name, target in diff.added.items()}
-    removed = {
-        name: _target_to_dict(target) for name, target in diff.removed.items()
-    }
+    removed = {name: _target_to_dict(target) for name, target in diff.removed.items()}
     changed_targets: dict[str, dict[str, dict[str, str]]] = {}
     for name, (before, after) in diff.changed_targets.items():
         changed_targets[name] = {
@@ -1668,9 +1602,7 @@ def optional_exports_diff_from_dict(data: object) -> OptionalExportRegistryDiff:
     """Odtwórz diff rejestru lazy-eksportów z reprezentacji słownikowej."""
 
     if not isinstance(data, dict):
-        raise TypeError(
-            "data must be a mapping produced by optional_exports_diff_to_dict"
-        )
+        raise TypeError("data must be a mapping produced by optional_exports_diff_to_dict")
 
     required_keys = {
         "added",
@@ -1683,9 +1615,7 @@ def optional_exports_diff_from_dict(data: object) -> OptionalExportRegistryDiff:
     missing_keys = required_keys - data.keys()
     if missing_keys:
         missing_str = ", ".join(sorted(missing_keys))
-        raise ValueError(
-            "diff dictionary must contain keys: " + missing_str
-        )
+        raise ValueError("diff dictionary must contain keys: " + missing_str)
 
     added_raw = data["added"]
     if not isinstance(added_raw, dict):
@@ -1717,9 +1647,7 @@ def optional_exports_diff_from_dict(data: object) -> OptionalExportRegistryDiff:
         before_payload = payload.get("before")
         after_payload = payload.get("after")
         if "before" not in payload or "after" not in payload:
-            raise ValueError(
-                "changed_targets entries must define 'before' and 'after' fields"
-            )
+            raise ValueError("changed_targets entries must define 'before' and 'after' fields")
         before = _target_from_dict(before_payload, context="changed_targets.before")
         after = _target_from_dict(after_payload, context="changed_targets.after")
         changed_targets[name] = (before, after)
@@ -1727,9 +1655,7 @@ def optional_exports_diff_from_dict(data: object) -> OptionalExportRegistryDiff:
     status_changes_raw = data["status_changes"]
     if not isinstance(status_changes_raw, dict):
         raise ValueError("'status_changes' entry must be a mapping")
-    status_changes: dict[
-        str, tuple[OptionalExportStatus | None, OptionalExportStatus | None]
-    ] = {}
+    status_changes: dict[str, tuple[OptionalExportStatus | None, OptionalExportStatus | None]] = {}
     for name, payload in status_changes_raw.items():
         if not isinstance(name, str):
             raise ValueError("status_changes keys must be strings")
@@ -1739,20 +1665,10 @@ def optional_exports_diff_from_dict(data: object) -> OptionalExportRegistryDiff:
         before_payload = payload.get("before")
         after_payload = payload.get("after")
         if "before" not in payload or "after" not in payload:
-            raise ValueError(
-                "status_changes entries must define 'before' and 'after' fields"
-            )
+            raise ValueError("status_changes entries must define 'before' and 'after' fields")
 
-        before_status = (
-            None
-            if before_payload is None
-            else _status_from_dict(name, before_payload)
-        )
-        after_status = (
-            None
-            if after_payload is None
-            else _status_from_dict(name, after_payload)
-        )
+        before_status = None if before_payload is None else _status_from_dict(name, before_payload)
+        after_status = None if after_payload is None else _status_from_dict(name, after_payload)
         status_changes[name] = (before_status, after_status)
 
     cache_gained_raw = data["cache_gained"]
@@ -1792,9 +1708,7 @@ def optional_exports_diff_to_json(
     """Serializuj diff rejestru lazy-eksportów do łańcucha JSON."""
 
     if not isinstance(diff, OptionalExportRegistryDiff):
-        raise TypeError(
-            "diff must be an instance of OptionalExportRegistryDiff"
-        )
+        raise TypeError("diff must be an instance of OptionalExportRegistryDiff")
 
     payload = optional_exports_diff_to_dict(diff)
     return json.dumps(payload, indent=indent, sort_keys=sort_keys)
@@ -1831,9 +1745,7 @@ def optional_exports_diff_to_file(
     """Zapisz diff lazy-eksportów do pliku JSON."""
 
     if not isinstance(diff, OptionalExportRegistryDiff):
-        raise TypeError(
-            "diff must be an instance of OptionalExportRegistryDiff"
-        )
+        raise TypeError("diff must be an instance of OptionalExportRegistryDiff")
 
     target_path = Path(path)
     payload = optional_exports_diff_to_json(diff, indent=indent)
@@ -1878,13 +1790,13 @@ def format_optional_export_status(
     return " ".join(parts)
 
 
-def _ensure_status_sequence(statuses: Iterable[OptionalExportStatus]) -> Sequence[OptionalExportStatus]:
+def _ensure_status_sequence(
+    statuses: Iterable[OptionalExportStatus],
+) -> Sequence[OptionalExportStatus]:
     sequence = list(statuses)
     for status in sequence:
         if not isinstance(status, OptionalExportStatus):
-            raise TypeError(
-                "statuses must contain OptionalExportStatus instances only"
-            )
+            raise TypeError("statuses must contain OptionalExportStatus instances only")
     return sequence
 
 
@@ -1936,15 +1848,11 @@ def _emit_log_message(
     stacklevel: int | None,
 ) -> None:
     target_logger = (
-        cast(_LoggerLike, logger)
-        if logger is not None
-        else get_optional_exports_logger()
+        cast(_LoggerLike, logger) if logger is not None else get_optional_exports_logger()
     )
 
     if not isinstance(target_logger, _LoggerLike):  # pragma: no cover - walidacja typu w runtime
-        raise TypeError(
-            "logger must provide a log(level, message, *args, **kwargs) method"
-        )
+        raise TypeError("logger must provide a log(level, message, *args, **kwargs) method")
 
     kwargs: dict[str, object] = {}
     extra_payload = _coerce_log_extra(extra)
@@ -2000,15 +1908,13 @@ def format_optional_exports_diff(
 
     if diff.added:
         added_lines = "\n".join(
-            f"  - {name}: {_format_target(target)}"
-            for name, target in sorted(diff.added.items())
+            f"  - {name}: {_format_target(target)}" for name, target in sorted(diff.added.items())
         )
         sections.append(f"Added:\n{added_lines}")
 
     if diff.removed:
         removed_lines = "\n".join(
-            f"  - {name}: {_format_target(target)}"
-            for name, target in sorted(diff.removed.items())
+            f"  - {name}: {_format_target(target)}" for name, target in sorted(diff.removed.items())
         )
         sections.append(f"Removed:\n{removed_lines}")
 
@@ -2040,9 +1946,7 @@ def format_optional_exports_diff(
         sections.append("Status changes:\n" + "\n".join(status_lines))
 
     if diff.cache_gained:
-        gained_lines = "\n".join(
-            f"  - {name}" for name in sorted(diff.cache_gained)
-        )
+        gained_lines = "\n".join(f"  - {name}" for name in sorted(diff.cache_gained))
         sections.append(f"Cache gained:\n{gained_lines}")
 
     if diff.cache_lost:
@@ -2149,9 +2053,7 @@ def optional_exports_snapshot_to_dict(
     """Zserializuj migawkę rejestru lazy-eksportów do struktury słownikowej."""
 
     if not isinstance(snapshot, OptionalExportRegistrySnapshot):
-        raise TypeError(
-            "snapshot must be an instance of OptionalExportRegistrySnapshot"
-        )
+        raise TypeError("snapshot must be an instance of OptionalExportRegistrySnapshot")
 
     registered = {name: _target_to_dict(target) for name, target in snapshot.registered.items()}
 
@@ -2170,17 +2072,13 @@ def optional_exports_snapshot_from_dict(
     """Odtwórz migawkę rejestru lazy-eksportów z reprezentacji słownikowej."""
 
     if not isinstance(data, dict):
-        raise TypeError(
-            "data must be a mapping produced by optional_exports_snapshot_to_dict"
-        )
+        raise TypeError("data must be a mapping produced by optional_exports_snapshot_to_dict")
 
     required_keys = {"registered", "cached_names", "statuses"}
     missing_keys = required_keys - data.keys()
     if missing_keys:
         missing_str = ", ".join(sorted(missing_keys))
-        raise ValueError(
-            "snapshot dictionary must contain keys: " + missing_str
-        )
+        raise ValueError("snapshot dictionary must contain keys: " + missing_str)
 
     registered_raw = data["registered"]
     if not isinstance(registered_raw, dict):
@@ -2228,9 +2126,7 @@ def optional_exports_snapshot_to_json(
     """Serializuj migawkę rejestru lazy-eksportów do łańcucha JSON."""
 
     if not isinstance(snapshot, OptionalExportRegistrySnapshot):
-        raise TypeError(
-            "snapshot must be an instance of OptionalExportRegistrySnapshot"
-        )
+        raise TypeError("snapshot must be an instance of OptionalExportRegistrySnapshot")
 
     payload = optional_exports_snapshot_to_dict(snapshot)
     return json.dumps(payload, indent=indent, sort_keys=sort_keys)
@@ -2267,9 +2163,7 @@ def optional_exports_snapshot_to_file(
     """Zapisz migawkę lazy-eksportów do pliku JSON."""
 
     if not isinstance(snapshot, OptionalExportRegistrySnapshot):
-        raise TypeError(
-            "snapshot must be an instance of OptionalExportRegistrySnapshot"
-        )
+        raise TypeError("snapshot must be an instance of OptionalExportRegistrySnapshot")
 
     target_path = Path(path)
     payload = optional_exports_snapshot_to_json(snapshot, indent=indent)
@@ -2296,20 +2190,15 @@ def restore_optional_exports(
     """Przywróć stan rejestru lazy-eksportów na podstawie migawki."""
 
     if not isinstance(snapshot, OptionalExportRegistrySnapshot):
-        raise TypeError(
-            "snapshot must be an instance of OptionalExportRegistrySnapshot"
-        )
+        raise TypeError("snapshot must be an instance of OptionalExportRegistrySnapshot")
 
     target_registry = dict(snapshot.registered)
     target_names = set(target_registry)
 
-    missing_builtin = sorted(
-        name for name in _BASE_OPTIONAL_EXPORTS if name not in target_names
-    )
+    missing_builtin = sorted(name for name in _BASE_OPTIONAL_EXPORTS if name not in target_names)
     if missing_builtin:
         raise ValueError(
-            "Snapshot is missing builtin optional exports: "
-            + ", ".join(missing_builtin)
+            "Snapshot is missing builtin optional exports: " + ", ".join(missing_builtin)
         )
 
     current_names = set(_LAZY_OPTIONAL_EXPORTS)
@@ -2436,9 +2325,7 @@ def get_optional_export(
     """
 
     if name not in _LAZY_OPTIONAL_EXPORTS:
-        raise ValueError(
-            f"'{name}' nie jest zarejestrowane jako opcjonalny eksport runtime"
-        )
+        raise ValueError(f"'{name}' nie jest zarejestrowane jako opcjonalny eksport runtime")
 
     try:
         return _load_optional_export(name, cache=cache)
@@ -2453,9 +2340,7 @@ def refresh_optional_export(name: str, *, reload_module: bool = False):
     """Odśwież zcache'owany lazy-eksport i opcjonalnie przeładuj moduł źródłowy."""
 
     if name not in _LAZY_OPTIONAL_EXPORTS:
-        raise ValueError(
-            f"'{name}' nie jest zarejestrowane jako opcjonalny eksport runtime"
-        )
+        raise ValueError(f"'{name}' nie jest zarejestrowane jako opcjonalny eksport runtime")
 
     module_name, _ = _LAZY_OPTIONAL_EXPORTS[name]
     previous_value = globals().pop(name, _MISSING)
@@ -2511,9 +2396,7 @@ def ensure_optional_exports(
 
     for name in names:
         if name not in _LAZY_OPTIONAL_EXPORTS:
-            raise ValueError(
-                f"'{name}' nie jest zarejestrowane jako opcjonalny eksport runtime"
-            )
+            raise ValueError(f"'{name}' nie jest zarejestrowane jako opcjonalny eksport runtime")
 
         try:
             loaded[name] = _load_optional_export(name, cache=cache)
@@ -2530,9 +2413,7 @@ def is_optional_export_cached(name: str) -> bool:
     """Sprawdź, czy zadany lazy-eksport jest obecnie zcache'owany w module."""
 
     if name not in _LAZY_OPTIONAL_EXPORTS:
-        raise ValueError(
-            f"'{name}' nie jest zarejestrowane jako opcjonalny eksport runtime"
-        )
+        raise ValueError(f"'{name}' nie jest zarejestrowane jako opcjonalny eksport runtime")
 
     return name in globals()
 
@@ -2541,9 +2422,7 @@ def evict_optional_export(name: str) -> bool:
     """Usuń zcache'owaną wartość lazy-eksportu, jeśli istnieje."""
 
     if name not in _LAZY_OPTIONAL_EXPORTS:
-        raise ValueError(
-            f"'{name}' nie jest zarejestrowane jako opcjonalny eksport runtime"
-        )
+        raise ValueError(f"'{name}' nie jest zarejestrowane jako opcjonalny eksport runtime")
 
     previous = globals().pop(name, _MISSING)
     return previous is not _MISSING

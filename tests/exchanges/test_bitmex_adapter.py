@@ -23,7 +23,9 @@ def _credentials(environment: Environment = Environment.TESTNET) -> ExchangeCred
 
 
 def test_bitmex_spot_stream_paths() -> None:
-    adapter = BitmexSpotAdapter(_credentials(), environment=Environment.TESTNET, client=_StubClient())
+    adapter = BitmexSpotAdapter(
+        _credentials(), environment=Environment.TESTNET, client=_StubClient()
+    )
     stream = adapter.stream_public_data(channels=["orderbook"])
     assert isinstance(stream, LocalLongPollStream)
     assert stream._base_url == "https://stream.sandbox.dudzian.ai/exchanges"  # noqa: SLF001
@@ -103,4 +105,3 @@ def test_bitmex_futures_maps_rate_limit_errors() -> None:
     adapter.configure_network(ip_allowlist=())
     with pytest.raises(ExchangeThrottlingError):
         adapter.fetch_account_snapshot()
-

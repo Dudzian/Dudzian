@@ -61,7 +61,9 @@ def _load_signing_key(value: str | None) -> tuple[bytes, str | None]:
     return key, key_id
 
 
-def read_audit_entries(path: str | os.PathLike[str] | None, *, limit: int = 200) -> list[dict[str, Any]]:
+def read_audit_entries(
+    path: str | os.PathLike[str] | None, *, limit: int = 200
+) -> list[dict[str, Any]]:
     """Zwraca listę wpisów audytowych z pliku JSONL."""
 
     log_path = _coerce_path(path, default=DEFAULT_AUDIT_PATH)
@@ -211,4 +213,3 @@ __all__ = [
     "export_security_bundle",
     "read_audit_entries",
 ]
-

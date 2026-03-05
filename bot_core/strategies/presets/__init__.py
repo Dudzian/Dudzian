@@ -3,6 +3,7 @@
 Zapewnia lekkie API do pracy z presetami (walidacja, kreator, instalator)
 bez wymuszania importu pełnych implementacji silników strategii.
 """
+
 from __future__ import annotations
 
 import importlib

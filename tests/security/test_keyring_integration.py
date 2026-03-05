@@ -28,7 +28,9 @@ class DummyHwId:
         return "stub-fingerprint"
 
 
-def _install_keyring_stub(monkeypatch: pytest.MonkeyPatch, backend: DummyBackend | None = None) -> types.ModuleType:
+def _install_keyring_stub(
+    monkeypatch: pytest.MonkeyPatch, backend: DummyBackend | None = None
+) -> types.ModuleType:
     module = types.ModuleType("keyring")
     errors = types.SimpleNamespace(PasswordDeleteError=Exception)
     current_backend = backend or DummyBackend()
@@ -61,7 +63,9 @@ def _install_keyring_stub(monkeypatch: pytest.MonkeyPatch, backend: DummyBackend
     return module
 
 
-def _install_backend_module(monkeypatch: pytest.MonkeyPatch, module_name: str, class_name: str) -> type[DummyBackend]:
+def _install_backend_module(
+    monkeypatch: pytest.MonkeyPatch, module_name: str, class_name: str
+) -> type[DummyBackend]:
     package, _, leaf = module_name.rpartition(".")
     if package:
         package_module = sys.modules.get(package)
@@ -98,9 +102,7 @@ def test_linux_backend_promotes_secret_service(monkeypatch: pytest.MonkeyPatch) 
 def test_windows_backend_promotes_win_vault(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(sys, "platform", "win32", raising=False)
     _install_keyring_stub(monkeypatch)
-    native_cls = _install_backend_module(
-        monkeypatch, "keyring.backends.Windows", "WinVaultKeyring"
-    )
+    native_cls = _install_backend_module(monkeypatch, "keyring.backends.Windows", "WinVaultKeyring")
 
     storage = KeyringSecretStorage(hwid_provider=DummyHwId())
     assert isinstance(storage._backend, native_cls)  # type: ignore[attr-defined]
@@ -109,9 +111,7 @@ def test_windows_backend_promotes_win_vault(monkeypatch: pytest.MonkeyPatch) -> 
 def test_macos_backend_promotes_keychain(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(sys, "platform", "darwin", raising=False)
     _install_keyring_stub(monkeypatch)
-    native_cls = _install_backend_module(
-        monkeypatch, "keyring.backends.macOS", "Keyring"
-    )
+    native_cls = _install_backend_module(monkeypatch, "keyring.backends.macOS", "Keyring")
 
     storage = KeyringSecretStorage(hwid_provider=DummyHwId())
     assert isinstance(storage._backend, native_cls)  # type: ignore[attr-defined]

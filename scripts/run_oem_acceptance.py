@@ -91,6 +91,7 @@ except Exception:  # pragma: no cover
 @dataclass(slots=True)
 class StepOutcome:
     """Reprezentuje wynik pojedynczego kroku akceptacyjnego."""
+
     step: str
     status: str
     details: dict[str, Any] = field(default_factory=dict)
@@ -106,8 +107,12 @@ def _build_parser() -> argparse.ArgumentParser:
     )
 
     parser.add_argument("--summary-path", help="Ścieżka do pliku JSON z podsumowaniem akceptacji")
-    parser.add_argument("--print-summary", action="store_true", help="Wypisz podsumowanie na stdout")
-    parser.add_argument("--fail-fast", action="store_true", help="Zatrzymaj proces po pierwszym błędzie")
+    parser.add_argument(
+        "--print-summary", action="store_true", help="Wypisz podsumowanie na stdout"
+    )
+    parser.add_argument(
+        "--fail-fast", action="store_true", help="Zatrzymaj proces po pierwszym błędzie"
+    )
 
     parser.add_argument(
         "--artifact-root",
@@ -119,44 +124,93 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--skip-license", action="store_true", help="Pomiń provisioning licencji")
     parser.add_argument("--skip-risk", action="store_true", help="Pomiń symulacje Paper Labs")
     parser.add_argument("--skip-mtls", action="store_true", help="Pomiń generowanie pakietu mTLS")
-    parser.add_argument("--skip-tco", action="store_true", help="Pomiń analizę kosztów transakcyjnych (TCO)")
-    parser.add_argument("--skip-decision", action="store_true", help="Pomiń smoke test DecisionOrchestratora")
+    parser.add_argument(
+        "--skip-tco", action="store_true", help="Pomiń analizę kosztów transakcyjnych (TCO)"
+    )
+    parser.add_argument(
+        "--skip-decision", action="store_true", help="Pomiń smoke test DecisionOrchestratora"
+    )
     parser.add_argument("--skip-slo", action="store_true", help="Pomiń generowanie raportu SLO")
     parser.add_argument("--skip-rotation", action="store_true", help="Pomiń plan rotacji kluczy")
-    parser.add_argument("--skip-observability", action="store_true", help="Pomiń budowanie paczki obserwowalności")
+    parser.add_argument(
+        "--skip-observability", action="store_true", help="Pomiń budowanie paczki obserwowalności"
+    )
 
     # Parametry decision logu
     parser.add_argument("--decision-log-path", help="Ścieżka do decision logu JSONL")
-    parser.add_argument("--decision-log-hmac-key", help="Wartość klucza HMAC (ciąg znaków) do podpisu decision logu")
-    parser.add_argument("--decision-log-hmac-key-file", help="Plik zawierający klucz HMAC do podpisu decision logu")
+    parser.add_argument(
+        "--decision-log-hmac-key", help="Wartość klucza HMAC (ciąg znaków) do podpisu decision logu"
+    )
+    parser.add_argument(
+        "--decision-log-hmac-key-file", help="Plik zawierający klucz HMAC do podpisu decision logu"
+    )
     parser.add_argument("--decision-log-key-id", help="Identyfikator klucza decision logu")
-    parser.add_argument("--decision-log-category", default="release.oem.acceptance", help="Kategoria wpisu decision logu")
+    parser.add_argument(
+        "--decision-log-category",
+        default="release.oem.acceptance",
+        help="Kategoria wpisu decision logu",
+    )
     parser.add_argument("--decision-log-notes", help="Notatka dołączana do wpisu decision logu")
-    parser.add_argument("--decision-log-allow-unsigned", action="store_true", help="Pozwól na dodanie wpisu bez podpisu")
+    parser.add_argument(
+        "--decision-log-allow-unsigned",
+        action="store_true",
+        help="Pozwól na dodanie wpisu bez podpisu",
+    )
 
     # Parametry bundla
     parser.add_argument("--bundle-platform", choices=sorted(SUPPORTED_PLATFORMS))
     parser.add_argument("--bundle-version", help="Wersja bundla Core OEM")
     parser.add_argument("--bundle-signing-key", help="Plik z kluczem HMAC do podpisu bundla")
-    parser.add_argument("--bundle-daemon", action="append", default=[], help="Ścieżka do artefaktu demona (wielokrotna)")
-    parser.add_argument("--bundle-ui", action="append", default=[], help="Ścieżka do artefaktu UI (wielokrotna)")
-    parser.add_argument("--bundle-config", action="append", default=[], help="Wpis konfiguracyjny rel_path=plik")
-    parser.add_argument("--bundle-resource", action="append", default=[], help="Dodatkowy zasób katalog=plik")
-    parser.add_argument("--bundle-output-dir", help="Katalog docelowy dla archiwum bundla (domyślnie var/dist)")
-    parser.add_argument("--bundle-fingerprint-placeholder", default="UNPROVISIONED", help="Wartość fingerprintu w bundlu")
+    parser.add_argument(
+        "--bundle-daemon",
+        action="append",
+        default=[],
+        help="Ścieżka do artefaktu demona (wielokrotna)",
+    )
+    parser.add_argument(
+        "--bundle-ui", action="append", default=[], help="Ścieżka do artefaktu UI (wielokrotna)"
+    )
+    parser.add_argument(
+        "--bundle-config", action="append", default=[], help="Wpis konfiguracyjny rel_path=plik"
+    )
+    parser.add_argument(
+        "--bundle-resource", action="append", default=[], help="Dodatkowy zasób katalog=plik"
+    )
+    parser.add_argument(
+        "--bundle-output-dir", help="Katalog docelowy dla archiwum bundla (domyślnie var/dist)"
+    )
+    parser.add_argument(
+        "--bundle-fingerprint-placeholder",
+        default="UNPROVISIONED",
+        help="Wartość fingerprintu w bundlu",
+    )
 
     # Parametry licencji
     parser.add_argument("--license-signing-key", help="Plik z kluczem HMAC licencji")
     parser.add_argument("--license-key-id", help="Identyfikator klucza licencyjnego")
     parser.add_argument("--license-fingerprint", help="Fingerprint urządzenia OEM")
     parser.add_argument("--license-fingerprint-file", help="Plik z fingerprintem urządzenia")
-    parser.add_argument("--license-profile", default="paper", help="Profil pracy zapisywany w licencji")
-    parser.add_argument("--license-valid-days", type=int, default=365, help="Okres ważności licencji w dniach")
+    parser.add_argument(
+        "--license-profile", default="paper", help="Profil pracy zapisywany w licencji"
+    )
+    parser.add_argument(
+        "--license-valid-days", type=int, default=365, help="Okres ważności licencji w dniach"
+    )
     parser.add_argument("--license-registry", help="Ścieżka rejestru licencji JSONL")
-    parser.add_argument("--license-rotation-log", help="Plik logu rotacji klucza licencji (jeśli wymagany)")
-    parser.add_argument("--license-rotation-interval-days", type=float, default=90.0, help="Interwał rotacji klucza")
+    parser.add_argument(
+        "--license-rotation-log", help="Plik logu rotacji klucza licencji (jeśli wymagany)"
+    )
+    parser.add_argument(
+        "--license-rotation-interval-days", type=float, default=90.0, help="Interwał rotacji klucza"
+    )
     parser.add_argument("--license-notes", help="Notatka dołączana do licencji")
-    parser.add_argument("--license-feature", action="append", dest="license_features", default=[], help="Flagi funkcjonalne")
+    parser.add_argument(
+        "--license-feature",
+        action="append",
+        dest="license_features",
+        default=[],
+        help="Flagi funkcjonalne",
+    )
     parser.add_argument("--license-bundle-version", help="Wersja bundla wpisywana do licencji")
 
     # Parametry Paper Labs
@@ -164,16 +218,36 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--risk-environment", help="Nazwa środowiska konfiguracyjnego (np. paper)")
     parser.add_argument("--risk-dataset-root", help="Nadpisanie ścieżki do danych Parquet")
     parser.add_argument("--risk-namespace", default="binance_spot", help="Namespace danych Parquet")
-    parser.add_argument("--risk-symbol", action="append", dest="risk_symbols", default=[], help="Symbol instrumentu")
+    parser.add_argument(
+        "--risk-symbol", action="append", dest="risk_symbols", default=[], help="Symbol instrumentu"
+    )
     parser.add_argument("--risk-interval", default="1h", help="Interwał świec do symulacji")
     parser.add_argument("--risk-max-bars", type=int, default=720, help="Maks. liczba świec")
-    parser.add_argument("--risk-base-equity", type=float, default=100_000.0, help="Kapitał początkowy w USD")
+    parser.add_argument(
+        "--risk-base-equity", type=float, default=100_000.0, help="Kapitał początkowy w USD"
+    )
     parser.add_argument("--risk-output-dir", help="Katalog na raporty Paper Labs")
-    parser.add_argument("--risk-json-name", default="risk_simulation_report.json", help="Nazwa pliku JSON")
-    parser.add_argument("--risk-pdf-name", default="risk_simulation_report.pdf", help="Nazwa pliku PDF")
-    parser.add_argument("--risk-fail-on-breach", action="store_true", help="Przerwij przy naruszeniach")
-    parser.add_argument("--risk-synthetic-fallback", action="store_true", dest="risk_synthetic_fallback", help="Wymuś syntetyczne dane")
-    parser.add_argument("--risk-disable-synthetic-fallback", action="store_false", dest="risk_synthetic_fallback", help="Wyłącz syntetyczne dane")
+    parser.add_argument(
+        "--risk-json-name", default="risk_simulation_report.json", help="Nazwa pliku JSON"
+    )
+    parser.add_argument(
+        "--risk-pdf-name", default="risk_simulation_report.pdf", help="Nazwa pliku PDF"
+    )
+    parser.add_argument(
+        "--risk-fail-on-breach", action="store_true", help="Przerwij przy naruszeniach"
+    )
+    parser.add_argument(
+        "--risk-synthetic-fallback",
+        action="store_true",
+        dest="risk_synthetic_fallback",
+        help="Wymuś syntetyczne dane",
+    )
+    parser.add_argument(
+        "--risk-disable-synthetic-fallback",
+        action="store_false",
+        dest="risk_synthetic_fallback",
+        help="Wyłącz syntetyczne dane",
+    )
     parser.set_defaults(risk_synthetic_fallback=True)
 
     # Parametry mTLS
@@ -183,50 +257,101 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--mtls-organization", default="Dudzian", help="Pole O certyfikatu")
     parser.add_argument("--mtls-valid-days", type=int, default=365, help="Ważność certyfikatów")
     parser.add_argument("--mtls-key-size", type=int, default=4096, help="Rozmiar klucza RSA")
-    parser.add_argument("--mtls-server-hostname", action="append", dest="mtls_server_hostnames", default=[], help="Hostname/IP do SAN serwera")
+    parser.add_argument(
+        "--mtls-server-hostname",
+        action="append",
+        dest="mtls_server_hostnames",
+        default=[],
+        help="Hostname/IP do SAN serwera",
+    )
     parser.add_argument("--mtls-rotation-registry", help="Plik rejestru rotacji TLS (opcjonalny)")
     parser.add_argument("--mtls-ca-passphrase-env", help="ENV z passphrase dla klucza CA")
     parser.add_argument("--mtls-server-passphrase-env", help="ENV z passphrase klucza serwera")
     parser.add_argument("--mtls-client-passphrase-env", help="ENV z passphrase klucza klienta")
 
     # Parametry TCO
-    parser.add_argument("--tco-fill", action="append", dest="tco_fills", default=[], help="Plik JSONL z fillami")
+    parser.add_argument(
+        "--tco-fill", action="append", dest="tco_fills", default=[], help="Plik JSONL z fillami"
+    )
     parser.add_argument("--tco-output-dir", default="var/audit/tco", help="Katalog raportu TCO")
-    parser.add_argument("--tco-basename", default="oem_acceptance_tco", help="Nazwa bazowa artefaktów TCO")
+    parser.add_argument(
+        "--tco-basename", default="oem_acceptance_tco", help="Nazwa bazowa artefaktów TCO"
+    )
     parser.add_argument("--tco-signing-key", help="Klucz HMAC do podpisu raportu TCO")
     parser.add_argument("--tco-signing-key-id", help="Identyfikator klucza TCO")
-    parser.add_argument("--tco-cost-limit-bps", type=float, default=None, help="Limit kosztów w bps (alert)")
-    parser.add_argument("--tco-metadata", action="append", default=[], help="Dodatkowe metadane TCO (k=v)")
+    parser.add_argument(
+        "--tco-cost-limit-bps", type=float, default=None, help="Limit kosztów w bps (alert)"
+    )
+    parser.add_argument(
+        "--tco-metadata", action="append", default=[], help="Dodatkowe metadane TCO (k=v)"
+    )
 
     # Parametry DecisionOrchestratora
-    parser.add_argument("--decision-config", help="Konfiguracja core.yaml używana przez decision engine")
+    parser.add_argument(
+        "--decision-config", help="Konfiguracja core.yaml używana przez decision engine"
+    )
     parser.add_argument("--decision-risk-snapshot", help="Plik JSON ze snapshotem ryzyka profili")
     parser.add_argument("--decision-candidates", help="Plik JSON z kandydatami decyzji")
-    parser.add_argument("--decision-output", help="Ścieżka wynikowego raportu DecisionOrchestratora")
-    parser.add_argument("--decision-allow-empty", action="store_true", help="Nie traktuj braku akceptacji jako błędu")
-    parser.add_argument("--decision-signing-key", help="Wartość klucza podpisu raportu decision engine")
+    parser.add_argument(
+        "--decision-output", help="Ścieżka wynikowego raportu DecisionOrchestratora"
+    )
+    parser.add_argument(
+        "--decision-allow-empty",
+        action="store_true",
+        help="Nie traktuj braku akceptacji jako błędu",
+    )
+    parser.add_argument(
+        "--decision-signing-key", help="Wartość klucza podpisu raportu decision engine"
+    )
     parser.add_argument("--decision-signing-key-env", help="Nazwa zmiennej ENV z kluczem podpisu")
-    parser.add_argument("--decision-signing-key-file", help="Plik z kluczem podpisu decision engine")
+    parser.add_argument(
+        "--decision-signing-key-file", help="Plik z kluczem podpisu decision engine"
+    )
     parser.add_argument("--decision-signing-key-id", help="Identyfikator klucza decision engine")
-    parser.add_argument("--decision-tco-report", help="Opcjonalna ścieżka do raportu TCO dla orchestratora")
+    parser.add_argument(
+        "--decision-tco-report", help="Opcjonalna ścieżka do raportu TCO dla orchestratora"
+    )
 
     # Parametry SLO
     parser.add_argument("--slo-config", help="Konfiguracja core.yaml z definicjami SLO")
-    parser.add_argument("--slo-metric", action="append", dest="slo_metrics", default=[], help="Plik JSONL z metrykami SLO")
+    parser.add_argument(
+        "--slo-metric",
+        action="append",
+        dest="slo_metrics",
+        default=[],
+        help="Plik JSONL z metrykami SLO",
+    )
     parser.add_argument("--slo-output-dir", default="var/audit/slo", help="Katalog raportów SLO")
     parser.add_argument("--slo-basename", default="oem_slo_report", help="Nazwa bazowa raportu SLO")
     parser.add_argument("--slo-signing-key", help="Klucz podpisu raportu SLO")
     parser.add_argument("--slo-signing-key-id", help="Identyfikator klucza raportu SLO")
-    parser.add_argument("--slo-metadata", action="append", default=[], help="Metadane raportu SLO (k=v)")
+    parser.add_argument(
+        "--slo-metadata", action="append", default=[], help="Metadane raportu SLO (k=v)"
+    )
 
     # Parametry rotacji kluczy
-    parser.add_argument("--rotation-config", help="Konfiguracja core.yaml używana do planu rotacji kluczy")
-    parser.add_argument("--rotation-registry", help="Ścieżka rejestru rotacji (nadpisuje konfigurację)")
+    parser.add_argument(
+        "--rotation-config", help="Konfiguracja core.yaml używana do planu rotacji kluczy"
+    )
+    parser.add_argument(
+        "--rotation-registry", help="Ścieżka rejestru rotacji (nadpisuje konfigurację)"
+    )
     parser.add_argument("--rotation-output-dir", help="Katalog docelowy raportu rotacji")
-    parser.add_argument("--rotation-basename", default="rotation_plan_oem", help="Nazwa bazowa raportu rotacji")
-    parser.add_argument("--rotation-execute", action="store_true", help="Zapisz aktualizację rejestru rotacji")
-    parser.add_argument("--rotation-interval-override", type=float, default=None, help="Override interwału rotacji (dni)")
-    parser.add_argument("--rotation-warn-override", type=float, default=None, help="Override progu ostrzeżeń (dni)")
+    parser.add_argument(
+        "--rotation-basename", default="rotation_plan_oem", help="Nazwa bazowa raportu rotacji"
+    )
+    parser.add_argument(
+        "--rotation-execute", action="store_true", help="Zapisz aktualizację rejestru rotacji"
+    )
+    parser.add_argument(
+        "--rotation-interval-override",
+        type=float,
+        default=None,
+        help="Override interwału rotacji (dni)",
+    )
+    parser.add_argument(
+        "--rotation-warn-override", type=float, default=None, help="Override progu ostrzeżeń (dni)"
+    )
     parser.add_argument(
         "--rotation-mode",
         choices=("plan", "batch"),
@@ -242,23 +367,41 @@ def _build_parser() -> argparse.ArgumentParser:
     # Parametry paczki obserwowalności
     parser.add_argument("--observability-version", help="Wersja paczki observability")
     parser.add_argument("--observability-output-dir", help="Katalog docelowy paczki observability")
-    parser.add_argument("--observability-signing-key", help="Plik z kluczem podpisu paczki observability")
+    parser.add_argument(
+        "--observability-signing-key", help="Plik z kluczem podpisu paczki observability"
+    )
     parser.add_argument("--observability-key-id", help="Identyfikator klucza paczki observability")
-    parser.add_argument("--observability-dashboard", action="append", dest="observability_dashboards", default=[], help="Plik dashboardu Grafany")
-    parser.add_argument("--observability-alert", action="append", dest="observability_alerts", default=[], help="Plik reguł alertowych Prometheusa")
+    parser.add_argument(
+        "--observability-dashboard",
+        action="append",
+        dest="observability_dashboards",
+        default=[],
+        help="Plik dashboardu Grafany",
+    )
+    parser.add_argument(
+        "--observability-alert",
+        action="append",
+        dest="observability_alerts",
+        default=[],
+        help="Plik reguł alertowych Prometheusa",
+    )
 
     return parser
 
 
 def _ensure_paths_exist(values: Iterable[str], description: str) -> None:
-    missing = [candidate for candidate in values if candidate and not Path(candidate).expanduser().exists()]
+    missing = [
+        candidate for candidate in values if candidate and not Path(candidate).expanduser().exists()
+    ]
     if missing:
         raise AcceptanceError(f"{description}: brakujące ścieżki: {', '.join(missing)}")
 
 
 def _require(step_name: str, fn) -> None:
     if fn is None:
-        raise AcceptanceError(f"Krok '{step_name}' jest niedostępny: brak wymaganego modułu skryptu.")
+        raise AcceptanceError(
+            f"Krok '{step_name}' jest niedostępny: brak wymaganego modułu skryptu."
+        )
 
 
 def _run_bundle_step(args: argparse.Namespace) -> dict[str, Any]:
@@ -275,7 +418,9 @@ def _run_bundle_step(args: argparse.Namespace) -> dict[str, Any]:
     if not args.bundle_ui:
         raise AcceptanceError("Należy wskazać co najmniej jeden artefakt UI (--bundle-ui)")
     if not args.bundle_config:
-        raise AcceptanceError("Należy dodać przynajmniej jeden plik konfiguracyjny (--bundle-config)")
+        raise AcceptanceError(
+            "Należy dodać przynajmniej jeden plik konfiguracyjny (--bundle-config)"
+        )
 
     _ensure_paths_exist(
         [args.bundle_signing_key, *(args.bundle_daemon), *(args.bundle_ui)],
@@ -286,9 +431,12 @@ def _run_bundle_step(args: argparse.Namespace) -> dict[str, Any]:
         _ensure_paths_exist([path], "Etap bundla (config/resource)")
 
     cli_args: List[str] = [
-        "--platform", args.bundle_platform,
-        "--version", args.bundle_version,
-        "--signing-key-path", args.bundle_signing_key,
+        "--platform",
+        args.bundle_platform,
+        "--version",
+        args.bundle_version,
+        "--signing-key-path",
+        args.bundle_signing_key,
     ]
     for path in args.bundle_daemon:
         cli_args.extend(["--daemon", path])
@@ -304,7 +452,11 @@ def _run_bundle_step(args: argparse.Namespace) -> dict[str, Any]:
         cli_args.extend(["--fingerprint-placeholder", args.bundle_fingerprint_placeholder])
 
     bundle_path = build_core_bundle_from_cli(cli_args)
-    return {"archive": str(bundle_path), "platform": args.bundle_platform, "version": args.bundle_version}
+    return {
+        "archive": str(bundle_path),
+        "platform": args.bundle_platform,
+        "version": args.bundle_version,
+    }
 
 
 def _run_license_step(args: argparse.Namespace) -> dict[str, Any]:
@@ -326,22 +478,35 @@ def _run_license_step(args: argparse.Namespace) -> dict[str, Any]:
     bundle_version = args.license_bundle_version or args.bundle_version or "0.0.0"
     registry_path = Path(args.license_registry).expanduser()
     registry_path.parent.mkdir(parents=True, exist_ok=True)
-    rotation_log_path = Path(args.license_rotation_log).expanduser() if args.license_rotation_log else None
+    rotation_log_path = (
+        Path(args.license_rotation_log).expanduser() if args.license_rotation_log else None
+    )
     if rotation_log_path is not None:
         rotation_log_path.parent.mkdir(parents=True, exist_ok=True)
 
     cli_args: List[str] = [
-        "--signing-key-path", args.license_signing_key,
-        "--profile", args.license_profile,
-        "--bundle-version", bundle_version,
-        "--output", str(registry_path),
-        "--valid-days", str(args.license_valid_days),
+        "--signing-key-path",
+        args.license_signing_key,
+        "--profile",
+        args.license_profile,
+        "--bundle-version",
+        bundle_version,
+        "--output",
+        str(registry_path),
+        "--valid-days",
+        str(args.license_valid_days),
     ]
     if args.license_key_id:
         cli_args.extend(["--key-id", args.license_key_id])
     if rotation_log_path:
-        cli_args.extend(["--rotation-log", str(rotation_log_path),
-                         "--rotation-interval-days", str(args.license_rotation_interval_days)])
+        cli_args.extend(
+            [
+                "--rotation-log",
+                str(rotation_log_path),
+                "--rotation-interval-days",
+                str(args.license_rotation_interval_days),
+            ]
+        )
     if args.license_notes:
         cli_args.extend(["--notes", args.license_notes])
     for feature in args.license_features:
@@ -377,13 +542,20 @@ def _run_risk_step(args: argparse.Namespace) -> dict[str, Any]:
         _ensure_paths_exist([args.risk_dataset_root], "Paper Labs dataset")
 
     cli_args: List[str] = [
-        "--config", args.risk_config,
-        "--output-dir", args.risk_output_dir,
-        "--interval", args.risk_interval,
-        "--max-bars", str(args.risk_max_bars),
-        "--base-equity", str(args.risk_base_equity),
-        "--json-output", args.risk_json_name,
-        "--pdf-output", args.risk_pdf_name,
+        "--config",
+        args.risk_config,
+        "--output-dir",
+        args.risk_output_dir,
+        "--interval",
+        args.risk_interval,
+        "--max-bars",
+        str(args.risk_max_bars),
+        "--base-equity",
+        str(args.risk_base_equity),
+        "--json-output",
+        args.risk_json_name,
+        "--pdf-output",
+        args.risk_pdf_name,
     ]
     if args.risk_environment:
         cli_args.extend(["--environment", args.risk_environment])
@@ -428,7 +600,9 @@ def _run_risk_step(args: argparse.Namespace) -> dict[str, Any]:
                 "reason": "Paper Labs niedostępne w tej kompilacji",
                 "timestamp": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
             }
-            json_path.write_text(json.dumps(json_payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+            json_path.write_text(
+                json.dumps(json_payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
+            )
             pdf_path = output_dir / args.risk_pdf_name
             pdf_path.write_text(
                 "Paper Labs unavailable – generated placeholder report for audit purposes.\n",
@@ -502,7 +676,9 @@ def _generate_placeholder_mtls_bundle(
         )
 
     metadata_path = output_dir / f"{bundle_name}-metadata.json"
-    metadata_path.write_text(json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    metadata_path.write_text(
+        json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
+    )
 
     return {
         "metadata": str(metadata_path),
@@ -561,22 +737,34 @@ def _run_mtls_step(args: argparse.Namespace) -> dict[str, Any]:
         normalized["bundle"] = bundle_name
         normalized.setdefault("bundle_path", str(output_dir))
         metadata_path = output_dir / f"{bundle_name}-metadata.json"
-        metadata_path.write_text(json.dumps(normalized, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+        metadata_path.write_text(
+            json.dumps(normalized, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
+        )
         files = normalized.get("files", {})
         return {
             "metadata": str(metadata_path),
             "ca_certificate": str(files.get("ca_certificate", output_dir / "ca" / "ca.pem")),
-            "server_certificate": str(files.get("server_certificate", output_dir / "server" / "server.crt")),
-            "client_certificate": str(files.get("client_certificate", output_dir / "client" / "client.crt")),
+            "server_certificate": str(
+                files.get("server_certificate", output_dir / "server" / "server.crt")
+            ),
+            "client_certificate": str(
+                files.get("client_certificate", output_dir / "client" / "client.crt")
+            ),
         }
 
     cli_args: List[str] = [
-        "--output-dir", args.mtls_output_dir,
-        "--bundle-name", args.mtls_bundle_name,
-        "--common-name", args.mtls_common_name,
-        "--organization", args.mtls_organization,
-        "--valid-days", str(args.mtls_valid_days),
-        "--key-size", str(args.mtls_key_size),
+        "--output-dir",
+        args.mtls_output_dir,
+        "--bundle-name",
+        args.mtls_bundle_name,
+        "--common-name",
+        args.mtls_common_name,
+        "--organization",
+        args.mtls_organization,
+        "--valid-days",
+        str(args.mtls_valid_days),
+        "--key-size",
+        str(args.mtls_key_size),
     ]
     for host in args.mtls_server_hostnames or []:
         cli_args.extend(["--server-hostname", host])
@@ -618,7 +806,8 @@ def _generate_placeholder_tco_report(args: argparse.Namespace) -> dict[str, Any]
             b"1 0 obj << /Type /Catalog /Pages 2 0 R >> endobj",
             b"2 0 obj << /Type /Pages /Count 1 /Kids [3 0 R] >> endobj",
             b"3 0 obj << /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Contents 4 0 R /Resources << /Font << /F1 5 0 R >> >> >> endobj",
-            b"4 0 obj << /Length %d >> stream\n%s\nendstream endobj" % (len(content_bytes), content_bytes),
+            b"4 0 obj << /Length %d >> stream\n%s\nendstream endobj"
+            % (len(content_bytes), content_bytes),
             b"5 0 obj << /Type /Font /Subtype /Type1 /BaseFont /Helvetica >> endobj",
         ]
 
@@ -636,17 +825,20 @@ def _generate_placeholder_tco_report(args: argparse.Namespace) -> dict[str, Any]
         for offset in offsets[1:]:
             buffer.extend(f"{offset:010d} 00000 n \n".encode("ascii"))
         buffer.extend(
-            (
-                f"trailer << /Size {count} /Root 1 0 R >>\n"
-                f"startxref\n{xref_offset}\n%%EOF\n"
-            ).encode("ascii")
+            (f"trailer << /Size {count} /Root 1 0 R >>\nstartxref\n{xref_offset}\n%%EOF\n").encode(
+                "ascii"
+            )
         )
         target.write_bytes(buffer)
 
     try:
-        from reportlab.pdfgen import canvas  # lokalny import, aby nie wysadzać całości gdy reportlab nie jest dostępny
+        from reportlab.pdfgen import (
+            canvas,
+        )  # lokalny import, aby nie wysadzać całości gdy reportlab nie jest dostępny
     except ImportError:
-        LOGGER.warning("Brak reportlab – zapisuję minimalny PDF placeholder TCO bez zależności zewnętrznych")
+        LOGGER.warning(
+            "Brak reportlab – zapisuję minimalny PDF placeholder TCO bez zależności zewnętrznych"
+        )
         _write_trivial_pdf(pdf_path, "Placeholder TCO report for OEM acceptance.")
     else:
         pdf = canvas.Canvas(str(pdf_path))
@@ -738,15 +930,24 @@ def _run_decision_step(args: argparse.Namespace) -> dict[str, Any]:
             raise AcceptanceError(f"Brak parametru {flag} dla DecisionOrchestratora")
 
     config_path = args.decision_config or args.risk_config or str(Path("config") / "core.yaml")
-    _ensure_paths_exist([config_path, args.decision_risk_snapshot, args.decision_candidates], "Etap DecisionOrchestrator")
+    _ensure_paths_exist(
+        [config_path, args.decision_risk_snapshot, args.decision_candidates],
+        "Etap DecisionOrchestrator",
+    )
     if args.decision_signing_key_file:
-        _ensure_paths_exist([args.decision_signing_key_file], "DecisionOrchestrator (klucz plikowy)")
+        _ensure_paths_exist(
+            [args.decision_signing_key_file], "DecisionOrchestrator (klucz plikowy)"
+        )
 
     cli_args: List[str] = [
-        "--config", str(Path(config_path).expanduser()),
-        "--risk-snapshot", str(Path(args.decision_risk_snapshot).expanduser()),
-        "--candidates", str(Path(args.decision_candidates).expanduser()),
-        "--output", str(Path(args.decision_output).expanduser()),
+        "--config",
+        str(Path(config_path).expanduser()),
+        "--risk-snapshot",
+        str(Path(args.decision_risk_snapshot).expanduser()),
+        "--candidates",
+        str(Path(args.decision_candidates).expanduser()),
+        "--output",
+        str(Path(args.decision_output).expanduser()),
     ]
 
     tco_report = args.decision_tco_report or getattr(args, "_tco_report_path", None)
@@ -755,9 +956,19 @@ def _run_decision_step(args: argparse.Namespace) -> dict[str, Any]:
     if args.decision_allow_empty:
         cli_args.append("--allow-empty")
 
-    signing_args = [v for v in (args.decision_signing_key, args.decision_signing_key_env, args.decision_signing_key_file) if v]
+    signing_args = [
+        v
+        for v in (
+            args.decision_signing_key,
+            args.decision_signing_key_env,
+            args.decision_signing_key_file,
+        )
+        if v
+    ]
     if len(signing_args) > 1:
-        raise AcceptanceError("Podaj klucz decision engine w jednej formie: wartość, zmienna ENV lub plik")
+        raise AcceptanceError(
+            "Podaj klucz decision engine w jednej formie: wartość, zmienna ENV lub plik"
+        )
     if args.decision_signing_key:
         cli_args.extend(["--signing-key", args.decision_signing_key])
     elif args.decision_signing_key_env:
@@ -822,7 +1033,12 @@ def _run_slo_step(args: argparse.Namespace) -> dict[str, Any]:
 
 def _run_rotation_step(args: argparse.Namespace) -> dict[str, Any]:
     _require("rotation", run_rotate_keys)
-    config_path = args.rotation_config or args.slo_config or args.risk_config or str(Path("config") / "core.yaml")
+    config_path = (
+        args.rotation_config
+        or args.slo_config
+        or args.risk_config
+        or str(Path("config") / "core.yaml")
+    )
     _ensure_paths_exist([config_path], "Etap rotacji kluczy (konfiguracja)")
 
     mode = getattr(args, "rotation_mode", "plan") or "plan"
@@ -876,7 +1092,9 @@ def _run_rotation_step(args: argparse.Namespace) -> dict[str, Any]:
 
         plan_path = output_root / f"{basename}.json"
         if not plan_path.exists():
-            raise AcceptanceError(f"Nie udało się odnaleźć wygenerowanego planu rotacji: {plan_path}")
+            raise AcceptanceError(
+                f"Nie udało się odnaleźć wygenerowanego planu rotacji: {plan_path}"
+            )
         return {"plan": str(plan_path)}
 
     cli_args = [
@@ -895,7 +1113,9 @@ def _run_rotation_step(args: argparse.Namespace) -> dict[str, Any]:
         output_root = None
     if args.rotation_basename:
         if output_root is None:
-            raise AcceptanceError("W trybie batch wymagany jest --rotation-output-dir gdy podano --rotation-basename")
+            raise AcceptanceError(
+                "W trybie batch wymagany jest --rotation-output-dir gdy podano --rotation-basename"
+            )
         output_target = output_root / f"{args.rotation_basename}.json"
         cli_args.extend(["--output", str(output_target)])
     if args.rotation_interval_override is not None:
@@ -943,9 +1163,12 @@ def _run_observability_step(args: argparse.Namespace) -> dict[str, Any]:
     _ensure_paths_exist(args.observability_alerts or [], "Paczka obserwowalności (alert)")
 
     cli_args: List[str] = [
-        "--version", args.observability_version,
-        "--output-dir", args.observability_output_dir,
-        "--hmac-key", args.observability_signing_key,
+        "--version",
+        args.observability_version,
+        "--output-dir",
+        args.observability_output_dir,
+        "--hmac-key",
+        args.observability_signing_key,
     ]
     if args.observability_key_id:
         cli_args.extend(["--hmac-key-id", args.observability_key_id])
@@ -994,7 +1217,9 @@ def _record(summary: list[StepOutcome], outcome: StepOutcome) -> None:
     summary.append(outcome)
 
 
-def _dump_summary(summary: list[StepOutcome], *, args: argparse.Namespace) -> list[Mapping[str, Any]]:
+def _dump_summary(
+    summary: list[StepOutcome], *, args: argparse.Namespace
+) -> list[Mapping[str, Any]]:
     payload = _serialize_summary(summary)
     if args.summary_path:
         path = Path(args.summary_path)
@@ -1007,6 +1232,8 @@ def _dump_summary(summary: list[StepOutcome], *, args: argparse.Namespace) -> li
 
 def _serialize_summary(summary: Sequence[StepOutcome]) -> list[Mapping[str, Any]]:
     return [asdict(item) for item in summary]
+
+
 def _resolve_decision_log_key(args: argparse.Namespace) -> bytes | None:
     inline = args.decision_log_hmac_key
     path = args.decision_log_hmac_key_file
@@ -1150,7 +1377,11 @@ def _extract_bundle_metadata(archive_path: Path, destination: Path) -> list[str]
                     continue
                 _store_member(info.filename, archive.read(info))
     else:
-        mode = "r:gz" if archive_path.suffixes[-2:] == [".tar", ".gz"] or archive_path.suffix == ".tgz" else "r"
+        mode = (
+            "r:gz"
+            if archive_path.suffixes[-2:] == [".tar", ".gz"] or archive_path.suffix == ".tgz"
+            else "r"
+        )
         with tarfile.open(archive_path, mode) as archive:
             for member in archive.getmembers():
                 if not member.isfile():
@@ -1191,15 +1422,15 @@ def _publish_artifacts(
     }
 
     summary_path = artifact_dir / "summary.json"
-    summary_path.write_text(json.dumps(serialized_summary, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    summary_path.write_text(
+        json.dumps(serialized_summary, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
+    )
     metadata["summary_path"] = str(summary_path)
     if args.summary_path:
         metadata["source_summary_path"] = str(Path(args.summary_path).expanduser())
 
     details_by_step = {
-        item.step: item.details
-        for item in summary
-        if item.status == "ok" and item.details
+        item.step: item.details for item in summary if item.status == "ok" and item.details
     }
 
     bundle_details = details_by_step.get("bundle")
@@ -1257,7 +1488,9 @@ def _publish_artifacts(
         copied_log = decision_dir / log_path.name
         copied_log_path = _copy_artifact(log_path, copied_log)
         entry_path = decision_dir / "entry.json"
-        entry_path.write_text(json.dumps(entry, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+        entry_path.write_text(
+            json.dumps(entry, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
+        )
         metadata["decision_log"] = {"log_path": copied_log_path, "entry_path": str(entry_path)}
 
     tco_details = details_by_step.get("tco")
@@ -1321,7 +1554,9 @@ def _publish_artifacts(
             metadata.setdefault("observability", {})["archive"] = copied_path
 
     metadata_path = artifact_dir / "metadata.json"
-    metadata_path.write_text(json.dumps(metadata, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    metadata_path.write_text(
+        json.dumps(metadata, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
+    )
     return artifact_dir
 
 

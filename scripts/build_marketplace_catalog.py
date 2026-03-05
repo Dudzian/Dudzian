@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 """Buduje katalog Marketplace na podstawie specyfikacji presetów."""
+
 from __future__ import annotations
 
 import argparse
@@ -182,21 +183,31 @@ def _build_markdown(catalog: MarketplaceCatalog) -> str:
     separator = "| --- | --- | --- | --- | --- | --- |"
     lines.extend([header, separator])
     for package in sorted(catalog.packages, key=lambda entry: entry.package_id):
-        personas = ", ".join(
-            _markdown_escape(pref.persona)
-            for pref in package.user_preferences
-            if getattr(pref, "persona", "")
-        ) or "—"
-        risk_summary = ", ".join(
-            sorted(
-                {
-                    pref.risk_target.strip()
-                    for pref in package.user_preferences
-                    if pref.risk_target
-                }
+        personas = (
+            ", ".join(
+                _markdown_escape(pref.persona)
+                for pref in package.user_preferences
+                if getattr(pref, "persona", "")
             )
-        ) or "—"
-        budgets = [float(pref.recommended_budget) for pref in package.user_preferences if pref.recommended_budget]
+            or "—"
+        )
+        risk_summary = (
+            ", ".join(
+                sorted(
+                    {
+                        pref.risk_target.strip()
+                        for pref in package.user_preferences
+                        if pref.risk_target
+                    }
+                )
+            )
+            or "—"
+        )
+        budgets = [
+            float(pref.recommended_budget)
+            for pref in package.user_preferences
+            if pref.recommended_budget
+        ]
         budget_summary = _format_budget_range(budgets)
         summary = _markdown_escape(package.summary or "—")
         lines.append(
@@ -345,9 +356,7 @@ def build_catalog(
             latest_release = max(latest_release, package.release_date.astimezone(timezone.utc))
 
     strategy_packages = [
-        (package, spec_path)
-        for package, spec_path in package_sources
-        if package.user_preferences
+        (package, spec_path) for package, spec_path in package_sources if package.user_preferences
     ]
     if len(strategy_packages) < 15:
         raise ValueError(
@@ -356,16 +365,16 @@ def build_catalog(
     missing_persona = [
         (package, spec_path)
         for package, spec_path in strategy_packages
-        if any(not (getattr(pref, "persona", "") or "").strip() for pref in package.user_preferences)
+        if any(
+            not (getattr(pref, "persona", "") or "").strip() for pref in package.user_preferences
+        )
     ]
     if missing_persona:
         formatted = ", ".join(
             f"{entry.package_id} ({_spec_label(spec_path, presets_dir)})"
             for entry, spec_path in missing_persona
         )
-        raise ValueError(
-            "Brak kompletnych metadanych person w strategiach: " + formatted
-        )
+        raise ValueError("Brak kompletnych metadanych person w strategiach: " + formatted)
 
     packages.sort(key=lambda item: item.package_id)
     generated_at = latest_release if packages else datetime.now(timezone.utc)
@@ -417,16 +426,28 @@ def _load_signing_keys(entries: Iterable[str]) -> dict[str, bytes]:
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--presets", default=str(DEFAULT_PRESETS_DIR), help="Katalog ze specyfikacjami presetów.")
-    parser.add_argument("--packages", default=str(DEFAULT_PACKAGES_DIR), help="Katalog docelowy artefaktów Marketplace.")
-    parser.add_argument("--catalog", default=str(DEFAULT_CATALOG), help="Ścieżka docelowa katalogu Marketplace.")
+    parser.add_argument(
+        "--presets", default=str(DEFAULT_PRESETS_DIR), help="Katalog ze specyfikacjami presetów."
+    )
+    parser.add_argument(
+        "--packages",
+        default=str(DEFAULT_PACKAGES_DIR),
+        help="Katalog docelowy artefaktów Marketplace.",
+    )
+    parser.add_argument(
+        "--catalog", default=str(DEFAULT_CATALOG), help="Ścieżka docelowa katalogu Marketplace."
+    )
     parser.add_argument(
         "--markdown",
         default=str(DEFAULT_MARKDOWN),
         help="Ścieżka docelowa katalogu Marketplace w formacie Markdown.",
     )
-    parser.add_argument("--private-key", required=True, help="Klucz prywatny Ed25519 do podpisu presetów.")
-    parser.add_argument("--key-id", required=True, help="Identyfikator klucza Ed25519 do podpisu presetów.")
+    parser.add_argument(
+        "--private-key", required=True, help="Klucz prywatny Ed25519 do podpisu presetów."
+    )
+    parser.add_argument(
+        "--key-id", required=True, help="Identyfikator klucza Ed25519 do podpisu presetów."
+    )
     parser.add_argument("--issuer", help="Opcjonalny identyfikator wystawcy podpisu presetów.")
     parser.add_argument(
         "--signing-key",

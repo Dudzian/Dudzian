@@ -1,11 +1,16 @@
 """Kontroler generowania paczek diagnostycznych na potrzeby zgłoszeń serwisowych."""
+
 from __future__ import annotations
 
 from pathlib import Path
 
 from PySide6.QtCore import QObject, Property, Signal, Slot
 
-from core.support.diagnostics import DiagnosticsError, DiagnosticsPackage, create_diagnostics_package
+from core.support.diagnostics import (
+    DiagnosticsError,
+    DiagnosticsPackage,
+    create_diagnostics_package,
+)
 from .logging import get_support_logger
 
 LOGGER = get_support_logger()

@@ -1,4 +1,5 @@
 """Lokalni eksporterzy metryk wspierający uruchomienie offline."""
+
 from __future__ import annotations
 
 import logging
@@ -129,4 +130,3 @@ __all__ = [
     "PrometheusExporterConfig",
     "test_port_available",
 ]
-

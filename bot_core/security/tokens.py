@@ -1,4 +1,5 @@
 """Walidacja tokenów usługowych i proste RBAC dla serwisów runtime."""
+
 from __future__ import annotations
 
 import hashlib

@@ -87,9 +87,7 @@ def _load_decision_key(args: argparse.Namespace) -> bytes | None:
         if os.name != "nt":
             mode = resolved.stat().st_mode
             if mode & (0o077):
-                raise ValueError(
-                    "Plik klucza decision logu musi mieć uprawnienia maks. 600"
-                )
+                raise ValueError("Plik klucza decision logu musi mieć uprawnienia maks. 600")
         key = resolved.read_bytes()
     else:
         return None
@@ -142,9 +140,7 @@ def _copy_release_artifacts(
     signature = archive.with_suffix(".manifest.sig")
 
     if not manifest.exists() or not signature.exists():
-        raise FileNotFoundError(
-            "Brak plików manifestu lub podpisu obok zbudowanego archiwum"
-        )
+        raise FileNotFoundError("Brak plików manifestu lub podpisu obok zbudowanego archiwum")
 
     artifacts = {}
     for src in (archive, manifest, signature):

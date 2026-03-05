@@ -1,4 +1,5 @@
 """Local OEM orchestrator managing demo/paper/live environments."""
+
 from __future__ import annotations
 
 import argparse
@@ -89,8 +90,12 @@ def _definition_from_config(cfg: Any) -> StrategyDefinition:
     except KeyError:
         spec = None
 
-    license_tier = getattr(cfg, "license_tier", None) or (spec.license_tier if spec else "unspecified")
-    risk_classes = tuple(getattr(cfg, "risk_classes", ()) or (spec.risk_classes if spec else ("unspecified",)))
+    license_tier = getattr(cfg, "license_tier", None) or (
+        spec.license_tier if spec else "unspecified"
+    )
+    risk_classes = tuple(
+        getattr(cfg, "risk_classes", ()) or (spec.risk_classes if spec else ("unspecified",))
+    )
     required_data = tuple(
         getattr(cfg, "required_data", ()) or (spec.required_data if spec else ("unspecified",))
     )
@@ -113,14 +118,18 @@ def _definition_from_config(cfg: Any) -> StrategyDefinition:
     )
 
 
-def _ensure_environment(name: str, *, environments: Mapping[str, EnvironmentDefinition]) -> EnvironmentDefinition:
+def _ensure_environment(
+    name: str, *, environments: Mapping[str, EnvironmentDefinition]
+) -> EnvironmentDefinition:
     try:
         return environments[name]
     except KeyError as exc:
         raise SystemExit(f"Nieznane środowisko: {name}") from exc
 
 
-def cmd_prepare(args: argparse.Namespace, environments: Mapping[str, EnvironmentDefinition]) -> None:
+def cmd_prepare(
+    args: argparse.Namespace, environments: Mapping[str, EnvironmentDefinition]
+) -> None:
     env = _ensure_environment(args.environment, environments=environments)
     base_dir = Path(args.base_dir).expanduser().resolve()
     env_dir = base_dir / env.name
@@ -130,7 +139,9 @@ def cmd_prepare(args: argparse.Namespace, environments: Mapping[str, Environment
     print(f"Przygotowano katalog środowiska {env.name}: {env_dir}")
 
 
-def cmd_bundle(args: argparse.Namespace, environments: Mapping[str, EnvironmentDefinition], *, state_path: Path) -> None:
+def cmd_bundle(
+    args: argparse.Namespace, environments: Mapping[str, EnvironmentDefinition], *, state_path: Path
+) -> None:
     env = _ensure_environment(args.environment, environments=environments)
     license_result = _resolve_license_result(env.config_path)
     guard = _require_capability_guard(license_result)
@@ -215,7 +226,9 @@ def cmd_bundle(args: argparse.Namespace, environments: Mapping[str, EnvironmentD
     print(f"Zbudowano bundla środowiska {env.name}: {archive}")
 
 
-def cmd_launch(args: argparse.Namespace, environments: Mapping[str, EnvironmentDefinition], *, state_path: Path) -> None:
+def cmd_launch(
+    args: argparse.Namespace, environments: Mapping[str, EnvironmentDefinition], *, state_path: Path
+) -> None:
     env = _ensure_environment(args.environment, environments=environments)
     license_result = _resolve_license_result(env.config_path)
     guard = _require_capability_guard(license_result)
@@ -327,7 +340,9 @@ def _require_capability_guard(result) -> CapabilityGuard:
     return guard
 
 
-def cmd_verify_update(args: argparse.Namespace, environments: Mapping[str, EnvironmentDefinition]) -> None:
+def cmd_verify_update(
+    args: argparse.Namespace, environments: Mapping[str, EnvironmentDefinition]
+) -> None:
     env = _ensure_environment(args.environment, environments=environments)
     manifest_path = Path(args.manifest).expanduser().resolve()
     bundle_dir = Path(args.bundle_dir).expanduser().resolve()
@@ -355,30 +370,34 @@ def cmd_verify_update(args: argparse.Namespace, environments: Mapping[str, Envir
         license_result=license_result,
     )
 
-    print(json.dumps(
-        {
-            "manifest": {
-                "version": result.manifest.version,
-                "platform": result.manifest.platform,
-                "runtime": result.manifest.runtime,
-                "allowed_profiles": result.manifest.allowed_profiles,
+    print(
+        json.dumps(
+            {
+                "manifest": {
+                    "version": result.manifest.version,
+                    "platform": result.manifest.platform,
+                    "runtime": result.manifest.runtime,
+                    "allowed_profiles": result.manifest.allowed_profiles,
+                },
+                "signature_valid": result.signature_valid,
+                "signature_checked": result.signature_checked,
+                "license_ok": result.license_ok,
+                "artifact_checks": result.artifact_checks,
+                "errors": result.errors,
+                "warnings": result.warnings,
             },
-            "signature_valid": result.signature_valid,
-            "signature_checked": result.signature_checked,
-            "license_ok": result.license_ok,
-            "artifact_checks": result.artifact_checks,
-            "errors": result.errors,
-            "warnings": result.warnings,
-        },
-        ensure_ascii=False,
-        indent=2,
-    ))
+            ensure_ascii=False,
+            indent=2,
+        )
+    )
 
     if not result.is_successful:
         raise SystemExit("Aktualizacja nie przeszła weryfikacji")
 
 
-def cmd_status(args: argparse.Namespace, environments: Mapping[str, EnvironmentDefinition], *, state_path: Path) -> None:
+def cmd_status(
+    args: argparse.Namespace, environments: Mapping[str, EnvironmentDefinition], *, state_path: Path
+) -> None:
     state = _load_state(state_path)
     env_states = state.get("environments", {})
     report: Dict[str, Any] = {}
@@ -412,19 +431,31 @@ def cmd_status(args: argparse.Namespace, environments: Mapping[str, EnvironmentD
             )
             entry["strategies"] = definition_summaries
             entry["license_tiers"] = sorted(
-                {payload.get("license_tier") for payload in definition_summaries if payload.get("license_tier")}
+                {
+                    payload.get("license_tier")
+                    for payload in definition_summaries
+                    if payload.get("license_tier")
+                }
             )
             capabilities = sorted(
-                {payload.get("capability") for payload in definition_summaries if payload.get("capability")}
+                {
+                    payload.get("capability")
+                    for payload in definition_summaries
+                    if payload.get("capability")
+                }
             )
             if capabilities:
                 entry["capabilities"] = capabilities
         else:
             entry["strategies"] = []
 
-        summaries_by_name = {payload.get("name"): payload for payload in entry.get("strategies", [])}
+        summaries_by_name = {
+            payload.get("name"): payload for payload in entry.get("strategies", [])
+        }
         if env.scheduler_name:
-            scheduler_cfg = getattr(core_config, "multi_strategy_schedulers", {}).get(env.scheduler_name)
+            scheduler_cfg = getattr(core_config, "multi_strategy_schedulers", {}).get(
+                env.scheduler_name
+            )
             if scheduler_cfg:
                 schedule_entries: list[dict[str, Any]] = []
                 for schedule in getattr(scheduler_cfg, "schedules", []):
@@ -457,7 +488,11 @@ def cmd_status(args: argparse.Namespace, environments: Mapping[str, EnvironmentD
                     }
                 )
                 capability_set = sorted(
-                    {entry.get("capability") for entry in schedule_entries if entry.get("capability")}
+                    {
+                        entry.get("capability")
+                        for entry in schedule_entries
+                        if entry.get("capability")
+                    }
                 )
                 scheduler_summary: dict[str, Any] = {
                     "name": scheduler_cfg.name,
@@ -476,8 +511,14 @@ def cmd_status(args: argparse.Namespace, environments: Mapping[str, EnvironmentD
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Local orchestrator for OEM environments")
-    parser.add_argument("--state-file", default="var/orchestrator/state.json", help="Ścieżka pliku stanu orchestratora")
-    parser.add_argument("--base-dir", default="var/orchestrator", help="Katalog z artefaktami orchestratora")
+    parser.add_argument(
+        "--state-file",
+        default="var/orchestrator/state.json",
+        help="Ścieżka pliku stanu orchestratora",
+    )
+    parser.add_argument(
+        "--base-dir", default="var/orchestrator", help="Katalog z artefaktami orchestratora"
+    )
     subparsers = parser.add_subparsers(dest="command", required=True)
 
     prepare_parser = subparsers.add_parser("prepare", help="Przygotuj katalog środowiska")
@@ -647,7 +688,9 @@ def build_parser() -> argparse.ArgumentParser:
     launch_parser.add_argument("--dry-run", action="store_true")
     launch_parser.set_defaults(func=cmd_launch)
 
-    verify_parser = subparsers.add_parser("verify-update", help="Zweryfikuj podpisane paczki aktualizacji")
+    verify_parser = subparsers.add_parser(
+        "verify-update", help="Zweryfikuj podpisane paczki aktualizacji"
+    )
     verify_parser.add_argument("environment", choices=sorted(DEFAULT_ENVIRONMENTS))
     verify_parser.add_argument("--manifest", required=True)
     verify_parser.add_argument("--bundle-dir", required=True)

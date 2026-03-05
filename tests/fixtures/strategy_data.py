@@ -1,4 +1,5 @@
 """Wspólne fikstury/stuby danych dla testów strategii."""
+
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -26,7 +27,13 @@ class VolatilitySeriesFixture:
 
 
 def build_cross_exchange_fixture() -> CrossExchangeFixture:
-    def snapshot(primary_bid: float, primary_ask: float, secondary_bid: float, secondary_ask: float, timestamp: int) -> MarketSnapshot:
+    def snapshot(
+        primary_bid: float,
+        primary_ask: float,
+        secondary_bid: float,
+        secondary_ask: float,
+        timestamp: int,
+    ) -> MarketSnapshot:
         return MarketSnapshot(
             symbol="BTC_USDT_CROSS",
             timestamp=timestamp,
@@ -62,8 +69,11 @@ def build_volatility_series_fixture() -> VolatilitySeriesFixture:
             volume=1_000_000.0,
         )
 
-    history = [snapshot(price, idx) for idx, price in enumerate([100.0, 100.5, 101.0, 102.0, 104.0])]
+    history = [
+        snapshot(price, idx) for idx, price in enumerate([100.0, 100.5, 101.0, 102.0, 104.0])
+    ]
     volatile_tick = snapshot(110.0, 10)
     follow_up = snapshot(110.1, 11)
-    return VolatilitySeriesFixture(history=tuple(history), volatile_tick=volatile_tick, follow_up=follow_up)
-
+    return VolatilitySeriesFixture(
+        history=tuple(history), volatile_tick=volatile_tick, follow_up=follow_up
+    )

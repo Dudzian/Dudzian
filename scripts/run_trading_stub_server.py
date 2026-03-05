@@ -60,6 +60,7 @@ try:  # najczęściej tak:
         FileAlertAuditLog as _FileAudit,
         InMemoryAlertAuditLog as _Audit,
     )
+
     DefaultAlertRouter = _Router
     InMemoryAlertAuditLog = _Audit
     FileAlertAuditLog = _FileAudit
@@ -70,6 +71,7 @@ except Exception:
             InMemoryAlertAuditLog as _Audit2,
         )
         from bot_core.alerts import DefaultAlertRouter as _Router2  # type: ignore
+
         DefaultAlertRouter = _Router2
         InMemoryAlertAuditLog = _Audit2
         FileAlertAuditLog = _FileAudit2
@@ -135,7 +137,9 @@ def _parse_env_float(value: str, *, variable: str, parser: argparse.ArgumentPars
     try:
         return float(value)
     except ValueError:
-        parser.error(f"Zmienna {variable} musi być liczbą zmiennoprzecinkową – otrzymano '{value}'.")
+        parser.error(
+            f"Zmienna {variable} musi być liczbą zmiennoprzecinkową – otrzymano '{value}'."
+        )
     raise AssertionError("parser.error powinno zakończyć działanie")
 
 
@@ -276,9 +280,7 @@ def _load_metrics_risk_profiles(
         parser.error(f"Nie udało się wczytać profili ryzyka z {target}: {exc}")
     else:
         if registered:
-            LOGGER.info(
-                "Załadowano %s profil(e) ryzyka telemetrii z %s", len(registered), target
-            )
+            LOGGER.info("Załadowano %s profil(e) ryzyka telemetrii z %s", len(registered), target)
 
     args._metrics_risk_profiles_file_metadata = dict(metadata)
 
@@ -321,7 +323,13 @@ def _apply_environment_overrides(
 
     def skip_due_to_cli(option: str, env_var: str, raw_value: str) -> None:
         record_entry(
-            {"option": option, "variable": env_var, "raw_value": raw_value, "applied": False, "reason": "cli_override"}
+            {
+                "option": option,
+                "variable": env_var,
+                "raw_value": raw_value,
+                "applied": False,
+                "reason": "cli_override",
+            }
         )
 
     def normalize_value(value: Any) -> Any:
@@ -331,7 +339,9 @@ def _apply_environment_overrides(
             return [str(v) if isinstance(v, Path) else v for v in value]
         return value
 
-    def apply_value(option: str, env_var: str, raw_value: str, parsed_value: Any, **extra: object) -> None:
+    def apply_value(
+        option: str, env_var: str, raw_value: str, parsed_value: Any, **extra: object
+    ) -> None:
         override_keys.add(option)
         value_sources[option] = "env"
         entry: dict[str, object] = {
@@ -388,14 +398,18 @@ def _apply_environment_overrides(
         else:
             disabled = parse_bool("RUN_TRADING_STUB_NO_DEFAULT_DATASET")
             args.no_default_dataset = disabled
-            apply_value("include_default_dataset", "RUN_TRADING_STUB_NO_DEFAULT_DATASET", raw, not disabled)
+            apply_value(
+                "include_default_dataset", "RUN_TRADING_STUB_NO_DEFAULT_DATASET", raw, not disabled
+            )
 
     if (raw := os.getenv("RUN_TRADING_STUB_SHUTDOWN_AFTER")) is not None:
         if env_present("--shutdown-after"):
             skip_due_to_cli("shutdown_after", "RUN_TRADING_STUB_SHUTDOWN_AFTER", raw)
         else:
             args.shutdown_after = parse_float("RUN_TRADING_STUB_SHUTDOWN_AFTER")
-            apply_value("shutdown_after", "RUN_TRADING_STUB_SHUTDOWN_AFTER", raw, args.shutdown_after)
+            apply_value(
+                "shutdown_after", "RUN_TRADING_STUB_SHUTDOWN_AFTER", raw, args.shutdown_after
+            )
 
     if (raw := os.getenv("RUN_TRADING_STUB_MAX_WORKERS")) is not None:
         if env_present("--max-workers"):
@@ -416,7 +430,9 @@ def _apply_environment_overrides(
             skip_due_to_cli("stream_interval", "RUN_TRADING_STUB_STREAM_INTERVAL", raw)
         else:
             args.stream_interval = parse_float("RUN_TRADING_STUB_STREAM_INTERVAL")
-            apply_value("stream_interval", "RUN_TRADING_STUB_STREAM_INTERVAL", raw, args.stream_interval)
+            apply_value(
+                "stream_interval", "RUN_TRADING_STUB_STREAM_INTERVAL", raw, args.stream_interval
+            )
 
     if (raw := os.getenv("RUN_TRADING_STUB_LOG_LEVEL")) is not None:
         if env_present("--log-level"):
@@ -438,7 +454,9 @@ def _apply_environment_overrides(
             skip_due_to_cli("enable_metrics", "RUN_TRADING_STUB_ENABLE_METRICS", raw)
         else:
             args.enable_metrics = parse_bool("RUN_TRADING_STUB_ENABLE_METRICS")
-            apply_value("enable_metrics", "RUN_TRADING_STUB_ENABLE_METRICS", raw, args.enable_metrics)
+            apply_value(
+                "enable_metrics", "RUN_TRADING_STUB_ENABLE_METRICS", raw, args.enable_metrics
+            )
 
     if (raw := os.getenv("RUN_TRADING_STUB_METRICS_HOST")) is not None:
         if env_present("--metrics-host"):
@@ -459,25 +477,39 @@ def _apply_environment_overrides(
             skip_due_to_cli("metrics_history_size", "RUN_TRADING_STUB_METRICS_HISTORY_SIZE", raw)
         else:
             args.metrics_history_size = parse_int("RUN_TRADING_STUB_METRICS_HISTORY_SIZE")
-            apply_value("metrics_history_size", "RUN_TRADING_STUB_METRICS_HISTORY_SIZE", raw, args.metrics_history_size)
+            apply_value(
+                "metrics_history_size",
+                "RUN_TRADING_STUB_METRICS_HISTORY_SIZE",
+                raw,
+                args.metrics_history_size,
+            )
 
     if (raw := os.getenv("RUN_TRADING_STUB_METRICS_JSONL")) is not None:
         if env_present("--metrics-jsonl"):
             skip_due_to_cli("metrics_jsonl_path", "RUN_TRADING_STUB_METRICS_JSONL", raw)
         else:
             args.metrics_jsonl = Path(raw).expanduser()
-            apply_value("metrics_jsonl_path", "RUN_TRADING_STUB_METRICS_JSONL", raw, str(args.metrics_jsonl))
+            apply_value(
+                "metrics_jsonl_path", "RUN_TRADING_STUB_METRICS_JSONL", raw, str(args.metrics_jsonl)
+            )
 
     if (raw := os.getenv("RUN_TRADING_STUB_METRICS_JSONL_FSYNC")) is not None:
         if env_present("--metrics-jsonl-fsync"):
             skip_due_to_cli("metrics_jsonl_fsync", "RUN_TRADING_STUB_METRICS_JSONL_FSYNC", raw)
         else:
             args.metrics_jsonl_fsync = parse_bool("RUN_TRADING_STUB_METRICS_JSONL_FSYNC")
-            apply_value("metrics_jsonl_fsync", "RUN_TRADING_STUB_METRICS_JSONL_FSYNC", raw, args.metrics_jsonl_fsync)
+            apply_value(
+                "metrics_jsonl_fsync",
+                "RUN_TRADING_STUB_METRICS_JSONL_FSYNC",
+                raw,
+                args.metrics_jsonl_fsync,
+            )
 
     if (raw := os.getenv("RUN_TRADING_STUB_METRICS_RISK_PROFILES_FILE")) is not None:
         if env_present("--metrics-risk-profiles-file"):
-            skip_due_to_cli("metrics_risk_profiles_file", "RUN_TRADING_STUB_METRICS_RISK_PROFILES_FILE", raw)
+            skip_due_to_cli(
+                "metrics_risk_profiles_file", "RUN_TRADING_STUB_METRICS_RISK_PROFILES_FILE", raw
+            )
         else:
             normalized = raw.strip()
             if not normalized:
@@ -518,7 +550,9 @@ def _apply_environment_overrides(
 
     if (raw := os.getenv("RUN_TRADING_STUB_METRICS_DISABLE_LOG_SINK")) is not None:
         if env_present("--metrics-disable-log-sink"):
-            skip_due_to_cli("metrics_disable_log_sink", "RUN_TRADING_STUB_METRICS_DISABLE_LOG_SINK", raw)
+            skip_due_to_cli(
+                "metrics_disable_log_sink", "RUN_TRADING_STUB_METRICS_DISABLE_LOG_SINK", raw
+            )
         else:
             args.metrics_disable_log_sink = parse_bool("RUN_TRADING_STUB_METRICS_DISABLE_LOG_SINK")
             apply_value(
@@ -530,7 +564,11 @@ def _apply_environment_overrides(
 
     if (raw := os.getenv("RUN_TRADING_STUB_METRICS_UI_ALERTS_RISK_PROFILE")) is not None:
         if env_present("--metrics-ui-alerts-risk-profile"):
-            skip_due_to_cli("metrics_ui_alerts_risk_profile", "RUN_TRADING_STUB_METRICS_UI_ALERTS_RISK_PROFILE", raw)
+            skip_due_to_cli(
+                "metrics_ui_alerts_risk_profile",
+                "RUN_TRADING_STUB_METRICS_UI_ALERTS_RISK_PROFILE",
+                raw,
+            )
         else:
             normalized = raw.strip().lower()
             args.metrics_ui_alerts_risk_profile = normalized
@@ -546,14 +584,24 @@ def _apply_environment_overrides(
             skip_due_to_cli("metrics_tls_cert", "RUN_TRADING_STUB_METRICS_TLS_CERT", raw)
         else:
             args.metrics_tls_cert = Path(raw).expanduser()
-            apply_value("metrics_tls_cert", "RUN_TRADING_STUB_METRICS_TLS_CERT", raw, str(args.metrics_tls_cert))
+            apply_value(
+                "metrics_tls_cert",
+                "RUN_TRADING_STUB_METRICS_TLS_CERT",
+                raw,
+                str(args.metrics_tls_cert),
+            )
 
     if (raw := os.getenv("RUN_TRADING_STUB_METRICS_TLS_KEY")) is not None:
         if env_present("--metrics-tls-key"):
             skip_due_to_cli("metrics_tls_key", "RUN_TRADING_STUB_METRICS_TLS_KEY", raw)
         else:
             args.metrics_tls_key = Path(raw).expanduser()
-            apply_value("metrics_tls_key", "RUN_TRADING_STUB_METRICS_TLS_KEY", raw, str(args.metrics_tls_key))
+            apply_value(
+                "metrics_tls_key",
+                "RUN_TRADING_STUB_METRICS_TLS_KEY",
+                raw,
+                str(args.metrics_tls_key),
+            )
 
     if (raw := os.getenv("RUN_TRADING_STUB_METRICS_TLS_CLIENT_CA")) is not None:
         if env_present("--metrics-tls-client-ca"):
@@ -587,7 +635,9 @@ def _apply_environment_overrides(
 
     if (raw := os.getenv("RUN_TRADING_STUB_METRICS_UI_ALERTS_JSONL")) is not None:
         if env_present("--metrics-ui-alerts-jsonl"):
-            skip_due_to_cli("metrics_ui_alerts_jsonl_path", "RUN_TRADING_STUB_METRICS_UI_ALERTS_JSONL", raw)
+            skip_due_to_cli(
+                "metrics_ui_alerts_jsonl_path", "RUN_TRADING_STUB_METRICS_UI_ALERTS_JSONL", raw
+            )
         else:
             args.metrics_ui_alerts_jsonl = Path(raw).expanduser()
             apply_value(
@@ -599,9 +649,13 @@ def _apply_environment_overrides(
 
     if (raw := os.getenv("RUN_TRADING_STUB_DISABLE_METRICS_UI_ALERTS")) is not None:
         if env_present("--disable-metrics-ui-alerts"):
-            skip_due_to_cli("disable_metrics_ui_alerts", "RUN_TRADING_STUB_DISABLE_METRICS_UI_ALERTS", raw)
+            skip_due_to_cli(
+                "disable_metrics_ui_alerts", "RUN_TRADING_STUB_DISABLE_METRICS_UI_ALERTS", raw
+            )
         else:
-            args.disable_metrics_ui_alerts = parse_bool("RUN_TRADING_STUB_DISABLE_METRICS_UI_ALERTS")
+            args.disable_metrics_ui_alerts = parse_bool(
+                "RUN_TRADING_STUB_DISABLE_METRICS_UI_ALERTS"
+            )
             apply_value(
                 "disable_metrics_ui_alerts",
                 "RUN_TRADING_STUB_DISABLE_METRICS_UI_ALERTS",
@@ -611,7 +665,11 @@ def _apply_environment_overrides(
 
     if (raw := os.getenv("RUN_TRADING_STUB_METRICS_UI_ALERTS_REDUCE_MODE")) is not None:
         if env_present("--metrics-ui-alerts-reduce-mode"):
-            skip_due_to_cli("metrics_ui_alerts_reduce_mode", "RUN_TRADING_STUB_METRICS_UI_ALERTS_REDUCE_MODE", raw)
+            skip_due_to_cli(
+                "metrics_ui_alerts_reduce_mode",
+                "RUN_TRADING_STUB_METRICS_UI_ALERTS_REDUCE_MODE",
+                raw,
+            )
         else:
             normalized = raw.strip().lower()
             if normalized not in UI_ALERT_MODE_CHOICES:
@@ -628,7 +686,11 @@ def _apply_environment_overrides(
 
     if (raw := os.getenv("RUN_TRADING_STUB_METRICS_UI_ALERTS_OVERLAY_MODE")) is not None:
         if env_present("--metrics-ui-alerts-overlay-mode"):
-            skip_due_to_cli("metrics_ui_alerts_overlay_mode", "RUN_TRADING_STUB_METRICS_UI_ALERTS_OVERLAY_MODE", raw)
+            skip_due_to_cli(
+                "metrics_ui_alerts_overlay_mode",
+                "RUN_TRADING_STUB_METRICS_UI_ALERTS_OVERLAY_MODE",
+                raw,
+            )
         else:
             normalized = raw.strip().lower()
             if normalized not in UI_ALERT_MODE_CHOICES:
@@ -767,7 +829,9 @@ def _apply_environment_overrides(
                 threshold_ms,
             )
 
-    if (raw := os.getenv("RUN_TRADING_STUB_METRICS_UI_ALERTS_OVERLAY_CRITICAL_THRESHOLD")) is not None:
+    if (
+        raw := os.getenv("RUN_TRADING_STUB_METRICS_UI_ALERTS_OVERLAY_CRITICAL_THRESHOLD")
+    ) is not None:
         if env_present("--metrics-ui-alerts-overlay-critical-threshold"):
             skip_due_to_cli(
                 "metrics_ui_alerts_overlay_critical_threshold",
@@ -787,7 +851,9 @@ def _apply_environment_overrides(
 
     if (raw := os.getenv("RUN_TRADING_STUB_METRICS_UI_ALERTS_AUDIT_DIR")) is not None:
         if env_present("--metrics-ui-alerts-audit-dir"):
-            skip_due_to_cli("metrics_ui_alerts_audit_dir", "RUN_TRADING_STUB_METRICS_UI_ALERTS_AUDIT_DIR", raw)
+            skip_due_to_cli(
+                "metrics_ui_alerts_audit_dir", "RUN_TRADING_STUB_METRICS_UI_ALERTS_AUDIT_DIR", raw
+            )
         else:
             normalized = raw.strip().lower()
             if normalized in {"", "none", "null", "off", "disable", "disabled"}:
@@ -917,9 +983,15 @@ def _apply_environment_overrides(
 
     if (raw := os.getenv("RUN_TRADING_STUB_METRICS_UI_ALERTS_AUDIT_FSYNC")) is not None:
         if env_present("--metrics-ui-alerts-audit-fsync"):
-            skip_due_to_cli("metrics_ui_alerts_audit_fsync", "RUN_TRADING_STUB_METRICS_UI_ALERTS_AUDIT_FSYNC", raw)
+            skip_due_to_cli(
+                "metrics_ui_alerts_audit_fsync",
+                "RUN_TRADING_STUB_METRICS_UI_ALERTS_AUDIT_FSYNC",
+                raw,
+            )
         else:
-            args.metrics_ui_alerts_audit_fsync = parse_bool("RUN_TRADING_STUB_METRICS_UI_ALERTS_AUDIT_FSYNC")
+            args.metrics_ui_alerts_audit_fsync = parse_bool(
+                "RUN_TRADING_STUB_METRICS_UI_ALERTS_AUDIT_FSYNC"
+            )
             apply_value(
                 "metrics_ui_alerts_audit_fsync",
                 "RUN_TRADING_STUB_METRICS_UI_ALERTS_AUDIT_FSYNC",
@@ -932,7 +1004,12 @@ def _apply_environment_overrides(
             skip_due_to_cli("metrics_print_address", "RUN_TRADING_STUB_METRICS_PRINT_ADDRESS", raw)
         else:
             args.metrics_print_address = parse_bool("RUN_TRADING_STUB_METRICS_PRINT_ADDRESS")
-            apply_value("metrics_print_address", "RUN_TRADING_STUB_METRICS_PRINT_ADDRESS", raw, args.metrics_print_address)
+            apply_value(
+                "metrics_print_address",
+                "RUN_TRADING_STUB_METRICS_PRINT_ADDRESS",
+                raw,
+                args.metrics_print_address,
+            )
 
     if (raw := os.getenv("RUN_TRADING_STUB_METRICS_AUTH_TOKEN")) is not None:
         if env_present("--metrics-auth-token"):
@@ -947,20 +1024,34 @@ def _apply_environment_overrides(
             skip_due_to_cli("print_runtime_plan", "RUN_TRADING_STUB_PRINT_RUNTIME_PLAN", raw)
         else:
             args.print_runtime_plan = parse_bool("RUN_TRADING_STUB_PRINT_RUNTIME_PLAN")
-            apply_value("print_runtime_plan", "RUN_TRADING_STUB_PRINT_RUNTIME_PLAN", raw, args.print_runtime_plan)
+            apply_value(
+                "print_runtime_plan",
+                "RUN_TRADING_STUB_PRINT_RUNTIME_PLAN",
+                raw,
+                args.print_runtime_plan,
+            )
 
     if (raw := os.getenv("RUN_TRADING_STUB_RUNTIME_PLAN_JSONL")) is not None:
         if env_present("--runtime-plan-jsonl"):
             skip_due_to_cli("runtime_plan_jsonl_path", "RUN_TRADING_STUB_RUNTIME_PLAN_JSONL", raw)
         else:
             args.runtime_plan_jsonl = Path(raw).expanduser()
-            apply_value("runtime_plan_jsonl_path", "RUN_TRADING_STUB_RUNTIME_PLAN_JSONL", raw, str(args.runtime_plan_jsonl))
+            apply_value(
+                "runtime_plan_jsonl_path",
+                "RUN_TRADING_STUB_RUNTIME_PLAN_JSONL",
+                raw,
+                str(args.runtime_plan_jsonl),
+            )
 
     if (raw := os.getenv("RUN_TRADING_STUB_FAIL_ON_SECURITY_WARNINGS")) is not None:
         if env_present("--fail-on-security-warnings"):
-            skip_due_to_cli("fail_on_security_warnings", "RUN_TRADING_STUB_FAIL_ON_SECURITY_WARNINGS", raw)
+            skip_due_to_cli(
+                "fail_on_security_warnings", "RUN_TRADING_STUB_FAIL_ON_SECURITY_WARNINGS", raw
+            )
         else:
-            args.fail_on_security_warnings = parse_bool("RUN_TRADING_STUB_FAIL_ON_SECURITY_WARNINGS")
+            args.fail_on_security_warnings = parse_bool(
+                "RUN_TRADING_STUB_FAIL_ON_SECURITY_WARNINGS"
+            )
             apply_value(
                 "fail_on_security_warnings",
                 "RUN_TRADING_STUB_FAIL_ON_SECURITY_WARNINGS",
@@ -1049,7 +1140,9 @@ def _build_ui_alert_sink(
         memory_forced = requested_backend == "memory"
         file_backend_error = False
         if requested_backend == "file" and audit_dir is None:
-            raise ValueError("Backend plikowy audytu UI wymaga podania --metrics-ui-alerts-audit-dir")
+            raise ValueError(
+                "Backend plikowy audytu UI wymaga podania --metrics-ui-alerts-audit-dir"
+            )
         if not memory_forced and audit_dir is not None:
             if FileAlertAuditLog is None:
                 if requested_backend == "file":
@@ -1120,9 +1213,7 @@ def _build_ui_alert_sink(
         overlay_logging = overlay_mode in {"enable", "jsonl"}
         jank_logging = jank_mode in {"enable", "jsonl"}
         reduce_category = args.metrics_ui_alerts_reduce_category or _DEFAULT_UI_CATEGORY
-        reduce_active = (
-            args.metrics_ui_alerts_reduce_active_severity or _DEFAULT_UI_SEVERITY_ACTIVE
-        )
+        reduce_active = args.metrics_ui_alerts_reduce_active_severity or _DEFAULT_UI_SEVERITY_ACTIVE
         reduce_recovered = (
             args.metrics_ui_alerts_reduce_recovered_severity or _DEFAULT_UI_SEVERITY_RECOVERED
         )
@@ -1142,9 +1233,7 @@ def _build_ui_alert_sink(
             else _DEFAULT_OVERLAY_THRESHOLD
         )
         jank_category = args.metrics_ui_alerts_jank_category or _DEFAULT_UI_CATEGORY
-        jank_spike = (
-            args.metrics_ui_alerts_jank_spike_severity or _DEFAULT_JANK_SEVERITY_SPIKE
-        )
+        jank_spike = args.metrics_ui_alerts_jank_spike_severity or _DEFAULT_JANK_SEVERITY_SPIKE
         jank_critical = (
             args.metrics_ui_alerts_jank_critical_severity or _DEFAULT_JANK_SEVERITY_CRITICAL
         )
@@ -1180,7 +1269,11 @@ def _build_ui_alert_sink(
             sink_kwargs["jank_critical_over_ms"] = jank_threshold
 
         raw_path = path if path is not None else DEFAULT_UI_ALERTS_JSONL_PATH
-        normalized_path = raw_path.expanduser() if isinstance(raw_path, Path) else Path(str(raw_path)).expanduser()
+        normalized_path = (
+            raw_path.expanduser()
+            if isinstance(raw_path, Path)
+            else Path(str(raw_path)).expanduser()
+        )
         sink_settings: dict[str, object] = {
             "path": normalized_path.as_posix(),
             "reduce_mode": reduce_mode,
@@ -1210,14 +1303,14 @@ def _build_ui_alert_sink(
             sink_settings["risk_profile"] = dict(risk_profile_meta)
         if risk_profile_summary := getattr(args, "_metrics_risk_profile_summary", None):
             sink_settings["risk_profile_summary"] = dict(risk_profile_summary)
-        if risk_profiles_file_meta := getattr(
-            args, "_metrics_risk_profiles_file_metadata", None
-        ):
+        if risk_profiles_file_meta := getattr(args, "_metrics_risk_profiles_file_metadata", None):
             sink_settings["risk_profiles_file"] = dict(risk_profiles_file_meta)
 
         sink = UiTelemetryAlertSink(router, **sink_kwargs)
     except Exception:
-        LOGGER.exception("Nie udało się zainicjalizować UiTelemetryAlertSink – kontynuuję bez alertów UI")
+        LOGGER.exception(
+            "Nie udało się zainicjalizować UiTelemetryAlertSink – kontynuuję bez alertów UI"
+        )
         return None
     LOGGER.info("Sink alertów telemetrii UI aktywny (log: %s)", path)
     return sink, path, sink_settings
@@ -1245,7 +1338,9 @@ def _start_metrics_service(args) -> tuple[object | None, str | None]:
         tls_config = {
             "certificate_path": Path(args.metrics_tls_cert),
             "private_key_path": Path(args.metrics_tls_key),
-            "client_ca_path": Path(args.metrics_tls_client_ca) if args.metrics_tls_client_ca else None,
+            "client_ca_path": Path(args.metrics_tls_client_ca)
+            if args.metrics_tls_client_ca
+            else None,
             "require_client_auth": bool(args.metrics_tls_require_client_cert),
         }
 
@@ -1362,7 +1457,9 @@ def _start_metrics_service(args) -> tuple[object | None, str | None]:
             LOGGER.exception("Nie udało się utworzyć serwera MetricsService")
             return None, None
 
-    LOGGER.error("Nie udało się wywołać create_metrics_server z kompatybilnymi argumentami: %s", last_exc)
+    LOGGER.error(
+        "Nie udało się wywołać create_metrics_server z kompatybilnymi argumentami: %s", last_exc
+    )
     return None, None
 
 
@@ -1373,34 +1470,77 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--host", default="127.0.0.1", help="Adres hosta (domyślnie 127.0.0.1).")
     parser.add_argument("--port", type=int, default=50051, help="Port (0 = losowy).")
     parser.add_argument(
-        "--dataset", action="append", type=Path, default=None, help="Plik YAML z danymi stubu (można podać wielokrotnie)."
+        "--dataset",
+        action="append",
+        type=Path,
+        default=None,
+        help="Plik YAML z danymi stubu (można podać wielokrotnie).",
     )
-    parser.add_argument("--no-default-dataset", action="store_true", help="Nie ładuj datasetu domyślnego.")
-    parser.add_argument("--shutdown-after", type=float, default=None, help="Auto-stop po tylu sekundach.")
-    parser.add_argument("--max-workers", type=int, default=8, help="Wątki w puli gRPC (domyślnie 8).")
+    parser.add_argument(
+        "--no-default-dataset", action="store_true", help="Nie ładuj datasetu domyślnego."
+    )
+    parser.add_argument(
+        "--shutdown-after", type=float, default=None, help="Auto-stop po tylu sekundach."
+    )
+    parser.add_argument(
+        "--max-workers", type=int, default=8, help="Wątki w puli gRPC (domyślnie 8)."
+    )
     parser.add_argument("--stream-repeat", action="store_true", help="Pętla streamu incrementów.")
-    parser.add_argument("--stream-interval", type=float, default=0.0, help="Odstęp (s) między incrementami.")
-    parser.add_argument("--log-level", default="info", help="Poziom logowania (debug, info, warning, error).")
-    parser.add_argument("--print-address", action="store_true", help="Wypisz adres stubu na stdout.")
+    parser.add_argument(
+        "--stream-interval", type=float, default=0.0, help="Odstęp (s) między incrementami."
+    )
+    parser.add_argument(
+        "--log-level", default="info", help="Poziom logowania (debug, info, warning, error)."
+    )
+    parser.add_argument(
+        "--print-address", action="store_true", help="Wypisz adres stubu na stdout."
+    )
 
     # --- MetricsService (opcjonalny towarzyszący serwer telemetrii UI) ---
-    parser.add_argument("--enable-metrics", action="store_true", help="Uruchom towarzyszący MetricsService.")
+    parser.add_argument(
+        "--enable-metrics", action="store_true", help="Uruchom towarzyszący MetricsService."
+    )
     metrics_group = parser.add_argument_group("metrics", "Opcje serwera MetricsService")
     metrics_group.add_argument("--metrics-host", default="127.0.0.1", help="Host MetricsService.")
-    metrics_group.add_argument("--metrics-port", type=int, default=50061, help="Port MetricsService (0 = losowy).")
-    metrics_group.add_argument("--metrics-history-size", type=int, default=512, help="Rozmiar historii snapshotów.")
-    metrics_group.add_argument("--metrics-jsonl", type=Path, default=None, help="Plik JSONL na snapshoty metryk.")
-    metrics_group.add_argument("--metrics-jsonl-fsync", action="store_true", help="fsync po każdym wpisie JSONL.")
-    metrics_group.add_argument("--metrics-disable-log-sink", action="store_true", help="Wyłącz LoggingSink.")
-    metrics_group.add_argument("--metrics-tls-cert", type=Path, default=None, help="Certyfikat TLS (PEM).")
-    metrics_group.add_argument("--metrics-tls-key", type=Path, default=None, help="Klucz prywatny TLS (PEM).")
-    metrics_group.add_argument("--metrics-tls-client-ca", type=Path, default=None, help="CA klientów mTLS (PEM).")
-    metrics_group.add_argument("--metrics-tls-require-client-cert", action="store_true", help="Wymagaj mTLS.")
-    metrics_group.add_argument("--metrics-auth-token", default=None, help="Token Bearer wymagany przez telemetrię.")
     metrics_group.add_argument(
-        "--metrics-ui-alerts-jsonl", type=Path, default=None, help="Plik JSONL dla alertów UI (domyślnie logs/ui_telemetry_alerts.jsonl)."
+        "--metrics-port", type=int, default=50061, help="Port MetricsService (0 = losowy)."
     )
-    metrics_group.add_argument("--disable-metrics-ui-alerts", action="store_true", help="Wyłącz alerty telemetrii UI.")
+    metrics_group.add_argument(
+        "--metrics-history-size", type=int, default=512, help="Rozmiar historii snapshotów."
+    )
+    metrics_group.add_argument(
+        "--metrics-jsonl", type=Path, default=None, help="Plik JSONL na snapshoty metryk."
+    )
+    metrics_group.add_argument(
+        "--metrics-jsonl-fsync", action="store_true", help="fsync po każdym wpisie JSONL."
+    )
+    metrics_group.add_argument(
+        "--metrics-disable-log-sink", action="store_true", help="Wyłącz LoggingSink."
+    )
+    metrics_group.add_argument(
+        "--metrics-tls-cert", type=Path, default=None, help="Certyfikat TLS (PEM)."
+    )
+    metrics_group.add_argument(
+        "--metrics-tls-key", type=Path, default=None, help="Klucz prywatny TLS (PEM)."
+    )
+    metrics_group.add_argument(
+        "--metrics-tls-client-ca", type=Path, default=None, help="CA klientów mTLS (PEM)."
+    )
+    metrics_group.add_argument(
+        "--metrics-tls-require-client-cert", action="store_true", help="Wymagaj mTLS."
+    )
+    metrics_group.add_argument(
+        "--metrics-auth-token", default=None, help="Token Bearer wymagany przez telemetrię."
+    )
+    metrics_group.add_argument(
+        "--metrics-ui-alerts-jsonl",
+        type=Path,
+        default=None,
+        help="Plik JSONL dla alertów UI (domyślnie logs/ui_telemetry_alerts.jsonl).",
+    )
+    metrics_group.add_argument(
+        "--disable-metrics-ui-alerts", action="store_true", help="Wyłącz alerty telemetrii UI."
+    )
     metrics_group.add_argument(
         "--metrics-ui-alerts-risk-profile",
         default=None,
@@ -1528,12 +1668,18 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Wymuś fsync po każdym wpisie audytu alertów UI.",
     )
-    metrics_group.add_argument("--metrics-print-address", action="store_true", help="Wypisz adres MetricsService.")
+    metrics_group.add_argument(
+        "--metrics-print-address", action="store_true", help="Wypisz adres MetricsService."
+    )
 
     # --- Audyt/Plan runtime ---
     audit_group = parser.add_argument_group("audit", "Opcje audytu runtime")
-    audit_group.add_argument("--print-runtime-plan", action="store_true", help="Wypisz plan runtime i wyjdź.")
-    audit_group.add_argument("--runtime-plan-jsonl", type=Path, default=None, help="Dopisz plan runtime do JSONL.")
+    audit_group.add_argument(
+        "--print-runtime-plan", action="store_true", help="Wypisz plan runtime i wyjdź."
+    )
+    audit_group.add_argument(
+        "--runtime-plan-jsonl", type=Path, default=None, help="Dopisz plan runtime do JSONL."
+    )
     audit_group.add_argument(
         "--fail-on-security-warnings",
         action="store_true",
@@ -1546,6 +1692,7 @@ def _install_signal_handlers(stop_callback) -> None:
     def handler(signum, _frame) -> None:  # pragma: no cover
         LOGGER.info("Otrzymano sygnał %s – trwa zatrzymywanie serwera", signum)
         stop_callback()
+
     for sig in (signal.SIGINT, signal.SIGTERM):
         try:
             signal.signal(sig, handler)
@@ -1574,19 +1721,35 @@ def _dataset_summary(dataset: InMemoryTradingDataset) -> Mapping[str, object]:
     }
 
 
-def _build_dataset_plan(dataset: InMemoryTradingDataset, dataset_paths: Iterable[Path], include_default: bool) -> Mapping[str, object]:
+def _build_dataset_plan(
+    dataset: InMemoryTradingDataset, dataset_paths: Iterable[Path], include_default: bool
+) -> Mapping[str, object]:
     sources: list[Mapping[str, object]] = []
     if include_default:
         sources.append({"type": "default", "description": "build_default_dataset"})
     for raw_path in dataset_paths:
         path = Path(str(raw_path)).expanduser()
-        sources.append({"type": "file", "path": native_path(path), "metadata": file_reference_metadata(path, role="stub_dataset")})
-    return {"include_default": include_default, "sources": sources, "summary": _dataset_summary(dataset)}
+        sources.append(
+            {
+                "type": "file",
+                "path": native_path(path),
+                "metadata": file_reference_metadata(path, role="stub_dataset"),
+            }
+        )
+    return {
+        "include_default": include_default,
+        "sources": sources,
+        "summary": _dataset_summary(dataset),
+    }
 
 
 def _build_metrics_plan(args) -> Mapping[str, object]:
     metrics_available = create_metrics_server is not None
-    ui_alert_deps = UiTelemetryAlertSink is not None and DefaultAlertRouter is not None and InMemoryAlertAuditLog is not None
+    ui_alert_deps = (
+        UiTelemetryAlertSink is not None
+        and DefaultAlertRouter is not None
+        and InMemoryAlertAuditLog is not None
+    )
     if args.metrics_jsonl:
         jsonl_path = Path(str(args.metrics_jsonl)).expanduser()
         jsonl_info: Mapping[str, object] = {
@@ -1602,7 +1765,11 @@ def _build_metrics_plan(args) -> Mapping[str, object]:
     if tls_configured:
         cert_path = Path(str(args.metrics_tls_cert)).expanduser()
         key_path = Path(str(args.metrics_tls_key)).expanduser()
-        client_ca_path = Path(str(args.metrics_tls_client_ca)).expanduser() if args.metrics_tls_client_ca else None
+        client_ca_path = (
+            Path(str(args.metrics_tls_client_ca)).expanduser()
+            if args.metrics_tls_client_ca
+            else None
+        )
         tls_info: Mapping[str, object] = {
             "configured": True,
             "require_client_auth": bool(args.metrics_tls_require_client_cert),
@@ -1612,9 +1779,16 @@ def _build_metrics_plan(args) -> Mapping[str, object]:
         if client_ca_path is not None:
             tls_info["client_ca"] = file_reference_metadata(client_ca_path, role="tls_client_ca")
     else:
-        tls_info = {"configured": False, "require_client_auth": bool(args.metrics_tls_require_client_cert)}  # type: ignore[assignment]
+        tls_info = {
+            "configured": False,
+            "require_client_auth": bool(args.metrics_tls_require_client_cert),
+        }  # type: ignore[assignment]
 
-    ui_alert_path = Path(str(args.metrics_ui_alerts_jsonl)).expanduser() if args.metrics_ui_alerts_jsonl else DEFAULT_UI_ALERTS_JSONL_PATH.expanduser()
+    ui_alert_path = (
+        Path(str(args.metrics_ui_alerts_jsonl)).expanduser()
+        if args.metrics_ui_alerts_jsonl
+        else DEFAULT_UI_ALERTS_JSONL_PATH.expanduser()
+    )
     reduce_mode_value = (args.metrics_ui_alerts_reduce_mode or "enable").lower()
     overlay_mode_value = (args.metrics_ui_alerts_overlay_mode or "enable").lower()
     jank_mode_value = (args.metrics_ui_alerts_jank_mode or "enable").lower()
@@ -1633,14 +1807,9 @@ def _build_metrics_plan(args) -> Mapping[str, object]:
         or jank_dispatch
     )
     audit_dir_arg = getattr(args, "metrics_ui_alerts_audit_dir", None)
-    audit_dir = (
-        Path(str(audit_dir_arg)).expanduser()
-        if audit_dir_arg
-        else None
-    )
+    audit_dir = Path(str(audit_dir_arg)).expanduser() if audit_dir_arg else None
     audit_pattern = (
-        getattr(args, "metrics_ui_alerts_audit_pattern", None)
-        or _DEFAULT_UI_ALERT_AUDIT_PATTERN
+        getattr(args, "metrics_ui_alerts_audit_pattern", None) or _DEFAULT_UI_ALERT_AUDIT_PATTERN
     )
     retention_override = getattr(args, "metrics_ui_alerts_audit_retention_days", None)
     audit_retention = (
@@ -1651,7 +1820,9 @@ def _build_metrics_plan(args) -> Mapping[str, object]:
     raw_backend_choice = getattr(args, "metrics_ui_alerts_audit_backend", None)
     requested_backend = (raw_backend_choice or "auto").lower()
     memory_forced = requested_backend == "memory"
-    file_backend_supported = audit_dir is not None and FileAlertAuditLog is not None and not memory_forced
+    file_backend_supported = (
+        audit_dir is not None and FileAlertAuditLog is not None and not memory_forced
+    )
     if requested_backend == "file" and audit_dir is None:
         audit_info: Mapping[str, object] = {
             "requested": requested_backend,
@@ -1671,9 +1842,7 @@ def _build_metrics_plan(args) -> Mapping[str, object]:
             "requested": requested_backend,
             "backend": "memory",
             "fsync": bool(getattr(args, "metrics_ui_alerts_audit_fsync", False)),
-            "note": "directory_ignored_memory_backend"
-            if audit_dir is not None
-            else None,
+            "note": "directory_ignored_memory_backend" if audit_dir is not None else None,
         }
         if audit_info["note"] is None:
             audit_info = {k: v for k, v in audit_info.items() if v is not None}
@@ -1698,7 +1867,13 @@ def _build_metrics_plan(args) -> Mapping[str, object]:
     ui_alerts_info: dict[str, object] = {
         "configured": not bool(args.disable_metrics_ui_alerts),
         "available": ui_alert_deps,
-        "expected_active": bool(args.enable_metrics and not args.disable_metrics_ui_alerts and metrics_available and ui_alert_deps and sink_expected),
+        "expected_active": bool(
+            args.enable_metrics
+            and not args.disable_metrics_ui_alerts
+            and metrics_available
+            and ui_alert_deps
+            and sink_expected
+        ),
         "path": native_path(ui_alert_path),
         "metadata": file_reference_metadata(ui_alert_path, role="ui_alerts_jsonl"),
         "source": "cli" if args.metrics_ui_alerts_jsonl else "default",
@@ -1712,19 +1887,25 @@ def _build_metrics_plan(args) -> Mapping[str, object]:
         "overlay_logging": overlay_logging,
         "jank_logging": jank_logging,
         "reduce_motion_category": args.metrics_ui_alerts_reduce_category or _DEFAULT_UI_CATEGORY,
-        "reduce_motion_severity_active": args.metrics_ui_alerts_reduce_active_severity or _DEFAULT_UI_SEVERITY_ACTIVE,
-        "reduce_motion_severity_recovered": args.metrics_ui_alerts_reduce_recovered_severity or _DEFAULT_UI_SEVERITY_RECOVERED,
+        "reduce_motion_severity_active": args.metrics_ui_alerts_reduce_active_severity
+        or _DEFAULT_UI_SEVERITY_ACTIVE,
+        "reduce_motion_severity_recovered": args.metrics_ui_alerts_reduce_recovered_severity
+        or _DEFAULT_UI_SEVERITY_RECOVERED,
         "overlay_category": args.metrics_ui_alerts_overlay_category or _DEFAULT_UI_CATEGORY,
-        "overlay_severity_exceeded": args.metrics_ui_alerts_overlay_exceeded_severity or _DEFAULT_UI_SEVERITY_ACTIVE,
-        "overlay_severity_recovered": args.metrics_ui_alerts_overlay_recovered_severity or _DEFAULT_UI_SEVERITY_RECOVERED,
-        "overlay_severity_critical": args.metrics_ui_alerts_overlay_critical_severity or _DEFAULT_OVERLAY_SEVERITY_CRITICAL,
+        "overlay_severity_exceeded": args.metrics_ui_alerts_overlay_exceeded_severity
+        or _DEFAULT_UI_SEVERITY_ACTIVE,
+        "overlay_severity_recovered": args.metrics_ui_alerts_overlay_recovered_severity
+        or _DEFAULT_UI_SEVERITY_RECOVERED,
+        "overlay_severity_critical": args.metrics_ui_alerts_overlay_critical_severity
+        or _DEFAULT_OVERLAY_SEVERITY_CRITICAL,
         "overlay_critical_threshold": (
             args.metrics_ui_alerts_overlay_critical_threshold
             if args.metrics_ui_alerts_overlay_critical_threshold is not None
             else _DEFAULT_OVERLAY_THRESHOLD
         ),
         "jank_category": args.metrics_ui_alerts_jank_category or _DEFAULT_UI_CATEGORY,
-        "jank_severity_spike": args.metrics_ui_alerts_jank_spike_severity or _DEFAULT_JANK_SEVERITY_SPIKE,
+        "jank_severity_spike": args.metrics_ui_alerts_jank_spike_severity
+        or _DEFAULT_JANK_SEVERITY_SPIKE,
         "jank_severity_critical": (
             args.metrics_ui_alerts_jank_critical_severity
             if args.metrics_ui_alerts_jank_critical_severity is not None
@@ -1741,16 +1922,16 @@ def _build_metrics_plan(args) -> Mapping[str, object]:
         ui_alerts_info["risk_profile"] = dict(risk_profile_meta)
     if risk_profile_summary := getattr(args, "_metrics_risk_profile_summary", None):
         ui_alerts_info["risk_profile_summary"] = dict(risk_profile_summary)
-    if risk_profiles_file_meta := getattr(
-        args, "_metrics_risk_profiles_file_metadata", None
-    ):
+    if risk_profiles_file_meta := getattr(args, "_metrics_risk_profiles_file_metadata", None):
         ui_alerts_info["risk_profiles_file"] = dict(risk_profiles_file_meta)
 
     warnings: list[str] = []
     if args.enable_metrics and not metrics_available:
         warnings.append("create_metrics_server nie jest dostępne – telemetria nie uruchomi się.")
     if args.enable_metrics and not args.disable_metrics_ui_alerts and not ui_alert_deps:
-        warnings.append("UiTelemetryAlertSink lub router alertów nie są dostępne – alerty UI będą wyłączone.")
+        warnings.append(
+            "UiTelemetryAlertSink lub router alertów nie są dostępne – alerty UI będą wyłączone."
+        )
 
     return {
         "available": metrics_available,
@@ -1791,7 +1972,9 @@ def _build_runtime_plan_payload(
     environment_overrides: Iterable[Mapping[str, object]],
     parameter_sources: Mapping[str, str],
 ) -> Mapping[str, object]:
-    dataset_plan = _build_dataset_plan(dataset, dataset_paths, include_default=not args.no_default_dataset)
+    dataset_plan = _build_dataset_plan(
+        dataset, dataset_paths, include_default=not args.no_default_dataset
+    )
     metrics_plan = _build_metrics_plan(args)
     plan: dict[str, object] = {
         "version": 2,
@@ -1809,12 +1992,26 @@ def _build_runtime_plan_payload(
         "metrics": metrics_plan,
     }
     overrides_list = [dict(entry) for entry in environment_overrides]
-    plan["environment"] = {"overrides": overrides_list, "parameter_sources": dict(parameter_sources)}
+    plan["environment"] = {
+        "overrides": overrides_list,
+        "parameter_sources": dict(parameter_sources),
+    }
 
     fail_parameter_source = parameter_sources.get("fail_on_security_warnings", "default")
-    fail_env_entry = next((entry for entry in overrides_list if entry.get("option") == "fail_on_security_warnings"), None)
+    fail_env_entry = next(
+        (entry for entry in overrides_list if entry.get("option") == "fail_on_security_warnings"),
+        None,
+    )
     env_variable = "RUN_TRADING_STUB_FAIL_ON_SECURITY_WARNINGS"
-    fail_source = "cli" if fail_parameter_source == "cli" else (f"env:{env_variable}" if fail_parameter_source.startswith("env") else fail_parameter_source)
+    fail_source = (
+        "cli"
+        if fail_parameter_source == "cli"
+        else (
+            f"env:{env_variable}"
+            if fail_parameter_source.startswith("env")
+            else fail_parameter_source
+        )
+    )
 
     plan["security"] = {
         "fail_on_security_warnings": {
@@ -1824,11 +2021,19 @@ def _build_runtime_plan_payload(
                 "source": fail_source,
                 "parameter_source": fail_parameter_source,
                 "cli_flag": "--fail-on-security-warnings",
-                "environment_variable": (fail_env_entry.get("variable") if fail_env_entry else None),
-                "environment_raw_value": (fail_env_entry.get("raw_value") if fail_env_entry else None),
-                "environment_applied": (fail_env_entry.get("applied") if fail_env_entry is not None else None),
+                "environment_variable": (
+                    fail_env_entry.get("variable") if fail_env_entry else None
+                ),
+                "environment_raw_value": (
+                    fail_env_entry.get("raw_value") if fail_env_entry else None
+                ),
+                "environment_applied": (
+                    fail_env_entry.get("applied") if fail_env_entry is not None else None
+                ),
                 "environment_reason": (fail_env_entry.get("reason") if fail_env_entry else None),
-                "environment_parsed_value": (fail_env_entry.get("parsed_value") if fail_env_entry else None),
+                "environment_parsed_value": (
+                    fail_env_entry.get("parsed_value") if fail_env_entry else None
+                ),
                 "environment_note": (fail_env_entry.get("note") if fail_env_entry else None),
             }.items()
             if v is not None
@@ -1877,7 +2082,9 @@ def main(argv: list[str] | None = None) -> int:
         parser.error("--metrics-port musi być liczbą nieujemną")
     if args.enable_metrics:
         if bool(args.metrics_tls_cert) ^ bool(args.metrics_tls_key):
-            parser.error("TLS wymaga jednoczesnego podania --metrics-tls-cert oraz --metrics-tls-key")
+            parser.error(
+                "TLS wymaga jednoczesnego podania --metrics-tls-cert oraz --metrics-tls-key"
+            )
         for option in ("metrics_tls_cert", "metrics_tls_key", "metrics_tls_client_ca"):
             path = getattr(args, option)
             if path and not Path(path).exists():
@@ -1896,7 +2103,9 @@ def main(argv: list[str] | None = None) -> int:
 
     # Plan runtime (opcjonalny)
     runtime_plan_payload: Mapping[str, object] | None = None
-    need_runtime_plan = bool(args.print_runtime_plan or args.runtime_plan_jsonl or args.fail_on_security_warnings)
+    need_runtime_plan = bool(
+        args.print_runtime_plan or args.runtime_plan_jsonl or args.fail_on_security_warnings
+    )
     if need_runtime_plan:
         try:
             runtime_plan_payload = _build_runtime_plan_payload(
@@ -1924,7 +2133,9 @@ def main(argv: list[str] | None = None) -> int:
             destination = _append_runtime_plan_jsonl(args.runtime_plan_jsonl, runtime_plan_payload)
             LOGGER.info("Plan runtime zapisany do %s", destination)
         except Exception as exc:
-            LOGGER.error("Nie udało się zapisać planu runtime do %s: %s", args.runtime_plan_jsonl, exc)
+            LOGGER.error(
+                "Nie udało się zapisać planu runtime do %s: %s", args.runtime_plan_jsonl, exc
+            )
             return 2
 
     if args.print_runtime_plan and runtime_plan_payload is not None:
@@ -1935,11 +2146,17 @@ def main(argv: list[str] | None = None) -> int:
             return 3
         return 0
 
-    if args.fail_on_security_warnings and runtime_plan_payload is not None and security_warnings_detected:
+    if (
+        args.fail_on_security_warnings
+        and runtime_plan_payload is not None
+        and security_warnings_detected
+    ):
         return 3
 
     if dataset.performance_guard:
-        guard_preview = ", ".join(f"{key}={value}" for key, value in sorted(dataset.performance_guard.items()))
+        guard_preview = ", ".join(
+            f"{key}={value}" for key, value in sorted(dataset.performance_guard.items())
+        )
         LOGGER.info("Konfiguracja performance guard: %s", guard_preview)
 
     metrics_server, metrics_address = _start_metrics_service(args)
@@ -1978,7 +2195,10 @@ def main(argv: list[str] | None = None) -> int:
 
     try:
         if args.shutdown_after is not None:
-            LOGGER.info("Serwer zakończy pracę automatycznie po %.2f s (lub szybciej po sygnale)", args.shutdown_after)
+            LOGGER.info(
+                "Serwer zakończy pracę automatycznie po %.2f s (lub szybciej po sygnale)",
+                args.shutdown_after,
+            )
             terminated = server.wait_for_termination(timeout=args.shutdown_after)
             if not terminated and not should_stop:
                 LOGGER.info("Limit czasu minął – zatrzymuję serwer stub i telemetrię.")

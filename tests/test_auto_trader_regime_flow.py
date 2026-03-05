@@ -157,9 +157,7 @@ def test_auto_trader_configure_aliases_updates_candidates() -> None:
         {"Day Trading Classic": "day_trading"}, suffixes=("_migration_fallback",)
     )
 
-    candidates = trader._strategy_metadata_candidates(
-        "Day Trading Classic_migration_fallback"
-    )
+    candidates = trader._strategy_metadata_candidates("Day Trading Classic_migration_fallback")
     assert "day_trading" in candidates
     suffixes = trader._alias_resolver_instance().suffixes
     assert "_migration_fallback" in suffixes
@@ -365,11 +363,12 @@ def test_auto_trader_reallocates_exchange_on_degradation() -> None:
     snapshot = trader.build_auto_mode_snapshot(include_history=False, tz=None)
     exchange_indicators = snapshot["performance_indicators"]["exchange"]
     assert exchange_indicators["selected"]["exchange"] == "kraken"
-    assert any(entry.get("exchange") == "kraken" for entry in exchange_indicators.get("allocations", []))
+    assert any(
+        entry.get("exchange") == "kraken" for entry in exchange_indicators.get("allocations", [])
+    )
 
 
-class _RiskServiceStub:
-    ...
+class _RiskServiceStub: ...
 
 
 def test_adjust_strategy_parameters_enters_defensive_mode(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -418,7 +417,9 @@ def test_adjust_strategy_parameters_enters_defensive_mode(monkeypatch: pytest.Mo
     assert trader._journal_performance_state == "defensive"
     assert trader.current_leverage <= 0.5
     assert trader.current_stop_loss_pct <= 0.03
-    assert trader.current_strategy == "capital_preservation" or trader.current_strategy.endswith("_defensive")
+    assert trader.current_strategy == "capital_preservation" or trader.current_strategy.endswith(
+        "_defensive"
+    )
 
     snapshot = trader.build_auto_mode_snapshot(include_history=False, tz=None)
     indicators = snapshot["performance_indicators"]
@@ -428,6 +429,8 @@ def test_adjust_strategy_parameters_enters_defensive_mode(monkeypatch: pytest.Mo
     recent_event = history[0]
     assert recent_event["state"] in {"defensive", "critical"}
     assert recent_event["reason"] in {"journal_defensive", "journal_defensive_adjustment"}
+
+
 def _prepare_guardrail_history(monkeypatch: pytest.MonkeyPatch) -> AutoTrader:
     emitter = _Emitter()
     gui = _GUI()
@@ -439,11 +442,9 @@ def _prepare_guardrail_history(monkeypatch: pytest.MonkeyPatch) -> AutoTrader:
         enable_auto_trade=False,
     )
 
-    class _ServiceAlpha:
-        ...
+    class _ServiceAlpha: ...
 
-    class _ServiceBeta:
-        ...
+    class _ServiceBeta: ...
 
     alpha = _ServiceAlpha()
     beta = _ServiceBeta()
@@ -716,7 +717,12 @@ def _build_summary(
             resolved_level = RiskLevel.CRITICAL
         elif risk >= 0.65 or (resolved_risk_trend >= 0.1 and resolved_stability < 0.7):
             resolved_level = RiskLevel.ELEVATED
-        elif risk <= 0.25 and resolved_risk_trend <= 0.0 and resolved_stability >= 0.55 and confidence >= 0.5:
+        elif (
+            risk <= 0.25
+            and resolved_risk_trend <= 0.0
+            and resolved_stability >= 0.55
+            and confidence >= 0.5
+        ):
             resolved_level = RiskLevel.CALM
         elif risk <= 0.45 and resolved_risk_trend <= 0.05:
             resolved_level = RiskLevel.BALANCED
@@ -729,14 +735,18 @@ def _build_summary(
         else:
             values = [snap.risk_score for snap in snapshots]
             mean = sum(values) / len(values)
-            resolved_volatility = (sum((value - mean) ** 2 for value in values) / len(values)) ** 0.5
+            resolved_volatility = (
+                sum((value - mean) ** 2 for value in values) / len(values)
+            ) ** 0.5
     resolved_persistence = regime_persistence
     if resolved_persistence is None:
         if len(snapshots) <= 1:
             resolved_persistence = 1.0
         else:
             changes = sum(
-                1 for idx in range(1, len(snapshots)) if snapshots[idx].regime != snapshots[idx - 1].regime
+                1
+                for idx in range(1, len(snapshots))
+                if snapshots[idx].regime != snapshots[idx - 1].regime
             )
             resolved_persistence = 1.0 - (changes / (len(snapshots) - 1))
     resolved_conf_trend = confidence_trend
@@ -788,7 +798,9 @@ def _build_summary(
         )
     else:
         resolved_instability = float(instability_score)
-    resolved_avg_drawdown = float(avg_drawdown) if avg_drawdown is not None else float(sum(drawdowns) / len(drawdowns))
+    resolved_avg_drawdown = (
+        float(avg_drawdown) if avg_drawdown is not None else float(sum(drawdowns) / len(drawdowns))
+    )
     resolved_avg_volume_trend = (
         float(avg_volume_trend)
         if avg_volume_trend is not None
@@ -823,9 +835,7 @@ def _build_summary(
             sum(
                 1
                 for snap in snapshots
-                if snap.drawdown >= 0.22
-                or snap.volatility >= 0.035
-                or snap.volatility_ratio >= 1.4
+                if snap.drawdown >= 0.22 or snap.volatility >= 0.035 or snap.volatility_ratio >= 1.4
             )
             / max(len(snapshots), 1),
         )
@@ -866,7 +876,8 @@ def _build_summary(
             1.0,
             0.45 * resolved_tail_risk_index
             + 0.3 * resolved_shock_frequency
-            + 0.25 * max(min(resolved_risk_volatility / 0.3, 1.0), min(resolved_vol_of_vol / 0.025, 1.0)),
+            + 0.25
+            * max(min(resolved_risk_volatility / 0.3, 1.0), min(resolved_vol_of_vol / 0.025, 1.0)),
         )
     )
     if severe_event_rate is not None:
@@ -882,9 +893,7 @@ def _build_summary(
                 or snap.volatility_ratio >= 1.45
             )
         )
-        resolved_severe_event_rate = float(
-            min(1.0, severe_events / max(len(snapshots), 1))
-        )
+        resolved_severe_event_rate = float(min(1.0, severe_events / max(len(snapshots), 1)))
     if recovery_potential is not None:
         resolved_recovery_potential = float(recovery_potential)
     else:
@@ -916,21 +925,23 @@ def _build_summary(
     if volatility_trend is not None:
         resolved_volatility_trend = float(volatility_trend)
     else:
-        resolved_volatility_trend = float(
-            np.clip(volatilities[-1] - volatilities[0], -0.05, 0.05)
-        ) if len(volatilities) >= 2 else 0.0
+        resolved_volatility_trend = (
+            float(np.clip(volatilities[-1] - volatilities[0], -0.05, 0.05))
+            if len(volatilities) >= 2
+            else 0.0
+        )
     if drawdown_trend is not None:
         resolved_drawdown_trend = float(drawdown_trend)
     else:
-        resolved_drawdown_trend = float(
-            np.clip(drawdowns[-1] - drawdowns[0], -0.4, 0.4)
-        ) if len(drawdowns) >= 2 else 0.0
+        resolved_drawdown_trend = (
+            float(np.clip(drawdowns[-1] - drawdowns[0], -0.4, 0.4)) if len(drawdowns) >= 2 else 0.0
+        )
     if volume_trend_volatility is not None:
         resolved_volume_trend_volatility = float(volume_trend_volatility)
     else:
-        resolved_volume_trend_volatility = float(
-            np.std(volume_trends, dtype=float)
-        ) if len(volume_trends) >= 2 else 0.0
+        resolved_volume_trend_volatility = (
+            float(np.std(volume_trends, dtype=float)) if len(volume_trends) >= 2 else 0.0
+        )
     vol_trend_intensity = min(1.0, max(0.0, resolved_volatility_trend) / 0.03)
     drawdown_trend_intensity = min(1.0, max(0.0, resolved_drawdown_trend) / 0.18)
     volume_trend_vol_norm = min(1.0, resolved_volume_trend_volatility / 0.25)
@@ -959,7 +970,9 @@ def _build_summary(
     if volume_imbalance is not None:
         resolved_volume_imbalance = float(volume_imbalance)
     else:
-        resolved_volume_imbalance = float(np.mean(volume_imbalance_values)) if volume_imbalance_values else 0.0
+        resolved_volume_imbalance = (
+            float(np.mean(volume_imbalance_values)) if volume_imbalance_values else 0.0
+        )
     if distribution_pressure is not None:
         resolved_distribution_pressure = float(distribution_pressure)
     else:
@@ -1002,9 +1015,7 @@ def _build_summary(
     else:
         resolved_stress_balance = float(
             np.clip(
-                0.5
-                + 0.5
-                * (resolved_recovery_potential - resolved_stress_index),
+                0.5 + 0.5 * (resolved_recovery_potential - resolved_stress_index),
                 0.0,
                 1.0,
             )
@@ -1021,7 +1032,8 @@ def _build_summary(
                     + 0.25 * resolved_stability_projection
                     + 0.2 * max(0.0, 1.0 - resolved_drawdown_pressure)
                     + 0.12 * max(0.0, 1.0 - resolved_liquidity_pressure)
-                    + 0.08 * max(
+                    + 0.08
+                    * max(
                         0.0,
                         1.0
                         - min(
@@ -1184,6 +1196,8 @@ def _build_summary(
         distribution_pressure=resolved_distribution_pressure,
         history=snapshots,
     )
+
+
 class _RiskServiceStub:
     def __init__(self, approval: bool) -> None:
         self._approval = approval
@@ -1191,6 +1205,7 @@ class _RiskServiceStub:
 
     def __call__(self, decision: RiskDecision) -> bool:
         return self.evaluate_decision(decision)
+
     def __init__(self, approval: Any) -> None:
         self._approval = approval
         self.calls: list[RiskDecision] = []
@@ -1217,6 +1232,7 @@ class _RiskServiceResponseStub:
         if callable(result):
             result = result()
         return result
+
     def _resolve(self) -> Any:
         return self._response() if callable(self._response) else self._response
 
@@ -1361,18 +1377,12 @@ def test_reload_thresholds_refreshes_auto_trader() -> None:
     gui = _GUI()
     trader = AutoTrader(emitter, gui, lambda: "ETHUSDT", thresholds_loader=_loader)
 
-    assert (
-        trader._thresholds["auto_trader"]["map_regime_to_signal"]["assessment_confidence"]
-        == 0.3
-    )
+    assert trader._thresholds["auto_trader"]["map_regime_to_signal"]["assessment_confidence"] == 0.3
 
     store["auto_trader"]["map_regime_to_signal"]["assessment_confidence"] = 0.6
     trader.reload_thresholds()
 
-    assert (
-        trader._thresholds["auto_trader"]["map_regime_to_signal"]["assessment_confidence"]
-        == 0.6
-    )
+    assert trader._thresholds["auto_trader"]["map_regime_to_signal"]["assessment_confidence"] == 0.6
 
 
 def test_adjust_strategy_parameters_respects_summary_risk_cap() -> None:
@@ -1443,7 +1453,9 @@ def test_adjust_strategy_parameters_respects_summary_risk_cap() -> None:
             confidence_fragility=0.4,
         )
 
-        default_trader._adjust_strategy_parameters(assessment, aggregated_risk=0.35, summary=summary)
+        default_trader._adjust_strategy_parameters(
+            assessment, aggregated_risk=0.35, summary=summary
+        )
         default_leverage = default_trader.current_leverage
 
         custom_thresholds = copy.deepcopy(base_thresholds)
@@ -1527,7 +1539,9 @@ def test_signal_guardrails_follow_configuration() -> None:
         assert trader._apply_signal_guardrails("buy", 0.8, summary) == "hold"
         assert trader._last_guardrail_reasons
         assert trader._last_guardrail_triggers
-        assert all(isinstance(trigger, GuardrailTrigger) for trigger in trader._last_guardrail_triggers)
+        assert all(
+            isinstance(trigger, GuardrailTrigger) for trigger in trader._last_guardrail_triggers
+        )
         assert any("effective risk" in reason for reason in trader._last_guardrail_reasons)
         assert trader._last_guardrail_triggers[0].name == "effective_risk"
 
@@ -1648,16 +1662,15 @@ auto_trader:
 
     try:
         thresholds = config_loader.load_risk_thresholds()
-        assert (
-            thresholds["auto_trader"]["map_regime_to_signal"]["assessment_confidence"]
-            == 0.77
-        )
+        assert thresholds["auto_trader"]["map_regime_to_signal"]["assessment_confidence"] == 0.77
     finally:
         monkeypatch.delenv("BOT_CORE_RISK_THRESHOLDS_PATH", raising=False)
         config_loader.reset_threshold_cache()
 
 
-def test_load_risk_thresholds_signal_thresholds(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+def test_load_risk_thresholds_signal_thresholds(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
     config_loader.reset_threshold_cache()
     override = tmp_path / "risk_thresholds.yaml"
     override.write_text(
@@ -1690,7 +1703,9 @@ auto_trader:
         config_loader.reset_threshold_cache()
 
 
-def test_load_risk_thresholds_rejects_invalid_signal_threshold(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+def test_load_risk_thresholds_rejects_invalid_signal_threshold(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
     config_loader.reset_threshold_cache()
     override = tmp_path / "risk_thresholds.yaml"
     override.write_text(
@@ -1710,6 +1725,7 @@ auto_trader:
         monkeypatch.delenv("BOT_CORE_RISK_THRESHOLDS_PATH", raising=False)
         config_loader.reset_threshold_cache()
 
+
 @dataclass
 class _DummyAssessment:
     regime: MarketRegime
@@ -1727,20 +1743,22 @@ class _DummyAssessment:
                 "volatility": 0.01,
                 "momentum": 0.0,
                 "autocorr": -0.1,
-            "intraday_vol": 0.01,
-            "drawdown": 0.05,
-            "volatility_ratio": 1.1,
-            "volume_trend": 0.02,
-            "return_skew": 0.0,
-            "return_kurtosis": 0.0,
-            "volume_imbalance": 0.0,
-        },
-        symbol=symbol,
-    )
+                "intraday_vol": 0.01,
+                "drawdown": 0.05,
+                "volatility_ratio": 1.1,
+                "volume_trend": 0.02,
+                "return_skew": 0.0,
+                "return_kurtosis": 0.0,
+                "volume_imbalance": 0.0,
+            },
+            symbol=symbol,
+        )
 
 
 class _AIManagerStub:
-    def __init__(self, assessments: list[_DummyAssessment], summaries: dict[str, RegimeSummary] | None = None) -> None:
+    def __init__(
+        self, assessments: list[_DummyAssessment], summaries: dict[str, RegimeSummary] | None = None
+    ) -> None:
         self._queue = assessments
         self.calls: list[str] = []
         self._summaries = summaries or {}
@@ -1748,7 +1766,9 @@ class _AIManagerStub:
         self.is_degraded = False
         self._last_prediction = assessments[0].ai_prediction if assessments else 0.0
 
-    def assess_market_regime(self, symbol: str, market_data: pd.DataFrame, **_: Any) -> MarketRegimeAssessment:
+    def assess_market_regime(
+        self, symbol: str, market_data: pd.DataFrame, **_: Any
+    ) -> MarketRegimeAssessment:
         self.calls.append(symbol)
         next_assessment = self._queue.pop(0)
         self._last_prediction = next_assessment.ai_prediction
@@ -1846,7 +1866,9 @@ def _load_summary(
             continue
         mapped = rename_map.get(key, key)
         resolved_overrides[mapped] = value
-    summary = load_summary_for_regime(regime, dataset=dataset, overrides=resolved_overrides, step=step)
+    summary = load_summary_for_regime(
+        regime, dataset=dataset, overrides=resolved_overrides, step=step
+    )
     return summary
 
 
@@ -1857,7 +1879,6 @@ def _build_market_data() -> pd.DataFrame:
     low = close * 0.999
     volume = pd.Series(1_000, index=idx)
     return pd.DataFrame({"open": close, "high": high, "low": low, "close": close, "volume": volume})
-
 
 
 def _prepare_trader(
@@ -2494,7 +2515,12 @@ def test_auto_trader_allows_trade_when_degradation_low() -> None:
         should_trade=True,
         cooldown_active=False,
         summary=summary,
-        summary_fields=["degradation_score", "stability_projection", "cooldown_score", "risk_level"],
+        summary_fields=[
+            "degradation_score",
+            "stability_projection",
+            "cooldown_score",
+            "risk_level",
+        ],
     )
     assert trader._last_signal == "buy"
     assert trader.current_strategy.startswith("trend_following")
@@ -2640,7 +2666,10 @@ def test_auto_trader_holds_when_confidence_trend_collapses() -> None:
     )
     assert trader._last_signal == "hold"
     assert trader.current_leverage <= 0.6
-    assert trader.current_strategy.endswith("probing") or trader.current_strategy == "capital_preservation"
+    assert (
+        trader.current_strategy.endswith("probing")
+        or trader.current_strategy == "capital_preservation"
+    )
 
 
 def test_auto_trader_holds_when_regime_streak_short() -> None:
@@ -2671,7 +2700,10 @@ def test_auto_trader_holds_when_regime_streak_short() -> None:
     )
     assert trader._last_signal == "hold"
     assert trader.current_leverage <= 0.4
-    assert trader.current_strategy.endswith("probing") or trader.current_strategy == "capital_preservation"
+    assert (
+        trader.current_strategy.endswith("probing")
+        or trader.current_strategy == "capital_preservation"
+    )
 
 
 def test_auto_trader_trims_when_persistence_collapses() -> None:
@@ -2707,7 +2739,10 @@ def test_auto_trader_trims_when_persistence_collapses() -> None:
     )
     assert trader._last_signal == "hold"
     assert trader.current_leverage <= 0.4
-    assert trader.current_strategy.endswith("probing") or trader.current_strategy == "capital_preservation"
+    assert (
+        trader.current_strategy.endswith("probing")
+        or trader.current_strategy == "capital_preservation"
+    )
     assert decision.details["effective_risk"] >= summary.risk_score * 0.7
 
 
@@ -2775,12 +2810,13 @@ def test_auto_trader_increases_risk_when_summary_calm() -> None:
     assert trader.current_leverage > 2.0
     assert trader._last_risk_decision is not None
     assert trader._last_risk_decision.should_trade is True
-    assert (
-        trader._last_risk_decision.details["summary"]["risk_level"]
-        == summary.risk_level.value
+    assert trader._last_risk_decision.details["summary"]["risk_level"] == summary.risk_level.value
+    assert trader._last_risk_decision.details["summary"]["risk_volatility"] == pytest.approx(
+        summary.risk_volatility
     )
-    assert trader._last_risk_decision.details["summary"]["risk_volatility"] == pytest.approx(summary.risk_volatility)
-    assert trader._last_risk_decision.details["summary"]["regime_persistence"] == pytest.approx(summary.regime_persistence)
+    assert trader._last_risk_decision.details["summary"]["regime_persistence"] == pytest.approx(
+        summary.regime_persistence
+    )
 
 
 @pytest.mark.parametrize(
@@ -3066,8 +3102,7 @@ def test_auto_trader_traces_risk_evaluations_by_decision(
 
     decision = RiskDecision(should_trade=True, fraction=0.3, state="active")
 
-    class _Service:
-        ...
+    class _Service: ...
 
     service = _Service()
 
@@ -3327,7 +3362,9 @@ def test_auto_trader_filters_and_summarizes_risk_history() -> None:
     assert summary_by_id["total"] == 1
 
 
-def test_auto_trader_risk_history_filters_by_service_and_time(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_auto_trader_risk_history_filters_by_service_and_time(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     emitter = _Emitter()
     gui = _GUI()
     provider = _Provider(_build_market_data())
@@ -3348,11 +3385,9 @@ def test_auto_trader_risk_history_filters_by_service_and_time(monkeypatch: pytes
         details={"origin": "unit-test"},
     )
 
-    class _ServiceAlpha:
-        ...
+    class _ServiceAlpha: ...
 
-    class _ServiceBeta:
-        ...
+    class _ServiceBeta: ...
 
     alpha = _ServiceAlpha()
     beta = _ServiceBeta()
@@ -3432,9 +3467,7 @@ def test_auto_trader_risk_history_filters_by_service_and_time(monkeypatch: pytes
     evaluations = trader.get_risk_evaluations()
     df = trader.risk_evaluations_to_dataframe()
     assert len(df) == 4
-    assert {"timestamp", "approved", "normalized", "decision", "decision_id"}.issubset(
-        df.columns
-    )
+    assert {"timestamp", "approved", "normalized", "decision", "decision_id"}.issubset(df.columns)
     assert df.loc[pd.isna(df["service"]), "error"].iloc[0].startswith("RuntimeError")
 
     alpha_df = trader.risk_evaluations_to_dataframe(service="_ServiceAlpha")
@@ -3446,7 +3479,9 @@ def test_auto_trader_risk_history_filters_by_service_and_time(monkeypatch: pytes
         until=pd.Timestamp(1020.0, unit="s"),
     )
     assert len(window_df) == 2
-    assert set(window_df.get("service", pd.Series(index=window_df.index)).fillna("<unknown>").unique()) == {
+    assert set(
+        window_df.get("service", pd.Series(index=window_df.index)).fillna("<unknown>").unique()
+    ) == {
         "_ServiceBeta",
         "<unknown>",
     }
@@ -3528,9 +3563,7 @@ def test_auto_trader_risk_history_filters_by_service_and_time(monkeypatch: pytes
         "decision",
         "response",
         "error",
-    }.issubset(
-        records_snapshot[0].keys()
-    )
+    }.issubset(records_snapshot[0].keys())
     assert records_snapshot[0]["decision"]["details"]["origin"] == "unit-test"
 
     alpha_records = trader.risk_evaluations_to_records(service="_ServiceAlpha")
@@ -3568,9 +3601,7 @@ def test_auto_trader_risk_history_filters_by_service_and_time(monkeypatch: pytes
         flatten_decision=True,
         decision_fields=["fraction", "details"],
     )
-    subset_keys = [
-        key for key in subset_records[0].keys() if key.startswith("decision_")
-    ]
+    subset_keys = [key for key in subset_records[0].keys() if key.startswith("decision_")]
     assert subset_keys == ["decision_id", "decision_fraction", "decision_details"]
 
     dropped_records = trader.risk_evaluations_to_records(
@@ -3635,8 +3666,7 @@ def test_auto_trader_risk_history_emits_events(monkeypatch: pytest.MonkeyPatch) 
     with pytest.raises(TypeError):
         trader.add_risk_evaluation_listener(object())  # type: ignore[arg-type]
 
-    class _ServiceGamma:
-        ...
+    class _ServiceGamma: ...
 
     service = _ServiceGamma()
 
@@ -3668,7 +3698,9 @@ def test_auto_trader_risk_history_emits_events(monkeypatch: pytest.MonkeyPatch) 
         error=None,
     )
 
-    risk_events = [payload for event, payload in emitter.events if event == "auto_trader.risk_evaluation"]
+    risk_events = [
+        payload for event, payload in emitter.events if event == "auto_trader.risk_evaluation"
+    ]
     assert len(risk_events) == 3
     assert len(payloads) == 3
     assert payloads[0]["service"] == "_ServiceGamma"
@@ -3691,7 +3723,9 @@ def test_auto_trader_risk_history_emits_events(monkeypatch: pytest.MonkeyPatch) 
         error=None,
     )
 
-    risk_events_after = [payload for event, payload in emitter.events if event == "auto_trader.risk_evaluation"]
+    risk_events_after = [
+        payload for event, payload in emitter.events if event == "auto_trader.risk_evaluation"
+    ]
     assert len(risk_events_after) == 4
     assert len(payloads) == 3
 
@@ -4116,14 +4150,11 @@ def test_auto_trader_summarizes_decision_dimensions() -> None:
         enable_auto_trade=False,
     )
 
-    class _ServiceAlpha:
-        ...
+    class _ServiceAlpha: ...
 
-    class _ServiceBeta:
-        ...
+    class _ServiceBeta: ...
 
-    class _ServiceGamma:
-        ...
+    class _ServiceGamma: ...
 
     alpha = _ServiceAlpha()
     beta = _ServiceBeta()
@@ -4304,14 +4335,11 @@ def test_auto_trader_decision_timeline_summary(
         enable_auto_trade=False,
     )
 
-    class _ServiceAlpha:
-        ...
+    class _ServiceAlpha: ...
 
-    class _ServiceBeta:
-        ...
+    class _ServiceBeta: ...
 
-    class _ServiceGamma:
-        ...
+    class _ServiceGamma: ...
 
     alpha = _ServiceAlpha()
     beta = _ServiceBeta()
@@ -4520,11 +4548,9 @@ def test_auto_trader_decision_timeline_exports(
         enable_auto_trade=False,
     )
 
-    class _ServiceAlpha:
-        ...
+    class _ServiceAlpha: ...
 
-    class _ServiceBeta:
-        ...
+    class _ServiceBeta: ...
 
     alpha = _ServiceAlpha()
     beta = _ServiceBeta()
@@ -4678,9 +4704,7 @@ def test_auto_trader_decision_timeline_exports(
         include_services=True,
         include_decision_dimensions=True,
     )
-    assert (
-        filtered_df.loc[filtered_df["bucket_type"] == "bucket", "total"].sum() == 1
-    )
+    assert filtered_df.loc[filtered_df["bucket_type"] == "bucket", "total"].sum() == 1
 
 
 def test_auto_trader_guardrail_summary(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -4787,17 +4811,13 @@ def test_auto_trader_guardrail_summary(monkeypatch: pytest.MonkeyPatch) -> None:
     assert unit_score_summary["guardrail_events"] == 1
     assert set(unit_score_summary["services"].keys()) == {"<unknown>"}
 
-    label_filtered_summary = trader.summarize_risk_guardrails(
-        trigger_label="Volatility ratio"
-    )
+    label_filtered_summary = trader.summarize_risk_guardrails(trigger_label="Volatility ratio")
     assert label_filtered_summary["total"] == 1
     assert label_filtered_summary["guardrail_events"] == 1
     assert "volatility_ratio" in label_filtered_summary["triggers"]
     assert label_filtered_summary["triggers"]["volatility_ratio"]["count"] == 1
 
-    comparator_filtered_summary = trader.summarize_risk_guardrails(
-        trigger_comparator=">="
-    )
+    comparator_filtered_summary = trader.summarize_risk_guardrails(trigger_comparator=">=")
     assert comparator_filtered_summary["total"] == 3
     assert comparator_filtered_summary["guardrail_events"] == 3
 
@@ -4896,9 +4916,7 @@ def test_auto_trader_guardrail_summary(monkeypatch: pytest.MonkeyPatch) -> None:
     assert trigger_records[0]["service"] == "_ServiceAlpha"
     assert trigger_records[0]["guardrail_trigger_count"] == 2
 
-    label_records = trader.guardrail_events_to_records(
-        trigger_label="Volatility ratio"
-    )
+    label_records = trader.guardrail_events_to_records(trigger_label="Volatility ratio")
     assert len(label_records) == 1
     assert label_records[0]["service"] == "_ServiceAlpha"
 
@@ -5011,7 +5029,10 @@ def test_auto_trader_guardrail_summary(monkeypatch: pytest.MonkeyPatch) -> None:
 
     df_with_decision = trader.guardrail_events_to_dataframe(include_decision=True)
     assert "decision" in df_with_decision.columns
-    assert df_with_decision.loc[0, "decision"]["details"]["guardrail_triggers"][0]["name"] == "effective_risk"
+    assert (
+        df_with_decision.loc[0, "decision"]["details"]["guardrail_triggers"][0]["name"]
+        == "effective_risk"
+    )
 
     empty_df = trader.guardrail_events_to_dataframe(limit=0)
     assert empty_df.empty
@@ -5053,10 +5074,7 @@ def test_guardrail_filters_support_decision_id(
         bucket_s=20.0,
         decision_id=target_id,
     )
-    assert (
-        df_timeline.attrs["guardrail_summary"]["filters"]["decision_id"]
-        == [target_id]
-    )
+    assert df_timeline.attrs["guardrail_summary"]["filters"]["decision_id"] == [target_id]
 
 
 def test_auto_trader_guardrail_timeline_exports(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -5095,9 +5113,7 @@ def test_auto_trader_guardrail_timeline_exports(monkeypatch: pytest.MonkeyPatch)
     assert value_totals["average"] == pytest.approx(0.92)
     assert summary["total"] == 3
     assert summary["evaluations"] == 4
-    assert summary["guardrail_rate"] == pytest.approx(
-        summary["total"] / summary["evaluations"]
-    )
+    assert summary["guardrail_rate"] == pytest.approx(summary["total"] / summary["evaluations"])
     assert summary["approval_states"] == {"denied": 3, "approved": 1}
     assert summary["normalization_states"] == {"raw": 3, "normalized": 1}
     assert summary["first_timestamp"] == pytest.approx(2000.0)
@@ -5253,9 +5269,7 @@ def test_auto_trader_guardrail_timeline_exports(monkeypatch: pytest.MonkeyPatch)
     assert summary_metadata["normalization_states"]["raw"] == 3
     assert summary_metadata["first_timestamp"] == summary_snapshot["first_timestamp"]
     assert summary_metadata["last_timestamp"] == summary_snapshot["last_timestamp"]
-    assert summary_metadata.get("missing_timestamp") == summary_snapshot.get(
-        "missing_timestamp"
-    )
+    assert summary_metadata.get("missing_timestamp") == summary_snapshot.get("missing_timestamp")
     assert summary_metadata["services"]["_ServiceAlpha"]["guardrail_events"] == 2
     assert summary_metadata["services"]["_ServiceAlpha"]["evaluations"] == 2
     assert summary_metadata["guardrail_trigger_thresholds"]["count"] == 4
@@ -5297,9 +5311,7 @@ def test_auto_trader_guardrail_timeline_exports(monkeypatch: pytest.MonkeyPatch)
         "guardrail_trigger_values"
     )
     assert summary_record["approval_states"] == summary_snapshot["approval_states"]
-    assert summary_record["normalization_states"] == summary_snapshot[
-        "normalization_states"
-    ]
+    assert summary_record["normalization_states"] == summary_snapshot["normalization_states"]
     assert summary_record["guardrail_rate"] == pytest.approx(
         summary_snapshot["total"] / summary_snapshot["evaluations"]
     )
@@ -5314,15 +5326,11 @@ def test_auto_trader_guardrail_timeline_exports(monkeypatch: pytest.MonkeyPatch)
         "ratio": 3,
         "score": 1,
     }
-    assert summary_records.summary["approval_states"] == summary_snapshot[
-        "approval_states"
-    ]
-    assert summary_records.summary["normalization_states"] == summary_snapshot[
-        "normalization_states"
-    ]
-    assert summary_records.summary["guardrail_rate"] == summary_snapshot[
-        "guardrail_rate"
-    ]
+    assert summary_records.summary["approval_states"] == summary_snapshot["approval_states"]
+    assert (
+        summary_records.summary["normalization_states"] == summary_snapshot["normalization_states"]
+    )
+    assert summary_records.summary["guardrail_rate"] == summary_snapshot["guardrail_rate"]
 
     df = trader.guardrail_timeline_to_dataframe(
         bucket_s=20.0,
@@ -5343,21 +5351,16 @@ def test_auto_trader_guardrail_timeline_exports(monkeypatch: pytest.MonkeyPatch)
     assert "guardrail_trigger_values" not in df_minimal.columns
 
     df_with_metadata = trader.guardrail_timeline_to_dataframe(bucket_s=20.0)
-    assert df_with_metadata.attrs["guardrail_summary"]["services"]["_ServiceAlpha"][
-        "guardrail_events"
-    ] == 2
-    assert df_with_metadata.attrs["guardrail_summary"]["guardrail_trigger_thresholds"][
-        "count"
-    ] == 4
-    assert df_with_metadata.attrs["guardrail_summary"]["guardrail_reasons"][
-        "effective risk cap"
-    ] == 3
-    assert df_with_metadata.attrs["guardrail_summary"]["approval_states"][
-        "denied"
-    ] == 3
-    assert df_with_metadata.attrs["guardrail_summary"]["normalization_states"][
-        "raw"
-    ] == 3
+    assert (
+        df_with_metadata.attrs["guardrail_summary"]["services"]["_ServiceAlpha"]["guardrail_events"]
+        == 2
+    )
+    assert df_with_metadata.attrs["guardrail_summary"]["guardrail_trigger_thresholds"]["count"] == 4
+    assert (
+        df_with_metadata.attrs["guardrail_summary"]["guardrail_reasons"]["effective risk cap"] == 3
+    )
+    assert df_with_metadata.attrs["guardrail_summary"]["approval_states"]["denied"] == 3
+    assert df_with_metadata.attrs["guardrail_summary"]["normalization_states"]["raw"] == 3
     assert df_with_metadata.attrs["guardrail_summary"]["guardrail_rate"] == (
         pytest.approx(summary["total"] / summary["evaluations"])
     )
@@ -5380,22 +5383,16 @@ def test_auto_trader_guardrail_timeline_exports(monkeypatch: pytest.MonkeyPatch)
     if "services" in df_with_summary.columns:
         assert summary_row["services"] == summary_snapshot.get("services")
     if "guardrail_reasons" in df_with_summary.columns:
-        assert summary_row["guardrail_reasons"] == summary_snapshot.get(
-            "guardrail_reasons"
-        )
+        assert summary_row["guardrail_reasons"] == summary_snapshot.get("guardrail_reasons")
     assert summary_row["approval_states"] == summary_snapshot["approval_states"]
-    assert summary_row["normalization_states"] == summary_snapshot[
-        "normalization_states"
-    ]
+    assert summary_row["normalization_states"] == summary_snapshot["normalization_states"]
     df_summary_metadata = df_with_summary.attrs.get("guardrail_summary")
     assert df_summary_metadata is not None
     assert df_summary_metadata["total"] == summary_snapshot["total"]
     assert df_summary_metadata["first_timestamp"] == summary_snapshot["first_timestamp"]
     assert df_summary_metadata["filters"]["fill_gaps"] is True
     assert df_summary_metadata["approval_states"] == summary_snapshot["approval_states"]
-    assert df_summary_metadata["normalization_states"] == summary_snapshot[
-        "normalization_states"
-    ]
+    assert df_summary_metadata["normalization_states"] == summary_snapshot["normalization_states"]
     assert df_summary_metadata["guardrail_rate"] == summary_snapshot["guardrail_rate"]
 
     records_with_missing = trader.guardrail_timeline_to_records(
@@ -5404,11 +5401,7 @@ def test_auto_trader_guardrail_timeline_exports(monkeypatch: pytest.MonkeyPatch)
     )
     assert len(records_with_missing) == 2
     missing_record = next(
-        (
-            record
-            for record in records_with_missing
-            if record.get("bucket_type") == "missing"
-        ),
+        (record for record in records_with_missing if record.get("bucket_type") == "missing"),
         None,
     )
     if missing_record is not None:
@@ -5601,9 +5594,7 @@ def test_guardrail_filters_support_missing_label_and_comparator(
     assert len(comparator_records) == 1
     assert comparator_records[0]["guardrail_triggers"][0]["comparator"] == "<="
 
-    missing_comparator_records = trader.guardrail_events_to_records(
-        trigger_comparator=None
-    )
+    missing_comparator_records = trader.guardrail_events_to_records(trigger_comparator=None)
     assert len(missing_comparator_records) == 1
     assert missing_comparator_records[0]["guardrail_triggers"][0]["comparator"] is None
 
@@ -5738,9 +5729,7 @@ def test_extract_guardrail_dimensions_prefers_cache(
     reasons, triggers, tokens = trader._extract_guardrail_dimensions(entry)
 
     assert reasons == ("cached reason",)
-    assert triggers == (
-        {"name": "cached_guard", "label": None, "comparator": None, "unit": None},
-    )
+    assert triggers == ({"name": "cached_guard", "label": None, "comparator": None, "unit": None},)
     assert tokens == [
         {
             "name": "cached_guard",
@@ -5811,9 +5800,7 @@ def test_guardrail_events_export_roundtrip(monkeypatch: pytest.MonkeyPatch) -> N
     assert snapshot["tokens"] and snapshot["tokens"][0]["name"]
 
 
-def test_guardrail_events_dump_and_import(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
-) -> None:
+def test_guardrail_events_dump_and_import(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     trader = _prepare_guardrail_history(monkeypatch)
     export_path = tmp_path / "guardrail_events.json"
 

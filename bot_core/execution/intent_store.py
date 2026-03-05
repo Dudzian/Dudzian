@@ -1,4 +1,5 @@
 """Trwały magazyn intencji/bindingów zleceń dla LiveExecutionRouter (SQLite)."""
+
 from __future__ import annotations
 
 import sqlite3

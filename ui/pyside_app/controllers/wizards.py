@@ -1,4 +1,5 @@
 """Kontroler odpowiedzialny za kreatory trybów pracy w PySide6."""
+
 from __future__ import annotations
 
 
@@ -42,8 +43,12 @@ class ModeWizardController(QObject):
         repo_root = Path(__file__).resolve().parents[3]
         self._runtime_service = runtime_service
         self._ui_config = ui_config
-        self._definitions_path = (definitions_path or repo_root / "config" / "ui" / "mode_wizards").expanduser()
-        self._storage_path = (storage_path or repo_root / "var" / "ui_mode_wizard_state.json").expanduser()
+        self._definitions_path = (
+            definitions_path or repo_root / "config" / "ui" / "mode_wizards"
+        ).expanduser()
+        self._storage_path = (
+            storage_path or repo_root / "var" / "ui_mode_wizard_state.json"
+        ).expanduser()
         self._storage_path.parent.mkdir(parents=True, exist_ok=True)
         self._storage: MutableMapping[str, Any] = self._load_storage()
         self._modes = self._load_mode_definitions()
@@ -211,13 +216,16 @@ class ModeWizardController(QObject):
 
     def _persist_storage(self) -> None:
         try:
-            self._storage_path.write_text(json.dumps(self._storage, indent=2, ensure_ascii=False), encoding="utf-8")
+            self._storage_path.write_text(
+                json.dumps(self._storage, indent=2, ensure_ascii=False), encoding="utf-8"
+            )
         except Exception as exc:  # pragma: no cover - środowiska read-only
             _LOGGER.warning("Nie można zapisać stanu kreatorów: %s", exc)
 
     def _load_ai_profiles(self, runtime_config_path: Path | None) -> dict[str, Any]:
         runtime_path = runtime_config_path or Path(
-            self._ui_config.payload.get("runtime_config_path") or Path(__file__).resolve().parents[3] / "config" / "runtime.yaml"
+            self._ui_config.payload.get("runtime_config_path")
+            or Path(__file__).resolve().parents[3] / "config" / "runtime.yaml"
         )
         profiles: dict[str, Any] = {}
         try:
@@ -239,7 +247,9 @@ class ModeWizardController(QObject):
                     selection.profile_name,
                     {
                         "mode": getattr(selection.profile, "mode", "remote"),
-                        "entrypoint": getattr(selection.profile, "entrypoint", selection.profile.entrypoint),
+                        "entrypoint": getattr(
+                            selection.profile, "entrypoint", selection.profile.entrypoint
+                        ),
                         "description": getattr(selection.profile, "description", None),
                     },
                 )
@@ -286,14 +296,17 @@ class ModeWizardController(QObject):
                     break
             hold_value = None
             if isinstance(decision_payload, Mapping):
-                hold_value = decision_payload.get("holdingMinutes") or decision_payload.get("holdingPeriodMinutes")
+                hold_value = decision_payload.get("holdingMinutes") or decision_payload.get(
+                    "holdingPeriodMinutes"
+                )
             if hold_value is not None:
                 try:
                     holding.append(float(hold_value))
                 except Exception:
                     pass
             env_tokens = " ".join(
-                str(entry.get(key) or "") for key in ("environment", "portfolio", "strategy", "status")
+                str(entry.get(key) or "")
+                for key in ("environment", "portfolio", "strategy", "status")
             ).lower()
             if any(token in env_tokens for token in ("future", "perp", "derivative")):
                 futures_signal = True

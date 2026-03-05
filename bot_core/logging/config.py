@@ -1,4 +1,5 @@
 """Konfiguracja logowania integrująca metryki i alerty offline."""
+
 from __future__ import annotations
 
 import logging
@@ -69,4 +70,3 @@ def install_metrics_logging_handler(
 
 
 __all__ = ["MetricsLoggingHandler", "install_metrics_logging_handler"]
-

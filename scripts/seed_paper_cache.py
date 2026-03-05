@@ -1,4 +1,5 @@
 """Narzędzie do przygotowania lokalnego cache'u OHLCV dla smoke testów paper tradingu."""
+
 from __future__ import annotations
 
 import argparse
@@ -105,8 +106,8 @@ def _generate_rows(
 
     def _rand() -> float:
         nonlocal rng_state
-        rng_state = (1103515245 * rng_state + 12345) % (2 ** 31)
-        return rng_state / float(2 ** 31)
+        rng_state = (1103515245 * rng_state + 12345) % (2**31)
+        return rng_state / float(2**31)
 
     rows: list[list[float]] = []
     current = start
@@ -118,15 +119,19 @@ def _generate_rows(
         high_price = max(open_price, close_price) * (1.0 + abs((_rand() - 0.5) * 0.01))
         low_price = min(open_price, close_price) * (1.0 - abs((_rand() - 0.5) * 0.01))
         volume = volume_anchor * (0.75 + _rand() * 0.5)
-        timestamp = int(current.replace(hour=0, minute=0, second=0, microsecond=0).timestamp() * 1000)
-        rows.append([
-            float(timestamp),
-            float(round(open_price, 6)),
-            float(round(high_price, 6)),
-            float(round(low_price, 6)),
-            float(round(close_price, 6)),
-            float(round(volume, 6)),
-        ])
+        timestamp = int(
+            current.replace(hour=0, minute=0, second=0, microsecond=0).timestamp() * 1000
+        )
+        rows.append(
+            [
+                float(timestamp),
+                float(round(open_price, 6)),
+                float(round(high_price, 6)),
+                float(round(low_price, 6)),
+                float(round(close_price, 6)),
+                float(round(volume, 6)),
+            ]
+        )
         price = close_price
         current += step
     return rows
@@ -244,7 +249,9 @@ def _build_parser() -> argparse.ArgumentParser:
             "aby umożliwić offline smoke test strategii Daily Trend."
         )
     )
-    parser.add_argument("--config", default="config/core.yaml", help="Ścieżka do pliku konfiguracyjnego core")
+    parser.add_argument(
+        "--config", default="config/core.yaml", help="Ścieżka do pliku konfiguracyjnego core"
+    )
     parser.add_argument(
         "--environment",
         default="binance_paper",

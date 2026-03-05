@@ -1,4 +1,5 @@
 """Asynchroniczny klient HTTP z kontrolą limitów i retry."""
+
 from __future__ import annotations
 
 import asyncio
@@ -48,12 +49,18 @@ class RateLimitedAsyncClient:
             limits=limits,
             transport=transport,
         )
-        low, high = (float(jitter_range[0]), float(jitter_range[1])) if len(jitter_range) >= 2 else (0.05, 0.35)
+        low, high = (
+            (float(jitter_range[0]), float(jitter_range[1]))
+            if len(jitter_range) >= 2
+            else (0.05, 0.35)
+        )
         self._retry = _RetryConfig(
             retries=max(1, int(retries)),
             backoff_factor=max(0.0, float(backoff_factor)),
             jitter_range=(min(low, high), max(low, high)),
-            retry_statuses=frozenset(int(code) for code in (retry_statuses or _DEFAULT_RETRY_STATUSES)),
+            retry_statuses=frozenset(
+                int(code) for code in (retry_statuses or _DEFAULT_RETRY_STATUSES)
+            ),
         )
 
     @property

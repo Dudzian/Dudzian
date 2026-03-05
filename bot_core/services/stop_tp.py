@@ -29,6 +29,7 @@ class StopTPService:
       - PaperBroker -> POSITION_UPDATE, MARKET_TICK
     Przy naruszeniu progów wysyła ORDER_REQUEST do wyjścia z pozycji.
     """
+
     def __init__(self, bus: EventBus, cfg: StopTPConfig) -> None:
         self.bus = bus
         self.cfg = cfg
@@ -125,13 +126,23 @@ class StopTPService:
         qty = abs(self._pos_qty)
         if qty <= 0:
             return
-        self.bus.publish(EventType.ORDER_REQUEST, {
-            "symbol": self.cfg.symbol,
-            "side": side,
-            "qty": qty,
-            "price": px,
-            "client_order_id": f"EXIT-{int(now*1000)}"
-        })
+        self.bus.publish(
+            EventType.ORDER_REQUEST,
+            {
+                "symbol": self.cfg.symbol,
+                "side": side,
+                "qty": qty,
+                "price": px,
+                "client_order_id": f"EXIT-{int(now * 1000)}",
+            },
+        )
         self._last_exit_ts = now
-        log.info("StopTP: exit %s qty=%.6f at %.2f (ATR=%.2f, SLx=%.2f, TPx=%.2f)",
-                 side, qty, px, self._atr or -1, self._sl_mult, self._tp_mult)
+        log.info(
+            "StopTP: exit %s qty=%.6f at %.2f (ATR=%.2f, SLx=%.2f, TPx=%.2f)",
+            side,
+            qty,
+            px,
+            self._atr or -1,
+            self._sl_mult,
+            self._tp_mult,
+        )

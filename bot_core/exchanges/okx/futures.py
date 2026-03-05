@@ -1,4 +1,5 @@
 """Adapter futures OKX z obsługą watchdog i metryk."""
+
 from __future__ import annotations
 
 from typing import Any, Mapping

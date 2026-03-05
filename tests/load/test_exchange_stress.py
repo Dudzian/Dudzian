@@ -104,14 +104,16 @@ def test_cli_main_writes_output(tmp_path: Path) -> None:
         encoding="utf-8",
     )
     output_path = tmp_path / "result.json"
-    exit_code = cli_main([
-        "--config",
-        str(config_path),
-        "--output",
-        str(output_path),
-        "--seed",
-        "7",
-    ])
+    exit_code = cli_main(
+        [
+            "--config",
+            str(config_path),
+            "--output",
+            str(output_path),
+            "--seed",
+            "7",
+        ]
+    )
     assert exit_code == 0
     payload = json.loads(output_path.read_text(encoding="utf-8"))
     assert payload["exchanges"]["cli_exchange"]["total_requests"] == 2

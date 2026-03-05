@@ -332,21 +332,15 @@ def test_load_autotrade_entries_streaming(monkeypatch, tmp_path):
     since = datetime(2024, 1, 1, 0, 0, tzinfo=timezone.utc)
     until = datetime(2024, 1, 1, 0, 30, tzinfo=timezone.utc)
 
-    entries = list(
-        _load_autotrade_entries([export_path], since=since, until=until)
-    )
+    entries = list(_load_autotrade_entries([export_path], since=since, until=until))
 
     entry_ids = [entry["id"] for entry in entries if "id" in entry]
     assert entry_ids == [2, 3]
 
     extracted_timestamps = [
-        calibrate_autotrade_thresholds._extract_entry_timestamp(entry)
-        for entry in entries
+        calibrate_autotrade_thresholds._extract_entry_timestamp(entry) for entry in entries
     ]
-    assert all(
-        ts is None or (since <= ts <= until)
-        for ts in extracted_timestamps
-    )
+    assert all(ts is None or (since <= ts <= until) for ts in extracted_timestamps)
 
     assert len(tracking_handles) == 1
     handle = tracking_handles[0]
@@ -401,13 +395,9 @@ def test_load_autotrade_entries_streaming_root_array(
     assert [entry["id"] for entry in loaded if "id" in entry] == [2, 3]
 
     timestamps = [
-        calibrate_autotrade_thresholds._extract_entry_timestamp(entry)
-        for entry in loaded
+        calibrate_autotrade_thresholds._extract_entry_timestamp(entry) for entry in loaded
     ]
-    assert all(
-        ts is None or (since <= ts <= until)
-        for ts in timestamps
-    )
+    assert all(ts is None or (since <= ts <= until) for ts in timestamps)
 
     assert len(tracking_handles) == 1
     handle = tracking_handles[0]
@@ -667,8 +657,7 @@ def test_load_autotrade_entries_filters_nested_timestamps(tmp_path: Path) -> Non
 
     assert [entry["id"] for entry in loaded if "id" in entry] == [2, 3]
     timestamps = [
-        calibrate_autotrade_thresholds._extract_entry_timestamp(entry)
-        for entry in loaded
+        calibrate_autotrade_thresholds._extract_entry_timestamp(entry) for entry in loaded
     ]
     assert all(ts is not None and since <= ts <= until for ts in timestamps)
 
@@ -925,9 +914,7 @@ def test_autotrade_single_object_export_is_supported(tmp_path: Path) -> None:
     }
     export_path.write_text(json.dumps(entry), encoding="utf-8")
 
-    loaded = list(
-        calibrate_autotrade_thresholds._load_autotrade_entries([export_path])
-    )
+    loaded = list(calibrate_autotrade_thresholds._load_autotrade_entries([export_path]))
 
     assert len(loaded) == 2
     assert loaded[0] == entry
@@ -982,9 +969,7 @@ def test_autotrade_single_object_export_without_seek(
         fake_open_text_file,
     )
 
-    loaded = list(
-        calibrate_autotrade_thresholds._load_autotrade_entries([export_path])
-    )
+    loaded = list(calibrate_autotrade_thresholds._load_autotrade_entries([export_path]))
 
     assert len(loaded) == 2
     assert loaded[0] == entry
@@ -1043,9 +1028,7 @@ def test_script_generates_report(tmp_path: Path) -> None:
     assert inline_sources["signal_after_clamp"] == pytest.approx(0.78)
     assert sources_payload["risk_thresholds"]["files"] == []
     assert sources_payload["risk_thresholds"]["inline"] == {}
-    groups = {
-        (entry["primary_exchange"], entry["strategy"]): entry for entry in payload["groups"]
-    }
+    groups = {(entry["primary_exchange"], entry["strategy"]): entry for entry in payload["groups"]}
     trend_group = groups[("binance", "trend_following")]
     signal_stats = trend_group["metrics"]["signal_after_adjustment"]
     assert signal_stats["count"] == 1
@@ -1695,9 +1678,11 @@ def test_load_current_thresholds_rejects_infinite_inline_risk() -> None:
 
 def test_load_current_thresholds_rejects_mixed_inline_with_nan() -> None:
     with pytest.raises(SystemExit) as excinfo:
-        _load_current_signal_thresholds([
-            "signal_after_adjustment=0.7,signal_after_clamp=NaN",
-        ])
+        _load_current_signal_thresholds(
+            [
+                "signal_after_adjustment=0.7,signal_after_clamp=NaN",
+            ]
+        )
 
     message = str(excinfo.value)
     assert "musi być skończoną liczbą" in message
@@ -1920,7 +1905,9 @@ def test_load_current_thresholds_collects_risk_files(tmp_path: Path) -> None:
         encoding="utf-8",
     )
 
-    thresholds, risk_score, sources_payload = _load_current_signal_thresholds([str(thresholds_path)])
+    thresholds, risk_score, sources_payload = _load_current_signal_thresholds(
+        [str(thresholds_path)]
+    )
 
     assert thresholds["signal_after_clamp"] == pytest.approx(0.73)
     assert risk_score == pytest.approx(0.66)
@@ -2016,19 +2003,18 @@ def test_group_resolution_prefers_entry_metadata_over_symbol_map() -> None:
         )
 
         groups = {
-            (group["primary_exchange"], group["strategy"]): group
-            for group in report["groups"]
+            (group["primary_exchange"], group["strategy"]): group for group in report["groups"]
         }
 
         kraken_group = groups[("kraken", "mean_reversion")]
         binance_group = groups[("binance", "trend_following")]
 
-        assert (
-            kraken_group["metrics"]["risk_score"]["count"] == 1
-        ), "Entry-specific metadata should override symbol_map fallback"
-        assert (
-            binance_group["metrics"]["risk_score"]["count"] == 1
-        ), "Entries should remain grouped by their own metadata"
+        assert kraken_group["metrics"]["risk_score"]["count"] == 1, (
+            "Entry-specific metadata should override symbol_map fallback"
+        )
+        assert binance_group["metrics"]["risk_score"]["count"] == 1, (
+            "Entries should remain grouped by their own metadata"
+        )
 
 
 def test_group_resolution_merges_entry_and_summary_metadata_before_symbol_map() -> None:
@@ -2144,10 +2130,7 @@ def test_autotrade_entry_keeps_detail_routing_when_symbol_missing() -> None:
             suggestion_percentile=0.5,
         )
 
-    groups = {
-        (group["primary_exchange"], group["strategy"])
-        for group in report["groups"]
-    }
+    groups = {(group["primary_exchange"], group["strategy"]) for group in report["groups"]}
     assert ("kraken", "mean_reversion") in groups
     assert ("unknown", "unknown") not in groups
 
@@ -2215,9 +2198,7 @@ def test_autotrade_entry_reads_nested_routing_metadata() -> None:
             suggestion_percentile=0.5,
         )
 
-    groups = {
-        (group["primary_exchange"], group["strategy"]): group for group in report["groups"]
-    }
+    groups = {(group["primary_exchange"], group["strategy"]): group for group in report["groups"]}
 
     assert ("ftx", "grid_bot") in groups
     nested_group = groups[("ftx", "grid_bot")]
@@ -2297,7 +2278,9 @@ def test_generate_report_rejects_non_finite_current_inline() -> None:
     assert "current_thresholds.inline" in message
 
 
-def test_generate_report_records_default_risk_threshold_loader(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_generate_report_records_default_risk_threshold_loader(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     def _fake_loader(*, config_path: Path | None = None) -> Mapping[str, object]:
         assert config_path is None
         return {"auto_trader": {"map_regime_to_signal": {"risk_score": 0.55}}}
@@ -2445,6 +2428,7 @@ def test_generate_report_loader_metadata_marks_not_applied_after_inline_value(
             "applied": False,
         }
     ]
+
 
 def test_generate_report_rejects_invalid_current_threshold_mapping_value() -> None:
     with pytest.raises(SystemExit) as excinfo:
@@ -2624,6 +2608,8 @@ def test_generate_report_uses_normalized_current_threshold_mapping() -> None:
     assert metrics["signal_after_adjustment"]["current_threshold"] == pytest.approx(0.51)
     if "signal_after_clamp" in metrics:
         assert metrics["signal_after_clamp"]["current_threshold"] is None
+
+
 def test_generate_report_merges_multiple_risk_threshold_paths(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
@@ -2753,9 +2739,7 @@ def test_autotrade_entry_reads_routing_sequences() -> None:
             suggestion_percentile=0.5,
         )
 
-    groups = {
-        (group["primary_exchange"], group["strategy"]): group for group in report["groups"]
-    }
+    groups = {(group["primary_exchange"], group["strategy"]): group for group in report["groups"]}
 
     assert ("kraken", "mean_reversion") in groups
     nested_group = groups[("kraken", "mean_reversion")]
@@ -2789,9 +2773,7 @@ def test_journal_freeze_event_preserves_event_metadata_over_symbol_map() -> None
             suggestion_percentile=0.5,
         )
 
-    groups = {
-        (group["primary_exchange"], group["strategy"]): group for group in report["groups"]
-    }
+    groups = {(group["primary_exchange"], group["strategy"]): group for group in report["groups"]}
 
     assert ("binance", "trend_following") in groups
     assert ("kraken", "mean_reversion") in groups
@@ -2918,6 +2900,8 @@ def test_generate_report_accepts_generators() -> None:
     assert report["groups"]
     trend_group = next(iter(report["groups"]))
     assert trend_group["metrics"]["signal_after_adjustment"]["count"] == 2
+
+
 def test_build_symbol_map_coalesces_case_variants() -> None:
     events = [
         {"symbol": "BtcUsdt", "primary_exchange": "binance", "strategy": "trend"},
@@ -2959,15 +2943,15 @@ def test_symbol_map_fallback_supplements_missing_metadata() -> None:
             suggestion_percentile=0.5,
         )
 
-    groups = {
-        (group["primary_exchange"], group["strategy"]): group for group in report["groups"]
-    }
+    groups = {(group["primary_exchange"], group["strategy"]): group for group in report["groups"]}
 
     assert ("binance", "unknown") in groups
     assert groups[("binance", "unknown")]["metrics"]["risk_score"]["count"] == 1
 
 
-def test_generate_report_handles_large_inputs_with_low_peak_memory(monkeypatch, tmp_path: Path) -> None:
+def test_generate_report_handles_large_inputs_with_low_peak_memory(
+    monkeypatch, tmp_path: Path
+) -> None:
     event_count = 2000
     journal_path = tmp_path / "large_journal.jsonl"
     with journal_path.open("w", encoding="utf-8") as handle:
@@ -3019,9 +3003,7 @@ def test_generate_report_handles_large_inputs_with_low_peak_memory(monkeypatch, 
         if size > current_peak:
             peak_sizes[(key, metric)] = size
 
-    monkeypatch.setattr(
-        "scripts.calibrate_autotrade_thresholds._METRIC_APPEND_OBSERVER", _observer
-    )
+    monkeypatch.setattr("scripts.calibrate_autotrade_thresholds._METRIC_APPEND_OBSERVER", _observer)
 
     report = _generate_report(
         journal_events=journal_iter,
@@ -3237,11 +3219,17 @@ def test_loaders_yield_records_incrementally(monkeypatch, tmp_path: Path) -> Non
         json.dumps({"timestamp": "2024-01-01T00:02:00Z", "value": 3}) + "\n",
     ]
     autotrade_lines = [
-        json.dumps({"timestamp": "2024-01-01T01:00:00Z", "decision": {"summary": {"risk_score": 1}}})
+        json.dumps(
+            {"timestamp": "2024-01-01T01:00:00Z", "decision": {"summary": {"risk_score": 1}}}
+        )
         + "\n",
-        json.dumps({"timestamp": "2024-01-01T01:01:00Z", "decision": {"summary": {"risk_score": 2}}})
+        json.dumps(
+            {"timestamp": "2024-01-01T01:01:00Z", "decision": {"summary": {"risk_score": 2}}}
+        )
         + "\n",
-        json.dumps({"timestamp": "2024-01-01T01:02:00Z", "decision": {"summary": {"risk_score": 3}}})
+        json.dumps(
+            {"timestamp": "2024-01-01T01:02:00Z", "decision": {"summary": {"risk_score": 3}}}
+        )
         + "\n",
     ]
 
@@ -4812,9 +4800,9 @@ def test_generate_report_limits_raw_freeze_events_with_display_limit() -> None:
     assert overflow_statuses == {"auto_risk_freeze": 2}
     display_overflow_summary = raw_payload["display_overflow_summary"]
     assert display_overflow_summary["total"] == 2
-    assert {
-        item["status"]: item["count"] for item in display_overflow_summary["statuses"]
-    } == {"auto_risk_freeze": 2}
+    assert {item["status"]: item["count"] for item in display_overflow_summary["statuses"]} == {
+        "auto_risk_freeze": 2
+    }
 
     global_raw = report["global_summary"]["raw_freeze_events"]
     assert global_raw["mode"] == "sample"
@@ -4879,6 +4867,7 @@ def test_generate_report_omits_raw_freeze_events_when_max_raw_zero() -> None:
         "display_limit": 0,
         "reason": "limit_zero",
     }
+
 
 def test_generate_report_can_omit_raw_freeze_events_when_requested() -> None:
     journal_events = [
@@ -5355,6 +5344,7 @@ def test_generate_report_omits_raw_freeze_events_when_sample_limit_zero() -> Non
         "reason": "sample_limit_zero",
     }
 
+
 def test_generate_report_can_omit_freeze_events() -> None:
     journal_events = [
         {
@@ -5493,9 +5483,9 @@ def test_generate_report_limits_raw_freeze_events_with_max_limit_and_display_lim
     assert overflow_statuses == {"auto_risk_freeze": 2}
     display_overflow_summary = raw_payload["display_overflow_summary"]
     assert display_overflow_summary["total"] == 2
-    assert {
-        item["status"]: item["count"] for item in display_overflow_summary["statuses"]
-    } == {"auto_risk_freeze": 2}
+    assert {item["status"]: item["count"] for item in display_overflow_summary["statuses"]} == {
+        "auto_risk_freeze": 2
+    }
 
     global_raw = report["global_summary"]["raw_freeze_events"]
     assert global_raw["mode"] == "limit"
@@ -5594,7 +5584,9 @@ def test_configure_cli_stdio_sets_utf8_backslashreplace(monkeypatch: pytest.Monk
     assert stderr.errors == "backslashreplace"
 
 
-def test_configure_cli_stdio_falls_back_to_backslashreplace(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_configure_cli_stdio_falls_back_to_backslashreplace(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     class _Stream:
         def __init__(self) -> None:
             self.calls: list[dict[str, str]] = []
@@ -5621,7 +5613,9 @@ def test_configure_cli_stdio_falls_back_to_backslashreplace(monkeypatch: pytest.
     ]
 
 
-def test_configure_cli_stdio_ignores_streams_without_reconfigure(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_configure_cli_stdio_ignores_streams_without_reconfigure(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     class _StreamWithoutReconfigure:
         pass
 
@@ -5631,7 +5625,9 @@ def test_configure_cli_stdio_ignores_streams_without_reconfigure(monkeypatch: py
     cli_stdio.configure_cli_stdio()
 
 
-def test_configure_cli_stdio_ignores_non_callable_reconfigure(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_configure_cli_stdio_ignores_non_callable_reconfigure(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     class _StreamWithNonCallableReconfigure:
         reconfigure = "not-callable"
 
@@ -5846,9 +5842,7 @@ def test_main_accepts_max_raw_freeze_events(
     assert captured["omit_freeze_events"] is False
 
 
-def test_main_handles_raw_freeze_sampling(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
-) -> None:
+def test_main_handles_raw_freeze_sampling(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     from scripts import calibrate_autotrade_thresholds as module
 
     journal_path = tmp_path / "journal.jsonl"
@@ -5998,9 +5992,7 @@ def test_main_accepts_zero_raw_freeze_events_sample_limit(
     assert captured["max_raw_freeze_events"] is None
 
 
-def test_main_accepts_max_global_samples(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
-) -> None:
+def test_main_accepts_max_global_samples(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     from scripts import calibrate_autotrade_thresholds as module
 
     journal_path = tmp_path / "journal.jsonl"
@@ -6071,9 +6063,7 @@ def test_main_rejects_negative_max_global_samples(tmp_path: Path) -> None:
     assert "nieujemny" in message
 
 
-def test_main_accepts_omit_freeze_events(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
-) -> None:
+def test_main_accepts_omit_freeze_events(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     from scripts import calibrate_autotrade_thresholds as module
 
     journal_path = tmp_path / "journal.jsonl"
@@ -6223,9 +6213,7 @@ def test_symbol_map_matches_symbols_case_insensitively() -> None:
             suggestion_percentile=0.5,
         )
 
-    groups = {
-        (group["primary_exchange"], group["strategy"]): group for group in report["groups"]
-    }
+    groups = {(group["primary_exchange"], group["strategy"]): group for group in report["groups"]}
 
     assert ("binance", "trend_following") in groups
     matched_group = groups[("binance", "trend_following")]
@@ -6313,9 +6301,7 @@ def test_symbol_map_ambiguous_entry_keeps_unknown_routing() -> None:
             suggestion_percentile=0.5,
         )
 
-    groups = {
-        (group["primary_exchange"], group["strategy"]): group for group in report["groups"]
-    }
+    groups = {(group["primary_exchange"], group["strategy"]): group for group in report["groups"]}
 
     assert set(groups) == {("unknown", "unknown")}
     assert groups[("unknown", "unknown")]["metrics"]["risk_score"]["count"] == 1

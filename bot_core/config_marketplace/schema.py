@@ -1,4 +1,5 @@
 """Schemat metadanych konfiguracji Marketplace."""
+
 from __future__ import annotations
 
 from datetime import datetime
@@ -25,7 +26,7 @@ class Maintainer(BaseModel):
         None, description="Organizacja odpowiedzialna za utrzymanie pakietu."
     )
     role: str | None = Field(None, description="Rola w projekcie (autor, maintainer...).")
-    url: HttpUrl | None = Field(None, description="Strona domowa autora." )
+    url: HttpUrl | None = Field(None, description="Strona domowa autora.")
 
 
 class LicenseInfo(BaseModel):
@@ -38,9 +39,7 @@ class LicenseInfo(BaseModel):
         description="Identyfikator SPDX jeżeli licencja jest zarejestrowana.",
     )
     url: HttpUrl | None = Field(None, description="Link do pełnej treści licencji.")
-    terms_summary: str | None = Field(
-        None, description="Skrót najważniejszych warunków licencji."
-    )
+    terms_summary: str | None = Field(None, description="Skrót najważniejszych warunków licencji.")
     redistributable: bool = Field(
         True,
         description="Czy paczkę można przekazywać dalej w ramach instalacji.",
@@ -100,9 +99,7 @@ class ArtifactIntegrity(BaseModel):
         "sha256",
         description="Algorytm skrótu użyty do wyliczenia digestu.",
     )
-    digest: str = Field(
-        ..., pattern=_HASH_PATTERN, description="Oczekiwany skrót artefaktu (hex)."
-    )
+    digest: str = Field(..., pattern=_HASH_PATTERN, description="Oczekiwany skrót artefaktu (hex).")
 
     def normalized_algorithm(self) -> str:
         return self.algorithm.strip().lower()
@@ -141,17 +138,17 @@ class DistributionArtifact(BaseModel):
         "config",
         description="Klasyfikacja artefaktu (config, dataset, docs ...).",
     )
-    description: str | None = Field(
-        None, description="Krótki opis zawartości artefaktu."
-    )
+    description: str | None = Field(None, description="Krótki opis zawartości artefaktu.")
     size_bytes: int | None = Field(
         None, description="Rozmiar oczekiwany po stronie klienta (opcjonalnie)."
     )
     integrity: ArtifactIntegrity | None = Field(
-        None, description="Informacje potrzebne do weryfikacji integralności.",
+        None,
+        description="Informacje potrzebne do weryfikacji integralności.",
     )
     signature: ArtifactSignature | None = Field(
-        None, description="Podpis kryptograficzny artefaktu.",
+        None,
+        description="Podpis kryptograficzny artefaktu.",
     )
 
 
@@ -183,18 +180,13 @@ class VersionCompatibility(BaseModel):
         "core",
         description="Identyfikator komponentu (core, bot_core, ui, gateway ...).",
     )
-    minimum: str | None = Field(
-        None, description="Minimalna wspierana wersja komponentu."
-    )
-    maximum: str | None = Field(
-        None, description="Maksymalna wspierana wersja komponentu."
-    )
+    minimum: str | None = Field(None, description="Minimalna wspierana wersja komponentu.")
+    maximum: str | None = Field(None, description="Maksymalna wspierana wersja komponentu.")
     recommended: str | None = Field(
-        None, description="Rekomendowana wersja komponentu.",
+        None,
+        description="Rekomendowana wersja komponentu.",
     )
-    channel: str | None = Field(
-        None, description="Kanał dystrybucji (stable, beta, nightly...)."
-    )
+    channel: str | None = Field(None, description="Kanał dystrybucji (stable, beta, nightly...).")
     notes: str | None = Field(None, description="Uwagi dotyczące zgodności.")
 
 
@@ -207,9 +199,7 @@ class ReleaseReviewer(BaseModel):
         pattern=r"^[^@\s]+@[^@\s]+\.[^@\s]+$",
         description="Adres e-mail recenzenta (opcjonalnie).",
     )
-    role: str | None = Field(
-        None, description="Rola recenzenta (QA, compliance, produkt...)."
-    )
+    role: str | None = Field(None, description="Rola recenzenta (QA, compliance, produkt...).")
 
 
 class ReleaseMetadata(BaseModel):
@@ -232,10 +222,12 @@ class ReleaseMetadata(BaseModel):
         description="Link do zgłoszenia/artefaktu zatwierdzającego (np. Jira).",
     )
     approved_at: datetime | None = Field(
-        None, description="Znacznik czasu zatwierdzenia publikacji.",
+        None,
+        description="Znacznik czasu zatwierdzenia publikacji.",
     )
     notes: str | None = Field(
-        None, description="Uwagi do publikacji (np. warunki dodatkowe).",
+        None,
+        description="Uwagi do publikacji (np. warunki dodatkowe).",
     )
 
     @model_validator(mode="after")
@@ -243,13 +235,9 @@ class ReleaseMetadata(BaseModel):
         status = values.review_status.lower().strip()
         if status == "approved":
             if not values.reviewers:
-                raise ValueError(
-                    "Zatwierdzone wydanie musi mieć przynajmniej jednego recenzenta."
-                )
+                raise ValueError("Zatwierdzone wydanie musi mieć przynajmniej jednego recenzenta.")
             if values.approved_at is None:
-                raise ValueError(
-                    "Pole approved_at jest wymagane przy statusie review 'approved'."
-                )
+                raise ValueError("Pole approved_at jest wymagane przy statusie review 'approved'.")
         return values
 
 
@@ -274,10 +262,12 @@ class ExchangeCompatibilityEntry(BaseModel):
         description="Status certyfikacji (beta, certified, deprecated...).",
     )
     last_verified_at: datetime | None = Field(
-        None, description="Znacznik czasu ostatniej weryfikacji funkcjonalnej.",
+        None,
+        description="Znacznik czasu ostatniej weryfikacji funkcjonalnej.",
     )
     notes: str | None = Field(
-        None, description="Uwagi dotyczące ograniczeń lub rekomendacji.",
+        None,
+        description="Uwagi dotyczące ograniczeń lub rekomendacji.",
     )
 
 
@@ -360,21 +350,15 @@ class MarketplacePackageMetadata(BaseModel):
         "1.0",
         description="Wersja schematu metadanych Marketplace.",
     )
-    package_id: str = Field(
-        ..., pattern=_PACKAGE_ID_PATTERN, description="Identyfikator paczki."
-    )
+    package_id: str = Field(..., pattern=_PACKAGE_ID_PATTERN, description="Identyfikator paczki.")
     display_name: str = Field(..., description="Przyjazna nazwa paczki.")
     summary: str = Field(..., description="Krótki opis funkcjonalny.")
     description: str = Field(..., description="Pełen opis paczki.")
-    version: str = Field(
-        ..., pattern=_SEMVER_PATTERN, description="Wersja paczki zgodna z SemVer."
-    )
+    version: str = Field(..., pattern=_SEMVER_PATTERN, description="Wersja paczki zgodna z SemVer.")
     revision: str | None = Field(
         None, description="Dodatkowy identyfikator rewizji (build, commit SHA)."
     )
-    release_date: datetime | None = Field(
-        None, description="Data publikacji paczki w ISO-8601."
-    )
+    release_date: datetime | None = Field(None, description="Data publikacji paczki w ISO-8601.")
     maintainers: list[Maintainer] = Field(
         default_factory=list, description="Lista osób odpowiedzialnych za paczkę."
     )

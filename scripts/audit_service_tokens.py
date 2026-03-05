@@ -1,4 +1,5 @@
 """Audyt konfiguracji tokenów usługowych dla MetricsService i RiskService."""
+
 from __future__ import annotations
 
 import argparse

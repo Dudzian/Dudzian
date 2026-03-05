@@ -60,13 +60,15 @@ def test_main_detects_missing_file(manifest_payload: Path, tmp_path: Path) -> No
     missing_root.mkdir()
 
     with pytest.raises(SystemExit) as excinfo:
-        validator.main([
-            str(manifest_payload),
-            "--pyinstaller-root",
-            str(missing_root),
-            "--briefcase-root",
-            str(tmp_path / "brief"),
-        ])
+        validator.main(
+            [
+                str(manifest_payload),
+                "--pyinstaller-root",
+                str(missing_root),
+                "--briefcase-root",
+                str(tmp_path / "brief"),
+            ]
+        )
 
     assert "plik nie istnieje" in str(excinfo.value)
 
@@ -77,12 +79,14 @@ def test_main_detects_mismatched_hash(monkeypatch, tmp_path: Path, manifest_payl
     manifest_payload.write_text(json.dumps(manifest), encoding="utf-8")
 
     with pytest.raises(SystemExit) as excinfo:
-        validator.main([
-            str(manifest_payload),
-            "--pyinstaller-root",
-            str(tmp_path / "py"),
-            "--briefcase-root",
-            str(tmp_path / "brief"),
-        ])
+        validator.main(
+            [
+                str(manifest_payload),
+                "--pyinstaller-root",
+                str(tmp_path / "py"),
+                "--briefcase-root",
+                str(tmp_path / "brief"),
+            ]
+        )
 
     assert "hash" in str(excinfo.value)

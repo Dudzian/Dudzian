@@ -1,4 +1,5 @@
 """CLI do uruchamiania pipeline'u strategii Daily Trend w trybie paper/testnet."""
+
 from __future__ import annotations
 
 import argparse
@@ -111,9 +112,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         _LOGGER.error("Plik konfiguracyjny %s nie istnieje", config_path)
         return 1
 
-    cli_adapter_specs = parse_adapter_factory_cli_specs(
-        getattr(args, "adapter_factories", None)
-    )
+    cli_adapter_specs = parse_adapter_factory_cli_specs(getattr(args, "adapter_factories", None))
     adapter_factories_payload: dict[str, object] | None = None
     if args.paper_smoke:
         adapter_factories_payload = {
@@ -140,9 +139,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             controller_name=args.controller,
             config_path=config_path,
             secret_manager=secret_manager,
-            adapter_factories=cast(
-                Mapping[str, ExchangeAdapterFactory] | None, adapter_factories
-            ),
+            adapter_factories=cast(Mapping[str, ExchangeAdapterFactory] | None, adapter_factories),
             risk_profile_name=args.risk_profile,
         )
     except Exception as exc:  # noqa: BLE001
@@ -249,7 +246,9 @@ def main(argv: Sequence[str] | None = None) -> int:
                     else pipeline.bootstrap.environment.risk_profile
                 )
         except NotImplementedError:
-            _LOGGER.warning("Silnik ryzyka nie udostępnia metody snapshot_state – pomijam stan ryzyka")
+            _LOGGER.warning(
+                "Silnik ryzyka nie udostępnia metody snapshot_state – pomijam stan ryzyka"
+            )
         except Exception as exc:  # noqa: BLE001
             _LOGGER.warning("Nie udało się pobrać stanu ryzyka: %s", exc)
 
@@ -313,7 +312,9 @@ def main(argv: Sequence[str] | None = None) -> int:
         summary_txt_path = summary_path.with_suffix(".txt")
         summary_txt_path.write_text(summary_text + "\n", encoding="utf-8")
         readme_path = _write_smoke_readme(report_dir)
-        _LOGGER.info("Raport smoke testu zapisany w %s (summary sha256=%s)", report_dir, summary_hash)
+        _LOGGER.info(
+            "Raport smoke testu zapisany w %s (summary sha256=%s)", report_dir, summary_hash
+        )
         _LOGGER.info("Podsumowanie smoke testu:%s%s", os.linesep, summary_text)
 
         archive_path: Path | None = None
@@ -323,7 +324,10 @@ def main(argv: Sequence[str] | None = None) -> int:
             if args.archive_smoke:
                 _LOGGER.info("Utworzono archiwum smoke testu: %s", archive_path)
             else:
-                _LOGGER.info("Archiwum smoke testu wygenerowane automatycznie na potrzeby uploadu: %s", archive_path)
+                _LOGGER.info(
+                    "Archiwum smoke testu wygenerowane automatycznie na potrzeby uploadu: %s",
+                    archive_path,
+                )
 
         upload_result = None
         if upload_cfg and archive_path:
@@ -335,7 +339,11 @@ def main(argv: Sequence[str] | None = None) -> int:
                     summary_sha256=summary_hash,
                     window=window_meta,
                 )
-                _LOGGER.info("Przesłano archiwum smoke testu (%s) do %s", upload_result.backend, upload_result.location)
+                _LOGGER.info(
+                    "Przesłano archiwum smoke testu (%s) do %s",
+                    upload_result.backend,
+                    upload_result.location,
+                )
             except Exception as exc:  # noqa: BLE001
                 _LOGGER.error("Nie udało się przesłać archiwum smoke testu: %s", exc)
 

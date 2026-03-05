@@ -35,7 +35,9 @@ def _reset_keyring(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.delenv("BOT_CORE_UI_PYTHON", raising=False)
 
 
-def test_license_secret_uses_keyring_and_encrypts_disk(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+def test_license_secret_uses_keyring_and_encrypts_disk(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
     backend = _InMemoryKeyring()
     module = types.ModuleType("keyring")
     module.get_password = backend.get_password  # type: ignore[assignment]
@@ -52,14 +54,18 @@ def test_license_secret_uses_keyring_and_encrypts_disk(monkeypatch: pytest.Monke
     secret = fp.load_license_secret(secret_path)
     assert len(secret) == 48
 
-    stored = backend._store.get((fp.LICENSE_SECRET_KEYRING_SERVICE, fp.LICENSE_SECRET_KEYRING_ENTRY))
+    stored = backend._store.get(
+        (fp.LICENSE_SECRET_KEYRING_SERVICE, fp.LICENSE_SECRET_KEYRING_ENTRY)
+    )
     assert stored is not None
     document = json.loads(secret_path.read_text(encoding="utf-8"))
     assert document["version"] == fp.LICENSE_SECRET_FILE_VERSION
     assert document["hwid_digest"]
 
 
-def test_license_secret_requires_migration_for_plaintext_file(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+def test_license_secret_requires_migration_for_plaintext_file(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
     monkeypatch.setattr(fp, "_load_secret_from_keyring", lambda: None, raising=False)
     monkeypatch.setattr(fp, "_store_secret_in_keyring", lambda _secret: False, raising=False)
     monkeypatch.setattr(fp, "get_local_fingerprint", lambda: "DEVICE-ABC")
@@ -76,7 +82,9 @@ def test_license_secret_requires_migration_for_plaintext_file(monkeypatch: pytes
     assert "dudzian_migrate.license_secret" in message
 
 
-def test_license_secret_rejects_mismatched_fingerprint(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+def test_license_secret_rejects_mismatched_fingerprint(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
     monkeypatch.setattr(fp, "_load_secret_from_keyring", lambda: None, raising=False)
     monkeypatch.setattr(fp, "_store_secret_in_keyring", lambda _secret: False, raising=False)
 

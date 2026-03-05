@@ -165,21 +165,10 @@ def test_register_profile_extends_chain(tmp_path: Path) -> None:
 
 def test_metrics_service_env_overrides() -> None:
     env_overrides = get_metrics_service_env_overrides("conservative")
-    assert (
-        env_overrides["RUN_METRICS_SERVICE_UI_ALERTS_OVERLAY_CRITICAL_THRESHOLD"]
-        == 1
-    )
-    assert (
-        env_overrides["RUN_METRICS_SERVICE_UI_ALERTS_REDUCE_ACTIVE_SEVERITY"]
-        == "critical"
-    )
-    assert (
-        env_overrides["RUN_METRICS_SERVICE_UI_ALERTS_PERFORMANCE_MODE"] == "enable"
-    )
-    assert (
-        env_overrides["RUN_METRICS_SERVICE_UI_ALERTS_PERFORMANCE_CPU_WARNING_PERCENT"]
-        == 75.0
-    )
+    assert env_overrides["RUN_METRICS_SERVICE_UI_ALERTS_OVERLAY_CRITICAL_THRESHOLD"] == 1
+    assert env_overrides["RUN_METRICS_SERVICE_UI_ALERTS_REDUCE_ACTIVE_SEVERITY"] == "critical"
+    assert env_overrides["RUN_METRICS_SERVICE_UI_ALERTS_PERFORMANCE_MODE"] == "enable"
+    assert env_overrides["RUN_METRICS_SERVICE_UI_ALERTS_PERFORMANCE_CPU_WARNING_PERCENT"] == 75.0
 
 
 def test_register_profile_extends_unknown() -> None:
@@ -225,9 +214,7 @@ def test_cli_list_profiles(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -
     assert payload["profiles"]["cli-list"]["severity_min"] == "critical"
 
 
-def test_cli_list_profiles_yaml_format(
-    tmp_path: Path, capsys: pytest.CaptureFixture[str]
-) -> None:
+def test_cli_list_profiles_yaml_format(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
     profile_path = tmp_path / "cli_profiles_yaml.yaml"
     profile_path.write_text(
         "risk_profiles:\n  cli-list-yaml:\n    severity_min: info\n",
@@ -250,9 +237,7 @@ def test_cli_list_profiles_yaml_format(
     assert payload["profiles"]["cli-list-yaml"]["severity_min"] == "info"
 
 
-def test_cli_bundle_generates_templates(
-    tmp_path: Path, capsys: pytest.CaptureFixture[str]
-) -> None:
+def test_cli_bundle_generates_templates(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
     output_dir = tmp_path / "bundle"
     exit_code = telemetry_profiles_cli.main(
         [
@@ -292,11 +277,13 @@ def test_cli_bundle_generates_templates(
 
 def test_cli_bundle_defaults(tmp_path: Path) -> None:
     output_dir = tmp_path / "bundle-default"
-    exit_code = telemetry_profiles_cli.main([
-        "bundle",
-        "--output-dir",
-        str(output_dir),
-    ])
+    exit_code = telemetry_profiles_cli.main(
+        [
+            "bundle",
+            "--output-dir",
+            str(output_dir),
+        ]
+    )
     assert exit_code == 0
 
     manifest_payload = json.loads((output_dir / "manifest.json").read_text(encoding="utf-8"))
@@ -310,13 +297,15 @@ def test_cli_bundle_defaults(tmp_path: Path) -> None:
 def test_cli_bundle_rejects_invalid_stage(tmp_path: Path) -> None:
     output_dir = tmp_path / "bundle-invalid"
     with pytest.raises(SystemExit) as excinfo:
-        telemetry_profiles_cli.main([
-            "bundle",
-            "--output-dir",
-            str(output_dir),
-            "--stage",
-            "invalid",
-        ])
+        telemetry_profiles_cli.main(
+            [
+                "bundle",
+                "--output-dir",
+                str(output_dir),
+                "--stage",
+                "invalid",
+            ]
+        )
     assert excinfo.value.code == 2
 
 
@@ -398,9 +387,7 @@ def test_cli_show_profile(tmp_path: Path, capsys: pytest.CaptureFixture[str]) ->
     assert payload["metrics_service_overrides"]["ui_alerts_reduce_mode"] == "enable"
 
 
-def test_cli_show_profile_yaml(
-    tmp_path: Path, capsys: pytest.CaptureFixture[str]
-) -> None:
+def test_cli_show_profile_yaml(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
     profile_path = tmp_path / "cli_show_yaml.yaml"
     profile_path.write_text(
         "risk_profiles:\n  cli-show-yaml:\n    severity_min: warning\n",
@@ -424,9 +411,7 @@ def test_cli_show_profile_yaml(
     assert payload["risk_profile"]["severity_min"] == "warning"
 
 
-def test_cli_render_profile_json(
-    tmp_path: Path, capsys: pytest.CaptureFixture[str]
-) -> None:
+def test_cli_render_profile_json(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
     profile_path = tmp_path / "cli_render.yaml"
     profile_path.write_text(
         "risk_profiles:\n  cli-render:\n    severity_min: warning\n",
@@ -477,9 +462,7 @@ def test_cli_render_observability_sections(capsys: pytest.CaptureFixture[str]) -
     assert "schedule" in payload["decision_log_requirements"]["required_fields"]
 
 
-def test_cli_render_profile_cli_format(
-    tmp_path: Path, capsys: pytest.CaptureFixture[str]
-) -> None:
+def test_cli_render_profile_cli_format(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
     profile_path = tmp_path / "cli_render_cli.json"
     profile_path.write_text(
         json.dumps(
@@ -517,9 +500,7 @@ def test_cli_render_profile_cli_format(
     assert "--ui-alerts-overlay-critical-threshold 2" in lines
 
 
-def test_cli_render_profile_env_format(
-    tmp_path: Path, capsys: pytest.CaptureFixture[str]
-) -> None:
+def test_cli_render_profile_env_format(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
     profile_path = tmp_path / "cli_render_env.yaml"
     profile_path.write_text(
         "risk_profiles:\n  cli-render-env:\n    metrics_service_overrides:\n"
@@ -545,9 +526,7 @@ def test_cli_render_profile_env_format(
     lines = [line.strip() for line in captured.out.splitlines() if line.strip()]
     assert "RUN_METRICS_SERVICE_UI_ALERTS_JANK_MODE=enable" in lines
     assert "RUN_METRICS_SERVICE_UI_ALERTS_JANK_CRITICAL_OVER_MS=17" in lines
-    assert (
-        'RUN_METRICS_SERVICE_UI_ALERTS_AUDIT_DIR="/var/log/ui alerts"' in lines
-    )
+    assert 'RUN_METRICS_SERVICE_UI_ALERTS_AUDIT_DIR="/var/log/ui alerts"' in lines
 
 
 def test_cli_render_profile_env_export_style(
@@ -576,9 +555,7 @@ def test_cli_render_profile_env_export_style(
 
     captured = capsys.readouterr()
     lines = [line.strip() for line in captured.out.splitlines() if line.strip()]
-    assert (
-        "export RUN_METRICS_SERVICE_UI_ALERTS_AUDIT_DIR='/var/log/ui alerts'" in lines
-    )
+    assert "export RUN_METRICS_SERVICE_UI_ALERTS_AUDIT_DIR='/var/log/ui alerts'" in lines
 
 
 def test_cli_render_profile_env_with_include_profile_rejected(
@@ -607,9 +584,7 @@ def test_cli_render_profile_env_with_include_profile_rejected(
     assert excinfo.value.code == 2
 
 
-def test_cli_render_profile_yaml_format(
-    tmp_path: Path, capsys: pytest.CaptureFixture[str]
-) -> None:
+def test_cli_render_profile_yaml_format(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
     profile_path = tmp_path / "cli_render_yaml.yaml"
     profile_path.write_text(
         "risk_profiles:\n  cli-render-yaml:\n    severity_min: notice\n",
@@ -643,9 +618,7 @@ def test_cli_render_infers_format_from_output_extension(
 ) -> None:
     out_path = tmp_path / "auto.yaml"
 
-    exit_code = telemetry_profiles_cli.main(
-        ["render", "balanced", "--output", str(out_path)]
-    )
+    exit_code = telemetry_profiles_cli.main(["render", "balanced", "--output", str(out_path)])
     assert exit_code == 0
 
     rendered = yaml.safe_load(out_path.read_text(encoding="utf-8"))
@@ -688,10 +661,7 @@ def test_cli_render_profile_json_sections(
         "env_assignments",
         "env_assignments_format",
     }
-    assert (
-        payload["metrics_service_config_overrides"]["reduce_motion_mode"]
-        == "enable"
-    )
+    assert payload["metrics_service_config_overrides"]["reduce_motion_mode"] == "enable"
     assert any(
         line == "RUN_METRICS_SERVICE_UI_ALERTS_REDUCE_MODE=enable"
         for line in payload["env_assignments"]
@@ -808,9 +778,7 @@ def test_cli_diff_builtin_profiles(capsys: pytest.CaptureFixture[str]) -> None:
     assert any("--ui-alerts-overlay-critical-threshold=1" in line for line in cli_changes)
 
     env_changes = payload["env"]["added_or_changed"]
-    assert (
-        "RUN_METRICS_SERVICE_UI_ALERTS_OVERLAY_CRITICAL_THRESHOLD=1" in env_changes
-    )
+    assert "RUN_METRICS_SERVICE_UI_ALERTS_OVERLAY_CRITICAL_THRESHOLD=1" in env_changes
     assert payload["env"]["format"] == "dotenv"
 
 
@@ -887,9 +855,7 @@ def test_cli_diff_sections_auto_include_profiles(capsys: pytest.CaptureFixture[s
 
 
 def test_cli_diff_fail_on_diff_sets_exit_code(capsys: pytest.CaptureFixture[str]) -> None:
-    exit_code = telemetry_profiles_cli.main(
-        ["diff", "balanced", "conservative", "--fail-on-diff"]
-    )
+    exit_code = telemetry_profiles_cli.main(["diff", "balanced", "conservative", "--fail-on-diff"])
     assert exit_code == 1
 
     payload = json.loads(capsys.readouterr().out)
@@ -900,9 +866,7 @@ def test_cli_diff_fail_on_diff_sets_exit_code(capsys: pytest.CaptureFixture[str]
 def test_cli_diff_fail_on_diff_passes_when_no_changes(
     capsys: pytest.CaptureFixture[str],
 ) -> None:
-    exit_code = telemetry_profiles_cli.main(
-        ["diff", "balanced", "balanced", "--fail-on-diff"]
-    )
+    exit_code = telemetry_profiles_cli.main(["diff", "balanced", "balanced", "--fail-on-diff"])
     assert exit_code == 0
 
     payload = json.loads(capsys.readouterr().out)
@@ -964,9 +928,7 @@ def test_cli_render_detects_format_extension_mismatch(tmp_path: Path) -> None:
     assert excinfo.value.code == 2
 
 
-def test_cli_diff_with_custom_profile(
-    tmp_path: Path, capsys: pytest.CaptureFixture[str]
-) -> None:
+def test_cli_diff_with_custom_profile(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
     profile_path = tmp_path / "diff_profiles.yaml"
     profile_path.write_text(
         "risk_profiles:\n"
@@ -1011,9 +973,7 @@ def test_cli_diff_with_custom_profile(
 
     env_changes = payload["env"]["added_or_changed"]
     assert payload["env"]["format"] == "export"
-    assert (
-        "export RUN_METRICS_SERVICE_UI_ALERTS_JANK_MODE=jsonl" in env_changes
-    )
+    assert "export RUN_METRICS_SERVICE_UI_ALERTS_JANK_MODE=jsonl" in env_changes
     assert payload["diff"]["metrics_service_overrides"]["added"] == {}
     assert payload["diff"]["metrics_service_overrides"]["removed"] == []
 

@@ -38,8 +38,7 @@ def test_lockfile_contains_all_pinned_versions():
 
     missing = sorted(name for name in txt_packages if name not in lock_packages)
     assert not missing, (
-        "Lockfile nie zawiera wszystkich pakietów z requirements-desktop.txt: "
-        + ", ".join(missing)
+        "Lockfile nie zawiera wszystkich pakietów z requirements-desktop.txt: " + ", ".join(missing)
     )
 
     mismatched = {
@@ -50,8 +49,7 @@ def test_lockfile_contains_all_pinned_versions():
     assert not mismatched, (
         "Wersje w lockfile nie zgadzają się z requirements-desktop.txt: "
         + ", ".join(
-            f"{pkg} ({expected} != {actual})"
-            for pkg, (expected, actual) in mismatched.items()
+            f"{pkg} ({expected} != {actual})" for pkg, (expected, actual) in mismatched.items()
         )
     )
 

@@ -73,7 +73,7 @@ def main() -> int:
         print("Brakuje zależności środowiska CI:")
         for name in missing:
             print(f"- {name}")
-        print("Zainstaluj je poleceniem: python -m pip install -e \".[test]\"")
+        print('Zainstaluj je poleceniem: python -m pip install -e ".[test]"')
         return 1
 
     print("Preflight OK:")

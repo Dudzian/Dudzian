@@ -28,7 +28,9 @@ def _make_config(**overrides: object) -> DecisionEngineConfig:
         max_latency_ms=240.0,
         max_trade_notional=30000.0,
     )
-    stress = DecisionStressTestConfig(cost_shock_bps=2.0, latency_spike_ms=40.0, slippage_multiplier=1.2)
+    stress = DecisionStressTestConfig(
+        cost_shock_bps=2.0, latency_spike_ms=40.0, slippage_multiplier=1.2
+    )
     return DecisionEngineConfig(
         orchestrator=thresholds,
         profile_overrides={},
@@ -150,7 +152,11 @@ def test_logs_threshold_snapshot_on_rejection(caplog: pytest.LogCaptureFixture) 
         orchestrator.evaluate_candidate(candidate, _context())
 
     record = next(
-        (entry for entry in caplog.records if "DecisionOrchestrator rejected candidate" in entry.message),
+        (
+            entry
+            for entry in caplog.records
+            if "DecisionOrchestrator rejected candidate" in entry.message
+        ),
         None,
     )
     assert record is not None

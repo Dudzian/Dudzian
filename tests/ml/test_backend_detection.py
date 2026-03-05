@@ -13,7 +13,9 @@ def _clear_backend_caches():
     backends.clear_backend_caches()
 
 
-def test_is_backend_available_returns_false_when_module_missing(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_is_backend_available_returns_false_when_module_missing(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     def _missing(name: str, package: str | None = None):  # pragma: no cover - monkeypatched
         raise ModuleNotFoundError(name)
 
@@ -52,7 +54,9 @@ def test_is_backend_available_handles_oserror(monkeypatch: pytest.MonkeyPatch) -
         backends.require_backend("lightgbm")
 
 
-def test_get_backend_priority_from_custom_config(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_get_backend_priority_from_custom_config(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     config = tmp_path / "backends.yml"
     config.write_text(
         """

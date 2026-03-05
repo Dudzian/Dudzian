@@ -109,7 +109,9 @@ def _validate_control(raw: Mapping[str, object], *, issues: list[str], warnings:
         issues.append(f"Kontrola {control_id} ma niepoprawne pole evidence (oczekiwano listy).")
     description = raw.get("description")
     if description is not None and not isinstance(description, str):
-        warnings.append(f"Kontrola {control_id} posiada opis w niepoprawnym formacie (konwertowano).")
+        warnings.append(
+            f"Kontrola {control_id} posiada opis w niepoprawnym formacie (konwertowano)."
+        )
     return control_id, status_value
 
 
@@ -233,7 +235,11 @@ def validate_compliance_reports(
                 metadata={
                     "report_id": data.get("report_id"),
                     "generated_at": data.get("generated_at"),
-                    "control_count": len(data.get("controls", []) if isinstance(data.get("controls"), Sequence) else []),
+                    "control_count": len(
+                        data.get("controls", [])
+                        if isinstance(data.get("controls"), Sequence)
+                        else []
+                    ),
                 },
             )
         )

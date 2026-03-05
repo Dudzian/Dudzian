@@ -10,6 +10,7 @@ from bot_core.runtime.journal import InMemoryTradingDecisionJournal
 
 try:
     from bot_core.runtime.multi_strategy_scheduler import MultiStrategyScheduler  # type: ignore[attr-defined]
+
     _HAVE_MULTI_SCHEDULER = True
 except Exception:  # pragma: no cover
     MultiStrategyScheduler = None  # type: ignore[assignment]
@@ -24,6 +25,7 @@ except Exception:  # pragma: no cover
 # --- Wariant asset-based (HEAD) ---
 try:
     from bot_core.market_intel import MarketIntelSnapshot  # type: ignore[attr-defined]
+
     _HAVE_MI_SNAPSHOT = True
 except Exception:  # pragma: no cover
     MarketIntelSnapshot = None  # type: ignore[assignment]
@@ -31,6 +33,7 @@ except Exception:  # pragma: no cover
 
 try:
     from bot_core.observability import SLOStatus  # type: ignore[attr-defined]
+
     _HAVE_SLO_STATUS = True
 except Exception:  # pragma: no cover
     SLOStatus = None  # type: ignore[assignment]
@@ -47,6 +50,7 @@ try:
         PortfolioRiskBudgetConfig,
         PortfolioSloOverrideConfig,
     )
+
     _HAVE_PORTFOLIO_ASSET_CONFIG = True
 except Exception:  # pragma: no cover
     AssetPortfolioGovernorConfig = None  # type: ignore[assignment]
@@ -60,6 +64,7 @@ except Exception:  # pragma: no cover
 
 try:
     from bot_core.risk import StressOverrideRecommendation  # type: ignore[attr-defined]
+
     _HAVE_STRESS_OVERRIDE = True
 except Exception:  # pragma: no cover
     StressOverrideRecommendation = None  # type: ignore[assignment]
@@ -73,6 +78,7 @@ try:
         PortfolioGovernorScoringWeights,
         PortfolioGovernorStrategyConfig,
     )
+
     _HAVE_SCORING_CONFIG = True
 except Exception:  # pragma: no cover
     PortfolioGovernorConfig_Scoring = None  # type: ignore[assignment]
@@ -80,7 +86,7 @@ except Exception:  # pragma: no cover
     PortfolioGovernorStrategyConfig = None  # type: ignore[assignment]
     _HAVE_SCORING_CONFIG = False
 
-if 'PortfolioGovernor' not in globals():  # jeśli nie wczytany wyżej
+if "PortfolioGovernor" not in globals():  # jeśli nie wczytany wyżej
     try:
         from bot_core.portfolio import PortfolioGovernor  # type: ignore
     except Exception:  # pragma: no cover
@@ -91,28 +97,34 @@ if 'PortfolioGovernor' not in globals():  # jeśli nie wczytany wyżej
 #   Pomocnicze wykrywanie możliwości
 # ============================================================
 
+
 def _supports_asset_api() -> bool:
-    return all([
-        _HAVE_MI_SNAPSHOT,
-        _HAVE_SLO_STATUS,
-        _HAVE_PORTFOLIO_ASSET_CONFIG,
-        PortfolioGovernor is not None,
-        hasattr(PortfolioGovernor, "evaluate"),
-    ])
+    return all(
+        [
+            _HAVE_MI_SNAPSHOT,
+            _HAVE_SLO_STATUS,
+            _HAVE_PORTFOLIO_ASSET_CONFIG,
+            PortfolioGovernor is not None,
+            hasattr(PortfolioGovernor, "evaluate"),
+        ]
+    )
 
 
 def _supports_scoring_api() -> bool:
-    return all([
-        _HAVE_SCORING_CONFIG,
-        PortfolioGovernor is not None,
-        hasattr(PortfolioGovernor, "observe_strategy_metrics"),
-        hasattr(PortfolioGovernor, "maybe_rebalance"),
-    ])
+    return all(
+        [
+            _HAVE_SCORING_CONFIG,
+            PortfolioGovernor is not None,
+            hasattr(PortfolioGovernor, "observe_strategy_metrics"),
+            hasattr(PortfolioGovernor, "maybe_rebalance"),
+        ]
+    )
 
 
 # ============================================================
 #   Wspólne helpery dla wariantu asset-based
 # ============================================================
+
 
 def _snapshot(
     *,
@@ -174,6 +186,7 @@ def _governor_config_asset() -> "AssetPortfolioGovernorConfig":
 # ============================================================
 #   TESTY: wariant asset-based
 # ============================================================
+
 
 def test_portfolio_governor_detects_drift() -> None:
     if not _supports_asset_api():
@@ -402,6 +415,7 @@ def test_portfolio_governor_writes_decision_log(tmp_path: Path) -> None:
 # ============================================================
 #   TESTY: wariant scoring-based
 # ============================================================
+
 
 def _build_governor_scoring(*, enabled: bool = True, **overrides: object) -> "PortfolioGovernor":
     if not _supports_scoring_api():

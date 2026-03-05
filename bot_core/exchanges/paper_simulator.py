@@ -274,7 +274,9 @@ class PaperMarginSimulator(PaperBackend):
         adjusted_price = price
         if self._slippage_bps:
             multiplier = 1 + (self._slippage_bps / 10_000.0)
-            adjusted_price = price * multiplier if order.side == OrderSide.BUY else price / multiplier
+            adjusted_price = (
+                price * multiplier if order.side == OrderSide.BUY else price / multiplier
+            )
         fee = qty * adjusted_price * self._fee_rate
         notional = qty * adjusted_price
         leverage_before = self._effective_leverage()
@@ -562,7 +564,7 @@ class PaperFuturesSimulator(PaperMarginSimulator):
         database=None,
         funding_interval_seconds: Optional[float] = None,
         risk_journal: TradingDecisionJournal | None = None,
-        ) -> None:
+    ) -> None:
         super().__init__(
             price_feed_backend,
             event_bus=event_bus,
@@ -587,4 +589,3 @@ class PaperFuturesSimulator(PaperMarginSimulator):
 
 
 __all__ = ["PaperMarginSimulator", "PaperFuturesSimulator"]
-

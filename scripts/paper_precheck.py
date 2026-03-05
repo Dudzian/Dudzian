@@ -1,4 +1,5 @@
 """Preflight weryfikacji przed uruchomieniem smoke testu paper."""
+
 from __future__ import annotations
 
 import argparse
@@ -262,9 +263,7 @@ def _filter_statuses_by_intervals(
         return [], missing
 
     filtered = [
-        status
-        for status in statuses
-        if str(_get_field(status, "interval")) in resolved_variants
+        status for status in statuses if str(_get_field(status, "interval")) in resolved_variants
     ]
     return filtered, []
 
@@ -824,7 +823,9 @@ def main(argv: Sequence[str] | None = None) -> int:
         if coverage_result is None:
             print("Pokrycie danych: pominięto (brak manifestu lub uniwersum)")
         else:
-            summary = coverage_result.get("summary", {}) if isinstance(coverage_result, Mapping) else {}
+            summary = (
+                coverage_result.get("summary", {}) if isinstance(coverage_result, Mapping) else {}
+            )
             print(f"Pokrycie danych: {coverage_status}")
             if isinstance(summary, Mapping):
                 total = summary.get("total", 0)

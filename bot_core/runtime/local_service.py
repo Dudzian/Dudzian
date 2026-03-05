@@ -6,6 +6,7 @@ YAML dataset definition compatible with ``bot_core.testing.trading_stub_server``
 and publishes the bound address on stdout in a structured form that the UI can
 parse.
 """
+
 from __future__ import annotations
 
 import argparse

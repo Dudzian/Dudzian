@@ -1,4 +1,5 @@
 """Narzędzia wspierające przygotowanie wydań OEM."""
+
 from __future__ import annotations
 
 import argparse
@@ -43,7 +44,9 @@ def _render_template(template_key: str, context: Mapping[str, str]) -> str:
     return raw.format_map(safe_context)
 
 
-def generate_document(template_key: str, output_path: Path, context: Mapping[str, str]) -> DocumentResult:
+def generate_document(
+    template_key: str, output_path: Path, context: Mapping[str, str]
+) -> DocumentResult:
     """Generuje dokument na bazie szablonu i zwraca informacje o wyniku."""
 
     enriched_context = dict(context)
@@ -51,7 +54,9 @@ def generate_document(template_key: str, output_path: Path, context: Mapping[str
     output_path.parent.mkdir(parents=True, exist_ok=True)
     content = _render_template(template_key, enriched_context)
     output_path.write_text(content, encoding="utf-8")
-    return DocumentResult(path=output_path, template=_TEMPLATE_MAP[template_key], context=enriched_context)
+    return DocumentResult(
+        path=output_path, template=_TEMPLATE_MAP[template_key], context=enriched_context
+    )
 
 
 def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
@@ -61,14 +66,22 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     checklist = subparsers.add_parser("generate-checklist", help="Generuje checklistę wydania OEM")
     checklist.add_argument("--version", required=True, help="Numer wersji wydania")
     checklist.add_argument("--output", required=True, help="Ścieżka docelowa pliku Markdown")
-    checklist.add_argument("--owner", default="N/D", help="Osoba lub zespół odpowiedzialny za wydanie")
+    checklist.add_argument(
+        "--owner", default="N/D", help="Osoba lub zespół odpowiedzialny za wydanie"
+    )
     checklist.add_argument("--release-tag", default="N/D", help="Tag Git lub identyfikator wydania")
-    checklist.add_argument("--license-report", default="N/D", help="Ścieżka do raportu licencyjnego")
-    checklist.add_argument("--compliance-report", default="N/D", help="Ścieżka do raportu zgodności")
+    checklist.add_argument(
+        "--license-report", default="N/D", help="Ścieżka do raportu licencyjnego"
+    )
+    checklist.add_argument(
+        "--compliance-report", default="N/D", help="Ścieżka do raportu zgodności"
+    )
     checklist.add_argument("--test-report", default="N/D", help="Ścieżka do raportu testów")
     checklist.add_argument("--notes", default="Brak dodatkowych uwag.", help="Uwagi końcowe")
 
-    license_report = subparsers.add_parser("generate-license-report", help="Generuje raport licencyjny")
+    license_report = subparsers.add_parser(
+        "generate-license-report", help="Generuje raport licencyjny"
+    )
     license_report.add_argument("--version", required=True)
     license_report.add_argument("--output", required=True)
     license_report.add_argument("--license-scope", default="OEM")
@@ -76,7 +89,9 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     license_report.add_argument("--activation-table", default="Brak szczegółów aktywacji.")
     license_report.add_argument("--notes", default="Brak uwag.")
 
-    compliance_report = subparsers.add_parser("generate-compliance-report", help="Generuje raport zgodności")
+    compliance_report = subparsers.add_parser(
+        "generate-compliance-report", help="Generuje raport zgodności"
+    )
     compliance_report.add_argument("--version", required=True)
     compliance_report.add_argument("--output", required=True)
     compliance_report.add_argument("--owner", default="Zespół compliance")

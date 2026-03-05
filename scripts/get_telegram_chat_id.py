@@ -8,8 +8,10 @@ Użycie:
   python scripts/get_telegram_chat_id.py
 Wymaga: requests, python-dotenv (opcjonalnie)
 """
+
 import os, sys, json, argparse
 from datetime import datetime, timezone
+
 try:
     import requests  # type: ignore
 except ImportError:
@@ -18,12 +20,15 @@ except ImportError:
 
 try:
     from dotenv import load_dotenv  # type: ignore
+
     load_dotenv()
 except Exception:
     pass
 
+
 def utcnow():
     return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
 
 def main():
     ap = argparse.ArgumentParser()
@@ -49,11 +54,14 @@ def main():
 
     results = data.get("result", [])
     if not results:
-        print("Brak update'ów. Wskazówki:\n- Napisz wiadomość do bota (DM),\n- albo dodaj go do grupy i napisz cokolwiek,\n- albo opublikuj post na kanale, gdzie jest adminem.\nPotem odpal skrypt ponownie.")
+        print(
+            "Brak update'ów. Wskazówki:\n- Napisz wiadomość do bota (DM),\n- albo dodaj go do grupy i napisz cokolwiek,\n- albo opublikuj post na kanale, gdzie jest adminem.\nPotem odpal skrypt ponownie."
+        )
         sys.exit(0)
 
     # wyciągnij chat z message / edited_message / channel_post / my_chat_member itp.
     chats = []
+
     def _try(obj, path):
         cur = obj
         for p in path.split("."):
@@ -64,9 +72,16 @@ def main():
         return cur
 
     for upd in results:
-        for key in ["message", "edited_message", "channel_post", "edited_channel_post", "my_chat_member", "chat_member"]:
+        for key in [
+            "message",
+            "edited_message",
+            "channel_post",
+            "edited_channel_post",
+            "my_chat_member",
+            "chat_member",
+        ]:
             m = upd.get(key)
-            if not m: 
+            if not m:
                 continue
             chat = m.get("chat") if isinstance(m, dict) else None
             if chat and isinstance(chat, dict):
@@ -76,7 +91,7 @@ def main():
     uniq = {}
     for c in chats:
         cid = c.get("id")
-        if cid is None: 
+        if cid is None:
             continue
         uniq[cid] = {
             "id": cid,
@@ -88,17 +103,26 @@ def main():
         }
 
     if not uniq:
-        print("Znaleziono update'y, ale bez 'chat'. Wyślij nową wiadomość do bota i spróbuj ponownie.")
+        print(
+            "Znaleziono update'y, ale bez 'chat'. Wyślij nową wiadomość do bota i spróbuj ponownie."
+        )
         sys.exit(0)
 
     arr = list(uniq.values())
 
     # Czytelny output
-    print(json.dumps({
-        "timestamp_utc": utcnow(),
-        "found_chats": arr,
-        "hint": "Wybierz właściwy 'id' i wpisz do TELEGRAM_CHAT_ID w .env (dla grup często ujemny, np. -100123...)"
-    }, ensure_ascii=False, indent=2))
+    print(
+        json.dumps(
+            {
+                "timestamp_utc": utcnow(),
+                "found_chats": arr,
+                "hint": "Wybierz właściwy 'id' i wpisz do TELEGRAM_CHAT_ID w .env (dla grup często ujemny, np. -100123...)",
+            },
+            ensure_ascii=False,
+            indent=2,
+        )
+    )
+
 
 if __name__ == "__main__":
     main()

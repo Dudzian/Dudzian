@@ -270,4 +270,3 @@ def main(argv: Iterable[str] | None = None) -> int:
 
 if __name__ == "__main__":  # pragma: no cover - CLI entrypoint
     raise SystemExit(main(sys.argv[1:]))
-

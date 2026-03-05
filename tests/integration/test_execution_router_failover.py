@@ -42,11 +42,15 @@ class FakeAdapter(ExchangeAdapter):
         self._lock = threading.Lock()
 
     # --- ExchangeAdapter abstract API -------------------------------------
-    def configure_network(self, *, ip_allowlist: Sequence[str] | None = None) -> None:  # pragma: no cover - not used
+    def configure_network(
+        self, *, ip_allowlist: Sequence[str] | None = None
+    ) -> None:  # pragma: no cover - not used
         return None
 
     def fetch_account_snapshot(self) -> AccountSnapshot:  # pragma: no cover - not used
-        return AccountSnapshot(balances={}, total_equity=0.0, available_margin=0.0, maintenance_margin=0.0)
+        return AccountSnapshot(
+            balances={}, total_equity=0.0, available_margin=0.0, maintenance_margin=0.0
+        )
 
     def fetch_symbols(self) -> Iterable[str]:  # pragma: no cover - not used
         return ()
@@ -79,13 +83,19 @@ class FakeAdapter(ExchangeAdapter):
             with self._lock:
                 self._active_calls -= 1
 
-    def cancel_order(self, order_id: str, *, symbol: str | None = None) -> None:  # pragma: no cover - not used
+    def cancel_order(
+        self, order_id: str, *, symbol: str | None = None
+    ) -> None:  # pragma: no cover - not used
         return None
 
-    def stream_public_data(self, *, channels: Sequence[str]) -> DummyStream:  # pragma: no cover - not used
+    def stream_public_data(
+        self, *, channels: Sequence[str]
+    ) -> DummyStream:  # pragma: no cover - not used
         return DummyStream()
 
-    def stream_private_data(self, *, channels: Sequence[str]) -> DummyStream:  # pragma: no cover - not used
+    def stream_private_data(
+        self, *, channels: Sequence[str]
+    ) -> DummyStream:  # pragma: no cover - not used
         return DummyStream()
 
 
@@ -172,7 +182,9 @@ def test_live_router_enforces_rate_limit_per_exchange(execution_context: Executi
     finally:
         router.close()
 
-    assert rate_limited_adapter.max_active_calls == 1, "Per-exchange semaphore should serialize requests"
+    assert rate_limited_adapter.max_active_calls == 1, (
+        "Per-exchange semaphore should serialize requests"
+    )
 
 
 @pytest.mark.integration
@@ -189,7 +201,9 @@ def test_paper_service_respects_market_constraints(execution_context: ExecutionC
     }
     paper = PaperTradingExecutionService(markets, initial_balances={"USDT": 1000.0})
 
-    request = OrderRequest(symbol="BTC/USDT", side="buy", quantity=0.05, order_type="market", price=101.0)
+    request = OrderRequest(
+        symbol="BTC/USDT", side="buy", quantity=0.05, order_type="market", price=101.0
+    )
 
     result = paper.execute(request, execution_context)
 
@@ -198,4 +212,3 @@ def test_paper_service_respects_market_constraints(execution_context: ExecutionC
 
     ledger_entries = list(paper.ledger())
     assert ledger_entries, "Paper router should record ledger entries for executed trades"
-

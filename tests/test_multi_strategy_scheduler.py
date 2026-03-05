@@ -74,8 +74,6 @@ class DummyCoordinator:
         return None
 
 
-
-
 def _snapshot(price: float, ts: int) -> MarketSnapshot:
     return MarketSnapshot(
         symbol="BTC_USDT",
@@ -240,9 +238,7 @@ def test_scheduler_logs_expired_suspensions(caplog: pytest.LogCaptureFixture) ->
     snapshot = scheduler.suspension_snapshot()
 
     assert "mean_schedule" not in snapshot["schedules"]
-    assert (
-        "automatycznie wznowiony po wygaśnięciu zawieszenia" in caplog.text
-    )
+    assert "automatycznie wznowiony po wygaśnięciu zawieszenia" in caplog.text
     assert "maintenance" in caplog.text
     assert "mean_schedule" in caplog.text
 
@@ -477,10 +473,7 @@ def test_signal_limit_snapshot_returns_nested_mapping() -> None:
     assert entry["limit"] == 4
     assert entry["active"] is True
     snapshot["trend"]["balanced"]["limit"] = 10
-    assert (
-        scheduler.signal_limit_snapshot()["trend"]["balanced"]["limit"]
-        == 4
-    )
+    assert scheduler.signal_limit_snapshot()["trend"]["balanced"]["limit"] == 4
 
 
 def test_signal_limit_override_expires_and_is_purged() -> None:
@@ -514,7 +507,6 @@ def test_signal_limit_override_expires_and_is_purged() -> None:
 
     second_snapshot = scheduler.signal_limit_snapshot()
     assert second_snapshot == {}
-
 
 
 def test_expired_signal_limit_restores_schedule_and_logs(caplog: pytest.LogCaptureFixture) -> None:
@@ -569,4 +561,3 @@ def test_expired_signal_limit_restores_schedule_and_logs(caplog: pytest.LogCaptu
         "Wygasło nadpisanie limitu sygnałów trend/balanced" in record.message
         for record in caplog.records
     )
-

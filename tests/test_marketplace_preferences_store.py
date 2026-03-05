@@ -25,4 +25,3 @@ def test_preference_store_persists_entries(tmp_path: Path) -> None:
 
     assert reloaded.clear_entry("alpha", "portfolio-main") is True
     assert reloaded.entry("alpha", "portfolio-main") is None
-

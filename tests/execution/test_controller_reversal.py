@@ -40,7 +40,9 @@ class DummyRiskEngine:
     def __init__(self) -> None:
         self.requests: list[OrderRequest] = []
 
-    def apply_pre_trade_checks(self, request: OrderRequest, *, account: AccountSnapshot, profile_name: str):  # type: ignore[override]
+    def apply_pre_trade_checks(
+        self, request: OrderRequest, *, account: AccountSnapshot, profile_name: str
+    ):  # type: ignore[override]
         self.requests.append(request)
         return type("RiskResult", (), {"allowed": True, "reason": None, "adjustments": {}})()
 
@@ -110,4 +112,3 @@ def test_reversal_pipeline_executes_close_then_open():
     )
     assert close_risk_request.metadata.get("is_reducing") is True
     assert close_risk_request.metadata.get("reducing_only") is True
-

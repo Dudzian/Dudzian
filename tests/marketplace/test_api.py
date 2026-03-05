@@ -29,7 +29,12 @@ def test_build_marketplace_preset_parses_dependencies_and_updates() -> None:
         "version": "2.0.0",
         "dependencies": [
             "core/base",
-            {"preset_id": "risk-kit", "constraints": [">=1.0", "<2.0"], "optional": True, "notes": "Risk module"},
+            {
+                "preset_id": "risk-kit",
+                "constraints": [">=1.0", "<2.0"],
+                "optional": True,
+                "notes": "Risk module",
+            },
         ],
         "updates": {
             "channels": [

@@ -1,4 +1,5 @@
 """Obsługa dynamicznych limitów sygnałów dla schedulera strategii."""
+
 from __future__ import annotations
 
 import logging
@@ -122,7 +123,9 @@ class SignalLimitManager:
         self,
         *,
         now: datetime | None = None,
-    ) -> tuple[Mapping[tuple[str, str], SignalLimitOverride], Mapping[tuple[str, str], SignalLimitOverride]]:
+    ) -> tuple[
+        Mapping[tuple[str, str], SignalLimitOverride], Mapping[tuple[str, str], SignalLimitOverride]
+    ]:
         moment = now or self._clock()
         with self._lock:
             expired = self._purge_expired(moment)
@@ -156,7 +159,7 @@ class SignalLimitManager:
         duration_seconds: float | None = None,
     ) -> SignalLimitOverride | None:
         now = self._clock()
-        resolved_reason: str | None = (reason or None)
+        resolved_reason: str | None = reason or None
         resolved_until: datetime | None = until
         resolved_duration: float | None = duration_seconds
         created_at: datetime | None = None
@@ -181,13 +184,11 @@ class SignalLimitManager:
                     resolved_reason = str(reason_value)
             if resolved_until is None:
                 resolved_until = self._coerce_datetime(
-                    getattr(limit, "until", None)
-                    or getattr(limit, "expires_at", None)
+                    getattr(limit, "until", None) or getattr(limit, "expires_at", None)
                 )
             if resolved_duration is None:
                 resolved_duration = self._coerce_duration(
-                    getattr(limit, "duration_seconds", None)
-                    or getattr(limit, "duration", None)
+                    getattr(limit, "duration_seconds", None) or getattr(limit, "duration", None)
                 )
             created_at = self._coerce_datetime(getattr(limit, "created_at", None))
         elif isinstance(limit, Mapping):
@@ -289,9 +290,7 @@ class SignalLimitManager:
         for (strategy, profile), override in expired.items():
             reason_part = f", powód: {override.reason}" if override.reason else ""
             expiry_part = (
-                f", wygasło o {override.expires_at.isoformat()}"
-                if override.expires_at
-                else ""
+                f", wygasło o {override.expires_at.isoformat()}" if override.expires_at else ""
             )
             self._logger.info(
                 "Wygasło nadpisanie limitu sygnałów %s/%s (limit=%s%s%s)",
@@ -324,4 +323,3 @@ class SignalLimitManager:
             profile = getattr(schedule, "risk_profile", None)
             if (strategy, profile) in affected:
                 apply_callback(schedule)
-

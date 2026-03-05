@@ -74,7 +74,9 @@ def _parse_definitions(data: Mapping[str, Any]) -> dict[str, SLODefinition]:
                 ),
                 severity=str(entry.get("severity", "critical")),
                 description=(
-                    str(entry.get("description")) if entry.get("description") not in (None, "") else None
+                    str(entry.get("description"))
+                    if entry.get("description") not in (None, "")
+                    else None
                 ),
                 tags=tuple(str(tag) for tag in (entry.get("tags") or ())),
             )
@@ -101,9 +103,7 @@ def _parse_statuses(
     items: Iterable[tuple[str, Mapping[str, Any]]] = []
     if isinstance(results, Mapping):
         items = [
-            (str(name), entry)
-            for name, entry in results.items()
-            if isinstance(entry, Mapping)
+            (str(name), entry) for name, entry in results.items() if isinstance(entry, Mapping)
         ]
     elif isinstance(results, Iterable) and not isinstance(results, (str, bytes)):
         temp: list[tuple[str, Mapping[str, Any]]] = []
@@ -121,8 +121,10 @@ def _parse_statuses(
             target_value = definition.target
         target = float(target_value) if target_value is not None else 0.0
         warning_threshold = entry.get("warning_threshold")
-        warning = float(warning_threshold) if warning_threshold is not None else (
-            definition.warning_threshold if definition else None
+        warning = (
+            float(warning_threshold)
+            if warning_threshold is not None
+            else (definition.warning_threshold if definition else None)
         )
         statuses[name] = SLOStatus(
             name=name,
@@ -137,11 +139,7 @@ def _parse_statuses(
             window_start=_parse_dt(entry.get("window_start")),
             window_end=_parse_dt(entry.get("window_end")),
             sample_size=int(entry.get("sample_size") or 0),
-            reason=(
-                str(entry.get("reason"))
-                if entry.get("reason") not in (None, "")
-                else None
-            ),
+            reason=(str(entry.get("reason")) if entry.get("reason") not in (None, "") else None),
             metadata=_to_float_mapping(entry.get("metadata")),
         )
     _merge_composite_statuses(data, statuses)
@@ -185,8 +183,7 @@ def _merge_composite_statuses(
             total = sum(
                 int(value)
                 for key, value in counts.items()
-                if key in {"ok", "warning", "breach", "unknown"}
-                and isinstance(value, (int, float))
+                if key in {"ok", "warning", "breach", "unknown"} and isinstance(value, (int, float))
             )
         total = int(total)
         ok_count = int(counts.get("ok", 0)) if isinstance(counts, Mapping) else 0
@@ -215,11 +212,7 @@ def _merge_composite_statuses(
             window_start=_parse_dt(entry.get("window_start")),
             window_end=_parse_dt(entry.get("window_end")),
             sample_size=total,
-            reason=(
-                str(entry.get("reason"))
-                if entry.get("reason") not in (None, "")
-                else None
-            ),
+            reason=(str(entry.get("reason")) if entry.get("reason") not in (None, "") else None),
             metadata=metadata,
         )
 
@@ -347,7 +340,9 @@ def run(argv: list[str] | None = None) -> int:
         key, key_id = _load_hmac_key(args)
         if key:
             signature_payload = build_hmac_signature(payload, key=key, key_id=key_id)
-            signature_path = Path(args.signature) if args.signature else output_path.with_suffix(".sig")
+            signature_path = (
+                Path(args.signature) if args.signature else output_path.with_suffix(".sig")
+            )
             signature_path.parent.mkdir(parents=True, exist_ok=True)
             with signature_path.open("w", encoding="utf-8") as handle:
                 json.dump(signature_payload, handle, ensure_ascii=False, separators=(",", ":"))
@@ -365,4 +360,3 @@ def run(argv: list[str] | None = None) -> int:
 
 if __name__ == "__main__":  # pragma: no cover - CLI entry point
     raise SystemExit(run())
-

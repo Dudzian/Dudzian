@@ -23,6 +23,7 @@ def _create_logging_helper_module(tmp_path: Path, content: str) -> tuple[str, Pa
 def _remove_helper_module(module_name: str) -> None:
     sys.modules.pop(module_name, None)
 
+
 import pytest
 
 
@@ -129,7 +130,7 @@ def test_snapshot_optional_exports_reflects_registry_state() -> None:
     assert snapshot.registered == dict(runtime._LAZY_OPTIONAL_EXPORTS)
     assert "TradingController" not in snapshot.cached_names
     assert "TradingController" in snapshot.available_names
-    
+
     runtime.require_optional_export("TradingController")
     updated_snapshot = runtime.snapshot_optional_exports()
 
@@ -602,9 +603,7 @@ def test_ensure_optional_exports_loads_available_and_reports_missing(
         ("bot_core.runtime._module_does_not_exist", "Missing"),
     )
 
-    loaded, missing = runtime.ensure_optional_exports(
-        ["TradingController", missing_name]
-    )
+    loaded, missing = runtime.ensure_optional_exports(["TradingController", missing_name])
 
     assert "TradingController" in loaded
     assert missing_name not in loaded
@@ -898,9 +897,7 @@ def _sample_diff(runtime: ModuleType) -> object:
     return runtime.OptionalExportRegistryDiff(
         added={"Added": ("pkg.added", "symbol")},
         removed={"Removed": ("pkg.removed", "old_symbol")},
-        changed_targets={
-            "Changed": (("pkg.before", "attr_before"), ("pkg.after", "attr_after"))
-        },
+        changed_targets={"Changed": (("pkg.before", "attr_before"), ("pkg.after", "attr_after"))},
         status_changes={
             "Added": (
                 None,
@@ -1272,10 +1269,14 @@ def test_set_optional_exports_logger_overrides_default(caplog: pytest.LogCapture
     with caplog.at_level(logging.INFO, logger="bot_core.runtime"):
         message = runtime.log_optional_export_status(status)
 
-    assert any(record.name == "bot_core.runtime" and record.message == message for record in caplog.records)
+    assert any(
+        record.name == "bot_core.runtime" and record.message == message for record in caplog.records
+    )
 
 
-def test_temporary_optional_exports_logger_restores_previous(caplog: pytest.LogCaptureFixture) -> None:
+def test_temporary_optional_exports_logger_restores_previous(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
     runtime = importlib.import_module("bot_core.runtime")
     status = runtime.probe_optional_export("TradingController")
     mock_logger = mock.Mock()
@@ -1288,7 +1289,9 @@ def test_temporary_optional_exports_logger_restores_previous(caplog: pytest.LogC
     with caplog.at_level(logging.INFO, logger="bot_core.runtime"):
         message = runtime.log_optional_export_status(status)
 
-    assert any(record.name == "bot_core.runtime" and record.message == message for record in caplog.records)
+    assert any(
+        record.name == "bot_core.runtime" and record.message == message for record in caplog.records
+    )
 
 
 def test_configure_optional_exports_logging_sets_up_logger() -> None:
@@ -1402,10 +1405,7 @@ def test_configure_optional_exports_logging_from_dict_sets_default_logger() -> N
         assert isinstance(configured, logging.Logger)
         assert runtime.get_optional_exports_logger() is configured
         assert configured.propagate is False
-        assert any(
-            isinstance(handler, logging.StreamHandler)
-            for handler in configured.handlers
-        )
+        assert any(isinstance(handler, logging.StreamHandler) for handler in configured.handlers)
     finally:
         runtime.set_optional_exports_logger(None)
         if configured is not None:
@@ -1668,9 +1668,7 @@ def test_configure_optional_exports_logging_from_python_returns_logger(
         assert isinstance(configured, logging.Logger)
         assert runtime.get_optional_exports_logger() is configured
         assert configured.level == logging.DEBUG
-        assert any(
-            isinstance(handler, logging.NullHandler) for handler in configured.handlers
-        )
+        assert any(isinstance(handler, logging.NullHandler) for handler in configured.handlers)
     finally:
         runtime.set_optional_exports_logger(None)
         if configured is not None:
@@ -1754,13 +1752,11 @@ def test_configure_optional_exports_logging_from_python_validates_result(
 def test_parse_optional_exports_logging_spec_variants() -> None:
     runtime = importlib.import_module("bot_core.runtime")
 
-    parsed_json = runtime.parse_optional_exports_logging_spec(
-        "json:  {\n  \"version\": 1\n}"
-    )
+    parsed_json = runtime.parse_optional_exports_logging_spec('json:  {\n  "version": 1\n}')
     assert parsed_json.kind == "json"
     assert parsed_json.origin == "prefixed"
     assert parsed_json.attribute is None
-    assert "\"version\"" in parsed_json.value
+    assert '"version"' in parsed_json.value
 
     inline_payload = json.dumps({"version": 1})
     parsed_inline = runtime.parse_optional_exports_logging_spec(inline_payload)
@@ -1771,9 +1767,7 @@ def test_parse_optional_exports_logging_spec_variants() -> None:
     assert parsed_file.kind == "file"
     assert parsed_file.origin == "bare"
 
-    parsed_python = runtime.parse_optional_exports_logging_spec(
-        "python:pkg.module:factory"
-    )
+    parsed_python = runtime.parse_optional_exports_logging_spec("python:pkg.module:factory")
     assert parsed_python.kind == "python"
     assert parsed_python.value == "pkg.module"
     assert parsed_python.attribute == "factory"
@@ -1906,9 +1900,7 @@ def test_configure_optional_exports_logging_from_parsed_spec_python(
     )
 
     monkeypatch.syspath_prepend(str(tmp_path))
-    parsed = runtime.parse_optional_exports_logging_spec(
-        f"python:{module_name}:build_config"
-    )
+    parsed = runtime.parse_optional_exports_logging_spec(f"python:{module_name}:build_config")
 
     configured: logging.Logger | None = None
     try:
@@ -2044,7 +2036,7 @@ def test_configure_optional_exports_logging_from_spec_python(
                     }
                 },
             }
-        """
+        """,
     )
 
     monkeypatch.syspath_prepend(str(tmp_path))
@@ -2214,7 +2206,9 @@ def test_configure_optional_exports_logging_from_env_python(
         module_path.unlink(missing_ok=True)
 
 
-def test_configure_optional_exports_logging_from_env_missing(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_configure_optional_exports_logging_from_env_missing(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     runtime = importlib.import_module("bot_core.runtime")
     runtime.set_optional_exports_logger(None)
     monkeypatch.delenv("BOT_CORE_OPTIONAL_EXPORTS_LOGGING", raising=False)
@@ -2222,12 +2216,12 @@ def test_configure_optional_exports_logging_from_env_missing(monkeypatch: pytest
     with pytest.raises(KeyError):
         runtime.configure_optional_exports_logging_from_env()
 
-    assert (
-        runtime.configure_optional_exports_logging_from_env(missing_ok=True) is None
-    )
+    assert runtime.configure_optional_exports_logging_from_env(missing_ok=True) is None
 
 
-def test_configure_optional_exports_logging_from_env_validates(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_configure_optional_exports_logging_from_env_validates(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     runtime = importlib.import_module("bot_core.runtime")
     runtime.set_optional_exports_logger(None)
 

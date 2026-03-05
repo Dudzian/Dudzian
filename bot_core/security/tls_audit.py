@@ -1,4 +1,5 @@
 """Audyt konfiguracji TLS dla usług runtime."""
+
 from __future__ import annotations
 
 import os
@@ -75,8 +76,7 @@ def _has_rbac_tokens(config: object) -> bool:
     if config is None:
         return False
     return bool(
-        getattr(config, "rbac_tokens_configured", False)
-        or getattr(config, "rbac_tokens", ())
+        getattr(config, "rbac_tokens_configured", False) or getattr(config, "rbac_tokens", ())
     )
 
 
@@ -231,9 +231,7 @@ def audit_tls_entry(
                 has_perm_warning = False
 
                 if isinstance(security_flags, Mapping):
-                    permissions_supported = bool(
-                        security_flags.get("permissions_supported", True)
-                    )
+                    permissions_supported = bool(security_flags.get("permissions_supported", True))
                     if security_flags.get("permissions_too_open"):
                         has_perm_warning = True
                     # pozytywne sygnały, jeśli generator je wystawił
@@ -247,10 +245,9 @@ def audit_tls_entry(
                             permissions_secure = True
                             break
 
-                key_path_value = (
-                    private_key_metadata.get("absolute_path")
-                    or private_key_metadata.get("path")
-                )
+                key_path_value = private_key_metadata.get(
+                    "absolute_path"
+                ) or private_key_metadata.get("path")
                 in_temp_dir = False
                 if isinstance(key_path_value, (str, Path)):
                     in_temp_dir = _is_in_temp_directory(key_path_value)
@@ -285,7 +282,9 @@ def audit_tls_entry(
 
                 file_attrs = None
                 for key in ("st_file_attributes", "file_attributes"):
-                    if isinstance(security_flags, Mapping) and isinstance(security_flags.get(key), int):
+                    if isinstance(security_flags, Mapping) and isinstance(
+                        security_flags.get(key), int
+                    ):
                         file_attrs = int(security_flags[key])
                         break
                     if isinstance(private_key_metadata.get(key), int):
@@ -323,7 +322,11 @@ def audit_tls_entry(
                         has_perm_warning
                         or perms_too_open_by_mode
                         or (permissions_supported and (not permissions_confirmed_secure))
-                        or ((not permissions_supported) and temp_tls_hint and (not permissions_confirmed_secure))
+                        or (
+                            (not permissions_supported)
+                            and temp_tls_hint
+                            and (not permissions_confirmed_secure)
+                        )
                     ):
                         warnings.append(
                             "Klucz prywatny TLS znajduje się w katalogu tymczasowym i nie ma potwierdzonych bezpiecznych uprawnień – upewnij się, że dostęp jest ograniczony."
@@ -395,15 +398,11 @@ def audit_tls_entry(
         for pin in pinned:
             normalized = str(pin).lower()
             if ":" not in normalized:
-                errors.append(
-                    f"Wpis pinningu '{pin}' ma nieprawidłowy format (brak algorytmu)"
-                )
+                errors.append(f"Wpis pinningu '{pin}' ma nieprawidłowy format (brak algorytmu)")
                 continue
             algorithm, fingerprint = normalized.split(":", 1)
             if not fingerprint:
-                errors.append(
-                    f"Wpis pinningu '{pin}' ma pusty fingerprint"
-                )
+                errors.append(f"Wpis pinningu '{pin}' ma pusty fingerprint")
                 continue
             fingerprints = available.get(algorithm)
             if fingerprints is None:
@@ -418,9 +417,7 @@ def audit_tls_entry(
             )
         report["pinned_fingerprint_match"] = matched if certificate_metadata else None
         if certificate_metadata and not matched:
-            errors.append(
-                "Żaden fingerprint certyfikatu nie pasuje do konfiguracji pinningu"
-            )
+            errors.append("Żaden fingerprint certyfikatu nie pasuje do konfiguracji pinningu")
 
     report["warnings"] = list(dict.fromkeys(warnings)) if warnings else []
     report["errors"] = list(dict.fromkeys(errors)) if errors else []
@@ -545,9 +542,7 @@ def audit_tls_assets(
         rbac_tokens_configured = _has_rbac_tokens(metrics_config)
         service_report = {
             "enabled": bool(getattr(metrics_config, "enabled", False)),
-            "auth_token_configured": _is_auth_token_configured(
-                metrics_config, env_map
-            ),
+            "auth_token_configured": _is_auth_token_configured(metrics_config, env_map),
             "rbac_tokens_configured": rbac_tokens_configured,
             "tls": audit_tls_entry(
                 getattr(metrics_config, "tls", None),
@@ -583,9 +578,7 @@ def audit_tls_assets(
         rbac_tokens_configured = _has_rbac_tokens(risk_config)
         service_report = {
             "enabled": bool(getattr(risk_config, "enabled", False)),
-            "auth_token_configured": _is_auth_token_configured(
-                risk_config, env_map
-            ),
+            "auth_token_configured": _is_auth_token_configured(risk_config, env_map),
             "rbac_tokens_configured": rbac_tokens_configured,
             "tls": audit_tls_entry(
                 getattr(risk_config, "tls", None),

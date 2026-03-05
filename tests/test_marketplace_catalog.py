@@ -24,7 +24,9 @@ def test_catalog_integrity_and_release_metadata() -> None:
 
     signing_key_path = repo_root / "config" / "marketplace" / "keys" / "dev-hmac.key"
     validator = MarketplaceValidator(signing_keys={"dev-hmac": _read_key(signing_key_path)})
-    results = validator.verify_catalog(catalog, repository_root=repo_root / "config" / "marketplace")
+    results = validator.verify_catalog(
+        catalog, repository_root=repo_root / "config" / "marketplace"
+    )
     for result in results:
         fingerprint_errors = [err for err in result.errors if "fingerprint" in err.lower()]
         other_errors = [err for err in result.errors if err not in fingerprint_errors]
@@ -32,8 +34,12 @@ def test_catalog_integrity_and_release_metadata() -> None:
 
     for package in catalog.packages:
         if package.versioning.source:
-            source_path = repo_root / "config" / "marketplace" / "presets" / package.versioning.source
-            assert source_path.exists(), f"Brak pliku źródłowego presetu {package.versioning.source}"
+            source_path = (
+                repo_root / "config" / "marketplace" / "presets" / package.versioning.source
+            )
+            assert source_path.exists(), (
+                f"Brak pliku źródłowego presetu {package.versioning.source}"
+            )
         for artifact in package.distribution:
             artifact_path = repo_root / "config" / "marketplace" / artifact.uri
             assert artifact_path.exists(), f"Brak artefaktu {artifact.uri}"

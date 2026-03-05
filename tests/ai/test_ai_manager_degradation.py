@@ -12,6 +12,7 @@ import pytest
 
 
 if "lightgbm" not in sys.modules:
+
     class _StubLightGBMDataset:
         def __init__(self, *args: object, **kwargs: object) -> None:
             self.args = args
@@ -154,11 +155,13 @@ def test_collect_exception_types_respects_import_chain() -> None:
 
 
 def test_ai_manager_degrades_on_quality_thresholds(tmp_path: Path) -> None:
-    frame = pd.DataFrame({
-        "f1": [float(i) for i in range(40)],
-        "f2": [float(i % 4) for i in range(40)],
-        "target": [float((i % 2) - 0.5) for i in range(40)],
-    })
+    frame = pd.DataFrame(
+        {
+            "f1": [float(i) for i in range(40)],
+            "f2": [float(i % 4) for i in range(40)],
+            "target": [float((i % 2) - 0.5) for i in range(40)],
+        }
+    )
     artifact_path = train_gradient_boosting_model(
         frame,
         ["f1", "f2"],

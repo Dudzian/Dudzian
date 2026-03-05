@@ -1,4 +1,5 @@
 """Pomocnicze funkcje IO dla modułów portfelowych Stage6."""
+
 from __future__ import annotations
 
 import json
@@ -83,7 +84,9 @@ def load_allocations_file(path: Path) -> dict[str, float]:
 def parse_market_intel_payload(data: Mapping[str, Any]) -> dict[str, MarketIntelSnapshot]:
     """Konwertuje strukturę JSON/YAML na snapshoty Market Intel."""
 
-    snapshots_section = data.get("snapshots") if isinstance(data.get("snapshots"), Mapping) else None
+    snapshots_section = (
+        data.get("snapshots") if isinstance(data.get("snapshots"), Mapping) else None
+    )
     payload = snapshots_section or data
     if not isinstance(payload, Mapping):
         raise ValueError("Raport Market Intel musi zawierać mapę snapshots")

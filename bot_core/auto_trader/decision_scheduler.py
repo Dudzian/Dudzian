@@ -1,4 +1,5 @@
 """Decision cycle scheduler for the lightweight auto-trader."""
+
 from __future__ import annotations
 
 import asyncio
@@ -17,13 +18,19 @@ if TYPE_CHECKING:  # pragma: no cover - typing only
 class AutoTraderSchedulerHooks(Protocol):
     """Lifecycle callbacks invoked by :class:`AutoTraderDecisionScheduler`."""
 
-    def on_bootstrap(self, scheduler: "AutoTraderDecisionScheduler") -> None:  # pragma: no cover - interface only
+    def on_bootstrap(
+        self, scheduler: "AutoTraderDecisionScheduler"
+    ) -> None:  # pragma: no cover - interface only
         """Execute bootstrap logic right before the first cycle."""
 
-    def on_cycle_success(self, report: "DecisionCycleReport") -> None:  # pragma: no cover - interface only
+    def on_cycle_success(
+        self, report: "DecisionCycleReport"
+    ) -> None:  # pragma: no cover - interface only
         """Handle a successful decision cycle."""
 
-    def on_cycle_failure(self, exc: BaseException) -> float | None:  # pragma: no cover - interface only
+    def on_cycle_failure(
+        self, exc: BaseException
+    ) -> float | None:  # pragma: no cover - interface only
         """Handle a failed cycle and optionally override the restart delay."""
 
 
@@ -156,7 +163,9 @@ class AutoTraderDecisionScheduler:
             try:
                 emit("auto_trader.model_changed", **dict(event))
             except Exception:  # pragma: no cover - zdarzenie nie powinno zatrzymać pętli
-                LOGGER.exception("AutoTraderDecisionScheduler nie mógł wyemitować zdarzenia model_changed")
+                LOGGER.exception(
+                    "AutoTraderDecisionScheduler nie mógł wyemitować zdarzenia model_changed"
+                )
                 break
 
     async def _run_async(self) -> None:
@@ -219,7 +228,6 @@ class AutoTraderDecisionScheduler:
             self._drain_model_change_events()
         finally:
             self._mark_cycle_end()
-
 
     def _invoke_bootstrap_hook(self) -> None:
         hooks = self.hooks

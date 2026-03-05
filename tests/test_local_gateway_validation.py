@@ -41,7 +41,10 @@ def test_non_dict_payload_rejected():
     gateway, metrics, limiter = _make_basic_components()
     response = _process_request(json.dumps([1, 2, 3]), gateway, metrics, limiter)
 
-    assert response == {"id": None, "error": {"code": "invalid-request", "message": "Payload musi być obiektem JSON"}}
+    assert response == {
+        "id": None,
+        "error": {"code": "invalid-request", "message": "Payload musi być obiektem JSON"},
+    }
     assert metrics.invalid_request == 1
 
 
@@ -60,13 +63,18 @@ def test_rate_limit_blocks_requests():
     second = _process_request(json.dumps({"id": 2, "method": "ping"}), gateway, metrics, limiter)
 
     assert first == {"id": 1, "result": "ok"}
-    assert second == {"id": 2, "error": {"code": "rate-limit", "message": "Przekroczono limit zapytań"}}
+    assert second == {
+        "id": 2,
+        "error": {"code": "rate-limit", "message": "Przekroczono limit zapytań"},
+    }
     assert metrics.rate_limited == 1
 
 
 def test_dispatch_error_propagates_as_error_payload():
     gateway, metrics, limiter = _make_basic_components(raise_exc=RuntimeError("boom"))
-    response = _process_request(json.dumps({"id": "x", "method": "fail"}), gateway, metrics, limiter)
+    response = _process_request(
+        json.dumps({"id": "x", "method": "fail"}), gateway, metrics, limiter
+    )
 
     assert response == {"id": "x", "error": {"code": "dispatch-error", "message": "boom"}}
     assert metrics.dispatch_errors == 1

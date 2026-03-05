@@ -1,4 +1,5 @@
 """Dedykowane wyjątki dla adapterów giełdowych."""
+
 from __future__ import annotations
 
 from dataclasses import dataclass

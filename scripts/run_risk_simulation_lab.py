@@ -1,4 +1,5 @@
 """CLI do uruchamiania symulacji Paper Labs dla profili ryzyka."""
+
 from __future__ import annotations
 
 import argparse
@@ -126,7 +127,9 @@ def _build_parser() -> argparse.ArgumentParser:
     return parser
 
 
-def _resolve_dataset_root(args: argparse.Namespace, *, config: Mapping[str, object] | object) -> Path | None:
+def _resolve_dataset_root(
+    args: argparse.Namespace, *, config: Mapping[str, object] | object
+) -> Path | None:
     if args.dataset_root:
         return Path(args.dataset_root)
     if args.environment:
@@ -153,7 +156,9 @@ def _collect_tco_summary(
     tco_config = getattr(decision_engine, "tco", None) if decision_engine is not None else None
     report_paths: Sequence[str] = ()
     if tco_config is not None:
-        report_paths = tuple(getattr(tco_config, "report_paths", ())) or tuple(getattr(tco_config, "reports", ()))
+        report_paths = tuple(getattr(tco_config, "report_paths", ())) or tuple(
+            getattr(tco_config, "reports", ())
+        )
     if not report_paths and yaml is not None:
         try:
             raw_payload = yaml.safe_load(config_path.read_text(encoding="utf-8")) or {}

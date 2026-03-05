@@ -4,6 +4,7 @@ Moduł udostępnia znormalizowane profile, które można stosować
 zarówno w narzędziach CLI (`watch_metrics_stream`,
 `verify_decision_log`), jak i wewnątrz runtime'u (`MetricsService`).
 """
+
 from __future__ import annotations
 
 import json
@@ -449,9 +450,7 @@ def register_risk_profiles(
             normalized_profiles[normalized] = {}
             continue
         if not isinstance(profile, Mapping):
-            raise ValueError(
-                f"Profil ryzyka '{name}' musi być mapą, otrzymano {type(profile)!r}"
-            )
+            raise ValueError(f"Profil ryzyka '{name}' musi być mapą, otrzymano {type(profile)!r}")
         normalized_profiles[normalized] = deepcopy(dict(profile))
 
     resolved: dict[str, dict[str, Any]] = {}
@@ -461,9 +460,7 @@ def register_risk_profiles(
         if name in resolved:
             return resolved[name]
         if name in visiting:
-            raise ValueError(
-                f"Wykryto cykliczne dziedziczenie profili ryzyka przy '{name}'"
-            )
+            raise ValueError(f"Wykryto cykliczne dziedziczenie profili ryzyka przy '{name}'")
         try:
             entry = normalized_profiles[name]
         except KeyError as exc:
@@ -475,13 +472,9 @@ def register_risk_profiles(
         if extends_raw:
             base_name = str(extends_raw).strip().lower()
             if not base_name:
-                raise ValueError(
-                    f"Profil ryzyka '{name}' posiada nieprawidłowe pole extends"
-                )
+                raise ValueError(f"Profil ryzyka '{name}' posiada nieprawidłowe pole extends")
             if base_name == name:
-                raise ValueError(
-                    f"Profil ryzyka '{name}' nie może dziedziczyć z samego siebie"
-                )
+                raise ValueError(f"Profil ryzyka '{name}' nie może dziedziczyć z samego siebie")
             if base_name in normalized_profiles:
                 base_profile = resolve(base_name)
             else:
@@ -509,17 +502,11 @@ def register_risk_profiles(
                 if "extends" not in merged and base_profile.get("extends"):
                     merged["extends"] = base_profile.get("extends")
                 base_chain = base_profile.get("extends_chain")
-                if (
-                    base_chain
-                    and "extends_chain" not in merged
-                    and isinstance(base_chain, list)
-                ):
+                if base_chain and "extends_chain" not in merged and isinstance(base_chain, list):
                     merged["extends_chain"] = list(base_chain)
             else:
                 merged = deepcopy(entry)
-                if "extends_chain" in merged and not isinstance(
-                    merged.get("extends_chain"), list
-                ):
+                if "extends_chain" in merged and not isinstance(merged.get("extends_chain"), list):
                     merged["extends_chain"] = list(merged.get("extends_chain") or [])
 
         visiting.remove(name)
@@ -535,9 +522,7 @@ def register_risk_profiles(
     return registered
 
 
-def _load_risk_profiles_from_single_file(
-    source: Path, *, origin: str | None = None
-) -> list[str]:
+def _load_risk_profiles_from_single_file(source: Path, *, origin: str | None = None) -> list[str]:
     if not source.exists():
         raise FileNotFoundError(f"Nie znaleziono pliku profili ryzyka: {source}")
     if source.is_dir():
@@ -633,7 +618,9 @@ def load_risk_profiles_with_metadata(
             metadata["origin"] = origin_label
         return registered, metadata
 
-    registered = _load_risk_profiles_from_single_file(target, origin=origin_label or f"file:{target}")
+    registered = _load_risk_profiles_from_single_file(
+        target, origin=origin_label or f"file:{target}"
+    )
     metadata = {
         "path": str(target),
         "type": "file",
@@ -838,7 +825,8 @@ def summarize_risk_profile(metadata: Mapping[str, Any]) -> dict[str, Any]:
             str(name): {
                 key: deepcopy(value)
                 for key, value in payload.items()
-                if key in {"max_gap_minutes", "max_delay_ms", "expected_symbols", "expected_symbol_pairs"}
+                if key
+                in {"max_gap_minutes", "max_delay_ms", "expected_symbols", "expected_symbol_pairs"}
             }
             for name, payload in data_quality.items()
             if isinstance(payload, Mapping)

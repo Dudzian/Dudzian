@@ -57,7 +57,9 @@ def test_portfolio_decision_log_generates_signed_entry(tmp_path: Path) -> None:
     assert entry["signature"]["key_id"] == "stage6"
     assert log_path.exists()
 
-    stored = [json.loads(line) for line in log_path.read_text(encoding="utf-8").splitlines() if line]
+    stored = [
+        json.loads(line) for line in log_path.read_text(encoding="utf-8").splitlines() if line
+    ]
     assert len(stored) == 1
     recorded = stored[0]
     assert recorded["portfolio_id"] == "core"

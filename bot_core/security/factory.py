@@ -1,4 +1,5 @@
 """Fabryki magazynów sekretów zależne od systemu operacyjnego."""
+
 from __future__ import annotations
 
 import os

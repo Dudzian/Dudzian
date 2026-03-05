@@ -16,7 +16,10 @@ def _credentials() -> ExchangeCredentials:
 
 
 def _watchdog() -> Watchdog:
-    return Watchdog(retry_policy=RetryPolicy(max_attempts=3, base_delay=0.0, max_delay=0.0, jitter=(0.0, 0.0)), sleep=lambda _: None)
+    return Watchdog(
+        retry_policy=RetryPolicy(max_attempts=3, base_delay=0.0, max_delay=0.0, jitter=(0.0, 0.0)),
+        sleep=lambda _: None,
+    )
 
 
 def test_fetch_account_snapshot_aggregates_trade_balance(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -29,7 +32,9 @@ def test_fetch_account_snapshot_aggregates_trade_balance(monkeypatch: pytest.Mon
 
     monkeypatch.setattr(KrakenMarginAdapter, "_private_request", fake_private)
 
-    adapter = KrakenMarginAdapter(_credentials(), environment=Environment.TESTNET, watchdog=_watchdog())
+    adapter = KrakenMarginAdapter(
+        _credentials(), environment=Environment.TESTNET, watchdog=_watchdog()
+    )
     snapshot = adapter.fetch_account_snapshot()
     adapter.configure_network()
 
@@ -59,7 +64,9 @@ def test_place_order_retries_on_throttling(monkeypatch: pytest.MonkeyPatch) -> N
 
     monkeypatch.setattr(KrakenMarginAdapter, "_private_request", fake_private)
 
-    adapter = KrakenMarginAdapter(_credentials(), environment=Environment.TESTNET, watchdog=_watchdog())
+    adapter = KrakenMarginAdapter(
+        _credentials(), environment=Environment.TESTNET, watchdog=_watchdog()
+    )
     order = adapter.place_order(
         OrderRequest(symbol="BTC/USD", side="buy", quantity=0.1, order_type="market")
     )
@@ -75,10 +82,14 @@ def test_place_order_maps_auth_error(monkeypatch: pytest.MonkeyPatch) -> None:
 
     monkeypatch.setattr(KrakenMarginAdapter, "_private_request", fake_private)
 
-    adapter = KrakenMarginAdapter(_credentials(), environment=Environment.TESTNET, watchdog=_watchdog())
+    adapter = KrakenMarginAdapter(
+        _credentials(), environment=Environment.TESTNET, watchdog=_watchdog()
+    )
 
     adapter.configure_network()
     with pytest.raises(ExchangeAuthError):
         adapter.place_order(
-            OrderRequest(symbol="BTC/USD", side="sell", quantity=0.1, order_type="limit", price=20000.0)
+            OrderRequest(
+                symbol="BTC/USD", side="sell", quantity=0.1, order_type="limit", price=20000.0
+            )
         )

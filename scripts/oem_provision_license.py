@@ -4,6 +4,7 @@ Skrypt generuje i podpisuje licencje na podstawie fingerprintu urządzenia. Para
 można przekazać zarówno jako flagi CLI, jak i poprzez opcjonalny wniosek licencyjny
 (`request.json`/`request.yaml`) przekazany jako pierwszy argument pozycyjny.
 """
+
 from __future__ import annotations
 
 import argparse
@@ -125,7 +126,9 @@ def verify_fingerprint_signature(
     try:
         key = keys[key_id]
     except KeyError as exc:
-        raise ProvisioningError(f"Brak klucza HMAC '{key_id}' do weryfikacji fingerprintu.") from exc
+        raise ProvisioningError(
+            f"Brak klucza HMAC '{key_id}' do weryfikacji fingerprintu."
+        ) from exc
 
     algorithm = str(signature.get("algorithm") or "HMAC-SHA384").upper()
     import hashlib, hmac  # lokalny import, aby uniknąć globalnych zależności
@@ -162,7 +165,9 @@ class OemPolicy:
     require_dongle_usb: bool = True
 
 
-def evaluate_policy(payload: Mapping[str, Any], mode: str, policy: OemPolicy) -> dict[str, list[str]]:
+def evaluate_policy(
+    payload: Mapping[str, Any], mode: str, policy: OemPolicy
+) -> dict[str, list[str]]:
     components = payload.get("components")
     if not isinstance(components, Mapping):
         raise ProvisioningError("Fingerprint payload jest niepełny (brak sekcji components).")
@@ -248,7 +253,9 @@ def build_license_payload_rich(
 
     evaluation = evaluate_policy(payload, mode, policy)
     if evaluation["errors"]:
-        raise ProvisioningError("Fingerprint nie spełnia wymagań OEM: " + "; ".join(evaluation["errors"]))
+        raise ProvisioningError(
+            "Fingerprint nie spełnia wymagań OEM: " + "; ".join(evaluation["errors"])
+        )
 
     issued = _iso_now()
     expires = issued + timedelta(days=valid_days)
@@ -281,9 +288,12 @@ def build_license_payload_rich(
 
 
 # --- podpis i rejestr --------------------------------------------------------
-def sign_with_single_key(payload: Mapping[str, Any], *, key_bytes: bytes, key_id: str | None) -> dict[str, Any]:
+def sign_with_single_key(
+    payload: Mapping[str, Any], *, key_bytes: bytes, key_id: str | None
+) -> dict[str, Any]:
     digest = canonical_json_bytes(payload)
     import hashlib, hmac  # lokalnie – dla zgodności z HMAC-SHA384
+
     value = base64.b64encode(hmac.new(key_bytes, digest, hashlib.sha384).digest()).decode("ascii")
     sig = {"algorithm": LICENSE_SIGNATURE_ALGORITHM, "value": value}
     if key_id:
@@ -303,7 +313,9 @@ def sign_with_rotating_keys(
     # Lokalny provider: wybieramy najstarszy / wymagający rotacji
     registry = RotationRegistry(rotation_log)
     now = _iso_now()
-    statuses = {kid: registry.status(kid, purpose, interval_days=interval_days, now=now) for kid in keys}
+    statuses = {
+        kid: registry.status(kid, purpose, interval_days=interval_days, now=now) for kid in keys
+    }
 
     # priorytety: overdue > due > OK; w każdej grupie najstarszy
     def _prio(st):
@@ -343,11 +355,15 @@ def write_usb_artifact(target: str, record: Mapping[str, Any]) -> Path:
         license_id = record.get("payload", {}).get("license_id") or uuid.uuid4().hex
         path = p / f"{license_id}.json"
         path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(record, ensure_ascii=False, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    path.write_text(
+        json.dumps(record, ensure_ascii=False, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+    )
     return path
 
 
-def emit_qr_ascii_or_base64(record: Mapping[str, Any], *, ascii_qr: bool, output_base64_path: str | None) -> None:
+def emit_qr_ascii_or_base64(
+    record: Mapping[str, Any], *, ascii_qr: bool, output_base64_path: str | None
+) -> None:
     payload = json.dumps(record, ensure_ascii=False, separators=(",", ":"))
     encoded = base64.b64encode(payload.encode("utf-8")).decode("ascii")
     if ascii_qr:
@@ -400,7 +416,9 @@ def validate_registry(
 
         import hashlib, hmac  # lokalny import na potrzeby walidacji
 
-        digest = hmac.new(license_keys[key_id], canonical_json_bytes(payload), hashlib.sha384).digest()
+        digest = hmac.new(
+            license_keys[key_id], canonical_json_bytes(payload), hashlib.sha384
+        ).digest()
         expected_value = base64.b64encode(digest).decode("ascii")
         if expected_value != signature.get("value"):
             errors.append(f"Linia {index}: podpis licencji niezgodny z HMAC.")
@@ -433,7 +451,9 @@ def _load_request_payload(path: Path) -> Mapping[str, Any]:
     data: Any
     if suffix in {".yaml", ".yml"}:
         if yaml is None:
-            raise ProvisioningError("Do wczytania plików YAML wymagany jest PyYAML (pip install pyyaml).")
+            raise ProvisioningError(
+                "Do wczytania plików YAML wymagany jest PyYAML (pip install pyyaml)."
+            )
         data = yaml.safe_load(text) or {}
     else:
         try:
@@ -449,7 +469,9 @@ def _load_request_payload(path: Path) -> Mapping[str, Any]:
                 raise ProvisioningError(f"Nie można wczytać pliku wniosku: {exc}") from exc
 
     if not isinstance(data, Mapping):
-        raise ProvisioningError("Plik wniosku musi zawierać obiekt klucz-wartość na poziomie głównym.")
+        raise ProvisioningError(
+            "Plik wniosku musi zawierać obiekt klucz-wartość na poziomie głównym."
+        )
     return data
 
 
@@ -511,7 +533,9 @@ _REQUEST_KEY_ALIASES: dict[str, str] = {
 }
 
 
-def _request_payload_to_cli_args(data: Mapping[str, Any], existing_args: Sequence[str]) -> list[str]:
+def _request_payload_to_cli_args(
+    data: Mapping[str, Any], existing_args: Sequence[str]
+) -> list[str]:
     normalized = {_normalize_request_key(key): value for key, value in data.items()}
     for alias, target in _REQUEST_KEY_ALIASES.items():
         if alias in normalized and target not in normalized:
@@ -562,22 +586,33 @@ def _parse_args(argv: Sequence[str] | None) -> argparse.Namespace:
         help="Opcjonalny plik JSON/YAML z pełnym wnioskiem licencyjnym.",
     )
     # fingerprint
-    parser.add_argument("--fingerprint", help="Fingerprint: string lub JSON/BASE64 albo ścieżka do pliku.")
     parser.add_argument(
-        "--mode", choices=["qr", "usb"], default="qr", help="Tryb dostarczenia fingerprintu (wpływa na politykę)."
+        "--fingerprint", help="Fingerprint: string lub JSON/BASE64 albo ścieżka do pliku."
+    )
+    parser.add_argument(
+        "--mode",
+        choices=["qr", "usb"],
+        default="qr",
+        help="Tryb dostarczenia fingerprintu (wpływa na politykę).",
     )
     # parametry licencji
     parser.add_argument("--issuer", default="OEM-Control", help="Identyfikator wystawcy licencji")
     parser.add_argument("--profile", default="paper", help="Profil pracy bota (paper/live/demo)")
     parser.add_argument("--bundle-version", default="0.0.0", help="Wersja bundla Core OEM")
-    parser.add_argument("--feature", action="append", dest="features", default=[], help="Dodatkowe feature flagi")
+    parser.add_argument(
+        "--feature", action="append", dest="features", default=[], help="Dodatkowe feature flagi"
+    )
     parser.add_argument("--valid-days", type=int, default=365, help="Ważność licencji (dni)")
     parser.add_argument("--notes", help="Opcjonalna notatka")
     # podpis – wariant A: pojedynczy klucz
     parser.add_argument("--signing-key-path", help="Plik zawierający klucz HMAC (min 32 bajty)")
-    parser.add_argument("--key-id", help="Identyfikator klucza użytego do podpisu (wariant pojedynczy)")
+    parser.add_argument(
+        "--key-id", help="Identyfikator klucza użytego do podpisu (wariant pojedynczy)"
+    )
     # podpis – wariant B: rotujący zestaw kluczy
-    parser.add_argument("--license-key", action="append", dest="license_keys", help="Klucz w formacie key_id=sekret")
+    parser.add_argument(
+        "--license-key", action="append", dest="license_keys", help="Klucz w formacie key_id=sekret"
+    )
     parser.add_argument(
         "--rotation-log",
         "--license-rotation-log",
@@ -586,9 +621,14 @@ def _parse_args(argv: Sequence[str] | None) -> argparse.Namespace:
         help="Rejestr rotacji kluczy HMAC (dla wariantu zestawu).",
     )
     parser.add_argument(
-        "--rotation-interval-days", type=float, default=90.0, help="Interwał rotacji kluczy HMAC (dni)."
+        "--rotation-interval-days",
+        type=float,
+        default=90.0,
+        help="Interwał rotacji kluczy HMAC (dni).",
     )
-    parser.add_argument("--no-mark-rotation", action="store_true", help="Nie zapisuj rotacji po podpisaniu")
+    parser.add_argument(
+        "--no-mark-rotation", action="store_true", help="Nie zapisuj rotacji po podpisaniu"
+    )
     # walidacja fingerprintu JSON
     parser.add_argument(
         "--fingerprint-key",
@@ -618,7 +658,9 @@ def _parse_args(argv: Sequence[str] | None) -> argparse.Namespace:
         help="Nie wystawiaj licencji, tylko zweryfikuj fingerprint i/lub rejestr podpisów.",
     )
     # tryb walidacji rejestru
-    parser.add_argument("--validate-registry", action="store_true", help="Waliduj rejestr i zakończ.")
+    parser.add_argument(
+        "--validate-registry", action="store_true", help="Waliduj rejestr i zakończ."
+    )
 
     argv_list = list(argv if argv is not None else sys.argv[1:])
     args = parser.parse_args(argv_list)
@@ -640,7 +682,9 @@ def _parse_args(argv: Sequence[str] | None) -> argparse.Namespace:
 def _run_validation(args: argparse.Namespace) -> int:
     license_keys = _parse_key_entries(args.license_keys)
     if not license_keys:
-        raise ProvisioningError("Do walidacji rejestru wymagane są klucze licencyjne (--license-key).")
+        raise ProvisioningError(
+            "Do walidacji rejestru wymagane są klucze licencyjne (--license-key)."
+        )
     fingerprint_keys = _parse_key_entries(args.fingerprint_keys)
     errors = validate_registry(Path(args.output), license_keys, fingerprint_keys)
     if errors:
@@ -668,7 +712,9 @@ def _run_verify(args: argparse.Namespace) -> int:
         verify_fingerprint_signature(source, fingerprint_keys)
         policy = evaluate_policy(source.get("payload", {}), args.mode, OemPolicy())
         if policy["errors"]:
-            raise ProvisioningError("Fingerprint nie przechodzi polityki OEM: " + "; ".join(policy["errors"]))
+            raise ProvisioningError(
+                "Fingerprint nie przechodzi polityki OEM: " + "; ".join(policy["errors"])
+            )
         if policy["warnings"]:
             for warning in policy["warnings"]:
                 print(f"[WARN] {warning}")
@@ -769,7 +815,9 @@ def _run_provision(args: argparse.Namespace) -> int:
     print(f"[OK] Dodano licencję do rejestru {registry_path}")
 
     if args.emit_qr or args.qr_output:
-        emit_qr_ascii_or_base64(record, ascii_qr=bool(args.emit_qr), output_base64_path=args.qr_output)
+        emit_qr_ascii_or_base64(
+            record, ascii_qr=bool(args.emit_qr), output_base64_path=args.qr_output
+        )
     if args.usb_target:
         target = write_usb_artifact(args.usb_target, record)
         print(f"[INFO] Licencja zapisana: {target}")

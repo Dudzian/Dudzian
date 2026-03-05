@@ -69,7 +69,9 @@ class _DummyAdapter(ExchangeAdapter):
 
 
 def _context() -> ExecutionContext:
-    return ExecutionContext(portfolio_id="P1", risk_profile="conservative", environment="live", metadata={})
+    return ExecutionContext(
+        portfolio_id="P1", risk_profile="conservative", environment="live", metadata={}
+    )
 
 
 def _request(

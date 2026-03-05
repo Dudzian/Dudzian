@@ -17,6 +17,8 @@ from bot_core.security.signing import build_hmac_signature
 
 
 ROOT = Path(__file__).resolve().parents[1]
+
+
 def _write_file(base: Path, name: str, data: str) -> Path:
     path = base / name
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -108,9 +110,11 @@ def test_verify_resilience_bundle_detects_tamper(tmp_path: Path) -> None:
             info.size = len(data)
             archive.addfile(info, BytesIO(data))
 
-    exit_code = verify_bundle([
-        str(bundle),
-    ])
+    exit_code = verify_bundle(
+        [
+            str(bundle),
+        ]
+    )
 
     assert exit_code == 2
 
@@ -205,7 +209,9 @@ def test_audit_resilience_bundles_reports(tmp_path: Path) -> None:
 
     signature_doc = json.loads(json_sig_path.read_text(encoding="utf-8"))
     assert signature_doc["target"] == json_path.name
-    expected_signature = build_hmac_signature(data, key=report_key, algorithm="HMAC-SHA256", key_id="stage6-audit")
+    expected_signature = build_hmac_signature(
+        data, key=report_key, algorithm="HMAC-SHA256", key_id="stage6-audit"
+    )
     assert signature_doc["signature"] == expected_signature
 
 

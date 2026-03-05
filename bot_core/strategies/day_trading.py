@@ -1,4 +1,5 @@
 """Intraday momentum/day-trading strategy engine."""
+
 from __future__ import annotations
 
 from collections import deque
@@ -33,7 +34,9 @@ class DayTradingSettings:
 
     def __post_init__(self) -> None:
         self.momentum_window = ensure_positive_int(self.momentum_window, field="momentum_window")
-        self.volatility_window = ensure_positive_int(self.volatility_window, field="volatility_window")
+        self.volatility_window = ensure_positive_int(
+            self.volatility_window, field="volatility_window"
+        )
         self.max_holding_bars = ensure_positive_int(self.max_holding_bars, field="max_holding_bars")
         self.entry_threshold = ensure_positive_float(self.entry_threshold, field="entry_threshold")
         self.exit_threshold = ensure_positive_float(self.exit_threshold, field="exit_threshold")
@@ -60,6 +63,7 @@ class DayTradingSettings:
             atr_floor=float(params.get("atr_floor", defaults.atr_floor)),
             bias_strength=float(params.get("bias_strength", defaults.bias_strength)),
         )
+
 
 @dataclass(slots=True)
 class _DayTradingState:
@@ -122,7 +126,9 @@ class DayTradingStrategy(BaseStrategy):
                     self._build_signal(
                         snapshot,
                         side="sell",
-                        confidence=min(1.0, abs(adjusted_strength) / self._settings.entry_threshold),
+                        confidence=min(
+                            1.0, abs(adjusted_strength) / self._settings.entry_threshold
+                        ),
                         strength=adjusted_strength,
                         volatility=volatility,
                         direction="short",
@@ -179,7 +185,9 @@ class DayTradingStrategy(BaseStrategy):
         atr = float(snapshot.indicators.get("atr", 0.0))
         state.atrs.append(max(atr, self._settings.atr_floor))
 
-    def _open_position(self, state: _DayTradingState, *, price: float, atr: float, direction: str) -> None:
+    def _open_position(
+        self, state: _DayTradingState, *, price: float, atr: float, direction: str
+    ) -> None:
         state.position = direction
         state.entry_price = price
         state.entry_atr = max(atr, self._settings.atr_floor)
@@ -247,4 +255,3 @@ class DayTradingStrategy(BaseStrategy):
 
 
 __all__ = ["DayTradingSettings", "DayTradingStrategy"]
-

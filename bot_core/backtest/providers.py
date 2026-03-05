@@ -1,4 +1,5 @@
 """Wspólny interfejs providerów danych historycznych (OHLCV/Trades)."""
+
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -62,14 +63,11 @@ class TradeTick:
 class HistoryProvider(Protocol):
     """Wspólny interfejs loaderów danych historycznych dla backtestu i runtime."""
 
-    def iter_ohlcv(self) -> Iterable[OHLCVBar]:
-        ...
+    def iter_ohlcv(self) -> Iterable[OHLCVBar]: ...
 
-    def iter_rows(self) -> Iterable[Tuple[datetime, Mapping[str, float]]]:
-        ...
+    def iter_rows(self) -> Iterable[Tuple[datetime, Mapping[str, float]]]: ...
 
-    def history_until(self, index: int) -> pd.DataFrame:
-        ...
+    def history_until(self, index: int) -> pd.DataFrame: ...
 
     @property
     def dataframe(self) -> pd.DataFrame:  # pragma: no cover - dostęp debugowy
@@ -96,7 +94,9 @@ class PandasHistoryProvider(HistoryProvider):
     def iter_ohlcv(self) -> Iterable[OHLCVBar]:
         for ts, row in self._data.iterrows():
             timestamp = (
-                ts if isinstance(ts, datetime) else datetime.fromtimestamp(float(ts) / 1000.0, tz=timezone.utc)
+                ts
+                if isinstance(ts, datetime)
+                else datetime.fromtimestamp(float(ts) / 1000.0, tz=timezone.utc)
             )
             if timestamp.tzinfo is None:
                 timestamp = timestamp.replace(tzinfo=timezone.utc)

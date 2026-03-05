@@ -161,7 +161,9 @@ def test_auto_trade_engine_generates_orders_and_signals(monkeypatch) -> None:
 
     adapter.subscribe(
         EventType.AUTOTRADE_STATUS,
-        lambda evt: statuses.extend([ev.payload["status"] for ev in (evt if isinstance(evt, list) else [evt])]),
+        lambda evt: statuses.extend(
+            [ev.payload["status"] for ev in (evt if isinstance(evt, list) else [evt])]
+        ),
     )
 
     cfg = AutoTradeConfig(
@@ -397,6 +399,7 @@ def test_auto_trade_engine_adjustment_threshold_blocks_signal(monkeypatch) -> No
     assert effective["signal_after_adjustment"] == pytest.approx(0.8)
     assert effective["signal_after_clamp"] == pytest.approx(0.2)
 
+
 def test_auto_trade_engine_normalizes_routing_context() -> None:
     adapter = _make_sync_adapter()
     cfg = AutoTradeConfig(
@@ -410,7 +413,9 @@ def test_auto_trade_engine_normalizes_routing_context() -> None:
         "primary_exchange": "   ",
         "strategy": "  alt_scalp  ",
     }
-    engine = AutoTradeEngine(adapter, lambda *args, **kwargs: None, cfg, decision_journal_context=context)
+    engine = AutoTradeEngine(
+        adapter, lambda *args, **kwargs: None, cfg, decision_journal_context=context
+    )
 
     detail = engine._augment_status_detail({})
 
@@ -521,9 +526,7 @@ class _WorkflowStub:
     ) -> tuple[PresetAvailability, ...]:
         return self._availability
 
-    def activation_history(
-        self, *, limit: int | None = None
-    ) -> tuple[RegimePresetActivation, ...]:
+    def activation_history(self, *, limit: int | None = None) -> tuple[RegimePresetActivation, ...]:
         entries: tuple[RegimePresetActivation, ...] = tuple(self._history_entries)
         if limit is None:
             return entries
@@ -535,9 +538,7 @@ class _WorkflowStub:
             return entries
         return entries[-parsed:]
 
-    def activation_history_frame(
-        self, *, limit: int | None = None
-    ) -> pd.DataFrame:
+    def activation_history_frame(self, *, limit: int | None = None) -> pd.DataFrame:
         entries = self.activation_history(limit=limit)
         columns = [
             "activated_at",
@@ -602,9 +603,7 @@ class _InferenceStub:
     ) -> tuple[PresetAvailability, ...]:
         return self._availability
 
-    def activation_history(
-        self, *, limit: int | None = None
-    ) -> tuple[RegimePresetActivation, ...]:
+    def activation_history(self, *, limit: int | None = None) -> tuple[RegimePresetActivation, ...]:
         entries: tuple[RegimePresetActivation, ...] = tuple(self._history_entries)
         if limit is None:
             return entries
@@ -616,9 +615,7 @@ class _InferenceStub:
             return entries
         return entries[-parsed:]
 
-    def activation_history_frame(
-        self, *, limit: int | None = None
-    ) -> pd.DataFrame:
+    def activation_history_frame(self, *, limit: int | None = None) -> pd.DataFrame:
         entries = self.activation_history(limit=limit)
         columns = [
             "activated_at",
@@ -652,7 +649,9 @@ class _InferenceStub:
             )
         frame = pd.DataFrame(rows, columns=columns)
         if not frame.empty:
-            frame["regime"] = frame["regime"].apply(lambda r: r.value if isinstance(r, MarketRegime) else r)
+            frame["regime"] = frame["regime"].apply(
+                lambda r: r.value if isinstance(r, MarketRegime) else r
+            )
             frame["preset_regime"] = frame["preset_regime"].apply(
                 lambda r: r.value if isinstance(r, MarketRegime) else r
             )
@@ -911,8 +910,13 @@ def test_auto_trade_engine_uses_regime_workflow_decision(monkeypatch) -> None:
     assert params_payload["ema_fast_period"] == expected_params.ema_fast_period
     assert params_payload["ema_slow_period"] == expected_params.ema_slow_period
     assert params_payload["ensemble_weights"] == decision_params.ensemble_weights
-    assert params_payload["day_trading_momentum_window"] == expected_params.day_trading_momentum_window
-    assert params_payload["day_trading_volatility_window"] == expected_params.day_trading_volatility_window
+    assert (
+        params_payload["day_trading_momentum_window"] == expected_params.day_trading_momentum_window
+    )
+    assert (
+        params_payload["day_trading_volatility_window"]
+        == expected_params.day_trading_volatility_window
+    )
     metadata_block = latest_signal["metadata"]
     assert metadata_block["license_tiers"] == ["standard", "professional"]
     assert "activation" in metadata_block
@@ -1082,9 +1086,7 @@ def test_auto_risk_freeze_sync_state(monkeypatch) -> None:
     assert extend_event["strategy"] == "trend_following"
     unfreeze_event = exported[-1]
     assert unfreeze_event["mode"] == "auto"
-    assert float(unfreeze_event["frozen_for"]) == pytest.approx(
-        release_detail["frozen_for"]
-    )
+    assert float(unfreeze_event["frozen_for"]) == pytest.approx(release_detail["frozen_for"])
     assert unfreeze_event["primary_exchange"] == "binance"
     assert unfreeze_event["strategy"] == "trend_following"
 
@@ -1734,9 +1736,7 @@ def test_auto_trade_engine_uses_ai_inference(monkeypatch) -> None:
         mean_reversion_window=4,
         mean_reversion_z=0.5,
     )
-    inference = _InferenceStub(
-        ModelScore(expected_return_bps=120.0, success_probability=0.8)
-    )
+    inference = _InferenceStub(ModelScore(expected_return_bps=120.0, success_probability=0.8))
     engine = AutoTradeEngine(
         adapter,
         lambda *_: None,
@@ -1836,9 +1836,7 @@ def test_auto_trade_engine_uses_ai_inference(monkeypatch) -> None:
     exported = list(journal.export())
     assert len(exported) >= 2, "expected inference journal events"
     positive_event = next(
-        event
-        for event in reversed(exported)
-        if float(event.get("expected_return_bps", 0.0)) > 0.0
+        event for event in reversed(exported) if float(event.get("expected_return_bps", 0.0)) > 0.0
     )
     assert positive_event["event"] == "ai_inference"
     assert positive_event["environment"] == "paper"
@@ -1856,18 +1854,14 @@ def test_auto_trade_engine_uses_ai_inference(monkeypatch) -> None:
     positive_event_scored_at = datetime.fromisoformat(positive_event["scored_at"])
     assert positive_event_scored_at.tzinfo == timezone.utc
     negative_event = next(
-        event
-        for event in reversed(exported)
-        if float(event.get("expected_return_bps", 0.0)) < 0.0
+        event for event in reversed(exported) if float(event.get("expected_return_bps", 0.0)) < 0.0
     )
     assert negative_event["event"] == "ai_inference"
     assert negative_event["environment"] == "paper"
     assert negative_event["primary_exchange"] == "binance"
     assert negative_event["strategy"] == "trend_following"
     assert float(negative_event["expected_return_bps"]) == pytest.approx(-150.0)
-    assert float(negative_event["signal_before_adjustment"]) == pytest.approx(
-        negative_base_signal
-    )
+    assert float(negative_event["signal_before_adjustment"]) == pytest.approx(negative_base_signal)
     assert float(negative_event["signal_after_adjustment"]) == pytest.approx(
         negative_meta["signal_after_adjustment"]
     )

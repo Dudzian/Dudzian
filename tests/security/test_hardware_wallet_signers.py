@@ -91,7 +91,9 @@ def test_transaction_signer_selector_close_closes_all_unique_signers() -> None:
     assert dummy.closed == 1
 
 
-def test_build_transaction_signer_selector_closes_partial_signers(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_build_transaction_signer_selector_closes_partial_signers(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     built: list[object] = []
 
     class TrackingSigner:
@@ -156,7 +158,9 @@ def test_signers_expose_description_metadata() -> None:
 def test_selector_describe_signers_deduplicates_instances() -> None:
     default = HmacTransactionSigner(key=b"default-secret", key_id="default")
     ledger = LedgerSigner(seed=b"ledger-selector")
-    selector = TransactionSignerSelector(default=default, overrides={"ledger": ledger, "alias": ledger})
+    selector = TransactionSignerSelector(
+        default=default, overrides={"ledger": ledger, "alias": ledger}
+    )
 
     descriptions = selector.describe_signers()
     assert descriptions[None]["algorithm"] == "HMAC-SHA256"
@@ -189,7 +193,7 @@ def test_selector_describe_signers_handles_errors(caplog: pytest.LogCaptureFixtu
             # W repo mamy historycznie mojibake w literałach testowych; runtime na Windows
             # bywa też z replacement chars U+FFFD.
             "Nie uda�o si� pobra� opisu podpisuj�cego",
-            "Nie uda\uFFFDo si\uFFFD pobra\uFFFD opisu podpisuj\uFFFDcego",
+            "Nie uda\ufffdo si\ufffd pobra\ufffd opisu podpisuj\ufffdcego",
         )
     )
 
@@ -253,6 +257,7 @@ def test_selector_describe_audit_bundle_reports_conflicting_key_id() -> None:
     assert mismatch_issue["severity"] == "warning"
     assert set(mismatch_issue["hardware_modes"]) == {True, False}
 
+
 def test_selector_verify_logs_and_returns_false_on_error(caplog: pytest.LogCaptureFixture) -> None:
     class ExplodingSigner(HmacTransactionSigner):
         def verify(self, payload: Any, signature: Mapping[str, Any]) -> bool:  # type: ignore[override]
@@ -262,7 +267,10 @@ def test_selector_verify_logs_and_returns_false_on_error(caplog: pytest.LogCaptu
     selector = TransactionSignerSelector(default=signer)
 
     with caplog.at_level("DEBUG"):
-        assert selector.verify(None, {"operation": "withdrawal"}, {"algorithm": "HMAC-SHA256"}) is False
+        assert (
+            selector.verify(None, {"operation": "withdrawal"}, {"algorithm": "HMAC-SHA256"})
+            is False
+        )
 
     assert any(
         variant in record.message
@@ -270,7 +278,7 @@ def test_selector_verify_logs_and_returns_false_on_error(caplog: pytest.LogCaptu
         for variant in (
             # W zależności od kodowania/Windows log może mieć mojibake albo replacement chars.
             "Nie uda�o si� zweryfikowa� podpisu",
-            "Nie uda\uFFFDo si\uFFFD zweryfikowa\uFFFD podpisu",
+            "Nie uda\ufffdo si\ufffd zweryfikowa\ufffd podpisu",
         )
     )
 
@@ -292,10 +300,14 @@ def test_ledger_verify_uses_metadata_public_key() -> None:
         int(str(y_value), 16),
         ec.SECP256K1(),
     )
-    signature_without_xy["device_public_key"] = numbers.public_key().public_bytes(
-        encoding=serialization.Encoding.X962,
-        format=serialization.PublicFormat.UncompressedPoint,
-    ).hex()
+    signature_without_xy["device_public_key"] = (
+        numbers.public_key()
+        .public_bytes(
+            encoding=serialization.Encoding.X962,
+            format=serialization.PublicFormat.UncompressedPoint,
+        )
+        .hex()
+    )
 
     assert verifier.verify(payload, signature_without_xy) is True
 

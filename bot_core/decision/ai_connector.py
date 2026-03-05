@@ -1,4 +1,5 @@
 """Integracja Decision Engine z natywnym menedżerem modeli ``bot_core.ai.manager``."""
+
 from __future__ import annotations
 
 from dataclasses import dataclass, field
@@ -39,12 +40,10 @@ class AIManagerDecisionConnector:
         if self.threshold_bps is None:
             self.threshold_bps = float(getattr(self.ai_manager, "ai_threshold_bps", 0.0) or 0.0)
         self._strategy_profiles = {
-            str(key): str(value)
-            for key, value in (self.strategy_profiles or {}).items()
+            str(key): str(value) for key, value in (self.strategy_profiles or {}).items()
         }
         self._risk_profile_map = {
-            str(key).lower(): str(value)
-            for key, value in (self.risk_profile_map or {}).items()
+            str(key).lower(): str(value) for key, value in (self.risk_profile_map or {}).items()
         }
 
     async def generate_candidates(
@@ -68,7 +67,9 @@ class AIManagerDecisionConnector:
             feature_cols=feature_cols,
         )
         if not isinstance(prediction_series, pd.Series):
-            prediction_series = pd.Series(prediction_series, index=market_data.index[-len(prediction_series) :])
+            prediction_series = pd.Series(
+                prediction_series, index=market_data.index[-len(prediction_series) :]
+            )
         candidates: list[DecisionCandidate] = []
         base_metadata: Dict[str, object] = dict(metadata or {})
         for ts, signal in prediction_series.items():

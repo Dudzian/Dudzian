@@ -1,4 +1,5 @@
 """Adaptive learning helpers integrating regime-aware strategy selection."""
+
 from __future__ import annotations
 
 import logging
@@ -195,7 +196,11 @@ class AdaptiveStrategyLearner:
         except Exception:  # pragma: no cover - corrupted state should not break runtime
             _LOGGER.exception("Nie udało się odczytać stanu adaptive learnera z %s", path)
             return
-        state = artifact.model_state.get("policies") if isinstance(artifact.model_state, Mapping) else None
+        state = (
+            artifact.model_state.get("policies")
+            if isinstance(artifact.model_state, Mapping)
+            else None
+        )
         if not isinstance(state, Mapping):
             return
         for regime_key, payload in state.items():
@@ -260,7 +265,9 @@ class AdaptiveStrategyLearner:
         key = _normalise_regime(regime)
         policy = self._policies.get(key)
         if policy is None:
-            policy = AdaptiveRegimePolicy(regime=key, exploration=self.exploration, min_trials=self.min_trials)
+            policy = AdaptiveRegimePolicy(
+                regime=key, exploration=self.exploration, min_trials=self.min_trials
+            )
             self._policies[key] = policy
         return policy
 
@@ -294,7 +301,9 @@ class AdaptiveStrategyLearner:
                     timestamp=timestamp,
                 )
             except Exception:  # pragma: no cover - orchestrator integration should not be fatal
-                _LOGGER.debug("Nie udało się zarejestrować metryk strategii w orchestratorze", exc_info=True)
+                _LOGGER.debug(
+                    "Nie udało się zarejestrować metryk strategii w orchestratorze", exc_info=True
+                )
 
     @staticmethod
     def _reward_from_metrics(metrics: Mapping[str, float]) -> float:
@@ -354,9 +363,7 @@ class AdaptiveStrategyLearner:
             exploitation = max(-1.0, min(1.0, stats.mean_reward))
             exploration_bonus = 0.0
             if policy is not None and stats.plays > 0 and total_plays > 0:
-                exploration_bonus = math.sqrt(
-                    math.log(total_plays + 1.0) / max(1, stats.plays)
-                )
+                exploration_bonus = math.sqrt(math.log(total_plays + 1.0) / max(1, stats.plays))
             base_scores[stats.name] = max(
                 0.0, exploitation + self.exploration * exploration_bonus + 1.0
             )
@@ -364,13 +371,9 @@ class AdaptiveStrategyLearner:
             base_scores[strategy] = 1.0
         total_score = sum(base_scores.values())
         if total_score <= 0:
-            base_distribution = {
-                name: 1.0 / float(len(base_scores)) for name in base_scores
-            }
+            base_distribution = {name: 1.0 / float(len(base_scores)) for name in base_scores}
         else:
-            base_distribution = {
-                name: value / total_score for name, value in base_scores.items()
-            }
+            base_distribution = {name: value / total_score for name, value in base_scores.items()}
         confidence = normalized_metrics.get("confidence", 0.6)
         if not math.isfinite(confidence):
             confidence = 0.6

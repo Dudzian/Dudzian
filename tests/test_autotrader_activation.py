@@ -56,9 +56,7 @@ def test_auto_trader_requires_manual_confirmation() -> None:
     assert trader.enable_auto_trade is True
     assert trader._started is True
     assert trader._auto_trade_thread_active is False
-    assert any(
-        "Auto-trade awaiting explicit activation" in message for message in emitter.logs
-    )
+    assert any("Auto-trade awaiting explicit activation" in message for message in emitter.logs)
 
     trader.confirm_auto_trade(True)
     time.sleep(0.02)

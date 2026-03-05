@@ -1,4 +1,5 @@
 """Asynchroniczne testy integracyjne MultiStrategyScheduler."""
+
 from __future__ import annotations
 
 import asyncio
@@ -110,7 +111,9 @@ def test_scheduler_applies_capital_allocation_and_signal_limits() -> None:
     trend_ctx, grid_ctx = scheduler._schedules
     assert trend_ctx.active_max_signals == 2
     assert grid_ctx.active_max_signals >= 1
-    assert trend_ctx.metrics["allocator_signal_factor"] >= grid_ctx.metrics["allocator_signal_factor"]
+    assert (
+        trend_ctx.metrics["allocator_signal_factor"] >= grid_ctx.metrics["allocator_signal_factor"]
+    )
 
 
 def test_tag_quota_policy_updates_scheduler_state() -> None:
@@ -593,9 +596,7 @@ def test_risk_profile_budget_allocation_respects_profiles() -> None:
     trend_secondary.metrics.update({"signals": 1.0, "avg_confidence": 0.2})
     grid_schedule.metrics.update({"signals": 2.0, "avg_confidence": 0.6})
 
-    asyncio.run(
-        scheduler._maybe_rebalance_allocation(datetime(2024, 1, 1, tzinfo=timezone.utc))
-    )
+    asyncio.run(scheduler._maybe_rebalance_allocation(datetime(2024, 1, 1, tzinfo=timezone.utc)))
 
     balanced_share = trend_primary.allocator_signal_factor + trend_secondary.allocator_signal_factor
     aggressive_share = grid_schedule.allocator_signal_factor
@@ -820,10 +821,12 @@ def test_replace_capital_policy_rebalances_immediately() -> None:
 
     async def _apply() -> None:
         await scheduler.replace_capital_policy(
-            FixedWeightAllocation({
-                "trend_schedule": 0.1,
-                "grid_schedule": 0.9,
-            }),
+            FixedWeightAllocation(
+                {
+                    "trend_schedule": 0.1,
+                    "grid_schedule": 0.9,
+                }
+            ),
             timestamp=datetime(2024, 1, 1, tzinfo=timezone.utc),
         )
 

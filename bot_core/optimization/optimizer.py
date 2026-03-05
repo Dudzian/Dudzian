@@ -1,4 +1,5 @@
 """Silnik optymalizacji parametrów strategii oraz harmonogram."""
+
 from __future__ import annotations
 
 import itertools
@@ -22,7 +23,9 @@ except Exception:  # pragma: no cover - środowiska bez optuna
     optuna = None  # type: ignore[assignment]
 
 
-StrategyEvaluator = Callable[[StrategyEngine, Mapping[str, Any]], tuple[float, Mapping[str, Any]] | float]
+StrategyEvaluator = Callable[
+    [StrategyEngine, Mapping[str, Any]], tuple[float, Mapping[str, Any]] | float
+]
 
 
 class OptimizationTaskQueue:
@@ -33,7 +36,9 @@ class OptimizationTaskQueue:
 
         self._executor = ThreadPoolExecutor(max_workers=max(1, int(max_workers)))
 
-    def submit(self, fn: Callable[[], StrategyOptimizationReport | None]) -> StrategyOptimizationReport | None:
+    def submit(
+        self, fn: Callable[[], StrategyOptimizationReport | None]
+    ) -> StrategyOptimizationReport | None:
         future = self._executor.submit(fn)
         return future.result()
 
@@ -254,9 +259,7 @@ class StrategyOptimizer:
     ) -> Iterable[Mapping[str, Any]]:
         base_params = dict(base_definition.parameters)
         grid_items = {
-            key: tuple(dict.fromkeys(value))
-            for key, value in search_grid.items()
-            if value
+            key: tuple(dict.fromkeys(value)) for key, value in search_grid.items() if value
         }
         if algorithm == "grid":
             # Rozszerz zakresy ciągłe na siatkę jeśli zdefiniowano krok.
@@ -304,11 +307,15 @@ class StrategyOptimizer:
                     if step in (None, 0):
                         value = sampler.sample_float(study, trial, key, low, high)
                     else:
-                        value = sampler.sample_float(study, trial, key, low, high, step=abs(float(step)))
+                        value = sampler.sample_float(
+                            study, trial, key, low, high, step=abs(float(step))
+                        )
                     candidate[key] = value
                 for key, choices in categorical_items:
                     if choices:
-                        candidate[key] = sampler.sample_categorical(study, trial, key, list(choices))
+                        candidate[key] = sampler.sample_categorical(
+                            study, trial, key, list(choices)
+                        )
                 yield candidate
             return
 
@@ -394,8 +401,12 @@ class OptimizationScheduler:
         bounds: dict[str, tuple[float, float, float | None]] = {}
         for key, bound in getattr(config.search_space, "bounds", {}).items():
             try:
-                low = float(getattr(bound, "lower", getattr(bound, "min", getattr(bound, "minimum"))))
-                high = float(getattr(bound, "upper", getattr(bound, "max", getattr(bound, "maximum"))))
+                low = float(
+                    getattr(bound, "lower", getattr(bound, "min", getattr(bound, "minimum")))
+                )
+                high = float(
+                    getattr(bound, "upper", getattr(bound, "max", getattr(bound, "maximum")))
+                )
             except Exception:
                 continue
             step_value = getattr(bound, "step", None)
@@ -440,7 +451,9 @@ class OptimizationScheduler:
             if not any(task.cadence_seconds > 0 for task in self._tasks.values()):
                 return
             self._stop_event.clear()
-            self._thread = threading.Thread(target=self._run_loop, name="optimization-scheduler", daemon=True)
+            self._thread = threading.Thread(
+                target=self._run_loop, name="optimization-scheduler", daemon=True
+            )
             self._thread.start()
 
     def stop(self) -> None:
@@ -552,6 +565,7 @@ class OptimizationScheduler:
             export_report(report, self._report_directory)
         except Exception:  # pragma: no cover - raportowanie nie powinno zatrzymywać harmonogramu
             self._logger.debug("Nie udało się zapisać raportu optymalizacji", exc_info=True)
+
 
 __all__ = [
     "OptimizationScheduler",

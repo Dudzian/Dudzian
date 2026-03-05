@@ -5,7 +5,11 @@ from pathlib import Path
 
 import pytest
 
-from bot_core.config.models import InstrumentBackfillWindow, InstrumentConfig, InstrumentUniverseConfig
+from bot_core.config.models import (
+    InstrumentBackfillWindow,
+    InstrumentConfig,
+    InstrumentUniverseConfig,
+)
 from bot_core.data.ohlcv.manifest_report import generate_manifest_report, summarize_status
 from bot_core.data.ohlcv.sqlite_storage import SQLiteCacheStorage
 
@@ -33,19 +37,21 @@ def sample_universe() -> InstrumentUniverseConfig:
                 quote_asset="USDT",
                 categories=("core",),
                 exchange_symbols={"binance_spot": "ETHUSDT"},
-                backfill_windows=(
-                    InstrumentBackfillWindow(interval="1d", lookback_days=365),
-                ),
+                backfill_windows=(InstrumentBackfillWindow(interval="1d", lookback_days=365),),
             ),
         ),
     )
 
 
-def test_report_marks_missing_metadata(tmp_path: Path, sample_universe: InstrumentUniverseConfig) -> None:
+def test_report_marks_missing_metadata(
+    tmp_path: Path, sample_universe: InstrumentUniverseConfig
+) -> None:
     manifest = tmp_path / "manifest.sqlite"
     storage = SQLiteCacheStorage(manifest, store_rows=False)
     metadata = storage.metadata()
-    metadata["last_timestamp::BTCUSDT::1d"] = str(int(datetime(2024, 5, 1, tzinfo=timezone.utc).timestamp() * 1000))
+    metadata["last_timestamp::BTCUSDT::1d"] = str(
+        int(datetime(2024, 5, 1, tzinfo=timezone.utc).timestamp() * 1000)
+    )
     metadata["row_count::BTCUSDT::1d"] = "200"
 
     entries = generate_manifest_report(
@@ -68,7 +74,9 @@ def test_report_marks_missing_metadata(tmp_path: Path, sample_universe: Instrume
     assert eth_daily.status == "missing_metadata"
 
 
-def test_report_handles_invalid_timestamp(tmp_path: Path, sample_universe: InstrumentUniverseConfig) -> None:
+def test_report_handles_invalid_timestamp(
+    tmp_path: Path, sample_universe: InstrumentUniverseConfig
+) -> None:
     manifest = tmp_path / "manifest.sqlite"
     storage = SQLiteCacheStorage(manifest, store_rows=False)
     metadata = storage.metadata()
@@ -86,7 +94,9 @@ def test_report_handles_invalid_timestamp(tmp_path: Path, sample_universe: Instr
     assert entry.last_timestamp_iso == "not-a-number"
 
 
-def test_summarize_status_counts_entries(sample_universe: InstrumentUniverseConfig, tmp_path: Path) -> None:
+def test_summarize_status_counts_entries(
+    sample_universe: InstrumentUniverseConfig, tmp_path: Path
+) -> None:
     manifest = tmp_path / "manifest.sqlite"
     storage = SQLiteCacheStorage(manifest, store_rows=False)
     metadata = storage.metadata()

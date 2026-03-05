@@ -10,7 +10,14 @@ import yaml
 from bot_core.execution.live_router import LiveExecutionRouter
 from bot_core.execution.base import ExecutionContext
 from bot_core.execution.paper import PaperTradingExecutionService
-from bot_core.exchanges.base import AccountSnapshot, Environment, ExchangeAdapter, ExchangeCredentials, OrderRequest, OrderResult
+from bot_core.exchanges.base import (
+    AccountSnapshot,
+    Environment,
+    ExchangeAdapter,
+    ExchangeCredentials,
+    OrderRequest,
+    OrderResult,
+)
 from bot_core.runtime.pipeline import build_daily_trend_pipeline
 from bot_core.config.models import RuntimeExecutionLiveSettings, RuntimeExecutionSettings
 from bot_core.security import SecretManager, SecretStorage
@@ -104,7 +111,9 @@ class RecordingLiveAdapter(ExchangeAdapter):
 
 
 @pytest.fixture()
-def live_runtime_fixture(tmp_path: Path) -> tuple[Path, RecordingLiveAdapter, SecretManager, _RuntimeConfigStub]:
+def live_runtime_fixture(
+    tmp_path: Path,
+) -> tuple[Path, RecordingLiveAdapter, SecretManager, _RuntimeConfigStub]:
     candles = [
         [1_600_000_000_000, 100.0, 105.0, 95.0, 102.0, 12.0],
         [1_600_086_400_000, 102.0, 107.0, 101.0, 104.0, 11.0],
@@ -126,9 +135,7 @@ def live_runtime_fixture(tmp_path: Path) -> tuple[Path, RecordingLiveAdapter, Se
                 "hard_drawdown_pct": 0.2,
             }
         },
-        "runtime": {
-            "controllers": {"daily_trend_core": {"tick_seconds": 3600, "interval": "1h"}}
-        },
+        "runtime": {"controllers": {"daily_trend_core": {"tick_seconds": 3600, "interval": "1h"}}},
         "strategies": {
             "core_daily_trend": {
                 "engine": "daily_trend_momentum",
@@ -213,7 +220,9 @@ def live_runtime_fixture(tmp_path: Path) -> tuple[Path, RecordingLiveAdapter, Se
     return core_path, adapter, secret_manager, runtime_config
 
 
-def test_live_execution_flow(live_runtime_fixture: tuple[Path, RecordingLiveAdapter, SecretManager, _RuntimeConfigStub]) -> None:
+def test_live_execution_flow(
+    live_runtime_fixture: tuple[Path, RecordingLiveAdapter, SecretManager, _RuntimeConfigStub],
+) -> None:
     config_path, adapter, secret_manager, runtime_config = live_runtime_fixture
 
     pipeline = build_daily_trend_pipeline(

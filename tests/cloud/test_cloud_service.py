@@ -26,6 +26,7 @@ except Exception:
         """
         Fallback tylko do testów: wystarczy, żeby plik się importował.
         """
+
         UNKNOWN = "unknown"
 
 
@@ -203,16 +204,10 @@ def _invoke_cloud_cli(
                 except json.JSONDecodeError:
                     time.sleep(0.25)
                     continue
-                if (
-                    data.get("healthStatus") == "ready"
-                    and data.get("orchestratorReady") is True
-                ):
+                if data.get("healthStatus") == "ready" and data.get("orchestratorReady") is True:
                     break
                 time.sleep(0.25)
-            if not (
-                data.get("healthStatus") == "ready"
-                and data.get("orchestratorReady") is True
-            ):
+            if not (data.get("healthStatus") == "ready" and data.get("orchestratorReady") is True):
                 _terminate_process(proc)
                 output = _read_available_stdout(proc)
                 exit_code = proc.poll()

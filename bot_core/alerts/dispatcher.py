@@ -1,4 +1,5 @@
 """Lightweight alert dispatcher for in-process listeners."""
+
 from __future__ import annotations
 
 import logging
@@ -110,7 +111,9 @@ class AlertDispatcher:
         self._lock = threading.Lock()
         self._counter = 0
 
-    def register(self, listener: Callable[[AlertEvent], None], *, name: Optional[str] = None) -> str:
+    def register(
+        self, listener: Callable[[AlertEvent], None], *, name: Optional[str] = None
+    ) -> str:
         """Register a listener and return its identifier."""
 
         with self._lock:

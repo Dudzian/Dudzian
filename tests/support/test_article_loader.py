@@ -39,7 +39,9 @@ def test_loader_parses_metadata(tmp_path: Path) -> None:
     assert article.summary == "Szybki start"
     assert article.tags == ("faq", "wsparcie")
     assert article.category == "pomoc"
-    assert article.runbooks and article.runbooks[0].path == Path("docs/operations/runbooks/README.md")
+    assert article.runbooks and article.runbooks[0].path == Path(
+        "docs/operations/runbooks/README.md"
+    )
 
 
 def test_search_index_scores_matches(tmp_path: Path) -> None:

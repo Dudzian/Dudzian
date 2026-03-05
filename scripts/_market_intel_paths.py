@@ -98,7 +98,7 @@ def resolve_market_intel_path(
     suggestion = (
         "python scripts/build_market_intel_metrics.py "
         f"--environment {environment} --governor {governor} "
-        f"--output \"{suggestion_output}\""
+        f'--output "{suggestion_output}"'
     )
 
     details = str(raw_value or expanded)

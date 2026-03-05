@@ -45,9 +45,7 @@ def _print_status(result) -> None:
 
 
 def _summarize(results) -> None:
-    healthy = [
-        r for r in results if r.exists and r.verified and r.up_to_date and not r.issues
-    ]
+    healthy = [r for r in results if r.exists and r.verified and r.up_to_date and not r.issues]
     print(
         f"\nSummary: {len(healthy)}/{len(results)} presets verified and current; {len(results) - len(healthy)} require attention."
     )

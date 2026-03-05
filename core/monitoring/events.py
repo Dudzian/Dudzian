@@ -1,4 +1,5 @@
 """Definicje zdarzeń monitorujących runtime retrainingu i onboarding."""
+
 from __future__ import annotations
 
 from dataclasses import dataclass, field
@@ -101,8 +102,7 @@ class ComplianceAuditCompleted(MonitoringEvent):
 class EventPublisher(Protocol):
     """Interfejs do publikacji zdarzeń monitorujących."""
 
-    def __call__(self, event: MonitoringEvent) -> None:
-        ...
+    def __call__(self, event: MonitoringEvent) -> None: ...
 
 
 __all__ = [

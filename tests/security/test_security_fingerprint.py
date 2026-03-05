@@ -273,9 +273,7 @@ def test_collect_security_signals_detects_virt_what_vm_marker():
 
 
 def test_collect_security_signals_detects_lscpu_container_marker():
-    signals = _collect_signals(
-        lscpu_info={"virtualization_type": "container"}
-    )
+    signals = _collect_signals(lscpu_info={"virtualization_type": "container"})
 
     assert signals.vm_indicators["lscpu"]
     assert signals.vm_indicators["container"]

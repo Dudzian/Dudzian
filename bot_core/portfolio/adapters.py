@@ -9,6 +9,7 @@ from typing import Mapping
 try:  # pragma: no cover - moduły mogą być nieobecne w lżejszych buildach
     from bot_core.market_intel import MarketIntelSnapshot  # type: ignore
 except Exception:  # pragma: no cover - fallback minimalny
+
     @dataclass(slots=True)
     class MarketIntelSnapshot:  # type: ignore[redefinition]
         symbol: str
@@ -24,9 +25,11 @@ except Exception:  # pragma: no cover - fallback minimalny
         momentum_score: float | None = None
         metadata: Mapping[str, float] = field(default_factory=dict)
 
+
 try:  # pragma: no cover - opcjonalne metryki SLO
     from bot_core.observability.slo import SLOStatus  # type: ignore
 except Exception:  # pragma: no cover - fallback minimalny
+
     @dataclass(slots=True)
     class SLOStatus:  # type: ignore[redefinition]
         status: str | None = None
@@ -37,9 +40,11 @@ except Exception:  # pragma: no cover - fallback minimalny
         def is_breach(self) -> bool:
             return (self.status or "").lower() == "breach"
 
+
 try:  # pragma: no cover - zależność od warstwy ryzyka
     from bot_core.risk import StressOverrideRecommendation  # type: ignore
 except Exception:  # pragma: no cover - fallback minimalny
+
     @dataclass(slots=True)
     class StressOverrideRecommendation:  # type: ignore[redefinition]
         symbol: str | None = None

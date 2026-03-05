@@ -1,4 +1,5 @@
 """Adapter REST dla Kraken Spot zgodny z interfejsem `ExchangeAdapter`."""
+
 from __future__ import annotations
 
 import base64
@@ -262,7 +263,9 @@ class KrakenSpotAdapter(ExchangeAdapter):
     def _build_stream(self, scope: str, channels: Sequence[str]) -> LocalLongPollStream:
         stream_settings = dict(self._stream_settings())
         base_url = str(
-            stream_settings.get("base_url", self._settings.get("stream_base_url", "http://127.0.0.1:8765"))
+            stream_settings.get(
+                "base_url", self._settings.get("stream_base_url", "http://127.0.0.1:8765")
+            )
         )
         default_path = f"/stream/{self.name}/{scope}"
         path = str(
@@ -279,7 +282,9 @@ class KrakenSpotAdapter(ExchangeAdapter):
             )
         )
         timeout = float(stream_settings.get("timeout", self._settings.get("stream_timeout", 10.0)))
-        max_retries = int(stream_settings.get("max_retries", self._settings.get("stream_max_retries", 3)))
+        max_retries = int(
+            stream_settings.get("max_retries", self._settings.get("stream_max_retries", 3))
+        )
         backoff_base = float(
             stream_settings.get("backoff_base", self._settings.get("stream_backoff_base", 0.25))
         )
@@ -417,13 +422,20 @@ class KrakenSpotAdapter(ExchangeAdapter):
     def fetch_account_snapshot(self) -> AccountSnapshot:  # type: ignore[override]
         if "read" not in self._permission_set:
             raise PermissionError("Poświadczenia Kraken nie mają uprawnień do odczytu.")
+
         def _call() -> AccountSnapshot:
-            balances_payload = self._private_request(_RequestContext(path="/0/private/Balance", params={}))
+            balances_payload = self._private_request(
+                _RequestContext(path="/0/private/Balance", params={})
+            )
             trade_balance_payload = self._private_request(
-                _RequestContext(path="/0/private/TradeBalance", params={"asset": self._valuation_asset})
+                _RequestContext(
+                    path="/0/private/TradeBalance", params={"asset": self._valuation_asset}
+                )
             )
 
-            balances_data = balances_payload.get("result", {}) if isinstance(balances_payload, Mapping) else {}
+            balances_data = (
+                balances_payload.get("result", {}) if isinstance(balances_payload, Mapping) else {}
+            )
             balances: MutableMapping[str, float] = {}
             for asset, amount in balances_data.items():
                 try:
@@ -431,7 +443,11 @@ class KrakenSpotAdapter(ExchangeAdapter):
                 except (TypeError, ValueError):
                     continue
 
-            trade_data = trade_balance_payload.get("result", {}) if isinstance(trade_balance_payload, Mapping) else {}
+            trade_data = (
+                trade_balance_payload.get("result", {})
+                if isinstance(trade_balance_payload, Mapping)
+                else {}
+            )
             total_equity = float(trade_data.get("eb", trade_data.get("e", 0.0)) or 0.0)
             available_margin = float(trade_data.get("mf", 0.0) or 0.0)
             maintenance_margin = float(trade_data.get("m", 0.0) or 0.0)
@@ -479,7 +495,9 @@ class KrakenSpotAdapter(ExchangeAdapter):
                 for candle in values:
                     if isinstance(candle, Sequence) and len(candle) >= 6:
                         ts, o, h, l, c, v = candle[:6]
-                        candles.append([float(ts), float(o), float(h), float(l), float(c), float(v)])
+                        candles.append(
+                            [float(ts), float(o), float(h), float(l), float(c), float(v)]
+                        )
                 break
         if limit is not None:
             candles = candles[:limit]
@@ -624,7 +642,9 @@ class KrakenSpotAdapter(ExchangeAdapter):
         )
 
         labels = self._labels(endpoint="/0/public/Depth", signed="false", symbol=symbol)
-        self._metric_orderbook_levels.set(float(len(order_book.bids) + len(order_book.asks)), labels=labels)
+        self._metric_orderbook_levels.set(
+            float(len(order_book.bids) + len(order_book.asks)), labels=labels
+        )
         return order_book
 
     # ------------------------------------------------------------------
@@ -660,7 +680,9 @@ class KrakenSpotAdapter(ExchangeAdapter):
             params["userref"] = request.client_order_id
 
         def _call() -> OrderResult:
-            payload = self._private_request(_RequestContext(path="/0/private/AddOrder", params=params))
+            payload = self._private_request(
+                _RequestContext(path="/0/private/AddOrder", params=params)
+            )
             result = payload.get("result", {}) if isinstance(payload, Mapping) else {}
             txid_seq = result.get("txid") if isinstance(result, Mapping) else None
             txid: str | None = None
@@ -681,9 +703,12 @@ class KrakenSpotAdapter(ExchangeAdapter):
     def cancel_order(self, order_id: str, *, symbol: str | None = None) -> None:  # type: ignore[override]
         if "trade" not in self._permission_set:
             raise PermissionError("Poświadczenia Kraken nie mają uprawnień tradingowych.")
+
         def _call() -> None:
             params: Mapping[str, Any] = {"txid": order_id}
-            payload = self._private_request(_RequestContext(path="/0/private/CancelOrder", params=params))
+            payload = self._private_request(
+                _RequestContext(path="/0/private/CancelOrder", params=params)
+            )
             result = payload.get("result", {}) if isinstance(payload, Mapping) else {}
             if not isinstance(result, Mapping) or int(result.get("count", 0)) < 1:
                 raise ExchangeAPIError(
@@ -765,7 +790,9 @@ class KrakenSpotAdapter(ExchangeAdapter):
         """Pobiera historię transakcji z opcjonalną filtracją po symbolu."""
 
         if "read" not in self._permission_set:
-            raise PermissionError("Poświadczenia Kraken nie mają uprawnień do odczytu historii transakcji.")
+            raise PermissionError(
+                "Poświadczenia Kraken nie mają uprawnień do odczytu historii transakcji."
+            )
 
         if max_pages <= 0:
             raise ValueError("Parametr max_pages musi być dodatni.")
@@ -816,7 +843,9 @@ class KrakenSpotAdapter(ExchangeAdapter):
             raw_count = len(trades_payload) if isinstance(trades_payload, Mapping) else 0
             fetched_raw += raw_count
             count_value = result.get("count") if isinstance(result, Mapping) else None
-            total_expected = int(count_value) if isinstance(count_value, (int, float)) else raw_count
+            total_expected = (
+                int(count_value) if isinstance(count_value, (int, float)) else raw_count
+            )
             if raw_count == 0 or fetched_raw >= total_expected:
                 break
             base_params["ofs"] = fetched_raw
@@ -866,7 +895,9 @@ class KrakenSpotAdapter(ExchangeAdapter):
             message = (nonce + encoded_params).encode("utf-8")
             sha_digest = hashlib.sha256(message).digest()
             decoded_secret = base64.b64decode(self.credentials.secret)
-            mac = hmac.new(decoded_secret, (context.path.encode("utf-8") + sha_digest), hashlib.sha512)
+            mac = hmac.new(
+                decoded_secret, (context.path.encode("utf-8") + sha_digest), hashlib.sha512
+            )
             signature = base64.b64encode(mac.digest()).decode("utf-8")
 
             headers = dict(_DEFAULT_HEADERS)
@@ -945,7 +976,9 @@ class KrakenSpotAdapter(ExchangeAdapter):
                     )
                     time.sleep(sleep_for)
                     continue
-                raise ExchangeNetworkError("Błąd sieciowy podczas komunikacji z Kraken Spot.", reason=exc) from exc
+                raise ExchangeNetworkError(
+                    "Błąd sieciowy podczas komunikacji z Kraken Spot.", reason=exc
+                ) from exc
             duration = max(time.monotonic() - start, 0.0)
             self._metric_http_latency.observe(duration, labels=labels)
             self._ensure_no_error(payload, endpoint=endpoint, signed=signed)

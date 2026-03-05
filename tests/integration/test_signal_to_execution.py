@@ -26,7 +26,9 @@ class _StubExchangeAdapter(ExchangeAdapter):
         super().__init__(ExchangeCredentials(key_id="test"))
         self.orders: list[OrderRequest] = []
 
-    def configure_network(self, *, ip_allowlist=None) -> None:  # pragma: no cover - konfiguracja nieużywana
+    def configure_network(
+        self, *, ip_allowlist=None
+    ) -> None:  # pragma: no cover - konfiguracja nieużywana
         return None
 
     def fetch_account_snapshot(self):  # pragma: no cover - niepotrzebne w teście
@@ -35,7 +37,9 @@ class _StubExchangeAdapter(ExchangeAdapter):
     def fetch_symbols(self):  # pragma: no cover - niepotrzebne
         return []
 
-    def fetch_ohlcv(self, symbol, interval, start=None, end=None, limit=None):  # pragma: no cover - niepotrzebne
+    def fetch_ohlcv(
+        self, symbol, interval, start=None, end=None, limit=None
+    ):  # pragma: no cover - niepotrzebne
         return []
 
     def place_order(self, request: OrderRequest) -> OrderResult:

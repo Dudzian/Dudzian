@@ -1,4 +1,5 @@
 """Uruchamia proces backfillu OHLCV zgodny z architekturą etapu 1."""
+
 from __future__ import annotations
 
 import argparse
@@ -50,9 +51,7 @@ def _build_adapter(exchange: str, environment: Environment) -> PublicAPIDataSour
             )
         ),
         "zonda_spot": lambda env: PublicAPIDataSource(
-            exchange_adapter=ZondaSpotAdapter(
-                ExchangeCredentials(key_id="public", environment=env)
-            )
+            exchange_adapter=ZondaSpotAdapter(ExchangeCredentials(key_id="public", environment=env))
         ),
     }
     try:

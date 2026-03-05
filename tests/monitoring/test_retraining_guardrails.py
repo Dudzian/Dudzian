@@ -1,4 +1,5 @@
 """Testy guardrail'i retrainingu i obsługi zdarzeń monitorujących."""
+
 from __future__ import annotations
 
 from pathlib import Path

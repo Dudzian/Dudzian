@@ -19,7 +19,9 @@ class _Emitter:
     def __init__(self) -> None:
         self.logs: list[tuple[str, dict[str, object]]] = []
 
-    def log(self, message: str, level: str | None = None, **kwargs: object) -> None:  # pragma: no cover - minimal emitter
+    def log(
+        self, message: str, level: str | None = None, **kwargs: object
+    ) -> None:  # pragma: no cover - minimal emitter
         self.logs.append((message, {"level": level, **kwargs}))
 
 
@@ -98,7 +100,9 @@ def test_decision_orchestrator_allows_positive_signal(tmp_path: Path) -> None:
         repository_root=tmp_path,
         set_default=True,
     )
-    trader = AutoTrader(_Emitter(), _GUI(), lambda: "BTCUSDT", bootstrap_context=_bootstrap_context(orchestrator))
+    trader = AutoTrader(
+        _Emitter(), _GUI(), lambda: "BTCUSDT", bootstrap_context=_bootstrap_context(orchestrator)
+    )
     data = pd.DataFrame(
         {
             "close": [1.0, 1.5, 2.0],
@@ -141,7 +145,9 @@ def test_decision_orchestrator_allows_positive_signal(tmp_path: Path) -> None:
     )
     assert decision.should_trade is True
     assert decision.details["decision_engine"]["accepted"] is True
-    assert decision.details["decision_engine"]["thresholds"]["min_probability"] == pytest.approx(0.5)
+    assert decision.details["decision_engine"]["thresholds"]["min_probability"] == pytest.approx(
+        0.5
+    )
 
 
 def test_auto_trader_attaches_ai_context_to_decision(tmp_path: Path) -> None:
@@ -154,7 +160,9 @@ def test_auto_trader_attaches_ai_context_to_decision(tmp_path: Path) -> None:
         repository_root=tmp_path,
         set_default=True,
     )
-    trader = AutoTrader(_Emitter(), _GUI(), lambda: "ETHUSDT", bootstrap_context=_bootstrap_context(orchestrator))
+    trader = AutoTrader(
+        _Emitter(), _GUI(), lambda: "ETHUSDT", bootstrap_context=_bootstrap_context(orchestrator)
+    )
     data = pd.DataFrame(
         {
             "close": [0.9, 1.1, 1.3],
@@ -397,7 +405,9 @@ def test_decision_orchestrator_blocks_negative_signal(tmp_path: Path) -> None:
         repository_root=tmp_path,
         set_default=True,
     )
-    trader = AutoTrader(_Emitter(), _GUI(), lambda: "BTCUSDT", bootstrap_context=_bootstrap_context(orchestrator))
+    trader = AutoTrader(
+        _Emitter(), _GUI(), lambda: "BTCUSDT", bootstrap_context=_bootstrap_context(orchestrator)
+    )
     original_builder = trader._build_decision_candidate
 
     def _builder_with_cost(self, **kwargs: object):

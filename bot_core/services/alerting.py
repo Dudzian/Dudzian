@@ -1,4 +1,5 @@
 """Rozszerzone zarządzanie alertami (email, Slack, webhook) dla bota."""
+
 from __future__ import annotations
 
 import json

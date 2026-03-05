@@ -144,7 +144,9 @@ def test_export_returns_requested_format(tmp_path, ed25519_keypair) -> None:
         signing_keys={"author": public_key_b64},
     )
 
-    document, data = repo.export_preset("delta", format="yaml", signing_keys={"author": public_key_b64})
+    document, data = repo.export_preset(
+        "delta", format="yaml", signing_keys={"author": public_key_b64}
+    )
     assert document.fmt == "yaml"
     assert b"preset:" in data
     assert document.verification.verified is True
@@ -321,9 +323,12 @@ def test_load_all_handles_unicode_numerals(tmp_path, ed25519_keypair) -> None:
 
     documents = repo.load_all(signing_keys={"author": public_key_b64})
 
-    assert [
-        doc.preset_id for doc in documents
-    ] == ["digit_six", "roman_six", "unicode_roman_seven", "circled_eight"]
+    assert [doc.preset_id for doc in documents] == [
+        "digit_six",
+        "roman_six",
+        "unicode_roman_seven",
+        "circled_eight",
+    ]
     assert all(doc.verification.verified for doc in documents)
 
 
@@ -346,9 +351,7 @@ def test_load_all_handles_compound_unicode_roman_numerals(tmp_path, ed25519_keyp
 
     documents = repo.load_all(signing_keys={"author": public_key_b64})
 
-    assert [
-        doc.preset_id for doc in documents
-    ] == [
+    assert [doc.preset_id for doc in documents] == [
         "roman_eleven",
         "unicode_roman_twelve",
         "circled_thirteen",

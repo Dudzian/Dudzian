@@ -118,7 +118,9 @@ def build_cycle_equity_summary(
             or entry.get("completed_at")
             or entry.get("started_at")
         )
-        sortable.append((_normalize_cycle_timestamp(timestamp_raw, target_tz), index, entry, timestamp_raw))
+        sortable.append(
+            (_normalize_cycle_timestamp(timestamp_raw, target_tz), index, entry, timestamp_raw)
+        )
 
     if not sortable:
         return [], {}, {}
@@ -179,8 +181,14 @@ def build_cycle_equity_summary(
                     window_base_equity = previous_equity
                     window_previous_equity = previous_equity
                     window_peak = max(previous_equity, cumulative)
-                if window_previous_equity is not None and window_previous_equity != 0.0 and math.isfinite(window_previous_equity):
-                    window_returns.append((cumulative - window_previous_equity) / window_previous_equity)
+                if (
+                    window_previous_equity is not None
+                    and window_previous_equity != 0.0
+                    and math.isfinite(window_previous_equity)
+                ):
+                    window_returns.append(
+                        (cumulative - window_previous_equity) / window_previous_equity
+                    )
                 window_previous_equity = cumulative
                 window_cycle_count += 1
                 window_last_equity = cumulative
@@ -221,7 +229,9 @@ def build_cycle_equity_summary(
         if returns:
             mean = sum(returns) / len(returns)
             metrics["avg_return_pct"] = mean
-            variance = max(0.0, (sum(value * value for value in returns) / len(returns)) - (mean * mean))
+            variance = max(
+                0.0, (sum(value * value for value in returns) / len(returns)) - (mean * mean)
+            )
             metrics["volatility_pct"] = math.sqrt(variance)
         metrics["max_drawdown_pct"] = max_drawdown
         window_payload = _window_payload(first_timestamp, last_timestamp)
@@ -237,13 +247,16 @@ def build_cycle_equity_summary(
         and math.isfinite(window_base_equity)
     ):
         window_metrics["cycle_count"] = window_cycle_count
-        window_metrics["net_return_pct"] = (window_last_equity - window_base_equity) / window_base_equity
+        window_metrics["net_return_pct"] = (
+            window_last_equity - window_base_equity
+        ) / window_base_equity
         if window_returns:
             mean = sum(window_returns) / len(window_returns)
             window_metrics["avg_return_pct"] = mean
             variance = max(
                 0.0,
-                (sum(value * value for value in window_returns) / len(window_returns)) - (mean * mean),
+                (sum(value * value for value in window_returns) / len(window_returns))
+                - (mean * mean),
             )
             window_metrics["volatility_pct"] = math.sqrt(variance)
         window_metrics["max_drawdown_pct"] = window_max_drawdown

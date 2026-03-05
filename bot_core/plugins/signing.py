@@ -12,7 +12,9 @@ from .manifest import PluginSignature, SignedStrategyPlugin, StrategyPluginManif
 class PluginSigner:
     """Buduje podpisy HMAC dla manifestów pluginów."""
 
-    def __init__(self, key: bytes, *, key_id: str | None = None, algorithm: str = "HMAC-SHA256") -> None:
+    def __init__(
+        self, key: bytes, *, key_id: str | None = None, algorithm: str = "HMAC-SHA256"
+    ) -> None:
         if not isinstance(key, (bytes, bytearray)):
             raise TypeError("key must be bytes")
         self._key = bytes(key)
@@ -68,4 +70,3 @@ class PluginVerifier:
 
 
 __all__ = ["PluginSigner", "PluginVerifier"]
-

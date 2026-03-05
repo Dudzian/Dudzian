@@ -1,4 +1,5 @@
 """Generator licencji offline zgodny z podpisem Ed25519."""
+
 from __future__ import annotations
 
 import argparse

@@ -27,7 +27,9 @@ SCRIPT_DIR = Path(__file__).resolve().parent
 # biblioteka `packaging` z PyPI).
 if str(ROOT) not in sys.path:  # pragma: no cover - konfiguracja ścieżki wykonywana raz
     sys.path.insert(0, str(ROOT))
-if sys.path[1:2] and Path(sys.path[1]).resolve() == SCRIPT_DIR:  # pragma: no cover - jednorazowa modyfikacja
+if (
+    sys.path[1:2] and Path(sys.path[1]).resolve() == SCRIPT_DIR
+):  # pragma: no cover - jednorazowa modyfikacja
     sys.path.pop(1)
 
 from packaging.version import InvalidVersion, Version
@@ -128,7 +130,11 @@ def _extract_liquidation_feed(
     if not isinstance(liquidation_path, str) or not liquidation_path:
         return base_url
     if base_url:
-        return f"{base_url.rstrip('/')}{liquidation_path}" if liquidation_path.startswith("/") else f"{base_url}/{liquidation_path}"
+        return (
+            f"{base_url.rstrip('/')}{liquidation_path}"
+            if liquidation_path.startswith("/")
+            else f"{base_url}/{liquidation_path}"
+        )
     return liquidation_path
 
 
@@ -148,7 +154,9 @@ def _hypercare_checklist_status(live_readiness: Any) -> tuple[bool | None, str]:
         return None, "not_required"
     if hypercare_doc is None:
         return False, "missing_document"
-    if bool(getattr(hypercare_doc, "signed", False)) and getattr(hypercare_doc, "signature_path", None):
+    if bool(getattr(hypercare_doc, "signed", False)) and getattr(
+        hypercare_doc, "signature_path", None
+    ):
         return True, "signed"
     return False, "missing_signature"
 
@@ -189,7 +197,9 @@ def _push_dashboard_snapshot(
         try:
             urllib.request.urlopen(request, timeout=10)
         except urllib.error.URLError as exc:  # pragma: no cover - zależy od środowiska CI
-            raise RuntimeError(f"Nie udało się wypchnąć CSV do endpointu dashboardu: {exc}") from exc
+            raise RuntimeError(
+                f"Nie udało się wypchnąć CSV do endpointu dashboardu: {exc}"
+            ) from exc
 
 
 def _validate_monitored_rows(rows: Sequence[Mapping[str, Any]]) -> None:
@@ -221,15 +231,19 @@ def _validate_monitored_rows(rows: Sequence[Mapping[str, Any]]) -> None:
 
         lp_status = row.get("long_poll_metrics_status")
         if lp_status != "fresh":
-            errors.append(
-                f"{exchange}:{profile} long_poll_metrics_status={lp_status or 'missing'}"
-            )
+            errors.append(f"{exchange}:{profile} long_poll_metrics_status={lp_status or 'missing'}")
 
         lp_age = row.get("long_poll_snapshot_age_minutes")
         if lp_status == "fresh" and lp_age in (None, ""):
-            errors.append(f"{exchange}:{profile} long_poll_snapshot_age_minutes={lp_age or 'missing'}")
+            errors.append(
+                f"{exchange}:{profile} long_poll_snapshot_age_minutes={lp_age or 'missing'}"
+            )
 
-        for key in ("hypercare_failover_status", "hypercare_latency_status", "hypercare_cost_status"):
+        for key in (
+            "hypercare_failover_status",
+            "hypercare_latency_status",
+            "hypercare_cost_status",
+        ):
             status = row.get(key)
             if status in (None, "not_configured", "unknown"):
                 errors.append(f"{exchange}:{profile} {key}={status or 'missing'}")
@@ -397,8 +411,12 @@ def _load_long_poll_metrics(path: str | None) -> LongPollMetrics:
     entries: Sequence[Any]
     if isinstance(payload, Mapping):
         default_timestamp = _coerce_datetime(payload.get("collected_at"))
-        entries_candidate = payload.get("snapshots") or payload.get("entries") or payload.get("data")
-        if isinstance(entries_candidate, Sequence) and not isinstance(entries_candidate, (str, bytes, bytearray)):
+        entries_candidate = (
+            payload.get("snapshots") or payload.get("entries") or payload.get("data")
+        )
+        if isinstance(entries_candidate, Sequence) and not isinstance(
+            entries_candidate, (str, bytes, bytearray)
+        ):
             entries = entries_candidate
         else:
             entries = (payload,)
@@ -429,7 +447,9 @@ def _load_long_poll_metrics(path: str | None) -> LongPollMetrics:
         }
         snapshot = {key: value for key, value in entry.items()}
         snapshot["labels"] = normalized_labels
-        timestamp = _coerce_datetime(entry.get("collected_at")) or default_timestamp or fallback_timestamp
+        timestamp = (
+            _coerce_datetime(entry.get("collected_at")) or default_timestamp or fallback_timestamp
+        )
         snapshot["_collected_at"] = timestamp
         metrics[(adapter, scope, environment)] = snapshot
     return metrics
@@ -553,7 +573,9 @@ def _summarize_signal_quality(
         "signal_quality_snapshot_status": status,
         "signal_quality_snapshot_age_minutes": age_minutes,
         "signal_quality_snapshot_path": str(snapshot_path),
-        "signal_quality_records": total_records if isinstance(total_records, (int, float)) else None,
+        "signal_quality_records": total_records
+        if isinstance(total_records, (int, float))
+        else None,
     }
 
 
@@ -576,7 +598,8 @@ def build_rows(
     )
     ttl_hours = (
         float(signal_quality_ttl_hours)
-        if isinstance(signal_quality_ttl_hours, (int, float)) and math.isfinite(signal_quality_ttl_hours)
+        if isinstance(signal_quality_ttl_hours, (int, float))
+        and math.isfinite(signal_quality_ttl_hours)
         else _DEFAULT_SIGNAL_QUALITY_TTL_HOURS
     )
 
@@ -600,9 +623,17 @@ def build_rows(
                     break
 
             default_settings = adapter_entry.default_settings if adapter_entry else {}
-            stream_settings = default_settings.get("stream", {}) if isinstance(default_settings, Mapping) else {}
-            retry_policy = default_settings.get("retry_policy", {}) if isinstance(default_settings, Mapping) else {}
-            adapter_settings = env_cfg.adapter_settings if isinstance(env_cfg.adapter_settings, Mapping) else {}
+            stream_settings = (
+                default_settings.get("stream", {}) if isinstance(default_settings, Mapping) else {}
+            )
+            retry_policy = (
+                default_settings.get("retry_policy", {})
+                if isinstance(default_settings, Mapping)
+                else {}
+            )
+            adapter_settings = (
+                env_cfg.adapter_settings if isinstance(env_cfg.adapter_settings, Mapping) else {}
+            )
             futures_margin_mode = _extract_margin_mode(adapter_settings, default_settings)
             liquidation_feed = _extract_liquidation_feed(
                 adapter_settings,
@@ -621,7 +652,9 @@ def build_rows(
             signed_by_attr = getattr(live_readiness, "signed_by", None)
             if isinstance(signed_by_attr, (list, tuple)):
                 readiness_signed_by = [str(entry) for entry in signed_by_attr]
-            if isinstance(live_readiness, Mapping):  # pragma: no cover - kompatybilność starych schematów
+            if isinstance(
+                live_readiness, Mapping
+            ):  # pragma: no cover - kompatybilność starych schematów
                 readiness_signed = bool(live_readiness.get("signed", False))
                 readiness_signed_by = [str(entry) for entry in live_readiness.get("signed_by", ())]
 
@@ -718,9 +751,15 @@ def build_rows(
                     "missing_required_documents": missing_docs,
                     "futures_checklist_id": checklist_id,
                     "futures_checklist_ready": checklist_ready,
-                    "hypercare_failover_status": hypercare_summary.get("failover") if hypercare_summary else None,
-                    "hypercare_latency_status": hypercare_summary.get("latency") if hypercare_summary else None,
-                    "hypercare_cost_status": hypercare_summary.get("cost") if hypercare_summary else None,
+                    "hypercare_failover_status": hypercare_summary.get("failover")
+                    if hypercare_summary
+                    else None,
+                    "hypercare_latency_status": hypercare_summary.get("latency")
+                    if hypercare_summary
+                    else None,
+                    "hypercare_cost_status": hypercare_summary.get("cost")
+                    if hypercare_summary
+                    else None,
                     **long_poll_summary,
                     **signal_quality_summary,
                 }
@@ -730,8 +769,10 @@ def build_rows(
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--config", default="config/core.yaml", help="Ścieżka do pliku config/core.yaml")
-    parser.add_argument("--output", help="Plik CSV do zapisania raportu (""-"" = stdout)")
+    parser.add_argument(
+        "--config", default="config/core.yaml", help="Ścieżka do pliku config/core.yaml"
+    )
+    parser.add_argument("--output", help="Plik CSV do zapisania raportu (- = stdout)")
     parser.add_argument(
         "--report-date",
         default=_dt.date.today().isoformat(),
@@ -891,7 +932,9 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.push_dashboard:
         if output_path is None:
-            raise SystemError("Eksport na dashboard wymaga zapisu do pliku (ustaw --output lub katalog raportów)")
+            raise SystemError(
+                "Eksport na dashboard wymaga zapisu do pliku (ustaw --output lub katalog raportów)"
+            )
         dashboard_dir = Path(args.dashboard_dir)
         _push_dashboard_snapshot(output_path, dashboard_dir, args.dashboard_endpoint)
     return 0
@@ -899,4 +942,3 @@ def main(argv: list[str] | None = None) -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
-

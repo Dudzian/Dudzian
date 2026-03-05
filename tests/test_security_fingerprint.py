@@ -53,7 +53,9 @@ def test_build_fingerprint_document_signs_payload(tmp_path):
     assert verify_document({"payload": document.payload, "signature": document.signature}, key=key)
 
     payload_bytes = canonical_json_bytes(document.payload)
-    recomputed = base64.b64encode(hmac.new(key, payload_bytes, hashlib.sha384).digest()).decode("ascii")
+    recomputed = base64.b64encode(hmac.new(key, payload_bytes, hashlib.sha384).digest()).decode(
+        "ascii"
+    )
     assert recomputed == document.signature["value"]
 
 

@@ -27,18 +27,18 @@ platform = "linux"
 [bundle]
 output_dir = "{output_dir.as_posix()}"
 work_dir = "{work_dir.as_posix()}"
-qt_dist = "{(samples / 'ui').as_posix()}"
+qt_dist = "{(samples / "ui").as_posix()}"
 include = [
-  "config={(samples / 'config').as_posix()}",
-  "daemon={(samples / 'daemon').as_posix()}",
-  "resources={(samples / 'resources').as_posix()}",
-  "reports={(samples / 'reports').as_posix()}",
-  "var={(samples / 'var').as_posix()}",
+  "config={(samples / "config").as_posix()}",
+  "daemon={(samples / "daemon").as_posix()}",
+  "resources={(samples / "resources").as_posix()}",
+  "reports={(samples / "reports").as_posix()}",
+  "var={(samples / "var").as_posix()}",
 ]
 wheels_extra = [
-  "{(samples / 'wheels' / 'ccxt-4.0.0-py3-none-any.whl').as_posix()}",
-  "{(samples / 'wheels' / 'aiohttp-3.9.5-cp311-cp311-manylinux.whl').as_posix()}",
-  "{(samples / 'wheels' / 'lightgbm-4.6.0-cp311-cp311-manylinux.whl').as_posix()}",
+  "{(samples / "wheels" / "ccxt-4.0.0-py3-none-any.whl").as_posix()}",
+  "{(samples / "wheels" / "aiohttp-3.9.5-cp311-cp311-manylinux.whl").as_posix()}",
+  "{(samples / "wheels" / "lightgbm-4.6.0-cp311-cp311-manylinux.whl").as_posix()}",
 ]
 metadata_path = "{metadata_path.as_posix()}"
 """

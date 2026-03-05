@@ -100,7 +100,9 @@ def test_compliance_auditor_detects_violations_and_emits_events(tmp_path: Path) 
         ],
         kyc_profile={"country": "IR"},
         as_of=now,
-        event_publisher=lambda event: events.append(event) if isinstance(event, ComplianceViolation) else None,
+        event_publisher=lambda event: events.append(event)
+        if isinstance(event, ComplianceViolation)
+        else None,
     )
 
     assert result.passed is False

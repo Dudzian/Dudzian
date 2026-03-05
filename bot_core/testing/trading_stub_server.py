@@ -149,9 +149,7 @@ def merge_datasets(
 
     if overlay.tradable_instruments:
         for exchange, items in overlay.tradable_instruments.items():
-            base.tradable_instruments[exchange] = [
-                _clone_message(item) for item in items
-            ]
+            base.tradable_instruments[exchange] = [_clone_message(item) for item in items]
 
     return base
 
@@ -335,21 +333,41 @@ def _filter_decision_entries(records: Sequence[Any], filters: Dict[str, Any]) ->
         if until and (parsed_timestamp is None or parsed_timestamp >= until):
             continue
 
-        if not _match(fields.get("event") if isinstance(fields, MutableMapping) else None, expected_event):
+        if not _match(
+            fields.get("event") if isinstance(fields, MutableMapping) else None, expected_event
+        ):
             continue
-        if not _match(fields.get("strategy") if isinstance(fields, MutableMapping) else None, expected_strategy):
+        if not _match(
+            fields.get("strategy") if isinstance(fields, MutableMapping) else None,
+            expected_strategy,
+        ):
             continue
-        if not _match(fields.get("symbol") if isinstance(fields, MutableMapping) else None, expected_symbol):
+        if not _match(
+            fields.get("symbol") if isinstance(fields, MutableMapping) else None, expected_symbol
+        ):
             continue
-        if not _match(fields.get("status") if isinstance(fields, MutableMapping) else None, expected_status):
+        if not _match(
+            fields.get("status") if isinstance(fields, MutableMapping) else None, expected_status
+        ):
             continue
-        if not _match(fields.get("side") if isinstance(fields, MutableMapping) else None, expected_side):
+        if not _match(
+            fields.get("side") if isinstance(fields, MutableMapping) else None, expected_side
+        ):
             continue
-        if not _match(fields.get("environment") if isinstance(fields, MutableMapping) else None, expected_environment):
+        if not _match(
+            fields.get("environment") if isinstance(fields, MutableMapping) else None,
+            expected_environment,
+        ):
             continue
-        if not _match(fields.get("portfolio") if isinstance(fields, MutableMapping) else None, expected_portfolio):
+        if not _match(
+            fields.get("portfolio") if isinstance(fields, MutableMapping) else None,
+            expected_portfolio,
+        ):
             continue
-        if not _match(fields.get("risk_profile") if isinstance(fields, MutableMapping) else None, expected_risk):
+        if not _match(
+            fields.get("risk_profile") if isinstance(fields, MutableMapping) else None,
+            expected_risk,
+        ):
             continue
 
         result.append(entry)
@@ -411,7 +429,9 @@ class _MarketDataService:
 
     def GetOhlcvHistory(self, request, context):  # noqa: N802
         candles = _match_history(self._dataset, request)
-        start = _timestamp_to_datetime(request.start_time if request.HasField("start_time") else None)
+        start = _timestamp_to_datetime(
+            request.start_time if request.HasField("start_time") else None
+        )
         end = _timestamp_to_datetime(request.end_time if request.HasField("end_time") else None)
         filtered = _filter_by_time(candles, start, end)
 
@@ -436,9 +456,7 @@ class _MarketDataService:
             snapshot = _snapshot_for(self._dataset, request)
             if snapshot:
                 cloned_snapshot = [_clone_message(candle) for candle in snapshot]
-                yield self._update_cls(
-                    snapshot=self._snapshot_cls(candles=cloned_snapshot)
-                )
+                yield self._update_cls(snapshot=self._snapshot_cls(candles=cloned_snapshot))
 
         increments = _increments_for(self._dataset, request)
         if not increments:
@@ -573,9 +591,7 @@ class _RuntimeService:
             snapshot = _decision_snapshot(self._dataset, request)
             if snapshot:
                 cloned = [_clone_message(entry) for entry in snapshot]
-                update = self._update_cls(
-                    snapshot=self._snapshot_cls(records=cloned)
-                )
+                update = self._update_cls(snapshot=self._snapshot_cls(records=cloned))
                 _apply_cycle_metrics(update, self._dataset.decision_cycle_metrics)
                 yield update
 
@@ -785,7 +801,7 @@ def build_default_dataset() -> InMemoryTradingDataset:
                         max_value=120_000.0,
                         current_value=95_000.0,
                         threshold_value=90_000.0,
-                    )
+                    ),
                 ],
                 generated_at=_make_timestamp(risk_generated_at),
             )

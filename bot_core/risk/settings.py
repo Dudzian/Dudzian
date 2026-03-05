@@ -162,8 +162,12 @@ def derive_risk_manager_settings(
         max_portfolio_risk=float(base["max_portfolio_risk"]),
         max_positions=int(base["max_positions"]),
         emergency_stop_drawdown=float(base["emergency_stop_drawdown"]),
-        confidence_level=None if base["confidence_level"] is None else float(base["confidence_level"]),
-        target_volatility=None if base["target_volatility"] is None else float(base["target_volatility"]),
+        confidence_level=None
+        if base["confidence_level"] is None
+        else float(base["confidence_level"]),
+        target_volatility=None
+        if base["target_volatility"] is None
+        else float(base["target_volatility"]),
         profile_name=profile_name,
     )
 

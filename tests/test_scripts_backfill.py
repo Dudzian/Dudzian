@@ -1,4 +1,5 @@
 """Testy skryptu backfill sprawdzające harmonogram odświeżania."""
+
 from __future__ import annotations
 
 import asyncio
@@ -46,6 +47,7 @@ class _DummyScheduler:
     def stop(self) -> None:
         self.stop_called = True
 
+
 def test_scheduler_uses_interval_specific_frequency_and_lookback() -> None:
     universe = InstrumentUniverseConfig(
         name="test_universe",
@@ -87,7 +89,9 @@ def test_scheduler_uses_interval_specific_frequency_and_lookback() -> None:
 
     assert jobs_by_interval["1d"]["frequency_seconds"] == plans["1d"].refresh_seconds
     assert jobs_by_interval["1h"]["frequency_seconds"] == plans["1h"].refresh_seconds
-    assert jobs_by_interval["1d"]["frequency_seconds"] != jobs_by_interval["1h"]["frequency_seconds"]
+    assert (
+        jobs_by_interval["1d"]["frequency_seconds"] != jobs_by_interval["1h"]["frequency_seconds"]
+    )
 
     assert jobs_by_interval["1d"]["lookback_ms"] == plans["1d"].incremental_lookback_ms
     assert jobs_by_interval["1h"]["lookback_ms"] == plans["1h"].incremental_lookback_ms

@@ -117,9 +117,10 @@ def start_http_server(
     server = MetricsHTTPServer((host, port), registry=registry, metrics_path=metrics_path)
     thread = threading.Thread(target=server.serve_forever, name="metrics-http-server", daemon=True)
     thread.start()
-    _LOGGER.info("Serwer metryk uruchomiony na %s:%s%s", host, server.server_address[1], metrics_path)
+    _LOGGER.info(
+        "Serwer metryk uruchomiony na %s:%s%s", host, server.server_address[1], metrics_path
+    )
     return server, thread
 
 
 __all__ = ["MetricsHTTPServer", "start_http_server"]
-

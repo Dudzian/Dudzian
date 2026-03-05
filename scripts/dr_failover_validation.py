@@ -25,8 +25,12 @@ _DEF_OUTPUT = Path("reports/ci/dr_failover")
 
 
 def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Wymusza failover DR alertingu i porównuje _lastError")
-    parser.add_argument("--endpoint", default="localhost:50051", help="Adres gRPC CloudOrchestratora")
+    parser = argparse.ArgumentParser(
+        description="Wymusza failover DR alertingu i porównuje _lastError"
+    )
+    parser.add_argument(
+        "--endpoint", default="localhost:50051", help="Adres gRPC CloudOrchestratora"
+    )
     parser.add_argument("--alertmanager-url", dest="alertmanager_url", help="Primary Alertmanager")
     parser.add_argument("--prometheus-url", dest="prometheus_url", help="Primary Prometheus")
     parser.add_argument("--dr-alertmanager-url", dest="dr_alertmanager_url", help="DR Alertmanager")
@@ -202,9 +206,7 @@ def main(argv: list[str] | None = None) -> int:
     )
 
     comparison: FailoverComparison = compare_last_error(before_state, after_state)
-    status, failure_reasons = evaluate_outcome(
-        comparison, before_ok=before_ok, after_ok=after_ok
-    )
+    status, failure_reasons = evaluate_outcome(comparison, before_ok=before_ok, after_ok=after_ok)
     probe_regression = bool(before_ok and not after_ok)
 
     summary = {

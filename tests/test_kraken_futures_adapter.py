@@ -9,7 +9,6 @@ from urllib.request import Request
 import pytest
 
 
-
 from bot_core.exchanges.base import AccountSnapshot, Environment, ExchangeCredentials, OrderRequest
 from bot_core.exchanges.kraken.futures import KrakenFuturesAdapter, _RequestContext
 from bot_core.exchanges.health import CircuitBreaker, RetryPolicy, Watchdog
@@ -99,9 +98,7 @@ def test_place_order_builds_body(monkeypatch: pytest.MonkeyPatch) -> None:
                 "sendStatus": {
                     "order_id": "OF12345",
                     "status": "accepted",
-                    "orderEvents": [
-                        {"type": "fill", "fill_size": "0.01", "price": "30000.0"}
-                    ],
+                    "orderEvents": [{"type": "fill", "fill_size": "0.01", "price": "30000.0"}],
                 },
             }
         else:
@@ -133,8 +130,8 @@ def test_place_order_builds_body(monkeypatch: pytest.MonkeyPatch) -> None:
     headers = {name.lower(): value for name, value in captured_request.header_items()}
     assert headers["apikey"] == "kraken-futures-key"
     body_bytes = captured_request.data or b""
-    assert b"\"cliOrdId\":\"cli-kraken\"" in body_bytes
-    assert b"\"limitPrice\":\"30000.00\"" in body_bytes
+    assert b'"cliOrdId":"cli-kraken"' in body_bytes
+    assert b'"limitPrice":"30000.00"' in body_bytes
     expected_signature = _expected_signature(
         path="/orders",
         body=body_bytes,
@@ -170,6 +167,7 @@ def test_watchdog_is_used_for_requests(monkeypatch: pytest.MonkeyPatch) -> None:
     watchdog = _RecordingWatchdog()
     adapter = KrakenFuturesAdapter(_credentials(), environment=Environment.LIVE, watchdog=watchdog)
     adapter.configure_network()
+
     def fake_private(context):
         if context.path == "/accounts":
             return {"accounts": {"futures": {}}}
@@ -192,7 +190,9 @@ def test_watchdog_is_used_for_requests(monkeypatch: pytest.MonkeyPatch) -> None:
     adapter.fetch_account_snapshot()
     adapter.fetch_symbols()
     adapter.fetch_ohlcv("pi_xbtusd", "1m")
-    adapter.place_order(OrderRequest(symbol="pi_xbtusd", side="buy", quantity=0.1, order_type="market"))
+    adapter.place_order(
+        OrderRequest(symbol="pi_xbtusd", side="buy", quantity=0.1, order_type="market")
+    )
     adapter.cancel_order("OID-2")
 
     assert "kraken_futures_private_request" in watchdog.operations

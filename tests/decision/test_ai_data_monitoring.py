@@ -75,12 +75,9 @@ def _make_artifact(
         name: {"mean": 0.0, "stdev": 1.0} for name in feature_names
     }
     stats = feature_stats or {
-        name: {"mean": 0.0, "stdev": 1.0, "min": -1.0, "max": 1.0}
-        for name in feature_names
+        name: {"mean": 0.0, "stdev": 1.0, "min": -1.0, "max": 1.0} for name in feature_names
     }
-    scaler_summary = feature_scaler_summary or {
-        name: (0.0, 1.0) for name in feature_names
-    }
+    scaler_summary = feature_scaler_summary or {name: (0.0, 1.0) for name in feature_names}
     metadata = {
         "feature_names": list(feature_names),
         "feature_scalers": metadata_scalers,
@@ -119,7 +116,9 @@ def _make_artifact(
     )
 
 
-def test_data_completeness_watcher_detects_missing(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_data_completeness_watcher_detects_missing(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     monkeypatch.setenv("AI_DECISION_AUDIT_ROOT", str(tmp_path / "audit"))
     watcher = InferenceDataCompletenessWatcher()
     watcher.configure(["alpha", "beta"])
@@ -135,7 +134,9 @@ def test_data_completeness_watcher_detects_missing(tmp_path: Path, monkeypatch: 
     assert sorted(payload["missing_features"]) == ["beta"]
 
 
-def test_feature_bounds_validator_detects_outliers(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_feature_bounds_validator_detects_outliers(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     monkeypatch.setenv("AI_DECISION_AUDIT_ROOT", str(tmp_path / "audit"))
     validator = InferenceFeatureBoundsValidator()
     validator.configure({"ratio": {"min": 0.0, "max": 1.0}})
@@ -153,7 +154,9 @@ def test_feature_bounds_validator_detects_outliers(tmp_path: Path, monkeypatch: 
     assert payload["violations"][0]["reason"] == "out_of_bounds"
 
 
-def test_inference_monitoring_exports_reports(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_inference_monitoring_exports_reports(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     audit_root = tmp_path / "audit"
     monkeypatch.setenv("AI_DECISION_AUDIT_ROOT", str(audit_root))
     repository = FilesystemModelRepository(tmp_path / "repo")
@@ -355,14 +358,10 @@ def test_load_recent_reports_filters_and_limits(
     assert reports_all[0]["context"]["run"] == "alert"
     assert any(report["status"] == "alert" for report in reports_all)
 
-    completeness_reports = load_recent_data_quality_reports(
-        category="completeness", limit=5
-    )
+    completeness_reports = load_recent_data_quality_reports(category="completeness", limit=5)
     assert completeness_reports
     assert completeness_reports[0]["context"]["run"] == "alert"
-    assert all(
-        report.get("category") == "completeness" for report in completeness_reports
-    )
+    assert all(report.get("category") == "completeness" for report in completeness_reports)
 
     with pytest.raises(ValueError):
         load_recent_data_quality_reports(limit=0)
@@ -554,9 +553,7 @@ def test_filter_audit_reports_since_filters_old_entries() -> None:
         {"category": "missing"},
     )
 
-    filtered = filter_audit_reports_since(
-        reports, since=datetime(2024, 1, 15, tzinfo=timezone.utc)
-    )
+    filtered = filter_audit_reports_since(reports, since=datetime(2024, 1, 15, tzinfo=timezone.utc))
 
     assert filtered[0]["category"] == "new"
     assert filtered[1]["category"] == "missing"
@@ -719,7 +716,9 @@ def test_ai_manager_validates_custom_sign_off_roles(tmp_path: Path) -> None:
         manager.set_compliance_sign_off_roles(("unknown",))
 
 
-def test_ai_manager_passes_configured_sign_off_roles(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+def test_ai_manager_passes_configured_sign_off_roles(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
     captured_roles: list[Sequence[str] | None] = []
 
     def _fake_ensure(**kwargs):

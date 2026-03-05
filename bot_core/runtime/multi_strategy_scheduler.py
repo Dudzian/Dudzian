@@ -1,4 +1,5 @@
 """Harmonogram wielostrate-giczny obsługujący wiele silników strategii."""
+
 from __future__ import annotations
 
 import asyncio
@@ -78,11 +79,9 @@ def _split_symbol_components(symbol: str | None) -> tuple[str | None, str | None
 class StrategyDataFeed(Protocol):
     """Źródło danych dla strategii."""
 
-    def load_history(self, strategy_name: str, bars: int) -> Sequence[MarketSnapshot]:
-        ...
+    def load_history(self, strategy_name: str, bars: int) -> Sequence[MarketSnapshot]: ...
 
-    def fetch_latest(self, strategy_name: str) -> Sequence[MarketSnapshot]:
-        ...
+    def fetch_latest(self, strategy_name: str) -> Sequence[MarketSnapshot]: ...
 
 
 class StrategySignalSink(Protocol):
@@ -96,8 +95,7 @@ class StrategySignalSink(Protocol):
         risk_profile: str,
         timestamp: datetime,
         signals: Sequence[StrategySignal],
-    ) -> None:
-        ...
+    ) -> None: ...
 
 
 TelemetryEmitter = Callable[[str, Mapping[str, float]], None]
@@ -162,6 +160,7 @@ class StrategyRunContext:
 
     def latency_ms(self, clock: Callable[[], datetime]) -> float:
         return max(0.0, (clock() - self.timestamp).total_seconds() * 1000)
+
 
 def _extract_tags(metadata: Mapping[str, object] | None) -> tuple[tuple[str, ...], str | None]:
     if not isinstance(metadata, Mapping):
@@ -315,6 +314,7 @@ def _parse_schedule_fallbacks(metadata: Mapping[str, object] | None) -> tuple[st
 
 def _format_window(window: tuple[int, int]) -> str:
     start, end = window
+
     def _format(minutes: int) -> str:
         minutes %= 24 * 60
         hour = minutes // 60
@@ -343,12 +343,8 @@ def _extract_schedule_metadata(
     tags, primary_tag = _extract_tags(metadata)
     license_tier = _coerce_non_empty_str(metadata.get("license_tier")) if metadata else None
     capability = _coerce_non_empty_str(metadata.get("capability")) if metadata else None
-    risk_classes = (
-        _normalize_metadata_sequence(metadata.get("risk_classes")) if metadata else ()
-    )
-    required_data = (
-        _normalize_metadata_sequence(metadata.get("required_data")) if metadata else ()
-    )
+    risk_classes = _normalize_metadata_sequence(metadata.get("risk_classes")) if metadata else ()
+    required_data = _normalize_metadata_sequence(metadata.get("required_data")) if metadata else ()
 
     license_tier = license_tier or _coerce_non_empty_str(getattr(strategy, "license_tier", None))
     capability = capability or _coerce_non_empty_str(getattr(strategy, "capability", None))
@@ -483,10 +479,7 @@ class MultiStrategyScheduler(RuntimeScheduler):
     def allocation_snapshot(self) -> Mapping[str, float]:
         """Zwraca ostatnio zastosowane wagi polityki kapitału."""
 
-        return {
-            schedule.name: float(schedule.allocator_weight)
-            for schedule in self._schedules
-        }
+        return {schedule.name: float(schedule.allocator_weight) for schedule in self._schedules}
 
     def capital_allocation_state(self) -> Mapping[str, Mapping[str, float]]:
         """Zwraca ostatnie migawki wag (surowe, wygładzone, profilowe)."""
@@ -507,8 +500,7 @@ class MultiStrategyScheduler(RuntimeScheduler):
             "policy_name": getattr(self._capital_policy, "name", "unknown"),
             "flags": dict(self._last_allocator_flags),
             "details": {
-                str(key): dict(value)
-                for key, value in self._last_allocator_diagnostics.items()
+                str(key): dict(value) for key, value in self._last_allocator_diagnostics.items()
             },
             "tag_weights": dict(self._last_allocator_tag_weights),
             "tag_members": dict(self._last_allocator_tag_counts),
@@ -570,18 +562,12 @@ class MultiStrategyScheduler(RuntimeScheduler):
             descriptor["failover_count"] = int(schedule.failover_count)
             if schedule.cost_report_summary:
                 descriptor["cost_report"] = dict(schedule.cost_report_summary)
-            limit_override = active_overrides.get(
-                (schedule.strategy_name, schedule.risk_profile)
-            )
+            limit_override = active_overrides.get((schedule.strategy_name, schedule.risk_profile))
             if limit_override is not None:
                 descriptor["signal_limit_override"] = int(limit_override.limit)
-                descriptor["signal_limit_details"] = dict(
-                    limit_override.to_snapshot(now)
-                )
+                descriptor["signal_limit_details"] = dict(limit_override.to_snapshot(now))
 
-            suspension_info: Mapping[str, object] | None = schedule_suspensions.get(
-                schedule.name
-            )
+            suspension_info: Mapping[str, object] | None = schedule_suspensions.get(schedule.name)
             if suspension_info is None:
                 for tag in schedule.tags:
                     tag_record = tag_suspensions.get(tag)
@@ -589,10 +575,7 @@ class MultiStrategyScheduler(RuntimeScheduler):
                         suspension_info = dict(tag_record)
                         break
                 else:
-                    if (
-                        schedule.primary_tag
-                        and schedule.primary_tag not in schedule.tags
-                    ):
+                    if schedule.primary_tag and schedule.primary_tag not in schedule.tags:
                         tag_record = tag_suspensions.get(schedule.primary_tag)
                         if tag_record is not None:
                             suspension_info = dict(tag_record)
@@ -623,9 +606,7 @@ class MultiStrategyScheduler(RuntimeScheduler):
 
         normalized_tag = tag.lower().strip() if isinstance(tag, str) and tag.strip() else None
         normalized_strategy = (
-            strategy.lower().strip()
-            if isinstance(strategy, str) and strategy.strip()
-            else None
+            strategy.lower().strip() if isinstance(strategy, str) and strategy.strip() else None
         )
 
         schedule_map = self.describe_schedules()
@@ -661,11 +642,7 @@ class MultiStrategyScheduler(RuntimeScheduler):
             for tag_name in entry_tags:
                 aggregated_tags[tag_name] += weight
             primary_tag = entry.get("primary_tag")
-            if (
-                isinstance(primary_tag, str)
-                and primary_tag
-                and primary_tag not in entry_tags
-            ):
+            if isinstance(primary_tag, str) and primary_tag and primary_tag not in entry_tags:
                 aggregated_tags[primary_tag] += weight
 
         filtered.sort(key=lambda item: item["name"])
@@ -821,7 +798,6 @@ class MultiStrategyScheduler(RuntimeScheduler):
             until=until,
             duration_seconds=duration_seconds,
         )
-
 
     def _handle_expired_signal_limits(
         self,
@@ -1052,12 +1028,12 @@ class MultiStrategyScheduler(RuntimeScheduler):
                 metadata={"reason": reason, "fallback": fallback.name, **(metadata or {})},
             )
             self.resume_schedule(fallback.name)
-            self.suspend_schedule(schedule.name, reason=f"failover:{reason}", duration_seconds=900.0)
+            self.suspend_schedule(
+                schedule.name, reason=f"failover:{reason}", duration_seconds=900.0
+            )
             return
 
-    def attach_portfolio_coordinator(
-        self, coordinator: "PortfolioRuntimeCoordinator"
-    ) -> None:
+    def attach_portfolio_coordinator(self, coordinator: "PortfolioRuntimeCoordinator") -> None:
         """Podpina koordynatora PortfolioGovernora do schedulera."""
 
         self._portfolio_coordinator = coordinator
@@ -1292,16 +1268,22 @@ class MultiStrategyScheduler(RuntimeScheduler):
                 if "target_allocation" in metadata and "current_allocation" in metadata:
                     target_alloc = metadata.get("target_allocation")
                     current_alloc = metadata.get("current_allocation")
-                    if isinstance(target_alloc, (int, float)) and isinstance(
-                        current_alloc, (int, float)
-                    ) and target_alloc:
+                    if (
+                        isinstance(target_alloc, (int, float))
+                        and isinstance(current_alloc, (int, float))
+                        and target_alloc
+                    ):
                         diff_pct = abs(float(target_alloc) - float(current_alloc)) / max(
                             abs(float(target_alloc)), 1e-9
                         )
                         context.volatility_alloc_errors.append(diff_pct * 100.0)
                 realized_vol = metadata.get("realized_volatility")
                 target_vol = metadata.get("target_volatility")
-                if isinstance(realized_vol, (int, float)) and isinstance(target_vol, (int, float)) and target_vol:
+                if (
+                    isinstance(realized_vol, (int, float))
+                    and isinstance(target_vol, (int, float))
+                    and target_vol
+                ):
                     variance_pct = abs(float(realized_vol) - float(target_vol)) / max(
                         abs(float(target_vol)), 1e-9
                     )
@@ -1311,7 +1293,11 @@ class MultiStrategyScheduler(RuntimeScheduler):
                     context.arbitrage_delays.append(float(secondary_delay))
                 entry_spread = metadata.get("entry_spread")
                 exit_spread = metadata.get("exit_spread")
-                if isinstance(entry_spread, (int, float)) and isinstance(exit_spread, (int, float)) and entry_spread:
+                if (
+                    isinstance(entry_spread, (int, float))
+                    and isinstance(exit_spread, (int, float))
+                    and entry_spread
+                ):
                     capture = (float(entry_spread) - float(exit_spread)) / abs(float(entry_spread))
                     context.arbitrage_captures.append(capture * 10_000.0)
             self._record_decisions(schedule, bounded_signals, timestamp, snapshot.symbol)
@@ -1387,9 +1373,7 @@ class MultiStrategyScheduler(RuntimeScheduler):
         schedule.metrics["active_max_signals"] = 0.0
         schedule.metrics["signals"] = 0.0
         schedule.metrics["suspended"] = 1.0
-        schedule.metrics["allocator_signal_factor"] = float(
-            schedule.allocator_signal_factor
-        )
+        schedule.metrics["allocator_signal_factor"] = float(schedule.allocator_signal_factor)
         schedule.metrics["allocator_weight_target"] = float(schedule.allocator_weight)
         schedule.metrics["governor_signal_factor"] = float(schedule.governor_signal_factor)
         schedule.metrics["portfolio_weight_target"] = float(schedule.portfolio_weight)
@@ -1424,9 +1408,7 @@ class MultiStrategyScheduler(RuntimeScheduler):
         except Exception:  # pragma: no cover - defensywnie
             return 1
 
-    def _apply_portfolio_decision(
-        self, decision: "PortfolioRebalanceDecision"
-    ) -> None:
+    def _apply_portfolio_decision(self, decision: "PortfolioRebalanceDecision") -> None:
         self._last_portfolio_decision = decision
         if self._portfolio_governor is None:
             return
@@ -1446,26 +1428,25 @@ class MultiStrategyScheduler(RuntimeScheduler):
                 schedule.base_max_signals * max(0.0, schedule.governor_signal_factor)
             )
             self._apply_signal_limits(schedule)
-        allocation_map = {
-            sched.name: sched.portfolio_weight for sched in self._schedules
-        }
+        allocation_map = {sched.name: sched.portfolio_weight for sched in self._schedules}
         _LOGGER.info(
             "PortfolioGovernor decision applied: weights=%s signals=%s",
             {name: round(weight, 4) for name, weight in allocation_map.items()},
-            {
-                sched.name: sched.active_max_signals
-                for sched in self._schedules
-            },
+            {sched.name: sched.active_max_signals for sched in self._schedules},
         )
         if self._decision_journal is not None:
             adjustments = getattr(decision, "adjustments", ()) or ()
             advisories = getattr(decision, "advisories", ()) or ()
             metadata: dict[str, object] = {
-                "rebalance_required": "1" if getattr(decision, "rebalance_required", False) else "0",
+                "rebalance_required": "1"
+                if getattr(decision, "rebalance_required", False)
+                else "0",
                 "portfolio_value": str(getattr(decision, "portfolio_value", 0.0)),
                 "adjustment_count": str(len(adjustments)),
                 "advisory_count": str(len(advisories)),
-                "weights": json.dumps({name: round(weight, 6) for name, weight in allocation_map.items()}),
+                "weights": json.dumps(
+                    {name: round(weight, 6) for name, weight in allocation_map.items()}
+                ),
             }
             adjustment_payload: list[dict[str, object]] = []
             for adjustment in adjustments:
@@ -1538,8 +1519,7 @@ class MultiStrategyScheduler(RuntimeScheduler):
             normalized = normalize_weights(weights)
             if not normalized and schedules_snapshot:
                 normalized = {
-                    schedule.name: 1.0 / len(schedules_snapshot)
-                    for schedule in schedules_snapshot
+                    schedule.name: 1.0 / len(schedules_snapshot) for schedule in schedules_snapshot
                 }
             raw_getter = getattr(policy, "raw_allocation_snapshot", None)
             if callable(raw_getter):
@@ -1581,8 +1561,7 @@ class MultiStrategyScheduler(RuntimeScheduler):
                         profile_snapshot = {
                             str(key): float(value)
                             for key, value in snapshot.items()
-                            if isinstance(value, (int, float))
-                            and math.isfinite(float(value))
+                            if isinstance(value, (int, float)) and math.isfinite(float(value))
                         }
             diagnostics_getter = getattr(policy, "allocation_diagnostics", None)
             if callable(diagnostics_getter):
@@ -1621,8 +1600,7 @@ class MultiStrategyScheduler(RuntimeScheduler):
                         tag_snapshot = {
                             str(key): float(value)
                             for key, value in tag_result.items()
-                            if isinstance(value, (int, float))
-                            and math.isfinite(float(value))
+                            if isinstance(value, (int, float)) and math.isfinite(float(value))
                         }
             tag_member_getter = getattr(policy, "tag_member_snapshot", None)
             if callable(tag_member_getter):
@@ -1638,8 +1616,7 @@ class MultiStrategyScheduler(RuntimeScheduler):
                         tag_member_snapshot = {
                             str(key): float(value)
                             for key, value in member_result.items()
-                            if isinstance(value, (int, float))
-                            and math.isfinite(float(value))
+                            if isinstance(value, (int, float)) and math.isfinite(float(value))
                         }
             floor_attr = getattr(policy, "floor_adjustment_applied", None)
             if isinstance(floor_attr, bool):
@@ -1699,8 +1676,7 @@ class MultiStrategyScheduler(RuntimeScheduler):
         if profile_snapshot:
             normalized_profile_snapshot = normalize_weights(profile_snapshot)
             log_profiles = {
-                key: round(value, 4)
-                for key, value in normalized_profile_snapshot.items()
+                key: round(value, 4) for key, value in normalized_profile_snapshot.items()
             }
             _LOGGER.info(
                 "Capital allocator %s profile weights: %s",

@@ -40,15 +40,18 @@ def _require_yaml():
 
     return yaml
 
+
 _SUPPORTED_FORMATS = {"json", "yaml", "yml"}
-_DIACRITIC_OVERRIDES = str.maketrans({
-    "ł": "l",
-    "Ł": "L",
-    "đ": "d",
-    "Đ": "D",
-    "Ø": "O",
-    "ø": "o",
-})
+_DIACRITIC_OVERRIDES = str.maketrans(
+    {
+        "ł": "l",
+        "Ł": "L",
+        "đ": "d",
+        "Đ": "D",
+        "Ø": "O",
+        "ø": "o",
+    }
+)
 _TOKEN_SPLITTER = re.compile(r"(\d+|(?<![A-Za-z])[IVXLCDM]+(?![A-Za-z]))", re.IGNORECASE)
 _ROMAN_NUMERAL_PATTERN = re.compile(
     r"^M{0,4}(CM|CD|D?C{0,3})(XC|XL|L?X{0,3})(IX|IV|V?I{0,3})$",
@@ -212,8 +215,6 @@ def _sorting_key(name: str) -> tuple[tuple[int, object], ...]:
     return tuple(result)
 
 
-
-
 def parse_preset_document(
     data: bytes | str,
     *,
@@ -235,7 +236,9 @@ def parse_preset_document(
             document = _yaml.safe_load(raw_text)
             fmt = "yaml"
         except _yaml.YAMLError as exc:  # type: ignore[attr-defined]
-            raise ValueError(f"Nie udało się wczytać presetu {source or '<memory>'}: {exc}") from exc
+            raise ValueError(
+                f"Nie udało się wczytać presetu {source or '<memory>'}: {exc}"
+            ) from exc
     if not isinstance(document, Mapping):
         raise ValueError("Dokument presetu musi być obiektem JSON/YAML")
 
@@ -278,13 +281,13 @@ def serialize_preset_document(
     fmt = format.lower().strip()
     if fmt == "json":
         return (
-            json.dumps(payload, ensure_ascii=ensure_ascii, indent=2, sort_keys=True)
-            + "\n"
+            json.dumps(payload, ensure_ascii=ensure_ascii, indent=2, sort_keys=True) + "\n"
         ).encode("utf-8")
     if fmt in {"yaml", "yml"}:
         _yaml = _require_yaml()
         return _yaml.safe_dump(payload, allow_unicode=True, sort_keys=False).encode("utf-8")
     raise ValueError(f"Nieobsługiwany format eksportu: {format}")
+
 
 def _sanitize_filename(preset_id: str) -> str:
     sanitized = [ch if ch.isalnum() or ch in {"-", "_"} else "-" for ch in preset_id]
@@ -319,7 +322,9 @@ class PresetRepository:
         )
         for path in files:
             try:
-                doc = parse_preset_document(path.read_bytes(), source=path, signing_keys=signing_keys)
+                doc = parse_preset_document(
+                    path.read_bytes(), source=path, signing_keys=signing_keys
+                )
             except Exception:
                 LOGGER.exception("Nie udało się wczytać presetu %s", path)
                 continue

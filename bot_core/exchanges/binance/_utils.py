@@ -1,4 +1,5 @@
 """Wspólne funkcje pomocnicze dla adapterów Binance."""
+
 from __future__ import annotations
 
 import time

@@ -1,4 +1,5 @@
 """Pomocnicze stuby wykorzystywane w testach serwisów telemetrycznych."""
+
 from __future__ import annotations
 
 from typing import Any, Mapping

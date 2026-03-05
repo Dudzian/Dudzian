@@ -66,6 +66,7 @@ except Exception:  # pragma: no cover - environment without config-based API
 
 try:
     from bot_core.runtime.pipeline import _load_stress_overrides_from_reports  # type: ignore[attr-defined]
+
     _HAVE_PIPELINE_HELPERS = True
 except Exception:  # pragma: no cover - pipeline helpers unavailable
     _load_stress_overrides_from_reports = None  # type: ignore[assignment]
@@ -143,7 +144,9 @@ def test_stress_lab_evaluator_generates_overrides() -> None:
     assets = {
         "BTCUSDT": PortfolioAssetConfig(symbol="BTCUSDT", target_weight=0.4, tags=("core",)),  # type: ignore[call-arg]
         "UNIUSDT": PortfolioAssetConfig(symbol="UNIUSDT", target_weight=0.1, tags=("defi",)),  # type: ignore[call-arg]
-        "SOLUSDT": PortfolioAssetConfig(symbol="SOLUSDT", target_weight=0.15, tags=("alt", "latency")),  # type: ignore[call-arg]
+        "SOLUSDT": PortfolioAssetConfig(
+            symbol="SOLUSDT", target_weight=0.15, tags=("alt", "latency")
+        ),  # type: ignore[call-arg]
     }
     report = evaluator.evaluate(_build_report(), portfolio=assets)  # type: ignore[attr-defined]
 
@@ -152,7 +155,9 @@ def test_stress_lab_evaluator_generates_overrides() -> None:
     assert report.counts["critical"] == 3
     assert report.counts["warning"] == 1
 
-    critical_override = next(override for override in report.overrides if override.symbol == "BTCUSDT")
+    critical_override = next(
+        override for override in report.overrides if override.symbol == "BTCUSDT"
+    )
     assert critical_override.severity == "critical"
     assert critical_override.force_rebalance is True
     assert critical_override.weight_multiplier == 0.0
@@ -166,11 +171,15 @@ def test_stress_lab_evaluator_generates_overrides() -> None:
     assert warning_override.symbol == "UNIUSDT"
     assert warning_override.weight_multiplier == 0.6
 
-    latency_override = next(override for override in report.overrides if override.symbol == "SOLUSDT")
+    latency_override = next(
+        override for override in report.overrides if override.symbol == "SOLUSDT"
+    )
     assert latency_override.severity == "critical"
     assert latency_override.force_rebalance is True
 
-    latency_insight = next(insight for insight in report.insights if insight.scenario == "latency_spike")
+    latency_insight = next(
+        insight for insight in report.insights if insight.scenario == "latency_spike"
+    )
     assert latency_insight.metrics["latency_alert"] == "critical"
     assert "metric:latency" in latency_insight.tags
 
@@ -278,7 +287,11 @@ def test_stress_lab_liquidity_thresholds_force_critical_override() -> None:
                     StressTestResult(  # type: ignore[call-arg]
                         name="liquidity_drain",
                         status="success",
-                        metrics={"assets": ["UNIUSDT"], "risk_budget": "alts", "liquidity_usd": 80_000.0},
+                        metrics={
+                            "assets": ["UNIUSDT"],
+                            "risk_budget": "alts",
+                            "liquidity_usd": 80_000.0,
+                        },
                         notes="",
                     ),
                 ),
@@ -290,12 +303,16 @@ def test_stress_lab_liquidity_thresholds_force_critical_override() -> None:
 
     stress_report = evaluator.evaluate(report, portfolio=assets)  # type: ignore[attr-defined]
 
-    liquidity_insight = next(insight for insight in stress_report.insights if insight.scenario == "liquidity_drain")
+    liquidity_insight = next(
+        insight for insight in stress_report.insights if insight.scenario == "liquidity_drain"
+    )
     assert liquidity_insight.severity == "critical"
     assert liquidity_insight.metrics["liquidity_alert"] == "critical"
     assert "metric:liquidity" in liquidity_insight.tags
 
-    override = next(override for override in stress_report.overrides if override.symbol == "UNIUSDT")
+    override = next(
+        override for override in stress_report.overrides if override.symbol == "UNIUSDT"
+    )
     assert override.severity == "critical"
     assert override.force_rebalance is True
 

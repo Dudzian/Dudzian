@@ -14,7 +14,9 @@ def _write_expected_file(tmp_path: Path, fingerprint: str) -> Path:
     return path
 
 
-def test_install_hook_main_accepts_fake_fingerprint(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_install_hook_main_accepts_fake_fingerprint(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     fingerprint = "stub-fingerprint"
     expected = _write_expected_file(tmp_path, fingerprint)
 
@@ -27,7 +29,9 @@ def test_install_hook_main_accepts_fake_fingerprint(tmp_path: Path, monkeypatch:
     assert result == fingerprint
 
 
-def test_install_hook_main_detects_mismatch(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_install_hook_main_detects_mismatch(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     expected = _write_expected_file(tmp_path, "expected")
 
     monkeypatch.setenv("KBOT_FAKE_FINGERPRINT", "different")

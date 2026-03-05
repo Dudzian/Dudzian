@@ -1,4 +1,5 @@
 """Obsługa zawieszeń harmonogramów i tagów strategii."""
+
 from __future__ import annotations
 
 import logging
@@ -155,20 +156,14 @@ class SuspensionManager:
                 schedule_reasons[name] = descriptor
                 remaining = record.remaining_seconds(now)
                 if remaining is not None:
-                    if (
-                        next_expiration_info is None
-                        or remaining < next_expiration_info[2]
-                    ):
+                    if next_expiration_info is None or remaining < next_expiration_info[2]:
                         next_expiration_info = ("schedule", name, remaining)
             for tag_name, record in self._tag_suspensions.items():
                 tags[tag_name] = record.as_dict(now)
                 tag_reasons[tag_name] = record.reason
                 remaining = record.remaining_seconds(now)
                 if remaining is not None:
-                    if (
-                        next_expiration_info is None
-                        or remaining < next_expiration_info[2]
-                    ):
+                    if next_expiration_info is None or remaining < next_expiration_info[2]:
                         next_expiration_info = ("tag", tag_name, remaining)
         counts = {
             "schedules": len(schedules),
@@ -309,4 +304,3 @@ class SuspensionManager:
         if seconds <= 0:
             return None
         return now + timedelta(seconds=seconds)
-

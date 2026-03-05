@@ -1,4 +1,5 @@
 """Generowanie podsumowania smoke testu paper trading w formacie Markdown."""
+
 from __future__ import annotations
 
 import argparse
@@ -148,7 +149,9 @@ def render_summary_markdown(
     storage = summary.get("storage") if isinstance(summary.get("storage"), Mapping) else None
     if storage:
         lines.append("## Stan przestrzeni dyskowej")
-        storage_rows = [(key.replace("_", " ").title(), value) for key, value in sorted(storage.items())]
+        storage_rows = [
+            (key.replace("_", " ").title(), value) for key, value in sorted(storage.items())
+        ]
         lines.append(_build_table(storage_rows))
 
     precheck = summary.get("precheck") if isinstance(summary.get("precheck"), Mapping) else {}
@@ -290,7 +293,9 @@ def render_summary_markdown(
                 )
             cli_args = risk_requirements.get("cli_args")
             if cli_args:
-                detail_rows.append(("Flagi verify_decision_log", " ".join(str(arg) for arg in cli_args)))
+                detail_rows.append(
+                    ("Flagi verify_decision_log", " ".join(str(arg) for arg in cli_args))
+                )
             lines.append(_build_table(detail_rows))
 
             combined_meta = risk_requirements.get("combined_metadata")
@@ -501,7 +506,9 @@ def render_summary_markdown(
                 limit=max_json_chars,
             )
 
-    token_audit = summary.get("token_audit") if isinstance(summary.get("token_audit"), Mapping) else None
+    token_audit = (
+        summary.get("token_audit") if isinstance(summary.get("token_audit"), Mapping) else None
+    )
     if token_audit:
         lines.append("## Audyt tokenów RBAC")
         token_warnings = token_audit.get("warnings") if isinstance(token_audit, Mapping) else None
@@ -545,9 +552,13 @@ def render_summary_markdown(
             lines.append("### Błędy tokenów")
             lines.append(f"- {token_errors}")
             lines.append("")
-        token_report_payload = token_audit.get("report") if isinstance(token_audit, Mapping) else None
+        token_report_payload = (
+            token_audit.get("report") if isinstance(token_audit, Mapping) else None
+        )
         if isinstance(token_report_payload, Mapping):
-            _append_json_block(lines, "Raport audytu tokenów", token_report_payload, limit=max_json_chars)
+            _append_json_block(
+                lines, "Raport audytu tokenów", token_report_payload, limit=max_json_chars
+            )
 
     tls_audit = summary.get("tls_audit") if isinstance(summary.get("tls_audit"), Mapping) else None
     if tls_audit:

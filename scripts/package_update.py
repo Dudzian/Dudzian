@@ -1,4 +1,5 @@
 """Tworzenie podpisanych pakietów aktualizacji `.dudzianpkg`."""
+
 from __future__ import annotations
 
 import argparse
@@ -112,7 +113,9 @@ def build_offline_package(
 
 def _load_signing_key(args: argparse.Namespace) -> tuple[bytes | None, str | None]:
     if args.signing_key and args.signing_key_file:
-        raise SystemExit("Podaj klucz podpisu poprzez --signing-key lub --signing-key-file, nie oba naraz")
+        raise SystemExit(
+            "Podaj klucz podpisu poprzez --signing-key lub --signing-key-file, nie oba naraz"
+        )
     if args.signing_key:
         return args.signing_key.encode("utf-8"), args.signing_key_id
     if args.signing_key_file:
@@ -132,7 +135,9 @@ def parse_arguments(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--package-id", required=True, help="Identyfikator pakietu")
     parser.add_argument("--version", required=True, help="Wersja pakietu")
     parser.add_argument("--fingerprint", help="Opcjonalny fingerprint urządzenia")
-    parser.add_argument("--metadata", nargs="*", default=[], help="Dodatkowe metadane w formacie klucz=wartość")
+    parser.add_argument(
+        "--metadata", nargs="*", default=[], help="Dodatkowe metadane w formacie klucz=wartość"
+    )
     parser.add_argument("--signing-key", help="Klucz HMAC wprost w wierszu poleceń")
     parser.add_argument("--signing-key-file", help="Plik zawierający klucz HMAC")
     parser.add_argument("--signing-key-id", help="Identyfikator klucza HMAC")

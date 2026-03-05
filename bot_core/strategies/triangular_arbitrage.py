@@ -56,7 +56,9 @@ class TriangularArbitrageStrategy(StrategyEngine):
             return []
 
         path_key = f"{direction}_path"
-        path_definition = snapshot.indicators.get(path_key) or snapshot.indicators.get("triangular_path")
+        path_definition = snapshot.indicators.get(path_key) or snapshot.indicators.get(
+            "triangular_path"
+        )
         if not path_definition:
             return []
 
@@ -148,4 +150,3 @@ def _build_metadata(
 
 
 __all__ = ["TriangularArbitrageSettings", "TriangularArbitrageStrategy"]
-

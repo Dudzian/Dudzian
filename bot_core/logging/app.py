@@ -1,4 +1,5 @@
 """Application-level logging setup for bot_core runtime and tools."""
+
 from __future__ import annotations
 
 import atexit
@@ -203,11 +204,7 @@ def get_logger(name: Optional[str] = None) -> logging.Logger:
     """Return a configured logger, installing the app logging configuration if needed."""
 
     setup_app_logging()
-    target = (
-        name
-        or _env("BOT_CORE_LOGGER_NAME")
-        or "bot_core"
-    )
+    target = name or _env("BOT_CORE_LOGGER_NAME") or "bot_core"
     return logging.getLogger(target if name is None else name)
 
 

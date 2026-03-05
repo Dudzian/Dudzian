@@ -1,4 +1,5 @@
 """Generowanie raportów guardrail'i kolejki I/O."""
+
 from __future__ import annotations
 
 import math
@@ -82,7 +83,9 @@ class GuardrailReport:
         ]
         for summary in self.summaries:
             timeout_avg = (
-                f"{summary.timeout_avg_seconds:.3f}" if summary.timeout_avg_seconds is not None else "n/d"
+                f"{summary.timeout_avg_seconds:.3f}"
+                if summary.timeout_avg_seconds is not None
+                else "n/d"
             )
             wait_avg = (
                 f"{summary.rate_limit_wait_avg_seconds:.3f}"
@@ -120,7 +123,9 @@ class GuardrailReport:
     def _recommendations_section(self) -> list[str]:
         rows = ["## Rekomendacje", ""]
         if not self.recommendations:
-            rows.append("Brak dodatkowych rekomendacji – konfiguracja guardrail'i wygląda stabilnie.")
+            rows.append(
+                "Brak dodatkowych rekomendacji – konfiguracja guardrail'i wygląda stabilnie."
+            )
         else:
             for item in self.recommendations:
                 rows.append(f"- {item}")
@@ -271,7 +276,9 @@ def _safe_ratio(numerator: float | None, denominator: float | None) -> float | N
     return numerator / denominator
 
 
-def _read_log_records(directory: str | Path | None, *, limit: int = 20) -> tuple[GuardrailLogRecord, ...]:
+def _read_log_records(
+    directory: str | Path | None, *, limit: int = 20
+) -> tuple[GuardrailLogRecord, ...]:
     if directory is None:
         return ()
 
@@ -355,7 +362,9 @@ def _build_recommendations(
         )
     if not recommendations:
         if summaries:
-            recommendations.append("Guardrails nie sygnalizują problemów – utrzymuj obecną konfigurację.")
+            recommendations.append(
+                "Guardrails nie sygnalizują problemów – utrzymuj obecną konfigurację."
+            )
         else:
             recommendations.append(
                 "Brak zdarzeń guardrail – potwierdź, że kolejka I/O jest poprawnie zainicjalizowana."

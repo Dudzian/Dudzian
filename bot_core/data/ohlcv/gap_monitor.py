@@ -1,4 +1,5 @@
 """Monitor luk danych OHLCV z integracją alertów."""
+
 from __future__ import annotations
 
 from dataclasses import dataclass, field
@@ -138,7 +139,9 @@ class DataGapIncidentTracker:
                 self._emit_alert(
                     severity="critical",
                     title=f"Brak danych OHLCV {symbol} {interval}",
-                    body=("Manifest nie posiada wpisu last_timestamp – należy zweryfikować pipeline backfillu."),
+                    body=(
+                        "Manifest nie posiada wpisu last_timestamp – należy zweryfikować pipeline backfillu."
+                    ),
                     context={
                         "environment": self.environment_name,
                         "exchange": self.exchange,
@@ -196,7 +199,9 @@ class DataGapIncidentTracker:
 
             now = self.clock()
             row_count = _safe_int(row_count_raw)
-            last_timestamp_iso = datetime.fromtimestamp(last_ts_ms / 1000, tz=timezone.utc).isoformat()
+            last_timestamp_iso = datetime.fromtimestamp(
+                last_ts_ms / 1000, tz=timezone.utc
+            ).isoformat()
 
             if gap_minutes < warning_threshold:
                 warnings_in_window = len(state.warnings)
@@ -209,13 +214,17 @@ class DataGapIncidentTracker:
                     self._emit_alert(
                         severity="info",
                         title=f"Incydent zamknięty – luka danych {symbol} {interval}",
-                        body=("Dane OHLCV zostały uzupełnione. Zamykam incydent i resetuję licznik ostrzeżeń."),
+                        body=(
+                            "Dane OHLCV zostały uzupełnione. Zamykam incydent i resetuję licznik ostrzeżeń."
+                        ),
                         context={
                             "environment": self.environment_name,
                             "exchange": self.exchange,
                             "symbol": symbol,
                             "interval": interval,
-                            "incident_minutes": f"{incident_minutes:.1f}" if incident_minutes is not None else "0.0",
+                            "incident_minutes": f"{incident_minutes:.1f}"
+                            if incident_minutes is not None
+                            else "0.0",
                             "gap_minutes": f"{gap_minutes:.1f}",
                             "row_count": str(row_count_raw or "0"),
                         },
@@ -281,7 +290,9 @@ class DataGapIncidentTracker:
             if state.incident_open:
                 assert state.incident_open_at is not None
                 elapsed = (now - state.incident_open_at).total_seconds() / 60
-                if (not state.sms_escalated) and elapsed >= max(1, self.policy.sms_escalation_minutes):
+                if (not state.sms_escalated) and elapsed >= max(
+                    1, self.policy.sms_escalation_minutes
+                ):
                     state.sms_escalated = True
                     self._emit_alert(
                         severity="critical",
@@ -338,7 +349,9 @@ class DataGapIncidentTracker:
             self._emit_alert(
                 severity="warning",
                 title=f"Luka danych {symbol} {interval}",
-                body=("Brak świec OHLCV od ponad wyznaczonego progu. Monitoruję dalsze próby synchronizacji."),
+                body=(
+                    "Brak świec OHLCV od ponad wyznaczonego progu. Monitoruję dalsze próby synchronizacji."
+                ),
                 context={**context, "warnings_in_window": str(warn_count)},
             )
             self._log_audit(

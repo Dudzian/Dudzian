@@ -62,6 +62,9 @@ def test_offline_mode_forces_paper_when_enabled():
     selector = ExecutionModeSelector()
     env = _Env(environment=ExchangeEnvironment.LIVE, offline=True)
 
-    assert selector.resolve(
-        _settings(mode="live", live_enabled=True, force_paper_when_offline=True), env
-    ) == "paper"
+    assert (
+        selector.resolve(
+            _settings(mode="live", live_enabled=True, force_paper_when_offline=True), env
+        )
+        == "paper"
+    )

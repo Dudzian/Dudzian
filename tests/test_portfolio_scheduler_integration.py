@@ -21,7 +21,9 @@ class _StaticStrategy(StrategyEngine):
     def __init__(self, confidences: tuple[float, ...]) -> None:
         self._confidences = confidences
 
-    def warm_up(self, history: tuple[MarketSnapshot, ...]) -> None:  # pragma: no cover - deterministic
+    def warm_up(
+        self, history: tuple[MarketSnapshot, ...]
+    ) -> None:  # pragma: no cover - deterministic
         return None
 
     def on_data(self, snapshot: MarketSnapshot) -> tuple[StrategySignal, ...]:
@@ -48,7 +50,9 @@ class _SingleSnapshotFeed(StrategyDataFeed):
             volume=100.0,
         )
 
-    def load_history(self, strategy_name: str, bars: int) -> tuple[MarketSnapshot, ...]:  # pragma: no cover - deterministic
+    def load_history(
+        self, strategy_name: str, bars: int
+    ) -> tuple[MarketSnapshot, ...]:  # pragma: no cover - deterministic
         return ()
 
     def fetch_latest(self, strategy_name: str) -> tuple[MarketSnapshot, ...]:
@@ -146,7 +150,9 @@ def test_scheduler_applies_portfolio_governor_allocations() -> None:
     assert decision is not None
 
     trend_schedule = next(item for item in scheduler._schedules if item.strategy_name == "trend")
-    mr_schedule = next(item for item in scheduler._schedules if item.strategy_name == "mean_reversion")
+    mr_schedule = next(
+        item for item in scheduler._schedules if item.strategy_name == "mean_reversion"
+    )
 
     trend_weight = governor.current_weights["trend"]
     mr_weight = governor.current_weights["mean_reversion"]

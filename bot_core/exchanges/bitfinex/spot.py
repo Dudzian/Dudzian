@@ -1,4 +1,5 @@
 """Adapter CCXT dla Bitfinex Spot."""
+
 from __future__ import annotations
 
 from typing import Any, Mapping
@@ -42,4 +43,3 @@ class BitfinexSpotAdapter(CCXTSpotAdapter):
 
 
 __all__ = ["BitfinexSpotAdapter"]
-

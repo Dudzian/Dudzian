@@ -60,7 +60,9 @@ def test_no_lowercase_styles_qml_wrapper_files() -> None:
     if not lowercase_styles_dir.exists():
         return
 
-    qml_files = sorted(path.relative_to(QML_ROOT).as_posix() for path in lowercase_styles_dir.rglob("*.qml"))
+    qml_files = sorted(
+        path.relative_to(QML_ROOT).as_posix() for path in lowercase_styles_dir.rglob("*.qml")
+    )
     assert qml_files == [], (
         "Case-insensitive collision risk: lowercase 'ui/pyside_app/qml/styles' contains QML files: "
         + ", ".join(qml_files)
@@ -71,7 +73,9 @@ def test_no_path_based_styles_imports_in_pyside_qml() -> None:
     offenders: list[str] = []
 
     for qml_file in sorted(QML_ROOT.rglob("*.qml")):
-        for line_number, line in enumerate(qml_file.read_text(encoding="utf-8", errors="replace").splitlines(), start=1):
+        for line_number, line in enumerate(
+            qml_file.read_text(encoding="utf-8", errors="replace").splitlines(), start=1
+        ):
             if PATH_STYLES_IMPORT_RE.match(line):
                 offenders.append(f"{qml_file}:{line_number}: {line.rstrip()}")
 

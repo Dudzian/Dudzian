@@ -29,7 +29,9 @@ class _PredictHook(Protocol):
 
 
 class _InitHook(Protocol):
-    def __call__(self, model_type: str, model_dir: Path | None) -> None:  # pragma: no cover - protokół
+    def __call__(
+        self, model_type: str, model_dir: Path | None
+    ) -> None:  # pragma: no cover - protokół
         ...
 
 

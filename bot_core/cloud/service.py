@@ -41,7 +41,9 @@ class CloudRuntimeService:
         self,
         config: CloudServerConfig,
         *,
-        context_builder: Callable[[str | Path, str | None], LocalRuntimeContext] = build_local_runtime_context,
+        context_builder: Callable[
+            [str | Path, str | None], LocalRuntimeContext
+        ] = build_local_runtime_context,
         license_service: LicenseService | None = None,
         ready_hook: Callable[[Mapping[str, object]], None] | None = None,
         health_probe_path: str | Path | None = None,
@@ -136,7 +138,9 @@ class CloudRuntimeService:
                 try:
                     server.stop(0.5)
                 except Exception:  # pragma: no cover - defensywne
-                    LOGGER.debug("Błąd podczas zatrzymywania nieaktywnego CloudRuntimeServer", exc_info=True)
+                    LOGGER.debug(
+                        "Błąd podczas zatrzymywania nieaktywnego CloudRuntimeServer", exc_info=True
+                    )
                 with self._lock:
                     self._starting = False
                 context.stop()
@@ -168,12 +172,17 @@ class CloudRuntimeService:
                 try:
                     server.stop(0.5)
                 except Exception:  # pragma: no cover - defensywne
-                    LOGGER.debug("Błąd podczas zatrzymywania CloudRuntimeServer po błędzie startu", exc_info=True)
+                    LOGGER.debug(
+                        "Błąd podczas zatrzymywania CloudRuntimeServer po błędzie startu",
+                        exc_info=True,
+                    )
             context.stop()
             raise
 
         with self._lock:
-            should_publish = self._context is context and server is not None and orchestrator is not None
+            should_publish = (
+                self._context is context and server is not None and orchestrator is not None
+            )
             if should_publish:
                 self._server = server
                 self._address = server.address
@@ -267,7 +276,9 @@ class CloudRuntimeService:
             try:
                 self._license_service = LicenseService()
             except LicenseServiceError as exc:
-                LOGGER.error("Nie udało się zainicjalizować LicenseService dla klientów cloud: %s", exc)
+                LOGGER.error(
+                    "Nie udało się zainicjalizować LicenseService dla klientów cloud: %s", exc
+                )
                 raise
         if self._security_manager is None:
             try:
@@ -372,7 +383,9 @@ class CloudRuntimeService:
             try:
                 context.cloud_health_headers = dict(headers)
             except Exception:  # pragma: no cover - defensywne
-                LOGGER.debug("Nie udało się zaktualizować cloud_health_headers w kontekście", exc_info=True)
+                LOGGER.debug(
+                    "Nie udało się zaktualizować cloud_health_headers w kontekście", exc_info=True
+                )
         self._update_health(orchestrator=snapshot)
 
     def _start_context_in_background(
@@ -410,7 +423,9 @@ class CloudRuntimeService:
         with self._lock:
             return self._context is context
 
-    def _run_context_start(self, context: LocalRuntimeContext, started_evt: threading.Event) -> None:
+    def _run_context_start(
+        self, context: LocalRuntimeContext, started_evt: threading.Event
+    ) -> None:
         if not self._is_current_context(context):
             started_evt.set()
             return

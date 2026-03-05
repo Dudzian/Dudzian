@@ -73,9 +73,7 @@ def _add_issue(issues: list[str], label: str) -> None:
         issues.append(label)
 
 
-def _summarize_scheduler_state(
-    state: Mapping[str, Any], *, now: datetime
-) -> Mapping[str, Any]:
+def _summarize_scheduler_state(state: Mapping[str, Any], *, now: datetime) -> Mapping[str, Any]:
     snapshot = {str(key): value for key, value in state.items()}
     last_run = _parse_iso_datetime(snapshot.get("last_run"))
     next_run = _parse_iso_datetime(snapshot.get("next_run"))
@@ -120,13 +118,9 @@ def collect_pipeline_compliance_summary(
 
     reference_time = now.astimezone(timezone.utc) if now else datetime.now(timezone.utc)
 
-    dq_reports = load_recent_data_quality_reports(
-        limit=data_quality_limit, audit_root=audit_root
-    )
+    dq_reports = load_recent_data_quality_reports(limit=data_quality_limit, audit_root=audit_root)
     drift_reports = load_recent_drift_reports(limit=drift_limit, audit_root=audit_root)
-    walk_reports = load_recent_walk_forward_reports(
-        limit=walk_forward_limit, audit_root=audit_root
-    )
+    walk_reports = load_recent_walk_forward_reports(limit=walk_forward_limit, audit_root=audit_root)
 
     dq_summary = summarize_data_quality_reports(dq_reports)
     drift_summary = summarize_drift_reports(drift_reports)
@@ -152,9 +146,7 @@ def collect_pipeline_compliance_summary(
     if include_scheduler:
         scheduler_state = load_scheduler_state(audit_root=audit_root)
         if scheduler_state is not None:
-            scheduler_summary = _summarize_scheduler_state(
-                scheduler_state, now=reference_time
-            )
+            scheduler_summary = _summarize_scheduler_state(scheduler_state, now=reference_time)
             if scheduler_summary.get("is_overdue"):
                 _add_issue(issues, "scheduler_overdue")
             if scheduler_summary.get("cooldown_active"):

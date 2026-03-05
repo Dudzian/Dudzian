@@ -26,7 +26,11 @@ from bot_core.security.fingerprint import (
     load_license_secret,
     _normalize_binding_fingerprint,
 )
-from bot_core.security.logs import export_security_bundle, export_signed_audit_log, read_audit_entries
+from bot_core.security.logs import (
+    export_security_bundle,
+    export_signed_audit_log,
+    read_audit_entries,
+)
 from bot_core.security.path_utils import resolve_tilde_path
 from bot_core.security.license import validate_license
 from bot_core.security.license_service import (
@@ -81,7 +85,9 @@ def _load_keys_from_file(path: Path) -> dict[str, bytes]:
     return decoded
 
 
-def ensure_binding_secret(secret_path: str | None = None, expected_fingerprint: str | None = None) -> dict[str, Any]:
+def ensure_binding_secret(
+    secret_path: str | None = None, expected_fingerprint: str | None = None
+) -> dict[str, Any]:
     normalized_expected = (
         _normalize_binding_fingerprint(expected_fingerprint)
         if expected_fingerprint is not None and expected_fingerprint.strip()
@@ -210,7 +216,9 @@ def _build_capability_summary(snapshot: LicenseSnapshot) -> dict[str, Any]:
     environments = sorted(capabilities.environments)
     summary = _empty_license_summary(snapshot.bundle_path)
     fingerprint_value = capabilities.hwid or snapshot.local_hwid
-    fingerprint_source = "payload" if capabilities.hwid else ("local" if snapshot.local_hwid else None)
+    fingerprint_source = (
+        "payload" if capabilities.hwid else ("local" if snapshot.local_hwid else None)
+    )
     summary.update(
         {
             "status": "active",
@@ -314,9 +322,7 @@ def _read_license_summary(
         except FileNotFoundError:
             errors.append(f"Brak pliku kluczy licencji: {license_keys_path}")
         except ValueError as exc:
-            errors.append(
-                f"Nie udało się wczytać kluczy licencji ({license_keys_path}): {exc}"
-            )
+            errors.append(f"Nie udało się wczytać kluczy licencji ({license_keys_path}): {exc}")
 
     if fingerprint_keys_path:
         try:
@@ -338,9 +344,7 @@ def _read_license_summary(
                 f"Nie udało się wczytać kluczy listy odwołań ({revocation_keys_path}): {exc}"
             )
     elif revocation_signature_required:
-        errors.append(
-            "Wymagano podpisanej listy odwołań, ale nie dostarczono pliku kluczy HMAC."
-        )
+        errors.append("Wymagano podpisanej listy odwołań, ale nie dostarczono pliku kluczy HMAC.")
 
     result = validate_license(
         license_path=path,
@@ -369,7 +373,9 @@ def _read_license_summary(
         "license_id": result.license_id,
         "revocation_status": result.revocation_status,
         "revocation_checked": result.revocation_checked,
-        "revocation_list_path": str(result.revocation_list_path) if result.revocation_list_path else None,
+        "revocation_list_path": str(result.revocation_list_path)
+        if result.revocation_list_path
+        else None,
         "revocation_generated_at": result.revocation_generated_at,
         "revocation_reason": result.revocation_reason,
         "revocation_revoked_at": result.revocation_revoked_at,
@@ -656,9 +662,7 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="UI security bridge")
     subparsers = parser.add_subparsers(dest="command", required=True)
 
-    dump_parser = subparsers.add_parser(
-        "dump", help="Zwraca stan licencji i profili użytkowników"
-    )
+    dump_parser = subparsers.add_parser("dump", help="Zwraca stan licencji i profili użytkowników")
     dump_parser.add_argument("--license-path", dest="license_path", default=None)
     dump_parser.add_argument("--profiles-path", dest="profiles_path", default=None)
     dump_parser.add_argument("--fingerprint-path", dest="fingerprint_path", default=None)
@@ -675,8 +679,7 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     dump_parser.add_argument("--audit-path", dest="audit_path", default=None)
     dump_parser.add_argument("--audit-limit", dest="audit_limit", type=int, default=200)
 
-    oem_parser = subparsers.add_parser(
-        "oem-validate", help="Waliduje licencję OEM oraz fallback")
+    oem_parser = subparsers.add_parser("oem-validate", help="Waliduje licencję OEM oraz fallback")
     oem_parser.add_argument("--license-path", dest="license_path", required=True)
     oem_parser.add_argument("--fallback-path", dest="fallback_path", default=None)
     oem_parser.add_argument("--fingerprint-path", dest="fingerprint_path", default=None)
@@ -691,7 +694,9 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         help="Wymaga podpisanej listy odwołań oraz dostarczonych kluczy HMAC.",
     )
 
-    fingerprint_parser = subparsers.add_parser("fingerprint", help="Generuje podpisany fingerprint hosta")
+    fingerprint_parser = subparsers.add_parser(
+        "fingerprint", help="Generuje podpisany fingerprint hosta"
+    )
     fingerprint_parser.add_argument("--keys-file", dest="keys_file", default=None)
     fingerprint_parser.add_argument(
         "--key",
@@ -702,7 +707,9 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     )
     fingerprint_parser.add_argument("--rotation-log", dest="rotation_log", default=None)
     fingerprint_parser.add_argument("--purpose", dest="purpose", default=None)
-    fingerprint_parser.add_argument("--interval-days", dest="interval_days", type=float, default=None)
+    fingerprint_parser.add_argument(
+        "--interval-days", dest="interval_days", type=float, default=None
+    )
     fingerprint_parser.add_argument("--dongle", dest="dongle", default=None)
 
     assign_parser = subparsers.add_parser("assign-profile", help="Aktualizuje profil użytkownika")
@@ -719,20 +726,26 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     remove_parser.add_argument("--log-path", dest="log_path", default=None)
     remove_parser.add_argument("--actor", dest="actor", default=None)
 
-    verify_tpm_parser = subparsers.add_parser("verify-tpm", help="Waliduje dowód TPM/secure enclave")
+    verify_tpm_parser = subparsers.add_parser(
+        "verify-tpm", help="Waliduje dowód TPM/secure enclave"
+    )
     verify_tpm_parser.add_argument("--evidence-path", dest="evidence_path", required=True)
-    verify_tpm_parser.add_argument("--expected-fingerprint", dest="expected_fingerprint", default=None)
+    verify_tpm_parser.add_argument(
+        "--expected-fingerprint", dest="expected_fingerprint", default=None
+    )
     verify_tpm_parser.add_argument("--license-path", dest="license_path", default=None)
     verify_tpm_parser.add_argument("--keyring", dest="keyring", default=None)
 
     ensure_secret_parser = subparsers.add_parser(
-        "ensure-binding-secret", help="Zapewnia wygenerowanie i zabezpieczenie lokalnego sekretu licencyjnego"
+        "ensure-binding-secret",
+        help="Zapewnia wygenerowanie i zabezpieczenie lokalnego sekretu licencyjnego",
     )
     ensure_secret_parser.add_argument("--secret-path", dest="secret_path", default=None)
     ensure_secret_parser.add_argument("--fingerprint", dest="fingerprint", default=None)
 
     bundle_parser = subparsers.add_parser(
-        "export-security-bundle", help="Eksportuje podpisany pakiet logów bezpieczeństwa oraz alertów"
+        "export-security-bundle",
+        help="Eksportuje podpisany pakiet logów bezpieczeństwa oraz alertów",
     )
     bundle_parser.add_argument("--audit-path", dest="audit_path", required=True)
     bundle_parser.add_argument("--alerts-path", dest="alerts_path", required=True)
@@ -751,13 +764,17 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         help="Opcjonalne metadane w formacie JSON do zapisania w pakiecie.",
     )
 
-    audit_parser = subparsers.add_parser("export-audit", help="Eksportuje podpisany pakiet logów bezpieczeństwa")
+    audit_parser = subparsers.add_parser(
+        "export-audit", help="Eksportuje podpisany pakiet logów bezpieczeństwa"
+    )
     audit_parser.add_argument("--log-path", dest="log_path", default=None)
     audit_parser.add_argument("--output-dir", dest="output_dir", default=None)
     audit_parser.add_argument("--limit", dest="limit", type=int, default=None)
     audit_parser.add_argument("--key", dest="key_source", default=None)
     audit_parser.add_argument("--key-id", dest="key_id", default=None)
-    audit_parser.add_argument("--metadata", dest="metadata", default=None, help="Dodatkowe metadane w formacie JSON")
+    audit_parser.add_argument(
+        "--metadata", dest="metadata", default=None, help="Dodatkowe metadane w formacie JSON"
+    )
 
     return parser.parse_args(argv)
 

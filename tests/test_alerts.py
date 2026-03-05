@@ -1,4 +1,5 @@
 """Testy modułu alertów."""
+
 from __future__ import annotations
 
 import base64
@@ -133,7 +134,9 @@ def test_router_dispatch_updates_metrics(sample_message: AlertMessage) -> None:
     ) == pytest.approx(1.0)
 
 
-def test_router_continues_on_error(sample_message: AlertMessage, caplog: pytest.LogCaptureFixture) -> None:
+def test_router_continues_on_error(
+    sample_message: AlertMessage, caplog: pytest.LogCaptureFixture
+) -> None:
     audit = InMemoryAlertAuditLog()
     router = DefaultAlertRouter(audit_log=audit)
     router.register(FailingChannel())
@@ -194,11 +197,15 @@ def test_router_records_failure_metric(sample_message: AlertMessage) -> None:
 
 def test_file_alert_audit_log_writes_entries(tmp_path: Path, sample_message: AlertMessage) -> None:
     log_dir = tmp_path / "audit"
-    audit = FileAlertAuditLog(directory=log_dir, filename_pattern="alerts-%Y%m%d.jsonl", retention_days=30)
+    audit = FileAlertAuditLog(
+        directory=log_dir, filename_pattern="alerts-%Y%m%d.jsonl", retention_days=30
+    )
 
     audit.append(sample_message, channel="telegram")
 
-    expected_file = log_dir / sample_message.timestamp.astimezone(timezone.utc).strftime("alerts-%Y%m%d.jsonl")
+    expected_file = log_dir / sample_message.timestamp.astimezone(timezone.utc).strftime(
+        "alerts-%Y%m%d.jsonl"
+    )
     assert expected_file.exists()
     contents = expected_file.read_text("utf-8").strip().splitlines()
     assert contents
@@ -235,7 +242,6 @@ def test_file_alert_audit_log_respects_retention(tmp_path: Path) -> None:
     audit.append(old_message, channel="email")
     old_file = (tmp_path / "audit") / "alerts-20230101.jsonl"
     assert old_file.exists()
-
 
     audit.append(new_message, channel="telegram")
     assert not old_file.exists()
@@ -391,7 +397,9 @@ def test_email_channel_builds_message(sample_message: AlertMessage) -> None:
     assert channel.health_check()["status"] == "ok"
 
 
-def test_router_throttles_repeated_alerts(sample_message: AlertMessage, caplog: pytest.LogCaptureFixture) -> None:
+def test_router_throttles_repeated_alerts(
+    sample_message: AlertMessage, caplog: pytest.LogCaptureFixture
+) -> None:
     logger = logging.getLogger("bot_core.alerts")
     handler = _ListHandler(level=logging.INFO)
     prev_level = logger.level
@@ -434,7 +442,11 @@ def test_router_throttles_repeated_alerts(sample_message: AlertMessage, caplog: 
     messages = "\n".join(record.getMessage() for record in handler.records)
     assert handler.records, "Brak przechwyconych logów z bot_core.alerts (throttle)"
     normalized = unicodedata.normalize("NFKD", messages).encode("ascii", "ignore").decode().lower()
-    assert ("powtarz" in normalized and "alert" in normalized and ("tlum" in normalized or "tumie" in normalized))
+    assert (
+        "powtarz" in normalized
+        and "alert" in normalized
+        and ("tlum" in normalized or "tumie" in normalized)
+    )
 
     clock.advance(180)
     router.dispatch(sample_message)
@@ -447,7 +459,9 @@ def test_router_records_suppressed_metric() -> None:
     audit = InMemoryAlertAuditLog()
     registry = MetricsRegistry()
     clock = _MutableClock(start=datetime(2024, 1, 1, tzinfo=timezone.utc))
-    throttle = AlertThrottle(window=timedelta(seconds=60), clock=clock, exclude_severities=frozenset())
+    throttle = AlertThrottle(
+        window=timedelta(seconds=60), clock=clock, exclude_severities=frozenset()
+    )
     router = DefaultAlertRouter(
         audit_log=audit,
         throttle=throttle,
@@ -492,7 +506,9 @@ def test_router_health_snapshot_records_metric(sample_message: AlertMessage) -> 
 
     assert snapshot[channel.name]["status"] == "error"
     health_errors = registry.get("alert_healthcheck_errors_total")
-    assert health_errors.value(labels={"environment": "paper", "channel": channel.name}) == pytest.approx(1.0)
+    assert health_errors.value(
+        labels={"environment": "paper", "channel": channel.name}
+    ) == pytest.approx(1.0)
 
 
 def test_sms_channel_sends_to_all_recipients(sample_message: AlertMessage) -> None:

@@ -9,7 +9,17 @@ from dataclasses import InitVar, dataclass, field, replace
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from tempfile import NamedTemporaryFile
-from typing import Any, Callable, ClassVar, Final, Iterable, Mapping, MutableMapping, Protocol, Sequence
+from typing import (
+    Any,
+    Callable,
+    ClassVar,
+    Final,
+    Iterable,
+    Mapping,
+    MutableMapping,
+    Protocol,
+    Sequence,
+)
 
 from bot_core.runtime.journal import TradingDecisionEvent, TradingDecisionJournal
 
@@ -32,8 +42,7 @@ _LOGGER = logging.getLogger(__name__)
 class RetrainingEventEmitter(Protocol):
     """Minimalny protokół emitera zdarzeń obsługującego publikacje retreningu."""
 
-    def emit(self, event: str, **payload: Any) -> None:
-        ...
+    def emit(self, event: str, **payload: Any) -> None: ...
 
 
 @dataclass(slots=True)
@@ -541,13 +550,9 @@ class ScheduledTrainingJob:
     audit_root: str | Path | None = None
     decision_journal: TradingDecisionJournal | None = None
     decision_journal_context: Mapping[str, str] | None = None
-    _journal_environment: str = field(
-        init=False, repr=False, default=DEFAULT_JOURNAL_ENVIRONMENT
-    )
+    _journal_environment: str = field(init=False, repr=False, default=DEFAULT_JOURNAL_ENVIRONMENT)
     _journal_portfolio: str | None = field(init=False, repr=False, default=None)
-    _journal_risk_profile: str = field(
-        init=False, repr=False, default=DEFAULT_JOURNAL_RISK_PROFILE
-    )
+    _journal_risk_profile: str = field(init=False, repr=False, default=DEFAULT_JOURNAL_RISK_PROFILE)
     journal_environment: InitVar[str | None] = None
     journal_portfolio: InitVar[str | None] = None
     journal_risk_profile: InitVar[str | None] = None
@@ -569,9 +574,7 @@ class ScheduledTrainingJob:
             raise TypeError("decision_journal_context musi być mapowaniem lub None")
         env_value = None if isinstance(journal_environment, property) else journal_environment
         risk_value = None if isinstance(journal_risk_profile, property) else journal_risk_profile
-        portfolio_value = (
-            None if isinstance(journal_portfolio, property) else journal_portfolio
-        )
+        portfolio_value = None if isinstance(journal_portfolio, property) else journal_portfolio
 
         self.journal_environment = env_value
         self.journal_risk_profile = risk_value
@@ -617,9 +620,7 @@ class ScheduledTrainingJob:
         if value is None:
             self._journal_portfolio = None
         else:
-            self._journal_portfolio = self._normalize_journal_value(
-                value, default=self.name
-            )
+            self._journal_portfolio = self._normalize_journal_value(value, default=self.name)
 
     @property
     def journal_risk_profile(self) -> str:
@@ -636,9 +637,7 @@ class ScheduledTrainingJob:
         return self._journal_context_value("strategy", self.name)
 
     def run(self, now: datetime | None = None) -> ModelArtifact:
-        planned_timestamp = (
-            self.scheduler._ensure_utc(now) if now is not None else None
-        )
+        planned_timestamp = self.scheduler._ensure_utc(now) if now is not None else None
         dataset: FeatureDataset | None = None
         trainer: ModelTrainer | None = None
         try:
@@ -759,9 +758,7 @@ class ScheduledTrainingJob:
                             formatted_value = float(metric_value)
                         except (TypeError, ValueError):
                             continue
-                        metadata[
-                            f"metric_{split_name}_{metric_name}"
-                        ] = f"{formatted_value:.10f}"
+                        metadata[f"metric_{split_name}_{metric_name}"] = f"{formatted_value:.10f}"
             event = TradingDecisionEvent(
                 event_type="ai_retraining",
                 timestamp=artifact.trained_at,
@@ -774,9 +771,7 @@ class ScheduledTrainingJob:
                     "schedule_run_id", f"{self.name}:{artifact.trained_at.isoformat()}"
                 ),
                 strategy_instance_id=context.get("strategy_instance_id"),
-                telemetry_namespace=context.get(
-                    "telemetry_namespace", f"ai.scheduler.{self.name}"
-                ),
+                telemetry_namespace=context.get("telemetry_namespace", f"ai.scheduler.{self.name}"),
                 metadata=metadata,
             )
             self.decision_journal.record(event)
@@ -801,7 +796,9 @@ class ScheduledTrainingJob:
         metadata = getattr(artifact, "metadata", {})
         model_name = None
         if isinstance(metadata, Mapping):
-            model_name = metadata.get("model_name") or metadata.get("model") or metadata.get("job_name")
+            model_name = (
+                metadata.get("model_name") or metadata.get("model") or metadata.get("job_name")
+            )
         if not model_name:
             model_name = self.name
         payload: dict[str, object] = {
@@ -887,9 +884,7 @@ class ScheduledTrainingJob:
                 key_str = str(key)
                 if key_str in {"environment", "portfolio", "risk_profile", "strategy", "schedule"}:
                     fallback = context.get(key_str, self.name)
-                    context[key_str] = self._normalize_journal_value(
-                        value, default=fallback
-                    )
+                    context[key_str] = self._normalize_journal_value(value, default=fallback)
                 else:
                     context[key_str] = str(value)
         return context
@@ -936,13 +931,9 @@ class ScheduledTrainingJob:
             risk_profile=context.get("risk_profile", self.journal_risk_profile),
             schedule=context.get("schedule", self.name),
             strategy=context.get("strategy", self.name),
-            schedule_run_id=context.get(
-                "schedule_run_id", f"{self.name}:{failed_at.isoformat()}"
-            ),
+            schedule_run_id=context.get("schedule_run_id", f"{self.name}:{failed_at.isoformat()}"),
             strategy_instance_id=context.get("strategy_instance_id"),
-            telemetry_namespace=context.get(
-                "telemetry_namespace", f"ai.scheduler.{self.name}"
-            ),
+            telemetry_namespace=context.get("telemetry_namespace", f"ai.scheduler.{self.name}"),
             metadata=metadata,
         )
         try:

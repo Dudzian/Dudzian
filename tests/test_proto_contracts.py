@@ -31,7 +31,7 @@ def test_trading_proto_contains_required_contracts(snippet: str) -> None:
 def test_trading_proto_declares_contract_version() -> None:
     content = PROTO_FILE.read_text(encoding="utf-8")
     assert "package botcore.trading.v1;" in content
-    assert "syntax = \"proto3\";" in content
+    assert 'syntax = "proto3";' in content
 
 
 def test_trading_proto_documents_no_websocket_policy() -> None:

@@ -56,4 +56,5 @@ def require_hardware_wallet_metadata(
     document["requires_hardware_wallet"] = True
     return document
 
+
 __all__ = ["PayoutRequest", "PayoutRecord", "require_hardware_wallet_metadata"]

@@ -16,7 +16,10 @@ def _credentials() -> ExchangeCredentials:
 
 
 def _watchdog() -> Watchdog:
-    return Watchdog(retry_policy=RetryPolicy(max_attempts=3, base_delay=0.0, max_delay=0.0, jitter=(0.0, 0.0)), sleep=lambda _: None)
+    return Watchdog(
+        retry_policy=RetryPolicy(max_attempts=3, base_delay=0.0, max_delay=0.0, jitter=(0.0, 0.0)),
+        sleep=lambda _: None,
+    )
 
 
 def test_fetch_account_snapshot_handles_high_volatility(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -57,7 +60,10 @@ def test_place_order_retries_on_rate_limit(monkeypatch: pytest.MonkeyPatch) -> N
     responses = iter(
         [
             ExchangeThrottlingError("limit", status_code=429, payload=None),
-            {"status": "Ok", "order": {"id": "123", "status": "new", "filledAmount": "0", "avgPrice": "0"}},
+            {
+                "status": "Ok",
+                "order": {"id": "123", "status": "new", "filledAmount": "0", "avgPrice": "0"},
+            },
         ]
     )
 
@@ -68,11 +74,15 @@ def test_place_order_retries_on_rate_limit(monkeypatch: pytest.MonkeyPatch) -> N
         return value
 
     monkeypatch.setattr(ZondaMarginAdapter, "_signed_request", fake_signed)
-    monkeypatch.setattr(ZondaMarginAdapter, "_public_request", lambda *args, **kwargs: {"status": "Ok", "items": {}})
+    monkeypatch.setattr(
+        ZondaMarginAdapter, "_public_request", lambda *args, **kwargs: {"status": "Ok", "items": {}}
+    )
 
     adapter = ZondaMarginAdapter(_credentials(), environment=Environment.LIVE, watchdog=_watchdog())
     result = adapter.place_order(
-        OrderRequest(symbol="BTC-PLN", side="sell", quantity=0.1, order_type="limit", price=150000.0)
+        OrderRequest(
+            symbol="BTC-PLN", side="sell", quantity=0.1, order_type="limit", price=150000.0
+        )
     )
 
     assert result.order_id == "123"
@@ -83,7 +93,9 @@ def test_cancel_order_maps_errors(monkeypatch: pytest.MonkeyPatch) -> None:
         return {"status": "Fail", "errors": [{"code": 4002, "message": "Invalid signature"}]}
 
     monkeypatch.setattr(ZondaMarginAdapter, "_signed_request", fake_signed)
-    monkeypatch.setattr(ZondaMarginAdapter, "_public_request", lambda *args, **kwargs: {"status": "Ok", "items": {}})
+    monkeypatch.setattr(
+        ZondaMarginAdapter, "_public_request", lambda *args, **kwargs: {"status": "Ok", "items": {}}
+    )
 
     adapter = ZondaMarginAdapter(_credentials(), environment=Environment.LIVE, watchdog=_watchdog())
 

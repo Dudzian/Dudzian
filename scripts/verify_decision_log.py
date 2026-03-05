@@ -228,9 +228,7 @@ class _SummaryAggregator:
                     "samples": stats["fps_count"],
                 }
             if stats["screens"]:
-                payload["screens"] = [
-                    json.loads(encoded) for encoded in sorted(stats["screens"])
-                ]
+                payload["screens"] = [json.loads(encoded) for encoded in sorted(stats["screens"])]
             if stats["severity_counts"]:
                 payload["severity"] = {
                     "counts": {
@@ -251,8 +249,7 @@ class _SummaryAggregator:
             summary["last_timestamp"] = self._last_ts.isoformat()
         if self._severity_totals:
             summary["severity_counts"] = {
-                level: self._severity_totals[level]
-                for level in sorted(self._severity_totals)
+                level: self._severity_totals[level] for level in sorted(self._severity_totals)
             }
         return summary
 
@@ -288,12 +285,12 @@ def _expected_env_assignments(overrides: Mapping[str, Any]) -> dict[str, str]:
 
 
 def _unescape_env_value(raw: str) -> str:
-    if raw.startswith("\"") and raw.endswith("\""):
+    if raw.startswith('"') and raw.endswith('"'):
         inner = raw[1:-1]
         try:
             return codecs.decode(inner, "unicode_escape")
         except Exception:  # pragma: no cover - defensywne
-            return inner.replace("\\\"", "\"").replace("\\\\", "\\")
+            return inner.replace('\\"', '"').replace("\\\\", "\\")
     if raw.startswith("'") and raw.endswith("'"):
         inner = raw[1:-1]
         return inner.replace("\\'", "'").replace("\\\\", "\\")
@@ -310,9 +307,7 @@ def _parse_env_snippet(path: Path) -> dict[str, str]:
         if line.startswith("export "):
             line = line[len("export ") :].strip()
         if "=" not in line:
-            raise VerificationError(
-                f"Linia {index} pliku {path} nie zawiera przypisania KEY=VALUE"
-            )
+            raise VerificationError(f"Linia {index} pliku {path} nie zawiera przypisania KEY=VALUE")
         key, value = line.split("=", 1)
         key = key.strip()
         if not key:
@@ -366,9 +361,13 @@ def _load_json_schema_validator(path: str):
     try:
         schema = json.loads(schema_text)
     except json.JSONDecodeError as exc:
-        raise VerificationError(f"Plik schematu JSON {path!r} zawiera nieprawidłowy JSON: {exc}") from exc
+        raise VerificationError(
+            f"Plik schematu JSON {path!r} zawiera nieprawidłowy JSON: {exc}"
+        ) from exc
     if not isinstance(schema, Mapping):
-        raise VerificationError(f"Plik schematu JSON {path!r} musi zawierać obiekt na poziomie głównym")
+        raise VerificationError(
+            f"Plik schematu JSON {path!r} musi zawierać obiekt na poziomie głównym"
+        )
 
     if jsonschema is None:  # pragma: no cover - zależy od środowiska uruchomieniowego
         builtin_validator = _build_builtin_json_schema_validator(schema)
@@ -400,7 +399,9 @@ def _load_json_schema_validator(path: str):
 
 
 class _DecisionLogSchemaValidationError(Exception):
-    def __init__(self, message: str, *, path: Sequence[Any] = ()):  # pragma: no cover - prosta struktura
+    def __init__(
+        self, message: str, *, path: Sequence[Any] = ()
+    ):  # pragma: no cover - prosta struktura
         super().__init__(message)
         self.message = message
         self.absolute_path = tuple(path)
@@ -530,9 +531,7 @@ _DECISION_LOG_V2_SCHEMA_DESCRIPTION = (
     "Wbudowany schemat decision logu v2 (artefacts, runtime_flags, signatures)."
 )
 _DECISION_LOG_V2_SCHEMA_SYNONYMS = tuple(
-    sorted(
-        {"decision_log_v2"} | _DECISION_LOG_V2_SCHEMA_IDS | _DECISION_LOG_V2_SCHEMA_TITLES
-    )
+    sorted({"decision_log_v2"} | _DECISION_LOG_V2_SCHEMA_IDS | _DECISION_LOG_V2_SCHEMA_TITLES)
 )
 _DECISION_LOG_V2_SCHEMA_INFO = _BuiltinSchemaInfo(
     canonical="builtin:decision_log_v2",
@@ -918,7 +917,9 @@ def _load_signing_key(
 ) -> tuple[_SigningKey | None, bool]:
     allow_unsigned = False
     if env_allow_unsigned is not None:
-        allow_unsigned = _parse_env_bool(env_allow_unsigned, variable=f"{_ENV_PREFIX}ALLOW_UNSIGNED", parser=parser)
+        allow_unsigned = _parse_env_bool(
+            env_allow_unsigned, variable=f"{_ENV_PREFIX}ALLOW_UNSIGNED", parser=parser
+        )
 
     value = cli_value or env_value
     file_path = cli_file or env_file
@@ -1017,10 +1018,14 @@ def _open_input(path: str) -> Iterable[str]:
 
 
 def _canonical_payload(payload: Mapping[str, Any]) -> bytes:
-    return json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    return json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode(
+        "utf-8"
+    )
 
 
-def _verify_entry(entry: Mapping[str, Any], *, signing_key: _SigningKey | None, allow_unsigned: bool) -> None:
+def _verify_entry(
+    entry: Mapping[str, Any], *, signing_key: _SigningKey | None, allow_unsigned: bool
+) -> None:
     signature = entry.get("signature")
     if not signature:
         if allow_unsigned:
@@ -1044,7 +1049,9 @@ def _verify_entry(entry: Mapping[str, Any], *, signing_key: _SigningKey | None, 
 
     key_id = signature.get("key_id")
     if signing_key is None:
-        raise VerificationError("Oczekiwano klucza do weryfikacji podpisu, ale nie został dostarczony")
+        raise VerificationError(
+            "Oczekiwano klucza do weryfikacji podpisu, ale nie został dostarczony"
+        )
     if key_id is not None and signing_key.key_id and key_id != signing_key.key_id:
         raise VerificationError(
             f"Podpis używa identyfikatora klucza {key_id}, ale oczekiwano {signing_key.key_id}"
@@ -1109,7 +1116,9 @@ def verify_log(
             if require_screen_info:
                 screen = entry.get("screen")
                 if not isinstance(screen, Mapping):
-                    raise VerificationError("Wpis decision logu nie zawiera sekcji screen z metadanymi monitora")
+                    raise VerificationError(
+                        "Wpis decision logu nie zawiera sekcji screen z metadanymi monitora"
+                    )
                 if not screen:
                     raise VerificationError("Metadane monitora (screen) są puste")
                 important_keys = {
@@ -1177,7 +1186,9 @@ def _validate_metadata(
     )
     if metadata is None:
         if expectations_defined:
-            raise VerificationError("Decision log nie zawiera metadanych, a oczekiwano ich obecności")
+            raise VerificationError(
+                "Decision log nie zawiera metadanych, a oczekiwano ich obecności"
+            )
         return
 
     mode = metadata.get("mode")
@@ -1248,18 +1259,14 @@ def _validate_metadata(
             )
         scope_match = metadata.get("auth_token_scope_match")
         if scope_match is False:
-            raise VerificationError(
-                "Token autoryzacyjny nie spełnia wymaganych scope'ów"
-            )
+            raise VerificationError("Token autoryzacyjny nie spełnia wymaganych scope'ów")
         scopes_recorded_raw = metadata.get("auth_token_scopes")
         recorded_scopes: set[str] | None
         if scopes_recorded_raw is None:
             recorded_scopes = None
         elif isinstance(scopes_recorded_raw, (list, tuple, set)):
             recorded_scopes = {
-                str(entry).strip().lower()
-                for entry in scopes_recorded_raw
-                if str(entry).strip()
+                str(entry).strip().lower() for entry in scopes_recorded_raw if str(entry).strip()
             }
         else:
             raise VerificationError(
@@ -1281,7 +1288,9 @@ def _validate_metadata(
         if not metadata.get("use_tls", False):
             raise VerificationError("Metadane wskazują, że połączenie gRPC nie używa TLS")
 
-    tls_requirements = bool(required_tls_materials or expected_server_sha256 or expected_server_sha256_sources)
+    tls_requirements = bool(
+        required_tls_materials or expected_server_sha256 or expected_server_sha256_sources
+    )
     tls_materials = metadata.get("tls_materials") if isinstance(metadata, Mapping) else None
     if tls_requirements:
         if not isinstance(tls_materials, Mapping):
@@ -1302,7 +1311,9 @@ def _validate_metadata(
     # spójność deklaracji fingerprintu z flagą w tls_materials
     server_material_recorded = "server_sha256" in tls_materials
     server_material_flag = bool(tls_materials.get("server_sha256"))
-    server_fingerprint_raw = metadata.get("server_sha256") if isinstance(metadata, Mapping) else None
+    server_fingerprint_raw = (
+        metadata.get("server_sha256") if isinstance(metadata, Mapping) else None
+    )
     normalized_present = _normalize_server_sha256(server_fingerprint_raw)
 
     if server_material_recorded:
@@ -1335,9 +1346,13 @@ def _validate_metadata(
                 + (f" ({expected_labels})" if expected_labels else "")
             )
         if expected_sources:
-            fingerprint_source_raw = metadata.get("server_sha256_source") if isinstance(metadata, Mapping) else None
+            fingerprint_source_raw = (
+                metadata.get("server_sha256_source") if isinstance(metadata, Mapping) else None
+            )
             fingerprint_source = (
-                str(fingerprint_source_raw).strip().lower() if fingerprint_source_raw is not None else None
+                str(fingerprint_source_raw).strip().lower()
+                if fingerprint_source_raw is not None
+                else None
             )
             if fingerprint_source not in expected_sources:
                 allowed = ", ".join(sorted(expected_sources)) or ""
@@ -1346,9 +1361,13 @@ def _validate_metadata(
                     + (f" (dozwolone: {allowed})" if allowed else "")
                 )
     elif expected_sources:
-        fingerprint_source_raw = metadata.get("server_sha256_source") if isinstance(metadata, Mapping) else None
+        fingerprint_source_raw = (
+            metadata.get("server_sha256_source") if isinstance(metadata, Mapping) else None
+        )
         fingerprint_source = (
-            str(fingerprint_source_raw).strip().lower() if fingerprint_source_raw is not None else None
+            str(fingerprint_source_raw).strip().lower()
+            if fingerprint_source_raw is not None
+            else None
         )
         if fingerprint_source not in expected_sources:
             allowed = ", ".join(sorted(expected_sources)) or ""
@@ -1487,9 +1506,7 @@ def _validate_risk_service_metadata(
                     candidate = scope_name.strip().lower()
                     if candidate:
                         recorded_scopes.add(candidate)
-        missing_scopes = [
-            scope for scope in required_scopes if scope not in recorded_scopes
-        ]
+        missing_scopes = [scope for scope in required_scopes if scope not in recorded_scopes]
         if missing_scopes:
             raise VerificationError(
                 "Sekcja risk_service nie deklaruje wymaganych scope'ów: "
@@ -1511,9 +1528,7 @@ def _validate_risk_service_metadata(
                     candidate = entry.strip()
                     if candidate:
                         recorded_tokens.add(candidate)
-        missing_tokens = [
-            token for token in required_token_ids if token not in recorded_tokens
-        ]
+        missing_tokens = [token for token in required_token_ids if token not in recorded_tokens]
         if missing_tokens:
             raise VerificationError(
                 "Sekcja risk_service nie deklaruje wymaganych token_id: "
@@ -1522,13 +1537,9 @@ def _validate_risk_service_metadata(
 
     if require_auth_token:
         if metadata.get("auth_token_scope_checked") is not True:
-            raise VerificationError(
-                "Sekcja risk_service nie potwierdza weryfikacji tokenu RBAC"
-            )
+            raise VerificationError("Sekcja risk_service nie potwierdza weryfikacji tokenu RBAC")
         if metadata.get("auth_token_scope_match") is False:
-            raise VerificationError(
-                "Token RBAC dla risk_service nie spełnia wymaganych scope'ów"
-            )
+            raise VerificationError("Token RBAC dla risk_service nie spełnia wymaganych scope'ów")
 
 
 def _ensure_filter_matches_snapshots(
@@ -1548,10 +1559,14 @@ def _ensure_filter_matches_snapshots(
         elif isinstance(raw, list):
             normalized = {_normalize_severity(item) for item in raw}
             if None in normalized:
-                raise VerificationError("Filtr severity w metadanych zawiera nieprawidłowe wartości")
+                raise VerificationError(
+                    "Filtr severity w metadanych zawiera nieprawidłowe wartości"
+                )
             severity_filters = {item for item in normalized if item is not None}
         else:
-            raise VerificationError("Filtr severity w metadanych musi być listą wartości tekstowych")
+            raise VerificationError(
+                "Filtr severity w metadanych musi być listą wartości tekstowych"
+            )
 
     severity_min_raw = filters.get("severity_min")
     severity_min = None
@@ -1591,7 +1606,9 @@ def _ensure_filter_matches_snapshots(
         try:
             limit_int = int(limit)
         except (TypeError, ValueError):
-            raise VerificationError("Filtr limit w metadanych powinien być liczbą całkowitą") from None
+            raise VerificationError(
+                "Filtr limit w metadanych powinien być liczbą całkowitą"
+            ) from None
         if limit_int < 0:
             raise VerificationError("Filtr limit w metadanych nie może być ujemny")
         if len(snapshots) > limit_int:
@@ -1667,7 +1684,9 @@ def _read_summary_payload(path: str) -> Mapping[str, Any]:
         raise VerificationError(f"Podsumowanie {path} zawiera nieprawidłowy JSON: {exc}") from exc
 
     if not isinstance(summary, Mapping):
-        raise VerificationError("Podsumowanie powinno być obiektem JSON zawierającym pole 'summary'")
+        raise VerificationError(
+            "Podsumowanie powinno być obiektem JSON zawierającym pole 'summary'"
+        )
 
     body = summary.get("summary")
     if not isinstance(body, Mapping):
@@ -1698,7 +1717,9 @@ def _extract_severity_counts(candidate: Any, *, context: str) -> dict[str, int]:
     if candidate is None:
         return {}
     if not isinstance(candidate, Mapping):
-        raise VerificationError(f"{context}: sekcja severity powinna być obiektem zawierającym counts")
+        raise VerificationError(
+            f"{context}: sekcja severity powinna być obiektem zawierającym counts"
+        )
     counts = candidate.get("counts")
     if not isinstance(counts, Mapping):
         raise VerificationError(f"{context}: sekcja severity powinna zawierać pole counts")
@@ -1710,7 +1731,9 @@ def _extract_severity_counts(candidate: Any, *, context: str) -> dict[str, int]:
         try:
             numeric = int(value)
         except (TypeError, ValueError):
-            raise VerificationError(f"{context}: liczność severity {level!r} powinna być liczbą całkowitą") from None
+            raise VerificationError(
+                f"{context}: liczność severity {level!r} powinna być liczbą całkowitą"
+            ) from None
         normalised[level_normalised] = numeric
     return normalised
 
@@ -1757,7 +1780,9 @@ def _compare_summary(expected: Mapping[str, Any], actual: Mapping[str, Any]) -> 
         actual_fps = actual_event.get("fps")
         if expected_fps is None:
             if actual_fps is not None:
-                raise VerificationError(f"{context}: log posiada statystyki FPS, ale podsumowanie ich nie deklaruje")
+                raise VerificationError(
+                    f"{context}: log posiada statystyki FPS, ale podsumowanie ich nie deklaruje"
+                )
         else:
             if not isinstance(expected_fps, Mapping) or not isinstance(actual_fps, Mapping):
                 raise VerificationError(f"{context}: sekcja fps powinna być obiektem JSON")
@@ -1780,7 +1805,9 @@ def _compare_summary(expected: Mapping[str, Any], actual: Mapping[str, Any]) -> 
         if expected_screens != actual_screens:
             raise VerificationError(f"{context}: zestaw ekranów różni się od oczekiwanego")
 
-        expected_severity = _extract_severity_counts(expected_event.get("severity"), context=context)
+        expected_severity = _extract_severity_counts(
+            expected_event.get("severity"), context=context
+        )
         actual_severity = _extract_severity_counts(actual_event.get("severity"), context=context)
         if expected_severity != actual_severity:
             raise VerificationError(
@@ -1794,7 +1821,9 @@ def _compare_summary(expected: Mapping[str, Any], actual: Mapping[str, Any]) -> 
                         f"{context}: pole {ts_field} ma wartość {actual_event.get(ts_field)!r}, oczekiwano {expected_event[ts_field]!r}"
                     )
             elif ts_field in actual_event:
-                raise VerificationError(f"{context}: log zawiera pole {ts_field}, którego brak w podsumowaniu")
+                raise VerificationError(
+                    f"{context}: log zawiera pole {ts_field}, którego brak w podsumowaniu"
+                )
 
     for ts_field in ("first_timestamp", "last_timestamp"):
         if ts_field in expected:
@@ -1811,12 +1840,20 @@ def _compare_summary(expected: Mapping[str, Any], actual: Mapping[str, Any]) -> 
     actual_severity_total = actual.get("severity_counts")
     if expected_severity_total is None:
         if actual_severity_total:
-            raise VerificationError("Podsumowanie nie deklaruje severity_counts, ale log zawiera globalne liczniki")
+            raise VerificationError(
+                "Podsumowanie nie deklaruje severity_counts, ale log zawiera globalne liczniki"
+            )
     else:
-        if not isinstance(expected_severity_total, Mapping) or not isinstance(actual_severity_total, Mapping):
+        if not isinstance(expected_severity_total, Mapping) or not isinstance(
+            actual_severity_total, Mapping
+        ):
             raise VerificationError("severity_counts powinno być obiektem JSON")
-        expected_counts = _extract_severity_counts({"counts": expected_severity_total}, context="severity_counts")
-        actual_counts = _extract_severity_counts({"counts": actual_severity_total}, context="severity_counts")
+        expected_counts = _extract_severity_counts(
+            {"counts": expected_severity_total}, context="severity_counts"
+        )
+        actual_counts = _extract_severity_counts(
+            {"counts": actual_severity_total}, context="severity_counts"
+        )
         if expected_counts != actual_counts:
             raise VerificationError("Globalne liczniki severity nie zgadzają się z decision logiem")
 
@@ -1839,12 +1876,16 @@ def _validate_summary_path(
     signature_payload = payload.get("signature")
 
     if signature_payload is None and metadata_signature:
-        raise VerificationError("Metadane wymagają podpisanego podsumowania, ale plik nie zawiera podpisu")
+        raise VerificationError(
+            "Metadane wymagają podpisanego podsumowania, ale plik nie zawiera podpisu"
+        )
 
     signature_present = signature_payload is not None
     if signature_payload is not None:
         if signing_key is None:
-            raise VerificationError("Podsumowanie zawiera podpis, lecz nie dostarczono klucza HMAC do weryfikacji")
+            raise VerificationError(
+                "Podsumowanie zawiera podpis, lecz nie dostarczono klucza HMAC do weryfikacji"
+            )
         entry = dict(payload)
         _verify_entry(entry, signing_key=signing_key, allow_unsigned=False)
         if metadata_signature:
@@ -1887,7 +1928,9 @@ def _enforce_event_limits(*, summary: Mapping[str, Any] | None, limits: Mapping[
     if not limits:
         return
     if not isinstance(summary, Mapping):
-        raise VerificationError("Brak danych podsumowania decision logu do weryfikacji limitów zdarzeń")
+        raise VerificationError(
+            "Brak danych podsumowania decision logu do weryfikacji limitów zdarzeń"
+        )
     events_section = summary.get("events")
     if not isinstance(events_section, Mapping):
         raise VerificationError("Podsumowanie decision logu nie zawiera sekcji events")
@@ -2060,7 +2103,9 @@ def _build_summary_parser() -> argparse.ArgumentParser:
         prog="verify_decision_log.py summary",
     )
     parser.add_argument("--append", help="Ścieżka decision logu JSONL do zaktualizowania")
-    parser.add_argument("--stage", required=True, help="Nazwa etapu (np. demo, paper, live_execution)")
+    parser.add_argument(
+        "--stage", required=True, help="Nazwa etapu (np. demo, paper, live_execution)"
+    )
     parser.add_argument("--status", required=True, help="Status wpisu decision logu")
     parser.add_argument("--kind", default="snapshot", help="Wartość pola kind (domyślnie snapshot)")
     parser.add_argument(
@@ -2208,9 +2253,7 @@ def _summary_main(argv: list[str]) -> int:
 
     signature_entries: dict[str, str] = {}
     for spec in args.signature_entry or ():
-        key, raw_value = _parse_key_value_option(
-            spec, parser=parser, option="--signature-entry"
-        )
+        key, raw_value = _parse_key_value_option(spec, parser=parser, option="--signature-entry")
         value = raw_value.strip()
         if not value:
             parser.error(f"--signature-entry: wartość dla {key!r} nie może być pusta")
@@ -2284,6 +2327,7 @@ def _summary_main(argv: list[str]) -> int:
         print(output)
     return 0
 
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Weryfikacja podpisów decision logu UI")
     parser.add_argument(
@@ -2314,7 +2358,9 @@ def build_parser() -> argparse.ArgumentParser:
         metavar="ALIAS",
         help="Wypisz szczegółowy opis aliasu wbudowanego schematu JSON i zakończ",
     )
-    parser.add_argument("--expect-mode", choices=["grpc", "jsonl"], help="Oczekiwany tryb metadanych")
+    parser.add_argument(
+        "--expect-mode", choices=["grpc", "jsonl"], help="Oczekiwany tryb metadanych"
+    )
     parser.add_argument(
         "--expect-summary-enabled",
         action="store_true",
@@ -2510,16 +2556,16 @@ def _load_risk_profile_presets(args: argparse.Namespace, parser: argparse.Argume
 
     target = Path(path_value).expanduser()
     try:
-        registered, _meta = load_risk_profiles_with_metadata(target, origin_label=f"verify:{target}")
+        registered, _meta = load_risk_profiles_with_metadata(
+            target, origin_label=f"verify:{target}"
+        )
     except FileNotFoundError as exc:
         parser.error(str(exc))
     except Exception as exc:  # pragma: no cover - zależne od formatu
         parser.error(f"Nie udało się wczytać profili ryzyka z {target}: {exc}")
     else:
         if registered:
-            LOGGER.info(
-                "Załadowano %s profil(e) ryzyka telemetrii z %s", len(registered), target
-            )
+            LOGGER.info("Załadowano %s profil(e) ryzyka telemetrii z %s", len(registered), target)
 
 
 def _apply_env_defaults(args: argparse.Namespace, parser: argparse.ArgumentParser) -> None:
@@ -2617,7 +2663,9 @@ def _apply_env_defaults(args: argparse.Namespace, parser: argparse.ArgumentParse
     }
     env_tls_materials = os.getenv(_ENV_REQUIRE_TLS_MATERIALS)
     if env_tls_materials:
-        for entry in _parse_env_list(env_tls_materials, variable=_ENV_REQUIRE_TLS_MATERIALS, parser=parser):
+        for entry in _parse_env_list(
+            env_tls_materials, variable=_ENV_REQUIRE_TLS_MATERIALS, parser=parser
+        ):
             normalized = entry.strip().lower()
             if normalized not in _TLS_MATERIAL_CHOICES:
                 parser.error(
@@ -2676,8 +2724,7 @@ def _apply_env_defaults(args: argparse.Namespace, parser: argparse.ArgumentParse
             )
 
     risk_tls_materials = {
-        str(item).strip().lower()
-        for item in getattr(args, "require_risk_service_tls_material", [])
+        str(item).strip().lower() for item in getattr(args, "require_risk_service_tls_material", [])
     }
     env_risk_tls_materials = os.getenv(_ENV_REQUIRE_RISK_TLS_MATERIALS)
     if env_risk_tls_materials:
@@ -2738,9 +2785,7 @@ def _apply_env_defaults(args: argparse.Namespace, parser: argparse.ArgumentParse
     args._required_risk_service_scopes = tuple(normalized_risk_scopes)
 
     required_risk_tokens_raw: list[str] = []
-    required_risk_tokens_raw.extend(
-        getattr(args, "require_risk_service_token_id", []) or []
-    )
+    required_risk_tokens_raw.extend(getattr(args, "require_risk_service_token_id", []) or [])
     env_required_risk_tokens = os.getenv(_ENV_REQUIRE_RISK_TOKEN_ID)
     if env_required_risk_tokens:
         required_risk_tokens_raw.extend(
@@ -2839,7 +2884,9 @@ def _apply_env_defaults(args: argparse.Namespace, parser: argparse.ArgumentParse
         except json.JSONDecodeError as exc:
             parser.error(f"{_ENV_MAX_EVENT_COUNTS} zawiera nieprawidłowy JSON: {exc}")
         if not isinstance(env_limits_obj, Mapping):
-            parser.error(f"{_ENV_MAX_EVENT_COUNTS} musi być obiektem JSON mapującym zdarzenie na limit")
+            parser.error(
+                f"{_ENV_MAX_EVENT_COUNTS} musi być obiektem JSON mapującym zdarzenie na limit"
+            )
         for key, value in env_limits_obj.items():
             if not isinstance(value, int):
                 parser.error(
@@ -2863,7 +2910,9 @@ def _apply_env_defaults(args: argparse.Namespace, parser: argparse.ArgumentParse
         except json.JSONDecodeError as exc:
             parser.error(f"{_ENV_MIN_EVENT_COUNTS} zawiera nieprawidłowy JSON: {exc}")
         if not isinstance(env_min_limits_obj, Mapping):
-            parser.error(f"{_ENV_MIN_EVENT_COUNTS} musi być obiektem JSON mapującym zdarzenie na minimalną liczbę wystąpień")
+            parser.error(
+                f"{_ENV_MIN_EVENT_COUNTS} musi być obiektem JSON mapującym zdarzenie na minimalną liczbę wystąpień"
+            )
         for key, value in env_min_limits_obj.items():
             if not isinstance(value, int):
                 parser.error(
@@ -2924,9 +2973,7 @@ def _apply_core_config_defaults(args: argparse.Namespace, parser: argparse.Argum
         "host": getattr(metrics_config, "host", None),
         "port": getattr(metrics_config, "port", None),
         "risk_profile": getattr(metrics_config, "ui_alerts_risk_profile", None),
-        "risk_profiles_file": getattr(
-            metrics_config, "ui_alerts_risk_profiles_file", None
-        ),
+        "risk_profiles_file": getattr(metrics_config, "ui_alerts_risk_profiles_file", None),
     }
     metadata["metrics_service"] = {
         key: value for key, value in metrics_meta.items() if value not in (None, "")
@@ -3078,7 +3125,9 @@ def main(argv: list[str] | None = None) -> int:
             parser.error(str(exc))
 
     if getattr(args, "print_risk_profiles", False):
-        _print_available_risk_profiles(getattr(args, "risk_profile", None), core_metadata=core_metadata)
+        _print_available_risk_profiles(
+            getattr(args, "risk_profile", None), core_metadata=core_metadata
+        )
         return 0
 
     if args.path is None:
@@ -3152,7 +3201,9 @@ def main(argv: list[str] | None = None) -> int:
             require_auth_token=getattr(args, "_require_risk_service_auth_token", False),
         )
         if metadata:
-            _ensure_filter_matches_snapshots(metadata=metadata, snapshots=result.get("snapshots", []))
+            _ensure_filter_matches_snapshots(
+                metadata=metadata, snapshots=result.get("snapshots", [])
+            )
         summary_signature_meta = None
         if isinstance(metadata, Mapping):
             summary_signature_meta = metadata.get("summary_signature")

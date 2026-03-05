@@ -89,7 +89,9 @@ def _build_allocation_map(config: object) -> dict[str, float]:
     for asset in _extract_assets(config):
         symbol = _extract_symbol(asset)
         if not symbol:
-            raise PortfolioAllocationExportError("Wykryto aktywo bez symbolu w konfiguracji PortfolioGovernora")
+            raise PortfolioAllocationExportError(
+                "Wykryto aktywo bez symbolu w konfiguracji PortfolioGovernora"
+            )
 
         weight = _extract_weight(asset)
         if weight is None:
@@ -101,7 +103,9 @@ def _build_allocation_map(config: object) -> dict[str, float]:
         allocations[symbol] = float(weight)
 
     if not allocations:
-        raise PortfolioAllocationExportError("Konfiguracja PortfolioGovernora nie zawiera aktywów do eksportu")
+        raise PortfolioAllocationExportError(
+            "Konfiguracja PortfolioGovernora nie zawiera aktywów do eksportu"
+        )
 
     return dict(sorted(allocations.items()))
 
@@ -194,7 +198,9 @@ def export_allocations_from_core_config(
         )
 
     try:
-        governor_cfg: PortfolioGovernorConfig | Mapping[str, object] = core_config.portfolio_governors[governor]
+        governor_cfg: PortfolioGovernorConfig | Mapping[str, object] = (
+            core_config.portfolio_governors[governor]
+        )
     except KeyError as exc:  # pragma: no cover - ochrona przed regresją konfiguracji
         raise PortfolioAllocationExportError(
             f"PortfolioGovernor {governor} nie istnieje w konfiguracji core ({core_config_path})"
@@ -220,4 +226,3 @@ __all__ = [
     "export_allocations_for_governor_config",
     "export_allocations_from_core_config",
 ]
-

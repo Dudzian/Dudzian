@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 """Mostek CLI udostępniający presety strategii i zarządzanie licencjami dla UI."""
+
 from __future__ import annotations
 
 import argparse
@@ -184,7 +185,9 @@ def _collect_review_documents(source_dir: Path) -> dict[str, Mapping[str, Any]]:
     return documents
 
 
-def _verify_review_signature(entry: Mapping[str, Any], signing_keys: Mapping[str, bytes]) -> tuple[bool, str | None]:
+def _verify_review_signature(
+    entry: Mapping[str, Any], signing_keys: Mapping[str, bytes]
+) -> tuple[bool, str | None]:
     signature = entry.get("signature")
     if not isinstance(signature, Mapping):
         return False, "Brak podpisu recenzji"
@@ -245,7 +248,8 @@ def _aggregate_review_documents(
                 }
             )
         warnings.extend(
-            f"{preset_id}: {msg}" for msg in _normalize_sequence_of_messages(document.get("warnings"))
+            f"{preset_id}: {msg}"
+            for msg in _normalize_sequence_of_messages(document.get("warnings"))
         )
         deduped_warnings = []
         for msg in warnings:
@@ -433,8 +437,7 @@ def _build_assignment_summary(
     if pending_assignments:
         warning_codes.append("assignment-pending")
         warning_messages.append(
-            "Portfele oczekują na zatwierdzenie w licencji: "
-            + ", ".join(pending_assignments)
+            "Portfele oczekują na zatwierdzenie w licencji: " + ", ".join(pending_assignments)
         )
     if seat_shortfall:
         warning_codes.append("assignment-seat-shortfall")
@@ -451,7 +454,7 @@ def _build_assignment_summary(
 
 
 def _build_portfolio_summaries(
-    assignment_summaries: Mapping[str, Mapping[str, Any]]
+    assignment_summaries: Mapping[str, Mapping[str, Any]],
 ) -> dict[str, Any]:
     def _append(entry: dict[str, Any], key: str, preset_id: str) -> None:
         bucket = entry.setdefault(key, [])
@@ -673,7 +676,9 @@ def _command_list(args: argparse.Namespace) -> None:
     index = MarketplaceIndex.from_documents(documents)
     assignments_store = PresetAssignmentStore(repository.root / ".meta" / "assignments.json")
     reviews_state = _read_reviews_state(_reviews_meta_path(presets_dir))
-    community_entries = reviews_state.get("presets", {}) if isinstance(reviews_state, Mapping) else {}
+    community_entries = (
+        reviews_state.get("presets", {}) if isinstance(reviews_state, Mapping) else {}
+    )
 
     for summary in summaries:
         preset_id = summary.get("preset_id") or summary.get("presetId")
@@ -721,18 +726,26 @@ def _command_list(args: argparse.Namespace) -> None:
                 validation = metadata.get("validation")
                 if isinstance(validation, Mapping):
                     warning_messages = validation.get("warning_messages")
-                    if not isinstance(warning_messages, Sequence) or isinstance(warning_messages, (str, bytes)):
+                    if not isinstance(warning_messages, Sequence) or isinstance(
+                        warning_messages, (str, bytes)
+                    ):
                         warning_messages = validation.get("warningMessages")
-                    if isinstance(warning_messages, Sequence) and not isinstance(warning_messages, (str, bytes)):
+                    if isinstance(warning_messages, Sequence) and not isinstance(
+                        warning_messages, (str, bytes)
+                    ):
                         summary["warning_messages"] = [
                             str(item)
                             for item in warning_messages
                             if isinstance(item, str) and item.strip()
                         ]
                     warning_codes = validation.get("warning_codes")
-                    if not isinstance(warning_codes, Sequence) or isinstance(warning_codes, (str, bytes)):
+                    if not isinstance(warning_codes, Sequence) or isinstance(
+                        warning_codes, (str, bytes)
+                    ):
                         warning_codes = validation.get("warningCodes")
-                    if isinstance(warning_codes, Sequence) and not isinstance(warning_codes, (str, bytes)):
+                    if isinstance(warning_codes, Sequence) and not isinstance(
+                        warning_codes, (str, bytes)
+                    ):
                         summary["warnings"] = [
                             str(item)
                             for item in warning_codes
@@ -773,9 +786,7 @@ def _command_plan(args: argparse.Namespace) -> None:
 
     index = MarketplaceIndex.from_documents(list(catalog_docs.values()))
     installed_versions = {
-        doc.preset_id: doc.version
-        for doc in documents
-        if doc.preset_id and doc.version
+        doc.preset_id: doc.version for doc in documents if doc.preset_id and doc.version
     }
     selection = [value.strip() for value in (args.preset_id or []) if value and value.strip()]
     plan = index.plan_installation(selection, installed_versions=installed_versions)
@@ -923,7 +934,11 @@ def _command_install_workflow(args: argparse.Namespace) -> None:
 
     result = installer.install_from_catalog(args.preset_id)
 
-    portfolio_ids = [value.strip() for value in (args.portfolio_id or []) if isinstance(value, str) and value.strip()]
+    portfolio_ids = [
+        value.strip()
+        for value in (args.portfolio_id or [])
+        if isinstance(value, str) and value.strip()
+    ]
     assignments: dict[str, list[str]] = {}
     if result.success:
         for portfolio_id in portfolio_ids:
@@ -1036,7 +1051,9 @@ def _command_unassign(args: argparse.Namespace) -> None:
 def _command_sync_reviews(args: argparse.Namespace) -> None:
     signing_keys = _load_signing_keys(args.signing_key or [], args.signing_key_file or [])
     if not signing_keys:
-        raise SystemExit("sync-reviews wymaga przekazania klucza HMAC (--signing-key lub --signing-key-file)")
+        raise SystemExit(
+            "sync-reviews wymaga przekazania klucza HMAC (--signing-key lub --signing-key-file)"
+        )
     presets_dir = Path(args.presets_dir)
     source_dir = Path(args.source_dir)
     state = _sync_reviews_state(presets_dir, source_dir, signing_keys)
@@ -1055,13 +1072,19 @@ def _command_submit_review(args: argparse.Namespace) -> None:
     reviews_dir = Path(args.reviews_dir)
     signing_keys = _load_signing_keys(args.signing_key or [], args.signing_key_file or [])
     if not signing_keys:
-        raise SystemExit("submit-review wymaga przekazania kluczy podpisów (--signing-key/--signing-key-file)")
+        raise SystemExit(
+            "submit-review wymaga przekazania kluczy podpisów (--signing-key/--signing-key-file)"
+        )
     review_key_id = args.review_key_id
     if not review_key_id:
-        raise SystemExit("submit-review wymaga parametru --review-key-id wskazującego klucz podpisu")
+        raise SystemExit(
+            "submit-review wymaga parametru --review-key-id wskazującego klucz podpisu"
+        )
     review_key = signing_keys.get(review_key_id)
     if review_key is None:
-        raise SystemExit(f"Brak klucza '{review_key_id}' w mapie --signing-key; nie można podpisać recenzji")
+        raise SystemExit(
+            f"Brak klucza '{review_key_id}' w mapie --signing-key; nie można podpisać recenzji"
+        )
     rating = args.rating
     if rating < 1 or rating > 5:
         raise SystemExit("Ocena musi być w zakresie 1-5 gwiazdek")
@@ -1074,7 +1097,9 @@ def _command_submit_review(args: argparse.Namespace) -> None:
     if isinstance(licenses, Mapping):
         license_entry = licenses.get(args.preset_id)
     if not isinstance(license_entry, Mapping):
-        raise SystemExit("Brak aktywnej licencji na preset – recenzja wymaga posiadania ważnej licencji")
+        raise SystemExit(
+            "Brak aktywnej licencji na preset – recenzja wymaga posiadania ważnej licencji"
+        )
     review_id = args.review_id or f"rvw-{uuid4().hex[:12]}"
     payload: dict[str, Any] = {
         "review_id": review_id,
@@ -1121,14 +1146,20 @@ def _command_submit_review(args: argparse.Namespace) -> None:
 
 def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--presets-dir", default="data/strategies", help="Katalog z plikami presetów JSON")
+    parser.add_argument(
+        "--presets-dir", default="data/strategies", help="Katalog z plikami presetów JSON"
+    )
     parser.add_argument(
         "--licenses-path",
         default="var/marketplace_licenses.json",
         help="Ścieżka do pliku przechowującego stan aktywacji presetów",
     )
-    parser.add_argument("--fingerprint", help="Nadpisanie fingerprintu sprzętowego (dla testów/diagnostyki)")
-    parser.add_argument("--signing-key", action="append", help="Klucz HMAC w formacie KEY_ID=SECRET")
+    parser.add_argument(
+        "--fingerprint", help="Nadpisanie fingerprintu sprzętowego (dla testów/diagnostyki)"
+    )
+    parser.add_argument(
+        "--signing-key", action="append", help="Klucz HMAC w formacie KEY_ID=SECRET"
+    )
     parser.add_argument(
         "--signing-key-file",
         action="append",
@@ -1138,7 +1169,11 @@ def _build_parser() -> argparse.ArgumentParser:
     subparsers = parser.add_subparsers(dest="command", required=True)
 
     list_parser = subparsers.add_parser("list", help="Lista dostępnych presetów")
-    list_parser.add_argument("--profile", choices=[p.value for p in StrategyPresetProfile], help="Filtr profilu strategii")
+    list_parser.add_argument(
+        "--profile",
+        choices=[p.value for p in StrategyPresetProfile],
+        help="Filtr profilu strategii",
+    )
     list_parser.add_argument(
         "--include-strategies",
         action="store_true",
@@ -1147,7 +1182,9 @@ def _build_parser() -> argparse.ArgumentParser:
 
     activate_parser = subparsers.add_parser("activate", help="Aktywacja licencji presetu")
     activate_parser.add_argument("--preset-id", required=True, help="Identyfikator presetu")
-    activate_parser.add_argument("--license-json", help="Ścieżka do pliku JSON z licencją (domyślnie stdin)")
+    activate_parser.add_argument(
+        "--license-json", help="Ścieżka do pliku JSON z licencją (domyślnie stdin)"
+    )
 
     install_parser = subparsers.add_parser(
         "install",
@@ -1204,7 +1241,9 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Publikuje recenzję presetu i aktualizuje lokalne metryki community",
     )
     submit_review_parser.add_argument("--preset-id", required=True, help="Identyfikator presetu")
-    submit_review_parser.add_argument("--rating", type=int, required=True, help="Ocena 1-5 gwiazdek")
+    submit_review_parser.add_argument(
+        "--rating", type=int, required=True, help="Ocena 1-5 gwiazdek"
+    )
     submit_review_parser.add_argument("--comment", required=True, help="Treść recenzji")
     submit_review_parser.add_argument("--author", help="Opcjonalny podpis recenzji")
     submit_review_parser.add_argument(

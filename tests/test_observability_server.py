@@ -47,7 +47,9 @@ def test_metrics_server_returns_404_for_unknown_path() -> None:
     port = _find_free_port()
     server, thread = start_http_server(port, registry=registry)
     try:
-        with urlopen(f"http://127.0.0.1:{server.server_address[1]}/invalid") as response:  # pragma: no cover
+        with urlopen(
+            f"http://127.0.0.1:{server.server_address[1]}/invalid"
+        ) as response:  # pragma: no cover
             raise AssertionError("Żądanie /invalid powinno zakończyć się błędem")
     except HTTPError as exc:
         assert exc.code == 404

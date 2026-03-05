@@ -31,22 +31,26 @@ def test_ml_feature_pipeline_generates_training_set() -> None:
     assert features.shape[1] == len(pipeline.feature_names)
     assert features.shape[0] == len(history) - pipeline.window - pipeline.forecast_horizon + 1
     assert target.shape[0] == features.shape[0]
-    first_target = (history[pipeline.window].close - history[pipeline.window - 1].close) / history[pipeline.window - 1].close
+    first_target = (history[pipeline.window].close - history[pipeline.window - 1].close) / history[
+        pipeline.window - 1
+    ].close
     assert target[0] == pytest.approx(first_target)
 
 
 def test_transform_requires_sufficient_history() -> None:
     pipeline = MLFeaturePipeline(window=3)
     with pytest.raises(ValueError):
-        pipeline.transform_features(MarketSnapshot(
-            symbol="TEST",
-            timestamp=999,
-            open=1,
-            high=1,
-            low=1,
-            close=1,
-            volume=1,
-        ))
+        pipeline.transform_features(
+            MarketSnapshot(
+                symbol="TEST",
+                timestamp=999,
+                open=1,
+                high=1,
+                low=1,
+                close=1,
+                volume=1,
+            )
+        )
     history = _build_history(3)
     pipeline.fit(history)
     for snap in history:

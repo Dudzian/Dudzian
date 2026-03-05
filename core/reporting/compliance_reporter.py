@@ -1,4 +1,5 @@
 """Generator raportów audytu zgodności KYC/AML."""
+
 from __future__ import annotations
 
 from dataclasses import dataclass, field
@@ -125,9 +126,7 @@ class ComplianceReport:
             rows.append("Brak naruszeń – konfiguracja spełnia wymagania KYC/AML.")
             rows.append("")
             return rows
-        rows.append(
-            "| Reguła | Poziom | Opis | Metadane |"
-        )
+        rows.append("| Reguła | Poziom | Opis | Metadane |")
         rows.append("| --- | --- | --- | --- |")
         for finding in self.findings:
             metadata = ", ".join(f"{key}={value}" for key, value in finding.metadata.items()) or "—"
@@ -175,9 +174,7 @@ def _default_recommendations(
     recs: list[str] = []
     severities = {finding.severity.lower() for finding in findings}
     if any(level in severities for level in {"critical", "high"}):
-        recs.append(
-            "Skontaktuj się z zespołem zgodności przed dalszym uruchomieniem strategii."
-        )
+        recs.append("Skontaktuj się z zespołem zgodności przed dalszym uruchomieniem strategii.")
     if any(finding.rule_id == "KYC_MISSING_FIELDS" for finding in findings):
         recs.append("Uzupełnij brakujące pola profilu KYC wskazane w metadanych naruszenia.")
     if any(finding.rule_id.startswith("AML_") for finding in findings):

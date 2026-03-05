@@ -53,14 +53,10 @@ def sample_config(tmp_path: Path) -> Path:
             }
         },
         "futures_spread_strategies": {
-            "basis_guard": {
-                "parameters": {"entry_z": 1.4, "exit_z": 0.35, "max_bars": 24}
-            }
+            "basis_guard": {"parameters": {"entry_z": 1.4, "exit_z": 0.35, "max_bars": 24}}
         },
         "cross_exchange_hedge_strategies": {
-            "delta_guard": {
-                "parameters": {"basis_scale": 0.009, "inventory_scale": 0.3}
-            }
+            "delta_guard": {"parameters": {"basis_scale": 0.009, "inventory_scale": 0.3}}
         },
         "multi_strategy_schedulers": {
             "default": {
@@ -169,7 +165,9 @@ def test_apply_updates_writes_yaml(sample_config: Path, monkeypatch: pytest.Monk
     assert updated["multi_strategy_schedulers"]["default"]["health_check_interval"] == 90
 
 
-def test_main_apply_reads_stdin(sample_config: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]) -> None:
+def test_main_apply_reads_stdin(
+    sample_config: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
     calls: list[Path] = []
 
     def fake_load(path: Path) -> None:
@@ -183,11 +181,13 @@ def test_main_apply_reads_stdin(sample_config: Path, monkeypatch: pytest.MonkeyP
 
     monkeypatch.setattr(ui_config_bridge.sys, "stdin", io.StringIO(json.dumps(update_payload)))
 
-    exit_code = ui_config_bridge.main([
-        "--config",
-        str(sample_config),
-        "--apply",
-    ])
+    exit_code = ui_config_bridge.main(
+        [
+            "--config",
+            str(sample_config),
+            "--apply",
+        ]
+    )
 
     assert exit_code == 0
     assert calls == [sample_config]
@@ -197,13 +197,15 @@ def test_main_apply_reads_stdin(sample_config: Path, monkeypatch: pytest.MonkeyP
 
 
 def test_main_dump_outputs_json(sample_config: Path, capsys: pytest.CaptureFixture[str]) -> None:
-    exit_code = ui_config_bridge.main([
-        "--config",
-        str(sample_config),
-        "--dump",
-        "--section",
-        "scheduler",
-    ])
+    exit_code = ui_config_bridge.main(
+        [
+            "--config",
+            str(sample_config),
+            "--dump",
+            "--section",
+            "scheduler",
+        ]
+    )
 
     assert exit_code == 0
     captured = capsys.readouterr()
@@ -220,9 +222,7 @@ def test_dump_config_filters_blocked_capabilities() -> None:
                 "tags": ["custom"],
             }
         },
-        "scalping_strategies": {
-            "quick_scalp": {}
-        },
+        "scalping_strategies": {"quick_scalp": {}},
         "multi_strategy_schedulers": {
             "default": {
                 "schedules": [
@@ -318,12 +318,8 @@ def test_dump_config_reports_blocked_limits_and_suspensions() -> None:
         assert len(schedules) == 1
         assert schedules[0]["strategy"] == "trend"
 
-        assert scheduler["initial_signal_limits"] == {
-            "trend": {"balanced": {"limit": 2}}
-        }
-        assert scheduler["signal_limits"] == {
-            "trend": {"balanced": {"limit": 3}}
-        }
+        assert scheduler["initial_signal_limits"] == {"trend": {"balanced": {"limit": 2}}}
+        assert scheduler["signal_limits"] == {"trend": {"balanced": {"limit": 3}}}
         assert scheduler["initial_suspensions"] == [
             {"kind": "tag", "target": "intraday", "reason": "tag-pause"}
         ]
@@ -331,18 +327,12 @@ def test_dump_config_reports_blocked_limits_and_suspensions() -> None:
         assert scheduler["blocked_strategies"] == ["blocked-strategy"]
         assert scheduler["blocked_capabilities"] == {"blocked-strategy": "scalping"}
         assert scheduler["blocked_schedule_capabilities"] == {"blocked-run": "scalping"}
-        assert scheduler["blocked_initial_signal_limits"] == {
-            "blocked-strategy": ["balanced"]
-        }
+        assert scheduler["blocked_initial_signal_limits"] == {"blocked-strategy": ["balanced"]}
         assert scheduler["blocked_initial_signal_limit_capabilities"] == {
             "blocked-strategy": "scalping"
         }
-        assert scheduler["blocked_signal_limits"] == {
-            "blocked-strategy": ["balanced"]
-        }
-        assert scheduler["blocked_signal_limit_capabilities"] == {
-            "blocked-strategy": "scalping"
-        }
+        assert scheduler["blocked_signal_limits"] == {"blocked-strategy": ["balanced"]}
+        assert scheduler["blocked_signal_limit_capabilities"] == {"blocked-strategy": "scalping"}
         assert scheduler["blocked_suspensions"] == [
             {
                 "kind": "schedule",
@@ -351,9 +341,6 @@ def test_dump_config_reports_blocked_limits_and_suspensions() -> None:
                 "capability": "scalping",
             }
         ]
-        assert scheduler["blocked_suspension_capabilities"] == {
-            "schedule:blocked-run": "scalping"
-        }
+        assert scheduler["blocked_suspension_capabilities"] == {"schedule:blocked-run": "scalping"}
     finally:
         reset_capability_guard()
-

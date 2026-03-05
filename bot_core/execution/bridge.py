@@ -17,6 +17,7 @@ from bot_core.runtime.journal import TradingDecisionJournal, log_decision_event
 try:  # pragma: no cover - moduł może nie istnieć w każdej gałęzi
     from bot_core.exchanges.errors import ExchangeNetworkError, ExchangeThrottlingError
 except Exception:  # pragma: no cover
+
     class _FallbackExchangeNetworkError(Exception):
         """Fallback when giełdowe wyjątki nie są dostępne."""
 
@@ -57,7 +58,16 @@ def _normalise_decision(decision: Any) -> MutableMapping[str, Any]:
             mapping = None
         if isinstance(mapping, Mapping):
             payload.update(mapping)
-    for attribute in ("symbol", "side", "action", "price", "quantity", "notional", "order_type", "metadata"):
+    for attribute in (
+        "symbol",
+        "side",
+        "action",
+        "price",
+        "quantity",
+        "notional",
+        "order_type",
+        "metadata",
+    ):
         if hasattr(decision, attribute):
             payload[attribute] = getattr(decision, attribute)
     candidate = getattr(decision, "candidate", None)
@@ -86,7 +96,13 @@ def decision_to_order_request(
     if not symbol:
         raise ValueError("decision payload missing symbol")
 
-    action = str(source.get("action") or payload.get("action") or source.get("side") or payload.get("side") or "buy").lower()
+    action = str(
+        source.get("action")
+        or payload.get("action")
+        or source.get("side")
+        or payload.get("side")
+        or "buy"
+    ).lower()
     if action in {"enter", "long", "buy"}:
         side = "buy"
     elif action in {"exit", "sell", "short"}:
@@ -200,9 +216,7 @@ class ExchangeAdapterExecutionService(ExecutionService):
                 result = adapter.place_order(request)
             except _RETRYABLE_EXCEPTIONS as exc:
                 delay = self._compute_backoff(attempt, exc)
-                self.logger.warning(
-                    "Retryable exchange error on attempt %s: %s", attempt, exc
-                )
+                self.logger.warning("Retryable exchange error on attempt %s: %s", attempt, exc)
                 if attempt >= max(1, int(self.max_attempts)):
                     self._log_event(
                         context,

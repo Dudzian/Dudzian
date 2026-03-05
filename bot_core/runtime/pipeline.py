@@ -1,4 +1,5 @@
 """Budowanie gotowych pipeline'ów strategii trend-following na podstawie konfiguracji."""
+
 from __future__ import annotations
 
 import asyncio
@@ -258,9 +259,7 @@ def _load_market_intel_snapshots_from_reports(
     return {}
 
 
-def _resolve_latest_stress_report(
-    governor_name: str, directories: Sequence[Path]
-) -> Path | None:
+def _resolve_latest_stress_report(governor_name: str, directories: Sequence[Path]) -> Path | None:
     name_slug = governor_name.strip().lower().replace(" ", "_") or "portfolio"
     prefixes = (
         f"stress_lab_{name_slug}_",
@@ -286,14 +285,10 @@ def _load_stress_overrides_from_reports(
     try:
         overrides = load_stress_overrides(report_path, max_age=max_age)
     except Exception:  # pragma: no cover - diagnostyka raportów
-        _LOGGER.exception(
-            "PortfolioGovernor: błąd wczytania raportu Stress Lab %s", report_path
-        )
+        _LOGGER.exception("PortfolioGovernor: błąd wczytania raportu Stress Lab %s", report_path)
         return ()
     if overrides:
-        _LOGGER.debug(
-            "PortfolioGovernor: użyto fallbackowego raportu Stress Lab %s", report_path
-        )
+        _LOGGER.debug("PortfolioGovernor: użyto fallbackowego raportu Stress Lab %s", report_path)
     return overrides
 
 
@@ -381,7 +376,9 @@ def _resolve_environment_name_for_mode(
     return next(iter(core_config.environments), None)
 
 
-def _create_cached_source(adapter: ExchangeAdapter, environment: EnvironmentConfig) -> CachedOHLCVSource:
+def _create_cached_source(
+    adapter: ExchangeAdapter, environment: EnvironmentConfig
+) -> CachedOHLCVSource:
     """Buduje źródło OHLCV korzystające z lokalnego cache i snapshotów REST."""
 
     cache_root = Path(environment.data_cache_path)
@@ -462,8 +459,9 @@ def build_daily_trend_pipeline(
     resolved_strategy_name = strategy_name or getattr(environment, "default_strategy", None)
     if not resolved_strategy_name:
         raise ValueError(
-            "Środowisko '{environment}' nie ma zdefiniowanej domyślnej strategii, a parametr strategy_name nie został podany."
-            .format(environment=environment_name)
+            "Środowisko '{environment}' nie ma zdefiniowanej domyślnej strategii, a parametr strategy_name nie został podany.".format(
+                environment=environment_name
+            )
         )
 
     if guard is not None:
@@ -487,8 +485,9 @@ def build_daily_trend_pipeline(
     resolved_controller_name = controller_name or getattr(environment, "default_controller", None)
     if not resolved_controller_name:
         raise ValueError(
-            "Środowisko '{environment}' nie ma zdefiniowanego domyślnego kontrolera runtime, a parametr controller_name nie został podany."
-            .format(environment=environment_name)
+            "Środowisko '{environment}' nie ma zdefiniowanego domyślnego kontrolera runtime, a parametr controller_name nie został podany.".format(
+                environment=environment_name
+            )
         )
 
     strategy_cfg = _resolve_strategy(core_config, resolved_strategy_name)
@@ -536,9 +535,7 @@ def build_daily_trend_pipeline(
     )
 
     if DailyTrendMomentumStrategy is None or DailyTrendMomentumSettings is None:
-        raise RuntimeError(
-            "Moduł daily_trend_momentum nie jest dostępny w tej wersji instalacji."
-        )
+        raise RuntimeError("Moduł daily_trend_momentum nie jest dostępny w tej wersji instalacji.")
 
     strategy = DailyTrendMomentumStrategy(
         DailyTrendMomentumSettings(
@@ -784,9 +781,7 @@ async def consume_stream_async(
     heartbeat_interval = max(0.0, float(heartbeat_interval))
     timeout_value = None if idle_timeout is None else max(0.0, float(idle_timeout))
 
-    async def _call_maybe_async(
-        func: Callable[..., object] | None, *args: object
-    ) -> object | None:
+    async def _call_maybe_async(func: Callable[..., object] | None, *args: object) -> object | None:
         if func is None:
             return None
         result = func(*args)
@@ -838,7 +833,9 @@ async def consume_stream_async(
 # --------------------------------------------------------------------------------------
 
 
-def _resolve_strategy(core_config: CoreConfig, strategy_name: str) -> DailyTrendMomentumStrategyConfig:
+def _resolve_strategy(
+    core_config: CoreConfig, strategy_name: str
+) -> DailyTrendMomentumStrategyConfig:
     try:
         return core_config.strategies[strategy_name]
     except KeyError as exc:  # pragma: no cover - kontrola konfiguracji
@@ -852,7 +849,9 @@ def _resolve_runtime(core_config: CoreConfig, controller_name: str) -> Controlle
         raise KeyError(f"Brak konfiguracji runtime dla kontrolera '{controller_name}'") from exc
 
 
-def _resolve_universe(core_config: CoreConfig, environment: EnvironmentConfig) -> InstrumentUniverseConfig:
+def _resolve_universe(
+    core_config: CoreConfig, environment: EnvironmentConfig
+) -> InstrumentUniverseConfig:
     if not environment.instrument_universe:
         raise ValueError(
             f"Środowisko {environment.name} nie ma przypisanego instrument_universe w config/core.yaml"
@@ -867,7 +866,9 @@ def _resolve_universe(core_config: CoreConfig, environment: EnvironmentConfig) -
 
 def _normalize_paper_settings(environment: EnvironmentConfig) -> MutableMapping[str, object]:
     if environment.environment not in {Environment.PAPER, Environment.TESTNET}:
-        raise ValueError("Pipeline paper trading jest dostępny wyłącznie dla środowisk paper/testnet.")
+        raise ValueError(
+            "Pipeline paper trading jest dostępny wyłącznie dla środowisk paper/testnet."
+        )
 
     # adapter_settings może nie istnieć w danej gałęzi modeli – użyj bezpiecznego getattr
     raw_adapter = getattr(environment, "adapter_settings", {}) or {}
@@ -907,7 +908,9 @@ def _normalize_paper_settings(environment: EnvironmentConfig) -> MutableMapping[
             candidate = Path(text)
             ledger_directory = candidate if candidate.is_absolute() else base_path / candidate
 
-    ledger_filename_pattern = str(raw_settings.get("ledger_filename_pattern", "ledger-%Y%m%d.jsonl"))
+    ledger_filename_pattern = str(
+        raw_settings.get("ledger_filename_pattern", "ledger-%Y%m%d.jsonl")
+    )
     ledger_retention_days_raw = raw_settings.get("ledger_retention_days", 730)
     if ledger_retention_days_raw is None:
         ledger_retention_days = None
@@ -1007,8 +1010,12 @@ def _build_markets(
         market = MarketMetadata(
             base_asset=instrument.base_asset.upper(),
             quote_asset=quote,
-            min_quantity=float(per_symbol.get("min_quantity", default_market.get("min_quantity", 0.0))),
-            min_notional=float(per_symbol.get("min_notional", default_market.get("min_notional", 0.0))),
+            min_quantity=float(
+                per_symbol.get("min_quantity", default_market.get("min_quantity", 0.0))
+            ),
+            min_notional=float(
+                per_symbol.get("min_notional", default_market.get("min_notional", 0.0))
+            ),
             step_size=_optional_float(per_symbol.get("step_size", default_market.get("step_size"))),
             tick_size=_optional_float(per_symbol.get("tick_size", default_market.get("tick_size"))),
         )
@@ -1081,13 +1088,13 @@ def _select_execution_service(
     try:
         bootstrap_ctx.execution_service = service
     except Exception:  # pragma: no cover - kontekst może być typu tylko-do-odczytu
-        _LOGGER.debug("Nie udało się zapisać PaperTradingExecutionService w BootstrapContext", exc_info=True)
+        _LOGGER.debug(
+            "Nie udało się zapisać PaperTradingExecutionService w BootstrapContext", exc_info=True
+        )
     return service
 
 
-def _build_price_resolver(
-    data_source: CachedOHLCVSource, interval: str
-) -> PriceResolver:
+def _build_price_resolver(data_source: CachedOHLCVSource, interval: str) -> PriceResolver:
     storage = data_source.storage
 
     def resolver(symbol: str) -> float | None:
@@ -1144,7 +1151,11 @@ def _build_account_loader(
             if rows:
                 latest_cached = float(rows[-1][0])
         cached_entry = price_cache.get(symbol)
-        if cached_entry and latest_cached is not None and abs(cached_entry[0] - latest_cached) < 1e-6:
+        if (
+            cached_entry
+            and latest_cached is not None
+            and abs(cached_entry[0] - latest_cached) < 1e-6
+        ):
             return cached_entry[1]
 
         now_ms = int(datetime.now(timezone.utc).timestamp() * 1000)
@@ -1236,8 +1247,12 @@ def _build_account_loader(
                 current_price = latest_price(symbol)
                 pair_prices[(market.base_asset.upper(), market.quote_asset.upper())] = current_price
                 if current_price > 0:
-                    adjacency[market.base_asset.upper()].append((market.quote_asset.upper(), current_price))
-                    adjacency[market.quote_asset.upper()].append((market.base_asset.upper(), 1.0 / current_price))
+                    adjacency[market.base_asset.upper()].append(
+                        (market.quote_asset.upper(), current_price)
+                    )
+                    adjacency[market.quote_asset.upper()].append(
+                        (market.base_asset.upper(), 1.0 / current_price)
+                    )
             total_equity += convert_amount(market.quote_asset, margin)
             liability = current_price * quantity
             total_equity -= convert_amount(market.quote_asset, liability)
@@ -1414,7 +1429,9 @@ class OHLCVStrategyFeed(StrategyDataFeed):
                 snapshots.extend(_response_to_snapshots(symbol, response))
         else:
             workers = min(self._max_workers, len(tasks))
-            with ThreadPoolExecutor(max_workers=workers, thread_name_prefix="ohlcv-feed") as executor:
+            with ThreadPoolExecutor(
+                max_workers=workers, thread_name_prefix="ohlcv-feed"
+            ) as executor:
                 futures = {
                     executor.submit(self._data_source.fetch_ohlcv, request): symbol
                     for symbol, request in tasks.items()
@@ -1460,7 +1477,9 @@ class OHLCVStrategyFeed(StrategyDataFeed):
                     snapshots.append(converted[-1])
         else:
             workers = min(self._max_workers, len(tasks))
-            with ThreadPoolExecutor(max_workers=workers, thread_name_prefix="ohlcv-feed") as executor:
+            with ThreadPoolExecutor(
+                max_workers=workers, thread_name_prefix="ohlcv-feed"
+            ) as executor:
                 futures = {
                     executor.submit(self._data_source.fetch_ohlcv, request): symbol
                     for symbol, request in tasks.items()
@@ -1537,11 +1556,7 @@ class StreamingStrategyFeed(StrategyDataFeed):
         self._async_task: asyncio.Task[None] | None = None
         self._disabled = False
         self._buffers: dict[str, deque[MarketSnapshot]] = {}
-        self._known_symbols = {
-            symbol
-            for values in self._symbols_map.values()
-            for symbol in values
-        }
+        self._known_symbols = {symbol for values in self._symbols_map.values() for symbol in values}
         for symbol in self._known_symbols:
             self._buffers[symbol] = deque(maxlen=self._buffer_size)
         self._last_event_at: float | None = None
@@ -1554,11 +1569,15 @@ class StreamingStrategyFeed(StrategyDataFeed):
         if self._disabled:
             return
         if self._async_task and not self._async_task.done():
-            raise RuntimeError("StreamingStrategyFeed jest już uruchomiony w trybie asynchronicznym.")
+            raise RuntimeError(
+                "StreamingStrategyFeed jest już uruchomiony w trybie asynchronicznym."
+            )
         if self._thread and self._thread.is_alive():
             return
         self._stop_event.clear()
-        self._thread = threading.Thread(target=self._run_loop, name=_PIPELINE_THREAD_NAME, daemon=True)
+        self._thread = threading.Thread(
+            target=self._run_loop, name=_PIPELINE_THREAD_NAME, daemon=True
+        )
         self._thread.start()
         self._register_instance()
 
@@ -1582,7 +1601,9 @@ class StreamingStrategyFeed(StrategyDataFeed):
             try:
                 snapshot = self._event_to_snapshot(event)
             except Exception:
-                self._logger.debug("Nie udało się sparsować zdarzenia streamu: %s", event, exc_info=True)
+                self._logger.debug(
+                    "Nie udało się sparsować zdarzenia streamu: %s", event, exc_info=True
+                )
                 continue
             if snapshot is None:
                 continue
@@ -1620,7 +1641,9 @@ class StreamingStrategyFeed(StrategyDataFeed):
             self._disabled = False
 
         if self._thread and self._thread.is_alive():
-            raise RuntimeError("StreamingStrategyFeed jest już uruchomiony w trybie synchronicznym.")
+            raise RuntimeError(
+                "StreamingStrategyFeed jest już uruchomiony w trybie synchronicznym."
+            )
         if self._async_task and not self._async_task.done():
             return self._async_task
 
@@ -1719,7 +1742,9 @@ class StreamingStrategyFeed(StrategyDataFeed):
                 except TypeError:
                     raise
                 except TimeoutError:
-                    self._logger.warning("Brak nowych danych w streamie strategii przez dłuższy czas")
+                    self._logger.warning(
+                        "Brak nowych danych w streamie strategii przez dłuższy czas"
+                    )
                 except Exception:  # pragma: no cover - logowanie dla diagnostyki
                     self._logger.exception("Błąd podczas przetwarzania streamu strategii")
 
@@ -1768,10 +1793,7 @@ class StreamingStrategyFeed(StrategyDataFeed):
             return None
         symbol = str(symbol_raw)
         timestamp_raw = (
-            event.get("timestamp")
-            or event.get("time")
-            or event.get("ts")
-            or time.time()
+            event.get("timestamp") or event.get("time") or event.get("ts") or time.time()
         )
         try:
             timestamp_value = float(timestamp_raw)
@@ -1784,17 +1806,26 @@ class StreamingStrategyFeed(StrategyDataFeed):
         else:
             timestamp_ms = int(timestamp_value * 1000.0)
 
-        last_price = StreamingStrategyFeed._float(event.get("last_price") or event.get("price") or event.get("close"))
+        last_price = StreamingStrategyFeed._float(
+            event.get("last_price") or event.get("price") or event.get("close")
+        )
         if last_price is None:
             return None
-        open_price = StreamingStrategyFeed._float(event.get("open_price") or event.get("open")) or last_price
-        high_price = StreamingStrategyFeed._float(event.get("high_24h") or event.get("high")) or max(open_price, last_price)
-        low_price = StreamingStrategyFeed._float(event.get("low_24h") or event.get("low")) or min(open_price, last_price)
-        volume = StreamingStrategyFeed._float(
-            event.get("volume_24h_base")
-            or event.get("volume")
-            or event.get("base_volume")
-        ) or 0.0
+        open_price = (
+            StreamingStrategyFeed._float(event.get("open_price") or event.get("open")) or last_price
+        )
+        high_price = StreamingStrategyFeed._float(
+            event.get("high_24h") or event.get("high")
+        ) or max(open_price, last_price)
+        low_price = StreamingStrategyFeed._float(event.get("low_24h") or event.get("low")) or min(
+            open_price, last_price
+        )
+        volume = (
+            StreamingStrategyFeed._float(
+                event.get("volume_24h_base") or event.get("volume") or event.get("base_volume")
+            )
+            or 0.0
+        )
 
         indicators: dict[str, float] = {}
         for key in (
@@ -1828,7 +1859,9 @@ class StreamingStrategyFeed(StrategyDataFeed):
             return None
 
 
-def _resolve_adapter_metrics_registry(adapter: ExchangeAdapter | object | None) -> MetricsRegistry | None:
+def _resolve_adapter_metrics_registry(
+    adapter: ExchangeAdapter | object | None,
+) -> MetricsRegistry | None:
     """Wyszukuje rejestr metryk powiązany z adapterem giełdowym."""
 
     if adapter is None:
@@ -1886,11 +1919,7 @@ def _build_streaming_feed(
     port = getattr(stream_config, "port", 8765)
     base_url = str(stream_settings.get("base_url") or f"http://{host}:{port}")
     default_path = f"/stream/{exchange}/public"
-    path = str(
-        stream_settings.get("public_path")
-        or stream_settings.get("path")
-        or default_path
-    )
+    path = str(stream_settings.get("public_path") or stream_settings.get("path") or default_path)
     raw_channels = stream_settings.get("public_channels") or stream_settings.get("channels")
     channels: list[str]
     if raw_channels is None:
@@ -1979,9 +2008,17 @@ def _build_streaming_feed(
     backoff_base = float(stream_settings.get("backoff_base", 0.25))
     backoff_cap = float(stream_settings.get("backoff_cap", 2.0))
     http_method = stream_settings.get("public_method") or stream_settings.get("method", "GET")
-    params_in_body = bool(stream_settings.get("public_params_in_body", stream_settings.get("params_in_body", False)))
-    channels_in_body = bool(stream_settings.get("public_channels_in_body", stream_settings.get("channels_in_body", False)))
-    cursor_in_body = bool(stream_settings.get("public_cursor_in_body", stream_settings.get("cursor_in_body", False)))
+    params_in_body = bool(
+        stream_settings.get("public_params_in_body", stream_settings.get("params_in_body", False))
+    )
+    channels_in_body = bool(
+        stream_settings.get(
+            "public_channels_in_body", stream_settings.get("channels_in_body", False)
+        )
+    )
+    cursor_in_body = bool(
+        stream_settings.get("public_cursor_in_body", stream_settings.get("cursor_in_body", False))
+    )
 
     buffer_size_raw = stream_settings.get("buffer_size", 256)
     try:
@@ -2084,14 +2121,19 @@ def _estimate_default_notional(paper_settings: Mapping[str, object]) -> float:
     return default_notional
 
 
-def _collect_fixed_weight_entries(
-    source: Any, *, prefix: str | None = None
-) -> Mapping[str, float]:
+def _collect_fixed_weight_entries(source: Any, *, prefix: str | None = None) -> Mapping[str, float]:
     result: dict[str, float] = {}
     if isinstance(source, Mapping):
         for key, value in source.items():
             lowered = str(key).lower()
-            if lowered in {"strategies", "strategy", "schedules", "schedule", "profiles", "profile"}:
+            if lowered in {
+                "strategies",
+                "strategy",
+                "schedules",
+                "schedule",
+                "profiles",
+                "profile",
+            }:
                 result.update(_collect_fixed_weight_entries(value, prefix=prefix))
                 continue
             if isinstance(value, Mapping):
@@ -2107,11 +2149,7 @@ def _collect_fixed_weight_entries(
         for entry in source:
             if not isinstance(entry, Mapping):
                 continue
-            name_value = (
-                entry.get("schedule")
-                or entry.get("strategy")
-                or entry.get("name")
-            )
+            name_value = entry.get("schedule") or entry.get("strategy") or entry.get("name")
             weight_value = entry.get("weight")
             profile_value = entry.get("profile") or entry.get("risk_profile")
             if name_value is None or weight_value is None:
@@ -2228,7 +2266,9 @@ def _build_optimization_evaluator(
     optimization_cfg: RuntimeOptimizationSettings,
     quality_lookup: Callable[[str], Mapping[str, Any] | None],
 ) -> Callable[[StrategyEngine, Mapping[str, Any]], tuple[float, Mapping[str, Any]]]:
-    history_bars = getattr(task_cfg.evaluation, "history_bars", None) or optimization_cfg.default_history_bars
+    history_bars = (
+        getattr(task_cfg.evaluation, "history_bars", None) or optimization_cfg.default_history_bars
+    )
     warmup_bars = getattr(task_cfg.evaluation, "warmup_bars", 0)
     warmup_bars = max(0, min(history_bars - 1, int(warmup_bars)))
     data_feed = getattr(runtime, "data_feed", None)
@@ -2358,23 +2398,17 @@ def _collect_metric_weight_specs(source: Any) -> tuple[MetricWeightRule, ...]:
             if weight_source not in (None, ""):
                 weight = _safe_float(weight_source, default=1.0)
             default_source = (
-                definition.get("default")
-                or definition.get("missing")
-                or definition.get("fallback")
+                definition.get("default") or definition.get("missing") or definition.get("fallback")
             )
             if default_source not in (None, ""):
                 default = _safe_float(default_source, default=0.0)
             min_source = (
-                definition.get("min")
-                or definition.get("clamp_min")
-                or definition.get("floor")
+                definition.get("min") or definition.get("clamp_min") or definition.get("floor")
             )
             if min_source not in (None, ""):
                 clamp_min = _safe_float(min_source, default=0.0)
             max_source = (
-                definition.get("max")
-                or definition.get("clamp_max")
-                or definition.get("cap")
+                definition.get("max") or definition.get("clamp_max") or definition.get("cap")
             )
             if max_source not in (None, ""):
                 clamp_max = _safe_float(max_source, default=0.0)
@@ -2455,7 +2489,9 @@ def _policy_factory_from_spec(
     return _default
 
 
-def _assign_policy_label(policy: CapitalAllocationPolicy, label: str | None) -> CapitalAllocationPolicy:
+def _assign_policy_label(
+    policy: CapitalAllocationPolicy, label: str | None
+) -> CapitalAllocationPolicy:
     if label in (None, ""):
         return policy
     try:
@@ -2531,10 +2567,7 @@ def _resolve_capital_policy(
         return policy, rebalance_seconds
     if name in {"metric", "metric_weighted", "telemetry_weighted", "metric_score"}:
         metrics_source = (
-            spec.get("metrics")
-            or spec.get("rules")
-            or spec.get("weights")
-            or spec.get("signals")
+            spec.get("metrics") or spec.get("rules") or spec.get("weights") or spec.get("signals")
         )
         metric_rules = _collect_metric_weight_specs(metrics_source)
         if not metric_rules:
@@ -2546,9 +2579,7 @@ def _resolve_capital_policy(
         shift_entry = spec.get("shift_epsilon") or spec.get("shift") or spec.get("epsilon")
         shift_epsilon = _safe_float(shift_entry, default=1e-6)
         fallback_spec = (
-            spec.get("fallback")
-            or spec.get("fallback_policy")
-            or spec.get("default_policy")
+            spec.get("fallback") or spec.get("fallback_policy") or spec.get("default_policy")
         )
         fallback_policy: CapitalAllocationPolicy | None = None
         if isinstance(fallback_spec, str) and fallback_spec.strip().lower() in {
@@ -2571,10 +2602,7 @@ def _resolve_capital_policy(
         return policy, rebalance_seconds
     if name in {"tag_quota", "tag_budget", "tag_weight", "tag_split"}:
         tags_source = (
-            spec.get("tags")
-            or spec.get("tag_weights")
-            or spec.get("weights")
-            or spec.get("groups")
+            spec.get("tags") or spec.get("tag_weights") or spec.get("weights") or spec.get("groups")
         )
         tag_weights = _collect_tag_weight_entries(tags_source)
         if not tag_weights:
@@ -2596,11 +2624,7 @@ def _resolve_capital_policy(
                 fallback_spec,
                 _allow_profile=_allow_profile,
             )
-        inner_spec = (
-            spec.get("within_tag")
-            or spec.get("within")
-            or spec.get("inner_policy")
-        )
+        inner_spec = spec.get("within_tag") or spec.get("within") or spec.get("inner_policy")
         inner_factory: Callable[[], CapitalAllocationPolicy] | None = None
         if inner_spec not in (None, ""):
             inner_factory = _policy_factory_from_spec(inner_spec)
@@ -2657,16 +2681,8 @@ def _resolve_capital_policy(
             or spec.get("base_policy")
             or spec.get("inner_policy")
         )
-        smoothing_entry = (
-            spec.get("alpha")
-            or spec.get("smoothing_factor")
-            or spec.get("smoothing")
-        )
-        min_delta_entry = (
-            spec.get("min_delta")
-            or spec.get("threshold")
-            or spec.get("min_step")
-        )
+        smoothing_entry = spec.get("alpha") or spec.get("smoothing_factor") or spec.get("smoothing")
+        min_delta_entry = spec.get("min_delta") or spec.get("threshold") or spec.get("min_step")
         floor_entry = spec.get("floor_weight") or spec.get("min_weight") or spec.get("floor")
 
         base_spec = base_entry or "risk_parity"
@@ -2697,9 +2713,7 @@ def _resolve_capital_policy(
                 weight_value = 1.0
                 if isinstance(entry, Mapping):
                     weight_source = (
-                        entry.get("weight")
-                        or entry.get("share")
-                        or entry.get("coefficient")
+                        entry.get("weight") or entry.get("share") or entry.get("coefficient")
                     )
                     weight_value = _safe_float(weight_source, default=1.0)
                     component_spec = (
@@ -2712,9 +2726,7 @@ def _resolve_capital_policy(
                     )
                 if component_spec in (None, "") or weight_value <= 0:
                     continue
-                component_policy, _ = _resolve_capital_policy(
-                    component_spec, _allow_profile=False
-                )
+                component_policy, _ = _resolve_capital_policy(component_spec, _allow_profile=False)
                 components.append((component_policy, weight_value, str(comp_label)))
         elif isinstance(components_source, Sequence):
             for entry in components_source:
@@ -2723,9 +2735,7 @@ def _resolve_capital_policy(
                 label_value: str | None = None
                 if isinstance(entry, Mapping):
                     weight_source = (
-                        entry.get("weight")
-                        or entry.get("share")
-                        or entry.get("coefficient")
+                        entry.get("weight") or entry.get("share") or entry.get("coefficient")
                     )
                     weight_value = _safe_float(weight_source, default=1.0)
                     label_entry = entry.get("label") or entry.get("alias")
@@ -2741,9 +2751,7 @@ def _resolve_capital_policy(
                     )
                 if component_spec in (None, "") or weight_value <= 0:
                     continue
-                component_policy, _ = _resolve_capital_policy(
-                    component_spec, _allow_profile=False
-                )
+                component_policy, _ = _resolve_capital_policy(component_spec, _allow_profile=False)
                 components.append((component_policy, weight_value, label_value))
         else:
             _LOGGER.debug(
@@ -2757,9 +2765,7 @@ def _resolve_capital_policy(
         )
         normalize_components = _as_bool(normalize_flag, default=True)
         fallback_spec = (
-            spec.get("fallback")
-            or spec.get("fallback_policy")
-            or spec.get("default_policy")
+            spec.get("fallback") or spec.get("fallback_policy") or spec.get("default_policy")
         )
         fallback_policy: CapitalAllocationPolicy | None
         if isinstance(fallback_spec, str) and fallback_spec.strip().lower() in {
@@ -3015,12 +3021,8 @@ class DecisionAwareSignalSink(StrategySignalSink):
                 "stress_failures": list(getattr(evaluation, "stress_failures", ())),
                 "cost_bps": getattr(evaluation, "cost_bps", None),
                 "net_edge_bps": getattr(evaluation, "net_edge_bps", None),
-                "model_expected_return_bps": getattr(
-                    evaluation, "model_expected_return_bps", None
-                ),
-                "model_success_probability": getattr(
-                    evaluation, "model_success_probability", None
-                ),
+                "model_expected_return_bps": getattr(evaluation, "model_expected_return_bps", None),
+                "model_success_probability": getattr(evaluation, "model_success_probability", None),
                 "model_name": getattr(evaluation, "model_name", None),
             }
 
@@ -3156,7 +3158,7 @@ class DecisionAwareSignalSink(StrategySignalSink):
         return self._base_sink.export()
 
     def evaluations(self) -> Sequence[DecisionEvaluation]:
-            return tuple(self._evaluations)
+        return tuple(self._evaluations)
 
     def evaluation_history(
         self,
@@ -3178,9 +3180,7 @@ class DecisionAwareSignalSink(StrategySignalSink):
         history: list[Mapping[str, object]] = []
         for evaluation in records:
             history.append(
-                self._serialize_evaluation_payload(
-                    evaluation, include_candidate=include_candidates
-                )
+                self._serialize_evaluation_payload(evaluation, include_candidate=include_candidates)
             )
         return tuple(history)
 
@@ -3407,9 +3407,7 @@ class DecisionAwareSignalSink(StrategySignalSink):
                 probability = None
             try:
                 min_probability = (
-                    float(raw_min_probability)
-                    if raw_min_probability is not None
-                    else None
+                    float(raw_min_probability) if raw_min_probability is not None else None
                 )
             except (TypeError, ValueError):  # pragma: no cover - defensywnie
                 min_probability = None
@@ -3494,7 +3492,9 @@ class DecisionAwareSignalSink(StrategySignalSink):
 
         return max(0.0, min(0.995, probability))
 
-    def _extract_expected_return(self, signal: StrategySignal, metadata: Mapping[str, Any]) -> float:
+    def _extract_expected_return(
+        self, signal: StrategySignal, metadata: Mapping[str, Any]
+    ) -> float:
         candidate = metadata.get("expected_return_bps")
         if candidate is None and isinstance(metadata.get("ai_manager"), Mapping):
             candidate = metadata["ai_manager"].get("expected_return_bps")
@@ -3633,7 +3633,9 @@ def build_multi_strategy_runtime(
     universe = _resolve_universe(core_config, environment)
     markets = _build_markets(universe, environment.exchange, allowed_quotes, paper_settings)
     if not markets:
-        raise ValueError("Brak instrumentów dla scheduler-a multi-strategy – sprawdź instrument_universe")
+        raise ValueError(
+            "Brak instrumentów dla scheduler-a multi-strategy – sprawdź instrument_universe"
+        )
 
     cached_source = _create_cached_source(bootstrap_ctx.adapter, environment)
     storage = cached_source.storage
@@ -3739,7 +3741,9 @@ def build_multi_strategy_runtime(
         try:
             bootstrap_ctx.io_dispatcher = io_dispatcher
         except Exception:  # pragma: no cover - kontekst może blokować zapisy
-            _LOGGER.debug("Nie udało się zarejestrować io_dispatcher w BootstrapContext", exc_info=True)
+            _LOGGER.debug(
+                "Nie udało się zarejestrować io_dispatcher w BootstrapContext", exc_info=True
+            )
     else:
         try:
             bootstrap_ctx.io_dispatcher = None
@@ -3976,7 +3980,9 @@ def build_multi_strategy_runtime(
     for schedule in scheduler_cfg.schedules:
         strategy = strategies.get(schedule.strategy)
         if strategy is None:
-            raise KeyError(f"Strategia {schedule.strategy} nie została zarejestrowana w konfiguracji")
+            raise KeyError(
+                f"Strategia {schedule.strategy} nie została zarejestrowana w konfiguracji"
+            )
         scheduler.register_schedule(
             name=schedule.name,
             strategy_name=schedule.strategy,
@@ -4030,9 +4036,7 @@ def build_multi_strategy_runtime(
         model_repository=optimization_repo,
         catalog=DEFAULT_STRATEGY_CATALOG,
     )
-    if optimization_scheduler is not None and hasattr(
-        scheduler, "add_portfolio_decision_listener"
-    ):
+    if optimization_scheduler is not None and hasattr(scheduler, "add_portfolio_decision_listener"):
 
         def _trigger_after_portfolio(decision: PortfolioDecision) -> None:
             if not getattr(decision, "rebalance_required", False):
@@ -4259,10 +4263,7 @@ def _instantiate_strategies(
         if guard is not None and spec.capability:
             guard.require_strategy(
                 spec.capability,
-                message=(
-                    f"Strategia '{name}' wymaga aktywnej licencji "
-                    f"{spec.capability}."
-                ),
+                message=(f"Strategia '{name}' wymaga aktywnej licencji {spec.capability}."),
             )
         registry[name] = catalog.create(definition)
 
@@ -4356,9 +4357,7 @@ def describe_multi_strategy_configuration(
                 if definition.risk_classes:
                     entry["risk_classes"] = list(dict.fromkeys(definition.risk_classes))
                 if definition.required_data:
-                    entry["required_data"] = list(
-                        dict.fromkeys(definition.required_data)
-                    )
+                    entry["required_data"] = list(dict.fromkeys(definition.required_data))
                 if capability_id is None:
                     extra_capability = definition.metadata.get("capability")
                     if extra_capability not in (None, ""):
@@ -4385,9 +4384,7 @@ def describe_multi_strategy_configuration(
         schedules.append(entry)
 
     schedules.sort(key=lambda item: item["name"])
-    allowed_strategies = {
-        str(entry["strategy"]) for entry in schedules if entry.get("strategy")
-    }
+    allowed_strategies = {str(entry["strategy"]) for entry in schedules if entry.get("strategy")}
 
     policy_spec = getattr(scheduler_cfg, "capital_policy", None)
     policy, policy_interval = _resolve_capital_policy(policy_spec, _allow_profile=False)
@@ -4421,10 +4418,9 @@ def describe_multi_strategy_configuration(
                     else:
                         blocked_profiles.add("*")
                 if blocked_capabilities is not None:
-                    capability_id = (
-                        blocked_strategy_capabilities.get(strategy_key)
-                        or strategy_capabilities.get(strategy_key)
-                    )
+                    capability_id = blocked_strategy_capabilities.get(
+                        strategy_key
+                    ) or strategy_capabilities.get(strategy_key)
                     if capability_id:
                         blocked_capabilities.setdefault(strategy_key, capability_id)
                 continue
@@ -4475,10 +4471,9 @@ def describe_multi_strategy_configuration(
                     or blocked_strategy_capabilities.get(target)
                 )
             else:
-                capability_id = (
-                    blocked_strategy_capabilities.get(target)
-                    or strategy_capabilities.get(target)
-                )
+                capability_id = blocked_strategy_capabilities.get(
+                    target
+                ) or strategy_capabilities.get(target)
             if capability_id:
                 payload["capability"] = capability_id
                 key = f"{kind}:{target}".strip(":")
@@ -4540,8 +4535,7 @@ def describe_multi_strategy_configuration(
     merged_initial_capabilities: dict[str, str] = dict(blocked_initial_limit_capabilities)
     if blocked_initial_limits:
         summary["blocked_initial_signal_limits"] = {
-            name: sorted(profiles)
-            for name, profiles in blocked_initial_limits.items()
+            name: sorted(profiles) for name, profiles in blocked_initial_limits.items()
         }
         for name in blocked_initial_limits:
             capability_id = (
@@ -4553,15 +4547,13 @@ def describe_multi_strategy_configuration(
                 merged_initial_capabilities[name] = capability_id
     if merged_initial_capabilities:
         summary["blocked_initial_signal_limit_capabilities"] = {
-            name: merged_initial_capabilities[name]
-            for name in sorted(merged_initial_capabilities)
+            name: merged_initial_capabilities[name] for name in sorted(merged_initial_capabilities)
         }
 
     merged_static_capabilities: dict[str, str] = dict(blocked_static_limit_capabilities)
     if blocked_static_limits:
         summary["blocked_signal_limits"] = {
-            name: sorted(profiles)
-            for name, profiles in blocked_static_limits.items()
+            name: sorted(profiles) for name, profiles in blocked_static_limits.items()
         }
         for name in blocked_static_limits:
             capability_id = (
@@ -4573,8 +4565,7 @@ def describe_multi_strategy_configuration(
                 merged_static_capabilities[name] = capability_id
     if merged_static_capabilities:
         summary["blocked_signal_limit_capabilities"] = {
-            name: merged_static_capabilities[name]
-            for name in sorted(merged_static_capabilities)
+            name: merged_static_capabilities[name] for name in sorted(merged_static_capabilities)
         }
     if getattr(scheduler_cfg, "portfolio_governor", None):
         summary["portfolio_governor"] = scheduler_cfg.portfolio_governor
@@ -4596,6 +4587,8 @@ def describe_multi_strategy_configuration(
                 catalog=resolved_catalog,
             )
     return summary
+
+
 def _build_mode_runtime(
     mode: str,
     *,
@@ -4749,7 +4742,9 @@ def _build_follower_configs(raw_followers: object) -> tuple[CopyTradingFollowerC
             scaling=scaling,
             risk_multiplier=risk_multiplier,
             enabled=enabled,
-            max_position_value=float(max_position_value) if max_position_value not in (None, "") else None,
+            max_position_value=float(max_position_value)
+            if max_position_value not in (None, "")
+            else None,
             allow_partial=allow_partial,
         )
         followers.append(follower)
@@ -4824,7 +4819,10 @@ def build_multi_portfolio_scheduler_from_config(
 def describe_multi_portfolio_state(
     scheduler: MultiPortfolioScheduler,
 ) -> Sequence[Mapping[str, object]]:
-    return [scheduler.portfolio_state(portfolio_id) for portfolio_id in scheduler.registered_portfolios()]
+    return [
+        scheduler.portfolio_state(portfolio_id)
+        for portfolio_id in scheduler.registered_portfolios()
+    ]
 
 
 Pipeline = StreamingStrategyFeed

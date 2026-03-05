@@ -1,4 +1,5 @@
 """Smoke test DecisionOrchestratora Etapu 5."""
+
 from __future__ import annotations
 
 import argparse
@@ -35,26 +36,10 @@ class ModeDefaults:
 MODE_DEFAULTS: Mapping[str, ModeDefaults] = {
     "paper": ModeDefaults(
         config=DEFAULT_CONFIG,
-        risk_snapshot=REPO_ROOT
-        / "data"
-        / "decision_engine"
-        / "paper"
-        / "risk_snapshot.json",
-        candidates=REPO_ROOT
-        / "data"
-        / "decision_engine"
-        / "paper"
-        / "candidates.json",
-        tco_report=REPO_ROOT
-        / "data"
-        / "decision_engine"
-        / "paper"
-        / "tco_report.json",
-        output=REPO_ROOT
-        / "var"
-        / "audit"
-        / "decision_engine"
-        / "smoke_paper.json",
+        risk_snapshot=REPO_ROOT / "data" / "decision_engine" / "paper" / "risk_snapshot.json",
+        candidates=REPO_ROOT / "data" / "decision_engine" / "paper" / "candidates.json",
+        tco_report=REPO_ROOT / "data" / "decision_engine" / "paper" / "tco_report.json",
+        output=REPO_ROOT / "var" / "audit" / "decision_engine" / "smoke_paper.json",
     ),
     # Placeholder presets for future environments.
     "demo": ModeDefaults(config=DEFAULT_CONFIG),
@@ -225,14 +210,14 @@ def _resolve_inputs(args: argparse.Namespace) -> ResolvedInputs:
 
     config_path = (args.config or preset.config or DEFAULT_CONFIG).expanduser()
 
-    risk_snapshot_path = (args.risk_snapshot or preset.risk_snapshot)
+    risk_snapshot_path = args.risk_snapshot or preset.risk_snapshot
     if risk_snapshot_path is None:
         raise ValueError(
             "Podaj --risk-snapshot lub wybierz tryb z domyślnym snapshotem (np. --mode paper)."
         )
     risk_snapshot_path = risk_snapshot_path.expanduser()
 
-    candidates_path = (args.candidates or preset.candidates)
+    candidates_path = args.candidates or preset.candidates
     if candidates_path is None:
         raise ValueError(
             "Podaj --candidates lub wybierz tryb z domyślną listą kandydatów (np. --mode paper)."

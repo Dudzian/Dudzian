@@ -47,7 +47,11 @@ class _InstallerStub:
         self._preview = preview
 
     def list_available(self) -> Sequence[_Descriptor]:
-        return (_Descriptor(preset_id=self._document.preset_id, version=self._document.version or "1.0.0"),)
+        return (
+            _Descriptor(
+                preset_id=self._document.preset_id, version=self._document.version or "1.0.0"
+            ),
+        )
 
     def preview_installation(self, preset_id: str) -> MarketplaceInstallResult:
         assert preset_id == self._document.preset_id
@@ -68,7 +72,9 @@ class _RepositoryStub:
     def remove(self, preset_id: str) -> bool:
         return False
 
-    def export_preset(self, preset_id: str, *, format: str = "json") -> tuple[dict[str, Any], bytes]:
+    def export_preset(
+        self, preset_id: str, *, format: str = "json"
+    ) -> tuple[dict[str, Any], bytes]:
         return {"metadata": {"id": preset_id}}, b"{}"
 
 

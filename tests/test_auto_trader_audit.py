@@ -203,7 +203,9 @@ def test_risk_evaluation_history_records_feature_columns() -> None:
     assert metadata["feature_columns_source"] == "default"
     assert "configured_feature_columns" not in metadata
 
-    events = [payload for event, payload in emitter.events if event == "auto_trader.risk_evaluation"]
+    events = [
+        payload for event, payload in emitter.events if event == "auto_trader.risk_evaluation"
+    ]
     assert len(events) == 1
     assert events[0]["metadata"]["feature_columns"] == ["close", "volume"]
 
@@ -250,7 +252,9 @@ def test_load_risk_evaluations_preserves_feature_metadata() -> None:
     record = evaluations[0]
     assert record["metadata"] == metadata
 
-    events = [payload for event, payload in emitter.events if event == "auto_trader.risk_evaluation"]
+    events = [
+        payload for event, payload in emitter.events if event == "auto_trader.risk_evaluation"
+    ]
     assert len(events) == 1
     assert events[0]["metadata"] == metadata
 

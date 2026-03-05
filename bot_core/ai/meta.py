@@ -186,4 +186,3 @@ def select_meta_confidence(payload: Mapping[str, object]) -> float | None:
             continue
         return max(0.0, min(1.0, value))
     return None
-

@@ -1,4 +1,5 @@
 """Obsługa zdarzeń decyzyjnych silnika ryzyka oraz logging JSONL."""
+
 from __future__ import annotations
 
 import json
@@ -233,7 +234,9 @@ class RiskAlertLog:
             self._buffer.append(alert)
         return alert
 
-    def tail(self, *, limit: int = 50, profile: str | None = None) -> Sequence[Mapping[str, object]]:
+    def tail(
+        self, *, limit: int = 50, profile: str | None = None
+    ) -> Sequence[Mapping[str, object]]:
         if limit <= 0:
             return ()
         normalized_profile = profile.strip().lower() if isinstance(profile, str) else None

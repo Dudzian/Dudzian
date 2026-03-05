@@ -1,4 +1,5 @@
 """Symulacja makroekonomicznych scenariuszy stresowych portfela Stage6."""
+
 from __future__ import annotations
 
 import csv
@@ -287,9 +288,7 @@ class PortfolioStressReport(HmacSignedReportMixin):
         quantile = _weighted_quantile(return_values, probability_weights, 0.05)
         if quantile is not None:
             summary["var_95_return_pct"] = quantile
-            cvar_return = _weighted_expected_shortfall(
-                return_values, probability_weights, quantile
-            )
+            cvar_return = _weighted_expected_shortfall(return_values, probability_weights, quantile)
             if cvar_return is not None:
                 summary["cvar_95_return_pct"] = cvar_return
 
@@ -517,11 +516,15 @@ def load_portfolio_stress_baseline(path: Path | str) -> PortfolioStressBaseline:
     return baseline_from_mapping(payload)
 
 
-def _factor_map(scenario: PortfolioStressScenarioConfig) -> Mapping[str, PortfolioStressFactorShockConfig]:
+def _factor_map(
+    scenario: PortfolioStressScenarioConfig,
+) -> Mapping[str, PortfolioStressFactorShockConfig]:
     return {shock.factor: shock for shock in getattr(scenario, "factors", ())}
 
 
-def _asset_map(scenario: PortfolioStressScenarioConfig) -> Mapping[str, PortfolioStressAssetShockConfig]:
+def _asset_map(
+    scenario: PortfolioStressScenarioConfig,
+) -> Mapping[str, PortfolioStressAssetShockConfig]:
     return {shock.symbol.lower(): shock for shock in getattr(scenario, "assets", ())}
 
 
@@ -531,10 +534,7 @@ def run_portfolio_stress(
     *,
     report_metadata: Mapping[str, Any] | None = None,
 ) -> PortfolioStressReport:
-    results = [
-        _evaluate_scenario(baseline, scenario)
-        for scenario in scenarios
-    ]
+    results = [_evaluate_scenario(baseline, scenario) for scenario in scenarios]
     return PortfolioStressReport(
         baseline=baseline,
         scenarios=tuple(results),

@@ -20,7 +20,9 @@ try:
 except ModuleNotFoundError:  # pragma: no cover
     yaml = None  # type: ignore
 
-pytestmark = pytest.mark.skipif(yaml is None, reason="PyYAML nie jest zainstalowane w tym środowisku testowym.")
+pytestmark = pytest.mark.skipif(
+    yaml is None, reason="PyYAML nie jest zainstalowane w tym środowisku testowym."
+)
 
 import tests._pathbootstrap  # noqa: F401  # pylint: disable=unused-import
 
@@ -67,6 +69,7 @@ if yaml is not None:
     from bot_core.security import SecretManager, SecretStorage, SecretStorageError
     from bot_core.security.signing import build_hmac_signature
 else:
+
     class SecretStorage:
         pass
 
@@ -75,14 +78,20 @@ else:
     EmailChannel = SMSChannel = TelegramChannel = object  # type: ignore[assignment]
     DecisionCandidate = DecisionContext = RiskSnapshot = object  # type: ignore[assignment]
     AccountSnapshot = Environment = ExchangeAdapter = ExchangeCredentials = OrderRequest = object  # type: ignore[assignment]
-    BinanceSpotAdapter = BybitSpotAdapter = CoinbaseSpotAdapter = KuCoinSpotAdapter = NowaGieldaSpotAdapter = OKXSpotAdapter = object  # type: ignore[assignment]
+    BinanceSpotAdapter = BybitSpotAdapter = CoinbaseSpotAdapter = KuCoinSpotAdapter = (
+        NowaGieldaSpotAdapter
+    ) = OKXSpotAdapter = object  # type: ignore[assignment]
     ThresholdRiskEngine = FileRiskRepository = RiskManagerSettings = object  # type: ignore[assignment]
     BootstrapContext = object  # type: ignore[assignment]
     _DEFAULT_ADAPTERS = {}  # type: ignore[assignment]
     _instantiate_adapter = _apply_adapter_factory_specs = _load_initial_tco_costs = None  # type: ignore[assignment]
     bootstrap_environment = catalog_runtime_entrypoints = extract_live_readiness_metadata = None  # type: ignore[assignment]
-    get_registered_adapter_factories = register_adapter_factory = register_adapter_factory_from_path = None  # type: ignore[assignment]
-    resolve_runtime_entrypoint = parse_adapter_factory_cli_specs = unregister_adapter_factory = temporary_adapter_factories = None  # type: ignore[assignment]
+    get_registered_adapter_factories = register_adapter_factory = (
+        register_adapter_factory_from_path
+    ) = None  # type: ignore[assignment]
+    resolve_runtime_entrypoint = parse_adapter_factory_cli_specs = unregister_adapter_factory = (
+        temporary_adapter_factories
+    ) = None  # type: ignore[assignment]
     DEFAULT_UI_ALERTS_JSONL_PATH = ""  # type: ignore[assignment]
     SecretManager = SecretStorageError = object  # type: ignore[assignment]
     build_hmac_signature = None  # type: ignore[assignment]
@@ -367,9 +376,7 @@ def _prepare_signed_license_bundle(base_dir: Path) -> Mapping[str, Path]:
     )
     license_path = base_dir / "license.json"
     license_document = {"payload": license_payload, "signature": license_signature}
-    license_path.write_text(
-        json.dumps(license_document, ensure_ascii=False), encoding="utf-8"
-    )
+    license_path.write_text(json.dumps(license_document, ensure_ascii=False), encoding="utf-8")
 
     fingerprint_path = base_dir / "fingerprint.json"
     fingerprint_document = {
@@ -957,9 +964,7 @@ def test_bootstrap_environment_live_exposes_checklist(
         json.dumps(credentials_payload),
     )
 
-    context = bootstrap_environment(
-        "binance_live", config_path=config_path, secret_manager=manager
-    )
+    context = bootstrap_environment("binance_live", config_path=config_path, secret_manager=manager)
 
     checklist = context.live_readiness_checklist
     assert checklist is not None
@@ -1015,9 +1020,10 @@ def test_bootstrap_environment_live_exposes_checklist(
     metadata_path = context.metrics_ui_alerts_metadata.get("path")
     assert metadata_path is not None
     assert Path(str(metadata_path)).name == DEFAULT_UI_ALERTS_JSONL_PATH.name
-    assert Path(
-        context.metrics_ui_alerts_metadata.get("absolute_path")
-    ).name == DEFAULT_UI_ALERTS_JSONL_PATH.name
+    assert (
+        Path(context.metrics_ui_alerts_metadata.get("absolute_path")).name
+        == DEFAULT_UI_ALERTS_JSONL_PATH.name
+    )
     assert context.metrics_jsonl_metadata is None
     if context.metrics_security_warnings is not None:
         assert isinstance(context.metrics_security_warnings, tuple)
@@ -1356,9 +1362,7 @@ def test_live_checklist_ignores_null_required_entries(
         json.dumps(credentials_payload),
     )
 
-    context = bootstrap_environment(
-        "binance_live", config_path=config_path, secret_manager=manager
-    )
+    context = bootstrap_environment("binance_live", config_path=config_path, secret_manager=manager)
 
     verification = context.live_signature_verification
     assert verification is not None
@@ -1467,9 +1471,7 @@ def test_live_checklist_matches_required_documents_case_insensitive(
         ),
     )
 
-    context = bootstrap_environment(
-        "binance_live", config_path=config_path, secret_manager=manager
-    )
+    context = bootstrap_environment("binance_live", config_path=config_path, secret_manager=manager)
 
     verification = context.live_signature_verification
     assert verification is not None
@@ -1587,9 +1589,7 @@ def test_live_checklist_normalizes_verified_document_names(
         json.dumps(credentials_payload),
     )
 
-    context = bootstrap_environment(
-        "binance_live", config_path=config_path, secret_manager=manager
-    )
+    context = bootstrap_environment("binance_live", config_path=config_path, secret_manager=manager)
 
     verification = context.live_signature_verification
     assert verification is not None
@@ -1822,9 +1822,7 @@ def test_live_checklist_blocks_on_invalid_signature(
         json.dumps(credentials_payload),
     )
 
-    context = bootstrap_environment(
-        "binance_live", config_path=config_path, secret_manager=manager
-    )
+    context = bootstrap_environment("binance_live", config_path=config_path, secret_manager=manager)
 
     assert context.live_readiness_checklist is not None
     verification = context.live_signature_verification
@@ -2449,7 +2447,9 @@ def test_build_sms_channel_rejects_sender_id_without_flag(
     with pytest.raises(SecretStorageError) as exc:
         bootstrap_module._build_sms_channel({"ops": settings}, "ops", secret_manager)
 
-    assert "zawiera 'sender_id', lecz 'allow_alphanumeric_sender' pozostaje wyłączone" in str(exc.value)
+    assert "zawiera 'sender_id', lecz 'allow_alphanumeric_sender' pozostaje wyłączone" in str(
+        exc.value
+    )
 
     bootstrap_module._get_alert_components.cache_clear()
 
@@ -2782,9 +2782,7 @@ def test_bootstrap_environment_supports_zonda(tmp_path: Path) -> None:
         "license_keys_path": str(license_bundle["license_keys"]),
         "fingerprint_keys_path": str(license_bundle["fingerprint_keys"]),
     }
-    config_path.write_text(
-        yaml.safe_dump(config_data, sort_keys=False), encoding="utf-8"
-    )
+    config_path.write_text(yaml.safe_dump(config_data, sort_keys=False), encoding="utf-8")
 
     credentials_payload = {
         "key_id": "zonda-key",
@@ -3047,9 +3045,7 @@ def test_parse_adapter_factory_cli_specs_accepts_simple_paths() -> None:
         ["binance_spot=bot_core.exchanges.nowa_gielda:NowaGieldaSpotAdapter"]
     )
 
-    assert specs == {
-        "binance_spot": "bot_core.exchanges.nowa_gielda:NowaGieldaSpotAdapter"
-    }
+    assert specs == {"binance_spot": "bot_core.exchanges.nowa_gielda:NowaGieldaSpotAdapter"}
 
 
 def test_parse_adapter_factory_cli_specs_supports_remove_flag() -> None:
@@ -3060,7 +3056,9 @@ def test_parse_adapter_factory_cli_specs_supports_remove_flag() -> None:
 
 def test_parse_adapter_factory_cli_specs_supports_inline_json() -> None:
     specs = parse_adapter_factory_cli_specs(
-        ['custom={"path": "bot_core.exchanges.nowa_gielda:NowaGieldaSpotAdapter", "override": true}']
+        [
+            'custom={"path": "bot_core.exchanges.nowa_gielda:NowaGieldaSpotAdapter", "override": true}'
+        ]
     )
 
     assert specs == {
@@ -3078,10 +3076,12 @@ def test_parse_adapter_factory_cli_specs_rejects_invalid_format() -> None:
 
 def test_parse_adapter_factory_cli_specs_rejects_duplicate_entries() -> None:
     with pytest.raises(ValueError):
-        parse_adapter_factory_cli_specs([
-            "binance_spot=bot_core.exchanges.nowa_gielda:NowaGieldaSpotAdapter",
-            "binance_spot=bot_core.exchanges.bybit:BybitSpotAdapter",
-        ])
+        parse_adapter_factory_cli_specs(
+            [
+                "binance_spot=bot_core.exchanges.nowa_gielda:NowaGieldaSpotAdapter",
+                "binance_spot=bot_core.exchanges.bybit:BybitSpotAdapter",
+            ]
+        )
 
 
 def test_bootstrap_environment_applies_permission_profile_defaults(tmp_path: Path) -> None:
@@ -3104,7 +3104,9 @@ def test_bootstrap_metrics_ui_alerts_audit_requested_file_without_backend(tmp_pa
     )
     _, manager = _prepare_manager()
 
-    context = bootstrap_environment("binance_paper", config_path=config_path, secret_manager=manager)
+    context = bootstrap_environment(
+        "binance_paper", config_path=config_path, secret_manager=manager
+    )
 
     assert context.metrics_ui_alerts_settings is not None
     audit_info = context.metrics_ui_alerts_settings.get("audit")
@@ -3136,7 +3138,9 @@ def test_bootstrap_metrics_ui_alerts_audit_inherits_file_backend(tmp_path: Path)
     )
     _, manager = _prepare_manager()
 
-    context = bootstrap_environment("binance_paper", config_path=config_path, secret_manager=manager)
+    context = bootstrap_environment(
+        "binance_paper", config_path=config_path, secret_manager=manager
+    )
 
     assert context.metrics_ui_alerts_settings is not None
     audit_info = context.metrics_ui_alerts_settings.get("audit")
@@ -3173,7 +3177,9 @@ def test_bootstrap_metrics_ui_alerts_audit_memory_request_on_file_backend(tmp_pa
     )
     _, manager = _prepare_manager()
 
-    context = bootstrap_environment("binance_paper", config_path=config_path, secret_manager=manager)
+    context = bootstrap_environment(
+        "binance_paper", config_path=config_path, secret_manager=manager
+    )
 
     assert context.metrics_ui_alerts_settings is not None
     audit_info = context.metrics_ui_alerts_settings.get("audit")
@@ -3242,9 +3248,7 @@ def test_bootstrap_metrics_risk_profiles_directory_metadata(tmp_path: Path) -> N
             {
                 "risk_profiles": {
                     "ops_dir": {
-                        "metrics_service_overrides": {
-                            "ui_alerts_overlay_critical_threshold": 5
-                        }
+                        "metrics_service_overrides": {"ui_alerts_overlay_critical_threshold": 5}
                     }
                 }
             }
@@ -3328,7 +3332,9 @@ def test_bootstrap_collects_risk_security_metadata(tmp_path: Path) -> None:
     assert any("Klucz prywatny TLS" in warning for warning in warnings)
 
 
-def test_bootstrap_collects_metrics_security_metadata(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_bootstrap_collects_metrics_security_metadata(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     tls_dir = tmp_path / "metrics_tls"
     tls_dir.mkdir()
     cert_path = tls_dir / "metrics_cert.pem"
@@ -3367,7 +3373,10 @@ def test_bootstrap_collects_metrics_security_metadata(tmp_path: Path, monkeypatc
     assert isinstance(tls_meta, Mapping)
     certificates = tls_meta.get("certificate", {}).get("certificates", [])
     assert certificates
-    assert certificates[0]["fingerprint_sha256"] == "a49ede6616a62c76e2affdf692aa103cfeb89ddbd1f0f03b13a8a3166aa63079"
+    assert (
+        certificates[0]["fingerprint_sha256"]
+        == "a49ede6616a62c76e2affdf692aa103cfeb89ddbd1f0f03b13a8a3166aa63079"
+    )
 
     auth_meta = metadata.get("auth")
     assert isinstance(auth_meta, Mapping)
@@ -3455,9 +3464,7 @@ def test_bootstrap_loads_tco_report_for_decision_engine(tmp_path: Path) -> None:
             "require_at_startup": True,
         },
     }
-    Path(config_path).write_text(
-        yaml.safe_dump(config_data, sort_keys=False), encoding="utf-8"
-    )
+    Path(config_path).write_text(yaml.safe_dump(config_data, sort_keys=False), encoding="utf-8")
 
     _, manager = _prepare_manager()
     context = bootstrap_environment(
@@ -3535,9 +3542,7 @@ def test_bootstrap_runtime_tco_reporter_clears_after_export(tmp_path: Path) -> N
             "runtime_clear_after_export": True,
         },
     }
-    Path(config_path).write_text(
-        yaml.safe_dump(config_data, sort_keys=False), encoding="utf-8"
-    )
+    Path(config_path).write_text(yaml.safe_dump(config_data, sort_keys=False), encoding="utf-8")
 
     _, manager = _prepare_manager()
     context = bootstrap_environment(
@@ -3621,9 +3626,7 @@ def test_load_initial_tco_costs_warns_about_stale_report(tmp_path: Path) -> None
 
     assert loaded_path == str(report_path)
     assert orchestrator.reports, "stale raport powinien zostać załadowany mimo ostrzeżenia"
-    assert any(
-        entry.startswith(f"stale_warning:{report_path}") for entry in warnings
-    )
+    assert any(entry.startswith(f"stale_warning:{report_path}") for entry in warnings)
 
 
 def test_load_initial_tco_costs_skips_report_past_max_age(tmp_path: Path) -> None:
@@ -3643,6 +3646,4 @@ def test_load_initial_tco_costs_skips_report_past_max_age(tmp_path: Path) -> Non
 
     assert loaded_path is None
     assert not orchestrator.reports
-    assert any(
-        entry.startswith(f"stale_critical:{report_path}") for entry in warnings
-    )
+    assert any(entry.startswith(f"stale_critical:{report_path}") for entry in warnings)

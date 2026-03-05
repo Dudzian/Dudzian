@@ -181,9 +181,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     details: Optional[str] = None
 
     if args.expected_digest and digest.lower() != args.expected_digest.lower():
-        details = (
-            f"Niezgodność skrótu: oczekiwano {args.expected_digest}, otrzymano {digest}"
-        )
+        details = f"Niezgodność skrótu: oczekiwano {args.expected_digest}, otrzymano {digest}"
         result = VerificationResult(
             artifact=artifact,
             signature_path=signature_path,
@@ -197,9 +195,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         _write_report(args.report, result)
         raise ValueError(details)
 
-    signature_bytes = _decode_signature(
-        signature_path.read_bytes(), fmt=args.signature_format
-    )
+    signature_bytes = _decode_signature(signature_path.read_bytes(), fmt=args.signature_format)
     data = artifact.read_bytes()
     public_key = _load_public_key(public_key_path, algorithm=args.algorithm)
 

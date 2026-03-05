@@ -92,7 +92,9 @@ def test_gap_report_interval_breakdown(tmp_path: Path, capsys: pytest.CaptureFix
     assert interval_stats["1d"]["with_gap_measurement"] == 1
 
 
-def test_gap_report_all_configured_uses_monitoring(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+def test_gap_report_all_configured_uses_monitoring(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
     cache_dir = tmp_path / "gap_report_all"
     rows = _generate_rows(datetime(2024, 1, 1, tzinfo=timezone.utc), 30)
     _write_cache(cache_dir, rows)

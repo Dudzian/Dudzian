@@ -1,4 +1,5 @@
 """Eksporter metryk manifestu OHLCV dla Prometheusa."""
+
 from __future__ import annotations
 
 from dataclasses import dataclass, field

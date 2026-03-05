@@ -106,14 +106,14 @@ def test_personalizer_builds_overrides() -> None:
     assert params["max_positions"] == 7
 
 
-def test_personalizer_accepts_preset_document(personalization_preset_dir: Path, signing_key: bytes) -> None:
+def test_personalizer_accepts_preset_document(
+    personalization_preset_dir: Path, signing_key: bytes
+) -> None:
     preset_path = personalization_preset_dir / "alpha.json"
     _write_signed_preset(preset_path, preset_id="alpha", signing_key=signing_key)
     repository = PresetRepository(personalization_preset_dir)
     document = repository.load_all()[0]
-    config = UserPreferenceConfig.from_mapping(
-        {"risk_target": "conservative", "budget": 800}
-    )
+    config = UserPreferenceConfig.from_mapping({"risk_target": "conservative", "budget": 800})
     overrides = PresetPreferencePersonalizer().build_overrides(document, config)
     assert overrides
     strategy_overrides = overrides.get("alpha-strategy") or next(iter(overrides.values()))

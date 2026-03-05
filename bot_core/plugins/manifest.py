@@ -234,4 +234,3 @@ def _format_timestamp(value: datetime) -> str:
         .isoformat()
         .replace("+00:00", "Z")
     )
-

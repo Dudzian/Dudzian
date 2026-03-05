@@ -6,7 +6,21 @@ import asyncio
 import logging
 import math
 from datetime import datetime, timezone
-from typing import Any, Awaitable, Callable, Dict, Iterable, List, Mapping, MutableMapping, Protocol, Sequence, Tuple, TypeVar, runtime_checkable
+from typing import (
+    Any,
+    Awaitable,
+    Callable,
+    Dict,
+    Iterable,
+    List,
+    Mapping,
+    MutableMapping,
+    Protocol,
+    Sequence,
+    Tuple,
+    TypeVar,
+    runtime_checkable,
+)
 
 import pandas as pd
 
@@ -37,11 +51,11 @@ class BacktestError(RuntimeError):
 
 @runtime_checkable
 class DataProviderProtocol(HistoryProvider, Protocol):
-    async def get_ohlcv(self, symbol: str, timeframe: str, *, limit: int = 500) -> Mapping[str, Any]:
-        ...
+    async def get_ohlcv(
+        self, symbol: str, timeframe: str, *, limit: int = 500
+    ) -> Mapping[str, Any]: ...
 
-    async def get_ticker(self, symbol: str) -> Mapping[str, Any]:
-        ...
+    async def get_ticker(self, symbol: str) -> Mapping[str, Any]: ...
 
 
 class StrategySignalProtocol(Protocol):
@@ -66,19 +80,15 @@ SignalT = TypeVar("SignalT", bound=StrategySignalProtocol)
 
 
 class StrategyLike(Protocol[ContextT, SignalT]):
-    async def prepare(self, context: ContextT, data_provider: DataProviderProtocol) -> None:
-        ...
+    async def prepare(self, context: ContextT, data_provider: DataProviderProtocol) -> None: ...
 
     async def handle_market_data(
         self, context: ContextT, market_payload: Mapping[str, Any]
-    ) -> SignalT:
-        ...
+    ) -> SignalT: ...
 
-    async def notify_fill(self, context: ContextT, fill: Mapping[str, Any]) -> None:
-        ...
+    async def notify_fill(self, context: ContextT, fill: Mapping[str, Any]) -> None: ...
 
-    async def shutdown(self) -> None:
-        ...
+    async def shutdown(self) -> None: ...
 
 
 def _ensure_timezone(value: datetime) -> datetime:
@@ -219,9 +229,7 @@ class StrategyBacktestSession:
                 for task in pending:
                     task.cancel()
                 if pending:
-                    self._loop.run_until_complete(
-                        asyncio.gather(*pending, return_exceptions=True)
-                    )
+                    self._loop.run_until_complete(asyncio.gather(*pending, return_exceptions=True))
             except Exception:  # pragma: no cover - defensywne
                 pass
             finally:
@@ -412,7 +420,11 @@ class BacktestEngine:
         zero_volume_threshold = 3 if timeframe_s else 10
 
         def _finalize_zero_volume_warning() -> None:
-            nonlocal zero_volume_start_idx, zero_volume_start_ts, zero_volume_last_ts, zero_volume_count
+            nonlocal \
+                zero_volume_start_idx, \
+                zero_volume_start_ts, \
+                zero_volume_last_ts, \
+                zero_volume_count
             if zero_volume_count >= zero_volume_threshold and zero_volume_start_idx is not None:
                 duration_s: int | None = None
                 if zero_volume_start_ts and zero_volume_last_ts:
@@ -420,7 +432,9 @@ class BacktestEngine:
                 start_ts = zero_volume_start_ts.isoformat() if zero_volume_start_ts else "?"
                 end_ts = zero_volume_last_ts.isoformat() if zero_volume_last_ts else "?"
                 duration_fragment = (
-                    f", łączny czas ok. {duration_s}s" if duration_s is not None and duration_s > 0 else ""
+                    f", łączny czas ok. {duration_s}s"
+                    if duration_s is not None and duration_s > 0
+                    else ""
                 )
                 warnings.append(
                     "Wykryto długą sekwencję zerowego wolumenu: "
@@ -484,15 +498,15 @@ class BacktestEngine:
                 open_trade["slippage"] = float(open_trade.get("slippage", 0.0)) + abs(fill.slippage)
                 open_trade["volume"] = float(open_trade.get("volume", 0.0)) + abs(fill.size)
                 trade_dir = open_trade["direction"]
-                if (
-                    (trade_dir == "LONG" and direction == 1 and position > 0)
-                    or (trade_dir == "SHORT" and direction == -1 and position < 0)
+                if (trade_dir == "LONG" and direction == 1 and position > 0) or (
+                    trade_dir == "SHORT" and direction == -1 and position < 0
                 ):
                     prev_pos = float(open_trade.get("position", 0.0))
                     new_pos = abs(position)
                     if new_pos > 0:
                         open_trade["entry_price"] = (
-                            float(open_trade["entry_price"]) * prev_pos + fill.price * abs(fill.size)
+                            float(open_trade["entry_price"]) * prev_pos
+                            + fill.price * abs(fill.size)
                         ) / new_pos
                         open_trade["position"] = new_pos
                 open_trade["position"] = abs(position)
@@ -728,7 +742,11 @@ class BacktestEngine:
             duration_days = max(duration_days, 1 / 365.25)
         else:
             duration_days = 1 / 365.25
-        cagr = (((final_balance / starting_balance) ** (1 / duration_days)) - 1) * 100 if starting_balance else 0.0
+        cagr = (
+            (((final_balance / starting_balance) ** (1 / duration_days)) - 1) * 100
+            if starting_balance
+            else 0.0
+        )
         peak = equity_curve[0]
         max_drawdown = 0.0
         for value in equity_curve:
@@ -745,12 +763,12 @@ class BacktestEngine:
             variance = sum((r - avg_return) ** 2 for r in returns) / periods
             std_dev = math.sqrt(variance)
             if std_dev > 0:
-                sharpe = (avg_return / std_dev) * (252 ** 0.5)
+                sharpe = (avg_return / std_dev) * (252**0.5)
             downside = [r for r in returns if r < 0]
             if downside:
                 downside_dev = math.sqrt(sum(r**2 for r in downside) / periods)
                 if downside_dev > 0:
-                    sortino = (avg_return / downside_dev) * (252 ** 0.5)
+                    sortino = (avg_return / downside_dev) * (252**0.5)
             elif avg_return > 0:
                 sortino = float("inf")
             gains = [max(0.0, r) for r in returns]

@@ -29,7 +29,9 @@ def test_package_exports_ui_bridge():
     assert reporting.ui_bridge is ui_bridge
 
 
-def _quality_report(version: str, directional: float, mae: float, status: str = "improved") -> ModelQualityReport:
+def _quality_report(
+    version: str, directional: float, mae: float, status: str = "improved"
+) -> ModelQualityReport:
     metrics = {"summary": {"directional_accuracy": directional, "mae": mae}}
     return ModelQualityReport(
         model_name="demo",
@@ -221,8 +223,10 @@ def test_cmd_overview_detects_directories_without_summary(tmp_path, capsys):
     assert report_entry["relative_path"] == "diagnostics/2024-03-10"
     assert report_entry["summary_path"] is None
     assert report_entry["display_name"] == "diagnostics/2024-03-10"
-    assert Path(report_entry["absolute_path"]).as_posix().endswith(
-        "diagnostics/2024-03-10/metrics.jsonl"
+    assert (
+        Path(report_entry["absolute_path"])
+        .as_posix()
+        .endswith("diagnostics/2024-03-10/metrics.jsonl")
     )
     assert category_entry["latest_updated_at"] == report_entry["updated_at"]
     assert report_entry["total_size"] == len(metrics_content.encode("utf-8"))
@@ -453,7 +457,7 @@ def test_cmd_purge_dry_run_collects_metrics(tmp_path, capsys):
     second_summary_content = "{}"
     write_fixture_text(second_summary, second_summary_content)
     second_export = second_exports / "data.json"
-    second_export_content = "{\"ok\": true}"
+    second_export_content = '{"ok": true}'
     write_fixture_text(second_export, second_export_content)
 
     # removed_size dotyczy wyłącznie celów raportowych; signal_quality_cleanup
@@ -776,7 +780,7 @@ def test_cmd_archive_requires_overwrite_for_existing_targets(tmp_path, capsys):
     destination = tmp_path / "archives"
     existing_copy = destination / "audit" / "2024-03-01"
     existing_copy.mkdir(parents=True)
-    write_fixture_text((existing_copy / "summary.json"), "{\"existing\": true}")
+    write_fixture_text((existing_copy / "summary.json"), '{"existing": true}')
 
     args = _build_archive_args(base_dir, destination=destination)
 
@@ -820,7 +824,7 @@ def test_cmd_overview_marks_invalid_summary(tmp_path, capsys):
     report_dir.mkdir(parents=True)
 
     summary_path = report_dir / "summary.json"
-    write_fixture_text(summary_path, "{\"report_date\": }")
+    write_fixture_text(summary_path, '{"report_date": }')
 
     export_path = report_dir / "snapshot.csv"
     export_content = "timestamp,value\n2024-05-07T00:00:00Z,1\n"
@@ -991,7 +995,9 @@ def test_cmd_overview_category_filter(tmp_path, capsys):
 
     diagnostics_dir = base_dir / "diagnostics" / "2024-02-02"
     diagnostics_dir.mkdir(parents=True)
-    write_fixture_text((diagnostics_dir / "summary.json"), json.dumps({"report_date": "2024-02-02"}))
+    write_fixture_text(
+        (diagnostics_dir / "summary.json"), json.dumps({"report_date": "2024-02-02"})
+    )
     write_fixture_text((diagnostics_dir / "export.csv"), "row\n")
 
     args = SimpleNamespace(base_dir=str(base_dir), categories=["audit"])
@@ -1030,7 +1036,9 @@ def test_cmd_overview_query_filter(tmp_path, capsys):
 
     diagnostics_dir = base_dir / "diagnostics" / "2024-05-02"
     diagnostics_dir.mkdir(parents=True)
-    write_fixture_text((diagnostics_dir / "summary.json"), json.dumps({"report_date": "2024-05-02"}))
+    write_fixture_text(
+        (diagnostics_dir / "summary.json"), json.dumps({"report_date": "2024-05-02"})
+    )
 
     args = SimpleNamespace(base_dir=str(base_dir), query="diag")
 
@@ -1135,9 +1143,7 @@ def test_cmd_overview_summary_status_filters(tmp_path, capsys):
     payload = json.loads(captured.out)
 
     assert return_code == 0
-    assert [report["relative_path"] for report in payload["reports"]] == [
-        "audit/2024-04-01"
-    ]
+    assert [report["relative_path"] for report in payload["reports"]] == ["audit/2024-04-01"]
     assert payload["filters"]["summary_status"] == "valid"
     assert payload["summary"]["missing_summary_count"] == 0
     assert payload["summary"]["invalid_summary_count"] == 0
@@ -1148,9 +1154,7 @@ def test_cmd_overview_summary_status_filters(tmp_path, capsys):
     payload = json.loads(captured.out)
 
     assert return_code == 0
-    assert [report["relative_path"] for report in payload["reports"]] == [
-        "diagnostics/2024-04-02"
-    ]
+    assert [report["relative_path"] for report in payload["reports"]] == ["diagnostics/2024-04-02"]
     assert payload["filters"]["summary_status"] == "missing"
     assert payload["reports"][0]["summary_path"] is None
     assert payload["summary"]["missing_summary_count"] == 1
@@ -1161,9 +1165,7 @@ def test_cmd_overview_summary_status_filters(tmp_path, capsys):
     payload = json.loads(captured.out)
 
     assert return_code == 0
-    assert [report["relative_path"] for report in payload["reports"]] == [
-        "audit/2024-04-03"
-    ]
+    assert [report["relative_path"] for report in payload["reports"]] == ["audit/2024-04-03"]
     assert payload["filters"]["summary_status"] == "invalid"
     assert payload["reports"][0]["summary_error"].startswith("Invalid JSON")
     assert payload["summary"]["invalid_summary_count"] == 1
@@ -1191,7 +1193,9 @@ def test_cmd_overview_has_exports_filter(tmp_path, capsys):
 
     without_exports = base_dir / "diagnostics" / "2024-06-02"
     without_exports.mkdir(parents=True)
-    write_fixture_text((without_exports / "summary.json"), json.dumps({"report_date": "2024-06-02"}))
+    write_fixture_text(
+        (without_exports / "summary.json"), json.dumps({"report_date": "2024-06-02"})
+    )
 
     args = SimpleNamespace(base_dir=str(base_dir), has_exports="yes")
 
@@ -1373,24 +1377,23 @@ def test_cmd_overview_sorts_by_name(tmp_path, capsys):
     first_dir.mkdir(parents=True)
     second_dir.mkdir(parents=True)
 
-    write_fixture_text(
-        (first_dir / "summary.json"), json.dumps({"report_date": "2024-02-01"})
-    )
-    write_fixture_text(
-        (second_dir / "summary.json"), json.dumps({"report_date": "2024-02-02"})
-    )
+    write_fixture_text((first_dir / "summary.json"), json.dumps({"report_date": "2024-02-01"}))
+    write_fixture_text((second_dir / "summary.json"), json.dumps({"report_date": "2024-02-02"}))
 
     write_fixture_text((first_dir / "export.csv"), "row\n")
     write_fixture_text((second_dir / "export.csv"), "row\n")
 
     # ustawiamy identyczne znaczniki czasu, aby kolejność zależała tylko od sortowania
     fixed_timestamp = 1_700_500_000
-    for path in [first_dir / "summary.json", first_dir / "export.csv", second_dir / "summary.json", second_dir / "export.csv"]:
+    for path in [
+        first_dir / "summary.json",
+        first_dir / "export.csv",
+        second_dir / "summary.json",
+        second_dir / "export.csv",
+    ]:
         os.utime(path, (fixed_timestamp, fixed_timestamp))
 
-    args = SimpleNamespace(
-        base_dir=str(base_dir), sort_key="name", sort_direction="asc"
-    )
+    args = SimpleNamespace(base_dir=str(base_dir), sort_key="name", sort_direction="asc")
 
     return_code = ui_bridge.cmd_overview(args)
 
@@ -1414,12 +1417,8 @@ def test_cmd_overview_sorts_by_size_descending(tmp_path, capsys):
     small_dir.mkdir(parents=True)
     large_dir.mkdir(parents=True)
 
-    write_fixture_text(
-        (small_dir / "summary.json"), json.dumps({"report_date": "2024-03-01"})
-    )
-    write_fixture_text(
-        (large_dir / "summary.json"), json.dumps({"report_date": "2024-03-02"})
-    )
+    write_fixture_text((small_dir / "summary.json"), json.dumps({"report_date": "2024-03-01"}))
+    write_fixture_text((large_dir / "summary.json"), json.dumps({"report_date": "2024-03-02"}))
 
     write_fixture_text((small_dir / "export.csv"), "a\n")
     write_fixture_text((large_dir / "export.csv"), "a\n" * 100)
@@ -1543,12 +1542,18 @@ def test_list_reports_includes_relative_paths(tmp_path: Path) -> None:
     assert entry["path"].endswith("report-list")
 
 
-def test_cmd_promote_creates_audit_entry(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+def test_cmd_promote_creates_audit_entry(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
     quality_dir = tmp_path / "quality"
     audit_dir = tmp_path / "audit"
 
-    record_model_quality_report(_quality_report("v1", directional=0.61, mae=15.0), history_root=quality_dir)
-    record_model_quality_report(_quality_report("v2", directional=0.6, mae=14.5, status="ok"), history_root=quality_dir)
+    record_model_quality_report(
+        _quality_report("v1", directional=0.61, mae=15.0), history_root=quality_dir
+    )
+    record_model_quality_report(
+        _quality_report("v2", directional=0.6, mae=14.5, status="ok"), history_root=quality_dir
+    )
 
     args = SimpleNamespace(
         model="demo",

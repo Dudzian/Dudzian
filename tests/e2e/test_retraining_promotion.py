@@ -21,7 +21,9 @@ def _quality_report(version: str, directional: float, mae: float) -> ModelQualit
 
 
 @pytest.mark.e2e_retraining
-def test_retraining_cycle_promotes_best_challenger(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+def test_retraining_cycle_promotes_best_challenger(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
     quality_dir = tmp_path / "quality"
     champion_report = _quality_report("v1", directional=0.55, mae=15.0)
     record_model_quality_report(champion_report, history_root=quality_dir)
@@ -45,7 +47,9 @@ def test_retraining_cycle_promotes_best_challenger(tmp_path: Path, capsys: pytes
             }
         ],
     }
-    challengers_path.write_text(json.dumps(challengers_payload, ensure_ascii=False, indent=2), encoding="utf-8")
+    challengers_path.write_text(
+        json.dumps(challengers_payload, ensure_ascii=False, indent=2), encoding="utf-8"
+    )
 
     dataset_path = tmp_path / "dataset.json"
     dataset_payload = {

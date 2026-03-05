@@ -747,37 +747,71 @@ def test_stream_client_records_metrics_on_reconnect_and_replay() -> None:
     assert third.cursor == "cursor-2"
 
     labels = {"adapter": "nowa_gielda_spot", "scope": "public"}
-    assert registry.get("bot_exchange_stream_client_batches_total").value(labels=labels) == pytest.approx(3.0)
-    assert registry.get("bot_exchange_stream_client_events_total").value(labels=labels) == pytest.approx(3.0)
-    assert registry.get("bot_exchange_stream_client_heartbeats_total").value(labels=labels) == pytest.approx(0.0)
-    assert registry.get("bot_exchange_stream_client_reconnects_total").value(labels=labels) == pytest.approx(1.0)
-    assert registry.get("bot_exchange_stream_client_history_replays_total").value(labels=labels) == pytest.approx(1.0)
-    assert registry.get("bot_exchange_stream_client_pending_batches").value(labels=labels) == pytest.approx(0.0)
-    assert registry.get("bot_exchange_stream_client_history_size").value(labels=labels) == pytest.approx(2.0)
+    assert registry.get("bot_exchange_stream_client_batches_total").value(
+        labels=labels
+    ) == pytest.approx(3.0)
+    assert registry.get("bot_exchange_stream_client_events_total").value(
+        labels=labels
+    ) == pytest.approx(3.0)
+    assert registry.get("bot_exchange_stream_client_heartbeats_total").value(
+        labels=labels
+    ) == pytest.approx(0.0)
+    assert registry.get("bot_exchange_stream_client_reconnects_total").value(
+        labels=labels
+    ) == pytest.approx(1.0)
+    assert registry.get("bot_exchange_stream_client_history_replays_total").value(
+        labels=labels
+    ) == pytest.approx(1.0)
+    assert registry.get("bot_exchange_stream_client_pending_batches").value(
+        labels=labels
+    ) == pytest.approx(0.0)
+    assert registry.get("bot_exchange_stream_client_history_size").value(
+        labels=labels
+    ) == pytest.approx(2.0)
 
     client.force_reconnect(replay_history=True)
 
-    assert registry.get("bot_exchange_stream_client_reconnects_total").value(labels=labels) == pytest.approx(2.0)
-    assert registry.get("bot_exchange_stream_client_history_replays_total").value(labels=labels) == pytest.approx(3.0)
-    assert registry.get("bot_exchange_stream_client_pending_batches").value(labels=labels) == pytest.approx(2.0)
+    assert registry.get("bot_exchange_stream_client_reconnects_total").value(
+        labels=labels
+    ) == pytest.approx(2.0)
+    assert registry.get("bot_exchange_stream_client_history_replays_total").value(
+        labels=labels
+    ) == pytest.approx(3.0)
+    assert registry.get("bot_exchange_stream_client_pending_batches").value(
+        labels=labels
+    ) == pytest.approx(2.0)
 
     assert client.replay_history(include_heartbeats=False, force=True)
 
-    assert registry.get("bot_exchange_stream_client_history_replays_total").value(labels=labels) == pytest.approx(5.0)
-    assert registry.get("bot_exchange_stream_client_pending_batches").value(labels=labels) == pytest.approx(2.0)
+    assert registry.get("bot_exchange_stream_client_history_replays_total").value(
+        labels=labels
+    ) == pytest.approx(5.0)
+    assert registry.get("bot_exchange_stream_client_pending_batches").value(
+        labels=labels
+    ) == pytest.approx(2.0)
 
     replay_first = next(client)
     replay_second = next(client)
     assert replay_first.cursor == "cursor-1"
     assert replay_second.cursor == "cursor-2"
 
-    assert registry.get("bot_exchange_stream_client_batches_total").value(labels=labels) == pytest.approx(5.0)
-    assert registry.get("bot_exchange_stream_client_events_total").value(labels=labels) == pytest.approx(5.0)
-    assert registry.get("bot_exchange_stream_client_pending_batches").value(labels=labels) == pytest.approx(0.0)
+    assert registry.get("bot_exchange_stream_client_batches_total").value(
+        labels=labels
+    ) == pytest.approx(5.0)
+    assert registry.get("bot_exchange_stream_client_events_total").value(
+        labels=labels
+    ) == pytest.approx(5.0)
+    assert registry.get("bot_exchange_stream_client_pending_batches").value(
+        labels=labels
+    ) == pytest.approx(0.0)
 
     client.close()
 
-    assert registry.get("bot_exchange_stream_client_pending_batches").value(labels=labels) == pytest.approx(0.0)
+    assert registry.get("bot_exchange_stream_client_pending_batches").value(
+        labels=labels
+    ) == pytest.approx(0.0)
+
+
 def test_stream_client_manual_history_replay() -> None:
     class _SequenceStream:
         def __init__(self, batches: Sequence[StreamBatch]) -> None:
@@ -1154,6 +1188,7 @@ def test_stream_client_diagnostics_counters_and_reset() -> None:
 
     client.close()
     assert cursors_seen == [None, "cur-1", "cur-2"]
+
 
 def test_stream_reconnect_config_supports_backoff_aliases() -> None:
     adapter = _build_stream_adapter(

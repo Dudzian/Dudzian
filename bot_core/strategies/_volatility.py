@@ -13,7 +13,9 @@ def _tail(values: Sequence[float] | Iterable[float], length: int | None) -> list
     return items[-length:]
 
 
-def realized_volatility(returns: Sequence[float] | Iterable[float], *, lookback: int | None = None) -> float:
+def realized_volatility(
+    returns: Sequence[float] | Iterable[float], *, lookback: int | None = None
+) -> float:
     """Oblicza zrealizowaną zmienność (odchylenie standardowe log-zwrotów)."""
 
     data = _tail(returns, lookback)
@@ -25,4 +27,3 @@ def realized_volatility(returns: Sequence[float] | Iterable[float], *, lookback:
 
 
 __all__ = ["realized_volatility"]
-

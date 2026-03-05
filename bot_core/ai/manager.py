@@ -6,6 +6,7 @@ skrypty i testy (``tests/test_ai_manager.py``). Został zaprojektowany tak,
 aby współpracował z nową architekturą, ale jednocześnie zachował kontrakt
 API znany z pierwszych iteracji projektu.
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -62,11 +63,17 @@ else:
     def _joblib_load(path: Path) -> Any:
         return joblib.load(path)
 
+
 import numpy as np
 import pandas as pd
 
 from ._license import ensure_ai_signals_enabled
-from .audit import list_audit_reports, load_audit_report, save_data_quality_report, save_drift_report
+from .audit import (
+    list_audit_reports,
+    load_audit_report,
+    save_data_quality_report,
+    save_drift_report,
+)
 from .data_monitoring import (
     ComplianceSignOffError,
     collect_pending_compliance_sign_offs,
@@ -166,10 +173,9 @@ def _select_metric_block(metrics: Mapping[str, object]) -> Mapping[str, float]:
                 }
         return {}
     return {
-        str(key): float(value)
-        for key, value in metrics.items()
-        if isinstance(value, (int, float))
+        str(key): float(value) for key, value in metrics.items() if isinstance(value, (int, float))
     }
+
 
 LoggerLike = Union[logging.Logger, logging.LoggerAdapter]
 
@@ -259,6 +265,7 @@ def _safe_mean(values: Iterable[object]) -> Optional[float]:
         return None
     return sum(collected) / len(collected)
 
+
 _AI_IMPORT_ERROR: Optional[BaseException] = None
 _FALLBACK_ACTIVE = False
 
@@ -267,9 +274,7 @@ def _bundle_import_errors(primary: BaseException, secondary: BaseException) -> B
     """Połącz dwa wyjątki importu w jeden obiekt z zachowaniem kontekstu."""
 
     try:
-        return ExceptionGroup(
-            "AI backend import failed", [primary, secondary]
-        )  # type: ignore[name-defined,type-var]
+        return ExceptionGroup("AI backend import failed", [primary, secondary])  # type: ignore[name-defined,type-var]
     except NameError:  # pragma: no cover - Python < 3.11
         secondary.__cause__ = primary  # type: ignore[attr-defined]
         return secondary
@@ -345,7 +350,9 @@ def _iter_exception_chain(root: BaseException) -> Iterable[BaseException]:
             queue.append(cause)
 
         context = getattr(current, "__context__", None)
-        if not getattr(current, "__suppress_context__", False) and isinstance(context, BaseException):
+        if not getattr(current, "__suppress_context__", False) and isinstance(
+            context, BaseException
+        ):
             queue.append(context)
 
 
@@ -563,7 +570,9 @@ def _load_signing_keys_from_directory(directory: Path) -> Mapping[str, bytes]:
                 try:
                     keys[str(key_id)] = _decode_hmac_key_material(material, context=str(candidate))
                 except ValueError as exc:
-                    logger.warning("Nie można zdekodować klucza OEM %r w %s: %s", key_id, candidate, exc)
+                    logger.warning(
+                        "Nie można zdekodować klucza OEM %r w %s: %s", key_id, candidate, exc
+                    )
             continue
 
         key_id = candidate.stem
@@ -607,7 +616,9 @@ def _load_packaged_repository_signing_keys(base_path: Path) -> Mapping[str, byte
                         )
                         continue
                     try:
-                        keys[str(key_id)] = _decode_hmac_key_material(material, context="BOT_CORE_AI_MODEL_SIGNING_KEYS_JSON")
+                        keys[str(key_id)] = _decode_hmac_key_material(
+                            material, context="BOT_CORE_AI_MODEL_SIGNING_KEYS_JSON"
+                        )
                     except ValueError as exc:
                         logger.warning(
                             "Nie można zdekodować klucza OEM %r z konfiguracji JSON: %s",
@@ -635,9 +646,13 @@ def _load_packaged_repository_signing_keys(base_path: Path) -> Mapping[str, byte
     if env_inline_key:
         key_id = os.getenv("BOT_CORE_AI_MODEL_SIGNING_KEY_ID") or "default"
         try:
-            keys[key_id] = _decode_hmac_key_material(env_inline_key, context="BOT_CORE_AI_MODEL_SIGNING_KEY")
+            keys[key_id] = _decode_hmac_key_material(
+                env_inline_key, context="BOT_CORE_AI_MODEL_SIGNING_KEY"
+            )
         except ValueError as exc:
-            logger.warning("Nie można zdekodować klucza OEM z BOT_CORE_AI_MODEL_SIGNING_KEY: %s", exc)
+            logger.warning(
+                "Nie można zdekodować klucza OEM z BOT_CORE_AI_MODEL_SIGNING_KEY: %s", exc
+            )
 
     if keys:
         logger.debug("Łącznie załadowano %d kluczy OEM do walidacji pakietów", len(keys))
@@ -676,9 +691,7 @@ def _validate_packaged_model_repository(base_path: Path) -> None:
             )
         file_name = entry.get("file")
         if not isinstance(file_name, str) or not file_name.strip():
-            raise ModelArtifactIntegrityError(
-                f"Wpis manifestu {version!r} nie zawiera pola 'file'"
-            )
+            raise ModelArtifactIntegrityError(f"Wpis manifestu {version!r} nie zawiera pola 'file'")
         artifact_path = base_path / file_name
         if not artifact_path.exists():
             raise ModelArtifactIntegrityError(
@@ -714,6 +727,7 @@ def _validate_packaged_model_repository(base_path: Path) -> None:
 
     logger.debug("Packaged OEM model repository at %s validated successfully", base_path)
 
+
 if not _attempt_load_ai_models_module("ai_models"):
     try:  # lokalna implementacja modeli AI
         from bot_core.ai.models import AIModels as _DefaultAIModels  # type: ignore
@@ -747,7 +761,10 @@ except Exception:
     try:  # następnie wariant lokalny
         from data_preprocessor import windowize as _default_windowize  # type: ignore
     except Exception:  # fallback minimalny – działa w środowisku testowym bez zależności
-        def _default_windowize(df: pd.DataFrame, feature_cols: List[str], seq_len: int, target_col: str):
+
+        def _default_windowize(
+            df: pd.DataFrame, feature_cols: List[str], seq_len: int, target_col: str
+        ):
             """Minimalna implementacja okienkująca dane dla modeli sekwencyjnych."""
             if seq_len <= 0 or len(df) <= seq_len:
                 raise ValueError("Za mało danych do przygotowania sekwencji.")
@@ -760,6 +777,7 @@ except Exception:
                 prev = target[idx - 1] if target[idx - 1] != 0 else 1e-12
                 y.append((target[idx] / prev) - 1.0)
             return np.asarray(X, dtype=np.float32), np.asarray(y, dtype=np.float32)
+
 
 # Zmienne modułowe podmieniane w testach jednostkowych
 _AIModels = _DefaultAIModels
@@ -1047,9 +1065,9 @@ class PipelineHistoryDiff:
 
     added: Dict[str, Tuple[PipelineExecutionRecord, ...]] = field(default_factory=dict)
     removed: Dict[str, Tuple[PipelineExecutionRecord, ...]] = field(default_factory=dict)
-    changed: Dict[str, Tuple[Tuple[PipelineExecutionRecord, ...], Tuple[PipelineExecutionRecord, ...]]] = field(
-        default_factory=dict
-    )
+    changed: Dict[
+        str, Tuple[Tuple[PipelineExecutionRecord, ...], Tuple[PipelineExecutionRecord, ...]]
+    ] = field(default_factory=dict)
 
     def is_empty(self) -> bool:
         return not (self.added or self.removed or self.changed)
@@ -1141,7 +1159,9 @@ class AIManager:
         self._packaged_repository: Path | None = _PACKAGED_MODEL_REPOSITORY
         self._packaged_repository_verified: bool = False
         self._degradation_history: list[DegradationEvent] = []
-        if decision_journal_context is not None and not isinstance(decision_journal_context, Mapping):
+        if decision_journal_context is not None and not isinstance(
+            decision_journal_context, Mapping
+        ):
             raise TypeError("decision_journal_context musi być mapowaniem lub None")
         self._decision_journal_context: Mapping[str, Any] | None = (
             dict(decision_journal_context) if decision_journal_context is not None else None
@@ -1159,9 +1179,7 @@ class AIManager:
                 self._degradation_reason = "fallback_ai_models"
             self._degradation_exceptions = (_AI_IMPORT_ERROR,)
             self._degradation_exception_types = _collect_exception_types(_AI_IMPORT_ERROR)
-            self._degradation_exception_diagnostics = _build_exception_diagnostics(
-                _AI_IMPORT_ERROR
-            )
+            self._degradation_exception_diagnostics = _build_exception_diagnostics(_AI_IMPORT_ERROR)
         elif _FALLBACK_ACTIVE:
             self._degraded = True
             self._degradation_reason = "fallback_ai_models"
@@ -1180,9 +1198,7 @@ class AIManager:
                     "backend_validation_failed: packaged_model_repository",
                     details=details,
                     exceptions=(exc,),
-                    exception_types=(
-                        f"{exc.__class__.__module__}.{exc.__class__.__qualname__}",
-                    ),
+                    exception_types=(f"{exc.__class__.__module__}.{exc.__class__.__qualname__}",),
                     exception_diagnostics=diagnostics,
                 )
             else:
@@ -1266,8 +1282,7 @@ class AIManager:
             check_module = getattr(check.__class__, "__module__", "")
             check_name = getattr(check.__class__, "__name__", "")
             if not (
-                check_name == "DataQualityCheck"
-                and check_module.startswith("bot_core.ai.manager")
+                check_name == "DataQualityCheck" and check_module.startswith("bot_core.ai.manager")
             ):
                 raise TypeError("check musi być instancją DataQualityCheck")
         self._data_quality_checks.append(cast(DataQualityCheck, check))
@@ -1320,7 +1335,9 @@ class AIManager:
                     normalized = normalized.to_pydatetime()
                 payload[key_str] = normalized.astimezone(timezone.utc).isoformat()
             elif isinstance(value, np.datetime64):
-                payload[key_str] = pd.Timestamp(value).to_pydatetime().astimezone(timezone.utc).isoformat()
+                payload[key_str] = (
+                    pd.Timestamp(value).to_pydatetime().astimezone(timezone.utc).isoformat()
+                )
             elif isinstance(value, Path):
                 payload[key_str] = str(value)
             elif isinstance(value, Mapping):
@@ -1358,7 +1375,14 @@ class AIManager:
             "risk_profile": context.get("risk_profile", "ai-monitoring"),
             "metadata": self._stringify_metadata(metadata),
         }
-        for key in ("symbol", "schedule", "strategy", "schedule_run_id", "strategy_instance_id", "status"):
+        for key in (
+            "symbol",
+            "schedule",
+            "strategy",
+            "schedule_run_id",
+            "strategy_instance_id",
+            "status",
+        ):
             value = context.get(key)
             if value is not None:
                 event_kwargs[key] = str(value)
@@ -1388,9 +1412,7 @@ class AIManager:
 
     def _ensure_compliance_activation_gate(self) -> None:
         if not self._require_compliance_sign_offs:
-            logger.debug(
-                "Pomijam bramkę podpisów compliance – wymaganie wyłączone."
-            )
+            logger.debug("Pomijam bramkę podpisów compliance – wymaganie wyłączone.")
             return
         if self._audit_root is not None:
             kwargs: Dict[str, Any] = {"audit_root": self._audit_root}
@@ -1404,7 +1426,9 @@ class AIManager:
             roles=self._compliance_sign_off_roles,
         )
 
-    def _load_audit_payload(self, *, path: Path | None, subdirectory: str) -> Mapping[str, Any] | None:
+    def _load_audit_payload(
+        self, *, path: Path | None, subdirectory: str
+    ) -> Mapping[str, Any] | None:
         candidates: list[Path] = []
         if path is not None:
             candidates.append(path)
@@ -1484,7 +1508,11 @@ class AIManager:
             start_value = start_candidate
             end_value = end_candidate
 
-        if (start_iso is None or end_iso is None) and "timestamp" in frame.columns and not frame["timestamp"].empty:
+        if (
+            (start_iso is None or end_iso is None)
+            and "timestamp" in frame.columns
+            and not frame["timestamp"].empty
+        ):
             start_candidate = frame["timestamp"].iloc[0]
             end_candidate = frame["timestamp"].iloc[-1]
             candidate_start_iso = cls._normalize_timestamp_value(start_candidate)
@@ -1507,7 +1535,9 @@ class AIManager:
         return summary
 
     @staticmethod
-    def _normalize_quality_issues(issues: Sequence[Mapping[str, Any]] | Mapping[str, Any]) -> List[Mapping[str, Any]]:
+    def _normalize_quality_issues(
+        issues: Sequence[Mapping[str, Any]] | Mapping[str, Any],
+    ) -> List[Mapping[str, Any]]:
         if isinstance(issues, Mapping):
             return [dict(issues)]
         normalized: List[Mapping[str, Any]] = []
@@ -1567,7 +1597,9 @@ class AIManager:
                 tags=tags if tags is not None else None,
             )
         except Exception:
-            logger.exception("Nie udało się zapisać raportu jakości danych (%s)", job_name or "unknown")
+            logger.exception(
+                "Nie udało się zapisać raportu jakości danych (%s)", job_name or "unknown"
+            )
             return None
         self._last_data_quality_report_path = path
         metadata: Dict[str, Any] = {
@@ -1593,7 +1625,9 @@ class AIManager:
                 dataset_symbol = symbol_candidate
             else:
                 symbols_candidate = dataset.metadata.get("symbols")
-                if isinstance(symbols_candidate, Sequence) and not isinstance(symbols_candidate, (str, bytes, bytearray)):
+                if isinstance(symbols_candidate, Sequence) and not isinstance(
+                    symbols_candidate, (str, bytes, bytearray)
+                ):
                     for entry in symbols_candidate:
                         if entry is None:
                             continue
@@ -1627,9 +1661,7 @@ class AIManager:
             try:
                 result, dataset = check.evaluate(df)
             except Exception:
-                logger.exception(
-                    "Nie udało się uruchomić kontroli jakości danych %s", check.name
-                )
+                logger.exception("Nie udało się uruchomić kontroli jakości danych %s", check.name)
                 continue
             if result is None:
                 continue
@@ -1706,7 +1738,9 @@ class AIManager:
                     features=common,
                 )
             except Exception:  # pragma: no cover - diagnostyka dryfu nie może blokować pipeline'u
-                logger.exception("Nie udało się obliczyć szczegółowego raportu dryfu dla %s", symbol)
+                logger.exception(
+                    "Nie udało się obliczyć szczegółowego raportu dryfu dla %s", symbol
+                )
                 assessment = None
 
         if assessment is not None:
@@ -1790,9 +1824,7 @@ class AIManager:
                 thresholds_loader=self._regime_classifier.thresholds_loader,
             ),
         )
-        history.reload_thresholds(
-            thresholds=self._regime_classifier.thresholds_snapshot()
-        )
+        history.reload_thresholds(thresholds=self._regime_classifier.thresholds_snapshot())
         history.update(assessment)
         _emit_history_log(
             f"Regime[{normalized_symbol}] => {assessment.regime.value} (risk={assessment.risk_score:.2f}, confidence={assessment.confidence:.2f})",
@@ -2123,7 +2155,10 @@ class AIManager:
         def _on_completed(artifact: ModelArtifact, validation: WalkForwardResult | None) -> None:
             inferred_symbol = _resolve_symbol()
             timestamp = artifact.trained_at.astimezone(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
-            filename = repository_filename or f"{(inferred_symbol or 'model')}_{normalized_model_type}_{timestamp}.json"
+            filename = (
+                repository_filename
+                or f"{(inferred_symbol or 'model')}_{normalized_model_type}_{timestamp}.json"
+            )
 
             metadata: Dict[str, object] = dict(artifact.metadata)
             metadata.setdefault("job_name", name)
@@ -2172,7 +2207,9 @@ class AIManager:
                 self._repository_models[repository_key] = inference
                 self._repository_paths[repository_key] = destination
                 artifact_obj = getattr(inference, "_artifact", None)
-                artifact_meta = getattr(artifact_obj, "metadata", {}) if artifact_obj is not None else {}
+                artifact_meta = (
+                    getattr(artifact_obj, "metadata", {}) if artifact_obj is not None else {}
+                )
                 if isinstance(artifact_meta, Mapping):
                     self._update_meta_confidence_cache(
                         repository_key,
@@ -2271,7 +2308,9 @@ class AIManager:
     ) -> None:
         """Podłącz istniejący DecisionOrchestrator do menedżera."""
 
-        if _DecisionOrchestrator is not None and not isinstance(orchestrator, _DecisionOrchestrator):
+        if _DecisionOrchestrator is not None and not isinstance(
+            orchestrator, _DecisionOrchestrator
+        ):
             raise TypeError("orchestrator must be DecisionOrchestrator instance")
         self._decision_orchestrator = orchestrator
         if default_model:
@@ -2334,7 +2373,9 @@ class AIManager:
         self._decision_inferences[normalized_name] = inference
         if set_default or self._decision_default_name is None:
             self._decision_default_name = normalized_name
-        quality_ok, quality_details = self._evaluate_decision_model_quality(inference, normalized_name)
+        quality_ok, quality_details = self._evaluate_decision_model_quality(
+            inference, normalized_name
+        )
         if self._decision_orchestrator is not None:
             try:
                 self._decision_orchestrator.attach_named_inference(
@@ -2390,7 +2431,9 @@ class AIManager:
                 try:
                     sources.append(repository.resolve(version))
                 except Exception:
-                    logger.debug("Could not resolve version %s from manifest", version, exc_info=True)
+                    logger.debug(
+                        "Could not resolve version %s from manifest", version, exc_info=True
+                    )
         else:
             sources.extend(sorted(repository.base_path.glob(pattern)))
 
@@ -2399,7 +2442,9 @@ class AIManager:
                 inference = DecisionModelInference(repository)
                 inference.load_weights(artifact_path)
             except Exception:
-                logger.warning("Failed to load model artifact from %s", artifact_path, exc_info=True)
+                logger.warning(
+                    "Failed to load model artifact from %s", artifact_path, exc_info=True
+                )
                 continue
 
             artifact = getattr(inference, "_artifact", None)
@@ -2411,7 +2456,9 @@ class AIManager:
                 continue
             key = self._model_key(str(symbol), str(model_type))
             self._repository_models[key] = inference
-            self._repository_paths[key] = artifact_path if isinstance(artifact_path, Path) else Path(artifact_path)
+            self._repository_paths[key] = (
+                artifact_path if isinstance(artifact_path, Path) else Path(artifact_path)
+            )
             self._update_meta_confidence_cache(
                 key,
                 inference=inference,
@@ -2492,9 +2539,7 @@ class AIManager:
         if explanation is not None:
             explain_payload = explanation.as_metadata()
             explain_json = serialize_explainability(explanation)
-            decision_metadata = candidate_payload["metadata"].setdefault(
-                "decision_engine", {}
-            )
+            decision_metadata = candidate_payload["metadata"].setdefault("decision_engine", {})
             if isinstance(decision_metadata, dict):
                 decision_metadata["explainability"] = explain_payload
                 decision_metadata["explainability_json"] = explain_json
@@ -2627,7 +2672,11 @@ class AIManager:
         """Zarejestruj zespół modeli dostępny przy generowaniu predykcji."""
 
         normalized_name = self._normalize_model_type(name)
-        comp_list = [self._normalize_model_type(component) for component in components if str(component).strip()]
+        comp_list = [
+            self._normalize_model_type(component)
+            for component in components
+            if str(component).strip()
+        ]
         if not comp_list:
             raise ValueError("Zespół modeli wymaga co najmniej jednego komponentu.")
         if len(set(comp_list)) != len(comp_list):
@@ -2657,7 +2706,9 @@ class AIManager:
             for regime_name, vector in regime_weights.items():
                 sequence = tuple(float(value) for value in vector)
                 if len(sequence) != len(comp_list):
-                    raise ValueError("Wektor regime_weights musi mieć tyle elementów co komponenty.")
+                    raise ValueError(
+                        "Wektor regime_weights musi mieć tyle elementów co komponenty."
+                    )
                 regime_weight_map[str(regime_name).lower()] = sequence
 
         if meta_weight_floor < 0.0:
@@ -2713,7 +2764,10 @@ class AIManager:
         if not isinstance(snapshot, EnsembleRegistrySnapshot):
             raise TypeError("Oczekiwano instancji EnsembleRegistrySnapshot")
 
-        desired = {self._normalize_model_type(name): definition for name, definition in snapshot.ensembles.items()}
+        desired = {
+            self._normalize_model_type(name): definition
+            for name, definition in snapshot.ensembles.items()
+        }
 
         if clear_missing:
             for name in list(self._ensembles.keys()):
@@ -2770,7 +2824,9 @@ class AIManager:
             combined = pd.Series(combined, index=frame.index)
         else:  # pragma: no cover - zabezpieczenie przed przyszłymi wartościami
             raise ValueError(f"Nieobsługiwana agregacja zespołu: {agg}")
-        return combined if isinstance(combined, pd.Series) else pd.Series(combined, index=frame.index)
+        return (
+            combined if isinstance(combined, pd.Series) else pd.Series(combined, index=frame.index)
+        )
 
     def _collect_meta_confidence(
         self, symbol_key: str, components: Iterable[str]
@@ -2827,7 +2883,11 @@ class AIManager:
                 with path.open("r", encoding="utf-8") as handle:
                     payload = json.load(handle)
             except Exception:  # pragma: no cover - pliki mogą być uszkodzone
-                logger.debug("Nie udało się odczytać artefaktu %s przy pobieraniu meta-confidence", path, exc_info=True)
+                logger.debug(
+                    "Nie udało się odczytać artefaktu %s przy pobieraniu meta-confidence",
+                    path,
+                    exc_info=True,
+                )
             else:
                 metadata = payload.get("metadata") if isinstance(payload, Mapping) else None
                 if isinstance(metadata, Mapping):
@@ -2872,7 +2932,9 @@ class AIManager:
             ensemble = self._ensembles.get(normalized_type)
             if ensemble is not None:
                 component_series = [
-                    await self._predict_model_series(symbol_key, component, df, feats, cache, visited)
+                    await self._predict_model_series(
+                        symbol_key, component, df, feats, cache, visited
+                    )
                     for component in ensemble.components
                 ]
                 meta_scores = self._collect_meta_confidence(symbol_key, ensemble.components)
@@ -3109,9 +3171,7 @@ class AIManager:
             detail = "; ".join(suppressed_errors)
         else:
             detail = "brak kompatybilnych podpisów metod"
-        raise AttributeError(
-            f"Model {model!r} nie obsługuje fallbacku predict_series ({detail})."
-        )
+        raise AttributeError(f"Model {model!r} nie obsługuje fallbacku predict_series ({detail}).")
 
     def _load_model_from_disk(self, path: Path) -> Any:
         loader = getattr(_AIModels, "load_model", None)
@@ -3259,9 +3319,7 @@ class AIManager:
             wf_mae = _safe_float(walk_forward_meta.get("average_mae"))
             if wf_mae is not None:
                 summary.setdefault("walk_forward_mae", wf_mae)
-            wf_directional = _safe_float(
-                walk_forward_meta.get("average_directional_accuracy")
-            )
+            wf_directional = _safe_float(walk_forward_meta.get("average_directional_accuracy"))
             if wf_directional is not None:
                 summary.setdefault("walk_forward_directional_accuracy", wf_directional)
 
@@ -3397,7 +3455,12 @@ class AIManager:
         )
 
         triggered = volatility_shift > threshold or feature_drift > threshold
-        return DriftReport(feature_drift=feature_drift, volatility_shift=volatility_shift, triggered=triggered, threshold=threshold)
+        return DriftReport(
+            feature_drift=feature_drift,
+            volatility_shift=volatility_shift,
+            triggered=triggered,
+            threshold=threshold,
+        )
 
     async def rank_models(
         self,
@@ -3447,7 +3510,9 @@ class AIManager:
                         if cv_scores
                         else float(metrics.get("directional_accuracy", 0.0))
                     )
-                    sharpe = self._sharpe_ratio(np.asarray(cv_scores, dtype=float)) if cv_scores else 0.0
+                    sharpe = (
+                        self._sharpe_ratio(np.asarray(cv_scores, dtype=float)) if cv_scores else 0.0
+                    )
                     model_path = self._repository_paths.get(key)
                     evaluations.append(
                         ModelEvaluation(
@@ -3472,8 +3537,16 @@ class AIManager:
 
                     X_val = X[start:end]
                     y_val = y[start:end]
-                    X_train = np.concatenate((X[:start], X[end:]), axis=0) if start > 0 or end < total else X
-                    y_train = np.concatenate((y[:start], y[end:]), axis=0) if start > 0 or end < total else y
+                    X_train = (
+                        np.concatenate((X[:start], X[end:]), axis=0)
+                        if start > 0 or end < total
+                        else X
+                    )
+                    y_train = (
+                        np.concatenate((y[:start], y[end:]), axis=0)
+                        if start > 0 or end < total
+                        else y
+                    )
 
                     if len(X_train) == 0 or len(X_val) == 0:
                         continue
@@ -3579,7 +3652,9 @@ class AIManager:
             self._pipeline_history[key] = history
         return history
 
-    def _record_pipeline_selection(self, selection: StrategySelectionResult) -> PipelineExecutionRecord:
+    def _record_pipeline_selection(
+        self, selection: StrategySelectionResult
+    ) -> PipelineExecutionRecord:
         symbol = self._normalize_symbol(selection.symbol)
         predictions = selection.predictions
         prediction_count = 0
@@ -3636,7 +3711,9 @@ class AIManager:
                 continue
             self._pipeline_history[symbol] = new_history
 
-    def get_pipeline_history(self, symbol: str, limit: Optional[int] = None) -> List[PipelineExecutionRecord]:
+    def get_pipeline_history(
+        self, symbol: str, limit: Optional[int] = None
+    ) -> List[PipelineExecutionRecord]:
         if limit is not None and limit <= 0:
             return []
         history = self._pipeline_history.get(self._normalize_symbol(symbol))
@@ -3784,8 +3861,12 @@ class AIManager:
         interval_seconds: float,
         seq_len: int,
         folds: int,
-        baseline_provider: Optional[Callable[[], Union[pd.DataFrame, Awaitable[pd.DataFrame]]]] = None,
-        on_result: Optional[Callable[[StrategySelectionResult], Union[None, Awaitable[None]]]] = None,
+        baseline_provider: Optional[
+            Callable[[], Union[pd.DataFrame, Awaitable[pd.DataFrame]]]
+        ] = None,
+        on_result: Optional[
+            Callable[[StrategySelectionResult], Union[None, Awaitable[None]]]
+        ] = None,
     ) -> Callable[[], Awaitable[None]]:
         async def _runner() -> None:
             while True:
@@ -3832,8 +3913,12 @@ class AIManager:
         interval_seconds: float = 3600.0,
         seq_len: int = 64,
         folds: int = 3,
-        baseline_provider: Optional[Callable[[], Union[pd.DataFrame, Awaitable[pd.DataFrame]]]] = None,
-        on_result: Optional[Callable[[StrategySelectionResult], Union[None, Awaitable[None]]]] = None,
+        baseline_provider: Optional[
+            Callable[[], Union[pd.DataFrame, Awaitable[pd.DataFrame]]]
+        ] = None,
+        on_result: Optional[
+            Callable[[StrategySelectionResult], Union[None, Awaitable[None]]]
+        ] = None,
     ) -> PipelineSchedule:
         """Zaplanuj cykliczne uruchamianie pipeline'u selekcji modeli."""
 
@@ -3957,7 +4042,9 @@ class AIManager:
                     )
                     preds = np.asarray(pred, dtype=float).flatten()
                 except Exception:
-                    logger.debug("Model %s nie udostępnia metody predict – pomijam ocenę.", model_name)
+                    logger.debug(
+                        "Model %s nie udostępnia metody predict – pomijam ocenę.", model_name
+                    )
 
                 hit_rate = 0.0
                 if preds is not None and len(preds) == len(y):
@@ -3967,7 +4054,9 @@ class AIManager:
 
                 key = self._model_key(symbol, model_name)
                 self.models[key] = model
-                results[model_name] = TrainResult(model_type=model_name, hit_rate=hit_rate, model_path=str(model_path))
+                results[model_name] = TrainResult(
+                    model_type=model_name, hit_rate=hit_rate, model_path=str(model_path)
+                )
 
                 if progress_callback:
                     try:
@@ -4068,9 +4157,7 @@ def _serialize_ensemble_definition(definition: EnsembleDefinition) -> Dict[str, 
         "components": list(definition.components),
         "aggregation": definition.aggregation,
         "weights": None if definition.weights is None else list(definition.weights),
-        "regime_weights": {
-            key: list(values) for key, values in definition.regime_weights.items()
-        },
+        "regime_weights": {key: list(values) for key, values in definition.regime_weights.items()},
         "meta_weight_floor": float(definition.meta_weight_floor),
     }
 
@@ -4160,10 +4247,15 @@ def _deserialize_ensemble_definition(name: str, payload: Mapping[str, Any]) -> E
     )
 
 
-def ensemble_registry_snapshot_to_dict(snapshot: EnsembleRegistrySnapshot) -> Dict[str, Dict[str, Any]]:
+def ensemble_registry_snapshot_to_dict(
+    snapshot: EnsembleRegistrySnapshot,
+) -> Dict[str, Dict[str, Any]]:
     if not isinstance(snapshot, EnsembleRegistrySnapshot):
         raise TypeError("Oczekiwano instancji EnsembleRegistrySnapshot")
-    return {name: _serialize_ensemble_definition(definition) for name, definition in snapshot.ensembles.items()}
+    return {
+        name: _serialize_ensemble_definition(definition)
+        for name, definition in snapshot.ensembles.items()
+    }
 
 
 def ensemble_registry_snapshot_from_dict(payload: Mapping[str, Any]) -> EnsembleRegistrySnapshot:
@@ -4181,12 +4273,16 @@ def ensemble_registry_snapshot_from_dict(payload: Mapping[str, Any]) -> Ensemble
     return EnsembleRegistrySnapshot(ensembles)
 
 
-def ensemble_registry_snapshot_to_json(snapshot: EnsembleRegistrySnapshot, *, indent: Optional[int] = None) -> str:
+def ensemble_registry_snapshot_to_json(
+    snapshot: EnsembleRegistrySnapshot, *, indent: Optional[int] = None
+) -> str:
     data = ensemble_registry_snapshot_to_dict(snapshot)
     return json.dumps(data, indent=indent, sort_keys=True)
 
 
-def ensemble_registry_snapshot_from_json(payload: Union[str, bytes, bytearray]) -> EnsembleRegistrySnapshot:
+def ensemble_registry_snapshot_from_json(
+    payload: Union[str, bytes, bytearray],
+) -> EnsembleRegistrySnapshot:
     if isinstance(payload, (bytes, bytearray)):
         payload = payload.decode("utf-8")
     if not isinstance(payload, str):
@@ -4315,7 +4411,9 @@ def ensemble_registry_diff_from_dict(payload: Mapping[str, Any]) -> EnsembleRegi
     return diff
 
 
-def ensemble_registry_diff_to_json(diff: EnsembleRegistryDiff, *, indent: Optional[int] = None) -> str:
+def ensemble_registry_diff_to_json(
+    diff: EnsembleRegistryDiff, *, indent: Optional[int] = None
+) -> str:
     data = ensemble_registry_diff_to_dict(diff)
     return json.dumps(data, indent=indent, sort_keys=True)
 
@@ -4447,14 +4545,24 @@ def _deserialize_pipeline_execution_record(payload: Mapping[str, Any]) -> Pipeli
         evaluations=evaluations,
         drift_report=drift_report,
         prediction_count=int(payload.get("prediction_count", 0) or 0),
-        prediction_mean=(None if payload.get("prediction_mean") is None else float(payload["prediction_mean"])),
-        prediction_std=(None if payload.get("prediction_std") is None else float(payload["prediction_std"])),
-        prediction_min=(None if payload.get("prediction_min") is None else float(payload["prediction_min"])),
-        prediction_max=(None if payload.get("prediction_max") is None else float(payload["prediction_max"])),
+        prediction_mean=(
+            None if payload.get("prediction_mean") is None else float(payload["prediction_mean"])
+        ),
+        prediction_std=(
+            None if payload.get("prediction_std") is None else float(payload["prediction_std"])
+        ),
+        prediction_min=(
+            None if payload.get("prediction_min") is None else float(payload["prediction_min"])
+        ),
+        prediction_max=(
+            None if payload.get("prediction_max") is None else float(payload["prediction_max"])
+        ),
     )
 
 
-def pipeline_history_snapshot_to_dict(snapshot: PipelineHistorySnapshot) -> Dict[str, List[Dict[str, Any]]]:
+def pipeline_history_snapshot_to_dict(
+    snapshot: PipelineHistorySnapshot,
+) -> Dict[str, List[Dict[str, Any]]]:
     if not isinstance(snapshot, PipelineHistorySnapshot):
         raise TypeError("Oczekiwano instancji PipelineHistorySnapshot")
     result: Dict[str, List[Dict[str, Any]]] = {}
@@ -4478,12 +4586,16 @@ def pipeline_history_snapshot_from_dict(payload: Mapping[str, Any]) -> PipelineH
     return PipelineHistorySnapshot(records)
 
 
-def pipeline_history_snapshot_to_json(snapshot: PipelineHistorySnapshot, *, indent: Optional[int] = None) -> str:
+def pipeline_history_snapshot_to_json(
+    snapshot: PipelineHistorySnapshot, *, indent: Optional[int] = None
+) -> str:
     data = pipeline_history_snapshot_to_dict(snapshot)
     return json.dumps(data, indent=indent, sort_keys=True)
 
 
-def pipeline_history_snapshot_from_json(payload: Union[str, bytes, bytearray]) -> PipelineHistorySnapshot:
+def pipeline_history_snapshot_from_json(
+    payload: Union[str, bytes, bytearray],
+) -> PipelineHistorySnapshot:
     if isinstance(payload, (bytes, bytearray)):
         payload = payload.decode("utf-8")
     if not isinstance(payload, str):
@@ -4492,7 +4604,9 @@ def pipeline_history_snapshot_from_json(payload: Union[str, bytes, bytearray]) -
     return pipeline_history_snapshot_from_dict(data)
 
 
-def pipeline_history_snapshot_to_file(snapshot: PipelineHistorySnapshot, path: PathInput, *, indent: Optional[int] = 2) -> None:
+def pipeline_history_snapshot_to_file(
+    snapshot: PipelineHistorySnapshot, path: PathInput, *, indent: Optional[int] = 2
+) -> None:
     target = Path(path)
     target.parent.mkdir(parents=True, exist_ok=True)
     payload = pipeline_history_snapshot_to_json(snapshot, indent=indent)
@@ -4515,7 +4629,9 @@ def diff_pipeline_history_snapshots(
 
     diff = PipelineHistoryDiff()
 
-    before_records = {symbol: tuple(records) for symbol, records in before.records.items() if records}
+    before_records = {
+        symbol: tuple(records) for symbol, records in before.records.items() if records
+    }
     after_records = {symbol: tuple(records) for symbol, records in after.records.items() if records}
 
     for symbol in before_records.keys() - after_records.keys():
@@ -4544,10 +4660,14 @@ def pipeline_history_diff_to_dict(diff: PipelineHistoryDiff) -> Dict[str, Any]:
     }
 
     for symbol, records in diff.added.items():
-        result["added"][symbol] = [_serialize_pipeline_execution_record(record) for record in records]
+        result["added"][symbol] = [
+            _serialize_pipeline_execution_record(record) for record in records
+        ]
 
     for symbol, records in diff.removed.items():
-        result["removed"][symbol] = [_serialize_pipeline_execution_record(record) for record in records]
+        result["removed"][symbol] = [
+            _serialize_pipeline_execution_record(record) for record in records
+        ]
 
     for symbol, (before_records, after_records) in diff.changed.items():
         result["changed"][symbol] = {
@@ -4574,7 +4694,9 @@ def pipeline_history_diff_from_dict(payload: Mapping[str, Any]) -> PipelineHisto
             continue
         if not isinstance(records, Iterable):
             raise TypeError("Lista rekordów dodanych musi być iterowalna")
-        diff.added[symbol] = tuple(_deserialize_pipeline_execution_record(record) for record in records)
+        diff.added[symbol] = tuple(
+            _deserialize_pipeline_execution_record(record) for record in records
+        )
 
     removed_raw = payload.get("removed", {})
     if not isinstance(removed_raw, Mapping):
@@ -4586,7 +4708,9 @@ def pipeline_history_diff_from_dict(payload: Mapping[str, Any]) -> PipelineHisto
             continue
         if not isinstance(records, Iterable):
             raise TypeError("Lista rekordów usuniętych musi być iterowalna")
-        diff.removed[symbol] = tuple(_deserialize_pipeline_execution_record(record) for record in records)
+        diff.removed[symbol] = tuple(
+            _deserialize_pipeline_execution_record(record) for record in records
+        )
 
     changed_raw = payload.get("changed", {})
     if not isinstance(changed_raw, Mapping):
@@ -4602,14 +4726,20 @@ def pipeline_history_diff_from_dict(payload: Mapping[str, Any]) -> PipelineHisto
         after_entries = records.get("after", [])
         if not isinstance(before_entries, Iterable) or not isinstance(after_entries, Iterable):
             raise TypeError("Sekcje 'before' i 'after' muszą być iterowalne")
-        before_records = tuple(_deserialize_pipeline_execution_record(record) for record in before_entries)
-        after_records = tuple(_deserialize_pipeline_execution_record(record) for record in after_entries)
+        before_records = tuple(
+            _deserialize_pipeline_execution_record(record) for record in before_entries
+        )
+        after_records = tuple(
+            _deserialize_pipeline_execution_record(record) for record in after_entries
+        )
         diff.changed[symbol] = (before_records, after_records)
 
     return diff
 
 
-def pipeline_history_diff_to_json(diff: PipelineHistoryDiff, *, indent: Optional[int] = None) -> str:
+def pipeline_history_diff_to_json(
+    diff: PipelineHistoryDiff, *, indent: Optional[int] = None
+) -> str:
     data = pipeline_history_diff_to_dict(diff)
     return json.dumps(data, indent=indent, sort_keys=True)
 
@@ -4623,7 +4753,9 @@ def pipeline_history_diff_from_json(payload: Union[str, bytes, bytearray]) -> Pi
     return pipeline_history_diff_from_dict(data)
 
 
-def pipeline_history_diff_to_file(diff: PipelineHistoryDiff, path: PathInput, *, indent: Optional[int] = 2) -> None:
+def pipeline_history_diff_to_file(
+    diff: PipelineHistoryDiff, path: PathInput, *, indent: Optional[int] = 2
+) -> None:
     target = Path(path)
     target.parent.mkdir(parents=True, exist_ok=True)
     payload = pipeline_history_diff_to_json(diff, indent=indent)

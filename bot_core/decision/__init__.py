@@ -19,9 +19,11 @@ except Exception:  # pragma: no cover - defensywnie zapewniamy stabilne API
     def summarize_evaluation_payloads(*_: Any, **__: Any) -> Any:  # type: ignore[misc]
         raise RuntimeError("Decision summary utilities are not available")
 
+
 try:  # pragma: no cover - utils mogą być odchudzone w środowisku testowym
     from .utils import coerce_float
 except Exception:  # pragma: no cover - zachowujemy podpis funkcji
+
     def coerce_float(*_: Any, **__: Any) -> Any:  # type: ignore[misc]
         raise RuntimeError("Decision utilities are not available")
 

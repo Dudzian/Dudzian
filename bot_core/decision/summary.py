@@ -1,4 +1,5 @@
 """Utilities for aggregating Decision Engine evaluation payloads."""
+
 from __future__ import annotations
 
 import copy
@@ -39,7 +40,9 @@ def _normalize_thresholds(
     return normalized
 
 
-def _extract_candidate_metadata(candidate: Mapping[str, object] | None) -> Mapping[str, object] | None:
+def _extract_candidate_metadata(
+    candidate: Mapping[str, object] | None,
+) -> Mapping[str, object] | None:
     if not candidate or not isinstance(candidate, Mapping):
         return None
     metadata = candidate.get("metadata")
@@ -118,14 +121,18 @@ def _serialize_history_entry(payload: Mapping[str, object]) -> dict[str, object]
 
     model_selection = record.get("model_selection")
     if isinstance(model_selection, Mapping):
-        record["model_selection"] = {str(key): copy.deepcopy(value) for key, value in model_selection.items()}
+        record["model_selection"] = {
+            str(key): copy.deepcopy(value) for key, value in model_selection.items()
+        }
 
     candidate = record.get("candidate")
     if isinstance(candidate, Mapping):
         normalized_candidate = {str(key): copy.deepcopy(value) for key, value in candidate.items()}
         metadata = normalized_candidate.get("metadata")
         if isinstance(metadata, Mapping):
-            normalized_candidate["metadata"] = {str(key): copy.deepcopy(value) for key, value in metadata.items()}
+            normalized_candidate["metadata"] = {
+                str(key): copy.deepcopy(value) for key, value in metadata.items()
+            }
         record["candidate"] = normalized_candidate
 
     return record
@@ -369,9 +376,7 @@ class _ThresholdAccumulator:
         summary[f"std_{margin_key}"] = total_stats["std"]
         summary[f"{base_name}_threshold_breaches"] = self.total_breaches
         summary[f"{base_name}_threshold_breach_rate"] = (
-            self.total_breaches / total_stats["count"]
-            if total_stats["count"]
-            else 0.0
+            self.total_breaches / total_stats["count"] if total_stats["count"] else 0.0
         )
 
         accepted_stats = _compute_stats(self.accepted)
@@ -386,9 +391,7 @@ class _ThresholdAccumulator:
         summary[f"accepted_std_{margin_key}"] = accepted_stats["std"]
         summary[f"accepted_{base_name}_threshold_breaches"] = self.accepted_breaches
         summary[f"accepted_{base_name}_threshold_breach_rate"] = (
-            self.accepted_breaches / accepted_stats["count"]
-            if accepted_stats["count"]
-            else 0.0
+            self.accepted_breaches / accepted_stats["count"] if accepted_stats["count"] else 0.0
         )
 
         rejected_stats = _compute_stats(self.rejected)
@@ -403,16 +406,16 @@ class _ThresholdAccumulator:
         summary[f"rejected_std_{margin_key}"] = rejected_stats["std"]
         summary[f"rejected_{base_name}_threshold_breaches"] = self.rejected_breaches
         summary[f"rejected_{base_name}_threshold_breach_rate"] = (
-            self.rejected_breaches / rejected_stats["count"]
-            if rejected_stats["count"]
-            else 0.0
+            self.rejected_breaches / rejected_stats["count"] if rejected_stats["count"] else 0.0
         )
 
 
 class DecisionSummaryAggregator:
     """Aggregates raw evaluation payloads into a summary mapping."""
 
-    def __init__(self, evaluations: Iterable[Mapping[str, object]], *, history_limit: int | None = None) -> None:
+    def __init__(
+        self, evaluations: Iterable[Mapping[str, object]], *, history_limit: int | None = None
+    ) -> None:
         self._items = [payload for payload in evaluations if isinstance(payload, Mapping)]
         self._full_total = len(self._items)
         self._history_limit = _resolve_history_limit(history_limit)
@@ -495,8 +498,7 @@ class DecisionSummaryAggregator:
             "notional": _ThresholdAccumulator("notional_threshold_margin"),
         }
         margin_to_base = {
-            accumulator.margin_key: base
-            for base, accumulator in threshold_accumulators.items()
+            accumulator.margin_key: base for base, accumulator in threshold_accumulators.items()
         }
 
         accepted_count = 0
@@ -511,8 +513,12 @@ class DecisionSummaryAggregator:
 
         risk_counts: Counter[str] = Counter()
         stress_counts: Counter[str] = Counter()
-        risk_breakdown: dict[str, dict[str, int]] = defaultdict(lambda: {"total": 0, "accepted": 0, "rejected": 0})
-        stress_breakdown: dict[str, dict[str, int]] = defaultdict(lambda: {"total": 0, "accepted": 0, "rejected": 0})
+        risk_breakdown: dict[str, dict[str, int]] = defaultdict(
+            lambda: {"total": 0, "accepted": 0, "rejected": 0}
+        )
+        stress_breakdown: dict[str, dict[str, int]] = defaultdict(
+            lambda: {"total": 0, "accepted": 0, "rejected": 0}
+        )
 
         model_usage: Counter[str] = Counter()
         action_usage: Counter[str] = Counter()
@@ -534,7 +540,9 @@ class DecisionSummaryAggregator:
             if accepted:
                 accepted_count += 1
                 current_acceptance_streak += 1
-                longest_acceptance_streak = max(longest_acceptance_streak, current_acceptance_streak)
+                longest_acceptance_streak = max(
+                    longest_acceptance_streak, current_acceptance_streak
+                )
                 current_rejection_streak = 0
             else:
                 rejected_count += 1
@@ -607,13 +615,9 @@ class DecisionSummaryAggregator:
             )
 
             if expected_return is not None:
-                metric_accumulators["expected_return_bps"].add(
-                    expected_return, accepted=accepted
-                )
+                metric_accumulators["expected_return_bps"].add(expected_return, accepted=accepted)
             if expected_value is not None:
-                metric_accumulators["expected_value_bps"].add(
-                    expected_value, accepted=accepted
-                )
+                metric_accumulators["expected_value_bps"].add(expected_value, accepted=accepted)
             if expected_value_minus_cost is not None:
                 metric_accumulators["expected_value_minus_cost_bps"].add(
                     expected_value_minus_cost, accepted=accepted
@@ -783,9 +787,7 @@ class DecisionSummaryAggregator:
                     summary[f"latest_{margin_key}"] = margin
                     base_name = margin_to_base.get(margin_key)
                     if base_name is not None:
-                        threshold_accumulators[base_name].add(
-                            margin, accepted=accepted
-                        )
+                        threshold_accumulators[base_name].add(margin, accepted=accepted)
 
         if "rejection_reasons" in summary:
             rejection_counter: Counter[str] = summary["rejection_reasons"]  # type: ignore[assignment]
@@ -800,7 +802,9 @@ class DecisionSummaryAggregator:
                 "total": self.history_window,
                 "accepted": accepted_count,
                 "rejected": rejected_count,
-                "acceptance_rate": accepted_count / self.history_window if self.history_window else 0.0,
+                "acceptance_rate": accepted_count / self.history_window
+                if self.history_window
+                else 0.0,
                 "history_limit": self.history_limit,
                 "history_window": self.history_window,
                 "full_total": self.full_total,
@@ -817,7 +821,9 @@ class DecisionSummaryAggregator:
         full_rejected = self.full_total - full_accepted
         summary["full_accepted"] = full_accepted
         summary["full_rejected"] = full_rejected
-        summary["full_acceptance_rate"] = full_accepted / self.full_total if self.full_total else 0.0
+        summary["full_acceptance_rate"] = (
+            full_accepted / self.full_total if self.full_total else 0.0
+        )
         summary["full_history_generated_at_count"] = self._full_generated_at_count
         summary["full_history_missing_generated_at"] = self._full_missing_generated_at
         summary["full_history_generated_at_coverage"] = (
@@ -826,7 +832,9 @@ class DecisionSummaryAggregator:
 
         summary["risk_flag_counts"] = dict(risk_counts)
         summary["unique_risk_flags"] = len(risk_counts)
-        summary["risk_flags_with_accepts"] = sum(1 for flag, data in risk_breakdown.items() if data["accepted"])
+        summary["risk_flags_with_accepts"] = sum(
+            1 for flag, data in risk_breakdown.items() if data["accepted"]
+        )
         summary["risk_flag_breakdown"] = {
             flag: {
                 **data,

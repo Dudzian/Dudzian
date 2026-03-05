@@ -1,4 +1,5 @@
 """Adapter margin OKX z rozszerzoną obsługą watchdog."""
+
 from __future__ import annotations
 
 from typing import Any, Mapping

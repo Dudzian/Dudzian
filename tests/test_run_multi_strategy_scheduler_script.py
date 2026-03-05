@@ -1,4 +1,5 @@
 """Testy CLI skryptu run_multi_strategy_scheduler."""
+
 from __future__ import annotations
 
 import asyncio
@@ -142,8 +143,7 @@ class _DummyScheduler:
             for name in sorted(self._active_schedules)
         }
         tags = {
-            tag: {"reason": "manual", "until": "bez terminu"}
-            for tag in sorted(self._active_tags)
+            tag: {"reason": "manual", "until": "bez terminu"} for tag in sorted(self._active_tags)
         }
         return {"schedules": schedules, "tags": tags}
 
@@ -193,10 +193,14 @@ class _DummyScheduler:
 
 
 class _DummySecretStorage:
-    def get_secret(self, *_args: object, **_kwargs: object) -> str | None:  # pragma: no cover - proste stuby
+    def get_secret(
+        self, *_args: object, **_kwargs: object
+    ) -> str | None:  # pragma: no cover - proste stuby
         return None
 
-    def put_secret(self, *_args: object, **_kwargs: object) -> None:  # pragma: no cover - proste stuby
+    def put_secret(
+        self, *_args: object, **_kwargs: object
+    ) -> None:  # pragma: no cover - proste stuby
         return None
 
 
@@ -207,7 +211,9 @@ def _invoke_main(
     captured: dict[str, Any] = {"async_coro_name": None}
     scheduler = _DummyScheduler()
 
-    def fake_build_scheduler(*, adapter_factories: Mapping[str, object] | None, **kwargs: object) -> _DummyScheduler:
+    def fake_build_scheduler(
+        *, adapter_factories: Mapping[str, object] | None, **kwargs: object
+    ) -> _DummyScheduler:
         captured["adapter_factories"] = adapter_factories
         captured["kwargs"] = kwargs
         return scheduler
@@ -239,7 +245,7 @@ def test_main_invokes_run_once_with_cli_overrides(monkeypatch: pytest.MonkeyPatc
         "--adapter-factory",
         "kucoin_spot=bot_core.exchanges.kucoin:KuCoinSpotAdapter",
         "--adapter-factory",
-        "bybit_spot=json:{\"path\": \"bot_core.exchanges.bybit:BybitSpotAdapter\", \"override\": true}",
+        'bybit_spot=json:{"path": "bot_core.exchanges.bybit:BybitSpotAdapter", "override": true}',
     ]
 
     scheduler, captured = _invoke_main(monkeypatch, argv)
@@ -662,7 +668,9 @@ def test_set_capital_policy_without_rebalance(
     assert "Załadowano politykę kapitału" in out
 
 
-def test_set_allocation_interval(monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]) -> None:
+def test_set_allocation_interval(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
     argv = [
         "--environment",
         "binance_paper",
@@ -685,7 +693,9 @@ def test_build_scheduler_reraises_license_error(monkeypatch: pytest.MonkeyPatch)
     def fake_build_runtime(*_args: object, **_kwargs: object) -> object:
         raise RuntimeError("bootstrap failed") from license_exc
 
-    monkeypatch.setattr(run_multi_strategy_scheduler, "build_multi_strategy_runtime", fake_build_runtime)
+    monkeypatch.setattr(
+        run_multi_strategy_scheduler, "build_multi_strategy_runtime", fake_build_runtime
+    )
     monkeypatch.setattr(
         run_multi_strategy_scheduler,
         "create_default_secret_storage",
@@ -708,9 +718,13 @@ def test_run_returns_error_code_on_license_block(
     caplog: pytest.LogCaptureFixture,
 ) -> None:
     def fake_build_runtime(*_args: object, **_kwargs: object) -> object:
-        raise RuntimeError("bootstrap failed") from LicenseCapabilityError("Brak modułu multi-strategy")
+        raise RuntimeError("bootstrap failed") from LicenseCapabilityError(
+            "Brak modułu multi-strategy"
+        )
 
-    monkeypatch.setattr(run_multi_strategy_scheduler, "build_multi_strategy_runtime", fake_build_runtime)
+    monkeypatch.setattr(
+        run_multi_strategy_scheduler, "build_multi_strategy_runtime", fake_build_runtime
+    )
     monkeypatch.setattr(
         run_multi_strategy_scheduler,
         "create_default_secret_storage",
@@ -734,7 +748,9 @@ def test_run_returns_error_code_on_license_validation(
     def fake_build_runtime(*_args: object, **_kwargs: object) -> object:
         raise LicenseValidationError("Brak licencji Pro")
 
-    monkeypatch.setattr(run_multi_strategy_scheduler, "build_multi_strategy_runtime", fake_build_runtime)
+    monkeypatch.setattr(
+        run_multi_strategy_scheduler, "build_multi_strategy_runtime", fake_build_runtime
+    )
     monkeypatch.setattr(
         run_multi_strategy_scheduler,
         "create_default_secret_storage",

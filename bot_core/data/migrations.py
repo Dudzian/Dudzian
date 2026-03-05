@@ -1,4 +1,5 @@
 """Narzędzia wspomagające migracje danych OHLCV dla nowych giełd."""
+
 from __future__ import annotations
 
 from dataclasses import dataclass

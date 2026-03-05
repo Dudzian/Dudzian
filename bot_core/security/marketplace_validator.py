@@ -1,4 +1,5 @@
 """Walidator podpisów i fingerprintu paczek Marketplace."""
+
 from __future__ import annotations
 
 import hashlib
@@ -90,7 +91,9 @@ class MarketplaceValidator:
             )
         else:
             if artifact.integrity:
-                digest_ok, message = self._verify_integrity(artifact_path, artifact.integrity.digest, artifact.integrity.algorithm)
+                digest_ok, message = self._verify_integrity(
+                    artifact_path, artifact.integrity.digest, artifact.integrity.algorithm
+                )
                 if not digest_ok:
                     errors.append(message)
             if artifact.signature:
@@ -133,7 +136,9 @@ class MarketplaceValidator:
                 path = repository_root / path
         return path
 
-    def _verify_integrity(self, path: Path, expected_digest: str, algorithm: str) -> tuple[bool, str]:
+    def _verify_integrity(
+        self, path: Path, expected_digest: str, algorithm: str
+    ) -> tuple[bool, str]:
         normalized = algorithm.strip().lower()
         try:
             hasher = hashlib.new(normalized)
@@ -182,7 +187,9 @@ class MarketplaceValidator:
             "value": signature.value,
             "key_id": signature.key_id,
         }
-        if not verify_hmac_signature(payload, signature_doc, key=key_bytes, algorithm=signature.algorithm):
+        if not verify_hmac_signature(
+            payload, signature_doc, key=key_bytes, algorithm=signature.algorithm
+        ):
             serialized = json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True)
             return [
                 "Niepoprawny podpis artefaktu '{}': payload={}, key_id={}".format(
@@ -215,7 +222,10 @@ class MarketplaceValidator:
             return False
 
         if not any(_matches(candidate) for candidate in policy.allowed_fingerprints):
-            message = policy.audit_message or "Fingerprint urządzenia nie znajduje się na liście dopuszczonych."
+            message = (
+                policy.audit_message
+                or "Fingerprint urządzenia nie znajduje się na liście dopuszczonych."
+            )
             return [f"[fingerprint] {message}"]
         return []
 

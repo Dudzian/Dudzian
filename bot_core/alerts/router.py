@@ -1,4 +1,5 @@
 """Domyślna implementacja routera alertów."""
+
 from __future__ import annotations
 
 import logging
@@ -6,7 +7,13 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Any, Dict, Mapping, MutableMapping, MutableSequence
 
-from bot_core.alerts.base import AlertChannel, AlertMessage, AlertRouter, AlertAuditLog, AlertDeliveryError
+from bot_core.alerts.base import (
+    AlertChannel,
+    AlertMessage,
+    AlertRouter,
+    AlertAuditLog,
+    AlertDeliveryError,
+)
 from bot_core.alerts.throttle import AlertThrottle
 
 
@@ -16,6 +23,7 @@ try:  # pragma: no cover - fallback dla gałęzi bez modułu observability
         get_global_metrics_registry,
     )
 except Exception:  # pragma: no cover - minimalny no-op gdy moduł nie istnieje
+
     class _NoopMetric:
         def inc(self, *_args: object, **_kwargs: object) -> None:
             return None
@@ -93,7 +101,9 @@ class DefaultAlertRouter(AlertRouter):
             )
             self.audit_log.append(message, channel=_SUPPRESSED_CHANNEL)
             self._metric_alert_suppressed_total.inc(
-                labels=self._metric_labels_with(channel=_SUPPRESSED_CHANNEL, severity=message.severity)
+                labels=self._metric_labels_with(
+                    channel=_SUPPRESSED_CHANNEL, severity=message.severity
+                )
             )
             return
 
@@ -103,7 +113,10 @@ class DefaultAlertRouter(AlertRouter):
             try:
                 channel.send(message)
             except AlertDeliveryError as exc:  # pragma: no cover - defensive guard
-                self.logger.error("Nie udało się wysłać alertu", extra={"channel": channel.name, "error": str(exc)})
+                self.logger.error(
+                    "Nie udało się wysłać alertu",
+                    extra={"channel": channel.name, "error": str(exc)},
+                )
                 failures[channel.name] = str(exc)
                 self._metric_alert_failures_total.inc(
                     labels=self._metric_labels_with(channel=channel.name, severity=message.severity)
@@ -143,7 +156,9 @@ class DefaultAlertRouter(AlertRouter):
             except Exception as exc:  # noqa: BLE001
                 self.logger.exception("Błąd podczas health-check kanału %s", channel.name)
                 data.update({"status": "error", "detail": str(exc)})
-                self._metric_health_errors_total.inc(labels=self._metric_labels_with(channel=channel.name))
+                self._metric_health_errors_total.inc(
+                    labels=self._metric_labels_with(channel=channel.name)
+                )
             snapshot[channel.name] = data
         return snapshot
 
@@ -157,4 +172,3 @@ class DefaultAlertRouter(AlertRouter):
 
 
 __all__ = ["DefaultAlertRouter"]
-

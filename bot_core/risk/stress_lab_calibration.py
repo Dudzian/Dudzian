@@ -1,4 +1,5 @@
 """Kalibracja progów Stress Lab Stage6 na podstawie metryk rynkowych."""
+
 from __future__ import annotations
 
 import csv
@@ -92,9 +93,7 @@ def build_volume_segments(
     bucket_count = min(buckets, len(ranked))
 
     min_per_bucket = (
-        min_symbols_per_bucket
-        if len(ranked) >= min_symbols_per_bucket * bucket_count
-        else 1
+        min_symbols_per_bucket if len(ranked) >= min_symbols_per_bucket * bucket_count else 1
     )
 
     segments: list[StressLabCalibrationSegment] = []

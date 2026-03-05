@@ -72,7 +72,9 @@ def _stop_gateway(gateway: StreamGateway, server: object, thread: object) -> Non
     gateway.close()
 
 
-def test_stream_gateway_public_stream_returns_batches(kraken_credentials: ExchangeCredentials, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_stream_gateway_public_stream_returns_batches(
+    kraken_credentials: ExchangeCredentials, monkeypatch: pytest.MonkeyPatch
+) -> None:
     adapter = KrakenSpotAdapter(
         kraken_credentials,
         environment=Environment.PAPER,
@@ -280,7 +282,9 @@ def test_stream_gateway_binance_spot_public_channels(
     }
     call_state = {"ticker": 0, "depth": 0}
 
-    def fake_public_request(self, path: str, params: dict[str, object] | None = None, *, method: str = "GET"):
+    def fake_public_request(
+        self, path: str, params: dict[str, object] | None = None, *, method: str = "GET"
+    ):
         del method
         assert params is not None
         if path == "/api/v3/ticker/24hr":
@@ -392,7 +396,9 @@ def test_stream_gateway_binance_spot_orders(
     ]
     call_state = {"count": 0}
 
-    def fake_signed_request(self, path: str, *, method: str = "GET", params: dict[str, object] | None = None):
+    def fake_signed_request(
+        self, path: str, *, method: str = "GET", params: dict[str, object] | None = None
+    ):
         del method, params
         assert path == "/api/v3/openOrders"
         index = min(call_state["count"], len(open_orders_payloads) - 1)
@@ -481,7 +487,9 @@ def test_stream_gateway_binance_futures_public_channels(
     }
     call_state = {"ticker": 0}
 
-    def fake_public_request(self, path: str, params: dict[str, object] | None = None, *, method: str = "GET"):
+    def fake_public_request(
+        self, path: str, params: dict[str, object] | None = None, *, method: str = "GET"
+    ):
         del method
         assert params is not None
         if path == "/fapi/v1/ticker/24hr":
@@ -604,7 +612,9 @@ def test_stream_gateway_binance_futures_orders(
     ]
     call_state = {"count": 0}
 
-    def fake_signed_request(self, path: str, *, method: str = "GET", params: dict[str, object] | None = None):
+    def fake_signed_request(
+        self, path: str, *, method: str = "GET", params: dict[str, object] | None = None
+    ):
         del method, params
         assert path == "/fapi/v1/openOrders"
         index = min(call_state["count"], len(open_orders_payloads) - 1)
@@ -637,7 +647,9 @@ def test_stream_gateway_binance_futures_orders(
         _stop_gateway(gateway, server, thread)
 
 
-def test_stream_gateway_private_stream_returns_orders(kraken_credentials: ExchangeCredentials, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_stream_gateway_private_stream_returns_orders(
+    kraken_credentials: ExchangeCredentials, monkeypatch: pytest.MonkeyPatch
+) -> None:
     adapter = KrakenSpotAdapter(
         kraken_credentials,
         environment=Environment.PAPER,

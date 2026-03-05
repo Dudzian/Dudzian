@@ -73,7 +73,9 @@ def annualize_volatility(returns: pd.Series, periods_per_year: int = 252) -> flo
     return float(returns.std(ddof=1) * np.sqrt(periods_per_year))
 
 
-def resample_returns(returns: Iterable[float], size: int, random_state: Optional[np.random.Generator] = None) -> np.ndarray:
+def resample_returns(
+    returns: Iterable[float], size: int, random_state: Optional[np.random.Generator] = None
+) -> np.ndarray:
     """Losuje próbkę stóp zwrotu z możliwością powtarzania."""
 
     generator = random_state or np.random.default_rng()

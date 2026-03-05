@@ -20,7 +20,9 @@ class _DummyAdapter(ExchangeAdapter):
     def __init__(self) -> None:
         super().__init__(ExchangeCredentials(key_id="dummy"))
 
-    def configure_network(self, *, ip_allowlist=None) -> None:  # pragma: no cover - not used in test
+    def configure_network(
+        self, *, ip_allowlist=None
+    ) -> None:  # pragma: no cover - not used in test
         return None
 
     def fetch_account_snapshot(self) -> AccountSnapshot:  # pragma: no cover - not used in test
@@ -34,7 +36,9 @@ class _DummyAdapter(ExchangeAdapter):
     def fetch_symbols(self):  # pragma: no cover - not used in test
         return []
 
-    def fetch_ohlcv(self, symbol, interval, start=None, end=None, limit=None):  # pragma: no cover - not used in test
+    def fetch_ohlcv(
+        self, symbol, interval, start=None, end=None, limit=None
+    ):  # pragma: no cover - not used in test
         return []
 
     def place_order(self, request: OrderRequest) -> OrderResult:
@@ -46,7 +50,9 @@ class _DummyAdapter(ExchangeAdapter):
             raw_response={},
         )
 
-    def cancel_order(self, order_id: str, *, symbol=None) -> None:  # pragma: no cover - not used in test
+    def cancel_order(
+        self, order_id: str, *, symbol=None
+    ) -> None:  # pragma: no cover - not used in test
         return None
 
     def stream_public_data(self, *, channels):  # pragma: no cover - not used in test

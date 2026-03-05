@@ -13,7 +13,9 @@ from bot_core.runtime.journal import JsonlTradingDecisionJournal
 
 def _parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Run AI sandbox scenario")
-    parser.add_argument("scenario", nargs="?", default="smoke", help="Scenario identifier to execute")
+    parser.add_argument(
+        "scenario", nargs="?", default="smoke", help="Scenario identifier to execute"
+    )
     parser.add_argument("--dataset", dest="dataset", help="Optional dataset name or path")
     parser.add_argument("--model", dest="model", help="Decision model name to use")
     parser.add_argument(
@@ -60,8 +62,8 @@ def main() -> None:
         event_types=args.event_types,
     )
     print(
-        "Scenario '%s' processed %d events from %s" %
-        (result.scenario, result.processed_events, result.dataset)
+        "Scenario '%s' processed %d events from %s"
+        % (result.scenario, result.processed_events, result.dataset)
     )
     if result.risk_limit_summary:
         print("Observed risk limit utilisation:")

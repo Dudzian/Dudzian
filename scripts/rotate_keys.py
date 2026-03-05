@@ -10,6 +10,7 @@ Subcommands:
              oznacza klucze jako zrotowane (execute)
   - status : szybki podgląd rejestru rotacji dla bundla (np. mTLS `core-oem`)
 """
+
 from __future__ import annotations
 
 import argparse
@@ -41,6 +42,7 @@ try:
 except Exception:  # pragma: no cover
     _load_core_config_pkg = None
 
+
 def load_core_config(path: str | Path):
     if _load_core_config_pkg is not None:
         return _load_core_config_pkg(path)
@@ -48,14 +50,17 @@ def load_core_config(path: str | Path):
         return _load_core_config_loader(path)
     raise ImportError("Nie można załadować load_core_config (sprawdź zależności bot_core).")
 
+
 # --- RotationRegistry – różne lokalizacje w repo ---
 RotationRegistry = None
 try:
     from bot_core.security.rotation import RotationRegistry as _RR  # HEAD
+
     RotationRegistry = _RR
 except Exception:
     try:
         from bot_core.security import RotationRegistry as _RR  # main
+
         RotationRegistry = _RR
     except Exception as exc:  # pragma: no cover
         raise ImportError("Brak RotationRegistry w bot_core.security") from exc
@@ -81,10 +86,12 @@ except Exception:  # pragma: no cover
 # Wspólne utilsy
 # =====================================================================
 
+
 def _decode_key_b64(value: str | None) -> bytes | None:
     if not value:
         return None
     return base64.b64decode(value, validate=True)
+
 
 def _resolve_signing_key_b64(
     *, inline: str | None, file_path: str | None, env_name: str | None
@@ -97,6 +104,7 @@ def _resolve_signing_key_b64(
         value = os.environ.get(env_name)
         return _decode_key_b64(value) if value else None
     return None
+
 
 def _parse_datetime(value: str | None) -> datetime:
     if not value:
@@ -136,7 +144,7 @@ def _bundle_key_candidates(bundle: str) -> list[str]:
         if candidate and candidate not in variants:
             variants.append(candidate)
     if normalized.endswith("mtls"):
-        suffix_stripped = normalized[: -4].rstrip("-_ ")
+        suffix_stripped = normalized[:-4].rstrip("-_ ")
         if suffix_stripped and suffix_stripped not in variants:
             variants.append(suffix_stripped)
     else:
@@ -174,9 +182,11 @@ def _status_payload(
         payload["last_rotated"] = last_rotated.isoformat().replace("+00:00", "Z")
     return payload
 
+
 # =====================================================================
 # Subcommand: batch  (podpisany raport rotacji)
 # =====================================================================
+
 
 def _build_parser_batch(sub: argparse._SubParsersAction) -> argparse.ArgumentParser:
     p = sub.add_parser(
@@ -185,14 +195,20 @@ def _build_parser_batch(sub: argparse._SubParsersAction) -> argparse.ArgumentPar
         description="Aktualizuje rejestry rotacji (po środowiskach) i zapisuje podpisany raport z wynikami.",
     )
     p.add_argument("--config", default="config/core.yaml", help="Ścieżka do CoreConfig")
-    p.add_argument("--environment", action="append", dest="environments",
-                   help="Nazwa środowiska (można wielokrotnie); domyślnie wszystkie")
-    p.add_argument("--interval-days", type=float, default=90.0,
-                   help="Interwał rotacji w dniach (domyślnie 90)")
+    p.add_argument(
+        "--environment",
+        action="append",
+        dest="environments",
+        help="Nazwa środowiska (można wielokrotnie); domyślnie wszystkie",
+    )
+    p.add_argument(
+        "--interval-days", type=float, default=90.0, help="Interwał rotacji w dniach (domyślnie 90)"
+    )
     p.add_argument("--operator", required=True, help="Operator wykonujący rotację")
     p.add_argument("--notes", help="Uwagi do raportu")
-    p.add_argument("--artifact-root", default="var/audit/key_rotation",
-                   help="Katalog docelowy raportów")
+    p.add_argument(
+        "--artifact-root", default="var/audit/key_rotation", help="Katalog docelowy raportów"
+    )
     p.add_argument("--output", help="Pełna ścieżka pliku raportu (opcjonalnie)")
     p.add_argument("--executed-at", help="Znacznik czasu rotacji (ISO8601); domyślnie teraz")
     p.add_argument("--dry-run", action="store_true", help="Nie zapisuj zmian do rejestru")
@@ -203,7 +219,10 @@ def _build_parser_batch(sub: argparse._SubParsersAction) -> argparse.ArgumentPar
     p.set_defaults(_handler=_handle_batch)
     return p
 
-def _resolve_environments(config: CoreConfig, names: Iterable[str] | None) -> list[EnvironmentConfig]:
+
+def _resolve_environments(
+    config: CoreConfig, names: Iterable[str] | None
+) -> list[EnvironmentConfig]:
     if not names:
         return list(config.environments.values())
     resolved: list[EnvironmentConfig] = []
@@ -213,8 +232,10 @@ def _resolve_environments(config: CoreConfig, names: Iterable[str] | None) -> li
         resolved.append(config.environments[name])
     return resolved
 
+
 def _registry_path(environment: EnvironmentConfig) -> Path:
     return Path(environment.data_cache_path) / "security" / "rotation_log.json"
+
 
 def _resolve_output_path_batch(
     args: argparse.Namespace,
@@ -232,6 +253,7 @@ def _resolve_output_path_batch(
     else:
         filename = f"key_rotation_batch_{timestamp}.json"
     return base / filename
+
 
 def _handle_batch(args: argparse.Namespace) -> int:
     executed_at = _parse_datetime(args.executed_at)
@@ -296,20 +318,24 @@ def _handle_batch(args: argparse.Namespace) -> int:
         signing_key_id=args.signing_key_id,
     )
 
-    print(json.dumps(
-        {
-            "output": str(path),
-            "signed": bool(signing_key),
-            "environments": [env.name for env in environments],
-            "dry_run": bool(args.dry_run),
-        },
-        ensure_ascii=False
-    ))
+    print(
+        json.dumps(
+            {
+                "output": str(path),
+                "signed": bool(signing_key),
+                "environments": [env.name for env in environments],
+                "dry_run": bool(args.dry_run),
+            },
+            ensure_ascii=False,
+        )
+    )
     return 0
+
 
 # =====================================================================
 # Subcommand: plan  (main – plan/execute wg observability.key_rotation)
 # =====================================================================
+
 
 def _build_parser_plan(sub: argparse._SubParsersAction) -> argparse.ArgumentParser:
     p = sub.add_parser(
@@ -317,22 +343,37 @@ def _build_parser_plan(sub: argparse._SubParsersAction) -> argparse.ArgumentPars
         help="Plan rotacji wg observability.key_rotation (+ opcjonalne execute)",
         description="Generuje plan rotacji i (opcjonalnie) oznacza due/overdue jako zrotowane.",
     )
-    p.add_argument("--config", default=str(REPO_ROOT / "config" / "core.yaml"),
-                   help="Ścieżka do pliku konfiguracji core.yaml")
-    p.add_argument("--registry-path", dest="registry_path",
-                   help="Ścieżka rejestru rotacji (nadpisuje konfigurację)")
-    p.add_argument("--output-dir", default=None,
-                   help="Katalog docelowy planu (domyślnie z konfiguracji)")
-    p.add_argument("--basename", default=None,
-                   help="Nazwa bazowa pliku raportu (bez rozszerzeń)")
-    p.add_argument("--execute", action="store_true",
-                   help="Zapisz aktualizacje rotacji dla wpisów wymagających działania")
-    p.add_argument("--interval-override", type=float, default=None,
-                   help="Globalny override interwału (dni)")
-    p.add_argument("--warn-within-override", type=float, default=None,
-                   help="Globalny override progu ostrzeżeń (dni)")
+    p.add_argument(
+        "--config",
+        default=str(REPO_ROOT / "config" / "core.yaml"),
+        help="Ścieżka do pliku konfiguracji core.yaml",
+    )
+    p.add_argument(
+        "--registry-path",
+        dest="registry_path",
+        help="Ścieżka rejestru rotacji (nadpisuje konfigurację)",
+    )
+    p.add_argument(
+        "--output-dir", default=None, help="Katalog docelowy planu (domyślnie z konfiguracji)"
+    )
+    p.add_argument("--basename", default=None, help="Nazwa bazowa pliku raportu (bez rozszerzeń)")
+    p.add_argument(
+        "--execute",
+        action="store_true",
+        help="Zapisz aktualizacje rotacji dla wpisów wymagających działania",
+    )
+    p.add_argument(
+        "--interval-override", type=float, default=None, help="Globalny override interwału (dni)"
+    )
+    p.add_argument(
+        "--warn-within-override",
+        type=float,
+        default=None,
+        help="Globalny override progu ostrzeżeń (dni)",
+    )
     p.set_defaults(_handler=_handle_plan)
     return p
+
 
 def _load_rotation_config(config_path: Path):
     core_config = load_core_config(config_path)
@@ -341,11 +382,13 @@ def _load_rotation_config(config_path: Path):
         raise ValueError("Konfiguracja nie zawiera sekcji observability.key_rotation")
     return observability.key_rotation
 
+
 def _normalize_path(path: str | None, *, default: str, base: Path) -> Path:
     candidate = Path(path) if path else Path(default)
     if not candidate.is_absolute():
         candidate = (base / candidate).resolve()
     return candidate
+
 
 def _status_for_entry(
     registry: RotationRegistry,
@@ -370,6 +413,7 @@ def _status_for_entry(
     if isinstance(last_rotated, datetime):
         payload["last_rotated"] = last_rotated.isoformat().replace("+00:00", "Z")
     return payload
+
 
 def _handle_plan(args: argparse.Namespace) -> int:
     config_path = Path(args.config)
@@ -398,8 +442,12 @@ def _handle_plan(args: argparse.Namespace) -> int:
     updated: list[dict[str, object]] = []
 
     for entry in entries:
-        interval_days = interval_override or entry.interval_days or rotation_config.default_interval_days
-        warn_days = warn_override or entry.warn_within_days or rotation_config.default_warn_within_days
+        interval_days = (
+            interval_override or entry.interval_days or rotation_config.default_interval_days
+        )
+        warn_days = (
+            warn_override or entry.warn_within_days or rotation_config.default_warn_within_days
+        )
         status_payload = _status_for_entry(
             registry,
             entry,
@@ -428,7 +476,9 @@ def _handle_plan(args: argparse.Namespace) -> int:
         "results": results,
         "updated": updated,
     }
-    report_path.write_text(json.dumps(report, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    report_path.write_text(
+        json.dumps(report, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
+    )
 
     print(f"Plan rotacji zapisany w {report_path}")
     if args.execute and updated:
@@ -437,9 +487,11 @@ def _handle_plan(args: argparse.Namespace) -> int:
             print(f" - {entry['key']} ({entry['purpose']})")
     return 0
 
+
 # =====================================================================
 # Subcommand: status  (szybki podgląd bundla)
 # =====================================================================
+
 
 def _extract_status_defaults(
     config: Any,
@@ -464,9 +516,7 @@ def _extract_status_defaults(
     observability = _maybe_getattr(config, "observability")
     if observability is None:
         observability = (
-            raw_mapping.get("observability")
-            if isinstance(raw_mapping, Mapping)
-            else None
+            raw_mapping.get("observability") if isinstance(raw_mapping, Mapping) else None
         )
 
     key_rotation = _maybe_getattr(observability, "key_rotation")
@@ -564,7 +614,9 @@ def _handle_status(args: argparse.Namespace) -> int:
     bundle_positional = getattr(args, "bundle", None)
 
     bundle_candidates = [value for value in (bundle_flag, bundle_positional) if value]
-    normalized_candidates = [str(value).strip() for value in bundle_candidates if str(value).strip()]
+    normalized_candidates = [
+        str(value).strip() for value in bundle_candidates if str(value).strip()
+    ]
 
     if bundle_flag and bundle_positional:
         if not normalized_candidates or len(set(normalized_candidates)) > 1:
@@ -587,7 +639,11 @@ def _handle_status(args: argparse.Namespace) -> int:
     try:
         config = load_core_config(config_path)
     except FileNotFoundError:
-        print(json.dumps({"error": f"Plik konfiguracji {config_path} nie istnieje"}, ensure_ascii=False))
+        print(
+            json.dumps(
+                {"error": f"Plik konfiguracji {config_path} nie istnieje"}, ensure_ascii=False
+            )
+        )
         return 2
 
     raw_config: Mapping[str, Any] | None = None
@@ -617,7 +673,9 @@ def _handle_status(args: argparse.Namespace) -> int:
         )
         return 2
 
-    interval = float(args.interval_days) if args.interval_days is not None else default_interval or 90.0
+    interval = (
+        float(args.interval_days) if args.interval_days is not None else default_interval or 90.0
+    )
     warn_within = float(args.warn_days) if args.warn_days is not None else default_warn or 14.0
     now = _parse_datetime(getattr(args, "as_of", None))
 
@@ -671,9 +729,11 @@ def _handle_status(args: argparse.Namespace) -> int:
     print(json.dumps(report, ensure_ascii=False, indent=2, sort_keys=True))
     return 0
 
+
 # =====================================================================
 # Entrypoint
 # =====================================================================
+
 
 def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
@@ -736,6 +796,7 @@ def run(argv: Sequence[str] | None = None) -> int:
         parser.print_help()
         return 1
     return handler(args)
+
 
 if __name__ == "__main__":  # pragma: no cover
     raise SystemExit(run())

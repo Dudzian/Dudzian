@@ -32,7 +32,9 @@ def _reload_logging_app() -> None:
     importlib.import_module(module_name)
 
 
-def test_logging_env_ignores_archival_variables(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+def test_logging_env_ignores_archival_variables(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
     monkeypatch.delenv("BOT_CORE_LOG_DIR", raising=False)
     monkeypatch.delenv("BOT_CORE_LOG_FILE", raising=False)
     monkeypatch.delenv("BOT_CORE_LOGGER_NAME", raising=False)
@@ -94,7 +96,9 @@ def test_logging_env_uses_env_level(monkeypatch: pytest.MonkeyPatch) -> None:
     assert logger.level == logging.DEBUG
 
 
-def test_logging_env_allows_custom_log_file(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+def test_logging_env_allows_custom_log_file(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
     target = tmp_path / "alt.log"
     monkeypatch.setenv("BOT_CORE_LOG_FILE", str(target))
 
@@ -119,7 +123,9 @@ def test_setup_app_logging_is_idempotent(monkeypatch: pytest.MonkeyPatch, tmp_pa
     assert isinstance(first.handlers[0], QueueHandler)
 
 
-def test_setup_app_logging_attaches_vector_handler(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+def test_setup_app_logging_attaches_vector_handler(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
     monkeypatch.setenv("BOT_CORE_LOG_DIR", str(tmp_path))
     monkeypatch.setenv("BOT_CORE_LOG_SHIP_VECTOR", "http://localhost:8686/logs")
 
@@ -183,4 +189,3 @@ def test_stop_queue_listener_unregisters_from_atexit(
 
     assert module._LISTENER is None
     assert unregistered == [module._stop_queue_listener]
-

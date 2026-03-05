@@ -1,4 +1,5 @@
 """Bazowe interfejsy oraz wspólna logika dla strategii ML."""
+
 from __future__ import annotations
 
 import abc
@@ -21,16 +22,13 @@ class FeaturePipeline(Protocol):
 
     feature_names: Sequence[str]
 
-    def fit(self, snapshots: Sequence[MarketSnapshot]) -> None:
-        ...
+    def fit(self, snapshots: Sequence[MarketSnapshot]) -> None: ...
 
-    def transform_features(self, snapshot: MarketSnapshot) -> FeatureVector:
-        ...
+    def transform_features(self, snapshot: MarketSnapshot) -> FeatureVector: ...
 
     def build_training_set(
         self, history: Sequence[MarketSnapshot]
-    ) -> tuple[np.ndarray, np.ndarray]:
-        ...
+    ) -> tuple[np.ndarray, np.ndarray]: ...
 
 
 @dataclass(slots=True)

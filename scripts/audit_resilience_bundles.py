@@ -31,7 +31,9 @@ def _load_hmac_material(
 ) -> bytes | None:
     provided = sum(1 for option in (inline_value, file_path, env_name) if option)
     if provided > 1:
-        raise ValueError(f"{context}: wybierz dokładnie jedno źródło klucza (wartość, plik lub zmienna)")
+        raise ValueError(
+            f"{context}: wybierz dokładnie jedno źródło klucza (wartość, plik lub zmienna)"
+        )
 
     if inline_value:
         key = inline_value.encode("utf-8")

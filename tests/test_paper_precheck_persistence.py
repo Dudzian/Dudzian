@@ -1,4 +1,5 @@
 """Testy zapisu raportów paper_precheck do katalogu audytu."""
+
 from __future__ import annotations
 
 from datetime import datetime, timezone

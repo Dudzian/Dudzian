@@ -34,8 +34,12 @@ def _service_for(
     interval_days: float = 120.0,
 ) -> HardwareFingerprintService:
     registry = RotationRegistry(rotation_path)
-    registry.mark_rotated("key-2023", "hardware-fingerprint", timestamp=FIXED_NOW - timedelta(days=95))
-    registry.mark_rotated("key-2024", "hardware-fingerprint", timestamp=FIXED_NOW - timedelta(days=10))
+    registry.mark_rotated(
+        "key-2023", "hardware-fingerprint", timestamp=FIXED_NOW - timedelta(days=95)
+    )
+    registry.mark_rotated(
+        "key-2024", "hardware-fingerprint", timestamp=FIXED_NOW - timedelta(days=10)
+    )
     provider = RotatingHmacKeyProvider(
         {"key-2023": b"archival-secret", "key-2024": b"fresh-secret"},
         registry,

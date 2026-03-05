@@ -140,7 +140,9 @@ def test_schedule_transitions_are_recorded() -> None:
 
     events = list(journal.export())
     assert any(event["event"] == "schedule_blocked" for event in events)
-    assert any(event["event"] == "schedule_transition" and event["status"] == "closed" for event in events)
+    assert any(
+        event["event"] == "schedule_transition" and event["status"] == "closed" for event in events
+    )
 
 
 def test_guardrail_blocks_trade_and_logs() -> None:
@@ -150,7 +152,9 @@ def test_guardrail_blocks_trade_and_logs() -> None:
         ai_threshold_bps = 5.0
         is_degraded = False
 
-        def assess_market_regime(self, symbol: str, market_data: pd.DataFrame) -> MarketRegimeAssessment:
+        def assess_market_regime(
+            self, symbol: str, market_data: pd.DataFrame
+        ) -> MarketRegimeAssessment:
             return _build_assessment(risk=0.6)
 
         def get_regime_summary(self, symbol: str) -> None:
@@ -310,7 +314,9 @@ def test_auto_mode_snapshot_exposes_decision_lookup_and_guardrail_details() -> N
         def __init__(self, records: Sequence[Mapping[str, Any]]) -> None:
             self._records = [dict(record) for record in records]
 
-        def record(self, event: Mapping[str, Any] | Any) -> None:  # pragma: no cover - zgodność z kontraktem
+        def record(
+            self, event: Mapping[str, Any] | Any
+        ) -> None:  # pragma: no cover - zgodność z kontraktem
             if isinstance(event, Mapping):
                 self._records.append(dict(event))
             else:
@@ -481,7 +487,9 @@ def test_auto_mode_snapshot_normalizes_decision_history_entries() -> None:
         def __init__(self, records: Sequence[Mapping[str, Any]]) -> None:
             self._records = [dict(record) for record in records]
 
-        def record(self, event: Mapping[str, Any] | Any) -> None:  # pragma: no cover - zgodność z kontraktem
+        def record(
+            self, event: Mapping[str, Any] | Any
+        ) -> None:  # pragma: no cover - zgodność z kontraktem
             if isinstance(event, Mapping):
                 self._records.append(dict(event))
             else:
@@ -594,7 +602,9 @@ def test_auto_mode_snapshot_normalizes_model_events() -> None:
         def __init__(self, records: Sequence[Mapping[str, Any]]) -> None:
             self._records = [dict(record) for record in records]
 
-        def record(self, event: Mapping[str, Any] | Any) -> None:  # pragma: no cover - zgodność z kontraktem
+        def record(
+            self, event: Mapping[str, Any] | Any
+        ) -> None:  # pragma: no cover - zgodność z kontraktem
             if isinstance(event, Mapping):
                 self._records.append(dict(event))
             else:
@@ -712,7 +722,9 @@ def test_ai_scoring_failure_triggers_fallback() -> None:
         ai_threshold_bps: float = 3.0
         is_degraded: bool = False
 
-        def assess_market_regime(self, symbol: str, market_data: pd.DataFrame) -> MarketRegimeAssessment:
+        def assess_market_regime(
+            self, symbol: str, market_data: pd.DataFrame
+        ) -> MarketRegimeAssessment:
             return _build_assessment(risk=0.25, confidence=0.9)
 
         def get_regime_summary(self, symbol: str) -> None:

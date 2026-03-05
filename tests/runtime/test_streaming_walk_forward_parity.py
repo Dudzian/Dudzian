@@ -58,7 +58,11 @@ class _StreamRequestHandler(BaseHTTPRequestHandler):
     server: "HTTPServer"
 
     def do_GET(self) -> None:  # noqa: N802
-        payload = self.server.responses.pop(0) if self.server.responses else {"batches": [], "retry_after": 0.0}
+        payload = (
+            self.server.responses.pop(0)
+            if self.server.responses
+            else {"batches": [], "retry_after": 0.0}
+        )
         data = json.dumps(payload).encode("utf-8")
         self.send_response(200)
         self.send_header("Content-Type", "application/json")
@@ -70,8 +74,7 @@ class _StreamRequestHandler(BaseHTTPRequestHandler):
 def _start_stream_server(responses: list[dict[str, object]]) -> tuple[HTTPServer, threading.Thread]:
     server = HTTPServer(("127.0.0.1", 0), _StreamRequestHandler)
     server.responses = [  # type: ignore[attr-defined]
-        {"batches": [batch], "retry_after": 0.0}
-        for batch in responses
+        {"batches": [batch], "retry_after": 0.0} for batch in responses
     ]
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()
@@ -165,8 +168,7 @@ def test_streaming_matches_walk_forward_history(monkeypatch: pytest.MonkeyPatch)
     streamed_report = backtester.run(_build_definition(), streamed_dataset, segments)
 
     assert streamed_report.total_return_pct == pytest.approx(baseline.total_return_pct, rel=1e-6)
-    assert (
-        streamed_report.cost_summary.total_notional
-        == pytest.approx(baseline.cost_summary.total_notional, rel=1e-6)
+    assert streamed_report.cost_summary.total_notional == pytest.approx(
+        baseline.cost_summary.total_notional, rel=1e-6
     )
     assert streamed_report.cost_summary.total_trades == baseline.cost_summary.total_trades

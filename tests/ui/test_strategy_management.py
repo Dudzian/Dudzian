@@ -10,7 +10,9 @@ except ModuleNotFoundError:  # pragma: no cover
 
 pytestmark = [
     pytest.mark.qml,
-    pytest.mark.skipif(yaml is None, reason="PyYAML nie jest zainstalowane w tym środowisku testowym."),
+    pytest.mark.skipif(
+        yaml is None, reason="PyYAML nie jest zainstalowane w tym środowisku testowym."
+    ),
 ]
 
 if yaml is not None:
@@ -32,6 +34,7 @@ if yaml is not None:
     except ImportError as exc:  # pragma: no cover
         pytest.skip(f"Brak zależności QtWidgets: {exc}", allow_module_level=True)
 else:
+
     class QObject:  # pragma: no cover - wykorzystywane tylko gdy moduł jest skipowany
         def __init__(self, *args, **kwargs) -> None:
             pass
@@ -119,7 +122,11 @@ class RuntimeServiceStub(QObject):
                     "preset_payload": {
                         "name": entry["name"],
                         "blocks": [
-                            {"type": "alpha", "label": "Alpha", "params": {"lookback": 12, "threshold": 1.5}},
+                            {
+                                "type": "alpha",
+                                "label": "Alpha",
+                                "params": {"lookback": 12, "threshold": 1.5},
+                            },
                         ],
                         "metadata": {"source": "stub"},
                     },
@@ -152,7 +159,11 @@ class RuntimeServiceStub(QObject):
         name = str(payload.get("name") or f"Preset {self.clone_count + 1}")
         slug = name.lower().replace(" ", "-")
         self.clone_count += 1
-        new_entry = {"name": name, "slug": f"{slug}-{self.clone_count}", "path": f"/tmp/{slug}-{self.clone_count}.json"}
+        new_entry = {
+            "name": name,
+            "slug": f"{slug}-{self.clone_count}",
+            "path": f"/tmp/{slug}-{self.clone_count}.json",
+        }
         self._presets.insert(0, new_entry)
         self._cache = None
         return {"ok": True, "name": name, "path": new_entry["path"]}
@@ -235,7 +246,9 @@ def test_strategy_management_clone_refreshes_presets(tmp_path: Path) -> None:
     context.setContextProperty("reportController", report_controller)
     context.setContextProperty("strategyManagementController", strategy_controller)
 
-    view_path = Path(__file__).resolve().parents[2] / "ui" / "qml" / "views" / "StrategyManagement.qml"
+    view_path = (
+        Path(__file__).resolve().parents[2] / "ui" / "qml" / "views" / "StrategyManagement.qml"
+    )
     qml_warnings: list = []
 
     def _collect(warnings_list: list) -> None:
@@ -244,7 +257,9 @@ def test_strategy_management_clone_refreshes_presets(tmp_path: Path) -> None:
     engine.warnings.connect(_collect)  # type: ignore[attr-defined]
     engine.load(QUrl.fromLocalFile(str(view_path)))
     if qml_warnings or not engine.rootObjects():
-        warnings_text = "; ".join(warning.toString() for warning in qml_warnings) or "brak obiektów root"
+        warnings_text = (
+            "; ".join(warning.toString() for warning in qml_warnings) or "brak obiektów root"
+        )
         pytest.skip(
             f"Nie udało się załadować StrategyManagement: {warnings_text}",
             allow_module_level=False,

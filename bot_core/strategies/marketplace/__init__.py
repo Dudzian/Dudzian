@@ -101,11 +101,15 @@ def _load_yaml(path: Path) -> Mapping[str, Any]:
     try:
         raw = path.read_text(encoding="utf-8")
     except OSError as exc:
-        raise MarketplaceCatalogError(f"Nie udało się odczytać pliku manifestu {path}: {exc}") from exc
+        raise MarketplaceCatalogError(
+            f"Nie udało się odczytać pliku manifestu {path}: {exc}"
+        ) from exc
     try:
         data = yaml.safe_load(raw)
     except yaml.YAMLError as exc:  # pragma: no cover - biblioteka raportuje błąd
-        raise MarketplaceCatalogError(f"Manifest Marketplace ma niepoprawny format YAML ({path}).") from exc
+        raise MarketplaceCatalogError(
+            f"Manifest Marketplace ma niepoprawny format YAML ({path})."
+        ) from exc
     if not isinstance(data, Mapping):
         raise MarketplaceCatalogError("Manifest Marketplace musi być słownikiem.")
     return data
@@ -138,7 +142,9 @@ def _parse_preset(base_path: Path, payload: Mapping[str, Any]) -> MarketplacePre
     summary_text = str(summary).strip() if isinstance(summary, str) else None
     license_tier = payload.get("license_tier")
     license_tier_text = (
-        str(license_tier).strip() if isinstance(license_tier, str) and license_tier.strip() else None
+        str(license_tier).strip()
+        if isinstance(license_tier, str) and license_tier.strip()
+        else None
     )
 
     author_payload = payload.get("author")
@@ -216,13 +222,17 @@ def load_catalog(base_path: str | Path | None = None) -> MarketplaceCatalog:
         try:
             generated_at = datetime.fromisoformat(text)
         except ValueError as exc:
-            raise MarketplaceCatalogError("Pole generated_at w katalogu Marketplace ma niepoprawny format.") from exc
+            raise MarketplaceCatalogError(
+                "Pole generated_at w katalogu Marketplace ma niepoprawny format."
+            ) from exc
     else:
         generated_at = datetime.utcnow()
 
     presets_payload = data.get("presets")
     if not isinstance(presets_payload, Sequence):
-        raise MarketplaceCatalogError("Manifest Marketplace musi zawierać listę presetów w polu 'presets'.")
+        raise MarketplaceCatalogError(
+            "Manifest Marketplace musi zawierać listę presetów w polu 'presets'."
+        )
 
     presets: list[MarketplacePreset] = []
     for item in presets_payload:

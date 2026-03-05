@@ -7,6 +7,7 @@ licencji, a następnie generuje zunifikowany plik `runtime.yaml`.  Wartości
 domyślne zostały zachowane tak, aby odpowiadały wcześniejszemu układowi
 konfiguracji (AI, risk, licensing, UI).
 """
+
 from __future__ import annotations
 
 import argparse
@@ -46,7 +47,11 @@ def _strip_nulls(value: Any) -> Any:
             cleaned[key] = normalized
         return cleaned
     if isinstance(value, list):
-        return [item for item in (_strip_nulls(elem) for elem in value) if item not in (None, {}, [], ())]
+        return [
+            item
+            for item in (_strip_nulls(elem) for elem in value)
+            if item not in (None, {}, [], ())
+        ]
     return value
 
 
@@ -161,5 +166,7 @@ def main() -> int:
 
     print(f"Zapisano konfigurację runtime do {runtime_path}")
     return 0
+
+
 if __name__ == "__main__":
     sys.exit(main())

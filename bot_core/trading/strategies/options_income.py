@@ -1,4 +1,5 @@
 """Helper primitives for building options income signals."""
+
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -30,9 +31,7 @@ class OptionsIncomeSignalConfig:
         return self
 
 
-def _infer_implied_vol_surface(
-    market_data: Optional[pd.DataFrame], index: pd.Index
-) -> pd.Series:
+def _infer_implied_vol_surface(market_data: Optional[pd.DataFrame], index: pd.Index) -> pd.Series:
     if market_data is None or market_data.empty:
         return pd.Series(0.0, index=index)
 
@@ -62,7 +61,9 @@ def compute_options_income_signal(
         cfg = OptionsIncomeSignalConfig().clamp()
 
     atr = atr.replace(0.0, np.nan)
-    realised = (atr / (fast_price.abs() + 1e-12)).rolling(window=cfg.anchor_window, min_periods=1).mean()
+    realised = (
+        (atr / (fast_price.abs() + 1e-12)).rolling(window=cfg.anchor_window, min_periods=1).mean()
+    )
     realised = realised.fillna(cfg.implied_realized_floor)
 
     implied = _infer_implied_vol_surface(market_data, fast_price.index)

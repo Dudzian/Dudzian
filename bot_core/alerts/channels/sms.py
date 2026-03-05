@@ -1,4 +1,5 @@
 """Adapter SMS obsługujący dostawców z API HTTP (np. Twilio i operatorów lokalnych)."""
+
 from __future__ import annotations
 
 import base64
@@ -14,8 +15,7 @@ from bot_core.alerts.channels.providers import SmsProviderConfig
 
 
 class _SmsHttpOpener(Protocol):
-    def __call__(self, req: request.Request, *, timeout: float) -> request.addinfourl:
-        ...
+    def __call__(self, req: request.Request, *, timeout: float) -> request.addinfourl: ...
 
 
 def _default_sms_opener(req: request.Request, *, timeout: float) -> request.addinfourl:
@@ -45,7 +45,8 @@ class SMSChannel(AlertChannel):
             base = self.provider.api_base_url.rstrip("/")
             self.provider_base_url = base
             self.logger.debug(
-                "SMSChannel skonfigurowany dla dostawcy", extra={"provider": self.provider.provider_id}
+                "SMSChannel skonfigurowany dla dostawcy",
+                extra={"provider": self.provider.provider_id},
             )
 
     def send(self, message: AlertMessage) -> None:
@@ -56,13 +57,17 @@ class SMSChannel(AlertChannel):
 
     def _send_single(self, recipient: str, message: AlertMessage) -> None:
         url = f"{self.provider_base_url}/2010-04-01/Accounts/{self.account_sid}/Messages.json"
-        payload = parse.urlencode({
-            "To": recipient,
-            "From": self.from_number,
-            "Body": self._build_body(message),
-        }).encode("utf-8")
+        payload = parse.urlencode(
+            {
+                "To": recipient,
+                "From": self.from_number,
+                "Body": self._build_body(message),
+            }
+        ).encode("utf-8")
         req = request.Request(url, data=payload, method="POST")
-        auth_header = base64.b64encode(f"{self.account_sid}:{self.auth_token}".encode("utf-8")).decode("ascii")
+        auth_header = base64.b64encode(
+            f"{self.account_sid}:{self.auth_token}".encode("utf-8")
+        ).decode("ascii")
         req.add_header("Authorization", f"Basic {auth_header}")
         req.add_header("Content-Type", "application/x-www-form-urlencoded")
 
@@ -82,14 +87,19 @@ class SMSChannel(AlertChannel):
                 "Dostawca SMS zwrócił kod %s: %s",
                 status,
                 detail,
-                extra={"recipient": recipient, "provider": self.provider.provider_id if self.provider else None},
+                extra={
+                    "recipient": recipient,
+                    "provider": self.provider.provider_id if self.provider else None,
+                },
             )
             raise AlertDeliveryError(f"Dostawca SMS zwrócił kod {status}: {detail}")
 
         if raw_body:
             try:
                 decoded: Dict[str, object] = json.loads(raw_body)
-            except json.JSONDecodeError:  # pragma: no cover - brak body JSON nie jest błędem krytycznym
+            except (
+                json.JSONDecodeError
+            ):  # pragma: no cover - brak body JSON nie jest błędem krytycznym
                 decoded = {"status": "unknown"}
             error_msg = decoded.get("message") if isinstance(decoded, dict) else None
             if error_msg:
@@ -97,7 +107,10 @@ class SMSChannel(AlertChannel):
                 self.logger.error(
                     "Dostawca SMS zgłosił błąd: %s",
                     error_msg,
-                    extra={"recipient": recipient, "provider": self.provider.provider_id if self.provider else None},
+                    extra={
+                        "recipient": recipient,
+                        "provider": self.provider.provider_id if self.provider else None,
+                    },
                 )
                 raise AlertDeliveryError(f"Dostawca SMS zgłosił błąd: {error_msg}")
 

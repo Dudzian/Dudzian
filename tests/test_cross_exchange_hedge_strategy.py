@@ -26,7 +26,9 @@ def _snapshot(basis: float, inventory: float, latency: float) -> MarketSnapshot:
 
 def test_cross_exchange_hedge_outputs_ratio() -> None:
     strategy = CrossExchangeHedgeStrategy(
-        CrossExchangeHedgeSettings(basis_scale=0.01, inventory_scale=0.35, latency_limit_ms=200.0, max_hedge_ratio=0.9)
+        CrossExchangeHedgeSettings(
+            basis_scale=0.01, inventory_scale=0.35, latency_limit_ms=200.0, max_hedge_ratio=0.9
+        )
     )
     strategy.warm_up([_snapshot(0.0, 0.0, 50.0)])
 
@@ -37,7 +39,9 @@ def test_cross_exchange_hedge_outputs_ratio() -> None:
 
 def test_cross_exchange_hedge_latency_penalty_reduces_ratio() -> None:
     strategy = CrossExchangeHedgeStrategy(
-        CrossExchangeHedgeSettings(basis_scale=0.01, inventory_scale=0.2, latency_limit_ms=100.0, max_hedge_ratio=1.0)
+        CrossExchangeHedgeSettings(
+            basis_scale=0.01, inventory_scale=0.2, latency_limit_ms=100.0, max_hedge_ratio=1.0
+        )
     )
     fast_signal = strategy.on_data(_snapshot(0.01, 0.0, 30.0))[0].metadata["target_ratio"]
     slow_signal = strategy.on_data(_snapshot(0.01, 0.0, 120.0))[0].metadata["target_ratio"]

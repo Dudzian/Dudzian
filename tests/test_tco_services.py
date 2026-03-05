@@ -144,9 +144,7 @@ def test_aggregate_costs_applies_extensions() -> None:
     service.register_extension(_MetadataExtension(stage="stage6"))
 
     report = service.aggregate_costs(
-        (
-            _commission("0.3", strategy="gamma", profile="balanced"),
-        ),
+        (_commission("0.3", strategy="gamma", profile="balanced"),),
         metadata={"source": "unit-test"},
     )
 

@@ -263,10 +263,7 @@ class TaxReportExporter:
             f"Podatek krótki: {report.totals.short_term_tax:.2f}",
             f"Podatek długi: {report.totals.long_term_tax:.2f}",
             f"Łączne zobowiązanie: {report.totals.total_tax_liability:.2f}",
-            (
-                "Śr. okres przetrzymania (dni): "
-                f"{report.totals.average_holding_period_days:.2f}"
-            ),
+            (f"Śr. okres przetrzymania (dni): {report.totals.average_holding_period_days:.2f}"),
             f"Otwarte pozycje: {len(report.open_lots)}",
             (
                 "Otwarte qty short: "
@@ -276,10 +273,7 @@ class TaxReportExporter:
                 "Otwarte qty long: "
                 f"{report.totals.unrealized_long_term_quantity:.8f}, cost={report.totals.unrealized_long_term_cost_basis:.2f}"
             ),
-            (
-                "Śr. okres otwartych (dni): "
-                f"{report.totals.average_open_holding_period_days:.2f}"
-            ),
+            (f"Śr. okres otwartych (dni): {report.totals.average_open_holding_period_days:.2f}"),
         ]
         for event in report.events:
             content_lines.append(
@@ -408,7 +402,9 @@ class TaxReportExporter:
         return buffer.getvalue()
 
     # --- Walidacja i podpis -----------------------------------------------------
-    def _load_schema(self, candidate: Mapping[str, object] | Path | None) -> Mapping[str, object] | None:
+    def _load_schema(
+        self, candidate: Mapping[str, object] | Path | None
+    ) -> Mapping[str, object] | None:
         if candidate is None:
             path = self._default_schema
             if path and path.exists():
@@ -421,7 +417,9 @@ class TaxReportExporter:
         with path.open("r", encoding="utf-8") as handle:
             return json.load(handle)
 
-    def _validate_schema(self, payload: Mapping[str, object], schema: Mapping[str, object] | None) -> None:
+    def _validate_schema(
+        self, payload: Mapping[str, object], schema: Mapping[str, object] | None
+    ) -> None:
         if schema is None:
             return
         if jsonschema is None:

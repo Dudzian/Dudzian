@@ -17,8 +17,16 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 require_pyside6()
 
-from PySide6.QtCore import (QAbstractListModel, QModelIndex, QObject, Property,
-                            Qt, QUrl, Signal, Slot)
+from PySide6.QtCore import (
+    QAbstractListModel,
+    QModelIndex,
+    QObject,
+    Property,
+    Qt,
+    QUrl,
+    Signal,
+    Slot,
+)
 from PySide6.QtQml import QQmlApplicationEngine
 
 try:  # pragma: no cover - zależy od środowiska CI
@@ -50,8 +58,7 @@ def find_repo_root(start: Path) -> Path:
         return marker_root
     checked = ", ".join(str(path) for path in candidates)
     raise AssertionError(
-        "Nie udało się odnaleźć katalogu repozytorium. "
-        f"Sprawdzone lokalizacje: {checked}"
+        f"Nie udało się odnaleźć katalogu repozytorium. Sprawdzone lokalizacje: {checked}"
     )
 
 
@@ -182,7 +189,9 @@ class EngineCostModel(QAbstractListModel):
                 formatted = f"{float(value) * 100:.2f} %"
             elif isinstance(value, float):
                 formatted = f"{float(value):.2f}"
-            self._entries.append({"key": key, "label": label, "value": value, "formatted": formatted})
+            self._entries.append(
+                {"key": key, "label": label, "value": value, "formatted": formatted}
+            )
 
     def rowCount(self, parent: QModelIndex | None = None) -> int:  # type: ignore[override]
         return len(self._entries)
@@ -253,8 +262,7 @@ def _shutdown_local_long_poll_streams(timeout: float = 2.0) -> None:
         if thread.is_alive() and thread.name.startswith("LocalLongPollStream[")
     ]
     assert not active, (
-        "Pozostały aktywne wątki LocalLongPollStream: "
-        f"{[thread.name for thread in active]}"
+        f"Pozostały aktywne wątki LocalLongPollStream: {[thread.name for thread in active]}"
     )
 
 
@@ -325,13 +333,16 @@ def test_risk_controls_panel_handles_engine_snapshot():
     source_url = QUrl.fromLocalFile(str(source_path))
     engine_qml.load(source_url)
     missing_property_warning = next(
-        (warning for warning in qml_warnings if "Cannot assign to non-existent property" in warning),
+        (
+            warning
+            for warning in qml_warnings
+            if "Cannot assign to non-existent property" in warning
+        ),
         None,
     )
     if missing_property_warning:
         raise AssertionError(
-            "Wykryto ostrzeżenie QML o nieistniejącej właściwości:\n"
-            f"{missing_property_warning}"
+            f"Wykryto ostrzeżenie QML o nieistniejącej właściwości:\n{missing_property_warning}"
         )
     if not engine_qml.rootObjects():
         warnings_summary = "\n".join(qml_warnings) if qml_warnings else "(brak warnings)"

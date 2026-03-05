@@ -1,4 +1,5 @@
 """Walidacja spójności konfiguracji CoreConfig."""
+
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -135,9 +136,7 @@ def validate_core_config(
             f"profil środowisk '{profile_display}' nie jest wspierany – dostępne: {available_text}"
         )
 
-    active_profile = (
-        requested_profile if requested_profile in available_env_profiles else None
-    )
+    active_profile = requested_profile if requested_profile in available_env_profiles else None
 
     _validate_risk_profiles(config, errors, warnings)
     _validate_instrument_buckets(config, errors, warnings)
@@ -165,9 +164,7 @@ def assert_core_config_valid(config: CoreConfig) -> ConfigValidationResult:
     return result
 
 
-def _validate_risk_profiles(
-    config: CoreConfig, errors: list[str], warnings: list[str]
-) -> None:
+def _validate_risk_profiles(config: CoreConfig, errors: list[str], warnings: list[str]) -> None:
     for name, profile in config.risk_profiles.items():
         context = f"profil ryzyka '{name}'"
         if profile.max_daily_loss_pct < 0:
@@ -186,9 +183,7 @@ def _validate_risk_profiles(
             errors.append(f"{context}: hard_drawdown_pct nie może być ujemne")
 
         if name.lower() != profile.name.lower():
-            warnings.append(
-                f"profil ryzyka '{name}' ma nazwę '{profile.name}' – zalecana spójność"
-            )
+            warnings.append(f"profil ryzyka '{name}' ma nazwę '{profile.name}' – zalecana spójność")
 
         for bucket_name in profile.instrument_buckets:
             if bucket_name not in config.instrument_buckets:
@@ -206,9 +201,7 @@ def _validate_instrument_buckets(
         if not bucket.symbols:
             errors.append(f"{context}: lista symboli nie może być pusta")
         if bucket.universe and bucket.universe not in universes:
-            errors.append(
-                f"{context}: referencja do nieistniejącego uniwersum '{bucket.universe}'"
-            )
+            errors.append(f"{context}: referencja do nieistniejącego uniwersum '{bucket.universe}'")
         if bucket.max_position_pct is not None and bucket.max_position_pct <= 0:
             errors.append(
                 f"{context}: max_position_pct musi być dodatnie, otrzymano {bucket.max_position_pct}"
@@ -219,9 +212,7 @@ def _validate_instrument_buckets(
             )
 
 
-def _validate_strategies(
-    config: CoreConfig, errors: list[str], warnings: list[str]
-) -> None:
+def _validate_strategies(config: CoreConfig, errors: list[str], warnings: list[str]) -> None:
     for name, strategy in config.strategies.items():
         context = f"strategia '{name}'"
         if strategy.fast_ma <= 0:
@@ -246,9 +237,7 @@ def _validate_strategies(
             )
 
 
-def _validate_live_routing(
-    config: CoreConfig, errors: list[str], warnings: list[str]
-) -> None:
+def _validate_live_routing(config: CoreConfig, errors: list[str], warnings: list[str]) -> None:
     routing = getattr(config, "live_routing", None)
     if routing is None:
         return
@@ -279,9 +268,7 @@ def _validate_live_routing(
         for entry in route:
             normalized = str(entry).strip()
             if not normalized:
-                errors.append(
-                    f"{context}.route_overrides[{symbol}]: zawiera pustą nazwę giełdy"
-                )
+                errors.append(f"{context}.route_overrides[{symbol}]: zawiera pustą nazwę giełdy")
 
     buckets = tuple(getattr(routing, "latency_histogram_buckets", ()))
     if buckets:
@@ -292,23 +279,21 @@ def _validate_live_routing(
                     f"{context}: latency_histogram_buckets muszą być dodatnie (otrzymano {bucket})"
                 )
             if previous is not None and bucket <= previous:
-                errors.append(
-                    f"{context}: latency_histogram_buckets muszą być ściśle rosnące"
-                )
+                errors.append(f"{context}: latency_histogram_buckets muszą być ściśle rosnące")
             previous = bucket
 
     for alert in getattr(routing, "prometheus_alerts", ()):  # type: ignore[attr-defined]
         name = getattr(alert, "name", "")
         expr = getattr(alert, "expr", "")
         if not name or not expr:
-            errors.append(
-                f"{context}.prometheus_alerts: każdy alert wymaga pól name oraz expr"
-            )
+            errors.append(f"{context}.prometheus_alerts: każdy alert wymaga pól name oraz expr")
         duration = getattr(alert, "for_duration", None)
         if duration is not None and not duration.strip():
             warnings.append(
                 f"{context}.prometheus_alerts[{name}]: parametr 'for' jest pusty – zostanie pominięty"
             )
+
+
 def _validate_runtime_controllers(
     config: CoreConfig, errors: list[str], warnings: list[str]
 ) -> None:
@@ -489,10 +474,7 @@ def _validate_environment_ai(
         errors.append(f"{ai_context}: threshold_bps nie może być ujemne")
     if ai_config.default_notional is not None and ai_config.default_notional <= 0:
         errors.append(f"{ai_context}: default_notional musi być dodatnie")
-    if (
-        ai_config.default_risk_profile
-        and ai_config.default_risk_profile not in available_profiles
-    ):
+    if ai_config.default_risk_profile and ai_config.default_risk_profile not in available_profiles:
         errors.append(
             f"{ai_context}: domyślny profil ryzyka '{ai_config.default_risk_profile}' nie istnieje w sekcji risk_profiles"
         )
@@ -529,9 +511,7 @@ def _validate_environment_ai(
             )
             continue
         if not model_path.exists():
-            warnings.append(
-                f"{entry_context}: plik modelu {model_path} nie istnieje"
-            )
+            warnings.append(f"{entry_context}: plik modelu {model_path} nie istnieje")
 
     for preload_name in ai_config.preload:
         if preload_name not in defined_models:
@@ -572,9 +552,7 @@ def _validate_alert_channels(
             errors.append(f"{context}: kanał alertowy '{channel}' nie istnieje w sekcji alerts")
 
 
-def _validate_metrics_service(
-    config: CoreConfig, errors: list[str], warnings: list[str]
-) -> None:
+def _validate_metrics_service(config: CoreConfig, errors: list[str], warnings: list[str]) -> None:
     metrics = getattr(config, "metrics_service", None)
     if metrics is None:
         return
@@ -604,17 +582,15 @@ def _validate_metrics_service(
                 continue
             normalized = key_str.lower()
             if key_str != normalized:
-                errors.append(f"{context}: grpc_metadata klucz '{key}' musi być zapisany małymi literami")
+                errors.append(
+                    f"{context}: grpc_metadata klucz '{key}' musi być zapisany małymi literami"
+                )
                 continue
             if not _GRPC_METADATA_KEY_PATTERN.fullmatch(normalized):
-                errors.append(
-                    f"{context}: grpc_metadata klucz '{key}' zawiera niedozwolone znaki"
-                )
+                errors.append(f"{context}: grpc_metadata klucz '{key}' zawiera niedozwolone znaki")
                 continue
             if normalized in seen_keys:
-                warnings.append(
-                    f"{context}: grpc_metadata zawiera duplikat klucza '{normalized}'"
-                )
+                warnings.append(f"{context}: grpc_metadata zawiera duplikat klucza '{normalized}'")
             seen_keys.add(normalized)
 
         sources = getattr(metrics, "grpc_metadata_sources", None)
@@ -640,25 +616,17 @@ def _validate_metrics_service(
         certificate = getattr(tls, "certificate_path", None)
         private_key = getattr(tls, "private_key_path", None)
         if not certificate or not str(certificate).strip():
-            errors.append(
-                f"{context}: TLS wymaga certificate_path przy włączonym szyfrowaniu"
-            )
+            errors.append(f"{context}: TLS wymaga certificate_path przy włączonym szyfrowaniu")
         if not private_key or not str(private_key).strip():
-            errors.append(
-                f"{context}: TLS wymaga private_key_path przy włączonym szyfrowaniu"
-            )
+            errors.append(f"{context}: TLS wymaga private_key_path przy włączonym szyfrowaniu")
         if getattr(tls, "require_client_auth", False):
             client_ca = getattr(tls, "client_ca_path", None)
             if not client_ca or not str(client_ca).strip():
-                errors.append(
-                    f"{context}: TLS z require_client_auth wymaga client_ca_path"
-                )
+                errors.append(f"{context}: TLS z require_client_auth wymaga client_ca_path")
     if tls is not None:
         pinned = tuple(getattr(tls, "pinned_fingerprints", ()) or ())
         if pinned and not getattr(tls, "enabled", False):
-            warnings.append(
-                f"{context}: tls.pinned_fingerprints ustawione, ale TLS jest wyłączone"
-            )
+            warnings.append(f"{context}: tls.pinned_fingerprints ustawione, ale TLS jest wyłączone")
         seen_pins: set[str] = set()
         for entry in pinned:
             normalized = str(entry).strip().lower()
@@ -668,17 +636,13 @@ def _validate_metrics_service(
                 )
                 continue
             if normalized in seen_pins:
-                warnings.append(
-                    f"{context}: tls.pinned_fingerprints zawiera duplikat '{entry}'"
-                )
+                warnings.append(f"{context}: tls.pinned_fingerprints zawiera duplikat '{entry}'")
             seen_pins.add(normalized)
         password_env = getattr(tls, "private_key_password_env", None)
         if password_env is not None:
             normalized_env = str(password_env).strip()
             if not normalized_env:
-                errors.append(
-                    f"{context}: tls.private_key_password_env nie może być puste"
-                )
+                errors.append(f"{context}: tls.private_key_password_env nie może być puste")
             elif normalized_env and not normalized_env.isupper():
                 warnings.append(
                     f"{context}: nazwa zmiennej tls.private_key_password_env powinna być wielkimi literami"
@@ -691,9 +655,7 @@ def _validate_metrics_service(
         mode_value=getattr(metrics, "reduce_motion_mode", None),
         category_value=getattr(metrics, "reduce_motion_category", ""),
         required_severities={
-            "reduce_motion_severity_active": getattr(
-                metrics, "reduce_motion_severity_active", ""
-            ),
+            "reduce_motion_severity_active": getattr(metrics, "reduce_motion_severity_active", ""),
             "reduce_motion_severity_recovered": getattr(
                 metrics, "reduce_motion_severity_recovered", ""
             ),
@@ -737,14 +699,10 @@ def _validate_metrics_service(
         mode_value=getattr(metrics, "jank_alert_mode", None),
         category_value=getattr(metrics, "jank_alert_category", ""),
         required_severities={
-            "jank_alert_severity_spike": getattr(
-                metrics, "jank_alert_severity_spike", ""
-            ),
+            "jank_alert_severity_spike": getattr(metrics, "jank_alert_severity_spike", ""),
         },
         optional_severities={
-            "jank_alert_severity_critical": getattr(
-                metrics, "jank_alert_severity_critical", None
-            )
+            "jank_alert_severity_critical": getattr(metrics, "jank_alert_severity_critical", None)
         },
         threshold_value=getattr(metrics, "jank_alert_critical_over_ms", None),
         threshold_label="jank_alert_critical_over_ms",
@@ -759,12 +717,8 @@ def _validate_metrics_service(
         mode_value=getattr(metrics, "performance_alert_mode", None),
         category_value=getattr(metrics, "performance_category", ""),
         required_severities={
-            "performance_severity_warning": getattr(
-                metrics, "performance_severity_warning", ""
-            ),
-            "performance_severity_critical": getattr(
-                metrics, "performance_severity_critical", ""
-            ),
+            "performance_severity_warning": getattr(metrics, "performance_severity_warning", ""),
+            "performance_severity_critical": getattr(metrics, "performance_severity_critical", ""),
             "performance_severity_recovered": getattr(
                 metrics, "performance_severity_recovered", ""
             ),
@@ -798,20 +752,14 @@ def _validate_metrics_service(
             try:
                 numeric = float(value)
             except (TypeError, ValueError):
-                errors.append(
-                    f"{context}: {field_name} musi być wartością liczbową"
-                )
+                errors.append(f"{context}: {field_name} musi być wartością liczbową")
                 return None
             if numeric <= 0:
-                errors.append(
-                    f"{context}: {field_name} musi być dodatnie (otrzymano {value})"
-                )
+                errors.append(f"{context}: {field_name} musi być dodatnie (otrzymano {value})")
                 return None
             return numeric
 
-        def _validate_threshold_pair(
-            warning_field: str, critical_field: str
-        ) -> None:
+        def _validate_threshold_pair(warning_field: str, critical_field: str) -> None:
             warning_value = _validate_threshold_value(warning_field)
             critical_value = _validate_threshold_value(critical_field)
             if (
@@ -861,14 +809,10 @@ def _validate_metrics_service(
     if profiles_file_value:
         profiles_path = Path(str(profiles_file_value)).expanduser()
         if not profiles_path.exists():
-            errors.append(
-                f"{context}: ui_alerts_risk_profiles_file '{profiles_path}' nie istnieje"
-            )
+            errors.append(f"{context}: ui_alerts_risk_profiles_file '{profiles_path}' nie istnieje")
 
 
-def _validate_risk_service(
-    config: CoreConfig, errors: list[str], warnings: list[str]
-) -> None:
+def _validate_risk_service(config: CoreConfig, errors: list[str], warnings: list[str]) -> None:
     risk_service = getattr(config, "risk_service", None)
     if risk_service is None:
         return
@@ -924,25 +868,17 @@ def _validate_risk_service(
         certificate = getattr(tls, "certificate_path", None)
         private_key = getattr(tls, "private_key_path", None)
         if not certificate or not str(certificate).strip():
-            errors.append(
-                f"{context}: TLS wymaga certificate_path przy włączonym szyfrowaniu"
-            )
+            errors.append(f"{context}: TLS wymaga certificate_path przy włączonym szyfrowaniu")
         if not private_key or not str(private_key).strip():
-            errors.append(
-                f"{context}: TLS wymaga private_key_path przy włączonym szyfrowaniu"
-            )
+            errors.append(f"{context}: TLS wymaga private_key_path przy włączonym szyfrowaniu")
         if getattr(tls, "require_client_auth", False):
             client_ca = getattr(tls, "client_ca_path", None)
             if not client_ca or not str(client_ca).strip():
-                errors.append(
-                    f"{context}: TLS z require_client_auth wymaga client_ca_path"
-                )
+                errors.append(f"{context}: TLS z require_client_auth wymaga client_ca_path")
     if tls is not None:
         pinned = tuple(getattr(tls, "pinned_fingerprints", ()) or ())
         if pinned and not getattr(tls, "enabled", False):
-            warnings.append(
-                f"{context}: tls.pinned_fingerprints ustawione, ale TLS jest wyłączone"
-            )
+            warnings.append(f"{context}: tls.pinned_fingerprints ustawione, ale TLS jest wyłączone")
         seen_pins: set[str] = set()
         for entry in pinned:
             normalized = str(entry).strip().lower()
@@ -952,26 +888,20 @@ def _validate_risk_service(
                 )
                 continue
             if normalized in seen_pins:
-                warnings.append(
-                    f"{context}: tls.pinned_fingerprints zawiera duplikat '{entry}'"
-                )
+                warnings.append(f"{context}: tls.pinned_fingerprints zawiera duplikat '{entry}'")
             seen_pins.add(normalized)
         password_env = getattr(tls, "private_key_password_env", None)
         if password_env is not None:
             normalized_env = str(password_env).strip()
             if not normalized_env:
-                errors.append(
-                    f"{context}: tls.private_key_password_env nie może być puste"
-                )
+                errors.append(f"{context}: tls.private_key_password_env nie może być puste")
             elif normalized_env and not normalized_env.isupper():
                 warnings.append(
                     f"{context}: nazwa zmiennej tls.private_key_password_env powinna być wielkimi literami"
                 )
 
 
-def _validate_risk_decision_log(
-    config: CoreConfig, errors: list[str], warnings: list[str]
-) -> None:
+def _validate_risk_decision_log(config: CoreConfig, errors: list[str], warnings: list[str]) -> None:
     log_config = getattr(config, "risk_decision_log", None)
     if log_config is None or not getattr(log_config, "enabled", True):
         return
@@ -993,14 +923,10 @@ def _validate_risk_decision_log(
             key_sources.append(source)
 
     if len(key_sources) > 1:
-        errors.append(
-            f"{context}: skonfiguruj tylko jedno źródło klucza podpisu (env/path/value)"
-        )
+        errors.append(f"{context}: skonfiguruj tylko jedno źródło klucza podpisu (env/path/value)")
 
     if not key_sources:
-        warnings.append(
-            f"{context}: brak klucza podpisu – podpisy HMAC nie będą generowane"
-        )
+        warnings.append(f"{context}: brak klucza podpisu – podpisy HMAC nie będą generowane")
 
     if getattr(log_config, "signing_key_value", None):
         warnings.append(
@@ -1032,14 +958,10 @@ def _validate_portfolio_decision_log(
             key_sources.append(source)
 
     if len(key_sources) > 1:
-        errors.append(
-            f"{context}: skonfiguruj tylko jedno źródło klucza podpisu (env/path/value)"
-        )
+        errors.append(f"{context}: skonfiguruj tylko jedno źródło klucza podpisu (env/path/value)")
 
     if not key_sources:
-        warnings.append(
-            f"{context}: brak klucza podpisu – podpisy HMAC nie będą generowane"
-        )
+        warnings.append(f"{context}: brak klucza podpisu – podpisy HMAC nie będą generowane")
 
     if getattr(log_config, "signing_key_value", None):
         warnings.append(
@@ -1047,9 +969,7 @@ def _validate_portfolio_decision_log(
         )
 
 
-def _validate_security_baseline(
-    config: CoreConfig, errors: list[str], warnings: list[str]
-) -> None:
+def _validate_security_baseline(config: CoreConfig, errors: list[str], warnings: list[str]) -> None:
     baseline_config = getattr(config, "security_baseline", None)
     if baseline_config is None:
         return
@@ -1090,9 +1010,7 @@ def _validate_security_baseline(
         )
 
     if len(key_sources) > 1:
-        errors.append(
-            f"{context}: skonfiguruj tylko jedno źródło klucza podpisu (env/path/value)"
-        )
+        errors.append(f"{context}: skonfiguruj tylko jedno źródło klucza podpisu (env/path/value)")
 
     require_signature = bool(getattr(signing_config, "require_signature", False))
     if require_signature and not key_sources:
@@ -1158,9 +1076,7 @@ def _validate_ui_alert_block(
 
     for field_name, severity in required_severities.items():
         if not severity or not str(severity).strip():
-            errors.append(
-                f"{context}: {field_name} nie może być puste przy aktywnych alertach"
-            )
+            errors.append(f"{context}: {field_name} nie może być puste przy aktywnych alertach")
 
     for field_name, severity in optional_severities.items():
         if severity is not None and not str(severity).strip():
@@ -1170,9 +1086,7 @@ def _validate_ui_alert_block(
         try:
             numeric = float(threshold_value)
         except (TypeError, ValueError):  # pragma: no cover - defensywne logowanie
-            errors.append(
-                f"{context}: {threshold_label} musi być wartością liczbową"
-            )
+            errors.append(f"{context}: {threshold_label} musi być wartością liczbową")
             return
         if numeric <= 0:
             errors.append(
@@ -1256,6 +1170,7 @@ def _validate_service_tokens_block(
                 continue
             seen_scopes.add(normalized_scope)
 
+
 def _validate_instrument_universes(
     config: CoreConfig, errors: list[str], warnings: list[str]
 ) -> None:
@@ -1282,7 +1197,9 @@ def _validate_instrument_universes(
 
             if not instrument.categories:
                 errors.append(f"{inst_context}: lista kategorii nie może być pusta")
-            elif len(set(cat.lower() for cat in instrument.categories)) != len(instrument.categories):
+            elif len(set(cat.lower() for cat in instrument.categories)) != len(
+                instrument.categories
+            ):
                 warnings.append(f"{inst_context}: wykryto zduplikowane kategorie")
 
             if not instrument.exchange_symbols:
@@ -1323,14 +1240,14 @@ def _validate_instrument_universes(
                     )
                 interval_key = interval.lower()
                 if interval_key in intervals_seen:
-                    warnings.append(f"{inst_context}: interwał '{window.interval}' zdefiniowano wielokrotnie")
+                    warnings.append(
+                        f"{inst_context}: interwał '{window.interval}' zdefiniowano wielokrotnie"
+                    )
                 else:
                     intervals_seen.add(interval_key)
 
 
-def _validate_resource_limits(
-    config: CoreConfig, errors: list[str], warnings: list[str]
-) -> None:
+def _validate_resource_limits(config: CoreConfig, errors: list[str], warnings: list[str]) -> None:
     limits = getattr(config, "runtime_resource_limits", None)
     if limits is None:
         return
@@ -1349,9 +1266,7 @@ def _validate_resource_limits(
         )
 
 
-def _validate_decision_engine(
-    config: CoreConfig, errors: list[str], warnings: list[str]
-) -> None:
+def _validate_decision_engine(config: CoreConfig, errors: list[str], warnings: list[str]) -> None:
     decision_config = getattr(config, "decision_engine", None)
     if decision_config is None:
         return
@@ -1375,11 +1290,7 @@ def _validate_decision_engine(
         errors.append(
             "decision_engine.tco.max_report_age_hours musi być dodatnie, jeśli jest ustawione"
         )
-    if (
-        warn_age is not None
-        and max_age is not None
-        and warn_age > max_age
-    ):
+    if warn_age is not None and max_age is not None and warn_age > max_age:
         errors.append(
             "decision_engine.tco.warn_report_age_hours nie może przekraczać max_report_age_hours"
         )

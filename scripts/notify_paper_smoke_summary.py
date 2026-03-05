@@ -1,4 +1,5 @@
 """Powiadamia kanały compliance o wyniku smoke testu na podstawie summary.json."""
+
 from __future__ import annotations
 
 import argparse
@@ -118,9 +119,7 @@ def _create_secret_manager(args: argparse.Namespace) -> SecretManager:
     )
 
 
-def _set_path_context(
-    context: MutableMapping[str, str], key: str, value: object | None
-) -> None:
+def _set_path_context(context: MutableMapping[str, str], key: str, value: object | None) -> None:
     if value is None:
         return
     try:
@@ -174,9 +173,7 @@ def _append_publish_context(
 
     archive_upload = publish_payload.get("archive_upload")
     if isinstance(archive_upload, Mapping):
-        context["paper_smoke_publish_archive_status"] = str(
-            archive_upload.get("status", "unknown")
-        )
+        context["paper_smoke_publish_archive_status"] = str(archive_upload.get("status", "unknown"))
         backend = archive_upload.get("backend")
         if backend:
             context["paper_smoke_publish_archive_backend"] = str(backend)
@@ -205,7 +202,9 @@ def _append_telemetry_context(
             return
         context[key] = "true" if bool(value) else "false"
 
-    _set_path_context(context, "paper_smoke_telemetry_summary_path", telemetry_payload.get("summary_path"))
+    _set_path_context(
+        context, "paper_smoke_telemetry_summary_path", telemetry_payload.get("summary_path")
+    )
     _set_path_context(
         context,
         "paper_smoke_telemetry_decision_log_path",
@@ -307,9 +306,7 @@ def _append_telemetry_context(
 
         cli_args = risk_requirements.get("cli_args")
         if isinstance(cli_args, (list, tuple)) and cli_args:
-            context["paper_smoke_risk_service_cli_args"] = " ".join(
-                str(arg) for arg in cli_args
-            )
+            context["paper_smoke_risk_service_cli_args"] = " ".join(str(arg) for arg in cli_args)
 
         combined_metadata = risk_requirements.get("combined_metadata")
         if isinstance(combined_metadata, Mapping):
@@ -423,7 +420,9 @@ def _build_alert_payload(
             context["paper_smoke_manifest_risk_profile"] = str(risk_profile)
         deny_status = manifest_section.get("deny_status")
         if isinstance(deny_status, (list, tuple, set)):
-            context["paper_smoke_manifest_deny_status"] = ",".join(str(item) for item in deny_status)
+            context["paper_smoke_manifest_deny_status"] = ",".join(
+                str(item) for item in deny_status
+            )
         elif deny_status:
             context["paper_smoke_manifest_deny_status"] = str(deny_status)
 
@@ -563,7 +562,9 @@ def _build_alert_payload(
                 context["paper_smoke_security_baseline_signature"] = str(signature_value)
             signature_algorithm = signature_payload.get("algorithm")
             if signature_algorithm:
-                context["paper_smoke_security_baseline_signature_algorithm"] = str(signature_algorithm)
+                context["paper_smoke_security_baseline_signature_algorithm"] = str(
+                    signature_algorithm
+                )
             signature_key_id = signature_payload.get("key_id")
             if signature_key_id:
                 context["paper_smoke_security_baseline_signature_key_id"] = str(signature_key_id)

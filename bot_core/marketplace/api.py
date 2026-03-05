@@ -118,7 +118,9 @@ def _satisfies_constraint(version: str | None, constraints: Sequence[str]) -> bo
                 base = Version(constraint[2:].strip())
             except InvalidVersion:
                 return None
-            upper = Version(f"{base.major}.{base.minor + 1 if base.release and len(base.release) > 1 else base.minor + 1}.0")
+            upper = Version(
+                f"{base.major}.{base.minor + 1 if base.release and len(base.release) > 1 else base.minor + 1}.0"
+            )
             if current < base or current >= upper:
                 return False
         else:
@@ -251,10 +253,14 @@ def _parse_dependency(entry: object) -> PresetDependency | None:
         return PresetDependency(preset_id=_normalize_identifier(entry))
     if isinstance(entry, Mapping):
         try:
-            preset_id = _normalize_identifier(entry.get("preset_id") or entry.get("id") or entry.get("name"))
+            preset_id = _normalize_identifier(
+                entry.get("preset_id") or entry.get("id") or entry.get("name")
+            )
         except ValueError:
             return None
-        constraints_value = entry.get("version") or entry.get("constraint") or entry.get("constraints")
+        constraints_value = (
+            entry.get("version") or entry.get("constraint") or entry.get("constraints")
+        )
         constraints: tuple[str, ...] = ()
         if isinstance(constraints_value, str):
             constraints = _parse_version_constraint(constraints_value)
@@ -284,7 +290,9 @@ def _parse_dependencies(metadata: Mapping[str, object]) -> tuple[PresetDependenc
     items: Iterable[object]
     if isinstance(dependencies_field, Mapping):
         items = dependencies_field.values()
-    elif isinstance(dependencies_field, Sequence) and not isinstance(dependencies_field, (str, bytes)):
+    elif isinstance(dependencies_field, Sequence) and not isinstance(
+        dependencies_field, (str, bytes)
+    ):
         items = dependencies_field
     else:
         return tuple()
@@ -347,7 +355,9 @@ def _parse_update_directive(metadata: Mapping[str, object]) -> PresetUpdateDirec
         )
     else:
         replaces = tuple()
-    requires_approval = _normalize_bool(updates_field.get("requires_approval") or updates_field.get("manual"))
+    requires_approval = _normalize_bool(
+        updates_field.get("requires_approval") or updates_field.get("manual")
+    )
     channel = _optional_str(updates_field.get("default_channel") or updates_field.get("channel"))
     message = _optional_str(updates_field.get("message") or updates_field.get("notes"))
     return PresetUpdateDirective(
@@ -566,4 +576,3 @@ __all__ = [
     "UpdateStep",
     "build_marketplace_preset",
 ]
-

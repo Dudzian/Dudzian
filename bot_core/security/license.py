@@ -1,4 +1,5 @@
 """Walidacja licencji OEM oraz podpisanych fingerprintów."""
+
 from __future__ import annotations
 
 import json
@@ -124,10 +125,14 @@ def _parse_seat_policy(
     fingerprint_value: str | None,
     errors: list[ValidationMessage],
     warnings: list[ValidationMessage],
-) -> tuple[int | None, int | None, int | None, tuple[str, ...], tuple[str, ...], str | None, bool | None]:
+) -> tuple[
+    int | None, int | None, int | None, tuple[str, ...], tuple[str, ...], str | None, bool | None
+]:
     section = payload.get("seat_policy")
     if not isinstance(section, Mapping):
-        section = payload.get("multi_seat") if isinstance(payload.get("multi_seat"), Mapping) else None
+        section = (
+            payload.get("multi_seat") if isinstance(payload.get("multi_seat"), Mapping) else None
+        )
     if not isinstance(section, Mapping):
         return None, None, None, tuple(), tuple(), None, None
 
@@ -141,7 +146,9 @@ def _parse_seat_policy(
         )
         total = None
 
-    assignments = _normalize_sequence_of_str(section.get("assignments") or section.get("allocated") or section.get("devices"))
+    assignments = _normalize_sequence_of_str(
+        section.get("assignments") or section.get("allocated") or section.get("devices")
+    )
     pending = _normalize_sequence_of_str(section.get("pending") or section.get("requests"))
     in_use = len(assignments)
     available: int | None = None
@@ -156,7 +163,9 @@ def _parse_seat_policy(
             )
 
     enforcement = _normalize_text(section.get("enforcement") or section.get("mode"))
-    auto_assign = bool(section.get("auto_assign")) if section.get("auto_assign") is not None else None
+    auto_assign = (
+        bool(section.get("auto_assign")) if section.get("auto_assign") is not None else None
+    )
 
     if fingerprint_value and total not in (None, 0):
         if fingerprint_value not in assignments:
@@ -198,7 +207,9 @@ def _parse_subscription_section(
         return None, None, None, None, None
 
     status = _normalize_text(section.get("status")) or "active"
-    period = section.get("current_period") if isinstance(section.get("current_period"), Mapping) else {}
+    period = (
+        section.get("current_period") if isinstance(section.get("current_period"), Mapping) else {}
+    )
     period_start = _normalize_text(
         period.get("start")
         or period.get("from")
@@ -206,19 +217,22 @@ def _parse_subscription_section(
         or section.get("start")
     )
     period_end = _normalize_text(
-        period.get("end")
-        or period.get("to")
-        or section.get("period_end")
-        or section.get("end")
+        period.get("end") or period.get("to") or section.get("period_end") or section.get("end")
     )
     renews_at = _normalize_text(section.get("renews_at") or section.get("renews_on"))
     grace_days_raw = section.get("grace_period_days") or section.get("grace_days")
     grace_days = _normalize_int(grace_days_raw)
     grace_expires_at: str | None = None
 
-    start_dt = _parse_timestamp(period_start, label="subscription.start", errors=errors, warnings=warnings)
-    end_dt = _parse_timestamp(period_end, label="subscription.end", errors=errors, warnings=warnings)
-    renew_dt = _parse_timestamp(renews_at, label="subscription.renews_at", errors=errors, warnings=warnings)
+    start_dt = _parse_timestamp(
+        period_start, label="subscription.start", errors=errors, warnings=warnings
+    )
+    end_dt = _parse_timestamp(
+        period_end, label="subscription.end", errors=errors, warnings=warnings
+    )
+    renew_dt = _parse_timestamp(
+        renews_at, label="subscription.renews_at", errors=errors, warnings=warnings
+    )
 
     if grace_days is not None and end_dt is not None:
         grace_dt = end_dt + timedelta(days=grace_days)
@@ -262,6 +276,7 @@ def _parse_subscription_section(
         end_dt.isoformat().replace("+00:00", "Z") if end_dt else period_end,
         grace_expires_at,
     )
+
 
 @dataclass(slots=True)
 class LicenseValidationResult:
@@ -376,20 +391,14 @@ class LicenseValidationResult:
             context["subscription_grace_expires_at"] = self.subscription_grace_expires_at
         if self.errors:
             context["errors"] = [
-                entry.message
-                if hasattr(entry, "message")
-                else str(entry)
-                for entry in self.errors
+                entry.message if hasattr(entry, "message") else str(entry) for entry in self.errors
             ]
             context["error_details"] = [
                 entry.to_dict() if hasattr(entry, "to_dict") else str(entry)
                 for entry in self.errors
             ]
             context["error_messages"] = [
-                entry.message
-                if hasattr(entry, "message")
-                else str(entry)
-                for entry in self.errors
+                entry.message if hasattr(entry, "message") else str(entry) for entry in self.errors
             ]
         if self.warnings:
             context["warnings"] = [entry.to_dict() for entry in self.warnings]
@@ -555,9 +564,7 @@ def _coerce_revocation_entry(
 def _extract_revocation_entries(container: Any) -> dict[str, tuple[str | None, str | None]]:
     entries: dict[str, tuple[str | None, str | None]] = {}
 
-    def _register(
-        license_id: str | None, reason: str | None, revoked_at: str | None
-    ) -> None:
+    def _register(license_id: str | None, reason: str | None, revoked_at: str | None) -> None:
         if not license_id:
             return
         existing_reason: str | None = None
@@ -591,7 +598,9 @@ def _parse_revocation_document(
     errors: list[ValidationMessage],
     warnings: list[ValidationMessage],
 ) -> tuple[dict[str, tuple[str | None, str | None]], str | None]:
-    if not isinstance(document, (Mapping, Sequence)) or isinstance(document, (str, bytes, bytearray)):
+    if not isinstance(document, (Mapping, Sequence)) or isinstance(
+        document, (str, bytes, bytearray)
+    ):
         _append_error(
             errors,
             "license.revocation.invalid_format",
@@ -768,14 +777,10 @@ def validate_license(
     revocation_revoked_at: str | None = None
     now = current_time.astimezone(timezone.utc) if current_time else datetime.now(timezone.utc)
     allowed_profile_set = {
-        str(value).strip().lower()
-        for value in (allowed_profiles or ())
-        if str(value).strip()
+        str(value).strip().lower() for value in (allowed_profiles or ()) if str(value).strip()
     }
     allowed_issuer_set = {
-        str(value).strip().lower()
-        for value in (allowed_issuers or ())
-        if str(value).strip()
+        str(value).strip().lower() for value in (allowed_issuers or ()) if str(value).strip()
     }
     seats_total: int | None = None
     seats_in_use: int | None = None
@@ -790,9 +795,7 @@ def validate_license(
     subscription_period_end: str | None = None
     subscription_grace_expires_at: str | None = None
     allowed_schema_versions_set = {
-        str(value).strip()
-        for value in (allowed_schema_versions or ())
-        if str(value).strip()
+        str(value).strip() for value in (allowed_schema_versions or ()) if str(value).strip()
     }
 
     if not license_file.exists():
@@ -896,9 +899,17 @@ def validate_license(
             "Licencja nie zawiera struktur payload/signature.",
             hint="Sprawdź, czy pakiet licencyjny nie został przycięty lub niekompletnie skopiowany.",
         )
-        fingerprint_value = _extract_fingerprint(document.get("fingerprint")) if isinstance(document, Mapping) else None
-        issued_at = _normalize_text(document.get("issued_at")) if isinstance(document, Mapping) else None
-        expires_at = _normalize_text(document.get("expires_at")) if isinstance(document, Mapping) else None
+        fingerprint_value = (
+            _extract_fingerprint(document.get("fingerprint"))
+            if isinstance(document, Mapping)
+            else None
+        )
+        issued_at = (
+            _normalize_text(document.get("issued_at")) if isinstance(document, Mapping) else None
+        )
+        expires_at = (
+            _normalize_text(document.get("expires_at")) if isinstance(document, Mapping) else None
+        )
         if isinstance(document, Mapping):
             validity = document.get("valid")
             if isinstance(validity, Mapping):
@@ -1057,8 +1068,16 @@ def validate_license(
         if key_id:
             license_signature_key = key_id
 
-    fp_payload = payload.get("fingerprint_payload") if isinstance(payload.get("fingerprint_payload"), Mapping) else None
-    fp_signature = payload.get("fingerprint_signature") if isinstance(payload.get("fingerprint_signature"), Mapping) else None
+    fp_payload = (
+        payload.get("fingerprint_payload")
+        if isinstance(payload.get("fingerprint_payload"), Mapping)
+        else None
+    )
+    fp_signature = (
+        payload.get("fingerprint_signature")
+        if isinstance(payload.get("fingerprint_signature"), Mapping)
+        else None
+    )
     if fp_payload is not None:
         fingerprint_source = "license_payload"
         fp_value = _extract_fingerprint(fp_payload.get("fingerprint"))
@@ -1118,8 +1137,12 @@ def validate_license(
                     hint="Zweryfikuj integralność pliku fingerprintu.",
                 )
             else:
-                fp_payload_doc = fp_document.get("payload") if isinstance(fp_document, Mapping) else None
-                fp_signature_doc = fp_document.get("signature") if isinstance(fp_document, Mapping) else None
+                fp_payload_doc = (
+                    fp_document.get("payload") if isinstance(fp_document, Mapping) else None
+                )
+                fp_signature_doc = (
+                    fp_document.get("signature") if isinstance(fp_document, Mapping) else None
+                )
                 if isinstance(fp_payload_doc, Mapping):
                     fp_value = _extract_fingerprint(fp_payload_doc.get("fingerprint"))
                     if fp_value and fingerprint_value and fp_value != fingerprint_value:
@@ -1500,8 +1523,7 @@ def validate_license(
                 _append_warning(
                     warnings,
                     "license.time.expiring_soon",
-                    "Licencja wygaśnie w ciągu 30 dni (data: "
-                    f"{expires_dt.isoformat()}).",
+                    f"Licencja wygaśnie w ciągu 30 dni (data: {expires_dt.isoformat()}).",
                     hint="Zaplanowanie odnowienia licencji zapewni ciągłość działania.",
                 )
 
@@ -1530,7 +1552,9 @@ def validate_license(
                     _append_error(
                         errors,
                         "license.time.max_validity_exceeded",
-                        "Okres ważności licencji (" "%.1f dni) przekracza dozwolone %.1f dni." % (
+                        "Okres ważności licencji ("
+                        "%.1f dni) przekracza dozwolone %.1f dni."
+                        % (
                             validity_days,
                             max_validity.total_seconds() / 86400.0,
                         ),
@@ -1544,7 +1568,8 @@ def validate_license(
         license_path=license_file,
         issued_at=issued_at,
         expires_at=expires_at,
-        fingerprint_source=fingerprint_source or (str(file_fingerprint_path) if file_fingerprint_path else None),
+        fingerprint_source=fingerprint_source
+        or (str(file_fingerprint_path) if file_fingerprint_path else None),
         profile=profile,
         issuer=issuer,
         schema=schema,

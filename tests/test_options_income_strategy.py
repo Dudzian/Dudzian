@@ -17,7 +17,9 @@ def _snapshot(iv: float, delta: float, days: int, price: float, ts: int) -> Mark
 
 def test_options_income_strategy_enter_and_exit() -> None:
     strategy = OptionsIncomeStrategy(
-        OptionsIncomeSettings(min_iv=0.3, max_delta=0.4, min_days_to_expiry=10, roll_threshold_iv=0.2)
+        OptionsIncomeSettings(
+            min_iv=0.3, max_delta=0.4, min_days_to_expiry=10, roll_threshold_iv=0.2
+        )
     )
 
     enter = strategy.on_data(_snapshot(iv=0.35, delta=0.25, days=14, price=100.0, ts=1))

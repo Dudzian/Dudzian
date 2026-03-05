@@ -157,9 +157,7 @@ class ModelRegistry:
         """Aktywuje wskazany model i aktualizuje stan runtime."""
 
         registry = self._load_registry()
-        candidates = {
-            entry.get("model_id"): entry for entry in registry.get("models", [])
-        }
+        candidates = {entry.get("model_id"): entry for entry in registry.get("models", [])}
         if model_id not in candidates:
             raise ModelRegistryError(f"Model {model_id} nie istnieje w rejestrze")
         registry["active_model_id"] = model_id

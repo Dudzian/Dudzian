@@ -58,6 +58,7 @@ except Exception:  # pragma: no cover
     class SecretStorageError(Exception):  # type: ignore[override]
         """Fallback gdy biblioteka bezpieczeństwa nie jest dostępna."""
 
+
 try:  # pragma: no cover - gRPC jest opcjonalny
     import grpc
 except Exception:  # pragma: no cover - brak gRPC w dystrybucji light
@@ -143,7 +144,9 @@ def _build_secret_manager() -> SecretManager | None:
             headless_path=storage_path,
         )
     except SecretStorageError:
-        _LOGGER.warning("Nie udało się zainicjalizować magazynu sekretów dla kanałów alertów HyperCare.")
+        _LOGGER.warning(
+            "Nie udało się zainicjalizować magazynu sekretów dla kanałów alertów HyperCare."
+        )
         return None
     except Exception:  # pragma: no cover - diagnostyka środowisk niestandardowych
         _LOGGER.exception("Błąd inicjalizacji magazynu sekretów dla kanałów alertów HyperCare")
@@ -209,7 +212,9 @@ class _CloudAlertStub:
             response_deserializer=lambda body: struct_pb2.Struct.FromString(body),
         )
 
-    def PublishAlert(self, request, *, metadata=None, timeout: float | None = None):  # pragma: no cover
+    def PublishAlert(
+        self, request, *, metadata=None, timeout: float | None = None
+    ):  # pragma: no cover
         return self._publish(request, metadata=metadata, timeout=timeout)
 
 
@@ -231,8 +236,11 @@ class _CloudAlertChannel(AlertChannel):
             if grpc is None:
                 channel_factory = None
             elif getattr(selection.client, "use_tls", False):
+
                 def _secure(address: str) -> Any:
-                    credentials = grpc.ssl_channel_credentials()  # pragma: no cover - zależne od środowiska
+                    credentials = (
+                        grpc.ssl_channel_credentials()
+                    )  # pragma: no cover - zależne od środowiska
                     return grpc.secure_channel(address, credentials)
 
                 channel_factory = _secure
@@ -309,6 +317,7 @@ class _CloudAlertChannel(AlertChannel):
             "profile": getattr(self._selection, "profile_name", "remote"),
         }
 
+
 class _FeedWebhookAlertChannel(AlertChannel):
     """Minimalny kanał wysyłający alerty feedu na webhook HyperCare."""
 
@@ -367,7 +376,9 @@ def _build_feed_alert_router() -> DefaultAlertRouter | None:
     try:
         core_config = load_core_config(core_path)
     except Exception:  # pragma: no cover - brak core.yaml lub błędny format
-        _LOGGER.debug("Nie udało się wczytać core.yaml podczas konfiguracji alertów feedu", exc_info=True)
+        _LOGGER.debug(
+            "Nie udało się wczytać core.yaml podczas konfiguracji alertów feedu", exc_info=True
+        )
         return None
 
     environment_name = _select_feed_alert_environment(runtime_config, core_config)
@@ -710,9 +721,7 @@ class UiTelemetryAlertSink:
             self._reduce_motion_incident_critical_threshold_seconds: float | None = None
         else:
             configured = float(reduce_motion_incident_critical_threshold_seconds)
-            critical_threshold = max(
-                self._reduce_motion_incident_threshold_seconds, configured
-            )
+            critical_threshold = max(self._reduce_motion_incident_threshold_seconds, configured)
             self._reduce_motion_incident_critical_threshold_seconds = max(0.0, critical_threshold)
         self._overlay_category = self._category_with_suffix(overlay_category, "overlay_budget")
         self._overlay_severity_exceeded = overlay_severity_exceeded
@@ -800,12 +809,8 @@ class UiTelemetryAlertSink:
         self._gpu_utilization_critical_percent = _normalize_threshold(
             gpu_utilization_critical_percent
         )
-        self._ram_usage_warning_megabytes = _normalize_threshold(
-            ram_usage_warning_megabytes
-        )
-        self._ram_usage_critical_megabytes = _normalize_threshold(
-            ram_usage_critical_megabytes
-        )
+        self._ram_usage_warning_megabytes = _normalize_threshold(ram_usage_warning_megabytes)
+        self._ram_usage_critical_megabytes = _normalize_threshold(ram_usage_critical_megabytes)
         self._lock = Lock()
         self._last_reduce_motion_state: bool | None = None
         self._reduce_motion_current_state: bool | None = None
@@ -892,9 +897,7 @@ class UiTelemetryAlertSink:
         else:
             reduce_motion_field = payload.get("reduce_motion")
             if isinstance(reduce_motion_field, bool):
-                self._update_reduce_motion_incident_state(
-                    snapshot, payload, reduce_motion_field
-                )
+                self._update_reduce_motion_incident_state(snapshot, payload, reduce_motion_field)
         self._track_tag_inactivity(snapshot, payload)
         self._handle_retry_backlog(snapshot, payload)
         self._handle_performance_metrics(snapshot, payload)
@@ -912,17 +915,12 @@ class UiTelemetryAlertSink:
         metrics: list[dict[str, Any]] = []
 
         def _has_threshold(warning: float | None, critical: float | None) -> bool:
-            return (warning is not None and warning > 0) or (
-                critical is not None and critical > 0
-            )
+            return (warning is not None and warning > 0) or (critical is not None and critical > 0)
 
         event_to_frame_raw = getattr(snapshot, "event_to_frame_p95_ms", None)
-        if (
-            isinstance(event_to_frame_raw, (int, float))
-            and _has_threshold(
-                self._performance_event_to_frame_warning_ms,
-                self._performance_event_to_frame_critical_ms,
-            )
+        if isinstance(event_to_frame_raw, (int, float)) and _has_threshold(
+            self._performance_event_to_frame_warning_ms,
+            self._performance_event_to_frame_critical_ms,
         ):
             event_to_frame_value = max(0.0, float(event_to_frame_raw))
             metrics.append(
@@ -940,12 +938,9 @@ class UiTelemetryAlertSink:
             )
 
         cpu_raw = getattr(snapshot, "cpu_utilization", None)
-        if (
-            isinstance(cpu_raw, (int, float))
-            and _has_threshold(
-                self._cpu_utilization_warning_percent,
-                self._cpu_utilization_critical_percent,
-            )
+        if isinstance(cpu_raw, (int, float)) and _has_threshold(
+            self._cpu_utilization_warning_percent,
+            self._cpu_utilization_critical_percent,
         ):
             cpu_value = max(0.0, float(cpu_raw))
             metrics.append(
@@ -963,12 +958,9 @@ class UiTelemetryAlertSink:
             )
 
         gpu_raw = getattr(snapshot, "gpu_utilization", None)
-        if (
-            isinstance(gpu_raw, (int, float))
-            and _has_threshold(
-                self._gpu_utilization_warning_percent,
-                self._gpu_utilization_critical_percent,
-            )
+        if isinstance(gpu_raw, (int, float)) and _has_threshold(
+            self._gpu_utilization_warning_percent,
+            self._gpu_utilization_critical_percent,
         ):
             gpu_value = max(0.0, float(gpu_raw))
             metrics.append(
@@ -986,12 +978,9 @@ class UiTelemetryAlertSink:
             )
 
         ram_raw = getattr(snapshot, "ram_megabytes", None)
-        if (
-            isinstance(ram_raw, (int, float))
-            and _has_threshold(
-                self._ram_usage_warning_megabytes,
-                self._ram_usage_critical_megabytes,
-            )
+        if isinstance(ram_raw, (int, float)) and _has_threshold(
+            self._ram_usage_warning_megabytes,
+            self._ram_usage_critical_megabytes,
         ):
             ram_value = max(0.0, float(ram_raw))
             metrics.append(
@@ -1015,9 +1004,7 @@ class UiTelemetryAlertSink:
         state_key = tag_value or "__global__"
 
         for config in metrics:
-            self._process_performance_metric(
-                snapshot, payload, config, tag_value, state_key
-            )
+            self._process_performance_metric(snapshot, payload, config, tag_value, state_key)
 
     def _track_tag_inactivity(self, snapshot, payload: Mapping[str, Any]) -> None:
         if not (self._enable_tag_inactivity_alerts or self._log_tag_inactivity_events):
@@ -1088,8 +1075,7 @@ class UiTelemetryAlertSink:
         self._reduce_motion_current_state = active
 
         features_enabled = (
-            self._enable_reduce_motion_incident_alerts
-            or self._log_reduce_motion_incident_events
+            self._enable_reduce_motion_incident_alerts or self._log_reduce_motion_incident_events
         )
 
         if not features_enabled:
@@ -1186,29 +1172,26 @@ class UiTelemetryAlertSink:
                         interval is not None
                         and self._reduce_motion_incident_last_alert_duration is not None
                         and duration_seconds is not None
-                        and (
-                            duration_seconds
-                            - self._reduce_motion_incident_last_alert_duration
-                        )
+                        and (duration_seconds - self._reduce_motion_incident_last_alert_duration)
                         >= interval
                     ):
                         should_emit = True
                         reason = "realert_interval"
                         duration_delta = (
-                            duration_seconds
-                            - self._reduce_motion_incident_last_alert_duration
+                            duration_seconds - self._reduce_motion_incident_last_alert_duration
                         )
                     elif self._reduce_motion_incident_realert_cooldown_seconds is not None:
                         last_alert = self._reduce_motion_incident_last_alert_monotonic
-                        if last_alert is None or (
-                            _monotonic() - last_alert
-                        ) >= self._reduce_motion_incident_realert_cooldown_seconds:
+                        if (
+                            last_alert is None
+                            or (_monotonic() - last_alert)
+                            >= self._reduce_motion_incident_realert_cooldown_seconds
+                        ):
                             should_emit = True
                             reason = "realert_cooldown"
                             if (
                                 duration_seconds is not None
-                                and self._reduce_motion_incident_last_alert_duration
-                                is not None
+                                and self._reduce_motion_incident_last_alert_duration is not None
                             ):
                                 duration_delta = (
                                     duration_seconds
@@ -1242,9 +1225,7 @@ class UiTelemetryAlertSink:
                 context["window_count"] = str(int(window_count))
             context["reduce_motion_incident_threshold_seconds"] = f"{threshold:.3f}"
             if duration_seconds is not None:
-                context["reduce_motion_incident_duration_seconds"] = (
-                    f"{duration_seconds:.3f}"
-                )
+                context["reduce_motion_incident_duration_seconds"] = f"{duration_seconds:.3f}"
             if duration_delta is not None:
                 context["reduce_motion_incident_duration_delta_seconds"] = (
                     f"{max(0.0, duration_delta):.3f}"
@@ -1276,8 +1257,8 @@ class UiTelemetryAlertSink:
             if escalation_reason:
                 log_payload["reduce_motion_incident_escalation"] = escalation_reason
             if duration_delta is not None:
-                log_payload["reduce_motion_incident_duration_delta_seconds"] = (
-                    max(0.0, duration_delta)
+                log_payload["reduce_motion_incident_duration_delta_seconds"] = max(
+                    0.0, duration_delta
                 )
 
             if self._log_reduce_motion_incident_events:
@@ -1300,9 +1281,7 @@ class UiTelemetryAlertSink:
                 ]
                 if duration_delta is not None and duration_delta > 0:
                     body_parts.append(
-                        "Dodatkowe {:.1f} s od poprzedniego alertu.".format(
-                            duration_delta
-                        )
+                        "Dodatkowe {:.1f} s od poprzedniego alertu.".format(duration_delta)
                     )
                 if escalation_reason == "critical_threshold":
                     body_parts.append(
@@ -1328,9 +1307,7 @@ class UiTelemetryAlertSink:
         started_iso = self._reduce_motion_incident_started_iso
         started_wallclock = self._reduce_motion_incident_started_wallclock
         duration_seconds = (
-            max(0.0, _monotonic() - started_monotonic)
-            if started_monotonic is not None
-            else None
+            max(0.0, _monotonic() - started_monotonic) if started_monotonic is not None else None
         )
         recovered_wallclock = _wallclock()
         recovered_iso = _timestamp_to_iso(snapshot)
@@ -1373,9 +1350,7 @@ class UiTelemetryAlertSink:
         if isinstance(window_count, (int, float)):
             context["window_count"] = str(int(window_count))
         context["reduce_motion_incident_threshold_seconds"] = f"{threshold:.3f}"
-        context["reduce_motion_incident_duration_seconds"] = (
-            f"{duration_seconds:.3f}"
-        )
+        context["reduce_motion_incident_duration_seconds"] = f"{duration_seconds:.3f}"
         context["reduce_motion_incident_severity"] = severity
         if started_iso:
             context["reduce_motion_incident_started_at"] = started_iso
@@ -1409,10 +1384,8 @@ class UiTelemetryAlertSink:
         if not self._enable_reduce_motion_incident_alerts:
             return
 
-        body = (
-            "Reduce motion wyłączony po {:.1f} s (próg {:.1f} s).".format(
-                duration_seconds, threshold
-            )
+        body = "Reduce motion wyłączony po {:.1f} s (próg {:.1f} s).".format(
+            duration_seconds, threshold
         )
         if screen_summary:
             body += f" Ekran: {screen_summary}."
@@ -1546,9 +1519,7 @@ class UiTelemetryAlertSink:
 
         previous_severity = self._retry_backlog_last_severity
         severity_change = (
-            triggered
-            and previous_severity is not None
-            and previous_severity != severity
+            triggered and previous_severity is not None and previous_severity != severity
         )
         if severity_change:
             should_emit = True
@@ -1570,10 +1541,7 @@ class UiTelemetryAlertSink:
             ):
                 now = _monotonic()
                 last = self._retry_backlog_last_alert_monotonic
-                if last is not None and (
-                    now - last
-                    < self._retry_backlog_realert_cooldown_seconds
-                ):
+                if last is not None and (now - last < self._retry_backlog_realert_cooldown_seconds):
                     return
             should_emit = True
 
@@ -1583,9 +1551,7 @@ class UiTelemetryAlertSink:
             self._retry_backlog_last_alert_value = None
             self._retry_backlog_last_alert_monotonic = None
 
-        if not (
-            self._log_retry_backlog_events or self._enable_retry_backlog_alerts
-        ):
+        if not (self._log_retry_backlog_events or self._enable_retry_backlog_alerts):
             return
 
         window_count = payload.get("window_count")
@@ -1633,10 +1599,9 @@ class UiTelemetryAlertSink:
             duration_fragment = f" Czas degradacji: {duration_seconds:.1f} s."
 
         if triggered:
-            body = (
-                "Bufor retry telemetrii wynosi {} (próg {}). "
-                "Poprzedni backlog: {}."
-            ).format(backlog_after, threshold or ">0", backlog_before)
+            body = ("Bufor retry telemetrii wynosi {} (próg {}). Poprzedni backlog: {}.").format(
+                backlog_after, threshold or ">0", backlog_before
+            )
             if backlog_delta is not None:
                 sign = "+" if backlog_delta >= 0 else ""
                 body += f" Zmiana od ostatniego alertu: {sign}{backlog_delta}."
@@ -1645,9 +1610,9 @@ class UiTelemetryAlertSink:
             body += duration_fragment
             title = "Bufor retry telemetrii narasta"
         else:
-            body = (
-                "Bufor retry telemetrii został opróżniony ({} -> {})."
-            ).format(backlog_before, backlog_after)
+            body = ("Bufor retry telemetrii został opróżniony ({} -> {}).").format(
+                backlog_before, backlog_after
+            )
             body += duration_fragment
             title = "Bufor retry telemetrii przywrócony"
 
@@ -1665,9 +1630,7 @@ class UiTelemetryAlertSink:
         if triggered:
             self._retry_backlog_last_alert_monotonic = _monotonic()
 
-    def _evaluate_tag_inactivity(
-        self, now_monotonic: float, now_wallclock: datetime
-    ) -> None:
+    def _evaluate_tag_inactivity(self, now_monotonic: float, now_wallclock: datetime) -> None:
         if not (self._enable_tag_inactivity_alerts or self._log_tag_inactivity_events):
             return
 
@@ -1750,9 +1713,7 @@ class UiTelemetryAlertSink:
             title = f"Telemetria UI nieaktywna dla tagu {tag}"
             body_parts = [
                 "Tag {} nie raportuje próbek telemetrii.".format(tag),
-                "Przekroczono próg {} s.".format(
-                    context["tag_inactivity_threshold_seconds"]
-                ),
+                "Przekroczono próg {} s.".format(context["tag_inactivity_threshold_seconds"]),
             ]
             if age_seconds is not None:
                 body_parts.append(
@@ -1767,9 +1728,7 @@ class UiTelemetryAlertSink:
             body_parts = ["Tag {} wznowił wysyłanie telemetrii.".format(tag)]
             if duration_seconds is not None:
                 body_parts.append(
-                    "Przerwa trwała {} s.".format(
-                        context["tag_inactivity_duration_seconds"]
-                    )
+                    "Przerwa trwała {} s.".format(context["tag_inactivity_duration_seconds"])
                 )
             if last_seen_iso:
                 body_parts.append(f"Ostatni snapshot: {last_seen_iso}.")
@@ -1830,9 +1789,13 @@ class UiTelemetryAlertSink:
             else self._reduce_motion_severity_recovered
         )
         title = "UI reduce motion aktywny" if active else "UI reduce motion wyłączony"
-        body = (
-            "Tryb reduce motion {} – FPS {:.1f} przy celu {}. Nakładki {} z {}."
-        ).format("włączony" if active else "wyłączony", fps_value, fps_target, overlay_active, overlay_allowed)
+        body = ("Tryb reduce motion {} – FPS {:.1f} przy celu {}. Nakładki {} z {}.").format(
+            "włączony" if active else "wyłączony",
+            fps_value,
+            fps_target,
+            overlay_active,
+            overlay_allowed,
+        )
         context = {
             "active": str(active).lower(),
             "fps": f"{fps_value:.2f}",
@@ -1971,7 +1934,9 @@ class UiTelemetryAlertSink:
             if duration_delta is not None:
                 context["overlay_incident_duration_delta_seconds"] = f"{duration_delta:.3f}"
             if self._overlay_incident_realert_delta:
-                context["overlay_incident_realert_delta"] = str(self._overlay_incident_realert_delta)
+                context["overlay_incident_realert_delta"] = str(
+                    self._overlay_incident_realert_delta
+                )
             if self._overlay_incident_realert_cooldown_seconds is not None:
                 context["overlay_incident_realert_cooldown_seconds"] = (
                     f"{self._overlay_incident_realert_cooldown_seconds:.3f}"
@@ -2002,7 +1967,12 @@ class UiTelemetryAlertSink:
                     snapshot,
                     context=context,
                 )
-            elif self._log_overlay_events and reason in {"initial", "severity_change", "realert_difference", "realert_cooldown"}:
+            elif self._log_overlay_events and reason in {
+                "initial",
+                "severity_change",
+                "realert_difference",
+                "realert_cooldown",
+            }:
                 self._append_jsonl(
                     self._overlay_category,
                     severity,
@@ -2057,7 +2027,9 @@ class UiTelemetryAlertSink:
                 context["overlay_incident_started_at"] = self._overlay_incident_started_iso
             context["overlay_incident_recovered_at"] = _datetime_to_iso(now_wallclock)
             if self._overlay_incident_realert_delta:
-                context["overlay_incident_realert_delta"] = str(self._overlay_incident_realert_delta)
+                context["overlay_incident_realert_delta"] = str(
+                    self._overlay_incident_realert_delta
+                )
             if self._overlay_incident_realert_cooldown_seconds is not None:
                 context["overlay_incident_realert_cooldown_seconds"] = (
                     f"{self._overlay_incident_realert_cooldown_seconds:.3f}"
@@ -2382,9 +2354,7 @@ class UiTelemetryAlertSink:
             unit_suffix = f" {config.get('unit', '')}" if config.get("unit") else ""
             value_str = self._format_metric_value(value)
             threshold_str = (
-                self._format_metric_value(threshold_value)
-                if threshold_value is not None
-                else ""
+                self._format_metric_value(threshold_value) if threshold_value is not None else ""
             )
             body_parts = [
                 f"{config.get('label', metric_name)}: {value_str}{unit_suffix}.",
@@ -2495,8 +2465,7 @@ class UiTelemetryAlertSink:
         ]
         if previous_threshold is not None:
             body_parts.append(
-                "Próg odniesienia: "
-                f"{self._format_metric_value(previous_threshold)}{unit_suffix}."
+                f"Próg odniesienia: {self._format_metric_value(previous_threshold)}{unit_suffix}."
             )
         if duration_seconds is not None:
             body_parts.append(f"Czas trwania: {duration_seconds:.1f} s.")

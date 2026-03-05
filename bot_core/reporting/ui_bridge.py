@@ -1,4 +1,5 @@
 """Bridge CLI exposing reporting artefacts to the Qt UI layer."""
+
 from __future__ import annotations
 
 import argparse
@@ -326,11 +327,15 @@ def delete_report(
     return payload
 
 
-def _archive_destination_path(destination: Path, identifier_path: Path, archive_format: str) -> Path:
+def _archive_destination_path(
+    destination: Path, identifier_path: Path, archive_format: str
+) -> Path:
     if archive_format == "directory":
         return (destination / identifier_path).resolve(strict=False)
 
-    name_candidate = identifier_path.name or identifier_path.stem or identifier_path.as_posix().replace("/", "_")
+    name_candidate = (
+        identifier_path.name or identifier_path.stem or identifier_path.as_posix().replace("/", "_")
+    )
     if not name_candidate:
         name_candidate = "report"
 
@@ -552,9 +557,7 @@ def _parse_iso_datetime(value: str) -> datetime:
     try:
         parsed = datetime.fromisoformat(value)
     except ValueError as exc:
-        raise argparse.ArgumentTypeError(
-            f"Invalid ISO date/time format: {value}"
-        ) from exc
+        raise argparse.ArgumentTypeError(f"Invalid ISO date/time format: {value}") from exc
 
     if parsed.tzinfo is None:
         parsed = parsed.replace(tzinfo=timezone.utc)
@@ -607,9 +610,7 @@ def _normalize_filters(
     summary_status = str(summary_status_raw or "any").strip().casefold()
     allowed_status = {"any", "valid", "missing", "invalid"}
     if summary_status not in allowed_status:
-        raise argparse.ArgumentTypeError(
-            f"Unsupported summary status filter: {summary_status_raw}"
-        )
+        raise argparse.ArgumentTypeError(f"Unsupported summary status filter: {summary_status_raw}")
 
     limit: int | None = None
     if limit_raw is not None:
@@ -631,9 +632,7 @@ def _normalize_filters(
     sort_direction = str(sort_direction_raw or "desc").strip().casefold()
     allowed_directions = {"asc", "desc"}
     if sort_direction not in allowed_directions:
-        raise argparse.ArgumentTypeError(
-            f"Unsupported sort direction: {sort_direction_raw}"
-        )
+        raise argparse.ArgumentTypeError(f"Unsupported sort direction: {sort_direction_raw}")
 
     query: str | None = None
     if query_raw is not None:
@@ -644,9 +643,7 @@ def _normalize_filters(
     has_exports = str(has_exports_raw or "any").strip().casefold()
     allowed_exports = {"any", "yes", "no"}
     if has_exports not in allowed_exports:
-        raise argparse.ArgumentTypeError(
-            f"Unsupported exports filter value: {has_exports_raw}"
-        )
+        raise argparse.ArgumentTypeError(f"Unsupported exports filter value: {has_exports_raw}")
 
     return (
         since,
@@ -901,8 +898,10 @@ def _extract_equity_curve_points(
             if isinstance(value, Sequence):
                 raw_points = value
                 break
-        if raw_points is None and isinstance(candidate.get("timestamps"), Sequence) and isinstance(
-            candidate.get("values"), Sequence
+        if (
+            raw_points is None
+            and isinstance(candidate.get("timestamps"), Sequence)
+            and isinstance(candidate.get("values"), Sequence)
         ):
             timestamps = candidate["timestamps"]  # type: ignore[index]
             values = candidate["values"]  # type: ignore[index]
@@ -968,7 +967,14 @@ def _extract_asset_heatmap_cells(
     summary: Mapping[str, object], *, source: str, category: str
 ) -> list[dict[str, object]]:
     candidate: object | None = None
-    for key in ("asset_heatmap", "assetHeatmap", "asset_allocation", "assetAllocation", "assets", "positions"):
+    for key in (
+        "asset_heatmap",
+        "assetHeatmap",
+        "asset_allocation",
+        "assetAllocation",
+        "assets",
+        "positions",
+    ):
         if key in summary:
             candidate = summary.get(key)
             break
@@ -1073,10 +1079,7 @@ def _build_dashboard_payload(entries: Iterable[ReportEntry]) -> Mapping[str, obj
     if len(equity_points) > max_equity_points:
         total_points = len(equity_points)
         step = max(1, (total_points + max_equity_points - 1) // max_equity_points)
-        sampled = [
-            equity_points[index]
-            for index in range(0, total_points, step)
-        ]
+        sampled = [equity_points[index] for index in range(0, total_points, step)]
         if sampled:
             sampled[-1] = equity_points[-1]
         else:
@@ -1142,7 +1145,9 @@ def _summarize_overview(entries: Iterable[ReportEntry]) -> Mapping[str, object]:
     if entries:
         latest = max(entry.updated_at for entry in entries)
         earliest_candidates = [
-            entry.created_at or entry.updated_at for entry in entries if entry.created_at or entry.updated_at
+            entry.created_at or entry.updated_at
+            for entry in entries
+            if entry.created_at or entry.updated_at
         ]
         earliest = min(earliest_candidates) if earliest_candidates else latest
         summary["latest_updated_at"] = latest.isoformat()
@@ -1301,9 +1306,17 @@ def cmd_promote(args: argparse.Namespace) -> int:
         print("Parametr --version jest wymagany", file=sys.stderr)
         return 2
 
-    quality_dir = Path(args.quality_dir).expanduser() if getattr(args, "quality_dir", None) else DEFAULT_QUALITY_DIR
+    quality_dir = (
+        Path(args.quality_dir).expanduser()
+        if getattr(args, "quality_dir", None)
+        else DEFAULT_QUALITY_DIR
+    )
     quality_dir = quality_dir.resolve()
-    audit_root = Path(args.audit_dir).expanduser() if getattr(args, "audit_dir", None) else Path("audit/champion_promotions")
+    audit_root = (
+        Path(args.audit_dir).expanduser()
+        if getattr(args, "audit_dir", None)
+        else Path("audit/champion_promotions")
+    )
     audit_root = audit_root.resolve()
     reason = str(getattr(args, "reason", "")).strip() or None
 
@@ -1319,7 +1332,9 @@ def cmd_promote(args: argparse.Namespace) -> int:
     audit_dir.mkdir(parents=True, exist_ok=True)
 
     candidate_payload = json.loads(json.dumps(decision.candidate))
-    previous_payload = json.loads(json.dumps(decision.previous_champion)) if decision.previous_champion else None
+    previous_payload = (
+        json.loads(json.dumps(decision.previous_champion)) if decision.previous_champion else None
+    )
     challengers_payload = [json.loads(json.dumps(entry)) for entry in decision.challengers]
 
     summary_payload: dict[str, object] = {
@@ -1337,7 +1352,10 @@ def cmd_promote(args: argparse.Namespace) -> int:
     }
 
     summary_path = audit_dir / "summary.json"
-    summary_path.write_text(json.dumps(summary_payload, ensure_ascii=False, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    summary_path.write_text(
+        json.dumps(summary_payload, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
 
     summary_size = summary_path.stat().st_size
     report_entry = ReportEntry(
@@ -1582,7 +1600,9 @@ def cmd_purge(args: argparse.Namespace) -> int:
             continue
 
         exists = candidate.exists()
-        files_to_remove, directories_to_remove, size_to_remove = _calculate_deletion_stats(candidate)
+        files_to_remove, directories_to_remove, size_to_remove = _calculate_deletion_stats(
+            candidate
+        )
 
         target_info["removed_files"] = files_to_remove
         target_info["removed_directories"] = directories_to_remove
@@ -1980,14 +2000,18 @@ def build_parser() -> argparse.ArgumentParser:
     )
     promote_parser.add_argument("--model", required=True, help="Nazwa modelu decision engine")
     promote_parser.add_argument("--version", required=True, help="Wersja challengera do awansu")
-    promote_parser.add_argument("--quality-dir", dest="quality_dir", default=None, help="Katalog z rejestrem champion")
+    promote_parser.add_argument(
+        "--quality-dir", dest="quality_dir", default=None, help="Katalog z rejestrem champion"
+    )
     promote_parser.add_argument(
         "--audit-dir",
         dest="audit_dir",
         default=None,
         help="Katalog docelowy wpisów audytowych (domyślnie audit/champion_promotions)",
     )
-    promote_parser.add_argument("--reason", dest="reason", default=None, help="Uzasadnienie ręcznej promocji")
+    promote_parser.add_argument(
+        "--reason", dest="reason", default=None, help="Uzasadnienie ręcznej promocji"
+    )
 
     delete_parser = subparsers.add_parser("delete", help="Usuń raport lub katalog eksportów")
     delete_parser.add_argument("path", help="Ścieżka (względna) raportu do usunięcia")

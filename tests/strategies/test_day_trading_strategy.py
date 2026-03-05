@@ -2,7 +2,15 @@ from bot_core.strategies.base import MarketSnapshot
 from bot_core.strategies.day_trading import DayTradingSettings, DayTradingStrategy
 
 
-def _snapshot(symbol: str, close: float, atr: float, *, high: float | None = None, low: float | None = None, timestamp: int = 0) -> MarketSnapshot:
+def _snapshot(
+    symbol: str,
+    close: float,
+    atr: float,
+    *,
+    high: float | None = None,
+    low: float | None = None,
+    timestamp: int = 0,
+) -> MarketSnapshot:
     high_price = high if high is not None else close
     low_price = low if low is not None else close
     return MarketSnapshot(
@@ -36,7 +44,9 @@ def test_day_trading_strategy_generates_long_and_exit() -> None:
     enter = strategy.decide(_snapshot("BTCUSDT", 101.0, 0.01, high=101.5, low=100.2, timestamp=2))
     assert enter and enter[0].side == "buy"
 
-    exit_signals = strategy.decide(_snapshot("BTCUSDT", 104.0, 0.01, high=104.5, low=103.5, timestamp=3))
+    exit_signals = strategy.decide(
+        _snapshot("BTCUSDT", 104.0, 0.01, high=104.5, low=103.5, timestamp=3)
+    )
     assert exit_signals and exit_signals[0].side == "sell"
     assert exit_signals[0].metadata.get("exit_reason") == "take_profit"
 

@@ -1,4 +1,5 @@
 """Narzędzia do audytu certyfikatów TLS i pinningu."""
+
 from __future__ import annotations
 
 import hashlib
@@ -155,7 +156,9 @@ def describe_certificate(pem_block: bytes | str) -> dict[str, Any]:
     if issuer_label:
         metadata["issuer_label"] = issuer_label
     if not_after:
-        metadata["expires_in_days"] = (not_after - datetime.now(timezone.utc)).total_seconds() / 86_400.0
+        metadata["expires_in_days"] = (
+            not_after - datetime.now(timezone.utc)
+        ).total_seconds() / 86_400.0
     return metadata
 
 
@@ -190,7 +193,9 @@ def certificate_reference_metadata(
         try:
             entry["fingerprint_sha256"] = certificate_fingerprint(block, algorithm="sha256")
         except ValueError:
-            warnings.append("Nie udało się obliczyć fingerprintu certyfikatu (nieprawidłowy blok PEM).")
+            warnings.append(
+                "Nie udało się obliczyć fingerprintu certyfikatu (nieprawidłowy blok PEM)."
+            )
             continue
         details = describe_certificate(block)
         entry.update(details)

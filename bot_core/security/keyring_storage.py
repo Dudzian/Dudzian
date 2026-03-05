@@ -56,7 +56,9 @@ class KeyringSecretStorage(SecretStorage):
             return None
         master, hwid_digest = self._load_master_key()
         try:
-            return self._decrypt_value(encrypted, storage_key=key, master=master, hwid_digest=hwid_digest)
+            return self._decrypt_value(
+                encrypted, storage_key=key, master=master, hwid_digest=hwid_digest
+            )
         except SecretStorageError:
             raise
         except Exception as exc:  # pragma: no cover - silne logowanie
@@ -64,7 +66,9 @@ class KeyringSecretStorage(SecretStorage):
 
     def set_secret(self, key: str, value: str) -> None:
         master, hwid_digest = self._load_master_key()
-        encrypted = self._encrypt_value(value, storage_key=key, master=master, hwid_digest=hwid_digest)
+        encrypted = self._encrypt_value(
+            value, storage_key=key, master=master, hwid_digest=hwid_digest
+        )
         result = self._keyring.set_password(self._service_name, key, encrypted)
         if result is not None:  # pragma: no cover - większość backendów zwraca None
             raise SecretStorageError(f"Nie udało się zapisać sekretu '{key}'.")
@@ -101,11 +105,17 @@ class KeyringSecretStorage(SecretStorage):
             if encrypted is None:
                 self._unregister_key(storage_key)
                 continue
-            plaintext = self._decrypt_value(encrypted, storage_key=storage_key, master=old_master, hwid_digest=hwid_digest)
-            rotated_value = self._encrypt_value(plaintext, storage_key=storage_key, master=new_master, hwid_digest=hwid_digest)
+            plaintext = self._decrypt_value(
+                encrypted, storage_key=storage_key, master=old_master, hwid_digest=hwid_digest
+            )
+            rotated_value = self._encrypt_value(
+                plaintext, storage_key=storage_key, master=new_master, hwid_digest=hwid_digest
+            )
             result = self._keyring.set_password(self._service_name, storage_key, rotated_value)
             if result is not None:  # pragma: no cover - defensywne
-                raise SecretStorageError(f"Nie udało się zapisać sekretu '{storage_key}' podczas rotacji.")
+                raise SecretStorageError(
+                    f"Nie udało się zapisać sekretu '{storage_key}' podczas rotacji."
+                )
             self._register_key(storage_key, hwid_digest)
 
     # ------------------------------------------------------------------
@@ -159,7 +169,9 @@ class KeyringSecretStorage(SecretStorage):
             "hwid_digest": hwid_digest,
             "rotated_at": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
         }
-        result = self._keyring.set_password(self._service_name, self.MASTER_KEY_SLOT, json.dumps(payload))
+        result = self._keyring.set_password(
+            self._service_name, self.MASTER_KEY_SLOT, json.dumps(payload)
+        )
         if result is not None:  # pragma: no cover - defensywne
             raise SecretStorageError("Nie udało się zapisać klucza głównego w keychainie.")
 
@@ -172,7 +184,9 @@ class KeyringSecretStorage(SecretStorage):
         except json.JSONDecodeError:
             return {"version": self.INDEX_VERSION, "keys": {}}
         except OSError as exc:
-            raise SecretStorageError(f"Nie udało się odczytać indeksu magazynu sekretów: {exc}") from exc
+            raise SecretStorageError(
+                f"Nie udało się odczytać indeksu magazynu sekretów: {exc}"
+            ) from exc
 
         keys = document.get("keys")
         if not isinstance(keys, Mapping):
@@ -268,14 +282,19 @@ class KeyringSecretStorage(SecretStorage):
         nested = getattr(backend, "_backends", None) or getattr(backend, "backends", None)
         if nested:
             for candidate in nested:
-                if candidate.__class__.__module__ == module_name and candidate.__class__.__name__ == class_name:
+                if (
+                    candidate.__class__.__module__ == module_name
+                    and candidate.__class__.__name__ == class_name
+                ):
                     return True
         return False
 
     def _derive_data_key(self, master: bytes, hwid_digest: str) -> bytes:
         return hmac.new(master, hwid_digest.encode("ascii"), hashlib.sha256).digest()
 
-    def _encrypt_value(self, value: str, *, storage_key: str, master: bytes, hwid_digest: str) -> str:
+    def _encrypt_value(
+        self, value: str, *, storage_key: str, master: bytes, hwid_digest: str
+    ) -> str:
         aes_key = self._derive_data_key(master, hwid_digest)
         nonce = os.urandom(12)
         cipher = AESGCM(aes_key)
@@ -288,7 +307,9 @@ class KeyringSecretStorage(SecretStorage):
         }
         return json.dumps(payload)
 
-    def _decrypt_value(self, document: str, *, storage_key: str, master: bytes, hwid_digest: str) -> str:
+    def _decrypt_value(
+        self, document: str, *, storage_key: str, master: bytes, hwid_digest: str
+    ) -> str:
         try:
             payload = json.loads(document)
         except json.JSONDecodeError as exc:

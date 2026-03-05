@@ -45,7 +45,9 @@ def bullish_candles() -> list[Candle]:
     return candles
 
 
-def test_simulation_runner_generates_results_without_breaches(bullish_candles: list[Candle]) -> None:
+def test_simulation_runner_generates_results_without_breaches(
+    bullish_candles: list[Candle],
+) -> None:
     profiles = [
         ConservativeProfile(),
         BalancedProfile(),

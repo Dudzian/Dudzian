@@ -4,7 +4,11 @@ from types import SimpleNamespace
 import pytest
 
 import bot_core.security.tls_audit as tls_audit_module
-from bot_core.security.tls_audit import audit_tls_assets, audit_tls_entry, verify_certificate_key_pair
+from bot_core.security.tls_audit import (
+    audit_tls_assets,
+    audit_tls_entry,
+    verify_certificate_key_pair,
+)
 
 
 _CERT_PEM = """-----BEGIN CERTIFICATE-----
@@ -125,7 +129,9 @@ def test_audit_tls_entry_reports_pins(tmp_path: Path) -> None:
         client_ca_path=None,
         require_client_auth=False,
         private_key_password_env=None,
-        pinned_fingerprints=("sha256:7d820a06ec208056b274865f8a430b761172fef4c3e2fa9c26b9de010e692efb",),
+        pinned_fingerprints=(
+            "sha256:7d820a06ec208056b274865f8a430b761172fef4c3e2fa9c26b9de010e692efb",
+        ),
     )
 
     report = audit_tls_entry(config, role_prefix="test_tls", env={})
@@ -199,7 +205,9 @@ def test_audit_tls_assets_aggregates_services(tmp_path: Path) -> None:
     assert report["errors"]  # brak dopasowania fingerprintu
 
 
-def test_audit_tls_entry_uses_entry_metadata_for_world_readable_filter(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_audit_tls_entry_uses_entry_metadata_for_world_readable_filter(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     warning_text = tls_audit_module.WORLD_READABLE_CERT_WARNING
 
     monkeypatch.setattr(
@@ -238,7 +246,9 @@ def test_audit_tls_entry_uses_entry_metadata_for_world_readable_filter(monkeypat
     assert warning_text not in report["warnings"]
 
 
-def test_audit_mtls_bundle_filters_world_readable_for_certificate_warnings(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+def test_audit_mtls_bundle_filters_world_readable_for_certificate_warnings(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
     warning_text = tls_audit_module.WORLD_READABLE_CERT_WARNING
 
     monkeypatch.setattr(
@@ -273,7 +283,9 @@ def test_audit_mtls_bundle_filters_world_readable_for_certificate_warnings(monke
         return []
 
     monkeypatch.setattr(tls_audit_module, "collect_security_warnings", _collect_security_warnings)
-    monkeypatch.setattr(tls_audit_module, "verify_certificate_key_pair", lambda *args, **kwargs: (True, None))
+    monkeypatch.setattr(
+        tls_audit_module, "verify_certificate_key_pair", lambda *args, **kwargs: (True, None)
+    )
 
     report = tls_audit_module.audit_mtls_bundle(tmp_path)
 

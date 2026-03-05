@@ -1,4 +1,5 @@
 """Generator zanonimizowanego manifestu OHLCV do testów i CI."""
+
 from __future__ import annotations
 
 import argparse

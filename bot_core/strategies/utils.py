@@ -1,4 +1,5 @@
 """Wspólne helpery strategii redukujące duplikację logiki sygnałów i backtestów."""
+
 from __future__ import annotations
 
 from typing import Any, Dict

@@ -21,13 +21,17 @@ def _parse_metadata(entries: list[str]) -> dict[str, Any]:
 
 
 def _build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(description="Buduje paczkę .dudzianpkg do dystrybucji offline.")
+    parser = argparse.ArgumentParser(
+        description="Buduje paczkę .dudzianpkg do dystrybucji offline."
+    )
     parser.add_argument("--payload", required=True, help="Katalog z artefaktami aktualizacji")
     parser.add_argument("--output", required=True, help="Ścieżka docelowa paczki .dudzianpkg")
     parser.add_argument("--package-id", required=True, help="Identyfikator pakietu aktualizacji")
     parser.add_argument("--version", required=True, help="Wersja pakietu")
     parser.add_argument("--fingerprint", help="Opcjonalny fingerprint przypisany do pakietu")
-    parser.add_argument("--metadata", nargs="*", default=[], help="Dodatkowe metadane w formacie klucz=wartość")
+    parser.add_argument(
+        "--metadata", nargs="*", default=[], help="Dodatkowe metadane w formacie klucz=wartość"
+    )
     parser.add_argument("--signing-key", help="Klucz HMAC w formacie KEY_ID=SECRET")
     parser.add_argument("--manifest-output", help="Ścieżka do zapisu manifestu JSON")
     parser.add_argument("--rotation-registry", help="Plik rejestru rotacji fingerprintów")

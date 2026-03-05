@@ -13,6 +13,8 @@ from scripts import notify_paper_smoke_summary as cli  # noqa: E402 - import mod
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
+
+
 @dataclass
 class _RecordedAuditLog:
     records: list[Mapping[str, str]]
@@ -150,7 +152,11 @@ def _write_summary(tmp_path: Path, **overrides: object) -> Path:
             "required": True,
             "exit_code": 0,
             "json_sync": {"status": "ok", "backend": "s3", "location": "s3://audit/jsonl"},
-            "archive_upload": {"status": "ok", "backend": "s3", "location": "s3://audit/archive.zip"},
+            "archive_upload": {
+                "status": "ok",
+                "backend": "s3",
+                "location": "s3://audit/archive.zip",
+            },
         },
         "manifest": manifest_payload,
         "tls_audit": {
@@ -205,7 +211,11 @@ def test_main_dispatches_alert(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) 
 
     monkeypatch.setattr(cli, "build_alert_channels", _fake_build_alert_channels)
     monkeypatch.setattr(cli, "_create_secret_manager", lambda args: _DummySecretManager())
-    monkeypatch.setattr(cli, "load_core_config", lambda _path: types.SimpleNamespace(environments={"binance_paper": object()}))
+    monkeypatch.setattr(
+        cli,
+        "load_core_config",
+        lambda _path: types.SimpleNamespace(environments={"binance_paper": object()}),
+    )
 
     exit_code = cli.main(
         [
@@ -248,19 +258,15 @@ def test_main_dispatches_alert(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) 
         "telemetry/decision.log"
     )
     assert message.context["paper_smoke_required_auth_scopes"] == "metrics.read,risk.read"
-    assert (
-        message.context["paper_smoke_risk_service_required_scopes"]
-        == "risk.read"
-    )
-    assert (
-        message.context["paper_smoke_risk_service_required_token_ids"]
-        == "risk-reader"
-    )
+    assert message.context["paper_smoke_risk_service_required_scopes"] == "risk.read"
+    assert message.context["paper_smoke_risk_service_required_token_ids"] == "risk-reader"
     assert message.context["paper_smoke_risk_service_require_tls"] == "true"
     assert message.context["paper_smoke_risk_service_require_auth_token"] == "true"
 
 
-def test_main_dry_run_prints_preview(monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+def test_main_dry_run_prints_preview(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
     summary_path = _write_summary(tmp_path, publish={"status": "warning", "required": False})
 
     exit_code = cli.main(
@@ -282,7 +288,9 @@ def test_main_dry_run_prints_preview(monkeypatch: pytest.MonkeyPatch, tmp_path: 
     assert payload["context"]["paper_smoke_tls_audit_status"] == "warning"
     assert payload["context"]["paper_smoke_token_audit_status"] == "ok"
     assert payload["context"]["paper_smoke_security_baseline_status"] == "warning"
-    assert payload["context"]["paper_smoke_security_baseline_signature"] == "YmFzZWxpbmUtc2lnbmF0dXJl"
+    assert (
+        payload["context"]["paper_smoke_security_baseline_signature"] == "YmFzZWxpbmUtc2lnbmF0dXJl"
+    )
 
 
 def test_manifest_failure_escalates_severity(
@@ -325,10 +333,7 @@ def test_manifest_failure_escalates_severity(
 
     assert exit_code == 0
     assert recorded_router.messages[0].severity == "error"
-    assert (
-        recorded_router.messages[0].context["paper_smoke_manifest_status"]
-        == "missing_metadata"
-    )
+    assert recorded_router.messages[0].context["paper_smoke_manifest_status"] == "missing_metadata"
 
 
 def test_main_returns_error_when_summary_missing(tmp_path: Path) -> None:

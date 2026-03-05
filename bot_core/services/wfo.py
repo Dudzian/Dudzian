@@ -1,4 +1,5 @@
 """Walk-forward optimization (WFO) dla strategii AI."""
+
 from __future__ import annotations
 
 import logging
@@ -93,13 +94,23 @@ class WalkForwardOptimizer:
             target = np.sign(returns.to_numpy(dtype=float))
             guesses = np.sign(shifted_preds.to_numpy(dtype=float))
             hit_rate = float((guesses == target).mean())
-            sharpe = self.ai_manager._sharpe_ratio(shifted_preds.to_numpy(dtype=float) * returns.to_numpy(dtype=float))
+            sharpe = self.ai_manager._sharpe_ratio(
+                shifted_preds.to_numpy(dtype=float) * returns.to_numpy(dtype=float)
+            )
 
             slice_result = WalkForwardSliceResult(
-                train_start=pd.to_datetime(train_df.index[0]).to_pydatetime().replace(tzinfo=timezone.utc),
-                train_end=pd.to_datetime(train_df.index[-1]).to_pydatetime().replace(tzinfo=timezone.utc),
-                test_start=pd.to_datetime(test_df.index[0]).to_pydatetime().replace(tzinfo=timezone.utc),
-                test_end=pd.to_datetime(test_df.index[-1]).to_pydatetime().replace(tzinfo=timezone.utc),
+                train_start=pd.to_datetime(train_df.index[0])
+                .to_pydatetime()
+                .replace(tzinfo=timezone.utc),
+                train_end=pd.to_datetime(train_df.index[-1])
+                .to_pydatetime()
+                .replace(tzinfo=timezone.utc),
+                test_start=pd.to_datetime(test_df.index[0])
+                .to_pydatetime()
+                .replace(tzinfo=timezone.utc),
+                test_end=pd.to_datetime(test_df.index[-1])
+                .to_pydatetime()
+                .replace(tzinfo=timezone.utc),
                 model_type=selection.best_model,
                 hit_rate=hit_rate,
                 pnl=pnl,

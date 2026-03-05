@@ -95,7 +95,7 @@ _NETWORK_THROTTLE_KEYWORDS = (
     "server hung up",
     "connection dropped",
     "connection lost",
-    "client network socket disconnected", 
+    "client network socket disconnected",
     "backend fetch failed",
     "client.timeout exceeded",
     "client timeout exceeded",
@@ -266,7 +266,7 @@ def _coerce_binance_message(payload: object, default_message: str) -> tuple[str,
 
     if isinstance(payload, str):
         stripped = payload.strip()
-        if stripped.startswith(('{', '[')):
+        if stripped.startswith(("{", "[")):
             try:
                 parsed = json.loads(stripped)
             except (TypeError, ValueError):
@@ -442,7 +442,7 @@ def _iter_error_messages(source: object) -> Iterator[str]:
         normalized = source.strip()
         if not normalized:
             return
-        if normalized.startswith(('{', '[')):
+        if normalized.startswith(("{", "[")):
             try:
                 parsed = json.loads(normalized)
             except (TypeError, ValueError):
@@ -576,7 +576,9 @@ _ZONDA_THROTTLE_KEYWORDS = (
 ) + _NETWORK_THROTTLE_KEYWORDS
 
 
-def raise_for_zonda_error(*, status_code: int, payload: Mapping[str, object], default_message: str) -> None:
+def raise_for_zonda_error(
+    *, status_code: int, payload: Mapping[str, object], default_message: str
+) -> None:
     """Podnosi specyficzny wyjątek na podstawie odpowiedzi API Zonda."""
 
     message = default_message
@@ -609,7 +611,9 @@ def raise_for_zonda_error(*, status_code: int, payload: Mapping[str, object], de
                 nested_code = _parse_int(entry.get("code"))
                 if nested_code in _ZONDA_AUTH_CODES:
                     msg = entry.get("message") or message
-                    raise ExchangeAuthError(message=str(msg), status_code=status_code, payload=payload)
+                    raise ExchangeAuthError(
+                        message=str(msg), status_code=status_code, payload=payload
+                    )
                 if nested_code in _ZONDA_THROTTLE_CODES:
                     msg = entry.get("message") or message
                     raise ExchangeThrottlingError(
@@ -656,7 +660,7 @@ def _coerce_payload_mapping(payload: object) -> Mapping[str, object] | None:
             return None
     if isinstance(payload, str):
         text = payload.strip()
-        if text.startswith(('{', '[')):
+        if text.startswith(("{", "[")):
             try:
                 parsed = json.loads(text)
             except (TypeError, ValueError):
@@ -685,7 +689,9 @@ def raise_for_nowa_gielda_error(*, status_code: int, payload: object, default_me
     )
 
 
-def raise_for_deribit_error(*, status_code: int, payload: Mapping[str, object], default_message: str) -> None:
+def raise_for_deribit_error(
+    *, status_code: int, payload: Mapping[str, object], default_message: str
+) -> None:
     """Mapuje odpowiedź Deribit na wyjątki domenowe."""
 
     message = default_message
@@ -718,12 +724,16 @@ def raise_for_deribit_error(*, status_code: int, payload: Mapping[str, object], 
         or code in _DERIBIT_THROTTLE_CODES
         or any(keyword in normalized for keyword in _DERIBIT_THROTTLE_KEYWORDS)
     ):
-        raise ExchangeThrottlingError(message=message, status_code=status_code or 429, payload=payload)
+        raise ExchangeThrottlingError(
+            message=message, status_code=status_code or 429, payload=payload
+        )
 
     raise ExchangeAPIError(message=message, status_code=status_code or 500, payload=payload)
 
 
-def raise_for_bitmex_error(*, status_code: int, payload: Mapping[str, object], default_message: str) -> None:
+def raise_for_bitmex_error(
+    *, status_code: int, payload: Mapping[str, object], default_message: str
+) -> None:
     """Mapuje błędy BitMEX na wyjątki domenowe."""
 
     message = default_message
@@ -753,7 +763,9 @@ def raise_for_bitmex_error(*, status_code: int, payload: Mapping[str, object], d
         or code == 429
         or any(keyword in normalized_message for keyword in _BITMEX_THROTTLE_KEYWORDS)
     ):
-        raise ExchangeThrottlingError(message=message, status_code=status_code or 429, payload=payload)
+        raise ExchangeThrottlingError(
+            message=message, status_code=status_code or 429, payload=payload
+        )
 
     raise ExchangeAPIError(message=message, status_code=status_code or 500, payload=payload)
 

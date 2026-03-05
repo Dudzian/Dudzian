@@ -20,7 +20,9 @@ if str(REPO_ROOT) not in sys.path:
 
 _SIGNING_PATH = REPO_ROOT / "bot_core" / "security" / "signing.py"
 _SIGNING_SPEC = importlib.util.spec_from_file_location("bot_core.security.signing", _SIGNING_PATH)
-if _SIGNING_SPEC is None or _SIGNING_SPEC.loader is None:  # pragma: no cover - środowisko uszkodzone
+if (
+    _SIGNING_SPEC is None or _SIGNING_SPEC.loader is None
+):  # pragma: no cover - środowisko uszkodzone
     raise RuntimeError("Nie można załadować modułu signing (brak specyfikacji)")
 _SIGNING_MODULE = importlib.util.module_from_spec(_SIGNING_SPEC)
 sys.modules.setdefault("bot_core.security.signing", _SIGNING_MODULE)
@@ -47,7 +49,9 @@ def _parse_metadata(entries: Sequence[str] | None) -> MutableMapping[str, str]:
     return metadata
 
 
-def _load_signing_key(*, inline: str | None, env: str | None, path: Path | None) -> tuple[bytes | None, str | None]:
+def _load_signing_key(
+    *, inline: str | None, env: str | None, path: Path | None
+) -> tuple[bytes | None, str | None]:
     if inline:
         key = inline.encode("utf-8")
         if len(key) < 16:
@@ -152,6 +156,7 @@ def _write_tar(
 ) -> None:
     destination.parent.mkdir(parents=True, exist_ok=True)
     with tarfile.open(destination, "w:gz") as archive:
+
         def _add(name: str, data: bytes) -> None:
             info = tarfile.TarInfo(name)
             info.size = len(data)
@@ -179,7 +184,12 @@ def _validate_paths(paths: Sequence[Path]) -> None:
 def _run_stage6(argv: Sequence[str]) -> int:
     parser = argparse.ArgumentParser(description="Eksport paczki odporności Stage6 (tar.gz)")
     parser.add_argument("--version", required=True, help="Wersja paczki umieszczona w manifeście")
-    parser.add_argument("--report", action="append", default=[], help="Plik raportu do umieszczenia w katalogu reports/")
+    parser.add_argument(
+        "--report",
+        action="append",
+        default=[],
+        help="Plik raportu do umieszczenia w katalogu reports/",
+    )
     parser.add_argument(
         "--signature",
         action="append",

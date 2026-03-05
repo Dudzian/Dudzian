@@ -29,15 +29,15 @@ class DummyEngine(StrategyEngine):
 
     def on_data(self, snapshot: MarketSnapshot) -> tuple[StrategySignal, ...]:
         confidence = float(self.parameters.get("alpha", 0.0))
-        return (
-            StrategySignal(symbol=snapshot.symbol, side="BUY", confidence=confidence),
-        )
+        return (StrategySignal(symbol=snapshot.symbol, side="BUY", confidence=confidence),)
 
 
 def _build_catalog() -> tuple[StrategyCatalog, StrategyDefinition]:
     catalog = StrategyCatalog()
 
-    def _factory(*, name: str, parameters: dict[str, float], metadata: dict[str, object]) -> StrategyEngine:
+    def _factory(
+        *, name: str, parameters: dict[str, float], metadata: dict[str, object]
+    ) -> StrategyEngine:
         return DummyEngine(parameters=parameters, metadata=metadata)
 
     spec = StrategyEngineSpec(
@@ -224,7 +224,9 @@ def test_scheduler_uses_queue_and_quality_baseline(tmp_path: Path) -> None:
     )
 
     class StubRepo:
-        def get_quality_report(self, version: str) -> dict[str, float]:  # pragma: no cover - prosty stub
+        def get_quality_report(
+            self, version: str
+        ) -> dict[str, float]:  # pragma: no cover - prosty stub
             return {"version": version, "score": 0.42}
 
     class StubFeed:

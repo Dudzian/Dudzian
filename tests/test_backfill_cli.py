@@ -181,6 +181,7 @@ def test_run_scheduler_uses_interval_specific_frequency():
 
 # --------------------- manifest health tests ---------------------
 
+
 class _CollectingRouter:
     def __init__(self) -> None:
         self.messages = []
@@ -200,9 +201,7 @@ def _build_universe(symbol: str, interval: str) -> InstrumentUniverseConfig:
                 quote_asset=symbol.split("_")[1],
                 categories=("core",),
                 exchange_symbols={"binance_spot": symbol.replace("_", "")},
-                backfill_windows=(
-                    InstrumentBackfillWindow(interval=interval, lookback_days=30),
-                ),
+                backfill_windows=(InstrumentBackfillWindow(interval=interval, lookback_days=30),),
             ),
         ),
     )
@@ -216,7 +215,9 @@ def test_report_manifest_health_does_not_alert_when_everything_ok(tmp_path):
     as_of = datetime(2024, 1, 1, 12, 0, tzinfo=timezone.utc)
 
     metadata = storage.metadata()
-    metadata["last_timestamp::BTCUSDT::1h"] = str(int((as_of - timedelta(minutes=30)).timestamp() * 1000))
+    metadata["last_timestamp::BTCUSDT::1h"] = str(
+        int((as_of - timedelta(minutes=30)).timestamp() * 1000)
+    )
     metadata["row_count::BTCUSDT::1h"] = "720"
 
     backfill._report_manifest_health(
@@ -256,9 +257,13 @@ def test_report_manifest_health_emits_warning_for_long_gap(tmp_path):
     as_of = datetime(2024, 1, 1, 12, 0, tzinfo=timezone.utc)
 
     metadata = storage.metadata()
-    metadata["last_timestamp::BTCUSDT::1d"] = str(int((as_of - timedelta(hours=12)).timestamp() * 1000))
+    metadata["last_timestamp::BTCUSDT::1d"] = str(
+        int((as_of - timedelta(hours=12)).timestamp() * 1000)
+    )
     metadata["row_count::BTCUSDT::1d"] = "365"
-    metadata["last_timestamp::BTCUSDT::1h"] = str(int((as_of - timedelta(hours=3)).timestamp() * 1000))
+    metadata["last_timestamp::BTCUSDT::1h"] = str(
+        int((as_of - timedelta(hours=3)).timestamp() * 1000)
+    )
     metadata["row_count::BTCUSDT::1h"] = "720"
 
     backfill._report_manifest_health(
@@ -286,7 +291,9 @@ def test_report_manifest_health_alerts_on_threshold_only(tmp_path):
     as_of = datetime(2024, 1, 1, 12, 0, tzinfo=timezone.utc)
 
     metadata = storage.metadata()
-    metadata["last_timestamp::BTCUSDT::1h"] = str(int((as_of - timedelta(minutes=60)).timestamp() * 1000))
+    metadata["last_timestamp::BTCUSDT::1h"] = str(
+        int((as_of - timedelta(minutes=60)).timestamp() * 1000)
+    )
     metadata["row_count::BTCUSDT::1h"] = "720"
 
     data_quality = EnvironmentDataQualityConfig(max_gap_minutes=30.0, min_ok_ratio=None)

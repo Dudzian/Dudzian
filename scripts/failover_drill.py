@@ -7,6 +7,7 @@ Subcommands:
   - run       : execute ResilienceFailoverDrill from core.yaml and write signed report
   - evaluate  : evaluate failover plan against a resilience bundle and (optionally) run self-healing
 """
+
 from __future__ import annotations
 
 import argparse
@@ -121,9 +122,15 @@ def _resolve_signing_key_for_run(
     args: argparse.Namespace, config
 ) -> Tuple[Optional[bytes], Optional[str]]:
     resilience = getattr(config, "resilience", None)
-    key_path = args.signing_key_path or (getattr(resilience, "signing_key_path", None) if resilience else None)
-    key_env = args.signing_key_env or (getattr(resilience, "signing_key_env", None) if resilience else None)
-    key_id = args.signing_key_id or (getattr(resilience, "signing_key_id", None) if resilience else None)
+    key_path = args.signing_key_path or (
+        getattr(resilience, "signing_key_path", None) if resilience else None
+    )
+    key_env = args.signing_key_env or (
+        getattr(resilience, "signing_key_env", None) if resilience else None
+    )
+    key_id = args.signing_key_id or (
+        getattr(resilience, "signing_key_id", None) if resilience else None
+    )
 
     key_bytes: Optional[bytes] = None
     if key_path:
@@ -137,7 +144,9 @@ def _resolve_signing_key_for_run(
 
 
 def _handle_run(args: argparse.Namespace) -> int:
-    logging.basicConfig(level=args.log_level.upper(), format="%(asctime)s %(levelname)s %(message)s")
+    logging.basicConfig(
+        level=args.log_level.upper(), format="%(asctime)s %(levelname)s %(message)s"
+    )
 
     config = load_core_config(args.config)
     if config.resilience is None or not config.resilience.enabled:
@@ -175,7 +184,9 @@ def _handle_run(args: argparse.Namespace) -> int:
 
 # ----------------------------- subcommand: evaluate (HEAD) -----------------------------
 def _configure_evaluate_parser(parser: argparse.ArgumentParser) -> argparse.ArgumentParser:
-    parser.add_argument("--bundle", required=True, help="Ścieżka do paczki odpornościowej (.zip/.tar itp.)")
+    parser.add_argument(
+        "--bundle", required=True, help="Ścieżka do paczki odpornościowej (.zip/.tar itp.)"
+    )
     parser.add_argument("--plan", required=True, help="Ścieżka do planu failover (JSON)")
     parser.add_argument("--output-json", required=True, help="Ścieżka do zapisu podsumowania JSON")
     parser.add_argument("--output-csv", help="Opcjonalna ścieżka do raportu CSV z wynikami usług")
@@ -196,14 +207,18 @@ def _configure_evaluate_parser(parser: argparse.ArgumentParser) -> argparse.Argu
         help="Tryb self-healing: tylko plan lub wykonanie",
     )
     parser.add_argument(
-        "--self-heal-output", help="Ścieżka zapisu raportu self-healing (domyślnie obok podsumowania)"
+        "--self-heal-output",
+        help="Ścieżka zapisu raportu self-healing (domyślnie obok podsumowania)",
     )
-    parser.add_argument("--self-heal-signing-key", help="Klucz HMAC do podpisu raportu self-healing")
+    parser.add_argument(
+        "--self-heal-signing-key", help="Klucz HMAC do podpisu raportu self-healing"
+    )
     parser.add_argument(
         "--self-heal-signing-key-id", help="Identyfikator klucza HMAC raportu self-healing"
     )
     parser.add_argument(
-        "--self-heal-signature-path", help="Ścieżka pliku podpisu self-healing (domyślnie obok raportu)"
+        "--self-heal-signature-path",
+        help="Ścieżka pliku podpisu self-healing (domyślnie obok raportu)",
     )
 
     parser.add_argument("--log-level", default="INFO", help="Poziom logowania (domyślnie INFO)")
@@ -221,7 +236,9 @@ def _build_parser_evaluate(sub: argparse._SubParsersAction) -> argparse.Argument
 
 
 def _handle_evaluate(args: argparse.Namespace) -> int:
-    logging.basicConfig(level=args.log_level.upper(), format="%(asctime)s %(levelname)s %(message)s")
+    logging.basicConfig(
+        level=args.log_level.upper(), format="%(asctime)s %(levelname)s %(message)s"
+    )
 
     bundle_path = Path(args.bundle).expanduser().resolve()
     plan_path = Path(args.plan).expanduser().resolve()
@@ -290,7 +307,9 @@ def _handle_evaluate(args: argparse.Namespace) -> int:
                 target=self_heal_output.name,
             )
 
-        print(f"Self-healing {report.mode} zakończony statusem: {report.status} (akcje: {len(report.actions)}).")
+        print(
+            f"Self-healing {report.mode} zakończony statusem: {report.status} (akcje: {len(report.actions)})."
+        )
 
     print(
         f"Zakończono ćwiczenie failover '{summary.drill_name}' – status: {summary.status} "

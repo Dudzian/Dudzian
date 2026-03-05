@@ -61,7 +61,9 @@ def _load_strategy_step(service: OnboardingService):
     app = QApplication.instance() or QApplication([])
     engine = QQmlApplicationEngine()
     engine.rootContext().setContextProperty("onboardingService", service)
-    qml_path = Path(__file__).resolve().parents[2] / "ui" / "qml" / "onboarding" / "StrategySetupStep.qml"
+    qml_path = (
+        Path(__file__).resolve().parents[2] / "ui" / "qml" / "onboarding" / "StrategySetupStep.qml"
+    )
     engine.load(QUrl.fromLocalFile(str(qml_path)))
     assert engine.rootObjects(), "Nie udało się załadować StrategySetupStep.qml"
     root = engine.rootObjects()[0]

@@ -65,18 +65,13 @@ def build_regime_features(
     trend_strength = float(np.abs(short.iloc[-1] - long.iloc[-1]) / (np.abs(long.iloc[-1]) + 1e-12))
 
     volatility = float(np.nan_to_num(returns.std(), nan=0.0, posinf=0.0, neginf=0.0))
-    momentum = float(
-        np.nan_to_num(returns.tail(window).mean(), nan=0.0, posinf=0.0, neginf=0.0)
-    )
+    momentum = float(np.nan_to_num(returns.tail(window).mean(), nan=0.0, posinf=0.0, neginf=0.0))
     autocorr_raw = returns.autocorr(lag=autocorr_lag)
     autocorr = float(np.nan_to_num(autocorr_raw if autocorr_raw is not None else 0.0, nan=0.0))
 
     if {"high", "low"}.issubset(ordered_data.columns):
         intraday_series = (
-            (ordered_data["high"] - ordered_data["low"])
-            .div(close)
-            .rolling(daily_window)
-            .mean()
+            (ordered_data["high"] - ordered_data["low"]).div(close).rolling(daily_window).mean()
         )
         intraday_series = intraday_series.dropna()
         if intraday_series.empty:
@@ -89,15 +84,15 @@ def build_regime_features(
         else:
             intraday_vol = float(np.nan_to_num(intraday_series.iloc[-1], nan=0.0))
     else:
-        intraday_vol = float(
-            np.nan_to_num(returns.tail(daily_window).abs().mean(), nan=0.0)
-        )
+        intraday_vol = float(np.nan_to_num(returns.tail(daily_window).abs().mean(), nan=0.0))
 
     drawdown = float(
         np.nan_to_num((close.cummax() - close).div(close.cummax() + 1e-12).max(), nan=0.0)
     )
     volatility_window = min(max(daily_window * 5, trend_window), returns.size)
-    rolling_vol = returns.rolling(volatility_window, min_periods=max(volatility_window // 2, 10)).std()
+    rolling_vol = returns.rolling(
+        volatility_window, min_periods=max(volatility_window // 2, 10)
+    ).std()
     rolling_clean = rolling_vol.dropna()
     baseline_vol = (
         float(np.nan_to_num(rolling_clean.iloc[-1], nan=0.0, posinf=0.0, neginf=0.0))
@@ -129,12 +124,8 @@ def build_regime_features(
     if "volume" in ordered_data.columns:
         volume_series = ordered_data["volume"].astype(float).reindex(close.index)
         change = returns.reindex(volume_series.index, method="ffill").fillna(0.0)
-        positive_volume = float(
-            np.nan_to_num(volume_series.where(change > 0.0).mean(), nan=0.0)
-        )
-        negative_volume = float(
-            np.nan_to_num(volume_series.where(change <= 0.0).mean(), nan=0.0)
-        )
+        positive_volume = float(np.nan_to_num(volume_series.where(change > 0.0).mean(), nan=0.0))
+        negative_volume = float(np.nan_to_num(volume_series.where(change <= 0.0).mean(), nan=0.0))
         denom = np.abs(positive_volume) + np.abs(negative_volume) + 1e-12
         volume_imbalance = float(np.nan_to_num((positive_volume - negative_volume) / denom))
     else:

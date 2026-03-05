@@ -57,7 +57,8 @@ def _parse_include_entries(entries: Iterable[str]) -> list[IncludeMapping]:
         alias, separator, raw_path = entry.partition("=")
         if separator != "=" or not alias:
             raise DesktopBuildError(
-                f"Niepoprawny format include '{entry}'. Użyj składni docelowy=ścieżka.")
+                f"Niepoprawny format include '{entry}'. Użyj składni docelowy=ścieżka."
+            )
         alias_path = Path(alias.strip())
         if alias_path.is_absolute():
             raise DesktopBuildError("Ścieżka docelowa include nie może być absolutna")
@@ -128,7 +129,9 @@ def _embed_license(
         report_payload["signature"] = signature
 
     integrity_path = license_dir / "license_integrity.json"
-    integrity_path.write_text(json.dumps(report_payload, ensure_ascii=False, indent=2), encoding="utf-8")
+    integrity_path.write_text(
+        json.dumps(report_payload, ensure_ascii=False, indent=2), encoding="utf-8"
+    )
     return {
         "license_id": license_id,
         "store_path": store_path.relative_to(staging_root).as_posix(),
@@ -219,7 +222,9 @@ def build_distribution(
         }
 
         manifest_path = bundle_root / "manifest.json"
-        manifest_path.write_text(json.dumps(manifest, ensure_ascii=False, indent=2), encoding="utf-8")
+        manifest_path.write_text(
+            json.dumps(manifest, ensure_ascii=False, indent=2), encoding="utf-8"
+        )
 
         if signing_key:
             key_id, secret = _parse_signing_key(signing_key)
@@ -242,17 +247,37 @@ def build_distribution(
 def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--version", required=True, help="Wersja pakietu")
-    parser.add_argument("--platform", required=True, choices=["linux", "macos", "windows"], help="Docelowa platforma")
+    parser.add_argument(
+        "--platform",
+        required=True,
+        choices=["linux", "macos", "windows"],
+        help="Docelowa platforma",
+    )
     parser.add_argument("--runtime-dir", required=True, help="Katalog z binarkami runtime")
     parser.add_argument("--ui-dir", help="Opcjonalny katalog z zasobami UI")
-    parser.add_argument("--include", action="append", default=[], help="Dodatkowe katalogi w formacie docelowy=ścieżka")
-    parser.add_argument("--license-json", required=True, help="Plik JSON z licencją do zaszyfrowania")
+    parser.add_argument(
+        "--include",
+        action="append",
+        default=[],
+        help="Dodatkowe katalogi w formacie docelowy=ścieżka",
+    )
+    parser.add_argument(
+        "--license-json", required=True, help="Plik JSON z licencją do zaszyfrowania"
+    )
     parser.add_argument("--license-fingerprint", required=True, help="Fingerprint docelowego hosta")
-    parser.add_argument("--license-output-name", default="license_store.json", help="Nazwa pliku magazynu licencji w paczce")
-    parser.add_argument("--license-hmac-key", help="Klucz HMAC (opcjonalny) do podpisania metadanych licencji")
+    parser.add_argument(
+        "--license-output-name",
+        default="license_store.json",
+        help="Nazwa pliku magazynu licencji w paczce",
+    )
+    parser.add_argument(
+        "--license-hmac-key", help="Klucz HMAC (opcjonalny) do podpisania metadanych licencji"
+    )
     parser.add_argument("--signing-key", help="Klucz HMAC (KEY_ID=wartość) do podpisu manifestu")
     parser.add_argument("--bundle-name", help="Własna nazwa katalogu w archiwum")
-    parser.add_argument("--output-dir", default=str(DEFAULT_OUTPUT), help="Katalog docelowy z archiwami")
+    parser.add_argument(
+        "--output-dir", default=str(DEFAULT_OUTPUT), help="Katalog docelowy z archiwami"
+    )
     return parser
 
 

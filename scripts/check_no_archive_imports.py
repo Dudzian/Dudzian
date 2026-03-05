@@ -5,6 +5,7 @@ Uruchomienie bez argumentów skanuje domyślne katalogi runtime/CI i
 zwraca kod wyjścia 1 w przypadku znalezienia importu modułu zaczynającego się
 od `archive` lub zawierającego segment `archive` (np. `from foo.archive import x`).
 """
+
 from __future__ import annotations
 
 import ast

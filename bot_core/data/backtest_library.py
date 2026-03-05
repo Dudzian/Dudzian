@@ -1,4 +1,5 @@
 """Biblioteka znormalizowanych danych backtestowych dla strategii Etapu 4."""
+
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -166,9 +167,7 @@ class BacktestDatasetLibrary:
             typed_row: Dict[str, object] = {}
             for column, expected_type in schema.items():
                 if column not in row:
-                    raise ValueError(
-                        f"Dataset {name} row {index} missing column '{column}'"
-                    )
+                    raise ValueError(f"Dataset {name} row {index} missing column '{column}'")
                 value = row[column]
                 if value in {"", None}:
                     raise ValueError(
@@ -188,16 +187,12 @@ class BacktestDatasetLibrary:
         """Ładuje dataset jako :class:`pandas.DataFrame` wraz z konwersją typów."""
 
         rows = self.load_typed_rows(name)
-        with capture_pandas_warnings(
-            _LOGGER, component="data.backtest_library.load_dataframe"
-        ):
+        with capture_pandas_warnings(_LOGGER, component="data.backtest_library.load_dataframe"):
             frame = pd.DataFrame(rows)
             datetime_columns = datetime_columns or {}
             for column, unit in datetime_columns.items():
                 if column in frame.columns:
-                    frame[column] = pd.to_datetime(
-                        frame[column], unit=unit, errors="coerce"
-                    )
+                    frame[column] = pd.to_datetime(frame[column], unit=unit, errors="coerce")
 
             if index_column and index_column in frame.columns:
                 frame = frame.set_index(index_column)

@@ -1,4 +1,5 @@
 """End-to-end coverage for DecisionOrchestrator ↔ AutoTrader integration."""
+
 from __future__ import annotations
 
 from datetime import datetime, timezone
@@ -59,7 +60,9 @@ class _AIManagerStub:
     ai_threshold_bps = 6.0
     is_degraded = False
 
-    def assess_market_regime(self, symbol: str, market_data: pd.DataFrame) -> MarketRegimeAssessment:
+    def assess_market_regime(
+        self, symbol: str, market_data: pd.DataFrame
+    ) -> MarketRegimeAssessment:
         del symbol, market_data
         return MarketRegimeAssessment(
             regime=MarketRegime.TREND,
@@ -182,7 +185,9 @@ def _market_frame() -> pd.DataFrame:
     return frame
 
 
-def test_autotrader_applies_orchestrator_strategy_and_risk_limits(_market_frame: pd.DataFrame) -> None:
+def test_autotrader_applies_orchestrator_strategy_and_risk_limits(
+    _market_frame: pd.DataFrame,
+) -> None:
     emitter = _Emitter()
     gui = _GUI()
     ai_manager = _AIManagerStub()

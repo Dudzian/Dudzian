@@ -1,4 +1,5 @@
 """Walidacja reguł alertów Prometheusa dla scenariuszy Stage 4/5/6."""
+
 from __future__ import annotations
 
 import argparse
@@ -74,13 +75,9 @@ def _read_rules(path: Path) -> dict:
     try:
         loaded = yaml.safe_load(path.read_text(encoding="utf-8"))
     except yaml.YAMLError as exc:  # pragma: no cover
-        raise PrometheusRuleValidationError(
-            f"Nie udało się sparsować pliku YAML '{path}'"
-        ) from exc
+        raise PrometheusRuleValidationError(f"Nie udało się sparsować pliku YAML '{path}'") from exc
     if not isinstance(loaded, dict) or "groups" not in loaded:
-        raise PrometheusRuleValidationError(
-            f"Plik '{path}' nie zawiera sekcji 'groups'"
-        )
+        raise PrometheusRuleValidationError(f"Plik '{path}' nie zawiera sekcji 'groups'")
     if not isinstance(loaded["groups"], list) or not loaded["groups"]:
         raise PrometheusRuleValidationError(
             f"Plik '{path}' musi zawierać co najmniej jedną grupę reguł"
@@ -152,7 +149,9 @@ def _validate_rule(
 
         def _has_placeholder(label: str) -> bool:
             placeholder = f"{{{{ $labels.{label} }}}}"
-            return any(isinstance(text, str) and placeholder in text for text in annotations.values())
+            return any(
+                isinstance(text, str) and placeholder in text for text in annotations.values()
+            )
 
         def _annotation_has_placeholder(annotation: str, label: str) -> bool:
             placeholder = f"{{{{ $labels.{label} }}}}"
@@ -163,7 +162,9 @@ def _validate_rule(
         uses_cloud_worker_error = "bot_cloud_worker_last_error" in lowered
         if uses_cloud_worker_status:
             if not _has_placeholder("worker"):
-                _error("alert korzystający z bot_cloud_worker_status musi renderować {{ $labels.worker }} w adnotacjach")
+                _error(
+                    "alert korzystający z bot_cloud_worker_status musi renderować {{ $labels.worker }} w adnotacjach"
+                )
             if not _annotation_has_placeholder("summary", "worker"):
                 _error(
                     "alert korzystający z bot_cloud_worker_status musi renderować {{ $labels.worker }} w polu 'summary'"
@@ -174,9 +175,13 @@ def _validate_rule(
                 )
         if uses_cloud_worker_error:
             if not _has_placeholder("worker"):
-                _error("alert korzystający z bot_cloud_worker_last_error musi renderować {{ $labels.worker }} w adnotacjach")
+                _error(
+                    "alert korzystający z bot_cloud_worker_last_error musi renderować {{ $labels.worker }} w adnotacjach"
+                )
             if not _has_placeholder("error"):
-                _error("alert korzystający z bot_cloud_worker_last_error musi renderować {{ $labels.error }} w adnotacjach")
+                _error(
+                    "alert korzystający z bot_cloud_worker_last_error musi renderować {{ $labels.error }} w adnotacjach"
+                )
             if not _annotation_has_placeholder("summary", "worker"):
                 _error(
                     "alert korzystający z bot_cloud_worker_last_error musi renderować {{ $labels.worker }} w polu 'summary'"
@@ -236,7 +241,9 @@ def _validate_file(
     errors: list[str] = []
 
     for group in groups:
-        group_name = group.get("name", "<bez_nazwy>") if isinstance(group, dict) else "<niepoprawna_grupa>"
+        group_name = (
+            group.get("name", "<bez_nazwy>") if isinstance(group, dict) else "<niepoprawna_grupa>"
+        )
         if not isinstance(group, dict):
             errors.append(f"{path}: grupa nie jest słownikiem")
             continue

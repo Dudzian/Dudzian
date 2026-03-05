@@ -4,7 +4,12 @@ from types import SimpleNamespace
 import grpc
 import pytest
 
-from bot_core.cloud.config import CloudMarketplaceConfig, CloudRuntimeConfig, CloudSecurityConfig, CloudServerConfig
+from bot_core.cloud.config import (
+    CloudMarketplaceConfig,
+    CloudRuntimeConfig,
+    CloudSecurityConfig,
+    CloudServerConfig,
+)
 from bot_core.cloud.security import CloudAuthServicer, CloudAuthorizationError
 from bot_core.cloud.service import CloudRuntimeService
 from bot_core.generated import trading_pb2
@@ -56,7 +61,9 @@ def _fake_config(tmp_path: Path) -> CloudServerConfig:
     )
 
 
-def test_cloud_service_writes_health_and_ready(tmp_path: Path, _fake_config, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_cloud_service_writes_health_and_ready(
+    tmp_path: Path, _fake_config, monkeypatch: pytest.MonkeyPatch
+) -> None:
     events: list[dict[str, object]] = []
 
     def _builder(config_path, entrypoint):
@@ -105,7 +112,9 @@ def test_market_data_servicer_propagates_cloud_metadata() -> None:
     class _Request:
         exchange = ""
 
-    from bot_core.api.server import _MarketDataServicer  # lokalny import, aby zachować zależności testu
+    from bot_core.api.server import (
+        _MarketDataServicer,
+    )  # lokalny import, aby zachować zależności testu
 
     servicer = _MarketDataServicer(_Ctx())
     rpc_context = _RpcContext()
@@ -133,7 +142,10 @@ def test_order_servicer_propagates_cloud_metadata() -> None:
 
     class _Ctx:
         def __init__(self) -> None:
-            self.cloud_health_headers = {"x-bot-cloud-health": "0", "x-bot-cloud-last-error": "boom"}
+            self.cloud_health_headers = {
+                "x-bot-cloud-health": "0",
+                "x-bot-cloud-last-error": "boom",
+            }
             self.primary_symbol = "BTCUSDT"
             self.pipeline = SimpleNamespace(execution_service=_ExecutionService())
             self.execution_context = object()
@@ -220,7 +232,9 @@ def test_marketplace_servicer_propagates_cloud_metadata() -> None:
         def set_trailing_metadata(self, metadata):
             self.trailing_metadata = list(metadata)
 
-    from bot_core.api.server import _MarketplaceServicer  # lokalny import, aby zachować zależności testu
+    from bot_core.api.server import (
+        _MarketplaceServicer,
+    )  # lokalny import, aby zachować zależności testu
 
     ctx = _Ctx()
     servicer = _MarketplaceServicer(ctx)

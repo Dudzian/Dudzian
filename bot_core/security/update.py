@@ -1,4 +1,5 @@
 """Verification and application helpers for signed update packages."""
+
 from __future__ import annotations
 
 import hashlib
@@ -135,7 +136,9 @@ class UpdateManifest:
         if allowed_profiles is not None:
             raw_payload["allowed_profiles"] = list(allowed_profiles)
 
-        signature = payload.get("signature") if isinstance(payload.get("signature"), Mapping) else None
+        signature = (
+            payload.get("signature") if isinstance(payload.get("signature"), Mapping) else None
+        )
         integrity_manifest = (
             payload.get("integrity_manifest")
             if isinstance(payload.get("integrity_manifest"), Mapping)
@@ -170,7 +173,11 @@ class UpdateVerificationResult:
 
     @property
     def is_successful(self) -> bool:
-        return (self.signature_valid or not self.signature_checked) and self.license_ok and not self.errors
+        return (
+            (self.signature_valid or not self.signature_checked)
+            and self.license_ok
+            and not self.errors
+        )
 
 
 class UpdateVerificationError(RuntimeError):
@@ -307,11 +314,16 @@ def verify_update_bundle(
                 license_ok = False
                 errors.append(
                     "Licencja OEM nie jest uprawniona do aktualizacji (profil %s, dozwolone: %s)"
-                    % (license_result.profile or "<unknown>", ", ".join(sorted(manifest.allowed_profiles)))
+                    % (
+                        license_result.profile or "<unknown>",
+                        ", ".join(sorted(manifest.allowed_profiles)),
+                    )
                 )
             elif not license_result.is_valid:
                 license_ok = False
-                errors.append("Licencja OEM nie przeszła walidacji i nie może otrzymać aktualizacji")
+                errors.append(
+                    "Licencja OEM nie przeszła walidacji i nie może otrzymać aktualizacji"
+                )
             else:
                 warnings.append(
                     f"Licencja {license_result.license_path} potwierdzona dla profilu {license_result.profile}"
@@ -321,7 +333,9 @@ def verify_update_bundle(
         guard: CapabilityGuard | None = getattr(license_result, "capability_guard", None)
         if capabilities is None:
             license_ok = False
-            errors.append("Licencja offline nie dostarczyła capabilities – aktualizacja jest zablokowana.")
+            errors.append(
+                "Licencja offline nie dostarczyła capabilities – aktualizacja jest zablokowana."
+            )
         else:
             if guard is None:
                 guard = CapabilityGuard(capabilities)
@@ -342,7 +356,9 @@ def verify_update_bundle(
             metadata = manifest.metadata or {}
             required_modules = metadata.get("required_modules")
             if required_modules:
-                if isinstance(required_modules, Sequence) and not isinstance(required_modules, (str, bytes, bytearray)):
+                if isinstance(required_modules, Sequence) and not isinstance(
+                    required_modules, (str, bytes, bytearray)
+                ):
                     missing = [
                         str(module)
                         for module in required_modules
@@ -407,7 +423,9 @@ def verify_differential_update(
         package_key=package_key,
         hwid_provider=hwid_provider,
     )
-    manifest_validation = manager.validate_manifest(manifest_path, signature_path=delta_signature_path)
+    manifest_validation = manager.validate_manifest(
+        manifest_path, signature_path=delta_signature_path
+    )
     update_result = manager.verify_package(
         package_dir,
         license_result=license_result,

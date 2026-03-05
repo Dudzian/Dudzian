@@ -66,9 +66,7 @@ class MatchingEngine:
 
     _EPSILON = 1e-12
 
-    def __init__(
-        self, config: MatchingConfig | SimulationScenario | None = None
-    ) -> None:
+    def __init__(self, config: MatchingConfig | SimulationScenario | None = None) -> None:
         scenario = (
             config
             if isinstance(config, SimulationScenario)

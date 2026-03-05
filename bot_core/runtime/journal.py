@@ -1,4 +1,5 @@
 """Dziennik decyzji tradingowych – wspiera audyt i compliance."""
+
 from __future__ import annotations
 
 import json
@@ -125,11 +126,9 @@ class TradingDecisionEvent:
 class TradingDecisionJournal(Protocol):
     """Minimalny kontrakt dziennika decyzji."""
 
-    def record(self, event: TradingDecisionEvent) -> None:
-        ...
+    def record(self, event: TradingDecisionEvent) -> None: ...
 
-    def export(self) -> Iterable[Mapping[str, str]]:
-        ...
+    def export(self) -> Iterable[Mapping[str, str]]: ...
 
 
 @dataclass(slots=True)
@@ -263,9 +262,7 @@ class AdaptiveDecisionJournal(TradingDecisionJournal):
             self.learner.persist()
 
     @staticmethod
-    def _resolve_regime(
-        event: TradingDecisionEvent, metadata: Mapping[str, str]
-    ) -> str | None:
+    def _resolve_regime(event: TradingDecisionEvent, metadata: Mapping[str, str]) -> str | None:
         activation_raw = metadata.get("activation")
         if activation_raw:
             try:
@@ -610,4 +607,3 @@ __all__ = [
     "log_model_change_event",
     "aggregate_decision_statistics",
 ]
-

@@ -16,11 +16,15 @@ from tests.test_runtime_pipeline_offline import (
 
 
 @pytest.fixture()
-def loopback_exchange_server(base_loopback_exchange_server: _LoopbackExchangeState) -> _LoopbackExchangeState:
+def loopback_exchange_server(
+    base_loopback_exchange_server: _LoopbackExchangeState,
+) -> _LoopbackExchangeState:
     return base_loopback_exchange_server
 
 
-def _run_local_bot(runtime_path: Path, entrypoint: str, mode: str, tmp_path: Path) -> subprocess.CompletedProcess[str]:
+def _run_local_bot(
+    runtime_path: Path, entrypoint: str, mode: str, tmp_path: Path
+) -> subprocess.CompletedProcess[str]:
     reports_dir = tmp_path / "reports"
     markdown_dir = tmp_path / "markdown"
     state_dir = tmp_path / "state"
@@ -74,7 +78,9 @@ def test_run_local_bot_loopback_modes(
     tmp_path: Path,
     loopback_exchange_server: _LoopbackExchangeState,
 ) -> None:
-    core_path, runtime_path = _materialize_loopback_configs(tmp_path, port=loopback_exchange_server.port)
+    core_path, runtime_path = _materialize_loopback_configs(
+        tmp_path, port=loopback_exchange_server.port
+    )
 
     paper_result = _run_local_bot(runtime_path, "loopback_paper", "paper", tmp_path)
     assert paper_result.returncode == 0, paper_result.stderr
@@ -95,11 +101,17 @@ def test_run_local_bot_loopback_modes(
 
     live_metrics = live_report.get("live_execution_metrics")
     assert live_metrics and live_metrics.get("entries")
-    loopback_entries = [entry for entry in live_metrics["entries"] if entry.get("exchange") == "loopback_spot"]
+    loopback_entries = [
+        entry for entry in live_metrics["entries"] if entry.get("exchange") == "loopback_spot"
+    ]
     assert loopback_entries, f"Brak wpisów metryk dla loopback_spot: {live_metrics}"
-    aggregated_entry = next((entry for entry in loopback_entries if entry.get("route") is None), None)
+    aggregated_entry = next(
+        (entry for entry in loopback_entries if entry.get("route") is None), None
+    )
     assert aggregated_entry is not None, f"Brak zagregowanego wpisu bez trasy: {loopback_entries}"
-    default_route_entry = next((entry for entry in loopback_entries if entry.get("route") == "default"), None)
+    default_route_entry = next(
+        (entry for entry in loopback_entries if entry.get("route") == "default"), None
+    )
     aggregated_metrics = aggregated_entry.get("metrics", {})
     if aggregated_metrics.get("orders_total"):
         assert default_route_entry is not None, f"Brak wpisu dla trasy default: {loopback_entries}"
@@ -201,9 +213,16 @@ def test_run_local_bot_loopback_modes(
             assert attempts_exception == 0
             assert attempts_success_rate is not None and attempts_success_rate == pytest.approx(1.0)
             assert attempts_error_rate is not None and attempts_error_rate == pytest.approx(0.0)
-            assert attempts_api_error_rate is not None and attempts_api_error_rate == pytest.approx(0.0)
-            assert attempts_auth_error_rate is not None and attempts_auth_error_rate == pytest.approx(0.0)
-            assert attempts_exception_rate is not None and attempts_exception_rate == pytest.approx(0.0)
+            assert attempts_api_error_rate is not None and attempts_api_error_rate == pytest.approx(
+                0.0
+            )
+            assert (
+                attempts_auth_error_rate is not None
+                and attempts_auth_error_rate == pytest.approx(0.0)
+            )
+            assert attempts_exception_rate is not None and attempts_exception_rate == pytest.approx(
+                0.0
+            )
             success_rate = metrics.get("orders_success_rate")
             failure_rate = metrics.get("orders_failure_rate")
             fallback_rate = metrics.get("orders_fallback_rate")

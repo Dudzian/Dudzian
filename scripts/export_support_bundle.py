@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 """Build an offline support bundle with logs, reports and telemetry artifacts."""
+
 from __future__ import annotations
 
 import argparse
@@ -125,7 +126,9 @@ def _prepare_includes(
     return list(resolved.items())
 
 
-def _write_tar_bundle(bundle_path: Path, entries: Mapping[str, Path], manifest: Mapping[str, object]) -> None:
+def _write_tar_bundle(
+    bundle_path: Path, entries: Mapping[str, Path], manifest: Mapping[str, object]
+) -> None:
     bundle_path.parent.mkdir(parents=True, exist_ok=True)
     with tarfile.open(bundle_path, mode="w:gz") as tar:
         for label, path in entries.items():
@@ -138,7 +141,9 @@ def _write_tar_bundle(bundle_path: Path, entries: Mapping[str, Path], manifest: 
         tar.addfile(info, fileobj=io.BytesIO(data))
 
 
-def _write_zip_bundle(bundle_path: Path, entries: Mapping[str, Path], manifest: Mapping[str, object]) -> None:
+def _write_zip_bundle(
+    bundle_path: Path, entries: Mapping[str, Path], manifest: Mapping[str, object]
+) -> None:
     bundle_path.parent.mkdir(parents=True, exist_ok=True)
     with zipfile.ZipFile(bundle_path, mode="w", compression=zipfile.ZIP_DEFLATED) as zf:
         for label, path in entries.items():
@@ -188,7 +193,9 @@ def run(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Eksport pakietu wsparcia UI")
     parser.add_argument("--output", help="Docelowa ścieżka archiwum (plik lub katalog)")
     parser.add_argument("--output-dir", help="Katalog docelowy pakietów wsparcia")
-    parser.add_argument("--basename", default="support-bundle", help="Bazowa nazwa pliku (bez rozszerzenia)")
+    parser.add_argument(
+        "--basename", default="support-bundle", help="Bazowa nazwa pliku (bez rozszerzenia)"
+    )
     parser.add_argument(
         "--format",
         choices=sorted(SUPPORTED_FORMATS),
@@ -218,7 +225,9 @@ def run(argv: list[str] | None = None) -> int:
     )
     parser.add_argument("--timestamp", help="Zewnętrznie narzucony znacznik czasu ISO-8601")
     parser.add_argument("--root", default=".", help="Katalog bazowy dla ścieżek względnych")
-    parser.add_argument("--dry-run", action="store_true", help="Tylko generuj manifest, bez archiwizacji")
+    parser.add_argument(
+        "--dry-run", action="store_true", help="Tylko generuj manifest, bez archiwizacji"
+    )
 
     args = parser.parse_args(argv)
 
@@ -241,7 +250,9 @@ def run(argv: list[str] | None = None) -> int:
         timestamp=safe_timestamp,
     )
 
-    manifest = _build_manifest(includes, fmt=args.format, bundle_path=bundle_path, timestamp=timestamp, metadata=metadata)
+    manifest = _build_manifest(
+        includes, fmt=args.format, bundle_path=bundle_path, timestamp=timestamp, metadata=metadata
+    )
 
     if args.dry_run:
         print(json.dumps({"status": "preview", **manifest}, ensure_ascii=False))

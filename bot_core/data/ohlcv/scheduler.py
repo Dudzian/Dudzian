@@ -1,4 +1,5 @@
 """Harmonogram odświeżania danych OHLCV w tle."""
+
 from __future__ import annotations
 
 import asyncio
@@ -173,4 +174,3 @@ class OHLCVRefreshScheduler:
                 )
             except asyncio.TimeoutError:
                 continue
-

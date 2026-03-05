@@ -69,7 +69,9 @@ def test_marketplace_install_workflow_end_to_end(tmp_path: Path) -> None:
 
     signing_key = b"catalog-secret"
     preset_id = "automation-ai"
-    _write_signed_preset(artifacts_dir / f"{preset_id}.json", preset_id=preset_id, signing_key=signing_key)
+    _write_signed_preset(
+        artifacts_dir / f"{preset_id}.json", preset_id=preset_id, signing_key=signing_key
+    )
     _write_catalog(catalog_dir / "catalog.yaml", preset_id)
 
     license_payload = {
@@ -109,7 +111,11 @@ def test_marketplace_install_workflow_end_to_end(tmp_path: Path) -> None:
 
     catalog = StrategyCatalog(hwid_provider=HwIdProvider(fingerprint_reader=lambda: "device-xyz"))
     catalog.load_presets_from_directory(repository.root, signing_keys={"catalog": signing_key})
-    catalog.install_license_override(preset_id, license_payload, hwid_provider=HwIdProvider(fingerprint_reader=lambda: "device-xyz"))
+    catalog.install_license_override(
+        preset_id,
+        license_payload,
+        hwid_provider=HwIdProvider(fingerprint_reader=lambda: "device-xyz"),
+    )
     descriptor = catalog.preset(preset_id)
     assert descriptor.preset_id == preset_id
     assert descriptor.license_status.status.value.lower() not in {"invalid", "revoked"}

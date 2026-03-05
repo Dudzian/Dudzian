@@ -1,4 +1,5 @@
 """Pętla czasu rzeczywistego dla strategii dziennych."""
+
 from __future__ import annotations
 
 import logging
@@ -67,7 +68,9 @@ class DailyTrendRealtimeRunner:
     on_cycle_error: Callable[[Exception], None] | None = None
     on_cycle_complete: Callable[[Sequence[OrderResult]], None] | None = None
     min_sleep_seconds: float = 1.0
-    last_cycle_signals: Sequence[ControllerSignal] = field(default_factory=tuple, init=False, repr=False)
+    last_cycle_signals: Sequence[ControllerSignal] = field(
+        default_factory=tuple, init=False, repr=False
+    )
     last_cycle_results: Sequence[OrderResult] = field(default_factory=tuple, init=False, repr=False)
     last_cycle_started_at: datetime | None = field(default=None, init=False, repr=False)
 
@@ -77,11 +80,15 @@ class DailyTrendRealtimeRunner:
         now = self.clock()
         self.last_cycle_started_at = now
         end_ms = int(now.timestamp() * 1000)
-        interval_seconds = _interval_seconds(self.controller.interval, max(1.0, self.controller.tick_seconds))
+        interval_seconds = _interval_seconds(
+            self.controller.interval, max(1.0, self.controller.tick_seconds)
+        )
         lookback_ms = int(interval_seconds * max(1, self.history_bars) * 1000)
         start_ms = max(0, end_ms - lookback_ms)
 
-        collected: Sequence[ControllerSignal] = self.controller.collect_signals(start=start_ms, end=end_ms)
+        collected: Sequence[ControllerSignal] = self.controller.collect_signals(
+            start=start_ms, end=end_ms
+        )
         self.last_cycle_signals = tuple(collected)
         signals = [item.signal for item in collected]
 

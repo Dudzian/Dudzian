@@ -1,4 +1,5 @@
 """Testy pipeline'u pakowania bundla OEM."""
+
 from __future__ import annotations
 
 import base64
@@ -8,7 +9,11 @@ from pathlib import Path
 
 import pytest
 
-from deploy.packaging.pipeline import HardwareFingerprintValidator, PackagingContext, build_pipeline_from_mapping
+from deploy.packaging.pipeline import (
+    HardwareFingerprintValidator,
+    PackagingContext,
+    build_pipeline_from_mapping,
+)
 from bot_core.security.signing import build_hmac_signature
 
 
@@ -84,7 +89,9 @@ def test_pipeline_executes_all_steps(tmp_path: Path, monkeypatch: pytest.MonkeyP
     hmac_key = b"pipeline-secret-key"
     monkeypatch.setenv("OEM_PIPELINE_HMAC", base64.b64encode(hmac_key).decode("ascii"))
     monkeypatch.setenv("OEM_PIPELINE_DELTA_KEY", base64.b64encode(b"delta-secret").decode("ascii"))
-    monkeypatch.setenv("OEM_PIPELINE_PACKAGE_KEY", base64.b64encode(b"package-secret").decode("ascii"))
+    monkeypatch.setenv(
+        "OEM_PIPELINE_PACKAGE_KEY", base64.b64encode(b"package-secret").decode("ascii")
+    )
     monkeypatch.setattr("bot_core.security.hwid.get_local_fingerprint", lambda: "OEM-FP-001")
 
     pipeline = build_pipeline_from_mapping(pipeline_config, base_dir=tmp_path)
@@ -108,7 +115,9 @@ def test_pipeline_executes_all_steps(tmp_path: Path, monkeypatch: pytest.MonkeyP
             {"path": "config/fingerprint.expected.json", "sha384": "fingerprint-digest"},
         ],
     }
-    context = PackagingContext(staging_root=staging_root, archive_path=archive_path, manifest=manifest)
+    context = PackagingContext(
+        staging_root=staging_root, archive_path=archive_path, manifest=manifest
+    )
 
     report = pipeline.execute(context)
 
@@ -161,4 +170,3 @@ def test_pipeline_executes_all_steps(tmp_path: Path, monkeypatch: pytest.MonkeyP
     for signature in report.code_signatures:
         assert signature.dry_run is True
         assert signature.return_code == 0
-

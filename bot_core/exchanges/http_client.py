@@ -1,4 +1,5 @@
 """Asynchroniczny wrapper HTTP zastępujący ``urllib.request.urlopen`` w adapterach giełdowych."""
+
 from __future__ import annotations
 
 import atexit
@@ -240,7 +241,9 @@ def _resolve_client(base_url: str, timeout: float) -> RateLimitedAsyncClient:
     return client
 
 
-def _extract_request_components(request: Request | str) -> tuple[str, str, Mapping[str, str], bytes | None]:
+def _extract_request_components(
+    request: Request | str,
+) -> tuple[str, str, Mapping[str, str], bytes | None]:
     if isinstance(request, Request):
         method = (request.get_method() or "GET").upper()
         url = request.full_url

@@ -12,10 +12,7 @@ from scripts.seed_paper_cache import GeneratedSeries, generate_smoke_cache
 def _write_config(path: Path, data_path: Path, *, cache_namespace: str | None = None) -> None:
     data_source_block = ""
     if cache_namespace:
-        data_source_block = (
-            "    data_source:\n"
-            f"      cache_namespace: {cache_namespace}\n"
-        )
+        data_source_block = f"    data_source:\n      cache_namespace: {cache_namespace}\n"
 
     path.write_text(
         f"""

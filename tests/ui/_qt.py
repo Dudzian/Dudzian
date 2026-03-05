@@ -1,4 +1,5 @@
 """Pomocnicy do wymuszania dostępności PySide6 w testach UI."""
+
 from __future__ import annotations
 
 import ctypes

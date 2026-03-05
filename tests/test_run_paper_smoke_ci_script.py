@@ -1,4 +1,5 @@
 """Testy dla skryptu run_paper_smoke_ci.py."""
+
 from __future__ import annotations
 
 import contextlib
@@ -219,9 +220,9 @@ def _fake_subprocess_run_factory(
             summary_path.parent.mkdir(parents=True, exist_ok=True)
             if "--core-config" in cmd:
                 cfg_arg = cmd.index("--core-config")
-                telemetry_summary.setdefault("metadata", {}).setdefault("core_config", {})["path"] = str(
-                    Path(cmd[cfg_arg + 1])
-                )
+                telemetry_summary.setdefault("metadata", {}).setdefault("core_config", {})[
+                    "path"
+                ] = str(Path(cmd[cfg_arg + 1]))
             summary_path.write_text(json.dumps(telemetry_summary), encoding="utf-8")
             log_arg = cmd.index("--decision-log")
             log_path = Path(cmd[log_arg + 1])
@@ -247,7 +248,9 @@ def _fake_subprocess_run_factory(
                 output_arg = cmd.index("--output-dir")
                 output_dir = Path(cmd[output_arg + 1])
                 output_dir.mkdir(parents=True, exist_ok=True)
-                stage_entries = [cmd[idx + 1] for idx, token in enumerate(cmd) if token == "--stage"]
+                stage_entries = [
+                    cmd[idx + 1] for idx, token in enumerate(cmd) if token == "--stage"
+                ]
                 stage_map = {"demo": "conservative", "paper": "balanced", "live": "manual"}
                 for entry in stage_entries:
                     stage, profile = entry.split("=", 1)
@@ -342,7 +345,9 @@ def _fake_subprocess_run_factory(
             summary_arg = cmd.index("--summary-output")
             summary_path = Path(cmd[summary_arg + 1])
             summary_path.parent.mkdir(parents=True, exist_ok=True)
-            summary_path.write_text(json.dumps(manifest_payload, ensure_ascii=False), encoding="utf-8")
+            summary_path.write_text(
+                json.dumps(manifest_payload, ensure_ascii=False), encoding="utf-8"
+            )
             if manifest_calls is not None:
                 manifest_calls.append({"cmd": list(cmd)})
             return _FakeCompleted(returncode=manifest_returncode)
@@ -352,23 +357,34 @@ def _fake_subprocess_run_factory(
             json_arg = cmd.index("--json-output")
             report_path = Path(cmd[json_arg + 1])
             report_path.parent.mkdir(parents=True, exist_ok=True)
-            report_path.write_text(json.dumps(default_tls_report, ensure_ascii=False), encoding="utf-8")
-            return _FakeCompleted(stdout=json.dumps(default_tls_report, ensure_ascii=False), returncode=tls_returncode)
+            report_path.write_text(
+                json.dumps(default_tls_report, ensure_ascii=False), encoding="utf-8"
+            )
+            return _FakeCompleted(
+                stdout=json.dumps(default_tls_report, ensure_ascii=False), returncode=tls_returncode
+            )
         if script == "audit_service_tokens.py":
             if token_calls is not None:
                 token_calls.append({"cmd": list(cmd)})
             json_arg = cmd.index("--json-output")
             report_path = Path(cmd[json_arg + 1])
             report_path.parent.mkdir(parents=True, exist_ok=True)
-            report_path.write_text(json.dumps(default_token_report, ensure_ascii=False), encoding="utf-8")
-            return _FakeCompleted(stdout=json.dumps(default_token_report, ensure_ascii=False), returncode=token_returncode)
+            report_path.write_text(
+                json.dumps(default_token_report, ensure_ascii=False), encoding="utf-8"
+            )
+            return _FakeCompleted(
+                stdout=json.dumps(default_token_report, ensure_ascii=False),
+                returncode=token_returncode,
+            )
         if script == "audit_security_baseline.py":
             if baseline_calls is not None:
                 baseline_calls.append({"cmd": list(cmd)})
             json_arg = cmd.index("--json-output")
             report_path = Path(cmd[json_arg + 1])
             report_path.parent.mkdir(parents=True, exist_ok=True)
-            report_path.write_text(json.dumps(default_baseline_report, ensure_ascii=False), encoding="utf-8")
+            report_path.write_text(
+                json.dumps(default_baseline_report, ensure_ascii=False), encoding="utf-8"
+            )
             return _FakeCompleted(
                 stdout=json.dumps(default_baseline_report, ensure_ascii=False),
                 returncode=baseline_returncode,
@@ -495,7 +511,10 @@ def test_build_command_accepts_adapter_factories(tmp_path: Path) -> None:
         operator="Tester",
         auto_publish_required=False,
         extra_run_daily_trend_args=[],
-        adapter_factory_specs=["kucoin_spot=bot_core.exchanges.kucoin:KuCoinSpotAdapter", "bybit_spot=!remove"],
+        adapter_factory_specs=[
+            "kucoin_spot=bot_core.exchanges.kucoin:KuCoinSpotAdapter",
+            "bybit_spot=!remove",
+        ],
     )
 
     assert command.count("--adapter-factory") == 2
@@ -503,7 +522,9 @@ def test_build_command_accepts_adapter_factories(tmp_path: Path) -> None:
     assert "bybit_spot=!remove" in command
 
 
-def test_main_runs_smoke_and_prints_summary(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+def test_main_runs_smoke_and_prints_summary(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
     scripts_dir = tmp_path / "scripts"
     scripts_dir.mkdir()
     run_daily_trend = scripts_dir / "run_daily_trend.py"
@@ -612,10 +633,7 @@ def test_main_runs_smoke_and_prints_summary(monkeypatch: pytest.MonkeyPatch, tmp
     assert "--require-risk-service-tls" in verify_cmd
     assert "--require-risk-service-tls-material" in verify_cmd
     assert "--expect-risk-service-server-sha256" in verify_cmd
-    assert (
-        "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
-        in verify_cmd
-    )
+    assert "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef" in verify_cmd
     assert "--require-risk-service-scope" in verify_cmd
     assert "--require-risk-service-auth-token" in verify_cmd
     assert "--require-risk-service-token-id" in verify_cmd
@@ -770,13 +788,17 @@ def test_main_propagates_manifest_failure(monkeypatch: pytest.MonkeyPatch, tmp_p
     assert manifest_calls, "export_manifest_metrics.py powinien zostać wywołany"
     cmd_tokens = manifest_calls[0]["cmd"]
     assert "--deny-status" in cmd_tokens
-    summary = json.loads((tmp_path / "output" / "paper_smoke_summary.json").read_text(encoding="utf-8"))
+    summary = json.loads(
+        (tmp_path / "output" / "paper_smoke_summary.json").read_text(encoding="utf-8")
+    )
     manifest_section = summary.get("manifest", {})
     assert manifest_section.get("worst_status") == "warning"
     assert manifest_section.get("exit_code") == 2
 
 
-def test_manifest_export_uses_signing_configuration(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+def test_manifest_export_uses_signing_configuration(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
     scripts_dir = tmp_path / "scripts"
     scripts_dir.mkdir()
     (scripts_dir / "run_daily_trend.py").write_text("print('stub run')", encoding="utf-8")
@@ -949,7 +971,9 @@ def test_main_fails_on_tls_audit_error(
     assert "security_baseline" in payload["status"]
 
 
-def test_security_baseline_cli_uses_signing(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+def test_security_baseline_cli_uses_signing(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
     scripts_dir = tmp_path / "scripts"
     scripts_dir.mkdir()
     (scripts_dir / "run_daily_trend.py").write_text("print('stub run')", encoding="utf-8")
@@ -1020,7 +1044,11 @@ def test_main_fails_on_token_audit_error(
             {
                 "service": "metrics_service",
                 "findings": [
-                    {"level": "error", "message": "Missing metrics.read", "details": {"scope": "metrics.read"}}
+                    {
+                        "level": "error",
+                        "message": "Missing metrics.read",
+                        "details": {"scope": "metrics.read"},
+                    }
                 ],
             }
         ],
@@ -1172,7 +1200,9 @@ def test_main_writes_env_file(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -
     assert markdown.startswith("# Raport CI")
 
 
-def test_main_dry_run(monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+def test_main_dry_run(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
     scripts_dir = tmp_path / "scripts"
     scripts_dir.mkdir()
     run_daily_trend = scripts_dir / "run_daily_trend.py"
@@ -1251,7 +1281,9 @@ def test_main_allows_stage_override(monkeypatch: pytest.MonkeyPatch, tmp_path: P
     assert call["stage_map"]["demo"] == "balanced"
     assert call["stage_map"]["paper"] == "balanced"
     assert call["stage_map"]["live"] == "manual"
-    summary = json.loads((tmp_path / "output" / "paper_smoke_summary.json").read_text(encoding="utf-8"))
+    summary = json.loads(
+        (tmp_path / "output" / "paper_smoke_summary.json").read_text(encoding="utf-8")
+    )
     bundle = summary.get("telemetry", {}).get("bundle", {})
     assert bundle.get("output_dir") == str(bundle_dir)
     assert bundle.get("manifest", {}).get("config_format") == "json"
@@ -1308,7 +1340,9 @@ def test_main_allows_optional_publish(monkeypatch: pytest.MonkeyPatch, tmp_path:
     assert exit_code == 0
 
 
-def test_main_renders_markdown_when_requested(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+def test_main_renders_markdown_when_requested(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
     scripts_dir = tmp_path / "scripts"
     scripts_dir.mkdir()
     run_daily_trend = scripts_dir / "run_daily_trend.py"
@@ -1382,9 +1416,7 @@ def test_ci_main_end_to_end_local_backends(monkeypatch: pytest.MonkeyPatch, tmp_
 
     config_path = _write_core_config(tmp_path, reporting=reporting_cfg)
 
-    base_run = _fake_subprocess_run_factory(
-        tmp_path=tmp_path, summary_payload={"status": "ok"}
-    )
+    base_run = _fake_subprocess_run_factory(tmp_path=tmp_path, summary_payload={"status": "ok"})
 
     def _fake_run(cmd, *_, **kwargs):  # noqa: ANN001
         script = Path(cmd[1]).name if len(cmd) > 1 else ""
@@ -1642,9 +1674,7 @@ def test_ci_main_end_to_end_s3_backends(monkeypatch: pytest.MonkeyPatch, tmp_pat
         types.SimpleNamespace(session=types.SimpleNamespace(Session=_StubSession)),
     )
 
-    base_run = _fake_subprocess_run_factory(
-        tmp_path=tmp_path, summary_payload={"status": "ok"}
-    )
+    base_run = _fake_subprocess_run_factory(tmp_path=tmp_path, summary_payload={"status": "ok"})
 
     def _fake_run(cmd, *_, **kwargs):  # noqa: ANN001
         script = Path(cmd[1]).name if len(cmd) > 1 else ""

@@ -40,7 +40,10 @@ def test_ci_harness_generates_audit_artifacts(tmp_path: Path) -> None:
     assert guardrails["observed"]["omega_ratio"] >= guardrails["thresholds"]["min_omega_ratio"]
     assert guardrails["thresholds"]["max_risk_of_ruin_pct"] >= 0
     assert guardrails["threshold_sources"]["max_risk_of_ruin_pct"] == "risk_profile:balanced"
-    assert guardrails["observed"]["risk_of_ruin_pct"] <= guardrails["thresholds"]["max_risk_of_ruin_pct"]
+    assert (
+        guardrails["observed"]["risk_of_ruin_pct"]
+        <= guardrails["thresholds"]["max_risk_of_ruin_pct"]
+    )
     assert guardrails["thresholds"]["min_hit_ratio_pct"] >= 0
     assert guardrails["threshold_sources"]["min_hit_ratio_pct"] == "risk_profile:balanced"
     assert guardrails["observed"]["hit_ratio_pct"] >= guardrails["thresholds"]["min_hit_ratio_pct"]

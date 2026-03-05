@@ -1,9 +1,16 @@
 """Adapter margin dla Zonda."""
+
 from __future__ import annotations
 
 from typing import Mapping, Optional, Sequence
 
-from bot_core.exchanges.base import AccountSnapshot, Environment, ExchangeCredentials, OrderRequest, OrderResult
+from bot_core.exchanges.base import (
+    AccountSnapshot,
+    Environment,
+    ExchangeCredentials,
+    OrderRequest,
+    OrderResult,
+)
 from bot_core.exchanges.error_mapping import raise_for_zonda_error
 from bot_core.exchanges.health import Watchdog
 from bot_core.exchanges.zonda.spot import (
@@ -96,7 +103,9 @@ class ZondaMarginAdapter(ZondaSpotAdapter):
                     continue
                 total_equity += balance * direct
                 available_margin += free_balances.get(asset, 0.0) * direct
-            maintenance_margin = _to_float(response.get("requiredMargin", response.get("maintenanceMargin", 0.0)))
+            maintenance_margin = _to_float(
+                response.get("requiredMargin", response.get("maintenanceMargin", 0.0))
+            )
             return AccountSnapshot(
                 balances=balances,
                 total_equity=total_equity,

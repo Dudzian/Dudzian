@@ -86,7 +86,9 @@ def test_paper_precheck_invalid_config(tmp_path: Path, capsys: pytest.CaptureFix
     assert "profile_not_defined" in payload["risk"]["issues"]
 
 
-def test_paper_precheck_coverage_failure(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+def test_paper_precheck_coverage_failure(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
     cache_dir = tmp_path / "cache_failure"
     rows = _generate_rows(datetime(2024, 1, 1, tzinfo=timezone.utc), 5)
     _write_cache(cache_dir, rows)
@@ -116,7 +118,9 @@ def test_paper_precheck_coverage_failure(tmp_path: Path, capsys: pytest.CaptureF
     assert any("insufficient_rows" in issue for issue in issues)
 
 
-def test_paper_precheck_manifest_missing_warning(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+def test_paper_precheck_manifest_missing_warning(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
     cache_dir = tmp_path / "cache_missing"
     cache_dir.mkdir()
     config_path = _write_config(tmp_path, cache_dir)
@@ -138,7 +142,9 @@ def test_paper_precheck_manifest_missing_warning(tmp_path: Path, capsys: pytest.
     assert payload["risk_status"] == "ok"
 
 
-def test_paper_precheck_fail_on_warnings(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+def test_paper_precheck_fail_on_warnings(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
     cache_dir = tmp_path / "cache_missing_fail"
     cache_dir.mkdir()
     config_path = _write_config(tmp_path, cache_dir)

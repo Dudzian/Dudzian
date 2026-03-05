@@ -40,7 +40,9 @@ class _FakePortfolioDecisionLog:
 
 
 class _FakePortfolioGovernor:
-    def __init__(self, cfg: Any, decision_log: Any | None = None) -> None:  # pragma: no cover - stub
+    def __init__(
+        self, cfg: Any, decision_log: Any | None = None
+    ) -> None:  # pragma: no cover - stub
         self.cfg = cfg
         self.decision_log = decision_log
 
@@ -84,7 +86,7 @@ def test_stage6_hypercare_cycle_runtime(
     _touch(
         "deploy/grafana/provisioning/dashboards/stage6_resilience_operations.json",
         tmp_path,
-        content="{\n  \"dashboard\": {}\n}\n",
+        content='{\n  "dashboard": {}\n}\n',
     )
     _touch("config/stage6/resilience_self_heal.json", tmp_path)
     _touch("data/stage6/resilience/failover_plan.json", tmp_path)
@@ -132,12 +134,16 @@ def test_stage6_hypercare_cycle_runtime(
                 == self._required["resilience"].parent.parent / "stage6" / "hypercare_summary.json"
             )
             assert (
-                (self._config.signature_path or self._config.output_path.with_suffix(".sig")).resolve(strict=False)
-                == self._required["resilience"].parent.parent / "stage6" / "hypercare_summary.sig"
-            )
+                self._config.signature_path or self._config.output_path.with_suffix(".sig")
+            ).resolve(strict=False) == self._required[
+                "resilience"
+            ].parent.parent / "stage6" / "hypercare_summary.sig"
 
             observability_cfg = self._config.observability
-            assert observability_cfg.slo.json_path.resolve(strict=False) == self._required["slo"].resolve()
+            assert (
+                observability_cfg.slo.json_path.resolve(strict=False)
+                == self._required["slo"].resolve()
+            )
             assert observability_cfg.metrics_path.resolve(strict=False) == (
                 tmp_path / "var/audit/observability/metrics.json"
             )
@@ -146,14 +152,23 @@ def test_stage6_hypercare_cycle_runtime(
             )
 
             resilience_cfg = self._config.resilience
-            assert resilience_cfg.audit.json_path.resolve(strict=False) == self._required["resilience"].resolve()
+            assert (
+                resilience_cfg.audit.json_path.resolve(strict=False)
+                == self._required["resilience"].resolve()
+            )
             assert resilience_cfg.failover.plan_path.resolve(strict=False) == (
                 tmp_path / "data/stage6/resilience/failover_plan.json"
             )
 
             portfolio_cfg = self._config.portfolio
-            assert portfolio_cfg.inputs.slo_report_path.resolve(strict=False) == self._required["slo"].resolve()
-            assert portfolio_cfg.inputs.stress_report_path.resolve(strict=False) == self._required["stress"].resolve()
+            assert (
+                portfolio_cfg.inputs.slo_report_path.resolve(strict=False)
+                == self._required["slo"].resolve()
+            )
+            assert (
+                portfolio_cfg.inputs.stress_report_path.resolve(strict=False)
+                == self._required["stress"].resolve()
+            )
 
         def run(self) -> _StubResult:
             for path in self._required.values():

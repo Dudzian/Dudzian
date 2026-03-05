@@ -1,4 +1,5 @@
 """Pure helpers for normalizing runtime decision records for UI payloads."""
+
 from __future__ import annotations
 
 from dataclasses import dataclass

@@ -1,4 +1,5 @@
 """Wspólne pomocniki HTTP wykorzystywane przez kanały alertowe."""
+
 from __future__ import annotations
 
 from typing import Protocol
@@ -9,8 +10,7 @@ from urllib.request import addinfourl
 class HttpOpener(Protocol):
     """Interfejs dla funkcji otwierającej żądanie HTTP."""
 
-    def __call__(self, req: request.Request, *, timeout: float) -> addinfourl:
-        ...
+    def __call__(self, req: request.Request, *, timeout: float) -> addinfourl: ...
 
 
 def default_opener(req: request.Request, *, timeout: float) -> addinfourl:

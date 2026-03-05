@@ -1,4 +1,5 @@
 """Obsługa magazynu raportów zdefiniowanego na poziomie środowiska."""
+
 from __future__ import annotations
 
 import os
@@ -27,7 +28,9 @@ def store_environment_report(
         return None
     if backend != "file":
         raise ValueError(
-            "Nieobsługiwany backend magazynu raportów: {backend}".format(backend=storage_cfg.backend)
+            "Nieobsługiwany backend magazynu raportów: {backend}".format(
+                backend=storage_cfg.backend
+            )
         )
 
     target_dir = _resolve_directory(environment, storage_cfg)
@@ -44,7 +47,9 @@ def store_environment_report(
             handle.flush()
             os.fsync(handle.fileno())
 
-    _prune_expired(target_dir.iterdir(), cutoff=_retention_cutoff(storage_cfg, timestamp), keep=target_path)
+    _prune_expired(
+        target_dir.iterdir(), cutoff=_retention_cutoff(storage_cfg, timestamp), keep=target_path
+    )
     return target_path
 
 
@@ -73,7 +78,9 @@ def _build_filename(config: EnvironmentReportStorageConfig, timestamp: datetime)
     return timestamp.astimezone(timezone.utc).strftime(pattern)
 
 
-def _retention_cutoff(config: EnvironmentReportStorageConfig, timestamp: datetime) -> datetime | None:
+def _retention_cutoff(
+    config: EnvironmentReportStorageConfig, timestamp: datetime
+) -> datetime | None:
     retention = getattr(config, "retention_days", None)
     if retention in (None, ""):
         return None

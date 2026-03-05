@@ -63,7 +63,9 @@ class _FakeClient:
 
     def create_order(self, symbol, order_type, side, amount, price=None, params=None):
         self._hit("create_order")
-        order = _FakeOrder(id=f"{symbol}-001", status="open", filled=amount / 2, remaining=amount / 2, price=price)
+        order = _FakeOrder(
+            id=f"{symbol}-001", status="open", filled=amount / 2, remaining=amount / 2, price=price
+        )
         self._orders[order.id] = order
         return {
             "id": order.id,
@@ -362,4 +364,3 @@ def test_huobi_adapter_keeps_default_exchange_id():
 
     assert adapter._settings["ccxt_config"]["options"]["defaultType"] == "spot"
     assert adapter._exchange_id == "huobi"
-

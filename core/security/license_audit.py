@@ -157,7 +157,14 @@ class LicenseAuditReport:
 
         if self.status_document:
             lines.extend(["", "## Bieżący status", ""])
-            for key in ("license_id", "edition", "effective_date", "issued_at", "maintenance", "trial"):
+            for key in (
+                "license_id",
+                "edition",
+                "effective_date",
+                "issued_at",
+                "maintenance",
+                "trial",
+            ):
                 if key in self.status_document:
                     value = self.status_document[key]
                     if isinstance(value, Mapping):
@@ -165,7 +172,15 @@ class LicenseAuditReport:
                     lines.append(f"- {key}: {value}")
 
         if self.activations:
-            lines.extend(["", "## Historia aktywacji", "", "| Data | Licencja | Edycja | Urządzenie | Powtórka |", "| --- | --- | --- | --- | --- |"])
+            lines.extend(
+                [
+                    "",
+                    "## Historia aktywacji",
+                    "",
+                    "| Data | Licencja | Edycja | Urządzenie | Powtórka |",
+                    "| --- | --- | --- | --- | --- |",
+                ]
+            )
             for record in self.activations:
                 hwid = record.local_hwid_hash or "-"
                 repeated = "tak" if record.repeat_activation else "nie"
@@ -236,8 +251,12 @@ def generate_license_audit_report(
 ) -> LicenseAuditReport:
     """Buduje raport audytu licencji na podstawie lokalnych plików."""
 
-    status_file = Path(status_path).expanduser() if status_path else Path("var/security/license_status.json")
-    audit_file = Path(audit_log_path).expanduser() if audit_log_path else Path("logs/security_admin.log")
+    status_file = (
+        Path(status_path).expanduser() if status_path else Path("var/security/license_status.json")
+    )
+    audit_file = (
+        Path(audit_log_path).expanduser() if audit_log_path else Path("logs/security_admin.log")
+    )
 
     warnings: list[str] = []
 
@@ -261,7 +280,9 @@ def generate_license_audit_report(
 
     summary = LicenseAuditSummary()
     summary.total_activations = len(records)
-    summary.unique_devices = len({record.local_hwid_hash for record in records if record.local_hwid_hash})
+    summary.unique_devices = len(
+        {record.local_hwid_hash for record in records if record.local_hwid_hash}
+    )
     summary.latest_activation = records[0].timestamp if records else None
 
     if status_document:
@@ -272,7 +293,9 @@ def generate_license_audit_report(
         summary.edition = records[0].edition
 
     if not status_document and not status_exists:
-        warnings.append("Brak pliku statusu licencji – raport bazuje wyłącznie na dzienniku audytu.")
+        warnings.append(
+            "Brak pliku statusu licencji – raport bazuje wyłącznie na dzienniku audytu."
+        )
     if not records:
         if not audit_exists:
             warnings.append("Brak dziennika audytu licencji.")
@@ -299,4 +322,3 @@ __all__ = [
     "LicenseAuditReport",
     "generate_license_audit_report",
 ]
-

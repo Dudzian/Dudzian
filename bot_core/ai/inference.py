@@ -175,8 +175,7 @@ class DecisionModelInference:
         scalers_field = getattr(self._artifact, "feature_scalers", {})
         if isinstance(scalers_field, Mapping):
             self._feature_scalers = {
-                str(name): (float(pair[0]), float(pair[1]))
-                for name, pair in scalers_field.items()
+                str(name): (float(pair[0]), float(pair[1])) for name, pair in scalers_field.items()
             }
         else:
             self._feature_scalers = {}
@@ -237,9 +236,7 @@ class DecisionModelInference:
             monitoring_context.update({str(key): value for key, value in context.items()})
         reports: dict[str, Mapping[str, object]] = {}
         if self._completeness_watcher.is_configured:
-            report = dict(
-                self._completeness_watcher.observe(features, context=monitoring_context)
-            )
+            report = dict(self._completeness_watcher.observe(features, context=monitoring_context))
             enforce = self._should_enforce("completeness")
             reports["completeness"] = apply_policy_to_report(report, enforce=enforce)
         if self._bounds_validator.is_configured:
@@ -374,9 +371,7 @@ class DecisionModelInference:
                 try:
                     prepared[name] = float(raw)
                 except (TypeError, ValueError):
-                    prepared[name] = float(
-                        self._feature_scalers.get(name, (0.0, 0.0))[0]
-                    )
+                    prepared[name] = float(self._feature_scalers.get(name, (0.0, 0.0))[0])
         for key, value in provided.items():
             if key not in prepared:
                 try:
@@ -385,9 +380,7 @@ class DecisionModelInference:
                     continue
         return prepared
 
-    def _extract_scalers(
-        self, metadata: Mapping[str, object]
-    ) -> dict[str, tuple[float, float]]:
+    def _extract_scalers(self, metadata: Mapping[str, object]) -> dict[str, tuple[float, float]]:
         raw = metadata.get("feature_scalers")
         if not isinstance(raw, Mapping):
             return {}
@@ -400,9 +393,7 @@ class DecisionModelInference:
             scalers[str(name)] = (mean, stdev)
         return scalers
 
-    def _extract_calibration(
-        self, metadata: Mapping[str, object]
-    ) -> "CalibrationReport | None":
+    def _extract_calibration(self, metadata: Mapping[str, object]) -> "CalibrationReport | None":
         from .validation import CalibrationReport
 
         payload = metadata.get("calibration")

@@ -12,7 +12,11 @@ from bot_core.generated import trading_pb2, trading_pb2_grpc
 from bot_core.security.fingerprint import sign_license_payload
 
 
-pytestmark = [pytest.mark.integration, pytest.mark.requires_trading_stubs, pytest.mark.unstable_windows]
+pytestmark = [
+    pytest.mark.integration,
+    pytest.mark.requires_trading_stubs,
+    pytest.mark.unstable_windows,
+]
 
 
 class _RuntimeStub(trading_pb2_grpc.RuntimeServiceServicer):
@@ -86,7 +90,9 @@ def test_cloud_hwid_enforcement_blocks_unauthorized_clients(_cloud_server):
     assert response.authorized is True
     metadata = (("authorization", f"CloudSession {response.session_token}"),)
 
-    runtime_stub.ListDecisions(trading_pb2.ListDecisionsRequest(limit=1), metadata=metadata, timeout=2)
+    runtime_stub.ListDecisions(
+        trading_pb2.ListDecisionsRequest(limit=1), metadata=metadata, timeout=2
+    )
 
     manager.refresh_allowed_clients(())
     with pytest.raises(grpc.RpcError) as revoked:
@@ -96,4 +102,3 @@ def test_cloud_hwid_enforcement_blocks_unauthorized_clients(_cloud_server):
             timeout=1,
         )
     assert revoked.value.code() == grpc.StatusCode.UNAUTHENTICATED
-

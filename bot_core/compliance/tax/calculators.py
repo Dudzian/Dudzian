@@ -154,7 +154,9 @@ class AverageCostBasisCalculator(CostBasisCalculator):
         lot = TaxLot(
             lot_id="average",
             asset=self._asset or "*",
-            acquisition_time=self._lots[0].acquisition_time if self._lots else event_time_placeholder(),
+            acquisition_time=self._lots[0].acquisition_time
+            if self._lots
+            else event_time_placeholder(),
             quantity=self._total_quantity,
             cost_basis=unit_cost * self._total_quantity,
             fee=unit_fee * self._total_quantity,

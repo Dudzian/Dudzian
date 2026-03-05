@@ -140,7 +140,9 @@ def test_build_offline_bundle_uses_default_docs(tmp_path, monkeypatch, freeze_de
 
     manifest_path = output / "bundle" / "MANIFEST.json"
     docs_entries = json.loads(manifest_path.read_text(encoding="utf-8"))["docs"]
-    assert docs_entries == ["docs/README.txt"], "Default docs should be copied when --docs is omitted"
+    assert docs_entries == ["docs/README.txt"], (
+        "Default docs should be copied when --docs is omitted"
+    )
 
     default_doc_copy = output / "bundle" / "docs" / "README.txt"
     assert default_doc_copy.exists()

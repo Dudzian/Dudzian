@@ -33,9 +33,7 @@ def _load_key(path: Path) -> bytes:
     if os.name != "nt":
         mode = resolved.stat().st_mode
         if mode & (stat.S_IRWXG | stat.S_IRWXO):
-            raise PermissionError(
-                "Signing key file permissions must restrict access to the owner"
-            )
+            raise PermissionError("Signing key file permissions must restrict access to the owner")
     return resolved.read_bytes()
 
 
@@ -62,9 +60,7 @@ def _validate_digest(
     computed = hasher.hexdigest()
     if computed != expected:
         raise ValueError(
-            "Manifest digest mismatch: payload={}, computed={}".format(
-                expected, computed
-            )
+            "Manifest digest mismatch: payload={}, computed={}".format(expected, computed)
         )
 
 
@@ -101,9 +97,7 @@ def _verify_stage6_signature(
     if normalized.startswith("HMAC-"):
         normalized = normalized[5:]
     if normalized != "SHA256":
-        raise ValueError(
-            "Stage6 signatures use HMAC-SHA256; adjust --digest accordingly"
-        )
+        raise ValueError("Stage6 signatures use HMAC-SHA256; adjust --digest accordingly")
 
     manifest_data = json.loads(manifest_path.read_text(encoding="utf-8"))
     if not isinstance(manifest_data, Mapping):
@@ -174,9 +168,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
             digest_algorithm=args.digest,
         )
     key_id = signature.get("key_id", "n/a")
-    print(
-        f"Signature verification succeeded for {manifest_path.name} (key_id={key_id})"
-    )
+    print(f"Signature verification succeeded for {manifest_path.name} (key_id={key_id})")
     return 0
 
 

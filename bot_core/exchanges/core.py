@@ -14,6 +14,7 @@ from typing import Any, Callable, Dict, Iterable, List, Optional, TYPE_CHECKING
 if importlib.util.find_spec("pydantic") is not None:
     from pydantic import BaseModel, ConfigDict, Field
 else:  # pragma: no cover - fallback dla środowisk bez zależności opcjonalnych
+
     class BaseModel:
         model_config: dict[str, object] = {}
 
@@ -24,10 +25,13 @@ else:  # pragma: no cover - fallback dla środowisk bez zależności opcjonalnyc
     def ConfigDict(**kwargs: object) -> dict[str, object]:
         return dict(kwargs)
 
-    def Field(*, default: object = None, default_factory: Callable[[], object] | None = None) -> object:
+    def Field(
+        *, default: object = None, default_factory: Callable[[], object] | None = None
+    ) -> object:
         if default_factory is not None:
             return default_factory()
         return default
+
 
 if TYPE_CHECKING:  # pragma: no cover
     from bot_core.database.manager import DatabaseManager
@@ -352,9 +356,7 @@ class PaperBackend(BaseBackend):
         mn = self.min_notional(symbol)
         notional = qty * reference_price
         if mn and notional < mn:
-            raise ValueError(
-                f"Notional {notional:.8f} < minNotional {mn:.8f} dla {symbol}"
-            )
+            raise ValueError(f"Notional {notional:.8f} < minNotional {mn:.8f} dla {symbol}")
 
         order_id = self._record_order(
             symbol,
@@ -605,9 +607,7 @@ class PaperBackend(BaseBackend):
             if new_qty <= 0:
                 new_qty = 0.0
             avg = (
-                (pos.quantity * pos.avg_price + quantity * price) / new_qty
-                if new_qty > 0
-                else 0.0
+                (pos.quantity * pos.avg_price + quantity * price) / new_qty if new_qty > 0 else 0.0
             )
             pos.quantity = float(f"{new_qty:.8f}")
             pos.avg_price = float(f"{avg:.8f}")

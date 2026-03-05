@@ -1,4 +1,5 @@
 """Kontrolery PySide6 udostępniane w kontekście QML."""
+
 from __future__ import annotations
 
 from .layout import LayoutProfileController

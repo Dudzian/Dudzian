@@ -1,4 +1,5 @@
 """QA test pilnujący, aby runtime/CI nie importowały archiwum."""
+
 from __future__ import annotations
 
 from pathlib import Path

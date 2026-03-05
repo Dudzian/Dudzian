@@ -17,8 +17,8 @@ log = logging.getLogger("services.marketdata")
 @dataclass
 class MarketDataConfig:
     symbol: str = "BTCUSDT"
-    timeframe_sec: int = 60              # 1m bary z ticków
-    atr_len: int = 14                    # ATR na barach
+    timeframe_sec: int = 60  # 1m bary z ticków
+    atr_len: int = 14  # ATR na barach
     publish_intermediate_bars: bool = False  # czy emitować aktualizacje intra-bar (nie tylko close)
 
 
@@ -30,6 +30,7 @@ class MarketDataService:
       - component="MarketData", action="atr_update"  (po przeliczeniu ATR)
     Nic nie tworzy nowych EventType (kompatybilność).
     """
+
     def __init__(self, bus: EventBus, cfg: MarketDataConfig) -> None:
         self.bus = bus
         self.cfg = cfg
@@ -45,7 +46,9 @@ class MarketDataService:
         self._tr_hist: Deque[float] = deque(maxlen=max(2, cfg.atr_len))
 
         self.bus.subscribe(EventType.MARKET_TICK, self._on_tick)
-        log.info("MarketDataService: %s tf=%ss, ATR len=%d", cfg.symbol, cfg.timeframe_sec, cfg.atr_len)
+        log.info(
+            "MarketDataService: %s tf=%ss, ATR len=%d", cfg.symbol, cfg.timeframe_sec, cfg.atr_len
+        )
 
     # --- utils -----------------------------------------------------------------------------------
 
@@ -76,14 +79,17 @@ class MarketDataService:
             "ticks": int(self._ticks_in_bar),
             "final": bool(finalized),
         }
-        self.bus.publish(EventType.AUTOTRADE_STATUS, {
-            "component": "MarketData",
-            "action": "bar_update",
-            "symbol": self.cfg.symbol,
-            "tf": f"{int(self.cfg.timeframe_sec)}s",
-            "bar": bar,
-            "ts": time.time()
-        })
+        self.bus.publish(
+            EventType.AUTOTRADE_STATUS,
+            {
+                "component": "MarketData",
+                "action": "bar_update",
+                "symbol": self.cfg.symbol,
+                "tf": f"{int(self.cfg.timeframe_sec)}s",
+                "bar": bar,
+                "ts": time.time(),
+            },
+        )
 
     def _push_tr_and_update_atr(self, high: float, low: float, close: float):
         # True Range
@@ -93,7 +99,7 @@ class MarketDataService:
             tr = max(
                 float(high - low),
                 abs(float(high - self._prev_close)),
-                abs(float(low - self._prev_close))
+                abs(float(low - self._prev_close)),
             )
         self._tr_hist.append(tr)
 
@@ -107,15 +113,18 @@ class MarketDataService:
         self._prev_close = close
 
         if self._atr is not None:
-            self.bus.publish(EventType.AUTOTRADE_STATUS, {
-                "component": "MarketData",
-                "action": "atr_update",
-                "symbol": self.cfg.symbol,
-                "tf": f"{int(self.cfg.timeframe_sec)}s",
-                "atr": float(self._atr),
-                "len": int(self.cfg.atr_len),
-                "ts": time.time()
-            })
+            self.bus.publish(
+                EventType.AUTOTRADE_STATUS,
+                {
+                    "component": "MarketData",
+                    "action": "atr_update",
+                    "symbol": self.cfg.symbol,
+                    "tf": f"{int(self.cfg.timeframe_sec)}s",
+                    "atr": float(self._atr),
+                    "len": int(self.cfg.atr_len),
+                    "ts": time.time(),
+                },
+            )
 
     # --- handlers --------------------------------------------------------------------------------
 

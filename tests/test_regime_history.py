@@ -189,7 +189,9 @@ class _ClassifierStub:
     def thresholds_snapshot(self) -> Mapping[str, object]:
         return deepcopy(self._thresholds)
 
-    def assess(self, market_data: pd.DataFrame, *, price_col: str = "close", symbol: str | None = None) -> MarketRegimeAssessment:
+    def assess(
+        self, market_data: pd.DataFrame, *, price_col: str = "close", symbol: str | None = None
+    ) -> MarketRegimeAssessment:
         assessment = self._queue.pop(0)
         return assessment
 

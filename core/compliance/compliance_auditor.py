@@ -73,9 +73,9 @@ class ComplianceAuditor:
             for field in self._config.get("kyc", {}).get("required_fields", ())
             if str(field).strip()
         )
-        self._kyc_severity = str(
-            self._config.get("kyc", {}).get("severity", "high")
-        ).strip() or "high"
+        self._kyc_severity = (
+            str(self._config.get("kyc", {}).get("severity", "high")).strip() or "high"
+        )
 
         aml_section = self._config.get("aml", {})
         self._aml_blocked_countries = {
@@ -108,7 +108,9 @@ class ComplianceAuditor:
         self._tx_daily_limit = self._safe_float(tx_section.get("max_daily_volume_usd"))
         self._tx_lookback_days = max(
             0,
-            int(tx_section.get("lookback_days", 1)) if str(tx_section.get("lookback_days", "")).strip() else 1,
+            int(tx_section.get("lookback_days", 1))
+            if str(tx_section.get("lookback_days", "")).strip()
+            else 1,
         )
         self._tx_severity = str(tx_section.get("severity", "warning")).strip() or "warning"
 
@@ -167,9 +169,7 @@ class ComplianceAuditor:
             config_path=self._config_path if self._config_path.exists() else None,
         )
 
-    def _evaluate_kyc(
-        self, profile: Mapping[str, object] | None
-    ) -> Iterable[ComplianceFinding]:
+    def _evaluate_kyc(self, profile: Mapping[str, object] | None) -> Iterable[ComplianceFinding]:
         if not self._kyc_required_fields:
             return ()
         profile = profile or {}
@@ -206,13 +206,8 @@ class ComplianceAuditor:
                 )
             )
         status = str(kyc_profile.get("status") or "").lower()
-        if (
-            self._aml_unverified_volume_limit is not None
-            and status not in {"verified", "full"}
-        ):
-            volume = sum(
-                self._extract_usd_value(tx) or 0.0 for tx in transactions
-            )
+        if self._aml_unverified_volume_limit is not None and status not in {"verified", "full"}:
+            volume = sum(self._extract_usd_value(tx) or 0.0 for tx in transactions)
             if volume > self._aml_unverified_volume_limit:
                 findings.append(
                     ComplianceFinding(
@@ -284,7 +279,9 @@ class ComplianceAuditor:
                         severity=self._tx_severity,
                         message="Pojedyncza transakcja przekracza ustalony limit",
                         metadata={
-                            "transaction_id": str(tx.get("id") or tx.get("external_id") or "unknown"),
+                            "transaction_id": str(
+                                tx.get("id") or tx.get("external_id") or "unknown"
+                            ),
                             "value_usd": round(value or 0.0, 2),
                             "limit_usd": self._tx_single_limit,
                         },
@@ -322,15 +319,14 @@ class ComplianceAuditor:
         hits: list[str] = []
         for tx in transactions:
             jurisdiction = str(
-                tx.get("counterparty_country")
-                or tx.get("jurisdiction")
-                or tx.get("country")
-                or ""
+                tx.get("counterparty_country") or tx.get("jurisdiction") or tx.get("country") or ""
             ).upper()
             if not jurisdiction:
                 continue
             if jurisdiction in self._aml_high_risk_jurisdictions:
-                identifier = str(tx.get("id") or tx.get("external_id") or tx.get("hash") or "unknown")
+                identifier = str(
+                    tx.get("id") or tx.get("external_id") or tx.get("hash") or "unknown"
+                )
                 hits.append(identifier)
         return tuple(hits)
 

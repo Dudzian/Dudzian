@@ -1,4 +1,5 @@
 """Generowanie dziennych raportów z symulatora paper tradingu."""
+
 from __future__ import annotations
 
 import csv
@@ -21,6 +22,7 @@ from bot_core.security.guards import get_capability_guard
 @dataclass(slots=True)
 class PaperReportArtifacts:
     """Ścieżki do wygenerowanych plików w archiwum raportu."""
+
     archive_path: Path
     ledger_rows: int
     decision_events: int

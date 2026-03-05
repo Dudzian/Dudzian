@@ -202,15 +202,17 @@ class TestNativeTradingEngine(unittest.TestCase):
         params = self.params
         data = self.data
 
-        def _warning_run_strategy(test_data: pd.DataFrame, _params: TradingParameters, *args, **kwargs):
+        def _warning_run_strategy(
+            test_data: pd.DataFrame, _params: TradingParameters, *args, **kwargs
+        ):
             warnings.warn("walk-forward drift", pd.errors.PerformanceWarning)
             return self._make_backtest_result(test_data.index)
 
         with (
-            patch("bot_core.observability.pandas_warnings.observe_pandas_warning") as observe_warning,
-            patch.object(
-                self.engine, "run_strategy", side_effect=_warning_run_strategy
-            ),
+            patch(
+                "bot_core.observability.pandas_warnings.observe_pandas_warning"
+            ) as observe_warning,
+            patch.object(self.engine, "run_strategy", side_effect=_warning_run_strategy),
         ):
             result_frame = tester.walk_forward_analysis(
                 data,
@@ -231,15 +233,17 @@ class TestNativeTradingEngine(unittest.TestCase):
         params = self.params
         data = self.data
 
-        def _warning_run_strategy(synthetic_data: pd.DataFrame, _params: TradingParameters, *args, **kwargs):
+        def _warning_run_strategy(
+            synthetic_data: pd.DataFrame, _params: TradingParameters, *args, **kwargs
+        ):
             warnings.warn("monte carlo drift", pd.errors.PerformanceWarning)
             return self._make_backtest_result(synthetic_data.index)
 
         with (
-            patch("bot_core.observability.pandas_warnings.observe_pandas_warning") as observe_warning,
-            patch.object(
-                self.engine, "run_strategy", side_effect=_warning_run_strategy
-            ),
+            patch(
+                "bot_core.observability.pandas_warnings.observe_pandas_warning"
+            ) as observe_warning,
+            patch.object(self.engine, "run_strategy", side_effect=_warning_run_strategy),
         ):
             results = tester.monte_carlo_simulation(
                 data,
@@ -482,9 +486,7 @@ class TestNativeTradingEngine(unittest.TestCase):
         successful_result = MagicMock()
         successful_result.configure_mock(sharpe_ratio=2.0)
 
-        self.engine.run_strategy = MagicMock(
-            side_effect=[RuntimeError("boom"), successful_result]
-        )
+        self.engine.run_strategy = MagicMock(side_effect=[RuntimeError("boom"), successful_result])
         self.engine._logger = MagicMock()
 
         param_ranges = {
@@ -658,15 +660,17 @@ class TestNativeTradingEngine(unittest.TestCase):
         closes_b = pd.Series([50.0, 49.5, 50.5, 51.0, 52.0, 53.5], index=dates)
 
         def _build_rows(series: pd.Series, symbol: str) -> pd.DataFrame:
-            frame = pd.DataFrame({
-                "timestamp": (series.index.view('int64') // 10**9).astype(int),
-                "symbol": symbol,
-                "open": series.values,
-                "high": series.values,
-                "low": series.values,
-                "close": series.values,
-                "volume": np.full(len(series), 1_000.0),
-            })
+            frame = pd.DataFrame(
+                {
+                    "timestamp": (series.index.view("int64") // 10**9).astype(int),
+                    "symbol": symbol,
+                    "open": series.values,
+                    "high": series.values,
+                    "low": series.values,
+                    "close": series.values,
+                    "volume": np.full(len(series), 1_000.0),
+                }
+            )
             return frame
 
         weights = {"ASSET_A": 0.6, "ASSET_B": 0.4}
@@ -674,10 +678,12 @@ class TestNativeTradingEngine(unittest.TestCase):
         returns_b = closes_b.pct_change().fillna(0.0)
         total_return_a = float((1 + returns_a).cumprod().iloc[-1] - 1.0)
         total_return_b = float((1 + returns_b).cumprod().iloc[-1] - 1.0)
-        combined_returns = pd.DataFrame({
-            "ASSET_A": returns_a,
-            "ASSET_B": returns_b,
-        }).fillna(0.0)
+        combined_returns = pd.DataFrame(
+            {
+                "ASSET_A": returns_a,
+                "ASSET_B": returns_b,
+            }
+        ).fillna(0.0)
         weighted_returns = combined_returns.mul(pd.Series(weights)).sum(axis=1)
         total_return_portfolio = float((1 + weighted_returns).cumprod().iloc[-1] - 1.0)
 
@@ -760,12 +766,16 @@ class TestNativeTradingEngine(unittest.TestCase):
 
             _build_rows(closes_a, "ASSET_A").to_csv(asset_a_path, index=False)
             _build_rows(closes_b, "ASSET_B").to_csv(asset_b_path, index=False)
-            manifest_path.write_text(yaml.safe_dump(manifest_payload, sort_keys=False), encoding="utf-8")
+            manifest_path.write_text(
+                yaml.safe_dump(manifest_payload, sort_keys=False), encoding="utf-8"
+            )
 
             library = BacktestDatasetLibrary(manifest_path)
             reference_a = library.describe("asset_a").reference_results.get("total_return")
             reference_b = library.describe("asset_b").reference_results.get("total_return")
-            reference_portfolio = library.describe("portfolio").reference_results.get("total_return")
+            reference_portfolio = library.describe("portfolio").reference_results.get(
+                "total_return"
+            )
             frame_a = library.load_dataframe(
                 "asset_a", index_column="timestamp", datetime_columns={"timestamp": "s"}
             )
@@ -783,7 +793,9 @@ class TestNativeTradingEngine(unittest.TestCase):
                     self._logger = logger
                     self._config = config
 
-                def calculate_indicators(self, data: pd.DataFrame, params: TradingParameters) -> TechnicalIndicators:
+                def calculate_indicators(
+                    self, data: pd.DataFrame, params: TradingParameters
+                ) -> TechnicalIndicators:
                     base = pd.Series(np.ones(len(data)), index=data.index)
                     atr = pd.Series(np.full(len(data), 1.0), index=data.index)
                     return TechnicalIndicators(
@@ -805,7 +817,9 @@ class TestNativeTradingEngine(unittest.TestCase):
                 def __init__(self, logger):
                     self._logger = logger
 
-                def generate_signals(self, indicators: TechnicalIndicators, params: TradingParameters) -> pd.Series:
+                def generate_signals(
+                    self, indicators: TechnicalIndicators, params: TradingParameters
+                ) -> pd.Series:
                     return pd.Series(1, index=indicators.rsi.index, dtype=int)
 
             class _ConstantRiskManager:
@@ -949,10 +963,12 @@ class TestNativeTradingEngine(unittest.TestCase):
         summary_engine = SummaryOnlyEngine()
         engine._backtest_engine = summary_engine  # type: ignore[assignment]
 
-        results = iter([
-            _make_backtest_result(0.02),
-            _make_backtest_result(0.01),
-        ])
+        results = iter(
+            [
+                _make_backtest_result(0.02),
+                _make_backtest_result(0.01),
+            ]
+        )
         engine._run_single_strategy = MagicMock(side_effect=lambda *_, **__: next(results))
 
         sessions = {
@@ -994,7 +1010,9 @@ class TestNativeTradingEngine(unittest.TestCase):
             return frame
 
         with (
-            patch("bot_core.observability.pandas_warnings.observe_pandas_warning") as observe_warning,
+            patch(
+                "bot_core.observability.pandas_warnings.observe_pandas_warning"
+            ) as observe_warning,
             patch.object(self.engine._validator, "validate_ohlcv", side_effect=emit_warning),
             patch.object(
                 self.engine._indicator_calculator,
@@ -1006,7 +1024,9 @@ class TestNativeTradingEngine(unittest.TestCase):
                 "generate_signals",
                 return_value=pd.Series(0, index=index, dtype=int),
             ),
-            patch.object(self.engine._risk_manager, "apply_risk_management", return_value=dummy_positions),
+            patch.object(
+                self.engine._risk_manager, "apply_risk_management", return_value=dummy_positions
+            ),
             patch.object(self.engine._backtest_engine, "run_backtest", return_value=dummy_result),
         ):
             self.engine._logger.setLevel(logging.WARNING)
@@ -1038,7 +1058,9 @@ class TestNativeTradingEngine(unittest.TestCase):
         logger = logging.getLogger("bot_core.trading.engine.test.capture")
         logger.setLevel(logging.WARNING)
 
-        with patch("bot_core.observability.pandas_warnings.observe_pandas_warning") as observe_warning:
+        with patch(
+            "bot_core.observability.pandas_warnings.observe_pandas_warning"
+        ) as observe_warning:
             with self.assertLogs(logger, level="WARNING") as log_cm:
                 with engine_module._capture_pandas_warnings(
                     logger, component="unit.test.component"
@@ -1084,7 +1106,9 @@ class TestNativeTradingEngine(unittest.TestCase):
 
         service = TradingSignalService(logger, catalog=DummyCatalog())
 
-        with patch("bot_core.observability.pandas_warnings.observe_pandas_warning") as observe_warning:
+        with patch(
+            "bot_core.observability.pandas_warnings.observe_pandas_warning"
+        ) as observe_warning:
             with self.assertLogs(logger, level="WARNING") as log_cm:
                 signals = service.generate_signals(indicators, params)
 
@@ -1117,7 +1141,9 @@ class TestNativeTradingEngine(unittest.TestCase):
             warnings.warn("vectorized fallback", pd.errors.PerformanceWarning)
             return 1.0
 
-        with patch("bot_core.observability.pandas_warnings.observe_pandas_warning") as observe_warning:
+        with patch(
+            "bot_core.observability.pandas_warnings.observe_pandas_warning"
+        ) as observe_warning:
             with patch.object(service, "_calculate_position_size", side_effect=warn_position_size):
                 with self.assertLogs(logger, level="WARNING") as log_cm:
                     managed = service.apply_risk_management(data, signals, indicators, self.params)
@@ -1204,7 +1230,9 @@ class TestNativeTradingEngine(unittest.TestCase):
 
         with (
             patch.object(pd.DataFrame, "sort_index", new=warn_sort),
-            patch("bot_core.observability.pandas_warnings.observe_pandas_warning") as observe_warning,
+            patch(
+                "bot_core.observability.pandas_warnings.observe_pandas_warning"
+            ) as observe_warning,
             self.assertLogs(engine._logger, level="WARNING") as log_cm,
         ):
             result = engine._run_multi_symbol_strategy(
@@ -1260,7 +1288,9 @@ class TestNativeTradingEngine(unittest.TestCase):
                     "bridges.ai_trading_bridge": bridge_module,
                 },
             ),
-            patch("bot_core.observability.pandas_warnings.observe_pandas_warning") as observe_warning,
+            patch(
+                "bot_core.observability.pandas_warnings.observe_pandas_warning"
+            ) as observe_warning,
             self.assertLogs(self.engine._logger, level="WARNING") as log_cm,
         ):
             metrics, trades, equity = shim.backtest(

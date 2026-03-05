@@ -1,4 +1,5 @@
 """Monitorowanie limitów i retry adapterów giełdowych."""
+
 from __future__ import annotations
 
 import logging

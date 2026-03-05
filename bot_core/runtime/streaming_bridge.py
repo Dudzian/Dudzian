@@ -33,7 +33,9 @@ def _normalize_timestamp(value: Any) -> int:
     raise TypeError(f"Nieobsługiwany typ znacznika czasu: {type(value)!r}")
 
 
-def _normalize_event(event: Mapping[str, Any], *, channel: str | None = None) -> MutableMapping[str, Any]:
+def _normalize_event(
+    event: Mapping[str, Any], *, channel: str | None = None
+) -> MutableMapping[str, Any]:
     payload: MutableMapping[str, Any] = {str(key): value for key, value in event.items()}
     if channel is not None:
         payload.setdefault("channel", channel)
@@ -110,7 +112,9 @@ def stream_batches_to_frame(batches: Iterable[StreamBatch]) -> pd.DataFrame:
     return frame[columns]
 
 
-def history_events_to_provider(history: Sequence[Mapping[str, Any]] | Sequence[OHLCVBar]) -> ListHistoryProvider:
+def history_events_to_provider(
+    history: Sequence[Mapping[str, Any]] | Sequence[OHLCVBar],
+) -> ListHistoryProvider:
     """Konwertuje snapshot historii OHLCV do interfejsu providerów backtest/runtime."""
 
     bars: list[OHLCVBar] = []
@@ -121,7 +125,9 @@ def history_events_to_provider(history: Sequence[Mapping[str, Any]] | Sequence[O
         normalized = _normalize_event(entry)
         bars.append(
             OHLCVBar(
-                timestamp=datetime.fromtimestamp(normalized["timestamp_ms"] / 1000.0, tz=timezone.utc),
+                timestamp=datetime.fromtimestamp(
+                    normalized["timestamp_ms"] / 1000.0, tz=timezone.utc
+                ),
                 open=float(normalized.get("open", normalized.get("close", 0.0))),
                 high=float(normalized.get("high", normalized.get("close", 0.0))),
                 low=float(normalized.get("low", normalized.get("close", 0.0))),
@@ -312,11 +318,7 @@ def load_snapshot_from_file(path: str) -> list[MutableMapping[str, Any]]:
 
     with open(path, "r", encoding="utf-8") as handle:
         payload = json.load(handle)
-    return [
-        _normalize_event(entry)
-        for entry in payload
-        if isinstance(entry, Mapping)
-    ]
+    return [_normalize_event(entry) for entry in payload if isinstance(entry, Mapping)]
 
 
 __all__ = [
@@ -328,4 +330,3 @@ __all__ = [
     "stream_batches_to_frame",
     "write_snapshot_to_file",
 ]
-

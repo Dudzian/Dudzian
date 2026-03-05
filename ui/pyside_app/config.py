@@ -1,4 +1,5 @@
 """Ładowanie profili konfiguracyjnych dla klienta PySide6."""
+
 from __future__ import annotations
 
 from dataclasses import dataclass

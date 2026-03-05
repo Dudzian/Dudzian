@@ -1,4 +1,5 @@
 """Testy portalu offline do zarządzania licencjami."""
+
 from __future__ import annotations
 
 import base64

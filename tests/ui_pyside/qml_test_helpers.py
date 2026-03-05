@@ -1,4 +1,5 @@
 """Helpers improving diagnostics when QML fails to load during tests."""
+
 from __future__ import annotations
 
 from typing import Iterable, Sequence

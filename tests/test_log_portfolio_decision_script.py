@@ -50,7 +50,9 @@ runtime:
     )
 
 
-def test_log_portfolio_decision_script_generates_signed_entry(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_log_portfolio_decision_script_generates_signed_entry(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     log_path = tmp_path / "audit" / "portfolio_decision.jsonl"
     config_path = tmp_path / "core.yaml"
     _write_config(config_path, log_path)
@@ -146,5 +148,7 @@ def test_log_portfolio_decision_script_generates_signed_entry(tmp_path: Path, mo
     assert entry["metadata"]["inputs"]["stress_overrides"] == str(stress_path)
     assert entry["metadata"]["stress_overrides"][0]["reason"] == "latency_spike"
     signature = entry.pop("signature")
-    expected_signature = build_hmac_signature(entry, key=key_value.encode("utf-8"), key_id="stage6-config")
+    expected_signature = build_hmac_signature(
+        entry, key=key_value.encode("utf-8"), key_id="stage6-config"
+    )
     assert signature == expected_signature

@@ -35,12 +35,9 @@ def load_s3_credentials(
     expected_keys = {"access_key_id", "secret_access_key"}
     missing = sorted(key for key in expected_keys if key not in payload)
     if missing:
-        raise SecretStorageError(
-            "Sekret S3 nie zawiera wymaganych pól: " + ", ".join(missing)
-        )
+        raise SecretStorageError("Sekret S3 nie zawiera wymaganych pól: " + ", ".join(missing))
 
     return {str(key): str(value) for key, value in payload.items()}
 
 
 __all__ = ["load_s3_credentials"]
-

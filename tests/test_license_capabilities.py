@@ -90,7 +90,9 @@ def test_build_capabilities_from_payload() -> None:
 
 def test_license_service_monotonic_effective_date(tmp_path) -> None:
     signing_key = SigningKey.generate()
-    payload_bytes = json.dumps(SAMPLE_PAYLOAD, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
+    payload_bytes = json.dumps(SAMPLE_PAYLOAD, ensure_ascii=False, separators=(",", ":")).encode(
+        "utf-8"
+    )
     signature = signing_key.sign(payload_bytes).signature
     bundle = {
         "payload_b64": base64.b64encode(payload_bytes).decode("ascii"),
@@ -123,7 +125,9 @@ def test_license_service_monotonic_effective_date(tmp_path) -> None:
     assert status_document["trial"]["active"] is False
     assert status_document["maintenance"]["active"] is True
 
-    audit_lines = [line for line in audit_log_path.read_text(encoding="utf-8").splitlines() if line.strip()]
+    audit_lines = [
+        line for line in audit_log_path.read_text(encoding="utf-8").splitlines() if line.strip()
+    ]
     assert audit_lines, "Audit log should contain at least one entry"
     audit_entry = json.loads(audit_lines[-1])
     expected_hash = hashlib.sha256("OPTIONAL_MACHINE_HASH".encode("utf-8")).hexdigest()[:24]
@@ -147,7 +151,9 @@ def test_license_service_monotonic_effective_date(tmp_path) -> None:
 
 def test_license_service_audit_reactivation(tmp_path) -> None:
     signing_key = SigningKey.generate()
-    payload_bytes = json.dumps(SAMPLE_PAYLOAD, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
+    payload_bytes = json.dumps(SAMPLE_PAYLOAD, ensure_ascii=False, separators=(",", ":")).encode(
+        "utf-8"
+    )
     signature = signing_key.sign(payload_bytes).signature
     bundle = {
         "payload_b64": base64.b64encode(payload_bytes).decode("ascii"),
@@ -172,7 +178,9 @@ def test_license_service_audit_reactivation(tmp_path) -> None:
     # Druga aktywacja – np. ponowna instalacja na tym samym HWID.
     service.load_from_file(bundle_path)
 
-    audit_lines = [line for line in audit_log_path.read_text(encoding="utf-8").splitlines() if line.strip()]
+    audit_lines = [
+        line for line in audit_log_path.read_text(encoding="utf-8").splitlines() if line.strip()
+    ]
     assert len(audit_lines) >= 2
     first_entry = json.loads(audit_lines[-2])
     second_entry = json.loads(audit_lines[-1])

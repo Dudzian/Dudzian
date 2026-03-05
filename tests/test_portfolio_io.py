@@ -104,7 +104,9 @@ def test_parse_stress_overrides_payload_handles_tags() -> None:
     assert override.tags == ("stress", "42")
 
 
-def test_resolve_decision_log_config_reads_env(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+def test_resolve_decision_log_config_reads_env(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
     log_path = tmp_path / "decision.jsonl"
     monkeypatch.setenv("PORTFOLIO_KEY", "secret")
     config = SimpleNamespace(

@@ -1,4 +1,5 @@
 """Profil zbalansowany będący ustawieniem domyślnym."""
+
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -31,5 +32,6 @@ class BalancedProfile(StaticRiskProfile):
     min_omega_ratio: float = 1.1
     max_risk_of_ruin_pct: float = 7.5
     min_hit_ratio_pct: float = 50.0
+
 
 __all__ = ["BalancedProfile"]

@@ -91,7 +91,9 @@ class MarketplacePresetInstaller:
 
         preset = self._catalog.find(preset_id)
         if preset is None:
-            raise MarketplaceCatalogError(f"Preset {preset_id!r} nie istnieje w katalogu Marketplace.")
+            raise MarketplaceCatalogError(
+                f"Preset {preset_id!r} nie istnieje w katalogu Marketplace."
+            )
         return self.install_from_path(preset.artifact_path)
 
     # ------------------------------------------------------------------
@@ -141,7 +143,9 @@ class MarketplacePresetInstaller:
 
         preset = self._catalog.find(preset_id)
         if preset is None:
-            raise MarketplaceCatalogError(f"Preset {preset_id!r} nie istnieje w katalogu Marketplace.")
+            raise MarketplaceCatalogError(
+                f"Preset {preset_id!r} nie istnieje w katalogu Marketplace."
+            )
 
         payload = preset.artifact_path.read_bytes()
         document = self._service.load(payload, source=preset.artifact_path)
@@ -237,13 +241,17 @@ class MarketplacePresetInstaller:
         warnings: list[str] = []
         normalized: Mapping[str, Any] | None = dict(license_payload)
 
-        license_preset = str(license_payload.get("preset_id") or license_payload.get("id") or "").strip()
+        license_preset = str(
+            license_payload.get("preset_id") or license_payload.get("id") or ""
+        ).strip()
         if license_preset and license_preset != preset_id:
             issues.append("license-preset-mismatch")
 
         allowed_versions = license_payload.get("allowed_versions")
         if allowed_versions:
-            if isinstance(allowed_versions, Sequence) and not isinstance(allowed_versions, (str, bytes)):
+            if isinstance(allowed_versions, Sequence) and not isinstance(
+                allowed_versions, (str, bytes)
+            ):
                 normalized_versions = {str(item).strip() for item in allowed_versions}
                 if version not in normalized_versions:
                     issues.append("license-version-mismatch")
@@ -275,7 +283,8 @@ class MarketplacePresetInstaller:
                 fingerprint_verified = False
             else:
                 fingerprint_verified = any(
-                    self._match_fingerprint(device_fingerprint, candidate) for candidate in fingerprints
+                    self._match_fingerprint(device_fingerprint, candidate)
+                    for candidate in fingerprints
                 )
                 if not fingerprint_verified:
                     issues.append("fingerprint-mismatch")
@@ -342,11 +351,15 @@ class MarketplacePresetInstaller:
             validation_payload: dict[str, Any] = {}
             if validation_errors:
                 validation_payload["errors"] = [entry.to_dict() for entry in validation_errors]
-                validation_payload["error_messages"] = [entry.message for entry in validation_errors]
+                validation_payload["error_messages"] = [
+                    entry.message for entry in validation_errors
+                ]
                 validation_payload["error_codes"] = [entry.code for entry in validation_errors]
             if validation_warnings:
                 validation_payload["warnings"] = [entry.to_dict() for entry in validation_warnings]
-                validation_payload["warning_messages"] = [entry.message for entry in validation_warnings]
+                validation_payload["warning_messages"] = [
+                    entry.message for entry in validation_warnings
+                ]
                 validation_payload["warning_codes"] = [entry.code for entry in validation_warnings]
             if validation_payload:
                 existing_validation = payload_copy.get("validation")

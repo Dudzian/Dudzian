@@ -15,13 +15,13 @@ log = logging.getLogger("services.position_sizer")
 @dataclass
 class PositionSizerConfig:
     symbol: str = "BTCUSDT"
-    risk_per_trade_pct: float = 0.5        # % equity ryzykowany na transakcję (np. 0.5%)
+    risk_per_trade_pct: float = 0.5  # % equity ryzykowany na transakcję (np. 0.5%)
     min_qty: float = 0.005
     max_qty: float = 0.1
-    sl_atr_mult: float = 2.0               # stop-loss w * ATR
-    tp_atr_mult: float = 3.0               # take-profit w * ATR
-    atr_tf: str = "60s"                    # oczekiwana ramka ATR z MarketData
-    publish_every_atr: bool = True         # aktualizuj strategię na każdą zmianę ATR
+    sl_atr_mult: float = 2.0  # stop-loss w * ATR
+    tp_atr_mult: float = 3.0  # take-profit w * ATR
+    atr_tf: str = "60s"  # oczekiwana ramka ATR z MarketData
+    publish_every_atr: bool = True  # aktualizuj strategię na każdą zmianę ATR
 
 
 class PositionSizer:
@@ -31,6 +31,7 @@ class PositionSizer:
     Publikuje AUTOTRADE_STATUS(action="strategy_update") z nowym qty oraz param. SL/TP,
     żeby StrategyEngine mógł z tego korzystać; a StopTPService ustawił progi wyjścia.
     """
+
     def __init__(self, bus: EventBus, cfg: PositionSizerConfig) -> None:
         self.bus = bus
         self.cfg = cfg
@@ -102,17 +103,20 @@ class PositionSizer:
         qty = risk_cash / denom
         qty = max(float(self.cfg.min_qty), min(float(self.cfg.max_qty), qty))
 
-        self.bus.publish(EventType.AUTOTRADE_STATUS, {
-            "component": "PositionSizer",
-            "action": "strategy_update",
-            "symbol": self.cfg.symbol,
-            "params": {
-                "qty": qty,
-                "sl_atr_mult": float(self.cfg.sl_atr_mult),
-                "tp_atr_mult": float(self.cfg.tp_atr_mult),
+        self.bus.publish(
+            EventType.AUTOTRADE_STATUS,
+            {
+                "component": "PositionSizer",
+                "action": "strategy_update",
+                "symbol": self.cfg.symbol,
+                "params": {
+                    "qty": qty,
+                    "sl_atr_mult": float(self.cfg.sl_atr_mult),
+                    "tp_atr_mult": float(self.cfg.tp_atr_mult),
+                },
+                "equity": self._equity,
+                "atr": self._atr,
+                "ts": time.time(),
             },
-            "equity": self._equity,
-            "atr": self._atr,
-            "ts": time.time()
-        })
+        )
         log.info("PositionSizer: qty=%.6f (equity=%.2f, atr=%.2f)", qty, self._equity, self._atr)

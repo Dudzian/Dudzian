@@ -72,9 +72,7 @@ def test_build_bundle_creates_signed_archive(monkeypatch, tmp_path):
 
     # ensure kopiowane katalogi zostały odwzorowane w strukturze bundla
     copied_sources = {Path(source).as_posix() for source, _ in copied_directories}
-    assert {"ui/qml", "config", "bot_core", reports_dir.as_posix()}.issubset(
-        copied_sources
-    )
+    assert {"ui/qml", "config", "bot_core", reports_dir.as_posix()}.issubset(copied_sources)
 
     with zipfile.ZipFile(archive_path) as bundle:
         members = set(bundle.namelist())

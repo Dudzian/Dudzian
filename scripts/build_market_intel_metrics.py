@@ -9,6 +9,7 @@ Obsługiwane tryby:
 Tryb wybierany jest automatycznie na podstawie dostępnych klas w bot_core.market_intel,
 ale można go wymusić przez --mode ohlcv|sqlite.
 """
+
 from __future__ import annotations
 
 import argparse
@@ -32,6 +33,7 @@ try:
     # API dla trybu OHLCV
     from bot_core.market_intel import MarketIntelAggregator as OHLCVAggregator  # type: ignore
     from bot_core.market_intel import MarketIntelQuery  # type: ignore
+
     _HAS_OHLCV = True
 except Exception:
     _HAS_OHLCV = False
@@ -42,6 +44,7 @@ try:
     # API dla trybu SQLite
     from bot_core.config.models import MarketIntelConfig, MarketIntelSqliteConfig  # type: ignore
     from bot_core.market_intel import MarketIntelAggregator as SqliteAggregator  # type: ignore
+
     _HAS_SQLITE_TYPES = True
 except Exception:
     _HAS_SQLITE_TYPES = False
@@ -52,6 +55,7 @@ except Exception:
 try:
     from bot_core.market_intel import MarketIntelSqliteBuilder  # type: ignore[attr-defined]
     from bot_core.market_intel import MarketIntelDataProvider  # type: ignore[attr-defined]
+
     _HAS_SQLITE_BUILDER = True
 except Exception:  # pragma: no cover - gałęzie bez buildera
     MarketIntelSqliteBuilder = None  # type: ignore[assignment]
@@ -59,6 +63,8 @@ except Exception:  # pragma: no cover - gałęzie bez buildera
     _HAS_SQLITE_BUILDER = False
 
 _LOGGER = logging.getLogger("stage6.market_intel.cli")
+
+
 # ---------------------------- wspólne utility ----------------------------
 def _default_output(governor: str) -> Path:
     timestamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
@@ -104,31 +110,66 @@ def _build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(description=__doc__)
 
     # Wspólne
-    p.add_argument("--config", default="config/core.yaml", help="Ścieżka do core.yaml (domyślnie config/core.yaml)")
+    p.add_argument(
+        "--config",
+        default="config/core.yaml",
+        help="Ścieżka do core.yaml (domyślnie config/core.yaml)",
+    )
     p.add_argument("--log-level", default="INFO", help="Poziom logowania (domyślnie INFO)")
-    p.add_argument("--mode", choices=("auto", "ohlcv", "sqlite"), default="auto",
-                   help="Wymuś tryb działania: ohlcv/sqlite (domyślnie auto)")
+    p.add_argument(
+        "--mode",
+        choices=("auto", "ohlcv", "sqlite"),
+        default="auto",
+        help="Wymuś tryb działania: ohlcv/sqlite (domyślnie auto)",
+    )
 
     # --- Tryb OHLCV (Parquet)
     p.add_argument("--environment", help="[OHLCV] Środowisko z core.yaml (np. binance_live)")
-    p.add_argument("--governor", help="[OHLCV] Nazwa PortfolioGovernora (sekcja portfolio_governors)")
+    p.add_argument(
+        "--governor", help="[OHLCV] Nazwa PortfolioGovernora (sekcja portfolio_governors)"
+    )
     p.add_argument("--interval", default="1h", help="[OHLCV] Interwał OHLCV (domyślnie 1h)")
-    p.add_argument("--lookback-bars", type=int, default=168, help="[OHLCV] Liczba świec do agregacji (domyślnie 168)")
-    p.add_argument("--cache-base", help="[OHLCV] Katalog bazowy cache OHLCV (domyślnie z env.data_cache_path)")
-    p.add_argument("--namespace", help="[OHLCV] Namespace cache Parquet (domyślnie environment z core.yaml)")
-    p.add_argument("--output", help="[OHLCV] Ścieżka pliku wynikowego (domyślnie var/market_intel/...)")
-    p.add_argument("--format", choices=("json", "csv"), default="json", help="[OHLCV] Format eksportu")
-    p.add_argument("--symbols", nargs="*", help="[OHLCV] Lista symboli (domyślnie aktywa governora)")
+    p.add_argument(
+        "--lookback-bars",
+        type=int,
+        default=168,
+        help="[OHLCV] Liczba świec do agregacji (domyślnie 168)",
+    )
+    p.add_argument(
+        "--cache-base", help="[OHLCV] Katalog bazowy cache OHLCV (domyślnie z env.data_cache_path)"
+    )
+    p.add_argument(
+        "--namespace", help="[OHLCV] Namespace cache Parquet (domyślnie environment z core.yaml)"
+    )
+    p.add_argument(
+        "--output", help="[OHLCV] Ścieżka pliku wynikowego (domyślnie var/market_intel/...)"
+    )
+    p.add_argument(
+        "--format", choices=("json", "csv"), default="json", help="[OHLCV] Format eksportu"
+    )
+    p.add_argument(
+        "--symbols", nargs="*", help="[OHLCV] Lista symboli (domyślnie aktywa governora)"
+    )
     p.add_argument("--pretty", action="store_true", help="[OHLCV] Format JSON z wcięciami")
 
     # --- Tryb SQLite (baseline + manifest)
-    p.add_argument("--output-dir", help="[SQLite] Katalog wyjściowy metryk (domyślnie wg konfiguracji)")
-    p.add_argument("--manifest", help="[SQLite] Ścieżka pliku manifestu (domyślnie wg konfiguracji)")
+    p.add_argument(
+        "--output-dir", help="[SQLite] Katalog wyjściowy metryk (domyślnie wg konfiguracji)"
+    )
+    p.add_argument(
+        "--manifest", help="[SQLite] Ścieżka pliku manifestu (domyślnie wg konfiguracji)"
+    )
     p.add_argument("--sqlite-path", help="[SQLite] Nadpisz ścieżkę do bazy SQLite z metrykami")
     p.add_argument("--sqlite-table", help="[SQLite] Nadpisz nazwę tabeli w bazie SQLite")
-    p.add_argument("--required-symbol", action="append", dest="required_symbols",
-                   help="[SQLite] Wymagany symbol (można podać wielokrotnie)")
-    p.add_argument("--default-weight", type=float, help="[SQLite] Domyślna waga gdy brak kolumny weight")
+    p.add_argument(
+        "--required-symbol",
+        action="append",
+        dest="required_symbols",
+        help="[SQLite] Wymagany symbol (można podać wielokrotnie)",
+    )
+    p.add_argument(
+        "--default-weight", type=float, help="[SQLite] Domyślna waga gdy brak kolumny weight"
+    )
     p.add_argument(
         "--populate-sqlite",
         action="store_true",
@@ -157,7 +198,9 @@ def _build_parser() -> argparse.ArgumentParser:
 # ---------------------------- Tryb OHLCV ----------------------------
 def _run_ohlcv(args: argparse.Namespace) -> int:
     if not _HAS_OHLCV:
-        raise SystemExit("Tryb OHLCV nieobsługiwany w tej gałęzi (brak MarketIntelQuery/aggregatora OHLCV). Użyj --mode sqlite.")
+        raise SystemExit(
+            "Tryb OHLCV nieobsługiwany w tej gałęzi (brak MarketIntelQuery/aggregatora OHLCV). Użyj --mode sqlite."
+        )
 
     if not args.environment or not args.governor:
         raise SystemExit("Dla trybu OHLCV wymagane są argumenty: --environment oraz --governor.")
@@ -178,7 +221,9 @@ def _run_ohlcv(args: argparse.Namespace) -> int:
     if hasattr(namespace, "value"):
         namespace = namespace.value
     if not cache_base:
-        raise SystemExit("Brak ścieżki cache dla środowiska – uzupełnij data_cache_path lub podaj --cache-base")
+        raise SystemExit(
+            "Brak ścieżki cache dla środowiska – uzupełnij data_cache_path lub podaj --cache-base"
+        )
 
     # Lazy import backendu Parquet (nie każda gałąź go ma)
     try:
@@ -250,7 +295,9 @@ def _override_required_symbols(
     return tuple(base)
 
 
-def _apply_overrides_sqlite(config: MarketIntelConfig, args: argparse.Namespace) -> MarketIntelConfig:
+def _apply_overrides_sqlite(
+    config: MarketIntelConfig, args: argparse.Namespace
+) -> MarketIntelConfig:
     sqlite_cfg = config.sqlite
     if sqlite_cfg is None:
         raise ValueError("Konfiguracja market_intel nie posiada sekcji sqlite")
@@ -261,7 +308,9 @@ def _apply_overrides_sqlite(config: MarketIntelConfig, args: argparse.Namespace)
     manifest_path = args.manifest if args.manifest else config.manifest_path
     output_dir = args.output_dir if args.output_dir else config.output_directory
     required_symbols = _override_required_symbols(args.required_symbols, config.required_symbols)
-    default_weight = config.default_weight if args.default_weight is None else float(args.default_weight)
+    default_weight = (
+        config.default_weight if args.default_weight is None else float(args.default_weight)
+    )
 
     return MarketIntelConfig(
         enabled=True,
@@ -315,7 +364,9 @@ def _populate_sqlite_dataset(config: MarketIntelConfig, args: argparse.Namespace
 
 def _run_sqlite(args: argparse.Namespace) -> int:
     if not (_HAS_SQLITE_TYPES and SqliteAggregator is not None):
-        raise SystemExit("Tryb SQLite nieobsługiwany w tej gałęzi (brak MarketIntelConfig/aggregatora SQLite). Użyj --mode ohlcv.")
+        raise SystemExit(
+            "Tryb SQLite nieobsługiwany w tej gałęzi (brak MarketIntelConfig/aggregatora SQLite). Użyj --mode ohlcv."
+        )
 
     config = load_core_config(args.config)
     market_config = getattr(config, "market_intel", None)
@@ -328,12 +379,16 @@ def _run_sqlite(args: argparse.Namespace) -> int:
         _populate_sqlite_dataset(effective_config, args)
     # Sprawdzamy, czy importowany aggregator ma API SQLite (write_outputs)
     if not hasattr(SqliteAggregator, "write_outputs"):
-        raise SystemExit("W tej gałęzi MarketIntelAggregator nie wspiera write_outputs (SQLite). Użyj --mode ohlcv.")
+        raise SystemExit(
+            "W tej gałęzi MarketIntelAggregator nie wspiera write_outputs (SQLite). Użyj --mode ohlcv."
+        )
 
     aggregator = SqliteAggregator(effective_config)  # type: ignore[arg-type]
     written = aggregator.write_outputs(
         output_directory=Path(effective_config.output_directory),
-        manifest_path=Path(effective_config.manifest_path) if effective_config.manifest_path else None,
+        manifest_path=Path(effective_config.manifest_path)
+        if effective_config.manifest_path
+        else None,
     )
     for path in written:
         _LOGGER.info("Zapisano %s", path)
@@ -347,19 +402,27 @@ def main(argv: list[str] | None = None) -> int:
     parser = _build_parser()
     args = parser.parse_args(argv)
 
-    logging.basicConfig(level=args.log_level.upper(), format="%(asctime)s %(levelname)s %(message)s")
+    logging.basicConfig(
+        level=args.log_level.upper(), format="%(asctime)s %(levelname)s %(message)s"
+    )
 
     mode = args.mode
     if mode == "auto":
         # preferencja: jeśli mamy SQLite typy i aggregator ma write_outputs -> sqlite,
         # w przeciwnym razie jeśli mamy OHLCV -> ohlcv
         picked = None
-        if _HAS_SQLITE_TYPES and SqliteAggregator is not None and hasattr(SqliteAggregator, "write_outputs"):
+        if (
+            _HAS_SQLITE_TYPES
+            and SqliteAggregator is not None
+            and hasattr(SqliteAggregator, "write_outputs")
+        ):
             picked = "sqlite"
         elif _HAS_OHLCV:
             picked = "ohlcv"
         else:
-            raise SystemExit("Nie wykryto obsługi żadnego trybu Market Intelligence (brak kompatybilnych klas).")
+            raise SystemExit(
+                "Nie wykryto obsługi żadnego trybu Market Intelligence (brak kompatybilnych klas)."
+            )
         mode = picked
         _LOGGER.info("Auto-detected mode: %s", mode)
 

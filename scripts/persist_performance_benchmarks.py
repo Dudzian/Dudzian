@@ -5,6 +5,7 @@ throughput and per-strategy benchmarks), normalizes them into a tabular schema
 and enforces a rolling window to keep artifacts small. It preserves commit SHA
 and timestamps for downstream correlation in dashboards.
 """
+
 from __future__ import annotations
 
 import argparse
@@ -65,7 +66,9 @@ def _normalize_payload(
         scenario = f"backtests_{payload.get('pair_count', 'unknown')}pairs"
         dataset = None
         timeframe = str(payload.get("timeframe")) if payload.get("timeframe") else None
-        pair_count = int(payload.get("pair_count")) if payload.get("pair_count") is not None else None
+        pair_count = (
+            int(payload.get("pair_count")) if payload.get("pair_count") is not None else None
+        )
         bars_per_second = None
         pairs_per_second = float(payload.get("pairs_per_second", 0))
         avg_ms = float(payload.get("avg_ms", 0.0)) if payload.get("avg_ms") is not None else None

@@ -28,6 +28,7 @@ class StrategyEngine:
     MA-cross + dynamiczny update parametrów (AUTOTRADE_STATUS action=strategy_update).
     Reaguje też na trading_pause/resume (enabled w locie).
     """
+
     def __init__(self, bus: EventBus, cfg: StrategyConfig) -> None:
         self.bus = bus
         self.cfg = cfg
@@ -80,7 +81,9 @@ class StrategyEngine:
                 self.cfg.fast_len = int(params.get("fast_len", self.cfg.fast_len))
                 self.cfg.slow_len = int(params.get("slow_len", self.cfg.slow_len))
                 self.cfg.qty = float(params.get("qty", self.cfg.qty))
-                self.cfg.order_cooldown_sec = float(params.get("order_cooldown_sec", self.cfg.order_cooldown_sec))
+                self.cfg.order_cooldown_sec = float(
+                    params.get("order_cooldown_sec", self.cfg.order_cooldown_sec)
+                )
                 # reset stanu średnich żeby szybciej „dogonić” zmianę
                 self._fast = None
                 self._slow = None
@@ -112,12 +115,22 @@ class StrategyEngine:
             if bias != self._state and (now - self._last_order_ts) >= self.cfg.order_cooldown_sec:
                 target = self.cfg.qty * bias
                 if abs(self._pos_qty + target) <= self.cfg.max_abs_position:
-                    self.bus.publish(EventType.SIGNAL, {
-                        "symbol": self.cfg.symbol, "side": "BUY" if bias > 0 else "SELL", "ts": now
-                    })
-                    self.bus.publish(EventType.ORDER_REQUEST, {
-                        "symbol": self.cfg.symbol, "side": "BUY" if bias > 0 else "SELL",
-                        "qty": abs(self.cfg.qty), "price": self._last_price
-                    })
+                    self.bus.publish(
+                        EventType.SIGNAL,
+                        {
+                            "symbol": self.cfg.symbol,
+                            "side": "BUY" if bias > 0 else "SELL",
+                            "ts": now,
+                        },
+                    )
+                    self.bus.publish(
+                        EventType.ORDER_REQUEST,
+                        {
+                            "symbol": self.cfg.symbol,
+                            "side": "BUY" if bias > 0 else "SELL",
+                            "qty": abs(self.cfg.qty),
+                            "price": self._last_price,
+                        },
+                    )
                     self._last_order_ts = now
                     self._state = bias

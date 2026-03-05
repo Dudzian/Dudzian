@@ -75,7 +75,9 @@ def test_validate_license_payload_includes_seat_and_subscription(tmp_path: Path)
         "preset_id": "demo",
         "allowed_versions": ["1.0.0"],
         "allowed_fingerprints": ["OEM-DEVICE-001"],
-        "expires_at": (datetime.now(timezone.utc) + timedelta(days=10)).isoformat().replace("+00:00", "Z"),
+        "expires_at": (datetime.now(timezone.utc) + timedelta(days=10))
+        .isoformat()
+        .replace("+00:00", "Z"),
         "seat_policy": {
             "total": 1,
             "assignments": [],
@@ -86,7 +88,9 @@ def test_validate_license_payload_includes_seat_and_subscription(tmp_path: Path)
             "status": "paused",
             "current_period": {
                 "start": "2025-01-01T00:00:00Z",
-                "end": (datetime.now(timezone.utc) - timedelta(days=1)).isoformat().replace("+00:00", "Z"),
+                "end": (datetime.now(timezone.utc) - timedelta(days=1))
+                .isoformat()
+                .replace("+00:00", "Z"),
             },
             "grace_period_days": 1,
         },

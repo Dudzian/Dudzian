@@ -18,9 +18,9 @@ class RiskConfig:
     symbol: str = "BTCUSDT"
     atr_lookback: int = 100
     atr_ewm_alpha: float = 2.0 / (100 + 1.0)
-    spike_threshold_pct: float = 50.0     # spike jeśli ATR > baseline*(1+X%)
+    spike_threshold_pct: float = 50.0  # spike jeśli ATR > baseline*(1+X%)
     min_bars_for_baseline: int = 150
-    publish_every_n: int = 10             # co ile barów publikować ATR_UPDATE
+    publish_every_n: int = 10  # co ile barów publikować ATR_UPDATE
 
 
 class RiskManager:
@@ -31,6 +31,7 @@ class RiskManager:
     - wykrywa spike i publikuje ATR_SPIKE,
     - regularnie publikuje ATR_UPDATE.
     """
+
     def __init__(self, bus: EventBus, cfg: RiskConfig) -> None:
         self.bus = bus
         self.cfg = cfg
@@ -53,7 +54,7 @@ class RiskManager:
             return []
 
     def _ewm(self, prev: Optional[float], value: float, alpha: float) -> float:
-        return (value if prev is None else (alpha * value + (1.0 - alpha) * prev))
+        return value if prev is None else (alpha * value + (1.0 - alpha) * prev)
 
     def _on_tick(self, ev_or_list: Union[Event, Iterable[Event]]) -> None:
         published = False
@@ -78,20 +79,26 @@ class RiskManager:
                     if self._count >= self.cfg.min_bars_for_baseline:
                         thr = self._baseline_ewm * (1.0 + self.cfg.spike_threshold_pct / 100.0)
                         if self._atr_ewm > thr:
-                            self.bus.publish(EventType.ATR_SPIKE, {
+                            self.bus.publish(
+                                EventType.ATR_SPIKE,
+                                {
+                                    "symbol": self.cfg.symbol,
+                                    "atr": self._atr_ewm,
+                                    "baseline": self._baseline_ewm,
+                                    "threshold": thr,
+                                    "ts": time.time(),
+                                },
+                            )
+                    if self._count % max(1, self.cfg.publish_every_n) == 0:
+                        self.bus.publish(
+                            EventType.ATR_UPDATE,
+                            {
                                 "symbol": self.cfg.symbol,
                                 "atr": self._atr_ewm,
                                 "baseline": self._baseline_ewm,
-                                "threshold": thr,
-                                "ts": time.time()
-                            })
-                    if self._count % max(1, self.cfg.publish_every_n) == 0:
-                        self.bus.publish(EventType.ATR_UPDATE, {
-                            "symbol": self.cfg.symbol,
-                            "atr": self._atr_ewm,
-                            "baseline": self._baseline_ewm,
-                            "ts": time.time()
-                        })
+                                "ts": time.time(),
+                            },
+                        )
                         published = True
             self._last_price = px
         if not published and self._atr_ewm is not None:

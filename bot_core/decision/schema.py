@@ -1,4 +1,5 @@
 """Schematy Pydantic dla podsumowań decision engine."""
+
 from __future__ import annotations
 
 from typing import Mapping, Sequence

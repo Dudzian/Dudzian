@@ -175,9 +175,7 @@ def update_champion_registry(
     challengers_path = model_dir / CHALLENGERS_FILENAME
 
     champion_data = _load_json(champion_path)
-    previous_champion = (
-        champion_data.get("report") if isinstance(champion_data, Mapping) else None
-    )
+    previous_champion = champion_data.get("report") if isinstance(champion_data, Mapping) else None
     champion_score = _score_payload(previous_champion) if previous_champion else None
 
     candidate_score = _score_payload(payload)
@@ -324,20 +322,26 @@ def promote_challenger(
             f"Brak challengera wersji '{normalized_version}' dla modelu '{normalized_model}'"
         )
 
-    candidate_report_raw = candidate_entry.get("report") if isinstance(candidate_entry, Mapping) else None
+    candidate_report_raw = (
+        candidate_entry.get("report") if isinstance(candidate_entry, Mapping) else None
+    )
     if not isinstance(candidate_report_raw, Mapping):
         raise ValueError("Wybrany challenger nie zawiera raportu jakości")
 
-    now = decided_at.astimezone(timezone.utc) if decided_at is not None else datetime.now(timezone.utc)
+    now = (
+        decided_at.astimezone(timezone.utc)
+        if decided_at is not None
+        else datetime.now(timezone.utc)
+    )
     reason_text = (reason or str(candidate_entry.get("reason", "")).strip()) or (
         f"Ręczna promocja challengera {normalized_version}"
     )
 
-    previous_champion_raw = champion_data.get("report") if isinstance(champion_data, Mapping) else None
+    previous_champion_raw = (
+        champion_data.get("report") if isinstance(champion_data, Mapping) else None
+    )
     previous_champion = (
-        dict(previous_champion_raw)
-        if isinstance(previous_champion_raw, Mapping)
-        else None
+        dict(previous_champion_raw) if isinstance(previous_champion_raw, Mapping) else None
     )
 
     champion_payload = dict(candidate_report_raw)
@@ -418,9 +422,7 @@ def load_champion_overview(
     challengers_path = root / model_name / CHALLENGERS_FILENAME
     challengers_data = _load_json(challengers_path) or {}
     entries_raw = challengers_data.get("entries")
-    entries = (
-        _normalize_entries(entries_raw) if isinstance(entries_raw, Sequence) else []
-    )
+    entries = _normalize_entries(entries_raw) if isinstance(entries_raw, Sequence) else []
 
     def _extract_entry(entry: Mapping[str, object]) -> Mapping[str, object]:
         report = entry.get("report") if isinstance(entry, Mapping) else None

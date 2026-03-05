@@ -1,4 +1,5 @@
 """Warstwa pomocnicza do walidacji licencji na potrzeby interfejsu UI."""
+
 from __future__ import annotations
 
 import json
@@ -136,7 +137,9 @@ class LicenseVerifier:
         except json.JSONDecodeError as exc:
             return LicenseVerificationOutcome(False, "invalid_bundle", details=str(exc))
 
-        with tempfile.NamedTemporaryFile("w", encoding="utf-8", delete=False, suffix=".json") as handle:
+        with tempfile.NamedTemporaryFile(
+            "w", encoding="utf-8", delete=False, suffix=".json"
+        ) as handle:
             handle.write(payload)
             temp_path = Path(handle.name)
 

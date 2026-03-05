@@ -51,15 +51,15 @@ def test_alert_smoke_decision_metrics() -> None:
 
     snapshot = registry.render_prometheus()
     assert (
-        "decision_candidate_evaluations_total{intent=\"single\",profile=\"balanced\",result=\"accepted\",strategy=\"mean_reversion\"}"
+        'decision_candidate_evaluations_total{intent="single",profile="balanced",result="accepted",strategy="mean_reversion"}'
         in snapshot
     )
     assert (
-        "decision_candidate_risk_flags_total{flag=\"drawdown_watch\",intent=\"single\",profile=\"balanced\"} 1.0"
+        'decision_candidate_risk_flags_total{flag="drawdown_watch",intent="single",profile="balanced"} 1.0'
         in snapshot
     )
     assert (
-        "decision_candidate_stress_failures_total{failure=\"latency\",intent=\"single\",profile=\"balanced\"} 1.0"
+        'decision_candidate_stress_failures_total{failure="latency",intent="single",profile="balanced"} 1.0'
         in snapshot
     )
 
@@ -85,11 +85,11 @@ def test_alert_smoke_decision_metrics_missing_snapshot() -> None:
 
     snapshot = registry.render_prometheus()
     assert (
-        "decision_candidate_evaluations_total{intent=\"single\",profile=\"balanced\",result=\"rejected\",strategy=\"mean_reversion\"}"
+        'decision_candidate_evaluations_total{intent="single",profile="balanced",result="rejected",strategy="mean_reversion"}'
         in snapshot
     )
     assert (
-        "decision_candidate_rejection_reasons_total{intent=\"single\",profile=\"balanced\",reason=\"missing_risk_snapshot\",strategy=\"mean_reversion\"} 1.0"
+        'decision_candidate_rejection_reasons_total{intent="single",profile="balanced",reason="missing_risk_snapshot",strategy="mean_reversion"} 1.0'
         in snapshot
     )
 
@@ -114,11 +114,11 @@ def test_alert_smoke_decision_rejection_reason_categorization() -> None:
 
     snapshot = registry.render_prometheus()
     assert (
-        "decision_candidate_rejection_reasons_total{intent=\"single\",profile=\"balanced\",reason=\"cost_above_limit\",strategy=\"mean_reversion\"} 1.0"
+        'decision_candidate_rejection_reasons_total{intent="single",profile="balanced",reason="cost_above_limit",strategy="mean_reversion"} 1.0'
         in snapshot
     )
     assert (
-        "decision_candidate_rejection_reasons_total{intent=\"single\",profile=\"balanced\",reason=\"net_edge_below_threshold\",strategy=\"mean_reversion\"} 1.0"
+        'decision_candidate_rejection_reasons_total{intent="single",profile="balanced",reason="net_edge_below_threshold",strategy="mean_reversion"} 1.0'
         in snapshot
     )
 
@@ -184,11 +184,13 @@ def test_alert_chaos_guardrail_switch_to_hedge() -> None:
         atr=1.0,
         metadata={"intent": "hedge"},
     )
-    allowed_result = engine.apply_pre_trade_checks(hedge_request, account=account, profile_name=profile.name)
+    allowed_result = engine.apply_pre_trade_checks(
+        hedge_request, account=account, profile_name=profile.name
+    )
     assert allowed_result.allowed is True
 
     metrics_snapshot = engine._guardrail_metrics.registry.render_prometheus()  # type: ignore[union-attr]
-    assert "risk_guardrail_hedge_mode{profile=\"balanced\"} 1.0" in metrics_snapshot
+    assert 'risk_guardrail_hedge_mode{profile="balanced"} 1.0' in metrics_snapshot
 
 
 def test_alert_chaos_guardrail_rollback_script(tmp_path: Path) -> None:
@@ -214,13 +216,15 @@ def test_alert_chaos_guardrail_rollback_script(tmp_path: Path) -> None:
     }
     repository.store("balanced", state_payload)
 
-    exit_code = guardrail_rollback_main([
-        "--repository",
-        str(repository_path),
-        "--profile",
-        "balanced",
-        "--clear-force-liquidation",
-    ])
+    exit_code = guardrail_rollback_main(
+        [
+            "--repository",
+            str(repository_path),
+            "--profile",
+            "balanced",
+            "--clear-force-liquidation",
+        ]
+    )
     assert exit_code == 0
 
     updated = repository.load("balanced")

@@ -1,4 +1,5 @@
 """Configuration for CI backtest regression harness."""
+
 from __future__ import annotations
 
 from pathlib import Path

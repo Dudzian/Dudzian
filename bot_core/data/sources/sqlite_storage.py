@@ -1,4 +1,5 @@
 """Implementacja magazynu OHLCV opartego o SQLite."""
+
 from __future__ import annotations
 
 import sqlite3
@@ -58,7 +59,9 @@ class _SQLiteMetadata(MutableMapping[str, str]):
     def __delitem__(self, key: str) -> None:
         with self._lock:
             with self._connection:
-                affected = self._connection.execute("DELETE FROM metadata WHERE key = ?", (key,)).rowcount
+                affected = self._connection.execute(
+                    "DELETE FROM metadata WHERE key = ?", (key,)
+                ).rowcount
         if affected == 0:
             raise KeyError(key)
 
@@ -169,7 +172,9 @@ class SQLiteCacheStorage(CacheStorage):
             elif prev_count is None:
                 total_rows = max(len(unique_timestamps), 0)
             else:
-                incremental = sum(1 for ts in unique_timestamps if prev_last is None or ts > prev_last)
+                incremental = sum(
+                    1 for ts in unique_timestamps if prev_last is None or ts > prev_last
+                )
                 total_rows = max(prev_count, prev_count + incremental)
 
             metadata[count_key] = str(total_rows)

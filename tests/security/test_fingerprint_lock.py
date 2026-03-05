@@ -21,4 +21,3 @@ def test_load_fingerprint_lock_reads_json_metadata(tmp_path: Path) -> None:
     assert lock.fingerprint == "ABCD-1234"
     assert lock.created_at == datetime(2024, 3, 1, 2, 3, 4, tzinfo=timezone.utc)
     assert lock.metadata == {"region": "eu"}
-

@@ -71,9 +71,7 @@ def test_trade_risk_limit_blocks_excessive_order():
     assert not result.allowed
     assert "limit ryzyka" in (result.reason or "").lower()
     assert result.adjustments is not None
-    assert result.adjustments["max_quantity"] == pytest.approx(
-        expected_max_quantity, rel=1e-6
-    )
+    assert result.adjustments["max_quantity"] == pytest.approx(expected_max_quantity, rel=1e-6)
     assert engine.recent_alerts() == ()  # brak alertów dla naruszenia twardego limitu
 
 
@@ -160,7 +158,9 @@ def test_cost_ratio_limit_blocks_orders():
     state.rolling_profit_30d = 4_000.0
     state.rolling_costs_30d = 1_200.0
 
-    result = engine.apply_pre_trade_checks(_order(280.0), account=account, profile_name=profile.name)
+    result = engine.apply_pre_trade_checks(
+        _order(280.0), account=account, profile_name=profile.name
+    )
 
     assert not result.allowed
     assert "Koszty transakcyjne" in (result.reason or "")

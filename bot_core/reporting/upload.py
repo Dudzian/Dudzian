@@ -1,4 +1,5 @@
 """Obsługa wysyłki archiwów smoke testu do bezpiecznego magazynu."""
+
 from __future__ import annotations
 
 import hashlib
@@ -103,7 +104,9 @@ class SmokeArchiveUploader:
         raise ValueError(f"Nieobsługiwany backend wysyłki archiwum: {self._config.backend}")
 
     @staticmethod
-    def resolve_config(reporting: CoreReportingConfig | object | None) -> SmokeArchiveUploadConfig | None:
+    def resolve_config(
+        reporting: CoreReportingConfig | object | None,
+    ) -> SmokeArchiveUploadConfig | None:
         """Zwraca konfigurację uploadu, jeśli została zdefiniowana w configu."""
 
         if reporting is None:
@@ -251,4 +254,3 @@ __all__ = [
     "SmokeArchiveUploader",
     "SmokeArchiveUploadResult",
 ]
-

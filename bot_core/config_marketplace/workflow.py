@@ -1,4 +1,5 @@
 """Workflow publikacji presetów Marketplace."""
+
 from __future__ import annotations
 
 import json
@@ -57,9 +58,7 @@ class PresetPublicationWorkflow:
         self._reviews = reviews
         self._signing_keys = dict(signing_keys or {})
         self._ready_packages = [
-            pkg
-            for pkg in catalog.packages
-            if pkg.release.review_status.lower() == "approved"
+            pkg for pkg in catalog.packages if pkg.release.review_status.lower() == "approved"
         ]
 
     @property
@@ -126,9 +125,7 @@ class PresetPublicationWorkflow:
             )
         return summaries
 
-    def _artifact_payloads(
-        self, preset: MarketplacePackageMetadata
-    ) -> list[dict[str, Any]]:
+    def _artifact_payloads(self, preset: MarketplacePackageMetadata) -> list[dict[str, Any]]:
         payloads: list[dict[str, Any]] = []
         for artifact in preset.distribution:
             normalized = {
@@ -172,7 +169,9 @@ class PresetPublicationWorkflow:
                     "releaseDate": preset.release_date.isoformat() if preset.release_date else None,
                     "artifacts": self._artifact_payloads(preset),
                     "reviews": [review.to_mapping() for review in self._collect_reviews(preset)],
-                    "exchangeCompatibility": [entry.model_dump() for entry in preset.exchange_compatibility],
+                    "exchangeCompatibility": [
+                        entry.model_dump() for entry in preset.exchange_compatibility
+                    ],
                     "wizard": {
                         "importable": True,
                         "source": preset.versioning.source,
@@ -195,11 +194,12 @@ class PresetPublicationWorkflow:
                     "package": preset.package_id,
                     "name": preset.display_name,
                     "status": preset.release.review_status,
-                    "approved_at": preset.release.approved_at.isoformat() if preset.release.approved_at else "",
+                    "approved_at": preset.release.approved_at.isoformat()
+                    if preset.release.approved_at
+                    else "",
                     "reviewers": [review.name for review in preset.release.reviewers],
                     "signed_artifacts": all(artifact.signature for artifact in preset.distribution),
                     "review_count": len(self._collect_reviews(preset)),
                 }
             )
         return rows
-

@@ -62,7 +62,9 @@ def _dummy_market_data(index: pd.Index) -> pd.DataFrame:
             "inventory_skew": pd.Series(np.linspace(-0.35, 0.42, len(index)), index=index),
             "latency_ms": pd.Series(85.0, index=index),
             "triangular_edge_bps": pd.Series(np.linspace(4.5, 9.0, len(index)), index=index),
-            "triangular_reverse_edge_bps": pd.Series(np.linspace(3.0, 7.0, len(index)), index=index),
+            "triangular_reverse_edge_bps": pd.Series(
+                np.linspace(3.0, 7.0, len(index)), index=index
+            ),
         }
     )
 
@@ -197,9 +199,7 @@ def test_public_descriptors_match_catalog_metadata() -> None:
         assert descriptor.risk_classes == tuple(payload.get("risk_classes", ()))
         assert descriptor.required_data == tuple(payload.get("required_data", ()))
         expected_tags = tuple(
-            str(item).strip()
-            for item in payload.get("default_tags", ())
-            if str(item).strip()
+            str(item).strip() for item in payload.get("default_tags", ()) if str(item).strip()
         )
         assert descriptor.tags == expected_tags
         capability = payload.get("capability")

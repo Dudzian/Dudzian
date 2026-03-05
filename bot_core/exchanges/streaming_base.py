@@ -1,4 +1,5 @@
 """Bazowe narzędzia do obsługi reconnectu i backoffu dla streamingu."""
+
 from __future__ import annotations
 
 import random
@@ -95,4 +96,3 @@ class StreamingBackoff:
                 reason=None,
             )
         self.reset()
-

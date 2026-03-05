@@ -135,7 +135,9 @@ class TaxReportGenerator:
         return rate
 
     # --- Ingest -----------------------------------------------------------------
-    def ingest_ledger_entries(self, entries: Iterable[LedgerEntry], *, source: str = "ledger") -> None:
+    def ingest_ledger_entries(
+        self, entries: Iterable[LedgerEntry], *, source: str = "ledger"
+    ) -> None:
         for entry in entries:
             side = str(entry.side).lower()
             if side not in {"buy", "sell"}:
@@ -865,9 +867,7 @@ class TaxReportGenerator:
             bucket = ensure(key)
             bucket["open_quantity"] += lot.quantity
             bucket["open_cost_basis"] += lot.cost_basis + lot.fee
-            bucket["open_holding_days_weighted_sum"] += (
-                lot.holding_period_days * lot.quantity
-            )
+            bucket["open_holding_days_weighted_sum"] += lot.holding_period_days * lot.quantity
             if lot.holding_period_days >= threshold:
                 bucket["open_long_term_quantity"] += lot.quantity
                 bucket["open_long_term_cost_basis"] += lot.cost_basis + lot.fee

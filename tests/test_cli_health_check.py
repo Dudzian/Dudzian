@@ -105,7 +105,9 @@ class _RecordingManager:
     ) -> None:
         self._credentials = (key_id, secret, passphrase)
 
-    def configure_native_adapter(self, *, settings: Mapping[str, object], mode: Mode | None = None) -> None:
+    def configure_native_adapter(
+        self, *, settings: Mapping[str, object], mode: Mode | None = None
+    ) -> None:
         self._configured_settings = dict(settings)
         self.native_adapter_mode = mode
 
@@ -126,7 +128,9 @@ class _RecordingManager:
         return self.paper_variant or "spot"
 
     def get_paper_initial_cash(self) -> float:
-        return float(self.paper_balance[0]) if self.paper_balance else float(self._paper_initial_cash)
+        return (
+            float(self.paper_balance[0]) if self.paper_balance else float(self._paper_initial_cash)
+        )
 
     def get_paper_cash_asset(self) -> str | None:
         if self.paper_balance and len(self.paper_balance) > 1:
@@ -204,7 +208,9 @@ def _write_environment(path: Path, content: str) -> Path:
     return path
 
 
-def test_health_check_cli_uses_profile_configuration(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+def test_health_check_cli_uses_profile_configuration(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
     credentials = _write_profile(
         tmp_path / "desktop.toml",
         """
@@ -245,7 +251,9 @@ base_delay = 0.1
     assert "private_api" in captured.out
 
 
-def test_health_check_cli_skips_private_when_no_credentials(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+def test_health_check_cli_skips_private_when_no_credentials(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
     credentials = _write_profile(
         tmp_path / "desktop.toml",
         """
@@ -588,7 +596,9 @@ live_margin:
     }
 
 
-def test_health_check_cli_validates_native_setting_format(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+def test_health_check_cli_validates_native_setting_format(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
     credentials = _write_profile(
         tmp_path / "desktop.toml",
         """
@@ -901,7 +911,9 @@ skip_private = true
     assert exit_code == 2
 
 
-def test_health_check_cli_outputs_json_payload(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+def test_health_check_cli_outputs_json_payload(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
     credentials = _write_profile(
         tmp_path / "desktop.toml",
         """
@@ -942,7 +954,9 @@ secret = "SECRET"
     assert "simulator" not in payload["paper"]
 
 
-def test_health_check_cli_outputs_pretty_json(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+def test_health_check_cli_outputs_pretty_json(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
     credentials = _write_profile(
         tmp_path / "desktop.toml",
         """
@@ -968,7 +982,7 @@ secret = "SECRET"
     assert exit_code == 0
     captured = capsys.readouterr()
     assert captured.out.startswith("{\n")
-    assert "  \"overall_status\": \"healthy\"" in captured.out
+    assert '  "overall_status": "healthy"' in captured.out
     payload = json.loads(captured.out)
     assert payload["overall_status"] == "healthy"
     assert payload["exchange"] == "binance"
@@ -1074,7 +1088,9 @@ live_margin:
     }
 
 
-def test_health_check_cli_overrides_paper_settings_with_cli(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+def test_health_check_cli_overrides_paper_settings_with_cli(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
     _RecordingManager.instances.clear()
 
     env_yaml = _write_environment(
@@ -1247,7 +1263,9 @@ def test_health_check_cli_validates_paper_flags(
     assert message in captured.err
 
 
-def test_health_check_cli_fails_when_private_asset_missing(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+def test_health_check_cli_fails_when_private_asset_missing(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
     _RecordingManager.instances.clear()
 
     env_config = _write_environment(
@@ -1381,11 +1399,13 @@ secret = "SECRET"
     saved_contents = output_file.read_text(encoding="utf-8")
     assert json.loads(saved_contents) == payload
     if output_format == "json-pretty":
-        assert "\n  \"results\": [" in payload_text
+        assert '\n  "results": [' in payload_text
         assert saved_contents.endswith("\n")
 
 
-def test_health_check_cli_rejects_output_path_in_text_mode(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+def test_health_check_cli_rejects_output_path_in_text_mode(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
     credentials = _write_profile(
         tmp_path / "desktop.toml",
         """
@@ -1413,7 +1433,9 @@ secret = "SECRET"
     assert "--output-path" in captured.err
 
 
-def test_health_check_cli_json_includes_skip_notes(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+def test_health_check_cli_json_includes_skip_notes(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
     credentials = _write_profile(
         tmp_path / "desktop.toml",
         """
@@ -1595,7 +1617,9 @@ def test_health_check_cli_normalizes_requested_check_names(
     assert manager.load_markets_calls == 1
 
 
-def test_health_check_cli_rejects_unknown_check(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+def test_health_check_cli_rejects_unknown_check(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
     credentials = _write_profile(
         tmp_path / "desktop.toml",
         """
@@ -1637,7 +1661,9 @@ def test_health_check_cli_lists_available_checks(capsys: pytest.CaptureFixture[s
         assert f"  * {name}" in captured.out
 
 
-def test_list_environments_prints_summary(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+def test_list_environments_prints_summary(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
     env_yaml = tmp_path / "envs.yaml"
     env_yaml.write_text(
         """
@@ -1671,7 +1697,10 @@ live:
     captured = capsys.readouterr()
     assert "Zdefiniowane środowiska" in captured.out
     assert "* live [exchange=kraken, mode=margin, testnet=false] - Produkcja margin" in captured.out
-    assert "* paper (default) [exchange=kraken, mode=paper, paper_variant=margin] - Symulator margin dla testów" in captured.out
+    assert (
+        "* paper (default) [exchange=kraken, mode=paper, paper_variant=margin] - Symulator margin dla testów"
+        in captured.out
+    )
 
 
 def test_list_environments_missing_file(capsys: pytest.CaptureFixture[str]) -> None:

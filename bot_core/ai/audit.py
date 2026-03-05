@@ -1,4 +1,5 @@
 """Helpery audytu modeli AI zapisujące raporty walidacji walk-forward i jakości danych."""
+
 from __future__ import annotations
 
 import json
@@ -70,9 +71,7 @@ def _normalize_role(role: object) -> str | None:
     return None
 
 
-def _default_sign_off(
-    *, extra_roles: Sequence[str] | None = None
-) -> dict[str, dict[str, object]]:
+def _default_sign_off(*, extra_roles: Sequence[str] | None = None) -> dict[str, dict[str, object]]:
     base_roles: list[str] = list(_SIGN_OFF_ROLES)
     extra: set[str] = set()
     for role in extra_roles or ():
@@ -95,7 +94,7 @@ def _default_sign_off(
 
 
 def _normalize_sign_off(
-    sign_off: Mapping[str, Mapping[str, Any]] | None
+    sign_off: Mapping[str, Mapping[str, Any]] | None,
 ) -> Mapping[str, Mapping[str, Any]]:
     extra_roles: list[str] = []
     if isinstance(sign_off, Mapping):
@@ -388,12 +387,8 @@ def summarize_walk_forward_reports(
                         pass
                     try:
                         acc = float(window.get("directional_accuracy"))
-                        worst_accuracy = (
-                            acc if worst_accuracy is None else min(worst_accuracy, acc)
-                        )
-                        best_accuracy = (
-                            acc if best_accuracy is None else max(best_accuracy, acc)
-                        )
+                        worst_accuracy = acc if worst_accuracy is None else min(worst_accuracy, acc)
+                        best_accuracy = acc if best_accuracy is None else max(best_accuracy, acc)
                     except (TypeError, ValueError):
                         pass
         _collect_pending_sign_off(
@@ -421,17 +416,11 @@ def summarize_walk_forward_reports(
         "worst_directional_accuracy": (
             float(worst_accuracy) if worst_accuracy is not None else None
         ),
-        "best_directional_accuracy": (
-            float(best_accuracy) if best_accuracy is not None else None
-        ),
+        "best_directional_accuracy": (float(best_accuracy) if best_accuracy is not None else None),
     }
     ordered_roles = list(_DEFAULT_SIGN_OFF_ROLE_ORDER)
-    ordered_roles.extend(
-        sorted(role for role in pending.keys() if role not in _SIGN_OFF_ROLES)
-    )
-    summary["pending_sign_off"] = {
-        role: tuple(pending.get(role, ())) for role in ordered_roles
-    }
+    ordered_roles.extend(sorted(role for role in pending.keys() if role not in _SIGN_OFF_ROLES))
+    summary["pending_sign_off"] = {role: tuple(pending.get(role, ())) for role in ordered_roles}
     return MappingProxyType(summary)
 
 
@@ -524,22 +513,24 @@ def save_drift_report(
     )
 
 
-def save_scheduler_state(
-    state: Mapping[str, Any], *, audit_root: str | Path | None = None
-) -> Path:
+def save_scheduler_state(state: Mapping[str, Any], *, audit_root: str | Path | None = None) -> Path:
     """Zapisuje stan harmonogramu retreningu do ``scheduler.json``."""
 
     target_path = scheduler_state_path(audit_root)
     target_path.parent.mkdir(parents=True, exist_ok=True)
     with target_path.open("w", encoding="utf-8") as handle:
-        json.dump({str(k): _json_safe(v) for k, v in state.items()}, handle, ensure_ascii=False, indent=2, sort_keys=True)
+        json.dump(
+            {str(k): _json_safe(v) for k, v in state.items()},
+            handle,
+            ensure_ascii=False,
+            indent=2,
+            sort_keys=True,
+        )
         handle.write("\n")
     return target_path
 
 
-def load_scheduler_state(
-    *, audit_root: str | Path | None = None
-) -> Mapping[str, Any] | None:
+def load_scheduler_state(*, audit_root: str | Path | None = None) -> Mapping[str, Any] | None:
     """Ładuje zapisany stan harmonogramu retreningu."""
 
     target_path = scheduler_state_path(audit_root)
@@ -549,6 +540,7 @@ def load_scheduler_state(
     if isinstance(payload, Mapping):
         return payload
     raise TypeError("Stan harmonogramu w scheduler.json musi być mapowaniem JSON")
+
 
 def _iter_json_reports(directory: Path) -> list[Path]:
     files: list[Path] = []
@@ -610,9 +602,7 @@ def load_latest_data_quality_report(
     return load_audit_report(paths[0])
 
 
-def load_latest_drift_report(
-    *, audit_root: str | Path | None = None
-) -> Mapping[str, Any] | None:
+def load_latest_drift_report(*, audit_root: str | Path | None = None) -> Mapping[str, Any] | None:
     """Ładuje najnowszy raport dryfu danych."""
 
     paths = list_audit_reports("drift", audit_root=audit_root, limit=1)

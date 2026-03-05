@@ -1,4 +1,5 @@
 """Lekki event bus wykorzystywany przez natywne moduły bota."""
+
 from __future__ import annotations
 
 import logging
@@ -629,9 +630,15 @@ class DummyMarketFeed:
             symbol = kwargs.pop("symbol", None)
             start_price = kwargs.pop("start_price", None)
             interval_sec = kwargs.pop("interval_sec", None)
-            interval_sec = interval_sec if interval_sec is not None else kwargs.pop("tick_interval_s", None)
-            interval_sec = interval_sec if interval_sec is not None else kwargs.pop("tick_interval", None)
-            interval_sec = interval_sec if interval_sec is not None else kwargs.pop("interval", None)
+            interval_sec = (
+                interval_sec if interval_sec is not None else kwargs.pop("tick_interval_s", None)
+            )
+            interval_sec = (
+                interval_sec if interval_sec is not None else kwargs.pop("tick_interval", None)
+            )
+            interval_sec = (
+                interval_sec if interval_sec is not None else kwargs.pop("interval", None)
+            )
             interval_sec = interval_sec if interval_sec is not None else kwargs.pop("dt", None)
             drift_bps = kwargs.pop("drift_bps", None)
             drift_bps = drift_bps if drift_bps is not None else kwargs.pop("mu_bps", None)
@@ -667,7 +674,9 @@ class DummyMarketFeed:
         if self._thr and self._thr.is_alive():
             return self
         self._stop.clear()
-        self._thr = threading.Thread(target=self._run, name=f"DummyFeed-{self.cfg.symbol}", daemon=True)
+        self._thr = threading.Thread(
+            target=self._run, name=f"DummyFeed-{self.cfg.symbol}", daemon=True
+        )
         self._thr.start()
         return self
 

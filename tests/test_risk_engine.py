@@ -1,4 +1,5 @@
 """Testy jednostkowe dla silnika zarządzania ryzykiem."""
+
 from __future__ import annotations
 
 import json
@@ -269,7 +270,9 @@ def test_decision_log_records_allowed_and_denied_events(tmp_path, manual_profile
 
     log_path = tmp_path / "risk_decisions.jsonl"
     decision_log = RiskDecisionLog(max_entries=10, jsonl_path=log_path, clock=_next_timestamp)
-    engine = ThresholdRiskEngine(clock=lambda: datetime(2024, 1, 1, 12, 0, 0), decision_log=decision_log)
+    engine = ThresholdRiskEngine(
+        clock=lambda: datetime(2024, 1, 1, 12, 0, 0), decision_log=decision_log
+    )
     engine.register_profile(manual_profile)
 
     snapshot = _snapshot(1_000.0)
@@ -349,7 +352,9 @@ def test_combined_strategy_orders_respect_max_position_pct(manual_profile: Manua
 
     account = _snapshot(1_000.0)
     first_order = _order(30_000.0, quantity=0.01)
-    first_result = engine.apply_pre_trade_checks(first_order, account=account, profile_name=manual_profile.name)
+    first_result = engine.apply_pre_trade_checks(
+        first_order, account=account, profile_name=manual_profile.name
+    )
     assert first_result.allowed
 
     engine.on_fill(
@@ -730,7 +735,9 @@ def test_on_fill_normalizes_position_side_and_allows_growth(manual_profile: Manu
         atr=200.0,
     )
 
-    first_check = engine.apply_pre_trade_checks(request, account=snapshot, profile_name=manual_profile.name)
+    first_check = engine.apply_pre_trade_checks(
+        request, account=snapshot, profile_name=manual_profile.name
+    )
     assert first_check.allowed is True
 
     engine.on_fill(
@@ -841,7 +848,9 @@ def test_register_profile_normalizes_persisted_state(manual_profile: ManualProfi
         },
     )
 
-    engine = ThresholdRiskEngine(repository=repository, clock=lambda: datetime(2024, 1, 1, 12, 0, 0))
+    engine = ThresholdRiskEngine(
+        repository=repository, clock=lambda: datetime(2024, 1, 1, 12, 0, 0)
+    )
     engine.register_profile(manual_profile)
 
     state = engine._states[manual_profile.name]
@@ -875,7 +884,9 @@ def test_file_risk_repository_persists_state(tmp_path: Path, manual_profile: Man
     )
 
     # Now instantiate a new engine sharing the same repository – state should persist.
-    new_engine = ThresholdRiskEngine(repository=repository, clock=lambda: datetime(2024, 1, 1, 14, 0, 0))
+    new_engine = ThresholdRiskEngine(
+        repository=repository, clock=lambda: datetime(2024, 1, 1, 14, 0, 0)
+    )
     new_engine.register_profile(manual_profile)
 
     state = new_engine._states[manual_profile.name]
@@ -943,9 +954,7 @@ def test_decision_orchestrator_metadata_when_candidate_passes(
 ) -> None:
     orchestrator = DecisionOrchestrator(
         _decision_engine_config(),
-        inference=_StubInference(
-            ModelScore(expected_return_bps=14.0, success_probability=0.8)
-        ),
+        inference=_StubInference(ModelScore(expected_return_bps=14.0, success_probability=0.8)),
     )
     clock_value = datetime(2024, 7, 1, 9, 0, 0)
     engine = ThresholdRiskEngine(
@@ -1007,9 +1016,7 @@ def test_decision_orchestrator_blocks_when_thresholds_exceeded(
 ) -> None:
     orchestrator = DecisionOrchestrator(
         _decision_engine_config(),
-        inference=_StubInference(
-            ModelScore(expected_return_bps=6.0, success_probability=0.7)
-        ),
+        inference=_StubInference(ModelScore(expected_return_bps=6.0, success_probability=0.7)),
     )
     engine = ThresholdRiskEngine(
         clock=lambda: datetime(2024, 7, 1, 9, 0, 0),

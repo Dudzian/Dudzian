@@ -1,4 +1,5 @@
 """Helpers for managing differential OEM updates."""
+
 from __future__ import annotations
 
 import hashlib
@@ -19,9 +20,9 @@ from bot_core.security.signing import validate_hmac_signature
 try:  # pragma: no cover - opcjonalna zależność
     from packaging.version import InvalidVersion, Version
 except Exception:  # pragma: no cover - środowiska bez "packaging"
+
     class InvalidVersion(ValueError):
         """Minimalna zamiana wyjątku z ``packaging``."""
-
 
     class Version:
         """Lekki parser wersji pozwalający na porównania ``<``/``<=``.
@@ -64,6 +65,7 @@ except Exception:  # pragma: no cover - środowiska bez "packaging"
 
         def __repr__(self) -> str:  # pragma: no cover - diagnostyka
             return f"Version({self._value!r})"
+
 
 if TYPE_CHECKING:  # pragma: no cover - mypy-only imports
     from bot_core.security.update import LicenseValidationResult, UpdateVerificationResult
@@ -280,7 +282,9 @@ class DifferentialUpdateManager:
         sha256 = _hash_file(resolved, "sha256")
         sha384 = _hash_file(resolved, "sha384")
         size = resolved.stat().st_size
-        return DownloadedPackage(source=source, path=resolved, sha256=sha256, sha384=sha384, size=size)
+        return DownloadedPackage(
+            source=source, path=resolved, sha256=sha256, sha384=sha384, size=size
+        )
 
     def verify_package(
         self,
@@ -302,7 +306,9 @@ class DifferentialUpdateManager:
         else:
             signature_path = Path(signature_path).expanduser()
 
-        from bot_core.security.update import verify_update_bundle  # import here to avoid circular dependency
+        from bot_core.security.update import (
+            verify_update_bundle,
+        )  # import here to avoid circular dependency
 
         return verify_update_bundle(
             manifest_path=manifest_path,

@@ -1,4 +1,5 @@
 """Strategia grid trading zarządzająca ekspozycją wokół ceny bazowej."""
+
 from __future__ import annotations
 
 import math
@@ -60,7 +61,9 @@ class GridTradingStrategy(StrategyEngine):
             return signals
 
         direction = "buy" if current_level < state.last_level else "sell"
-        trade_size = max(0.0, min(self._settings.max_inventory, abs(current_level - state.last_level) * 0.1))
+        trade_size = max(
+            0.0, min(self._settings.max_inventory, abs(current_level - state.last_level) * 0.1)
+        )
         inventory_change = trade_size if direction == "buy" else -trade_size
         new_inventory = state.inventory + inventory_change
 
@@ -71,7 +74,9 @@ class GridTradingStrategy(StrategyEngine):
             inventory_change = trade_size if direction == "buy" else -trade_size
             new_inventory = state.inventory + inventory_change
 
-        confidence = min(1.0, abs(normalized_move) / (self._settings.grid_spacing * self._settings.grid_size))
+        confidence = min(
+            1.0, abs(normalized_move) / (self._settings.grid_spacing * self._settings.grid_size)
+        )
         metadata = {
             "strategy": {
                 "type": "grid",

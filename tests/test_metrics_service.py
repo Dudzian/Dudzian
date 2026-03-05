@@ -328,7 +328,9 @@ def test_reduce_motion_alert_sink_ignores_duplicates():
     duplicate.notes = payload
     servicer.PushMetrics(duplicate, None)
 
-    assert len(router.messages) == 1, "Duplikaty reduce-motion nie powinny generować kolejnych alertów"
+    assert len(router.messages) == 1, (
+        "Duplikaty reduce-motion nie powinny generować kolejnych alertów"
+    )
 
 
 def test_overlay_budget_alert_sink_dispatches_alert():
@@ -399,7 +401,9 @@ def test_overlay_budget_alert_sink_ignores_duplicates():
     duplicate.notes = payload
     servicer.PushMetrics(duplicate, None)
 
-    assert len(router.messages) == 1, "Duplikaty overlay-budget nie powinny generować kolejnych alertów"
+    assert len(router.messages) == 1, (
+        "Duplikaty overlay-budget nie powinny generować kolejnych alertów"
+    )
 
 
 @pytest.mark.timeout(5)

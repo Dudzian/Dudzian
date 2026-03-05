@@ -11,10 +11,14 @@ def test_load_risk_thresholds_handles_missing_package_resource(monkeypatch):
 
     config_loader.reset_threshold_cache()
     monkeypatch.setattr(
-        config_loader, "_DEFAULT_OVERRIDE_PATH", config_loader._ROOT / "nonexistent_risk_thresholds.yaml"
+        config_loader,
+        "_DEFAULT_OVERRIDE_PATH",
+        config_loader._ROOT / "nonexistent_risk_thresholds.yaml",
     )
     monkeypatch.delenv(config_loader._ENV_OVERRIDE_VAR, raising=False)
-    monkeypatch.setattr(config_loader.resources, "files", lambda *_args, **_kwargs: _MissingResource())
+    monkeypatch.setattr(
+        config_loader.resources, "files", lambda *_args, **_kwargs: _MissingResource()
+    )
 
     default_thresholds = config_loader._load_default_thresholds()
     monkeypatch.setattr(config_loader, "_DEFAULT_THRESHOLDS", default_thresholds)
@@ -27,7 +31,9 @@ def test_load_risk_thresholds_handles_missing_package_resource(monkeypatch):
 def test_load_risk_thresholds_handles_missing_defaults_package(monkeypatch):
     config_loader.reset_threshold_cache()
     monkeypatch.setattr(
-        config_loader, "_DEFAULT_OVERRIDE_PATH", config_loader._ROOT / "nonexistent_risk_thresholds.yaml"
+        config_loader,
+        "_DEFAULT_OVERRIDE_PATH",
+        config_loader._ROOT / "nonexistent_risk_thresholds.yaml",
     )
     monkeypatch.delenv(config_loader._ENV_OVERRIDE_VAR, raising=False)
 

@@ -125,7 +125,9 @@ def test_binance_spot_stream_long_poll(monkeypatch: pytest.MonkeyPatch) -> None:
 
     monkeypatch.setattr("bot_core.exchanges.streaming.urlopen", fake_urlopen)
 
-    credentials = ExchangeCredentials(key_id="test", permissions=("read",), environment=Environment.PAPER)
+    credentials = ExchangeCredentials(
+        key_id="test", permissions=("read",), environment=Environment.PAPER
+    )
     adapter = BinanceSpotAdapter(
         credentials,
         environment=Environment.PAPER,
@@ -162,7 +164,9 @@ def test_zonda_private_stream_requires_permissions() -> None:
 
 
 def test_binance_stream_requires_network_configuration() -> None:
-    credentials = ExchangeCredentials(key_id="guard", permissions=("read",), environment=Environment.PAPER)
+    credentials = ExchangeCredentials(
+        key_id="guard", permissions=("read",), environment=Environment.PAPER
+    )
     adapter = BinanceSpotAdapter(
         credentials,
         environment=Environment.PAPER,
@@ -201,7 +205,9 @@ def test_stream_retries_after_network_error(monkeypatch: pytest.MonkeyPatch) -> 
 
     monkeypatch.setattr("bot_core.exchanges.streaming.urlopen", flaky_urlopen)
 
-    credentials = ExchangeCredentials(key_id="retry", permissions=("read",), environment=Environment.PAPER)
+    credentials = ExchangeCredentials(
+        key_id="retry", permissions=("read",), environment=Environment.PAPER
+    )
     adapter = BinanceSpotAdapter(
         credentials,
         environment=Environment.PAPER,
@@ -256,7 +262,13 @@ def test_local_long_poll_stream_stop_induced_network_errors_do_not_reconnect(
 
     reconnect_metric = registry.get("bot_exchange_stream_reconnects_total")
     assert isinstance(reconnect_metric, CounterMetric)
-    labels = {"adapter": "test", "scope": "public", "environment": "paper", "status": "attempt", "reason": "network"}
+    labels = {
+        "adapter": "test",
+        "scope": "public",
+        "environment": "paper",
+        "status": "attempt",
+        "reason": "network",
+    }
     assert reconnect_metric.value(labels=labels) == pytest.approx(0.0)
 
     stream.close()
@@ -524,7 +536,9 @@ def test_local_long_poll_stream_prefetches_in_background(
         if index == 1:
             second_request_started.set()
             if not release_second_response.wait(timeout=1.0):
-                raise AssertionError("Drugie zapytanie long-pollowe nie zostało odblokowane na czas")
+                raise AssertionError(
+                    "Drugie zapytanie long-pollowe nie zostało odblokowane na czas"
+                )
         payload = json.dumps(payload_map).encode("utf-8")
         return _FakeResponse(payload)
 
@@ -721,7 +735,9 @@ def test_local_long_poll_stream_async_context_manager(monkeypatch: pytest.Monkey
 
 
 def test_binance_stream_respects_scope_buffer_size() -> None:
-    credentials = ExchangeCredentials(key_id="buffer", permissions=("read",), environment=Environment.PAPER)
+    credentials = ExchangeCredentials(
+        key_id="buffer", permissions=("read",), environment=Environment.PAPER
+    )
     adapter = BinanceSpotAdapter(
         credentials,
         environment=Environment.PAPER,
@@ -745,7 +761,9 @@ def test_binance_stream_respects_scope_buffer_size() -> None:
 
 def test_binance_stream_uses_adapter_metrics_registry() -> None:
     registry = MetricsRegistry()
-    credentials = ExchangeCredentials(key_id="metrics", permissions=("read",), environment=Environment.PAPER)
+    credentials = ExchangeCredentials(
+        key_id="metrics", permissions=("read",), environment=Environment.PAPER
+    )
     adapter = BinanceSpotAdapter(
         credentials,
         environment=Environment.PAPER,
@@ -759,7 +777,11 @@ def test_binance_stream_uses_adapter_metrics_registry() -> None:
     try:
         metric = registry.get("bot_exchange_stream_pending_batches")
         assert isinstance(metric, GaugeMetric)
-        labels = {"adapter": adapter.name, "scope": "public", "environment": Environment.PAPER.value}
+        labels = {
+            "adapter": adapter.name,
+            "scope": "public",
+            "environment": Environment.PAPER.value,
+        }
         assert metric.value(labels=labels) == pytest.approx(0.0)
     finally:
         stream.close()
@@ -869,7 +891,9 @@ def test_stream_custom_channel_and_cursor_names(monkeypatch: pytest.MonkeyPatch)
 
     monkeypatch.setattr("bot_core.exchanges.streaming.urlopen", fake_urlopen)
 
-    credentials = ExchangeCredentials(key_id="custom", permissions=("read",), environment=Environment.PAPER)
+    credentials = ExchangeCredentials(
+        key_id="custom", permissions=("read",), environment=Environment.PAPER
+    )
     stream_settings = {
         **_build_stream_settings(),
         "channel_param": "topics",
@@ -927,7 +951,9 @@ def test_stream_channel_serializer_supports_mappings(monkeypatch: pytest.MonkeyP
 
     monkeypatch.setattr("bot_core.exchanges.streaming.urlopen", fake_urlopen)
 
-    credentials = ExchangeCredentials(key_id="mapping", permissions=("read",), environment=Environment.PAPER)
+    credentials = ExchangeCredentials(
+        key_id="mapping", permissions=("read",), environment=Environment.PAPER
+    )
     stream_settings = {
         **_build_stream_settings(),
         "channel_serializer": lambda values: {"topic": list(values)},
@@ -1101,9 +1127,7 @@ def test_local_long_poll_stream_single_request_on_success(
         calls += 1
         payload = json.dumps(
             {
-                "batches": [
-                    {"channel": "ticker", "events": [{"price": 12.0}], "cursor": "abc"}
-                ],
+                "batches": [{"channel": "ticker", "events": [{"price": 12.0}], "cursor": "abc"}],
             }
         ).encode("utf-8")
         return _FakeResponse(payload)
@@ -1378,6 +1402,7 @@ def test_local_long_poll_stream_handles_zstd_encoding(
         decompress_calls: list[bytes] = []
 
         if zstd_variant == "module":
+
             def fake_decompress(data: bytes) -> bytes:  # noqa: D401
                 decompress_calls.append(data)
                 assert data == encoded_payload
@@ -1385,13 +1410,16 @@ def test_local_long_poll_stream_handles_zstd_encoding(
 
             fake_zstd = SimpleNamespace(decompress=fake_decompress, ZstdError=RuntimeError)
         else:
+
             class FakeZstdDecompressor:
                 def decompress(self, data: bytes) -> bytes:  # noqa: D401
                     decompress_calls.append(data)
                     assert data == encoded_payload
                     return payload
 
-            fake_zstd = SimpleNamespace(ZstdDecompressor=FakeZstdDecompressor, ZstdError=RuntimeError)
+            fake_zstd = SimpleNamespace(
+                ZstdDecompressor=FakeZstdDecompressor, ZstdError=RuntimeError
+            )
 
         monkeypatch.setattr(streaming_module, "zstandard", fake_zstd, raising=False)
     else:
@@ -1743,7 +1771,9 @@ def test_local_long_poll_stream_retry_after_http_date(monkeypatch: pytest.Monkey
 
     monkeypatch.setattr("bot_core.exchanges.streaming.time.time", lambda: current.timestamp())
 
-    value = LocalLongPollStream._retry_after({"Retry-After": future.strftime("%a, %d %b %Y %H:%M:%S GMT")})
+    value = LocalLongPollStream._retry_after(
+        {"Retry-After": future.strftime("%a, %d %b %Y %H:%M:%S GMT")}
+    )
     assert value == pytest.approx(42.0)
 
 
@@ -1918,7 +1948,10 @@ def test_binance_private_stream_posts_channels_in_body(
     monkeypatch.setattr("bot_core.exchanges.streaming.urlopen", fake_urlopen)
 
     credentials = ExchangeCredentials(
-        key_id="binance", secret="secret", permissions=("read", "trade"), environment=Environment.PAPER
+        key_id="binance",
+        secret="secret",
+        permissions=("read", "trade"),
+        environment=Environment.PAPER,
     )
     stream_settings = {
         **_build_stream_settings(),
@@ -2256,9 +2289,6 @@ def test_local_long_poll_stream_wait_prefill_async_propagates_errors(
     stream.close()
 
 
-
-
-
 def test_local_long_poll_stream_disable_in_test_mode_keeps_active_worker_registered(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -2307,7 +2337,10 @@ def test_local_long_poll_stream_disable_in_test_mode_keeps_active_worker_registe
     with LocalLongPollStream._active_lock:
         assert stream not in stream._active_instances
 
-def test_local_long_poll_stream_close_all_active_uses_progressive_join(monkeypatch: pytest.MonkeyPatch) -> None:
+
+def test_local_long_poll_stream_close_all_active_uses_progressive_join(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     # Izolacja od ewentualnych niedomkniętych streamów z innych testów.
     LocalLongPollStream.close_all_active()
 
@@ -2382,9 +2415,7 @@ def test_local_long_poll_stream_close_all_active_waits_long_enough_for_small_tim
     LocalLongPollStream.close_all_active()
 
     leaking_workers = [
-        thread
-        for thread in threading.enumerate()
-        if thread.name.startswith("LocalLongPollStream[")
+        thread for thread in threading.enumerate() if thread.name.startswith("LocalLongPollStream[")
     ]
     assert not leaking_workers
 

@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 """Podpisuje presety Marketplace (JSON + MD) kluczami HMAC i Ed25519."""
+
 from __future__ import annotations
 
 import argparse
@@ -93,9 +94,7 @@ def sign_presets(
                 ed25519_key_id=ed25519_key_id,
                 issuer=issuer,
             )
-            path.with_suffix(path.suffix + ".sig").write_text(
-                _serialize(payload), encoding="utf-8"
-            )
+            path.with_suffix(path.suffix + ".sig").write_text(_serialize(payload), encoding="utf-8")
             signed += 1
         for path in sorted(root.rglob("*.md")):
             payload = _signature_payload(
@@ -107,9 +106,7 @@ def sign_presets(
                 ed25519_key_id=ed25519_key_id,
                 issuer=issuer,
             )
-            path.with_suffix(path.suffix + ".sig").write_text(
-                _serialize(payload), encoding="utf-8"
-            )
+            path.with_suffix(path.suffix + ".sig").write_text(_serialize(payload), encoding="utf-8")
             signed += 1
     return signed
 

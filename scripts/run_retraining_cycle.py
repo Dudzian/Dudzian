@@ -1,4 +1,5 @@
 """Uruchamia pojedynczy cykl retreningu i generuje raport."""
+
 from __future__ import annotations
 
 import argparse
@@ -23,7 +24,11 @@ from bot_core.reporting.model_quality import (
 from core.ml.training_pipeline import TrainingPipeline, TrainingPipelineResult
 from core.monitoring.events import MonitoringEvent
 from core.reporting import RetrainingReport
-from core.runtime.retraining_scheduler import ChaosSettings, RetrainingRunOutcome, RetrainingScheduler
+from core.runtime.retraining_scheduler import (
+    ChaosSettings,
+    RetrainingRunOutcome,
+    RetrainingScheduler,
+)
 
 LOGGER = logging.getLogger("run_retraining_cycle")
 
@@ -110,7 +115,9 @@ def _load_retraining_config(path: Path | None) -> Mapping[str, object]:
     if path is None:
         return {}
     if not path.exists():
-        LOGGER.warning("Plik konfiguracji retrainingu %s nie istnieje – używam wartości domyślnych", path)
+        LOGGER.warning(
+            "Plik konfiguracji retrainingu %s nie istnieje – używam wartości domyślnych", path
+        )
         return {}
     payload = yaml.safe_load(path.read_text(encoding="utf-8"))
     if not isinstance(payload, Mapping):  # pragma: no cover - zabezpieczenie przed błędnym formatem
@@ -237,7 +244,11 @@ def _score_report_payload(payload: Mapping[str, object]) -> tuple[float, float, 
     mae = math.inf
     expected_pnl = 0.0
 
-    for key in ("validation_directional_accuracy", "test_directional_accuracy", "directional_accuracy"):
+    for key in (
+        "validation_directional_accuracy",
+        "test_directional_accuracy",
+        "directional_accuracy",
+    ):
         if key in metrics:
             directional = max(directional, _float(metrics[key], directional))
 
@@ -472,9 +483,15 @@ def main(argv: Sequence[str] | None = None) -> int:
     captured_events: list[MonitoringEvent] = []
     config = _load_retraining_config(args.config)
     interval_minutes = float(config.get("interval_minutes", 180))
-    chaos = ChaosSettings.from_mapping(config.get("chaos")) if hasattr(ChaosSettings, "from_mapping") else ChaosSettings()
+    chaos = (
+        ChaosSettings.from_mapping(config.get("chaos"))
+        if hasattr(ChaosSettings, "from_mapping")
+        else ChaosSettings()
+    )
     if not hasattr(ChaosSettings, "from_mapping"):
-        LOGGER.warning("Używana wersja ChaosSettings nie wspiera from_mapping – stosuję konstruktor domyślny")
+        LOGGER.warning(
+            "Używana wersja ChaosSettings nie wspiera from_mapping – stosuję konstruktor domyślny"
+        )
         chaos = ChaosSettings(**(config.get("chaos", {}) or {}))
     scheduler = RetrainingScheduler(
         interval=timedelta(minutes=interval_minutes),
@@ -544,7 +561,9 @@ def main(argv: Sequence[str] | None = None) -> int:
     if result.training_result and result.training_result.fallback_chain:
         LOGGER.warning(
             "Aktywowano fallback backendów: %s",
-            ", ".join(entry.get("backend", "n/d") for entry in result.training_result.fallback_chain),
+            ", ".join(
+                entry.get("backend", "n/d") for entry in result.training_result.fallback_chain
+            ),
         )
     if result.training_result and result.training_result.validation_log_path:
         LOGGER.info(

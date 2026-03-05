@@ -24,9 +24,18 @@ def coverage_file(tmp_path: Path) -> Path:
     return xml
 
 
-def test_script_passes_with_default_threshold(coverage_file: Path, capsys: pytest.CaptureFixture[str]) -> None:
+def test_script_passes_with_default_threshold(
+    coverage_file: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
     exit_code = enforce_coverage.main(
-        ["--coverage-file", str(coverage_file), "--minimum", "80", "--package", "bot_core.strategies=85"]
+        [
+            "--coverage-file",
+            str(coverage_file),
+            "--minimum",
+            "80",
+            "--package",
+            "bot_core.strategies=85",
+        ]
     )
     assert exit_code == 0
     out = capsys.readouterr().out
@@ -35,9 +44,7 @@ def test_script_passes_with_default_threshold(coverage_file: Path, capsys: pytes
 
 
 def test_script_fails_when_threshold_not_met(coverage_file: Path) -> None:
-    exit_code = enforce_coverage.main(
-        ["--coverage-file", str(coverage_file), "--minimum", "95"]
-    )
+    exit_code = enforce_coverage.main(["--coverage-file", str(coverage_file), "--minimum", "95"])
     assert exit_code == 1
 
 

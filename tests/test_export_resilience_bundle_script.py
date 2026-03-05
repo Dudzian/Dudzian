@@ -25,7 +25,9 @@ def _run_export(args: list[str], *, env: dict[str, str]) -> subprocess.Completed
     )
 
 
-def _run_verify(args: list[str], *, env: dict[str, str], check: bool = True) -> subprocess.CompletedProcess[str]:
+def _run_verify(
+    args: list[str], *, env: dict[str, str], check: bool = True
+) -> subprocess.CompletedProcess[str]:
     return run_cli_utf8(
         [sys.executable, str(REPO_ROOT / "scripts/verify_resilience_bundle.py"), *args],
         check=check,

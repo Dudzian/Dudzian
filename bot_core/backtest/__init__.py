@@ -58,6 +58,7 @@ def __getattr__(name: str):
 def __dir__() -> list[str]:
     return sorted(set(globals().keys()) | set(_PANDAS_EXPORTS.keys()))
 
+
 __all__ = [
     "BacktestEngine",
     "BacktestError",

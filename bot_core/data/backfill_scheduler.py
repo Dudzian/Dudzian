@@ -1,4 +1,5 @@
 """Wspólny harmonogram backfillu/warmupu danych OHLCV."""
+
 from __future__ import annotations
 
 import logging
@@ -55,11 +56,15 @@ class BackfillScheduler:
 
         symbols = tuple(symbols)
         offline_mode = bool(getattr(environment, "offline_mode", False))
-        current_ms = now_ms if now_ms is not None else int(datetime.now(timezone.utc).timestamp() * 1000)
+        current_ms = (
+            now_ms if now_ms is not None else int(datetime.now(timezone.utc).timestamp() * 1000)
+        )
 
         missing_symbols: list[str] = []
         for symbol in symbols:
-            request = OHLCVRequest(symbol=symbol, interval=interval, start=0, end=current_ms, limit=1)
+            request = OHLCVRequest(
+                symbol=symbol, interval=interval, start=0, end=current_ms, limit=1
+            )
             try:
                 response = self._data_source.fetch_ohlcv(request)
             except Exception:  # pragma: no cover - fallback gdy upstream cache zwróci błąd

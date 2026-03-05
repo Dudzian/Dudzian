@@ -1,4 +1,5 @@
 """Generowanie raportów z przebiegu cyklu retreningu."""
+
 from __future__ import annotations
 
 
@@ -250,7 +251,8 @@ class RetrainingReport:
         if self.finished_at:
             payload["finished_at"] = self.finished_at.isoformat()
         payload["events"] = [
-            {"name": row.name, "severity": row.severity, "details": dict(row.details)} for row in self.events
+            {"name": row.name, "severity": row.severity, "details": dict(row.details)}
+            for row in self.events
         ]
         return payload
 
@@ -315,7 +317,9 @@ def _derive_alerts(
     for row in events:
         if row.name == "MissingDataDetected":
             alerts.append(
-                "Brak danych treningowych (missing_batches={}).".format(row.details.get("missing_batches", "n/d"))
+                "Brak danych treningowych (missing_batches={}).".format(
+                    row.details.get("missing_batches", "n/d")
+                )
             )
         elif row.name == "DataDriftDetected":
             alerts.append(

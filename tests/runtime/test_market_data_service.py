@@ -10,7 +10,9 @@ pytestmark = [pytest.mark.requires_trading_stubs, pytest.mark.unstable_windows]
 
 
 class FakeManager:
-    def __init__(self, markets: dict[str, dict[str, object]], rules: dict[str, MarketRules]) -> None:
+    def __init__(
+        self, markets: dict[str, dict[str, object]], rules: dict[str, MarketRules]
+    ) -> None:
         self._public = type("_Public", (), {"_markets": markets})()
         self._rules = rules
         self.load_calls = 0

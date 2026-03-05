@@ -101,7 +101,9 @@ class _FakeStream(Protocol):
 class FakeExchangeAdapter(ExchangeAdapter):
     name = "fake_exchange"
 
-    def __init__(self, credentials: ExchangeCredentials, *, fixtures: Sequence[_OhlcvFixture]) -> None:
+    def __init__(
+        self, credentials: ExchangeCredentials, *, fixtures: Sequence[_OhlcvFixture]
+    ) -> None:
         super().__init__(credentials)
         self._fixtures = {fixture.symbol: fixture.rows for fixture in fixtures}
 
@@ -136,16 +138,24 @@ class FakeExchangeAdapter(ExchangeAdapter):
             rows = rows[:limit]
         return rows
 
-    def place_order(self, request: OrderRequest) -> OrderResult:  # pragma: no cover - pipeline używa paper tradingu
+    def place_order(
+        self, request: OrderRequest
+    ) -> OrderResult:  # pragma: no cover - pipeline używa paper tradingu
         raise NotImplementedError
 
-    def cancel_order(self, order_id: str, *, symbol: Optional[str] = None) -> None:  # pragma: no cover - nieużywane
+    def cancel_order(
+        self, order_id: str, *, symbol: Optional[str] = None
+    ) -> None:  # pragma: no cover - nieużywane
         raise NotImplementedError
 
-    def stream_public_data(self, *, channels: Sequence[str]) -> _FakeStream:  # pragma: no cover - nieużywane
+    def stream_public_data(
+        self, *, channels: Sequence[str]
+    ) -> _FakeStream:  # pragma: no cover - nieużywane
         raise NotImplementedError
 
-    def stream_private_data(self, *, channels: Sequence[str]) -> _FakeStream:  # pragma: no cover - nieużywane
+    def stream_private_data(
+        self, *, channels: Sequence[str]
+    ) -> _FakeStream:  # pragma: no cover - nieużywane
         raise NotImplementedError
 
 
@@ -181,9 +191,7 @@ def pipeline_fixture(tmp_path: Path) -> tuple[Path, FakeExchangeAdapter, SecretM
                 "hard_drawdown_pct": 0.25,
             },
         },
-        "runtime": {
-            "controllers": {"daily_trend_core": {"tick_seconds": 86400, "interval": "1d"}}
-        },
+        "runtime": {"controllers": {"daily_trend_core": {"tick_seconds": 86400, "interval": "1d"}}},
         "strategies": {
             "core_daily_trend": {
                 "engine": "daily_trend_momentum",
@@ -241,7 +249,9 @@ def pipeline_fixture(tmp_path: Path) -> tuple[Path, FakeExchangeAdapter, SecretM
     config_path = tmp_path / "core.yaml"
 
     # Zamieniamy strukturę na YAML kompatybilny z loaderem.
-    yaml = pytest.importorskip("yaml", reason="PyYAML nie jest zainstalowane w tym środowisku testowym.")
+    yaml = pytest.importorskip(
+        "yaml", reason="PyYAML nie jest zainstalowane w tym środowisku testowym."
+    )
 
     config_path.write_text(yaml.safe_dump(config), encoding="utf-8")
 
@@ -254,7 +264,9 @@ def pipeline_fixture(tmp_path: Path) -> tuple[Path, FakeExchangeAdapter, SecretM
     return config_path, adapter, manager
 
 
-def test_build_daily_trend_pipeline(pipeline_fixture: tuple[Path, FakeExchangeAdapter, SecretManager]) -> None:
+def test_build_daily_trend_pipeline(
+    pipeline_fixture: tuple[Path, FakeExchangeAdapter, SecretManager],
+) -> None:
     config_path, adapter, manager = pipeline_fixture
 
     pipeline = build_daily_trend_pipeline(
@@ -286,7 +298,7 @@ def test_build_daily_trend_pipeline(pipeline_fixture: tuple[Path, FakeExchangeAd
 
 
 def test_build_daily_trend_pipeline_uses_environment_defaults(
-    pipeline_fixture: tuple[Path, FakeExchangeAdapter, SecretManager]
+    pipeline_fixture: tuple[Path, FakeExchangeAdapter, SecretManager],
 ) -> None:
     config_path, adapter, manager = pipeline_fixture
 
@@ -305,7 +317,7 @@ def test_build_daily_trend_pipeline_uses_environment_defaults(
 
 
 def test_build_daily_trend_pipeline_allows_risk_profile_override(
-    pipeline_fixture: tuple[Path, FakeExchangeAdapter, SecretManager]
+    pipeline_fixture: tuple[Path, FakeExchangeAdapter, SecretManager],
 ) -> None:
     config_path, adapter, manager = pipeline_fixture
 
@@ -325,7 +337,7 @@ def test_build_daily_trend_pipeline_allows_risk_profile_override(
 
 
 def test_create_trading_controller_executes_signal(
-    pipeline_fixture: tuple[Path, FakeExchangeAdapter, SecretManager]
+    pipeline_fixture: tuple[Path, FakeExchangeAdapter, SecretManager],
 ) -> None:
     config_path, adapter, manager = pipeline_fixture
 
@@ -406,9 +418,7 @@ def test_pipeline_bootstrap_integrates_tco_reports(tmp_path: Path) -> None:
                 "hard_drawdown_pct": 0.1,
             }
         },
-        "runtime": {
-            "controllers": {"daily_trend_core": {"tick_seconds": 86400, "interval": "1d"}}
-        },
+        "runtime": {"controllers": {"daily_trend_core": {"tick_seconds": 86400, "interval": "1d"}}},
         "strategies": {
             "core_daily_trend": {
                 "engine": "daily_trend_momentum",
@@ -509,7 +519,9 @@ def test_pipeline_bootstrap_integrates_tco_reports(tmp_path: Path) -> None:
     }
 
     config_path = tmp_path / "core.yaml"
-    yaml = pytest.importorskip("yaml", reason="PyYAML nie jest zainstalowane w tym środowisku testowym.")
+    yaml = pytest.importorskip(
+        "yaml", reason="PyYAML nie jest zainstalowane w tym środowisku testowym."
+    )
 
     config_path.write_text(yaml.safe_dump(config, sort_keys=False), encoding="utf-8")
 
@@ -618,27 +630,27 @@ def test_account_loader_handles_multi_currency_and_shorts(tmp_path: Path) -> Non
             "multi_quote": {
                 "description": "fixture",
                 "instruments": {
-                        "BTC_USDT": {
-                            "base_asset": "BTC",
-                            "quote_asset": "USDT",
-                            "categories": ["core"],
-                            "exchanges": {"fake_exchange": "BTCUSDT"},
-                            "backfill": [{"interval": "1d", "lookback_days": 10}],
-                        },
-                        "ETH_USDT": {
-                            "base_asset": "ETH",
-                            "quote_asset": "USDT",
-                            "categories": ["core"],
-                            "exchanges": {"fake_exchange": "ETHUSDT"},
-                            "backfill": [{"interval": "1d", "lookback_days": 10}],
-                        },
-                        "BTC_EUR": {
-                            "base_asset": "BTC",
-                            "quote_asset": "EUR",
-                            "categories": ["fiat"],
-                            "exchanges": {"fake_exchange": "BTCEUR"},
-                            "backfill": [{"interval": "1d", "lookback_days": 10}],
-                        },
+                    "BTC_USDT": {
+                        "base_asset": "BTC",
+                        "quote_asset": "USDT",
+                        "categories": ["core"],
+                        "exchanges": {"fake_exchange": "BTCUSDT"},
+                        "backfill": [{"interval": "1d", "lookback_days": 10}],
+                    },
+                    "ETH_USDT": {
+                        "base_asset": "ETH",
+                        "quote_asset": "USDT",
+                        "categories": ["core"],
+                        "exchanges": {"fake_exchange": "ETHUSDT"},
+                        "backfill": [{"interval": "1d", "lookback_days": 10}],
+                    },
+                    "BTC_EUR": {
+                        "base_asset": "BTC",
+                        "quote_asset": "EUR",
+                        "categories": ["fiat"],
+                        "exchanges": {"fake_exchange": "BTCEUR"},
+                        "backfill": [{"interval": "1d", "lookback_days": 10}],
+                    },
                 },
             }
         },
@@ -668,7 +680,9 @@ def test_account_loader_handles_multi_currency_and_shorts(tmp_path: Path) -> Non
     }
 
     config_path = tmp_path / "core_multi.yaml"
-    yaml = pytest.importorskip("yaml", reason="PyYAML nie jest zainstalowane w tym środowisku testowym.")
+    yaml = pytest.importorskip(
+        "yaml", reason="PyYAML nie jest zainstalowane w tym środowisku testowym."
+    )
 
     config_path.write_text(yaml.safe_dump(config), encoding="utf-8")
 
@@ -692,11 +706,13 @@ def test_account_loader_handles_multi_currency_and_shorts(tmp_path: Path) -> Non
     execution_service = pipeline.execution_service
     assert isinstance(execution_service, PaperTradingExecutionService)
     execution_service._balances.clear()  # type: ignore[attr-defined]
-    execution_service._balances.update({  # type: ignore[attr-defined]
-        "USDT": 8_000.0,
-        "EUR": 5_000.0,
-        "BTC": 0.1,
-    })
+    execution_service._balances.update(
+        {  # type: ignore[attr-defined]
+            "USDT": 8_000.0,
+            "EUR": 5_000.0,
+            "BTC": 0.1,
+        }
+    )
 
     snapshot = pipeline.controller.account_loader()
     btc_usdt_close = candles_btc_usdt[-1][4]
@@ -721,7 +737,9 @@ def test_account_loader_handles_multi_currency_and_shorts(tmp_path: Path) -> Non
         metadata={"leverage": "3"},
     )
     execution_service.execute(
-        OrderRequest(symbol="ETHUSDT", side="sell", quantity=1.0, order_type="market", price=1_500.0),
+        OrderRequest(
+            symbol="ETHUSDT", side="sell", quantity=1.0, order_type="market", price=1_500.0
+        ),
         context,
     )
 
@@ -734,9 +752,7 @@ def test_account_loader_handles_multi_currency_and_shorts(tmp_path: Path) -> Non
         + execution_service._balances["EUR"] * eur_to_usdt  # type: ignore[attr-defined]
     )
     expected_after = (
-        converted_balances
-        + short_state.margin
-        - candles_eth_usdt[-1][4] * short_state.quantity
+        converted_balances + short_state.margin - candles_eth_usdt[-1][4] * short_state.quantity
     )
     assert snapshot_after.total_equity == pytest.approx(expected_after, rel=1e-4)
     available_after = usdt_after + execution_service._balances["EUR"] * eur_to_usdt  # type: ignore[attr-defined]

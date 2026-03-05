@@ -4,6 +4,7 @@ Moduł udostępnia deterministyczne dane depth-of-book, funding, sentiment oraz
 trajektorie cenowe potrzebne do zasiania bazy `market_metrics.sqlite` podczas
 lokalnych oraz CI/CD uruchomień stress-labu Stage6.
 """
+
 from __future__ import annotations
 
 from dataclasses import dataclass

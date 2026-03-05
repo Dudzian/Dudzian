@@ -8,7 +8,10 @@ from urllib.parse import parse_qsl, urlparse
 import pytest
 
 from bot_core.exchanges.base import Environment, ExchangeCredentials
-from bot_core.exchanges.kraken.futures import KrakenFuturesAdapter, _RequestContext as FuturesRequestContext
+from bot_core.exchanges.kraken.futures import (
+    KrakenFuturesAdapter,
+    _RequestContext as FuturesRequestContext,
+)
 from bot_core.exchanges.kraken.spot import KrakenSpotAdapter, _RequestContext as SpotRequestContext
 
 
@@ -22,8 +25,12 @@ def kraken_credentials() -> ExchangeCredentials:
     )
 
 
-def test_spot_private_request_signature(monkeypatch: pytest.MonkeyPatch, kraken_credentials: ExchangeCredentials) -> None:
-    adapter = KrakenSpotAdapter(credentials=kraken_credentials, environment=Environment.PAPER, settings={})
+def test_spot_private_request_signature(
+    monkeypatch: pytest.MonkeyPatch, kraken_credentials: ExchangeCredentials
+) -> None:
+    adapter = KrakenSpotAdapter(
+        credentials=kraken_credentials, environment=Environment.PAPER, settings={}
+    )
     adapter.configure_network(ip_allowlist=())
 
     captured: dict[str, object] = {}
@@ -62,14 +69,16 @@ def test_spot_private_request_signature(monkeypatch: pytest.MonkeyPatch, kraken_
 def test_futures_private_request_signature(
     monkeypatch: pytest.MonkeyPatch, kraken_credentials: ExchangeCredentials
 ) -> None:
-    adapter = KrakenFuturesAdapter(credentials=kraken_credentials, environment=Environment.PAPER, settings={})
+    adapter = KrakenFuturesAdapter(
+        credentials=kraken_credentials, environment=Environment.PAPER, settings={}
+    )
     adapter.configure_network(ip_allowlist=())
 
     captured: dict[str, object] = {}
 
     class _DummyResponse:
         def __init__(self) -> None:
-            self._payload = b"{\"result\": \"success\", \"error\": []}"
+            self._payload = b'{"result": "success", "error": []}'
 
         def __enter__(self) -> "_DummyResponse":
             return self
@@ -90,7 +99,10 @@ def test_futures_private_request_signature(
     monkeypatch.setattr("bot_core.exchanges.kraken.futures.urlopen", _fake_urlopen)
 
     context = FuturesRequestContext(
-        path="/orders", method="POST", params={"symbol": "pi_xbtusd"}, body={"size": 1, "limitPrice": 31000.0}
+        path="/orders",
+        method="POST",
+        params={"symbol": "pi_xbtusd"},
+        body={"size": 1, "limitPrice": 31000.0},
     )
     adapter._private_request(context)
 
@@ -105,8 +117,12 @@ def test_futures_private_request_signature(
     body_bytes = captured["data"]
     assert isinstance(body_bytes, (bytes, bytearray))
 
-    message = nonce.encode("utf-8") + path.encode("utf-8") + query_fragment.encode("utf-8") + body_bytes
+    message = (
+        nonce.encode("utf-8") + path.encode("utf-8") + query_fragment.encode("utf-8") + body_bytes
+    )
     sha_digest = hashlib.sha256(message).digest()
     decoded_secret = base64.b64decode(kraken_credentials.secret)
-    expected_signature = base64.b64encode(hmac.new(decoded_secret, sha_digest, hashlib.sha256).digest()).decode("utf-8")
+    expected_signature = base64.b64encode(
+        hmac.new(decoded_secret, sha_digest, hashlib.sha256).digest()
+    ).decode("utf-8")
     assert headers["authent"] == expected_signature

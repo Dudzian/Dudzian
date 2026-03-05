@@ -65,7 +65,9 @@ def load_profiles(path: str | Path) -> list[UserProfile]:
     try:
         content = storage.read_text(encoding="utf-8")
     except OSError as exc:  # pragma: no cover - przekazywane do UI/logów
-        raise RuntimeError(f"Nie udało się odczytać profili użytkowników z {storage}: {exc}") from exc
+        raise RuntimeError(
+            f"Nie udało się odczytać profili użytkowników z {storage}: {exc}"
+        ) from exc
     if not content.strip():
         return []
     try:
@@ -101,13 +103,16 @@ def upsert_profile(
     normalized_id = str(user_id).strip()
     if not normalized_id:
         raise ValueError("Identyfikator użytkownika nie może być pusty.")
-    normalized_roles = tuple(sorted({str(role).strip() for role in roles or () if str(role).strip()}))
+    normalized_roles = tuple(
+        sorted({str(role).strip() for role in roles or () if str(role).strip()})
+    )
     now = _utcnow_iso()
     for index, profile in enumerate(profiles):
         if profile.user_id == normalized_id:
             updated = UserProfile(
                 user_id=normalized_id,
-                display_name=str(display_name or profile.display_name).strip() or profile.display_name,
+                display_name=str(display_name or profile.display_name).strip()
+                or profile.display_name,
                 roles=normalized_roles or profile.roles,
                 updated_at=now,
             )

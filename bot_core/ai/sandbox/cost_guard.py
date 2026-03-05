@@ -38,8 +38,7 @@ class SandboxResourceSample:
 class ResourceSampler(Protocol):
     """Kontrakt pobierania bieżących metryk zasobów."""
 
-    def __call__(self) -> SandboxResourceSample:
-        ...
+    def __call__(self) -> SandboxResourceSample: ...
 
 
 @dataclass(slots=True)
@@ -113,7 +112,9 @@ class SandboxCostGuard:
 
     def start(self) -> None:
         self._start_monotonic = time.monotonic()
-        self._statistics.update({"max_cpu_percent": 0.0, "max_gpu_percent": 0.0, "wall_time_seconds": 0.0})
+        self._statistics.update(
+            {"max_cpu_percent": 0.0, "max_gpu_percent": 0.0, "wall_time_seconds": 0.0}
+        )
 
     def finish(self) -> None:
         elapsed = self._elapsed_seconds()
@@ -131,14 +132,23 @@ class SandboxCostGuard:
             sample.elapsed_seconds = elapsed
         return sample
 
-    def update(self, *, sample: SandboxResourceSample | None = None, context: Mapping[str, object] | None = None) -> None:
+    def update(
+        self,
+        *,
+        sample: SandboxResourceSample | None = None,
+        context: Mapping[str, object] | None = None,
+    ) -> None:
         reading = sample or self.sample()
         labels = self.metric_labels
         if reading.cpu_percent is not None:
-            self._statistics["max_cpu_percent"] = max(self._statistics["max_cpu_percent"], float(reading.cpu_percent))
+            self._statistics["max_cpu_percent"] = max(
+                self._statistics["max_cpu_percent"], float(reading.cpu_percent)
+            )
             self._cpu_counter.inc(max(reading.cpu_percent, 0.0), labels=labels)
         if reading.gpu_percent is not None:
-            self._statistics["max_gpu_percent"] = max(self._statistics["max_gpu_percent"], float(reading.gpu_percent))
+            self._statistics["max_gpu_percent"] = max(
+                self._statistics["max_gpu_percent"], float(reading.gpu_percent)
+            )
             self._gpu_counter.inc(max(reading.gpu_percent, 0.0), labels=labels)
         self._statistics["wall_time_seconds"] = max(
             self._statistics.get("wall_time_seconds", 0.0), float(reading.elapsed_seconds)
@@ -164,7 +174,9 @@ class SandboxCostGuard:
                 cpu = None
         return SandboxResourceSample(cpu_percent=cpu, gpu_percent=gpu, elapsed_seconds=0.0)
 
-    def _enforce_limits(self, sample: SandboxResourceSample, *, context: Mapping[str, object] | None = None) -> None:
+    def _enforce_limits(
+        self, sample: SandboxResourceSample, *, context: Mapping[str, object] | None = None
+    ) -> None:
         limit = self.budgets.wall_time_seconds
         if limit is not None and sample.elapsed_seconds > limit:
             self._raise_budget_exceeded(

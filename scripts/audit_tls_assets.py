@@ -1,4 +1,5 @@
 """Audyt TLS dla usług runtime (MetricsService, RiskService)."""
+
 from __future__ import annotations
 
 import argparse
@@ -122,7 +123,9 @@ def main(argv: list[str] | None = None) -> int:
     fail_on_error = _should_fail_on_error(args)
 
     if load_core_config is None:
-        raise RuntimeError("Moduł konfiguracji nie jest dostępny – zainstaluj zależność bot_core.config")
+        raise RuntimeError(
+            "Moduł konfiguracji nie jest dostępny – zainstaluj zależność bot_core.config"
+        )
 
     if not config_path.exists():
         raise FileNotFoundError(f"Plik konfiguracji '{config_path}' nie istnieje")

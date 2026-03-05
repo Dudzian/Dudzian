@@ -19,6 +19,7 @@ def _get_supported_signal_threshold_metrics() -> frozenset[str]:
 
     return frozenset(name.casefold() for name in SUPPORTED_SIGNAL_THRESHOLD_METRICS)
 
+
 _DEFAULTS_PACKAGE = "bot_core.ai._defaults"
 _DEFAULTS_RESOURCE = "risk_thresholds.yaml"
 _ROOT = Path(__file__).resolve().parents[2]
@@ -87,9 +88,11 @@ def _deep_update(target: MutableMapping[str, Any], source: Mapping[str, Any]) ->
 
 def _load_default_thresholds() -> dict[str, Any]:
     try:
-        with resources.files(_DEFAULTS_PACKAGE).joinpath(_DEFAULTS_RESOURCE).open(
-            "r", encoding="utf8"
-        ) as stream:
+        with (
+            resources.files(_DEFAULTS_PACKAGE)
+            .joinpath(_DEFAULTS_RESOURCE)
+            .open("r", encoding="utf8") as stream
+        ):
             data = yaml.safe_load(stream) or {}
     except (FileNotFoundError, OSError, ModuleNotFoundError, AttributeError) as exc:
         _LOGGER.warning(
@@ -295,9 +298,7 @@ def _validate_thresholds(thresholds: Mapping[str, Any]) -> None:
         for key in ("rolling_score", "kill_switch", "release", "max_leverage"):
             value = degradation_cfg.get(key)
             if value is not None and not isinstance(value, (int, float)):
-                raise ValueError(
-                    f"Invalid exchange degradation guardrail {key}: {value!r}"
-                )
+                raise ValueError(f"Invalid exchange degradation guardrail {key}: {value!r}")
 
     cooldown_cfg = auto_trader.get("cooldown", {})
     if not isinstance(cooldown_cfg, Mapping):
@@ -341,9 +342,7 @@ def _validate_thresholds(thresholds: Mapping[str, Any]) -> None:
         normalised_strategy_thresholds = {}
         for exchange_key, strategy_map in strategy_thresholds.items():
             if not isinstance(strategy_map, Mapping):
-                raise ValueError(
-                    "auto_trader.strategy_signal_thresholds values must be mappings"
-                )
+                raise ValueError("auto_trader.strategy_signal_thresholds values must be mappings")
             exchange_norm = str(exchange_key).strip().casefold()
             if not exchange_norm:
                 continue

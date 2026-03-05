@@ -53,7 +53,9 @@ def test_register_model_artifact_reports_metrics(tmp_path: Path) -> None:
             self.attached: dict[str, bool] = {}
             self.metrics: dict[str, dict[str, float]] = {}
 
-        def attach_named_inference(self, name: str, inference, *, set_default: bool = False) -> None:
+        def attach_named_inference(
+            self, name: str, inference, *, set_default: bool = False
+        ) -> None:
             self.attached[name] = bool(set_default)
 
         def update_model_performance(self, name: str, metrics) -> None:

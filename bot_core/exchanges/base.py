@@ -1,4 +1,5 @@
 """Abstrakcyjne interfejsy adapterów giełdowych dla nowej architektury bota."""
+
 from __future__ import annotations
 
 import abc
@@ -52,8 +53,8 @@ class OrderRequest:
     client_order_id: Optional[str] = None
 
     # Dodatkowe, opcjonalne rozszerzenia:
-    stop_price: Optional[float] = None   # np. stop/stop-limit
-    atr: Optional[float] = None          # referencyjne ATR do SL/TP, jeśli strategia je dostarcza
+    stop_price: Optional[float] = None  # np. stop/stop-limit
+    atr: Optional[float] = None  # referencyjne ATR do SL/TP, jeśli strategia je dostarcza
 
     # Dowolne metadane strategii (audyt/telemetria)
     metadata: Mapping[str, object] | None = None
@@ -145,8 +146,7 @@ class ExchangeBackend(ExchangeAdapter):
 class ExchangeAdapterFactory(Protocol):
     """Prosty kontrakt dla fabryk adapterów (używany w konfiguracji)."""
 
-    def __call__(self, credentials: ExchangeCredentials, **kwargs: Any) -> ExchangeAdapter:
-        ...
+    def __call__(self, credentials: ExchangeCredentials, **kwargs: Any) -> ExchangeAdapter: ...
 
 
 __all__ = [

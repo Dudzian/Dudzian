@@ -1,4 +1,5 @@
 """Kontroler licencyjny z twardymi zabezpieczeniami OEM."""
+
 from __future__ import annotations
 
 import logging
@@ -297,7 +298,8 @@ def _extract_license_hardware(snapshot: LicenseSnapshot) -> HardwareFingerprintS
     if isinstance(hardware, Mapping):
         return HardwareFingerprintSnapshot(
             cpu_id=_normalize_component(hardware.get("cpu") or hardware.get("cpu_id")) or None,
-            board_id=_normalize_component(hardware.get("board") or hardware.get("board_id")) or None,
+            board_id=_normalize_component(hardware.get("board") or hardware.get("board_id"))
+            or None,
             tpm_id=_normalize_component(hardware.get("tpm") or hardware.get("tpm_id")) or None,
         )
     # Fallback: pojedyncze pola w payload

@@ -23,7 +23,9 @@ class ChampionSnapshot:
     numeric_metrics: Mapping[str, float]
 
 
-def _flatten_numeric(source: Mapping[str, Any], *, prefix: str | None = None) -> Mapping[str, float]:
+def _flatten_numeric(
+    source: Mapping[str, Any], *, prefix: str | None = None
+) -> Mapping[str, float]:
     result: MutableMapping[str, float] = {}
     for key, value in source.items():
         name = f"{prefix}.{key}" if prefix else str(key)
@@ -63,9 +65,7 @@ def _build_snapshot(model: str, overview: Mapping[str, Any] | None) -> ChampionS
     champion = overview.get("champion")
     metadata_raw = overview.get("champion_metadata")
 
-    metrics = _normalize_mapping(
-        champion.get("metrics") if isinstance(champion, Mapping) else {}
-    )
+    metrics = _normalize_mapping(champion.get("metrics") if isinstance(champion, Mapping) else {})
     parameters = _normalize_mapping(
         champion.get("parameters") if isinstance(champion, Mapping) else {}
     )
@@ -104,7 +104,9 @@ def _load_snapshot(root: Path, model: str) -> ChampionSnapshot:
     return _build_snapshot(model, overview)
 
 
-def _diff_parameters(lhs: ChampionSnapshot, rhs: ChampionSnapshot) -> Mapping[str, Mapping[str, Any]]:
+def _diff_parameters(
+    lhs: ChampionSnapshot, rhs: ChampionSnapshot
+) -> Mapping[str, Mapping[str, Any]]:
     keys = sorted(set(lhs.parameters.keys()) | set(rhs.parameters.keys()))
     diff: MutableMapping[str, Mapping[str, Any]] = {}
     for key in keys:

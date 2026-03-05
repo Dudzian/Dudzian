@@ -50,9 +50,9 @@ def test_gbm_simulation_generates_paths_and_metrics() -> None:
     assert result.price_paths.shape == (risk.num_paths, 11)
     assert result.drawdown_distribution.shape == (risk.num_paths,)
     strategy_metrics = result.strategy_results["buy_hold"].metrics
-    assert set(["VaR", "CVaR", "expected_shortfall", "mean_pnl", "std_pnl", "probabilistic_drawdown"]).issubset(
-        strategy_metrics
-    )
+    assert set(
+        ["VaR", "CVaR", "expected_shortfall", "mean_pnl", "std_pnl", "probabilistic_drawdown"]
+    ).issubset(strategy_metrics)
     assert np.isfinite(result.drawdown_probability)
     assert strategy_metrics["probabilistic_drawdown"] == result.drawdown_probability
 

@@ -55,13 +55,17 @@ class PluginReviewBoard:
         manifest = package.manifest
         identifier = manifest.identifier.strip()
         if not identifier:
-            findings.append(PluginReviewFinding(severity="error", message="Manifest wymaga identyfikatora"))
+            findings.append(
+                PluginReviewFinding(severity="error", message="Manifest wymaga identyfikatora")
+            )
 
         if not manifest.version.strip():
             findings.append(PluginReviewFinding(severity="error", message="Brak wersji manifestu"))
 
         if not manifest.strategies:
-            findings.append(PluginReviewFinding(severity="error", message="Manifest musi definiować strategie"))
+            findings.append(
+                PluginReviewFinding(severity="error", message="Manifest musi definiować strategie")
+            )
 
         if not manifest.capabilities:
             findings.append(
@@ -72,7 +76,9 @@ class PluginReviewBoard:
             )
 
         if self._verifier is not None and not self._verifier.verify(manifest, package.signature):
-            findings.append(PluginReviewFinding(severity="error", message="Podpis manifestu jest nieprawidłowy"))
+            findings.append(
+                PluginReviewFinding(severity="error", message="Podpis manifestu jest nieprawidłowy")
+            )
 
         for note in package.review_notes:
             findings.append(PluginReviewFinding(severity="info", message=f"note: {note}"))
@@ -94,4 +100,3 @@ __all__ = [
     "PluginReviewResult",
     "PluginReviewBoard",
 ]
-

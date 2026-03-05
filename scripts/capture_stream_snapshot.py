@@ -22,7 +22,9 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     parser.add_argument("--channels", required=True, help="Lista kanałów, rozdzielona przecinkami")
     parser.add_argument("--output", required=True, help="Ścieżka pliku wynikowego JSON")
     parser.add_argument("--limit", type=int, default=500, help="Limit pobranych zdarzeń")
-    parser.add_argument("--poll-interval", type=float, default=0.25, help="Odstęp pomiędzy pollingami")
+    parser.add_argument(
+        "--poll-interval", type=float, default=0.25, help="Odstęp pomiędzy pollingami"
+    )
     parser.add_argument("--timeout", type=float, default=10.0, help="Timeout żądania HTTP")
     return parser.parse_args(argv)
 
@@ -53,4 +55,3 @@ def main(argv: list[str] | None = None) -> int:
 
 if __name__ == "__main__":  # pragma: no cover - punkt wejścia CLI
     raise SystemExit(main())
-

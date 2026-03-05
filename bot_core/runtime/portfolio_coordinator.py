@@ -1,4 +1,5 @@
 """Koordynator runtime spajający PortfolioGovernor z danymi schedulera."""
+
 from __future__ import annotations
 
 import json
@@ -111,7 +112,9 @@ class PortfolioRuntimeCoordinator(RuntimeScheduler):
             try:
                 self.capital_policy_listener(decision)
             except Exception:  # pragma: no cover - diagnostyka odbiorcy
-                _LOGGER.exception("PortfolioRuntimeCoordinator: błąd aktualizacji polityki kapitału")
+                _LOGGER.exception(
+                    "PortfolioRuntimeCoordinator: błąd aktualizacji polityki kapitału"
+                )
 
         if self.tco_report_provider is not None and self.tco_report_consumer is not None:
             try:
@@ -127,7 +130,9 @@ class PortfolioRuntimeCoordinator(RuntimeScheduler):
                     try:
                         self.tco_report_consumer(report_payload)
                     except Exception:  # pragma: no cover - diagnostyka odbiorcy
-                        _LOGGER.exception("PortfolioRuntimeCoordinator: błąd aktualizacji kosztów TCO")
+                        _LOGGER.exception(
+                            "PortfolioRuntimeCoordinator: błąd aktualizacji kosztów TCO"
+                        )
                     else:
                         self._last_tco_signature = signature
 

@@ -1,4 +1,5 @@
 """Dostawca danych telemetrycznych dla panelu RuntimeOverview."""
+
 from __future__ import annotations
 
 

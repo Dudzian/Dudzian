@@ -41,10 +41,9 @@ def _install_monotonic(monkeypatch: pytest.MonkeyPatch, start: float) -> dict[st
     def fake_monotonic() -> float:
         return monotonic_time["value"]
 
-    monkeypatch.setattr(
-        "bot_core.runtime.metrics_alerts.time.monotonic", fake_monotonic
-    )
+    monkeypatch.setattr("bot_core.runtime.metrics_alerts.time.monotonic", fake_monotonic)
     return monotonic_time
+
 
 @dataclass(slots=True)
 class FakeTimestamp:
@@ -212,10 +211,7 @@ def test_cpu_performance_alerts_and_recovery(tmp_path: Path) -> None:
     assert len(lines) == 3
     payloads = [json.loads(line) for line in lines]
     assert payloads[1]["payload"]["performance_metric_severity"] == "critical"
-    assert (
-        payloads[2]["payload"]["performance_metric_previous_severity"]
-        == "critical"
-    )
+    assert payloads[2]["payload"]["performance_metric_previous_severity"] == "critical"
 
 
 def test_reduce_motion_alert_includes_screen_context(tmp_path: Path):
@@ -278,7 +274,9 @@ def test_reduce_motion_alert_deduplicates_state(tmp_path: Path):
     assert records[-1]["context"]["active"] == "false"
 
 
-def test_reduce_motion_incident_alert_after_threshold(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_reduce_motion_incident_alert_after_threshold(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     router, channel = _build_router()
     sink = UiTelemetryAlertSink(
         router,
@@ -342,14 +340,10 @@ def test_reduce_motion_incident_alert_after_threshold(tmp_path: Path, monkeypatc
         if line.strip()
     ]
     incident_records = [
-        r
-        for r in records
-        if r.get("payload", {}).get("event") == "reduce_motion_incident"
+        r for r in records if r.get("payload", {}).get("event") == "reduce_motion_incident"
     ]
     assert incident_records, "Log JSONL powinien zawierać wpis incydentu reduce motion"
-    assert (
-        incident_records[-1]["context"]["reduce_motion_incident_severity"] == "warning"
-    )
+    assert incident_records[-1]["context"]["reduce_motion_incident_severity"] == "warning"
 
 
 def test_reduce_motion_incident_recovery_emits_alert(
@@ -522,6 +516,7 @@ def test_reduce_motion_incident_realert_respects_cooldown(
     realert = incident_messages[-1]
     assert realert.context["reduce_motion_incident_reason"] == "realert_cooldown"
     assert realert.context["reduce_motion_incident_duration_delta_seconds"].startswith("11.")
+
 
 def test_overlay_alert_context_includes_tag(tmp_path: Path) -> None:
     router, channel = _build_router()
@@ -942,9 +937,10 @@ def test_retry_backlog_alerts_trigger_and_recover(tmp_path: Path) -> None:
 
     # Powtórzony snapshot nie generuje kolejnego alertu
     sink.handle_snapshot(degraded)
-    assert len([
-        msg for msg in channel.messages if msg.category == "ui.performance.retry_backlog"
-    ]) == 1
+    assert (
+        len([msg for msg in channel.messages if msg.category == "ui.performance.retry_backlog"])
+        == 1
+    )
 
     recovered = _make_snapshot(
         {
@@ -974,9 +970,7 @@ def test_retry_backlog_alerts_trigger_and_recover(tmp_path: Path) -> None:
         if line.strip()
     ]
     backlog_records = [
-        record
-        for record in records
-        if record.get("category") == "ui.performance.retry_backlog"
+        record for record in records if record.get("category") == "ui.performance.retry_backlog"
     ]
     assert backlog_records
     assert backlog_records[0]["context"]["retry_backlog_started_at"] == started_at
@@ -1049,16 +1043,14 @@ def test_retry_backlog_realert_on_growth(tmp_path: Path) -> None:
     backlog_messages = [
         message
         for message in channel.messages
-        if message.category == "ui.performance.retry_backlog"
-        and message.severity == "warning"
+        if message.category == "ui.performance.retry_backlog" and message.severity == "warning"
     ]
     assert len(backlog_messages) == 2
     assert backlog_messages[-1].context["retry_backlog_after"] == "6"
     assert backlog_messages[-1].context["retry_backlog_delta"] == "3"
-    assert (
-        backlog_messages[0].context.get("retry_backlog_started_at")
-        == backlog_messages[-1].context.get("retry_backlog_started_at")
-    )
+    assert backlog_messages[0].context.get("retry_backlog_started_at") == backlog_messages[
+        -1
+    ].context.get("retry_backlog_started_at")
     assert "+3" in backlog_messages[-1].body
 
     records = [
@@ -1096,9 +1088,9 @@ def test_retry_backlog_realert_respects_cooldown(monkeypatch, tmp_path: Path) ->
     )
     sink.handle_snapshot(first)
 
-    assert any(
-        msg.category == "ui.performance.retry_backlog" for msg in channel.messages
-    ), "Pierwszy alert powinien zostać wysłany"
+    assert any(msg.category == "ui.performance.retry_backlog" for msg in channel.messages), (
+        "Pierwszy alert powinien zostać wysłany"
+    )
 
     monotonic_time["value"] = 120.0
 
@@ -1170,10 +1162,9 @@ def test_retry_backlog_escalates_to_critical(tmp_path: Path) -> None:
     assert backlog_messages[1].context["retry_backlog_severity"] == "critical"
     assert backlog_messages[1].context["retry_backlog_delta"] == "2"
     assert backlog_messages[0].context.get("retry_backlog_started_at")
-    assert (
-        backlog_messages[0].context.get("retry_backlog_started_at")
-        == backlog_messages[1].context.get("retry_backlog_started_at")
-    )
+    assert backlog_messages[0].context.get("retry_backlog_started_at") == backlog_messages[
+        1
+    ].context.get("retry_backlog_started_at")
 
     records = [
         json.loads(line)
@@ -1190,9 +1181,7 @@ def test_retry_backlog_escalates_to_critical(tmp_path: Path) -> None:
     assert critical_records[-1]["context"]["retry_backlog_severity"] == "critical"
 
 
-def test_retry_backlog_escalates_after_duration(
-    monkeypatch, tmp_path: Path
-) -> None:
+def test_retry_backlog_escalates_after_duration(monkeypatch, tmp_path: Path) -> None:
     router, channel = _build_router()
     jsonl_path = tmp_path / "ui_alerts.jsonl"
     monotonic_time = _install_monotonic(monkeypatch, 100.0)
@@ -1313,27 +1302,13 @@ def test_tag_inactivity_alerts_and_recovers(monkeypatch, tmp_path: Path) -> None
         if line.strip()
     ]
     tag_records = [
-        record
-        for record in records
-        if record.get("category") == "ui.availability.tag_inactivity"
+        record for record in records if record.get("category") == "ui.availability.tag_inactivity"
     ]
     assert len(tag_records) == 2
     assert tag_records[0]["severity"] == "warning"
     assert tag_records[1]["severity"] == "info"
     assert tag_records[0]["payload"]["event"] == "tag_inactivity"
     assert tag_records[1]["payload"]["event"] == "tag_inactivity_recovered"
-
-
-
-
-
-
-
-
-
-
-
-
 
 
 def test_overlay_alert_logging_can_be_disabled(tmp_path: Path):

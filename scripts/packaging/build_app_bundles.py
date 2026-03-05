@@ -1,4 +1,5 @@
 """Automates cross-platform packaging via PyInstaller and Briefcase."""
+
 from __future__ import annotations
 
 import argparse
@@ -22,7 +23,9 @@ def _normalize_platform(value: str) -> str:
         lowered = "macos"
     if lowered not in SUPPORTED_PLATFORMS:
         choices = ", ".join(sorted(SUPPORTED_PLATFORMS))
-        raise argparse.ArgumentTypeError(f"Nieobsługiwana platforma '{value}'. Dostępne: {choices}.")
+        raise argparse.ArgumentTypeError(
+            f"Nieobsługiwana platforma '{value}'. Dostępne: {choices}."
+        )
     return lowered
 
 
@@ -32,7 +35,9 @@ def _run(command: Sequence[str], *, cwd: Path | None = None) -> None:
     try:
         subprocess.run(command, check=True, cwd=cwd)
     except subprocess.CalledProcessError as exc:  # pragma: no cover - CLI diagnostics
-        raise SystemExit(f"Polecenie zakończyło się niepowodzeniem ({exc.returncode}): {display}") from exc
+        raise SystemExit(
+            f"Polecenie zakończyło się niepowodzeniem ({exc.returncode}): {display}"
+        ) from exc
 
 
 def _build_pyinstaller(entrypoint: Path, dist_dir: Path, work_dir: Path, platform_id: str) -> Path:
@@ -111,7 +116,9 @@ def _parse_args(argv: Sequence[str] | None) -> argparse.Namespace:
 
 def main(argv: Sequence[str] | None = None) -> int:
     args = _parse_args(argv)
-    logging.basicConfig(level=logging.DEBUG if args.verbose else logging.INFO, format="[%(levelname)s] %(message)s")
+    logging.basicConfig(
+        level=logging.DEBUG if args.verbose else logging.INFO, format="[%(levelname)s] %(message)s"
+    )
 
     platform_id = args.platform
 
@@ -130,7 +137,9 @@ def main(argv: Sequence[str] | None = None) -> int:
         LOGGER.info("PyInstaller artefakt: %s", executable)
 
     if args.briefcase_app:
-        _package_briefcase(args.briefcase_app, platform_id, Path(args.briefcase_output).expanduser().resolve())
+        _package_briefcase(
+            args.briefcase_app, platform_id, Path(args.briefcase_output).expanduser().resolve()
+        )
 
     if not args.pyinstaller_entry and not args.briefcase_app:
         LOGGER.warning("Nie wskazano żadnych zadań build – pomijam.")

@@ -94,13 +94,22 @@ def _extract_compliance_mapping(payload: Any) -> Mapping[str, Any] | None:
     if isinstance(payload, Mapping):
         return payload
     attrs = {}
-    for key in ("live_allowed", "risk_profiles", "signoffs", "signatures", "signed", "require_signoff"):
+    for key in (
+        "live_allowed",
+        "risk_profiles",
+        "signoffs",
+        "signatures",
+        "signed",
+        "require_signoff",
+    ):
         if hasattr(payload, key):
             attrs[key] = getattr(payload, key)
     return attrs or None
 
 
-def _resolve_compliance_live_allowed(entrypoint_decl: Any, *, logger: logging.Logger | None = None) -> bool:
+def _resolve_compliance_live_allowed(
+    entrypoint_decl: Any, *, logger: logging.Logger | None = None
+) -> bool:
     if isinstance(entrypoint_decl, Mapping):
         compliance_source = entrypoint_decl.get("compliance")
         risk_profile = entrypoint_decl.get("risk_profile")
@@ -135,9 +144,7 @@ def _resolve_compliance_live_allowed(entrypoint_decl: Any, *, logger: logging.Lo
 
     if reasons:
         if logger is not None:
-            logger.debug(
-                "Runtime compliance guard disabled live trading: %s", ", ".join(reasons)
-            )
+            logger.debug("Runtime compliance guard disabled live trading: %s", ", ".join(reasons))
         return False
     return True
 
@@ -197,12 +204,12 @@ def load_runtime_entrypoint_metadata(
         return RuntimeEntrypointMetadata(
             environment=environment,
             risk_profile=risk_profile,
-            controller=str(controller) if isinstance(controller, str) and controller.strip() else None,
+            controller=str(controller)
+            if isinstance(controller, str) and controller.strip()
+            else None,
             strategy=str(strategy) if isinstance(strategy, str) and strategy.strip() else None,
             tags=tuple(tags),
-            compliance_live_allowed=_resolve_compliance_live_allowed(
-                raw_entry, logger=logger
-            ),
+            compliance_live_allowed=_resolve_compliance_live_allowed(raw_entry, logger=logger),
         )
 
     try:
@@ -221,17 +228,13 @@ def load_runtime_entrypoint_metadata(
         return None
 
     tags: Sequence[str] | Iterable[str] = getattr(entrypoint_decl, "tags", ())
-    compliance_allowed = _resolve_compliance_live_allowed(
-        entrypoint_decl, logger=logger
-    )
+    compliance_allowed = _resolve_compliance_live_allowed(entrypoint_decl, logger=logger)
     if not compliance_allowed:
         raw_entry = _load_entrypoint_from_raw_config(
             effective_config_path, entrypoint, logger=logger
         )
         if raw_entry is not None:
-            compliance_allowed = _resolve_compliance_live_allowed(
-                raw_entry, logger=logger
-            )
+            compliance_allowed = _resolve_compliance_live_allowed(raw_entry, logger=logger)
     return RuntimeEntrypointMetadata(
         environment=getattr(entrypoint_decl, "environment"),
         risk_profile=getattr(entrypoint_decl, "risk_profile"),
@@ -393,6 +396,7 @@ __all__ = [
     "load_runtime_entrypoint_metadata",
     "load_risk_profile_config",
 ]
+
 
 def _ensure_runtime_resolver() -> None:
     global _resolve_runtime_entrypoint  # noqa: PLW0603

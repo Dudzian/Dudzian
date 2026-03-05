@@ -77,11 +77,13 @@ def test_verify_package_fails_without_manifest(tmp_path: Path) -> None:
     package_dir = tmp_path / "missing"
     package_dir.mkdir()
 
-    exit_code = update_package.main([
-        "verify",
-        "--package-dir",
-        str(package_dir),
-    ])
+    exit_code = update_package.main(
+        [
+            "verify",
+            "--package-dir",
+            str(package_dir),
+        ]
+    )
 
     assert exit_code == 1
 
@@ -112,13 +114,15 @@ def test_scan_packages_reports_results(tmp_path: Path, capfd: pytest.CaptureFixt
 
     broken_dir = tmp_path / "broken"
     broken_dir.mkdir()
-    broken_dir.joinpath("manifest.json").write_text("{\"invalid\": }", encoding="utf-8")
+    broken_dir.joinpath("manifest.json").write_text('{"invalid": }', encoding="utf-8")
 
-    scan_code = update_package.main([
-        "scan",
-        "--packages-dir",
-        str(tmp_path),
-    ])
+    scan_code = update_package.main(
+        [
+            "scan",
+            "--packages-dir",
+            str(tmp_path),
+        ]
+    )
     assert scan_code == 0
 
     captured = capfd.readouterr()

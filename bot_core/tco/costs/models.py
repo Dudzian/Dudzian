@@ -1,4 +1,5 @@
 """Dataclasses opisujące podstawowe komponenty kosztowe w raportach TCO."""
+
 from __future__ import annotations
 
 from dataclasses import dataclass, field

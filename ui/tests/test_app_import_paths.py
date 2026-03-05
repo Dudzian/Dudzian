@@ -127,8 +127,6 @@ class DummyEngine:
         return DummyContext()
 
 
-
-
 class DummyEngineWithoutImportPathList:
     def __init__(self):
         self.import_paths: list[str] = []
@@ -145,6 +143,7 @@ class DummyEngineWithoutImportPathList:
 
     def rootContext(self) -> DummyContext:  # noqa: N802 - zgodnie z API Qt
         return DummyContext()
+
 
 class DummyBridge:
     def __init__(self, engine: DummyEngine, config: object, enable_cloud_runtime: bool):
@@ -196,7 +195,9 @@ from ui.pyside_app import app
 
 def _dummy_load_ui_app_config(config_path, profile=None, default_qml=None):
     return SimpleNamespace(
-        qml_entrypoint=Path(default_qml) if default_qml else Path("ui/pyside_app/qml/MainWindow.qml"),
+        qml_entrypoint=Path(default_qml)
+        if default_qml
+        else Path("ui/pyside_app/qml/MainWindow.qml"),
         theme_palette="dark",
     )
 

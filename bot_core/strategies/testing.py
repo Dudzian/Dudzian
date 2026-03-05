@@ -1,4 +1,5 @@
 """Tester parametrów strategii korzystający z walk-forward backtestu."""
+
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -94,4 +95,3 @@ __all__ = [
     "StrategyParameterTestReport",
     "ParameterTestResult",
 ]
-

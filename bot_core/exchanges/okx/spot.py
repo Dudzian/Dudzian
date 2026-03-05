@@ -1,4 +1,5 @@
 """Adapter CCXT dla rynku spot OKX."""
+
 from __future__ import annotations
 
 from typing import Any, Mapping
@@ -39,7 +40,9 @@ class OKXSpotAdapter(CCXTSpotAdapter):
             },
             settings or {},
         )
-        combined_settings.setdefault("sandbox_mode", environment in (Environment.PAPER, Environment.TESTNET))
+        combined_settings.setdefault(
+            "sandbox_mode", environment in (Environment.PAPER, Environment.TESTNET)
+        )
         super().__init__(
             credentials,
             exchange_id=combined_settings.pop("exchange_id", "okx"),
@@ -51,4 +54,3 @@ class OKXSpotAdapter(CCXTSpotAdapter):
 
 
 __all__ = ["OKXSpotAdapter"]
-

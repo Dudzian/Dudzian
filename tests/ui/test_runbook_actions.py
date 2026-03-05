@@ -114,7 +114,9 @@ def test_runbook_panel_action_button_executes_script(tmp_path: Path) -> None:
     metadata_dir.mkdir()
     actions_dir.mkdir()
 
-    (runbook_dir / "strategy_incident_playbook.md").write_text("# Strategia L1/L2\n", encoding="utf-8")
+    (runbook_dir / "strategy_incident_playbook.md").write_text(
+        "# Strategia L1/L2\n", encoding="utf-8"
+    )
     metadata_dir.joinpath("strategy_incident_playbook.yml").write_text(
         """
         id: strategy_incident_playbook
@@ -158,6 +160,7 @@ from pathlib import Path
             return str(warning)
 
     try:
+
         def _collect(warnings: list[object]) -> None:
             collected_warnings.extend(_format_warning(warning) for warning in warnings)
 
@@ -309,7 +312,11 @@ from pathlib import Path
                     runbook_names.append(name)
         except Exception:
             runbook_names = ["(failed to enumerate)"]
-        if isinstance(runbook_names, list) and runbook_names and runbook_names != ["(failed to enumerate)"]:
+        if (
+            isinstance(runbook_names, list)
+            and runbook_names
+            and runbook_names != ["(failed to enumerate)"]
+        ):
             runbook_names = sorted(set(runbook_names))[:200]
         alert_frame_names = []
         try:
@@ -322,7 +329,11 @@ from pathlib import Path
                     alert_frame_names.append(name)
         except Exception:
             alert_frame_names = ["(failed to enumerate)"]
-        if isinstance(alert_frame_names, list) and alert_frame_names and alert_frame_names != ["(failed to enumerate)"]:
+        if (
+            isinstance(alert_frame_names, list)
+            and alert_frame_names
+            and alert_frame_names != ["(failed to enumerate)"]
+        ):
             alert_frame_names = sorted(set(alert_frame_names))[:200]
         alert_item_name = None
         alert_item_type = None
@@ -330,11 +341,7 @@ from pathlib import Path
         if runbook_prefix:
             # Prefix is used only for diagnostics, not for button lookup.
             fallback_alert = next(
-                (
-                    obj
-                    for obj in items_root
-                    if (_obj_name(obj) or "").startswith(runbook_prefix)
-                ),
+                (obj for obj in items_root if (_obj_name(obj) or "").startswith(runbook_prefix)),
                 None,
             )
         if fallback_alert is None:
@@ -420,4 +427,6 @@ from pathlib import Path
     QMetaObject.invokeMethod(button, "click")
     app.processEvents()
 
-    assert (actions_dir / "ui_action_invoked.txt").exists(), "Skrypt nie został wykonany przez przycisk"
+    assert (actions_dir / "ui_action_invoked.txt").exists(), (
+        "Skrypt nie został wykonany przez przycisk"
+    )

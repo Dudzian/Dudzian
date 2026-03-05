@@ -38,7 +38,9 @@ def test_build_rotation_summary_entry_includes_signature(tmp_path: Path) -> None
         notes="Rotacja planowa",
     )
 
-    entry = build_rotation_summary_entry(summary, signing_key=b"demo_key", signing_key_id="rotation-v1")
+    entry = build_rotation_summary_entry(
+        summary, signing_key=b"demo_key", signing_key_id="rotation-v1"
+    )
 
     assert entry["type"] == "key_rotation_report"
     assert entry["stats"]["total"] == 1

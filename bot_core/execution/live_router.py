@@ -1,4 +1,5 @@
 """Router egzekucji dla środowiska live z fallbackami, metrykami i (opcjonalnie) decision logiem."""
+
 from __future__ import annotations
 
 import asyncio
@@ -61,6 +62,7 @@ try:  # pragma: no cover
         TransactionSignerSelector,
     )
 except Exception:  # pragma: no cover
+
     def _build_hmac_signature(
         payload: Mapping[str, object],
         *,
@@ -72,7 +74,9 @@ except Exception:  # pragma: no cover
         if algo not in {"HMACSHA384", "HMACSHA256"}:
             algo = "HMAC-SHA384"
         digestmod = hashlib.sha384 if algo == "HMAC-SHA384" else hashlib.sha256
-        canonical = json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode("utf-8")
+        canonical = json.dumps(
+            payload, ensure_ascii=False, sort_keys=True, separators=(",", ":")
+        ).encode("utf-8")
         sig = hmac.new(key, canonical, digestmod).digest()
         out = {
             "algorithm": "HMAC-SHA384" if digestmod is hashlib.sha384 else "HMAC-SHA256",
@@ -87,7 +91,9 @@ except Exception:  # pragma: no cover
         key_id: str | None = None
         requires_hardware = False
 
-        def sign(self, payload: Mapping[str, object]) -> Mapping[str, str]:  # pragma: no cover - fallback
+        def sign(
+            self, payload: Mapping[str, object]
+        ) -> Mapping[str, str]:  # pragma: no cover - fallback
             raise NotImplementedError
 
         def describe(self) -> Mapping[str, object]:  # pragma: no cover - fallback
@@ -103,7 +109,9 @@ except Exception:  # pragma: no cover
         def __init__(self, *args: object, **kwargs: object) -> None:
             self._default: TransactionSigner | None = None
 
-        def resolve(self, _account_id: str | None) -> TransactionSigner | None:  # pragma: no cover - fallback
+        def resolve(
+            self, _account_id: str | None
+        ) -> TransactionSigner | None:  # pragma: no cover - fallback
             return self._default
 
 
@@ -120,7 +128,9 @@ def _allow_live_router_in_test_mode() -> bool:
     return os.getenv(_ALLOW_TEST_LIVE_ROUTER_ENV, "").strip().lower() in {"1", "true", "yes", "on"}
 
 
-def _build_api_error(message: str, *, status: int = 422, payload: Mapping[str, object] | None = None) -> ExchangeAPIError:
+def _build_api_error(
+    message: str, *, status: int = 422, payload: Mapping[str, object] | None = None
+) -> ExchangeAPIError:
     """Tworzy instancję ``ExchangeAPIError`` niezależnie od wersji modułu błędów."""
 
     try:
@@ -136,9 +146,11 @@ def _build_api_error(message: str, *, status: int = 422, payload: Mapping[str, o
 
 # === Backoff & CircuitBreaker =================================================
 
+
 @dataclass(slots=True)
 class CircuitBreaker:
     """Prosty breaker (closed → open → half-open). Per giełda w routerze."""
+
     failure_threshold: int = 5
     open_seconds: float = 5.0
     half_open_max_calls: int = 1
@@ -180,9 +192,11 @@ class CircuitBreaker:
 
 # === API trasowania (kompatybilność) ========================================
 
+
 @dataclass(slots=True)
 class RoutingPlan:
     """Prosty plan – kolejność giełd podczas egzekucji."""
+
     exchanges: Sequence[str]
 
     def __post_init__(self) -> None:
@@ -203,6 +217,7 @@ class RoutingPlan:
 @dataclass(slots=True)
 class RouteDefinition:
     """Rozbudowana definicja trasy (nazwa, filtry, retry, budżet, metadane)."""
+
     name: str
     exchanges: Sequence[str]
     symbols: Sequence[str] = ()
@@ -267,6 +282,7 @@ class _QueuedOrder:
 
 # === LiveExecutionRouter =====================================================
 
+
 class LiveExecutionRouter(ExecutionService):
     """Asynchroniczny router egzekucji dla środowiska live."""
 
@@ -309,10 +325,14 @@ class LiveExecutionRouter(ExecutionService):
         self._adapters: dict[str, ExchangeAdapter] = {str(k): v for k, v in adapters.items()}
 
         if transaction_signer_selector is not None and transaction_signers is not None:
-            raise TypeError("transaction_signer_selector i transaction_signers nie mogą być podane jednocześnie")
+            raise TypeError(
+                "transaction_signer_selector i transaction_signers nie mogą być podane jednocześnie"
+            )
 
         self._transaction_signer_selector = transaction_signer_selector or transaction_signers
-        self._require_hardware_wallet_for_withdrawals = bool(require_hardware_wallet_for_withdrawals)
+        self._require_hardware_wallet_for_withdrawals = bool(
+            require_hardware_wallet_for_withdrawals
+        )
 
         # Tryb trasowania
         self._mode: str
@@ -462,7 +482,9 @@ class LiveExecutionRouter(ExecutionService):
         # Czas i breaker
         self._time = time_source or time.perf_counter
         factory = circuit_breaker_factory or (lambda: CircuitBreaker())
-        self._breakers: dict[str, CircuitBreaker] = {name: factory() for name in self._adapters.keys()}
+        self._breakers: dict[str, CircuitBreaker] = {
+            name: factory() for name in self._adapters.keys()
+        }
 
         # LRU powiązań order_id→exchange
         self._bindings_capacity = max(100, int(bindings_capacity))
@@ -585,9 +607,14 @@ class LiveExecutionRouter(ExecutionService):
         normalized.pop("hardware_wallet_account", None)
 
         context_meta = context.metadata if isinstance(context.metadata, Mapping) else {}
-        operation = str(normalized.get("operation") or context_meta.get("operation") or "").strip().lower()
+        operation = (
+            str(normalized.get("operation") or context_meta.get("operation") or "").strip().lower()
+        )
         is_outgoing = self._is_outgoing_operation(request, context)
-        requires_hw = bool(normalized.get("requires_hardware_wallet") or context_meta.get("requires_hardware_wallet"))
+        requires_hw = bool(
+            normalized.get("requires_hardware_wallet")
+            or context_meta.get("requires_hardware_wallet")
+        )
         if is_outgoing:
             requires_hw = True
             if not operation:
@@ -613,7 +640,9 @@ class LiveExecutionRouter(ExecutionService):
             raise RuntimeError(
                 f"Brak podpisującego transakcje dla konta '{account_id or 'default'}' wymagającego portfela sprzętowego."
             )
-        if self._require_hardware_wallet_for_withdrawals and not getattr(signer, "requires_hardware", False):
+        if self._require_hardware_wallet_for_withdrawals and not getattr(
+            signer, "requires_hardware", False
+        ):
             raise RuntimeError(
                 "Licencja wymaga podpisu z portfela sprzętowego dla wypłat, jednak wybrany podpisujący nie korzysta z urządzenia."
             )
@@ -697,7 +726,6 @@ class LiveExecutionRouter(ExecutionService):
         normalized["hardware_wallet_account"] = account_id
         request.metadata = normalized
 
-
     @staticmethod
     def _has_client_order_id(request: OrderRequest) -> bool:
         return isinstance(request.client_order_id, str) and bool(request.client_order_id.strip())
@@ -719,7 +747,9 @@ class LiveExecutionRouter(ExecutionService):
     def _is_outgoing_operation(request: OrderRequest, context: ExecutionContext) -> bool:
         metadata = request.metadata if isinstance(request.metadata, Mapping) else {}
         context_meta = context.metadata if isinstance(context.metadata, Mapping) else {}
-        operation = str(metadata.get("operation") or context_meta.get("operation") or "").strip().lower()
+        operation = (
+            str(metadata.get("operation") or context_meta.get("operation") or "").strip().lower()
+        )
         if operation in {"withdrawal", "payout"}:
             return True
 
@@ -730,7 +760,9 @@ class LiveExecutionRouter(ExecutionService):
         symbol = str(getattr(request, "symbol", "") or "").strip().upper()
         return symbol == "WITHDRAWAL"
 
-    def _validate_live_order_request(self, request: OrderRequest, context: ExecutionContext) -> None:
+    def _validate_live_order_request(
+        self, request: OrderRequest, context: ExecutionContext
+    ) -> None:
         if not self._is_live_environment(context):
             return
         if self._has_client_order_id(request):
@@ -794,7 +826,9 @@ class LiveExecutionRouter(ExecutionService):
             symbol = str(context_meta.get("symbol"))
 
         if not exchange_name:
-            self._m_cancel_binding_miss.inc(labels={"portfolio": context.portfolio_id, "symbol": symbol})
+            self._m_cancel_binding_miss.inc(
+                labels={"portfolio": context.portfolio_id, "symbol": symbol}
+            )
             for adapter in self._adapters.values():
                 try:
                     adapter.cancel_order(order_id)
@@ -1072,7 +1106,8 @@ class LiveExecutionRouter(ExecutionService):
             metadata = request.metadata if isinstance(request.metadata, Mapping) else {}
             context_meta = context.metadata if isinstance(context.metadata, Mapping) else {}
             requires_hw = self._require_hardware_wallet_for_withdrawals or bool(
-                metadata.get("requires_hardware_wallet") or context_meta.get("requires_hardware_wallet")
+                metadata.get("requires_hardware_wallet")
+                or context_meta.get("requires_hardware_wallet")
             )
             is_withdrawal = self._is_outgoing_operation(request, context)
             if requires_hw or is_withdrawal:
@@ -1110,8 +1145,12 @@ class LiveExecutionRouter(ExecutionService):
                     if latency_budget_ms is not None:
                         elapsed_ms = (attempt_now - start) * 1000.0
                         if elapsed_ms > latency_budget_ms:
-                            attempts_rec.append({"exchange": exchange_name, "status": "latency_budget_exceeded"})
-                            last_error = last_error or TimeoutError("Przekroczono budżet opóźnień trasy")
+                            attempts_rec.append(
+                                {"exchange": exchange_name, "status": "latency_budget_exceeded"}
+                            )
+                            last_error = last_error or TimeoutError(
+                                "Przekroczono budżet opóźnień trasy"
+                            )
                             break
 
                     common_labels = {
@@ -1156,7 +1195,10 @@ class LiveExecutionRouter(ExecutionService):
                                 )
                                 raise
 
-                            reconciled_result, reconcile_supported = await self._try_reconcile_order_by_client_id(
+                            (
+                                reconciled_result,
+                                reconcile_supported,
+                            ) = await self._try_reconcile_order_by_client_id(
                                 adapter=adapter,
                                 request=request,
                                 common_labels=common_labels,
@@ -1195,27 +1237,35 @@ class LiveExecutionRouter(ExecutionService):
                             if not fallback_allowed:
                                 raise
                             if attempt < max_retries:
-                                await asyncio.sleep(
-                                    self._error_policy.backoff(attempt, exc)
-                                )
+                                await asyncio.sleep(self._error_policy.backoff(attempt, exc))
                                 attempt += 1
                                 continue
                             break
                         if category == "auth":
                             self._m_attempts.inc(labels={**labels, "result": "auth_error"})
                             attempts_rec.append(
-                                {"exchange": exchange_name, "attempt": str(attempt), "status": "auth_error"}
+                                {
+                                    "exchange": exchange_name,
+                                    "attempt": str(attempt),
+                                    "status": "auth_error",
+                                }
                             )
                             last_error = exc
                             if breaker:
                                 breaker.record_failure(self._time())
-                            _LOGGER.error("Błąd uwierzytelnienia na %s – przerywam fallback.", exchange_name)
+                            _LOGGER.error(
+                                "Błąd uwierzytelnienia na %s – przerywam fallback.", exchange_name
+                            )
                             raise
                         if category == "api":
                             self._m_attempts.inc(labels={**labels, "result": "api_error"})
                             self._m_errors.inc(labels=labels)
                             attempts_rec.append(
-                                {"exchange": exchange_name, "attempt": str(attempt), "status": "api_error"}
+                                {
+                                    "exchange": exchange_name,
+                                    "attempt": str(attempt),
+                                    "status": "api_error",
+                                }
                             )
                             last_error = exc
                             if breaker:
@@ -1280,7 +1330,13 @@ class LiveExecutionRouter(ExecutionService):
                         fallback_used = True
 
                     self._remember_binding(result.order_id, exchange_name, request)
-                    attempts_rec.append({"exchange": exchange_name, "status": "success", "latency_s": f"{elapsed:.6f}"})
+                    attempts_rec.append(
+                        {
+                            "exchange": exchange_name,
+                            "status": "success",
+                            "latency_s": f"{elapsed:.6f}",
+                        }
+                    )
                     await self._emit_decision_log_best_effort(
                         route_name=route_name or "default",
                         route_metadata=route_meta,
@@ -1415,7 +1471,9 @@ class LiveExecutionRouter(ExecutionService):
         semaphore = self._exchange_semaphores.get(exchange_name)
         if semaphore is not None:
             return semaphore
-        limit = int(self._qos.per_exchange_concurrency.get(exchange_name, self._qos.worker_concurrency))
+        limit = int(
+            self._qos.per_exchange_concurrency.get(exchange_name, self._qos.worker_concurrency)
+        )
         limit = max(1, limit)
         semaphore = asyncio.Semaphore(limit)
         self._exchange_semaphores[exchange_name] = semaphore
@@ -1485,11 +1543,15 @@ class LiveExecutionRouter(ExecutionService):
                 queue_size = int(self._queue.qsize())
             except Exception:  # pragma: no cover - zależne od implementacji
                 queue_size = 0
-        return self._build_runtime_stats(queue_depth=queue_size, inflight=self._inflight_by_exchange)
+        return self._build_runtime_stats(
+            queue_depth=queue_size, inflight=self._inflight_by_exchange
+        )
 
     @asynccontextmanager
     async def _track_exchange_inflight(self, exchange_name: str):
-        self._inflight_by_exchange[exchange_name] = self._inflight_by_exchange.get(exchange_name, 0) + 1
+        self._inflight_by_exchange[exchange_name] = (
+            self._inflight_by_exchange.get(exchange_name, 0) + 1
+        )
         try:
             yield
         finally:
@@ -1537,12 +1599,8 @@ class LiveExecutionRouter(ExecutionService):
         error_details: str
         if reason == "timeout" and queue_timeout is not None:
             attempt_payload["queue_timeout_s"] = f"{queue_timeout:.6f}"
-            error_details = (
-                f"QueueTimeout(wait={queue_wait:.6f}, limit={queue_timeout:.6f})"
-            )
-            message = (
-                f"Przekroczono limit oczekiwania w kolejce ({queue_wait:.3f}s > {queue_timeout:.3f}s)"
-            )
+            error_details = f"QueueTimeout(wait={queue_wait:.6f}, limit={queue_timeout:.6f})"
+            message = f"Przekroczono limit oczekiwania w kolejce ({queue_wait:.3f}s > {queue_timeout:.3f}s)"
         else:
             queue_size = 0
             if self._queue is not None:
@@ -1614,7 +1672,9 @@ class LiveExecutionRouter(ExecutionService):
 
     # --- Wewnętrzne narzędzia ------------------------------------------------
 
-    def _remember_binding(self, order_id: str, exchange_name: str, request: OrderRequest | None = None) -> None:
+    def _remember_binding(
+        self, order_id: str, exchange_name: str, request: OrderRequest | None = None
+    ) -> None:
         with self._bindings_lock:
             self._bindings[order_id] = exchange_name
             self._bindings.move_to_end(order_id)
@@ -1682,7 +1742,9 @@ class LiveExecutionRouter(ExecutionService):
         normalized_status = status.upper()
         if normalized_status in {"REJECTED", "CANCELLED", "CANCELED", "ERROR"}:
             message = f"Adapter {exchange} odrzucił zlecenie (status={normalized_status})."
-            raise _build_api_error(message, status=422, payload={"exchange": exchange, "status": status})
+            raise _build_api_error(
+                message, status=422, payload={"exchange": exchange, "status": status}
+            )
 
         if not getattr(result, "order_id", ""):
             message = f"Adapter {exchange} nie zwrócił identyfikatora zlecenia."
@@ -1711,7 +1773,9 @@ class LiveExecutionRouter(ExecutionService):
 
     # --- Tryb "routes": wybór trasy -----------------------------------------
 
-    def _select_route_definition(self, request: OrderRequest, context: ExecutionContext) -> RouteDefinition:
+    def _select_route_definition(
+        self, request: OrderRequest, context: ExecutionContext
+    ) -> RouteDefinition:
         assert self._mode == "routes"
         meta = context.metadata or {}
         requested = meta.get("execution_route")
@@ -1938,7 +2002,7 @@ class LiveExecutionRouter(ExecutionService):
 
         for idx in range(self._decision_log_keep - 1, 0, -1):
             older = path.with_suffix(path.suffix + f".{idx}")
-            newer = path.with_suffix(path.suffix + ("" if idx == 1 else f".{idx-1}"))
+            newer = path.with_suffix(path.suffix + ("" if idx == 1 else f".{idx - 1}"))
             if newer.exists():
                 try:
                     if older.exists():

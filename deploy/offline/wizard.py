@@ -71,7 +71,11 @@ class InstallerWizard:
         if result.errors:
             LOGGER.error("Walidacja fingerprintu zakończona błędami: %s", "; ".join(result.errors))
         else:
-            LOGGER.info("Fingerprint %s zweryfikowany (klucz=%s).", result.fingerprint, result.key_id or "n/d")
+            LOGGER.info(
+                "Fingerprint %s zweryfikowany (klucz=%s).",
+                result.fingerprint,
+                result.key_id or "n/d",
+            )
         return result
 
     def validate_license(self, bundle: LicenseBundle) -> LicenseValidationResult:
@@ -84,9 +88,14 @@ class InstallerWizard:
         self._last_license = result
         if result.errors:
             for error in result.errors:
-                LOGGER.error("Błąd walidacji licencji: %s", error.message if hasattr(error, "message") else str(error))
+                LOGGER.error(
+                    "Błąd walidacji licencji: %s",
+                    error.message if hasattr(error, "message") else str(error),
+                )
         else:
-            LOGGER.info("Licencja %s (%s) zweryfikowana.", result.license_path, result.profile or "n/d")
+            LOGGER.info(
+                "Licencja %s (%s) zweryfikowana.", result.license_path, result.profile or "n/d"
+            )
         return result
 
     def apply_offline_update(
@@ -113,7 +122,9 @@ class InstallerWizard:
         if payload_archive:
             if not payload_archive.exists():
                 raise FileNotFoundError(payload_archive)
-            with tempfile.TemporaryDirectory(prefix="offline_update_", dir=str(self.session.root_dir)) as extracted:
+            with tempfile.TemporaryDirectory(
+                prefix="offline_update_", dir=str(self.session.root_dir)
+            ) as extracted:
                 extracted_path = Path(extracted)
                 shutil.unpack_archive(str(payload_archive), extracted_path)
                 payload_source = _resolve_payload_root(extracted_path)
@@ -147,7 +158,6 @@ class InstallerWizard:
         hmac_keys: Mapping[str, bytes] | None,
         payload_archive: Path | None,
     ) -> Path:
-
         verification_warnings: list[str] = []
         selected_key: str | None = None
 
@@ -171,7 +181,10 @@ class InstallerWizard:
                     result = attempt
                     selected_key = key_id
                     break
-                errors = ", ".join(_stringify_messages(getattr(attempt, "errors", []))) or "nieznany błąd"
+                errors = (
+                    ", ".join(_stringify_messages(getattr(attempt, "errors", [])))
+                    or "nieznany błąd"
+                )
                 errors_by_key.append(f"{key_id}: {errors}")
             if result is None:
                 self._last_update = {
@@ -250,7 +263,11 @@ class InstallerWizard:
         *,
         data: Mapping[str, object] | None = None,
     ) -> Path:
-        target = Path(path).expanduser() if path else self.session.logs_dir / "offline_installer_summary.json"
+        target = (
+            Path(path).expanduser()
+            if path
+            else self.session.logs_dir / "offline_installer_summary.json"
+        )
         target.parent.mkdir(parents=True, exist_ok=True)
         payload = dict(data) if data is not None else self.summary(include_timestamp=True)
         if "generated_at" not in payload:
@@ -268,12 +285,20 @@ class InstallerWizard:
             "profile": result.profile,
             "issuer": result.issuer,
             "license_path": str(result.license_path),
-            "errors": [msg.message if isinstance(msg, ValidationMessage) else str(msg) for msg in result.errors],
-            "warnings": [msg.message if isinstance(msg, ValidationMessage) else str(msg) for msg in result.warnings],
+            "errors": [
+                msg.message if isinstance(msg, ValidationMessage) else str(msg)
+                for msg in result.errors
+            ],
+            "warnings": [
+                msg.message if isinstance(msg, ValidationMessage) else str(msg)
+                for msg in result.warnings
+            ],
         }
 
     @staticmethod
-    def _serialize_fingerprint(result: FingerprintValidationResult | None) -> Mapping[str, object] | None:
+    def _serialize_fingerprint(
+        result: FingerprintValidationResult | None,
+    ) -> Mapping[str, object] | None:
         if result is None:
             return None
         return {
@@ -320,24 +345,46 @@ def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Offline installer and update helper")
     parser.add_argument("--root", default=".", help="Katalog instalacji (domyślnie bieżący).")
     parser.add_argument("--license", dest="license_path", help="Ścieżka pliku licencji OEM.")
-    parser.add_argument("--license-keys", dest="license_keys", help="Plik z kluczami HMAC licencji.")
-    parser.add_argument("--fingerprint", dest="fingerprint_path", help="Dokument fingerprintu hosta.")
-    parser.add_argument("--fingerprint-keys", dest="fingerprint_keys", help="Plik z kluczami HMAC fingerprintu.")
-    parser.add_argument("--update-manifest", dest="update_manifest", help="Manifest aktualizacji offline (opcjonalnie).")
-    parser.add_argument("--update-payload", dest="update_payload", help="Katalog z plikami aktualizacji (opcjonalnie).")
+    parser.add_argument(
+        "--license-keys", dest="license_keys", help="Plik z kluczami HMAC licencji."
+    )
+    parser.add_argument(
+        "--fingerprint", dest="fingerprint_path", help="Dokument fingerprintu hosta."
+    )
+    parser.add_argument(
+        "--fingerprint-keys", dest="fingerprint_keys", help="Plik z kluczami HMAC fingerprintu."
+    )
+    parser.add_argument(
+        "--update-manifest",
+        dest="update_manifest",
+        help="Manifest aktualizacji offline (opcjonalnie).",
+    )
+    parser.add_argument(
+        "--update-payload",
+        dest="update_payload",
+        help="Katalog z plikami aktualizacji (opcjonalnie).",
+    )
     parser.add_argument(
         "--update-archive",
         dest="update_archive",
         help="Archiwum aktualizacji (zip/tar) rozpakowywane przed walidacją (opcjonalnie).",
     )
-    parser.add_argument("--update-signature", dest="update_signature", help="Podpis manifestu aktualizacji (opcjonalnie).")
+    parser.add_argument(
+        "--update-signature",
+        dest="update_signature",
+        help="Podpis manifestu aktualizacji (opcjonalnie).",
+    )
     parser.add_argument(
         "--update-keys",
         dest="update_keys",
         action="append",
         help="Plik z kluczami HMAC podpisu manifestu (można podać wielokrotnie).",
     )
-    parser.add_argument("--apply-update", action="store_true", help="Po poprawnej walidacji spróbuj skopiować aktualizację.")
+    parser.add_argument(
+        "--apply-update",
+        action="store_true",
+        help="Po poprawnej walidacji spróbuj skopiować aktualizację.",
+    )
     parser.add_argument(
         "--summary-path",
         dest="summary_path",
@@ -367,8 +414,12 @@ def main(argv: list[str] | None = None) -> int:
         license_bundle = LicenseBundle(
             license_path=Path(args.license_path),
             license_keys_path=Path(args.license_keys).expanduser() if args.license_keys else None,
-            fingerprint_path=Path(args.fingerprint_path).expanduser() if args.fingerprint_path else None,
-            fingerprint_keys_path=Path(args.fingerprint_keys).expanduser() if args.fingerprint_keys else None,
+            fingerprint_path=Path(args.fingerprint_path).expanduser()
+            if args.fingerprint_path
+            else None,
+            fingerprint_keys_path=Path(args.fingerprint_keys).expanduser()
+            if args.fingerprint_keys
+            else None,
         )
         if license_bundle.fingerprint_path:
             wizard.validate_fingerprint(license_bundle)

@@ -82,18 +82,22 @@ def test_runtime_service_exposes_activation_summary() -> None:
             "timestamp": "2024-01-01T00:00:00+00:00",
             "status": "approved",
             "metadata": {
-                "activation": json.dumps({
-                    "preset_name": "grid_classic",
-                    "preset_hash": "hash-grid",
-                    "regime": "trend",
-                    "used_fallback": False,
-                }),
-                "guardrail_transition": json.dumps({
-                    "timestamp": "2024-01-01T00:00:00+00:00",
-                    "active": True,
-                    "previous_active": False,
-                    "reasons": ["latency"],
-                }),
+                "activation": json.dumps(
+                    {
+                        "preset_name": "grid_classic",
+                        "preset_hash": "hash-grid",
+                        "regime": "trend",
+                        "used_fallback": False,
+                    }
+                ),
+                "guardrail_transition": json.dumps(
+                    {
+                        "timestamp": "2024-01-01T00:00:00+00:00",
+                        "active": True,
+                        "previous_active": False,
+                        "reasons": ["latency"],
+                    }
+                ),
             },
         }
     ]

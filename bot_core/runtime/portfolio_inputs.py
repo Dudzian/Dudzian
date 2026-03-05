@@ -1,4 +1,5 @@
 """Ładowanie artefaktów Stage6 dla PortfolioGovernora w runtime."""
+
 from __future__ import annotations
 
 import json
@@ -136,7 +137,9 @@ def load_slo_statuses(
         error_budget = _to_float(entry.get("error_budget_pct"))
         status_text = str(entry.get("status", "unknown"))
         severity = str(entry.get("severity", "warning"))
-        metadata = _metadata_to_floats(entry.get("metadata") if isinstance(entry.get("metadata"), Mapping) else None)
+        metadata = _metadata_to_floats(
+            entry.get("metadata") if isinstance(entry.get("metadata"), Mapping) else None
+        )
         statuses[str(name)] = SLOStatus(
             name=str(name),
             indicator=indicator,
@@ -150,11 +153,7 @@ def load_slo_statuses(
             window_start=_parse_datetime(entry.get("window_start")),
             window_end=_parse_datetime(entry.get("window_end")),
             sample_size=int(entry.get("sample_size", 0) or 0),
-            reason=(
-                str(entry.get("reason"))
-                if entry.get("reason") not in (None, "")
-                else None
-            ),
+            reason=(str(entry.get("reason")) if entry.get("reason") not in (None, "") else None),
             metadata=metadata,
         )
     return statuses
@@ -205,9 +204,7 @@ def load_stress_overrides(
                 severity=str(entry.get("severity", "warning")),
                 reason=str(reason),
                 symbol=(
-                    str(entry.get("symbol"))
-                    if entry.get("symbol") not in (None, "")
-                    else None
+                    str(entry.get("symbol")) if entry.get("symbol") not in (None, "") else None
                 ),
                 risk_budget=(
                     str(entry.get("risk_budget"))
@@ -302,8 +299,7 @@ def load_portfolio_stress_summary(
     summary_section = summary_raw if isinstance(summary_raw, Mapping) else None
 
     scenario_count = int(
-        (summary_section.get("scenario_count") if summary_section else None)
-        or len(scenarios)
+        (summary_section.get("scenario_count") if summary_section else None) or len(scenarios)
     )
     summary_payload: dict[str, Any] = {
         "portfolio_id": payload.get("portfolio_id"),
@@ -321,12 +317,16 @@ def load_portfolio_stress_summary(
         summary_payload["max_drawdown_pct"] = max_drawdown
         summary_details["max_drawdown_pct"] = max_drawdown
 
-    min_total_return = _to_float(summary_section.get("min_total_return_pct")) if summary_section else None
+    min_total_return = (
+        _to_float(summary_section.get("min_total_return_pct")) if summary_section else None
+    )
     if min_total_return is not None:
         summary_payload["min_total_return_pct"] = min_total_return
         summary_details["min_total_return_pct"] = min_total_return
 
-    max_liquidity = _to_float(summary_section.get("max_liquidity_impact_usd")) if summary_section else None
+    max_liquidity = (
+        _to_float(summary_section.get("max_liquidity_impact_usd")) if summary_section else None
+    )
     if max_liquidity is not None:
         summary_payload["max_liquidity_impact_usd"] = max_liquidity
         summary_details["max_liquidity_impact_usd"] = max_liquidity
@@ -415,9 +415,7 @@ def load_portfolio_stress_summary(
                         "name": worst_tag_raw.get("name"),
                         "title": worst_tag_raw.get("title"),
                         "drawdown_pct": _to_float(worst_tag_raw.get("drawdown_pct")),
-                        "total_return_pct": _to_float(
-                            worst_tag_raw.get("total_return_pct")
-                        ),
+                        "total_return_pct": _to_float(worst_tag_raw.get("total_return_pct")),
                         "total_pnl_usd": _to_float(worst_tag_raw.get("total_pnl_usd")),
                     }
                 aggregates.append(aggregate)

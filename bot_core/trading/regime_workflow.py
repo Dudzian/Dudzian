@@ -1,4 +1,5 @@
 """Workflow orchestrating regime-aware strategy selection."""
+
 from __future__ import annotations
 
 import logging
@@ -102,12 +103,9 @@ class RegimeSwitchWorkflow:
         confidence_threshold: float = 0.55,
         persistence_threshold: float = 0.35,
         min_switch_cooldown: int = 5,
-        default_weights: Mapping[
-            MarketRegime | str, Mapping[str, float]
-        ] | None = None,
-        default_parameter_overrides: Mapping[
-            MarketRegime | str, Mapping[str, float | int]
-        ] | None = None,
+        default_weights: Mapping[MarketRegime | str, Mapping[str, float]] | None = None,
+        default_parameter_overrides: Mapping[MarketRegime | str, Mapping[str, float | int]]
+        | None = None,
         strategy_alias_map: Mapping[str, str] | None = None,
         strategy_alias_suffixes: Iterable[str] | None = None,
         logger: logging.Logger | None = None,
@@ -124,9 +122,7 @@ class RegimeSwitchWorkflow:
         self._history = history or RegimeHistory(
             thresholds_loader=self._classifier.thresholds_loader
         )
-        self._history.reload_thresholds(
-            thresholds=self._classifier.thresholds_snapshot()
-        )
+        self._history.reload_thresholds(thresholds=self._classifier.thresholds_snapshot())
         self._catalog = catalog or StrategyCatalog.default()
         self._confidence_threshold = float(confidence_threshold)
         self._persistence_threshold = float(persistence_threshold)
@@ -139,9 +135,7 @@ class RegimeSwitchWorkflow:
         ] = {}
 
         self._default_strategy_weights = self._build_default_weights(default_weights)
-        self._parameter_overrides = self._build_parameter_overrides(
-            default_parameter_overrides
-        )
+        self._parameter_overrides = self._build_parameter_overrides(default_parameter_overrides)
 
     @property
     def classifier(self) -> MarketRegimeClassifier:
@@ -237,11 +231,7 @@ class RegimeSwitchWorkflow:
             symbol=symbol,
             parameter_overrides=parameter_overrides,
         )
-        available = {
-            str(item).strip().lower()
-            for item in available_data
-            if str(item).strip()
-        }
+        available = {str(item).strip().lower() for item in available_data if str(item).strip()}
         missing = self._compute_missing_data(decision.required_data, available)
         blocked_reason = "missing_data" if missing else None
         return RegimeSwitchActivation(
@@ -269,10 +259,7 @@ class RegimeSwitchWorkflow:
     ) -> MarketRegime:
         if summary and summary.confidence >= self._confidence_threshold:
             return summary.regime
-        if (
-            self._last_decision is not None
-            and assessment.confidence < self._confidence_threshold
-        ):
+        if self._last_decision is not None and assessment.confidence < self._confidence_threshold:
             return self._last_decision.regime
         return assessment.regime
 
@@ -409,11 +396,7 @@ class RegimeSwitchWorkflow:
             payload.setdefault("name", name)
             if resolved_name and resolved_name != name:
                 payload.setdefault("catalog_name", resolved_name)
-                aliases = [
-                    alias
-                    for alias in lookup_sequence
-                    if alias not in {resolved_name, name}
-                ]
+                aliases = [alias for alias in lookup_sequence if alias not in {resolved_name, name}]
                 if aliases:
                     payload.setdefault("aliases", tuple(aliases))
             metadata_payload = MappingProxyType(payload)
@@ -478,10 +461,7 @@ class RegimeSwitchWorkflow:
     def default_strategy_weights(self) -> Mapping[MarketRegime, Mapping[str, float]]:
         """Udostępnia skopiowaną konfigurację wag strategii per reżim."""
 
-        return {
-            regime: dict(weights)
-            for regime, weights in self._default_strategy_weights.items()
-        }
+        return {regime: dict(weights) for regime, weights in self._default_strategy_weights.items()}
 
     @property
     def default_parameter_overrides(
@@ -489,10 +469,7 @@ class RegimeSwitchWorkflow:
     ) -> Mapping[MarketRegime, Mapping[str, float | int]]:
         """Udostępnia domyślne nadpisania parametrów wykorzystywane przy strojeniu."""
 
-        return {
-            regime: dict(values)
-            for regime, values in self._parameter_overrides.items()
-        }
+        return {regime: dict(values) for regime, values in self._parameter_overrides.items()}
 
     def _build_default_weights(
         self,
@@ -597,4 +574,3 @@ class RegimeSwitchWorkflow:
             return MarketRegime(str(regime).lower())
         except ValueError as exc:  # pragma: no cover - walidacja wejścia
             raise ValueError(f"Unknown regime key: {regime!r}") from exc
-

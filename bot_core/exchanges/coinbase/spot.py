@@ -1,4 +1,5 @@
 """Adapter CCXT dla rynku spot Coinbase."""
+
 from __future__ import annotations
 
 from typing import Any, Mapping
@@ -49,4 +50,3 @@ class CoinbaseSpotAdapter(CCXTSpotAdapter):
 
 
 __all__ = ["CoinbaseSpotAdapter"]
-

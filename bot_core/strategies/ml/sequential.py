@@ -1,4 +1,5 @@
 """Adaptery dla modeli sekwencyjnych stosowanych w tradingu."""
+
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -68,7 +69,9 @@ class LSTMAdapter(SequentialModelAdapter):
             )
             optimizer = torch.optim.Adam(model.parameters(), lr=1e-3)
             trainer = LSTMTrainer(model=model, optimizer=optimizer, loss_fn=nn.MSELoss(), epochs=5)
-        super().__init__(trainer=trainer, name="lstm", hyperparameters=getattr(trainer, "hyperparameters", {}))
+        super().__init__(
+            trainer=trainer, name="lstm", hyperparameters=getattr(trainer, "hyperparameters", {})
+        )
 
 
 class TemporalFusionTransformerAdapter(SequentialModelAdapter):
@@ -79,7 +82,9 @@ class TemporalFusionTransformerAdapter(SequentialModelAdapter):
             if TemporalFusionTransformer is None:
                 raise ImportError("Wymagana jest biblioteka pytorch-forecasting")
             model = TemporalFusionTransformer.from_dataset(**hyperparameters)
-        super().__init__(trainer=model, name="temporal_fusion_transformer", hyperparameters=hyperparameters)
+        super().__init__(
+            trainer=model, name="temporal_fusion_transformer", hyperparameters=hyperparameters
+        )
 
 
 __all__ = [

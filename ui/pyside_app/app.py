@@ -1,4 +1,5 @@
 """Uruchomienie aplikacji PySide6 oraz rejestracja kontekstu QML."""
+
 from __future__ import annotations
 
 import argparse
@@ -165,7 +166,9 @@ class BotPysideApplication:
         def _on_warnings(warnings: list) -> None:
             for warning in warnings:
                 try:
-                    location = warning.url().toString() if warning.url().isValid() else qml_file.as_uri()
+                    location = (
+                        warning.url().toString() if warning.url().isValid() else qml_file.as_uri()
+                    )
                     collected_warnings.append(
                         f"{location}:{warning.line()}:{warning.column()}: {warning.description()}"
                     )

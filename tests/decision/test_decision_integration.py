@@ -155,7 +155,7 @@ def test_orchestrator_switches_models_based_on_history() -> None:
 
 def test_orchestrator_prefers_recent_performance() -> None:
     base_time = datetime(2024, 5, 1, 12, tzinfo=timezone.utc)
-    
+
     def _clock() -> datetime:
         return base_time
 
@@ -260,9 +260,7 @@ def test_orchestrator_traces_unavailable_models() -> None:
             super().__init__(score)
             self.is_ready = False
 
-    slow = UnreadyInference(
-        ModelScore(expected_return_bps=12.0, success_probability=0.9)
-    )
+    slow = UnreadyInference(ModelScore(expected_return_bps=12.0, success_probability=0.9))
     fast = StubInference(ModelScore(expected_return_bps=5.0, success_probability=0.6))
     orchestrator = DecisionOrchestrator(_config())
     orchestrator.attach_named_inference("slow", slow, set_default=True)

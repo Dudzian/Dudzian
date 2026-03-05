@@ -72,11 +72,19 @@ def test_runbook_panel_qml_load(tmp_path: Path) -> None:
     report = _build_sample_report()
     runbook_dir = tmp_path / "runbooks"
     runbook_dir.mkdir()
-    (runbook_dir / "strategy_incident_playbook.md").write_text("# Strategia L1/L2\n", encoding="utf-8")
-    (runbook_dir / "autotrade_threshold_calibration.md").write_text("# Kalibracja progów\n", encoding="utf-8")
-    (runbook_dir / "oem_license_provisioning.md").write_text("# Provisioning OEM\n", encoding="utf-8")
+    (runbook_dir / "strategy_incident_playbook.md").write_text(
+        "# Strategia L1/L2\n", encoding="utf-8"
+    )
+    (runbook_dir / "autotrade_threshold_calibration.md").write_text(
+        "# Kalibracja progów\n", encoding="utf-8"
+    )
+    (runbook_dir / "oem_license_provisioning.md").write_text(
+        "# Provisioning OEM\n", encoding="utf-8"
+    )
 
-    controller = RunbookController(report_endpoint=_StaticEndpoint(report), runbook_directory=runbook_dir)
+    controller = RunbookController(
+        report_endpoint=_StaticEndpoint(report), runbook_directory=runbook_dir
+    )
     assert controller.refreshAlerts()
 
     app = QApplication.instance() or QApplication([])
@@ -112,11 +120,19 @@ def test_runbook_controller_mapping(tmp_path: Path) -> None:
     report = _build_sample_report()
     runbook_dir = tmp_path / "ops"
     runbook_dir.mkdir()
-    (runbook_dir / "strategy_incident_playbook.md").write_text("# Strategia L1/L2\n", encoding="utf-8")
-    (runbook_dir / "autotrade_threshold_calibration.md").write_text("# Kalibracja progów\n", encoding="utf-8")
-    (runbook_dir / "oem_license_provisioning.md").write_text("# Provisioning OEM\n", encoding="utf-8")
+    (runbook_dir / "strategy_incident_playbook.md").write_text(
+        "# Strategia L1/L2\n", encoding="utf-8"
+    )
+    (runbook_dir / "autotrade_threshold_calibration.md").write_text(
+        "# Kalibracja progów\n", encoding="utf-8"
+    )
+    (runbook_dir / "oem_license_provisioning.md").write_text(
+        "# Provisioning OEM\n", encoding="utf-8"
+    )
 
-    controller = RunbookController(report_endpoint=_StaticEndpoint(report), runbook_directory=runbook_dir)
+    controller = RunbookController(
+        report_endpoint=_StaticEndpoint(report), runbook_directory=runbook_dir
+    )
     assert controller.refreshAlerts()
 
     alerts = controller.alerts

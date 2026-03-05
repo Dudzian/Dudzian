@@ -1,4 +1,5 @@
 """Uruchamia lokalny gateway HTTP obsługujący streamy long-pollowe."""
+
 from __future__ import annotations
 
 import argparse
@@ -24,7 +25,9 @@ def _configure_logging(level: str) -> None:
 
 
 def _parse_args(argv: Sequence[str]) -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Uruchamia lokalny gateway streamingu long-pollowego.")
+    parser = argparse.ArgumentParser(
+        description="Uruchamia lokalny gateway streamingu long-pollowego."
+    )
     parser.add_argument("--config", default="config/core.yaml", help="Ścieżka do pliku core.yaml")
     parser.add_argument(
         "--environment",
@@ -35,8 +38,12 @@ def _parse_args(argv: Sequence[str]) -> argparse.Namespace:
     )
     parser.add_argument("--host", help="Adres hosta nasłuchu gateway'a")
     parser.add_argument("--port", type=int, help="Port nasłuchu gateway'a")
-    parser.add_argument("--api-key", dest="api_key", help="Klucz API używany do inicjalizacji adapterów")
-    parser.add_argument("--api-secret", dest="api_secret", help="Sekret API dla podpisanych endpointów")
+    parser.add_argument(
+        "--api-key", dest="api_key", help="Klucz API używany do inicjalizacji adapterów"
+    )
+    parser.add_argument(
+        "--api-secret", dest="api_secret", help="Sekret API dla podpisanych endpointów"
+    )
     parser.add_argument("--log-level", default="INFO", help="Poziom logowania (np. INFO, DEBUG)")
     return parser.parse_args(list(argv))
 

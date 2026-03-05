@@ -23,6 +23,7 @@ from scripts.telemetry_risk_profiles import (
 # --- tryb rozszerzony: CoreConfig + audyt plików/bezpieczeństwa ---------------
 from bot_core.config.loader import load_core_config
 from bot_core.config.models import CoreConfig, MetricsServiceConfig
+
 try:
     # w niektórych gałęziach może nie istnieć
     from bot_core.config.models import MetricsServiceTlsConfig  # type: ignore
@@ -113,8 +114,7 @@ if _runtime_create_metrics_server is not None:
                 last_exc = exc
                 continue
         raise RuntimeError(
-            "Nie udało się wywołać create_metrics_server z kompatybilnymi argumentami:"
-            f" {last_exc}"
+            f"Nie udało się wywołać create_metrics_server z kompatybilnymi argumentami: {last_exc}"
         )
 
 else:  # pragma: no cover - wrapper nieaktywowany bez runtime
@@ -122,9 +122,7 @@ else:  # pragma: no cover - wrapper nieaktywowany bez runtime
 
 
 METRICS_RUNTIME_AVAILABLE = JsonlSink is not None and _runtime_create_metrics_server is not None
-METRICS_RUNTIME_UNAVAILABLE_MESSAGE = (
-    "Brak wsparcia gRPC dla MetricsService (zainstaluj grpcio i wygeneruj stuby bot_core.generated.*)."
-)
+METRICS_RUNTIME_UNAVAILABLE_MESSAGE = "Brak wsparcia gRPC dla MetricsService (zainstaluj grpcio i wygeneruj stuby bot_core.generated.*)."
 if _METRICS_RUNTIME_IMPORT_ERROR is not None:
     METRICS_RUNTIME_UNAVAILABLE_MESSAGE = (
         f"{METRICS_RUNTIME_UNAVAILABLE_MESSAGE} Szczegóły: {_METRICS_RUNTIME_IMPORT_ERROR}"
@@ -958,16 +956,13 @@ def _ui_alerts_config_from_args(args: argparse.Namespace) -> dict[str, object]:
             args.ui_alerts_performance_category or _DEFAULT_PERFORMANCE_CATEGORY
         ),
         "performance_severity_warning": (
-            args.ui_alerts_performance_warning_severity
-            or _DEFAULT_PERFORMANCE_SEVERITY_WARNING
+            args.ui_alerts_performance_warning_severity or _DEFAULT_PERFORMANCE_SEVERITY_WARNING
         ),
         "performance_severity_critical": (
-            args.ui_alerts_performance_critical_severity
-            or _DEFAULT_PERFORMANCE_SEVERITY_CRITICAL
+            args.ui_alerts_performance_critical_severity or _DEFAULT_PERFORMANCE_SEVERITY_CRITICAL
         ),
         "performance_severity_recovered": (
-            args.ui_alerts_performance_recovered_severity
-            or _DEFAULT_PERFORMANCE_SEVERITY_RECOVERED
+            args.ui_alerts_performance_recovered_severity or _DEFAULT_PERFORMANCE_SEVERITY_RECOVERED
         ),
         "performance_event_to_frame_warning_ms": (
             args.ui_alerts_performance_event_to_frame_warning_ms
@@ -1043,9 +1038,7 @@ def _load_custom_risk_profiles(
         parser.error(f"Nie udało się wczytać profili ryzyka z {target}: {exc}")
     else:
         if registered:
-            LOGGER.info(
-                "Załadowano %s profil(e) ryzyka telemetrii z %s", len(registered), target
-            )
+            LOGGER.info("Załadowano %s profil(e) ryzyka telemetrii z %s", len(registered), target)
 
     args._ui_alerts_risk_profiles_file_metadata = dict(metadata)
 
@@ -1516,7 +1509,9 @@ def _build_server(
                         audit_backend["note"] = "directory_ignored_memory_backend"
                     elif file_backend_requested and requested_backend != "memory":
                         audit_backend["note"] = (
-                            "file_backend_error" if file_backend_error else "file_backend_unavailable"
+                            "file_backend_error"
+                            if file_backend_error
+                            else "file_backend_unavailable"
                         )
             elif "backend" not in audit_backend:
                 audit_backend["backend"] = "file"
@@ -1540,7 +1535,9 @@ def _build_server(
 
                     router.register(_LoggingChannel())
                 except Exception:
-                    LOGGER.exception("Nie udało się zainicjalizować routera alertów UI – alerty zostaną wyłączone.")
+                    LOGGER.exception(
+                        "Nie udało się zainicjalizować routera alertów UI – alerty zostaną wyłączone."
+                    )
                     router = None
                 if router is not None:
                     options = dict(ui_alerts_options or {})
@@ -1561,12 +1558,23 @@ def _build_server(
                     performance_logging = performance_mode in {"enable", "jsonl"}
                     jank_logging = jank_mode in {"enable", "jsonl"}
                     reduce_category = options.get("reduce_category") or _DEFAULT_UI_CATEGORY
-                    reduce_active = options.get("reduce_active_severity") or _DEFAULT_UI_SEVERITY_ACTIVE
-                    reduce_recovered = options.get("reduce_recovered_severity") or _DEFAULT_UI_SEVERITY_RECOVERED
+                    reduce_active = (
+                        options.get("reduce_active_severity") or _DEFAULT_UI_SEVERITY_ACTIVE
+                    )
+                    reduce_recovered = (
+                        options.get("reduce_recovered_severity") or _DEFAULT_UI_SEVERITY_RECOVERED
+                    )
                     overlay_category = options.get("overlay_category") or _DEFAULT_UI_CATEGORY
-                    overlay_exceeded = options.get("overlay_exceeded_severity") or _DEFAULT_UI_SEVERITY_ACTIVE
-                    overlay_recovered = options.get("overlay_recovered_severity") or _DEFAULT_UI_SEVERITY_RECOVERED
-                    overlay_critical = options.get("overlay_critical_severity") or _DEFAULT_OVERLAY_SEVERITY_CRITICAL
+                    overlay_exceeded = (
+                        options.get("overlay_exceeded_severity") or _DEFAULT_UI_SEVERITY_ACTIVE
+                    )
+                    overlay_recovered = (
+                        options.get("overlay_recovered_severity") or _DEFAULT_UI_SEVERITY_RECOVERED
+                    )
+                    overlay_critical = (
+                        options.get("overlay_critical_severity")
+                        or _DEFAULT_OVERLAY_SEVERITY_CRITICAL
+                    )
                     overlay_threshold_opt = options.get("overlay_critical_threshold")
                     overlay_threshold = (
                         int(overlay_threshold_opt)
@@ -1804,7 +1812,9 @@ def _build_server(
             last_exc = exc
             continue
     # jeśli wszystkie próby zawiodły
-    raise RuntimeError(f"Nie udało się wywołać create_metrics_server z kompatybilnymi argumentami: {last_exc}")
+    raise RuntimeError(
+        f"Nie udało się wywołać create_metrics_server z kompatybilnymi argumentami: {last_exc}"
+    )
 
 
 def _collect_provided_flags(raw_args: Iterable[str]) -> set[str]:
@@ -2197,7 +2207,9 @@ def _apply_core_metrics_config(
     # TLS – użyjemy getattr, by działać bez klas TLS w starszych gałęziach
     tls_cfg = getattr(metrics_config, "tls", None)
     tls_overridden = {
-        key for key in ("tls_cert", "tls_key", "tls_client_ca", "tls_require_client_cert") if key in env_overrides
+        key
+        for key in ("tls_cert", "tls_key", "tls_client_ca", "tls_require_client_cert")
+        if key in env_overrides
     }
 
     enabled = bool(getattr(tls_cfg, "enabled", False)) if tls_cfg is not None else False
@@ -2247,20 +2259,26 @@ def _apply_core_metrics_config(
                     )
             if "tls_require_client_cert" not in tls_overridden:
                 if not flag_provided("--tls-require-client-cert"):
-                    args.tls_require_client_cert = bool(getattr(tls_cfg, "require_client_auth", False))
+                    args.tls_require_client_cert = bool(
+                        getattr(tls_cfg, "require_client_auth", False)
+                    )
                     sources.setdefault("tls_require_client_cert", "core_config")
                     value_sources.setdefault("tls_require_client_cert", "core_config")
                 else:
                     sources.setdefault("tls_require_client_cert", "cli")
     else:
         if "tls_cert" not in tls_overridden:
-            sources.setdefault("tls_cert", "cli" if flag_provided("--tls-cert") else "core_config_disabled")
+            sources.setdefault(
+                "tls_cert", "cli" if flag_provided("--tls-cert") else "core_config_disabled"
+            )
             value_sources.setdefault(
                 "tls_cert",
                 "cli" if flag_provided("--tls-cert") else "core_config_disabled",
             )
         if "tls_key" not in tls_overridden:
-            sources.setdefault("tls_key", "cli" if flag_provided("--tls-key") else "core_config_disabled")
+            sources.setdefault(
+                "tls_key", "cli" if flag_provided("--tls-key") else "core_config_disabled"
+            )
             value_sources.setdefault(
                 "tls_key",
                 "cli" if flag_provided("--tls-key") else "core_config_disabled",
@@ -2287,11 +2305,15 @@ def _apply_core_metrics_config(
     # metadane poza parametrami startowymi
     value_sources.setdefault(
         "ui_alerts_jsonl_path",
-        "core_config" if getattr(metrics_config, "ui_alerts_jsonl_path", None) else "core_config_none",
+        "core_config"
+        if getattr(metrics_config, "ui_alerts_jsonl_path", None)
+        else "core_config_none",
     )
     sources.setdefault(
         "ui_alerts_jsonl_path",
-        "core_config" if getattr(metrics_config, "ui_alerts_jsonl_path", None) else "core_config_none",
+        "core_config"
+        if getattr(metrics_config, "ui_alerts_jsonl_path", None)
+        else "core_config_none",
     )
 
     return sources
@@ -2315,9 +2337,7 @@ def _build_core_config_section(
         section["cli_argument"] = str(Path(requested_path).expanduser())
 
     if core_config.source_path:
-        section["file"] = _file_reference_metadata(
-            core_config.source_path, role="core_config"
-        )
+        section["file"] = _file_reference_metadata(core_config.source_path, role="core_config")
     if core_config.source_directory:
         try:
             section["directory_absolute_path"] = str(
@@ -2347,18 +2367,18 @@ def _build_core_config_section(
         profile_name_value = getattr(metrics_config, "ui_alerts_risk_profile", None)
         if profile_name_value:
             metrics_values["ui_alerts_risk_profile"] = str(profile_name_value)
-        profiles_file_value = getattr(
-            metrics_config, "ui_alerts_risk_profiles_file", None
-        )
+        profiles_file_value = getattr(metrics_config, "ui_alerts_risk_profiles_file", None)
         if profiles_file_value:
             metrics_values["ui_alerts_risk_profiles_file"] = str(profiles_file_value)
         if getattr(metrics_config, "jsonl_path", None):
             metrics_values["jsonl_file"] = _file_reference_metadata(
-                metrics_config.jsonl_path, role="jsonl"  # type: ignore[arg-type]
+                metrics_config.jsonl_path,
+                role="jsonl",  # type: ignore[arg-type]
             )
         if getattr(metrics_config, "ui_alerts_jsonl_path", None):
             metrics_values["ui_alerts_file"] = _file_reference_metadata(
-                metrics_config.ui_alerts_jsonl_path, role="ui_alerts_jsonl"  # type: ignore[arg-type]
+                metrics_config.ui_alerts_jsonl_path,
+                role="ui_alerts_jsonl",  # type: ignore[arg-type]
             )
         tls_cfg = getattr(metrics_config, "tls", None)
         if tls_cfg is not None:
@@ -2371,15 +2391,18 @@ def _build_core_config_section(
             }
             if getattr(tls_cfg, "certificate_path", None):
                 tls_section["certificate_file"] = _file_reference_metadata(
-                    tls_cfg.certificate_path, role="tls_cert"  # type: ignore[arg-type]
+                    tls_cfg.certificate_path,
+                    role="tls_cert",  # type: ignore[arg-type]
                 )
             if getattr(tls_cfg, "private_key_path", None):
                 tls_section["private_key_file"] = _file_reference_metadata(
-                    tls_cfg.private_key_path, role="tls_key"  # type: ignore[arg-type]
+                    tls_cfg.private_key_path,
+                    role="tls_key",  # type: ignore[arg-type]
                 )
             if getattr(tls_cfg, "client_ca_path", None):
                 tls_section["client_ca_file"] = _file_reference_metadata(
-                    tls_cfg.client_ca_path, role="tls_client_ca"  # type: ignore[arg-type]
+                    tls_cfg.client_ca_path,
+                    role="tls_client_ca",  # type: ignore[arg-type]
                 )
             metrics_values["tls"] = tls_section
         metrics_section["values"] = metrics_values
@@ -2481,7 +2504,9 @@ def _build_config_plan_payload(
     )
     requested_backend = (args.ui_alerts_audit_backend or "auto").lower()
     memory_forced = requested_backend == "memory"
-    file_backend_supported = audit_dir_path is not None and FileAlertAuditLog is not None and not memory_forced
+    file_backend_supported = (
+        audit_dir_path is not None and FileAlertAuditLog is not None and not memory_forced
+    )
     audit_section: dict[str, object] = {
         "requested": requested_backend,
         "fsync": bool(args.ui_alerts_audit_fsync),
@@ -2519,12 +2544,17 @@ def _build_config_plan_payload(
     ui_alerts_section.update(
         {
             "reduce_motion_category": args.ui_alerts_reduce_category or _DEFAULT_UI_CATEGORY,
-            "reduce_motion_severity_active": args.ui_alerts_reduce_active_severity or _DEFAULT_UI_SEVERITY_ACTIVE,
-            "reduce_motion_severity_recovered": args.ui_alerts_reduce_recovered_severity or _DEFAULT_UI_SEVERITY_RECOVERED,
+            "reduce_motion_severity_active": args.ui_alerts_reduce_active_severity
+            or _DEFAULT_UI_SEVERITY_ACTIVE,
+            "reduce_motion_severity_recovered": args.ui_alerts_reduce_recovered_severity
+            or _DEFAULT_UI_SEVERITY_RECOVERED,
             "overlay_category": args.ui_alerts_overlay_category or _DEFAULT_UI_CATEGORY,
-            "overlay_severity_exceeded": args.ui_alerts_overlay_exceeded_severity or _DEFAULT_UI_SEVERITY_ACTIVE,
-            "overlay_severity_recovered": args.ui_alerts_overlay_recovered_severity or _DEFAULT_UI_SEVERITY_RECOVERED,
-            "overlay_severity_critical": args.ui_alerts_overlay_critical_severity or _DEFAULT_OVERLAY_SEVERITY_CRITICAL,
+            "overlay_severity_exceeded": args.ui_alerts_overlay_exceeded_severity
+            or _DEFAULT_UI_SEVERITY_ACTIVE,
+            "overlay_severity_recovered": args.ui_alerts_overlay_recovered_severity
+            or _DEFAULT_UI_SEVERITY_RECOVERED,
+            "overlay_severity_critical": args.ui_alerts_overlay_critical_severity
+            or _DEFAULT_OVERLAY_SEVERITY_CRITICAL,
             "overlay_critical_threshold": (
                 args.ui_alerts_overlay_critical_threshold
                 if args.ui_alerts_overlay_critical_threshold is not None
@@ -2536,8 +2566,7 @@ def _build_config_plan_payload(
             "performance_category": args.ui_alerts_performance_category
             or _DEFAULT_PERFORMANCE_CATEGORY,
             "performance_severity_warning": (
-                args.ui_alerts_performance_warning_severity
-                or _DEFAULT_PERFORMANCE_SEVERITY_WARNING
+                args.ui_alerts_performance_warning_severity or _DEFAULT_PERFORMANCE_SEVERITY_WARNING
             ),
             "performance_severity_critical": (
                 args.ui_alerts_performance_critical_severity
@@ -2588,7 +2617,8 @@ def _build_config_plan_payload(
                 else _DEFAULT_PERFORMANCE_RAM_CRITICAL_MEGABYTES
             ),
             "jank_category": args.ui_alerts_jank_category or _DEFAULT_UI_CATEGORY,
-            "jank_severity_spike": args.ui_alerts_jank_spike_severity or _DEFAULT_JANK_SEVERITY_SPIKE,
+            "jank_severity_spike": args.ui_alerts_jank_spike_severity
+            or _DEFAULT_JANK_SEVERITY_SPIKE,
             "jank_severity_critical": (
                 args.ui_alerts_jank_critical_severity
                 if args.ui_alerts_jank_critical_severity is not None
@@ -2604,7 +2634,7 @@ def _build_config_plan_payload(
     risk_profile_meta = getattr(args, "_ui_alerts_risk_profile_metadata", None)
     if risk_profile_meta:
         ui_alerts_section["risk_profile"] = dict(risk_profile_meta)
-    if (risk_profile_summary := getattr(args, "_ui_alerts_risk_profile_summary", None)):
+    if risk_profile_summary := getattr(args, "_ui_alerts_risk_profile_summary", None):
         ui_alerts_section["risk_profile_summary"] = dict(risk_profile_summary)
     risk_profiles_file_meta = getattr(args, "_ui_alerts_risk_profiles_file_metadata", None)
     if risk_profiles_file_meta:
@@ -2783,13 +2813,11 @@ def _build_config_plan_payload(
 
     config_section = runtime_state["ui_alerts_sink"].setdefault("config", {})
     config_section["audit"] = dict(audit_section)
-    if (risk_profile_meta := getattr(args, "_ui_alerts_risk_profile_metadata", None)):
+    if risk_profile_meta := getattr(args, "_ui_alerts_risk_profile_metadata", None):
         config_section["risk_profile"] = dict(risk_profile_meta)
-    if (risk_profile_summary := getattr(args, "_ui_alerts_risk_profile_summary", None)):
+    if risk_profile_summary := getattr(args, "_ui_alerts_risk_profile_summary", None):
         config_section["risk_profile_summary"] = dict(risk_profile_summary)
-    if (risk_profiles_file_meta := getattr(
-        args, "_ui_alerts_risk_profiles_file_metadata", None
-    )):
+    if risk_profiles_file_meta := getattr(args, "_ui_alerts_risk_profiles_file_metadata", None):
         config_section["risk_profiles_file"] = dict(risk_profiles_file_meta)
     if ui_alerts_arg_path is not None and "file" not in runtime_state["ui_alerts_sink"]:
         runtime_state["ui_alerts_sink"]["file"] = _file_reference_metadata(
@@ -2849,15 +2877,11 @@ def _build_config_plan_payload(
                 "environment_applied": (
                     fail_env_entry.get("applied") if fail_env_entry is not None else None
                 ),
-                "environment_reason": (
-                    fail_env_entry.get("reason") if fail_env_entry else None
-                ),
+                "environment_reason": (fail_env_entry.get("reason") if fail_env_entry else None),
                 "environment_parsed_value": (
                     fail_env_entry.get("parsed_value") if fail_env_entry else None
                 ),
-                "environment_note": (
-                    fail_env_entry.get("note") if fail_env_entry else None
-                ),
+                "environment_note": (fail_env_entry.get("note") if fail_env_entry else None),
             }
         ),
         "parameter_sources": {
@@ -2975,7 +2999,9 @@ def main(argv: list[str] | None = None) -> int:
                 )
                 tls_cfg = getattr(metrics_config, "tls", None)
                 if tls_cfg is not None and bool(getattr(tls_cfg, "enabled", False)):
-                    if not getattr(tls_cfg, "certificate_path", None) or not getattr(tls_cfg, "private_key_path", None):
+                    if not getattr(tls_cfg, "certificate_path", None) or not getattr(
+                        tls_cfg, "private_key_path", None
+                    ):
                         parser.error(
                             "Sekcja runtime.metrics_service.tls wymaga pól certificate_path oraz private_key_path"
                         )
@@ -3024,7 +3050,9 @@ def main(argv: list[str] | None = None) -> int:
     if backend_choice not in {"auto", "file", "memory"}:
         parser.error("--ui-alerts-audit-backend wymaga wartości auto/file/memory")
     if backend_choice == "file" and not args.ui_alerts_audit_dir:
-        parser.error("--ui-alerts-audit-backend file wymaga jednoczesnego podania --ui-alerts-audit-dir")
+        parser.error(
+            "--ui-alerts-audit-backend file wymaga jednoczesnego podania --ui-alerts-audit-dir"
+        )
 
     plan_requested = bool(
         args.config_plan_jsonl or args.print_config_plan or args.fail_on_security_warnings
@@ -3128,9 +3156,7 @@ def main(argv: list[str] | None = None) -> int:
             args.ui_alerts_reduce_recovered_severity or _DEFAULT_UI_SEVERITY_RECOVERED
         )
         overlay_category = args.ui_alerts_overlay_category or _DEFAULT_UI_CATEGORY
-        overlay_exceeded = (
-            args.ui_alerts_overlay_exceeded_severity or _DEFAULT_UI_SEVERITY_ACTIVE
-        )
+        overlay_exceeded = args.ui_alerts_overlay_exceeded_severity or _DEFAULT_UI_SEVERITY_ACTIVE
         overlay_recovered = (
             args.ui_alerts_overlay_recovered_severity or _DEFAULT_UI_SEVERITY_RECOVERED
         )
@@ -3142,20 +3168,15 @@ def main(argv: list[str] | None = None) -> int:
             if args.ui_alerts_overlay_critical_threshold is not None
             else _DEFAULT_OVERLAY_THRESHOLD
         )
-        performance_category = (
-            args.ui_alerts_performance_category or _DEFAULT_PERFORMANCE_CATEGORY
-        )
+        performance_category = args.ui_alerts_performance_category or _DEFAULT_PERFORMANCE_CATEGORY
         performance_warning = (
-            args.ui_alerts_performance_warning_severity
-            or _DEFAULT_PERFORMANCE_SEVERITY_WARNING
+            args.ui_alerts_performance_warning_severity or _DEFAULT_PERFORMANCE_SEVERITY_WARNING
         )
         performance_critical = (
-            args.ui_alerts_performance_critical_severity
-            or _DEFAULT_PERFORMANCE_SEVERITY_CRITICAL
+            args.ui_alerts_performance_critical_severity or _DEFAULT_PERFORMANCE_SEVERITY_CRITICAL
         )
         performance_recovered = (
-            args.ui_alerts_performance_recovered_severity
-            or _DEFAULT_PERFORMANCE_SEVERITY_RECOVERED
+            args.ui_alerts_performance_recovered_severity or _DEFAULT_PERFORMANCE_SEVERITY_RECOVERED
         )
         performance_event_warning = (
             float(args.ui_alerts_performance_event_to_frame_warning_ms)

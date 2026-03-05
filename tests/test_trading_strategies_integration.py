@@ -78,7 +78,9 @@ def test_trading_strategies_single_session_matches_engine(
     assert metrics["initial_capital"] == pytest.approx(12_500.0, rel=1e-12)
     assert metrics["fee_bps"] == pytest.approx(7.5, rel=1e-12)
 
-    pd.testing.assert_frame_equal(trades.reset_index(drop=True), engine_result.trades.reset_index(drop=True))
+    pd.testing.assert_frame_equal(
+        trades.reset_index(drop=True), engine_result.trades.reset_index(drop=True)
+    )
     pd.testing.assert_series_equal(equity, engine_result.equity_curve)
 
     captured = capsys.readouterr()

@@ -1,4 +1,5 @@
 """Bridges between auto-trader and risk engine payloads."""
+
 from __future__ import annotations
 
 from dataclasses import dataclass, field

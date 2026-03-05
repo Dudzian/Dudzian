@@ -42,7 +42,9 @@ def _make_artifact(metadata: dict[str, object] | None = None) -> ModelArtifact:
     )
 
 
-def _make_report(version: str, directional: float, mae: float, status: str = "improved") -> ModelQualityReport:
+def _make_report(
+    version: str, directional: float, mae: float, status: str = "improved"
+) -> ModelQualityReport:
     metrics = {"summary": {"directional_accuracy": directional, "mae": mae}}
     return ModelQualityReport(
         model_name="decision_engine",
@@ -58,7 +60,9 @@ def test_offline_snapshot_matches_champion_registry(tmp_path: Path) -> None:
     repo_root = tmp_path / "var" / "models"
     model_dir = repo_root / "decision_engine"
     repository = FilesystemModelRepository(model_dir)
-    repository.publish(_make_artifact(), version="v1", filename="model-v1.json", aliases=("latest",), activate=True)
+    repository.publish(
+        _make_artifact(), version="v1", filename="model-v1.json", aliases=("latest",), activate=True
+    )
 
     quality_dir = repo_root / "quality"
     first_decision = record_model_quality_report(
@@ -91,7 +95,11 @@ def test_offline_snapshot_matches_champion_registry(tmp_path: Path) -> None:
     history = snapshot["controller_history"]
     assert history and history[0]["event"] == "champion"
     assert history[0]["model"] == champion["version"]
-    assert any(entry["event"] == "challenger" and entry["model"] == second_decision.candidate.get("version") for entry in history)
+    assert any(
+        entry["event"] == "challenger"
+        and entry["model"] == second_decision.candidate.get("version")
+        for entry in history
+    )
 
     guardrail_summary = snapshot["guardrail_summary"]
     assert guardrail_summary["status"] == champion["status"]

@@ -138,9 +138,7 @@ def _collect_stage6_tool_metadata() -> tuple[Dict[str, object], list[str]]:
 def _print_core_diff(destination: Path, original: str | None, updated: str) -> None:
     original_exists = original is not None
     before_label = (
-        f"{destination} (przed migracją)"
-        if original_exists
-        else f"{destination} (nowy plik)"
+        f"{destination} (przed migracją)" if original_exists else f"{destination} (nowy plik)"
     )
     after_label = f"{destination} (po migracji)"
     before_lines = (original or "").splitlines(keepends=True)
@@ -257,41 +255,27 @@ def _format_risk_summary(summary: Dict[str, Dict[str, object]]) -> str:
         std_dev = data.get("risk_score_stddev")
         std_display = f"{std_dev:.3f}" if isinstance(std_dev, (int, float)) else "brak"
         score_p10 = data.get("risk_score_p10")
-        score_p10_display = (
-            f"{score_p10:.2f}" if isinstance(score_p10, (int, float)) else "brak"
-        )
+        score_p10_display = f"{score_p10:.2f}" if isinstance(score_p10, (int, float)) else "brak"
         score_p25 = data.get("risk_score_p25")
-        score_p25_display = (
-            f"{score_p25:.2f}" if isinstance(score_p25, (int, float)) else "brak"
-        )
+        score_p25_display = f"{score_p25:.2f}" if isinstance(score_p25, (int, float)) else "brak"
         score_p75 = data.get("risk_score_p75")
-        score_p75_display = (
-            f"{score_p75:.2f}" if isinstance(score_p75, (int, float)) else "brak"
-        )
+        score_p75_display = f"{score_p75:.2f}" if isinstance(score_p75, (int, float)) else "brak"
         score_p90 = data.get("risk_score_p90")
-        score_p90_display = (
-            f"{score_p90:.2f}" if isinstance(score_p90, (int, float)) else "brak"
-        )
+        score_p90_display = f"{score_p90:.2f}" if isinstance(score_p90, (int, float)) else "brak"
         score_iqr = data.get("risk_score_iqr")
-        score_iqr_display = (
-            f"{score_iqr:.2f}" if isinstance(score_iqr, (int, float)) else "brak"
-        )
+        score_iqr_display = f"{score_iqr:.2f}" if isinstance(score_iqr, (int, float)) else "brak"
         score_variance = data.get("risk_score_variance")
         score_variance_display = (
             f"{score_variance:.4f}" if isinstance(score_variance, (int, float)) else "brak"
         )
         score_mad = data.get("risk_score_mad")
-        score_mad_display = (
-            f"{score_mad:.3f}" if isinstance(score_mad, (int, float)) else "brak"
-        )
+        score_mad_display = f"{score_mad:.3f}" if isinstance(score_mad, (int, float)) else "brak"
         score_range = data.get("risk_score_range")
         score_range_display = (
             f"{score_range:.2f}" if isinstance(score_range, (int, float)) else "brak"
         )
         score_cv = data.get("risk_score_cv")
-        score_cv_display = (
-            f"{score_cv:.3f}" if isinstance(score_cv, (int, float)) else "brak"
-        )
+        score_cv_display = f"{score_cv:.3f}" if isinstance(score_cv, (int, float)) else "brak"
         score_skewness = data.get("risk_score_skewness")
         score_skew_display = (
             f"{score_skewness:.3f}" if isinstance(score_skewness, (int, float)) else "brak"
@@ -301,9 +285,7 @@ def _format_risk_summary(summary: Dict[str, Dict[str, object]]) -> str:
             f"{score_kurtosis:.3f}" if isinstance(score_kurtosis, (int, float)) else "brak"
         )
         score_jb = data.get("risk_score_jarque_bera")
-        score_jb_display = (
-            f"{score_jb:.3f}" if isinstance(score_jb, (int, float)) else "brak"
-        )
+        score_jb_display = f"{score_jb:.3f}" if isinstance(score_jb, (int, float)) else "brak"
         share = data.get("count_share", 0.0)
         share_display = f"{share * 100:.1f}%" if isinstance(share, (int, float)) else "brak"
         score_cov = data.get("score_coverage", 0.0)
@@ -315,45 +297,27 @@ def _format_risk_summary(summary: Dict[str, Dict[str, object]]) -> str:
             f"{rank_cov * 100:.1f}%" if isinstance(rank_cov, (int, float)) else "brak"
         )
         rank_p10 = data.get("rank_p10")
-        rank_p10_display = (
-            f"{rank_p10:.2f}" if isinstance(rank_p10, (int, float)) else "brak"
-        )
+        rank_p10_display = f"{rank_p10:.2f}" if isinstance(rank_p10, (int, float)) else "brak"
         rank_p25 = data.get("rank_p25")
-        rank_p25_display = (
-            f"{rank_p25:.2f}" if isinstance(rank_p25, (int, float)) else "brak"
-        )
+        rank_p25_display = f"{rank_p25:.2f}" if isinstance(rank_p25, (int, float)) else "brak"
         rank_p75 = data.get("rank_p75")
-        rank_p75_display = (
-            f"{rank_p75:.2f}" if isinstance(rank_p75, (int, float)) else "brak"
-        )
+        rank_p75_display = f"{rank_p75:.2f}" if isinstance(rank_p75, (int, float)) else "brak"
         rank_p90 = data.get("rank_p90")
-        rank_p90_display = (
-            f"{rank_p90:.2f}" if isinstance(rank_p90, (int, float)) else "brak"
-        )
+        rank_p90_display = f"{rank_p90:.2f}" if isinstance(rank_p90, (int, float)) else "brak"
         rank_iqr = data.get("rank_iqr")
-        rank_iqr_display = (
-            f"{rank_iqr:.2f}" if isinstance(rank_iqr, (int, float)) else "brak"
-        )
+        rank_iqr_display = f"{rank_iqr:.2f}" if isinstance(rank_iqr, (int, float)) else "brak"
         rank_std = data.get("rank_stddev")
-        rank_std_display = (
-            f"{rank_std:.3f}" if isinstance(rank_std, (int, float)) else "brak"
-        )
+        rank_std_display = f"{rank_std:.3f}" if isinstance(rank_std, (int, float)) else "brak"
         rank_variance = data.get("rank_variance")
         rank_variance_display = (
             f"{rank_variance:.4f}" if isinstance(rank_variance, (int, float)) else "brak"
         )
         rank_mad = data.get("rank_mad")
-        rank_mad_display = (
-            f"{rank_mad:.3f}" if isinstance(rank_mad, (int, float)) else "brak"
-        )
+        rank_mad_display = f"{rank_mad:.3f}" if isinstance(rank_mad, (int, float)) else "brak"
         rank_range = data.get("rank_range")
-        rank_range_display = (
-            f"{rank_range:.2f}" if isinstance(rank_range, (int, float)) else "brak"
-        )
+        rank_range_display = f"{rank_range:.2f}" if isinstance(rank_range, (int, float)) else "brak"
         rank_cv = data.get("rank_cv")
-        rank_cv_display = (
-            f"{rank_cv:.3f}" if isinstance(rank_cv, (int, float)) else "brak"
-        )
+        rank_cv_display = f"{rank_cv:.3f}" if isinstance(rank_cv, (int, float)) else "brak"
         rank_skewness = data.get("rank_skewness")
         rank_skew_display = (
             f"{rank_skewness:.3f}" if isinstance(rank_skewness, (int, float)) else "brak"
@@ -363,14 +327,10 @@ def _format_risk_summary(summary: Dict[str, Dict[str, object]]) -> str:
             f"{rank_kurtosis:.3f}" if isinstance(rank_kurtosis, (int, float)) else "brak"
         )
         rank_jb = data.get("rank_jarque_bera")
-        rank_jb_display = (
-            f"{rank_jb:.3f}" if isinstance(rank_jb, (int, float)) else "brak"
-        )
+        rank_jb_display = f"{rank_jb:.3f}" if isinstance(rank_jb, (int, float)) else "brak"
         pair_count = data.get("score_rank_count", 0)
         pair_cov = data.get("score_rank_covariance")
-        pair_cov_display = (
-            f"{pair_cov:.4f}" if isinstance(pair_cov, (int, float)) else "brak"
-        )
+        pair_cov_display = f"{pair_cov:.4f}" if isinstance(pair_cov, (int, float)) else "brak"
         pair_pearson = data.get("score_rank_pearson")
         pair_pearson_display = (
             f"{pair_pearson:.3f}" if isinstance(pair_pearson, (int, float)) else "brak"
@@ -380,9 +340,7 @@ def _format_risk_summary(summary: Dict[str, Dict[str, object]]) -> str:
             f"{pair_spearman:.3f}" if isinstance(pair_spearman, (int, float)) else "brak"
         )
         pair_slope = data.get("score_rank_regression_slope")
-        pair_slope_display = (
-            f"{pair_slope:.3f}" if isinstance(pair_slope, (int, float)) else "brak"
-        )
+        pair_slope_display = f"{pair_slope:.3f}" if isinstance(pair_slope, (int, float)) else "brak"
         pair_intercept = data.get("score_rank_regression_intercept")
         pair_intercept_display = (
             f"{pair_intercept:.3f}" if isinstance(pair_intercept, (int, float)) else "brak"
@@ -392,21 +350,13 @@ def _format_risk_summary(summary: Dict[str, Dict[str, object]]) -> str:
             f"{pair_r_squared:.3f}" if isinstance(pair_r_squared, (int, float)) else "brak"
         )
         pair_bias = data.get("score_rank_regression_bias")
-        pair_bias_display = (
-            f"{pair_bias:.3f}" if isinstance(pair_bias, (int, float)) else "brak"
-        )
+        pair_bias_display = f"{pair_bias:.3f}" if isinstance(pair_bias, (int, float)) else "brak"
         pair_mae = data.get("score_rank_regression_mae")
-        pair_mae_display = (
-            f"{pair_mae:.3f}" if isinstance(pair_mae, (int, float)) else "brak"
-        )
+        pair_mae_display = f"{pair_mae:.3f}" if isinstance(pair_mae, (int, float)) else "brak"
         pair_mse = data.get("score_rank_regression_mse")
-        pair_mse_display = (
-            f"{pair_mse:.4f}" if isinstance(pair_mse, (int, float)) else "brak"
-        )
+        pair_mse_display = f"{pair_mse:.4f}" if isinstance(pair_mse, (int, float)) else "brak"
         pair_rmse = data.get("score_rank_regression_rmse")
-        pair_rmse_display = (
-            f"{pair_rmse:.3f}" if isinstance(pair_rmse, (int, float)) else "brak"
-        )
+        pair_rmse_display = f"{pair_rmse:.3f}" if isinstance(pair_rmse, (int, float)) else "brak"
         pair_residual_variance = data.get("score_rank_regression_residual_variance")
         pair_residual_variance_display = (
             f"{pair_residual_variance:.4f}"
@@ -503,8 +453,6 @@ def _format_risk_summary(summary: Dict[str, Dict[str, object]]) -> str:
     return "\n".join(lines)
 
 
-
-
 def _load_secret_payload(path: Path) -> Mapping[str, Any]:
     try:
         text = path.read_text(encoding="utf-8")
@@ -568,7 +516,9 @@ def _resolve_rotation_passphrase(args: argparse.Namespace, current: str) -> str:
         try:
             return path.read_text(encoding="utf-8").strip()
         except OSError as exc:
-            raise SystemExit(f"Nie można odczytać pliku z nowym hasłem magazynu sekretów: {exc}") from exc
+            raise SystemExit(
+                f"Nie można odczytać pliku z nowym hasłem magazynu sekretów: {exc}"
+            ) from exc
     if args.secrets_rotate_passphrase_env:
         value = os.environ.get(args.secrets_rotate_passphrase_env)
         if value:
@@ -621,19 +571,23 @@ def _apply_secret_filters(
 
 
 def _configure_migration_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(
-        description="Migracja presetów GUI do Stage6 core.yaml"
+    parser = argparse.ArgumentParser(description="Migracja presetów GUI do Stage6 core.yaml")
+    parser.add_argument(
+        "--core-config", required=True, help="Ścieżka do docelowego pliku core.yaml"
     )
-    parser.add_argument("--core-config", required=True, help="Ścieżka do docelowego pliku core.yaml")
     parser.add_argument("--preset", required=True, help="Preset GUI (JSON/YAML) do zaimportowania")
     parser.add_argument("--profile-name", help="Nazwa profilu ryzyka utworzonego na bazie presetu")
-    parser.add_argument("--template-profile", help="Profil bazowy użyty do uzupełnienia brakujących pól")
+    parser.add_argument(
+        "--template-profile", help="Profil bazowy użyty do uzupełnienia brakujących pól"
+    )
     parser.add_argument(
         "--runtime-entrypoint",
         default="trading_gui",
         help="Entrypoint runtime, który ma korzystać z nowego profilu",
     )
-    parser.add_argument("--output", help="Alternatywna ścieżka zapisu YAML (domyślnie nadpisuje core.yaml)")
+    parser.add_argument(
+        "--output", help="Alternatywna ścieżka zapisu YAML (domyślnie nadpisuje core.yaml)"
+    )
     parser.add_argument(
         "--core-backup",
         nargs="?",
@@ -648,7 +602,9 @@ def _configure_migration_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Po migracji wypisz diff zmian w core.yaml względem poprzedniej zawartości.",
     )
-    parser.add_argument("--dry-run", action="store_true", help="Wyświetl wynik YAML bez zapisywania")
+    parser.add_argument(
+        "--dry-run", action="store_true", help="Wyświetl wynik YAML bez zapisywania"
+    )
     parser.add_argument("--secrets-input", help="Plik z sekretami GUI (JSON/YAML)")
     parser.add_argument(
         "--secrets-output",
@@ -847,7 +803,12 @@ def _run_stage6_migration(argv: Sequence[str]) -> int:
     if (
         secrets_output_path is None
         and desktop_paths is not None
-        and (secrets_payload is not None or rotation_requested or backup_requested or recover_requested)
+        and (
+            secrets_payload is not None
+            or rotation_requested
+            or backup_requested
+            or recover_requested
+        )
     ):
         secrets_output_path = desktop_paths.secret_vault_file
         if not used_default_vault and not args.dry_run:
@@ -905,7 +866,9 @@ def _run_stage6_migration(argv: Sequence[str]) -> int:
             )
         )
 
-    if (rotation_requested or backup_requested or recover_requested) and secrets_output_path is None:
+    if (
+        rotation_requested or backup_requested or recover_requested
+    ) and secrets_output_path is None:
         parser.error(
             "Operacje rotacji/backup/odzyskiwania wymagają wskazania --secrets-output lub --desktop-root."
         )
@@ -954,7 +917,9 @@ def _run_stage6_migration(argv: Sequence[str]) -> int:
     if args.dry_run:
         if secret_entries is not None:
             if entries_count:
-                message = "Tryb dry-run: pominięto zapis {count} sekretów".format(count=entries_count)
+                message = "Tryb dry-run: pominięto zapis {count} sekretów".format(
+                    count=entries_count
+                )
                 if secrets_output_path is not None:
                     message += " do magazynu {path}".format(path=secrets_output_path)
                 else:
@@ -988,7 +953,9 @@ def _run_stage6_migration(argv: Sequence[str]) -> int:
             try:
                 backup_text = backup_source_path.read_text(encoding="utf-8")
             except OSError as exc:
-                raise SystemExit(f"Nie udało się odczytać kopii zapasowej magazynu sekretów: {exc}") from exc
+                raise SystemExit(
+                    f"Nie udało się odczytać kopii zapasowej magazynu sekretów: {exc}"
+                ) from exc
             storage = EncryptedFileSecretStorage.recover_from_backup(
                 secrets_output_path,
                 _current_passphrase(),
@@ -1082,11 +1049,7 @@ def _run_stage6_migration(argv: Sequence[str]) -> int:
             warnings.append(warning)
 
     secrets_output_checksum: str | None = None
-    if (
-        secrets_output_path is not None
-        and not args.dry_run
-        and secrets_output_path.exists()
-    ):
+    if secrets_output_path is not None and not args.dry_run and secrets_output_path.exists():
         secrets_output_checksum, warning = _safe_file_checksum(secrets_output_path)
         if warning:
             warnings.append(warning)
@@ -1112,7 +1075,9 @@ def _run_stage6_migration(argv: Sequence[str]) -> int:
         file=getattr(args, "secret_passphrase_file", None),
         env=getattr(args, "secret_passphrase_env", None),
     )
-    output_passphrase_info["used"] = bool(secrets_written or rotation_performed or recovered_from_backup)
+    output_passphrase_info["used"] = bool(
+        secrets_written or rotation_performed or recovered_from_backup
+    )
     output_passphrase_info["rotated"] = bool(rotation_performed)
 
     rotation_passphrase_info = _describe_passphrase_args(
@@ -1180,9 +1145,7 @@ def _run_stage6_migration(argv: Sequence[str]) -> int:
                 encoding="utf-8",
             )
         except OSError as exc:
-            raise SystemExit(
-                f"Nie udało się zapisać podsumowania migracji: {exc}"
-            ) from exc
+            raise SystemExit(f"Nie udało się zapisać podsumowania migracji: {exc}") from exc
         else:
             print(f"Zapisano podsumowanie migracji do {summary_path}")
 

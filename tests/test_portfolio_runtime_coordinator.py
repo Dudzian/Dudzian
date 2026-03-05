@@ -128,6 +128,8 @@ def test_portfolio_runtime_coordinator_respects_cooldown() -> None:
     assert coordinator.evaluate() is not None
     assert calls["alloc"] == 1
 
-    current_time = current_time + timedelta(seconds=governor._config.rebalance_cooldown_seconds + 10)  # type: ignore[attr-defined]
+    current_time = current_time + timedelta(
+        seconds=governor._config.rebalance_cooldown_seconds + 10
+    )  # type: ignore[attr-defined]
     assert coordinator.evaluate() is not None
     assert calls["alloc"] == 2

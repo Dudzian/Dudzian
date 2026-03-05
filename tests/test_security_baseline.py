@@ -178,7 +178,11 @@ def test_security_baseline_reports_ok_for_hardened_config(tmp_path: Path) -> Non
     )
 
     # --- DIAGNOSTYKA: jeżeli fail, pokaż dokładnie co i dlaczego ---
-    if getattr(report, "status", None) != "ok" or getattr(report, "warnings", None) or getattr(report, "errors", None):
+    if (
+        getattr(report, "status", None) != "ok"
+        or getattr(report, "warnings", None)
+        or getattr(report, "errors", None)
+    ):
         diag = []
         diag.append(_dump_report(report))
         diag.append("TLS_FILE_METADATA\n")

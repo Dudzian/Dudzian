@@ -76,9 +76,7 @@ def test_observe_pandas_warning_records_metrics_labels() -> None:
     registry = MetricsRegistry()
     reset_pandas_warning_tracking()
     try:
-        observe_pandas_warning(
-            component="engine", category="PerformanceWarning", registry=registry
-        )
+        observe_pandas_warning(component="engine", category="PerformanceWarning", registry=registry)
         counter = registry.get("bot_pandas_warnings_total")
         assert isinstance(counter, CounterMetric)
         assert counter.value(
@@ -88,7 +86,9 @@ def test_observe_pandas_warning_records_metrics_labels() -> None:
         reset_pandas_warning_tracking()
 
 
-def test_observe_pandas_warning_emits_alert_after_threshold(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_observe_pandas_warning_emits_alert_after_threshold(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     registry = MetricsRegistry()
     reset_pandas_warning_tracking()
     alerts: list[dict[str, object]] = []
@@ -123,5 +123,3 @@ def test_observe_pandas_warning_emits_alert_after_threshold(monkeypatch: pytest.
         ) == pytest.approx(float(metrics_module._PANDAS_WARNING_ALERT_THRESHOLD))
     finally:
         reset_pandas_warning_tracking()
-
-

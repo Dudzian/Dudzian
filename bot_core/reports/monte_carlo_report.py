@@ -37,7 +37,9 @@ class MonteCarloReportBuilder:
     def build(self) -> MonteCarloReport:
         summary = self._build_summary_frame()
         metadata = self._build_metadata()
-        return MonteCarloReport(summary=summary, metadata=metadata, price_paths=self._result.price_paths)
+        return MonteCarloReport(
+            summary=summary, metadata=metadata, price_paths=self._result.price_paths
+        )
 
     def _build_summary_frame(self) -> pd.DataFrame:
         rows = []

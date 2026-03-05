@@ -1,4 +1,5 @@
 """Paper trading adapter backed by the unified matching engine."""
+
 from __future__ import annotations
 
 import logging
@@ -29,7 +30,9 @@ class _PortfolioState:
 class PaperTradingAdapter:
     """ExecutionService-compatible adapter that simulates fills locally."""
 
-    def __init__(self, *, initial_balance: float = 10_000.0, matching: MatchingConfig | None = None) -> None:
+    def __init__(
+        self, *, initial_balance: float = 10_000.0, matching: MatchingConfig | None = None
+    ) -> None:
         if MatchingEngine is None or MatchingConfig is None:
             raise RuntimeError("PaperTradingAdapter wymaga modułu bot_core.backtest.simulation")
         self._initial_balance = float(initial_balance)
@@ -39,11 +42,15 @@ class PaperTradingAdapter:
     def _ensure_state(self, symbol: str) -> _PortfolioState:
         state = self._portfolios.get(symbol)
         if state is None:
-            state = _PortfolioState(cash=self._initial_balance, matching=MatchingEngine(self._matching_cfg))
+            state = _PortfolioState(
+                cash=self._initial_balance, matching=MatchingEngine(self._matching_cfg)
+            )
             self._portfolios[symbol] = state
         return state
 
-    def update_market_data(self, symbol: str, timeframe: str, market_payload: Mapping[str, object]) -> None:
+    def update_market_data(
+        self, symbol: str, timeframe: str, market_payload: Mapping[str, object]
+    ) -> None:
         state = self._ensure_state(symbol)
         bar = self._extract_bar(market_payload)
         if bar is None or state.matching is None:
@@ -60,7 +67,9 @@ class PaperTradingAdapter:
             default=state.last_price,
         )
 
-    def submit_order(self, *, symbol: str, side: str, size: float, **kwargs) -> Mapping[str, object]:
+    def submit_order(
+        self, *, symbol: str, side: str, size: float, **kwargs
+    ) -> Mapping[str, object]:
         state = self._ensure_state(symbol)
         if state.matching is None:
             state.matching = MatchingEngine(self._matching_cfg)
@@ -92,7 +101,9 @@ class PaperTradingAdapter:
 
         state.position = previous_position + direction * fill.size
         if state.position:
-            state.avg_price = ((state.avg_price * previous_position) + fill.price * fill.size) / state.position
+            state.avg_price = (
+                (state.avg_price * previous_position) + fill.price * fill.size
+            ) / state.position
         else:
             state.avg_price = 0.0
 
@@ -126,7 +137,13 @@ class PaperTradingAdapter:
             close = market_payload.get("price")
             if close is None:
                 return None
-            bar = {"open": float(close), "high": float(close), "low": float(close), "close": float(close), "volume": 0.0}
+            bar = {
+                "open": float(close),
+                "high": float(close),
+                "low": float(close),
+                "close": float(close),
+                "volume": 0.0,
+            }
         bar.setdefault("timestamp", datetime.now(timezone.utc))
         return bar
 

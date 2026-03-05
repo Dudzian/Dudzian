@@ -15,7 +15,9 @@ def _snapshot(price: float, *, volume: float = 1_000_000.0, timestamp: int = 0) 
 
 
 def test_mean_reversion_generates_entry_and_exit_signals() -> None:
-    settings = MeanReversionSettings(lookback=10, entry_zscore=1.0, exit_zscore=0.2, min_volume_usd=0)
+    settings = MeanReversionSettings(
+        lookback=10, entry_zscore=1.0, exit_zscore=0.2, min_volume_usd=0
+    )
     strategy = MeanReversionStrategy(settings)
 
     history = [_snapshot(100.0 + i * 0.1, timestamp=i) for i in range(10)]
@@ -35,7 +37,9 @@ def test_mean_reversion_generates_entry_and_exit_signals() -> None:
 
 
 def test_mean_reversion_respects_volatility_cap() -> None:
-    settings = MeanReversionSettings(lookback=6, entry_zscore=1.0, exit_zscore=0.2, volatility_cap=0.01, min_volume_usd=0)
+    settings = MeanReversionSettings(
+        lookback=6, entry_zscore=1.0, exit_zscore=0.2, volatility_cap=0.01, min_volume_usd=0
+    )
     strategy = MeanReversionStrategy(settings)
 
     base_history = [_snapshot(100.0, timestamp=i) for i in range(6)]

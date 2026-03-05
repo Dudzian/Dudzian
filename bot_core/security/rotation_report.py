@@ -146,4 +146,3 @@ __all__ = [
     "build_rotation_summary_entry",
     "write_rotation_summary",
 ]
-

@@ -1,4 +1,5 @@
 """Strategia statystycznego powrotu do średniej."""
+
 from __future__ import annotations
 
 from collections import deque
@@ -64,7 +65,10 @@ class MeanReversionStrategy(StrategyEngine):
         volatility_stop = realized_vol > self._settings.volatility_cap * 1.5
 
         if state.position == 0:
-            if zscore <= -self._settings.entry_zscore and realized_vol <= self._settings.volatility_cap:
+            if (
+                zscore <= -self._settings.entry_zscore
+                and realized_vol <= self._settings.volatility_cap
+            ):
                 state.position = 1
                 state.bars_in_position = 0
                 signals.append(
@@ -79,7 +83,10 @@ class MeanReversionStrategy(StrategyEngine):
                         },
                     )
                 )
-            elif zscore >= self._settings.entry_zscore and realized_vol <= self._settings.volatility_cap:
+            elif (
+                zscore >= self._settings.entry_zscore
+                and realized_vol <= self._settings.volatility_cap
+            ):
                 state.position = -1
                 state.bars_in_position = 0
                 signals.append(

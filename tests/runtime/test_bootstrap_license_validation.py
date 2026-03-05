@@ -126,10 +126,14 @@ def _build_signed_license(
     license_path = base / "license.json"
     fingerprint_path = base / "fingerprint.json"
     license_path.write_text(json.dumps(license_document, ensure_ascii=False), encoding="utf-8")
-    fingerprint_path.write_text(json.dumps(fingerprint_document, ensure_ascii=False), encoding="utf-8")
+    fingerprint_path.write_text(
+        json.dumps(fingerprint_document, ensure_ascii=False), encoding="utf-8"
+    )
 
     license_keys_path = _write_keys(base / "license_keys.json", key_id="lic-1", secret=LICENSE_KEY)
-    fingerprint_keys_path = _write_keys(base / "fingerprint_keys.json", key_id="fp-1", secret=FINGERPRINT_KEY)
+    fingerprint_keys_path = _write_keys(
+        base / "fingerprint_keys.json", key_id="fp-1", secret=FINGERPRINT_KEY
+    )
 
     return {
         "license_path": str(license_path),
@@ -199,6 +203,7 @@ def _bootstrap(tmp_path: Path, *, mutate_license=None, monkeypatch=None, license
         "stub": lambda credentials, **kwargs: StubExchangeAdapter(credentials),
     }
     if monkeypatch is not None:
+
         class _RouterStub:
             def register(self, *_args, **_kwargs):
                 return None
@@ -322,8 +327,7 @@ def test_bootstrap_environment_rejects_revoked_license(tmp_path: Path, monkeypat
         for event in captured
     )
     assert any(
-        (event.context or {}).get("revocation_reason") == "Klucz unieważniony"
-        for event in captured
+        (event.context or {}).get("revocation_reason") == "Klucz unieważniony" for event in captured
     )
     assert any(
         (event.context or {}).get("revocation_revoked_at") == "2024-06-30T18:30:00+00:00"
@@ -367,7 +371,9 @@ def test_bootstrap_environment_accepts_clear_revocation_list(tmp_path: Path, mon
     assert any(event.severity in {AlertSeverity.INFO, AlertSeverity.WARNING} for event in events)
 
 
-def test_bootstrap_environment_requires_keys_for_signed_revocations(tmp_path: Path, monkeypatch) -> None:
+def test_bootstrap_environment_requires_keys_for_signed_revocations(
+    tmp_path: Path, monkeypatch
+) -> None:
     revocation_path = _write_revocations(
         tmp_path,
         revoked=[],

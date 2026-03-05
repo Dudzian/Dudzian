@@ -1,4 +1,5 @@
 """Testy dla modułu zarządzania zasobami runtime."""
+
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -29,12 +30,14 @@ class _DummyRuntime:
 
 
 def test_parse_strategy_affinity_specs_normalises_and_filters() -> None:
-    specs = parse_strategy_affinity_specs([
-        "alpha=0,1, 2",
-        "beta=",
-        "gamma=3,3",
-        "",
-    ])
+    specs = parse_strategy_affinity_specs(
+        [
+            "alpha=0,1, 2",
+            "beta=",
+            "gamma=3,3",
+            "",
+        ]
+    )
     assert specs == [
         StrategyAffinity(strategy="alpha", cores=(0, 1, 2)),
         StrategyAffinity(strategy="gamma", cores=(3,)),
@@ -42,11 +45,13 @@ def test_parse_strategy_affinity_specs_normalises_and_filters() -> None:
 
 
 def test_parse_feed_throttle_specs_supports_burst() -> None:
-    specs = parse_feed_throttle_specs([
-        "ticks=5:3",
-        "orders=2",
-        "",
-    ])
+    specs = parse_feed_throttle_specs(
+        [
+            "ticks=5:3",
+            "orders=2",
+            "",
+        ]
+    )
     assert specs == [
         DataFeedThrottlePolicy(feed="ticks", rate_per_second=5.0, burst=3),
         DataFeedThrottlePolicy(feed="orders", rate_per_second=2.0, burst=1),

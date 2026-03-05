@@ -95,12 +95,16 @@ def _stub_config(cert: Path, key: Path, *, with_warning: bool) -> SimpleNamespac
         private_key_password_env=None,
         pinned_fingerprints=(),
     )
-    metrics_service = SimpleNamespace(enabled=True, auth_token="" if with_warning else "secret", tls=metrics_tls)
+    metrics_service = SimpleNamespace(
+        enabled=True, auth_token="" if with_warning else "secret", tls=metrics_tls
+    )
     risk_service = SimpleNamespace(enabled=False, auth_token="token", tls=risk_tls)
     return SimpleNamespace(metrics_service=metrics_service, risk_service=risk_service)
 
 
-def test_audit_tls_assets_script_json_output(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_audit_tls_assets_script_json_output(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     cert_path = _write(tmp_path / "cert.pem", _CERT)
     key_path = _write(tmp_path / "key.pem", _KEY)
     config_path = tmp_path / "core.yaml"
@@ -127,7 +131,9 @@ def test_audit_tls_assets_script_json_output(tmp_path: Path, monkeypatch: pytest
     assert payload["errors"]
 
 
-def test_audit_tls_assets_script_env_configuration(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]) -> None:
+def test_audit_tls_assets_script_env_configuration(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
     cert_path = _write(tmp_path / "cert.pem", _CERT)
     key_path = _write(tmp_path / "key.pem", _KEY)
     config_path = tmp_path / "core.yaml"
@@ -151,7 +157,9 @@ def test_audit_tls_assets_script_env_configuration(tmp_path: Path, monkeypatch: 
     assert not payload["errors"]
 
 
-def test_audit_tls_assets_accepts_env_auth_token(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_audit_tls_assets_accepts_env_auth_token(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     cert_path = _write(tmp_path / "cert.pem", _CERT)
     key_path = _write(tmp_path / "key.pem", _KEY)
     os.chmod(cert_path, 0o600)
@@ -206,7 +214,9 @@ def test_audit_tls_assets_accepts_env_auth_token(tmp_path: Path, monkeypatch: py
     assert not metrics["warnings"]
 
 
-def test_audit_tls_assets_windows_skips_permission_warnings_but_keeps_other(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_audit_tls_assets_windows_skips_permission_warnings_but_keeps_other(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     monkeypatch.setattr(audit_tls_assets_script, "os", _WindowsOsProxy(os))
     monkeypatch.setattr(file_metadata, "os", _WindowsOsProxy(os))
     os.chmod(tmp_path, 0o777)

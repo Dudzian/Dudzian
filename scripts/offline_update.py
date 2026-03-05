@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 """CLI do pakowania, weryfikacji i instalacji offline'owych aktualizacji."""
+
 from __future__ import annotations
 
 import argparse
@@ -69,20 +70,26 @@ def _build_parser() -> argparse.ArgumentParser:
     prepare.add_argument("--strategies-dir", default="data/strategies", help="Źródło strategii")
     prepare.add_argument("--signing-key", help="Klucz HMAC (KEY_ID=SECRET) do podpisania manifestu")
 
-    verify = subparsers.add_parser("verify-release", help="Zweryfikuj podpis i sumy kontrolne paczki")
+    verify = subparsers.add_parser(
+        "verify-release", help="Zweryfikuj podpis i sumy kontrolne paczki"
+    )
     verify.add_argument("--archive", required=True, help="Ścieżka do archiwum tar.gz")
     verify.add_argument("--signing-key", help="Klucz HMAC (KEY_ID=SECRET) do weryfikacji manifestu")
 
     install = subparsers.add_parser("install-release", help="Zainstaluj paczkę offline")
     install.add_argument("--archive", required=True, help="Ścieżka do archiwum tar.gz")
     install.add_argument("--models-dir", default="data/models", help="Katalog docelowy modeli")
-    install.add_argument("--strategies-dir", default="data/strategies", help="Katalog docelowy strategii")
+    install.add_argument(
+        "--strategies-dir", default="data/strategies", help="Katalog docelowy strategii"
+    )
     install.add_argument(
         "--backup-dir",
         default="var/offline_updates/backups",
         help="Katalog na kopie zapasowe aktualnych modeli/strategii",
     )
-    install.add_argument("--signing-key", help="Klucz HMAC (KEY_ID=SECRET) do weryfikacji manifestu")
+    install.add_argument(
+        "--signing-key", help="Klucz HMAC (KEY_ID=SECRET) do weryfikacji manifestu"
+    )
     install.add_argument(
         "--require-signature",
         action="store_true",

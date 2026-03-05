@@ -1,4 +1,5 @@
 """Generowanie raportów z przebiegów optymalizacji strategii."""
+
 from __future__ import annotations
 
 import json
@@ -47,7 +48,8 @@ def render_html_report(report: StrategyOptimizationReport) -> str:
         "<h2>Najlepszy wynik</h2>"
         f"<p>Score: <strong>{report.best.score:.6f}</strong><br>"
         f"Parametry: {', '.join(f'{k}={v}' for k, v in report.best.parameters.items()) or '-'}<br>"
-        f"Metadane: {', '.join(f'{k}={v}' for k, v in report.best.metadata.items()) or '-'}" + "</p>"
+        f"Metadane: {', '.join(f'{k}={v}' for k, v in report.best.metadata.items()) or '-'}"
+        + "</p>"
     )
     return _HTML_HEADER + header + table + summary + _HTML_FOOTER
 

@@ -1,4 +1,5 @@
 """Magazyn świec OHLCV zapisujący dane w formacie Parquet."""
+
 from __future__ import annotations
 
 import json
@@ -125,7 +126,9 @@ class ParquetCacheStorage(CacheStorage):
                 if not open_times:
                     continue
                 length = len(open_times)
-                columns_data = {column: [float(value) for value in data.get(column, [])] for column in _COLUMNS}
+                columns_data = {
+                    column: [float(value) for value in data.get(column, [])] for column in _COLUMNS
+                }
                 for idx in range(length):
                     rows.append([columns_data[column][idx] for column in _COLUMNS])
 

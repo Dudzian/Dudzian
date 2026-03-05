@@ -1,4 +1,3 @@
-
 """Generowanie/pozyskiwanie i podpisywanie fingerprintów sprzętowych (OEM + host)."""
 
 from __future__ import annotations
@@ -229,9 +228,7 @@ _SYSTEMD_CONTAINER_LABELS: Mapping[str, str] = MappingProxyType(
 )
 
 _HOSTNAMECTL_VM_LABELS: Mapping[str, str] = MappingProxyType(dict(_SYSTEMD_VM_LABELS))
-_HOSTNAMECTL_CONTAINER_LABELS: Mapping[str, str] = MappingProxyType(
-    dict(_SYSTEMD_CONTAINER_LABELS)
-)
+_HOSTNAMECTL_CONTAINER_LABELS: Mapping[str, str] = MappingProxyType(dict(_SYSTEMD_CONTAINER_LABELS))
 
 _LSCPU_VENDOR_LABELS: Mapping[str, str] = MappingProxyType(
     {
@@ -374,9 +371,7 @@ def _detect_vm_cpu_signals(cpu_info: str | None, cpu_flags: Sequence[str]) -> li
         normalized = cpu_info.lower()
         for pattern, label in _VM_CPU_PATTERNS:
             if pattern in normalized:
-                signals.append(
-                    f"Identyfikator CPU wskazuje na środowisko wirtualne ({label})."
-                )
+                signals.append(f"Identyfikator CPU wskazuje na środowisko wirtualne ({label}).")
     if any(flag == "hypervisor" for flag in cpu_flags):
         signals.append("Flagi CPU zawierają znacznik 'hypervisor'.")
     return signals
@@ -481,8 +476,7 @@ def _detect_vm_dmi_signals(entries: Sequence[str]) -> list[str]:
         for pattern, label in _VM_DMI_PATTERNS:
             if pattern in lowered:
                 signals.append(
-                    "Identyfikatory sprzętu (DMI) wskazują na środowisko "
-                    f"wirtualne ({label})."
+                    f"Identyfikatory sprzętu (DMI) wskazują na środowisko wirtualne ({label})."
                 )
                 break
     if signals:
@@ -524,9 +518,7 @@ def _detect_dmidecode_signals(info: Mapping[str, str]) -> list[str]:
             continue
         for pattern, label in _VM_DMI_PATTERNS:
             if pattern in lowered:
-                signals.append(
-                    f"dmidecode ({field}) wskazuje na środowisko wirtualne ({label})."
-                )
+                signals.append(f"dmidecode ({field}) wskazuje na środowisko wirtualne ({label}).")
                 break
     if signals:
         signals = list(dict.fromkeys(signals))
@@ -577,9 +569,7 @@ def _detect_wmic_signals(info: Mapping[str, str]) -> list[str]:
             continue
         for pattern, label in _VM_DMI_PATTERNS:
             if pattern in lowered:
-                signals.append(
-                    f"WMIC ({key}) wskazuje na środowisko wirtualne ({label})."
-                )
+                signals.append(f"WMIC ({key}) wskazuje na środowisko wirtualne ({label}).")
                 break
     if signals:
         signals = list(dict.fromkeys(signals))
@@ -666,19 +656,14 @@ def _detect_systemd_virtualization_signals(value: str | None) -> tuple[list[str]
 
     if vm_label:
         vm_signals.append(
-            "systemd-detect-virt zgłasza uruchomienie w środowisku wirtualnym "
-            f"({vm_label})."
+            f"systemd-detect-virt zgłasza uruchomienie w środowisku wirtualnym ({vm_label})."
         )
     elif container_label:
         container_signals.append(
-            "systemd-detect-virt zgłasza uruchomienie w kontenerze "
-            f"({container_label})."
+            f"systemd-detect-virt zgłasza uruchomienie w kontenerze ({container_label})."
         )
     else:
-        vm_signals.append(
-            "systemd-detect-virt zwrócił nierozpoznany typ środowiska: "
-            f"{value}."
-        )
+        vm_signals.append(f"systemd-detect-virt zwrócił nierozpoznany typ środowiska: {value}.")
 
     return (vm_signals, container_signals)
 
@@ -697,19 +682,14 @@ def _detect_hostnamectl_virtualization_signals(
 
     if vm_label:
         vm_signals.append(
-            "hostnamectl raportuje uruchomienie w środowisku wirtualnym "
-            f"({vm_label})."
+            f"hostnamectl raportuje uruchomienie w środowisku wirtualnym ({vm_label})."
         )
     elif container_label:
         container_signals.append(
-            "hostnamectl raportuje uruchomienie w kontenerze "
-            f"({container_label})."
+            f"hostnamectl raportuje uruchomienie w kontenerze ({container_label})."
         )
     else:
-        vm_signals.append(
-            "hostnamectl zwrócił nierozpoznany typ wirtualizacji: "
-            f"{value}."
-        )
+        vm_signals.append(f"hostnamectl zwrócił nierozpoznany typ wirtualizacji: {value}.")
 
     return (vm_signals, container_signals)
 
@@ -723,9 +703,9 @@ def _probe_lscpu_info() -> Mapping[str, str]:
     for raw_line in output.splitlines():
         if not raw_line or "::" in raw_line:
             continue
-        if ':' not in raw_line:
+        if ":" not in raw_line:
             continue
-        key, value = raw_line.split(':', 1)
+        key, value = raw_line.split(":", 1)
         normalized_key = key.strip().lower()
         if not normalized_key:
             continue
@@ -749,9 +729,7 @@ def _detect_lscpu_signals(info: Mapping[str, str]) -> tuple[list[str], list[str]
     vendor = info.get("hypervisor_vendor")
     if vendor:
         label = _LSCPU_VENDOR_LABELS.get(vendor.strip().lower(), vendor.strip())
-        vm_signals.append(
-            "lscpu raportuje dostawcę hypervisora: " f"{label}."
-        )
+        vm_signals.append(f"lscpu raportuje dostawcę hypervisora: {label}.")
 
     virtualization = info.get("virtualization_type")
     if virtualization:
@@ -762,10 +740,7 @@ def _detect_lscpu_signals(info: Mapping[str, str]) -> tuple[list[str], list[str]
                 f"(virtualization type={virtualization})."
             )
         elif normalized not in {"none", "host"}:
-            vm_signals.append(
-                "lscpu wskazuje typ wirtualizacji: "
-                f"{virtualization}."
-            )
+            vm_signals.append(f"lscpu wskazuje typ wirtualizacji: {virtualization}.")
 
     if vm_signals:
         vm_signals = list(dict.fromkeys(vm_signals))
@@ -800,18 +775,14 @@ def _detect_virt_what_signals(entries: Sequence[str]) -> tuple[list[str], list[s
         container_label = _VIRTWHAT_CONTAINER_LABELS.get(lowered)
         if vm_label:
             vm_signals.append(
-                "virt-what zgłasza uruchomienie w środowisku wirtualnym "
-                f"({vm_label})."
+                f"virt-what zgłasza uruchomienie w środowisku wirtualnym ({vm_label})."
             )
         elif container_label:
             container_signals.append(
-                "virt-what zgłasza uruchomienie w kontenerze "
-                f"({container_label})."
+                f"virt-what zgłasza uruchomienie w kontenerze ({container_label})."
             )
         else:
-            vm_signals.append(
-                f"virt-what zwrócił nierozpoznany sygnał wirtualizacji: {lowered}."
-            )
+            vm_signals.append(f"virt-what zwrócił nierozpoznany sygnał wirtualizacji: {lowered}.")
 
     if vm_signals:
         vm_signals = list(dict.fromkeys(vm_signals))
@@ -915,11 +886,7 @@ def collect_security_signals(
         if mac_addresses is not None
         else tuple(_collect_mac_addresses(env_mapping))
     )
-    dmi_values = (
-        tuple(dmi_strings)
-        if dmi_strings is not None
-        else tuple(_collect_dmi_strings())
-    )
+    dmi_values = tuple(dmi_strings) if dmi_strings is not None else tuple(_collect_dmi_strings())
     proc_snapshot = tuple(processes) if processes is not None else _list_process_names()
     module_snapshot = (
         tuple(kernel_modules) if kernel_modules is not None else _collect_kernel_modules()
@@ -939,6 +906,7 @@ def collect_security_signals(
     elif path_exists is not None:
         path_exists_fn = path_exists
     else:
+
         def _default_exists(path: Path) -> bool:
             try:
                 return path.exists()
@@ -1054,20 +1022,16 @@ def collect_security_signals(
     filesystem_signals = _detect_vm_filesystem_signals(path_exists=path_exists_fn)
     module_signals = _detect_vm_kernel_module_signals(module_snapshot)
     container_env_signals = _detect_container_env_signals(env_mapping)
-    container_filesystem_signals = _detect_container_filesystem_signals(
-        path_exists=path_exists_fn
-    )
+    container_filesystem_signals = _detect_container_filesystem_signals(path_exists=path_exists_fn)
     container_cgroup_signals = _detect_container_cgroup_signals(cgroup_snapshot)
-    hostname_vm_signals, hostname_container_signals = (
-        _detect_hostnamectl_virtualization_signals(hostname_value)
+    hostname_vm_signals, hostname_container_signals = _detect_hostnamectl_virtualization_signals(
+        hostname_value
     )
     systemd_vm_signals, systemd_container_signals = _detect_systemd_virtualization_signals(
         systemd_value
     )
     lscpu_vm_signals, lscpu_container_signals = _detect_lscpu_signals(lscpu_mapping)
-    virt_what_vm_signals, virt_what_container_signals = _detect_virt_what_signals(
-        virt_what_entries
-    )
+    virt_what_vm_signals, virt_what_container_signals = _detect_virt_what_signals(virt_what_entries)
     debugger_signals = _detect_debugger_signals(
         trace=trace_value,
         tracer_pid=tracer_pid_value,
@@ -1088,21 +1052,13 @@ def collect_security_signals(
         )
     )
 
-    hostname_bucket = tuple(
-        dict.fromkeys((*hostname_vm_signals, *hostname_container_signals))
-    )
+    hostname_bucket = tuple(dict.fromkeys((*hostname_vm_signals, *hostname_container_signals)))
 
-    systemd_bucket = tuple(
-        dict.fromkeys((*systemd_vm_signals, *systemd_container_signals))
-    )
+    systemd_bucket = tuple(dict.fromkeys((*systemd_vm_signals, *systemd_container_signals)))
 
-    virt_what_bucket = tuple(
-        dict.fromkeys((*virt_what_vm_signals, *virt_what_container_signals))
-    )
+    virt_what_bucket = tuple(dict.fromkeys((*virt_what_vm_signals, *virt_what_container_signals)))
 
-    lscpu_bucket = tuple(
-        dict.fromkeys((*lscpu_vm_signals, *lscpu_container_signals))
-    )
+    lscpu_bucket = tuple(dict.fromkeys((*lscpu_vm_signals, *lscpu_container_signals)))
 
     vm_map = {
         "cpu": tuple(cpu_signals),
@@ -1168,7 +1124,9 @@ def _decrypt_license_secret(document: Mapping[str, object]) -> bytes:
     try:
         fingerprint = get_local_fingerprint()
     except Exception as exc:  # pragma: no cover - propagujemy w postaci FingerprintError
-        raise FingerprintError("Nie udało się pobrać lokalnego fingerprintu do odszyfrowania sekretu.") from exc
+        raise FingerprintError(
+            "Nie udało się pobrać lokalnego fingerprintu do odszyfrowania sekretu."
+        ) from exc
 
     normalized = _normalize_binding_fingerprint(fingerprint)
     try:
@@ -1249,7 +1207,10 @@ def _store_secret_in_keyring(secret: bytes) -> bool:
         return False
 
     if result is not None:  # pragma: no cover - backend powinien zwrócić None
-        LOGGER.warning("Backend keychain zwrócił nieoczekiwany rezultat przy zapisie sekretu licencji: %r", result)
+        LOGGER.warning(
+            "Backend keychain zwrócił nieoczekiwany rezultat przy zapisie sekretu licencji: %r",
+            result,
+        )
         return False
     return True
 
@@ -1260,7 +1221,9 @@ def _load_secret_from_disk(path: Path) -> tuple[bytes, str] | None:
     try:
         raw = path.read_text(encoding="utf-8").strip()
     except OSError as exc:
-        raise FingerprintError(f"Nie udało się odczytać pliku sekretu licencji ({path}): {exc}") from exc
+        raise FingerprintError(
+            f"Nie udało się odczytać pliku sekretu licencji ({path}): {exc}"
+        ) from exc
 
     if not raw:
         path.unlink(missing_ok=True)
@@ -1287,7 +1250,9 @@ def _write_encrypted_secret(secret: bytes, path: Path) -> None:
     try:
         fingerprint = get_local_fingerprint()
     except Exception as exc:  # pragma: no cover - propagujemy w postaci FingerprintError
-        raise FingerprintError("Nie udało się pobrać fingerprintu urządzenia do zapisania sekretu licencji.") from exc
+        raise FingerprintError(
+            "Nie udało się pobrać fingerprintu urządzenia do zapisania sekretu licencji."
+        ) from exc
 
     payload = _encrypt_license_secret(secret, fingerprint)
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -1300,7 +1265,9 @@ def _write_encrypted_secret(secret: bytes, path: Path) -> None:
         pass
 
 
-def load_license_secret(path: str | os.PathLike[str] | None = None, *, create: bool = True) -> bytes:
+def load_license_secret(
+    path: str | os.PathLike[str] | None = None, *, create: bool = True
+) -> bytes:
     """Zwraca sekret do podpisywania snapshotów licencji."""
 
     target = _license_secret_path(path)
@@ -1368,7 +1335,9 @@ def verify_license_payload_signature(
     if algorithm != LICENSE_SIGNATURE_ALGORITHM:
         return False
     try:
-        secret_bytes = secret if secret is not None else load_license_secret(secret_path, create=False)
+        secret_bytes = (
+            secret if secret is not None else load_license_secret(secret_path, create=False)
+        )
     except FingerprintError:
         return False
     key = _derive_license_key(fingerprint, secret_bytes)
@@ -1384,6 +1353,7 @@ def verify_license_payload_signature(
 # ---------------------------------------------------------------------------
 # Audyt fingerprintu / instalacji
 # ---------------------------------------------------------------------------
+
 
 def append_fingerprint_audit(
     *,
@@ -1497,6 +1467,7 @@ def report_single_instance_event(
 # ---------------------------------------------------------------------------
 # Starsze API – OEM Device Fingerprint
 # ---------------------------------------------------------------------------
+
 
 @dataclass(frozen=True)
 class FingerprintDocument:
@@ -1712,7 +1683,9 @@ def _ensure_key_strength(key: bytes) -> None:
         raise FingerprintError("Klucz podpisu fingerprintu musi mieć co najmniej 32 bajty")
 
 
-def _sign_payload(payload: Mapping[str, object], key: bytes, key_id: Optional[str]) -> dict[str, str]:
+def _sign_payload(
+    payload: Mapping[str, object], key: bytes, key_id: Optional[str]
+) -> dict[str, str]:
     digest = hmac.new(key, canonical_json_bytes(payload), hashlib.sha384).digest()
     signature = {
         "algorithm": SIGNATURE_ALGORITHM,
@@ -1793,10 +1766,16 @@ class DeviceFingerprintGenerator:
         _ensure_key_strength(signing_key)
         collected = _normalize_factors(factors or self.collect_factors())
         fingerprint = self.generate_fingerprint(factors=collected)
-        timestamp = datetime.now(timezone.utc) if created_at is None else created_at.astimezone(timezone.utc)
+        timestamp = (
+            datetime.now(timezone.utc)
+            if created_at is None
+            else created_at.astimezone(timezone.utc)
+        )
 
         if registry and key_id:
-            status = registry.status(key_id, purpose, interval_days=rotation_interval_days, now=timestamp)
+            status = registry.status(
+                key_id, purpose, interval_days=rotation_interval_days, now=timestamp
+            )
             if status.last_rotated is not None and status.is_overdue:
                 raise FingerprintError(
                     f"Klucz '{key_id}' dla celu '{purpose}' jest przeterminowany (ostatnia rotacja {status.last_rotated})."
@@ -1859,6 +1838,7 @@ def build_fingerprint_document(
 # ---------------------------------------------------------------------------
 # Nowsze API – Hardware Fingerprint Service (z rotacją kluczy)
 # ---------------------------------------------------------------------------
+
 
 def _ensure_utc_now() -> datetime:
     return datetime.now(timezone.utc)
@@ -2070,15 +2050,25 @@ class RotatingHmacKeyProvider:
             timestamp = -status.last_rotated.timestamp()
         return priority, timestamp
 
-    def select_active_key(self, *, now: datetime | None = None) -> tuple[str, bytes, RotationStatus]:
-        statuses: dict[str, RotationStatus] = {kid: self.status_for(kid, now=now) for kid in self._keys}
-        sorted_ids = sorted(statuses.items(), key=lambda item: (self._priority_tuple(item[1]), item[0]))
+    def select_active_key(
+        self, *, now: datetime | None = None
+    ) -> tuple[str, bytes, RotationStatus]:
+        statuses: dict[str, RotationStatus] = {
+            kid: self.status_for(kid, now=now) for kid in self._keys
+        }
+        sorted_ids = sorted(
+            statuses.items(), key=lambda item: (self._priority_tuple(item[1]), item[0])
+        )
         active_id, status = sorted_ids[0]
         return active_id, self._keys[active_id], status
 
-    def sign(self, payload: Mapping[str, Any], *, now: datetime | None = None) -> tuple[str, dict[str, str]]:
+    def sign(
+        self, payload: Mapping[str, Any], *, now: datetime | None = None
+    ) -> tuple[str, dict[str, str]]:
         key_id, key, _status = self.select_active_key(now=now)
-        signature = build_hmac_signature(payload, key=key, key_id=key_id, algorithm=SIGNATURE_ALGORITHM)
+        signature = build_hmac_signature(
+            payload, key=key, key_id=key_id, algorithm=SIGNATURE_ALGORITHM
+        )
         return key_id, signature
 
 
@@ -2188,7 +2178,9 @@ def evaluate_hwid_drift(
     baseline = _extract_digests(baseline_record)
     candidate = _extract_digests(candidate_record)
 
-    changed_components = sorted({key for key in set(baseline) | set(candidate) if baseline.get(key) != candidate.get(key)})
+    changed_components = sorted(
+        {key for key in set(baseline) | set(candidate) if baseline.get(key) != candidate.get(key)}
+    )
     tolerance_budget = dict(_DEFAULT_DRIFT_TOLERANCES)
     if tolerances:
         tolerance_budget.update({key: int(value) for key, value in tolerances.items()})
@@ -2218,6 +2210,7 @@ def evaluate_hwid_drift(
 # ---------------------------------------------------------------------------
 # Helpery/CLI (nowe API)
 # ---------------------------------------------------------------------------
+
 
 def decode_secret(value: str) -> bytes:
     text = value.strip()
@@ -2257,7 +2250,9 @@ def _load_keys_from_args(args: list[str]) -> dict[str, bytes]:
 def _cli_generate(argv: list[str]) -> int:
     import argparse
 
-    parser = argparse.ArgumentParser(description="Generuje odcisk sprzętowy hosta i podpisuje go HMAC.")
+    parser = argparse.ArgumentParser(
+        description="Generuje odcisk sprzętowy hosta i podpisuje go HMAC."
+    )
     parser.add_argument("--dongle", help="Wymuszony identyfikator klucza sprzętowego USB.")
     parser.add_argument(
         "--rotation-log",

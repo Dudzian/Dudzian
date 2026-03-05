@@ -13,6 +13,7 @@ from typing import Any, Dict
 # Zachowujemy oryginalną strukturę, aby 'from bot_core.resilience import audit' itd. działało.
 try:
     from . import audit, bundle, drill, hypercare, policy, self_healing  # type: ignore
+
     _HAS_HEAD_SUBMODULES = True
 except Exception:  # pragma: no cover – w razie użycia poza pakietem
     _HAS_HEAD_SUBMODULES = False
@@ -83,9 +84,9 @@ def __getattr__(name: str):  # pragma: no cover - mechanizm awaryjny
                 ResilienceFailoverDrill as _ResilienceFailoverDrill,
             )
         except Exception as exc:  # pragma: no cover - propagate the root cause
-            raise ImportError(
-                "Nie można zaimportować komponentów failover resilience"
-            ) from (_FAILOVER_IMPORT_ERROR or exc)
+            raise ImportError("Nie można zaimportować komponentów failover resilience") from (
+                _FAILOVER_IMPORT_ERROR or exc
+            )
 
         globals().update(
             {

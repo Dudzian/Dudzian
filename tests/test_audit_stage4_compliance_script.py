@@ -276,4 +276,3 @@ def test_audit_stage4_compliance_warns_about_rotation(monkeypatch, tmp_path):
     )
 
     assert exit_code == 0
-

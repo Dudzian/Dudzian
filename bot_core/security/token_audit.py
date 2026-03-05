@@ -1,4 +1,5 @@
 """Audyt konfiguracji tokenów usługowych i RBAC."""
+
 from __future__ import annotations
 
 import os
@@ -98,7 +99,9 @@ def _normalize_required_scopes(required_scopes: Iterable[str]) -> Mapping[str, S
     return {scope: tuple(sorted(values)) for scope, values in normalized.items()}
 
 
-def _token_metadata(config: ServiceTokenConfig, token: ServiceToken, *, env: Mapping[str, str]) -> Mapping[str, Any]:
+def _token_metadata(
+    config: ServiceTokenConfig, token: ServiceToken, *, env: Mapping[str, str]
+) -> Mapping[str, Any]:
     source: str | None = None
     if config.token_env:
         source = "env"
@@ -151,9 +154,7 @@ def audit_service_token_configs(
     rbac_tokens_present = bool(tokens_cfg)
     auth_token = getattr(config, "auth_token", None)
     auth_token_env = getattr(config, "auth_token_env", None)
-    auth_token_env_present = bool(
-        auth_token_env and env.get(str(auth_token_env))
-    )
+    auth_token_env_present = bool(auth_token_env and env.get(str(auth_token_env)))
     auth_token_file = getattr(config, "auth_token_file", None)
     auth_token_file_exists = False
     auth_token_file_mode: str | None = None
@@ -202,7 +203,11 @@ def audit_service_token_configs(
                     TokenAuditFinding(
                         level="warning",
                         message="Zmienna środowiskowa tokenu RBAC nie jest ustawiona",
-                        details={"service": service_name, "token_id": identifier, "token_env": cfg.token_env},
+                        details={
+                            "service": service_name,
+                            "token_id": identifier,
+                            "token_env": cfg.token_env,
+                        },
                     )
                 )
             for scope in normalized_required:
@@ -218,9 +223,7 @@ def audit_service_token_configs(
                     )
                 )
     else:
-        has_static_auth = bool(
-            auth_token or auth_token_env_present or auth_token_file_exists
-        )
+        has_static_auth = bool(auth_token or auth_token_env_present or auth_token_file_exists)
         if enabled:
             findings.append(
                 TokenAuditFinding(
@@ -269,9 +272,7 @@ def audit_service_token_configs(
             findings.append(
                 TokenAuditFinding(
                     level="warning",
-                    message=(
-                        "Usługa używa statycznego auth_token – rozważ migrację na RBAC"
-                    ),
+                    message=("Usługa używa statycznego auth_token – rozważ migrację na RBAC"),
                     details={"service": service_name},
                 )
             )
@@ -311,9 +312,7 @@ def audit_service_tokens(
     env: Mapping[str, str] | None = None,
     metrics_required_scopes: Sequence[str] | None = None,
     risk_required_scopes: Sequence[str] | None = None,
-    scheduler_required_scopes: Mapping[str, Sequence[str]]
-    | Sequence[str]
-    | None = None,
+    scheduler_required_scopes: Mapping[str, Sequence[str]] | Sequence[str] | None = None,
     warn_on_shared_secret: bool = True,
 ) -> TokenAuditReport:
     env_map = env or {}
@@ -338,16 +337,17 @@ def audit_service_tokens(
                     break
             if default_candidate:
                 scheduler_default_scopes = tuple(
-                    str(scope).strip().lower()
-                    for scope in default_candidate
-                    if str(scope).strip()
+                    str(scope).strip().lower() for scope in default_candidate if str(scope).strip()
                 )
         else:
-            scheduler_default_scopes = tuple(
-                str(scope).strip().lower()
-                for scope in scheduler_required_scopes
-                if str(scope).strip()
-            ) or scheduler_default_scopes
+            scheduler_default_scopes = (
+                tuple(
+                    str(scope).strip().lower()
+                    for scope in scheduler_required_scopes
+                    if str(scope).strip()
+                )
+                or scheduler_default_scopes
+            )
 
     services: list[TokenAuditServiceReport] = []
     services.append(

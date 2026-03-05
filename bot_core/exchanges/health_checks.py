@@ -1,4 +1,5 @@
 """Wspólne testy zdrowia dla adapterów giełdowych."""
+
 from __future__ import annotations
 
 import time

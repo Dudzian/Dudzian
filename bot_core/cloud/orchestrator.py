@@ -210,7 +210,12 @@ class CloudOrchestrator:
         with self._health_lock:
             return json.loads(json.dumps(self._health))
 
-    def _set_health(self, *, status: str | None = None, workers: Mapping[str, Mapping[str, object]] | None = None) -> None:
+    def _set_health(
+        self,
+        *,
+        status: str | None = None,
+        workers: Mapping[str, Mapping[str, object]] | None = None,
+    ) -> None:
         with self._health_lock:
             payload = dict(self._health)
             if status is not None:
@@ -272,7 +277,10 @@ class CloudOrchestrator:
     def _emit_health(self, snapshot: Mapping[str, object]) -> None:
         current = (snapshot.get("_health"), snapshot.get("_lastError"))
         if self._last_reported != current:
-            LOGGER.info("Cloud orchestrator health update", extra={"_health": current[0], "_lastError": current[1]})
+            LOGGER.info(
+                "Cloud orchestrator health update",
+                extra={"_health": current[0], "_lastError": current[1]},
+            )
             self._last_reported = current
         if callable(self._health_hook):
             try:

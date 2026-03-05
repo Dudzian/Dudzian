@@ -96,7 +96,9 @@ def _read_profile(path: Path) -> Profile:
         briefcase = BriefcaseProfile(
             project_path=(path.parent / project_raw).resolve(),
             app_name=app_name,
-            output_dir=(path.parent / output_dir).resolve() if isinstance(output_dir, str) else None,
+            output_dir=(path.parent / output_dir).resolve()
+            if isinstance(output_dir, str)
+            else None,
         )
 
     bundle_section = document.get("bundle") or {}
@@ -127,7 +129,9 @@ def _read_profile(path: Path) -> Profile:
         signing_key_id=signing_key_id,
     )
 
-    return Profile(platform=platform.strip(), pyinstaller=pyinstaller, briefcase=briefcase, bundle=bundle)
+    return Profile(
+        platform=platform.strip(), pyinstaller=pyinstaller, briefcase=briefcase, bundle=bundle
+    )
 
 
 def _ensure_directory(path: Path) -> None:
@@ -154,7 +158,9 @@ def _build_pyinstaller(profile: PyInstallerProfile, platform_id: str) -> Path:
 
     subprocess.run(args, check=True)
 
-    executable_dir = (profile.dist_dir or profile.entrypoint.parent / "dist") / profile.entrypoint.stem
+    executable_dir = (
+        profile.dist_dir or profile.entrypoint.parent / "dist"
+    ) / profile.entrypoint.stem
     extension = ".exe" if platform_id == "windows" else ""
     candidate = executable_dir / f"{profile.entrypoint.stem}{extension}"
     if not candidate.exists():
@@ -169,7 +175,12 @@ def _run_briefcase(profile: BriefcaseProfile, platform_id: str) -> Path:
     env = os.environ.copy()
     env.setdefault("BRIEFCASE_ROOT", str((profile.project_path / "build").resolve()))
     for command in (("create",), ("build",), ("package",)):
-        subprocess.run(["briefcase", *command, briefcase_platform, profile.app_name], cwd=profile.project_path, env=env, check=True)
+        subprocess.run(
+            ["briefcase", *command, briefcase_platform, profile.app_name],
+            cwd=profile.project_path,
+            env=env,
+            check=True,
+        )
     return output.resolve()
 
 
@@ -243,11 +254,17 @@ def _parse_args(argv: Sequence[str] | None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--profile", required=True, help="Ścieżka do pliku profilu TOML")
     parser.add_argument("--version", required=True, help="Wersja pakietu zapisywana w bundlu")
-    parser.add_argument("--platform", choices=["linux", "macos", "windows"], help="Nadpisz platformę z profilu")
-    parser.add_argument("--skip-pyinstaller", action="store_true", help="Pomiń etap budowania PyInstaller")
+    parser.add_argument(
+        "--platform", choices=["linux", "macos", "windows"], help="Nadpisz platformę z profilu"
+    )
+    parser.add_argument(
+        "--skip-pyinstaller", action="store_true", help="Pomiń etap budowania PyInstaller"
+    )
     parser.add_argument("--skip-briefcase", action="store_true", help="Pomiń etap Briefcase")
     parser.add_argument("--metadata-out", help="Ścieżka alternatywnego pliku metadanych")
-    parser.add_argument("--verify-fingerprint", help="Plik fingerprint.expected.json do weryfikacji po buildzie")
+    parser.add_argument(
+        "--verify-fingerprint", help="Plik fingerprint.expected.json do weryfikacji po buildzie"
+    )
     parser.add_argument(
         "--verify-fingerprint-key",
         action="append",
@@ -282,14 +299,18 @@ def main(argv: Sequence[str] | None = None) -> int:
     if profile.pyinstaller and not args.skip_pyinstaller:
         runtime_executable = _build_pyinstaller(profile.pyinstaller, platform_id)
     elif profile.pyinstaller:
-        runtime_executable = (profile.pyinstaller.dist_dir or Path("dist")) / profile.pyinstaller.entrypoint.stem
+        runtime_executable = (
+            profile.pyinstaller.dist_dir or Path("dist")
+        ) / profile.pyinstaller.entrypoint.stem
 
     briefcase_output: Path | None = None
     if profile.briefcase and not args.skip_briefcase:
         briefcase_output = _run_briefcase(profile.briefcase, platform_id)
 
     bundle_args = _compose_namespace(
-        entrypoint=profile.pyinstaller.entrypoint if profile.pyinstaller else profile_path.parent / "scripts" / "run_local_bot.py",
+        entrypoint=profile.pyinstaller.entrypoint
+        if profile.pyinstaller
+        else profile_path.parent / "scripts" / "run_local_bot.py",
         platform_id=platform_id,
         version=args.version,
         output_dir=profile.bundle.output_dir,
@@ -305,7 +326,11 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     archive_path = build_pyinstaller_bundle.build_bundle(bundle_args)
 
-    metadata_path = Path(args.metadata_out).expanduser().resolve() if args.metadata_out else profile.bundle.metadata_path
+    metadata_path = (
+        Path(args.metadata_out).expanduser().resolve()
+        if args.metadata_out
+        else profile.bundle.metadata_path
+    )
     payload: dict[str, object] = {
         "profile": str(profile_path),
         "platform": platform_id,
@@ -334,13 +359,17 @@ def main(argv: Sequence[str] | None = None) -> int:
             raise SystemExit(
                 "Weryfikacja fingerprintu wymaga co najmniej jednego klucza (--verify-fingerprint-key).",
             )
-        if args.verify_license_keys and not (args.verify_registry or Path("var/licenses/registry.jsonl").exists()):
+        if args.verify_license_keys and not (
+            args.verify_registry or Path("var/licenses/registry.jsonl").exists()
+        ):
             raise SystemExit(
                 "Podaj --verify-registry lub utwórz var/licenses/registry.jsonl przed weryfikacją podpisów licencji.",
             )
         verify_args.append("--verify")
         if args.verify_fingerprint:
-            verify_args.extend(["--fingerprint", str(Path(args.verify_fingerprint).expanduser().resolve())])
+            verify_args.extend(
+                ["--fingerprint", str(Path(args.verify_fingerprint).expanduser().resolve())]
+            )
         registry_path = args.verify_registry or str(Path("var/licenses/registry.jsonl").resolve())
         if args.verify_license_keys:
             verify_args.extend(["--output", registry_path])
@@ -351,7 +380,9 @@ def main(argv: Sequence[str] | None = None) -> int:
                 verify_args.extend(["--fingerprint-key", entry])
         exit_code = oem_provision_license.main(verify_args)
         if exit_code != 0:
-            raise SystemExit(f"Weryfikacja fingerprintu/licencji nie powiodła się (kod {exit_code}).")
+            raise SystemExit(
+                f"Weryfikacja fingerprintu/licencji nie powiodła się (kod {exit_code})."
+            )
         print("Automatyczna weryfikacja fingerprintu/licencji zakończona powodzeniem.")
     return 0
 

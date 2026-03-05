@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 """Buduje manifest i streszczenie dla raportu Stage6 Stress Lab."""
+
 from __future__ import annotations
 
 import argparse
@@ -92,9 +93,7 @@ def _build_summary(
                 for item in failures:
                     lines.append(f"    - {item}")
             if isinstance(metrics, Mapping) and metrics:
-                metrics_line = ", ".join(
-                    f"{key}={value}" for key, value in sorted(metrics.items())
-                )
+                metrics_line = ", ".join(f"{key}={value}" for key, value in sorted(metrics.items()))
                 lines.append(f"  - Metryki: {metrics_line}")
     summary_path.parent.mkdir(parents=True, exist_ok=True)
     summary_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
@@ -102,7 +101,9 @@ def _build_summary(
 
 
 def main(argv: list[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(description="Buduje manifest i podsumowanie raportu Stress Lab")
+    parser = argparse.ArgumentParser(
+        description="Buduje manifest i podsumowanie raportu Stress Lab"
+    )
     parser.add_argument("--report", required=True, type=Path, help="Ścieżka do raportu JSON")
     parser.add_argument("--signature", required=True, type=Path, help="Ścieżka do podpisu HMAC")
     parser.add_argument("--output", required=True, type=Path, help="Ścieżka zapisu manifestu JSON")
@@ -123,7 +124,9 @@ def main(argv: list[str] | None = None) -> int:
     )
 
     if summary_path is not None:
-        _build_summary(summary_path=summary_path, report_payload=payload, manifest_path=manifest_path)
+        _build_summary(
+            summary_path=summary_path, report_payload=payload, manifest_path=manifest_path
+        )
 
     print(json.dumps({"status": "ok", "manifest": manifest_path.as_posix()}))
     return 0

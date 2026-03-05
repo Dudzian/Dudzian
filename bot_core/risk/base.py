@@ -1,4 +1,5 @@
 """Interfejs silnika zarządzania ryzykiem oraz profili."""
+
 from __future__ import annotations
 
 import abc
@@ -25,32 +26,25 @@ class RiskProfile(abc.ABC):
     name: str
 
     @abc.abstractmethod
-    def max_positions(self) -> int:
-        ...
+    def max_positions(self) -> int: ...
 
     @abc.abstractmethod
-    def max_leverage(self) -> float:
-        ...
+    def max_leverage(self) -> float: ...
 
     @abc.abstractmethod
-    def drawdown_limit(self) -> float:
-        ...
+    def drawdown_limit(self) -> float: ...
 
     @abc.abstractmethod
-    def daily_loss_limit(self) -> float:
-        ...
+    def daily_loss_limit(self) -> float: ...
 
     @abc.abstractmethod
-    def max_position_exposure(self) -> float:
-        ...
+    def max_position_exposure(self) -> float: ...
 
     @abc.abstractmethod
-    def target_volatility(self) -> float:
-        ...
+    def target_volatility(self) -> float: ...
 
     @abc.abstractmethod
-    def stop_loss_atr_multiple(self) -> float:
-        ...
+    def stop_loss_atr_multiple(self) -> float: ...
 
     @abc.abstractmethod
     def trade_risk_pct_range(self) -> tuple[float, float]:
@@ -168,13 +162,14 @@ class StaticRiskProfile(RiskProfile):
 class RiskEngine(abc.ABC):
     """Silnik ryzyka odpowiada za enforce limitów i pre-trade checks."""
 
-    def get_profile(self, profile_name: str) -> RiskProfile | None:  # pragma: no cover - domyślna implementacja
+    def get_profile(
+        self, profile_name: str
+    ) -> RiskProfile | None:  # pragma: no cover - domyślna implementacja
         """Zwraca zarejestrowany profil lub None jeśli silnik nie udostępnia profili."""
         return None
 
     @abc.abstractmethod
-    def register_profile(self, profile: RiskProfile) -> None:
-        ...
+    def register_profile(self, profile: RiskProfile) -> None: ...
 
     @abc.abstractmethod
     def apply_pre_trade_checks(
@@ -183,8 +178,7 @@ class RiskEngine(abc.ABC):
         *,
         account: AccountSnapshot,
         profile_name: str,
-    ) -> RiskCheckResult:
-        ...
+    ) -> RiskCheckResult: ...
 
     @abc.abstractmethod
     def on_fill(
@@ -196,12 +190,10 @@ class RiskEngine(abc.ABC):
         position_value: float,
         pnl: float,
         timestamp: datetime | None = None,
-    ) -> None:
-        ...
+    ) -> None: ...
 
     @abc.abstractmethod
-    def should_liquidate(self, *, profile_name: str) -> bool:
-        ...
+    def should_liquidate(self, *, profile_name: str) -> bool: ...
 
     def snapshot_state(self, profile_name: str) -> Mapping[str, object] | None:
         """Zwraca bieżący stan profilu ryzyka do celów raportowych.
@@ -217,11 +209,9 @@ class RiskEngine(abc.ABC):
 class RiskRepository(Protocol):
     """Kontrakt dla repozytoriów stanu ryzyka (np. SQLite, Parquet)."""
 
-    def load(self, profile: str) -> Mapping[str, object] | None:
-        ...
+    def load(self, profile: str) -> Mapping[str, object] | None: ...
 
-    def store(self, profile: str, state: Mapping[str, object]) -> None:
-        ...
+    def store(self, profile: str, state: Mapping[str, object]) -> None: ...
 
 
 __all__ = [

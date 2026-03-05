@@ -126,7 +126,9 @@ def make_decision(rebalance: bool = True) -> PortfolioDecision:
 
 
 def test_copy_trading_scaling(strategy_catalog: StrategyCatalog) -> None:
-    scheduler = MultiPortfolioScheduler(strategy_catalog, clock=lambda: datetime(2024, 5, 17, 12, tzinfo=timezone.utc))
+    scheduler = MultiPortfolioScheduler(
+        strategy_catalog, clock=lambda: datetime(2024, 5, 17, 12, tzinfo=timezone.utc)
+    )
     scheduler.register_portfolio(
         PortfolioBinding(
             portfolio_id="master-001",

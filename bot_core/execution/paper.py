@@ -1,4 +1,5 @@
 """Silnik paper trading odzwierciedlający koszty i poślizg."""
+
 from __future__ import annotations
 
 import itertools
@@ -153,10 +154,12 @@ class PaperTradingExecutionService(ExecutionService):
             "paper_orders_total", "Liczba zleceń zrealizowanych w symulatorze paper tradingu."
         )
         self._metric_orders_rejected = self._metrics.counter(
-            "paper_orders_rejected_total", "Liczba zleceń odrzuconych przez symulator paper tradingu."
+            "paper_orders_rejected_total",
+            "Liczba zleceń odrzuconych przez symulator paper tradingu.",
         )
         self._metric_traded_notional = self._metrics.counter(
-            "paper_traded_notional_total", "Skumulowany notional obrotu w symulatorze paper tradingu."
+            "paper_traded_notional_total",
+            "Skumulowany notional obrotu w symulatorze paper tradingu.",
         )
         self._metric_latency = self._metrics.histogram(
             "paper_execution_latency_seconds",
@@ -185,7 +188,9 @@ class PaperTradingExecutionService(ExecutionService):
         try:
             result = self._execute_internal(request, context, market, side)
         except InsufficientBalanceError:
-            self._metric_orders_rejected.inc(labels={"symbol": symbol, "reason": "insufficient_balance"})
+            self._metric_orders_rejected.inc(
+                labels={"symbol": symbol, "reason": "insufficient_balance"}
+            )
             elapsed = max(0.0, self._time() - start_time)
             self._metric_latency.observe(elapsed, labels={"symbol": symbol, "status": "rejected"})
             raise
@@ -223,9 +228,13 @@ class PaperTradingExecutionService(ExecutionService):
 
         leverage = self._extract_leverage(context)
         if side == "buy":
-            self._process_buy(symbol, market, request.quantity, fill_price, fee, context.risk_profile)
+            self._process_buy(
+                symbol, market, request.quantity, fill_price, fee, context.risk_profile
+            )
         else:
-            self._process_sell(symbol, market, request.quantity, fill_price, fee, leverage, context.risk_profile)
+            self._process_sell(
+                symbol, market, request.quantity, fill_price, fee, leverage, context.risk_profile
+            )
 
         position_value = self._position_value(symbol, market, fill_price)
         short_position = self._short_positions.get(symbol)
@@ -289,7 +298,10 @@ class PaperTradingExecutionService(ExecutionService):
                 position_value=0.0,
             )
         )
-        _LOGGER.info("Zarejestrowano anulację %s w symulatorze paper trading (brak otwartych zleceń).", order_id)
+        _LOGGER.info(
+            "Zarejestrowano anulację %s w symulatorze paper trading (brak otwartych zleceń).",
+            order_id,
+        )
         self._persist_ledger_entry(self._ledger[-1])
 
     def flush(self) -> None:
@@ -407,7 +419,9 @@ class PaperTradingExecutionService(ExecutionService):
 
         remaining_quantity = quantity - cover_quantity
         if remaining_quantity > 0:
-            self._balances[market.base_asset] = self._balances.get(market.base_asset, 0.0) + remaining_quantity
+            self._balances[market.base_asset] = (
+                self._balances.get(market.base_asset, 0.0) + remaining_quantity
+            )
 
         if symbol in self._short_positions:
             self._enforce_maintenance_margin(symbol, market, price, risk_profile)
@@ -466,13 +480,16 @@ class PaperTradingExecutionService(ExecutionService):
 
         if remaining > 0:
             if short_position is None:
-                short_position = ShortPosition(quantity=0.0, entry_price=price, margin=0.0, leverage=leverage)
+                short_position = ShortPosition(
+                    quantity=0.0, entry_price=price, margin=0.0, leverage=leverage
+                )
                 self._short_positions[symbol] = short_position
             prev_quantity = short_position.quantity
             total_quantity = prev_quantity + remaining
             if total_quantity > 0:
                 short_position.entry_price = (
-                    (short_position.entry_price * prev_quantity + price * remaining) / total_quantity
+                    (short_position.entry_price * prev_quantity + price * remaining)
+                    / total_quantity
                     if prev_quantity > 0
                     else price
                 )

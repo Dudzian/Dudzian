@@ -12,7 +12,9 @@ from bot_core.security.signing import canonical_json_bytes
 from bot_core.security.tpm import TpmValidationError, validate_attestation
 
 
-def _write_evidence(tmp_path: Path, payload: dict[str, object], signature: dict[str, object] | None) -> Path:
+def _write_evidence(
+    tmp_path: Path, payload: dict[str, object], signature: dict[str, object] | None
+) -> Path:
     document: dict[str, object] = {"payload": payload}
     if signature:
         document["signature"] = signature

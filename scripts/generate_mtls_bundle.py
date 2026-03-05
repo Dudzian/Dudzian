@@ -1,4 +1,5 @@
 """Generuje pakiet certyfikatów mTLS (CA, serwer, klient) z audytem i wsparciem rotacji kluczy."""
+
 from __future__ import annotations
 
 import argparse
@@ -32,8 +33,10 @@ except Exception:  # pragma: no cover
 try:  # metadane referencyjne certyfikatów (opcjonalne)
     from bot_core.security.certificates import certificate_reference_metadata  # type: ignore
 except Exception:  # pragma: no cover
+
     def certificate_reference_metadata(path: Path, *, role: str) -> Mapping[str, object]:  # type: ignore
         return {"role": role, "path": str(path)}
+
 
 from bot_core.security.rotation import RotationRegistry
 
@@ -79,7 +82,9 @@ class BundleConfig:
 # CLI
 # -----------------------------------------------------------------------------
 def _parse_args(argv: Iterable[str] | None = None) -> BundleConfig:
-    parser = argparse.ArgumentParser(description="Generuje pakiet certyfikatów mTLS (CA/server/client).")
+    parser = argparse.ArgumentParser(
+        description="Generuje pakiet certyfikatów mTLS (CA/server/client)."
+    )
     parser.add_argument(
         "--output",
         "--output-dir",
@@ -87,10 +92,14 @@ def _parse_args(argv: Iterable[str] | None = None) -> BundleConfig:
         required=True,
         help="Katalog docelowy na wygenerowany pakiet (alias --output-dir / --output)",
     )
-    parser.add_argument("--bundle-name", default="core-oem", help="Identyfikator pakietu (prefiks plików)")
+    parser.add_argument(
+        "--bundle-name", default="core-oem", help="Identyfikator pakietu (prefiks plików)"
+    )
     parser.add_argument("--common-name", default="Dudzian OEM", help="CN używany dla certyfikatów")
     parser.add_argument("--organization", default="Dudzian", help="Pole O w certyfikatach")
-    parser.add_argument("--valid-days", type=int, default=365, help="Okres ważności certyfikatów w dniach")
+    parser.add_argument(
+        "--valid-days", type=int, default=365, help="Okres ważności certyfikatów w dniach"
+    )
     parser.add_argument("--key-size", type=int, default=4096, help="Rozmiar klucza RSA w bitach")
     parser.add_argument(
         "--server-hostname",
@@ -127,7 +136,9 @@ def _parse_args(argv: Iterable[str] | None = None) -> BundleConfig:
         valid_days=max(1, int(args.valid_days)),
         key_size=max(2048, int(args.key_size)),
         server_hostnames=hostnames,
-        rotation_registry=Path(args.rotation_registry).expanduser().resolve() if args.rotation_registry else None,
+        rotation_registry=Path(args.rotation_registry).expanduser().resolve()
+        if args.rotation_registry
+        else None,
         ca_key_passphrase=_env_passphrase(args.ca_key_passphrase_env),
         server_key_passphrase=_env_passphrase(args.server_key_passphrase_env),
         client_key_passphrase=_env_passphrase(args.client_key_passphrase_env),
@@ -150,7 +161,9 @@ def _env_passphrase(env_name: str | None) -> bytes | None:
 # -----------------------------------------------------------------------------
 def _generate_with_cryptography(config: BundleConfig) -> Mapping[str, Path]:
     def _generate_private_key(key_size: int) -> rsa.RSAPrivateKey:
-        return rsa.generate_private_key(public_exponent=65537, key_size=key_size, backend=default_backend())
+        return rsa.generate_private_key(
+            public_exponent=65537, key_size=key_size, backend=default_backend()
+        )
 
     def _serialize_key(key: rsa.RSAPrivateKey, passphrase: bytes | None) -> bytes:
         if passphrase:
@@ -165,7 +178,10 @@ def _generate_with_cryptography(config: BundleConfig) -> Mapping[str, Path]:
 
     def _build_name(cn: str, org: str) -> x509.Name:
         return x509.Name(
-            [x509.NameAttribute(NameOID.COMMON_NAME, cn), x509.NameAttribute(NameOID.ORGANIZATION_NAME, org)]
+            [
+                x509.NameAttribute(NameOID.COMMON_NAME, cn),
+                x509.NameAttribute(NameOID.ORGANIZATION_NAME, org),
+            ]
         )
 
     def _issue_certificate(
@@ -191,7 +207,9 @@ def _generate_with_cryptography(config: BundleConfig) -> Mapping[str, Path]:
             .not_valid_after(valid_to)
         )
         if is_ca:
-            builder = builder.add_extension(x509.BasicConstraints(ca=True, path_length=1), critical=True)
+            builder = builder.add_extension(
+                x509.BasicConstraints(ca=True, path_length=1), critical=True
+            )
             builder = builder.add_extension(
                 x509.KeyUsage(
                     digital_signature=True,
@@ -207,7 +225,9 @@ def _generate_with_cryptography(config: BundleConfig) -> Mapping[str, Path]:
                 critical=True,
             )
         else:
-            builder = builder.add_extension(x509.BasicConstraints(ca=False, path_length=None), critical=True)
+            builder = builder.add_extension(
+                x509.BasicConstraints(ca=False, path_length=None), critical=True
+            )
             builder = builder.add_extension(
                 x509.KeyUsage(
                     digital_signature=True,
@@ -235,12 +255,16 @@ def _generate_with_cryptography(config: BundleConfig) -> Mapping[str, Path]:
             except ValueError:
                 san_entries.append(x509.DNSName(name))
         if san_entries:
-            builder = builder.add_extension(x509.SubjectAlternativeName(san_entries), critical=False)
+            builder = builder.add_extension(
+                x509.SubjectAlternativeName(san_entries), critical=False
+            )
 
         if usages:
             builder = builder.add_extension(x509.ExtendedKeyUsage(list(usages)), critical=False)
 
-        return builder.sign(private_key=issuer_key, algorithm=hashes.SHA384(), backend=default_backend())
+        return builder.sign(
+            private_key=issuer_key, algorithm=hashes.SHA384(), backend=default_backend()
+        )
 
     def _write_file(path: Path, data: bytes, *, mode: int = 0o600) -> None:
         path.parent.mkdir(parents=True, exist_ok=True)
@@ -485,8 +509,12 @@ def _write_metadata(
         "files": {k: str(p) for k, p in files.items() if k != "metadata"},
         "artifacts": {
             "ca": certificate_reference_metadata(files["ca_certificate"], role="tls_ca"),
-            "server": certificate_reference_metadata(files["server_certificate"], role="tls_server_cert"),
-            "client": certificate_reference_metadata(files["client_certificate"], role="tls_client_cert"),
+            "server": certificate_reference_metadata(
+                files["server_certificate"], role="tls_server_cert"
+            ),
+            "client": certificate_reference_metadata(
+                files["client_certificate"], role="tls_client_cert"
+            ),
         },
     }
 
@@ -546,7 +574,9 @@ def generate_mtls_bundle(
     if server_cn:
         host_candidates.append(server_cn)
     host_candidates.extend(DEFAULT_HOSTNAMES)
-    normalized_hostnames = tuple(dict.fromkeys(name.strip() for name in host_candidates if name.strip()))
+    normalized_hostnames = tuple(
+        dict.fromkeys(name.strip() for name in host_candidates if name.strip())
+    )
 
     destination_files = {
         "ca_certificate": base / "ca" / "ca.pem",
@@ -562,7 +592,9 @@ def generate_mtls_bundle(
     if not overwrite:
         for path in (*destination_files.values(), metadata_destination):
             if path.exists():
-                raise FileExistsError(f"Ścieżka {path} już istnieje – użyj overwrite=True, aby nadpisać")
+                raise FileExistsError(
+                    f"Ścieżka {path} już istnieje – użyj overwrite=True, aby nadpisać"
+                )
 
     config = BundleConfig(
         output_dir=base,
@@ -594,7 +626,9 @@ def generate_mtls_bundle(
         target.parent.mkdir(parents=True, exist_ok=True)
         if target.exists():
             if not overwrite:
-                raise FileExistsError(f"Ścieżka {target} już istnieje – użyj overwrite=True, aby nadpisać")
+                raise FileExistsError(
+                    f"Ścieżka {target} już istnieje – użyj overwrite=True, aby nadpisać"
+                )
             target.unlink()
         source.replace(target)
 
@@ -604,8 +638,12 @@ def generate_mtls_bundle(
 
     artifacts = {
         "ca": certificate_reference_metadata(destination_files["ca_certificate"], role="tls_ca"),
-        "server": certificate_reference_metadata(destination_files["server_certificate"], role="tls_server_cert"),
-        "client": certificate_reference_metadata(destination_files["client_certificate"], role="tls_client_cert"),
+        "server": certificate_reference_metadata(
+            destination_files["server_certificate"], role="tls_server_cert"
+        ),
+        "client": certificate_reference_metadata(
+            destination_files["client_certificate"], role="tls_client_cert"
+        ),
     }
 
     metadata = dict(metadata)
@@ -635,7 +673,9 @@ def generate_mtls_bundle(
             registry.mark_rotated(key, "server", timestamp=now)
             registry.mark_rotated(key, "client", timestamp=now)
 
-    metadata_destination.write_text(json.dumps(metadata, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    metadata_destination.write_text(
+        json.dumps(metadata, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
+    )
 
     return metadata
 

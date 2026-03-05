@@ -84,7 +84,9 @@ def _build_diff_archive(base_dir: Path, target_dir: Path, output_path: Path) -> 
                 shutil.copy2(source_path, destination)
         if deleted:
             deleted_file = temp_dir / "deleted_files.json"
-            deleted_file.write_text(json.dumps(sorted(deleted), ensure_ascii=False, indent=2), encoding="utf-8")
+            deleted_file.write_text(
+                json.dumps(sorted(deleted), ensure_ascii=False, indent=2), encoding="utf-8"
+            )
         diff_archive = _make_tar(temp_dir, output_path)
     finally:
         shutil.rmtree(temp_dir, ignore_errors=True)
@@ -147,7 +149,9 @@ def create_update_package(
             diff=str(diff_result.diff_archive) if diff_result.diff_archive else None,
             base_id=base_id,
             integrity_manifest=None,
-            metadata=json.dumps(manifest_metadata, ensure_ascii=False) if manifest_metadata else None,
+            metadata=json.dumps(manifest_metadata, ensure_ascii=False)
+            if manifest_metadata
+            else None,
             key=raw_secret,
             key_id=key_id,
         )
@@ -166,7 +170,9 @@ def create_update_package(
             license_result=None,
         )
         if not result.is_successful:
-            raise RuntimeError(f"Weryfikacja pakietu aktualizacji nie powiodła się: {result.errors}")
+            raise RuntimeError(
+                f"Weryfikacja pakietu aktualizacji nie powiodła się: {result.errors}"
+            )
     finally:
         shutil.rmtree(staging_dir, ignore_errors=True)
 
@@ -176,15 +182,24 @@ def create_update_package(
 def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--target-dir", required=True, help="Katalog docelowej wersji instalacji")
-    parser.add_argument("--base-dir", help="Opcjonalna poprzednia instalacja do wygenerowania diffu")
-    parser.add_argument("--output-dir", default=str(DEFAULT_OUTPUT), help="Katalog na pakiety aktualizacji")
+    parser.add_argument(
+        "--base-dir", help="Opcjonalna poprzednia instalacja do wygenerowania diffu"
+    )
+    parser.add_argument(
+        "--output-dir", default=str(DEFAULT_OUTPUT), help="Katalog na pakiety aktualizacji"
+    )
     parser.add_argument("--package-id", required=True)
     parser.add_argument("--version", required=True)
     parser.add_argument("--platform", required=True)
     parser.add_argument("--runtime", required=True)
     parser.add_argument("--base-id", help="Identyfikator wersji bazowej dla łatki diff")
     parser.add_argument("--signing-key", help="Klucz HMAC do podpisu manifestu (KEY_ID=wartość)")
-    parser.add_argument("--metadata", action="append", default=[], help="Dodatkowe metadane w formacie klucz=wartość (JSON)")
+    parser.add_argument(
+        "--metadata",
+        action="append",
+        default=[],
+        help="Dodatkowe metadane w formacie klucz=wartość (JSON)",
+    )
     return parser
 
 

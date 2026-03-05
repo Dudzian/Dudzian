@@ -54,7 +54,9 @@ def test_check_data_coverage_success(tmp_path: Path, capsys: pytest.CaptureFixtu
     assert summary["stale_entries"] == 0
 
 
-def test_check_data_coverage_insufficient_rows(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+def test_check_data_coverage_insufficient_rows(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
     cache_dir = tmp_path / "cache_failure"
     rows = _generate_rows(datetime(2024, 1, 1, tzinfo=timezone.utc), 5)
     _write_cache(cache_dir, rows)
@@ -110,7 +112,9 @@ def test_check_data_coverage_interval_and_symbol_filters(
         },
     )
 
-    as_of_iso = _last_row_iso(rows_daily if rows_daily[-1][0] >= rows_hourly[-1][0] else rows_hourly)
+    as_of_iso = _last_row_iso(
+        rows_daily if rows_daily[-1][0] >= rows_hourly[-1][0] else rows_hourly
+    )
     exit_code = cli.main(
         [
             "--config",
@@ -157,7 +161,9 @@ def _generate_rows(start: datetime, count: int, *, interval: str = "1d") -> list
     try:
         step = step_map[interval]
     except KeyError as exc:  # pragma: no cover - nie używane w obecnych testach
-        raise ValueError("Nieobsługiwany interwał testowy: {interval}".format(interval=interval)) from exc
+        raise ValueError(
+            "Nieobsługiwany interwał testowy: {interval}".format(interval=interval)
+        ) from exc
 
     rows: list[list[float]] = []
     current = start.astimezone(timezone.utc)
@@ -248,9 +254,7 @@ def _write_config(
     if backfill:
         instrument_backfill = backfill.get(instrument_name)
     if instrument_backfill is None:
-        instrument_backfill = (
-            {"interval": "1d", "lookback_days": 30},
-        )
+        instrument_backfill = ({"interval": "1d", "lookback_days": 30},)
 
     base_asset, _, quote_asset = instrument_name.partition("_")
     if not quote_asset:

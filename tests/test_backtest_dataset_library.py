@@ -60,9 +60,7 @@ def test_load_dataframe_captures_pandas_warning(
         with patch(
             "bot_core.observability.pandas_warnings.observe_pandas_warning"
         ) as observe_warning:
-            with caplog.at_level(
-                "WARNING", logger="bot_core.data.backtest_library"
-            ):
+            with caplog.at_level("WARNING", logger="bot_core.data.backtest_library"):
                 frame = library.load_dataframe("volatility_target")
 
     assert isinstance(frame, pd.DataFrame)

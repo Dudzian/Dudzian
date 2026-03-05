@@ -35,16 +35,24 @@ class _FakeVerifier:
 
         return FingerprintResult("HW-ABC-123")
 
-    def verify_license_text(self, text: str, *, fingerprint: str | None = None) -> LicenseVerificationOutcome:
+    def verify_license_text(
+        self, text: str, *, fingerprint: str | None = None
+    ) -> LicenseVerificationOutcome:
         self.text_calls.append((text, fingerprint))
         if self.succeed and "VALID" in text:
-            return LicenseVerificationOutcome(True, "ok", license_id="demo-pro", fingerprint=fingerprint or "HW-ABC-123")
+            return LicenseVerificationOutcome(
+                True, "ok", license_id="demo-pro", fingerprint=fingerprint or "HW-ABC-123"
+            )
         return LicenseVerificationOutcome(False, "invalid_signature", details="signature mismatch")
 
-    def verify_license_file(self, path: str, *, fingerprint: str | None = None) -> LicenseVerificationOutcome:
+    def verify_license_file(
+        self, path: str, *, fingerprint: str | None = None
+    ) -> LicenseVerificationOutcome:
         self.file_calls.append((path, fingerprint))
         if self.succeed:
-            return LicenseVerificationOutcome(True, "ok", license_id="demo-pro", fingerprint=fingerprint or "HW-ABC-123")
+            return LicenseVerificationOutcome(
+                True, "ok", license_id="demo-pro", fingerprint=fingerprint or "HW-ABC-123"
+            )
         return LicenseVerificationOutcome(False, "file_not_found", details="missing file")
 
 
@@ -122,7 +130,9 @@ class _StubOnboardingService(QObject):
         return True
 
     @Slot(str, str, str, str, result=bool)
-    def importApiKey(self, exchange: str, api_key: str, api_secret: str, passphrase: str = "") -> bool:
+    def importApiKey(
+        self, exchange: str, api_key: str, api_secret: str, passphrase: str = ""
+    ) -> bool:
         self.set_ready(exchange=exchange)
         return True
 
@@ -149,7 +159,9 @@ def _load_wizard(
     engine.rootContext().setContextProperty("licensingController", controller)
     if onboarding_service is not None:
         engine.rootContext().setContextProperty("onboardingService", onboarding_service)
-    qml_path = Path(__file__).resolve().parents[2] / "ui" / "qml" / "onboarding" / "LicenseWizard.qml"
+    qml_path = (
+        Path(__file__).resolve().parents[2] / "ui" / "qml" / "onboarding" / "LicenseWizard.qml"
+    )
     qml_url = QUrl.fromLocalFile(str(qml_path))
     engine.load(qml_url)
     roots = engine.rootObjects()
@@ -158,7 +170,9 @@ def _load_wizard(
         warnings = engine.warnings()
     except Exception:
         warnings = []
-    warning_details = "\n".join(getattr(w, "toString", lambda: str(w))() for w in warnings) or "(none)"
+    warning_details = (
+        "\n".join(getattr(w, "toString", lambda: str(w))() for w in warnings) or "(none)"
+    )
 
     component = QQmlComponent(engine)
     component.loadUrl(qml_url)
@@ -170,21 +184,24 @@ def _load_wizard(
             component_errors = component.errors()
     except Exception:
         component_errors = []
-    component_error_details = "\n".join(
-        getattr(error, "toString", lambda: str(error))() for error in component_errors
-    ) or "(none)"
+    component_error_details = (
+        "\n".join(getattr(error, "toString", lambda: str(error))() for error in component_errors)
+        or "(none)"
+    )
     component_error_string = component.errorString() or "(none)"
 
     if not roots:
-        details = "\n".join([
-            "Nie udało się załadować LicenseWizard.qml",
-            "=== Engine warnings ===",
-            warning_details,
-            "=== Component errors ===",
-            component_error_details,
-            "=== Component errorString ===",
-            component_error_string,
-        ])
+        details = "\n".join(
+            [
+                "Nie udało się załadować LicenseWizard.qml",
+                "=== Engine warnings ===",
+                warning_details,
+                "=== Component errors ===",
+                component_error_details,
+                "=== Component errorString ===",
+                component_error_string,
+            ]
+        )
         raise AssertionError(details)
 
     root = roots[0]

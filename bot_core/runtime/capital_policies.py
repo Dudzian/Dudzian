@@ -1,4 +1,5 @@
 """Polityki alokacji kapitału wykorzystywane przez MultiStrategyScheduler."""
+
 from __future__ import annotations
 
 import logging
@@ -20,8 +21,7 @@ class CapitalAllocationPolicy(Protocol):
 
     name: str
 
-    def allocate(self, schedules: Sequence["_ScheduleContext"]) -> Mapping[str, float]:
-        ...
+    def allocate(self, schedules: Sequence["_ScheduleContext"]) -> Mapping[str, float]: ...
 
 
 @dataclass(slots=True)
@@ -211,7 +211,9 @@ class MetricWeightedAllocation:
             min_score = min(scores.values())
             if min_score <= 0.0 or not math.isfinite(min_score):
                 shift = (
-                    abs(min_score) + self._shift_epsilon if math.isfinite(min_score) else self._shift_epsilon
+                    abs(min_score) + self._shift_epsilon
+                    if math.isfinite(min_score)
+                    else self._shift_epsilon
                 )
 
         shifted: dict[str, float] = {}
@@ -305,10 +307,7 @@ class SmoothedCapitalAllocationPolicy:
 
         normalized_raw = normalize_weights(raw_allocation)
         if not normalized_raw and schedules:
-            normalized_raw = {
-                schedule.name: 1.0 / len(schedules)
-                for schedule in schedules
-            }
+            normalized_raw = {schedule.name: 1.0 / len(schedules) for schedule in schedules}
         raw_weights: dict[str, float] = {}
         smoothed: dict[str, float] = {}
         alpha = self.smoothing_factor
@@ -397,20 +396,14 @@ class BlendedCapitalAllocation:
             self._last_components = {}
             if self._fallback is not None:
                 return self._fallback.allocate(schedules)
-            return {
-                schedule.name: 1.0 / len(schedules)
-                for schedule in schedules
-            }
+            return {schedule.name: 1.0 / len(schedules) for schedule in schedules}
 
         total_weight = sum(weight for _, weight, _ in self._components)
         if total_weight <= 0:
             self._last_components = {}
             if self._fallback is not None:
                 return self._fallback.allocate(schedules)
-            return {
-                schedule.name: 1.0 / len(schedules)
-                for schedule in schedules
-            }
+            return {schedule.name: 1.0 / len(schedules) for schedule in schedules}
 
         strategy_counts = Counter(schedule.strategy_name for schedule in schedules)
         aggregate: defaultdict[str, float] = defaultdict(float)
@@ -467,10 +460,7 @@ class BlendedCapitalAllocation:
                 fallback = {}
             normalized = normalize_weights(fallback)
         if not normalized and schedules:
-            normalized = {
-                schedule.name: 1.0 / len(schedules)
-                for schedule in schedules
-            }
+            normalized = {schedule.name: 1.0 / len(schedules) for schedule in schedules}
 
         self._last_components = diagnostics
         return normalized
@@ -689,19 +679,13 @@ class RiskProfileBudgetAllocation:
             return {key: 1.0 / len(keys) for key in keys}
 
         remaining = 1.0 - floor_total
-        residuals = {
-            key: max(normalized[key] - floor, 0.0)
-            for key in keys
-        }
+        residuals = {key: max(normalized[key] - floor, 0.0) for key in keys}
         residual_total = sum(residuals.values())
         if residual_total <= 0:
             uniform_bonus = remaining / len(keys)
             return {key: floor + uniform_bonus for key in keys}
 
-        return {
-            key: floor + remaining * (residuals[key] / residual_total)
-            for key in keys
-        }
+        return {key: floor + remaining * (residuals[key] / residual_total) for key in keys}
 
     def allocate(self, schedules: Sequence["_ScheduleContext"]) -> Mapping[str, float]:
         if not schedules:
@@ -715,9 +699,7 @@ class RiskProfileBudgetAllocation:
             groups.setdefault(key, []).append(schedule)
 
         configured_targets = {
-            key: weight
-            for key, weight in self._profile_targets.items()
-            if key in groups
+            key: weight for key, weight in self._profile_targets.items() if key in groups
         }
 
         if configured_targets:
@@ -741,17 +723,13 @@ class RiskProfileBudgetAllocation:
 
         normalized_profiles = normalize_weights(configured_targets)
         if not normalized_profiles:
-            normalized_profiles = {
-                key: 1.0 / len(groups)
-                for key in groups
-            }
+            normalized_profiles = {key: 1.0 / len(groups) for key in groups}
         adjusted_profiles = normalized_profiles
         floor_applied = False
         if self._profile_floor > 0:
             adjusted_profiles = self._enforce_profile_floor(normalized_profiles, groups)
             floor_applied = any(
-                abs(adjusted_profiles.get(key, 0.0) - normalized_profiles.get(key, 0.0))
-                > 1e-9
+                abs(adjusted_profiles.get(key, 0.0) - normalized_profiles.get(key, 0.0)) > 1e-9
                 for key in groups
             )
             if floor_applied:
@@ -763,8 +741,7 @@ class RiskProfileBudgetAllocation:
                 )
         normalized_profiles = adjusted_profiles
         self._last_profile_weights = {
-            key: float(value)
-            for key, value in normalized_profiles.items()
+            key: float(value) for key, value in normalized_profiles.items()
         }
         self._last_floor_adjustment = floor_applied
 
@@ -783,8 +760,7 @@ class RiskProfileBudgetAllocation:
             normalized_inner = normalize_weights(inner_weights)
             if not normalized_inner and schedule_group:
                 normalized_inner = {
-                    schedule.name: 1.0 / len(schedule_group)
-                    for schedule in schedule_group
+                    schedule.name: 1.0 / len(schedule_group) for schedule in schedule_group
                 }
             for schedule in schedule_group:
                 weight = normalized_inner.get(schedule.name)
@@ -860,7 +836,9 @@ class TagQuotaAllocation:
             _LOGGER.exception("TagQuotaAllocation: nie udało się zbudować polityki wewnętrznej")
             return EqualWeightAllocation()
 
-    def _assign_tag(self, schedule: "_ScheduleContext", available_tags: Mapping[str, float]) -> str | None:
+    def _assign_tag(
+        self, schedule: "_ScheduleContext", available_tags: Mapping[str, float]
+    ) -> str | None:
         if not available_tags:
             return None
         if self._prefer_primary and schedule.primary_tag:
@@ -880,10 +858,11 @@ class TagQuotaAllocation:
         diagnostics: Mapping[str, Mapping[str, float]],
         used_fallback: bool,
     ) -> None:
-        self._last_tag_weights = {self._sanitize_tag(key): float(value) for key, value in tag_weights.items()}
+        self._last_tag_weights = {
+            self._sanitize_tag(key): float(value) for key, value in tag_weights.items()
+        }
         self._last_tag_counts = {
-            self._sanitize_tag(key): int(value)
-            for key, value in tag_counts.items()
+            self._sanitize_tag(key): int(value) for key, value in tag_counts.items()
         }
         self._schedule_diagnostics = {
             str(schedule): {
@@ -903,7 +882,9 @@ class TagQuotaAllocation:
 
     def allocate(self, schedules: Sequence["_ScheduleContext"]) -> Mapping[str, float]:
         if not schedules:
-            self._store_snapshots(tag_weights={}, tag_counts={}, diagnostics={}, used_fallback=False)
+            self._store_snapshots(
+                tag_weights={}, tag_counts={}, diagnostics={}, used_fallback=False
+            )
             return {}
 
         available_tags = dict(self._raw_tag_weights)
@@ -928,7 +909,12 @@ class TagQuotaAllocation:
         if not normalized_tags:
             fallback = self._fallback_policy or EqualWeightAllocation()
             allocation = fallback.allocate(schedules)
-            self._store_snapshots(tag_weights={}, tag_counts={}, diagnostics={}, used_fallback=self._fallback_policy is not None)
+            self._store_snapshots(
+                tag_weights={},
+                tag_counts={},
+                diagnostics={},
+                used_fallback=self._fallback_policy is not None,
+            )
             return allocation
 
         contributions: dict[str, float] = {}
@@ -944,7 +930,9 @@ class TagQuotaAllocation:
             if not inner_allocation:
                 inner_weight = 1.0 / len(members)
                 for schedule in members:
-                    contributions[schedule.name] = contributions.get(schedule.name, 0.0) + share * inner_weight
+                    contributions[schedule.name] = (
+                        contributions.get(schedule.name, 0.0) + share * inner_weight
+                    )
                     entry = diagnostics.setdefault(schedule.name, {})
                     entry["tag_share"] = share
                     entry["inner_fraction"] = inner_weight
@@ -953,7 +941,9 @@ class TagQuotaAllocation:
                 if not normalized_inner:
                     inner_weight = 1.0 / len(members)
                     for schedule in members:
-                        contributions[schedule.name] = contributions.get(schedule.name, 0.0) + share * inner_weight
+                        contributions[schedule.name] = (
+                            contributions.get(schedule.name, 0.0) + share * inner_weight
+                        )
                         entry = diagnostics.setdefault(schedule.name, {})
                         entry["tag_share"] = share
                         entry["inner_fraction"] = inner_weight
@@ -963,7 +953,9 @@ class TagQuotaAllocation:
                         if inner_share is None:
                             inner_share = normalized_inner.get(schedule.strategy_name, 0.0)
                         numeric_share = float(inner_share or 0.0)
-                        contributions[schedule.name] = contributions.get(schedule.name, 0.0) + share * numeric_share
+                        contributions[schedule.name] = (
+                            contributions.get(schedule.name, 0.0) + share * numeric_share
+                        )
                         entry = diagnostics.setdefault(schedule.name, {})
                         entry["tag_share"] = share
                         entry["inner_fraction"] = numeric_share
@@ -991,4 +983,3 @@ class TagQuotaAllocation:
     @property
     def used_fallback(self) -> bool:
         return self._used_fallback
-

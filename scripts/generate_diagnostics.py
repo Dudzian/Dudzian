@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 """Narzędzie CLI do generowania paczek diagnostycznych dla wsparcia technicznego."""
+
 from __future__ import annotations
 
 import argparse

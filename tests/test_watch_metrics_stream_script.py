@@ -304,9 +304,7 @@ def test_environment_numeric_override_allows_none_keyword(monkeypatch):
     args = parser.parse_args([])
     args.limit = 25
     monkeypatch.setenv(f"{_ENV_PREFIX}LIMIT", "NONE")
-    watch_metrics_module._apply_environment_overrides(
-        args, parser=parser, provided_flags=set()
-    )
+    watch_metrics_module._apply_environment_overrides(args, parser=parser, provided_flags=set())
     assert args.limit is None
 
 
@@ -315,9 +313,7 @@ def test_environment_numeric_override_allows_null_with_spaces(monkeypatch):
     args = parser.parse_args([])
     args.timeout = 17.5
     monkeypatch.setenv(f"{_ENV_PREFIX}TIMEOUT", "  null \t")
-    watch_metrics_module._apply_environment_overrides(
-        args, parser=parser, provided_flags=set()
-    )
+    watch_metrics_module._apply_environment_overrides(args, parser=parser, provided_flags=set())
     assert args.timeout is None
 
 
@@ -326,9 +322,7 @@ def test_environment_numeric_override_supports_default(monkeypatch):
     args = parser.parse_args([])
     args.port = 60000
     monkeypatch.setenv(f"{_ENV_PREFIX}PORT", "default")
-    watch_metrics_module._apply_environment_overrides(
-        args, parser=parser, provided_flags=set()
-    )
+    watch_metrics_module._apply_environment_overrides(args, parser=parser, provided_flags=set())
     assert args.port == parser.get_default("port")
 
 
@@ -337,9 +331,7 @@ def test_environment_simple_override_allows_default(monkeypatch):
     args = parser.parse_args([])
     args.host = "10.20.30.40"
     monkeypatch.setenv(f"{_ENV_PREFIX}HOST", "DEFAULT")
-    watch_metrics_module._apply_environment_overrides(
-        args, parser=parser, provided_flags=set()
-    )
+    watch_metrics_module._apply_environment_overrides(args, parser=parser, provided_flags=set())
     assert args.host == parser.get_default("host")
 
 
@@ -348,9 +340,7 @@ def test_environment_simple_override_allows_none(monkeypatch):
     args = parser.parse_args([])
     args.event = "reduce_motion"
     monkeypatch.setenv(f"{_ENV_PREFIX}EVENT", " none ")
-    watch_metrics_module._apply_environment_overrides(
-        args, parser=parser, provided_flags=set()
-    )
+    watch_metrics_module._apply_environment_overrides(args, parser=parser, provided_flags=set())
     assert args.event is None
 
 
@@ -359,9 +349,7 @@ def test_environment_list_override_allows_none(monkeypatch):
     args = parser.parse_args([])
     args.severity = ["warning"]
     monkeypatch.setenv(f"{_ENV_PREFIX}SEVERITY", "none")
-    watch_metrics_module._apply_environment_overrides(
-        args, parser=parser, provided_flags=set()
-    )
+    watch_metrics_module._apply_environment_overrides(args, parser=parser, provided_flags=set())
     assert args.severity is None
 
 
@@ -370,9 +358,7 @@ def test_environment_list_override_supports_default(monkeypatch):
     args = parser.parse_args([])
     args.severity = ["info"]
     monkeypatch.setenv(f"{_ENV_PREFIX}SEVERITY", "DEFAULT")
-    watch_metrics_module._apply_environment_overrides(
-        args, parser=parser, provided_flags=set()
-    )
+    watch_metrics_module._apply_environment_overrides(args, parser=parser, provided_flags=set())
     assert args.severity == parser.get_default("severity")
 
 
@@ -395,11 +381,13 @@ def test_watch_metrics_stream_risk_profiles_file_cli(tmp_path, capsys):
         json.dumps({"risk_profiles": {"ops": {"severity_min": "error"}}}, ensure_ascii=False)
     )
 
-    exit_code = watch_metrics_main([
-        "--print-risk-profiles",
-        "--risk-profiles-file",
-        str(profiles_path),
-    ])
+    exit_code = watch_metrics_main(
+        [
+            "--print-risk-profiles",
+            "--risk-profiles-file",
+            str(profiles_path),
+        ]
+    )
 
     captured = capsys.readouterr()
     assert exit_code == 0
@@ -635,9 +623,7 @@ class _FakeSnapshot:
 
 class _StubCollector:
     def __init__(self) -> None:
-        self.calls: list[
-            tuple[object, float | None, list[tuple[str, bytes | str]] | None]
-        ] = []
+        self.calls: list[tuple[object, float | None, list[tuple[str, bytes | str]] | None]] = []
         self.response: Iterable[object] = ()
 
     def StreamMetrics(
@@ -681,7 +667,9 @@ def test_watch_metrics_stream_from_jsonl(tmp_path, capsys):
         },
     ]
     jsonl_path = tmp_path / "metrics.jsonl"
-    jsonl_path.write_text("\n".join(json.dumps(item, ensure_ascii=False) for item in records) + "\n")
+    jsonl_path.write_text(
+        "\n".join(json.dumps(item, ensure_ascii=False) for item in records) + "\n"
+    )
 
     exit_code = watch_metrics_main(
         [
@@ -711,13 +699,19 @@ def test_watch_metrics_stream_from_multiple_jsonl_sources(tmp_path, capsys):
     second_records = [
         {
             "generated_at": "2024-01-03T00:00:00+00:00",
-            "notes": json.dumps({"event": "overlay_budget", "severity": "warning"}, ensure_ascii=False),
+            "notes": json.dumps(
+                {"event": "overlay_budget", "severity": "warning"}, ensure_ascii=False
+            ),
         }
     ]
     first_path = tmp_path / "metrics_a.jsonl"
-    first_path.write_text("\n".join(json.dumps(item, ensure_ascii=False) for item in first_records) + "\n")
+    first_path.write_text(
+        "\n".join(json.dumps(item, ensure_ascii=False) for item in first_records) + "\n"
+    )
     second_path = tmp_path / "metrics_b.jsonl"
-    second_path.write_text("\n".join(json.dumps(item, ensure_ascii=False) for item in second_records) + "\n")
+    second_path.write_text(
+        "\n".join(json.dumps(item, ensure_ascii=False) for item in second_records) + "\n"
+    )
 
     exit_code = watch_metrics_main(
         [
@@ -741,7 +735,9 @@ def test_watch_metrics_stream_from_gzip_jsonl(tmp_path, capsys):
     records = [
         {
             "generated_at": "2024-03-01T00:00:00+00:00",
-            "notes": json.dumps({"event": "overlay_budget", "severity": "warning"}, ensure_ascii=False),
+            "notes": json.dumps(
+                {"event": "overlay_budget", "severity": "warning"}, ensure_ascii=False
+            ),
         },
         {
             "generated_at": "2024-03-01T00:00:10+00:00",
@@ -772,7 +768,9 @@ def test_watch_metrics_stream_from_lzma_jsonl(tmp_path, capsys):
     records = [
         {
             "generated_at": "2024-05-01T00:00:00+00:00",
-            "notes": json.dumps({"event": "overlay_budget", "severity": "warning"}, ensure_ascii=False),
+            "notes": json.dumps(
+                {"event": "overlay_budget", "severity": "warning"}, ensure_ascii=False
+            ),
         },
         {
             "generated_at": "2024-05-01T00:00:05+00:00",
@@ -803,7 +801,9 @@ def test_watch_metrics_stream_from_bz2_jsonl(tmp_path, capsys):
     records = [
         {
             "generated_at": "2024-06-01T00:00:00+00:00",
-            "notes": json.dumps({"event": "overlay_budget", "severity": "warning"}, ensure_ascii=False),
+            "notes": json.dumps(
+                {"event": "overlay_budget", "severity": "warning"}, ensure_ascii=False
+            ),
         },
         {
             "generated_at": "2024-06-01T00:00:05+00:00",
@@ -835,7 +835,9 @@ def test_watch_metrics_stream_from_zip_jsonl(tmp_path, capsys):
     records = [
         {
             "generated_at": "2024-07-01T00:00:00+00:00",
-            "notes": json.dumps({"event": "overlay_budget", "severity": "warning"}, ensure_ascii=False),
+            "notes": json.dumps(
+                {"event": "overlay_budget", "severity": "warning"}, ensure_ascii=False
+            ),
         },
         {
             "generated_at": "2024-07-01T00:00:05+00:00",
@@ -879,7 +881,9 @@ def test_watch_metrics_stream_from_tar_jsonl(tmp_path, capsys):
     records = [
         {
             "generated_at": "2024-08-01T00:00:00+00:00",
-            "notes": json.dumps({"event": "overlay_budget", "severity": "warning"}, ensure_ascii=False),
+            "notes": json.dumps(
+                {"event": "overlay_budget", "severity": "warning"}, ensure_ascii=False
+            ),
         },
         {
             "generated_at": "2024-08-01T00:00:10+00:00",
@@ -909,7 +913,9 @@ def test_watch_metrics_stream_from_tgz_jsonl(tmp_path, capsys):
     records = [
         {
             "generated_at": "2024-09-01T00:00:00+00:00",
-            "notes": json.dumps({"event": "overlay_budget", "severity": "warning"}, ensure_ascii=False),
+            "notes": json.dumps(
+                {"event": "overlay_budget", "severity": "warning"}, ensure_ascii=False
+            ),
         },
         {
             "generated_at": "2024-09-01T00:00:05+00:00",
@@ -942,15 +948,11 @@ def test_watch_metrics_stream_from_directory_jsonl(tmp_path, capsys):
     gz_records = [
         {
             "generated_at": "2024-10-01T00:00:00+00:00",
-            "notes": json.dumps(
-                {"event": "reduce_motion", "severity": "info"}, ensure_ascii=False
-            ),
+            "notes": json.dumps({"event": "reduce_motion", "severity": "info"}, ensure_ascii=False),
         },
         {
             "generated_at": "2024-10-01T00:00:10+00:00",
-            "notes": json.dumps(
-                {"event": "hud_toggle", "severity": "warning"}, ensure_ascii=False
-            ),
+            "notes": json.dumps({"event": "hud_toggle", "severity": "warning"}, ensure_ascii=False),
         },
     ]
     with gzip.open(gz_path, "wt", encoding="utf-8") as handle:
@@ -980,11 +982,7 @@ def test_watch_metrics_stream_from_directory_jsonl(tmp_path, capsys):
     captured = capsys.readouterr()
     assert exit_code == 0
 
-    parsed_lines = [
-        json.loads(line)
-        for line in captured.out.splitlines()
-        if line.strip()
-    ]
+    parsed_lines = [json.loads(line) for line in captured.out.splitlines() if line.strip()]
     events: list[str] = []
     for entry in parsed_lines:
         raw_notes = entry.get("notes")
@@ -1003,9 +1001,7 @@ def test_watch_metrics_stream_from_glob_pattern(tmp_path, capsys):
     plain_records = [
         {
             "generated_at": "2024-11-01T00:00:05+00:00",
-            "notes": json.dumps(
-                {"event": "reduce_motion", "severity": "info"}, ensure_ascii=False
-            ),
+            "notes": json.dumps({"event": "reduce_motion", "severity": "info"}, ensure_ascii=False),
         }
     ]
     plain_payload = "\n".join(json.dumps(entry, ensure_ascii=False) for entry in plain_records)
@@ -1015,9 +1011,7 @@ def test_watch_metrics_stream_from_glob_pattern(tmp_path, capsys):
     gz_records = [
         {
             "generated_at": "2024-11-01T00:00:10+00:00",
-            "notes": json.dumps(
-                {"event": "hud_toggle", "severity": "warning"}, ensure_ascii=False
-            ),
+            "notes": json.dumps({"event": "hud_toggle", "severity": "warning"}, ensure_ascii=False),
         },
         {
             "generated_at": "2024-11-01T00:00:20+00:00",
@@ -1036,11 +1030,7 @@ def test_watch_metrics_stream_from_glob_pattern(tmp_path, capsys):
 
     assert exit_code == 0
 
-    parsed_lines = [
-        json.loads(line)
-        for line in captured.out.splitlines()
-        if line.strip()
-    ]
+    parsed_lines = [json.loads(line) for line in captured.out.splitlines() if line.strip()]
     events = []
     for entry in parsed_lines:
         raw_notes = entry.get("notes")
@@ -1082,9 +1072,7 @@ def test_watch_metrics_stream_from_manifest_text_file(tmp_path, capsys):
     first_records = [
         {
             "generated_at": "2024-12-01T00:00:00+00:00",
-            "notes": json.dumps(
-                {"event": "reduce_motion", "severity": "info"}, ensure_ascii=False
-            ),
+            "notes": json.dumps({"event": "reduce_motion", "severity": "info"}, ensure_ascii=False),
         }
     ]
     first_segment.write_text(
@@ -1096,9 +1084,7 @@ def test_watch_metrics_stream_from_manifest_text_file(tmp_path, capsys):
     second_records = [
         {
             "generated_at": "2024-12-01T00:00:10+00:00",
-            "notes": json.dumps(
-                {"event": "hud_toggle", "severity": "warning"}, ensure_ascii=False
-            ),
+            "notes": json.dumps({"event": "hud_toggle", "severity": "warning"}, ensure_ascii=False),
         },
         {
             "generated_at": "2024-12-01T00:00:20+00:00",
@@ -1124,11 +1110,7 @@ def test_watch_metrics_stream_from_manifest_text_file(tmp_path, capsys):
 
     assert exit_code == 0
 
-    parsed_lines = [
-        json.loads(line)
-        for line in captured.out.splitlines()
-        if line.strip()
-    ]
+    parsed_lines = [json.loads(line) for line in captured.out.splitlines() if line.strip()]
     events: list[str] = []
     for entry in parsed_lines:
         raw_notes = entry.get("notes")
@@ -1147,9 +1129,7 @@ def test_watch_metrics_stream_from_manifest_json_list(tmp_path, capsys):
     plain_payload = [
         {
             "generated_at": "2025-01-01T00:00:05+00:00",
-            "notes": json.dumps(
-                {"event": "reduce_motion", "severity": "info"}, ensure_ascii=False
-            ),
+            "notes": json.dumps({"event": "reduce_motion", "severity": "info"}, ensure_ascii=False),
         }
     ]
     plain_path.write_text(
@@ -1161,9 +1141,7 @@ def test_watch_metrics_stream_from_manifest_json_list(tmp_path, capsys):
     gz_payload = [
         {
             "generated_at": "2025-01-01T00:00:15+00:00",
-            "notes": json.dumps(
-                {"event": "hud_toggle", "severity": "warning"}, ensure_ascii=False
-            ),
+            "notes": json.dumps({"event": "hud_toggle", "severity": "warning"}, ensure_ascii=False),
         }
     ]
     with gzip.open(gz_path, "wt", encoding="utf-8") as handle:
@@ -1184,11 +1162,7 @@ def test_watch_metrics_stream_from_manifest_json_list(tmp_path, capsys):
 
     assert exit_code == 0
 
-    parsed_lines = [
-        json.loads(line)
-        for line in captured.out.splitlines()
-        if line.strip()
-    ]
+    parsed_lines = [json.loads(line) for line in captured.out.splitlines() if line.strip()]
     events = []
     for entry in parsed_lines:
         raw_notes = entry.get("notes")
@@ -1213,7 +1187,10 @@ def test_watch_metrics_stream_manifest_without_entries(tmp_path, caplog):
 
 def test_watch_metrics_stream_from_jsonl_stdin(monkeypatch, capsys):
     payload = "\n".join(
-        json.dumps({"generated_at": "2024-04-01T00:00:00Z", "notes": {"event": "reduce_motion"}}, ensure_ascii=False)
+        json.dumps(
+            {"generated_at": "2024-04-01T00:00:00Z", "notes": {"event": "reduce_motion"}},
+            ensure_ascii=False,
+        )
         for _ in range(2)
     )
     monkeypatch.setattr(sys, "stdin", io.StringIO(payload))
@@ -1249,7 +1226,9 @@ def test_watch_metrics_stream_from_jsonl_with_time_filters(tmp_path, capsys):
         },
     ]
     jsonl_path = tmp_path / "metrics.jsonl"
-    jsonl_path.write_text("\n".join(json.dumps(item, ensure_ascii=False) for item in records) + "\n")
+    jsonl_path.write_text(
+        "\n".join(json.dumps(item, ensure_ascii=False) for item in records) + "\n"
+    )
 
     exit_code = watch_metrics_main(
         [
@@ -1291,10 +1270,12 @@ def test_watch_metrics_stream_time_filters_from_env(monkeypatch, tmp_path, capsy
     monkeypatch.setenv(f"{_ENV_PREFIX}SINCE", "2024-02-01T00:00:10Z")
     monkeypatch.setenv(f"{_ENV_PREFIX}UNTIL", "2024-02-01T00:01:00+00:00")
 
-    exit_code = watch_metrics_main([
-        "--from-jsonl",
-        str(jsonl_path),
-    ])
+    exit_code = watch_metrics_main(
+        [
+            "--from-jsonl",
+            str(jsonl_path),
+        ]
+    )
     captured = capsys.readouterr()
     assert exit_code == 0
     assert "overlay_budget" in captured.out
@@ -1357,13 +1338,19 @@ def test_watch_metrics_stream_decision_log_offline(tmp_path, capsys):
 def test_watch_metrics_stream_decision_log_multiple_sources(tmp_path, capsys):
     first_path = tmp_path / "metrics_a.jsonl"
     first_path.write_text(
-        json.dumps({"generated_at": "2024-02-02T00:00:00Z", "notes": {"event": "reduce_motion"}}, ensure_ascii=False)
+        json.dumps(
+            {"generated_at": "2024-02-02T00:00:00Z", "notes": {"event": "reduce_motion"}},
+            ensure_ascii=False,
+        )
         + "\n",
         encoding="utf-8",
     )
     second_path = tmp_path / "metrics_b.jsonl"
     second_path.write_text(
-        json.dumps({"generated_at": "2024-02-02T00:01:00Z", "notes": {"event": "overlay_budget"}}, ensure_ascii=False)
+        json.dumps(
+            {"generated_at": "2024-02-02T00:01:00Z", "notes": {"event": "overlay_budget"}},
+            ensure_ascii=False,
+        )
         + "\n",
         encoding="utf-8",
     )
@@ -1396,7 +1383,10 @@ def test_watch_metrics_stream_decision_log_multiple_sources(tmp_path, capsys):
 
 def test_watch_metrics_stream_decision_log_from_stdin(monkeypatch, tmp_path, capsys):
     payload = "\n".join(
-        json.dumps({"generated_at": "2024-05-01T00:00:00Z", "notes": {"event": "overlay_budget"}}, ensure_ascii=False)
+        json.dumps(
+            {"generated_at": "2024-05-01T00:00:00Z", "notes": {"event": "overlay_budget"}},
+            ensure_ascii=False,
+        )
         for _ in range(2)
     )
     monkeypatch.setattr(sys, "stdin", io.StringIO(payload))
@@ -1434,7 +1424,9 @@ def test_watch_metrics_stream_time_filters_in_decision_log(tmp_path, capsys):
         },
     ]
     jsonl_path = tmp_path / "metrics.jsonl"
-    jsonl_path.write_text("\n".join(json.dumps(item, ensure_ascii=False) for item in records) + "\n")
+    jsonl_path.write_text(
+        "\n".join(json.dumps(item, ensure_ascii=False) for item in records) + "\n"
+    )
 
     decision_log = tmp_path / "audit" / "filtered.jsonl"
 
@@ -1623,7 +1615,9 @@ def test_watch_metrics_stream_core_config_summary_metadata(tmp_path, capsys):
         }
     ]
     jsonl_path = tmp_path / "metrics.jsonl"
-    jsonl_path.write_text("\n".join(json.dumps(item, ensure_ascii=False) for item in records) + "\n")
+    jsonl_path.write_text(
+        "\n".join(json.dumps(item, ensure_ascii=False) for item in records) + "\n"
+    )
 
     summary_path = tmp_path / "summary.json"
     exit_code = watch_metrics_main(
@@ -1841,7 +1835,9 @@ def test_watch_metrics_stream_signed_summary(tmp_path, capsys):
         separators=(",", ":"),
     ).encode("utf-8")
     expected_digest = hmac.new(key.encode("utf-8"), body, hashlib.sha256).digest()
-    assert summary_payload["signature"]["value"] == base64.b64encode(expected_digest).decode("ascii")
+    assert summary_payload["signature"]["value"] == base64.b64encode(expected_digest).decode(
+        "ascii"
+    )
 
     file_payload = json.loads(output_path.read_text(encoding="utf-8"))
     assert file_payload == summary_payload
@@ -1890,7 +1886,9 @@ def test_watch_metrics_stream_summary_signature_metadata(tmp_path, capsys):
     assert exit_code == 0
     assert "overlay_budget" in captured.out
 
-    entries = [line for line in decision_log.read_text(encoding="utf-8").splitlines() if line.strip()]
+    entries = [
+        line for line in decision_log.read_text(encoding="utf-8").splitlines() if line.strip()
+    ]
     metadata_entry = json.loads(entries[0])
     summary_info = metadata_entry["metadata"].get("summary_signature")
     assert summary_info == {"algorithm": "HMAC-SHA256", "key_id": key_id}
@@ -2031,7 +2029,9 @@ def test_environment_auth_token_file(monkeypatch, tmp_path):
     monkeypatch.setenv(f"{_ENV_PREFIX}AUTH_TOKEN_FILE", str(token_path))
     stub = _StubCollector()
     _install_dummy_loader(monkeypatch, stub)
-    monkeypatch.setattr(watch_metrics_module, "create_metrics_channel", lambda *args, **kwargs: "channel")
+    monkeypatch.setattr(
+        watch_metrics_module, "create_metrics_channel", lambda *args, **kwargs: "channel"
+    )
 
     exit_code = watch_metrics_main([])
 
@@ -2045,7 +2045,9 @@ def test_environment_auth_token(monkeypatch):
     monkeypatch.setenv(f"{_ENV_PREFIX}AUTH_TOKEN", "env-token")
     stub = _StubCollector()
     _install_dummy_loader(monkeypatch, stub)
-    monkeypatch.setattr(watch_metrics_module, "create_metrics_channel", lambda *args, **kwargs: "channel")
+    monkeypatch.setattr(
+        watch_metrics_module, "create_metrics_channel", lambda *args, **kwargs: "channel"
+    )
 
     exit_code = watch_metrics_main([])
 
@@ -2058,14 +2060,18 @@ def test_environment_auth_token(monkeypatch):
 def test_watch_metrics_stream_custom_headers_cli(monkeypatch):
     stub = _StubCollector()
     _install_dummy_loader(monkeypatch, stub)
-    monkeypatch.setattr(watch_metrics_module, "create_metrics_channel", lambda *args, **kwargs: "channel")
+    monkeypatch.setattr(
+        watch_metrics_module, "create_metrics_channel", lambda *args, **kwargs: "channel"
+    )
 
-    exit_code = watch_metrics_main([
-        "--header",
-        "x-trace=abc123",
-        "--header",
-        "x-user:Ops",
-    ])
+    exit_code = watch_metrics_main(
+        [
+            "--header",
+            "x-trace=abc123",
+            "--header",
+            "x-user:Ops",
+        ]
+    )
 
     assert exit_code == 0
     assert stub.calls
@@ -2077,7 +2083,9 @@ def test_environment_headers_override(monkeypatch):
     monkeypatch.setenv(f"{_ENV_PREFIX}HEADERS", "x-trace=abc; x-team = ops ")
     stub = _StubCollector()
     _install_dummy_loader(monkeypatch, stub)
-    monkeypatch.setattr(watch_metrics_module, "create_metrics_channel", lambda *args, **kwargs: "channel")
+    monkeypatch.setattr(
+        watch_metrics_module, "create_metrics_channel", lambda *args, **kwargs: "channel"
+    )
 
     exit_code = watch_metrics_main([])
 
@@ -2099,7 +2107,9 @@ def test_environment_headers_multiline(monkeypatch):
     monkeypatch.setenv(f"{_ENV_PREFIX}HEADERS", multiline)
     stub = _StubCollector()
     _install_dummy_loader(monkeypatch, stub)
-    monkeypatch.setattr(watch_metrics_module, "create_metrics_channel", lambda *args, **kwargs: "channel")
+    monkeypatch.setattr(
+        watch_metrics_module, "create_metrics_channel", lambda *args, **kwargs: "channel"
+    )
 
     exit_code = watch_metrics_main([])
 
@@ -2124,7 +2134,9 @@ def test_environment_headers_multiline_comments(monkeypatch):
     monkeypatch.setenv(f"{_ENV_PREFIX}HEADERS", multiline)
     stub = _StubCollector()
     _install_dummy_loader(monkeypatch, stub)
-    monkeypatch.setattr(watch_metrics_module, "create_metrics_channel", lambda *args, **kwargs: "channel")
+    monkeypatch.setattr(
+        watch_metrics_module, "create_metrics_channel", lambda *args, **kwargs: "channel"
+    )
 
     exit_code = watch_metrics_main([])
 
@@ -2150,7 +2162,9 @@ def test_environment_headers_file_list(monkeypatch, tmp_path):
 
     stub = _StubCollector()
     _install_dummy_loader(monkeypatch, stub)
-    monkeypatch.setattr(watch_metrics_module, "create_metrics_channel", lambda *args, **kwargs: "channel")
+    monkeypatch.setattr(
+        watch_metrics_module, "create_metrics_channel", lambda *args, **kwargs: "channel"
+    )
 
     exit_code = watch_metrics_main([])
 
@@ -2168,7 +2182,9 @@ def test_environment_headers_file_none(monkeypatch):
     monkeypatch.setenv(f"{_ENV_PREFIX}HEADERS_FILE", "NONE")
     stub = _StubCollector()
     _install_dummy_loader(monkeypatch, stub)
-    monkeypatch.setattr(watch_metrics_module, "create_metrics_channel", lambda *args, **kwargs: "channel")
+    monkeypatch.setattr(
+        watch_metrics_module, "create_metrics_channel", lambda *args, **kwargs: "channel"
+    )
 
     exit_code = watch_metrics_main([])
 
@@ -2193,7 +2209,9 @@ def test_headers_file_basic(monkeypatch, tmp_path):
 
     stub = _StubCollector()
     _install_dummy_loader(monkeypatch, stub)
-    monkeypatch.setattr(watch_metrics_module, "create_metrics_channel", lambda *args, **kwargs: "channel")
+    monkeypatch.setattr(
+        watch_metrics_module, "create_metrics_channel", lambda *args, **kwargs: "channel"
+    )
 
     exit_code = watch_metrics_main(["--headers-file", str(headers_file)])
 
@@ -2213,7 +2231,9 @@ def test_headers_file_cli_override(monkeypatch, tmp_path):
 
     stub = _StubCollector()
     _install_dummy_loader(monkeypatch, stub)
-    monkeypatch.setattr(watch_metrics_module, "create_metrics_channel", lambda *args, **kwargs: "channel")
+    monkeypatch.setattr(
+        watch_metrics_module, "create_metrics_channel", lambda *args, **kwargs: "channel"
+    )
 
     exit_code = watch_metrics_main(
         [
@@ -2238,7 +2258,9 @@ def test_headers_dir_basic(monkeypatch, tmp_path):
 
     stub = _StubCollector()
     _install_dummy_loader(monkeypatch, stub)
-    monkeypatch.setattr(watch_metrics_module, "create_metrics_channel", lambda *args, **kwargs: "channel")
+    monkeypatch.setattr(
+        watch_metrics_module, "create_metrics_channel", lambda *args, **kwargs: "channel"
+    )
 
     exit_code = watch_metrics_main(["--headers-dir", str(headers_dir)])
 
@@ -2265,7 +2287,9 @@ def test_environment_headers_dirs(monkeypatch, tmp_path):
 
     stub = _StubCollector()
     _install_dummy_loader(monkeypatch, stub)
-    monkeypatch.setattr(watch_metrics_module, "create_metrics_channel", lambda *args, **kwargs: "channel")
+    monkeypatch.setattr(
+        watch_metrics_module, "create_metrics_channel", lambda *args, **kwargs: "channel"
+    )
 
     exit_code = watch_metrics_main([])
 
@@ -2282,7 +2306,9 @@ def test_environment_headers_dirs_none(monkeypatch):
     monkeypatch.setenv(f"{_ENV_PREFIX}HEADERS_DIRS", "NONE")
     stub = _StubCollector()
     _install_dummy_loader(monkeypatch, stub)
-    monkeypatch.setattr(watch_metrics_module, "create_metrics_channel", lambda *args, **kwargs: "channel")
+    monkeypatch.setattr(
+        watch_metrics_module, "create_metrics_channel", lambda *args, **kwargs: "channel"
+    )
 
     exit_code = watch_metrics_main([])
 
@@ -2296,7 +2322,9 @@ def test_environment_headers_none(monkeypatch):
     monkeypatch.setenv(f"{_ENV_PREFIX}HEADERS", "NONE")
     stub = _StubCollector()
     _install_dummy_loader(monkeypatch, stub)
-    monkeypatch.setattr(watch_metrics_module, "create_metrics_channel", lambda *args, **kwargs: "channel")
+    monkeypatch.setattr(
+        watch_metrics_module, "create_metrics_channel", lambda *args, **kwargs: "channel"
+    )
 
     exit_code = watch_metrics_main([])
 
@@ -2309,7 +2337,9 @@ def test_environment_headers_none(monkeypatch):
 def test_core_config_grpc_metadata_applied(monkeypatch, tmp_path):
     stub = _StubCollector()
     _install_dummy_loader(monkeypatch, stub)
-    monkeypatch.setattr(watch_metrics_module, "create_metrics_channel", lambda *args, **kwargs: "channel")
+    monkeypatch.setattr(
+        watch_metrics_module, "create_metrics_channel", lambda *args, **kwargs: "channel"
+    )
     profiles_path = _write_risk_profile_file(tmp_path, name="ops", severity="warning")
     config_path = _write_core_config(
         tmp_path,
@@ -2328,12 +2358,13 @@ def test_core_config_grpc_metadata_applied(monkeypatch, tmp_path):
 def test_core_config_grpc_metadata_files_applied(monkeypatch, tmp_path):
     stub = _StubCollector()
     _install_dummy_loader(monkeypatch, stub)
-    monkeypatch.setattr(watch_metrics_module, "create_metrics_channel", lambda *args, **kwargs: "channel")
+    monkeypatch.setattr(
+        watch_metrics_module, "create_metrics_channel", lambda *args, **kwargs: "channel"
+    )
     profiles_path = _write_risk_profile_file(tmp_path, name="ops", severity="warning")
     headers_file = tmp_path / "metrics_headers.env"
     headers_file.write_text(
-        "authorization=Bearer from file\n"
-        "x-trace=from-file\n",
+        "authorization=Bearer from file\nx-trace=from-file\n",
         encoding="utf-8",
     )
     config_path = _write_core_config(
@@ -2359,7 +2390,9 @@ def test_core_config_grpc_metadata_sources_recorded(monkeypatch, tmp_path):
     monkeypatch.setenv("BOT_CORE_TRACE", "trace-token")
     stub = _StubCollector()
     _install_dummy_loader(monkeypatch, stub)
-    monkeypatch.setattr(watch_metrics_module, "create_metrics_channel", lambda *args, **kwargs: "channel")
+    monkeypatch.setattr(
+        watch_metrics_module, "create_metrics_channel", lambda *args, **kwargs: "channel"
+    )
     profiles_path = _write_risk_profile_file(tmp_path, name="ops", severity="warning")
     config_path = _write_core_config(
         tmp_path,
@@ -2383,7 +2416,9 @@ def test_core_config_grpc_metadata_sources_recorded(monkeypatch, tmp_path):
 def test_core_config_grpc_metadata_files_sources_recorded(monkeypatch, tmp_path):
     stub = _StubCollector()
     _install_dummy_loader(monkeypatch, stub)
-    monkeypatch.setattr(watch_metrics_module, "create_metrics_channel", lambda *args, **kwargs: "channel")
+    monkeypatch.setattr(
+        watch_metrics_module, "create_metrics_channel", lambda *args, **kwargs: "channel"
+    )
     profiles_path = _write_risk_profile_file(tmp_path, name="ops", severity="warning")
     headers_file = tmp_path / "metrics_headers.env"
     headers_file.write_text(
@@ -2419,7 +2454,9 @@ def test_core_config_grpc_metadata_files_sources_recorded(monkeypatch, tmp_path)
 def test_core_config_grpc_metadata_files_remove(monkeypatch, tmp_path):
     stub = _StubCollector()
     _install_dummy_loader(monkeypatch, stub)
-    monkeypatch.setattr(watch_metrics_module, "create_metrics_channel", lambda *args, **kwargs: "channel")
+    monkeypatch.setattr(
+        watch_metrics_module, "create_metrics_channel", lambda *args, **kwargs: "channel"
+    )
     profiles_path = _write_risk_profile_file(tmp_path, name="ops", severity="warning")
     headers_file = tmp_path / "metrics_headers.env"
     headers_file.write_text("authorization=NONE\n", encoding="utf-8")
@@ -2454,7 +2491,9 @@ def test_core_config_grpc_metadata_files_remove(monkeypatch, tmp_path):
 def test_core_config_grpc_metadata_directories_applied(monkeypatch, tmp_path):
     stub = _StubCollector()
     _install_dummy_loader(monkeypatch, stub)
-    monkeypatch.setattr(watch_metrics_module, "create_metrics_channel", lambda *args, **kwargs: "channel")
+    monkeypatch.setattr(
+        watch_metrics_module, "create_metrics_channel", lambda *args, **kwargs: "channel"
+    )
     profiles_path = _write_risk_profile_file(tmp_path, name="ops", severity="warning")
 
     headers_dir = tmp_path / "headers_dir"
@@ -2486,7 +2525,9 @@ def test_core_config_grpc_metadata_directories_applied(monkeypatch, tmp_path):
 def test_core_config_grpc_metadata_directories_sources_recorded(monkeypatch, tmp_path):
     stub = _StubCollector()
     _install_dummy_loader(monkeypatch, stub)
-    monkeypatch.setattr(watch_metrics_module, "create_metrics_channel", lambda *args, **kwargs: "channel")
+    monkeypatch.setattr(
+        watch_metrics_module, "create_metrics_channel", lambda *args, **kwargs: "channel"
+    )
     profiles_path = _write_risk_profile_file(tmp_path, name="ops", severity="warning")
 
     headers_dir = tmp_path / "headers_dir"
@@ -2523,7 +2564,9 @@ def test_core_config_grpc_metadata_directories_sources_recorded(monkeypatch, tmp
 def test_core_config_grpc_metadata_directories_remove(monkeypatch, tmp_path):
     stub = _StubCollector()
     _install_dummy_loader(monkeypatch, stub)
-    monkeypatch.setattr(watch_metrics_module, "create_metrics_channel", lambda *args, **kwargs: "channel")
+    monkeypatch.setattr(
+        watch_metrics_module, "create_metrics_channel", lambda *args, **kwargs: "channel"
+    )
     profiles_path = _write_risk_profile_file(tmp_path, name="ops", severity="warning")
 
     headers_dir = tmp_path / "headers_dir"
@@ -2563,7 +2606,9 @@ def test_core_config_grpc_metadata_disabled_by_env(monkeypatch, tmp_path):
     monkeypatch.setenv(f"{_ENV_PREFIX}HEADERS", "NONE")
     stub = _StubCollector()
     _install_dummy_loader(monkeypatch, stub)
-    monkeypatch.setattr(watch_metrics_module, "create_metrics_channel", lambda *args, **kwargs: "channel")
+    monkeypatch.setattr(
+        watch_metrics_module, "create_metrics_channel", lambda *args, **kwargs: "channel"
+    )
     profiles_path = _write_risk_profile_file(tmp_path, name="ops", severity="warning")
     config_path = _write_core_config(
         tmp_path,
@@ -2582,7 +2627,9 @@ def test_core_config_grpc_metadata_disabled_by_env(monkeypatch, tmp_path):
 def test_core_config_grpc_metadata_cli_override(monkeypatch, tmp_path):
     stub = _StubCollector()
     _install_dummy_loader(monkeypatch, stub)
-    monkeypatch.setattr(watch_metrics_module, "create_metrics_channel", lambda *args, **kwargs: "channel")
+    monkeypatch.setattr(
+        watch_metrics_module, "create_metrics_channel", lambda *args, **kwargs: "channel"
+    )
     profiles_path = _write_risk_profile_file(tmp_path, name="ops", severity="warning")
     config_path = _write_core_config(
         tmp_path,
@@ -2590,9 +2637,7 @@ def test_core_config_grpc_metadata_cli_override(monkeypatch, tmp_path):
         metrics_grpc_metadata={"x-trace": "config", "x-role": "config"},
     )
 
-    exit_code = watch_metrics_main(
-        ["--core-config", str(config_path), "--header", "x-trace=cli"]
-    )
+    exit_code = watch_metrics_main(["--core-config", str(config_path), "--header", "x-trace=cli"])
 
     assert exit_code == 0
     assert stub.calls
@@ -2604,7 +2649,9 @@ def test_core_config_grpc_metadata_sources_cli_override_logged(monkeypatch, tmp_
     stub = _StubCollector()
     stub.response = []
     _install_dummy_loader(monkeypatch, stub)
-    monkeypatch.setattr(watch_metrics_module, "create_metrics_channel", lambda *args, **kwargs: "channel")
+    monkeypatch.setattr(
+        watch_metrics_module, "create_metrics_channel", lambda *args, **kwargs: "channel"
+    )
     profiles_path = _write_risk_profile_file(tmp_path, name="ops", severity="warning")
     config_path = _write_core_config(
         tmp_path,
@@ -2708,7 +2755,9 @@ def test_cli_header_file_reference(monkeypatch, tmp_path):
     stub = _StubCollector()
     stub.response = []
     _install_dummy_loader(monkeypatch, stub)
-    monkeypatch.setattr(watch_metrics_module, "create_metrics_channel", lambda *args, **kwargs: "channel")
+    monkeypatch.setattr(
+        watch_metrics_module, "create_metrics_channel", lambda *args, **kwargs: "channel"
+    )
     profiles_path = _write_risk_profile_file(tmp_path, name="ops", severity="warning")
     config_path = _write_core_config(tmp_path, profiles_path=profiles_path)
     token_path = tmp_path / "header_token.txt"
@@ -2731,7 +2780,9 @@ def test_cli_header_file_reference(monkeypatch, tmp_path):
     assert stub.calls
     _request, _timeout, metadata = stub.calls[0]
     assert metadata == [("authorization", "Bearer from file")]
-    entries = [line for line in decision_log.read_text(encoding="utf-8").splitlines() if line.strip()]
+    entries = [
+        line for line in decision_log.read_text(encoding="utf-8").splitlines() if line.strip()
+    ]
     assert len(entries) == 1
     metadata_entry = json.loads(entries[0])
     assert metadata_entry["kind"] == "metadata"
@@ -2739,7 +2790,9 @@ def test_cli_header_file_reference(monkeypatch, tmp_path):
     assert custom_meta is not None
     expected_source = f"cli:--header@file:{token_path}".replace("\\", "/")
     # Porównujemy po normalizacji separatorów, bo Windows używa `\\`.
-    normalized_sources = {key: value.replace("\\", "/") for key, value in custom_meta["sources"].items()}
+    normalized_sources = {
+        key: value.replace("\\", "/") for key, value in custom_meta["sources"].items()
+    }
     assert normalized_sources == {"authorization": expected_source}
 
 
@@ -2747,7 +2800,9 @@ def test_cli_header_env_reference(monkeypatch, tmp_path):
     stub = _StubCollector()
     stub.response = []
     _install_dummy_loader(monkeypatch, stub)
-    monkeypatch.setattr(watch_metrics_module, "create_metrics_channel", lambda *args, **kwargs: "channel")
+    monkeypatch.setattr(
+        watch_metrics_module, "create_metrics_channel", lambda *args, **kwargs: "channel"
+    )
     monkeypatch.setenv("WATCH_HEADER_TOKEN", "env-token")
     profiles_path = _write_risk_profile_file(tmp_path, name="ops", severity="warning")
     config_path = _write_core_config(tmp_path, profiles_path=profiles_path)
@@ -2769,7 +2824,9 @@ def test_cli_header_env_reference(monkeypatch, tmp_path):
     assert stub.calls
     _request, _timeout, metadata = stub.calls[0]
     assert metadata == [("authorization", "env-token")]
-    entries = [line for line in decision_log.read_text(encoding="utf-8").splitlines() if line.strip()]
+    entries = [
+        line for line in decision_log.read_text(encoding="utf-8").splitlines() if line.strip()
+    ]
     assert len(entries) == 1
     metadata_entry = json.loads(entries[0])
     custom_meta = metadata_entry["metadata"].get("custom_metadata")
@@ -2781,7 +2838,9 @@ def test_headers_file_sources_logged(monkeypatch, tmp_path):
     stub = _StubCollector()
     stub.response = []
     _install_dummy_loader(monkeypatch, stub)
-    monkeypatch.setattr(watch_metrics_module, "create_metrics_channel", lambda *args, **kwargs: "channel")
+    monkeypatch.setattr(
+        watch_metrics_module, "create_metrics_channel", lambda *args, **kwargs: "channel"
+    )
     headers_file = tmp_path / "headers.env"
     headers_file.write_text("authorization=Bearer file", encoding="utf-8")
     decision_log = tmp_path / "logs" / "headers_file_sources.jsonl"
@@ -2797,12 +2856,16 @@ def test_headers_file_sources_logged(monkeypatch, tmp_path):
     )
 
     assert exit_code == 0
-    entries = [line for line in decision_log.read_text(encoding="utf-8").splitlines() if line.strip()]
+    entries = [
+        line for line in decision_log.read_text(encoding="utf-8").splitlines() if line.strip()
+    ]
     assert len(entries) == 1
     metadata_entry = json.loads(entries[0])
     custom_meta = metadata_entry["metadata"].get("custom_metadata")
     assert custom_meta is not None
-    normalized_sources = {key: value.replace("\\", "/") for key, value in custom_meta["sources"].items()}
+    normalized_sources = {
+        key: value.replace("\\", "/") for key, value in custom_meta["sources"].items()
+    }
     expected_source = f"file:{headers_file}".replace("\\", "/")
     assert normalized_sources == {"authorization": expected_source}
 
@@ -2811,7 +2874,9 @@ def test_cli_header_inline_base64_for_binary(monkeypatch, tmp_path):
     stub = _StubCollector()
     stub.response = []
     _install_dummy_loader(monkeypatch, stub)
-    monkeypatch.setattr(watch_metrics_module, "create_metrics_channel", lambda *args, **kwargs: "channel")
+    monkeypatch.setattr(
+        watch_metrics_module, "create_metrics_channel", lambda *args, **kwargs: "channel"
+    )
     profiles_path = _write_risk_profile_file(tmp_path, name="ops", severity="warning")
     config_path = _write_core_config(tmp_path, profiles_path=profiles_path)
 
@@ -2834,7 +2899,9 @@ def test_cli_header_file_base64_binary(monkeypatch, tmp_path):
     stub = _StubCollector()
     stub.response = []
     _install_dummy_loader(monkeypatch, stub)
-    monkeypatch.setattr(watch_metrics_module, "create_metrics_channel", lambda *args, **kwargs: "channel")
+    monkeypatch.setattr(
+        watch_metrics_module, "create_metrics_channel", lambda *args, **kwargs: "channel"
+    )
     profiles_path = _write_risk_profile_file(tmp_path, name="ops", severity="warning")
     config_path = _write_core_config(tmp_path, profiles_path=profiles_path)
     payload = base64.b64encode(b"\xde\xad\xbe\xef").decode("ascii")
@@ -2860,7 +2927,9 @@ def test_cli_header_env_base64_binary(monkeypatch, tmp_path):
     stub = _StubCollector()
     stub.response = []
     _install_dummy_loader(monkeypatch, stub)
-    monkeypatch.setattr(watch_metrics_module, "create_metrics_channel", lambda *args, **kwargs: "channel")
+    monkeypatch.setattr(
+        watch_metrics_module, "create_metrics_channel", lambda *args, **kwargs: "channel"
+    )
     monkeypatch.setenv("TRACE_TOKEN_B64", base64.b64encode(b"token-bytes").decode("ascii"))
     profiles_path = _write_risk_profile_file(tmp_path, name="ops", severity="warning")
     config_path = _write_core_config(tmp_path, profiles_path=profiles_path)
@@ -2884,7 +2953,9 @@ def test_cli_header_file64_decodes_utf8_for_text(monkeypatch, tmp_path):
     stub = _StubCollector()
     stub.response = []
     _install_dummy_loader(monkeypatch, stub)
-    monkeypatch.setattr(watch_metrics_module, "create_metrics_channel", lambda *args, **kwargs: "channel")
+    monkeypatch.setattr(
+        watch_metrics_module, "create_metrics_channel", lambda *args, **kwargs: "channel"
+    )
     profiles_path = _write_risk_profile_file(tmp_path, name="ops", severity="warning")
     config_path = _write_core_config(tmp_path, profiles_path=profiles_path)
     encoded_value = base64.b64encode("Bearer secret".encode("utf-8")).decode("ascii")
@@ -2910,7 +2981,9 @@ def test_cli_header_invalid_base64_raises(monkeypatch, tmp_path):
     stub = _StubCollector()
     stub.response = []
     _install_dummy_loader(monkeypatch, stub)
-    monkeypatch.setattr(watch_metrics_module, "create_metrics_channel", lambda *args, **kwargs: "channel")
+    monkeypatch.setattr(
+        watch_metrics_module, "create_metrics_channel", lambda *args, **kwargs: "channel"
+    )
     profiles_path = _write_risk_profile_file(tmp_path, name="ops", severity="warning")
     config_path = _write_core_config(tmp_path, profiles_path=profiles_path)
 
@@ -2929,7 +3002,9 @@ def test_cli_header_literal_escape(monkeypatch, tmp_path):
     stub = _StubCollector()
     stub.response = []
     _install_dummy_loader(monkeypatch, stub)
-    monkeypatch.setattr(watch_metrics_module, "create_metrics_channel", lambda *args, **kwargs: "channel")
+    monkeypatch.setattr(
+        watch_metrics_module, "create_metrics_channel", lambda *args, **kwargs: "channel"
+    )
     profiles_path = _write_risk_profile_file(tmp_path, name="ops", severity="warning")
     config_path = _write_core_config(tmp_path, profiles_path=profiles_path)
 
@@ -2946,11 +3021,15 @@ def test_cli_header_literal_escape(monkeypatch, tmp_path):
     assert stub.calls
     _request, _timeout, metadata = stub.calls[0]
     assert metadata == [("x-trace", "@observability")]
+
+
 def test_core_config_grpc_metadata_cli_remove(monkeypatch, tmp_path):
     stub = _StubCollector()
     stub.response = []
     _install_dummy_loader(monkeypatch, stub)
-    monkeypatch.setattr(watch_metrics_module, "create_metrics_channel", lambda *args, **kwargs: "channel")
+    monkeypatch.setattr(
+        watch_metrics_module, "create_metrics_channel", lambda *args, **kwargs: "channel"
+    )
     profiles_path = _write_risk_profile_file(tmp_path, name="ops", severity="warning")
     config_path = _write_core_config(
         tmp_path,
@@ -2991,7 +3070,9 @@ def test_environment_headers_remove_config_key(monkeypatch, tmp_path):
     stub = _StubCollector()
     stub.response = []
     _install_dummy_loader(monkeypatch, stub)
-    monkeypatch.setattr(watch_metrics_module, "create_metrics_channel", lambda *args, **kwargs: "channel")
+    monkeypatch.setattr(
+        watch_metrics_module, "create_metrics_channel", lambda *args, **kwargs: "channel"
+    )
     profiles_path = _write_risk_profile_file(tmp_path, name="ops", severity="warning")
     config_path = _write_core_config(
         tmp_path,
@@ -3024,7 +3105,9 @@ def test_environment_headers_remove_config_key(monkeypatch, tmp_path):
 def test_watch_metrics_stream_header_invalid_format(monkeypatch):
     stub = _StubCollector()
     _install_dummy_loader(monkeypatch, stub)
-    monkeypatch.setattr(watch_metrics_module, "create_metrics_channel", lambda *args, **kwargs: "channel")
+    monkeypatch.setattr(
+        watch_metrics_module, "create_metrics_channel", lambda *args, **kwargs: "channel"
+    )
 
     with pytest.raises(SystemExit):
         watch_metrics_main(["--header", "invalid"])
@@ -3033,7 +3116,9 @@ def test_watch_metrics_stream_header_invalid_format(monkeypatch):
 def test_watch_metrics_stream_header_invalid_key(monkeypatch):
     stub = _StubCollector()
     _install_dummy_loader(monkeypatch, stub)
-    monkeypatch.setattr(watch_metrics_module, "create_metrics_channel", lambda *args, **kwargs: "channel")
+    monkeypatch.setattr(
+        watch_metrics_module, "create_metrics_channel", lambda *args, **kwargs: "channel"
+    )
 
     with pytest.raises(SystemExit):
         watch_metrics_main(["--header", "X-Trace=abc"])
@@ -3044,10 +3129,12 @@ def test_watch_metrics_stream_requires_use_tls_for_tls_flags(tmp_path):
     tls_file.write_text("root")
 
     with pytest.raises(SystemExit) as exc:
-        watch_metrics_main([
-            "--root-cert",
-            str(tls_file),
-        ])
+        watch_metrics_main(
+            [
+                "--root-cert",
+                str(tls_file),
+            ]
+        )
 
     assert exc.value.code == 2
 
@@ -3224,12 +3311,14 @@ def test_watch_metrics_stream_filters_severity_min_env(monkeypatch, capsys):
 
 def test_watch_metrics_stream_rejects_conflicting_severity_filters():
     with pytest.raises(SystemExit) as excinfo:
-        watch_metrics_main([
-            "--severity",
-            "info",
-            "--severity-min",
-            "warning",
-        ])
+        watch_metrics_main(
+            [
+                "--severity",
+                "info",
+                "--severity-min",
+                "warning",
+            ]
+        )
 
     assert excinfo.value.code == 2
 
@@ -3260,7 +3349,9 @@ def test_watch_metrics_stream_risk_profile_defaults(tmp_path):
         },
     ]
     jsonl_path = tmp_path / "metrics.jsonl"
-    jsonl_path.write_text("\n".join(json.dumps(item, ensure_ascii=False) for item in records) + "\n")
+    jsonl_path.write_text(
+        "\n".join(json.dumps(item, ensure_ascii=False) for item in records) + "\n"
+    )
 
     decision_log_path = tmp_path / "decision.jsonl"
     summary_path = tmp_path / "summary.json"
@@ -3281,7 +3372,9 @@ def test_watch_metrics_stream_risk_profile_defaults(tmp_path):
     )
     assert exit_code == 0
 
-    decision_entries = [json.loads(line) for line in decision_log_path.read_text().splitlines() if line]
+    decision_entries = [
+        json.loads(line) for line in decision_log_path.read_text().splitlines() if line
+    ]
     assert decision_entries[0]["kind"] == "metadata"
     metadata = decision_entries[0]["metadata"]
     assert metadata["filters"]["severity_min"] == "warning"
@@ -3298,12 +3391,8 @@ def test_watch_metrics_stream_risk_profile_defaults(tmp_path):
     summary_payload = json.loads(summary_path.read_text())
     assert summary_payload["metadata"]["risk_profile"]["name"] == "conservative"
     assert summary_payload["metadata"]["risk_profile"]["origin"] == "builtin"
-    assert (
-        summary_payload["metadata"]["risk_profile_summary"]["name"] == "conservative"
-    )
-    assert (
-        summary_payload["metadata"]["risk_profile_summary"]["severity_min"] == "warning"
-    )
+    assert summary_payload["metadata"]["risk_profile_summary"]["name"] == "conservative"
+    assert summary_payload["metadata"]["risk_profile_summary"]["severity_min"] == "warning"
     assert summary_payload["summary"]["events"]["reduce_motion"]["count"] == 1
 
 
@@ -3333,7 +3422,9 @@ def test_watch_metrics_stream_risk_profile_from_file(tmp_path):
         },
     ]
     jsonl_path = tmp_path / "metrics.jsonl"
-    jsonl_path.write_text("\n".join(json.dumps(item, ensure_ascii=False) for item in records) + "\n")
+    jsonl_path.write_text(
+        "\n".join(json.dumps(item, ensure_ascii=False) for item in records) + "\n"
+    )
 
     profiles_path = tmp_path / "profiles.json"
     profiles_path.write_text(
@@ -3360,7 +3451,9 @@ def test_watch_metrics_stream_risk_profile_from_file(tmp_path):
 
     assert exit_code == 0
 
-    decision_entries = [json.loads(line) for line in decision_log_path.read_text().splitlines() if line]
+    decision_entries = [
+        json.loads(line) for line in decision_log_path.read_text().splitlines() if line
+    ]
     metadata = decision_entries[0]["metadata"]
     assert metadata["risk_profile"]["name"] == "ops"
     assert metadata["risk_profile"]["severity_min"] == "error"
@@ -3399,7 +3492,9 @@ def test_watch_metrics_stream_core_config_decision_metadata(tmp_path):
         }
     ]
     jsonl_path = tmp_path / "metrics.jsonl"
-    jsonl_path.write_text("\n".join(json.dumps(item, ensure_ascii=False) for item in records) + "\n")
+    jsonl_path.write_text(
+        "\n".join(json.dumps(item, ensure_ascii=False) for item in records) + "\n"
+    )
 
     decision_log_path = tmp_path / "decision.jsonl"
     summary_path = tmp_path / "summary.json"

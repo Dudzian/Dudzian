@@ -1,4 +1,5 @@
 """Testy weryfikujące bootstrap PySide6 w trybie offscreen."""
+
 from __future__ import annotations
 
 import os
@@ -6,6 +7,7 @@ import sys
 from pathlib import Path
 
 import pytest
+
 try:
     from PySide6.QtGui import QGuiApplication
 except ImportError as exc:  # pragma: no cover - środowiska bez wsparcia GL

@@ -1,4 +1,5 @@
 """Moduł zbierający anonimową telemetrię z opcją opt-in."""
+
 from __future__ import annotations
 
 import hashlib
@@ -18,6 +19,7 @@ __all__ = [
     "TelemetrySettings",
     "AnonymousTelemetryCollector",
 ]
+
 
 def _default_telemetry_dir() -> Path:
     base_override = os.environ.get("DUDZIAN_HOME")
@@ -250,7 +252,9 @@ class AnonymousTelemetryCollector:
                 "pseudonym": self._settings.pseudonym,
                 "events": events,
             }
-            export_path.write_text(json.dumps(payload, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+            export_path.write_text(
+                json.dumps(payload, indent=2, ensure_ascii=False) + "\n", encoding="utf-8"
+            )
             self._settings.last_export_at = datetime.now(timezone.utc).isoformat()
             self._persist_settings()
             return export_path
@@ -293,7 +297,9 @@ class AnonymousTelemetryCollector:
             raise TelemetryError(f"Nie można zapisać ustawień telemetrii: {exc}") from exc
 
     def _compute_pseudonym(self, fingerprint: str | None) -> str:
-        base = (fingerprint or self._settings.installation_id).strip() or self._settings.installation_id
+        base = (
+            fingerprint or self._settings.installation_id
+        ).strip() or self._settings.installation_id
         digest = hashlib.sha256(f"{base}|{self._settings.salt}".encode("utf-8")).hexdigest()
         return digest[:32]
 

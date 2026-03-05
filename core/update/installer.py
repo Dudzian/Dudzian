@@ -1,4 +1,5 @@
 """Obsługa paczek offline z modelami i strategiami."""
+
 from __future__ import annotations
 
 import hashlib
@@ -67,12 +68,18 @@ def _build_manifest(version: str, artifacts: Iterable[ReleaseArtifact]) -> dict[
 
 
 def _write_manifest(manifest_path: Path, manifest: Mapping[str, Any]) -> None:
-    manifest_path.write_text(json.dumps(manifest, ensure_ascii=False, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    manifest_path.write_text(
+        json.dumps(manifest, ensure_ascii=False, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+    )
 
 
-def _write_signature(manifest: Mapping[str, Any], signature_path: Path, *, key: bytes, key_id: str | None) -> None:
+def _write_signature(
+    manifest: Mapping[str, Any], signature_path: Path, *, key: bytes, key_id: str | None
+) -> None:
     signature = build_hmac_signature(manifest, key=key, key_id=key_id)
-    payload = json.dumps({"signature": signature}, ensure_ascii=False, indent=2, sort_keys=True) + "\n"
+    payload = (
+        json.dumps({"signature": signature}, ensure_ascii=False, indent=2, sort_keys=True) + "\n"
+    )
     signature_path.write_text(payload, encoding="utf-8")
 
 
@@ -103,7 +110,9 @@ def create_release_archive(
             shutil.copy2(artifact.absolute_path, destination)
         _write_manifest(staging_dir / "manifest.json", manifest)
         if signing_key is not None:
-            _write_signature(manifest, staging_dir / "manifest.sig", key=signing_key, key_id=signing_key_id)
+            _write_signature(
+                manifest, staging_dir / "manifest.sig", key=signing_key, key_id=signing_key_id
+            )
 
         output_path = output_path.expanduser()
         output_path.parent.mkdir(parents=True, exist_ok=True)

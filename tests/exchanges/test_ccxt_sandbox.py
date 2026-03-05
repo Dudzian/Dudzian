@@ -115,6 +115,7 @@ def test_private_backend_reenables_sandbox_after_reinit(monkeypatch: pytest.Monk
     assert created[1].options["options"]["defaultType"] == "future"
     assert backend.client is created[1]
 
+
 def test_private_backend_accepts_margin_default_type(monkeypatch: pytest.MonkeyPatch) -> None:
     created: list[dict[str, object]] = []
 
@@ -140,4 +141,3 @@ def test_private_backend_accepts_margin_default_type(monkeypatch: pytest.MonkeyP
     assert created[-1]["options"]["defaultType"] == "margin"
     assert backend.market_type == "margin"
     assert backend.mode is manager.Mode.MARGIN
-

@@ -39,7 +39,9 @@ class StrategyPluginRegistry:
     def register(self, package: SignedStrategyPlugin) -> RegisteredPlugin:
         review = self._review_board.evaluate(package)
         if review.status == ReviewStatus.REJECTED:
-            issues = "; ".join(finding.message for finding in review.findings if finding.severity == "error")
+            issues = "; ".join(
+                finding.message for finding in review.findings if finding.severity == "error"
+            )
             raise PluginRegistryError(f"Plugin '{package.manifest.identifier}' odrzucony: {issues}")
 
         entry = RegisteredPlugin(
@@ -61,4 +63,3 @@ class StrategyPluginRegistry:
 
 
 __all__ = ["StrategyPluginRegistry", "PluginRegistryError", "RegisteredPlugin"]
-

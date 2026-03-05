@@ -1,4 +1,5 @@
 """Implementacja silnika ryzyka egzekwującego limity profili."""
+
 from __future__ import annotations
 
 import logging
@@ -89,19 +90,15 @@ class ThresholdRiskEngine(RiskEngine):
         if self._decision_adapter is None and decision_orchestrator is not None:
             self._decision_adapter = DecisionOrchestratorAdapter(decision_orchestrator)
         self._decision_model_outcomes: MutableMapping[str, MutableMapping[str, int]] = {}
-        self._decision_model_rejections: MutableMapping[
-            str, MutableMapping[str, int]
-        ] = {}
-        self._decision_model_metrics: MutableMapping[
-            str, MutableMapping[str, float | int]
-        ] = {}
+        self._decision_model_rejections: MutableMapping[str, MutableMapping[str, int]] = {}
+        self._decision_model_metrics: MutableMapping[str, MutableMapping[str, float | int]] = {}
         self._decision_model_selection: MutableMapping[
             str,
             MutableMapping[str, object],
         ] = {}
-        self._decision_orchestrator_activity: MutableMapping[
-            str, float | int | None
-        ] = self._init_decision_orchestrator_activity()
+        self._decision_orchestrator_activity: MutableMapping[str, float | int | None] = (
+            self._init_decision_orchestrator_activity()
+        )
         self._decision_orchestrator_errors: MutableMapping[str, int] = {}
         self._exchange_manager: Any | None = None
         self._exchange_profile_hint: str | None = None
@@ -132,11 +129,11 @@ class ThresholdRiskEngine(RiskEngine):
         _LOGGER.info("Zarejestrowano profil ryzyka %s", profile.name)
         if self._default_profile is None:
             self._default_profile = profile.name
-        self._guardrails_service.record_profile_state(
-            profile.name, stored_state
-        )
+        self._guardrails_service.record_profile_state(profile.name, stored_state)
 
-    def get_profile(self, profile_name: str) -> RiskProfile | None:  # pragma: no cover - prosta ekspozycja profilu
+    def get_profile(
+        self, profile_name: str
+    ) -> RiskProfile | None:  # pragma: no cover - prosta ekspozycja profilu
         return self._profiles.get(profile_name)
 
     def attach_exchange_manager(
@@ -350,9 +347,7 @@ class ThresholdRiskEngine(RiskEngine):
         notional = abs(request.quantity) * price
         current_notional = position.notional if position else 0.0
         current_side = (
-            normalize_position_side(position.side)
-            if position
-            else ("long" if is_buy else "short")
+            normalize_position_side(position.side) if position else ("long" if is_buy else "short")
         )
 
         if position:
@@ -408,14 +403,19 @@ class ThresholdRiskEngine(RiskEngine):
 
         if state.force_liquidation and not is_reducing:
             force_block_message = (
-                force_reason + " Dozwolone są wyłącznie transakcje redukujące ekspozycję."
-            ) if force_reason else "Profil w trybie awaryjnym – dozwolone są wyłącznie transakcje redukujące ekspozycję."
+                (force_reason + " Dozwolone są wyłącznie transakcje redukujące ekspozycję.")
+                if force_reason
+                else "Profil w trybie awaryjnym – dozwolone są wyłącznie transakcje redukujące ekspozycję."
+            )
             return deny(force_block_message)
 
-        exposure_denial: tuple[str, Mapping[str, float] | None, Mapping[str, object] | None] | None = None
+        exposure_denial: (
+            tuple[str, Mapping[str, float] | None, Mapping[str, object] | None] | None
+        ) = None
 
         projected_exposure = new_notional
         if account.total_equity > 0:
+
             def _maybe_set_denial(*, cap_source: str, cap_pct: float, reason: str) -> None:
                 nonlocal exposure_denial
                 if cap_pct <= 0:
@@ -429,7 +429,11 @@ class ThresholdRiskEngine(RiskEngine):
 
                 if exposure_denial is not None:
                     _, _, meta = exposure_denial
-                    prev_cap = float(meta["exposure_cap"]) if meta and "exposure_cap" in meta else float("inf")
+                    prev_cap = (
+                        float(meta["exposure_cap"])
+                        if meta and "exposure_cap" in meta
+                        else float("inf")
+                    )
                     if exposure_cap >= prev_cap - 1e-12:
                         return
 
@@ -517,7 +521,9 @@ class ThresholdRiskEngine(RiskEngine):
 
                 minimum_distance = atr_value * max(atr_multiple, 1.0)
                 if minimum_distance > 0 and stop_distance + 1e-9 < minimum_distance:
-                    return deny("Stop loss jest ciaśniejszy niż wymaga tego polityka profilu ryzyka.")
+                    return deny(
+                        "Stop loss jest ciaśniejszy niż wymaga tego polityka profilu ryzyka."
+                    )
 
                 if (
                     stop_distance > 0
@@ -559,7 +565,9 @@ class ThresholdRiskEngine(RiskEngine):
 
                 max_risk_capital = target_vol * account.total_equity
                 if max_risk_capital <= 0:
-                    return deny("Kapitał lub target volatility profilu uniemożliwia otwarcie pozycji.")
+                    return deny(
+                        "Kapitał lub target volatility profilu uniemożliwia otwarcie pozycji."
+                    )
 
                 allowed_total_quantity = max_risk_capital / stop_distance_eps
 
@@ -648,7 +656,9 @@ class ThresholdRiskEngine(RiskEngine):
                         context={"symbol": symbol},
                     )
                 if portfolio_limit_pct > 0 and portfolio_exposure > portfolio_limit_pct + 1e-9:
-                    remaining_notional = max(0.0, portfolio_limit_pct * account.total_equity - gross_without_symbol)
+                    remaining_notional = max(
+                        0.0, portfolio_limit_pct * account.total_equity - gross_without_symbol
+                    )
                     allowed_quantity = remaining_notional / price
                     return deny(
                         "Przekroczono maksymalną ekspozycję portfela.",
@@ -705,7 +715,9 @@ class ThresholdRiskEngine(RiskEngine):
                     actual_distance = stop_price - price
 
                 if actual_distance <= 0:
-                    return deny("Cena stop loss musi znajdować się po właściwej stronie ceny wejścia.")
+                    return deny(
+                        "Cena stop loss musi znajdować się po właściwej stronie ceny wejścia."
+                    )
 
                 tolerance = max(expected_stop_distance * 1e-4, 1e-8)
                 if actual_distance + tolerance < expected_stop_distance:
@@ -726,7 +738,9 @@ class ThresholdRiskEngine(RiskEngine):
                 current_quantity = current_notional / price if price > 0 else 0.0
                 new_quantity = new_notional / price if price > 0 else 0.0
                 if new_quantity > allowed_total_quantity + 1e-9:
-                    allowed_additional_quantity = max(0.0, allowed_total_quantity - current_quantity)
+                    allowed_additional_quantity = max(
+                        0.0, allowed_total_quantity - current_quantity
+                    )
                     return deny(
                         "Wielkość zlecenia przekracza limit wynikający z docelowej zmienności profilu.",
                         adjustments={"max_quantity": max(0.0, allowed_additional_quantity)},
@@ -753,9 +767,7 @@ class ThresholdRiskEngine(RiskEngine):
             accepted_flag: bool | None = None
             raw_model_name: str | None = None
             if evaluation is not None:
-                raw_model_name, accepted_value = self._extract_model_and_acceptance(
-                    evaluation
-                )
+                raw_model_name, accepted_value = self._extract_model_and_acceptance(evaluation)
                 if accepted_value is not None:
                     accepted_flag = bool(accepted_value)
             if orchestrator_stats:
@@ -778,14 +790,10 @@ class ThresholdRiskEngine(RiskEngine):
                 else:
                     normalized_model = str(raw_model_name or "__unknown__").lower()
                     accepted_flag = accepted_flag
-                self._record_decision_model_metrics(
-                    normalized_model, evaluation, accepted_flag
-                )
+                self._record_decision_model_metrics(normalized_model, evaluation, accepted_flag)
                 self._record_decision_model_selection(evaluation)
                 if accepted_flag is False:
-                    self._record_decision_model_rejection(
-                        normalized_model, evaluation
-                    )
+                    self._record_decision_model_rejection(normalized_model, evaluation)
                     reason = self._decision_adapter.format_denial_reason(evaluation)
                     return deny(reason, metadata=evaluation_metadata)
 
@@ -834,7 +842,9 @@ class ThresholdRiskEngine(RiskEngine):
         *,
         profile_name: str,
         equity: float,
-        positions: Mapping[str, Mapping[str, object]] | Sequence[Mapping[str, object]] | None = None,
+        positions: Mapping[str, Mapping[str, object]]
+        | Sequence[Mapping[str, object]]
+        | None = None,
         realized_pnl: float | None = None,
         timestamp: datetime | None = None,
         metadata: Mapping[str, object] | None = None,
@@ -873,24 +883,36 @@ class ThresholdRiskEngine(RiskEngine):
                 state.positions.pop(symbol, None)
 
         if metadata:
-            weekly_realized = metadata.get("weekly_realized_pnl") if isinstance(metadata, Mapping) else None
+            weekly_realized = (
+                metadata.get("weekly_realized_pnl") if isinstance(metadata, Mapping) else None
+            )
             if weekly_realized is not None:
                 try:
                     state.weekly_realized_pnl = float(weekly_realized)
                 except (TypeError, ValueError):  # pragma: no cover - defensywnie
-                    _LOGGER.debug("Nie można sparsować weekly_realized_pnl z metadanych", exc_info=True)
-            rolling_profit = metadata.get("rolling_profit_30d") if isinstance(metadata, Mapping) else None
+                    _LOGGER.debug(
+                        "Nie można sparsować weekly_realized_pnl z metadanych", exc_info=True
+                    )
+            rolling_profit = (
+                metadata.get("rolling_profit_30d") if isinstance(metadata, Mapping) else None
+            )
             if rolling_profit is not None:
                 try:
                     state.rolling_profit_30d = float(rolling_profit)
                 except (TypeError, ValueError):  # pragma: no cover - defensywnie
-                    _LOGGER.debug("Nie można sparsować rolling_profit_30d z metadanych", exc_info=True)
-            rolling_costs = metadata.get("rolling_costs_30d") if isinstance(metadata, Mapping) else None
+                    _LOGGER.debug(
+                        "Nie można sparsować rolling_profit_30d z metadanych", exc_info=True
+                    )
+            rolling_costs = (
+                metadata.get("rolling_costs_30d") if isinstance(metadata, Mapping) else None
+            )
             if rolling_costs is not None:
                 try:
                     state.rolling_costs_30d = float(rolling_costs)
                 except (TypeError, ValueError):  # pragma: no cover - defensywnie
-                    _LOGGER.debug("Nie można sparsować rolling_costs_30d z metadanych", exc_info=True)
+                    _LOGGER.debug(
+                        "Nie można sparsować rolling_costs_30d z metadanych", exc_info=True
+                    )
 
         metrics = state.metrics(
             equity=equity,
@@ -900,7 +922,9 @@ class ThresholdRiskEngine(RiskEngine):
         previous_liquidation = state.force_liquidation
         if profile.drawdown_limit() > 0 and metrics.drawdown_pct >= profile.drawdown_limit():
             state.force_liquidation = True
-        elif profile.daily_loss_limit() > 0 and metrics.daily_loss_pct >= profile.daily_loss_limit():
+        elif (
+            profile.daily_loss_limit() > 0 and metrics.daily_loss_pct >= profile.daily_loss_limit()
+        ):
             state.force_liquidation = True
         elif not previous_liquidation:
             state.force_liquidation = False
@@ -1075,17 +1099,13 @@ class ThresholdRiskEngine(RiskEngine):
     ) -> Sequence[Mapping[str, object]]:
         return self._alert_log.tail(profile=profile_name, limit=limit)
 
-    def decision_orchestrator_activity(
-        self, *, reset: bool = False
-    ) -> Mapping[str, object]:
+    def decision_orchestrator_activity(self, *, reset: bool = False) -> Mapping[str, object]:
         """Zwraca zbiorcze statystyki aktywności DecisionOrchestratora."""
 
         counters = self._decision_orchestrator_activity
         duration_count = int(counters.get("duration_ms_count", 0))
         duration_sum = float(counters.get("duration_ms_sum", 0.0) or 0.0)
-        duration_average = (
-            duration_sum / duration_count if duration_count else None
-        )
+        duration_average = duration_sum / duration_count if duration_count else None
         duration_max = counters.get("duration_ms_max") if duration_count else None
         duration_min = counters.get("duration_ms_min") if duration_count else None
 
@@ -1100,14 +1120,10 @@ class ThresholdRiskEngine(RiskEngine):
                 "sum": duration_sum if duration_count else 0.0,
                 "average": duration_average,
                 "max": (
-                    float(duration_max)
-                    if duration_max is not None and duration_count
-                    else None
+                    float(duration_max) if duration_max is not None and duration_count else None
                 ),
                 "min": (
-                    float(duration_min)
-                    if duration_min is not None and duration_count
-                    else None
+                    float(duration_min) if duration_min is not None and duration_count else None
                 ),
                 "count": duration_count,
             },
@@ -1118,9 +1134,7 @@ class ThresholdRiskEngine(RiskEngine):
         }
 
         if reset:
-            self._decision_orchestrator_activity = (
-                self._init_decision_orchestrator_activity()
-            )
+            self._decision_orchestrator_activity = self._init_decision_orchestrator_activity()
             self._decision_orchestrator_errors = {}
 
         return snapshot
@@ -1141,7 +1155,12 @@ class ThresholdRiskEngine(RiskEngine):
         except (TypeError, ValueError):
             quantity = 0.0
         try:
-            price = float(payload.get("price") or payload.get("avg_price") or payload.get("reference_price") or 0.0)
+            price = float(
+                payload.get("price")
+                or payload.get("avg_price")
+                or payload.get("reference_price")
+                or 0.0
+            )
         except (TypeError, ValueError):
             price = 0.0
         position_value = abs(quantity * price)
@@ -1178,7 +1197,9 @@ class ThresholdRiskEngine(RiskEngine):
         profile_name = self._resolve_profile_from_payload(payload)
         if profile_name is None:
             return
-        snapshot_payload = payload.get("snapshot") if isinstance(payload.get("snapshot"), Mapping) else payload
+        snapshot_payload = (
+            payload.get("snapshot") if isinstance(payload.get("snapshot"), Mapping) else payload
+        )
         try:
             equity = float(snapshot_payload.get("total_equity", 0.0))  # type: ignore[arg-type]
         except (TypeError, ValueError):
@@ -1186,7 +1207,9 @@ class ThresholdRiskEngine(RiskEngine):
         if equity <= 0 and profile_name not in self._states:
             return
         positions_payload = payload.get("positions")
-        realized_pnl_value = snapshot_payload.get("realized_pnl") or snapshot_payload.get("daily_realized_pnl")
+        realized_pnl_value = snapshot_payload.get("realized_pnl") or snapshot_payload.get(
+            "daily_realized_pnl"
+        )
         try:
             realized_pnl = float(realized_pnl_value) if realized_pnl_value is not None else None
         except (TypeError, ValueError):
@@ -1236,7 +1259,9 @@ class ThresholdRiskEngine(RiskEngine):
             self.on_mark_to_market(
                 profile_name=profile_name,
                 equity=equity,
-                positions=positions_payload if isinstance(positions_payload, (Mapping, Sequence)) else None,
+                positions=positions_payload
+                if isinstance(positions_payload, (Mapping, Sequence))
+                else None,
                 realized_pnl=realized_pnl,
                 timestamp=timestamp,
                 metadata=metadata_payload or None,
@@ -1299,17 +1324,12 @@ class ThresholdRiskEngine(RiskEngine):
 
         snapshot: dict[str, Mapping[str, int]] = {}
         for name, counters in self._decision_model_rejections.items():
-            snapshot[name] = {
-                str(reason): int(count)
-                for reason, count in counters.items()
-            }
+            snapshot[name] = {str(reason): int(count) for reason, count in counters.items()}
         if reset:
             self._decision_model_rejections.clear()
         return snapshot
 
-    def decision_model_metrics(
-        self, *, reset: bool = False
-    ) -> Mapping[str, Mapping[str, object]]:
+    def decision_model_metrics(self, *, reset: bool = False) -> Mapping[str, Mapping[str, object]]:
         """Zwraca zagregowane metryki ewaluacji modeli orchestratora."""
 
         snapshot: dict[str, Mapping[str, object]] = {}
@@ -1351,8 +1371,7 @@ class ThresholdRiskEngine(RiskEngine):
             reasons_raw = counters.get("reasons")
             if isinstance(reasons_raw, Mapping):
                 reasons_snapshot = {
-                    str(reason): int(count)
-                    for reason, count in reasons_raw.items()
+                    str(reason): int(count) for reason, count in reasons_raw.items()
                 }
             else:
                 reasons_snapshot = {}
@@ -1410,14 +1429,10 @@ class ThresholdRiskEngine(RiskEngine):
                 stats["error"] = error
             return stats
 
-        candidate_payload, error_payload = self._extract_candidate_payload(
-            request.metadata
-        )
+        candidate_payload, error_payload = self._extract_candidate_payload(request.metadata)
         if error_payload:
             error_code = str(error_payload.get("error", "unknown_error"))
-            return None, error_payload, build_stats(
-                "error", attempted=False, error=error_code
-            )
+            return None, error_payload, build_stats("error", attempted=False, error=error_code)
         if candidate_payload is None:
             return None, None, build_stats("skipped", attempted=False)
 
@@ -1434,9 +1449,7 @@ class ThresholdRiskEngine(RiskEngine):
         try:
             candidate = adapter.build_candidate(payload)
         except Exception:
-            _LOGGER.warning(
-                "DecisionOrchestrator: nieprawidłowe dane kandydata", exc_info=True
-            )
+            _LOGGER.warning("DecisionOrchestrator: nieprawidłowe dane kandydata", exc_info=True)
             return (
                 None,
                 {"status": "error", "error": "invalid_candidate"},
@@ -1577,9 +1590,7 @@ class ThresholdRiskEngine(RiskEngine):
                 notional = abs(quantity_value) * price_value
 
             metrics = state.metrics(
-                equity=state.last_equity
-                or state.start_of_day_equity
-                or account.total_equity,
+                equity=state.last_equity or state.start_of_day_equity or account.total_equity,
                 gross_notional=state.gross_notional(),
                 active_positions=state.active_positions(),
             )
@@ -1643,9 +1654,7 @@ class ThresholdRiskEngine(RiskEngine):
         accepted: bool | None = None,
     ) -> tuple[str, bool] | None:
         if accepted is None or model_name is None:
-            extracted_name, extracted_accepted = self._extract_model_and_acceptance(
-                evaluation
-            )
+            extracted_name, extracted_accepted = self._extract_model_and_acceptance(evaluation)
             if model_name is None:
                 model_name = extracted_name
             if accepted is None:
@@ -1663,9 +1672,7 @@ class ThresholdRiskEngine(RiskEngine):
         counters[bucket] = counters.get(bucket, 0) + 1
         return normalized_name, bool(accepted)
 
-    def _record_decision_model_rejection(
-        self, model_name: str, evaluation: Any
-    ) -> None:
+    def _record_decision_model_rejection(self, model_name: str, evaluation: Any) -> None:
         reasons = self._extract_rejection_reasons(evaluation)
         if not reasons:
             return
@@ -1768,9 +1775,7 @@ class ThresholdRiskEngine(RiskEngine):
         if selection is None:
             return
         selected_name, candidates = selection
-        normalized_selected = (
-            str(selected_name).lower() if selected_name is not None else None
-        )
+        normalized_selected = str(selected_name).lower() if selected_name is not None else None
         for detail in candidates:
             name_raw = detail.get("name")
             if not name_raw:
@@ -1808,14 +1813,10 @@ class ThresholdRiskEngine(RiskEngine):
                     continue
                 sum_key = f"{metric}_sum"
                 count_key = f"{metric}_count"
-                counters[sum_key] = float(counters.get(sum_key, 0.0) or 0.0) + float(
-                    metric_value
-                )
+                counters[sum_key] = float(counters.get(sum_key, 0.0) or 0.0) + float(metric_value)
                 counters[count_key] = int(counters.get(count_key, 0)) + 1
 
-    def _extract_model_and_acceptance(
-        self, evaluation: Any
-    ) -> tuple[str | None, bool | None]:
+    def _extract_model_and_acceptance(self, evaluation: Any) -> tuple[str | None, bool | None]:
         model_name: str | None = None
         accepted: bool | None = None
 
@@ -1840,19 +1841,12 @@ class ThresholdRiskEngine(RiskEngine):
         return model_name, accepted
 
     def _extract_evaluation_metrics(self, evaluation: Any) -> Mapping[str, float | None]:
-        if (
-            DecisionEvaluation is not None
-            and isinstance(evaluation, DecisionEvaluation)
-        ):
+        if DecisionEvaluation is not None and isinstance(evaluation, DecisionEvaluation):
             return {
                 "cost_bps": _coerce_float(evaluation.cost_bps),
                 "net_edge_bps": _coerce_float(evaluation.net_edge_bps),
-                "model_expected_return_bps": _coerce_float(
-                    evaluation.model_expected_return_bps
-                ),
-                "model_success_probability": _coerce_float(
-                    evaluation.model_success_probability
-                ),
+                "model_expected_return_bps": _coerce_float(evaluation.model_expected_return_bps),
+                "model_success_probability": _coerce_float(evaluation.model_success_probability),
             }
         if isinstance(evaluation, Mapping):
             return {
@@ -1928,10 +1922,7 @@ class ThresholdRiskEngine(RiskEngine):
         if selection is None:
             return None
 
-        if (
-            ModelSelectionMetadata is not None
-            and isinstance(selection, ModelSelectionMetadata)
-        ):
+        if ModelSelectionMetadata is not None and isinstance(selection, ModelSelectionMetadata):
             selected = selection.selected
             candidates = self._coerce_selection_candidates(selection.candidates)
         elif isinstance(selection, Mapping):
@@ -1939,16 +1930,12 @@ class ThresholdRiskEngine(RiskEngine):
             candidates = self._coerce_selection_candidates(selection.get("candidates"))  # type: ignore[index]
         else:
             selected = getattr(selection, "selected", None)
-            candidates = self._coerce_selection_candidates(
-                getattr(selection, "candidates", None)
-            )
+            candidates = self._coerce_selection_candidates(getattr(selection, "candidates", None))
 
         normalized_selected = str(selected) if selected is not None else None
         return normalized_selected, candidates
 
-    def _coerce_selection_candidates(
-        self, payload: object
-    ) -> Sequence[Mapping[str, object]]:
+    def _coerce_selection_candidates(self, payload: object) -> Sequence[Mapping[str, object]]:
         if payload is None:
             return ()
         if isinstance(payload, Mapping):
@@ -1963,10 +1950,7 @@ class ThresholdRiskEngine(RiskEngine):
         for item in values:
             if item is None:
                 continue
-            if (
-                ModelSelectionDetail is not None
-                and isinstance(item, ModelSelectionDetail)
-            ):
+            if ModelSelectionDetail is not None and isinstance(item, ModelSelectionDetail):
                 candidates.append(
                     {
                         "name": item.name,
@@ -2053,4 +2037,6 @@ class ThresholdRiskEngine(RiskEngine):
             "json_path": str(json_path),
             "pdf_path": str(pdf_path),
         }
+
+
 __all__ = ["ThresholdRiskEngine", "RiskState", "PositionState"]

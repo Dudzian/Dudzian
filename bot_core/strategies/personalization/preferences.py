@@ -94,7 +94,9 @@ class PresetPreferencePersonalizer:
                 RiskTarget.AGGRESSIVE: 1.5,
             }
         )
-        self._budget_keys = tuple(budget_keys or ("budget", "notional", "notional_value", "capital"))
+        self._budget_keys = tuple(
+            budget_keys or ("budget", "notional", "notional_value", "capital")
+        )
         self._risk_keys = tuple(risk_keys or ("risk_multiplier", "risk", "risk_target"))
         self._leverage_keys = tuple(leverage_keys or ("leverage", "max_leverage"))
         self._position_keys = tuple(position_keys or ("max_positions", "max_trades"))
@@ -116,7 +118,9 @@ class PresetPreferencePersonalizer:
             params = entry.get("parameters")
             if not isinstance(params, Mapping):
                 continue
-            strategy_name = str(entry.get("name") or entry.get("engine") or payload.get("name") or "strategy")
+            strategy_name = str(
+                entry.get("name") or entry.get("engine") or payload.get("name") or "strategy"
+            )
             override: dict[str, Any] = {}
 
             if preferences.budget is not None:
@@ -167,4 +171,3 @@ __all__ = [
     "RiskTarget",
     "UserPreferenceConfig",
 ]
-

@@ -71,7 +71,9 @@ def test_ticket_dialog_generates_package(tmp_path: Path, project_with_data: Path
     engine.warnings.connect(_collect)  # type: ignore[attr-defined]
     engine.load(QUrl.fromLocalFile(str(qml_path)))
     if qml_warnings or not engine.rootObjects():
-        warnings_text = "; ".join(warning.toString() for warning in qml_warnings) or "brak obiektów root"
+        warnings_text = (
+            "; ".join(warning.toString() for warning in qml_warnings) or "brak obiektów root"
+        )
         pytest.skip(
             f"Nie udało się załadować TicketDialog.qml: {warnings_text}",
             allow_module_level=False,

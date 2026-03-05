@@ -1,4 +1,5 @@
 """CLI do uruchamiania pipeline'u strategii Daily Trend w trybie paper/testnet."""
+
 from __future__ import annotations
 
 import argparse
@@ -100,6 +101,7 @@ except (ModuleNotFoundError, ImportError):  # pragma: no cover - zależy od inst
 
 try:  # pragma: no cover - opcjonalny moduł telemetrii UI
     from bot_core.runtime.metrics_alerts import DEFAULT_UI_ALERTS_JSONL_PATH
+
     _UI_TELEMETRY_ALERT_SINK_AVAILABLE = True
 except Exception:  # pragma: no cover - brak telemetrii UI
     DEFAULT_UI_ALERTS_JSONL_PATH = Path("logs/ui_telemetry_alerts.jsonl")
@@ -122,7 +124,11 @@ _INTERNAL_OVERRIDE_ORIGIN = "wewnętrzne wywołanie _apply_runtime_overrides"
 def _posix_path(value: Path | str) -> str:
     """Normalizuje ścieżkę do formatu POSIX niezależnie od platformy."""
 
-    return value.expanduser().as_posix() if isinstance(value, Path) else Path(value).expanduser().as_posix()
+    return (
+        value.expanduser().as_posix()
+        if isinstance(value, Path)
+        else Path(value).expanduser().as_posix()
+    )
 
 
 @dataclass(frozen=True)
@@ -382,7 +388,11 @@ def _parse_modules_env_value(
         )
         return None, "empty_value"
 
-    modules = [candidate.strip() for candidate in _MODULE_ENV_SPLIT_PATTERN.split(raw_value) if candidate.strip()]
+    modules = [
+        candidate.strip()
+        for candidate in _MODULE_ENV_SPLIT_PATTERN.split(raw_value)
+        if candidate.strip()
+    ]
     if not modules:
         _LOGGER.warning(
             "Zmienna środowiskowa %s nie zawiera poprawnych nazw modułów (wartość: %r)",
@@ -435,14 +445,17 @@ def _risk_profile_notes(classification: str) -> list[str]:
             "Profil agresywny wymaga dodatkowych testów symulacyjnych i ścisłego nadzoru alertów ryzyka.",
         )
     elif classification == "conservative":
-        notes.append("Profil konserwatywny zalecany przy wdrożeniach pilotażowych lub testach integracyjnych.")
+        notes.append(
+            "Profil konserwatywny zalecany przy wdrożeniach pilotażowych lub testach integracyjnych."
+        )
     elif classification == "balanced":
         notes.append("Profil zbalansowany używany w kampanii referencyjnej paper trading.")
     return notes
 
 
 def _risk_profile_entry(
-    profile: "RiskProfileConfig", associated_envs: Sequence[str],
+    profile: "RiskProfileConfig",
+    associated_envs: Sequence[str],
 ) -> dict[str, object]:
     classification = _classify_risk_profile(profile.name)
     payload: dict[str, object] = {
@@ -470,7 +483,8 @@ def _risk_profile_entry(
 
 
 def _risk_profiles_payload(
-    config: "CoreConfig", environment_name: str | None,
+    config: "CoreConfig",
+    environment_name: str | None,
 ) -> dict[str, object]:
     environment_profiles = {
         name: env.risk_profile for name, env in sorted(config.environments.items())
@@ -613,9 +627,7 @@ def _collect_git_metadata(base_path: Path | None = None) -> Mapping[str, object]
             cwd=search_path,
         )
     except (OSError, subprocess.CalledProcessError):  # pragma: no cover - zależy od środowiska
-        _LOGGER.debug(
-            "Nie udało się ustalić katalogu głównego repozytorium Git", exc_info=True
-        )
+        _LOGGER.debug("Nie udało się ustalić katalogu głównego repozytorium Git", exc_info=True)
         return None
 
     repo_root = Path(root_result.stdout.strip())
@@ -725,9 +737,7 @@ def _metrics_service_details_from_config(
     elif runtime_jsonl_path:
         runtime_jsonl = Path(runtime_jsonl_path).expanduser()
         runtime_payload["jsonl_path"] = str(runtime_jsonl)
-        runtime_payload["jsonl_file"] = _file_reference_metadata(
-            runtime_jsonl, role="jsonl"
-        )
+        runtime_payload["jsonl_file"] = _file_reference_metadata(runtime_jsonl, role="jsonl")
     if runtime_ui_alert_metadata is not None:
         runtime_payload["ui_alerts_file"] = runtime_ui_alert_metadata
         ui_path_value = (
@@ -735,7 +745,9 @@ def _metrics_service_details_from_config(
             or runtime_ui_alert_metadata.get("absolute_path")
             or runtime_ui_alert_path
         )
-        runtime_payload["ui_alerts_jsonl_path"] = native_path(ui_path_value) if ui_path_value else ""
+        runtime_payload["ui_alerts_jsonl_path"] = (
+            native_path(ui_path_value) if ui_path_value else ""
+        )
     elif runtime_ui_alert_path:
         runtime_ui_alert = Path(runtime_ui_alert_path).expanduser()
         runtime_payload["ui_alerts_jsonl_path"] = str(runtime_ui_alert)
@@ -972,16 +984,16 @@ def _build_runtime_plan_payload(
     environment_cfg = getattr(pipeline.bootstrap, "environment", None)
     environment_type = None
     if environment_cfg is not None and hasattr(environment_cfg, "environment"):
-        environment_type = getattr(environment_cfg.environment, "value", environment_cfg.environment)
+        environment_type = getattr(
+            environment_cfg.environment, "value", environment_cfg.environment
+        )
 
     precheck_summary = _precheck_summary(precheck_payload)
 
     config_path_arg = Path(args.config).expanduser()
     config_source_value = getattr(config, "source_path", None)
     config_source_path = (
-        Path(config_source_value).expanduser()
-        if config_source_value
-        else config_path_arg
+        Path(config_source_value).expanduser() if config_source_value else config_path_arg
     )
     config_file_section: dict[str, object] = {"path": str(config_path_arg)}
     config_file_metadata = _config_file_metadata(config_source_path)
@@ -1147,15 +1159,9 @@ def _build_runtime_plan_payload(
         runtime_jsonl_path = getattr(bootstrap_ctx, "metrics_jsonl_path", None)
         runtime_sink_active = getattr(bootstrap_ctx, "metrics_ui_alert_sink_active", None)
         runtime_service_enabled = getattr(bootstrap_ctx, "metrics_service_enabled", None)
-        runtime_ui_alert_metadata = getattr(
-            bootstrap_ctx, "metrics_ui_alerts_metadata", None
-        )
-        runtime_jsonl_metadata = getattr(
-            bootstrap_ctx, "metrics_jsonl_metadata", None
-        )
-        runtime_security_warnings = getattr(
-            bootstrap_ctx, "metrics_security_warnings", None
-        )
+        runtime_ui_alert_metadata = getattr(bootstrap_ctx, "metrics_ui_alerts_metadata", None)
+        runtime_jsonl_metadata = getattr(bootstrap_ctx, "metrics_jsonl_metadata", None)
+        runtime_security_warnings = getattr(bootstrap_ctx, "metrics_security_warnings", None)
 
     metrics_details = _metrics_service_details_from_config(
         config,
@@ -1195,6 +1201,8 @@ def _build_runtime_plan_payload(
     }
 
     return plan
+
+
 def _append_runtime_plan_jsonl(path: Path, payload: Mapping[str, object]) -> Path:
     """Dopisuje wpis audytowy planu runtime do pliku JSONL."""
 
@@ -1236,9 +1244,7 @@ def _resolve_runtime_symbols(
 
         missing = [name for name in names if not hasattr(module, name)]
         if missing:
-            diagnostics.append(
-                f"{module_name}: brak symboli {', '.join(missing)}"
-            )
+            diagnostics.append(f"{module_name}: brak symboli {', '.join(missing)}")
             continue
 
         resolved = tuple(getattr(module, name) for name in names)
@@ -1260,7 +1266,9 @@ def _import_daily_trend_pipeline_symbols(
     """Importuje wymagane symbole pipeline'u zgodnie z kolejnością modułów."""
 
     symbols = ("build_daily_trend_pipeline", "create_trading_controller")
-    resolved = _resolve_runtime_symbols(module_candidates, symbols, component_hint="runtime pipeline")
+    resolved = _resolve_runtime_symbols(
+        module_candidates, symbols, component_hint="runtime pipeline"
+    )
     return resolved.symbols[0], resolved.symbols[1], resolved.module_name
 
 
@@ -1296,9 +1304,7 @@ if build_daily_trend_pipeline is None or create_trading_controller is None:
         build_daily_trend_pipeline,
         create_trading_controller,
         _PIPELINE_RESOLVED_FROM,
-    ) = _import_daily_trend_pipeline_symbols(
-        _PIPELINE_MODULE_CANDIDATES
-    )
+    ) = _import_daily_trend_pipeline_symbols(_PIPELINE_MODULE_CANDIDATES)
 else:
     _PIPELINE_RESOLVED_FROM = build_daily_trend_pipeline.__module__
 
@@ -1344,7 +1350,9 @@ def _apply_runtime_overrides(
                 create_trading_controller,
                 pipeline_source_module,
             ) = _import_daily_trend_pipeline_symbols(candidates)
-        except ImportError as exc:  # pragma: no cover - ścieżka obsługi błędów testowana przez main()
+        except (
+            ImportError
+        ) as exc:  # pragma: no cover - ścieżka obsługi błędów testowana przez main()
             source = pipeline_origin or "override pipeline"
             raise ImportError(f"{source}: {exc}") from exc
         _PIPELINE_MODULE_CANDIDATES = candidates
@@ -1353,9 +1361,7 @@ def _apply_runtime_overrides(
         _PIPELINE_FALLBACK_USED = pipeline_source_module == _FALLBACK_RUNTIME_MODULE
         source_suffix = f" (źródło: {pipeline_origin})" if pipeline_origin else ""
         _LOGGER.info("Zastosowano moduły pipeline%s: %s", source_suffix, ", ".join(candidates))
-        _LOGGER.debug(
-            "Symbole pipeline pochodzą z modułu: %s", pipeline_source_module
-        )
+        _LOGGER.debug("Symbole pipeline pochodzą z modułu: %s", pipeline_source_module)
 
     if realtime_modules is not None:
         candidates = _build_module_candidates(realtime_modules, _DEFAULT_REALTIME_SOURCES)
@@ -1364,7 +1370,9 @@ def _apply_runtime_overrides(
                 DailyTrendRealtimeRunner,
                 realtime_source_module,
             ) = _import_daily_trend_realtime_runner(candidates)
-        except ImportError as exc:  # pragma: no cover - ścieżka obsługi błędów testowana przez main()
+        except (
+            ImportError
+        ) as exc:  # pragma: no cover - ścieżka obsługi błędów testowana przez main()
             source = realtime_origin or "override realtime"
             raise ImportError(f"{source}: {exc}") from exc
         _REALTIME_MODULE_CANDIDATES = candidates
@@ -1373,9 +1381,7 @@ def _apply_runtime_overrides(
         _REALTIME_FALLBACK_USED = realtime_source_module == _FALLBACK_RUNTIME_MODULE
         source_suffix = f" (źródło: {realtime_origin})" if realtime_origin else ""
         _LOGGER.info("Zastosowano moduły realtime%s: %s", source_suffix, ", ".join(candidates))
-        _LOGGER.debug(
-            "Klasę realtime załadowano z modułu: %s", realtime_source_module
-        )
+        _LOGGER.debug("Klasę realtime załadowano z modułu: %s", realtime_source_module)
 
 
 def get_runtime_module_candidates() -> RuntimeModuleSnapshot:
@@ -1391,6 +1397,7 @@ def get_runtime_module_candidates() -> RuntimeModuleSnapshot:
         _PIPELINE_FALLBACK_USED,
         _REALTIME_FALLBACK_USED,
     )
+
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -1552,9 +1559,7 @@ def _parse_args(argv: Sequence[str] | None) -> argparse.Namespace:
     parser.add_argument(
         "--paper-smoke-audit-log",
         default="docs/audit/paper_trading_log.md",
-        help=(
-            "Ścieżka pliku logu audytu paper trading; podaj pusty napis, aby pominąć wpis."
-        ),
+        help=("Ścieżka pliku logu audytu paper trading; podaj pusty napis, aby pominąć wpis."),
     )
     parser.add_argument(
         "--paper-smoke-operator",
@@ -1650,6 +1655,8 @@ def _create_secret_manager(args: argparse.Namespace) -> SecretManager:
         headless_passphrase=args.headless_passphrase,
         headless_path=args.headless_storage,
     )
+
+
 def _persist_precheck_audit(
     payload: Mapping[str, object],
     *,
@@ -1671,9 +1678,7 @@ def _persist_precheck_audit(
             created_at=timestamp,
         )
     except Exception:  # noqa: BLE001
-        _LOGGER.exception(
-            "Nie udało się zapisać raportu paper_precheck do katalogu %s", audit_dir
-        )
+        _LOGGER.exception("Nie udało się zapisać raportu paper_precheck do katalogu %s", audit_dir)
         return None
 
     if isinstance(payload, MutableMapping):
@@ -1727,9 +1732,7 @@ def _run_paper_precheck_for_smoke(
     risk_status = str(payload.get("risk_status", "unknown"))
 
     if payload.get("error_reason") == "environment_not_found":
-        _LOGGER.error(
-            "Paper pre-check: środowisko %s nie istnieje w konfiguracji", environment
-        )
+        _LOGGER.error("Paper pre-check: środowisko %s nie istnieje w konfiguracji", environment)
     elif payload.get("error_reason") == "invalid_min_ok_ratio":
         _LOGGER.error("Paper pre-check: parametr min_ok_ratio spoza zakresu 0-1")
 
@@ -1938,9 +1941,7 @@ def _append_smoke_audit_entry(
         _LOGGER.exception("Nie udało się zapisać wpisu smoke testu do logu %s", log_path)
         return None
 
-    _LOGGER.info(
-        "Dodano wpis %s do logu audytu smoke testów (%s)", new_id, log_path
-    )
+    _LOGGER.info("Dodano wpis %s do logu audytu smoke testów (%s)", new_id, log_path)
     return new_id
 
 
@@ -2013,9 +2014,7 @@ def _append_smoke_json_log_entry(
         _LOGGER.exception("Nie udało się zapisać wpisu JSONL do %s", json_path)
         return None
 
-    _LOGGER.info(
-        "Dodano wpis JSON smoke testu (%s) do %s", record_id, json_path
-    )
+    _LOGGER.info("Dodano wpis JSON smoke testu (%s) do %s", record_id, json_path)
     return record
 
 
@@ -2247,9 +2246,7 @@ def _append_publish_context(
 
     archive_step = publish_result.get("archive_upload")
     if isinstance(archive_step, Mapping):
-        context["paper_smoke_publish_archive_status"] = str(
-            archive_step.get("status", "unknown")
-        )
+        context["paper_smoke_publish_archive_status"] = str(archive_step.get("status", "unknown"))
         backend_value = archive_step.get("backend")
         if backend_value:
             context["paper_smoke_publish_archive_backend"] = str(backend_value)
@@ -2448,7 +2445,9 @@ def _parse_iso_date(value: str, *, is_end: bool) -> datetime:
     return parsed
 
 
-def _resolve_date_window(arg: str | None, *, default_days: int = 30) -> tuple[int, int, Mapping[str, str]]:
+def _resolve_date_window(
+    arg: str | None, *, default_days: int = 30
+) -> tuple[int, int, Mapping[str, str]]:
     if not arg:
         end_dt = datetime.now(timezone.utc)
         start_dt = end_dt - timedelta(days=default_days)
@@ -2510,7 +2509,9 @@ def _format_percentage(value: float | None, *, decimals: int = 2) -> str:
     return f"{value * 100:.{decimals}f}%"
 
 
-def _normalize_position_entry(symbol: str, payload: Mapping[str, object]) -> tuple[float, str] | None:
+def _normalize_position_entry(
+    symbol: str, payload: Mapping[str, object]
+) -> tuple[float, str] | None:
     """Buduje opis pojedynczej pozycji do raportu tekstowego."""
     notional = _as_float(payload.get("notional"))
     if notional is None or notional <= 0:
@@ -2746,7 +2747,9 @@ def _export_smoke_report(
 
     # Zapis summary.json
     summary_path = report_dir / "summary.json"
-    summary_path.write_text(json.dumps(summary, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    summary_path.write_text(
+        json.dumps(summary, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
+    )
     return summary_path
 
 
@@ -2785,7 +2788,9 @@ def _collect_storage_health(directory: Path, *, min_free_mb: float | None) -> Ma
     try:
         usage = shutil.disk_usage(directory)
     except Exception as exc:  # noqa: BLE001
-        _LOGGER.warning("Nie udało się odczytać informacji o wolnym miejscu dla %s: %s", directory, exc)
+        _LOGGER.warning(
+            "Nie udało się odczytać informacji o wolnym miejscu dla %s: %s", directory, exc
+        )
         info.update({"status": "unknown", "error": str(exc)})
         if threshold_bytes is not None:
             info["threshold_bytes"] = threshold_bytes
@@ -3127,9 +3132,15 @@ def _render_smoke_summary(*, summary: Mapping[str, object], summary_sha256: str)
                             fragments.append(fragment)
                             continue
 
-                coverage_int = _as_int(payload.get("coverage_bars") if isinstance(payload, Mapping) else None)
-                required_int = _as_int(payload.get("required_bars") if isinstance(payload, Mapping) else None)
-                row_count_int = _as_int(payload.get("row_count") if isinstance(payload, Mapping) else None)
+                coverage_int = _as_int(
+                    payload.get("coverage_bars") if isinstance(payload, Mapping) else None
+                )
+                required_int = _as_int(
+                    payload.get("required_bars") if isinstance(payload, Mapping) else None
+                )
+                row_count_int = _as_int(
+                    payload.get("row_count") if isinstance(payload, Mapping) else None
+                )
                 if coverage_int is not None and required_int is not None:
                     fragment += f": pokrycie {coverage_int}/{required_int}"
                 if row_count_int is not None:
@@ -3327,20 +3338,37 @@ def _ensure_smoke_cache(
                 first_timestamp = int(float(rows[0][0]))
 
                 if row_count < candidate_required:
-                    issues.append((str(symbol), f"za mało świec ({row_count} < {candidate_required})"))
+                    issues.append(
+                        (str(symbol), f"za mało świec ({row_count} < {candidate_required})")
+                    )
                     continue
 
                 if last_timestamp < end_ms:
-                    issues.append((str(symbol), f"ostatnia świeca {last_timestamp} < wymaganego końca {end_ms}"))
+                    issues.append(
+                        (
+                            str(symbol),
+                            f"ostatnia świeca {last_timestamp} < wymaganego końca {end_ms}",
+                        )
+                    )
                     continue
 
                 if first_timestamp > start_ms:
-                    issues.append((str(symbol), f"pierwsza świeca {first_timestamp} > wymaganego startu {start_ms}"))
+                    issues.append(
+                        (
+                            str(symbol),
+                            f"pierwsza świeca {first_timestamp} > wymaganego startu {start_ms}",
+                        )
+                    )
                     continue
 
                 coverage = ((last_timestamp - first_timestamp) // max(1, candidate_tick_ms)) + 1
                 if coverage < candidate_required:
-                    issues.append((str(symbol), f"pokrycie obejmuje {coverage} świec (wymagane {candidate_required})"))
+                    issues.append(
+                        (
+                            str(symbol),
+                            f"pokrycie obejmuje {coverage} świec (wymagane {candidate_required})",
+                        )
+                    )
                     continue
 
                 symbol_entry = cache_reports.setdefault(str(symbol), {})
@@ -3749,10 +3777,7 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     snapshot = get_runtime_module_candidates()
     _LOGGER.debug(
-        (
-            "Aktywne moduły runtime – pipeline (%s, moduł %s): %s | "
-            "realtime (%s, moduł %s): %s"
-        ),
+        ("Aktywne moduły runtime – pipeline (%s, moduł %s): %s | realtime (%s, moduł %s): %s"),
         snapshot.pipeline_origin or "brak informacji",
         snapshot.pipeline_resolved_from or "nieustalony",
         ", ".join(snapshot.pipeline_modules),
@@ -3837,9 +3862,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         if precheck_exit != 0:
             return int(precheck_exit)
 
-    cli_adapter_specs = parse_adapter_factory_cli_specs(
-        getattr(args, "adapter_factories", None)
-    )
+    cli_adapter_specs = parse_adapter_factory_cli_specs(getattr(args, "adapter_factories", None))
     adapter_factories_payload: dict[str, object] | None = None
     if args.paper_smoke:
         adapter_factories_payload = {
@@ -3893,9 +3916,7 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     plan_payload: Mapping[str, object] | None = None
     need_plan_snapshot = bool(
-        runtime_plan_path is not None
-        or args.print_runtime_plan
-        or args.fail_on_security_warnings
+        runtime_plan_path is not None or args.print_runtime_plan or args.fail_on_security_warnings
     )
     if need_plan_snapshot:
         try:
@@ -4028,7 +4049,9 @@ def main(argv: Sequence[str] | None = None) -> int:
         )
 
         trading_controller = create_trading_controller(
-            pipeline, pipeline.bootstrap.alert_router, health_check_interval=0.0,
+            pipeline,
+            pipeline.bootstrap.alert_router,
+            health_check_interval=0.0,
         )
 
         runner = DailyTrendRealtimeRunner(
@@ -4055,7 +4078,9 @@ def main(argv: Sequence[str] | None = None) -> int:
             if risk_engine is not None and hasattr(risk_engine, "snapshot_state"):
                 risk_snapshot = risk_engine.snapshot_state(pipeline.risk_profile_name)
         except NotImplementedError:
-            _LOGGER.warning("Silnik ryzyka nie udostępnia metody snapshot_state – pomijam stan ryzyka")
+            _LOGGER.warning(
+                "Silnik ryzyka nie udostępnia metody snapshot_state – pomijam stan ryzyka"
+            )
         except Exception as exc:  # noqa: BLE001
             _LOGGER.warning("Nie udało się pobrać stanu ryzyka: %s", exc)
 
@@ -4113,7 +4138,9 @@ def main(argv: Sequence[str] | None = None) -> int:
         summary_txt_path = summary_path.with_suffix(".txt")
         summary_txt_path.write_text(summary_text + "\n", encoding="utf-8")
         readme_path = _write_smoke_readme(report_dir)
-        _LOGGER.info("Raport smoke testu zapisany w %s (summary sha256=%s)", report_dir, summary_hash)
+        _LOGGER.info(
+            "Raport smoke testu zapisany w %s (summary sha256=%s)", report_dir, summary_hash
+        )
         _LOGGER.info("Podsumowanie smoke testu:%s%s", os.linesep, summary_text)
 
         archive_path: Path | None = None
@@ -4142,7 +4169,10 @@ def main(argv: Sequence[str] | None = None) -> int:
             if args.archive_smoke:
                 _LOGGER.info("Utworzono archiwum smoke testu: %s", archive_path)
             else:
-                _LOGGER.info("Archiwum smoke testu wygenerowane automatycznie na potrzeby uploadu: %s", archive_path)
+                _LOGGER.info(
+                    "Archiwum smoke testu wygenerowane automatycznie na potrzeby uploadu: %s",
+                    archive_path,
+                )
 
         upload_result = None
         if upload_cfg and archive_path:
@@ -4155,7 +4185,9 @@ def main(argv: Sequence[str] | None = None) -> int:
                     window=window_meta,
                 )
                 _LOGGER.info(
-                    "Przesłano archiwum smoke testu (%s) do %s", upload_result.backend, upload_result.location
+                    "Przesłano archiwum smoke testu (%s) do %s",
+                    upload_result.backend,
+                    upload_result.location,
                 )
             except Exception as exc:  # noqa: BLE001
                 _LOGGER.error("Nie udało się przesłać archiwum smoke testu: %s", exc)
@@ -4181,9 +4213,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         precheck_risk_status = None
         if isinstance(precheck_payload, Mapping):
             precheck_status = str(precheck_payload.get("status", "unknown"))
-            precheck_coverage_status = str(
-                precheck_payload.get("coverage_status", "unknown")
-            )
+            precheck_coverage_status = str(precheck_payload.get("coverage_status", "unknown"))
             precheck_risk_status = str(precheck_payload.get("risk_status", "unknown"))
             precheck_status_text = (
                 f"{precheck_status} (coverage={precheck_coverage_status}, "
@@ -4298,7 +4328,9 @@ def main(argv: Sequence[str] | None = None) -> int:
                     summary_sha256=summary_hash,
                     severity=severity,
                     precheck_metadata=precheck_metadata_for_log,
-                    precheck_payload=precheck_payload if isinstance(precheck_payload, Mapping) else None,
+                    precheck_payload=precheck_payload
+                    if isinstance(precheck_payload, Mapping)
+                    else None,
                     precheck_status=precheck_status,
                     precheck_coverage_status=precheck_coverage_status,
                     precheck_risk_status=precheck_risk_status,
@@ -4342,7 +4374,9 @@ def main(argv: Sequence[str] | None = None) -> int:
                     alert_context["paper_smoke_json_sync_backend"] = json_sync_result.backend
                     alert_context["paper_smoke_json_sync_location"] = json_sync_result.location
                     metadata = json_sync_result.metadata
-                    version_id = metadata.get("version_id") if isinstance(metadata, Mapping) else None
+                    version_id = (
+                        metadata.get("version_id") if isinstance(metadata, Mapping) else None
+                    )
                     if version_id:
                         alert_context["paper_smoke_json_sync_version_id"] = str(version_id)
 
@@ -4359,9 +4393,7 @@ def main(argv: Sequence[str] | None = None) -> int:
 
         if offline_mode:
             if auto_publish_enabled:
-                _LOGGER.info(
-                    "Tryb offline: automatyczna publikacja artefaktów zostanie pominięta."
-                )
+                _LOGGER.info("Tryb offline: automatyczna publikacja artefaktów zostanie pominięta.")
             if auto_publish_required:
                 _LOGGER.warning(
                     "Tryb offline: wymaganie automatycznej publikacji artefaktów zostaje pominięte."
@@ -4487,7 +4519,9 @@ def main(argv: Sequence[str] | None = None) -> int:
                 )
 
         if publish_requirement_failed:
-            status_text = str(publish_result.get("status", "unknown")) if publish_result else "unknown"
+            status_text = (
+                str(publish_result.get("status", "unknown")) if publish_result else "unknown"
+            )
             _LOGGER.error(
                 "Smoke test zakończony niepowodzeniem: auto-publikacja artefaktów wymagana, status=%s, exit_code=%s.",
                 status_text,
@@ -4497,7 +4531,9 @@ def main(argv: Sequence[str] | None = None) -> int:
 
         if fail_low_storage:
             free_str = storage_context.get("storage_free_mb", "?")
-            thresh_str = storage_context.get("storage_threshold_mb", str(args.smoke_min_free_mb or "?"))
+            thresh_str = storage_context.get(
+                "storage_threshold_mb", str(args.smoke_min_free_mb or "?")
+            )
             _LOGGER.error(
                 "Smoke test zakończony niepowodzeniem: wolne miejsce %s MB poniżej wymaganego progu %s MB.",
                 free_str,
@@ -4509,7 +4545,9 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     # normalny tryb realtime / run-once
     trading_controller = create_trading_controller(
-        pipeline, pipeline.bootstrap.alert_router, health_check_interval=args.health_interval,
+        pipeline,
+        pipeline.bootstrap.alert_router,
+        health_check_interval=args.health_interval,
     )
 
     runner = DailyTrendRealtimeRunner(

@@ -7,6 +7,7 @@ Zwracany kod wyjścia:
 * 0 – wszystkie progi zgodne,
 * 1 – wykryto rozbieżności lub brak sekcji.
 """
+
 from __future__ import annotations
 
 import argparse
@@ -41,9 +42,7 @@ def _collect_differences(config_path: Path) -> list[str]:
 
 def _build_report(differences: list[str], config_path: Path) -> dict[str, object]:
     status = "ok" if not differences else "mismatch"
-    timestamp = datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace(
-        "+00:00", "Z"
-    )
+    timestamp = datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
     return {
         "timestamp": timestamp,
         "config_path": config_path.as_posix(),

@@ -1,4 +1,5 @@
 """Stałe progów Stage6 oraz pomocnicza walidacja konfiguracji."""
+
 from __future__ import annotations
 
 from typing import Final
@@ -68,8 +69,7 @@ def collect_stage6_threshold_differences(config: object) -> list[str]:
         expected_symbols = EXPECTED_MARKET_INTEL["required_symbols"]
         if required_symbols != expected_symbols:
             differences.append(
-                "market_intel.required_symbols="
-                f"{required_symbols} (oczekiwano {expected_symbols})"
+                f"market_intel.required_symbols={required_symbols} (oczekiwano {expected_symbols})"
             )
 
     governor = getattr(config, "portfolio_governor", None)
@@ -91,8 +91,7 @@ def collect_stage6_threshold_differences(config: object) -> list[str]:
                 actual = getattr(scoring, field_name, None)
                 if actual is None or abs(actual - expected) > 1e-9:
                     differences.append(
-                        "portfolio_governor.scoring."
-                        f"{field_name}={actual} (oczekiwano {expected})"
+                        f"portfolio_governor.scoring.{field_name}={actual} (oczekiwano {expected})"
                     )
 
         strategies = getattr(governor, "strategies", {})

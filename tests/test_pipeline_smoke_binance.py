@@ -1,4 +1,5 @@
 """Budowanie gotowych pipeline'ów strategii trend-following na podstawie konfiguracji."""
+
 from __future__ import annotations
 
 from collections import defaultdict, deque
@@ -91,15 +92,17 @@ def build_daily_trend_pipeline(
     resolved_strategy_name = strategy_name or getattr(environment, "default_strategy", None)
     if not resolved_strategy_name:
         raise ValueError(
-            "Środowisko '{environment}' nie ma zdefiniowanej domyślnej strategii, a parametr strategy_name nie został podany."
-            .format(environment=environment_name)
+            "Środowisko '{environment}' nie ma zdefiniowanej domyślnej strategii, a parametr strategy_name nie został podany.".format(
+                environment=environment_name
+            )
         )
 
     resolved_controller_name = controller_name or getattr(environment, "default_controller", None)
     if not resolved_controller_name:
         raise ValueError(
-            "Środowisko '{environment}' nie ma zdefiniowanego domyślnego kontrolera runtime, a parametr controller_name nie został podany."
-            .format(environment=environment_name)
+            "Środowisko '{environment}' nie ma zdefiniowanego domyślnego kontrolera runtime, a parametr controller_name nie został podany.".format(
+                environment=environment_name
+            )
         )
 
     strategy_cfg = _resolve_strategy(core_config, resolved_strategy_name)
@@ -232,7 +235,6 @@ def create_trading_controller(
 
 # Funkcje pomocnicze są importowane z bot_core.runtime.pipeline, aby uniknąć
 # duplikowania implementacji w testach.
-
 
 
 __all__ = ["DailyTrendPipeline", "build_daily_trend_pipeline", "create_trading_controller"]

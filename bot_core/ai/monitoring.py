@@ -15,7 +15,9 @@ def _to_seconds(value: timedelta | pd.Timedelta | float | int | str) -> float:
 
     if isinstance(value, timedelta):
         return float(value.total_seconds())
-    if isinstance(value, pd.Timedelta):  # pragma: no cover - zależne od opcjonalnej instalacji pandas
+    if isinstance(
+        value, pd.Timedelta
+    ):  # pragma: no cover - zależne od opcjonalnej instalacji pandas
         return float(value.total_seconds())
     if isinstance(value, (int, float)):
         return float(value)
@@ -93,15 +95,21 @@ class DataCompletenessWatcher:
             series = pd.to_datetime(frame[timestamp_field], utc=True, errors="coerce")
             return series.dropna()
         if isinstance(frame.index, pd.DatetimeIndex):
-            return frame.index.to_series().dt.tz_convert("UTC") if frame.index.tz is not None else frame.index.to_series().dt.tz_localize("UTC")
-        raise KeyError(
-            f"Brak kolumny {timestamp_field!r} oraz indeks nie jest DatetimeIndex"
-        )
+            return (
+                frame.index.to_series().dt.tz_convert("UTC")
+                if frame.index.tz is not None
+                else frame.index.to_series().dt.tz_localize("UTC")
+            )
+        raise KeyError(f"Brak kolumny {timestamp_field!r} oraz indeks nie jest DatetimeIndex")
 
-    def assess(self, frame: pd.DataFrame, *, timestamp_field: str | None = None) -> DataQualityAssessment:
+    def assess(
+        self, frame: pd.DataFrame, *, timestamp_field: str | None = None
+    ) -> DataQualityAssessment:
         """Analizuje DataFrame i raportuje luki względem oczekiwanej częstotliwości."""
 
-        ts = self._extract_timestamps(frame, timestamp_field=timestamp_field or self.timestamp_field)
+        ts = self._extract_timestamps(
+            frame, timestamp_field=timestamp_field or self.timestamp_field
+        )
         if ts.empty:
             issue = DataQualityIssue(
                 code="no_data",
@@ -200,7 +208,9 @@ def _compute_psi(
     production_dist = counts_production / max(counts_production.sum(), 1)
     baseline_dist = np.clip(baseline_dist, epsilon, None)
     production_dist = np.clip(production_dist, epsilon, None)
-    return float(np.sum((production_dist - baseline_dist) * np.log(production_dist / baseline_dist)))
+    return float(
+        np.sum((production_dist - baseline_dist) * np.log(production_dist / baseline_dist))
+    )
 
 
 def _compute_ks(baseline: np.ndarray, production: np.ndarray) -> float:
@@ -212,7 +222,9 @@ def _compute_ks(baseline: np.ndarray, production: np.ndarray) -> float:
     baseline_sorted = np.sort(baseline)
     production_sorted = np.sort(production)
     baseline_cdf = np.searchsorted(baseline_sorted, combined, side="right") / baseline_sorted.size
-    production_cdf = np.searchsorted(production_sorted, combined, side="right") / production_sorted.size
+    production_cdf = (
+        np.searchsorted(production_sorted, combined, side="right") / production_sorted.size
+    )
     return float(np.max(np.abs(baseline_cdf - production_cdf)))
 
 
@@ -267,8 +279,12 @@ class FeatureDriftAnalyzer:
         max_ks = 0.0
 
         for column in columns:
-            base_series = pd.to_numeric(baseline.get(column, pd.Series(dtype=float)), errors="coerce").dropna()
-            prod_series = pd.to_numeric(production.get(column, pd.Series(dtype=float)), errors="coerce").dropna()
+            base_series = pd.to_numeric(
+                baseline.get(column, pd.Series(dtype=float)), errors="coerce"
+            ).dropna()
+            prod_series = pd.to_numeric(
+                production.get(column, pd.Series(dtype=float)), errors="coerce"
+            ).dropna()
             base_values = base_series.to_numpy(dtype=float)
             prod_values = prod_series.to_numpy(dtype=float)
 
@@ -335,7 +351,9 @@ class FeatureDriftAnalyzer:
             summary["max_psi"] = 0.0
             summary["max_ks"] = 0.0
 
-        return FeatureDriftAssessment(metrics=metrics, summary=summary, triggered=triggered, issues=issues)
+        return FeatureDriftAssessment(
+            metrics=metrics, summary=summary, triggered=triggered, issues=issues
+        )
 
 
 @dataclass(slots=True)
@@ -406,4 +424,3 @@ __all__ = [
     "FeatureDriftAssessment",
     "FeatureBoundsValidator",
 ]
-

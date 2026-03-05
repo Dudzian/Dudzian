@@ -1,4 +1,5 @@
 """Restartuje lokalną kolejkę I/O runtime."""
+
 from __future__ import annotations
 
 import argparse

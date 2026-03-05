@@ -1,4 +1,5 @@
 """Nadzorca egzekwujący politykę sieciową adapterów REST i limiterów."""
+
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -217,7 +218,9 @@ def normalize_relative_api_path(path: str) -> str:
     if parts.scheme or parts.netloc:
         raise ValueError("Ścieżka endpointu API musi być względna wobec hosta adaptera.")
     if parts.query or parts.fragment:
-        raise ValueError("Parametry zapytania muszą być przekazywane przez 'params', a nie w ścieżce.")
+        raise ValueError(
+            "Parametry zapytania muszą być przekazywane przez 'params', a nie w ścieżce."
+        )
 
     normalized = parts.path
     if not normalized.startswith("/"):
@@ -297,4 +300,3 @@ __all__ = [
     "ExchangeNetworkGuard",
     "build_exchange_network_guard",
 ]
-

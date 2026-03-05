@@ -1,4 +1,5 @@
 """Reguły walidacji zbiorów danych ML wykorzystywanych przez pipeline treningowy."""
+
 from __future__ import annotations
 
 import json
@@ -188,7 +189,9 @@ class DatasetValidator:
         *,
         logger: logging.Logger | None = None,
     ) -> None:
-        self._rules: tuple[ValidationRule, ...] = tuple(rules or (MissingDataRule(), AnomalyDetectionRule()))
+        self._rules: tuple[ValidationRule, ...] = tuple(
+            rules or (MissingDataRule(), AnomalyDetectionRule())
+        )
         self._logger = logger or LOGGER
 
     def validate(self, dataset: FeatureDataset) -> ValidationReport:
@@ -200,7 +203,9 @@ class DatasetValidator:
             try:
                 issues.extend(rule.evaluate(dataset))
             except Exception as exc:  # pragma: no cover - zabezpieczenie przed błędami reguł
-                self._logger.exception("Reguła walidacji %s zgłosiła wyjątek: %s", getattr(rule, "name", rule), exc)
+                self._logger.exception(
+                    "Reguła walidacji %s zgłosiła wyjątek: %s", getattr(rule, "name", rule), exc
+                )
                 issues.append(
                     ValidationIssue(
                         rule=getattr(rule, "name", rule.__class__.__name__),
@@ -222,7 +227,9 @@ class DatasetValidator:
         directory.mkdir(parents=True, exist_ok=True)
         timestamp = report.generated_at.strftime("%Y%m%dT%H%M%S%fZ")
         path = directory / f"dataset_validation_{timestamp}.json"
-        path.write_text(json.dumps(report.to_mapping(), ensure_ascii=False, indent=2), encoding="utf-8")
+        path.write_text(
+            json.dumps(report.to_mapping(), ensure_ascii=False, indent=2), encoding="utf-8"
+        )
         return path
 
 

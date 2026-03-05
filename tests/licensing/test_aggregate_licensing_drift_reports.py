@@ -68,7 +68,12 @@ def test_collects_records_and_metrics(tmp_path):
         "generated_at": generated_at.isoformat(),
         "baseline": {"status": "match"},
         "scenarios": [
-            {"name": "disk", "status": "degraded", "changed_components": ["disk"], "tolerated": ["disk"]},
+            {
+                "name": "disk",
+                "status": "degraded",
+                "changed_components": ["disk"],
+                "tolerated": ["disk"],
+            },
             {"name": "cpu", "status": "rebind_required", "blocked": ["cpu"]},
         ],
     }
@@ -105,8 +110,10 @@ def test_collects_records_and_metrics(tmp_path):
 
     prom = (dashboard_dir / "licensing_drift.prom").read_text(encoding="utf-8")
     assert 'licensing_drift_status{scenario="cpu",status="rebind_required"} 1' in prom
-    assert 'licensing_drift_rejections_total 1' in prom
-    assert f'licensing_drift_run_timestamp{{run_id="run-42"}} {int(generated_at.timestamp())}' in prom
+    assert "licensing_drift_rejections_total 1" in prom
+    assert (
+        f'licensing_drift_run_timestamp{{run_id="run-42"}} {int(generated_at.timestamp())}' in prom
+    )
 
     parquet = pd.read_parquet(input_dir / "licensing_drift_summary.parquet")
     assert parquet.shape[0] == 3

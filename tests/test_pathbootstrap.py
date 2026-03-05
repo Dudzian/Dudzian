@@ -74,9 +74,7 @@ def test_ensure_repo_root_on_sys_path_adds_additional_paths_append(
     extra = str((repo_root / "tests").resolve())
     monkeypatch.setattr(sys, "path", ["/tmp/base"], raising=False)
 
-    ensure_repo_root_on_sys_path(
-        repo_root, position="append", additional_paths=("tests",)
-    )
+    ensure_repo_root_on_sys_path(repo_root, position="append", additional_paths=("tests",))
 
     assert sys.path == ["/tmp/base", repo_str, extra]
 
@@ -175,8 +173,7 @@ def test_format_env_assignment_plain() -> None:
 
 def test_format_env_assignment_posix() -> None:
     assert (
-        pathbootstrap._format_env_assignment("VAR", "/tmp/path", "posix")
-        == "export VAR=/tmp/path"
+        pathbootstrap._format_env_assignment("VAR", "/tmp/path", "posix") == "export VAR=/tmp/path"
     )
 
 
@@ -204,6 +201,8 @@ def test_format_env_assignment_cmd() -> None:
 def test_format_env_assignment_unknown() -> None:
     with pytest.raises(ValueError):
         pathbootstrap._format_env_assignment("VAR", "VALUE", "unknown")
+
+
 def test_get_repo_root_does_not_touch_sys_path(monkeypatch: pytest.MonkeyPatch) -> None:
     repo_root = Path(__file__).resolve().parents[1]
     original_path = list(sys.path)
@@ -919,9 +918,7 @@ def test_main_prints_pythonpath_value_json(
 
     clear_cache()
     try:
-        exit_code = main(
-            ["--print-pythonpath", "--format", "json", "--add-path", "tests"]
-        )
+        exit_code = main(["--print-pythonpath", "--format", "json", "--add-path", "tests"])
         captured = capsys.readouterr()
     finally:
         clear_cache()
@@ -974,9 +971,7 @@ def test_main_prints_pythonpath_json(
 
     clear_cache()
     try:
-        exit_code = main(
-            ["--print-pythonpath", "--format", "json", "--add-path", "tests"]
-        )
+        exit_code = main(["--print-pythonpath", "--format", "json", "--add-path", "tests"])
         captured = capsys.readouterr()
     finally:
         clear_cache()
@@ -991,8 +986,6 @@ def test_main_prints_pythonpath_json(
     assert payload == {
         "repo_root": expected_repo,
         "additional_paths": [expected_tests],
-        "pythonpath": PYTHONPATH_DISPLAY_SEPARATOR.join(
-            [expected_repo, expected_tests]
-        ),
+        "pythonpath": PYTHONPATH_DISPLAY_SEPARATOR.join([expected_repo, expected_tests]),
         "pythonpath_entries": [expected_repo, expected_tests],
     }

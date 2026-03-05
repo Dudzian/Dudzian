@@ -202,7 +202,7 @@ def test_set_work_schedule_accepts_mapping_payload() -> None:
                 "end": "00:00",
                 "mode": "maintenance",
                 "allow_trading": False,
-                "label": "full"
+                "label": "full",
             }
         ],
     }
@@ -413,7 +413,9 @@ def test_add_schedule_override_replaces_overlap_when_requested() -> None:
     assert overrides[0].end == replacement.end
     assert state.override is not None
     assert state.override.start == replacement.start
-    assert trader.get_decision_audit_entries(limit=1)[-1]["payload"]["reason"] == "override_replaced"
+    assert (
+        trader.get_decision_audit_entries(limit=1)[-1]["payload"]["reason"] == "override_replaced"
+    )
 
 
 def test_add_schedule_override_rejects_overlap_without_flag() -> None:
@@ -485,4 +487,3 @@ def test_clear_schedule_overrides_noop_when_empty() -> None:
     trader.clear_schedule_overrides()
 
     assert not emitter.events
-

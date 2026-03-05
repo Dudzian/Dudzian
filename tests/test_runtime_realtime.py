@@ -6,7 +6,6 @@ from pathlib import Path
 from typing import Iterable, Mapping, MutableMapping, Sequence
 
 
-
 import pytest
 
 from bot_core.alerts import DefaultAlertRouter
@@ -27,7 +26,11 @@ from tests._alert_channel_helpers import CollectingChannel
 from tests._daily_trend_helpers import FixtureSource, InMemoryStorage, build_core_config
 
 
-def _build_controller(position_size: float = 0.2) -> tuple[DailyTrendController, PaperTradingExecutionService, AccountSnapshot, Sequence[Sequence[float]]]:
+def _build_controller(
+    position_size: float = 0.2,
+) -> tuple[
+    DailyTrendController, PaperTradingExecutionService, AccountSnapshot, Sequence[Sequence[float]]
+]:
     day_ms = 86_400_000
     start_time = 1_600_000_000_000
     candles = [

@@ -1,4 +1,5 @@
 """Minimalistyczny adapter REST dla rynku spot nowa_gielda."""
+
 from __future__ import annotations
 
 import hmac
@@ -7,7 +8,17 @@ import time
 from collections import deque
 from dataclasses import dataclass
 from hashlib import sha256
-from typing import TYPE_CHECKING, Any, Callable, Deque, Iterable, Mapping, Optional, Protocol, Sequence
+from typing import (
+    TYPE_CHECKING,
+    Any,
+    Callable,
+    Deque,
+    Iterable,
+    Mapping,
+    Optional,
+    Protocol,
+    Sequence,
+)
 
 from urllib.parse import urlencode
 
@@ -79,7 +90,9 @@ _RATE_LIMITS: Mapping[str, RateLimitRule] = {
         RateLimitRule("GET", "/public/ohlcv", weight=2, window_seconds=1.0, max_requests=10),
         RateLimitRule("GET", "/private/account", weight=2, window_seconds=1.0, max_requests=10),
         RateLimitRule("GET", "/private/orders", weight=3, window_seconds=1.0, max_requests=5),
-        RateLimitRule("GET", "/private/orders/history", weight=3, window_seconds=1.0, max_requests=5),
+        RateLimitRule(
+            "GET", "/private/orders/history", weight=3, window_seconds=1.0, max_requests=5
+        ),
         RateLimitRule("GET", "/private/trades", weight=3, window_seconds=1.0, max_requests=5),
         RateLimitRule("POST", "/private/orders", weight=5, window_seconds=1.0, max_requests=5),
         RateLimitRule("DELETE", "/private/orders", weight=1, window_seconds=1.0, max_requests=10),
@@ -133,6 +146,7 @@ class _RateLimiter:
             )
 
         self._state[key] = (window_start, projected)
+
 
 class NowaGieldaHTTPClient:
     """Klient HTTP odpowiadający za komunikację z REST API nowa_gielda."""
@@ -230,7 +244,9 @@ class NowaGieldaHTTPClient:
             headers=headers,
         )
 
-    def _parse_response(self, method: str, path: str, response: httpx.Response) -> Mapping[str, Any]:
+    def _parse_response(
+        self, method: str, path: str, response: httpx.Response
+    ) -> Mapping[str, Any]:
         status = response.status_code
         if 200 <= status < 300:
             try:
@@ -918,7 +934,12 @@ class NowaGieldaSpotAdapter(ExchangeAdapter):
             )
         )
         buffer_size = int(settings.get(f"{scope}_buffer_size", settings.get("buffer_size", 8)))
-        return max(1, attempts), max(0.0, backoff_base), max(backoff_base, backoff_cap), max(1, buffer_size)
+        return (
+            max(1, attempts),
+            max(0.0, backoff_base),
+            max(backoff_base, backoff_cap),
+            max(1, buffer_size),
+        )
 
     def _build_stream(
         self,
@@ -929,7 +950,9 @@ class NowaGieldaSpotAdapter(ExchangeAdapter):
     ) -> LocalLongPollStream:
         stream_settings = dict(self._stream_settings())
         base_url = str(
-            stream_settings.get("base_url", self._settings.get("stream_base_url", "http://127.0.0.1:8765"))
+            stream_settings.get(
+                "base_url", self._settings.get("stream_base_url", "http://127.0.0.1:8765")
+            )
         )
         default_path = f"/stream/{self.name}/{scope}"
         path = str(
@@ -984,9 +1007,21 @@ class NowaGieldaSpotAdapter(ExchangeAdapter):
         elif isinstance(stream_settings.get("auth_token"), str):
             params.setdefault("token", stream_settings["auth_token"])
         http_method = stream_settings.get(f"{scope}_method", stream_settings.get("method", "GET"))
-        params_in_body = bool(stream_settings.get(f"{scope}_params_in_body", stream_settings.get("params_in_body", False)))
-        channels_in_body = bool(stream_settings.get(f"{scope}_channels_in_body", stream_settings.get("channels_in_body", False)))
-        cursor_in_body = bool(stream_settings.get(f"{scope}_cursor_in_body", stream_settings.get("cursor_in_body", False)))
+        params_in_body = bool(
+            stream_settings.get(
+                f"{scope}_params_in_body", stream_settings.get("params_in_body", False)
+            )
+        )
+        channels_in_body = bool(
+            stream_settings.get(
+                f"{scope}_channels_in_body", stream_settings.get("channels_in_body", False)
+            )
+        )
+        cursor_in_body = bool(
+            stream_settings.get(
+                f"{scope}_cursor_in_body", stream_settings.get("cursor_in_body", False)
+            )
+        )
         body_params: dict[str, object] = {}
         base_body = stream_settings.get("body_params")
         if isinstance(base_body, Mapping):
@@ -994,11 +1029,11 @@ class NowaGieldaSpotAdapter(ExchangeAdapter):
         scope_body = stream_settings.get(f"{scope}_body_params")
         if isinstance(scope_body, Mapping):
             body_params.update(scope_body)
-        body_encoder = stream_settings.get(f"{scope}_body_encoder", stream_settings.get("body_encoder"))
+        body_encoder = stream_settings.get(
+            f"{scope}_body_encoder", stream_settings.get("body_encoder")
+        )
         buffer_size = int(
-            stream_settings.get(
-                f"{scope}_buffer_size", stream_settings.get("buffer_size", 64)
-            )
+            stream_settings.get(f"{scope}_buffer_size", stream_settings.get("buffer_size", 64))
         )
 
         try:
@@ -1457,9 +1492,7 @@ class NowaGieldaSpotAdapter(ExchangeAdapter):
             avg_price_raw = entry.get("avgPrice")
             quantity_raw = entry.get("quantity") or entry.get("qty")
             filled_raw = (
-                entry.get("executedQuantity")
-                or entry.get("filledQuantity")
-                or entry.get("filled")
+                entry.get("executedQuantity") or entry.get("filledQuantity") or entry.get("filled")
             )
             created_raw = entry.get("timestamp") or entry.get("createdAt")
             closed_raw = entry.get("closedAt") or entry.get("updatedAt")
@@ -1485,9 +1518,7 @@ class NowaGieldaSpotAdapter(ExchangeAdapter):
                     "timestamp": float(created_raw)
                     if created_raw is not None
                     else float(timestamp),
-                    "closed_timestamp": float(closed_raw)
-                    if closed_raw is not None
-                    else None,
+                    "closed_timestamp": float(closed_raw) if closed_raw is not None else None,
                     "raw": dict(entry),
                 }
             except (TypeError, ValueError) as exc:

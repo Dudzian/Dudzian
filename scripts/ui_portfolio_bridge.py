@@ -1,4 +1,5 @@
 """Mostek CLI pomiędzy UI a lokalnym stanem harmonogramu multi-portfelowego."""
+
 from __future__ import annotations
 
 import argparse
@@ -22,7 +23,11 @@ def _load_store(path: Path) -> dict[str, Any]:
         return {"portfolios": {}}
     portfolios = payload.get("portfolios")
     if isinstance(portfolios, Mapping):
-        return {"portfolios": {key: dict(value) for key, value in portfolios.items() if isinstance(value, Mapping)}}
+        return {
+            "portfolios": {
+                key: dict(value) for key, value in portfolios.items() if isinstance(value, Mapping)
+            }
+        }
     if isinstance(portfolios, list):
         normalized: dict[str, Any] = {}
         for entry in portfolios:
@@ -107,7 +112,9 @@ def build_parser() -> argparse.ArgumentParser:
     list_parser = subparsers.add_parser("list", help="Wyświetla zapisane portfele")
     list_parser.set_defaults(func=_list_command)
 
-    apply_parser = subparsers.add_parser("apply", help="Aktualizuje konfigurację portfela na podstawie JSON")
+    apply_parser = subparsers.add_parser(
+        "apply", help="Aktualizuje konfigurację portfela na podstawie JSON"
+    )
     apply_parser.add_argument("--payload", help="Ścieżka do pliku JSON z definicją portfela")
     apply_parser.set_defaults(func=_apply_command)
 

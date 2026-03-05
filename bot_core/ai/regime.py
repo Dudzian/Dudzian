@@ -119,9 +119,7 @@ class MarketRegimeClassifier:
     def reload_thresholds(self) -> None:
         """Reload risk thresholds from the configured loader."""
 
-        self._thresholds = _ensure_mapping(
-            deepcopy(dict(self._thresholds_loader()))
-        )
+        self._thresholds = _ensure_mapping(deepcopy(dict(self._thresholds_loader())))
 
     def thresholds_snapshot(self) -> Mapping[str, Any]:
         """Return a copy of the currently loaded thresholds."""
@@ -214,7 +212,13 @@ class MarketRegimeClassifier:
         intraday_clamped = max(0.0, min(1.0, intraday_norm))
 
         trend_score = float(
-            np.clip(0.6 * max(0.0, min(1.0, trend_norm)) + 0.3 * max(0.0, momentum_norm) + 0.1 * min(1.0, volume_norm), 0.0, 1.0)
+            np.clip(
+                0.6 * max(0.0, min(1.0, trend_norm))
+                + 0.3 * max(0.0, momentum_norm)
+                + 0.1 * min(1.0, volume_norm),
+                0.0,
+                1.0,
+            )
         )
         daily_score = float(
             np.clip(0.55 * intraday_clamped + 0.3 * range_bias + 0.15 * balanced_momentum, 0.0, 1.0)
@@ -621,19 +625,17 @@ class RegimeHistory:
             total_weight += weight
             weight *= self.decay
 
-        assert dominant_regime is not None  # pragma: no cover - nieosiągalne przy niepustej historii
+        assert (
+            dominant_regime is not None
+        )  # pragma: no cover - nieosiągalne przy niepustej historii
         if counts:
             distribution = np.array(list(counts.values()), dtype=float)
             probabilities = distribution / (distribution.sum() or 1.0)
             entropy = 0.0
             with np.errstate(divide="ignore", invalid="ignore"):
-                entropy = float(
-                    -np.nansum(probabilities * np.log(probabilities + 1e-12))
-                )
+                entropy = float(-np.nansum(probabilities * np.log(probabilities + 1e-12)))
             max_entropy = float(np.log(len(MarketRegime)) or 1.0)
-            regime_entropy = float(
-                np.clip(entropy / (max_entropy or 1.0), 0.0, 1.0)
-            )
+            regime_entropy = float(np.clip(entropy / (max_entropy or 1.0), 0.0, 1.0))
         else:  # pragma: no cover - counts niepuste przy spełnionym asercie
             regime_entropy = 0.0
         weighted_risk = float(risk_total / (total_weight or 1.0))
@@ -669,9 +671,7 @@ class RegimeHistory:
             latest_risk = snapshots[-1].risk_score
             risk_trend = float(np.clip(latest_risk - oldest_risk, -1.0, 1.0))
             deltas = [
-                0.0
-                if snapshots[idx].regime == snapshots[idx - 1].regime
-                else 1.0
+                0.0 if snapshots[idx].regime == snapshots[idx - 1].regime else 1.0
                 for idx in range(1, len(snapshots))
             ]
             regime_persistence = float(1.0 - (sum(deltas) / (len(deltas) or 1.0)))
@@ -681,8 +681,7 @@ class RegimeHistory:
             )
             confidence_volatility = float(np.std(confidence_values, dtype=float))
             risk_deltas = [
-                abs(risk_values[idx] - risk_values[idx - 1])
-                for idx in range(1, len(risk_values))
+                abs(risk_values[idx] - risk_values[idx - 1]) for idx in range(1, len(risk_values))
             ]
             shock_events = sum(1 for delta in risk_deltas if delta >= 0.12)
             shock_events += sum(
@@ -690,9 +689,7 @@ class RegimeHistory:
                 for idx in range(1, len(snapshots))
                 if snapshots[idx].regime is not snapshots[idx - 1].regime
             )
-            shock_frequency = float(
-                np.clip(shock_events / (max(len(snapshots) - 1, 1)), 0.0, 1.0)
-            )
+            shock_frequency = float(np.clip(shock_events / (max(len(snapshots) - 1, 1)), 0.0, 1.0))
             volatility_of_volatility = float(np.std(volatility_values, dtype=float))
         else:
             risk_trend = 0.0
@@ -742,9 +739,7 @@ class RegimeHistory:
                 or snapshot.volatility_ratio >= 1.45
             )
         )
-        severe_event_rate = float(
-            np.clip(severe_events / (len(snapshots) or 1.0), 0.0, 1.0)
-        )
+        severe_event_rate = float(np.clip(severe_events / (len(snapshots) or 1.0), 0.0, 1.0))
         drawdown_pressure = float(np.clip(avg_drawdown / 0.25, 0.0, 1.0))
         liquidity_pressure = float(
             np.clip(
@@ -800,15 +795,11 @@ class RegimeHistory:
         else:
             volatility_trend = 0.0
         if len(drawdown_values) >= 2:
-            drawdown_trend = float(
-                np.clip(drawdown_values[-1] - drawdown_values[0], -0.4, 0.4)
-            )
+            drawdown_trend = float(np.clip(drawdown_values[-1] - drawdown_values[0], -0.4, 0.4))
         else:
             drawdown_trend = 0.0
         if len(volume_trend_values) >= 2:
-            volume_trend_volatility = float(
-                np.std(volume_trend_values, dtype=float)
-            )
+            volume_trend_volatility = float(np.std(volume_trend_values, dtype=float))
         else:
             volume_trend_volatility = 0.0
         volume_trend_volatility = float(max(volume_trend_volatility, 0.0))
@@ -836,12 +827,8 @@ class RegimeHistory:
         kurtosis_scale = float(scales.get("kurtosis_excess", 3.0)) or 3.0
         volume_scale = float(scales.get("volume_imbalance", 0.6)) or 0.6
         skew_pressure = float(np.clip(abs(skewness_bias) / skew_scale, 0.0, 1.0))
-        kurtosis_pressure = float(
-            np.clip(max(0.0, kurtosis_excess) / kurtosis_scale, 0.0, 1.0)
-        )
-        volume_imbalance_pressure = float(
-            np.clip(abs(volume_imbalance) / volume_scale, 0.0, 1.0)
-        )
+        kurtosis_pressure = float(np.clip(max(0.0, kurtosis_excess) / kurtosis_scale, 0.0, 1.0))
+        volume_imbalance_pressure = float(np.clip(abs(volume_imbalance) / volume_scale, 0.0, 1.0))
         distribution_pressure = float(
             np.clip(
                 0.28 * skew_pressure
@@ -859,9 +846,7 @@ class RegimeHistory:
         drawdown_trend_up = float(max(0.0, drawdown_trend))
         volatility_trend_intensity = float(np.clip(volatility_trend_up / 0.03, 0.0, 1.0))
         drawdown_trend_intensity = float(np.clip(drawdown_trend_up / 0.18, 0.0, 1.0))
-        volume_trend_volatility_norm = float(
-            np.clip(volume_trend_volatility / 0.25, 0.0, 1.0)
-        )
+        volume_trend_volatility_norm = float(np.clip(volume_trend_volatility / 0.25, 0.0, 1.0))
 
         degradation_score = float(
             np.clip(
@@ -889,9 +874,7 @@ class RegimeHistory:
             )
         )
 
-        stress_balance = float(
-            np.clip(0.5 + 0.5 * (recovery_potential - stress_index), 0.0, 1.0)
-        )
+        stress_balance = float(np.clip(0.5 + 0.5 * (recovery_potential - stress_index), 0.0, 1.0))
         resilience_score = float(
             np.clip(
                 0.3 * recovery_potential
@@ -947,9 +930,7 @@ class RegimeHistory:
                 1.0,
             )
         )
-        liquidity_trend_component = float(
-            np.clip(max(0.0, -avg_volume_trend) / 0.35, 0.0, 1.0)
-        )
+        liquidity_trend_component = float(np.clip(max(0.0, -avg_volume_trend) / 0.35, 0.0, 1.0))
         liquidity_trend = float(
             np.clip(
                 0.5 * liquidity_pressure
@@ -1165,12 +1146,8 @@ class RegimeHistory:
         kurtosis_scale = float(scales.get("kurtosis_excess", 3.0)) or 3.0
         volume_scale = float(scales.get("volume_imbalance", 0.6)) or 0.6
         skew_pressure = float(np.clip(abs(skewness_bias) / skew_scale, 0.0, 1.0))
-        kurtosis_pressure = float(
-            np.clip(max(0.0, kurtosis_excess) / kurtosis_scale, 0.0, 1.0)
-        )
-        volume_imbalance_pressure = float(
-            np.clip(abs(volume_imbalance) / volume_scale, 0.0, 1.0)
-        )
+        kurtosis_pressure = float(np.clip(max(0.0, kurtosis_excess) / kurtosis_scale, 0.0, 1.0))
+        volume_imbalance_pressure = float(np.clip(abs(volume_imbalance) / volume_scale, 0.0, 1.0))
 
         critical = _ensure_mapping(risk_level_cfg.get("critical"))
         if (
@@ -1198,8 +1175,7 @@ class RegimeHistory:
                 and shock_frequency >= float(critical.get("shock_frequency", 0.6))
             )
             or (
-                volatility_of_volatility
-                >= float(critical.get("volatility_of_volatility", 0.035))
+                volatility_of_volatility >= float(critical.get("volatility_of_volatility", 0.035))
                 and risk_score >= float(critical.get("volatility_risk_score", 0.55))
             )
             or cooldown_score >= float(critical.get("cooldown_score", 0.75))
@@ -1215,13 +1191,11 @@ class RegimeHistory:
             or liquidity_trend >= float(critical.get("liquidity_trend", 0.85))
             or confidence_fragility >= float(critical.get("confidence_fragility", 0.8))
             or (
-                confidence_resilience
-                <= float(critical.get("confidence_resilience", 0.25))
+                confidence_resilience <= float(critical.get("confidence_resilience", 0.25))
                 and risk_score >= float(critical.get("liquidity_risk_score", 0.5))
             )
             or (
-                stability_projection
-                <= float(critical.get("stability_projection", 0.2))
+                stability_projection <= float(critical.get("stability_projection", 0.2))
                 and (
                     risk_score >= float(critical.get("drawdown_risk_score", 0.55))
                     or instability_score >= float(critical.get("instability_support", 0.6))
@@ -1232,8 +1206,7 @@ class RegimeHistory:
                 and risk_score >= float(critical.get("vol_trend_risk_score", 0.6))
             )
             or (
-                drawdown_trend_intensity
-                >= float(critical.get("drawdown_trend_intensity", 0.12))
+                drawdown_trend_intensity >= float(critical.get("drawdown_trend_intensity", 0.12))
                 and risk_score >= float(critical.get("vol_trend_risk_score", 0.6))
             )
             or (
@@ -1245,10 +1218,8 @@ class RegimeHistory:
                 and risk_score >= float(critical.get("pressure_risk_score", 0.55))
             )
             or (
-                volume_imbalance_pressure
-                >= float(critical.get("volume_imbalance_pressure", 0.85))
-                and liquidity_pressure
-                >= float(critical.get("liquidity_pressure_support", 0.45))
+                volume_imbalance_pressure >= float(critical.get("volume_imbalance_pressure", 0.85))
+                and liquidity_pressure >= float(critical.get("liquidity_pressure_support", 0.45))
             )
         ):
             return RiskLevel.CRITICAL
@@ -1261,8 +1232,7 @@ class RegimeHistory:
                 and risk_score >= float(elevated.get("risk_support_score", 0.5))
             )
             or (
-                confidence_volatility
-                >= float(elevated.get("confidence_volatility", 0.2))
+                confidence_volatility >= float(elevated.get("confidence_volatility", 0.2))
                 and risk_score >= float(elevated.get("risk_support_score", 0.5))
             )
             or (
@@ -1283,8 +1253,7 @@ class RegimeHistory:
             or stress_index >= float(elevated.get("stress_index", 0.65))
             or tail_risk_index >= float(elevated.get("tail_risk_index", 0.55))
             or shock_frequency >= float(elevated.get("shock_frequency", 0.55))
-            or volatility_of_volatility
-            >= float(elevated.get("volatility_of_volatility", 0.03))
+            or volatility_of_volatility >= float(elevated.get("volatility_of_volatility", 0.03))
             or cooldown_score >= float(elevated.get("cooldown_score", 0.55))
             or severe_event_rate >= float(elevated.get("severe_event_rate", 0.45))
             or degradation_score >= float(elevated.get("degradation_score", 0.55))
@@ -1297,22 +1266,18 @@ class RegimeHistory:
             or stress_momentum >= float(elevated.get("stress_momentum", 0.6))
             or liquidity_trend >= float(elevated.get("liquidity_trend", 0.65))
             or confidence_fragility >= float(elevated.get("confidence_fragility", 0.6))
-            or confidence_resilience
-            <= float(elevated.get("confidence_resilience", 0.35))
+            or confidence_resilience <= float(elevated.get("confidence_resilience", 0.35))
             or stability_projection <= float(elevated.get("stability_projection", 0.35))
             or (
-                vol_trend_intensity
-                >= float(elevated.get("vol_trend_intensity", 0.018))
+                vol_trend_intensity >= float(elevated.get("vol_trend_intensity", 0.018))
                 and risk_score >= float(elevated.get("transition_risk_score", 0.45))
             )
             or (
-                drawdown_trend_intensity
-                >= float(elevated.get("drawdown_trend_intensity", 0.08))
+                drawdown_trend_intensity >= float(elevated.get("drawdown_trend_intensity", 0.08))
                 and risk_score >= float(elevated.get("transition_risk_score", 0.45))
             )
             or (
-                volume_trend_volatility
-                >= float(elevated.get("volume_trend_volatility", 0.18))
+                volume_trend_volatility >= float(elevated.get("volume_trend_volatility", 0.18))
                 and risk_score >= float(elevated.get("transition_risk_score", 0.45))
             )
             or (
@@ -1324,10 +1289,8 @@ class RegimeHistory:
                 and risk_score >= float(elevated.get("transition_risk_score", 0.45))
             )
             or (
-                volume_imbalance_pressure
-                >= float(elevated.get("volume_imbalance_pressure", 0.65))
-                and liquidity_pressure
-                >= float(elevated.get("liquidity_pressure_support", 0.4))
+                volume_imbalance_pressure >= float(elevated.get("volume_imbalance_pressure", 0.65))
+                and liquidity_pressure >= float(elevated.get("liquidity_pressure_support", 0.4))
             )
         ):
             return RiskLevel.ELEVATED
@@ -1367,8 +1330,7 @@ class RegimeHistory:
             and confidence_resilience >= float(calm.get("confidence_resilience", 0.55))
             and skew_pressure <= float(calm.get("skew_pressure", 0.45))
             and kurtosis_pressure <= float(calm.get("kurtosis_pressure", 0.45))
-            and volume_imbalance_pressure
-            <= float(calm.get("volume_imbalance_pressure", 0.45))
+            and volume_imbalance_pressure <= float(calm.get("volume_imbalance_pressure", 0.45))
         ):
             return RiskLevel.CALM
         balanced = _ensure_mapping(risk_level_cfg.get("balanced"))
@@ -1386,8 +1348,7 @@ class RegimeHistory:
             and stress_index <= float(balanced.get("stress_index", 0.5))
             and tail_risk_index <= float(balanced.get("tail_risk_index", 0.45))
             and shock_frequency <= float(balanced.get("shock_frequency", 0.45))
-            and volatility_of_volatility
-            <= float(balanced.get("volatility_of_volatility", 0.028))
+            and volatility_of_volatility <= float(balanced.get("volatility_of_volatility", 0.028))
             and cooldown_score <= float(balanced.get("cooldown_score", 0.5))
             and severe_event_rate <= float(balanced.get("severe_event_rate", 0.45))
             and degradation_score <= float(balanced.get("degradation_score", 0.45))
@@ -1404,8 +1365,7 @@ class RegimeHistory:
             and confidence_resilience >= float(balanced.get("confidence_resilience", 0.45))
             and skew_pressure <= float(balanced.get("skew_pressure", 0.6))
             and kurtosis_pressure <= float(balanced.get("kurtosis_pressure", 0.6))
-            and volume_imbalance_pressure
-            <= float(balanced.get("volume_imbalance_pressure", 0.55))
+            and volume_imbalance_pressure <= float(balanced.get("volume_imbalance_pressure", 0.55))
         ):
             return RiskLevel.BALANCED
         watch = _ensure_mapping(risk_level_cfg.get("watch"))
@@ -1424,15 +1384,13 @@ class RegimeHistory:
             or tail_risk_index >= float(watch.get("tail_risk_index", 0.4))
             or shock_frequency >= float(watch.get("shock_frequency", 0.4))
             or stress_index >= float(watch.get("stress_index", 0.45))
-            or volatility_of_volatility
-            >= float(watch.get("volatility_of_volatility", 0.024))
+            or volatility_of_volatility >= float(watch.get("volatility_of_volatility", 0.024))
             or cooldown_score >= float(watch.get("cooldown_score", 0.45))
             or severe_event_rate >= float(watch.get("severe_event_rate", 0.4))
             or degradation_score >= float(watch.get("degradation_score", 0.4))
             or stability_projection <= float(watch.get("stability_projection", 0.45))
             or vol_trend_intensity >= float(watch.get("vol_trend_intensity", 0.015))
-            or drawdown_trend_intensity
-            >= float(watch.get("drawdown_trend_intensity", 0.05))
+            or drawdown_trend_intensity >= float(watch.get("drawdown_trend_intensity", 0.05))
             or distribution_pressure >= float(watch.get("distribution_pressure", 0.45))
             or regime_entropy >= float(watch.get("regime_entropy", 0.6))
             or resilience_score <= float(watch.get("resilience_score", 0.45))
@@ -1445,14 +1403,12 @@ class RegimeHistory:
             or confidence_fragility >= float(watch.get("confidence_fragility", 0.5))
             or skew_pressure >= float(watch.get("skew_pressure", 0.55))
             or kurtosis_pressure >= float(watch.get("kurtosis_pressure", 0.55))
-            or volume_imbalance_pressure
-            >= float(watch.get("volume_imbalance_pressure", 0.5))
+            or volume_imbalance_pressure >= float(watch.get("volume_imbalance_pressure", 0.5))
         ):
             return RiskLevel.WATCH
-        if (
-            risk_volatility >= float(watch.get("risk_volatility", 0.25))
-            and regime_persistence <= float(watch.get("regime_persistence", 0.4))
-        ):
+        if risk_volatility >= float(
+            watch.get("risk_volatility", 0.25)
+        ) and regime_persistence <= float(watch.get("regime_persistence", 0.4)):
             return RiskLevel.WATCH
         return RiskLevel.WATCH
 
@@ -1466,4 +1422,3 @@ __all__ = [
     "RegimeSummary",
     "RiskLevel",
 ]
-

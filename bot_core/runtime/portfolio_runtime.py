@@ -1,4 +1,5 @@
 """Integracja runtime z warstwą portfolio i raportami Stage6."""
+
 from __future__ import annotations
 
 import logging
@@ -118,9 +119,7 @@ def load_market_intel_snapshots_from_reports(
     return {}
 
 
-def _resolve_latest_stress_report(
-    governor_name: str, directories: Sequence[Path]
-) -> Path | None:
+def _resolve_latest_stress_report(governor_name: str, directories: Sequence[Path]) -> Path | None:
     name_slug = governor_name.strip().lower().replace(" ", "_") or "portfolio"
     prefixes = (
         f"stress_lab_{name_slug}_",
@@ -146,14 +145,10 @@ def load_stress_overrides_from_reports(
     try:
         overrides = load_stress_overrides(report_path, max_age=max_age)
     except Exception:  # pragma: no cover
-        _LOGGER.exception(
-            "PortfolioGovernor: błąd wczytania raportu Stress Lab %s", report_path
-        )
+        _LOGGER.exception("PortfolioGovernor: błąd wczytania raportu Stress Lab %s", report_path)
         return ()
     if overrides:
-        _LOGGER.debug(
-            "PortfolioGovernor: użyto fallbackowego raportu Stress Lab %s", report_path
-        )
+        _LOGGER.debug("PortfolioGovernor: użyto fallbackowego raportu Stress Lab %s", report_path)
     return overrides
 
 
@@ -299,4 +294,3 @@ def _minutes_to_timedelta(value: float | int | None, default_minutes: float):
     if minutes <= 0:
         return None
     return timedelta(minutes=minutes)
-

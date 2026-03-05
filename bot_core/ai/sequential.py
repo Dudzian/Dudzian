@@ -152,7 +152,9 @@ class TemporalDifferencePolicy(SupportsInference):
 
     # ------------------------------------------------------------------ helpers --
     def _fit_numpy(self, samples: Sequence[Mapping[str, float]], targets: Sequence[float]) -> None:
-        feature_matrix = np.asarray([self._vectorize_numpy(sample) for sample in samples], dtype=float)
+        feature_matrix = np.asarray(
+            [self._vectorize_numpy(sample) for sample in samples], dtype=float
+        )
         target_arr = np.asarray(targets, dtype=float)
         weights = np.asarray(self._weights, dtype=float)
         bias = float(self._bias)
@@ -160,7 +162,9 @@ class TemporalDifferencePolicy(SupportsInference):
             value = float(np.dot(weights, feature_row) + bias)
             td_target = float(reward + self.discount_factor * value)
             td_error = td_target - value
-            weights = weights + self.learning_rate * (td_error * feature_row - self.weight_decay * weights)
+            weights = weights + self.learning_rate * (
+                td_error * feature_row - self.weight_decay * weights
+            )
             bias = bias + self.learning_rate * td_error * 0.5
         self._weights = [float(w) for w in weights]
         self._bias = bias
@@ -182,7 +186,9 @@ class TemporalDifferencePolicy(SupportsInference):
         }
 
     @classmethod
-    def from_state(cls, feature_names: Sequence[str], payload: Mapping[str, object]) -> "TemporalDifferencePolicy":
+    def from_state(
+        cls, feature_names: Sequence[str], payload: Mapping[str, object]
+    ) -> "TemporalDifferencePolicy":
         model = cls(
             feature_names=feature_names,
             learning_rate=float(payload.get("learning_rate", 0.05)),
@@ -199,7 +205,9 @@ class TemporalDifferencePolicy(SupportsInference):
 
     # ------------------------------------------------------------------ utils --
     def _vectorize_numpy(self, sample: Mapping[str, float]) -> np.ndarray:
-        return np.asarray([float(sample.get(name, 0.0)) for name in self.feature_names], dtype=float)
+        return np.asarray(
+            [float(sample.get(name, 0.0)) for name in self.feature_names], dtype=float
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -214,7 +222,9 @@ def _rank_features(dataset: FeatureDataset) -> Sequence[tuple[str, float]]:
         return ()
     target_arr = np.asarray(targets, dtype=float)
     for name in dataset.feature_names:
-        values = np.asarray([float(vector.features.get(name, 0.0)) for vector in dataset.vectors], dtype=float)
+        values = np.asarray(
+            [float(vector.features.get(name, 0.0)) for vector in dataset.vectors], dtype=float
+        )
         if np.allclose(values, values[0]):
             score = 0.0
         else:
@@ -320,7 +330,9 @@ class SequentialTrainingPipeline:
         ]
         targets = trimmed_dataset.targets
 
-        wf_metrics = self._walk_forward(features, targets, selected, folds, learning_rate, discount_factor)
+        wf_metrics = self._walk_forward(
+            features, targets, selected, folds, learning_rate, discount_factor
+        )
         heuristic_metrics = self._evaluate_heuristics(features, targets, folds)
 
         final_model = TemporalDifferencePolicy(
@@ -468,7 +480,9 @@ class SequentialTrainingPipeline:
     def _directional_accuracy(predictions: Sequence[float], targets: Sequence[float]) -> float:
         if not predictions:
             return 0.0
-        hits = sum(math.copysign(1.0, p) == math.copysign(1.0, t) for p, t in zip(predictions, targets))
+        hits = sum(
+            math.copysign(1.0, p) == math.copysign(1.0, t) for p, t in zip(predictions, targets)
+        )
         return hits / len(predictions)
 
     @staticmethod
@@ -524,7 +538,9 @@ class SequentialOnlineScorer:
         if self._model is not None:
             prediction = float(self._model.predict(features))
             probability = _sigmoid(prediction)
-            model_score = ModelScore(expected_return_bps=prediction, success_probability=probability)
+            model_score = ModelScore(
+                expected_return_bps=prediction, success_probability=probability
+            )
             if probability >= self._min_probability and math.isfinite(prediction):
                 return OnlineScoringResult(
                     score=model_score,
@@ -542,7 +558,9 @@ class SequentialOnlineScorer:
         if model_score is not None:
             diagnostics["model_probability"] = model_score.success_probability
             diagnostics["model_prediction"] = model_score.expected_return_bps
-        return OnlineScoringResult(score=fallback_score, source="heuristic", diagnostics=diagnostics)
+        return OnlineScoringResult(
+            score=fallback_score, source="heuristic", diagnostics=diagnostics
+        )
 
     def _heuristic_prediction(self, features: Mapping[str, float]) -> float:
         if not self._heuristics:
@@ -565,4 +583,3 @@ __all__ = [
     "momentum_heuristic",
     "volatility_penalized_momentum",
 ]
-

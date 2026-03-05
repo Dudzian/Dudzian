@@ -30,20 +30,23 @@ def test_runtime_service_uses_demo_loader_when_no_journal() -> None:
 
 
 def test_runtime_service_refreshes_runtime_metadata(tmp_path: Path) -> None:
-    pytest.importorskip("pyarrow", reason="Runtime metadata test requires pyarrow-backed AI repository")
+    pytest.importorskip(
+        "pyarrow", reason="Runtime metadata test requires pyarrow-backed AI repository"
+    )
     try:
         from bot_core.ai import FilesystemModelRepository
         from bot_core.ai.models import ModelArtifact
     except ModuleNotFoundError as exc:
         pytest.skip(f"Runtime metadata test requires optional AI dependencies: {exc}")
 
-
     registry_dir = tmp_path / "models"
     registry_dir.mkdir()
     runtime_template = Path("config/runtime.yaml").read_text(encoding="utf-8")
     runtime_config_path = tmp_path / "runtime.yaml"
     runtime_config_path.write_text(
-        runtime_template.replace("model_registry_path: models", f"model_registry_path: {registry_dir}"),
+        runtime_template.replace(
+            "model_registry_path: models", f"model_registry_path: {registry_dir}"
+        ),
         encoding="utf-8",
     )
 
@@ -211,8 +214,6 @@ def test_runtime_service_operator_action_can_be_invoked_via_qt_metaobject() -> N
         assert service.lastOperatorAction["entry"] == {}
 
 
-
-
 def test_runtime_service_operator_action_can_be_invoked_via_qvariant_signature() -> None:
     app = QCoreApplication.instance() or QCoreApplication([])
     service = RuntimeService(decision_loader=lambda limit: [])
@@ -272,6 +273,7 @@ def test_runtime_service_request_freeze_can_be_invoked_via_qvariant_signature() 
         assert service.lastOperatorAction["entry"] == {}
     else:
         assert service.lastOperatorAction["entry"]["id"] == "decision-freeze-variant"
+
 
 def test_runtime_service_trigger_operator_action_normalizes_qjsvalue_like_entry() -> None:
     service = RuntimeService(decision_loader=lambda limit: [])

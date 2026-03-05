@@ -18,7 +18,9 @@ def test_data_completeness_watcher_detects_gaps() -> None:
             "close": np.linspace(100.0, 102.0, 10),
         }
     )
-    watcher = DataCompletenessWatcher(frequency=timedelta(minutes=1), warning_gap_ratio=0.05, critical_gap_ratio=0.2)
+    watcher = DataCompletenessWatcher(
+        frequency=timedelta(minutes=1), warning_gap_ratio=0.05, critical_gap_ratio=0.2
+    )
 
     assessment = watcher.assess(frame)
 
@@ -73,4 +75,3 @@ def test_feature_bounds_validator_flags_outliers() -> None:
     assert issues, "Validator should detect out-of-bounds feature"
     assert any(issue.code == "feature_out_of_bounds" for issue in issues)
     assert validator.is_within_bounds({"momentum": 0.1, "volume_ratio": 1.05}, scalers)
-

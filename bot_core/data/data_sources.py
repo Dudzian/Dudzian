@@ -1,4 +1,5 @@
 """Publiczne interfejsy źródeł danych i lokalnych magazynów cache."""
+
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -38,14 +39,11 @@ class DataSource(Protocol):
 class CacheStorage(Protocol):
     """Minimalny kontrakt lokalnego magazynu danych (np. Parquet/SQLite)."""
 
-    def read(self, key: str) -> Mapping[str, Sequence[Sequence[float]]]:
-        ...
+    def read(self, key: str) -> Mapping[str, Sequence[Sequence[float]]]: ...
 
-    def write(self, key: str, payload: Mapping[str, Sequence[Sequence[float]]]) -> None:
-        ...
+    def write(self, key: str, payload: Mapping[str, Sequence[Sequence[float]]]) -> None: ...
 
-    def metadata(self) -> MutableMapping[str, str]:
-        ...
+    def metadata(self) -> MutableMapping[str, str]: ...
 
     def latest_timestamp(self, key: str) -> float | None:
         """Zwraca znacznik czasu ostatniej świecy zapisanej w cache."""

@@ -1,4 +1,5 @@
 """Generowanie i podpisywanie raportów TCO."""
+
 from __future__ import annotations
 
 import hashlib
@@ -62,9 +63,7 @@ class TCOReportWriter:
 
         output_lines: list[str] = []
         for row in rows:
-            output_lines.append(
-                ",".join(row)
-            )
+            output_lines.append(",".join(row))
         output_lines.append("")
         return "\n".join(output_lines)
 
@@ -117,10 +116,7 @@ class TCOReportWriter:
         for strategy, summary in sorted(self._report.strategies.items()):
             lines.append("")
             lines.append(
-                (
-                    "Strategia {name}: {trades} transakcji, koszty {cost:.6f} "
-                    "({bps:.2f} bps)"
-                ).format(
+                ("Strategia {name}: {trades} transakcji, koszty {cost:.6f} ({bps:.2f} bps)").format(
                     name=strategy,
                     trades=summary.total.trade_count,
                     cost=float(summary.total.total_cost),
@@ -229,7 +225,9 @@ class TCOReportWriter:
                 json.dumps(document, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
                 encoding="utf-8",
             )
-            signed[label] = SignedArtifact(path=path, signature_path=signature_path, payload=payload)
+            signed[label] = SignedArtifact(
+                path=path, signature_path=signature_path, payload=payload
+            )
         return signed
 
 

@@ -76,4 +76,3 @@ def load_trades(input_dir: pathlib.Path) -> Tuple[pd.DataFrame, pathlib.Path]:
 
 
 __all__ = ["load_trades"]
-

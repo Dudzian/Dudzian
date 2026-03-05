@@ -94,9 +94,7 @@ class ObservabilityBundleBuilder:
             if source.category in seen:
                 raise ValueError(f"Duplikat kategorii {source.category!r} w źródłach")
             seen.add(source.category)
-        self._sources = tuple(
-            (source.category, source.resolved_root()) for source in source_list
-        )
+        self._sources = tuple((source.category, source.resolved_root()) for source in source_list)
         self._include = tuple(include or ())
         self._exclude = tuple(exclude or ())
 
@@ -107,7 +105,9 @@ class ObservabilityBundleBuilder:
                 if candidate.is_dir():
                     continue
                 if candidate.is_symlink():
-                    raise ValueError(f"Symlinki nie są dozwolone w pakiecie obserwowalności: {candidate}")
+                    raise ValueError(
+                        f"Symlinki nie są dozwolone w pakiecie obserwowalności: {candidate}"
+                    )
                 if not candidate.is_file():
                     continue
                 relative = candidate.relative_to(root).as_posix()
@@ -215,8 +215,7 @@ class ObservabilityBundleBuilder:
             }
             signature_path = manifest_path.with_suffix(".sig")
             signature_path.write_text(
-                json.dumps(signature_doc, ensure_ascii=False, indent=2, sort_keys=True)
-                + "\n",
+                json.dumps(signature_doc, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
                 encoding="utf-8",
             )
 
@@ -250,9 +249,7 @@ class ObservabilityBundleVerifier:
             return ["Manifest nie zawiera listy plików"]
 
         with zipfile.ZipFile(self._bundle_path, "r") as archive:
-            archive_files = {
-                name for name in archive.namelist() if name and not name.endswith("/")
-            }
+            archive_files = {name for name in archive.namelist() if name and not name.endswith("/")}
             for name, (expected_size, expected_digest) in manifest_files.items():
                 try:
                     info = archive.getinfo(name)
@@ -329,4 +326,3 @@ __all__ = [
     "load_signature",
     "verify_signature",
 ]
-

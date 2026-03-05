@@ -51,9 +51,7 @@ def _load_symbol(target: str) -> StrategyPlugin | type[StrategyPlugin]:
 
     module = import_module(module_name)
     if not hasattr(module, symbol_name):
-        raise PluginLoadError(
-            f"Entrypoint '{target}' nie istnieje (brak symbolu '{symbol_name}')"
-        )
+        raise PluginLoadError(f"Entrypoint '{target}' nie istnieje (brak symbolu '{symbol_name}')")
     return getattr(module, symbol_name)
 
 
@@ -135,9 +133,7 @@ class StrategyPluginLoader:
                     )
                 self._catalog.register(plugin)
             else:  # pragma: no cover - defensywnie
-                raise PluginLoadError(
-                    f"Entrypoint '{target}' nie zwraca pluginu strategii"
-                )
+                raise PluginLoadError(f"Entrypoint '{target}' nie zwraca pluginu strategii")
 
             installed.append(strategy_name)
 
@@ -145,4 +141,3 @@ class StrategyPluginLoader:
 
 
 __all__ = ["StrategyPluginLoader", "PluginLoadError"]
-

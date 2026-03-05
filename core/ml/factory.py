@@ -4,7 +4,17 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Callable, Dict, Iterable, Iterator, Mapping, MutableMapping, Sequence, Tuple, TypeVar
+from typing import (
+    Callable,
+    Dict,
+    Iterable,
+    Iterator,
+    Mapping,
+    MutableMapping,
+    Sequence,
+    Tuple,
+    TypeVar,
+)
 
 from bot_core.ai import backends
 

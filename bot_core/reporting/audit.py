@@ -1,4 +1,5 @@
 """Obsługa synchronizacji dziennika JSONL smoke testów do magazynu audytowego."""
+
 from __future__ import annotations
 
 import json
@@ -198,7 +199,9 @@ class PaperSmokeJsonSynchronizer:
         metadata = dict(extra_args.get("Metadata") or {})
         metadata.setdefault("sha256", expected_hash)
         extra_args["Metadata"] = metadata
-        with tempfile.NamedTemporaryFile(delete=False) as temp_file:  # pragma: no cover - zależne od środowiska
+        with tempfile.NamedTemporaryFile(
+            delete=False
+        ) as temp_file:  # pragma: no cover - zależne od środowiska
             temp_file.write(payload)
             temp_file.flush()
             upload_path = Path(temp_file.name)
@@ -255,4 +258,3 @@ __all__ = [
     "PaperSmokeJsonSynchronizer",
     "PaperSmokeJsonSyncResult",
 ]
-

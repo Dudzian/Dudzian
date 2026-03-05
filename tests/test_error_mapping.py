@@ -60,7 +60,9 @@ class TestBinanceErrorMapping:
     def test_http_499_is_treated_as_throttling(self) -> None:
         payload = {"msg": "Client closed request"}
         with pytest.raises(ExchangeThrottlingError):
-            raise_for_binance_error(status_code=499, payload=payload, default_message="client closed")
+            raise_for_binance_error(
+                status_code=499, payload=payload, default_message="client closed"
+            )
 
     def test_http_523_is_treated_as_throttling(self) -> None:
         payload = {"msg": "Origin is unreachable"}
@@ -90,12 +92,16 @@ class TestBinanceErrorMapping:
     def test_http_598_is_treated_as_throttling(self) -> None:
         payload = {"msg": "Network read timeout"}
         with pytest.raises(ExchangeThrottlingError):
-            raise_for_binance_error(status_code=598, payload=payload, default_message="read timeout")
+            raise_for_binance_error(
+                status_code=598, payload=payload, default_message="read timeout"
+            )
 
     def test_http_599_is_treated_as_throttling(self) -> None:
         payload = {"msg": "Network connect timeout"}
         with pytest.raises(ExchangeThrottlingError):
-            raise_for_binance_error(status_code=599, payload=payload, default_message="connect timeout")
+            raise_for_binance_error(
+                status_code=599, payload=payload, default_message="connect timeout"
+            )
 
     def test_unknown_code_falls_back_to_api_error(self) -> None:
         payload = {"code": -3000, "msg": "Unknown error"}
@@ -104,11 +110,13 @@ class TestBinanceErrorMapping:
 
     def test_string_payload_becomes_error_message(self) -> None:
         with pytest.raises(ExchangeAPIError) as exc:
-            raise_for_binance_error(status_code=500, payload="maintenance", default_message="fallback")
+            raise_for_binance_error(
+                status_code=500, payload="maintenance", default_message="fallback"
+            )
         assert "maintenance" in str(exc.value)
 
     def test_bytes_payload_is_decoded(self) -> None:
-        payload = "{\"msg\":\"Maintenance\"}".encode("utf-8")
+        payload = '{"msg":"Maintenance"}'.encode("utf-8")
         with pytest.raises(ExchangeAPIError) as exc:
             raise_for_binance_error(status_code=500, payload=payload, default_message="fallback")
         assert "Maintenance" in str(exc.value)
@@ -445,16 +453,12 @@ class TestKrakenErrorMapping:
     def test_error_message_without_list_is_used(self) -> None:
         payload = {"errorMessage": "API key expired"}
         with pytest.raises(ExchangeAuthError):
-            raise_for_kraken_error(
-                payload=payload, default_message="kraken auth", status_code=403
-            )
+            raise_for_kraken_error(payload=payload, default_message="kraken auth", status_code=403)
 
     def test_status_based_auth_without_messages(self) -> None:
         payload: dict[str, object] = {}
         with pytest.raises(ExchangeAuthError):
-            raise_for_kraken_error(
-                payload=payload, default_message="kraken auth", status_code=401
-            )
+            raise_for_kraken_error(payload=payload, default_message="kraken auth", status_code=401)
 
     def test_reason_field_is_parsed(self) -> None:
         payload = {"error": [{"reason": "EAPI:Rate limit exceeded"}]}

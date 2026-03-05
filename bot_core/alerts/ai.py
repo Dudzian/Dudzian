@@ -23,7 +23,11 @@ class DriftAlertPayload:
 def emit_model_drift_alert(payload: DriftAlertPayload) -> None:
     """Emit a drift alert using the global dispatcher."""
 
-    severity = AlertSeverity.ERROR if payload.drift_score > payload.threshold * 1.5 else AlertSeverity.WARNING
+    severity = (
+        AlertSeverity.ERROR
+        if payload.drift_score > payload.threshold * 1.5
+        else AlertSeverity.WARNING
+    )
     context = {
         "model": payload.model_name,
         "backend": payload.backend,

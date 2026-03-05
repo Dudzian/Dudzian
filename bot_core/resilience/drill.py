@@ -91,7 +91,9 @@ class FailoverDrillPlan:
         if not isinstance(drill_name, str) or not drill_name.strip():
             raise ValueError("Plan musi zawierać pole 'drill_name'")
         executed_at = document.get("executed_at")
-        if executed_at is not None and (not isinstance(executed_at, str) or not executed_at.strip()):
+        if executed_at is not None and (
+            not isinstance(executed_at, str) or not executed_at.strip()
+        ):
             raise ValueError("Pole 'executed_at' musi być niepustym napisem lub None")
         services_value = document.get("services")
         services_seq = _ensure_sequence(services_value, context="services")
@@ -101,13 +103,25 @@ class FailoverDrillPlan:
             name = mapping.get("name")
             if not isinstance(name, str) or not name.strip():
                 raise ValueError("Każda usługa musi posiadać nazwę")
-            max_rto = _ensure_non_negative_float(mapping.get("max_rto_minutes"), field="max_rto_minutes")
-            max_rpo = _ensure_non_negative_float(mapping.get("max_rpo_minutes"), field="max_rpo_minutes")
-            observed_rto = _optional_non_negative_float(mapping.get("observed_rto_minutes"), field="observed_rto_minutes")
-            observed_rpo = _optional_non_negative_float(mapping.get("observed_rpo_minutes"), field="observed_rpo_minutes")
-            required = _ensure_patterns(mapping.get("required_artifacts"), field="required_artifacts")
+            max_rto = _ensure_non_negative_float(
+                mapping.get("max_rto_minutes"), field="max_rto_minutes"
+            )
+            max_rpo = _ensure_non_negative_float(
+                mapping.get("max_rpo_minutes"), field="max_rpo_minutes"
+            )
+            observed_rto = _optional_non_negative_float(
+                mapping.get("observed_rto_minutes"), field="observed_rto_minutes"
+            )
+            observed_rpo = _optional_non_negative_float(
+                mapping.get("observed_rpo_minutes"), field="observed_rpo_minutes"
+            )
+            required = _ensure_patterns(
+                mapping.get("required_artifacts"), field="required_artifacts"
+            )
             metadata = mapping.get("metadata")
-            metadata_mapping = dict(_ensure_mapping(metadata, context="metadata")) if metadata else {}
+            metadata_mapping = (
+                dict(_ensure_mapping(metadata, context="metadata")) if metadata else {}
+            )
             services.append(
                 FailoverServicePlan(
                     name=name,
@@ -122,7 +136,9 @@ class FailoverDrillPlan:
         if not services:
             raise ValueError("Plan powinien zawierać co najmniej jedną usługę")
         metadata_value = document.get("metadata")
-        metadata = dict(_ensure_mapping(metadata_value, context="metadata")) if metadata_value else {}
+        metadata = (
+            dict(_ensure_mapping(metadata_value, context="metadata")) if metadata_value else {}
+        )
         return FailoverDrillPlan(
             drill_name=drill_name,
             executed_at=executed_at,
@@ -330,8 +346,7 @@ def evaluate_failover_drill(
 ) -> FailoverDrillSummary:
     files = _manifest_files(manifest)
     services = tuple(
-        _evaluate_service(service, files, defaults=plan.metadata)
-        for service in plan.services
+        _evaluate_service(service, files, defaults=plan.metadata) for service in plan.services
     )
     critical_count = sum(1 for service in services if service.status == "critical")
     counts = {
@@ -405,9 +420,13 @@ def write_summary_csv(summary: FailoverDrillSummary, output_path: Path) -> None:
                     service.name,
                     service.status,
                     service.max_rto_minutes,
-                    service.observed_rto_minutes if service.observed_rto_minutes is not None else "",
+                    service.observed_rto_minutes
+                    if service.observed_rto_minutes is not None
+                    else "",
                     service.max_rpo_minutes,
-                    service.observed_rpo_minutes if service.observed_rpo_minutes is not None else "",
+                    service.observed_rpo_minutes
+                    if service.observed_rpo_minutes is not None
+                    else "",
                     " | ".join(service.missing_artifacts),
                     " | ".join(service.issues),
                 ]

@@ -1,4 +1,5 @@
 """Profil agresywny zgodny z wymaganiami klienta."""
+
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -31,5 +32,6 @@ class AggressiveProfile(StaticRiskProfile):
     min_omega_ratio: float = 1.0
     max_risk_of_ruin_pct: float = 12.0
     min_hit_ratio_pct: float = 45.0
+
 
 __all__ = ["AggressiveProfile"]

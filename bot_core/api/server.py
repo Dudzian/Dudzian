@@ -18,7 +18,17 @@ from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from types import ModuleType
-from typing import TYPE_CHECKING, Any, Callable, Dict, Iterable, Mapping, MutableMapping, Optional, Sequence
+from typing import (
+    TYPE_CHECKING,
+    Any,
+    Callable,
+    Dict,
+    Iterable,
+    Mapping,
+    MutableMapping,
+    Optional,
+    Sequence,
+)
 
 import grpc
 import pandas as pd
@@ -75,9 +85,7 @@ def _ensure_trading_engine_available() -> None:
         )
         sys.modules["bot_core.trading.engine"] = _build_trading_engine_stub()
     except Exception as exc:  # pragma: no cover - inne błędy importu
-        logging.getLogger(__name__).warning(
-            "Import trading.engine zgłosił wyjątek: %s", exc
-        )
+        logging.getLogger(__name__).warning("Import trading.engine zgłosił wyjątek: %s", exc)
 
 
 _ensure_trading_engine_available()
@@ -264,7 +272,9 @@ def _filter_decision_records(
     side_filter = _normalize_filter_values(filters.get("side") or filters.get("sides"))
     environment_filter = _normalize_filter_values(filters.get("environment"))
     portfolio_filter = _normalize_filter_values(filters.get("portfolio"))
-    risk_filter = _normalize_filter_values(filters.get("risk_profile") or filters.get("riskProfile"))
+    risk_filter = _normalize_filter_values(
+        filters.get("risk_profile") or filters.get("riskProfile")
+    )
     since_filter = _parse_iso_timestamp_safe(filters.get("since"))
     until_filter = _parse_iso_timestamp_safe(filters.get("until"))
 
@@ -404,7 +414,9 @@ class DefaultAlertRouterStub:
 class _GuiStub:
     """Minimalna implementacja interfejsu GUI wykorzystywana przez AutoTrader."""
 
-    def __init__(self, timeframe: str, ai_manager: Any | None, portfolio_manager: Any | None) -> None:
+    def __init__(
+        self, timeframe: str, ai_manager: Any | None, portfolio_manager: Any | None
+    ) -> None:
         self.timeframe_var = _ValueHolder(timeframe)
         self._demo = True
         self.ai_mgr = ai_manager
@@ -429,7 +441,9 @@ class _AutoTraderMarketDataProvider:
             window_ms = interval_to_milliseconds("1h")
         end_ms = int(time.time() * 1000)
         start_ms = max(0, end_ms - window_ms * max(limit + 5, 10))
-        request = OHLCVRequest(symbol=symbol, interval=interval, start=start_ms, end=end_ms, limit=limit)
+        request = OHLCVRequest(
+            symbol=symbol, interval=interval, start=start_ms, end=end_ms, limit=limit
+        )
         response = self._data_source.fetch_ohlcv(request)
         columns = tuple(response.columns or _DEFAULT_COLUMNS)
         if "timestamp" not in {name.lower() for name in columns}:
@@ -438,7 +452,13 @@ class _AutoTraderMarketDataProvider:
         if "timestamp" in frame.columns:
             frame["timestamp"] = pd.to_datetime(frame["timestamp"], unit="ms", utc=True)
             frame = frame.set_index("timestamp")
-        return frame[[column for column in ("open", "high", "low", "close", "volume") if column in frame.columns]]
+        return frame[
+            [
+                column
+                for column in ("open", "high", "low", "close", "volume")
+                if column in frame.columns
+            ]
+        ]
 
 
 class _AutoTraderStub:
@@ -465,7 +485,9 @@ class _AutoTraderStub:
         self.enable_auto_trade = True
         self._auto_trade_user_confirmed = False
 
-    def configure_controller_runner(self, runner: Any | None = None, *, factory: Callable[[], Any] | None = None) -> None:
+    def configure_controller_runner(
+        self, runner: Any | None = None, *, factory: Callable[[], Any] | None = None
+    ) -> None:
         if runner is not None:
             with self._runner_lock:
                 self._runner = runner
@@ -710,9 +732,7 @@ class LocalRuntimeContext:
             try:
                 self.prometheus_exporter.start()
             except OSError:
-                _LOGGER.warning(
-                    "Eksporter Prometheus nie został uruchomiony (port zajęty?)"
-                )
+                _LOGGER.warning("Eksporter Prometheus nie został uruchomiony (port zajęty?)")
                 self.prometheus_exporter = None
         if self.risk_publisher is not None:
             try:
@@ -757,16 +777,12 @@ class LocalRuntimeContext:
             try:
                 self.prometheus_exporter.stop()
             except Exception:  # pragma: no cover - defensywne
-                _LOGGER.debug(
-                    "Błąd podczas zatrzymywania eksportera Prometheus", exc_info=True
-                )
+                _LOGGER.debug("Błąd podczas zatrzymywania eksportera Prometheus", exc_info=True)
         if self.alert_sink_token:
             try:
                 get_alert_dispatcher().unregister(self.alert_sink_token)
             except Exception:  # pragma: no cover - defensywne logowanie
-                _LOGGER.debug(
-                    "Nie udało się wyrejestrować offline alert sink", exc_info=True
-                )
+                _LOGGER.debug("Nie udało się wyrejestrować offline alert sink", exc_info=True)
             finally:
                 self.alert_sink_token = None
         learner = self.adaptive_learner
@@ -817,9 +833,7 @@ class LocalRuntimeContext:
         if not self.marketplace_enabled or self.marketplace_repository is None:
             return ()
         try:
-            return self.marketplace_repository.load_all(
-                signing_keys=self.marketplace_signing_keys
-            )
+            return self.marketplace_repository.load_all(signing_keys=self.marketplace_signing_keys)
         except Exception:  # pragma: no cover - diagnostyka presetów
             _LOGGER.debug("Nie udało się odczytać presetów Marketplace", exc_info=True)
             return ()
@@ -891,9 +905,7 @@ class LocalRuntimeContext:
         except FileNotFoundError:
             return None
         except Exception:  # pragma: no cover - diagnostyka presetów
-            _LOGGER.debug(
-                "Nie udało się odczytać presetu Marketplace %s", preset_id, exc_info=True
-            )
+            _LOGGER.debug("Nie udało się odczytać presetu Marketplace %s", preset_id, exc_info=True)
             return None
         return document
 
@@ -996,7 +1008,9 @@ class LocalRuntimeContext:
 
         preset_record["slug"] = target.stem
 
-        target.write_text(json.dumps(preset_record, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+        target.write_text(
+            json.dumps(preset_record, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
+        )
         return {"ok": True, "path": str(target), "name": name}
 
     def list_strategy_presets(self) -> list[Mapping[str, Any]]:
@@ -1022,11 +1036,15 @@ class LocalRuntimeContext:
 
             blocks = payload.get("blocks") if isinstance(payload, Mapping) else None
             block_count = len(blocks) if isinstance(blocks, Sequence) else 0
-            metadata = payload.get("metadata") if isinstance(payload.get("metadata"), Mapping) else {}
+            metadata = (
+                payload.get("metadata") if isinstance(payload.get("metadata"), Mapping) else {}
+            )
             saved_at = payload.get("saved_at") or payload.get("created_at") or ""
             if not saved_at:
                 try:
-                    saved_at = datetime.fromtimestamp(path.stat().st_mtime, tz=timezone.utc).isoformat()
+                    saved_at = datetime.fromtimestamp(
+                        path.stat().st_mtime, tz=timezone.utc
+                    ).isoformat()
                 except OSError:  # pragma: no cover - brak dostępu do pliku
                     saved_at = ""
 
@@ -1043,7 +1061,9 @@ class LocalRuntimeContext:
                 }
             )
 
-        presets.sort(key=lambda entry: (entry.get("saved_at") or "", entry.get("name") or ""), reverse=True)
+        presets.sort(
+            key=lambda entry: (entry.get("saved_at") or "", entry.get("name") or ""), reverse=True
+        )
         return presets
 
     def load_strategy_preset(self, selector: Mapping[str, Any]) -> Mapping[str, Any]:
@@ -1060,10 +1080,7 @@ class LocalRuntimeContext:
             except Exception:  # pragma: no cover - błędna ścieżka
                 candidate = None
         slug_value = str(
-            selector_map.get("slug")
-            or selector_map.get("id")
-            or selector_map.get("name")
-            or ""
+            selector_map.get("slug") or selector_map.get("id") or selector_map.get("name") or ""
         ).strip()
 
         def _normalise(value: str) -> str:
@@ -1110,10 +1127,7 @@ class LocalRuntimeContext:
                 candidate = None
 
         slug_value = str(
-            selector_map.get("slug")
-            or selector_map.get("id")
-            or selector_map.get("name")
-            or ""
+            selector_map.get("slug") or selector_map.get("id") or selector_map.get("name") or ""
         ).strip()
 
         def _normalise(value: str) -> str:
@@ -1187,7 +1201,9 @@ class _CloudHealthMixin:
                 try:
                     sender(metadata)
                 except Exception:  # pragma: no cover - defensywne logowanie
-                    _LOGGER.debug("Nie udało się przesłać metadanych health do klienta", exc_info=True)
+                    _LOGGER.debug(
+                        "Nie udało się przesłać metadanych health do klienta", exc_info=True
+                    )
 
 
 class _MarketDataServicer(_CloudHealthMixin, trading_pb2_grpc.MarketDataServiceServicer):
@@ -1203,7 +1219,9 @@ class _MarketDataServicer(_CloudHealthMixin, trading_pb2_grpc.MarketDataServiceS
             return markets.get(symbol)
         return None
 
-    def _build_instrument(self, symbol: str, metadata: MarketMetadata | None) -> trading_pb2.Instrument:
+    def _build_instrument(
+        self, symbol: str, metadata: MarketMetadata | None
+    ) -> trading_pb2.Instrument:
         exchange = self._context.exchange_name or "PAPER"
         base = metadata.base_asset if metadata is not None else symbol.split("/")[0]
         quote = metadata.quote_asset if metadata is not None else symbol.split("/")[-1]
@@ -1256,7 +1274,11 @@ class _MarketDataServicer(_CloudHealthMixin, trading_pb2_grpc.MarketDataServiceS
 
     def GetOhlcvHistory(self, request, context):  # noqa: N802
         self._apply_cloud_health_metadata(context)
-        symbol = request.instrument.symbol or request.instrument.venue_symbol or self._context.primary_symbol
+        symbol = (
+            request.instrument.symbol
+            or request.instrument.venue_symbol
+            or self._context.primary_symbol
+        )
         metadata = self._resolve_metadata(symbol)
         default_interval = getattr(self._context.pipeline.controller, "interval", "1h")
         interval = _interval_from_iso(
@@ -1267,14 +1289,18 @@ class _MarketDataServicer(_CloudHealthMixin, trading_pb2_grpc.MarketDataServiceS
         end_ms = _ms_from_timestamp(request.end_time if request.HasField("end_time") else None)
         if end_ms is None:
             end_ms = int(time.time() * 1000)
-        start_ms = _ms_from_timestamp(request.start_time if request.HasField("start_time") else None)
+        start_ms = _ms_from_timestamp(
+            request.start_time if request.HasField("start_time") else None
+        )
         if start_ms is None:
             try:
                 window_ms = interval_to_milliseconds(interval)
             except Exception:
                 window_ms = interval_to_milliseconds("1h")
             start_ms = end_ms - window_ms * max(limit, 1)
-        request_payload = OHLCVRequest(symbol=symbol, interval=interval, start=int(start_ms), end=int(end_ms), limit=int(limit))
+        request_payload = OHLCVRequest(
+            symbol=symbol, interval=interval, start=int(start_ms), end=int(end_ms), limit=int(limit)
+        )
         response = self._context.pipeline.data_source.fetch_ohlcv(request_payload)
         columns = tuple(response.columns or _DEFAULT_COLUMNS)
         indices: MutableMapping[str, int] = {name.lower(): idx for idx, name in enumerate(columns)}
@@ -1370,7 +1396,11 @@ class _OrderServicer(_CloudHealthMixin, trading_pb2_grpc.OrderServiceServicer):
     def SubmitOrder(self, request, context):  # noqa: N802
         self._context.authorize(context)
         self._apply_cloud_health_metadata(context)
-        symbol = request.instrument.symbol or request.instrument.venue_symbol or self._context.primary_symbol
+        symbol = (
+            request.instrument.symbol
+            or request.instrument.venue_symbol
+            or self._context.primary_symbol
+        )
         execution_service: ExecutionService = self._context.pipeline.execution_service
         client_order_id = (request.client_order_id or "").strip() or f"svc-{uuid.uuid4().hex}"
         order_request = OrderRequest(
@@ -1396,7 +1426,9 @@ class _OrderServicer(_CloudHealthMixin, trading_pb2_grpc.OrderServiceServicer):
                 severity="error",
                 context={"symbol": symbol, "side": order_request.side},
             )
-            return trading_pb2.SubmitOrderResponse(status=trading_pb2.ORDER_STATUS_REJECTED, violations=[violation])
+            return trading_pb2.SubmitOrderResponse(
+                status=trading_pb2.ORDER_STATUS_REJECTED, violations=[violation]
+            )
         self._context.refresh_portfolio()
         return trading_pb2.SubmitOrderResponse(
             order_id=result.order_id,
@@ -1617,7 +1649,9 @@ class _RuntimeServicer(_CloudHealthMixin, trading_pb2_grpc.RuntimeServiceService
                 metrics_section = {}
                 if isinstance(snapshot, Mapping):
                     metrics_section = snapshot.get("metrics", {})
-                normalized = self._normalize_cycle_metrics(metrics_section if isinstance(metrics_section, Mapping) else None)
+                normalized = self._normalize_cycle_metrics(
+                    metrics_section if isinstance(metrics_section, Mapping) else None
+                )
                 if normalized:
                     return normalized
 
@@ -1742,7 +1776,9 @@ class _RuntimeServicer(_CloudHealthMixin, trading_pb2_grpc.RuntimeServiceService
 
         records = self._export_records()
         filters = self._filters_to_mapping(getattr(request, "filters", None))
-        filtered = _filter_decision_records(records, filters if isinstance(filters, Mapping) else None)
+        filtered = _filter_decision_records(
+            records, filters if isinstance(filters, Mapping) else None
+        )
 
         total = len(filtered)
         start_index = min(cursor, total)
@@ -1772,12 +1808,16 @@ class _HealthServicer(_CloudHealthMixin, trading_pb2_grpc.HealthServiceServicer)
             version=self._context.version,
             git_commit=self._context.git_commit or "unknown",
         )
-        response.started_at.CopyFrom(_timestamp_from_ms(int(self._context.started_at.timestamp() * 1000)))
+        response.started_at.CopyFrom(
+            _timestamp_from_ms(int(self._context.started_at.timestamp() * 1000))
+        )
         snapshot = self._attach_cloud_health(response)
         self._apply_cloud_health_status(snapshot, context)
         return response
 
-    def _attach_cloud_health(self, response: trading_pb2.HealthCheckResponse) -> Mapping[str, object] | None:
+    def _attach_cloud_health(
+        self, response: trading_pb2.HealthCheckResponse
+    ) -> Mapping[str, object] | None:
         orchestrator = getattr(self._context, "cloud_orchestrator", None)
         if orchestrator is None or not hasattr(orchestrator, "health_snapshot"):
             return None
@@ -1816,7 +1856,9 @@ class _HealthServicer(_CloudHealthMixin, trading_pb2_grpc.HealthServiceServicer)
             response.cloud_health.CopyFrom(cloud_health)
         return snapshot
 
-    def _apply_cloud_health_status(self, snapshot: Mapping[str, object] | None, rpc_context) -> None:
+    def _apply_cloud_health_status(
+        self, snapshot: Mapping[str, object] | None, rpc_context
+    ) -> None:
         if snapshot is None or rpc_context is None:
             return
         try:
@@ -1878,9 +1920,7 @@ class _MarketplaceServicer(_CloudHealthMixin, trading_pb2_grpc.MarketplaceServic
             context.abort(grpc.StatusCode.INVALID_ARGUMENT, str(exc))
         except Exception as exc:  # pragma: no cover - diagnostyka
             context.abort(grpc.StatusCode.INTERNAL, str(exc))
-        return trading_pb2.ImportMarketplacePresetResponse(
-            preset=self._build_summary(document)
-        )
+        return trading_pb2.ImportMarketplacePresetResponse(preset=self._build_summary(document))
 
     def ExportPreset(self, request, context):  # noqa: N802
         self._context.authorize(context)
@@ -1925,9 +1965,7 @@ class _MarketplaceServicer(_CloudHealthMixin, trading_pb2_grpc.MarketplaceServic
                 grpc.StatusCode.NOT_FOUND,
                 f"Preset {request.preset_id} not found",
             )
-        return trading_pb2.ActivateMarketplacePresetResponse(
-            preset=self._build_summary(document)
-        )
+        return trading_pb2.ActivateMarketplacePresetResponse(preset=self._build_summary(document))
 
 
 def _serialize_timestamp(timestamp: timestamp_pb2.Timestamp) -> int:
@@ -2040,13 +2078,9 @@ class LocalRuntimeGateway:
         if params.get("limit"):
             request.limit = int(params.get("limit"))
         if params.get("start_ms"):
-            request.start_time.CopyFrom(
-                _timestamp_from_ms(int(params.get("start_ms")))
-            )
+            request.start_time.CopyFrom(_timestamp_from_ms(int(params.get("start_ms"))))
         if params.get("end_ms"):
-            request.end_time.CopyFrom(
-                _timestamp_from_ms(int(params.get("end_ms")))
-            )
+            request.end_time.CopyFrom(_timestamp_from_ms(int(params.get("end_ms"))))
         response = self._market.GetOhlcvHistory(request, None)
         candles = [_serialize_candle(candle) for candle in response.candles]
         return {"candles": candles, "has_more": response.has_more}
@@ -2115,14 +2149,20 @@ class LocalRuntimeGateway:
         strategy = snapshot.get("strategy") if isinstance(snapshot, Mapping) else {}
         metrics = snapshot.get("metrics") if isinstance(snapshot, Mapping) else {}
         decision_summary = snapshot.get("decision_summary") if isinstance(snapshot, Mapping) else {}
-        guardrail_summary = snapshot.get("guardrail_summary") if isinstance(snapshot, Mapping) else {}
+        guardrail_summary = (
+            snapshot.get("guardrail_summary") if isinstance(snapshot, Mapping) else {}
+        )
         reasons = snapshot.get("reasons") if isinstance(snapshot, Mapping) else []
-        controller_history = snapshot.get("controller_history") if isinstance(snapshot, Mapping) else []
+        controller_history = (
+            snapshot.get("controller_history") if isinstance(snapshot, Mapping) else []
+        )
         recalibrations = snapshot.get("recalibrations") if isinstance(snapshot, Mapping) else []
         equity_curve = snapshot.get("equity_curve") if isinstance(snapshot, Mapping) else []
         risk_heatmap = snapshot.get("risk_heatmap") if isinstance(snapshot, Mapping) else []
         performance = snapshot.get("performance") if isinstance(snapshot, Mapping) else {}
-        performance_window = snapshot.get("performance_window") if isinstance(snapshot, Mapping) else {}
+        performance_window = (
+            snapshot.get("performance_window") if isinstance(snapshot, Mapping) else {}
+        )
         journal = getattr(auto_trader, "_decision_journal", None)
 
         if not isinstance(performance, Mapping) or not performance:
@@ -2180,7 +2220,11 @@ class LocalRuntimeGateway:
             payload = getattr(document, "payload", {})
             if isinstance(payload, Mapping):
                 summary_text = payload.get("summary")
-                preset_payload["metadata"] = dict(payload.get("metadata", {})) if isinstance(payload.get("metadata"), Mapping) else {}
+                preset_payload["metadata"] = (
+                    dict(payload.get("metadata", {}))
+                    if isinstance(payload.get("metadata"), Mapping)
+                    else {}
+                )
             if summary_text:
                 preset_payload["summary"] = summary_text
             if getattr(document, "path", None) is not None:
@@ -2201,7 +2245,9 @@ class LocalRuntimeGateway:
             "equityCurve": equity_curve,
             "riskHeatmap": risk_heatmap,
             "performance": dict(performance),
-            "performanceWindow": dict(performance_window) if isinstance(performance_window, Mapping) else {},
+            "performanceWindow": dict(performance_window)
+            if isinstance(performance_window, Mapping)
+            else {},
             "presets": presets,
             "alerts": dict(self._context.auto_mode_alerts),
         }
@@ -2222,7 +2268,9 @@ class LocalRuntimeGateway:
         preferences = params.get("preferences") if isinstance(params, Mapping) else None
         if not isinstance(preferences, Mapping):
             preferences = params
-        stored = self._context.update_auto_mode_alerts(preferences if isinstance(preferences, Mapping) else {})
+        stored = self._context.update_auto_mode_alerts(
+            preferences if isinstance(preferences, Mapping) else {}
+        )
         return {"alerts": stored}
 
     def _save_strategy_preset(self, params: Mapping[str, Any]) -> Mapping[str, Any]:
@@ -2238,7 +2286,10 @@ class LocalRuntimeGateway:
 
     def _stream_decision_journal(self, params: Mapping[str, Any]) -> Mapping[str, Any]:
         auto_trader = self._auto_trader
-        journal = getattr(auto_trader, "_decision_journal", None) if auto_trader is not None else None
+        journal = (
+            getattr(auto_trader, "_decision_journal", None) if auto_trader is not None else None
+        )
+
         def _to_int(value: Any) -> int:
             try:
                 return int(value)
@@ -2251,7 +2302,9 @@ class LocalRuntimeGateway:
         if cursor < 0:
             cursor = 0
         records = _export_decision_records(journal)
-        filtered = _filter_decision_records(records, filters if isinstance(filters, Mapping) else None)
+        filtered = _filter_decision_records(
+            records, filters if isinstance(filters, Mapping) else None
+        )
         total = len(filtered)
         start_index = min(cursor, total)
         if limit and limit > 0:
@@ -2347,12 +2400,18 @@ class LocalRuntimeServer:
             ThreadPoolExecutor(max_workers=max_workers),
             interceptors=server_interceptors,
         )
-        trading_pb2_grpc.add_MarketDataServiceServicer_to_server(_MarketDataServicer(context), self._server)
+        trading_pb2_grpc.add_MarketDataServiceServicer_to_server(
+            _MarketDataServicer(context), self._server
+        )
         trading_pb2_grpc.add_OrderServiceServicer_to_server(_OrderServicer(context), self._server)
         if context.risk_store is not None:
             trading_pb2_grpc.add_RiskServiceServicer_to_server(_RiskServicer(context), self._server)
-        trading_pb2_grpc.add_MetricsServiceServicer_to_server(_MetricsServicer(context), self._server)
-        trading_pb2_grpc.add_RuntimeServiceServicer_to_server(_RuntimeServicer(context), self._server)
+        trading_pb2_grpc.add_MetricsServiceServicer_to_server(
+            _MetricsServicer(context), self._server
+        )
+        trading_pb2_grpc.add_RuntimeServiceServicer_to_server(
+            _RuntimeServicer(context), self._server
+        )
         trading_pb2_grpc.add_HealthServiceServicer_to_server(_HealthServicer(context), self._server)
         if context.marketplace_repository is not None and context.marketplace_enabled:
             trading_pb2_grpc.add_MarketplaceServiceServicer_to_server(
@@ -2448,7 +2507,9 @@ def build_local_runtime_context(
     try:
         from bot_core.auto_trader import AutoTrader as _AutoTraderCls
     except Exception as exc:  # pragma: no cover - środowiska bez pełnego modułu trading
-        _LOGGER.warning("Nie udało się załadować AutoTradera – używam implementacji zastępczej: %s", exc)
+        _LOGGER.warning(
+            "Nie udało się załadować AutoTradera – używam implementacji zastępczej: %s", exc
+        )
         _AutoTraderCls = _AutoTraderStub
     environment_cfg = sanitized_core_config.environments.get(entrypoint_cfg.environment)
     if isinstance(secret_manager._storage, _InMemorySecretStorage) and environment_cfg is not None:
@@ -2456,7 +2517,11 @@ def build_local_runtime_context(
         credential_purpose = getattr(environment_cfg, "credential_purpose", "trading")
         env_value = getattr(environment_cfg, "environment", ExchangeEnvironment.PAPER)
         try:
-            env_enum = env_value if isinstance(env_value, ExchangeEnvironment) else ExchangeEnvironment(str(env_value))
+            env_enum = (
+                env_value
+                if isinstance(env_value, ExchangeEnvironment)
+                else ExchangeEnvironment(str(env_value))
+            )
         except Exception:
             env_enum = ExchangeEnvironment.PAPER
         if keychain_key:
@@ -2487,7 +2552,10 @@ def build_local_runtime_context(
         runtime_config=runtime_config,
     )
     execution_service = getattr(pipeline, "execution_service", None)
-    if execution_service is not None and getattr(execution_service, "_price_resolver", None) is None:
+    if (
+        execution_service is not None
+        and getattr(execution_service, "_price_resolver", None) is None
+    ):
         execution_service._price_resolver = lambda symbol: 100.0  # type: ignore[attr-defined]
         markets = getattr(execution_service, "_markets", None)
         if isinstance(markets, dict):
@@ -2501,7 +2569,10 @@ def build_local_runtime_context(
                     tick_size=getattr(market, "tick_size", None),
                 )
     controller_context = getattr(pipeline.controller, "execution_context", None)
-    if controller_context is not None and getattr(controller_context, "price_resolver", None) is None:
+    if (
+        controller_context is not None
+        and getattr(controller_context, "price_resolver", None) is None
+    ):
         controller_context.price_resolver = lambda symbol: 100.0
     alert_router = getattr(pipeline.bootstrap, "alert_router", None)
     if alert_router is None:
@@ -2563,7 +2634,9 @@ def build_local_runtime_context(
                 if hasattr(catalog, "available") and callable(catalog.available):
                     available = catalog.available()  # type: ignore[call-arg]
                 elif hasattr(DEFAULT_STRATEGY_CATALOG, "describe_engines"):
-                    available = [entry["name"] for entry in DEFAULT_STRATEGY_CATALOG.describe_engines()]
+                    available = [
+                        entry["name"] for entry in DEFAULT_STRATEGY_CATALOG.describe_engines()
+                    ]
                 if available:
                     adaptive_learner.register_strategies("trend", available)
                 if hasattr(catalog, "attach_adaptive_learner"):
@@ -2575,11 +2648,17 @@ def build_local_runtime_context(
                         learner=adaptive_learner,
                     )
             except Exception:  # pragma: no cover - defensywne logowanie
-                _LOGGER.debug("Nie udało się zarejestrować strategii w AdaptiveStrategyLearner", exc_info=True)
+                _LOGGER.debug(
+                    "Nie udało się zarejestrować strategii w AdaptiveStrategyLearner", exc_info=True
+                )
     retrain_scheduler: LocalRetrainScheduler | None = None
     retrain_cfg = getattr(runtime_config.ai, "retrain", None)
     if retrain_cfg and getattr(retrain_cfg, "enabled", False):
-        schedule_expr = getattr(retrain_cfg, "schedule", None) or runtime_config.ai.retrain_schedule or "0 3 * * *"
+        schedule_expr = (
+            getattr(retrain_cfg, "schedule", None)
+            or runtime_config.ai.retrain_schedule
+            or "0 3 * * *"
+        )
         manifest_value = getattr(retrain_cfg, "manifest_path", None) or getattr(
             retrain_cfg, "manifest", None
         )
@@ -2628,13 +2707,17 @@ def build_local_runtime_context(
         try:
             risk_store = RiskSnapshotStore(maxlen=512)
             risk_builder = RiskSnapshotBuilder(risk_engine)
+
             def _append_snapshot(snapshot: Any) -> None:
                 try:
                     proto = snapshot.to_proto()
                 except Exception:  # pragma: no cover - diagnostyka konwersji
-                    _LOGGER.debug("Nie udało się przekształcić RiskSnapshot w protobuf", exc_info=True)
+                    _LOGGER.debug(
+                        "Nie udało się przekształcić RiskSnapshot w protobuf", exc_info=True
+                    )
                     return
                 risk_store.append(proto)
+
             risk_publisher = RiskSnapshotPublisher(
                 risk_builder,
                 profiles=(pipeline.risk_profile_name,),
@@ -2664,9 +2747,7 @@ def build_local_runtime_context(
             except Exception:
                 severity_enum = AlertSeverity.WARNING
             try:
-                alert_sink_token = ensure_offline_logging_sink(
-                    min_severity=severity_enum
-                )
+                alert_sink_token = ensure_offline_logging_sink(min_severity=severity_enum)
             except Exception:  # pragma: no cover - rejestracja alertów nie powinna blokować
                 _LOGGER.debug("Nie udało się zarejestrować sinka alertów offline", exc_info=True)
     marketplace_cfg = getattr(runtime_config, "marketplace", None)
@@ -2689,7 +2770,8 @@ def build_local_runtime_context(
                     marketplace_signing_keys[str(key_id)] = decode_key_material(raw_value)
                 except Exception:  # pragma: no cover - defensywne logowanie
                     _LOGGER.debug(
-                        "Nie udało się zdekodować klucza podpisu Marketplace %s", key_id,
+                        "Nie udało się zdekodować klucza podpisu Marketplace %s",
+                        key_id,
                         exc_info=True,
                     )
         marketplace_allow_unsigned = bool(getattr(marketplace_cfg, "allow_unsigned", False))

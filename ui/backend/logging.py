@@ -1,4 +1,5 @@
 """Konfiguracja loggerów specyficznych dla warstwy UI."""
+
 from __future__ import annotations
 
 import logging
@@ -36,13 +37,17 @@ def _get_or_create_file_logger(directory: Path, namespace: str, filename: str) -
 def get_onboarding_logger(log_directory: str | Path = _ONBOARDING_LOG_DIRECTORY) -> logging.Logger:
     """Zwraca logger zapisujący zdarzenia kreatora onboardingowego."""
 
-    return _get_or_create_file_logger(Path(log_directory), _ONBOARDING_LOGGER_NAMESPACE, "onboarding.log")
+    return _get_or_create_file_logger(
+        Path(log_directory), _ONBOARDING_LOGGER_NAMESPACE, "onboarding.log"
+    )
 
 
 def get_update_logger(log_directory: str | Path = _UPDATE_LOG_DIRECTORY) -> logging.Logger:
     """Zwraca logger zapisujący import pakietów aktualizacji offline."""
 
-    return _get_or_create_file_logger(Path(log_directory), _UPDATE_LOGGER_NAMESPACE, "offline_update.log")
+    return _get_or_create_file_logger(
+        Path(log_directory), _UPDATE_LOGGER_NAMESPACE, "offline_update.log"
+    )
 
 
 def get_support_logger(log_directory: str | Path = _SUPPORT_LOG_DIRECTORY) -> logging.Logger:
@@ -54,7 +59,9 @@ def get_support_logger(log_directory: str | Path = _SUPPORT_LOG_DIRECTORY) -> lo
 def get_runbook_logger(log_directory: str | Path = _RUNBOOK_LOG_DIRECTORY) -> logging.Logger:
     """Zwraca logger akcji runbooków uruchamianych z UI."""
 
-    return _get_or_create_file_logger(Path(log_directory), _RUNBOOK_LOGGER_NAMESPACE, "runbook_actions.log")
+    return _get_or_create_file_logger(
+        Path(log_directory), _RUNBOOK_LOGGER_NAMESPACE, "runbook_actions.log"
+    )
 
 
 __all__ = ["get_onboarding_logger", "get_update_logger", "get_support_logger", "get_runbook_logger"]

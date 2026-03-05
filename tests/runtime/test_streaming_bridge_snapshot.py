@@ -184,7 +184,9 @@ def test_capture_stream_snapshot_async_closes_on_prefill_error(
         def start(self):
             return self
 
-        async def wait_prefill_async(self, *, min_batches: int = 1, timeout: float | None = None) -> bool:
+        async def wait_prefill_async(
+            self, *, min_batches: int = 1, timeout: float | None = None
+        ) -> bool:
             raise RuntimeError("boom")
 
         def __aiter__(self):  # pragma: no cover - nie powinniśmy iterować

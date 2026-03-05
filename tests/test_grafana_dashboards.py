@@ -77,10 +77,7 @@ def test_stage6_dashboard_stat_thresholds_sorted() -> None:
     assert stat_panels, "expected stat panels for stage6 observability"
     for panel in stat_panels:
         thresholds = (
-            panel.get("fieldConfig", {})
-            .get("defaults", {})
-            .get("thresholds", {})
-            .get("steps", [])
+            panel.get("fieldConfig", {}).get("defaults", {}).get("thresholds", {}).get("steps", [])
         )
         assert thresholds, "each stat panel should define threshold steps"
         values = [step.get("value", 0) for step in thresholds]

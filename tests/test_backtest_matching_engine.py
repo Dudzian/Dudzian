@@ -61,4 +61,3 @@ def test_matching_engine_applies_slippage_and_fees(slippage_fee_scenario) -> Non
     assert fill.price == pytest.approx(expected_price)
     assert fill.fee == pytest.approx(expected_fee)
     assert fill.timestamp.tzinfo is timezone.utc
-

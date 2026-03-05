@@ -13,7 +13,9 @@ except ModuleNotFoundError:  # pragma: no cover
 
 pytestmark = [
     pytest.mark.unstable_windows,
-    pytest.mark.skipif(yaml is None, reason="PyYAML nie jest zainstalowane w tym środowisku testowym."),
+    pytest.mark.skipif(
+        yaml is None, reason="PyYAML nie jest zainstalowane w tym środowisku testowym."
+    ),
 ]
 
 if yaml is not None:

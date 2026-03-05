@@ -1,4 +1,5 @@
 """Adapter do wysyłki alertów na Facebook Messenger."""
+
 from __future__ import annotations
 
 import json
@@ -23,7 +24,9 @@ class MessengerChannel(AlertChannel):
     api_version: str = "v16.0"
     name: str = "messenger"
     timeout: float = 10.0
-    logger: logging.Logger = field(default_factory=lambda: logging.getLogger("bot_core.alerts.messenger"))
+    logger: logging.Logger = field(
+        default_factory=lambda: logging.getLogger("bot_core.alerts.messenger")
+    )
     _opener: HttpOpener = field(default=default_opener, repr=False)
     _last_success: datetime | None = field(default=None, init=False, repr=False)
     _last_error: str | None = field(default=None, init=False, repr=False)
@@ -57,7 +60,9 @@ class MessengerChannel(AlertChannel):
         except Exception as exc:  # noqa: BLE001
             self._last_error = str(exc)
             self.logger.exception("Błąd wysyłki przez Messenger")
-            raise AlertDeliveryError(f"Messenger: nie udało się wysłać powiadomienia ({exc})") from exc
+            raise AlertDeliveryError(
+                f"Messenger: nie udało się wysłać powiadomienia ({exc})"
+            ) from exc
 
         if status >= 400:
             detail = raw.decode("utf-8", errors="ignore") if raw else ""

@@ -104,7 +104,9 @@ def verify_package(args: argparse.Namespace) -> int:
         signature_data = manifest_data.get("signature")
         if signature_data:
             signature_path = tmpdir_path / "signature.json"
-            signature_path.write_text(json.dumps(signature_data, ensure_ascii=False), encoding="utf-8")
+            signature_path.write_text(
+                json.dumps(signature_data, ensure_ascii=False), encoding="utf-8"
+            )
 
         key_bytes = decode_secret(args.key) if args.key else None
         result = verify_update_bundle(
@@ -178,7 +180,9 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Buduje i weryfikuje pakiety aktualizacji offline")
     subparsers = parser.add_subparsers(dest="command", required=True)
 
-    build_parser = subparsers.add_parser("build", help="Buduje manifest aktualizacji i podpisuje artefakty")
+    build_parser = subparsers.add_parser(
+        "build", help="Buduje manifest aktualizacji i podpisuje artefakty"
+    )
     build_parser.add_argument("--output-dir", required=True, help="Katalog docelowy pakietu")
     build_parser.add_argument("--package-id", required=True)
     build_parser.add_argument("--version", required=True)
@@ -196,9 +200,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     verify_parser.add_argument("--package-dir", required=True)
     verify_parser.add_argument("--key", help="Klucz HMAC do weryfikacji (hex/base64)")
 
-    scan_parser = subparsers.add_parser(
-        "scan", help="Generuje opis wszystkich pakietów w katalogu"
-    )
+    scan_parser = subparsers.add_parser("scan", help="Generuje opis wszystkich pakietów w katalogu")
     scan_parser.add_argument("--packages-dir", required=True)
 
     return parser.parse_args(argv)
@@ -221,4 +223,3 @@ def main(argv: list[str] | None = None) -> int:
 
 if __name__ == "__main__":  # pragma: no cover
     raise SystemExit(main())
-

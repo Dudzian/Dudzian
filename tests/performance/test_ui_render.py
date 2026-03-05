@@ -95,10 +95,7 @@ def _render_component(instance: Any, properties: dict[str, Any]) -> float:
 
 
 def _log_report(name: str, latencies_ms: list[float], threshold_ms: float) -> None:
-    commit = (
-        subprocess.check_output(["git", "rev-parse", "--short", "HEAD"], text=True)
-        .strip()
-    )
+    commit = subprocess.check_output(["git", "rev-parse", "--short", "HEAD"], text=True).strip()
     payload = {
         "scenario": name,
         "samples": len(latencies_ms),
@@ -109,14 +106,14 @@ def _log_report(name: str, latencies_ms: list[float], threshold_ms: float) -> No
         "timestamp_utc": datetime.datetime.utcnow().isoformat() + "Z",
         "git_commit": commit,
     }
-    (REPORT_DIR / f"{name}.json").write_text(
-        json.dumps(payload, indent=2), encoding="utf-8"
-    )
+    (REPORT_DIR / f"{name}.json").write_text(json.dumps(payload, indent=2), encoding="utf-8")
 
 
 @pytest.mark.performance
 @pytest.mark.parametrize("alert_count", [24, 48])
-def test_feed_sla_panel_render_time_under_feed_spike(qml_engine: QQmlEngine, alert_count: int) -> None:
+def test_feed_sla_panel_render_time_under_feed_spike(
+    qml_engine: QQmlEngine, alert_count: int
+) -> None:
     component = _load_component(qml_engine)
     heavy_feed_report = {
         "sla_state": "warning",
@@ -174,7 +171,9 @@ def test_feed_sla_panel_render_time_under_feed_spike(qml_engine: QQmlEngine, ale
 
 @pytest.mark.performance
 @pytest.mark.parametrize("timeline_size", [64, 128])
-def test_risk_panels_render_time_with_dense_timeline(qml_engine: QQmlEngine, timeline_size: int) -> None:
+def test_risk_panels_render_time_with_dense_timeline(
+    qml_engine: QQmlEngine, timeline_size: int
+) -> None:
     component = _load_component(qml_engine)
     risk_timeline = [
         {

@@ -39,7 +39,9 @@ class _StubExchangeAdapter(ExchangeAdapter):
     def fetch_symbols(self):  # pragma: no cover - not used
         return []
 
-    def fetch_ohlcv(self, symbol, interval, start=None, end=None, limit=None):  # pragma: no cover - not used
+    def fetch_ohlcv(
+        self, symbol, interval, start=None, end=None, limit=None
+    ):  # pragma: no cover - not used
         return []
 
     def place_order(self, request: OrderRequest) -> OrderResult:
@@ -107,7 +109,9 @@ def test_decision_to_order_request_from_mapping() -> None:
         },
         "metadata": {"strategy": "mean_reversion"},
     }
-    market = MarketMetadata(base_asset="ETH", quote_asset="USDT", min_quantity=0.0001, min_notional=10.0)
+    market = MarketMetadata(
+        base_asset="ETH", quote_asset="USDT", min_quantity=0.0001, min_notional=10.0
+    )
     order = decision_to_order_request(decision, price=2000.0, market=market)
 
     assert order.symbol == "ETHUSDT"

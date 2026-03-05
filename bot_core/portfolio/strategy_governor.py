@@ -103,8 +103,16 @@ class StrategyPortfolioGovernor:
         risk_profile: str | None = None,
     ) -> _StrategyState:
         baseline = float(strategy_cfg.baseline_weight or self._config.default_baseline_weight)
-        min_weight = float(strategy_cfg.min_weight if strategy_cfg.min_weight is not None else self._config.default_min_weight)
-        max_weight = float(strategy_cfg.max_weight if strategy_cfg.max_weight is not None else self._config.default_max_weight)
+        min_weight = float(
+            strategy_cfg.min_weight
+            if strategy_cfg.min_weight is not None
+            else self._config.default_min_weight
+        )
+        max_weight = float(
+            strategy_cfg.max_weight
+            if strategy_cfg.max_weight is not None
+            else self._config.default_max_weight
+        )
         if max_weight < min_weight:
             max_weight = min_weight
         baseline = min(max_weight, max(min_weight, baseline))
@@ -234,43 +242,27 @@ class StrategyPortfolioGovernor:
         )
 
     def _distribution_weights(self, scores: Mapping[str, float]) -> dict[str, float]:
-        positive = {
-            name: max(0.0, float(scores.get(name, 0.0)))
-            for name in self._states
-        }
+        positive = {name: max(0.0, float(scores.get(name, 0.0))) for name in self._states}
         total = sum(positive.values())
         if total <= 0.0:
-            baseline = {
-                name: state.baseline_weight
-                for name, state in self._states.items()
-            }
+            baseline = {name: state.baseline_weight for name, state in self._states.items()}
             total_baseline = sum(baseline.values())
             if total_baseline <= 0:
                 equal = 1.0 / len(self._states) if self._states else 1.0
                 return {name: equal for name in self._states}
-            return {
-                name: baseline[name] / total_baseline
-                for name in self._states
-            }
-        return {
-            name: positive.get(name, 0.0) / total
-            for name in self._states
-        }
+            return {name: baseline[name] / total_baseline for name in self._states}
+        return {name: positive.get(name, 0.0) / total for name in self._states}
 
     def _allocate_weights(self, scores: Mapping[str, float]) -> dict[str, float]:
         if not self._states:
             return {}
-        weights = {
-            name: state.min_weight
-            for name, state in self._states.items()
-        }
+        weights = {name: state.min_weight for name, state in self._states.items()}
         remaining = max(0.0, 1.0 - sum(weights.values()))
         if remaining <= 1e-9:
             return weights
         distribution = self._distribution_weights(scores)
         available = {
-            name: max(0.0, state.max_weight - weights[name])
-            for name, state in self._states.items()
+            name: max(0.0, state.max_weight - weights[name]) for name, state in self._states.items()
         }
         active = {name for name, avail in available.items() if avail > 1e-9}
         while active and remaining > 1e-9:
@@ -377,7 +369,9 @@ class StrategyPortfolioGovernor:
         state.last_timestamp = snapshot.timestamp
         state.samples += max(0.0, snapshot.sample_weight)
 
-    def maybe_rebalance(self, *, timestamp: datetime | None = None, force: bool = False) -> PortfolioRebalanceDecision | None:
+    def maybe_rebalance(
+        self, *, timestamp: datetime | None = None, force: bool = False
+    ) -> PortfolioRebalanceDecision | None:
         if not self._config.enabled or not self._states:
             return None
         now = timestamp or self._clock()
@@ -385,7 +379,9 @@ class StrategyPortfolioGovernor:
             interval = timedelta(minutes=max(0.0, self._config.rebalance_interval_minutes))
             if now - self._last_rebalance < interval:
                 return None
-        if self._config.require_complete_metrics and any(state.samples <= 0 for state in self._states.values()):
+        if self._config.require_complete_metrics and any(
+            state.samples <= 0 for state in self._states.values()
+        ):
             return None
 
         scores: dict[str, float] = {}
@@ -427,7 +423,9 @@ class StrategyPortfolioGovernor:
         self._io.record_portfolio_decision(decision)
         return decision
 
-    def resolve_allocation(self, strategy: str, risk_profile: str | None = None) -> StrategyAllocationDecision:
+    def resolve_allocation(
+        self, strategy: str, risk_profile: str | None = None
+    ) -> StrategyAllocationDecision:
         state = self._ensure_state(strategy, risk_profile)
         weight = float(self._current_weights.get(strategy, state.baseline_weight))
         baseline = state.baseline_weight or max(weight, 1e-9)
@@ -536,7 +534,9 @@ class StrategyPortfolioGovernor:
         return snapshot
 
     # -------------------------------------------------------------- koszty --
-    def set_strategy_cost(self, strategy: str, cost_bps: float, *, risk_profile: str | None = None) -> None:
+    def set_strategy_cost(
+        self, strategy: str, cost_bps: float, *, risk_profile: str | None = None
+    ) -> None:
         profile = risk_profile or "__total__"
         self._cost_index.lookup[(strategy, profile)] = max(0.0, float(cost_bps))
 
@@ -558,14 +558,20 @@ class StrategyPortfolioGovernor:
                     lookup[(str(strategy_name), "__total__")] = self._extract_cost_bps(total_raw)
                 profiles = summary_raw.get("profiles", {}) or {}
                 for profile_name, profile_raw in profiles.items():
-                    lookup[(str(strategy_name), str(profile_name))] = self._extract_cost_bps(profile_raw)
+                    lookup[(str(strategy_name), str(profile_name))] = self._extract_cost_bps(
+                        profile_raw
+                    )
             total_raw = data.get("total")
             if total_raw is not None:
                 default_cost = self._extract_cost_bps(total_raw)
         self._cost_index = _CostIndex(lookup=lookup, default_cost=max(0.0, float(default_cost)))
 
-    def _ingest_strategy_summary(self, summary: object, lookup: MutableMapping[tuple[str, str], float]) -> None:
-        if StrategyCostSummary is None or not isinstance(summary, StrategyCostSummary):  # pragma: no cover
+    def _ingest_strategy_summary(
+        self, summary: object, lookup: MutableMapping[tuple[str, str], float]
+    ) -> None:
+        if StrategyCostSummary is None or not isinstance(
+            summary, StrategyCostSummary
+        ):  # pragma: no cover
             return
         lookup[(summary.strategy, "__total__")] = float(summary.total.cost_bps)
         for profile_name, profile_summary in summary.profiles.items():
@@ -574,7 +580,9 @@ class StrategyPortfolioGovernor:
     def _extract_cost_bps(self, payload: object) -> float:
         if payload is None:
             return 0.0
-        if ProfileCostSummary is not None and isinstance(payload, ProfileCostSummary):  # pragma: no cover
+        if ProfileCostSummary is not None and isinstance(
+            payload, ProfileCostSummary
+        ):  # pragma: no cover
             return float(payload.cost_bps)
         if isinstance(payload, Mapping):
             value = payload.get("cost_bps")
@@ -587,6 +595,7 @@ class StrategyPortfolioGovernor:
 # =============================================================================
 # Publiczne symbole
 # =============================================================================
+
 
 # Zgodność z HEAD: alias o tej samej nazwie
 def coerce_strategy_config(
@@ -606,13 +615,23 @@ def coerce_strategy_config(
         )
     else:
         scoring = PortfolioGovernorScoringWeights(
-            alpha=float(getattr(scoring_cfg, "alpha", base.scoring.alpha)) if scoring_cfg is not None else base.scoring.alpha,
-            cost=float(getattr(scoring_cfg, "cost", base.scoring.cost)) if scoring_cfg is not None else base.scoring.cost,
-            slo=float(getattr(scoring_cfg, "slo", base.scoring.slo)) if scoring_cfg is not None else base.scoring.slo,
-            risk=float(getattr(scoring_cfg, "risk", base.scoring.risk)) if scoring_cfg is not None else base.scoring.risk,
+            alpha=float(getattr(scoring_cfg, "alpha", base.scoring.alpha))
+            if scoring_cfg is not None
+            else base.scoring.alpha,
+            cost=float(getattr(scoring_cfg, "cost", base.scoring.cost))
+            if scoring_cfg is not None
+            else base.scoring.cost,
+            slo=float(getattr(scoring_cfg, "slo", base.scoring.slo))
+            if scoring_cfg is not None
+            else base.scoring.slo,
+            risk=float(getattr(scoring_cfg, "risk", base.scoring.risk))
+            if scoring_cfg is not None
+            else base.scoring.risk,
         )
 
-    default_baseline = float(getattr(config, "default_baseline_weight", base.default_baseline_weight))
+    default_baseline = float(
+        getattr(config, "default_baseline_weight", base.default_baseline_weight)
+    )
     default_min = float(getattr(config, "default_min_weight", base.default_min_weight))
     default_max = float(getattr(config, "default_max_weight", base.default_max_weight))
 
@@ -650,9 +669,7 @@ def coerce_strategy_config(
         require_complete_metrics=bool(
             getattr(config, "require_complete_metrics", base.require_complete_metrics)
         ),
-        min_score_threshold=float(
-            getattr(config, "min_score_threshold", base.min_score_threshold)
-        ),
+        min_score_threshold=float(getattr(config, "min_score_threshold", base.min_score_threshold)),
         default_cost_bps=float(getattr(config, "default_cost_bps", base.default_cost_bps)),
         max_signal_floor=int(getattr(config, "max_signal_floor", base.max_signal_floor)),
     )

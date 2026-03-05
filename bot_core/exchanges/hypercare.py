@@ -56,8 +56,8 @@ class HypercareChecklistExporter:
             )
             row = (
                 f"{self.exchange},{self.checklist_id},True,{self.signed_by},"
-                f"{payload.get('signal_quality_snapshot','')},"
-                f"{payload.get('signal_quality_daily_csv','')},{payload['generated_at']}\n"
+                f"{payload.get('signal_quality_snapshot', '')},"
+                f"{payload.get('signal_quality_daily_csv', '')},{payload['generated_at']}\n"
             )
             tmp_csv = csv_path.with_suffix(".csv.tmp")
             tmp_csv.write_text(header + row, encoding="utf-8")

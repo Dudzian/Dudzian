@@ -1,4 +1,5 @@
 """Adapter wysyłający alerty przez usługę Signal."""
+
 from __future__ import annotations
 
 import json
@@ -19,8 +20,7 @@ class _SignalHttpOpener(Protocol):
         *,
         timeout: float,
         context: ssl.SSLContext | None,
-    ) -> request.addinfourl:
-        ...
+    ) -> request.addinfourl: ...
 
 
 def _default_signal_opener(
@@ -43,7 +43,9 @@ class SignalChannel(AlertChannel):
     verify_tls: bool = True
     name: str = "signal"
     timeout: float = 10.0
-    logger: logging.Logger = field(default_factory=lambda: logging.getLogger("bot_core.alerts.signal"))
+    logger: logging.Logger = field(
+        default_factory=lambda: logging.getLogger("bot_core.alerts.signal")
+    )
     _opener: _SignalHttpOpener = field(default=_default_signal_opener, repr=False)
     _ssl_context: ssl.SSLContext | None = field(default=None, init=False, repr=False)
     _last_success: datetime | None = field(default=None, init=False, repr=False)

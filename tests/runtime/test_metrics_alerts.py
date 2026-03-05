@@ -88,7 +88,9 @@ def test_get_feed_health_alert_sink_uses_provided_router(tmp_path: Path) -> None
     assert cached is sink, "Sink powinien być singletonem w module"
 
 
-def test_get_feed_health_alert_sink_falls_back_to_memory_router(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+def test_get_feed_health_alert_sink_falls_back_to_memory_router(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
     called: list[None] = []
 
     def _fake_builder() -> None:
@@ -163,7 +165,9 @@ def test_cloud_alert_channel_sends_payload(monkeypatch: pytest.MonkeyPatch) -> N
     published: list[dict[str, object]] = []
 
     class _Stub:
-        def PublishAlert(self, request, metadata=None, timeout=None) -> None:  # pragma: no cover - simple capture
+        def PublishAlert(
+            self, request, metadata=None, timeout=None
+        ) -> None:  # pragma: no cover - simple capture
             payload = json_format.MessageToDict(request)
             payload["metadata"] = metadata or []
             payload["timeout"] = timeout
@@ -193,7 +197,9 @@ def test_cloud_alert_channel_sends_payload(monkeypatch: pytest.MonkeyPatch) -> N
     assert payload["environment"] == "prod"
 
 
-def test_build_cloud_alert_channel_registers_remote_profile(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+def test_build_cloud_alert_channel_registers_remote_profile(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
     runtime_path = tmp_path / "runtime.yaml"
     runtime_path.write_text("cloud: {}\n", encoding="utf-8")
 
@@ -218,9 +224,21 @@ def test_build_cloud_alert_channel_registers_remote_profile(monkeypatch: pytest.
         "resolve_runtime_cloud_client",
         lambda *_args, **_kwargs: selection,
     )
-    monkeypatch.setattr(metrics_alerts, "grpc", SimpleNamespace(insecure_channel=lambda addr: object()), raising=False)
-    monkeypatch.setattr(metrics_alerts, "struct_pb2", metrics_alerts.struct_pb2 or SimpleNamespace(), raising=False)
-    monkeypatch.setattr(metrics_alerts, "timestamp_pb2", metrics_alerts.timestamp_pb2 or SimpleNamespace(), raising=False)
+    monkeypatch.setattr(
+        metrics_alerts,
+        "grpc",
+        SimpleNamespace(insecure_channel=lambda addr: object()),
+        raising=False,
+    )
+    monkeypatch.setattr(
+        metrics_alerts, "struct_pb2", metrics_alerts.struct_pb2 or SimpleNamespace(), raising=False
+    )
+    monkeypatch.setattr(
+        metrics_alerts,
+        "timestamp_pb2",
+        metrics_alerts.timestamp_pb2 or SimpleNamespace(),
+        raising=False,
+    )
 
     sentinel = object()
 

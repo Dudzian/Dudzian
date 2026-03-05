@@ -50,12 +50,14 @@ def test_disable_scheduler_creates_override(tmp_path: Path) -> None:
         assert (override_path.stat().st_mode & 0o077) == 0
 
     with pytest.raises(FileExistsError):
-        disable_scheduler([
-            "--output-dir",
-            str(output_dir),
-            "--reason",
-            "Ponowna próba",
-        ])
+        disable_scheduler(
+            [
+                "--output-dir",
+                str(output_dir),
+                "--reason",
+                "Ponowna próba",
+            ]
+        )
 
 
 def test_disable_decision_orchestrator_creates_override(tmp_path: Path) -> None:
@@ -81,7 +83,9 @@ def test_disable_decision_orchestrator_creates_override(tmp_path: Path) -> None:
     assert payload["reason"] == "Fallback AI"
 
 
-def test_cli_guard_annotates_component_in_error(tmp_path: Path, caplog: pytest.LogCaptureFixture) -> None:
+def test_cli_guard_annotates_component_in_error(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
     output_dir = tmp_path / "overrides"
     output_dir.mkdir(parents=True)
     existing = output_dir / COMPONENTS["decision_orchestrator"].filename

@@ -61,10 +61,14 @@ def sample_context() -> ExecutionContext:
 
 @pytest.fixture()
 def sample_request() -> OrderRequest:
-    return OrderRequest(symbol="BTC/USDT", side="BUY", quantity=1.0, order_type="MARKET", price=25_000.0)
+    return OrderRequest(
+        symbol="BTC/USDT", side="BUY", quantity=1.0, order_type="MARKET", price=25_000.0
+    )
 
 
-def test_execute_async_calls_sync_implementation(sample_request: OrderRequest, sample_context: ExecutionContext) -> None:
+def test_execute_async_calls_sync_implementation(
+    sample_request: OrderRequest, sample_context: ExecutionContext
+) -> None:
     service = _DummyExecutionService()
 
     result = asyncio.run(service.execute_async(sample_request, sample_context))
@@ -73,7 +77,9 @@ def test_execute_async_calls_sync_implementation(sample_request: OrderRequest, s
     assert service.execute_calls == [(sample_request, sample_context)]
 
 
-def test_execute_async_propagates_errors(sample_request: OrderRequest, sample_context: ExecutionContext) -> None:
+def test_execute_async_propagates_errors(
+    sample_request: OrderRequest, sample_context: ExecutionContext
+) -> None:
     service = _FailingExecutionService()
 
     with pytest.raises(ValueError):
@@ -148,7 +154,9 @@ def test_decision_to_order_request_accepts_decision_evaluation() -> None:
     assert request.quantity > 0.0
 
 
-def test_execution_service_context_manager_calls_close(sample_request: OrderRequest, sample_context: ExecutionContext) -> None:
+def test_execution_service_context_manager_calls_close(
+    sample_request: OrderRequest, sample_context: ExecutionContext
+) -> None:
     service = _DummyExecutionService()
 
     with service as ctx:
@@ -166,7 +174,9 @@ def test_execution_service_context_manager_propagates_close_errors() -> None:
             pass
 
 
-def test_execution_service_async_context_manager_calls_close(sample_request: OrderRequest, sample_context: ExecutionContext) -> None:
+def test_execution_service_async_context_manager_calls_close(
+    sample_request: OrderRequest, sample_context: ExecutionContext
+) -> None:
     service = _DummyExecutionService()
 
     async def _scenario() -> None:

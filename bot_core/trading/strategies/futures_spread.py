@@ -1,4 +1,5 @@
 """Utilities for futures spread mean-reversion signals."""
+
 from __future__ import annotations
 
 from dataclasses import dataclass

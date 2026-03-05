@@ -1,4 +1,5 @@
 """Scheduler retrainingu z obsługą scenariuszy chaosowych."""
+
 from __future__ import annotations
 
 import asyncio
@@ -135,7 +136,9 @@ class RetrainingScheduler:
         if self._chaos.should_trigger(self._chaos.delay_frequency, self._rng):
             delay_seconds = self._chaos.choose_delay(self._rng)
             if delay_seconds > 0:
-                delay_event = RetrainingDelayInjected(reason="chaos_delay", delay_seconds=delay_seconds)
+                delay_event = RetrainingDelayInjected(
+                    reason="chaos_delay", delay_seconds=delay_seconds
+                )
                 events.append(delay_event)
                 self._publish_event(delay_event)
                 self._logger.warning("Retraining opóźniony o %.3fs z powodu chaosu", delay_seconds)
@@ -149,7 +152,8 @@ class RetrainingScheduler:
             events.append(missing_event)
             self._publish_event(missing_event)
             self._logger.error(
-                "Chaos: brak danych (%s paczek), retraining zostaje pominięty", missing_event.missing_batches
+                "Chaos: brak danych (%s paczek), retraining zostaje pominięty",
+                missing_event.missing_batches,
             )
             self._last_run = now
             self._next_run = now + self._interval
@@ -174,7 +178,9 @@ class RetrainingScheduler:
             events.append(drift_event)
             self._publish_event(drift_event)
             self._logger.warning(
-                "Chaos: wykryto dryf danych score=%.4f threshold=%.4f", drift_score, self._chaos.drift_threshold
+                "Chaos: wykryto dryf danych score=%.4f threshold=%.4f",
+                drift_score,
+                self._chaos.drift_threshold,
             )
 
         started_monotonic = self._loop_time()

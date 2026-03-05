@@ -112,7 +112,9 @@ class TradingStubStreamIngestor:
         instrument_filter = {symbol.lower() for symbol in instruments} if instruments else None
         type_filter = {etype for etype in event_types} if event_types else None
         sequence = 0
-        for event in self._iter_merged_events(instrument_filter=instrument_filter, type_filter=type_filter):
+        for event in self._iter_merged_events(
+            instrument_filter=instrument_filter, type_filter=type_filter
+        ):
             yield SandboxStreamEvent(
                 instrument=event.instrument,
                 payload=event.payload,
@@ -130,10 +132,14 @@ class TradingStubStreamIngestor:
         for entry in market_data:
             if not isinstance(entry, Mapping):
                 continue
-            instrument_meta = entry.get("instrument") if isinstance(entry.get("instrument"), Mapping) else {}
+            instrument_meta = (
+                entry.get("instrument") if isinstance(entry.get("instrument"), Mapping) else {}
+            )
             instrument = InstrumentDescriptor(
                 exchange=str(instrument_meta.get("exchange", "UNKNOWN")),
-                symbol=str(instrument_meta.get("symbol", instrument_meta.get("venue_symbol", "UNKNOWN"))),
+                symbol=str(
+                    instrument_meta.get("symbol", instrument_meta.get("venue_symbol", "UNKNOWN"))
+                ),
                 venue_symbol=instrument_meta.get("venue_symbol"),
                 quote_currency=instrument_meta.get("quote_currency"),
                 base_currency=instrument_meta.get("base_currency"),
@@ -151,14 +157,18 @@ class TradingStubStreamIngestor:
             for entry in risk_states:
                 if not isinstance(entry, Mapping):
                     continue
-                instrument_meta = entry.get("instrument") if isinstance(entry.get("instrument"), Mapping) else {}
+                instrument_meta = (
+                    entry.get("instrument") if isinstance(entry.get("instrument"), Mapping) else {}
+                )
                 if instrument_meta:
                     instrument = InstrumentDescriptor(
                         exchange=str(instrument_meta.get("exchange", "UNKNOWN")),
                         symbol=str(
                             instrument_meta.get(
                                 "symbol",
-                                instrument_meta.get("venue_symbol", instrument_meta.get("exchange", "UNKNOWN")),
+                                instrument_meta.get(
+                                    "venue_symbol", instrument_meta.get("exchange", "UNKNOWN")
+                                ),
                             )
                         ),
                         venue_symbol=instrument_meta.get("venue_symbol"),

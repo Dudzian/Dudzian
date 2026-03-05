@@ -1,4 +1,5 @@
 """Serwer HTTP udostępniający lokalny stream long-pollowy dla adapterów giełdowych."""
+
 from __future__ import annotations
 
 import json
@@ -201,10 +202,7 @@ class StreamGateway:
             channels: list[Mapping[str, Any]] = []
             for key, state in self._channels.items():
                 adapter_name, environment, scope, channel, params = key
-                param_map = {
-                    str(param_key): [*values]
-                    for param_key, values in params
-                }
+                param_map = {str(param_key): [*values] for param_key, values in params}
                 channels.append(
                     {
                         "adapter": adapter_name,
@@ -232,8 +230,7 @@ class StreamGateway:
         """Czyści bufory dla wybranych kanałów (wymusza restart kursora)."""
 
         normalized_params = {
-            str(key): tuple(str(value) for value in values)
-            for key, values in params.items()
+            str(key): tuple(str(value) for value in values) for key, values in params.items()
         }
         removed = False
         for channel in channels:
@@ -356,7 +353,9 @@ class StreamGateway:
             result = fetcher(symbol, depth=depth)
             return [self._to_mapping(result)]
 
-        raise StreamGatewayError(f"Nieobsługiwany kanał publiczny '{channel}'", status=HTTPStatus.NOT_FOUND)
+        raise StreamGatewayError(
+            f"Nieobsługiwany kanał publiczny '{channel}'", status=HTTPStatus.NOT_FOUND
+        )
 
     def _collect_private_events(
         self,
@@ -380,7 +379,9 @@ class StreamGateway:
             snapshot = adapter.fetch_account_snapshot()
             return [self._to_mapping(snapshot)]
 
-        raise StreamGatewayError(f"Nieobsługiwany kanał prywatny '{channel}'", status=HTTPStatus.NOT_FOUND)
+        raise StreamGatewayError(
+            f"Nieobsługiwany kanał prywatny '{channel}'", status=HTTPStatus.NOT_FOUND
+        )
 
     # ------------------------------------------------------------------
     # Parsowanie parametrów
@@ -496,12 +497,16 @@ class _StreamRequestHandler(BaseHTTPRequestHandler):
             self._send_json({"error": {"message": str(exc)}}, exc.status)
             return
         except ExchangeError as exc:  # pragma: no cover - zależy od adapterów
-            _LOGGER.debug("Błąd adaptera w streamie %s/%s: %s", adapter_name, scope, exc, exc_info=True)
+            _LOGGER.debug(
+                "Błąd adaptera w streamie %s/%s: %s", adapter_name, scope, exc, exc_info=True
+            )
             self._send_json({"error": {"message": str(exc)}}, HTTPStatus.BAD_GATEWAY)
             return
         except Exception as exc:  # pragma: no cover - bezpieczeństwo
             _LOGGER.exception("Nieoczekiwany wyjątek stream gateway", exc_info=exc)
-            self._send_json({"error": {"message": "internal_error"}}, HTTPStatus.INTERNAL_SERVER_ERROR)
+            self._send_json(
+                {"error": {"message": "internal_error"}}, HTTPStatus.INTERNAL_SERVER_ERROR
+            )
             return
 
         self._send_json(response, HTTPStatus.OK)
@@ -540,9 +545,7 @@ class _StreamRequestHandler(BaseHTTPRequestHandler):
             return (candidate or None, key)
         return None, None
 
-    def _first_param(
-        self, params: Mapping[str, list[str]], keys: Sequence[str]
-    ) -> str | None:
+    def _first_param(self, params: Mapping[str, list[str]], keys: Sequence[str]) -> str | None:
         for key in keys:
             values = params.get(key)
             if values:

@@ -194,7 +194,9 @@ class TrendBacktestEngine:
         sl_price = price * (1.0 - sl_pct)
         return float(qty), float(sl_price), float(sl_pct)
 
-    def run_symbol(self, symbol: str, cfg: BacktestConfig) -> Tuple[List[TradeRecord], Dict[str, Any]]:
+    def run_symbol(
+        self, symbol: str, cfg: BacktestConfig
+    ) -> Tuple[List[TradeRecord], Dict[str, Any]]:
         strategy = cfg.strategy
         bars = self.fetch_ohlcv(symbol, strategy.timeframe, limit=cfg.max_bars or 3000)
         if not bars or len(bars) < max(strategy.ema_slow, strategy.atr_len) + 50:
@@ -250,11 +252,17 @@ class TrendBacktestEngine:
                     pnl -= _fees_total(trades[-1], cfg.entry.fee_rate)
                     trades[-1].pnl_usdt = pnl
                     trades[-1].pnl_pct = pnl / (position["entry"] * position["qty_total"]) * 100.0
-                    trades[-1].r_multiple = pnl / position["risk_usdt"] if position["risk_usdt"] else None
+                    trades[-1].r_multiple = (
+                        pnl / position["risk_usdt"] if position["risk_usdt"] else None
+                    )
                     position = None
                     continue
 
-                if (not position["tp1_done"]) and close_price >= position["tp1"] and position["qty_remain"] > 0:
+                if (
+                    (not position["tp1_done"])
+                    and close_price >= position["tp1"]
+                    and position["qty_remain"] > 0
+                ):
                     qty = min(position["q1"], position["qty_remain"])
                     if qty > 0:
                         trades[-1].fills.append(
@@ -268,7 +276,11 @@ class TrendBacktestEngine:
                             )
                             position["sl"] = max(position["sl"], breakeven)
 
-                if (not position["tp2_done"]) and close_price >= position["tp2"] and position["qty_remain"] > 0:
+                if (
+                    (not position["tp2_done"])
+                    and close_price >= position["tp2"]
+                    and position["qty_remain"] > 0
+                ):
                     qty = min(position["q2"], position["qty_remain"])
                     if qty > 0:
                         trades[-1].fills.append(
@@ -277,7 +289,11 @@ class TrendBacktestEngine:
                         position["qty_remain"] -= qty
                         position["tp2_done"] = True
 
-                if (not position["tp3_done"]) and close_price >= position["tp3"] and position["qty_remain"] > 0:
+                if (
+                    (not position["tp3_done"])
+                    and close_price >= position["tp3"]
+                    and position["qty_remain"] > 0
+                ):
                     qty = min(position["q3"], position["qty_remain"])
                     if qty > 0:
                         trades[-1].fills.append(
@@ -291,7 +307,11 @@ class TrendBacktestEngine:
                         position["trail_on"] = True
                         position["trail_peak"] = close_price
 
-                if position["trail_on"] and position["trail_dist"] > 0.0 and position["qty_remain"] > 0:
+                if (
+                    position["trail_on"]
+                    and position["trail_dist"] > 0.0
+                    and position["qty_remain"] > 0
+                ):
                     stop_trail = position["trail_peak"] * (1.0 - position["trail_dist"])
                     if close_price <= stop_trail:
                         qty = position["qty_remain"]
@@ -304,8 +324,12 @@ class TrendBacktestEngine:
                         pnl = (wap - position["entry"]) * position["qty_total"]
                         pnl -= _fees_total(trades[-1], cfg.entry.fee_rate)
                         trades[-1].pnl_usdt = pnl
-                        trades[-1].pnl_pct = pnl / (position["entry"] * position["qty_total"]) * 100.0
-                        trades[-1].r_multiple = pnl / position["risk_usdt"] if position["risk_usdt"] else None
+                        trades[-1].pnl_pct = (
+                            pnl / (position["entry"] * position["qty_total"]) * 100.0
+                        )
+                        trades[-1].r_multiple = (
+                            pnl / position["risk_usdt"] if position["risk_usdt"] else None
+                        )
                         position = None
                         continue
 
@@ -317,7 +341,9 @@ class TrendBacktestEngine:
                     pnl -= _fees_total(trades[-1], cfg.entry.fee_rate)
                     trades[-1].pnl_usdt = pnl
                     trades[-1].pnl_pct = pnl / (position["entry"] * position["qty_total"]) * 100.0
-                    trades[-1].r_multiple = pnl / position["risk_usdt"] if position["risk_usdt"] else None
+                    trades[-1].r_multiple = (
+                        pnl / position["risk_usdt"] if position["risk_usdt"] else None
+                    )
                     position = None
 
             if position is None:
@@ -347,7 +373,9 @@ class TrendBacktestEngine:
                         entry_price=entry_price,
                         entry_qty=qty,
                     )
-                    trade.fills.append(TradeFill(ts=entry_ts, price=entry_price, qty=qty, tag="ENTRY"))
+                    trade.fills.append(
+                        TradeFill(ts=entry_ts, price=entry_price, qty=qty, tag="ENTRY")
+                    )
                     trades.append(trade)
 
                     q1 = qty * cfg.exit.p1
@@ -393,4 +421,3 @@ class TrendBacktestEngine:
 
         summary = {"symbol": symbol, "trades": len(trades)}
         return trades, summary
-

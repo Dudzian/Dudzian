@@ -30,7 +30,9 @@ def test_strategy_configurator_lists_new_strategies() -> None:
     app = QApplication.instance() or QApplication([])
 
     engine = QQmlApplicationEngine()
-    view_path = Path(__file__).resolve().parents[2] / "ui" / "qml" / "views" / "StrategyConfigurator.qml"
+    view_path = (
+        Path(__file__).resolve().parents[2] / "ui" / "qml" / "views" / "StrategyConfigurator.qml"
+    )
     qml_warnings: list = []
 
     def _collect(warnings_list: list) -> None:
@@ -39,7 +41,9 @@ def test_strategy_configurator_lists_new_strategies() -> None:
     engine.warnings.connect(_collect)  # type: ignore[attr-defined]
     engine.load(QUrl.fromLocalFile(str(view_path)))
     if qml_warnings or not engine.rootObjects():
-        warnings_text = "; ".join(warning.toString() for warning in qml_warnings) or "brak obiektów root"
+        warnings_text = (
+            "; ".join(warning.toString() for warning in qml_warnings) or "brak obiektów root"
+        )
         pytest.skip(
             f"Nie udało się załadować StrategyConfigurator: {warnings_text}",
             allow_module_level=False,
@@ -89,7 +93,9 @@ def test_strategy_configurator_lists_new_strategies() -> None:
 
     strategy_names = root.property("strategyNames")
     assert isinstance(strategy_names, list)
-    assert {"theta_income_balanced", "futures_basis_defender", "cross_exchange_delta_guard"} <= set(strategy_names)
+    assert {"theta_income_balanced", "futures_basis_defender", "cross_exchange_delta_guard"} <= set(
+        strategy_names
+    )
 
     list_view = root.findChild(QObject, "strategyConfiguratorList")
     assert list_view is not None

@@ -5,6 +5,7 @@ import sys
 from pathlib import Path
 
 import pytest
+
 try:
     from PySide6.QtCore import QObject, Property, QUrl, Signal, Slot
     from PySide6.QtGui import QGuiApplication
@@ -110,9 +111,7 @@ def test_ai_decisions_view_renders_without_live_runtime() -> None:
     engine.rootContext().setContextProperty("runtimeService", runtime)
     engine.rootContext().setContextProperty("designSystem", design)
     if hasattr(engine, "setInitialProperties"):
-        engine.setInitialProperties(
-            {"runtimeService": runtime, "designSystem": design}
-        )
+        engine.setInitialProperties({"runtimeService": runtime, "designSystem": design})
     qml_path = Path("ui/pyside_app/qml/views/AiDecisionsView.qml").resolve()
     engine.load(QUrl.fromLocalFile(qml_path.as_posix()))
     assert_engine_loaded(engine, warnings, "QML view failed to load")
@@ -135,5 +134,7 @@ def test_ai_decisions_view_renders_without_live_runtime() -> None:
             break
 
     assert int(view.property("timelineCount")) == len(snapshot["history"])
-    assert int(view.property("recommendationCount")) == len(snapshot["lastDecision"]["recommendedModes"])
+    assert int(view.property("recommendationCount")) == len(
+        snapshot["lastDecision"]["recommendedModes"]
+    )
     assert view.property("currentMode").lower() == snapshot["lastDecision"]["mode"]

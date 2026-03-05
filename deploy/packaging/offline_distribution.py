@@ -32,7 +32,9 @@ def _serialize_rotation_status(status) -> dict[str, Any]:
     return {
         "purpose": status.purpose,
         "key": status.key,
-        "last_rotated": status.last_rotated.isoformat().replace("+00:00", "Z") if status.last_rotated else None,
+        "last_rotated": status.last_rotated.isoformat().replace("+00:00", "Z")
+        if status.last_rotated
+        else None,
         "days_since_rotation": status.days_since_rotation,
         "due_in_days": status.due_in_days,
         "is_due": status.is_due,

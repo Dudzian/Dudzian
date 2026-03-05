@@ -106,6 +106,7 @@ def _snapshot_has_field(snapshot: object, field: str) -> bool:
 # Sinki metryk
 # =============================================================================
 
+
 class MetricsSink(Protocol):
     """Komponent przyjmujący pojedynczy `MetricsSnapshot`."""
 
@@ -337,6 +338,7 @@ class OverlayBudgetAlertSink:
 # Pamięć + broker
 # =============================================================================
 
+
 def _timestamp_to_iso(ts) -> str | None:
     if ts is None:
         return None
@@ -390,6 +392,7 @@ class MetricsSnapshotStore:
 # Serwis gRPC
 # =============================================================================
 
+
 class MetricsServiceServicer(_MetricsServicerBase):
     """Implementacja serwisu gRPC `MetricsService`."""
 
@@ -416,7 +419,9 @@ class MetricsServiceServicer(_MetricsServicerBase):
             if not any(isinstance(sink, UiTelemetryAlertSink) for sink in sink_list):
                 try:
                     router = DefaultAlertRouter()
-                    alert_sink = UiTelemetryAlertSink(router, jsonl_path=DEFAULT_UI_ALERTS_JSONL_PATH)
+                    alert_sink = UiTelemetryAlertSink(
+                        router, jsonl_path=DEFAULT_UI_ALERTS_JSONL_PATH
+                    )
                     sink_list.append(alert_sink)
                     self._alert_sink = alert_sink
                 except Exception:  # pragma: no cover - brak konfiguracji alertów
@@ -426,7 +431,9 @@ class MetricsServiceServicer(_MetricsServicerBase):
                 try:
                     sink_list.append(UiTelemetryPrometheusExporter(alert_sink=self._alert_sink))
                 except Exception:  # pragma: no cover - błędna konfiguracja Prometheusa
-                    _LOGGER.exception("Nie udało się zainicjalizować eksportera Prometheus dla telemetrii UI")
+                    _LOGGER.exception(
+                        "Nie udało się zainicjalizować eksportera Prometheus dla telemetrii UI"
+                    )
         self._sinks = tuple(sink_list)
         self._auth_token = auth_token
         self._token_validator = token_validator
@@ -550,17 +557,13 @@ def _build_server_credentials(tls_config: Mapping[str, Any] | Any) -> Any | None
     certificate_source = _get_value(
         tls_config, "certificate_path", "certificate", "cert_path", "cert"
     )
-    key_source = _get_value(
-        tls_config, "private_key_path", "private_key", "key_path", "key"
-    )
+    key_source = _get_value(tls_config, "private_key_path", "private_key", "key_path", "key")
     if not certificate_source or not key_source:
         raise ValueError("Konfiguracja TLS wymaga certyfikatu serwera i klucza prywatnego")
 
     certificate = _read_tls_material(certificate_source)
     private_key = _read_tls_material(key_source)
-    client_ca_source = _get_value(
-        tls_config, "client_ca_path", "client_ca", "ca_path", "ca"
-    )
+    client_ca_source = _get_value(tls_config, "client_ca_path", "client_ca", "ca_path", "ca")
     client_ca = _read_tls_material(client_ca_source) if client_ca_source else None
     require_client_auth = bool(
         _get_value(
@@ -661,9 +664,11 @@ class MetricsServer(GrpcServerLifecycleMixin):
     def start(self) -> None:
         self._server.start()
 
+
 # =============================================================================
 # Fabryki
 # =============================================================================
+
 
 def create_server(
     *,
@@ -819,9 +824,7 @@ def build_metrics_server_from_config(
             except KeyError:
                 risk_profile_meta = {"name": normalized_profile, "error": "unknown_profile"}
                 resolver = None
-                _LOGGER.warning(
-                    "Nieznany profil ryzyka telemetrii UI: %s", normalized_profile
-                )
+                _LOGGER.warning("Nieznany profil ryzyka telemetrii UI: %s", normalized_profile)
             except Exception:  # pragma: no cover
                 resolver = None
                 _LOGGER.exception("Nie udało się zastosować profilu ryzyka %s", normalized_profile)
@@ -897,9 +900,7 @@ def build_metrics_server_from_config(
                 try:
                     return float(raw_value)
                 except (TypeError, ValueError):
-                    _LOGGER.debug(
-                        "Nieprawidłowy próg %s=%s", field_name, raw_value
-                    )
+                    _LOGGER.debug("Nieprawidłowy próg %s=%s", field_name, raw_value)
                     return None
 
             sink_kwargs = dict(
@@ -942,7 +943,8 @@ def build_metrics_server_from_config(
                     overlay_threshold_value = int(overlay_threshold_raw)
                 except (TypeError, ValueError):
                     _LOGGER.debug(
-                        "Nieprawidłowy próg overlay_alert_critical_threshold=%s", overlay_threshold_raw
+                        "Nieprawidłowy próg overlay_alert_critical_threshold=%s",
+                        overlay_threshold_raw,
                     )
                 else:
                     sink_kwargs["overlay_critical_threshold"] = overlay_threshold_value
@@ -967,31 +969,19 @@ def build_metrics_server_from_config(
             performance_event_critical = _normalize_optional_float(
                 "performance_event_to_frame_critical_ms", 60.0
             )
-            cpu_warning_percent = _normalize_optional_float(
-                "cpu_utilization_warning_percent", 85.0
-            )
+            cpu_warning_percent = _normalize_optional_float("cpu_utilization_warning_percent", 85.0)
             cpu_critical_percent = _normalize_optional_float(
                 "cpu_utilization_critical_percent", 95.0
             )
-            gpu_warning_percent = _normalize_optional_float(
-                "gpu_utilization_warning_percent", None
-            )
+            gpu_warning_percent = _normalize_optional_float("gpu_utilization_warning_percent", None)
             gpu_critical_percent = _normalize_optional_float(
                 "gpu_utilization_critical_percent", None
             )
-            ram_warning_megabytes = _normalize_optional_float(
-                "ram_usage_warning_megabytes", None
-            )
-            ram_critical_megabytes = _normalize_optional_float(
-                "ram_usage_critical_megabytes", None
-            )
+            ram_warning_megabytes = _normalize_optional_float("ram_usage_warning_megabytes", None)
+            ram_critical_megabytes = _normalize_optional_float("ram_usage_critical_megabytes", None)
 
-            sink_kwargs["performance_event_to_frame_warning_ms"] = (
-                performance_event_warning
-            )
-            sink_kwargs["performance_event_to_frame_critical_ms"] = (
-                performance_event_critical
-            )
+            sink_kwargs["performance_event_to_frame_warning_ms"] = performance_event_warning
+            sink_kwargs["performance_event_to_frame_critical_ms"] = performance_event_critical
             sink_kwargs["cpu_utilization_warning_percent"] = cpu_warning_percent
             sink_kwargs["cpu_utilization_critical_percent"] = cpu_critical_percent
             sink_kwargs["gpu_utilization_warning_percent"] = gpu_warning_percent
@@ -1003,7 +993,7 @@ def build_metrics_server_from_config(
                 risk_profile_meta = resolver.metadata()
             if risk_profile_meta is not None:
                 sink_kwargs["risk_profile"] = dict(risk_profile_meta)
-            
+
             sink_list.append(UiTelemetryAlertSink(alerts_router, **sink_kwargs))
             ui_alerts_path = path_value
             ui_sink_attached = True
@@ -1023,7 +1013,9 @@ def build_metrics_server_from_config(
                 "performance_logging": performance_logging,
                 "reduce_motion_category": sink_kwargs.get("reduce_motion_category"),
                 "reduce_motion_severity_active": sink_kwargs.get("reduce_motion_severity_active"),
-                "reduce_motion_severity_recovered": sink_kwargs.get("reduce_motion_severity_recovered"),
+                "reduce_motion_severity_recovered": sink_kwargs.get(
+                    "reduce_motion_severity_recovered"
+                ),
                 "overlay_category": sink_kwargs.get("overlay_category"),
                 "overlay_severity_exceeded": sink_kwargs.get("overlay_severity_exceeded"),
                 "overlay_severity_recovered": sink_kwargs.get("overlay_severity_recovered"),
@@ -1034,15 +1026,9 @@ def build_metrics_server_from_config(
                 "jank_severity_critical": sink_kwargs.get("jank_severity_critical"),
                 "jank_critical_over_ms": sink_kwargs.get("jank_critical_over_ms"),
                 "performance_category": sink_kwargs.get("performance_category"),
-                "performance_severity_warning": sink_kwargs.get(
-                    "performance_severity_warning"
-                ),
-                "performance_severity_critical": sink_kwargs.get(
-                    "performance_severity_critical"
-                ),
-                "performance_severity_recovered": sink_kwargs.get(
-                    "performance_severity_recovered"
-                ),
+                "performance_severity_warning": sink_kwargs.get("performance_severity_warning"),
+                "performance_severity_critical": sink_kwargs.get("performance_severity_critical"),
+                "performance_severity_recovered": sink_kwargs.get("performance_severity_recovered"),
                 "performance_event_to_frame_warning_ms": performance_event_warning,
                 "performance_event_to_frame_critical_ms": performance_event_critical,
                 "cpu_utilization_warning_percent": cpu_warning_percent,
@@ -1065,12 +1051,8 @@ def build_metrics_server_from_config(
                 ReduceMotionAlertSink(
                     alerts_router,
                     category=getattr(config, "reduce_motion_category", "ui.performance"),
-                    severity_active=getattr(
-                        config, "reduce_motion_severity_active", "warning"
-                    ),
-                    severity_recovered=getattr(
-                        config, "reduce_motion_severity_recovered", "info"
-                    ),
+                    severity_active=getattr(config, "reduce_motion_severity_active", "warning"),
+                    severity_recovered=getattr(config, "reduce_motion_severity_recovered", "info"),
                 )
             )
         if overlay_dispatch:
@@ -1078,12 +1060,8 @@ def build_metrics_server_from_config(
                 OverlayBudgetAlertSink(
                     alerts_router,
                     category=getattr(config, "overlay_alert_category", "ui.performance"),
-                    severity_exceeded=getattr(
-                        config, "overlay_alert_severity_exceeded", "warning"
-                    ),
-                    severity_recovered=getattr(
-                        config, "overlay_alert_severity_recovered", "info"
-                    ),
+                    severity_exceeded=getattr(config, "overlay_alert_severity_exceeded", "warning"),
+                    severity_recovered=getattr(config, "overlay_alert_severity_recovered", "info"),
                 )
             )
 

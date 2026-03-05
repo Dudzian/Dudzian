@@ -1,4 +1,5 @@
 """Proces backfillu OHLCV łączący publiczne API i lokalny cache."""
+
 from __future__ import annotations
 
 import logging

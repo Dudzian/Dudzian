@@ -1,4 +1,5 @@
 """Prosta rejestracja metryk kompatybilna z formatem Prometheusa."""
+
 from __future__ import annotations
 
 import logging
@@ -85,7 +86,9 @@ class CounterMetric(Metric):
                 return self._values[key]
             filter_set = set(key)
             return sum(
-                value for labels_tuple, value in self._values.items() if _labels_match(labels_tuple, filter_set)
+                value
+                for labels_tuple, value in self._values.items()
+                if _labels_match(labels_tuple, filter_set)
             )
 
     def samples(self) -> list[tuple[LabelTuple, float]]:
@@ -245,11 +248,15 @@ class HistogramMetric(Metric):
                     cumulative += state.counts.get(boundary, 0)
                     bucket_labels = dict(labels)
                     bucket_labels["le"] = str(boundary)
-                    lines.append(f"{self.name}_bucket{_format_labels(_normalize_labels(bucket_labels))} {cumulative}")
+                    lines.append(
+                        f"{self.name}_bucket{_format_labels(_normalize_labels(bucket_labels))} {cumulative}"
+                    )
                 cumulative += state.counts.get(math.inf, 0)
                 inf_labels = dict(labels)
                 inf_labels["le"] = "+Inf"
-                lines.append(f"{self.name}_bucket{_format_labels(_normalize_labels(inf_labels))} {cumulative}")
+                lines.append(
+                    f"{self.name}_bucket{_format_labels(_normalize_labels(inf_labels))} {cumulative}"
+                )
                 lines.append(f"{self.name}_sum{_format_labels(labels)} {state.sum}")
                 lines.append(f"{self.name}_count{_format_labels(labels)} {state.count}")
         return lines
@@ -262,7 +269,9 @@ def _quantile_from_histogram(state: HistogramState, quantile: float) -> float | 
         raise ValueError("Quantyl musi należeć do zakresu (0, 1].")
     target = max(1, math.ceil(state.count * quantile))
     cumulative = 0
-    for boundary in sorted(state.counts, key=lambda value: (math.inf if math.isinf(value) else value)):
+    for boundary in sorted(
+        state.counts, key=lambda value: (math.inf if math.isinf(value) else value)
+    ):
         if math.isinf(boundary):
             return None
         cumulative += state.counts.get(boundary, 0)
@@ -469,11 +478,21 @@ def summarize_live_execution_metrics(
             attempts_total += count
         summary["orders_attempts_total"] = int(round(attempts_total))
         if attempts_total > 0:
-            summary["orders_attempts_success_rate"] = summary["orders_attempts_success"] / attempts_total
-            summary["orders_attempts_error_rate"] = summary["orders_attempts_error"] / attempts_total
-            summary["orders_attempts_api_error_rate"] = summary["orders_attempts_api_error"] / attempts_total
-            summary["orders_attempts_auth_error_rate"] = summary["orders_attempts_auth_error"] / attempts_total
-            summary["orders_attempts_exception_rate"] = summary["orders_attempts_exception"] / attempts_total
+            summary["orders_attempts_success_rate"] = (
+                summary["orders_attempts_success"] / attempts_total
+            )
+            summary["orders_attempts_error_rate"] = (
+                summary["orders_attempts_error"] / attempts_total
+            )
+            summary["orders_attempts_api_error_rate"] = (
+                summary["orders_attempts_api_error"] / attempts_total
+            )
+            summary["orders_attempts_auth_error_rate"] = (
+                summary["orders_attempts_auth_error"] / attempts_total
+            )
+            summary["orders_attempts_exception_rate"] = (
+                summary["orders_attempts_exception"] / attempts_total
+            )
 
     try:
         routed_metric = registry.get("live_orders_total")
@@ -509,7 +528,9 @@ def summarize_live_execution_metrics(
         summary["orders_success_rate"] = summary["orders_success_total"] / orders_total
         summary["orders_failure_rate"] = summary["orders_failed_total"] / orders_total
     if summary["orders_success_total"] > 0:
-        summary["orders_fallback_rate"] = summary["orders_fallback_total"] / summary["orders_success_total"]
+        summary["orders_fallback_rate"] = (
+            summary["orders_fallback_total"] / summary["orders_success_total"]
+        )
 
     return summary
 
@@ -813,22 +834,30 @@ def _dispatch_metric_alert(
         _LOGGER.debug("Nie udało się wysłać alertu metrycznego", exc_info=True)
 
 
-def _get_exchange_metrics(exchange: str, registry: MetricsRegistry | None = None) -> ExchangeMetricSet:
+def _get_exchange_metrics(
+    exchange: str, registry: MetricsRegistry | None = None
+) -> ExchangeMetricSet:
     with _metrics_lock:
         normalized = exchange.lower()
         if normalized not in _exchange_sets:
-            _exchange_sets[normalized] = ExchangeMetricSet(registry or get_global_metrics_registry())
+            _exchange_sets[normalized] = ExchangeMetricSet(
+                registry or get_global_metrics_registry()
+            )
         return _exchange_sets[normalized]
 
 
-def _get_strategy_metrics(strategy: str, registry: MetricsRegistry | None = None) -> StrategyMetricSet:
+def _get_strategy_metrics(
+    strategy: str, registry: MetricsRegistry | None = None
+) -> StrategyMetricSet:
     with _metrics_lock:
         if strategy not in _strategy_sets:
             _strategy_sets[strategy] = StrategyMetricSet(registry or get_global_metrics_registry())
         return _strategy_sets[strategy]
 
 
-def _get_security_metrics(source: str, registry: MetricsRegistry | None = None) -> SecurityMetricSet:
+def _get_security_metrics(
+    source: str, registry: MetricsRegistry | None = None
+) -> SecurityMetricSet:
     with _metrics_lock:
         if source not in _security_sets:
             _security_sets[source] = SecurityMetricSet(registry or get_global_metrics_registry())
@@ -886,7 +915,9 @@ def observe_exchange_log_record(
         return
 
     severity = _resolve_severity(record.levelno)
-    outcome = getattr(record, "event_status", None) or ("error" if severity in {"error", "critical"} else "ok")
+    outcome = getattr(record, "event_status", None) or (
+        "error" if severity in {"error", "critical"} else "ok"
+    )
     latency_seconds: float | None = None
     if hasattr(record, "latency_seconds"):
         try:
@@ -987,7 +1018,9 @@ def observe_security_log_record(
         return
 
     severity = _resolve_severity(record.levelno)
-    event = getattr(record, "security_event", None) or ("failure" if severity in {"error", "critical"} else "info")
+    event = getattr(record, "security_event", None) or (
+        "failure" if severity in {"error", "critical"} else "info"
+    )
     metrics = _get_security_metrics(str(source), registry)
     metrics.observe_log(source=str(source), event=str(event), severity=severity)
 
@@ -1017,7 +1050,10 @@ def observe_pandas_warning(
     if message:
         _pandas_warning_examples[key] = message
 
-    if _pandas_warning_streak[key] >= _PANDAS_WARNING_ALERT_THRESHOLD and key not in _pandas_warning_alerted:
+    if (
+        _pandas_warning_streak[key] >= _PANDAS_WARNING_ALERT_THRESHOLD
+        and key not in _pandas_warning_alerted
+    ):
         alert_context: dict[str, str] = {
             "category": category,
             "count": str(_pandas_warning_streak[key]),

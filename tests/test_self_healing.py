@@ -270,4 +270,3 @@ def test_default_executor_invokes_disable_multi_strategy(monkeypatch) -> None:
     assert stub.calls
     assert stub.calls[0][0:2] == ["--component", "portfolio"]
     assert "--requested-by" in stub.calls[0]
-

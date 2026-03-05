@@ -103,9 +103,7 @@ class MarketRegimeClassifier:
         return self._thresholds_loader
 
     def reload_thresholds(self) -> None:
-        self._thresholds = _ensure_mapping(
-            dict(self._thresholds_loader())
-        )
+        self._thresholds = _ensure_mapping(dict(self._thresholds_loader()))
 
     def thresholds_snapshot(self) -> Mapping[str, Any]:
         return dict(self._thresholds)
@@ -214,10 +212,7 @@ class MarketRegimeClassifier:
         intraday_component = min(
             1.0,
             float(metrics.get("intraday_vol", 0.0))
-            / (
-                self.intraday_threshold
-                * float(score_cfg.get("intraday_multiplier", 1.5))
-            ),
+            / (self.intraday_threshold * float(score_cfg.get("intraday_multiplier", 1.5))),
         )
         drawdown_component = min(
             1.0,

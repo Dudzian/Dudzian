@@ -1,4 +1,5 @@
 """AI Governor odpowiedzialny za dobór trybu AutoTradera."""
+
 from __future__ import annotations
 
 from collections import deque
@@ -19,8 +20,7 @@ except Exception:  # pragma: no cover - fallback dla środowisk okrojonych
 class StrategyPerformanceProvider(Protocol):
     """Publiczny kontrakt na potrzeby AutoTraderAIGovernorRunner."""
 
-    def strategy_performance_snapshot(self) -> Mapping[str, StrategyPerformanceSummary]:
-        ...
+    def strategy_performance_snapshot(self) -> Mapping[str, StrategyPerformanceSummary]: ...
 
 
 def _safe_float(value: object) -> float | None:
@@ -204,7 +204,9 @@ class AutoTraderAIGovernorRunner:
         default_factory=lambda: deque(maxlen=16), init=False, repr=False
     )
 
-    _REGIME_BY_MODE: Mapping[str, MarketRegime] = field(init=False, repr=False, default_factory=dict)
+    _REGIME_BY_MODE: Mapping[str, MarketRegime] = field(
+        init=False, repr=False, default_factory=dict
+    )
 
     def __post_init__(self) -> None:
         self._REGIME_BY_MODE = {
@@ -414,4 +416,3 @@ __all__ = [
     "AutoTraderAIGovernorRunner",
     "StrategyPerformanceProvider",
 ]
-

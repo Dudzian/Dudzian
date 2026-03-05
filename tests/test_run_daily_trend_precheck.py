@@ -1,4 +1,5 @@
 """Testy pomocniczej integracji paper_precheck w run_daily_trend."""
+
 from __future__ import annotations
 
 import json
@@ -15,7 +16,9 @@ from bot_core.reporting.upload import SmokeArchiveUploadResult
 from scripts import run_daily_trend  # noqa: E402 - import modułu CLI w testach
 
 
-def test_run_paper_precheck_skip(monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture) -> None:
+def test_run_paper_precheck_skip(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
     caplog.set_level(logging.WARNING, logger=run_daily_trend._LOGGER.name)
 
     payload, exit_code, metadata = run_daily_trend._run_paper_precheck_for_smoke(
@@ -32,7 +35,9 @@ def test_run_paper_precheck_skip(monkeypatch: pytest.MonkeyPatch, caplog: pytest
     assert "Pomijam automatyczny paper_precheck" in caplog.text
 
 
-def test_run_paper_precheck_success(monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture, tmp_path: Path) -> None:
+def test_run_paper_precheck_success(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture, tmp_path: Path
+) -> None:
     caplog.set_level(logging.INFO, logger=run_daily_trend._LOGGER.name)
 
     expected_payload = {
@@ -63,7 +68,9 @@ def test_run_paper_precheck_success(monkeypatch: pytest.MonkeyPatch, caplog: pyt
     assert "audit_record" not in payload
 
 
-def test_run_paper_precheck_failure(monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture, tmp_path: Path) -> None:
+def test_run_paper_precheck_failure(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture, tmp_path: Path
+) -> None:
     caplog.set_level(logging.ERROR, logger=run_daily_trend._LOGGER.name)
 
     failing_payload = {
@@ -91,7 +98,9 @@ def test_run_paper_precheck_failure(monkeypatch: pytest.MonkeyPatch, caplog: pyt
     assert "Paper pre-check zakończony niepowodzeniem" in caplog.text
 
 
-def test_run_paper_precheck_persists_report(tmp_path: Path, caplog: pytest.LogCaptureFixture) -> None:
+def test_run_paper_precheck_persists_report(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
     caplog.set_level(logging.INFO, logger=run_daily_trend._LOGGER.name)
 
     expected_payload = {
@@ -133,7 +142,9 @@ def test_run_paper_precheck_persists_report(tmp_path: Path, caplog: pytest.LogCa
     assert "paper_precheck zapisany" in caplog.text
 
 
-def test_append_smoke_audit_entry_appends_row(tmp_path: Path, caplog: pytest.LogCaptureFixture) -> None:
+def test_append_smoke_audit_entry_appends_row(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
     caplog.set_level(logging.INFO, logger=run_daily_trend._LOGGER.name)
 
     log_template = "\n".join(
@@ -185,7 +196,9 @@ def test_append_smoke_audit_entry_appends_row(tmp_path: Path, caplog: pytest.Log
     assert "Dodano wpis S-0011" in caplog.text
 
 
-def test_append_smoke_json_log_entry_appends_record(tmp_path: Path, caplog: pytest.LogCaptureFixture) -> None:
+def test_append_smoke_json_log_entry_appends_record(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
     caplog.set_level(logging.INFO, logger=run_daily_trend._LOGGER.name)
 
     summary_path = tmp_path / "reports" / "summary.json"
@@ -235,7 +248,9 @@ def test_append_smoke_json_log_entry_appends_record(tmp_path: Path, caplog: pyte
     assert "Dodano wpis JSON smoke testu" in caplog.text
 
 
-def test_sync_smoke_json_log_invokes_synchronizer(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+def test_sync_smoke_json_log_invokes_synchronizer(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
     json_path = tmp_path / "log.jsonl"
     json_path.write_text("{}\n", encoding="utf-8")
 
@@ -278,14 +293,17 @@ def test_sync_smoke_json_log_invokes_synchronizer(monkeypatch: pytest.MonkeyPatc
 
 def test_sync_smoke_json_log_handles_missing_config(tmp_path: Path) -> None:
     json_path = tmp_path / "log.jsonl"
-    assert run_daily_trend._sync_smoke_json_log(
-        json_sync_cfg=None,
-        json_log_path=json_path,
-        environment="binance_paper",
-        record_id="J-0001",
-        timestamp=datetime.now(timezone.utc),
-        secret_manager=None,
-    ) is None
+    assert (
+        run_daily_trend._sync_smoke_json_log(
+            json_sync_cfg=None,
+            json_log_path=json_path,
+            environment="binance_paper",
+            record_id="J-0001",
+            timestamp=datetime.now(timezone.utc),
+            secret_manager=None,
+        )
+        is None
+    )
 
 
 def test_build_smoke_summary_payload_includes_metadata(tmp_path: Path) -> None:
@@ -397,7 +415,11 @@ def test_auto_publish_smoke_artifacts_invokes_script(
         stdout = json.dumps(
             {
                 "status": "ok",
-                "json_sync": {"status": "skipped", "backend": "local", "metadata": {"note": "cached"}},
+                "json_sync": {
+                    "status": "skipped",
+                    "backend": "local",
+                    "metadata": {"note": "cached"},
+                },
                 "archive_upload": {
                     "status": "ok",
                     "backend": "local",
@@ -447,9 +469,7 @@ def test_normalize_publish_result_sets_required_and_exit_code() -> None:
 
 
 def test_normalize_publish_result_handles_none() -> None:
-    payload = run_daily_trend._normalize_publish_result(
-        None, exit_code=None, required=False
-    )
+    payload = run_daily_trend._normalize_publish_result(None, exit_code=None, required=False)
 
     assert payload["status"] == "unknown"
     assert "exit_code" in payload
@@ -493,8 +513,7 @@ def test_append_publish_context_populates_metadata() -> None:
     assert context["paper_smoke_publish_required"] == "true"
     assert context["paper_smoke_publish_reason"] == "dry_run"
     assert (
-        context["paper_smoke_publish_stdout_snippet"]
-        == "auto publish dry run - nothing executed"
+        context["paper_smoke_publish_stdout_snippet"] == "auto publish dry run - nothing executed"
     )
     assert "paper_smoke_publish_stderr_snippet" not in context
     assert context["paper_smoke_publish_json_backend"] == "local"

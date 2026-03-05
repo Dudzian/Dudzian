@@ -19,7 +19,11 @@ from bot_core.execution.live_router import (
     RouterRuntimeStats,
 )
 from bot_core.exchanges.base import Environment, ExchangeAdapter, OrderRequest, OrderResult
-from bot_core.exchanges.errors import ExchangeAPIError, ExchangeNetworkError, ExchangeThrottlingError
+from bot_core.exchanges.errors import (
+    ExchangeAPIError,
+    ExchangeNetworkError,
+    ExchangeThrottlingError,
+)
 from bot_core.observability import MetricsRegistry
 from bot_core.runtime.frontend import _ExchangeManagerAdapter
 
@@ -32,6 +36,7 @@ def _allow_live_router(monkeypatch: pytest.MonkeyPatch) -> None:
     # chyba że jawnie pozwolimy na jego uruchomienie.
     monkeypatch.setenv("DUDZIAN_ALLOW_LIVE_ROUTER", "1")
 
+
 @dataclass(slots=True)
 class FakeClock:
     value: float = 1000.0
@@ -42,12 +47,13 @@ class FakeClock:
         return current
 
 
-
-
 class NoReconcileStubAdapter(StubExchangeAdapter):
     fetch_order_by_client_id = ExchangeAdapter.fetch_order_by_client_id
 
-def build_request(symbol: str = "BTCUSDT", *, client_order_id: str | None = "test-client-id") -> OrderRequest:
+
+def build_request(
+    symbol: str = "BTCUSDT", *, client_order_id: str | None = "test-client-id"
+) -> OrderRequest:
     return OrderRequest(
         symbol=symbol,
         side="buy",
@@ -88,13 +94,24 @@ def test_router_reconciles_existing_order_after_network_timeout(tmp_path: Path) 
         "primary": StubExchangeAdapter.from_name(
             "primary",
             environment=Environment.LIVE,
-            responses=[ExchangeNetworkError("timeout", None), OrderResult(order_id="duplicate", status="FILLED", filled_quantity=1.0, avg_price=101.0, raw_response={})],
+            responses=[
+                ExchangeNetworkError("timeout", None),
+                OrderResult(
+                    order_id="duplicate",
+                    status="FILLED",
+                    filled_quantity=1.0,
+                    avg_price=101.0,
+                    raw_response={},
+                ),
+            ],
             reconciled_order=reconciled_order,
         )
     }
     router = LiveExecutionRouter(
         adapters=adapters,
-        routes=[RouteDefinition(name="default", exchanges=("primary",), max_retries_per_exchange=2)],
+        routes=[
+            RouteDefinition(name="default", exchanges=("primary",), max_retries_per_exchange=2)
+        ],
         decision_log_path=tmp_path / "reconcile.jsonl",
         decision_log_hmac_key=b"K" * 48,
         metrics=registry,
@@ -108,7 +125,12 @@ def test_router_reconciles_existing_order_after_network_timeout(tmp_path: Path) 
         assert result.raw_response.get("reconciled") is True
         assert len(adapters["primary"].placed) == 1
         assert adapters["primary"].reconcile_calls == [("test-client-id", "BTCUSDT")]
-        labels = {"exchange": "primary", "symbol": "BTCUSDT", "portfolio": "core", "route": "default"}
+        labels = {
+            "exchange": "primary",
+            "symbol": "BTCUSDT",
+            "portfolio": "core",
+            "route": "default",
+        }
         assert registry.get("live_orders_reconciled_total").value(labels=labels) == 1.0
         entries = read_decision_entries(tmp_path / "reconcile.jsonl")
         statuses = [attempt.get("status") for attempt in entries[0]["payload"]["attempts"]]
@@ -117,7 +139,9 @@ def test_router_reconciles_existing_order_after_network_timeout(tmp_path: Path) 
         router.close()
 
 
-def test_router_reconciles_existing_order_after_network_timeout_via_exchange_manager_adapter(tmp_path: Path) -> None:
+def test_router_reconciles_existing_order_after_network_timeout_via_exchange_manager_adapter(
+    tmp_path: Path,
+) -> None:
     registry = MetricsRegistry()
 
     class DummyManager:
@@ -150,7 +174,9 @@ def test_router_reconciles_existing_order_after_network_timeout_via_exchange_man
     adapter = _ExchangeManagerAdapter(manager, sandbox=False, key_id="dummy-key")
     router = LiveExecutionRouter(
         adapters={"primary": adapter},
-        routes=[RouteDefinition(name="default", exchanges=("primary",), max_retries_per_exchange=2)],
+        routes=[
+            RouteDefinition(name="default", exchanges=("primary",), max_retries_per_exchange=2)
+        ],
         decision_log_path=tmp_path / "reconcile-manager-adapter.jsonl",
         decision_log_hmac_key=b"K" * 48,
         metrics=registry,
@@ -162,7 +188,12 @@ def test_router_reconciles_existing_order_after_network_timeout_via_exchange_man
 
         assert result.order_id == "remote-1"
         assert result.raw_response["reconciled"] is True
-        labels = {"exchange": "primary", "symbol": "BTCUSDT", "portfolio": "core", "route": "default"}
+        labels = {
+            "exchange": "primary",
+            "symbol": "BTCUSDT",
+            "portfolio": "core",
+            "route": "default",
+        }
         assert registry.get("live_orders_reconciled_total").value(labels=labels) == 1.0
         assert registry.get("live_orders_reconcile_failed_total").value(labels=labels) == 0.0
         assert manager.create_calls == 1
@@ -179,8 +210,9 @@ def test_router_reconciles_existing_order_after_network_timeout_via_exchange_man
         router.close()
 
 
-
-def test_router_reconciles_existing_order_after_network_timeout_via_exchange_manager_adapter_closed_orders(tmp_path: Path) -> None:
+def test_router_reconciles_existing_order_after_network_timeout_via_exchange_manager_adapter_closed_orders(
+    tmp_path: Path,
+) -> None:
     registry = MetricsRegistry()
 
     class DummyManager:
@@ -219,7 +251,9 @@ def test_router_reconciles_existing_order_after_network_timeout_via_exchange_man
     adapter = _ExchangeManagerAdapter(manager, sandbox=False, key_id="dummy-key")
     router = LiveExecutionRouter(
         adapters={"primary": adapter},
-        routes=[RouteDefinition(name="default", exchanges=("primary",), max_retries_per_exchange=2)],
+        routes=[
+            RouteDefinition(name="default", exchanges=("primary",), max_retries_per_exchange=2)
+        ],
         decision_log_path=tmp_path / "reconcile-manager-adapter-closed.jsonl",
         decision_log_hmac_key=b"C" * 48,
         metrics=registry,
@@ -231,7 +265,12 @@ def test_router_reconciles_existing_order_after_network_timeout_via_exchange_man
 
         assert result.order_id == "remote-1"
         assert result.raw_response["reconciled"] is True
-        labels = {"exchange": "primary", "symbol": "BTCUSDT", "portfolio": "core", "route": "default"}
+        labels = {
+            "exchange": "primary",
+            "symbol": "BTCUSDT",
+            "portfolio": "core",
+            "route": "default",
+        }
         assert registry.get("live_orders_reconciled_total").value(labels=labels) == 1.0
         assert registry.get("live_orders_reconcile_failed_total").value(labels=labels) == 0.0
         assert manager.create_calls == 1
@@ -249,7 +288,9 @@ def test_router_reconciles_existing_order_after_network_timeout_via_exchange_man
         router.close()
 
 
-def test_router_reconciles_even_if_fetch_orders_signature_mismatch_via_exchange_manager_adapter(tmp_path: Path) -> None:
+def test_router_reconciles_even_if_fetch_orders_signature_mismatch_via_exchange_manager_adapter(
+    tmp_path: Path,
+) -> None:
     registry = MetricsRegistry()
 
     class DummyManager:
@@ -288,7 +329,9 @@ def test_router_reconciles_even_if_fetch_orders_signature_mismatch_via_exchange_
     adapter = _ExchangeManagerAdapter(manager, sandbox=False, key_id="dummy-key")
     router = LiveExecutionRouter(
         adapters={"primary": adapter},
-        routes=[RouteDefinition(name="default", exchanges=("primary",), max_retries_per_exchange=2)],
+        routes=[
+            RouteDefinition(name="default", exchanges=("primary",), max_retries_per_exchange=2)
+        ],
         decision_log_path=tmp_path / "reconcile-manager-adapter-mismatch.jsonl",
         decision_log_hmac_key=b"S" * 48,
         metrics=registry,
@@ -303,7 +346,12 @@ def test_router_reconciles_even_if_fetch_orders_signature_mismatch_via_exchange_
         assert manager.create_calls == 1
         assert manager.fetch_orders_calls >= 1
         assert manager.fetch_closed_calls == 1
-        labels = {"exchange": "primary", "symbol": "BTCUSDT", "portfolio": "core", "route": "default"}
+        labels = {
+            "exchange": "primary",
+            "symbol": "BTCUSDT",
+            "portfolio": "core",
+            "route": "default",
+        }
         assert registry.get("live_orders_reconciled_total").value(labels=labels) == 1.0
         assert registry.get("live_orders_reconcile_failed_total").value(labels=labels) == 0.0
         entries = read_decision_entries(tmp_path / "reconcile-manager-adapter-mismatch.jsonl")
@@ -328,7 +376,15 @@ def test_router_retries_after_reconcile_failed_via_exchange_manager_adapter(tmp_
             self.create_calls = 0
             self.fetch_closed_calls = 0
 
-        def create_order(self, symbol: str, side: str, order_type: str, quantity: float, price: float | None, client_order_id: str | None) -> object:  # noqa: ARG002
+        def create_order(
+            self,
+            symbol: str,
+            side: str,
+            order_type: str,
+            quantity: float,
+            price: float | None,
+            client_order_id: str | None,
+        ) -> object:  # noqa: ARG002
             self.create_calls += 1
             if self.create_calls == 1:
                 raise ExchangeNetworkError("timeout", None)
@@ -349,7 +405,9 @@ def test_router_retries_after_reconcile_failed_via_exchange_manager_adapter(tmp_
     adapter = _ExchangeManagerAdapter(manager, sandbox=False, key_id="dummy-key")
     router = LiveExecutionRouter(
         adapters={"primary": adapter},
-        routes=[RouteDefinition(name="default", exchanges=("primary",), max_retries_per_exchange=2)],
+        routes=[
+            RouteDefinition(name="default", exchanges=("primary",), max_retries_per_exchange=2)
+        ],
         decision_log_path=tmp_path / "reconcile-manager-adapter-failed-retry.jsonl",
         decision_log_hmac_key=b"F" * 48,
         metrics=registry,
@@ -362,7 +420,12 @@ def test_router_retries_after_reconcile_failed_via_exchange_manager_adapter(tmp_
         assert result.order_id == "ok-2"
         assert manager.create_calls == 2
         assert manager.fetch_closed_calls == 1
-        labels = {"exchange": "primary", "symbol": "BTCUSDT", "portfolio": "core", "route": "default"}
+        labels = {
+            "exchange": "primary",
+            "symbol": "BTCUSDT",
+            "portfolio": "core",
+            "route": "default",
+        }
         assert registry.get("live_orders_reconcile_failed_total").value(labels=labels) == 1.0
         entries = read_decision_entries(tmp_path / "reconcile-manager-adapter-failed-retry.jsonl")
         attempts = entries[0]["payload"]["attempts"]
@@ -384,14 +447,22 @@ def test_router_retries_after_reconcile_returns_none(tmp_path: Path) -> None:
             environment=Environment.LIVE,
             responses=[
                 ExchangeNetworkError("timeout", None),
-                OrderResult(order_id="second-attempt", status="FILLED", filled_quantity=1.0, avg_price=99.9, raw_response={}),
+                OrderResult(
+                    order_id="second-attempt",
+                    status="FILLED",
+                    filled_quantity=1.0,
+                    avg_price=99.9,
+                    raw_response={},
+                ),
             ],
             reconciled_order=None,
         )
     }
     router = LiveExecutionRouter(
         adapters=adapters,
-        routes=[RouteDefinition(name="default", exchanges=("primary",), max_retries_per_exchange=2)],
+        routes=[
+            RouteDefinition(name="default", exchanges=("primary",), max_retries_per_exchange=2)
+        ],
         decision_log_path=tmp_path / "reconcile-miss-retry.jsonl",
         decision_log_hmac_key=b"R" * 48,
         metrics=registry,
@@ -404,7 +475,12 @@ def test_router_retries_after_reconcile_returns_none(tmp_path: Path) -> None:
         assert result.order_id == "second-attempt"
         assert len(adapters["primary"].placed) == 2
         assert adapters["primary"].reconcile_calls == [("test-client-id", "BTCUSDT")]
-        labels = {"exchange": "primary", "symbol": "BTCUSDT", "portfolio": "core", "route": "default"}
+        labels = {
+            "exchange": "primary",
+            "symbol": "BTCUSDT",
+            "portfolio": "core",
+            "route": "default",
+        }
         assert registry.get("live_orders_reconciled_total").value(labels=labels) == 0.0
         assert registry.get("live_orders_reconcile_failed_total").value(labels=labels) == 1.0
         entries = read_decision_entries(tmp_path / "reconcile-miss-retry.jsonl")
@@ -417,10 +493,11 @@ def test_router_retries_after_reconcile_returns_none(tmp_path: Path) -> None:
             and attempt.get("decision_event") == "reconcile_not_found"
             for attempt in attempts
         )
-        assert any(attempt.get("exchange") == "primary" and "latency_s" in attempt for attempt in attempts)
+        assert any(
+            attempt.get("exchange") == "primary" and "latency_s" in attempt for attempt in attempts
+        )
     finally:
         router.close()
-
 
 
 def test_router_retries_after_reconcile_raises_error(tmp_path: Path) -> None:
@@ -431,14 +508,22 @@ def test_router_retries_after_reconcile_raises_error(tmp_path: Path) -> None:
             environment=Environment.LIVE,
             responses=[
                 ExchangeNetworkError("timeout", None),
-                OrderResult(order_id="second-attempt", status="FILLED", filled_quantity=1.0, avg_price=99.9, raw_response={}),
+                OrderResult(
+                    order_id="second-attempt",
+                    status="FILLED",
+                    filled_quantity=1.0,
+                    avg_price=99.9,
+                    raw_response={},
+                ),
             ],
             reconcile_error=RuntimeError("boom"),
         )
     }
     router = LiveExecutionRouter(
         adapters=adapters,
-        routes=[RouteDefinition(name="default", exchanges=("primary",), max_retries_per_exchange=2)],
+        routes=[
+            RouteDefinition(name="default", exchanges=("primary",), max_retries_per_exchange=2)
+        ],
         decision_log_path=tmp_path / "reconcile-raises-retry.jsonl",
         decision_log_hmac_key=b"E" * 48,
         metrics=registry,
@@ -451,7 +536,12 @@ def test_router_retries_after_reconcile_raises_error(tmp_path: Path) -> None:
         assert result.order_id == "second-attempt"
         assert len(adapters["primary"].placed) == 2
         assert adapters["primary"].reconcile_calls == [("test-client-id", "BTCUSDT")]
-        labels = {"exchange": "primary", "symbol": "BTCUSDT", "portfolio": "core", "route": "default"}
+        labels = {
+            "exchange": "primary",
+            "symbol": "BTCUSDT",
+            "portfolio": "core",
+            "route": "default",
+        }
         assert registry.get("live_orders_reconcile_failed_total").value(labels=labels) == 1.0
         entries = read_decision_entries(tmp_path / "reconcile-raises-retry.jsonl")
         attempts = entries[0]["payload"]["attempts"]
@@ -463,6 +553,7 @@ def test_router_retries_after_reconcile_raises_error(tmp_path: Path) -> None:
         )
     finally:
         router.close()
+
 
 def test_router_reconciles_existing_order_after_throttling_error(tmp_path: Path) -> None:
     registry = MetricsRegistry()
@@ -479,14 +570,22 @@ def test_router_reconciles_existing_order_after_throttling_error(tmp_path: Path)
             environment=Environment.LIVE,
             responses=[
                 ExchangeThrottlingError("rate limit", status_code=429, payload=None),
-                OrderResult(order_id="duplicate", status="FILLED", filled_quantity=1.0, avg_price=101.0, raw_response={}),
+                OrderResult(
+                    order_id="duplicate",
+                    status="FILLED",
+                    filled_quantity=1.0,
+                    avg_price=101.0,
+                    raw_response={},
+                ),
             ],
             reconciled_order=reconciled_order,
         )
     }
     router = LiveExecutionRouter(
         adapters=adapters,
-        routes=[RouteDefinition(name="default", exchanges=("primary",), max_retries_per_exchange=2)],
+        routes=[
+            RouteDefinition(name="default", exchanges=("primary",), max_retries_per_exchange=2)
+        ],
         decision_log_path=tmp_path / "reconcile-throttling.jsonl",
         decision_log_hmac_key=b"T" * 48,
         metrics=registry,
@@ -500,7 +599,12 @@ def test_router_reconciles_existing_order_after_throttling_error(tmp_path: Path)
         assert result.raw_response.get("reconciled") is True
         assert len(adapters["primary"].placed) == 1
         assert adapters["primary"].reconcile_calls == [("test-client-id", "BTCUSDT")]
-        labels = {"exchange": "primary", "symbol": "BTCUSDT", "portfolio": "core", "route": "default"}
+        labels = {
+            "exchange": "primary",
+            "symbol": "BTCUSDT",
+            "portfolio": "core",
+            "route": "default",
+        }
         assert registry.get("live_orders_reconciled_total").value(labels=labels) == 1.0
         assert registry.get("live_orders_reconcile_failed_total").value(labels=labels) == 0.0
         entries = read_decision_entries(tmp_path / "reconcile-throttling.jsonl")
@@ -515,7 +619,6 @@ def test_router_reconciles_existing_order_after_throttling_error(tmp_path: Path)
         router.close()
 
 
-
 def test_router_throttling_reconcile_unsupported_fails_fast(tmp_path: Path) -> None:
     registry = MetricsRegistry()
     adapters = {
@@ -524,13 +627,21 @@ def test_router_throttling_reconcile_unsupported_fails_fast(tmp_path: Path) -> N
             environment=Environment.LIVE,
             responses=[
                 ExchangeThrottlingError("rate limit", status_code=429, payload=None),
-                OrderResult(order_id="should-not-happen", status="FILLED", filled_quantity=1.0, avg_price=100.0, raw_response={}),
+                OrderResult(
+                    order_id="should-not-happen",
+                    status="FILLED",
+                    filled_quantity=1.0,
+                    avg_price=100.0,
+                    raw_response={},
+                ),
             ],
         )
     }
     router = LiveExecutionRouter(
         adapters=adapters,
-        routes=[RouteDefinition(name="default", exchanges=("primary",), max_retries_per_exchange=2)],
+        routes=[
+            RouteDefinition(name="default", exchanges=("primary",), max_retries_per_exchange=2)
+        ],
         decision_log_path=tmp_path / "reconcile-throttling-unsupported.jsonl",
         decision_log_hmac_key=b"U" * 48,
         metrics=registry,
@@ -546,7 +657,8 @@ def test_router_throttling_reconcile_unsupported_fails_fast(tmp_path: Path) -> N
         entries = read_decision_entries(tmp_path / "reconcile-throttling-unsupported.jsonl")
         attempts = entries[0]["payload"]["attempts"]
         assert any(
-            attempt.get("status") == "reconcile_not_supported_failfast" and attempt.get("attempt") == "1"
+            attempt.get("status") == "reconcile_not_supported_failfast"
+            and attempt.get("attempt") == "1"
             for attempt in attempts
         )
     finally:
@@ -561,13 +673,21 @@ def test_router_network_timeout_reconcile_unsupported_fails_fast(tmp_path: Path)
             environment=Environment.LIVE,
             responses=[
                 ExchangeNetworkError("timeout", None),
-                OrderResult(order_id="should-not-happen", status="FILLED", filled_quantity=1.0, avg_price=100.0, raw_response={}),
+                OrderResult(
+                    order_id="should-not-happen",
+                    status="FILLED",
+                    filled_quantity=1.0,
+                    avg_price=100.0,
+                    raw_response={},
+                ),
             ],
         )
     }
     router = LiveExecutionRouter(
         adapters=adapters,
-        routes=[RouteDefinition(name="default", exchanges=("primary",), max_retries_per_exchange=2)],
+        routes=[
+            RouteDefinition(name="default", exchanges=("primary",), max_retries_per_exchange=2)
+        ],
         decision_log_path=tmp_path / "reconcile-unsupported.jsonl",
         decision_log_hmac_key=b"M" * 48,
         metrics=registry,
@@ -579,7 +699,12 @@ def test_router_network_timeout_reconcile_unsupported_fails_fast(tmp_path: Path)
             router.execute(build_request(), build_context("default"))
 
         assert len(adapters["primary"].placed) == 1
-        labels = {"exchange": "primary", "symbol": "BTCUSDT", "portfolio": "core", "route": "default"}
+        labels = {
+            "exchange": "primary",
+            "symbol": "BTCUSDT",
+            "portfolio": "core",
+            "route": "default",
+        }
         assert registry.get("live_orders_reconciled_total").value(labels=labels) == 0.0
         entries = read_decision_entries(tmp_path / "reconcile-unsupported.jsonl")
         statuses = [attempt.get("status") for attempt in entries[0]["payload"]["attempts"]]
@@ -592,7 +717,9 @@ def test_live_router_executes_on_primary(tmp_path: Path) -> None:
     registry = MetricsRegistry()
     decision_key = b"L" * 48
     clock = FakeClock()
-    success = OrderResult(order_id="1", status="FILLED", filled_quantity=1.0, avg_price=100.0, raw_response={})
+    success = OrderResult(
+        order_id="1", status="FILLED", filled_quantity=1.0, avg_price=100.0, raw_response={}
+    )
     adapters = {
         "primary": StubExchangeAdapter.from_name(
             "primary",
@@ -652,7 +779,13 @@ def test_live_router_uses_fallback(tmp_path: Path) -> None:
             "secondary",
             environment=Environment.LIVE,
             responses=[
-                OrderResult(order_id="2", status="FILLED", filled_quantity=1.0, avg_price=99.5, raw_response={})
+                OrderResult(
+                    order_id="2",
+                    status="FILLED",
+                    filled_quantity=1.0,
+                    avg_price=99.5,
+                    raw_response={},
+                )
             ],
         ),
     }
@@ -695,7 +828,13 @@ def test_live_router_blocks_disallowed_fallback(tmp_path: Path) -> None:
             "secondary",
             environment=Environment.LIVE,
             responses=[
-                OrderResult(order_id="2", status="FILLED", filled_quantity=1.0, avg_price=99.5, raw_response={})
+                OrderResult(
+                    order_id="2",
+                    status="FILLED",
+                    filled_quantity=1.0,
+                    avg_price=99.5,
+                    raw_response={},
+                )
             ],
         ),
     }
@@ -731,7 +870,13 @@ def test_live_router_does_not_cross_exchange_fallback_by_default(tmp_path: Path)
             "secondary",
             environment=Environment.LIVE,
             responses=[
-                OrderResult(order_id="2", status="FILLED", filled_quantity=1.0, avg_price=99.5, raw_response={})
+                OrderResult(
+                    order_id="2",
+                    status="FILLED",
+                    filled_quantity=1.0,
+                    avg_price=99.5,
+                    raw_response={},
+                )
             ],
         ),
     }
@@ -767,7 +912,9 @@ def test_live_router_network_error_without_client_order_id_has_no_retry(tmp_path
     }
     router = LiveExecutionRouter(
         adapters=adapters,
-        routes=[RouteDefinition(name="default", exchanges=("primary",), max_retries_per_exchange=3)],
+        routes=[
+            RouteDefinition(name="default", exchanges=("primary",), max_retries_per_exchange=3)
+        ],
         decision_log_path=tmp_path / "no-retry-without-client-id.jsonl",
         decision_log_hmac_key=b"H" * 48,
         time_source=FakeClock(),
@@ -782,7 +929,6 @@ def test_live_router_network_error_without_client_order_id_has_no_retry(tmp_path
         assert adapters["primary"].placed == []
     finally:
         router.close()
-
 
 
 def test_live_router_rejects_live_request_without_client_order_id(tmp_path: Path) -> None:
@@ -801,15 +947,24 @@ def test_live_router_rejects_live_request_without_client_order_id(tmp_path: Path
 
     try:
         with pytest.raises(ValueError, match="client_order_id"):
-            router.execute(build_request(client_order_id=None), build_context("default", environment="live"))
+            router.execute(
+                build_request(client_order_id=None), build_context("default", environment="live")
+            )
 
         assert adapters["primary"].placed == []
-        assert registry.get("live_orders_rejected_missing_client_id_total").value(
-            labels={"exchange": "unknown", "route": "default", "portfolio": "core", "symbol": "BTCUSDT"}
-        ) == 1.0
+        assert (
+            registry.get("live_orders_rejected_missing_client_id_total").value(
+                labels={
+                    "exchange": "unknown",
+                    "route": "default",
+                    "portfolio": "core",
+                    "symbol": "BTCUSDT",
+                }
+            )
+            == 1.0
+        )
     finally:
         router.close()
-
 
 
 def test_live_router_rejects_missing_client_id_when_env_is_enum(tmp_path: Path) -> None:
@@ -834,11 +989,20 @@ def test_live_router_rejects_missing_client_id_when_env_is_enum(tmp_path: Path) 
             )
 
         assert adapters["primary"].placed == []
-        assert registry.get("live_orders_rejected_missing_client_id_total").value(
-            labels={"exchange": "unknown", "route": "default", "portfolio": "core", "symbol": "BTCUSDT"}
-        ) == 1.0
+        assert (
+            registry.get("live_orders_rejected_missing_client_id_total").value(
+                labels={
+                    "exchange": "unknown",
+                    "route": "default",
+                    "portfolio": "core",
+                    "symbol": "BTCUSDT",
+                }
+            )
+            == 1.0
+        )
     finally:
         router.close()
+
 
 def test_live_router_raises_when_all_fail(tmp_path: Path) -> None:
     registry = MetricsRegistry()
@@ -883,7 +1047,13 @@ def test_cancel_uses_recorded_exchange(tmp_path: Path) -> None:
             "primary",
             environment=Environment.LIVE,
             responses=[
-                OrderResult(order_id="abc", status="FILLED", filled_quantity=2.0, avg_price=50.0, raw_response={})
+                OrderResult(
+                    order_id="abc",
+                    status="FILLED",
+                    filled_quantity=2.0,
+                    avg_price=50.0,
+                    raw_response={},
+                )
             ],
         ),
         "fallback": StubExchangeAdapter.from_name("fallback", environment=Environment.LIVE),
@@ -906,8 +1076,6 @@ def test_cancel_uses_recorded_exchange(tmp_path: Path) -> None:
         router.close()
 
 
-
-
 def test_live_router_cancel_uses_persisted_binding_after_restart(tmp_path: Path) -> None:
     store_path = tmp_path / "router-bindings.sqlite3"
     first_adapters = {
@@ -915,7 +1083,13 @@ def test_live_router_cancel_uses_persisted_binding_after_restart(tmp_path: Path)
             "primary",
             environment=Environment.LIVE,
             responses=[
-                OrderResult(order_id="persist-1", status="FILLED", filled_quantity=1.0, avg_price=100.0, raw_response={})
+                OrderResult(
+                    order_id="persist-1",
+                    status="FILLED",
+                    filled_quantity=1.0,
+                    avg_price=100.0,
+                    raw_response={},
+                )
             ],
         ),
         "fallback": StubExchangeAdapter.from_name("fallback", environment=Environment.LIVE),
@@ -956,6 +1130,7 @@ def test_live_router_cancel_uses_persisted_binding_after_restart(tmp_path: Path)
     finally:
         router_b.close()
 
+
 def test_execute_async_returns_result(tmp_path: Path) -> None:
     registry = MetricsRegistry()
     clock = FakeClock()
@@ -964,7 +1139,13 @@ def test_execute_async_returns_result(tmp_path: Path) -> None:
             "primary",
             environment=Environment.LIVE,
             responses=[
-                OrderResult(order_id="async-1", status="FILLED", filled_quantity=1.0, avg_price=100.5, raw_response={})
+                OrderResult(
+                    order_id="async-1",
+                    status="FILLED",
+                    filled_quantity=1.0,
+                    avg_price=100.5,
+                    raw_response={},
+                )
             ],
         )
     }
@@ -1007,7 +1188,13 @@ def test_execute_async_cancellation_propagates(tmp_path: Path) -> None:
             "primary",
             environment=Environment.LIVE,
             responses=[
-                OrderResult(order_id="async-2", status="FILLED", filled_quantity=1.0, avg_price=101.5, raw_response={})
+                OrderResult(
+                    order_id="async-2",
+                    status="FILLED",
+                    filled_quantity=1.0,
+                    avg_price=101.5,
+                    raw_response={},
+                )
             ],
         )
     }
@@ -1054,8 +1241,20 @@ def test_execute_async_cancellation_before_dispatch_skips_order(tmp_path: Path) 
             "primary",
             environment=Environment.LIVE,
             responses=[
-                OrderResult(order_id="async-blocked-1", status="FILLED", filled_quantity=1.0, avg_price=102.5, raw_response={}),
-                OrderResult(order_id="async-blocked-2", status="FILLED", filled_quantity=1.0, avg_price=103.5, raw_response={}),
+                OrderResult(
+                    order_id="async-blocked-1",
+                    status="FILLED",
+                    filled_quantity=1.0,
+                    avg_price=102.5,
+                    raw_response={},
+                ),
+                OrderResult(
+                    order_id="async-blocked-2",
+                    status="FILLED",
+                    filled_quantity=1.0,
+                    avg_price=103.5,
+                    raw_response={},
+                ),
             ],
         )
     }
@@ -1070,11 +1269,15 @@ def test_execute_async_cancellation_before_dispatch_skips_order(tmp_path: Path) 
     )
 
     async def _scenario() -> None:
-        first_task = asyncio.create_task(router.execute_async(build_request("BTCUSDT"), build_context()))
+        first_task = asyncio.create_task(
+            router.execute_async(build_request("BTCUSDT"), build_context())
+        )
         second_task: asyncio.Task[OrderResult] | None = None
         try:
             await asyncio.to_thread(start_event.wait)
-            second_task = asyncio.create_task(router.execute_async(build_request("ETHUSDT"), build_context()))
+            second_task = asyncio.create_task(
+                router.execute_async(build_request("ETHUSDT"), build_context())
+            )
             await asyncio.sleep(0.05)
             second_task.cancel()
             with pytest.raises(asyncio.CancelledError):
@@ -1134,9 +1337,13 @@ def test_queue_timeout_rejects_waiting_order(tmp_path: Path) -> None:
     )
 
     async def _scenario() -> None:
-        first_task = asyncio.create_task(router.execute_async(build_request("BTCUSDT"), build_context()))
+        first_task = asyncio.create_task(
+            router.execute_async(build_request("BTCUSDT"), build_context())
+        )
         await asyncio.sleep(0.01)
-        second_task = asyncio.create_task(router.execute_async(build_request("ETHUSDT"), build_context()))
+        second_task = asyncio.create_task(
+            router.execute_async(build_request("ETHUSDT"), build_context())
+        )
         try:
             await asyncio.sleep(0.08)
             block_event.set()
@@ -1171,7 +1378,9 @@ def test_queue_timeout_rejects_waiting_order(tmp_path: Path) -> None:
 
         entries = read_decision_entries(tmp_path / "queue_timeout.jsonl")
         timeout_entries = [
-            entry for entry in entries if entry["payload"]["attempts"][0]["status"] == "queue_timeout"
+            entry
+            for entry in entries
+            if entry["payload"]["attempts"][0]["status"] == "queue_timeout"
         ]
         assert timeout_entries, "decision log should contain queue timeout entry"
     finally:
@@ -1226,7 +1435,9 @@ def test_queue_overflow_rejects_new_orders(tmp_path: Path) -> None:
     async def _scenario() -> None:
         first = asyncio.create_task(router.execute_async(build_request("BTCUSDT"), build_context()))
         await asyncio.to_thread(start_event.wait)
-        second = asyncio.create_task(router.execute_async(build_request("ETHUSDT"), build_context()))
+        second = asyncio.create_task(
+            router.execute_async(build_request("ETHUSDT"), build_context())
+        )
         await asyncio.sleep(0.01)
         third = asyncio.create_task(router.execute_async(build_request("LTCUSDT"), build_context()))
 
@@ -1276,7 +1487,13 @@ def test_cancel_async_invokes_adapter(tmp_path: Path) -> None:
             "primary",
             environment=Environment.LIVE,
             responses=[
-                OrderResult(order_id="async-3", status="FILLED", filled_quantity=1.0, avg_price=102.5, raw_response={})
+                OrderResult(
+                    order_id="async-3",
+                    status="FILLED",
+                    filled_quantity=1.0,
+                    avg_price=102.5,
+                    raw_response={},
+                )
             ],
         )
     }
@@ -1519,11 +1736,15 @@ def test_runtime_stats_exposes_queue_and_inflight(tmp_path: Path) -> None:
     )
 
     async def _scenario() -> None:
-        first_task = asyncio.create_task(router.execute_async(build_request("BTCUSDT"), build_context()))
+        first_task = asyncio.create_task(
+            router.execute_async(build_request("BTCUSDT"), build_context())
+        )
         second_task: asyncio.Task[OrderResult] | None = None
         try:
             await asyncio.to_thread(start_event.wait)
-            second_task = asyncio.create_task(router.execute_async(build_request("ETHUSDT"), build_context()))
+            second_task = asyncio.create_task(
+                router.execute_async(build_request("ETHUSDT"), build_context())
+            )
             await asyncio.sleep(0)
             stats = await router.get_runtime_stats_async()
             assert isinstance(stats, RouterRuntimeStats)
@@ -1592,7 +1813,9 @@ def test_runtime_stats_after_close(tmp_path: Path) -> None:
 def test_router_validates_adapter_result(tmp_path: Path) -> None:
     registry = MetricsRegistry()
     clock = FakeClock()
-    bad_result = OrderResult(order_id="", status="rejected", filled_quantity=-1.0, avg_price=None, raw_response={})
+    bad_result = OrderResult(
+        order_id="", status="rejected", filled_quantity=-1.0, avg_price=None, raw_response={}
+    )
     adapters = {
         "primary": StubExchangeAdapter.from_name(
             "primary",

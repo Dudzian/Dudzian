@@ -4,7 +4,11 @@ import json
 from datetime import datetime, timezone
 from pathlib import Path
 
-from bot_core.observability.hypercare import ObservabilityCycleConfig, ObservabilityCycleResult, SLOOutputConfig
+from bot_core.observability.hypercare import (
+    ObservabilityCycleConfig,
+    ObservabilityCycleResult,
+    SLOOutputConfig,
+)
 from bot_core.portfolio import PortfolioDecision
 from bot_core.portfolio.hypercare import (
     PortfolioCycleConfig,
@@ -12,7 +16,12 @@ from bot_core.portfolio.hypercare import (
     PortfolioCycleOutputConfig,
     PortfolioCycleResult,
 )
-from bot_core.resilience.hypercare import AuditConfig, BundleConfig, FailoverConfig, ResilienceCycleConfig
+from bot_core.resilience.hypercare import (
+    AuditConfig,
+    BundleConfig,
+    FailoverConfig,
+    ResilienceCycleConfig,
+)
 from bot_core.runtime.stage6_hypercare import Stage6HypercareConfig, Stage6HypercareCycle
 from bot_core.security.signing import build_hmac_signature, verify_hmac_signature
 
@@ -213,9 +222,7 @@ def test_stage6_hypercare_collects_slo2_expectations(tmp_path: Path, monkeypatch
     monkeypatch.setattr(
         stage6_module,
         "get_observability_composite_expectations",
-        lambda profile: {
-            "composites": ["exchange.latency", "exchange.uptime", "orderbook.depth"]
-        },
+        lambda profile: {"composites": ["exchange.latency", "exchange.uptime", "orderbook.depth"]},
     )
 
     config = Stage6HypercareConfig(

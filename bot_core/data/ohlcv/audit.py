@@ -1,4 +1,5 @@
 """Audyt jakości danych OHLCV."""
+
 from __future__ import annotations
 
 import json
@@ -37,7 +38,9 @@ class GapAuditRecord:
             "row_count": self.row_count,
             "last_timestamp": self.last_timestamp,
             "warnings_in_window": self.warnings_in_window,
-            "incident_minutes": None if self.incident_minutes is None else round(self.incident_minutes, 3),
+            "incident_minutes": None
+            if self.incident_minutes is None
+            else round(self.incident_minutes, 3),
         }
 
     @classmethod
@@ -59,7 +62,9 @@ class GapAuditRecord:
             try:
                 return float(value)
             except (TypeError, ValueError):
-                raise ValueError(f"Pole '{key}' musi być liczbą zmiennoprzecinkową lub null") from None
+                raise ValueError(
+                    f"Pole '{key}' musi być liczbą zmiennoprzecinkową lub null"
+                ) from None
 
         def _maybe_int(key: str) -> int | None:
             value = payload.get(key)
@@ -116,8 +121,7 @@ class GapAuditRecord:
 class GapAuditLogger(Protocol):
     """Interfejs loggera przyjmującego wpisy audytowe luk danych."""
 
-    def log(self, record: GapAuditRecord) -> None:
-        ...  # pragma: no cover - protokół typów
+    def log(self, record: GapAuditRecord) -> None: ...  # pragma: no cover - protokół typów
 
 
 class JSONLGapAuditLogger:

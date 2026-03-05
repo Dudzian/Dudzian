@@ -1,4 +1,5 @@
 """Kontroler aktywacji licencji wykorzystywany przez kreator UI."""
+
 from __future__ import annotations
 
 
@@ -101,7 +102,7 @@ class LicensingController(QObject):
     def licenseAccepted(self) -> bool:  # type: ignore[override]
         return self._license_accepted
 
-    @Property('QStringList', notify=warningCodesChanged)
+    @Property("QStringList", notify=warningCodesChanged)
     def warningCodes(self) -> list[str]:  # type: ignore[override]
         return list(self._warnings)
 
@@ -223,7 +224,9 @@ class LicensingController(QObject):
 
     def _apply_outcome(self, outcome: LicenseVerificationOutcome) -> None:
         self._status_code = outcome.code
-        self._set_status_message_id(_STATUS_MESSAGE_IDS.get(outcome.code, _STATUS_MESSAGE_IDS["unexpected_error"]))
+        self._set_status_message_id(
+            _STATUS_MESSAGE_IDS.get(outcome.code, _STATUS_MESSAGE_IDS["unexpected_error"])
+        )
         self._set_status_details(outcome.details or "")
         self._set_license_id(outcome.license_id or "")
         self._set_license_accepted(outcome.ok)

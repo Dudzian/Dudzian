@@ -1,4 +1,5 @@
 """CLI uruchamiające audyt zgodności i generujące raport."""
+
 from __future__ import annotations
 
 import argparse

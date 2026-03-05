@@ -84,7 +84,9 @@ def test_license_store_encrypts_and_decrypts(tmp_path: Path) -> None:
 
 def test_license_store_migration_from_plain_json(tmp_path: Path) -> None:
     store_path = tmp_path / "store.json"
-    store_path.write_text(json.dumps({"licenses": {"alpha": {"status": "active"}}}), encoding="utf-8")
+    store_path.write_text(
+        json.dumps({"licenses": {"alpha": {"status": "active"}}}), encoding="utf-8"
+    )
     store = LicenseStore(path=store_path, fingerprint_override="fp-123")
     document = store.load()
     assert document.migrated is True

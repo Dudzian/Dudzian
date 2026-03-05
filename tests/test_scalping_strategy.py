@@ -15,7 +15,9 @@ def _snapshot(symbol: str, close: float, timestamp: int = 0) -> MarketSnapshot:
 
 
 def test_scalping_strategy_enters_and_exits_long() -> None:
-    strategy = ScalpingStrategy(ScalpingSettings(min_price_change=0.001, take_profit=0.001, stop_loss=0.002))
+    strategy = ScalpingStrategy(
+        ScalpingSettings(min_price_change=0.001, take_profit=0.001, stop_loss=0.002)
+    )
 
     enter = strategy.on_data(_snapshot("BTCUSDT", 100.0, timestamp=1))
     assert enter == []
@@ -30,7 +32,9 @@ def test_scalping_strategy_enters_and_exits_long() -> None:
 
 def test_scalping_strategy_enters_and_exits_short() -> None:
     strategy = ScalpingStrategy(
-        ScalpingSettings(min_price_change=0.001, take_profit=0.002, stop_loss=0.0015, max_hold_bars=10)
+        ScalpingSettings(
+            min_price_change=0.001, take_profit=0.002, stop_loss=0.0015, max_hold_bars=10
+        )
     )
 
     strategy.on_data(_snapshot("ETHUSDT", 200.0, timestamp=10))

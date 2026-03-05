@@ -19,8 +19,12 @@ def _load_mapping(path: Path) -> dict[str, Any]:
 
 
 def _build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(description="Buduje OEM installer, paczki aktualizacji oraz manifest release'u")
-    parser.add_argument("--pipeline-config", required=True, help="Ścieżka do konfiguracji pipeline'u (JSON)")
+    parser = argparse.ArgumentParser(
+        description="Buduje OEM installer, paczki aktualizacji oraz manifest release'u"
+    )
+    parser.add_argument(
+        "--pipeline-config", required=True, help="Ścieżka do konfiguracji pipeline'u (JSON)"
+    )
     parser.add_argument("--manifest", required=True, help="Ścieżka do manifestu bundla (JSON)")
     parser.add_argument("--staging-root", required=True, help="Katalog roboczy z plikami bundla")
     parser.add_argument("--archive", required=True, help="Ścieżka docelowa instalatora (ZIP/TAR)")
@@ -60,7 +64,9 @@ def main(argv: list[str] | None = None) -> None:
     archive_path = Path(args.archive).expanduser()
 
     if args.build_installer:
-        _run_build_command(args.build_installer, archive=archive_path, staging=staging_root, manifest=manifest_path)
+        _run_build_command(
+            args.build_installer, archive=archive_path, staging=staging_root, manifest=manifest_path
+        )
 
     if not archive_path.exists():
         raise SystemExit(f"Instalator {archive_path} nie istnieje po zakończeniu kroku build")
@@ -69,7 +75,9 @@ def main(argv: list[str] | None = None) -> None:
     manifest_payload = _load_mapping(manifest_path)
 
     pipeline = build_pipeline_from_mapping(config_payload, base_dir=pipeline_config_path.parent)
-    context = PackagingContext(staging_root=staging_root, archive_path=archive_path, manifest=manifest_payload)
+    context = PackagingContext(
+        staging_root=staging_root, archive_path=archive_path, manifest=manifest_payload
+    )
     report = pipeline.execute(context)
 
     release_dir = Path(args.release_dir).expanduser()
@@ -82,17 +90,25 @@ def main(argv: list[str] | None = None) -> None:
         "report": report.to_mapping(),
     }
     release_path = release_dir / f"{context.bundle_name}-{context.version}-{context.platform}.json"
-    release_path.write_text(json.dumps(release_manifest, ensure_ascii=False, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    release_path.write_text(
+        json.dumps(release_manifest, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
 
     summary = {
         "release_manifest": str(release_path),
         "archive": str(archive_path),
-        "update_packages": [entry["package_path"] for entry in release_manifest["report"].get("update_packages", [])],
+        "update_packages": [
+            entry["package_path"] for entry in release_manifest["report"].get("update_packages", [])
+        ],
     }
     if args.output:
         output_path = Path(args.output).expanduser()
         output_path.parent.mkdir(parents=True, exist_ok=True)
-        output_path.write_text(json.dumps(summary, ensure_ascii=False, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+        output_path.write_text(
+            json.dumps(summary, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
+            encoding="utf-8",
+        )
 
     json.dump(summary, fp=sys.stdout, ensure_ascii=False, indent=2, sort_keys=True)
     sys.stdout.write("\n")

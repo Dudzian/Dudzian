@@ -10,6 +10,7 @@ Obsługiwane dwa tryby:
    - Konstruktor: MarketIntelAggregator(config: MarketIntelConfig)
    - API: build() -> tuple[MarketIntelBaseline, ...], write_outputs(...): list[Path]
 """
+
 from __future__ import annotations
 
 import json
@@ -153,13 +154,27 @@ class MarketIntelAggregator:
 
         table = self._validate_identifier(sqlite_cfg.table, context="market_intel.sqlite.table")
         columns = {
-            "symbol": self._validate_identifier(sqlite_cfg.symbol_column, context="market_intel.sqlite.symbol_column"),
-            "mid_price": self._validate_identifier(sqlite_cfg.mid_price_column, context="market_intel.sqlite.mid_price_column"),
-            "avg_depth_usd": self._validate_identifier(sqlite_cfg.depth_column, context="market_intel.sqlite.depth_column"),
-            "avg_spread_bps": self._validate_identifier(sqlite_cfg.spread_column, context="market_intel.sqlite.spread_column"),
-            "funding_rate_bps": self._validate_identifier(sqlite_cfg.funding_column, context="market_intel.sqlite.funding_column"),
-            "sentiment_score": self._validate_identifier(sqlite_cfg.sentiment_column, context="market_intel.sqlite.sentiment_column"),
-            "realized_volatility": self._validate_identifier(sqlite_cfg.volatility_column, context="market_intel.sqlite.volatility_column"),
+            "symbol": self._validate_identifier(
+                sqlite_cfg.symbol_column, context="market_intel.sqlite.symbol_column"
+            ),
+            "mid_price": self._validate_identifier(
+                sqlite_cfg.mid_price_column, context="market_intel.sqlite.mid_price_column"
+            ),
+            "avg_depth_usd": self._validate_identifier(
+                sqlite_cfg.depth_column, context="market_intel.sqlite.depth_column"
+            ),
+            "avg_spread_bps": self._validate_identifier(
+                sqlite_cfg.spread_column, context="market_intel.sqlite.spread_column"
+            ),
+            "funding_rate_bps": self._validate_identifier(
+                sqlite_cfg.funding_column, context="market_intel.sqlite.funding_column"
+            ),
+            "sentiment_score": self._validate_identifier(
+                sqlite_cfg.sentiment_column, context="market_intel.sqlite.sentiment_column"
+            ),
+            "realized_volatility": self._validate_identifier(
+                sqlite_cfg.volatility_column, context="market_intel.sqlite.volatility_column"
+            ),
         }
         weight_column: str | None = None
         if sqlite_cfg.weight_column not in (None, "", False):
@@ -167,15 +182,18 @@ class MarketIntelAggregator:
                 str(sqlite_cfg.weight_column), context="market_intel.sqlite.weight_column"
             )
 
-        query_columns = [columns[k] for k in (
-            "symbol",
-            "mid_price",
-            "avg_depth_usd",
-            "avg_spread_bps",
-            "funding_rate_bps",
-            "sentiment_score",
-            "realized_volatility",
-        )]
+        query_columns = [
+            columns[k]
+            for k in (
+                "symbol",
+                "mid_price",
+                "avg_depth_usd",
+                "avg_spread_bps",
+                "funding_rate_bps",
+                "sentiment_score",
+                "realized_volatility",
+            )
+        ]
         if weight_column is not None:
             query_columns.append(weight_column)
 
@@ -193,7 +211,9 @@ class MarketIntelAggregator:
                 funding = float(db_row[4])
                 sentiment = float(db_row[5])
                 volatility = float(db_row[6])
-                weight = float(db_row[7]) if weight_column is not None else (self._config.default_weight)  # type: ignore[union-attr]
+                weight = (
+                    float(db_row[7]) if weight_column is not None else (self._config.default_weight)
+                )  # type: ignore[union-attr]
                 rows.append(
                     MarketIntelBaseline(
                         symbol=symbol,
@@ -251,7 +271,9 @@ class MarketIntelAggregator:
             }
             file_name = f"{baseline.symbol.lower()}.json"
             target = output_dir / file_name
-            target.write_text(json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+            target.write_text(
+                json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
+            )
             manifest_entries.append(
                 {"symbol": baseline.symbol, "path": str(target), "weight": baseline.weight}
             )
@@ -279,7 +301,9 @@ class MarketIntelAggregator:
 
     # --- helpers (cache) ---
     @staticmethod
-    def _select_tail(rows: Sequence[Sequence[float]], lookback_bars: int) -> Sequence[Sequence[float]]:
+    def _select_tail(
+        rows: Sequence[Sequence[float]], lookback_bars: int
+    ) -> Sequence[Sequence[float]]:
         if lookback_bars <= 0 or lookback_bars >= len(rows):
             return rows
         return rows[-lookback_bars:]
@@ -360,7 +384,9 @@ class MarketIntelAggregator:
     # --- guard ---
     def _require_mode(self, expected: str) -> None:
         if getattr(self, "_mode", None) != expected:
-            raise RuntimeError(f"Ta metoda jest dostępna tylko w trybie '{expected}' (aktualnie: '{self._mode}')")
+            raise RuntimeError(
+                f"Ta metoda jest dostępna tylko w trybie '{expected}' (aktualnie: '{self._mode}')"
+            )
 
 
 __all__ = [

@@ -91,7 +91,14 @@ class StubAppController(QObject):
         base_currency: str,
         granularity: str,
     ) -> bool:
-        self.last_update = (exchange, symbol, venue_symbol, quote_currency, base_currency, granularity)
+        self.last_update = (
+            exchange,
+            symbol,
+            venue_symbol,
+            quote_currency,
+            base_currency,
+            granularity,
+        )
         return True
 
     @Slot(result="QVariantMap")
@@ -150,7 +157,9 @@ def test_setup_wizard_configures_instrument_and_preferences(tmp_path: Path) -> N
     engine.warnings.connect(_collect)  # type: ignore[attr-defined]
     engine.load(QUrl.fromLocalFile(str(view_path)))
     if qml_warnings or not engine.rootObjects():
-        warnings_text = "; ".join(warning.toString() for warning in qml_warnings) or "brak obiektów root"
+        warnings_text = (
+            "; ".join(warning.toString() for warning in qml_warnings) or "brak obiektów root"
+        )
         pytest.skip(
             f"Nie udało się załadować kreatora konfiguracji: {warnings_text}",
             allow_module_level=False,

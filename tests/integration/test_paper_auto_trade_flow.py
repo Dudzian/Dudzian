@@ -65,7 +65,9 @@ class _AIManagerStub:
     ai_threshold_bps = 5.0
     is_degraded = False
 
-    def assess_market_regime(self, symbol: str, market_data: pd.DataFrame) -> MarketRegimeAssessment:
+    def assess_market_regime(
+        self, symbol: str, market_data: pd.DataFrame
+    ) -> MarketRegimeAssessment:
         del symbol, market_data
         return MarketRegimeAssessment(
             regime=MarketRegime.TREND,
@@ -152,7 +154,9 @@ class _StubExchangeAdapter(ExchangeAdapter):
     def fetch_symbols(self):  # pragma: no cover - not used
         return []
 
-    def fetch_ohlcv(self, symbol, interval, start=None, end=None, limit=None):  # pragma: no cover - not used
+    def fetch_ohlcv(
+        self, symbol, interval, start=None, end=None, limit=None
+    ):  # pragma: no cover - not used
         return []
 
     def place_order(self, request: OrderRequest) -> OrderResult:
@@ -166,7 +170,9 @@ class _StubExchangeAdapter(ExchangeAdapter):
             raw_response={"fee": 0.0, "fee_asset": "USDT"},
         )
 
-    def cancel_order(self, *_args: Any, **_kwargs: Any) -> bool:  # pragma: no cover - not used in test
+    def cancel_order(
+        self, *_args: Any, **_kwargs: Any
+    ) -> bool:  # pragma: no cover - not used in test
         return True
 
     def stream_public_data(self, *_args: Any, **_kwargs: Any):  # pragma: no cover - not used

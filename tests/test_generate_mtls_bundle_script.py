@@ -51,4 +51,3 @@ def test_generate_mtls_bundle_creates_expected_files(tmp_path: Path) -> None:
 
     registry_payload = json.loads(rotation_registry.read_text(encoding="utf-8"))
     assert any(key.startswith("test-oem::tls_server") for key in registry_payload)
-

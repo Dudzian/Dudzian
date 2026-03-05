@@ -1,4 +1,5 @@
 """Modele danych DecisionOrchestratora (Etap 5)."""
+
 from __future__ import annotations
 
 from dataclasses import dataclass, field
@@ -77,9 +78,7 @@ class DecisionCandidate:
                 if raw.get("cost_bps_override") is None
                 else float(raw.get("cost_bps_override"))
             ),
-            latency_ms=(
-                None if raw.get("latency_ms") is None else float(raw.get("latency_ms"))
-            ),
+            latency_ms=(None if raw.get("latency_ms") is None else float(raw.get("latency_ms"))),
             metadata=dict(raw.get("metadata", {})),
         )
 
@@ -279,9 +278,7 @@ class DecisionEngineSummary(BaseModel):
     risk_flag_counts: Mapping[str, int] | None = None
     risk_flag_breakdown: Mapping[str, DecisionEngineBreakdownEntry] | None = None
     stress_failure_counts: Mapping[str, int] | None = None
-    stress_failure_breakdown: (
-        Mapping[str, DecisionEngineBreakdownEntry] | None
-    ) = None
+    stress_failure_breakdown: Mapping[str, DecisionEngineBreakdownEntry] | None = None
     model_usage: Mapping[str, int] | None = None
     model_breakdown: Mapping[str, DecisionEngineBreakdownEntry] | None = None
     action_usage: Mapping[str, int] | None = None

@@ -92,9 +92,7 @@ class MonteCarloEngine:
         calibrated = self.scenario.calibrate(historical)
         price_paths = self._generate_price_paths(historical, calibrated)
         drawdowns = self._compute_drawdowns(price_paths)
-        drawdown_probability = float(
-            np.mean(drawdowns >= self.risk_parameters.drawdown_threshold)
-        )
+        drawdown_probability = float(np.mean(drawdowns >= self.risk_parameters.drawdown_threshold))
         normalized = self._normalize_strategies(strategies)
         strategy_results = {
             strategy.name: self._evaluate_strategy(strategy, price_paths, drawdown_probability)
@@ -114,7 +112,9 @@ class MonteCarloEngine:
     def _generate_price_paths(
         self, historical: HistoricalPriceSeries, scenario: MonteCarloScenario
     ) -> np.ndarray:
-        steps = int(np.ceil(self.risk_parameters.horizon_days / self.risk_parameters.time_step_days))
+        steps = int(
+            np.ceil(self.risk_parameters.horizon_days / self.risk_parameters.time_step_days)
+        )
         dt = self.risk_parameters.time_step_days / 252.0
         num_paths = self.risk_parameters.num_paths
         price0 = float(historical.prices.iloc[-1])
@@ -123,7 +123,9 @@ class MonteCarloEngine:
 
         volatility = scenario.volatility.resolve(historical)
         if scenario.model == ModelType.GBM:
-            return self._generate_gbm_paths(price0, scenario.drift, volatility, num_paths, steps, dt)
+            return self._generate_gbm_paths(
+                price0, scenario.drift, volatility, num_paths, steps, dt
+            )
         if scenario.model == ModelType.HESTON:
             return self._generate_heston_paths(price0, scenario, volatility, num_paths, steps, dt)
         if scenario.model == ModelType.BOOTSTRAP:
@@ -176,7 +178,9 @@ class MonteCarloEngine:
 
         for t in range(steps):
             variances = np.clip(
-                variances + kappa * (theta - variances) * dt + sigma_v * np.sqrt(np.maximum(variances, 1e-12)) * dw2[:, t],
+                variances
+                + kappa * (theta - variances) * dt
+                + sigma_v * np.sqrt(np.maximum(variances, 1e-12)) * dw2[:, t],
                 1e-12,
                 None,
             )
@@ -212,7 +216,9 @@ class MonteCarloEngine:
             elif callable(strategy):
                 normalized.append(_CallableStrategy(name=f"strategy_{idx}", func=strategy))
             else:
-                raise TypeError("Strategia musi implementować SimulationStrategy lub być wywoływalna")
+                raise TypeError(
+                    "Strategia musi implementować SimulationStrategy lub być wywoływalna"
+                )
         return normalized
 
     def _evaluate_strategy(
@@ -222,9 +228,7 @@ class MonteCarloEngine:
         drawdown_probability: float,
     ) -> StrategyResult:
         pnl = np.empty(price_paths.shape[0], dtype=float)
-        with capture_pandas_warnings(
-            _LOGGER, component="backtest.monte_carlo.strategy"
-        ):
+        with capture_pandas_warnings(_LOGGER, component="backtest.monte_carlo.strategy"):
             for idx, path in enumerate(price_paths):
                 price_series = pd.Series(path, name="price")
                 pnl[idx] = float(strategy.evaluate_path(price_series))
@@ -254,7 +258,9 @@ class MonteCarloEngine:
         drawdowns = np.empty(price_paths.shape[0], dtype=float)
         for idx, path in enumerate(price_paths):
             cumulative_max = np.maximum.accumulate(path)
-            drawdown = 1.0 - np.divide(path, cumulative_max, out=np.zeros_like(path), where=cumulative_max != 0)
+            drawdown = 1.0 - np.divide(
+                path, cumulative_max, out=np.zeros_like(path), where=cumulative_max != 0
+            )
             drawdowns[idx] = float(drawdown.max(initial=0.0))
         return drawdowns
 

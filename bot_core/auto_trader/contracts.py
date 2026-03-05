@@ -66,9 +66,7 @@ class DecisionJournalEntry(TypedDict, total=False):
     metadata: Mapping[str, object]
 
 
-def normalize_decision_journal_entry(
-    entry: Mapping[str, Any]
-) -> DecisionJournalEntry:
+def normalize_decision_journal_entry(entry: Mapping[str, Any]) -> DecisionJournalEntry:
     """Convert raw journal payloads into the public contract."""
 
     payload: dict[str, object] = {}

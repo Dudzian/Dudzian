@@ -70,9 +70,7 @@ def test_build_promotion_report_produces_summary(tmp_path: Path) -> None:
     config_path = tmp_path / "core.yaml"
     _write_core_config(config_path)
 
-    report = build_promotion_report(
-        "binance_live", config_path=config_path, skip_license=True
-    )
+    report = build_promotion_report("binance_live", config_path=config_path, skip_license=True)
 
     assert report["environment"] == "binance_live"
     assert report["alerting"]["channels"] == ["telegram:primary"]

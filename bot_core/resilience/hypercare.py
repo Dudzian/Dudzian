@@ -198,7 +198,9 @@ class ResilienceHypercareCycle:
         if self._config.failover.csv_path:
             failover_metadata["csv"] = self._config.failover.csv_path.expanduser().as_posix()
         if self._config.failover.signature_path:
-            failover_metadata["signature"] = self._config.failover.signature_path.expanduser().as_posix()
+            failover_metadata["signature"] = (
+                self._config.failover.signature_path.expanduser().as_posix()
+            )
         metadata["failover_summary"] = failover_metadata
 
         if self._config.self_healing:
@@ -209,7 +211,9 @@ class ResilienceHypercareCycle:
                 "output": self_heal_config.output_path.expanduser().as_posix(),
             }
             if self_heal_config.signature_path:
-                self_heal_metadata["signature"] = self_heal_config.signature_path.expanduser().as_posix()
+                self_heal_metadata["signature"] = (
+                    self_heal_config.signature_path.expanduser().as_posix()
+                )
             metadata["self_healing"] = self_heal_metadata
 
         artifacts = builder.build(
@@ -325,7 +329,9 @@ class ResilienceHypercareCycle:
         manifest = load_manifest(artifacts.manifest_path)
         verifier = ResilienceBundleVerifier(artifacts.bundle_path, manifest)
         errors = verifier.verify_files()
-        signature_doc = load_signature(artifacts.signature_path if artifacts.signature_path else None)
+        signature_doc = load_signature(
+            artifacts.signature_path if artifacts.signature_path else None
+        )
         signature_verified: bool | None = None
         verification_key = self._config.audit_hmac_key or self._config.signing_key
         if signature_doc is not None and verification_key is not None:

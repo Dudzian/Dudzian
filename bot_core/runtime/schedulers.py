@@ -7,7 +7,15 @@ import logging
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import TYPE_CHECKING, Callable, Mapping, MutableMapping, Protocol, Sequence, runtime_checkable
+from typing import (
+    TYPE_CHECKING,
+    Callable,
+    Mapping,
+    MutableMapping,
+    Protocol,
+    Sequence,
+    runtime_checkable,
+)
 
 from bot_core.ai.pipeline import (
     AutoRetrainPolicy,
@@ -29,17 +37,13 @@ Clock = Callable[[], datetime]
 class RuntimeScheduler(Protocol):
     """Minimalny kontrakt wspólny dla schedulerów runtime."""
 
-    async def start(self) -> None:
-        ...
+    async def start(self) -> None: ...
 
-    async def run_forever(self) -> None:
-        ...
+    async def run_forever(self) -> None: ...
 
-    async def run_once(self) -> None:
-        ...
+    async def run_once(self) -> None: ...
 
-    def stop(self) -> None:
-        ...
+    def stop(self) -> None: ...
 
 
 def _ensure_utc(timestamp: datetime | None) -> datetime:
@@ -109,23 +113,18 @@ class _AutoRetrainJob:
             quality = self.policy.quality
             if quality:
                 dir_accuracy = extracted.get("directional_accuracy")
-                if (
-                    quality.min_directional_accuracy is not None
-                    and (dir_accuracy is None or dir_accuracy < quality.min_directional_accuracy)
+                if quality.min_directional_accuracy is not None and (
+                    dir_accuracy is None or dir_accuracy < quality.min_directional_accuracy
                 ):
                     failures.append(
                         f"{result.spec.name}: directional_accuracy {dir_accuracy!r} < {quality.min_directional_accuracy}"
                     )
                 mae = extracted.get("mae")
                 if quality.max_mae is not None and (mae is None or mae > quality.max_mae):
-                    failures.append(
-                        f"{result.spec.name}: mae {mae!r} > {quality.max_mae}"
-                    )
+                    failures.append(f"{result.spec.name}: mae {mae!r} > {quality.max_mae}")
                 rmse = extracted.get("rmse")
                 if quality.max_rmse is not None and (rmse is None or rmse > quality.max_rmse):
-                    failures.append(
-                        f"{result.spec.name}: rmse {rmse!r} > {quality.max_rmse}"
-                    )
+                    failures.append(f"{result.spec.name}: rmse {rmse!r} > {quality.max_rmse}")
         success = not failures
         if success and self.ai_manager is not None:
             try:
@@ -155,7 +154,9 @@ class _AutoRetrainJob:
             try:
                 self.journal.record(
                     TradingDecisionEvent(
-                        event_type="ai_auto_retrain_succeeded" if success else "ai_auto_retrain_failed",
+                        event_type="ai_auto_retrain_succeeded"
+                        if success
+                        else "ai_auto_retrain_failed",
                         timestamp=now,
                         environment=self.policy.journal_environment,
                         portfolio=self.policy.journal_portfolio,

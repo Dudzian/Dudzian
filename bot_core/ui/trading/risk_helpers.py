@@ -1,4 +1,5 @@
 """Utility helpers bridging runtime risk profiles with the Trading GUI."""
+
 from __future__ import annotations
 
 import logging

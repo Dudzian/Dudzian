@@ -83,7 +83,9 @@ class DummyRiskEngine(RiskEngine):
         self._liquidate = liquidate
         self._result_queue.clear()
 
-    def set_result_sequence(self, results: Sequence[RiskCheckResult], *, liquidate: bool = False) -> None:
+    def set_result_sequence(
+        self, results: Sequence[RiskCheckResult], *, liquidate: bool = False
+    ) -> None:
         self._result_queue = list(results)
         if results:
             self._result = results[-1]
@@ -222,7 +224,11 @@ def test_controller_handles_multi_leg_signal() -> None:
 
     assert len(results) == 2
     assert [request.side for request in execution.requests] == ["BUY", "SELL"]
-    assert all(message.category == "execution" for message in channel.messages if message.category == "execution")
+    assert all(
+        message.category == "execution"
+        for message in channel.messages
+        if message.category == "execution"
+    )
     assert any(event["event"] == "order_executed" for event in journal.export())
 
 
@@ -303,15 +309,17 @@ def test_controller_reverses_position_before_opening_new_one() -> None:
     assert open_request.quantity == pytest.approx(2.0)
 
     journal_events = journal.export()
-    close_event = next(event for event in journal_events if event["event"] == "order_close_for_reversal")
+    close_event = next(
+        event for event in journal_events if event["event"] == "order_close_for_reversal"
+    )
     assert close_event.get("client_order_id")
     assert close_event.get("order_generated_client_order_id") == "True"
-    close_risk_event = next(event for event in journal_events if event["event"] == "reversal_close_risk_check")
+    close_risk_event = next(
+        event for event in journal_events if event["event"] == "reversal_close_risk_check"
+    )
     assert close_risk_event.get("status") == "allowed"
     assert close_risk_event.get("order_is_reducing") == "True"
     assert close_risk_event.get("order_reducing_only") == "True"
-
-
 
 
 def test_controller_reversal_is_disabled_by_default() -> None:
@@ -401,14 +409,18 @@ def test_controller_logs_untrusted_position_when_reversal_requested() -> None:
     assert len(results) == 1
     assert len(execution.requests) == 1
     events = journal.export()
-    skipped = next(event for event in events if event["event"] == "reversal_skipped_untrusted_position")
+    skipped = next(
+        event for event in events if event["event"] == "reversal_skipped_untrusted_position"
+    )
     assert skipped["status"] == "skipped"
 
 
 def test_controller_reversal_close_can_be_denied_by_risk() -> None:
     registry = MetricsRegistry()
     risk_engine = DummyRiskEngine()
-    risk_engine.set_result_sequence([RiskCheckResult(allowed=True), RiskCheckResult(allowed=False, reason="close blocked")])
+    risk_engine.set_result_sequence(
+        [RiskCheckResult(allowed=True), RiskCheckResult(allowed=False, reason="close blocked")]
+    )
     execution = DummyExecutionService()
     router, _, _ = _router_with_channel()
     journal = CollectingDecisionJournal()
@@ -444,7 +456,9 @@ def test_controller_reversal_close_can_be_denied_by_risk() -> None:
     assert len(results) == 1
     assert len(execution.requests) == 1
     events = journal.export()
-    close_risk_event = next(event for event in events if event["event"] == "reversal_close_risk_check")
+    close_risk_event = next(
+        event for event in events if event["event"] == "reversal_close_risk_check"
+    )
     assert close_risk_event["status"] == "rejected"
     denied_event = next(event for event in events if event["event"] == "reversal_denied_by_risk")
     assert denied_event["status"] == "rejected"
@@ -458,6 +472,7 @@ def test_controller_reversal_close_can_be_denied_by_risk() -> None:
     }
     denied_counter = registry.get("trading_reversal_denied_by_risk_total")
     assert denied_counter.value(labels=labels) == 1.0
+
 
 def test_controller_alerts_on_risk_rejection_and_limit() -> None:
     risk_engine = DummyRiskEngine()
@@ -582,7 +597,9 @@ def test_controller_scales_quantity_when_risk_suggests_limit() -> None:
     assert risk_engine.last_checks[0][0].quantity == pytest.approx(1.0)
     assert risk_engine.last_checks[1][0].quantity == pytest.approx(0.25)
     exported = tuple(audit.export())
-    assert any(entry["channel"] == "collector" and entry["category"] == "strategy" for entry in exported)
+    assert any(
+        entry["channel"] == "collector" and entry["category"] == "strategy" for entry in exported
+    )
     assert channel.messages[-1].category == "execution"
     events = [event["event"] for event in journal.export()]
     assert "risk_adjusted" in events
@@ -699,8 +716,12 @@ def test_controller_updates_metrics_counters_and_gauge() -> None:
         "trading_orders_total",
         "Liczba zleceń obsłużonych przez TradingController (result=submitted/executed/failed).",
     )
-    assert orders_counter.value(labels={**symbol_labels, "result": "submitted", "side": "BUY"}) == 1.0
-    assert orders_counter.value(labels={**symbol_labels, "result": "executed", "side": "BUY"}) == 1.0
+    assert (
+        orders_counter.value(labels={**symbol_labels, "result": "submitted", "side": "BUY"}) == 1.0
+    )
+    assert (
+        orders_counter.value(labels={**symbol_labels, "result": "executed", "side": "BUY"}) == 1.0
+    )
     assert orders_counter.value(labels={**symbol_labels, "result": "failed", "side": "BUY"}) == 0.0
 
     health_counter = registry.counter(
@@ -826,7 +847,9 @@ def test_controller_filters_signal_when_probability_below_threshold() -> None:
     assert results == []
     assert orchestrator.invocations == []
     assert len(channel.messages) == 1
-    decision_events = [event for event in journal.events if event.event_type == "decision_evaluation"]
+    decision_events = [
+        event for event in journal.events if event.event_type == "decision_evaluation"
+    ]
     assert any(event.status == "filtered" for event in decision_events)
     exported = tuple(audit.export())
     assert len(exported) == 1
@@ -882,7 +905,9 @@ def test_controller_skips_risk_when_orchestrator_rejects_signal() -> None:
     assert results == []
     assert len(orchestrator.invocations) == 1
     assert risk_engine.last_checks == []
-    decision_events = [event for event in journal.events if event.event_type == "decision_evaluation"]
+    decision_events = [
+        event for event in journal.events if event.event_type == "decision_evaluation"
+    ]
     assert any(event.status == "rejected" for event in decision_events)
     assert len(channel.messages) == 1
     exported = tuple(audit.export())
@@ -944,7 +969,9 @@ def test_controller_attaches_decision_metadata_for_execution() -> None:
     decision_meta = metadata["decision_engine"]
     assert decision_meta["accepted"] is True
     assert decision_meta["model"] == "gbm_v2"
-    decision_events = [event for event in journal.events if event.event_type == "decision_evaluation"]
+    decision_events = [
+        event for event in journal.events if event.event_type == "decision_evaluation"
+    ]
     assert any(event.status == "accepted" for event in decision_events)
 
 
@@ -973,7 +1000,8 @@ def test_controller_generates_client_order_id_when_missing() -> None:
     assert request.metadata is not None
     assert request.metadata.get("generated_client_order_id") is True
 
-    order_submitted_event = next(event for event in journal.export() if event["event"] == "order_submitted")
+    order_submitted_event = next(
+        event for event in journal.export() if event["event"] == "order_submitted"
+    )
     assert order_submitted_event.get("client_order_id") == request.client_order_id
     assert order_submitted_event.get("order_generated_client_order_id") == "True"
-

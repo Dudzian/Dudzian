@@ -21,7 +21,9 @@ from bot_core.resilience.failover import (
 )
 
 
-def _write_dataset(tmp_path: Path, *, max_latency: float, error_rate: float, duration: float, failed: int) -> Path:
+def _write_dataset(
+    tmp_path: Path, *, max_latency: float, error_rate: float, duration: float, failed: int
+) -> Path:
     dataset_path = tmp_path / "dataset.json"
     payload = {
         "max_latency_ms": max_latency,
@@ -36,7 +38,9 @@ def _write_dataset(tmp_path: Path, *, max_latency: float, error_rate: float, dur
 
 
 def test_resilience_failover_pass(tmp_path: Path) -> None:
-    dataset_path = _write_dataset(tmp_path, max_latency=200.0, error_rate=0.03, duration=60.0, failed=2)
+    dataset_path = _write_dataset(
+        tmp_path, max_latency=200.0, error_rate=0.03, duration=60.0, failed=2
+    )
     config = ResilienceConfig(
         enabled=True,
         drills=(
@@ -64,7 +68,9 @@ def test_resilience_failover_pass(tmp_path: Path) -> None:
 
 
 def test_resilience_failover_fail(tmp_path: Path) -> None:
-    dataset_path = _write_dataset(tmp_path, max_latency=250.0, error_rate=0.12, duration=150.0, failed=12)
+    dataset_path = _write_dataset(
+        tmp_path, max_latency=250.0, error_rate=0.12, duration=150.0, failed=12
+    )
     config = ResilienceConfig(
         enabled=True,
         require_success=True,

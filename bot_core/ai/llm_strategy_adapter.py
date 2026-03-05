@@ -1,4 +1,5 @@
 """Adapter ułatwiający integrację LLM z silnikami strategii."""
+
 from __future__ import annotations
 
 from dataclasses import dataclass, field
@@ -15,8 +16,7 @@ class LLMClient(Protocol):
         model: str,
         tools: Sequence[Mapping[str, Any]] | None = None,
         **kwargs: Any,
-    ) -> Mapping[str, Any]:
-        ...
+    ) -> Mapping[str, Any]: ...
 
 
 ToolHandler = Callable[[Mapping[str, Any]], Mapping[str, Any]]
@@ -111,7 +111,9 @@ class LLMStrategyAdapter:
         return {"impact": impact, "summary": summary.strip()}
 
     # --------------------------------------------------------------------- call --
-    def generate(self, *, variables: Mapping[str, Any] | None = None, **kwargs: Any) -> Mapping[str, Any]:
+    def generate(
+        self, *, variables: Mapping[str, Any] | None = None, **kwargs: Any
+    ) -> Mapping[str, Any]:
         """Generuje odpowiedź LLM z wykorzystaniem zdefiniowanych narzędzi."""
 
         messages = self.build_messages(**(variables or {}))

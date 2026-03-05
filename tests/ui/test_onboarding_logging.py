@@ -30,12 +30,18 @@ class _StubVerifier:
 
         return FingerprintResult("HW-XYZ-001")
 
-    def verify_license_text(self, _: str, *, fingerprint: str | None = None) -> LicenseVerificationOutcome:
+    def verify_license_text(
+        self, _: str, *, fingerprint: str | None = None
+    ) -> LicenseVerificationOutcome:
         if self._succeed:
-            return LicenseVerificationOutcome(True, "ok", license_id="demo", fingerprint=fingerprint)
+            return LicenseVerificationOutcome(
+                True, "ok", license_id="demo", fingerprint=fingerprint
+            )
         return LicenseVerificationOutcome(False, "invalid_signature", details="bad signature")
 
-    def verify_license_file(self, path: str, *, fingerprint: str | None = None) -> LicenseVerificationOutcome:
+    def verify_license_file(
+        self, path: str, *, fingerprint: str | None = None
+    ) -> LicenseVerificationOutcome:
         return self.verify_license_text(path, fingerprint=fingerprint)
 
 
@@ -76,7 +82,9 @@ def test_onboarding_logging_success(tmp_path: Path, _qt_app) -> None:
     assert log_file.exists(), "Log onboardingowy nie został utworzony"
     contents = log_file.read_text(encoding="utf-8")
     assert "ONBOARDING_COMPLETED" in contents
-    assert metrics.duration_seconds.samples, "Metryka czasu onboardingowego nie została zarejestrowana"
+    assert metrics.duration_seconds.samples, (
+        "Metryka czasu onboardingowego nie została zarejestrowana"
+    )
     assert events, "Zdarzenia monitorujące nie zostały opublikowane"
     assert isinstance(events[0], OnboardingCompleted)
     assert events[0].license_id == "demo"

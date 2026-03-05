@@ -1,4 +1,5 @@
 """Repozytoria audytu wykorzystywane przez system alertów."""
+
 from __future__ import annotations
 
 import json
@@ -134,4 +135,3 @@ class FileAlertAuditLog(AlertAuditLog):
 
 
 __all__ = ["AlertAuditEntry", "InMemoryAlertAuditLog", "FileAlertAuditLog"]
-

@@ -125,10 +125,20 @@ def build_bundle(args: argparse.Namespace) -> Path:
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Build OEM desktop installer bundle")
-    parser.add_argument("--build-dir", required=True, help="Path to compiled Qt application (Release directory)")
-    parser.add_argument("--output", default=str(DEFAULT_OUTPUT), help="Output directory for the installer bundle")
-    parser.add_argument("--reports", default=str(DEFAULT_REPORTS_DIR), help="Optional reports directory to embed")
-    parser.add_argument("--updater-script", default="scripts/desktop_updater.py", help="Updater entrypoint for PyInstaller")
+    parser.add_argument(
+        "--build-dir", required=True, help="Path to compiled Qt application (Release directory)"
+    )
+    parser.add_argument(
+        "--output", default=str(DEFAULT_OUTPUT), help="Output directory for the installer bundle"
+    )
+    parser.add_argument(
+        "--reports", default=str(DEFAULT_REPORTS_DIR), help="Optional reports directory to embed"
+    )
+    parser.add_argument(
+        "--updater-script",
+        default="scripts/desktop_updater.py",
+        help="Updater entrypoint for PyInstaller",
+    )
     parser.add_argument("--signing-key", help="Secret used to sign the updater binary")
     parser.add_argument("--platform", choices=["linux", "windows", "mac"], default="linux")
     args = parser.parse_args(argv)

@@ -53,7 +53,9 @@ class FixtureSource(DataSource):
             rows=filtered[:limit],
         )
 
-    def warm_cache(self, symbols: Iterable[str], intervals: Iterable[str]) -> None:  # pragma: no cover
+    def warm_cache(
+        self, symbols: Iterable[str], intervals: Iterable[str]
+    ) -> None:  # pragma: no cover
         del symbols, intervals
 
 

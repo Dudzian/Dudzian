@@ -70,7 +70,7 @@ def _make_tar_bundle(
         for name, data in (
             ("manifest.json", manifest_bytes),
             ("manifest.json.sig", signature_json),
-            *( ((payload_name, payload_content),) if include_payload else tuple() ),
+            *(((payload_name, payload_content),) if include_payload else tuple()),
         ):
             info = tarfile.TarInfo(name)
             info.size = len(data)
@@ -96,7 +96,9 @@ def test_verify_tar_bundle_rejects_digest_mismatch(tmp_path: Path, signing_key: 
         vrb._verify_tar_bundle(bundle_path=bundle_path, signing_key=signing_key)
 
 
-def test_verify_tar_bundle_rejects_invalid_manifest_structure(tmp_path: Path, signing_key: bytes) -> None:
+def test_verify_tar_bundle_rejects_invalid_manifest_structure(
+    tmp_path: Path, signing_key: bytes
+) -> None:
     malformed = _make_tar_bundle(
         tmp_path,
         signing_key,
@@ -116,7 +118,9 @@ def test_verify_tar_bundle_rejects_invalid_manifest_structure(tmp_path: Path, si
     invalid_fields = _make_tar_bundle(
         tmp_path,
         signing_key,
-        manifest_override=lambda manifest: manifest.__setitem__("files", [{"path": 1, "sha256": None}]),
+        manifest_override=lambda manifest: manifest.__setitem__(
+            "files", [{"path": 1, "sha256": None}]
+        ),
     )
     with pytest.raises(ValueError, match="Pozycja wymaga pól 'path' i 'sha256'"):
         vrb._verify_tar_bundle(bundle_path=invalid_fields, signing_key=signing_key)
@@ -163,7 +167,9 @@ def test_verify_external_manifest_roundtrip(tmp_path: Path) -> None:
     assert summary["bundle"].endswith(".zip")
 
 
-def test_verify_external_manifest_warnings(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+def test_verify_external_manifest_warnings(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
     source = tmp_path / "bundle"
     (source / "docs").mkdir(parents=True)
     (source / "docs" / "guide.md").write_text("guide", encoding="utf-8")
@@ -199,7 +205,9 @@ def test_verify_external_manifest_warnings(tmp_path: Path, capsys: pytest.Captur
     assert "klucz HMAC" in warn_without_signature
 
 
-def test_verify_external_manifest_propagates_errors(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_verify_external_manifest_propagates_errors(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     source = tmp_path / "bundle"
     (source / "docs").mkdir(parents=True)
     (source / "docs" / "guide.md").write_text("guide", encoding="utf-8")
@@ -365,7 +373,9 @@ def test_load_signing_key_merged_sources(tmp_path: Path, monkeypatch: pytest.Mon
     assert from_env == b"C" * 24
 
 
-def test_load_signing_key_merged_validates_inputs(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_load_signing_key_merged_validates_inputs(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     with pytest.raises(ValueError, match="co najmniej 16"):
         vrb._load_signing_key_merged(
             inline_value="short",
@@ -451,17 +461,23 @@ def test_load_signing_key_merged_returns_none_without_sources() -> None:
     )
 
 
-def test_main_handles_tar_mode(tmp_path: Path, capsys: pytest.CaptureFixture[str], signing_key: bytes) -> None:
+def test_main_handles_tar_mode(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], signing_key: bytes
+) -> None:
     bundle_path = _make_tar_bundle(tmp_path, signing_key)
 
-    exit_code = vrb.main([
-        "--bundle",
-        str(bundle_path),
-        "--hmac-key",
-        signing_key.decode("ascii", "ignore") if signing_key.isascii() else "stage6-signature-key",
-        "--log-level",
-        "DEBUG",
-    ])
+    exit_code = vrb.main(
+        [
+            "--bundle",
+            str(bundle_path),
+            "--hmac-key",
+            signing_key.decode("ascii", "ignore")
+            if signing_key.isascii()
+            else "stage6-signature-key",
+            "--log-level",
+            "DEBUG",
+        ]
+    )
 
     assert exit_code == 0
     captured = json.loads(capsys.readouterr().out)
@@ -480,16 +496,18 @@ def test_main_handles_external_mode(tmp_path: Path, capsys: pytest.CaptureFixtur
         signing_key=b"stage6-signature-key",
     )
 
-    exit_code = vrb.main([
-        "--bundle",
-        str(artifacts.bundle_path),
-        "--manifest",
-        str(artifacts.manifest_path),
-        "--signature",
-        str(artifacts.signature_path),
-        "--hmac-key",
-        "stage6-signature-key",
-    ])
+    exit_code = vrb.main(
+        [
+            "--bundle",
+            str(artifacts.bundle_path),
+            "--manifest",
+            str(artifacts.manifest_path),
+            "--signature",
+            str(artifacts.signature_path),
+            "--hmac-key",
+            "stage6-signature-key",
+        ]
+    )
 
     assert exit_code == 0
     output = json.loads(capsys.readouterr().out)
@@ -536,14 +554,16 @@ def test_main_handles_external_failure(
     monkeypatch.setattr(vrb, "_verify_external_manifest", boom)
 
     with caplog.at_level("ERROR", logger="verify_resilience_bundle"):
-        exit_code = vrb.main([
-            "--bundle",
-            str(artifacts.bundle_path),
-            "--manifest",
-            str(artifacts.manifest_path),
-            "--signature",
-            str(artifacts.signature_path),
-        ])
+        exit_code = vrb.main(
+            [
+                "--bundle",
+                str(artifacts.bundle_path),
+                "--manifest",
+                str(artifacts.manifest_path),
+                "--signature",
+                str(artifacts.signature_path),
+            ]
+        )
 
     assert exit_code == 2
     assert any("Weryfikacja nie powiodła się" in message for message in caplog.messages)

@@ -100,7 +100,8 @@ def test_verify_update_bundle_requires_signature_when_key_is_configured(tmp_path
     assert result.signature_checked is True
     assert result.is_successful is False
     assert (
-        "Manifest aktualizacji nie zawiera podpisu, mimo że oczekiwano go w konfiguracji." in result.errors
+        "Manifest aktualizacji nie zawiera podpisu, mimo że oczekiwano go w konfiguracji."
+        in result.errors
     )
 
 
@@ -371,7 +372,9 @@ def test_delta_manifest_rejects_casefold_conflicts_between_lists(tmp_path: Path)
 
 
 @pytest.mark.parametrize("embed_hwid", [True])
-def test_offline_update_workflow(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, embed_hwid: bool) -> None:
+def test_offline_update_workflow(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, embed_hwid: bool
+) -> None:
     fingerprint_value = "OEM-FP-999"
     monkeypatch.setattr("bot_core.security.hwid.get_local_fingerprint", lambda: fingerprint_value)
 
@@ -507,5 +510,7 @@ def test_offline_update_workflow(tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 
     manager.rollback(base_dir, runtime_dir)
     assert (runtime_dir / "daemon" / "app.bin").read_bytes() == b"OLD"
-    restored_doc = json.loads((runtime_dir / "config" / "fingerprint.expected.json").read_text(encoding="utf-8"))
+    restored_doc = json.loads(
+        (runtime_dir / "config" / "fingerprint.expected.json").read_text(encoding="utf-8")
+    )
     assert restored_doc["payload"]["fingerprint"] == fingerprint_value

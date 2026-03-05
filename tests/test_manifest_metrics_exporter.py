@@ -25,7 +25,9 @@ from bot_core.security.signing import build_hmac_signature
 import scripts.export_manifest_metrics as export_manifest_metrics
 
 
-def _make_entry(symbol: str, interval: str, *, status: str, gap: float, rows: int, threshold: int) -> ManifestEntry:
+def _make_entry(
+    symbol: str, interval: str, *, status: str, gap: float, rows: int, threshold: int
+) -> ManifestEntry:
     return ManifestEntry(
         symbol=symbol,
         interval=interval,
@@ -193,7 +195,9 @@ def simple_core_config(tmp_path: Path):
     return _StubCoreConfig()
 
 
-def test_export_manifest_metrics_script(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, simple_core_config) -> None:
+def test_export_manifest_metrics_script(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, simple_core_config
+) -> None:
     manifest = tmp_path / "ohlcv_manifest.sqlite"
     storage = SQLiteCacheStorage(manifest, store_rows=False)
 
@@ -208,7 +212,9 @@ def test_export_manifest_metrics_script(tmp_path: Path, monkeypatch: pytest.Monk
         },
     )
 
-    monkeypatch.setattr(export_manifest_metrics, "load_core_config", lambda path: simple_core_config)
+    monkeypatch.setattr(
+        export_manifest_metrics, "load_core_config", lambda path: simple_core_config
+    )
 
     metrics_path = tmp_path / "metrics.prom"
     summary_path = tmp_path / "summary.json"
@@ -241,11 +247,15 @@ def test_export_manifest_metrics_script(tmp_path: Path, monkeypatch: pytest.Monk
     assert summary["status_counts"].get("ok", 0) == 1
 
 
-def test_export_manifest_metrics_script_denies_status(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, simple_core_config) -> None:
+def test_export_manifest_metrics_script_denies_status(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, simple_core_config
+) -> None:
     manifest = tmp_path / "ohlcv_manifest.sqlite"
     SQLiteCacheStorage(manifest, store_rows=False)  # inicjalizuje strukturę bez wpisów
 
-    monkeypatch.setattr(export_manifest_metrics, "load_core_config", lambda path: simple_core_config)
+    monkeypatch.setattr(
+        export_manifest_metrics, "load_core_config", lambda path: simple_core_config
+    )
 
     exit_code = export_manifest_metrics.main(
         [
@@ -277,7 +287,9 @@ def test_export_manifest_metrics_script_signs_summary(
         {"rows": [[float(last_ts), 1.0, 1.0, 1.0, 1.0, 1.0]]},
     )
 
-    monkeypatch.setattr(export_manifest_metrics, "load_core_config", lambda path: simple_core_config)
+    monkeypatch.setattr(
+        export_manifest_metrics, "load_core_config", lambda path: simple_core_config
+    )
 
     metrics_path = tmp_path / "metrics.prom"
     summary_path = tmp_path / "summary.json"
@@ -325,7 +337,9 @@ def test_export_manifest_metrics_script_requires_signature_when_enforced(
     manifest = tmp_path / "ohlcv_manifest.sqlite"
     SQLiteCacheStorage(manifest, store_rows=False)
 
-    monkeypatch.setattr(export_manifest_metrics, "load_core_config", lambda path: simple_core_config)
+    monkeypatch.setattr(
+        export_manifest_metrics, "load_core_config", lambda path: simple_core_config
+    )
 
     with pytest.raises(SystemExit) as exc:
         export_manifest_metrics.main(

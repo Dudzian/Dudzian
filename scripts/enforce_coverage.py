@@ -1,4 +1,5 @@
 """Weryfikacja progów pokrycia testami dla krytycznych modułów Stage 4."""
+
 from __future__ import annotations
 
 import argparse
@@ -111,21 +112,15 @@ def _validate(
 
     if summary.overall < minimum:
         passed = False
-        messages.append(
-            f"Pokrycie całkowite {summary.overall:.2f}% poniżej progu {minimum:.2f}%"
-        )
+        messages.append(f"Pokrycie całkowite {summary.overall:.2f}% poniżej progu {minimum:.2f}%")
     else:
-        messages.append(
-            f"Pokrycie całkowite {summary.overall:.2f}% (próg {minimum:.2f}%)"
-        )
+        messages.append(f"Pokrycie całkowite {summary.overall:.2f}% (próg {minimum:.2f}%)")
 
     for requirement in requirements:
         package_rate = summary.packages.get(requirement.name)
         if package_rate is None:
             passed = False
-            messages.append(
-                f"Brak pakietu '{requirement.name}' w raporcie coverage"
-            )
+            messages.append(f"Brak pakietu '{requirement.name}' w raporcie coverage")
             continue
         threshold = requirement.minimum if requirement.minimum is not None else minimum
         if package_rate < threshold:

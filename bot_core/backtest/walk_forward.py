@@ -1,4 +1,5 @@
 """Walk-forward backtester obsługujący wiele instrumentów i koszty transakcyjne."""
+
 from __future__ import annotations
 
 import logging
@@ -141,18 +142,20 @@ class WalkForwardBacktester:
                 )
                 if report is None:
                     continue
-                reports.append(SymbolSegmentReport(
-                    symbol=symbol,
-                    segment_index=idx,
-                    train_range=(segment.train_start, segment.train_end),
-                    test_range=(segment.test_start, segment.test_end),
-                    start_equity=report["start_equity"],
-                    end_equity=report["end_equity"],
-                    return_pct=report["return_pct"],
-                    max_drawdown_pct=report["max_drawdown_pct"],
-                    equity_curve=tuple(report["equity_curve"]),
-                    costs=report["costs"],
-                ))
+                reports.append(
+                    SymbolSegmentReport(
+                        symbol=symbol,
+                        segment_index=idx,
+                        train_range=(segment.train_start, segment.train_end),
+                        test_range=(segment.test_start, segment.test_end),
+                        start_equity=report["start_equity"],
+                        end_equity=report["end_equity"],
+                        return_pct=report["return_pct"],
+                        max_drawdown_pct=report["max_drawdown_pct"],
+                        equity_curve=tuple(report["equity_curve"]),
+                        costs=report["costs"],
+                    )
+                )
                 symbol_capital[symbol] = report["end_equity"]
                 costs = per_symbol_costs[symbol]
                 costs.trades += report["costs"].trades
@@ -190,11 +193,9 @@ class WalkForwardBacktester:
         *,
         capital: float,
     ) -> Mapping[str, Any] | None:
-        with capture_pandas_warnings(
-            _LOGGER, component="backtest.walk_forward.segment"
-        ):
-            train = frame.loc[segment.train_start:segment.train_end]
-            test = frame.loc[segment.test_start:segment.test_end]
+        with capture_pandas_warnings(_LOGGER, component="backtest.walk_forward.segment"):
+            train = frame.loc[segment.train_start : segment.train_end]
+            test = frame.loc[segment.test_start : segment.test_end]
             if test.empty:
                 return None
 
@@ -340,4 +341,3 @@ __all__ = [
     "TransactionCostBreakdown",
     "SymbolSegmentReport",
 ]
-

@@ -1,4 +1,5 @@
 """Symulator obciążeniowy integracji giełd z wykorzystaniem AsyncIOTaskQueue."""
+
 from __future__ import annotations
 
 import argparse
@@ -179,14 +180,13 @@ def load_config(path: Path) -> ExchangeStressConfig:
             raise ValueError("Każdy scenariusz musi mieć nazwę")
         scenario = ExchangeScenario(
             name=name,
-            request_count=_normalize_int(item.get("request_count"), default_request_count) or default_request_count,
+            request_count=_normalize_int(item.get("request_count"), default_request_count)
+            or default_request_count,
             base_latency_ms=_normalize_float(item.get("base_latency_ms"), default_latency),
             jitter_ms=_normalize_float(item.get("jitter_ms"), default_jitter),
             error_rate=_normalize_float(item.get("error_rate"), default_error_rate),
             throttle_rate=_normalize_float(item.get("throttle_rate"), default_throttle_rate),
-            max_concurrency=(
-                _normalize_int(item.get("max_concurrency"), 0) or None
-            ),
+            max_concurrency=(_normalize_int(item.get("max_concurrency"), 0) or None),
             burst=(_normalize_int(item.get("burst"), 0) or None),
         )
         scenarios.append(scenario)
@@ -294,9 +294,7 @@ async def _run_scenario(
         else:
             metrics.errors += 1
         if outcome.error is not None:
-            _LOGGER.debug(
-                "Błąd transportu podczas testu %s: %s", scenario.name, outcome.error
-            )
+            _LOGGER.debug("Błąd transportu podczas testu %s: %s", scenario.name, outcome.error)
     return metrics
 
 
@@ -319,7 +317,9 @@ async def run_exchange_stress(
 
     transport = build_mock_transport(config.scenarios, seed=seed)
     started_at = time.time()
-    async with httpx.AsyncClient(transport=transport, base_url="https://exchange-stress.local") as client:
+    async with httpx.AsyncClient(
+        transport=transport, base_url="https://exchange-stress.local"
+    ) as client:
         metrics: dict[str, ExchangeMetrics] = {}
         for scenario in config.scenarios:
             metrics[scenario.name] = await _run_scenario(queue, client, scenario)
@@ -382,7 +382,9 @@ def main(argv: list[str] | None = None) -> int:
         return 130
 
     payload = result.as_dict()
-    output_path.write_text(json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    output_path.write_text(
+        json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
+    )
     _LOGGER.info("Zapisano wynik testu do %s", output_path)
     print(json.dumps(payload, ensure_ascii=False, indent=2))
     return 0

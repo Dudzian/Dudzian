@@ -103,4 +103,3 @@ def test_ai_components_allowed_when_module_enabled(tmp_path: Path) -> None:
         dataset_provider=lambda: pytest.skip("dataset provider nie powinien zostać wywołany"),
     )
     scheduler.register(job)
-

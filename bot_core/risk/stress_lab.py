@@ -29,7 +29,7 @@ from typing import Callable, Mapping, MutableMapping, Sequence, TypeAlias
 
 from bot_core.config.models import (
     PortfolioAssetConfig,
-    StressLabConfig,            # to jest konfiguracja z config.models (main)
+    StressLabConfig,  # to jest konfiguracja z config.models (main)
     StressLabDatasetConfig,
     StressLabScenarioConfig,
     StressLabShockConfig,
@@ -84,7 +84,9 @@ _DEFAULT_RUNTIME_SCENARIOS: tuple[StressLabScenarioConfig, ...] = (
         severity="critical",
         markets=("btc_usdt",),
         shocks=(
-            StressLabShockConfig(type="infrastructure_blackout", intensity=1.0, duration_minutes=90.0),
+            StressLabShockConfig(
+                type="infrastructure_blackout", intensity=1.0, duration_minutes=90.0
+            ),
             StressLabShockConfig(type="funding_shock", intensity=1.1),
             StressLabShockConfig(type="sentiment_crash", intensity=0.8),
         ),
@@ -102,6 +104,7 @@ def build_default_runtime_scenarios() -> tuple[StressLabScenarioConfig, ...]:
 @dataclass(slots=True)
 class StressLabSeverityPolicy:
     """Polityka adaptacyjna dla określonego poziomu severity."""
+
     severity: str
     weight_multiplier: float | None = None
     min_weight: float | None = None
@@ -135,6 +138,7 @@ class StressLabPolicyConfig:
     Uwaga: to NIE jest `config.models.StressLabConfig` z main.
     Ten typ konfiguruje sam evaluator (progi drawdown/liquidity/latency).
     """
+
     drawdown_warning_threshold: float = 0.08
     drawdown_critical_threshold: float = 0.12
     liquidity_warning_threshold_usd: float | None = 200_000.0
@@ -144,12 +148,15 @@ class StressLabPolicyConfig:
     failure_default_severity: str = "critical"
     degradation_default_severity: str = "warning"
     default_tags: Sequence[str] = field(default_factory=lambda: ("stress_lab",))
-    severity_policies: Mapping[str, StressLabSeverityPolicy] = field(default_factory=_default_policies)
+    severity_policies: Mapping[str, StressLabSeverityPolicy] = field(
+        default_factory=_default_policies
+    )
 
 
 @dataclass(slots=True)
 class StressOverrideRecommendation:
     """Rekomendacja override'u dla PortfolioGovernora."""
+
     severity: str
     reason: str
     symbol: str | None = None
@@ -184,6 +191,7 @@ class StressOverrideRecommendation:
 @dataclass(slots=True)
 class StressScenarioInsight:
     """Wniosek z pojedynczego scenariusza Stress Lab (HEAD)."""
+
     profile: str
     scenario: str
     severity: str
@@ -210,6 +218,7 @@ class StressScenarioInsight:
 @dataclass(slots=True)
 class StressLabReportHead:
     """Zbiorczy raport Stress Lab (HEAD) obejmujący wnioski i overridy."""
+
     generated_at: datetime
     source_report_at: str
     insights: Sequence[StressScenarioInsight]
@@ -245,7 +254,9 @@ class StressLabEvaluator:
         self,
         risk_report: RiskSimulationReport,
         *,
-        portfolio: Mapping[str, PortfolioAssetConfig] | Sequence[PortfolioAssetConfig] | None = None,
+        portfolio: Mapping[str, PortfolioAssetConfig]
+        | Sequence[PortfolioAssetConfig]
+        | None = None,
     ) -> StressLabReportHead:
         if portfolio is None:
             asset_map: Mapping[str, PortfolioAssetConfig] = {}
@@ -288,14 +299,10 @@ class StressLabEvaluator:
         drawdown = float(profile.max_drawdown_pct)
         if drawdown >= self._config.drawdown_critical_threshold:
             severity = "critical"
-            message = (
-                f"Max drawdown {drawdown:.2%} przekracza próg {self._config.drawdown_critical_threshold:.2%}"
-            )
+            message = f"Max drawdown {drawdown:.2%} przekracza próg {self._config.drawdown_critical_threshold:.2%}"
         elif drawdown >= self._config.drawdown_warning_threshold:
             severity = "warning"
-            message = (
-                f"Max drawdown {drawdown:.2%} przekracza próg {self._config.drawdown_warning_threshold:.2%}"
-            )
+            message = f"Max drawdown {drawdown:.2%} przekracza próg {self._config.drawdown_warning_threshold:.2%}"
         else:
             return None
 
@@ -588,6 +595,7 @@ class StressLabEvaluator:
 
 # --- writer-y (HEAD) ---------------------------------------------------------
 
+
 def write_report_json(report: StressLabReportHead, output_path: Path) -> dict[str, object]:
     payload = report.to_payload()
     output_path = output_path.expanduser()
@@ -643,7 +651,9 @@ def write_overrides_csv(report: StressLabReportHead, output_path: Path) -> Path:
                     override.symbol or "",
                     override.risk_budget or "",
                     override.severity,
-                    "" if override.weight_multiplier is None else f"{override.weight_multiplier:.6f}",
+                    ""
+                    if override.weight_multiplier is None
+                    else f"{override.weight_multiplier:.6f}",
                     "" if override.min_weight is None else f"{override.min_weight:.6f}",
                     "" if override.max_weight is None else f"{override.max_weight:.6f}",
                     "yes" if override.force_rebalance else "no",
@@ -698,6 +708,7 @@ def _is_synthetic_override_enabled() -> bool:
         return False
     return flag.strip().lower() in {"1", "true", "yes", "y", "on"}
 
+
 _SEVERITY_FACTORS: Mapping[str, float] = {
     "low": 0.4,
     "medium": 0.7,
@@ -714,6 +725,7 @@ MarketBaseline: TypeAlias = MarketIntelBaseline
 @dataclass(slots=True)
 class MarketStressMetrics:
     """Metryki wynikowe pojedynczego rynku po zasymulowaniu szoków (main)."""
+
     symbol: str
     baseline: MarketBaseline
     liquidity_loss_pct: float
@@ -747,6 +759,7 @@ class MarketStressMetrics:
 @dataclass(slots=True)
 class StressScenarioResult:
     """Zbiorczy wynik scenariusza Stress Lab (main)."""
+
     name: str
     severity: str
     status: str
@@ -776,6 +789,7 @@ class StressScenarioResult:
 @dataclass(slots=True)
 class StressLabReportMain(HmacSignedReportMixin):
     """Raport zbiorczy Stress Lab (main)."""
+
     generated_at: str
     thresholds: StressLabThresholdsConfig
     scenarios: Sequence[StressScenarioResult]
@@ -797,6 +811,7 @@ class StressLabReportMain(HmacSignedReportMixin):
             json.dump(self.to_mapping(), handle, ensure_ascii=False, indent=2, sort_keys=True)
             handle.write("\n")
         return path
+
 
 class StressLab:
     """Wykonuje scenariusze Stress Lab na podstawie konfiguracji Stage6 (main)."""
@@ -884,7 +899,9 @@ class StressLab:
             description=scenario.description,
         )
 
-    def _aggregate_metrics(self, market_results: Sequence[MarketStressMetrics]) -> Mapping[str, float]:
+    def _aggregate_metrics(
+        self, market_results: Sequence[MarketStressMetrics]
+    ) -> Mapping[str, float]:
         if not market_results:
             return {
                 "liquidity_loss_pct": 0.0,
@@ -903,10 +920,13 @@ class StressLab:
             total_weight = float(len(market_results))
 
         def _weighted_average(attr: str) -> float:
-            return sum(
-                getattr(result, attr) * weight
-                for result, weight in zip(market_results, weights)
-            ) / total_weight
+            return (
+                sum(
+                    getattr(result, attr) * weight
+                    for result, weight in zip(market_results, weights)
+                )
+                / total_weight
+            )
 
         return {
             "liquidity_loss_pct": max(0.0, _weighted_average("liquidity_loss_pct")),
@@ -958,7 +978,11 @@ class StressLab:
                     25.0 + severity_factor * intensity * 220.0,
                 )
             elif shock_type in {"blackout", "exchange_outage", "infrastructure_blackout"}:
-                duration = shock.duration_minutes if shock.duration_minutes is not None else severity_factor * intensity * 90.0
+                duration = (
+                    shock.duration_minutes
+                    if shock.duration_minutes is not None
+                    else severity_factor * intensity * 90.0
+                )
                 blackout_minutes = max(blackout_minutes, max(0.0, duration))
             elif shock_type in {"price_gap", "divergence", "dispersion"}:
                 dispersion_bps = max(dispersion_bps, severity_factor * intensity * 80.0)
@@ -971,7 +995,8 @@ class StressLab:
         liquidity_loss_pct = min(1.0, max(0.0, 1.0 - (depth / max(baseline.avg_depth_usd, 1.0))))
         spread_increase_bps = max(0.0, spread - baseline.avg_spread_bps)
         volatility_increase_pct = max(
-            0.0, (volatility - baseline.realized_volatility) / max(baseline.realized_volatility, 1e-6)
+            0.0,
+            (volatility - baseline.realized_volatility) / max(baseline.realized_volatility, 1e-6),
         )
         sentiment_drawdown = max(0.0, baseline.sentiment_score - sentiment)
         funding_shift_bps = abs(funding - baseline.funding_rate_bps)
@@ -995,7 +1020,9 @@ class StressLab:
             return self._datasets[market]
         if market in self._datasets_by_symbol:
             return self._datasets_by_symbol[market]
-        _LOGGER.warning("Stress Lab: brak datasetu dla rynku %s – generuję syntetyczny baseline", market)
+        _LOGGER.warning(
+            "Stress Lab: brak datasetu dla rynku %s – generuję syntetyczny baseline", market
+        )
         baseline = self._build_synthetic_baseline(market, weight=1.0)
         self._datasets_by_symbol[baseline.symbol] = baseline
         return baseline
@@ -1089,7 +1116,7 @@ __all__ = [
     "StressOverrideRecommendation",
     "StressScenarioInsight",
     "StressLabReportHead",
-    "StressLabReport",          # alias -> Head
+    "StressLabReport",  # alias -> Head
     "StressLabEvaluator",
     "write_overrides_csv",
     "write_report_csv",

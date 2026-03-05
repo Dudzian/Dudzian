@@ -58,8 +58,14 @@ def test_validate_license_includes_multi_seat_and_subscription(tmp_path: Path) -
     assert result.seat_assignments == ("OEM-DEVICE-001",)
     assert result.seat_pending == ("OEM-DEVICE-002",)
     assert result.subscription_status == "active"
-    assert result.subscription_renews_at == "2025-07-01T00:00:00+00:00" or result.subscription_renews_at == "2025-07-01T00:00:00Z"
-    assert result.subscription_period_start == "2025-01-01T00:00:00+00:00" or result.subscription_period_start == "2025-01-01T00:00:00Z"
+    assert (
+        result.subscription_renews_at == "2025-07-01T00:00:00+00:00"
+        or result.subscription_renews_at == "2025-07-01T00:00:00Z"
+    )
+    assert (
+        result.subscription_period_start == "2025-01-01T00:00:00+00:00"
+        or result.subscription_period_start == "2025-01-01T00:00:00Z"
+    )
 
 
 def test_seat_policy_enforcement_reports_missing_assignment(tmp_path: Path) -> None:

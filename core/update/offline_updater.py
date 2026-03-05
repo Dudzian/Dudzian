@@ -1,4 +1,5 @@
 """Weryfikacja i import podpisanych pakietów aktualizacji `.dudzianpkg`."""
+
 from __future__ import annotations
 
 import json
@@ -78,7 +79,9 @@ def _load_manifest(directory: Path) -> Mapping[str, object]:
     try:
         payload = json.loads(manifest_path.read_text(encoding="utf-8"))
     except json.JSONDecodeError as exc:  # pragma: no cover - defensywne
-        raise OfflinePackageError(f"Manifest {manifest_path} zawiera niepoprawny JSON: {exc}") from exc
+        raise OfflinePackageError(
+            f"Manifest {manifest_path} zawiera niepoprawny JSON: {exc}"
+        ) from exc
     if not isinstance(payload, Mapping):
         raise OfflinePackageError("Manifest pakietu powinien być obiektem JSON")
     return payload
@@ -114,7 +117,9 @@ def _normalise_artifacts(entries: Sequence[Mapping[str, object]]) -> list[Offlin
             raise OfflinePackageError(f"Artefakt {path_value} posiada niepoprawny rozmiar")
         if not isinstance(hash_value, str) or len(hash_value) < 32:
             raise OfflinePackageError(f"Artefakt {path_value} posiada niepoprawny hash SHA-256")
-        artifacts.append(OfflinePackageArtifact(path=path_value, size=size_value, sha256=hash_value.lower()))
+        artifacts.append(
+            OfflinePackageArtifact(path=path_value, size=size_value, sha256=hash_value.lower())
+        )
     return artifacts
 
 
@@ -151,7 +156,9 @@ def _normalise_manifest(payload: Mapping[str, object]) -> OfflinePackageManifest
     return OfflinePackageManifest(
         package_id=package_id.strip(),
         version=version.strip(),
-        fingerprint=fingerprint.strip() if isinstance(fingerprint, str) and fingerprint.strip() else None,
+        fingerprint=fingerprint.strip()
+        if isinstance(fingerprint, str) and fingerprint.strip()
+        else None,
         created_at=created_at,
         artifacts=artifacts,
         metadata=metadata,
@@ -208,14 +215,20 @@ def verify_offline_package(
         signature_payload = _load_signature(staging_dir)
         manifest = _normalise_manifest(manifest_payload)
 
-        if expected_fingerprint and manifest.fingerprint and manifest.fingerprint != expected_fingerprint:
+        if (
+            expected_fingerprint
+            and manifest.fingerprint
+            and manifest.fingerprint != expected_fingerprint
+        ):
             raise OfflinePackageError(
                 "Pakiet został przygotowany dla innego fingerprintu urządzenia"
             )
 
         if hmac_key is not None:
             if signature_payload is None:
-                raise OfflinePackageError("Pakiet nie zawiera pliku manifest.sig wymaganego do weryfikacji")
+                raise OfflinePackageError(
+                    "Pakiet nie zawiera pliku manifest.sig wymaganego do weryfikacji"
+                )
             if not verify_hmac_signature(manifest.raw, signature_payload, key=hmac_key):
                 raise OfflinePackageError("Podpis kryptograficzny pakietu jest niepoprawny")
 
@@ -277,7 +290,9 @@ def import_offline_package(
         manifest_to_write: MutableMapping[str, object] = dict(manifest.raw)
         manifest_to_write["signature"] = _signature_string(manifest, signature_payload, artifacts)
         if manifest_to_write.get("created_at") is None:
-            manifest_to_write["created_at"] = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+            manifest_to_write["created_at"] = (
+                datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+            )
 
         manifest_path = target / "manifest.json"
         manifest_path.write_text(

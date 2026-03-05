@@ -114,7 +114,9 @@ class Ed25519SignatureProvider(SignatureProvider):
 
         signature_value = signature_doc.get("value") or signature_doc.get("signature")
         if not isinstance(signature_value, str):
-            return PresetSignatureVerification(False, ("signature-missing",), self.algorithm, key_id_text), None
+            return PresetSignatureVerification(
+                False, ("signature-missing",), self.algorithm, key_id_text
+            ), None
 
         try:
             signature_bytes = decode_key_material(signature_value)
@@ -255,7 +257,9 @@ class HmacSha256SignatureProvider(SignatureProvider):
                 except ValueError:
                     key_bytes = None
 
-        verified = verify_hmac_signature(payload, signature_doc, key=key_bytes, algorithm="HMAC-SHA256")
+        verified = verify_hmac_signature(
+            payload, signature_doc, key=key_bytes, algorithm="HMAC-SHA256"
+        )
         signature = PresetSignature(
             algorithm="HMAC-SHA256",
             value=str(signature_doc.get("value") or signature_doc.get("signature")),
@@ -274,7 +278,9 @@ def verify_preset_signature(
 ) -> tuple[PresetSignatureVerification, PresetSignature | None]:
     """Weryfikuje podpis z użyciem zadanego adaptera."""
 
-    algorithm = (signature_doc or {}).get("algorithm") if isinstance(signature_doc, Mapping) else None
+    algorithm = (
+        (signature_doc or {}).get("algorithm") if isinstance(signature_doc, Mapping) else None
+    )
     normalized_algorithm = str(algorithm or "").strip().lower() or DEFAULT_SIGNATURE_ALGORITHM
     available = providers or (
         Ed25519SignatureProvider(),
@@ -332,4 +338,3 @@ __all__ = [
     "sign_preset_payload",
     "verify_preset_signature",
 ]
-

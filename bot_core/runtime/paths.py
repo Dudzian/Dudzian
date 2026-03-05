@@ -105,6 +105,7 @@ def build_desktop_app_paths_from_root(
 
     return _build_paths_for_root(Path(app_root), logs_dir=logs_dir, text_log_file=text_log_file)
 
+
 @dataclass(frozen=True)
 class RuntimePaths:
     """Zestaw ścieżek używanych przez runtime do cache, presetów i dzienników."""
@@ -122,7 +123,9 @@ class RuntimePaths:
         """
 
         base_value = getattr(environment, "data_cache_path", None) or Path("var/data") / getattr(
-            environment, "name", "default",
+            environment,
+            "name",
+            "default",
         )
         base_path = Path(str(base_value)).expanduser()
 

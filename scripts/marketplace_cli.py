@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 """CLI do zarządzania lokalnym repozytorium konfiguracji Marketplace."""
+
 from __future__ import annotations
 
 import argparse
@@ -39,7 +40,8 @@ from bot_core.marketplace import (  # noqa: E402
 )
 
 _PACKAGE_VERSION_REF_PATTERN = re.compile(
-    r"^[a-z0-9][a-z0-9._-]{2,63}@" r"[0-9]+\.[0-9]+\.[0-9]+(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?$"
+    r"^[a-z0-9][a-z0-9._-]{2,63}@"
+    r"[0-9]+\.[0-9]+\.[0-9]+(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?$"
 )
 
 _MARKETPLACE_DIR = REPO_ROOT / "config" / "marketplace"
@@ -86,7 +88,9 @@ class MarketplaceRepository:
     def update_config(self, config: MarketplaceRepositoryConfig) -> None:
         self.config_path.write_text(config.model_dump_json(indent=2), encoding="utf-8")
 
-    def sync(self, *, source: str | None = None, force: bool = False, timeout: int = 20) -> MarketplaceCatalog:
+    def sync(
+        self, *, source: str | None = None, force: bool = False, timeout: int = 20
+    ) -> MarketplaceCatalog:
         """Pobiera zdalny katalog i zapisuje go lokalnie."""
 
         self.ensure_initialized()
@@ -97,7 +101,9 @@ class MarketplaceRepository:
                 "Nie określono źródła katalogu. Użyj --source lub skonfiguruj remote_index_url."
             )
 
-        payload, etag = self._fetch_remote(remote, etag=None if force else config.etag, timeout=timeout)
+        payload, etag = self._fetch_remote(
+            remote, etag=None if force else config.etag, timeout=timeout
+        )
         if payload is None:
             print("Lokalny katalog jest aktualny (304 Not Modified).")
             return self.load_catalog()
@@ -133,7 +139,9 @@ class MarketplaceRepository:
         except HTTPError as exc:  # pragma: no cover - I/O
             if exc.code == 304:
                 return None, etag
-            raise MarketplaceVerificationError(f"Błąd HTTP podczas pobierania katalogu: {exc}") from exc
+            raise MarketplaceVerificationError(
+                f"Błąd HTTP podczas pobierania katalogu: {exc}"
+            ) from exc
         except URLError as exc:  # pragma: no cover - I/O
             raise MarketplaceVerificationError(f"Nie udało się pobrać katalogu: {exc}") from exc
 
@@ -203,9 +211,7 @@ def _validate_release_metadata(
 
         for ref in package.versioning.supersedes + package.versioning.superseded_by:
             if not _PACKAGE_VERSION_REF_PATTERN.match(ref):
-                errors.append(
-                    f"{package.package_id}: niepoprawny format odwołania wersji '{ref}'."
-                )
+                errors.append(f"{package.package_id}: niepoprawny format odwołania wersji '{ref}'.")
 
         source = package.versioning.source
         if source:
@@ -304,16 +310,12 @@ def _cmd_package(repo: MarketplaceRepository, args: argparse.Namespace) -> int:
         {"preset": payload, "signature": signature.as_dict()},
         require_signature=True,
     )
-    serialized = service.export(
-        document, format=args.format, ensure_ascii=args.ensure_ascii
-    )
+    serialized = service.export(document, format=args.format, ensure_ascii=args.ensure_ascii)
     ext = "yaml" if args.format == "yaml" else "json"
     metadata = payload.get("metadata") if isinstance(payload.get("metadata"), Mapping) else {}
     preset_id = str(metadata.get("id") or "").strip() or spec_path.stem
     output_path = (
-        Path(args.output).expanduser()
-        if args.output
-        else spec_path.with_suffix(f".{ext}")
+        Path(args.output).expanduser() if args.output else spec_path.with_suffix(f".{ext}")
     )
     output_path.write_bytes(serialized)
     print(f"Zapisano podpisany preset do {output_path}")

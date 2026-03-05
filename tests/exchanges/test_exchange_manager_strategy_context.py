@@ -14,7 +14,9 @@ from bot_core.strategies.catalog import (
 )
 
 
-def _build_descriptor(preset_id: str, *, profile: StrategyPresetProfile) -> StrategyPresetDescriptor:
+def _build_descriptor(
+    preset_id: str, *, profile: StrategyPresetProfile
+) -> StrategyPresetDescriptor:
     license_status = PresetLicenseStatus(
         preset_id=preset_id,
         module_id=f"module-{preset_id}",
@@ -84,4 +86,3 @@ def test_strategy_context_sync_and_assignment() -> None:
 
     with pytest.raises(ValueError):
         manager.activate_strategy_preset("unknown", "alpha")
-

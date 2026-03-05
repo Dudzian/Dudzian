@@ -31,7 +31,9 @@ def _parse_metadata(values: list[str] | None) -> dict[str, Any]:
 def _load_key(value: str | None, path: str | None, env: str | None) -> bytes | None:
     provided = [item for item in (value, path, env) if item]
     if len(provided) > 1:
-        raise ValueError("Klucz HMAC podaj jako wartość, plik lub zmienną środowiskową – tylko jedną opcję")
+        raise ValueError(
+            "Klucz HMAC podaj jako wartość, plik lub zmienną środowiskową – tylko jedną opcję"
+        )
     if value:
         return value.encode("utf-8")
     if env:
@@ -60,7 +62,9 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--bundle-name", default="stage6-resilience", help="Prefiks nazwy paczki")
     parser.add_argument("--include", action="append", help="Wzorce plików do uwzględnienia (glob)")
     parser.add_argument("--exclude", action="append", help="Wzorce plików do pominięcia (glob)")
-    parser.add_argument("--metadata", action="append", help="Dodatkowe metadane w formacie klucz=wartość")
+    parser.add_argument(
+        "--metadata", action="append", help="Dodatkowe metadane w formacie klucz=wartość"
+    )
 
     parser.add_argument(
         "--audit-json",
@@ -69,8 +73,16 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("--audit-csv", help="Opcjonalny raport CSV z audytu")
     parser.add_argument("--audit-signature", help="Plik podpisu raportu audytu")
-    parser.add_argument("--audit-require-signature", action="store_true", help="Wymagaj podpisu manifestu podczas audytu")
-    parser.add_argument("--audit-no-verify", action="store_true", help="Nie weryfikuj podpisu manifestu kluczem HMAC")
+    parser.add_argument(
+        "--audit-require-signature",
+        action="store_true",
+        help="Wymagaj podpisu manifestu podczas audytu",
+    )
+    parser.add_argument(
+        "--audit-no-verify",
+        action="store_true",
+        help="Nie weryfikuj podpisu manifestu kluczem HMAC",
+    )
     parser.add_argument("--audit-policy", help="Plik polityki wymagań paczki (JSON)")
     parser.add_argument("--audit-hmac-key", help="Klucz HMAC do weryfikacji podpisu manifestu")
     parser.add_argument("--audit-hmac-key-path", help="Plik z kluczem HMAC dla audytu")
@@ -112,7 +124,9 @@ def run(argv: list[str] | None = None) -> int:
     try:
         metadata = _parse_metadata(args.metadata)
         signing_key = _load_key(args.signing_key, args.signing_key_path, args.signing_key_env)
-        audit_key = _load_key(args.audit_hmac_key, args.audit_hmac_key_path, args.audit_hmac_key_env)
+        audit_key = _load_key(
+            args.audit_hmac_key, args.audit_hmac_key_path, args.audit_hmac_key_env
+        )
         policy = load_policy(Path(args.audit_policy)) if args.audit_policy else None
 
         bundle_config = hypercare.BundleConfig(

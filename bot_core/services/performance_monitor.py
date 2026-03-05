@@ -18,9 +18,9 @@ class PerfMonitorConfig:
     symbol: str = "BTCUSDT"
     window_trades: int = 100
     min_trades_to_eval: int = 20
-    pf_min: float = 1.1         # Profit Factor próg
-    exp_min: float = 0.0        # Expectancy próg (na transakcję)
-    consecutive_breaches: int = 3   # ile razy z rzędu poniżej progów -> trigger
+    pf_min: float = 1.1  # Profit Factor próg
+    exp_min: float = 0.0  # Expectancy próg (na transakcję)
+    consecutive_breaches: int = 3  # ile razy z rzędu poniżej progów -> trigger
     publish_every_n_trades: int = 5  # co ile transakcji publikować status
 
 
@@ -29,6 +29,7 @@ class PerformanceMonitor:
     Zbiera transakcje i liczy metryki okna: Profit Factor, Expectancy.
     Gdy przez N kolejnych ewaluacji metryki są poniżej progów -> emituje WFO_TRIGGER.
     """
+
     def __init__(self, bus: EventBus, cfg: PerfMonitorConfig) -> None:
         self.bus = bus
         self.cfg = cfg
@@ -81,23 +82,29 @@ class PerformanceMonitor:
                 self._breach_streak = self._breach_streak + 1 if breach else 0
 
                 if self._since_publish >= self.cfg.publish_every_n_trades:
-                    self.bus.publish(EventType.AUTOTRADE_STATUS, {
-                        "component": "PerformanceMonitor",
-                        "symbol": self.cfg.symbol,
-                        "pf": pf,
-                        "expectancy": exp,
-                        "breach_streak": self._breach_streak,
-                        "ts": time.time()
-                    })
+                    self.bus.publish(
+                        EventType.AUTOTRADE_STATUS,
+                        {
+                            "component": "PerformanceMonitor",
+                            "symbol": self.cfg.symbol,
+                            "pf": pf,
+                            "expectancy": exp,
+                            "breach_streak": self._breach_streak,
+                            "ts": time.time(),
+                        },
+                    )
                     self._since_publish = 0
 
                 if self._breach_streak >= self.cfg.consecutive_breaches:
-                    self.bus.publish(EventType.WFO_TRIGGER, {
-                        "reason": "performance_drop",
-                        "symbol": self.cfg.symbol,
-                        "pf": pf,
-                        "expectancy": exp,
-                        "ts": time.time()
-                    })
+                    self.bus.publish(
+                        EventType.WFO_TRIGGER,
+                        {
+                            "reason": "performance_drop",
+                            "symbol": self.cfg.symbol,
+                            "pf": pf,
+                            "expectancy": exp,
+                            "ts": time.time(),
+                        },
+                    )
                     # po triggerze zerujemy streak (i czekamy na WFO/cooldown)
                     self._breach_streak = 0

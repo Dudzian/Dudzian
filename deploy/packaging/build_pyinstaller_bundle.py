@@ -1,4 +1,5 @@
 """Build PyInstaller/Briefcase bundles combining bot_core runtime and Qt UI."""
+
 from __future__ import annotations
 
 import argparse
@@ -24,6 +25,7 @@ from urllib import parse as urlparse
 from urllib import request as urlrequest
 
 import tomllib
+
 try:  # pragma: no cover - optional dependency
     import yaml
 except Exception:  # pragma: no cover - optional dependency
@@ -80,6 +82,7 @@ def _apply_metadata_entry(metadata: dict[str, object], key: str, value: object) 
         cursor[part] = nested_mapping
         cursor = nested_mapping
 
+
 from bot_core.security.license_store import LicenseStore, LicenseStoreError
 from bot_core.security.signing import build_hmac_signature
 
@@ -109,7 +112,9 @@ def _resolve_layout(output_dir: Path, version: str, platform: str) -> BundleLayo
     extras_dir = bundle_root / "resources"
     for path in (daemon_dir, ui_dir, extras_dir):
         path.mkdir(parents=True, exist_ok=True)
-    return BundleLayout(root=bundle_root, daemon_dir=daemon_dir, ui_dir=ui_dir, extras_dir=extras_dir)
+    return BundleLayout(
+        root=bundle_root, daemon_dir=daemon_dir, ui_dir=ui_dir, extras_dir=extras_dir
+    )
 
 
 def _hash_file(path: Path) -> str:
@@ -342,9 +347,7 @@ _POLICY_ALIAS_MAP: dict[str, str] = {
 _OID_PATTERN = re.compile(r"^\d+(?:\.\d+)*$")
 
 
-def _parse_cert_fingerprints(
-    values: Iterable[str] | None, *, option: str
-) -> dict[str, set[str]]:
+def _parse_cert_fingerprints(values: Iterable[str] | None, *, option: str) -> dict[str, set[str]]:
     """Validate and normalize certificate fingerprint declarations."""
 
     fingerprints: dict[str, set[str]] = {}
@@ -368,9 +371,7 @@ def _parse_cert_fingerprints(
 
         cleaned = fingerprint.replace(":", "").replace(" ", "").lower()
         if not cleaned or any(char not in string.hexdigits for char in cleaned):
-            raise SystemExit(
-                f"Odcisk palca w {option} musi być wartością szesnastkową: {item}"
-            )
+            raise SystemExit(f"Odcisk palca w {option} musi być wartością szesnastkową: {item}")
 
         expected_length = hashlib.new(normalized_algorithm).digest_size * 2
         if len(cleaned) != expected_length:
@@ -400,9 +401,7 @@ def _parse_cert_subject_requirements(
             )
         normalized_key = key.strip().lower()
         if not normalized_key:
-            raise SystemExit(
-                f"Atrybut tematu certyfikatu w {option} nie może być pusty: {item}"
-            )
+            raise SystemExit(f"Atrybut tematu certyfikatu w {option} nie może być pusty: {item}")
         requirements.setdefault(normalized_key, set()).add(value)
 
     return requirements
@@ -425,9 +424,7 @@ def _parse_cert_issuer_requirements(
             )
         normalized_key = key.strip().lower()
         if not normalized_key:
-            raise SystemExit(
-                f"Atrybut wystawcy certyfikatu w {option} nie może być pusty: {item}"
-            )
+            raise SystemExit(f"Atrybut wystawcy certyfikatu w {option} nie może być pusty: {item}")
         requirements.setdefault(normalized_key, set()).add(value)
 
     return requirements
@@ -450,17 +447,13 @@ def _parse_cert_san_requirements(
             )
         normalized_key = key.strip().lower()
         if not normalized_key:
-            raise SystemExit(
-                f"Typ wpisu subjectAltName w {option} nie może być pusty: {item}"
-            )
+            raise SystemExit(f"Typ wpisu subjectAltName w {option} nie może być pusty: {item}")
         requirements.setdefault(normalized_key, set()).add(value)
 
     return requirements
 
 
-def _parse_cert_extended_key_usage(
-    values: Iterable[str] | None, *, option: str
-) -> set[str]:
+def _parse_cert_extended_key_usage(values: Iterable[str] | None, *, option: str) -> set[str]:
     """Validate required Extended Key Usage entries."""
 
     requirements: set[str] = set()
@@ -487,9 +480,7 @@ def _parse_cert_extended_key_usage(
     return requirements
 
 
-def _parse_cert_policy_requirements(
-    values: Iterable[str] | None, *, option: str
-) -> set[str]:
+def _parse_cert_policy_requirements(values: Iterable[str] | None, *, option: str) -> set[str]:
     """Validate required certificate policy identifiers."""
 
     requirements: set[str] = set()
@@ -517,9 +508,7 @@ def _parse_cert_policy_requirements(
     return requirements
 
 
-def _parse_cert_serial_requirements(
-    values: Iterable[str] | None, *, option: str
-) -> set[str]:
+def _parse_cert_serial_requirements(values: Iterable[str] | None, *, option: str) -> set[str]:
     """Validate and normalize allowed certificate serial numbers."""
 
     serials: set[str] = set()
@@ -529,9 +518,7 @@ def _parse_cert_serial_requirements(
     for item in values:
         raw_value = item.strip()
         if not raw_value:
-            raise SystemExit(
-                f"Numer seryjny w {option} nie może być pusty"
-            )
+            raise SystemExit(f"Numer seryjny w {option} nie może być pusty")
 
         candidate = raw_value
         if candidate.lower().startswith("0x"):
@@ -849,9 +836,7 @@ def _load_metadata_from_urls(
                 f"Adres metadanych {url} używa nieobsługiwanego schematu {parsed.scheme}"
             )
         if scheme != "https" and not allow_insecure_http:
-            raise SystemExit(
-                "Adresy metadanych HTTP wymagają flagi --metadata-url-allow-http"
-            )
+            raise SystemExit("Adresy metadanych HTTP wymagają flagi --metadata-url-allow-http")
         hostname = (parsed.hostname or "").lower()
         if normalized_hosts and hostname not in normalized_hosts:
             allowed = ", ".join(normalized_hosts.values())
@@ -907,8 +892,9 @@ def _load_metadata_from_urls(
 
                     if not matched:
                         raise SystemExit(
-                            "Certyfikat HTTPS źródła metadanych {} nie pasuje do żadnego dozwolonego odcisku"
-                            .format(url)
+                            "Certyfikat HTTPS źródła metadanych {} nie pasuje do żadnego dozwolonego odcisku".format(
+                                url
+                            )
                         )
 
                 if scheme == "https" and subject_requirements:
@@ -918,13 +904,15 @@ def _load_metadata_from_urls(
                         actual_values = subject_map.get(attribute)
                         if not actual_values:
                             raise SystemExit(
-                                "Certyfikat HTTPS źródła metadanych {} nie zawiera atrybutu tematu {}"
-                                .format(url, attribute)
+                                "Certyfikat HTTPS źródła metadanych {} nie zawiera atrybutu tematu {}".format(
+                                    url, attribute
+                                )
                             )
                         if not any(value in expected_values for value in actual_values):
                             raise SystemExit(
-                                "Certyfikat HTTPS źródła metadanych {} ma atrybut {} bez wymaganych wartości"
-                                .format(url, attribute)
+                                "Certyfikat HTTPS źródła metadanych {} ma atrybut {} bez wymaganych wartości".format(
+                                    url, attribute
+                                )
                             )
                 if scheme == "https" and issuer_requirements:
                     assert peer_cert is not None
@@ -939,8 +927,9 @@ def _load_metadata_from_urls(
                             )
                         if not any(value in expected_values for value in actual_values):
                             raise SystemExit(
-                                "Certyfikat HTTPS źródła metadanych {} ma atrybut wystawcy {} bez wymaganych wartości"
-                                .format(url, attribute)
+                                "Certyfikat HTTPS źródła metadanych {} ma atrybut wystawcy {} bez wymaganych wartości".format(
+                                    url, attribute
+                                )
                             )
                 if scheme == "https" and san_requirements:
                     assert peer_cert is not None
@@ -949,51 +938,58 @@ def _load_metadata_from_urls(
                         actual_values = san_map.get(entry_type)
                         if not actual_values:
                             raise SystemExit(
-                                "Certyfikat HTTPS źródła metadanych {} nie zawiera wpisu SAN typu {}"
-                                .format(url, entry_type)
+                                "Certyfikat HTTPS źródła metadanych {} nie zawiera wpisu SAN typu {}".format(
+                                    url, entry_type
+                                )
                             )
                         if not any(value in expected_values for value in actual_values):
                             raise SystemExit(
-                                "Certyfikat HTTPS źródła metadanych {} ma SAN typu {} bez wymaganych wartości"
-                                .format(url, entry_type)
+                                "Certyfikat HTTPS źródła metadanych {} ma SAN typu {} bez wymaganych wartości".format(
+                                    url, entry_type
+                                )
                             )
                 if scheme == "https" and eku_requirements:
                     assert peer_cert is not None
                     has_extension, eku_values = _extract_certificate_extended_key_usage(peer_cert)
                     if not has_extension:
                         raise SystemExit(
-                            "Certyfikat HTTPS źródła metadanych {} nie zawiera rozszerzenia Extended Key Usage"
-                            .format(url)
+                            "Certyfikat HTTPS źródła metadanych {} nie zawiera rozszerzenia Extended Key Usage".format(
+                                url
+                            )
                         )
                     missing_eku = eku_requirements - eku_values
                     if missing_eku:
                         missing_text = ", ".join(sorted(missing_eku))
                         raise SystemExit(
-                            "Certyfikat HTTPS źródła metadanych {} nie zawiera wymaganych EKU: {}"
-                            .format(url, missing_text)
+                            "Certyfikat HTTPS źródła metadanych {} nie zawiera wymaganych EKU: {}".format(
+                                url, missing_text
+                            )
                         )
                 if scheme == "https" and policy_requirements:
                     assert peer_cert is not None
                     has_extension, policy_values = _extract_certificate_policies(peer_cert)
                     if not has_extension:
                         raise SystemExit(
-                            "Certyfikat HTTPS źródła metadanych {} nie zawiera rozszerzenia certificatePolicies"
-                            .format(url)
+                            "Certyfikat HTTPS źródła metadanych {} nie zawiera rozszerzenia certificatePolicies".format(
+                                url
+                            )
                         )
                     missing_policies = policy_requirements - policy_values
                     if missing_policies:
                         missing_text = ", ".join(sorted(missing_policies))
                         raise SystemExit(
-                            "Certyfikat HTTPS źródła metadanych {} nie zawiera wymaganych polityk: {}"
-                            .format(url, missing_text)
+                            "Certyfikat HTTPS źródła metadanych {} nie zawiera wymaganych polityk: {}".format(
+                                url, missing_text
+                            )
                         )
                 if scheme == "https" and cert_serial_requirements:
                     assert peer_cert is not None
                     serial_number = _extract_certificate_serial_number(peer_cert)
                     if serial_number not in cert_serial_requirements:
                         raise SystemExit(
-                            "Certyfikat HTTPS źródła metadanych {} ma numer seryjny nieobecny na liście dozwolonych"
-                            .format(url)
+                            "Certyfikat HTTPS źródła metadanych {} ma numer seryjny nieobecny na liście dozwolonych".format(
+                                url
+                            )
                         )
                 content_type = response.headers.get("Content-Type")
                 if content_type and "json" not in content_type.lower():
@@ -1034,7 +1030,9 @@ def _load_metadata_from_urls(
         try:
             payload = json.loads(payload_text)
         except json.JSONDecodeError as exc:
-            raise SystemExit(f"Odpowiedź metadanych z {url} nie zawiera poprawnego JSON: {exc}") from exc
+            raise SystemExit(
+                f"Odpowiedź metadanych z {url} nie zawiera poprawnego JSON: {exc}"
+            ) from exc
 
         if not isinstance(payload, Mapping):
             raise SystemExit(f"Odpowiedź metadanych z {url} musi zawierać obiekt JSON")
@@ -1083,8 +1081,9 @@ def _load_metadata_from_ini(paths: Iterable[str] | None) -> dict[str, object]:
             normalized_key = full_key.replace("__", ".")
             if normalized_key in metadata:
                 raise SystemExit(
-                    "Klucz {key} został zduplikowany w plikach INI lub wcześniejszych źródłach metadanych"
-                    .format(key=normalized_key)
+                    "Klucz {key} został zduplikowany w plikach INI lub wcześniejszych źródłach metadanych".format(
+                        key=normalized_key
+                    )
                 )
             candidate = raw_value.strip()
             try:
@@ -1333,7 +1332,9 @@ def build_bundle(args: argparse.Namespace) -> Path:
     workdir = Path(args.workdir).expanduser().resolve()
     entrypoint = Path(args.entrypoint).expanduser().resolve()
     qt_dist = Path(args.qt_dist).expanduser().resolve() if args.qt_dist else None
-    briefcase_project = Path(args.briefcase_project).expanduser().resolve() if args.briefcase_project else None
+    briefcase_project = (
+        Path(args.briefcase_project).expanduser().resolve() if args.briefcase_project else None
+    )
 
     layout = _resolve_layout(output_dir, args.version, args.platform)
     artifacts: list[ArtifactSpec] = []
@@ -1359,7 +1360,9 @@ def build_bundle(args: argparse.Namespace) -> Path:
     for include in args.include or []:
         name, _, path = include.partition("=")
         if not name or not path:
-            raise SystemExit(f"Niepoprawny format --include: {include}. Wymagany zapis <nazwa>=<ścieżka>.")
+            raise SystemExit(
+                f"Niepoprawny format --include: {include}. Wymagany zapis <nazwa>=<ścieżka>."
+            )
         source = Path(path).expanduser().resolve()
         destination = layout.extras_dir / name
         if source.is_dir():
@@ -1446,7 +1449,9 @@ def build_bundle(args: argparse.Namespace) -> Path:
     if ca_path_option:
         ca_path_dir = Path(ca_path_option).expanduser().resolve()
         if not ca_path_dir.exists():
-            raise SystemExit(f"Katalog CA {ca_path_dir} podany w --metadata-url-capath nie istnieje")
+            raise SystemExit(
+                f"Katalog CA {ca_path_dir} podany w --metadata-url-capath nie istnieje"
+            )
         if not ca_path_dir.is_dir():
             raise SystemExit(f"Ścieżka {ca_path_dir} z --metadata-url-capath nie jest katalogiem")
     client_cert_option = getattr(args, "metadata_url_client_cert", None)
@@ -1585,10 +1590,18 @@ def build_bundle(args: argparse.Namespace) -> Path:
 
     if args.signing_key:
         key_candidate = Path(args.signing_key)
-        key_bytes = key_candidate.read_bytes() if key_candidate.exists() else args.signing_key.encode("utf-8")
-        signature = build_hmac_signature(payload=manifest, key=key_bytes, key_id=args.signing_key_id)
+        key_bytes = (
+            key_candidate.read_bytes()
+            if key_candidate.exists()
+            else args.signing_key.encode("utf-8")
+        )
+        signature = build_hmac_signature(
+            payload=manifest, key=key_bytes, key_id=args.signing_key_id
+        )
         signature_path = layout.root / "manifest.sig"
-        signature_path.write_text(json.dumps(signature, ensure_ascii=False, indent=2), encoding="utf-8")
+        signature_path.write_text(
+            json.dumps(signature, ensure_ascii=False, indent=2), encoding="utf-8"
+        )
 
     archive_path = layout.root.parent / f"{layout.root.name}.zip"
     if archive_path.exists():
@@ -1599,16 +1612,30 @@ def build_bundle(args: argparse.Namespace) -> Path:
 
 def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Build PyInstaller bundle with Qt UI")
-    parser.add_argument("--entrypoint", default="scripts/run_multi_strategy_scheduler.py", help="Python entrypoint for PyInstaller")
+    parser.add_argument(
+        "--entrypoint",
+        default="scripts/run_multi_strategy_scheduler.py",
+        help="Python entrypoint for PyInstaller",
+    )
     parser.add_argument("--qt-dist", help="Path to compiled Qt distribution (Release directory)")
-    parser.add_argument("--briefcase-project", help="Path to Briefcase project to build the Qt shell")
+    parser.add_argument(
+        "--briefcase-project", help="Path to Briefcase project to build the Qt shell"
+    )
     parser.add_argument("--platform", required=True, help="Target platform identifier")
     parser.add_argument("--version", required=True, help="Bundle version string")
-    parser.add_argument("--output-dir", default="var/dist", help="Root directory for generated bundles")
-    parser.add_argument("--workdir", default="var/build", help="Temporary work directory for build tools")
-    parser.add_argument("--hidden-import", action="append", help="Additional hidden imports for PyInstaller")
+    parser.add_argument(
+        "--output-dir", default="var/dist", help="Root directory for generated bundles"
+    )
+    parser.add_argument(
+        "--workdir", default="var/build", help="Temporary work directory for build tools"
+    )
+    parser.add_argument(
+        "--hidden-import", action="append", help="Additional hidden imports for PyInstaller"
+    )
     parser.add_argument("--runtime-name", help="Override runtime binary name")
-    parser.add_argument("--include", action="append", help="Additional resources to include <name>=<path>")
+    parser.add_argument(
+        "--include", action="append", help="Additional resources to include <name>=<path>"
+    )
     parser.add_argument(
         "--license-json",
         help="Offline license JSON that should be encrypted and bundled",
@@ -1628,8 +1655,12 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     )
     parser.add_argument("--signing-key", help="Secret value or path used to sign manifest.json")
     parser.add_argument("--signing-key-id", help="Identifier added to manifest signature")
-    parser.add_argument("--metadata", action="append", help="Add metadata entry <key>=<value> (value may be JSON)")
-    parser.add_argument("--metadata-file", action="append", help="Load additional metadata from a JSON file")
+    parser.add_argument(
+        "--metadata", action="append", help="Add metadata entry <key>=<value> (value may be JSON)"
+    )
+    parser.add_argument(
+        "--metadata-file", action="append", help="Load additional metadata from a JSON file"
+    )
     parser.add_argument(
         "--metadata-url",
         action="append",
@@ -1712,7 +1743,7 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         "--metadata-url-cert-serial",
         action="append",
         help=(
-            "Zaufaj tylko certyfikatom TLS z numerami seryjnymi z listy dozwolonych (format dziesiętny," \
+            "Zaufaj tylko certyfikatom TLS z numerami seryjnymi z listy dozwolonych (format dziesiętny,"
             " szesnastkowy lub z separacją dwukropkami)"
         ),
     )

@@ -99,6 +99,7 @@ def test_export_observability_bundle_creates_signed_archive(tmp_path: Path) -> N
         assert "sha256" in entry
         assert entry["path"]
 
+
 def test_export_observability_bundle_prevents_overwrite(tmp_path: Path) -> None:
     signing_key = tmp_path / "sign.key"
     signing_key.write_bytes(os.urandom(48))
