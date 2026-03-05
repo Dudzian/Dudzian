@@ -301,16 +301,23 @@ if(BUILD_TESTING)
         "QT_QPA_PLATFORM=offscreen"
         "QSG_RHI_BACKEND=software"
     )
-    if(DEFINED ENV{CI} AND "$ENV{CI}" MATCHES "^(1|true|TRUE|yes|YES)$")
-        list(APPEND UI_APP_TELEMETRY_TEST_ENV "QSG_INFO=1")
+    if(DEFINED ENV{CI})
+        string(TOLOWER "$ENV{CI}" UI_APP_CI_FLAG)
+        if(UI_APP_CI_FLAG MATCHES "^(1|true|yes)$")
+            list(APPEND UI_APP_TELEMETRY_TEST_ENV "QSG_INFO=1")
+        endif()
     endif()
 
-    set_tests_properties(
+
+    function(append_ui_telemetry_test_env)
+        set_property(TEST ${ARGV} APPEND PROPERTY ENVIRONMENT ${UI_APP_TELEMETRY_TEST_ENV})
+    endfunction()
+
+    append_ui_telemetry_test_env(
         ui_ApplicationTelemetryTest
         ui_ApplicationHealthConfigTest
         ui_ApplicationAuthTokenWatcherTest
         ui_ApplicationTransportValidationTest
-        PROPERTIES ENVIRONMENT "${UI_APP_TELEMETRY_TEST_ENV}"
     )
 
     add_executable(metrics_client_preflight_tests
@@ -376,67 +383,21 @@ if(BUILD_TESTING)
 
     add_executable(application_risk_refresh_tests
         tests/ApplicationRiskRefreshTest.cpp
-        src/app/Application.cpp
-        src/app/UiModuleViewsModel.cpp
-        src/utils/PathUtils.cpp
-        src/grpc/TradingClient.cpp
-        src/grpc/BotCoreLocalService.cpp
-        src/models/OhlcvListModel.cpp
-        src/models/AlertsModel.cpp
-        src/models/AlertsFilterProxyModel.cpp
-        src/models/RiskHistoryModel.cpp
-        src/models/RiskStateModel.cpp
-        src/models/DecisionLogModel.cpp
-        src/runtime/RuntimeDecisionBridge.cpp
-        src/utils/PerformanceGuard.cpp
-        src/utils/FrameRateMonitor.cpp
-        src/telemetry/UiTelemetryReporter.cpp
-        src/license/LicenseActivationController.cpp
-        src/security/SecurityAdminController.cpp
-        src/reporting/ReportCenterController.cpp
     )
-    target_include_directories(application_risk_refresh_tests PRIVATE src ${GENERATED_DIR})
     target_link_libraries(application_risk_refresh_tests
         PRIVATE
-            ui_tests_qt_quick
-            ui_tests_qt_net
-            ui_tests_qt_concurrent
-            trading_proto
-            protobuf::libprotobuf
-            gRPC::grpc++
+            ui_core
+            Qt6::Test
     )
     add_test(NAME application_risk_refresh_tests COMMAND application_risk_refresh_tests)
 
     add_executable(application_settings_persistence_tests
         tests/ApplicationSettingsPersistenceTest.cpp
-        src/app/Application.cpp
-        src/app/UiModuleViewsModel.cpp
-        src/utils/PathUtils.cpp
-        src/grpc/TradingClient.cpp
-        src/grpc/BotCoreLocalService.cpp
-        src/models/OhlcvListModel.cpp
-        src/models/AlertsModel.cpp
-        src/models/AlertsFilterProxyModel.cpp
-        src/models/RiskHistoryModel.cpp
-        src/models/RiskStateModel.cpp
-        src/models/DecisionLogModel.cpp
-        src/runtime/RuntimeDecisionBridge.cpp
-        src/utils/PerformanceGuard.cpp
-        src/utils/FrameRateMonitor.cpp
-        src/telemetry/UiTelemetryReporter.cpp
-        src/license/LicenseActivationController.cpp
-        src/security/SecurityAdminController.cpp
-        src/reporting/ReportCenterController.cpp
     )
-    target_include_directories(application_settings_persistence_tests PRIVATE src ${GENERATED_DIR})
     target_link_libraries(application_settings_persistence_tests
         PRIVATE
-            ui_tests_qt_quick
-            ui_tests_qt_net
-            ui_tests_qt_concurrent
-            trading_proto
-            protobuf::libprotobuf
-            gRPC::grpc++
+            ui_core
+            Qt6::Test
     )
     add_test(NAME application_settings_persistence_tests COMMAND application_settings_persistence_tests)
 
@@ -459,124 +420,53 @@ if(BUILD_TESTING)
 
     add_executable(runtime_decision_bridge_tests
         tests/RuntimeDecisionBridgeTest.cpp
-        src/runtime/RuntimeDecisionBridge.cpp
     )
-    target_include_directories(runtime_decision_bridge_tests PRIVATE src)
-    target_link_libraries(runtime_decision_bridge_tests PRIVATE ui_tests_qt_gui)
+    target_link_libraries(runtime_decision_bridge_tests PRIVATE ui_core Qt6::Test)
     add_test(NAME runtime_decision_bridge_tests COMMAND runtime_decision_bridge_tests)
 
     add_executable(user_profile_controller_tests
         tests/UserProfileControllerTest.cpp
-        src/app/UserProfileController.cpp
     )
-    target_include_directories(user_profile_controller_tests PRIVATE src)
-    target_link_libraries(user_profile_controller_tests PRIVATE ui_tests_qt_base)
+    target_link_libraries(user_profile_controller_tests PRIVATE ui_core Qt6::Test)
     add_test(NAME user_profile_controller_tests COMMAND user_profile_controller_tests)
 
     add_executable(application_risk_history_auto_export_tests
         tests/ApplicationRiskHistoryAutoExportTest.cpp
-        src/app/Application.cpp
-        src/app/UiModuleViewsModel.cpp
-        src/utils/PathUtils.cpp
-        src/grpc/TradingClient.cpp
-        src/grpc/BotCoreLocalService.cpp
-        src/models/OhlcvListModel.cpp
-        src/models/AlertsModel.cpp
-        src/models/AlertsFilterProxyModel.cpp
-        src/models/RiskHistoryModel.cpp
-        src/models/RiskStateModel.cpp
-        src/models/DecisionLogModel.cpp
-        src/runtime/RuntimeDecisionBridge.cpp
-        src/utils/PerformanceGuard.cpp
-        src/utils/FrameRateMonitor.cpp
-        src/telemetry/UiTelemetryReporter.cpp
-        src/license/LicenseActivationController.cpp
-        src/security/SecurityAdminController.cpp
-        src/reporting/ReportCenterController.cpp
     )
-    target_include_directories(application_risk_history_auto_export_tests PRIVATE src ${GENERATED_DIR})
     target_link_libraries(application_risk_history_auto_export_tests
         PRIVATE
-            ui_tests_qt_quick
-            ui_tests_qt_net
-            ui_tests_qt_concurrent
-            trading_proto
-            protobuf::libprotobuf
-            gRPC::grpc++
+            ui_core
+            Qt6::Test
     )
     add_test(NAME application_risk_history_auto_export_tests COMMAND application_risk_history_auto_export_tests)
 
     add_executable(application_decision_log_tests
         tests/ApplicationDecisionLogTest.cpp
-        src/app/Application.cpp
-        src/app/UiModuleViewsModel.cpp
-        src/app/UiModuleManager.cpp
-        src/utils/PathUtils.cpp
-        src/grpc/TradingClient.cpp
-        src/grpc/BotCoreLocalService.cpp
-        src/models/OhlcvListModel.cpp
-        src/models/AlertsModel.cpp
-        src/models/AlertsFilterProxyModel.cpp
-        src/models/RiskHistoryModel.cpp
-        src/models/RiskStateModel.cpp
-        src/models/DecisionLogModel.cpp
-        src/runtime/RuntimeDecisionBridge.cpp
-        src/utils/PerformanceGuard.cpp
-        src/utils/FrameRateMonitor.cpp
-        src/telemetry/UiTelemetryReporter.cpp
-        src/license/LicenseActivationController.cpp
-        src/security/SecurityAdminController.cpp
-        src/reporting/ReportCenterController.cpp
-        src/support/SupportBundleController.cpp
-        src/health/HealthStatusController.cpp
     )
-    target_include_directories(application_decision_log_tests PRIVATE src ${GENERATED_DIR})
     target_link_libraries(application_decision_log_tests
         PRIVATE
-            ui_tests_qt_quick
-            ui_tests_qt_net
-            ui_tests_qt_concurrent
-            trading_proto
-            protobuf::libprotobuf
-            gRPC::grpc++
+            ui_core
+            Qt6::Test
     )
     add_test(NAME application_decision_log_tests COMMAND application_decision_log_tests)
 
     add_executable(application_ui_modules_tests
         tests/ApplicationUiModulesTest.cpp
-        src/app/Application.cpp
-        src/app/UiModuleManager.cpp
-        src/app/UiModuleViewsModel.cpp
-        src/utils/PathUtils.cpp
-        src/grpc/TradingClient.cpp
-        src/grpc/BotCoreLocalService.cpp
-        src/models/OhlcvListModel.cpp
-        src/models/AlertsModel.cpp
-        src/models/AlertsFilterProxyModel.cpp
-        src/models/RiskHistoryModel.cpp
-        src/models/RiskStateModel.cpp
-        src/models/DecisionLogModel.cpp
-        src/runtime/RuntimeDecisionBridge.cpp
-        src/utils/PerformanceGuard.cpp
-        src/utils/FrameRateMonitor.cpp
-        src/telemetry/UiTelemetryReporter.cpp
-        src/license/LicenseActivationController.cpp
-        src/security/SecurityAdminController.cpp
-        src/reporting/ReportCenterController.cpp
-        src/support/SupportBundleController.cpp
-        src/health/HealthStatusController.cpp
     )
-    target_include_directories(application_ui_modules_tests PRIVATE src ${GENERATED_DIR})
     target_link_libraries(application_ui_modules_tests
         PRIVATE
-            ui_tests_qt_quick
-            ui_tests_qt_net
-            ui_tests_qt_concurrent
-            trading_proto
-            protobuf::libprotobuf
-            gRPC::grpc++
+            ui_core
+            Qt6::Test
     )
     add_test(NAME application_ui_modules_tests COMMAND application_ui_modules_tests)
+
+    append_ui_telemetry_test_env(
+        application_risk_refresh_tests
+        application_risk_history_auto_export_tests
+        application_settings_persistence_tests
+        application_decision_log_tests
+        application_ui_modules_tests
+    )
 
     # FrameRateMonitor tests
     add_executable(frame_rate_monitor_tests
@@ -844,6 +734,16 @@ if(BUILD_TESTING)
             gRPC::grpc++
     )
     add_test(NAME bot_core_local_service_tests COMMAND bot_core_local_service_tests)
+
+    append_ui_telemetry_test_env(
+        frame_rate_monitor_tests
+        candlestick_chart_view_tests
+        market_multi_stream_view_tests
+        side_panel_tests
+        admin_dialog_e2e_tests
+        first_run_wizard_e2e_tests
+        strategy_workbench_e2e_tests
+    )
 
     add_executable(trading_client_auth_metadata_tests
         tests/TradingClientAuthMetadataTest.cpp
