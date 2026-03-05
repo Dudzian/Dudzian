@@ -83,7 +83,7 @@ class CandlestickChartViewTest final : public QObject {
 
 private slots:
     static void initTestCase() {
-        Q_INIT_RESOURCE(qml);
+        Q_INIT_RESOURCE(candlestick_chart_view_qml);
         qmlRegisterUncreatableType<PerformanceGuard>(
             "BotCore", 1, 0, "PerformanceGuard", QStringLiteral("PerformanceGuard is provided by the controller"));
     }
