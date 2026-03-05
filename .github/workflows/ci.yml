@@ -1315,6 +1315,21 @@ jobs:
             PySide6_Essentials==${PYSIDE6_VERSION} \
             shiboken6==${PYSIDE6_VERSION}
 
+      - name: Install Linux UI packaging dependencies
+        shell: bash
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            build-essential \
+            ninja-build \
+            pkg-config \
+            libprotobuf-dev \
+            protobuf-compiler \
+            protobuf-compiler-grpc \
+            libgrpc-dev \
+            libgrpc++-dev \
+            libarchive-dev
+
       - name: Build Qt bundle
         shell: bash
         run: |
