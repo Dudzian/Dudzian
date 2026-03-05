@@ -1,24 +1,10 @@
 from __future__ import annotations
 
-import pytest
-
-from bot_core.decision.summary import DecisionSummaryAggregator
-
-
-def _build_summary(
-    evaluations: list[dict[str, object]], *, history_limit: int | None = None
-) -> dict[str, object]:
-    aggregator = DecisionSummaryAggregator(evaluations, history_limit=history_limit)
-    return dict(aggregator.build_summary())
-from bot_core.decision.summary import (
-    DecisionEngineSummary,
-    summarize_evaluation_payloads,
-)
 import sys
 import types
 from pathlib import Path
-from typing import TYPE_CHECKING
 
+import pytest
 
 _REPO_ROOT = Path(__file__).resolve().parents[2]
 if "bot_core" not in sys.modules:
@@ -31,18 +17,19 @@ if "bot_core.decision" not in sys.modules:
     decision_stub.__path__ = [str(_REPO_ROOT / "bot_core" / "decision")]
     sys.modules["bot_core.decision"] = decision_stub
 
-from bot_core.decision.summary import summarize_evaluation_payloads
 from bot_core.decision.schemas import DecisionEngineSummary
+from bot_core.decision.summary import DecisionSummaryAggregator, summarize_evaluation_payloads
 
 
-if TYPE_CHECKING:
-    from bot_core.decision.models import DecisionEngineSummary
+def _build_summary(
+    evaluations: list[dict[str, object]], *, history_limit: int | None = None
+) -> dict[str, object]:
+    aggregator = DecisionSummaryAggregator(evaluations, history_limit=history_limit)
+    return dict(aggregator.build_summary())
 
 
 def _summarize(*args, **kwargs) -> dict[str, object]:
-    return summarize_evaluation_payloads(*args, **kwargs).model_dump(
-        exclude_none=True
-    )
+    return summarize_evaluation_payloads(*args, **kwargs).model_dump(exclude_none=True)
 
 
 def _build_full_evaluations() -> list[dict[str, object]]:
@@ -112,12 +99,6 @@ def _build_full_evaluations() -> list[dict[str, object]]:
         },
     ]
 
-    summary = summarize_evaluation_payloads(evaluations, history_limit=5)
-    DecisionEngineSummary.model_validate({"type": "decision_engine_summary", **summary})
-    summary = _build_summary(evaluations, history_limit=5)
-    summary_model = summarize_evaluation_payloads(evaluations, history_limit=5)
-    assert isinstance(summary_model, DecisionEngineSummary)
-    summary = summary_model.model_dump()
 
 def test_summarize_evaluation_payloads_counts_and_latest_fields() -> None:
     evaluations = _build_full_evaluations()
@@ -202,27 +183,37 @@ def test_summarize_evaluation_payloads_counts_and_latest_fields() -> None:
     assert summary["actions_with_accepts"] == 1
     action_breakdown = summary["action_breakdown"]
     assert action_breakdown["BUY"]["accepted"] == 1
-    assert action_breakdown["BUY"]["metrics"]["expected_value_minus_cost_bps"]["accepted_sum"] == pytest.approx(6.0)
+    assert action_breakdown["BUY"]["metrics"]["expected_value_minus_cost_bps"][
+        "accepted_sum"
+    ] == pytest.approx(6.0)
     assert action_breakdown["SELL"]["rejected"] == 1
     assert action_breakdown["SELL"]["metrics"]["net_edge_bps"]["rejected_sum"] == pytest.approx(1.0)
     assert summary["strategy_usage"] == {"daily": 1, "intraday": 1}
     assert summary["unique_strategies"] == 2
     assert summary["strategies_with_accepts"] == 1
     strategy_breakdown = summary["strategy_breakdown"]
-    assert strategy_breakdown["daily"]["metrics"]["expected_value_bps"]["accepted_sum"] == pytest.approx(7.0)
+    assert strategy_breakdown["daily"]["metrics"]["expected_value_bps"][
+        "accepted_sum"
+    ] == pytest.approx(7.0)
     assert summary["history_start_generated_at"] == "2024-04-01T00:00:00Z"
     assert summary["history_end_generated_at"] == "2024-05-01T00:00:00Z"
     assert summary["history_span_seconds"] == pytest.approx(2_592_000.0)
     assert summary["full_history_start_generated_at"] == "2024-04-01T00:00:00Z"
     assert summary["full_history_end_generated_at"] == "2024-05-01T00:00:00Z"
     assert summary["full_history_span_seconds"] == pytest.approx(2_592_000.0)
-    assert strategy_breakdown["intraday"]["metrics"]["cost_bps"]["rejected_sum"] == pytest.approx(2.5)
+    assert strategy_breakdown["intraday"]["metrics"]["cost_bps"]["rejected_sum"] == pytest.approx(
+        2.5
+    )
     assert summary["symbol_usage"] == {"BTC/USDT": 1, "ETH/USDT": 1}
     assert summary["unique_symbols"] == 2
     assert summary["symbols_with_accepts"] == 1
     symbol_breakdown = summary["symbol_breakdown"]
-    assert symbol_breakdown["BTC/USDT"]["metrics"]["notional"]["accepted_sum"] == pytest.approx(1500)
-    assert symbol_breakdown["ETH/USDT"]["metrics"]["expected_value_minus_cost_bps"]["rejected_sum"] == pytest.approx(-0.3)
+    assert symbol_breakdown["BTC/USDT"]["metrics"]["notional"]["accepted_sum"] == pytest.approx(
+        1500
+    )
+    assert symbol_breakdown["ETH/USDT"]["metrics"]["expected_value_minus_cost_bps"][
+        "rejected_sum"
+    ] == pytest.approx(-0.3)
     assert summary["history_start_generated_at"] == "2024-04-01T00:00:00Z"
     assert summary["latest_model"] == "gbm_v2"
     assert summary["latest_status"] == "rejected"
@@ -249,9 +240,7 @@ def test_summarize_evaluation_payloads_counts_and_latest_fields() -> None:
     assert summary["latest_latency_threshold_margin"] == pytest.approx(-3.0)
     assert summary["latest_notional_threshold_margin"] == pytest.approx(-50.0)
     assert summary["latest_model_expected_value_bps"] == pytest.approx(1.845)
-    assert summary["latest_model_expected_value_minus_cost_bps"] == pytest.approx(
-        -0.655
-    )
+    assert summary["latest_model_expected_value_minus_cost_bps"] == pytest.approx(-0.655)
     assert summary["latest_model_expected_return_bps"] == pytest.approx(4.5)
     assert summary["latest_model_success_probability"] == pytest.approx(0.41)
     assert summary["avg_expected_probability"] == pytest.approx(0.625)
@@ -444,12 +433,8 @@ def test_summarize_evaluation_payloads_counts_and_latest_fields() -> None:
     assert summary["avg_model_expected_value_bps"] == pytest.approx(3.9825)
     assert summary["sum_model_expected_return_bps"] == pytest.approx(13.0)
     assert summary["sum_model_expected_value_bps"] == pytest.approx(7.965)
-    assert summary["avg_model_expected_value_minus_cost_bps"] == pytest.approx(
-        2.2325
-    )
-    assert summary["sum_model_expected_value_minus_cost_bps"] == pytest.approx(
-        4.465
-    )
+    assert summary["avg_model_expected_value_minus_cost_bps"] == pytest.approx(2.2325)
+    assert summary["sum_model_expected_value_minus_cost_bps"] == pytest.approx(4.465)
     assert summary["sum_notional"] == pytest.approx(2_300.0)
     assert summary["accepted_avg_net_edge_bps"] == pytest.approx(5.0)
     assert summary["accepted_median_net_edge_bps"] == pytest.approx(5.0)
@@ -589,33 +574,17 @@ def test_summarize_evaluation_payloads_counts_and_latest_fields() -> None:
     assert summary["rejected_std_model_expected_value_bps"] == pytest.approx(0.0)
     assert summary["rejected_sum_model_expected_value_bps"] == pytest.approx(1.845)
     assert summary["rejected_model_expected_value_bps_count"] == 1
-    assert summary["accepted_avg_model_expected_value_minus_cost_bps"] == pytest.approx(
-        5.12
-    )
-    assert summary["accepted_median_model_expected_value_minus_cost_bps"] == pytest.approx(
-        5.12
-    )
-    assert summary["accepted_p90_model_expected_value_minus_cost_bps"] == pytest.approx(
-        5.12
-    )
+    assert summary["accepted_avg_model_expected_value_minus_cost_bps"] == pytest.approx(5.12)
+    assert summary["accepted_median_model_expected_value_minus_cost_bps"] == pytest.approx(5.12)
+    assert summary["accepted_p90_model_expected_value_minus_cost_bps"] == pytest.approx(5.12)
     assert summary["accepted_std_model_expected_value_minus_cost_bps"] == pytest.approx(0.0)
-    assert summary["accepted_sum_model_expected_value_minus_cost_bps"] == pytest.approx(
-        5.12
-    )
+    assert summary["accepted_sum_model_expected_value_minus_cost_bps"] == pytest.approx(5.12)
     assert summary["accepted_model_expected_value_minus_cost_bps_count"] == 1
-    assert summary["rejected_avg_model_expected_value_minus_cost_bps"] == pytest.approx(
-        -0.655
-    )
-    assert summary["rejected_median_model_expected_value_minus_cost_bps"] == pytest.approx(
-        -0.655
-    )
-    assert summary["rejected_p90_model_expected_value_minus_cost_bps"] == pytest.approx(
-        -0.655
-    )
+    assert summary["rejected_avg_model_expected_value_minus_cost_bps"] == pytest.approx(-0.655)
+    assert summary["rejected_median_model_expected_value_minus_cost_bps"] == pytest.approx(-0.655)
+    assert summary["rejected_p90_model_expected_value_minus_cost_bps"] == pytest.approx(-0.655)
     assert summary["rejected_std_model_expected_value_minus_cost_bps"] == pytest.approx(0.0)
-    assert summary["rejected_sum_model_expected_value_minus_cost_bps"] == pytest.approx(
-        -0.655
-    )
+    assert summary["rejected_sum_model_expected_value_minus_cost_bps"] == pytest.approx(-0.655)
     assert summary["rejected_model_expected_value_minus_cost_bps_count"] == 1
     assert summary["median_net_edge_bps"] == pytest.approx(3.0)
     assert summary["p90_net_edge_bps"] == pytest.approx(4.6)
@@ -651,9 +620,7 @@ def test_summarize_evaluation_payloads_counts_and_latest_fields() -> None:
     assert summary["median_model_expected_value_bps"] == pytest.approx(3.9825)
     assert summary["min_model_expected_value_bps"] == pytest.approx(1.845)
     assert summary["max_model_expected_value_bps"] == pytest.approx(6.12)
-    assert summary["median_model_expected_value_minus_cost_bps"] == pytest.approx(
-        2.2325
-    )
+    assert summary["median_model_expected_value_minus_cost_bps"] == pytest.approx(2.2325)
     assert summary["min_model_expected_value_minus_cost_bps"] == pytest.approx(-0.655)
     assert summary["max_model_expected_value_minus_cost_bps"] == pytest.approx(5.12)
     assert summary["std_net_edge_bps"] == pytest.approx(2.0)
@@ -834,9 +801,7 @@ def test_summarize_evaluation_payloads_tracks_longest_streaks() -> None:
 
 
 def test_decision_engine_summary_model_validates_full_payload() -> None:
-    summary_model = summarize_evaluation_payloads(
-        _build_full_evaluations(), history_limit=5
-    )
+    summary_model = summarize_evaluation_payloads(_build_full_evaluations(), history_limit=5)
 
     summary_type = summary_model.__class__
     assert summary_type.__name__ == "DecisionEngineSummary"

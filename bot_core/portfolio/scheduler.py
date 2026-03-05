@@ -1,16 +1,26 @@
 """Harmonogram wieloportfelowy obsługujący copy trading i rebalancing."""
+
 from __future__ import annotations
 
 import logging
 from collections import defaultdict
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
-from typing import Callable, Iterable, Mapping, MutableMapping, Protocol, Sequence, runtime_checkable
+from typing import (
+    Callable,
+    Iterable,
+    Mapping,
+    MutableMapping,
+    Protocol,
+    Sequence,
+    runtime_checkable,
+)
 
 from bot_core.portfolio.governor import (
     PortfolioAdjustment,
     PortfolioAdvisory,
     PortfolioDecision,
+    PortfolioGovernor,
 )
 from bot_core.strategies.catalog import (
     PresetLicenseState,
@@ -30,28 +40,21 @@ class PortfolioScheduler(Protocol):
 
     governor: "PortfolioGovernor"
 
-    def evaluate(self, *, force: bool = False) -> "PortfolioDecision | None":
-        ...
+    def evaluate(self, *, force: bool = False) -> "PortfolioDecision | None": ...
 
-    async def start(self) -> None:
-        ...
+    async def start(self) -> None: ...
 
-    async def run_forever(self) -> None:
-        ...
+    async def run_forever(self) -> None: ...
 
-    async def run_once(self) -> None:
-        ...
+    async def run_once(self) -> None: ...
 
-    def stop(self) -> None:
-        ...
+    def stop(self) -> None: ...
 
     @property
-    def last_decision(self) -> "PortfolioDecision | None":
-        ...
+    def last_decision(self) -> "PortfolioDecision | None": ...
 
     @property
-    def last_run(self) -> datetime | None:
-        ...
+    def last_run(self) -> datetime | None: ...
 
 
 def _default_clock() -> datetime:
@@ -267,9 +270,7 @@ class MultiPortfolioScheduler:
     ) -> PortfolioScheduleResult:
         state = self._ensure_state(decision.portfolio_id)
         now = self._clock()
-        health_ok = self._health_monitor.evaluate(
-            decision.portfolio_id, decision, metadata
-        )
+        health_ok = self._health_monitor.evaluate(decision.portfolio_id, decision, metadata)
         events: list[SchedulerEvent] = []
         if not health_ok:
             events.extend(self._handle_failure(state, decision, metadata))

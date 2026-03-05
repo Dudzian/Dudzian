@@ -83,6 +83,7 @@ module = [
     "bot_core.execution",
     "bot_core.execution.*",
 ]
+ignore_missing_imports = true
 disable_error_code = [
   "attr-defined",
   "arg-type",
@@ -119,6 +120,20 @@ module = [
   "core.reporting.retraining_reporter",
   "ui.pyside_app.controllers.wizards",
 ]
+
+
+[[tool.mypy.overrides]]
+module = [
+  "bot_core.ai.training",
+  "bot_core.auto_trader.ai_governor",
+  "bot_core.auto_trader.lifecycle",
+  "scripts.validate_marketplace_presets",
+]
+disable_error_code = ["import-not-found"]
+
+[[tool.mypy.overrides]]
+module = ["bot_core.generated", "bot_core.generated.*"]
+ignore_missing_imports = true
 
 [tool.pytest.ini_options]
 addopts = ""

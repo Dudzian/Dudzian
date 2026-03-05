@@ -1,4 +1,5 @@
 """Symulacje profili ryzyka, stres testy paper→live oraz scenariusze Parquet."""
+
 from __future__ import annotations
 
 import json
@@ -52,6 +53,12 @@ except Exception:  # pragma: no cover
     RiskEngine = RiskProfile = None  # type: ignore
 
 from bot_core.risk.state import PositionState, normalize_position_side
+
+try:  # pragma: no cover
+    from bot_core.risk.profiles.manual import ManualProfile
+except Exception:  # pragma: no cover
+    ManualProfile = None  # type: ignore
+
 
 if TYPE_CHECKING:  # tylko dla typowania w IDE
     from bot_core.risk.base import RiskProfile as _RiskProfileT  # noqa: F401
@@ -147,10 +154,12 @@ DEFAULT_SMOKE_SCENARIOS: tuple[Mapping[str, object], ...] = (
     },
 )
 
+
 # --- Modele danych -----------------------------------------------------------
 @dataclass(slots=True)
 class Candle:
     """Pojedyncza świeca OHLCV wykorzystywana w symulacji."""
+
     timestamp_ms: int
     open: float
     high: float
@@ -162,6 +171,7 @@ class Candle:
 @dataclass(slots=True)
 class StressTestResult:
     """Wynik pojedynczego stres testu."""
+
     name: str
     status: str
     metrics: MutableMapping[str, float | str] = field(default_factory=dict)
@@ -184,6 +194,7 @@ class StressTestResult:
 @dataclass(slots=True)
 class ProfileSimulationResult:
     """Metryki wynikowe dla profilu ryzyka (symulacja OHLCV)."""
+
     profile: str
     base_equity: float
     final_equity: float
@@ -216,6 +227,7 @@ class ProfileSimulationResult:
 @dataclass(slots=True)
 class RiskScenarioResult:
     """Zbiorczy wynik symulacji scenariuszy (Parquet/engine)."""
+
     profile: str
     total_orders: int
     accepted_orders: int
@@ -241,6 +253,7 @@ class RiskScenarioResult:
 @dataclass(slots=True)
 class RiskSimulationReport:
     """Zbiorczy raport z symulacji profili ryzyka (OHLCV)."""
+
     generated_at: str
     base_equity: float
     profiles: Sequence[ProfileSimulationResult]
@@ -360,7 +373,9 @@ class RiskSimulationReport:
             "synthetic_data": self.synthetic_data,
             "profiles": [p.to_mapping() for p in self.profiles],
             "breach_count": sum(len(p.breaches) for p in self.profiles),
-            "stress_failures": sum(sum(1 for r in p.stress_tests if r.is_failure()) for p in self.profiles),
+            "stress_failures": sum(
+                sum(1 for r in p.stress_tests if r.is_failure()) for p in self.profiles
+            ),
         }
         if self.tco_summary is not None:
             payload["tco"] = dict(self.tco_summary)
@@ -391,7 +406,9 @@ class RiskSimulationReport:
                 f"  Max drawdown: {profile.max_drawdown_pct * 100:.2f}% — worst daily loss {profile.worst_daily_loss_pct * 100:.2f}%"
             )
             lines.append(f"  Realized volatility: {profile.realized_volatility * 100:.2f}%")
-            lines.append(f"  Breaches: {', '.join(profile.breaches) if profile.breaches else 'none'}")
+            lines.append(
+                f"  Breaches: {', '.join(profile.breaches) if profile.breaches else 'none'}"
+            )
             for stress in profile.stress_tests:
                 status = stress.status.upper()
                 severity = stress.metrics.get("severity")
@@ -404,7 +421,9 @@ class RiskSimulationReport:
         if self.tco_summary:
             lines.append("")
             lines.append("TCO summary:")
-            reports = self.tco_summary.get("reports") if isinstance(self.tco_summary, Mapping) else None
+            reports = (
+                self.tco_summary.get("reports") if isinstance(self.tco_summary, Mapping) else None
+            )
             if isinstance(reports, Sequence):
                 for entry in reports:
                     if not isinstance(entry, Mapping):
@@ -426,6 +445,7 @@ class RiskSimulationReport:
 @dataclass(slots=True)
 class RiskSimulationSuite:
     """Raport zbiorczy dla scenariuszy Parquet/engine."""
+
     scenarios: Sequence[RiskScenarioResult]
     generated_at: datetime = field(default_factory=datetime.utcnow)
 
@@ -472,6 +492,7 @@ class RiskSimulationSuite:
 @dataclass(slots=True)
 class SimulationSettings:
     """Parametry wejściowe symulacji OHLCV."""
+
     base_equity: float = _BASE_EQUITY_DEFAULT
     max_bars: int | None = 720
 
@@ -479,6 +500,7 @@ class SimulationSettings:
 @dataclass(slots=True)
 class SimulationOrder:
     """Pojedynczy rekord wejściowy używany podczas symulacji (Parquet/engine)."""
+
     profile: str
     timestamp: datetime
     symbol: str
@@ -680,7 +702,9 @@ class MarketDatasetLoader:
 
 
 # --- Generator syntetycznych świec ------------------------------------------
-def _generate_synthetic_candles(*, bars: int, seed: int = 42, interval_seconds: int = 3600) -> Sequence[Candle]:
+def _generate_synthetic_candles(
+    *, bars: int, seed: int = 42, interval_seconds: int = 3600
+) -> Sequence[Candle]:
     rng = random.Random(seed)
     candles: list[Candle] = []
     timestamp = int(datetime(2022, 1, 1, tzinfo=timezone.utc).timestamp() * 1000)
@@ -721,12 +745,16 @@ def _compute_returns(candles: Sequence[Candle]) -> list[float]:
     return returns
 
 
-def _compute_daily_losses(candles: Sequence[Candle], pnl_series: Sequence[float], base_equity: float) -> float:
+def _compute_daily_losses(
+    candles: Sequence[Candle], pnl_series: Sequence[float], base_equity: float
+) -> float:
     worst_loss = 0.0
     equity = base_equity
     by_day: dict[str, float] = {}
     for candle, pnl in zip(candles[1:], pnl_series):
-        day = datetime.fromtimestamp(candle.timestamp_ms / 1000.0, tz=timezone.utc).date().isoformat()
+        day = (
+            datetime.fromtimestamp(candle.timestamp_ms / 1000.0, tz=timezone.utc).date().isoformat()
+        )
         by_day.setdefault(day, equity)
         equity += pnl
         change = equity - by_day[day]
@@ -752,11 +780,17 @@ def _compute_max_drawdown(pnl_series: Sequence[float], base_equity: float) -> fl
 def _realized_volatility(returns: Sequence[float]) -> float:
     if not returns:
         return 0.0
-    return math.sqrt(pstdev(returns)) * math.sqrt(len(returns)) if len(returns) > 1 else abs(returns[0])
+    return (
+        math.sqrt(pstdev(returns)) * math.sqrt(len(returns))
+        if len(returns) > 1
+        else abs(returns[0])
+    )
 
 
 # --- Stres testy -------------------------------------------------------------
-def _run_flash_crash_test(profile: RiskProfile, candles: Sequence[Candle], base_equity: float) -> StressTestResult:
+def _run_flash_crash_test(
+    profile: RiskProfile, candles: Sequence[Candle], base_equity: float
+) -> StressTestResult:
     max_drop = 0.0
     for idx in range(1, len(candles)):
         prev_close = candles[idx - 1].close
@@ -773,7 +807,11 @@ def _run_flash_crash_test(profile: RiskProfile, candles: Sequence[Candle], base_
     }
     allowed = severity <= limit
     status = "passed" if allowed else "failed"
-    notes = None if allowed else f"Observed crash {severity * 100:.2f}% breaches drawdown limit {limit * 100:.2f}%"
+    notes = (
+        None
+        if allowed
+        else f"Observed crash {severity * 100:.2f}% breaches drawdown limit {limit * 100:.2f}%"
+    )
     return StressTestResult(name="flash_crash", status=status, metrics=metrics, notes=notes)
 
 
@@ -796,7 +834,11 @@ def _run_liquidity_dryout_test(profile: RiskProfile, candles: Sequence[Candle]) 
         "severity": low_volume_ratio / max(allowed_ratio, 1e-6),
     }
     status = "passed" if low_volume_ratio <= allowed_ratio else "failed"
-    notes = None if status == "passed" else f"{low_volume_ratio * 100:.2f}% słabych wolumenów przekracza próg {allowed_ratio * 100:.2f}%"
+    notes = (
+        None
+        if status == "passed"
+        else f"{low_volume_ratio * 100:.2f}% słabych wolumenów przekracza próg {allowed_ratio * 100:.2f}%"
+    )
     return StressTestResult(name="dry_liquidity", status=status, metrics=metrics, notes=notes)
 
 
@@ -821,7 +863,11 @@ def _run_latency_spike_test(profile: RiskProfile, candles: Sequence[Candle]) -> 
         "severity": max_spread / max(threshold, 1e-6),
     }
     status = "passed" if max_spread <= threshold else "failed"
-    notes = None if status == "passed" else f"Spread {max_spread * 100:.2f}% przekracza próg {threshold * 100:.2f}% – ryzyko poślizgu"
+    notes = (
+        None
+        if status == "passed"
+        else f"Spread {max_spread * 100:.2f}% przekracza próg {threshold * 100:.2f}% – ryzyko poślizgu"
+    )
     return StressTestResult(name="latency_spike", status=status, metrics=metrics, notes=notes)
 
 
@@ -864,7 +910,9 @@ class RiskSimulationRunner:
             synthetic_data=synthetic,
         )
 
-    def _run_for_profile(self, *, profile: RiskProfile, base_equity: float) -> ProfileSimulationResult:
+    def _run_for_profile(
+        self, *, profile: RiskProfile, base_equity: float
+    ) -> ProfileSimulationResult:
         def _scenario_enabled(name: str) -> bool:
             return self._stress_scenarios is None or name in self._stress_scenarios
 
@@ -932,7 +980,9 @@ class RiskSimulationRunner:
         total_pnl = sum(pnl_series)
         final_equity = base_equity + total_pnl
         max_drawdown = _compute_max_drawdown(pnl_series, base_equity)
-        worst_daily_loss = _compute_daily_losses(next(iter(self._candles_by_symbol.values())), pnl_series, base_equity)
+        worst_daily_loss = _compute_daily_losses(
+            next(iter(self._candles_by_symbol.values())), pnl_series, base_equity
+        )
         realized_vol = _realized_volatility(total_returns)
         breaches = []
         if max_drawdown > _drawdown_limit(profile):
@@ -1040,7 +1090,9 @@ def _load_profiles_from_yaml(path: str | Path) -> Sequence[RiskProfile]:
             name=str(name),
             max_positions=max_positions,
             max_leverage=float(config.get("max_leverage", 1.0)),
-            drawdown_limit=float(config.get("hard_drawdown_pct", config.get("drawdown_limit", 0.1))),
+            drawdown_limit=float(
+                config.get("hard_drawdown_pct", config.get("drawdown_limit", 0.1))
+            ),
             daily_loss_limit=float(config.get("max_daily_loss_pct", 0.05)),
             max_position_pct=float(config.get("max_position_pct", 0.2)),
             target_volatility=float(config.get("target_volatility", 0.15)),
@@ -1094,7 +1146,9 @@ def run_simulations_from_config(
             if not synthetic_fallback:
                 raise
             _LOGGER.warning("Brak danych Parquet dla %s – generuję syntetyczne świece", symbol)
-            candles[symbol] = _generate_synthetic_candles(bars=settings.max_bars if settings else 720)
+            candles[symbol] = _generate_synthetic_candles(
+                bars=settings.max_bars if settings else 720
+            )
     if synthetic_fallback and any(not c for c in candles.values()):
         for symbol, existing in list(candles.items()):
             if existing:
@@ -1149,7 +1203,9 @@ def load_orders_from_parquet(path: str | Path) -> Sequence[SimulationOrder]:
     return tuple(orders)
 
 
-def build_profile(profile_name: str, *, manual_overrides: Mapping[str, object] | None = None) -> RiskProfile:
+def build_profile(
+    profile_name: str, *, manual_overrides: Mapping[str, object] | None = None
+) -> RiskProfile:
     """Buduje profil ryzyka z wbudowanych klas (aggressive/balanced/conservative/manual)."""
     if RiskProfile is None or RiskProfileLoader is None:
         raise RuntimeError("RiskProfile base class is not available in this build.")
@@ -1194,18 +1250,24 @@ def run_profile_scenario(
             )
             current_state = exposures.get(order.symbol)
             current_side = (
-                normalize_position_side(current_state.side) if current_state else ("long" if order.side.lower() == "buy" else "short")
+                normalize_position_side(current_state.side)
+                if current_state
+                else ("long" if order.side.lower() == "buy" else "short")
             )
             current_notional = current_state.notional if current_state else 0.0
             is_buy = order.side.lower() == "buy"
             if is_buy:
-                new_notional = current_notional + order_notional if current_side == "long" else max(
-                    current_notional - order_notional, 0.0
+                new_notional = (
+                    current_notional + order_notional
+                    if current_side == "long"
+                    else max(current_notional - order_notional, 0.0)
                 )
                 new_side = "long" if new_notional > 0 else current_side
             else:
-                new_notional = current_notional + order_notional if current_side == "short" else max(
-                    current_notional - order_notional, 0.0
+                new_notional = (
+                    current_notional + order_notional
+                    if current_side == "short"
+                    else max(current_notional - order_notional, 0.0)
                 )
                 new_side = "short" if new_notional > 0 else current_side
             if new_notional > 0:

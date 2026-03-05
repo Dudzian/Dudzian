@@ -2,9 +2,12 @@ from __future__ import annotations
 
 import os
 import sys
-from typing import Generator
+from typing import TYPE_CHECKING, Generator
 
 import pytest
+
+if TYPE_CHECKING:
+    from PySide6.QtQml import QQmlEngine
 
 # WAŻNE: te zmienne muszą być ustawione ZANIM Qt/PySide6 zainicjalizuje platform plugin / scenegraph.
 # conftest z katalogu tests/performance ładuje się przed importem modułów testów w tym katalogu,

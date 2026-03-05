@@ -15,6 +15,7 @@ from typing import (
     Any,
     Callable,
     Mapping,
+    Protocol,
     MutableMapping,
     Sequence,
     Mapping as TypingMapping,
@@ -61,7 +62,10 @@ except Exception:  # pragma: no cover
 
 # Strategy types (interfejsy)
 try:
-    from bot_core.strategies import StrategySignal, MarketSnapshot  # gałąź z interfejsami w pakiecie
+    from bot_core.strategies import (
+        StrategySignal,
+        MarketSnapshot,
+    )  # gałąź z interfejsami w pakiecie
 except Exception:  # pragma: no cover
     from bot_core.strategies.base import StrategySignal, MarketSnapshot  # alternatywna ścieżka
 
@@ -73,19 +77,20 @@ try:  # pragma: no cover
         DecisionEvaluation,
     )  # type: ignore
     from bot_core.decision.evaluators import DecisionEvaluator
+    from bot_core.decision.orchestrator import DecisionOrchestrator
     from bot_core.decision.providers import DecisionProvider
 except Exception:  # pragma: no cover
     DecisionCandidate = None  # type: ignore
     DecisionContext = Any  # type: ignore
     DecisionEvaluation = Any  # type: ignore
+    DecisionOrchestrator = None  # type: ignore
 
     class DecisionEvaluator(Protocol):  # type: ignore[misc]
-        def evaluate_candidate(self, candidate: Any, context: Any) -> Any:
-            ...
+        def evaluate_candidate(self, candidate: Any, context: Any) -> Any: ...
 
     class DecisionProvider(Protocol):  # type: ignore[misc]
-        def ensure_snapshot(self, profile: str, snapshot: Mapping[str, object] | Any) -> Any:
-            ...
+        def ensure_snapshot(self, profile: str, snapshot: Mapping[str, object] | Any) -> Any: ...
+
 
 # Dane OHLCV – w zależności od gałęzi
 try:
@@ -114,6 +119,7 @@ try:  # pragma: no cover - fallback dla gałęzi bez modułu metrics
         get_global_metrics_registry,
     )
 except Exception:  # pragma: no cover
+
     class _NoopCounter:
         def inc(self, *_args, **_kwargs) -> None:
             return None
@@ -131,6 +137,7 @@ except Exception:  # pragma: no cover
 
     def get_global_metrics_registry() -> MetricsRegistry:  # type: ignore[override]
         return MetricsRegistry()
+
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -275,6 +282,7 @@ def _clamp_request_quantity(
 # TradingController – przetwarza sygnały (BUY/SELL), pilnuje ryzyka i wysyła alerty
 # =============================================================================
 
+
 def _as_timedelta(value: timedelta | float | int) -> timedelta:
     if isinstance(value, timedelta):
         return value
@@ -304,6 +312,7 @@ def _normalize_modes(values: Sequence[object] | None, *, default: Sequence[str])
 @dataclass(slots=True)
 class ControllerSignal:
     """Zbiera sygnał strategii wraz ze snapshotem rynku."""
+
     snapshot: MarketSnapshot
     signal: StrategySignal
 
@@ -438,9 +447,7 @@ class TradingController:
         if self._decision_orchestrator is not None:
             orchestrator_config = getattr(self._decision_orchestrator, "_config", None)
         if orchestrator_config is not None:
-            configured_min_probability = float(
-                getattr(orchestrator_config, "min_probability", 0.0)
-            )
+            configured_min_probability = float(getattr(orchestrator_config, "min_probability", 0.0))
         if self.decision_min_probability is not None:
             candidate = float(self.decision_min_probability)
         elif configured_min_probability is not None:
@@ -631,7 +638,9 @@ class TradingController:
             return
 
         strategy_name = self._strategy_name or str(
-            signal.metadata.get("strategy", request.metadata.get("strategy") if request.metadata else request.symbol)
+            signal.metadata.get(
+                "strategy", request.metadata.get("strategy") if request.metadata else request.symbol
+            )
         )
         reference_price = request.price
         raw_response = result.raw_response if isinstance(result.raw_response, Mapping) else {}
@@ -775,9 +784,7 @@ class TradingController:
         intent_raw = getattr(signal, "intent", "") or ""
         intent = str(intent_raw).strip().lower()
         legs_attr = getattr(signal, "legs", ()) or ()
-        legs: Sequence[object] = (
-            tuple(legs_attr) if isinstance(legs_attr, SequenceABC) else tuple()
-        )
+        legs: Sequence[object] = tuple(legs_attr) if isinstance(legs_attr, SequenceABC) else tuple()
         base_metadata = self._clone_metadata(getattr(signal, "metadata", None))
         parent_quantity: float | None = None
         if signal.quantity is not None:
@@ -855,7 +862,9 @@ class TradingController:
                     StrategySignal(
                         symbol=getattr(leg, "symbol", "") or signal.symbol,
                         side=normalized_side,
-                        confidence=leg_confidence if leg_confidence is not None else signal.confidence,
+                        confidence=leg_confidence
+                        if leg_confidence is not None
+                        else signal.confidence,
                         quantity=leg_quantity if leg_quantity is not None else parent_quantity,
                         intent="single",
                         metadata=combined_metadata,
@@ -924,9 +933,7 @@ class TradingController:
             self._record_decision_evaluation_event(signal, evaluation)
             if not getattr(evaluation, "accepted", False):
                 self._handle_decision_rejection(signal, evaluation)
-                self._metric_signals_total.inc(
-                    labels={**metric_labels, "status": "rejected"}
-                )
+                self._metric_signals_total.inc(labels={**metric_labels, "status": "rejected"})
                 return None
 
         request = self._build_order_request(signal, extra_metadata=decision_metadata)
@@ -1106,11 +1113,15 @@ class TradingController:
             (current_side == "LONG" and desired_side == "BUY")
             or (current_side == "SHORT" and desired_side == "SELL")
         ):
-            self._metric_reversal_skipped_total.inc(labels={**metric_labels, "reason": "not_required"})
+            self._metric_reversal_skipped_total.inc(
+                labels={**metric_labels, "reason": "not_required"}
+            )
             return
 
         if untrusted_reason:
-            self._metric_reversal_skipped_total.inc(labels={**metric_labels, "reason": "untrusted_position"})
+            self._metric_reversal_skipped_total.inc(
+                labels={**metric_labels, "reason": "untrusted_position"}
+            )
             self._record_decision_event(
                 "reversal_skipped_untrusted_position",
                 signal=signal,
@@ -1172,7 +1183,9 @@ class TradingController:
             },
         )
         if not close_risk.allowed:
-            self._metric_reversal_denied_by_risk_total.inc(labels={**metric_labels, "side": close_side})
+            self._metric_reversal_denied_by_risk_total.inc(
+                labels={**metric_labels, "side": close_side}
+            )
             self._record_decision_event(
                 "reversal_denied_by_risk",
                 signal=signal,
@@ -1217,7 +1230,6 @@ class TradingController:
             status=result.status or "filled",
             metadata={"close_order_id": result.order_id or ""},
         )
-
 
     def _maybe_adjust_request(
         self,
@@ -1276,7 +1288,9 @@ class TradingController:
         try:
             quantity = float(metadata_source.get("quantity", 0.0))
         except (TypeError, ValueError) as exc:
-            raise ValueError("Wielkość zlecenia (quantity) musi być liczbą zmiennoprzecinkową") from exc
+            raise ValueError(
+                "Wielkość zlecenia (quantity) musi być liczbą zmiennoprzecinkową"
+            ) from exc
         if quantity <= 0:
             raise ValueError("Wielkość zlecenia musi być dodatnia")
 
@@ -1296,7 +1310,9 @@ class TradingController:
             try:
                 stop_price = float(stop_price_raw)
             except (TypeError, ValueError) as exc:
-                raise ValueError("stop_price w metadanych musi być liczbą zmiennoprzecinkową") from exc
+                raise ValueError(
+                    "stop_price w metadanych musi być liczbą zmiennoprzecinkową"
+                ) from exc
         if atr_raw is not None:
             try:
                 atr = float(atr_raw)
@@ -1377,9 +1393,7 @@ class TradingController:
                     candidates.append(payload)
         return candidates
 
-    def _inject_explainability_metadata(
-        self, metadata: MutableMapping[str, object] | None
-    ) -> None:
+    def _inject_explainability_metadata(self, metadata: MutableMapping[str, object] | None) -> None:
         if not metadata:
             return
         for report in self._collect_explainability_payloads(metadata):
@@ -1580,12 +1594,8 @@ class TradingController:
                 "model": getattr(evaluation, "model_name", None),
                 "net_edge_bps": getattr(evaluation, "net_edge_bps", None),
                 "cost_bps": getattr(evaluation, "cost_bps", None),
-                "model_expected_return_bps": getattr(
-                    evaluation, "model_expected_return_bps", None
-                ),
-                "model_success_probability": getattr(
-                    evaluation, "model_success_probability", None
-                ),
+                "model_expected_return_bps": getattr(evaluation, "model_expected_return_bps", None),
+                "model_success_probability": getattr(evaluation, "model_success_probability", None),
             }
         }
         selection = getattr(evaluation, "model_selection", None)
@@ -1687,13 +1697,9 @@ class TradingController:
             "decision_status": "accepted",
             "net_edge_bps": getattr(evaluation, "net_edge_bps", None) or "",
             "cost_bps": getattr(evaluation, "cost_bps", None) or "",
-            "model_expected_return_bps": getattr(
-                evaluation, "model_expected_return_bps", None
-            )
+            "model_expected_return_bps": getattr(evaluation, "model_expected_return_bps", None)
             or "",
-            "model_success_probability": getattr(
-                evaluation, "model_success_probability", None
-            )
+            "model_success_probability": getattr(evaluation, "model_success_probability", None)
             or "",
         }
         model_name = getattr(evaluation, "model_name", None)
@@ -1761,7 +1767,9 @@ class TradingController:
 
     def _handle_liquidation_state(self, risk_result: RiskCheckResult) -> None:
         in_liquidation = self.risk_engine.should_liquidate(profile_name=self.risk_profile)
-        self._metric_liquidation_state.set(1.0 if in_liquidation else 0.0, labels=self._metric_labels)
+        self._metric_liquidation_state.set(
+            1.0 if in_liquidation else 0.0, labels=self._metric_labels
+        )
         if not in_liquidation:
             if self._liquidation_alerted:
                 _LOGGER.info("Profil %s wyszedł z trybu awaryjnego", self.risk_profile)
@@ -1771,7 +1779,10 @@ class TradingController:
         if self._liquidation_alerted:
             return
 
-        reason = risk_result.reason or "Profil ryzyka w trybie awaryjnym – przekroczono limit straty lub obsunięcia."
+        reason = (
+            risk_result.reason
+            or "Profil ryzyka w trybie awaryjnym – przekroczono limit straty lub obsunięcia."
+        )
         context = {
             "risk_profile": self.risk_profile,
             "environment": self.environment,
@@ -1852,15 +1863,14 @@ class TradingController:
             severity="critical",
             context=context,
         )
-        _LOGGER.exception(
-            "Błąd egzekucji zlecenia %s %s: %s", request.side, request.symbol, error
-        )
+        _LOGGER.exception("Błąd egzekucji zlecenia %s %s: %s", request.side, request.symbol, error)
         self.alert_router.dispatch(message)
 
 
 # =============================================================================
 # DailyTrendController – cykl: backfill -> strategia -> ryzyko -> egzekucja
 # =============================================================================
+
 
 @dataclass(slots=True)
 class DailyTrendController:
@@ -1876,7 +1886,9 @@ class DailyTrendController:
     symbols: Sequence[str]
     backfill_service: OHLCVBackfillService
     data_source: CachedOHLCVSource
-    strategy: Any  # StrategyEngine kompatybilny: posiada on_data(snapshot)->Sequence[StrategySignal]
+    strategy: (
+        Any  # StrategyEngine kompatybilny: posiada on_data(snapshot)->Sequence[StrategySignal]
+    )
     risk_engine: RiskEngine
     execution_service: ExecutionService
     account_loader: Callable[[], AccountSnapshot]
@@ -1899,11 +1911,15 @@ class DailyTrendController:
         try:
             self._environment = self.core_config.environments[self.environment_name]
         except KeyError as exc:
-            raise KeyError(f"Brak konfiguracji środowiska '{self.environment_name}' w CoreConfig") from exc
+            raise KeyError(
+                f"Brak konfiguracji środowiska '{self.environment_name}' w CoreConfig"
+            ) from exc
         try:
             self._runtime = self.core_config.runtime_controllers[self.controller_name]
         except Exception as exc:
-            raise KeyError(f"Brak sekcji runtime dla kontrolera '{self.controller_name}' w CoreConfig") from exc
+            raise KeyError(
+                f"Brak sekcji runtime dla kontrolera '{self.controller_name}' w CoreConfig"
+            ) from exc
         self._risk_profile = self._environment.risk_profile
         if not self.exchange_name:
             self.exchange_name = getattr(self._environment, "exchange", None)
@@ -1985,7 +2001,9 @@ class DailyTrendController:
             )
             request = base_request
             if not risk_result.allowed:
-                adjusted_qty = _extract_adjusted_quantity(base_request.quantity, risk_result.adjustments)
+                adjusted_qty = _extract_adjusted_quantity(
+                    base_request.quantity, risk_result.adjustments
+                )
                 if adjusted_qty is not None:
                     adjusted_metadata = dict(base_request.metadata or {})
                     adjusted_metadata["quantity"] = float(adjusted_qty)
@@ -2044,7 +2062,9 @@ class DailyTrendController:
             results.append(result)
         return results
 
-    def _build_order_request(self, snapshot: MarketSnapshot, signal: StrategySignal) -> OrderRequest:
+    def _build_order_request(
+        self, snapshot: MarketSnapshot, signal: StrategySignal
+    ) -> OrderRequest:
         side = signal.side.lower()
         metadata = dict(signal.metadata)
         quantity = float(metadata.get("quantity", self.position_size))
@@ -2207,7 +2227,8 @@ class DailyTrendController:
                 strategy=self.strategy_name or self.controller_name,
                 risk_profile=self._risk_profile,
                 instrument=symbol,
-                exchange=self.exchange_name or getattr(self._environment, "exchange", self.environment_name),
+                exchange=self.exchange_name
+                or getattr(self._environment, "exchange", self.environment_name),
                 side=side_lower,
                 quantity=filled_qty,
                 executed_price=avg_price,
@@ -2235,8 +2256,13 @@ class AIDecisionLoop:
     def run_online_loop(self, *, start: int, end: int) -> Sequence[DecisionEvaluation]:
         if DecisionCandidate is None:
             raise RuntimeError("Pakiet decision nie jest dostępny w tej gałęzi")
-        if DecisionOrchestrator is not None and not isinstance(self.orchestrator, DecisionOrchestrator):
-            _LOGGER.debug("AIDecisionLoop: używam niestandardowej implementacji orchestratora %s", type(self.orchestrator))
+        if DecisionOrchestrator is not None and not isinstance(
+            self.orchestrator, DecisionOrchestrator
+        ):
+            _LOGGER.debug(
+                "AIDecisionLoop: używam niestandardowej implementacji orchestratora %s",
+                type(self.orchestrator),
+            )
         if not getattr(self.inference, "is_ready", False):
             raise RuntimeError("Model inference nie został przygotowany (brak wag)")
 
@@ -2269,7 +2295,9 @@ class AIDecisionLoop:
                 snapshots_cache[self.risk_profile] = snapshot
             evaluation = self.orchestrator.evaluate_candidate(
                 candidate,
-                DecisionContext(risk_snapshot=snapshot, runtime={"vector_timestamp": vector.timestamp}),
+                DecisionContext(
+                    risk_snapshot=snapshot, runtime={"vector_timestamp": vector.timestamp}
+                ),
             )
             evaluations.append(evaluation)
         return evaluations
@@ -2294,7 +2322,9 @@ class RuntimeInProcessStub:
         """Zwraca listę słowników reprezentujących świece OHLCV."""
 
         candles: list[dict[str, float | int]] = []
-        timestamp = datetime.now(timezone.utc) - timedelta(seconds=self.interval_seconds * self.candle_count)
+        timestamp = datetime.now(timezone.utc) - timedelta(
+            seconds=self.interval_seconds * self.candle_count
+        )
         price = float(self.base_price)
         for sequence in range(self.candle_count):
             timestamp += timedelta(seconds=self.interval_seconds)

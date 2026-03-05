@@ -1,4 +1,5 @@
 """Rozszerzony silnik autotradingu wspierający wiele strategii i reżimy."""
+
 from __future__ import annotations
 
 import datetime as dt
@@ -53,6 +54,7 @@ from bot_core.strategies.regime_workflow import (
 )
 from bot_core.runtime.journal import TradingDecisionEvent, TradingDecisionJournal
 
+
 class _AliasConfigSentinel:
     __slots__ = ()
 
@@ -90,6 +92,8 @@ class _ManualRiskFreezeState:
     last_extension_at: float | None = None
     source_reason: str | None = None
     released_at: float | None = None
+
+
 @dataclass
 class AutoTradeConfig:
     """Podstawowa konfiguracja silnika autotradingu.
@@ -135,8 +139,7 @@ class AutoTradeConfig:
         if self.strategy_weights is None:
             defaults = RegimeStrategyWeights.default()
             self.strategy_weights = {
-                regime.value: dict(weights)
-                for regime, weights in defaults.weights.items()
+                regime.value: dict(weights) for regime, weights in defaults.weights.items()
             }
         params = self.trading_parameters
         if params is None:
@@ -144,9 +147,7 @@ class AutoTradeConfig:
         elif isinstance(params, Mapping):
             self.trading_parameters = TradingParameters(**{str(k): v for k, v in params.items()})
         elif not isinstance(params, TradingParameters):
-            raise TypeError(
-                "trading_parameters must be TradingParameters, mapping or None"
-            )
+            raise TypeError("trading_parameters must be TradingParameters, mapping or None")
         self.breakout_window = int(self.breakout_window)
         if self.breakout_window < 2:
             raise ValueError("breakout_window must be at least 2")
@@ -227,9 +228,7 @@ class AutoTradeConfig:
                     continue
                 cleaned_signal_thresholds[_canonical_metric_name(str(key))] = numeric
             self.signal_thresholds = (
-                MappingProxyType(cleaned_signal_thresholds)
-                if cleaned_signal_thresholds
-                else None
+                MappingProxyType(cleaned_signal_thresholds) if cleaned_signal_thresholds else None
             )
         else:
             self.signal_thresholds = None
@@ -276,9 +275,11 @@ class AutoTradeEngine:
     }
 
     _STRATEGY_SUFFIXES: tuple[str, ...] = ("_probing", MIGRATION_FALLBACK_SUFFIX)
-    _STRATEGY_ALIAS_MAP: Mapping[str, str] = MappingProxyType({
-        "intraday_breakout": "day_trading",
-    })
+    _STRATEGY_ALIAS_MAP: Mapping[str, str] = MappingProxyType(
+        {
+            "intraday_breakout": "day_trading",
+        }
+    )
     _ALIAS_RESOLVER: StrategyAliasResolver | None = None
 
     _PRESET_ENGINE_MAPPING = {
@@ -387,25 +388,18 @@ class AutoTradeEngine:
         )
         normalized_weights = self._normalize_strategy_config(self.cfg.strategy_weights)
         self._strategy_weights = RegimeStrategyWeights(
-            weights={
-                regime: dict(weights)
-                for regime, weights in normalized_weights.items()
-            }
+            weights={regime: dict(weights) for regime, weights in normalized_weights.items()}
         )
         catalog = strategy_catalog or StrategyCatalog.default()
         self._strategy_catalog = catalog
         self._engine_key_cache: Dict[str, str | None] = {}
         base_override = {
             "day_trading_momentum_window": int(max(1, self.cfg.breakout_window)),
-            "day_trading_volatility_window": int(
-                max(1, math.ceil(self.cfg.breakout_window * 1.5))
-            ),
+            "day_trading_volatility_window": int(max(1, math.ceil(self.cfg.breakout_window * 1.5))),
             "arbitrage_confirmation_window": int(self.cfg.arbitrage_confirmation_window),
             "arbitrage_spread_threshold": float(self.cfg.arbitrage_threshold),
         }
-        workflow_parameter_overrides = {
-            regime: dict(base_override) for regime in MarketRegime
-        }
+        workflow_parameter_overrides = {regime: dict(base_override) for regime in MarketRegime}
         self._workflow_parameter_overrides = {
             regime: dict(values) for regime, values in workflow_parameter_overrides.items()
         }
@@ -433,9 +427,7 @@ class AutoTradeEngine:
         if decision_journal_context is None:
             self._decision_journal_context: Dict[str, Any] = {}
         elif not isinstance(decision_journal_context, Mapping):
-            raise TypeError(
-                "decision_journal_context must be a mapping or None"
-            )
+            raise TypeError("decision_journal_context must be a mapping or None")
         else:
             self._decision_journal_context = {
                 str(key): value for key, value in decision_journal_context.items()
@@ -485,9 +477,7 @@ class AutoTradeEngine:
             snapshot[str(key)] = candidate
         return snapshot
 
-    def _augment_status_detail(
-        self, detail: Mapping[str, Any] | None
-    ) -> Dict[str, Any]:
+    def _augment_status_detail(self, detail: Mapping[str, Any] | None) -> Dict[str, Any]:
         payload = {str(key): value for key, value in (detail or {}).items()}
         routing_snapshot = self._routing_snapshot()
         for key, value in routing_snapshot.items():
@@ -507,9 +497,7 @@ class AutoTradeEngine:
 
     def disable(self, reason: str = "") -> None:
         self._enabled = False
-        detail = self._augment_status_detail(
-            {"symbol": self.cfg.symbol, "reason": reason}
-        )
+        detail = self._augment_status_detail({"symbol": self.cfg.symbol, "reason": reason})
         self.adapter.push_autotrade_status(  # type: ignore[attr-defined]
             "disabled",
             detail=detail,
@@ -518,9 +506,7 @@ class AutoTradeEngine:
 
     def apply_params(self, params: Dict[str, int]) -> None:
         self._params = dict(params)
-        detail = self._augment_status_detail(
-            {"symbol": self.cfg.symbol, "params": self._params}
-        )
+        detail = self._augment_status_detail({"symbol": self.cfg.symbol, "params": self._params})
         self.adapter.push_autotrade_status(  # type: ignore[attr-defined]
             "params_applied",
             detail=detail,
@@ -775,7 +761,7 @@ class AutoTradeEngine:
 
     @staticmethod
     def _normalize_strategy_config(
-        raw: Mapping[str, Mapping[str, float]] | None
+        raw: Mapping[str, Mapping[str, float]] | None,
     ) -> Dict[MarketRegime, Dict[str, float]]:
         if raw is None:
             defaults = RegimeStrategyWeights.default()
@@ -939,9 +925,7 @@ class AutoTradeEngine:
                 continue
             metadata = {
                 "ensemble_weights": normalized,
-                "parameter_overrides": dict(
-                    self._workflow_parameter_overrides.get(regime, {})
-                ),
+                "parameter_overrides": dict(self._workflow_parameter_overrides.get(regime, {})),
             }
             try:
                 workflow.register_preset(
@@ -1077,9 +1061,7 @@ class AutoTradeEngine:
             available.add("latency_monitoring")
         return available
 
-    def _activation_weights(
-        self, activation: RegimePresetActivation
-    ) -> Dict[str, float]:
+    def _activation_weights(self, activation: RegimePresetActivation) -> Dict[str, float]:
         metadata = activation.version.metadata
         preset_meta = metadata.get("preset_metadata") if isinstance(metadata, Mapping) else None
         weights: Dict[str, float] = {}
@@ -1154,8 +1136,7 @@ class AutoTradeEngine:
                     "name": dynamic_candidate.get("name"),
                     "regime": dynamic_candidate.get("regime"),
                     "strategies": [
-                        {"name": key, "weight": value}
-                        for key, value in dynamic_weights.items()
+                        {"name": key, "weight": value} for key, value in dynamic_weights.items()
                     ],
                 }
                 generated_at = dynamic_candidate.get("generated_at")
@@ -1182,9 +1163,7 @@ class AutoTradeEngine:
             weights = {name: float(value) / total for name, value in weights.items()}
         return weights
 
-    def _build_activation_payload(
-        self, activation: RegimePresetActivation
-    ) -> Mapping[str, object]:
+    def _build_activation_payload(self, activation: RegimePresetActivation) -> Mapping[str, object]:
         version_meta: Dict[str, object] = {}
         for key, value in activation.version.metadata.items():
             if isinstance(value, Mapping):
@@ -1218,9 +1197,7 @@ class AutoTradeEngine:
                 payload["preset_name"] = str(preset_name)
             preset_meta = activation.preset.get("metadata")
             if isinstance(preset_meta, Mapping):
-                payload["preset_metadata"] = {
-                    str(k): v for k, v in preset_meta.items()
-                }
+                payload["preset_metadata"] = {str(k): v for k, v in preset_meta.items()}
         return MappingProxyType(payload)
 
     def _build_activation_metadata(
@@ -1232,7 +1209,11 @@ class AutoTradeEngine:
         per_strategy: Dict[str, Dict[str, object]] = {
             name: dict(payload) for name, payload in catalog_metadata["strategies"].items()
         }
-        for entry in activation.preset.get("strategies", []) if isinstance(activation.preset, Mapping) else []:
+        for entry in (
+            activation.preset.get("strategies", [])
+            if isinstance(activation.preset, Mapping)
+            else []
+        ):
             if not isinstance(entry, Mapping):
                 continue
             name = str(entry.get("name") or entry.get("engine") or "").strip()
@@ -1263,10 +1244,7 @@ class AutoTradeEngine:
             if isinstance(value, (tuple, list)) and value:
                 summary[key] = tuple(str(item) for item in value)
         return (
-            {
-                name: MappingProxyType(dict(payload))
-                for name, payload in per_strategy.items()
-            },
+            {name: MappingProxyType(dict(payload)) for name, payload in per_strategy.items()},
             MappingProxyType({key: tuple(values) for key, values in summary.items()}),
         )
 
@@ -1306,9 +1284,7 @@ class AutoTradeEngine:
             "ema_fast_period": fast,
             "ema_slow_period": slow,
             "day_trading_momentum_window": int(max(1, self.cfg.breakout_window)),
-            "day_trading_volatility_window": int(
-                max(1, math.ceil(self.cfg.breakout_window * 1.5))
-            ),
+            "day_trading_volatility_window": int(max(1, math.ceil(self.cfg.breakout_window * 1.5))),
             "arbitrage_confirmation_window": int(self.cfg.arbitrage_confirmation_window),
             "arbitrage_spread_threshold": float(self.cfg.arbitrage_threshold),
         }
@@ -1317,9 +1293,7 @@ class AutoTradeEngine:
     def _compose_trading_parameters(self, weights: Mapping[str, float]) -> TradingParameters:
         base = self._build_base_trading_parameters()
         total = sum(float(v) for v in weights.values()) or 1.0
-        normalized = {
-            str(name): float(value) / total for name, value in weights.items()
-        }
+        normalized = {str(name): float(value) / total for name, value in weights.items()}
         return replace(base, ensemble_weights=normalized)
 
     def _collect_strategy_metadata(
@@ -1436,11 +1410,7 @@ class AutoTradeEngine:
             payload.setdefault("name", name)
             if resolved_name and resolved_name != name:
                 payload.setdefault("catalog_name", resolved_name)
-                aliases = [
-                    alias
-                    for alias in lookup_sequence
-                    if alias not in {resolved_name, name}
-                ]
+                aliases = [alias for alias in lookup_sequence if alias not in {resolved_name, name}]
                 if aliases:
                     payload.setdefault("aliases", tuple(aliases))
             metadata_payload = MappingProxyType(payload)
@@ -1498,9 +1468,7 @@ class AutoTradeEngine:
             schedule_blocked=schedule_blocked,
         )
 
-    def _serialize_preset_availability(
-        self, report: PresetAvailability
-    ) -> dict[str, Any]:
+    def _serialize_preset_availability(self, report: PresetAvailability) -> dict[str, Any]:
         metadata = dict(getattr(report.version, "metadata", {}))
         regime_key = (
             report.regime.value if isinstance(report.regime, MarketRegime) else report.regime
@@ -1559,15 +1527,10 @@ class AutoTradeEngine:
                 detail["thresholds"] = self._regime_history.thresholds_snapshot()
             if metadata_summary:
                 detail["metadata"] = {
-                    key: list(values)
-                    for key, values in metadata_summary.items()
-                    if values
+                    key: list(values) for key, values in metadata_summary.items() if values
                 }
             if activation_payload:
-                detail["activation"] = {
-                    key: value
-                    for key, value in activation_payload.items()
-                }
+                detail["activation"] = {key: value for key, value in activation_payload.items()}
             detail = self._augment_status_detail(detail)
             self.adapter.push_autotrade_status(  # type: ignore[attr-defined]
                 "regime_update",
@@ -1599,9 +1562,7 @@ class AutoTradeEngine:
                 else:
                     reports = getattr(workflow, "_preset_availability", ())
 
-        normalized = tuple(
-            self._normalize_preset_availability(report) for report in reports
-        )
+        normalized = tuple(self._normalize_preset_availability(report) for report in reports)
         self._preset_availability = normalized
         return [self._serialize_preset_availability(report) for report in normalized]
 
@@ -1793,7 +1754,7 @@ class AutoTradeEngine:
         }
         activated_at = activation.activated_at
         if coerce_timestamps:
-            target_tz = tz or timezone.utc
+            target_tz = tz or dt.timezone.utc
             if activated_at.tzinfo is None:
                 activated_at = activated_at.replace(tzinfo=target_tz)
             else:
@@ -1813,8 +1774,7 @@ class AutoTradeEngine:
         if include_decision:
             record["assessment"] = self._serialize_payload(activation.assessment)
             record["decision_candidates"] = [
-                self._serialize_payload(candidate)
-                for candidate in activation.decision_candidates
+                self._serialize_payload(candidate) for candidate in activation.decision_candidates
             ]
         if include_preset:
             record["preset"] = self._serialize_payload(activation.preset)
@@ -1952,9 +1912,7 @@ class AutoTradeEngine:
         summary: dict[str, Any] = {
             "total_activations": len(history),
             "fallback_activations": sum(1 for entry in history if entry.used_fallback),
-            "license_issue_activations": sum(
-                1 for entry in history if entry.license_issues
-            ),
+            "license_issue_activations": sum(1 for entry in history if entry.license_issues),
             "missing_data_counts": dict(missing_counter),
             "license_issue_counts": dict(license_counter),
             "blocked_reason_counts": dict(blocked_counter),
@@ -2224,10 +2182,7 @@ class AutoTradeEngine:
         normalized_signal = math.tanh(float(score.expected_return_bps) / 100.0)
         influence = float(score.success_probability)
         scaling = max(0.0, 1.0 + normalized_signal * influence)
-        adjusted = {
-            name: float(value) * scaling
-            for name, value in base_weights.items()
-        }
+        adjusted = {name: float(value) * scaling for name, value in base_weights.items()}
         base_abs = sum(abs(value) for value in base_weights.values())
         adjusted_abs = sum(abs(value) for value in adjusted.values())
         metadata: Dict[str, float] = {
@@ -2267,9 +2222,7 @@ class AutoTradeEngine:
                 "weights_before": {
                     str(name): float(value) for name, value in weights_before.items()
                 },
-                "weights_after": {
-                    str(name): float(value) for name, value in weights_after.items()
-                },
+                "weights_after": {str(name): float(value) for name, value in weights_after.items()},
             }
             metadata_payload.update({str(k): v for k, v in adjustment_metadata.items()})
             for key, value in routing_snapshot.items():
@@ -2277,10 +2230,7 @@ class AutoTradeEngine:
             scored_at_iso = self._isoformat(scored_at or self._last_inference_scored_at)
             if scored_at_iso is not None:
                 metadata_payload["scored_at"] = scored_at_iso
-            sample = {
-                str(name): float(value)
-                for name, value in sorted(features.items())[:8]
-            }
+            sample = {str(name): float(value) for name, value in sorted(features.items())[:8]}
             if sample:
                 metadata_payload["feature_sample"] = sample
             event_kwargs: Dict[str, Any] = {
@@ -2504,8 +2454,7 @@ class AutoTradeEngine:
             return
 
         current = {
-            regime: dict(weights)
-            for regime, weights in self._strategy_weights.weights.items()
+            regime: dict(weights) for regime, weights in self._strategy_weights.weights.items()
         }
         for regime, payload in normalised.items():
             if replace:
@@ -2541,10 +2490,7 @@ class AutoTradeEngine:
         if not normalised:
             return
 
-        current = {
-            regime: dict(values)
-            for regime, values in self._parameter_overrides.items()
-        }
+        current = {regime: dict(values) for regime, values in self._parameter_overrides.items()}
         for regime, payload in normalised.items():
             if replace:
                 current[regime] = {str(name): value for name, value in payload.items()}
@@ -2650,7 +2596,9 @@ class AutoTradeEngine:
         indicators: TechnicalIndicators | None = None
         if not indicator_frame.empty:
             try:
-                indicators = self._indicator_service.calculate_indicators(indicator_frame, parameters)
+                indicators = self._indicator_service.calculate_indicators(
+                    indicator_frame, parameters
+                )
             except Exception as exc:  # pragma: no cover - defensywna degradacja
                 self._logger.debug("Błąd wyliczania wskaźników: %s", exc, exc_info=True)
             else:
@@ -2669,12 +2617,9 @@ class AutoTradeEngine:
         base_weights = dict(weights)
         base_abs_weight = sum(abs(value) for value in base_weights.values())
         base_signal_numerator = sum(
-            base_weights.get(name, 0.0) * signals.get(name, 0.0)
-            for name in base_weights
+            base_weights.get(name, 0.0) * signals.get(name, 0.0) for name in base_weights
         )
-        base_signal_value = (
-            base_signal_numerator / base_abs_weight if base_abs_weight else 0.0
-        )
+        base_signal_value = base_signal_numerator / base_abs_weight if base_abs_weight else 0.0
         ai_metadata: dict[str, object] | None = None
         self._last_inference_score = None
         self._last_inference_metadata = None
@@ -2696,9 +2641,7 @@ class AutoTradeEngine:
                     context={"symbol": self.cfg.symbol, "regime": assessment.regime.value},
                 )
             except Exception as exc:  # pragma: no cover - inference should never break trading
-                self._logger.debug(
-                    "DecisionModelInference score failed: %s", exc, exc_info=True
-                )
+                self._logger.debug("DecisionModelInference score failed: %s", exc, exc_info=True)
             else:
                 self._last_inference_scored_at = dt.datetime.now(dt.timezone.utc)
                 scored_at_iso = self._isoformat(self._last_inference_scored_at)
@@ -2709,8 +2652,7 @@ class AutoTradeEngine:
                 self._last_trading_parameters = parameters
                 denominator_override = base_abs_weight if base_abs_weight > 0 else None
                 adjusted_numerator = sum(
-                    weights.get(name, 0.0) * signals.get(name, 0.0)
-                    for name in weights
+                    weights.get(name, 0.0) * signals.get(name, 0.0) for name in weights
                 )
                 denominator_for_adjusted = denominator_override
                 if denominator_for_adjusted is None:
@@ -2749,9 +2691,7 @@ class AutoTradeEngine:
         adjustment_threshold_triggered = False
         if self._signal_threshold_after_adjustment is not None:
             reference_value = (
-                adjusted_signal_value
-                if adjusted_signal_value is not None
-                else combined_unclamped
+                adjusted_signal_value if adjusted_signal_value is not None else combined_unclamped
             )
             if abs(reference_value) < self._signal_threshold_after_adjustment:
                 combined_unclamped = 0.0
@@ -2790,28 +2730,17 @@ class AutoTradeEngine:
                     scored_at=self._last_inference_scored_at,
                 )
                 self._last_inference_metadata = dict(ai_metadata)
-        clamp_threshold_triggered = (
-            0.0 < abs(raw_combined_unclamped) < self._activation_threshold
-        )
+        clamp_threshold_triggered = 0.0 < abs(raw_combined_unclamped) < self._activation_threshold
         metadata_payload: dict[str, object] | None = None
         metadata_container: dict[str, object] = {}
         if strategy_metadata:
             metadata_container["per_strategy"] = {
-                name: dict(payload)
-                for name, payload in strategy_metadata.items()
+                name: dict(payload) for name, payload in strategy_metadata.items()
             }
-            metadata_container["license_tiers"] = list(
-                metadata_summary.get("license_tiers", ())
-            )
-            metadata_container["risk_classes"] = list(
-                metadata_summary.get("risk_classes", ())
-            )
-            metadata_container["required_data"] = list(
-                metadata_summary.get("required_data", ())
-            )
-            metadata_container["capabilities"] = list(
-                metadata_summary.get("capabilities", ())
-            )
+            metadata_container["license_tiers"] = list(metadata_summary.get("license_tiers", ()))
+            metadata_container["risk_classes"] = list(metadata_summary.get("risk_classes", ()))
+            metadata_container["required_data"] = list(metadata_summary.get("required_data", ()))
+            metadata_container["capabilities"] = list(metadata_summary.get("capabilities", ()))
             metadata_container["tags"] = list(metadata_summary.get("tags", ()))
         if activation_payload:
             metadata_container["activation"] = {
@@ -2884,9 +2813,7 @@ class AutoTradeEngine:
             if metadata_payload:
                 detail["metadata"] = metadata_payload
             if activation_payload:
-                detail["activation"] = {
-                    key: value for key, value in activation_payload.items()
-                }
+                detail["activation"] = {key: value for key, value in activation_payload.items()}
             detail = self._augment_status_detail(detail)
             self.adapter.push_autotrade_status(  # type: ignore[attr-defined]
                 "entry_long",
@@ -2904,9 +2831,7 @@ class AutoTradeEngine:
             if metadata_payload:
                 detail["metadata"] = metadata_payload
             if activation_payload:
-                detail["activation"] = {
-                    key: value for key, value in activation_payload.items()
-                }
+                detail["activation"] = {key: value for key, value in activation_payload.items()}
             detail = self._augment_status_detail(detail)
             self.adapter.push_autotrade_status(  # type: ignore[attr-defined]
                 "entry_short",
@@ -3076,7 +3001,11 @@ class AutoTradeEngine:
                 summary=summary,
             )
             event = "auto_risk_freeze_extend" if self._auto_risk_frozen else "auto_risk_freeze"
-            if event == "auto_risk_freeze_extend" and previous_until and new_expiry <= previous_until + 1e-6:
+            if (
+                event == "auto_risk_freeze_extend"
+                and previous_until
+                and new_expiry <= previous_until + 1e-6
+            ):
                 new_expiry = previous_until
             self._emit_auto_risk_freeze(
                 now=now,
@@ -3084,7 +3013,9 @@ class AutoTradeEngine:
                 expiry=new_expiry,
                 reason=reason,
                 level=summary.risk_level if summary else self._auto_risk_state.risk_level,
-                score=summary.risk_score if summary is not None else self._auto_risk_state.risk_score,
+                score=summary.risk_score
+                if summary is not None
+                else self._auto_risk_state.risk_score,
                 previous_until=previous_until,
                 event=event,
             )
@@ -3136,12 +3067,8 @@ class AutoTradeEngine:
             and self._manual_risk_frozen_until
             and self._manual_risk_frozen_until > now
         )
-        manual_reason = (
-            getattr(self._manual_risk_state, "reason", None) if manual_active else None
-        )
-        manual_until = (
-            float(self._manual_risk_frozen_until) if manual_active else None
-        )
+        manual_reason = getattr(self._manual_risk_state, "reason", None) if manual_active else None
+        manual_until = float(self._manual_risk_frozen_until) if manual_active else None
         auto_active = bool(self._auto_risk_frozen and self._auto_risk_frozen_until > now)
         auto_until = float(self._auto_risk_frozen_until) if auto_active else None
         auto_level = self._auto_risk_state.risk_level if auto_active else None
@@ -3190,9 +3117,7 @@ class AutoTradeEngine:
                     "success_probability", float(self._last_inference_score.success_probability)
                 )
             if self._last_inference_scored_at is not None:
-                inference_payload["scored_at"] = self._isoformat(
-                    self._last_inference_scored_at
-                )
+                inference_payload["scored_at"] = self._isoformat(self._last_inference_scored_at)
             if inference_payload:
                 ai_payload = MappingProxyType(dict(inference_payload))
         workflow = getattr(self, "_regime_workflow", None)
@@ -3240,6 +3165,7 @@ class AutoTradeEngine:
         if regime is None:
             return "unknown"
         return str(regime)
+
 
 @dataclass(frozen=True)
 class RiskFreezeSnapshot:

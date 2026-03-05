@@ -38,10 +38,13 @@ from .validation import (
 
 
 if TYPE_CHECKING:  # pragma: no cover - tylko dla statycznego typowania
+    import lightgbm as lgb
+
     from .scheduler import RetrainingScheduler, WalkForwardResult, WalkForwardValidator
 
 
 _LOGGER = logging.getLogger(__name__)
+
 
 @runtime_checkable
 class SupportsInference(Protocol):
@@ -267,9 +270,16 @@ class SimpleGradientBoostingModel:
         for feature_index in range(feature_count):
             candidates = self._candidate_thresholds(matrix, feature_index)
             for threshold in candidates:
-                left_indices = [i for i, row in enumerate(matrix) if row[feature_index] <= threshold]
-                right_indices = [i for i, row in enumerate(matrix) if row[feature_index] > threshold]
-                if len(left_indices) < self.min_samples_leaf or len(right_indices) < self.min_samples_leaf:
+                left_indices = [
+                    i for i, row in enumerate(matrix) if row[feature_index] <= threshold
+                ]
+                right_indices = [
+                    i for i, row in enumerate(matrix) if row[feature_index] > threshold
+                ]
+                if (
+                    len(left_indices) < self.min_samples_leaf
+                    or len(right_indices) < self.min_samples_leaf
+                ):
                     continue
                 left_value = self._mean(residuals, left_indices)
                 right_value = self._mean(residuals, right_indices)
@@ -295,7 +305,9 @@ class SimpleGradientBoostingModel:
         return [values[i] for i in range(0, len(values), step)]
 
     def _stump_value(self, row: Sequence[float], stump: DecisionStump) -> float:
-        return stump.left_value if row[stump.feature_index] <= stump.threshold else stump.right_value
+        return (
+            stump.left_value if row[stump.feature_index] <= stump.threshold else stump.right_value
+        )
 
     @staticmethod
     def _mean(values: Sequence[float], indices: Iterable[int]) -> float:
@@ -365,9 +377,7 @@ class ModelTrainer:
         if not 0.0 <= test_split < 1.0:
             raise ValueError("test_split musi zawierać się w przedziale [0, 1)")
         if validation_split + test_split >= 1.0:
-            raise ValueError(
-                "Suma validation_split i test_split musi być mniejsza od 1.0"
-            )
+            raise ValueError("Suma validation_split i test_split musi być mniejsza od 1.0")
         self.learning_rate = float(learning_rate)
         self.n_estimators = int(n_estimators)
         self.validation_split = float(validation_split)
@@ -390,9 +400,7 @@ class ModelTrainer:
             test_targets,
         ) = self._split_learning_arrays(matrix, targets)
         if not train_matrix:
-            raise ValueError(
-                "Za mało danych do trenowania po podziale walidacyjno-testowym"
-            )
+            raise ValueError("Za mało danych do trenowania po podziale walidacyjno-testowym")
 
         scalers = self._compute_scalers(train_matrix, feature_names)
         metadata: MutableMapping[str, object] = dict(dataset.metadata)
@@ -526,11 +534,7 @@ class ModelTrainer:
             if validation_predictions is not None
             else None
         )
-        test_data = (
-            (test_predictions, test_targets)
-            if test_predictions is not None
-            else None
-        )
+        test_data = (test_predictions, test_targets) if test_predictions is not None else None
         metadata["meta_labeling"] = build_meta_labeling_payload(
             classifier,
             train_data=(train_predictions, train_targets),
@@ -615,11 +619,7 @@ class ModelTrainer:
             if validation_predictions is not None
             else None
         )
-        test_data = (
-            (test_predictions, test_targets)
-            if test_predictions is not None
-            else None
-        )
+        test_data = (test_predictions, test_targets) if test_predictions is not None else None
         metadata["meta_labeling"] = build_meta_labeling_payload(
             classifier,
             train_data=(train_predictions, train_targets),
@@ -691,23 +691,15 @@ class ModelTrainer:
             for t, p in zip(targets, predictions)
             if t > -1.0 and p > -1.0
         ]
-        msle = (
-            sum(diff * diff for diff in log_diffs) / len(log_diffs) if log_diffs else 0.0
-        )
+        msle = sum(diff * diff for diff in log_diffs) / len(log_diffs) if log_diffs else 0.0
         mean_absolute_log_error = (
             sum(abs(diff) for diff in log_diffs) / len(log_diffs) if log_diffs else 0.0
         )
         directional_hits = sum(
-            1
-            for t, p in zip(targets, predictions)
-            if (t >= 0 and p >= 0) or (t < 0 and p < 0)
+            1 for t, p in zip(targets, predictions) if (t >= 0 and p >= 0) or (t < 0 and p < 0)
         )
         accuracy = directional_hits / len(targets)
-        pnl = (
-            sum(t * p for t, p in zip(targets, predictions)) / len(targets)
-            if targets
-            else 0.0
-        )
+        pnl = sum(t * p for t, p in zip(targets, predictions)) / len(targets) if targets else 0.0
         return {
             "mae": mae,
             "rmse": rmse,
@@ -756,9 +748,7 @@ class ModelTrainer:
                 test_count -= reduction
         split_train_end = total - (validation_count + test_count)
         if split_train_end <= 0:
-            raise ValueError(
-                "Za mało danych do wyznaczenia podziału walidacyjnego/testowego"
-            )
+            raise ValueError("Za mało danych do wyznaczenia podziału walidacyjnego/testowego")
         validation_start = split_train_end
         validation_end = validation_start + validation_count
         test_start = validation_end
@@ -865,8 +855,7 @@ class ModelTrainer:
             return model
         metadata: MutableMapping[str, object] = {
             "feature_scalers": {
-                name: {"mean": mean, "stdev": stdev}
-                for name, (mean, stdev) in scalers.items()
+                name: {"mean": mean, "stdev": stdev} for name, (mean, stdev) in scalers.items()
             }
         }
         return adapter.load(result.state, feature_names, metadata)
@@ -965,8 +954,7 @@ class ModelTrainer:
             return model
         metadata: MutableMapping[str, object] = {
             "feature_scalers": {
-                name: {"mean": mean, "stdev": stdev}
-                for name, (mean, stdev) in scalers.items()
+                name: {"mean": mean, "stdev": stdev} for name, (mean, stdev) in scalers.items()
             }
         }
         return adapter.load(result.state, feature_names, metadata)
@@ -991,10 +979,7 @@ class ModelTrainer:
     def _rows_to_samples(
         self, matrix: Sequence[Sequence[float]], feature_names: Sequence[str]
     ) -> list[Mapping[str, float]]:
-        return [
-            {name: float(row[idx]) for idx, name in enumerate(feature_names)}
-            for row in matrix
-        ]
+        return [{name: float(row[idx]) for idx, name in enumerate(feature_names)} for row in matrix]
 
     def _compose_metrics(
         self,
@@ -1065,7 +1050,9 @@ class ModelTrainer:
                 validation_block.get("directional_accuracy", 0.0),
             )
             if "expected_pnl" in validation_block:
-                summary_block.setdefault("validation_expected_pnl", validation_block["expected_pnl"])
+                summary_block.setdefault(
+                    "validation_expected_pnl", validation_block["expected_pnl"]
+                )
         if test_metrics and test_rows > 0:
             summary_block.setdefault("test_mae", test_block.get("mae", 0.0))
             summary_block.setdefault(
@@ -1282,7 +1269,9 @@ def _lightgbm_adapter_train(context: ExternalTrainingContext) -> ExternalTrainin
         dtype=float,
     )
     train_targets = np.asarray(context.train_targets, dtype=float)
-    train_dataset = lgb.Dataset(train_matrix, label=train_targets, feature_name=list(context.feature_names))
+    train_dataset = lgb.Dataset(
+        train_matrix, label=train_targets, feature_name=list(context.feature_names)
+    )
     valid_sets = [train_dataset]
     valid_names = ["train"]
     if context.validation_matrix:
@@ -1517,9 +1506,7 @@ class WalkForwardTrainingCoordinator:
             return True, "schedule"
         return False, "idle"
 
-    def _build_validator(
-        self, dataset: FeatureDataset
-    ) -> "WalkForwardValidator | None":
+    def _build_validator(self, dataset: FeatureDataset) -> "WalkForwardValidator | None":
         if self.validator_factory is not None:
             return self.validator_factory(dataset)
         try:
