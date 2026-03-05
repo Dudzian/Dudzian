@@ -744,6 +744,7 @@ if(BUILD_TESTING)
         src/grpc/TradingClient.cpp
         src/models/MarketRegimeClassifierBridge.cpp
         src/utils/PathUtils.cpp
+        src/utils/PerformanceGuard.cpp
     )
     target_include_directories(trading_client_transport_tests PRIVATE src ${GENERATED_DIR})
     target_link_libraries(trading_client_transport_tests
