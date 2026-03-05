@@ -22,12 +22,16 @@ import sys
 import tempfile
 from dataclasses import dataclass, field
 from pathlib import Path, PurePosixPath
+from types import ModuleType
 from typing import Any, Dict, Iterable, List, Mapping, Optional
 
+yaml: ModuleType | None
 try:  # pragma: no cover - optional dependency
-    import yaml
+    import yaml as _yaml
 except Exception:  # pragma: no cover - optional dependency
     yaml = None
+else:
+    yaml = _yaml
 
 _PACKAGE_ROOT = Path(__file__).resolve().parent
 REPO_ROOT = _PACKAGE_ROOT.parent.parent
@@ -208,7 +212,9 @@ def _ensure_windows_safe_component(*, component: str, label: str, context: str) 
         raise ValueError(f"{label} contains Windows reserved device name: {context}")
     invalid_char = next((c for c in trimmed if c in _WINDOWS_INVALID_CHARS), None)
     if invalid_char is not None:
-        raise ValueError(f"{label} contains character '{invalid_char}' disallowed on Windows: {context}")
+        raise ValueError(
+            f"{label} contains character '{invalid_char}' disallowed on Windows: {context}"
+        )
 
 
 def _ensure_windows_safe_virtual_path(path: PurePosixPath, *, label: str) -> None:
@@ -235,6 +241,7 @@ def _ensure_windows_safe_tree(path: Path, *, label: str) -> None:
 @dataclass
 class BundleInputs:
     """Container for bundle inputs."""
+
     daemon_paths: List[Path]
     ui_paths: List[Path]
     config_paths: Dict[str, Path]
@@ -269,7 +276,9 @@ class SignatureManager:
         return hasher.hexdigest()
 
     def build_signature_document(self, payload: Mapping[str, Any]) -> Dict[str, Any]:
-        digest = hmac.new(self._key, canonical_json_bytes(payload), getattr(hashlib, self._digest_algorithm)).digest()
+        digest = hmac.new(
+            self._key, canonical_json_bytes(payload), getattr(hashlib, self._digest_algorithm)
+        ).digest()
         signature = {
             "algorithm": self._signature_algorithm,
             "value": base64.b64encode(digest).decode("ascii"),
@@ -280,7 +289,10 @@ class SignatureManager:
 
     def write_signature_document(self, payload: Mapping[str, Any], destination: Path) -> None:
         document = self.build_signature_document(payload)
-        destination.write_text(json.dumps(document, ensure_ascii=False, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+        destination.write_text(
+            json.dumps(document, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
+            encoding="utf-8",
+        )
 
 
 def _iter_symlinks(root: Path) -> Iterable[Path]:
@@ -370,7 +382,9 @@ class CoreBundleBuilder:
             ui_paths=list(inputs.ui_paths),
             config_paths=dict(inputs.config_paths),
             resources={directory: list(paths) for directory, paths in inputs.resources.items()},
-            fingerprint_placeholder=_validate_fingerprint_placeholder(inputs.fingerprint_placeholder),
+            fingerprint_placeholder=_validate_fingerprint_placeholder(
+                inputs.fingerprint_placeholder
+            ),
         )
         self.logger = logger or logging.getLogger(__name__)
         self._pipeline = pipeline
@@ -400,12 +414,16 @@ class CoreBundleBuilder:
             self._stage_components(staging_root)
             manifest = self._build_manifest(staging_root)
             manifest_path = staging_root / "manifest.json"
-            manifest_path.write_text(json.dumps(manifest, indent=2, sort_keys=True), encoding="utf-8")
+            manifest_path.write_text(
+                json.dumps(manifest, indent=2, sort_keys=True), encoding="utf-8"
+            )
             manifest_payload = {
                 "path": "manifest.json",
                 "sha384": self.signatures.digest_file(manifest_path),
             }
-            self.signatures.write_signature_document(manifest_payload, manifest_path.with_suffix(".sig"))
+            self.signatures.write_signature_document(
+                manifest_payload, manifest_path.with_suffix(".sig")
+            )
             archive_path = self._archive(staging_root)
             if archive_path.name != expected_archive_name:
                 raise RuntimeError("Archive name mismatch between expected and generated bundle")
@@ -478,7 +496,9 @@ class CoreBundleBuilder:
             "generated_at": _now_utc(),
         }
         document = self.signatures.build_signature_document(payload)
-        expected_path.write_text(json.dumps(document, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+        expected_path.write_text(
+            json.dumps(document, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+        )
 
     def _write_bootstrap_scripts(self, bootstrap_dir: Path) -> None:
         verify_script = bootstrap_dir / "verify_fingerprint.py"
@@ -768,28 +788,38 @@ def _parse_config_arguments(values: Iterable[str]) -> Dict[str, Path]:
         for reserved in _RESERVED_CONFIG_PATHS:
             reserved_lower = _casefold_path(reserved)
             if _is_prefix(normalized_lower, reserved_lower):
-                raise ValueError("Config entry cannot use reserved name: " f"{normalized_name}")
+                raise ValueError(f"Config entry cannot use reserved name: {normalized_name}")
         if normalized_lower.endswith(".sig"):
-            raise ValueError("Config entry must not end with '.sig' because signatures are generated automatically")
+            raise ValueError(
+                "Config entry must not end with '.sig' because signatures are generated automatically"
+            )
 
         if normalized_lower in resolved_casefold:
-            raise ValueError("Config entry would conflict on a case-insensitive filesystem: " f"{normalized_name}")
+            raise ValueError(
+                f"Config entry would conflict on a case-insensitive filesystem: {normalized_name}"
+            )
 
         for existing_lower, existing_name in resolved_casefold.items():
             if _is_prefix(normalized_lower, existing_lower):
-                raise ValueError("Config entry nests within another entry: " f"{normalized_name}")
+                raise ValueError(f"Config entry nests within another entry: {normalized_name}")
             if _is_prefix(existing_lower, normalized_lower):
                 raise ValueError(
-                    "Config entry would become a parent directory of another entry: " f"{normalized_name}"
+                    "Config entry would become a parent directory of another entry: "
+                    f"{normalized_name}"
                 )
 
         if normalized_lower in signature_targets_casefold or any(
-            _is_prefix(normalized_lower, signature_lower) for signature_lower in signature_targets_casefold
+            _is_prefix(normalized_lower, signature_lower)
+            for signature_lower in signature_targets_casefold
         ):
-            raise ValueError("Config entry conflicts with auto-generated signature file: " f"{normalized_name}")
+            raise ValueError(
+                f"Config entry conflicts with auto-generated signature file: {normalized_name}"
+            )
 
         source_path = Path(path_str).expanduser()
-        _ensure_path_string_has_no_control_chars(source_path, label=f"Config entry '{normalized_name}'")
+        _ensure_path_string_has_no_control_chars(
+            source_path, label=f"Config entry '{normalized_name}'"
+        )
         if sys.platform.startswith("win"):
             _ensure_windows_safe_path_string(source_path, label=f"Config entry '{normalized_name}'")
         if not source_path.exists():
@@ -805,12 +835,16 @@ def _parse_config_arguments(values: Iterable[str]) -> Dict[str, Path]:
         if signature_lower in resolved_casefold or any(
             _is_prefix(existing_lower, signature_lower) for existing_lower in resolved_casefold
         ):
-            raise ValueError("Config entry would collide with another entry's name: " f"{signature_name}")
+            raise ValueError(
+                f"Config entry would collide with another entry's name: {signature_name}"
+            )
 
         for reserved in _RESERVED_CONFIG_PATHS:
             reserved_lower = _casefold_path(reserved)
             if signature_lower == reserved_lower or _is_prefix(reserved_lower, signature_lower):
-                raise ValueError("Config entry would produce reserved signature path: " f"{signature_name}")
+                raise ValueError(
+                    f"Config entry would produce reserved signature path: {signature_name}"
+                )
 
         resolved[normalized_name] = path
         resolved_casefold[normalized_lower] = normalized_name
@@ -852,7 +886,10 @@ def _resolve_paths(values: Iterable[str], *, label: str) -> List[Path]:
         name_key = path.name.casefold()
         existing = seen_names.get(name_key)
         if existing is not None:
-            raise ValueError(f"{label} names would conflict on a case-insensitive filesystem:" f" {existing} vs {path}")
+            raise ValueError(
+                f"{label} names would conflict on a case-insensitive filesystem:"
+                f" {existing} vs {path}"
+            )
         seen_names[name_key] = path
         if path.is_dir():
             _ensure_casefold_safe_tree(path, label=label)
@@ -928,7 +965,11 @@ def _apply_dry_run_defaults(args: argparse.Namespace) -> None:
         return placeholders
 
     if not args.daemon:
-        target = _DRY_RUN_SAMPLE_DAEMON if _DRY_RUN_SAMPLE_DAEMON.exists() else _placeholders().daemon_dir
+        target = (
+            _DRY_RUN_SAMPLE_DAEMON
+            if _DRY_RUN_SAMPLE_DAEMON.exists()
+            else _placeholders().daemon_dir
+        )
         args.daemon = [str(target)]
     if not args.ui:
         target = _DRY_RUN_SAMPLE_UI if _DRY_RUN_SAMPLE_UI.exists() else _placeholders().ui_dir
@@ -1036,7 +1077,9 @@ def build_from_cli(argv: Optional[List[str]] = None) -> Path:
         action="store_true",
         help="Validate inputs without creating bundle archives. When other arguments are omitted, sample artifacts from deploy/packaging/samples/ are used",
     )
-    parser.add_argument("--log-level", default="INFO", choices=["DEBUG", "INFO", "WARNING", "ERROR"])
+    parser.add_argument(
+        "--log-level", default="INFO", choices=["DEBUG", "INFO", "WARNING", "ERROR"]
+    )
     args = parser.parse_args(argv)
 
     logging.basicConfig(level=getattr(logging, args.log_level))
@@ -1080,7 +1123,9 @@ def build_from_cli(argv: Optional[List[str]] = None) -> Path:
         if os.name != "nt" and not skip_permission_check:
             mode = key_path.stat().st_mode
             if mode & (stat.S_IRWXG | stat.S_IRWXO):
-                raise ValueError("Signing key file permissions must restrict access to the owner: " f"{key_path}")
+                raise ValueError(
+                    f"Signing key file permissions must restrict access to the owner: {key_path}"
+                )
 
         signing_key = key_path.read_bytes()
 
@@ -1102,11 +1147,14 @@ def build_from_cli(argv: Optional[List[str]] = None) -> Path:
             resource_dirs_casefold[normalized_directory_lower] = normalized_directory
         elif existing_directory != normalized_directory:
             raise ValueError(
-                "Resource directory would conflict on a case-insensitive filesystem: " f"{normalized_directory}"
+                "Resource directory would conflict on a case-insensitive filesystem: "
+                f"{normalized_directory}"
             )
         top_level = normalized_directory.split("/", 1)[0]
         if _casefold_path(top_level) in _RESERVED_RESOURCE_PREFIXES_CASEFOLD:
-            raise ValueError("Resource directory cannot use reserved prefix: " f"{normalized_directory}")
+            raise ValueError(
+                f"Resource directory cannot use reserved prefix: {normalized_directory}"
+            )
         source_path = Path(raw_path).expanduser()
         if not source_path.exists():
             raise FileNotFoundError(source_path)
@@ -1119,7 +1167,7 @@ def build_from_cli(argv: Optional[List[str]] = None) -> Path:
         names = resource_names.setdefault(normalized_directory, set())
         basename_key = basename.casefold()
         if basename_key in names:
-            raise ValueError("Duplicate resource entry for " f"{normalized_directory}/{basename}")
+            raise ValueError(f"Duplicate resource entry for {normalized_directory}/{basename}")
         names.add(basename_key)
         resources.setdefault(normalized_directory, []).append(resource_path)
 
@@ -1163,7 +1211,9 @@ def build_from_cli(argv: Optional[List[str]] = None) -> Path:
         destination = builder.expected_archive_path()
         if destination.exists():
             raise FileExistsError(f"Bundle archive already exists: {destination}")
-        builder.logger.info("Dry run: validations completed. Bundle would be created at %s", destination)
+        builder.logger.info(
+            "Dry run: validations completed. Bundle would be created at %s", destination
+        )
         return destination
 
     destination = builder.build()

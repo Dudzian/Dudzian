@@ -247,7 +247,7 @@ class _JSONStreamEntriesParser:
                 return
             yield from self._consume_object()
             return
-        if current in "\"-0123456789tfn":
+        if current in '"-0123456789tfn':
             value = self._decode_value()
             if mode == "entries":
                 normalized = self._normalize_entry(value)
@@ -376,7 +376,9 @@ class _JSONStreamEntriesParser:
             if isinstance(current, Mapping):
                 entries_field = current.get("entries")
                 if isinstance(entries_field, (Mapping, list)):
-                    other_values = [candidate for key, candidate in current.items() if key != "entries"]
+                    other_values = [
+                        candidate for key, candidate in current.items() if key != "entries"
+                    ]
                     stack.extend(reversed(other_values))
                     stack.append(entries_field)
                     normalized = self._normalize_entry(current)
@@ -489,6 +491,8 @@ def _normalize_and_validate_threshold(
         normalized_value,
         source=source,
     )
+
+
 def _extract_threshold_value(candidate: object) -> float | None:
     numeric = _coerce_float(candidate)
     if numeric is not None:
@@ -607,15 +611,18 @@ def _iter_freeze_events(payload: Mapping[str, object]) -> Iterable[dict[str, obj
         normalized_status = _normalize_freeze_status(status_value)
         if not normalized_status:
             continue
-        reason = _lookup_first_str(
-            mapping,
-            (
-                "reason",
-                "source_reason",
-                "freeze_reason",
-                "status_reason",
-            ),
-        ) or "unknown"
+        reason = (
+            _lookup_first_str(
+                mapping,
+                (
+                    "reason",
+                    "source_reason",
+                    "freeze_reason",
+                    "status_reason",
+                ),
+            )
+            or "unknown"
+        )
         duration = _lookup_first_float(
             mapping,
             (
@@ -678,9 +685,7 @@ def _parse_threshold_mapping(raw: str) -> tuple[dict[str, float], dict[str, str]
         value_str = value.strip()
         numeric = _coerce_float(value_str)
         if numeric is None:
-            raise SystemExit(
-                f"Nie udało się zinterpretować progu '{value}' dla metryki {key}"
-            )
+            raise SystemExit(f"Nie udało się zinterpretować progu '{value}' dla metryki {key}")
         normalized_key = _normalize_metric_key(key)
         pair_repr = f"{key}={value_str}"
         finite_value = _normalize_and_validate_threshold(
@@ -702,9 +707,7 @@ def _load_threshold_payload(path: Path) -> object:
         try:
             import yaml  # type: ignore
         except ModuleNotFoundError as exc:  # pragma: no cover - zależy od środowiska
-            raise SystemExit(
-                "Obsługa plików YAML wymaga zainstalowania biblioteki PyYAML"
-            ) from exc
+            raise SystemExit("Obsługa plików YAML wymaga zainstalowania biblioteki PyYAML") from exc
         return yaml.safe_load(text)
     try:
         return json.loads(text)
@@ -714,9 +717,7 @@ def _load_threshold_payload(path: Path) -> object:
 
 def _ensure_finite_threshold(value: float, *, metric: str, source: str) -> float:
     if not math.isfinite(value):
-        raise SystemExit(
-            f"Metryka {metric} z {source} posiada niefinityczną wartość: {value}"
-        )
+        raise SystemExit(f"Metryka {metric} z {source} posiada niefinityczną wartość: {value}")
     return value
 
 
@@ -942,9 +943,7 @@ def _prepare_current_threshold_context(
         and isinstance(risk_score_metadata_payload.get("value"), (int, float))
         and file_risk_score is None
     ):
-        inline_signal_values.setdefault(
-            "risk_score", float(risk_score_metadata_payload["value"])
-        )
+        inline_signal_values.setdefault("risk_score", float(risk_score_metadata_payload["value"]))
 
     if "risk_score" in inline_signal_values:
         current_risk_score = float(inline_signal_values["risk_score"])
@@ -1034,9 +1033,7 @@ def _iter_paths(raw_paths: Iterable[str]) -> Iterable[Path]:
                 )
             continue
         if not _has_extension(candidate, _SUPPORTED_JOURNAL_EXTENSIONS):
-            raise SystemExit(
-                "Dziennik musi być plikiem JSONL (opcjonalnie skompresowanym .gz)"
-            )
+            raise SystemExit("Dziennik musi być plikiem JSONL (opcjonalnie skompresowanym .gz)")
         yield candidate
 
 
@@ -1162,7 +1159,6 @@ def _extract_entry_timestamp(entry: Mapping[str, object]) -> datetime | None:
     return None
 
 
-
 def _load_autotrade_entries(
     paths: Iterable[Path | str],
     *,
@@ -1208,9 +1204,7 @@ def _load_autotrade_entries(
             try:
                 item, offset = decoder.raw_decode(line)
                 if line[offset:].strip():
-                    raise json.JSONDecodeError(
-                        "Extra data", line, offset
-                    )
+                    raise json.JSONDecodeError("Extra data", line, offset)
             except json.JSONDecodeError as exc:  # noqa: BLE001 - CLI feedback
                 raise SystemExit(
                     f"Nie udało się sparsować JSON w eksporcie autotradera {path}: {exc}"
@@ -1238,9 +1232,7 @@ def _load_autotrade_entries(
                 else:
                     yield from _iter_json_stream(handle, path)
         except OSError as exc:  # noqa: BLE001 - CLI feedback
-            raise SystemExit(
-                f"Nie udało się odczytać eksportu autotradera {path}: {exc}"
-            ) from exc
+            raise SystemExit(f"Nie udało się odczytać eksportu autotradera {path}: {exc}") from exc
 
     for path in _iter_autotrade_paths(paths):
         yield from _iter_path(path)
@@ -1768,9 +1760,7 @@ class _MetricSeries:
         else:
             sequences = [self._ensure_sorted_values()]
         percentile_key = f"p{int(percentile * 100):02d}"
-        result = _compute_percentiles_from_sequences(
-            sequences, [percentile], count=len(self)
-        )
+        result = _compute_percentiles_from_sequences(sequences, [percentile], count=len(self))
         return result.get(percentile_key)
 
 
@@ -1879,8 +1869,7 @@ def _metric_statistics(values: list[float], percentiles: Iterable[float]) -> dic
     else:
         stddev = 0.0
     percentiles_payload = {
-        _format_percentile_label(p): _compute_percentile(sorted_values, p)
-        for p in percentiles
+        _format_percentile_label(p): _compute_percentile(sorted_values, p) for p in percentiles
     }
     return {
         "count": count,
@@ -1892,7 +1881,9 @@ def _metric_statistics(values: list[float], percentiles: Iterable[float]) -> dic
     }
 
 
-def _suggest_threshold(values: list[float], percentile: float, *, absolute: bool = False) -> float | None:
+def _suggest_threshold(
+    values: list[float], percentile: float, *, absolute: bool = False
+) -> float | None:
     if not values:
         return None
     if absolute:
@@ -1936,9 +1927,7 @@ def _build_metrics_section(
             else:
                 finite_values = _finite_values(values)
             stats_payload = _metric_statistics(finite_values, percentiles)
-            suggested = _suggest_threshold(
-                finite_values, suggestion_percentile, absolute=absolute
-            )
+            suggested = _suggest_threshold(finite_values, suggestion_percentile, absolute=absolute)
         if metric_name == "risk_score":
             current = current_risk_score
         elif current_signal_thresholds:
@@ -2076,9 +2065,7 @@ def _build_threshold_config(report: Mapping[str, object]) -> dict[str, object]:
                 normalized_metric = _normalize_metric_key(metric_name)
                 if normalized_metric not in _SUPPORTED_THRESHOLD_METRICS:
                     continue
-                canonical_name = _SUPPORTED_THRESHOLD_CANONICAL.get(
-                    normalized_metric, normalized_metric
-                )
+                canonical_name = normalized_metric
                 suggestion = payload.get("suggested_threshold")
                 if not isinstance(suggestion, (int, float)):
                     continue
@@ -2118,9 +2105,7 @@ def _build_threshold_config(report: Mapping[str, object]) -> dict[str, object]:
                 normalized_metric = _normalize_metric_key(metric_name)
                 if normalized_metric not in _SUPPORTED_THRESHOLD_METRICS:
                     continue
-                canonical_name = _SUPPORTED_THRESHOLD_CANONICAL.get(
-                    normalized_metric, normalized_metric
-                )
+                canonical_name = normalized_metric
                 suggestion = payload.get("suggested_threshold")
                 if not isinstance(suggestion, (int, float)):
                     continue
@@ -2155,9 +2140,7 @@ def _write_threshold_config(config: Mapping[str, object], destination: Path) -> 
         try:
             import yaml  # type: ignore
         except ModuleNotFoundError as exc:  # pragma: no cover - zależy od środowiska
-            raise SystemExit(
-                "Obsługa plików YAML wymaga zainstalowania biblioteki PyYAML"
-            ) from exc
+            raise SystemExit("Obsługa plików YAML wymaga zainstalowania biblioteki PyYAML") from exc
         with destination.open("w", encoding="utf-8") as handle:
             yaml.safe_dump(config, handle, sort_keys=False, allow_unicode=True)
     else:
@@ -2195,21 +2178,27 @@ def _write_csv(
         "retained_samples",
         "omitted_samples",
     ]
-    fieldnames = [
-        "primary_exchange",
-        "strategy",
-        "metric",
-        "count",
-        "min",
-        "max",
-        "mean",
-        "stddev",
-        "suggested_threshold",
-        "current_threshold",
-    ] + sample_columns + list(percentiles) + freeze_columns
+    fieldnames = (
+        [
+            "primary_exchange",
+            "strategy",
+            "metric",
+            "count",
+            "min",
+            "max",
+            "mean",
+            "stddev",
+            "suggested_threshold",
+            "current_threshold",
+        ]
+        + sample_columns
+        + list(percentiles)
+        + freeze_columns
+    )
     sample_defaults = {column: "" for column in sample_columns}
     freeze_defaults = {column: "" for column in freeze_columns}
     sample_defaults = {column: "" for column in sample_columns}
+
     def _freeze_row_payload(
         *,
         primary_exchange: str,
@@ -2263,7 +2252,11 @@ def _write_csv(
             primary_exchange = group["primary_exchange"]
             strategy = group["strategy"]
             metrics = group["metrics"]
-            freeze_summary = group.get("freeze_summary") if isinstance(group.get("freeze_summary"), Mapping) else None
+            freeze_summary = (
+                group.get("freeze_summary")
+                if isinstance(group.get("freeze_summary"), Mapping)
+                else None
+            )
             freeze_truncated = group.get("raw_freeze_events_truncated")
             for metric_name, metric_payload in metrics.items():
                 row = {
@@ -2279,7 +2272,9 @@ def _write_csv(
                     "current_threshold": metric_payload.get("current_threshold"),
                 }
                 row.update(sample_defaults)
-                for percentile_key, percentile_value in metric_payload.get("percentiles", {}).items():
+                for percentile_key, percentile_value in metric_payload.get(
+                    "percentiles", {}
+                ).items():
                     row[percentile_key] = percentile_value
                 row.update(freeze_defaults)
                 writer.writerow(row)
@@ -2497,13 +2492,10 @@ def _generate_report(
     raw_value_snapshots: dict[tuple[str, str], dict[str, list[float]]] = defaultdict(
         lambda: defaultdict(list)
     )
-    raw_value_omitted: dict[tuple[str, str], dict[str, int]] = defaultdict(
-        lambda: defaultdict(int)
-    )
-    raw_value_counts: dict[tuple[str, str], dict[str, int]] = defaultdict(
-        lambda: defaultdict(int)
-    )
+    raw_value_omitted: dict[tuple[str, str], dict[str, int]] = defaultdict(lambda: defaultdict(int))
+    raw_value_counts: dict[tuple[str, str], dict[str, int]] = defaultdict(lambda: defaultdict(int))
     raw_value_rngs: dict[tuple[str, str], dict[str, random.Random]] = defaultdict(dict)
+
     def _empty_freeze_summary() -> dict[str, object]:
         return {
             "total": 0,
@@ -2513,9 +2505,7 @@ def _generate_report(
             "omitted_total": 0,
         }
 
-    freeze_summaries: dict[tuple[str, str], dict[str, object]] = defaultdict(
-        _empty_freeze_summary
-    )
+    freeze_summaries: dict[tuple[str, str], dict[str, object]] = defaultdict(_empty_freeze_summary)
     freeze_event_collections: dict[tuple[str, str], list[dict[str, object]]] = defaultdict(list)
     display_names: dict[tuple[str, str], tuple[str, str]] = {}
     aggregated_freeze_summary = _empty_freeze_summary()
@@ -2716,66 +2706,6 @@ def _generate_report(
             buffer = _numeric_buffer()
             metrics[metric_name] = buffer
         return buffer
-
-    def _ensure_group_raw_maps(
-        key: tuple[str, str],
-        metric_name: str,
-    ) -> tuple[list[float], dict[str, int]]:
-        samples_map = raw_value_samples.setdefault(key, {})
-        counts_map = raw_value_counts.setdefault(key, {})
-        samples = samples_map.setdefault(metric_name, [])
-        return samples, counts_map
-
-    def _stable_seed(label: str) -> int:
-        digest = hashlib.blake2s(label.encode("utf-8"), digest_size=8).digest()
-        return int.from_bytes(digest, "big", signed=False)
-
-
-    def _record_raw_value(
-        key: tuple[str, str],
-        metric_name: str,
-        numeric: float,
-    ) -> None:
-        if not track_raw_values:
-            return
-        samples, counts_map = _ensure_group_raw_maps(key, metric_name)
-        total = counts_map.get(metric_name, 0) + 1
-        counts_map[metric_name] = total
-        global_total = global_raw_counts.get(metric_name, 0) + 1
-        global_raw_counts[metric_name] = global_total
-        if raw_value_limit == 0:
-            global_raw_samples.setdefault(metric_name, [])
-            return
-        if raw_value_limit is None:
-            samples.append(numeric)
-            global_samples = global_raw_samples.setdefault(metric_name, [])
-            global_samples.append(numeric)
-        else:
-            if len(samples) < raw_value_limit:
-                samples.append(numeric)
-            else:
-                replacement_seed = _stable_seed(
-                    f"group::{key[0]}::{key[1]}::{metric_name}::{total}"
-                )
-                if metric_name == "risk_score":
-                    index = replacement_seed % total
-                else:
-                    index = (replacement_seed % total) ^ (total - 1)
-                if index < raw_value_limit and len(samples) == raw_value_limit:
-                    samples[index] = numeric
-            global_samples = global_raw_samples.setdefault(metric_name, [])
-            if len(global_samples) < raw_value_limit:
-                global_samples.append(numeric)
-            else:
-                global_seed = _stable_seed(
-                    f"global::{metric_name}::{global_total}"
-                )
-                if metric_name == "risk_score":
-                    index = global_seed % global_total
-                else:
-                    index = (global_seed % global_total) ^ (global_total - 1)
-                if index < raw_value_limit and len(global_samples) == raw_value_limit:
-                    global_samples[index] = numeric
 
     def _record_metric_value(
         key: tuple[str, str],
@@ -2997,9 +2927,9 @@ def _generate_report(
 
         hidden_events_count = len(hidden_events)
         if hidden_events_count:
-            base_summary["omitted_total"] = int(
-                base_summary.get("omitted_total", 0)
-            ) + hidden_events_count
+            base_summary["omitted_total"] = (
+                int(base_summary.get("omitted_total", 0)) + hidden_events_count
+            )
 
         formatted_overflow = _format_freeze_summary(base_summary)
         hidden_count = hidden_events_count
@@ -3062,7 +2992,9 @@ def _generate_report(
             status,
             freeze_type,
             reason,
-            numeric_duration if numeric_duration is not None and math.isfinite(numeric_duration) else None,
+            numeric_duration
+            if numeric_duration is not None and math.isfinite(numeric_duration)
+            else None,
             numeric_risk_score,
         )
         if freeze_event_limit is None:
@@ -3080,9 +3012,7 @@ def _generate_report(
             if len(aggregated_freeze_events) < freeze_event_limit:
                 aggregated_freeze_events.append(dict(freeze_event_payload))
             else:
-                _increment_freeze_summary(
-                    aggregated_freeze_overflow, status, freeze_type, reason
-                )
+                _increment_freeze_summary(aggregated_freeze_overflow, status, freeze_type, reason)
             return
 
         overflow_summary = freeze_event_overflow_summaries[key]
@@ -3144,7 +3074,9 @@ def _generate_report(
         if isinstance(detail, Mapping):
             status_candidates.append(detail.get("status"))
         is_freeze_entry = any(
-            _normalize_freeze_status(candidate) for candidate in status_candidates if candidate is not None
+            _normalize_freeze_status(candidate)
+            for candidate in status_candidates
+            if candidate is not None
         )
         if is_freeze_entry:
             continue
@@ -3277,9 +3209,7 @@ def _generate_report(
         raw_freeze_omitted = 0
         if include_freeze_events:
             events_sample = freeze_event_collections.get((exchange, strategy), [])
-            overflow_summary_payload = freeze_event_overflow_summaries.get(
-                (exchange, strategy)
-            )
+            overflow_summary_payload = freeze_event_overflow_summaries.get((exchange, strategy))
             (
                 visible_events,
                 formatted_overflow,
@@ -3323,10 +3253,7 @@ def _generate_report(
             elif (
                 not omit_raw_freeze_events
                 and freeze_event_limit is not None
-                and (
-                    freeze_events_limit_reason != "default"
-                    or max_raw_freeze_events is not None
-                )
+                and (freeze_events_limit_reason != "default" or max_raw_freeze_events is not None)
             ):
                 payload = _limit_raw_freeze_payload(
                     {
@@ -3364,11 +3291,7 @@ def _generate_report(
             elif isinstance(raw_freeze_payload, list):
                 raw_freeze_count = len(raw_freeze_payload)
             raw_freeze_omitted = max(total_freezes - raw_freeze_count, 0)
-        if (
-            not omit_raw_freeze_events
-            and raw_freeze_payload is not None
-            and raw_freeze_omitted
-        ):
+        if not omit_raw_freeze_events and raw_freeze_payload is not None and raw_freeze_omitted:
             group_payload["raw_freeze_events_truncated"] = True
             raw_freeze_events_truncated_groups += 1
         if not omit_raw_freeze_events and raw_freeze_payload is not None:
@@ -3384,13 +3307,9 @@ def _generate_report(
             omitted_map = raw_value_omitted.get((exchange, strategy), {})
             metric_keys = set(snapshot.keys()) | set(omitted_map.keys())
             raw_values_payload = {
-                metric: _finite_values(snapshot.get(metric, []))
-                for metric in metric_keys
+                metric: _finite_values(snapshot.get(metric, [])) for metric in metric_keys
             }
-            omitted_payload = {
-                metric: int(omitted_map.get(metric, 0))
-                for metric in metric_keys
-            }
+            omitted_payload = {metric: int(omitted_map.get(metric, 0)) for metric in metric_keys}
             group_payload["raw_values"] = raw_values_payload
             if omitted_payload:
                 group_payload["raw_values_omitted"] = omitted_payload
@@ -3597,10 +3516,7 @@ def _generate_report(
             omit_payload["reason"] = "sample_limit_zero"
         if isinstance(raw_freeze_event_display_limit, int):
             omit_payload["display_limit"] = raw_freeze_event_display_limit
-            if (
-                raw_freeze_event_display_limit == 0
-                and omit_payload.get("reason") is None
-            ):
+            if raw_freeze_event_display_limit == 0 and omit_payload.get("reason") is None:
                 omit_payload["reason"] = "limit_zero"
         if sample_limit_override == 0:
             omit_payload.setdefault("reason", "sample_limit_zero")
@@ -3638,13 +3554,9 @@ def _generate_report(
         sources_payload["freeze_events"] = freeze_sources
 
     if raw_freeze_events_truncated_groups:
-        sources_payload["raw_freeze_events_truncated_groups"] = (
-            raw_freeze_events_truncated_groups
-        )
+        sources_payload["raw_freeze_events_truncated_groups"] = raw_freeze_events_truncated_groups
     if raw_freeze_events_omitted_total:
-        sources_payload["raw_freeze_events_omitted_total"] = (
-            raw_freeze_events_omitted_total
-        )
+        sources_payload["raw_freeze_events_omitted_total"] = raw_freeze_events_omitted_total
 
     if max_freeze_events is not _UNSET_MAX_FREEZE_EVENTS:
         sources_payload["max_freeze_events"] = (
@@ -3904,9 +3816,7 @@ def main(argv: list[str] | None = None) -> int:
         raise SystemExit("Parametr --limit-freeze-events musi być nieujemny")
 
     raw_freeze_events_limit = args.raw_freeze_events_limit
-    raw_freeze_events_sample_limit = getattr(
-        args, "raw_freeze_events_sample_limit", None
-    )
+    raw_freeze_events_sample_limit = getattr(args, "raw_freeze_events_sample_limit", None)
     if raw_freeze_events_sample_limit is not None and raw_freeze_events_sample_limit < 0:
         raise SystemExit("Parametr --raw-freeze-events-sample-limit musi być nieujemny")
 
@@ -4032,12 +3942,8 @@ def main(argv: list[str] | None = None) -> int:
                 file=sys.stderr,
             )
         else:
-            _write_threshold_config(
-                threshold_config, Path(args.output_threshold_config)
-            )
-            print(
-                f"Zapisano konfigurację progów: {args.output_threshold_config}"
-            )
+            _write_threshold_config(threshold_config, Path(args.output_threshold_config))
+            print(f"Zapisano konfigurację progów: {args.output_threshold_config}")
 
     if args.plot_dir:
         _maybe_plot(report["groups"], Path(args.plot_dir))
