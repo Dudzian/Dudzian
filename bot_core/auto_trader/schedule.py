@@ -70,6 +70,25 @@ def _normalize_days(days: Iterable[int | str] | None) -> frozenset[int]:
     return frozenset(_normalize_day(day) for day in days)
 
 
+def _parse_bool(value: object) -> bool:
+    """Parse common boolean-like values while keeping tolerant fallback semantics.
+
+    Unknown string values fall back to ``bool(value)`` (so non-empty strings evaluate to ``True``).
+    """
+
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, str):
+        normalized = value.strip().lower()
+        if not normalized:
+            return False
+        if normalized in {"1", "true", "yes", "y", "on"}:
+            return True
+        if normalized in {"0", "false", "no", "n", "off"}:
+            return False
+    return bool(value)
+
+
 @dataclass(frozen=True)
 class ScheduleWindow:
     """Single trading window definition.
@@ -212,7 +231,7 @@ class ScheduleWindow:
             start=start_time,
             end=end_time,
             mode=str(mode_raw),
-            allow_trading=bool(allow_trading_raw),
+            allow_trading=_parse_bool(allow_trading_raw),
             days=days,
             label=label,
         )
@@ -268,7 +287,7 @@ class ScheduleOverride:
         cls,
         payload: Mapping[str, object],
         *,
-        default_timezone: timezone | None = None,
+        default_timezone: tzinfo | None = None,
     ) -> "ScheduleOverride":
         tz = default_timezone or timezone.utc
         start_raw = payload.get("start")
@@ -281,7 +300,7 @@ class ScheduleOverride:
         allow_raw = payload.get("allow_trading", True)
         label_raw = payload.get("label")
         label = None if label_raw is None else str(label_raw)
-        return cls(start=start, end=end, mode=str(mode_raw), allow_trading=bool(allow_raw), label=label)
+        return cls(start=start, end=end, mode=str(mode_raw), allow_trading=_parse_bool(allow_raw), label=label)
 
     def to_mapping(self) -> dict[str, object]:
         payload: dict[str, object] = {
@@ -295,13 +314,15 @@ class ScheduleOverride:
         return payload
 
 
-def _parse_datetime(value: object, default_timezone: timezone) -> datetime:
+def _parse_datetime(value: object, default_timezone: tzinfo) -> datetime:
     if isinstance(value, datetime):
         dt = value
     else:
         candidate = str(value).strip()
         if not candidate:
             raise ValueError("Datetime value cannot be empty")
+        if candidate.endswith(("Z", "z")):
+            candidate = f"{candidate[:-1]}+00:00"
         try:
             dt = datetime.fromisoformat(candidate)
         except ValueError:
@@ -416,7 +437,7 @@ class TradingSchedule:
         self._overrides = tuple(normalized_overrides)
 
     @property
-    def timezone(self) -> timezone:
+    def timezone(self) -> tzinfo:
         """Return timezone associated with the schedule."""
 
         return self._tz
@@ -436,6 +457,31 @@ class TradingSchedule:
     @property
     def overrides(self) -> tuple[ScheduleOverride, ...]:
         return self._overrides
+
+    def with_overrides(
+        self,
+        overrides: Sequence[ScheduleOverride] | Sequence[Mapping[str, object]],
+    ) -> "TradingSchedule":
+        """Return a copy of this schedule with updated overrides."""
+
+        normalized: list[ScheduleOverride] = []
+        for entry in overrides:
+            if isinstance(entry, ScheduleOverride):
+                normalized.append(entry)
+            elif isinstance(entry, Mapping):
+                normalized.append(ScheduleOverride.from_mapping(entry, default_timezone=self._tz))
+            else:
+                raise TypeError(
+                    "TradingSchedule overrides must be ScheduleOverride objects or mappings"
+                )
+
+        return TradingSchedule(
+            self._windows,
+            timezone_name=self._timezone_name,
+            tz=self._tz,
+            default_mode=self._default_mode,
+            overrides=normalized,
+        )
 
     def describe(self, reference: datetime | None = None) -> ScheduleState:
         reference_dt = self._normalize_datetime(reference)
