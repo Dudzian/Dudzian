@@ -109,8 +109,12 @@ void TradingClientAuthMetadataTest::metadataIncludesTokenRoleScopes()
     QCOMPARE(map.value("x-bot-role"), QByteArray("operator"));
 
     const auto scopes = map.values("x-bot-scope");
-    QSet<QByteArray> scopeSet = scopes.toSet();
-    QCOMPARE(scopeSet, QSet<QByteArray>({QByteArray("metrics.write"), QByteArray("trading.read")}));
+    const QSet<QByteArray> scopeSet(scopes.cbegin(), scopes.cend());
+    const QSet<QByteArray> expected{
+        QByteArray("metrics.write"),
+        QByteArray("trading.read"),
+    };
+    QCOMPARE(scopeSet, expected);
 }
 
 void TradingClientAuthMetadataTest::scopesAreNormalized()
@@ -125,7 +129,14 @@ void TradingClientAuthMetadataTest::scopesAreNormalized()
             scopes.append(QString::fromUtf8(entry.second));
         }
     }
-    QCOMPARE(scopes, QStringList{QStringLiteral("metrics.write"), QStringLiteral("trading.read")});
+    const QStringList expectedScopes{
+        QStringLiteral("metrics.write"),
+        QStringLiteral("trading.read"),
+    };
+
+    const QSet<QString> scopeSet(scopes.cbegin(), scopes.cend());
+    const QSet<QString> expectedSet(expectedScopes.cbegin(), expectedScopes.cend());
+    QCOMPARE(scopeSet, expectedSet);
 }
 
 void TradingClientAuthMetadataTest::metadataClearsWhenEmpty()
