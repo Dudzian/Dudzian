@@ -45,6 +45,7 @@ public:
     bool unregisterService(const QString& serviceId);
 
     Q_INVOKABLE QVariantList availableViews(const QString& category = QString()) const;
+    Q_INVOKABLE QVariantList availableServices() const;
     Q_INVOKABLE QObject* resolveService(const QString& serviceId) const;
     Q_INVOKABLE QVariantMap lastLoadReport() const { return m_lastLoadReport; }
 
@@ -62,7 +63,7 @@ public:
 signals:
     void viewRegistered(const QString& moduleId, const QVariantMap& descriptor);
     void viewUnregistered(const QString& moduleId, const QString& viewId);
-    void serviceRegistered(const QString& moduleId, const QString& serviceId);
+    void serviceRegistered(const QString& moduleId, const QVariantMap& descriptor);
     void serviceUnregistered(const QString& moduleId, const QString& serviceId);
 
 private:
@@ -78,6 +79,7 @@ private:
     };
 
     QVariantMap serializeView(const ViewDescriptor& descriptor, const QString& moduleId) const;
+    QVariantMap serializeService(const ServiceDescriptor& descriptor, const QString& moduleId) const;
     QObject* ensureServiceInstance(const ServiceEntry& entry) const;
     bool isValidLibraryPath(const QString& path) const;
 
@@ -87,4 +89,3 @@ private:
     std::vector<std::unique_ptr<QPluginLoader>> m_pluginLoaders;
     QVariantMap m_lastLoadReport;
 };
-
