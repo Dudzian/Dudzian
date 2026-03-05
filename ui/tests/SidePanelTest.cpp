@@ -81,7 +81,7 @@ private:
 };
 
 void SidePanelTest::initTestCase() {
-    Q_INIT_RESOURCE(qml);
+    Q_INIT_RESOURCE(side_panel_qml);
     qmlRegisterUncreatableType<PerformanceGuard>(
         "BotCore", 1, 0, "PerformanceGuard", QStringLiteral("PerformanceGuard is provided by the controller"));
 }
