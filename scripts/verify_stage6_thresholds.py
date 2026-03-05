@@ -20,6 +20,7 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
+from scripts._cli_stdio import configure_cli_stdio  # noqa: E402  # isort:skip
 from bot_core.config.loader import load_core_config  # noqa: E402  # isort:skip
 from bot_core.config.stage6_thresholds import (  # noqa: E402  # isort:skip
     collect_stage6_threshold_differences,
@@ -108,7 +109,15 @@ def main(argv: list[str] | None = None) -> int:
         )
         return 1
 
-    differences = _collect_differences(config_path)
+    try:
+        differences = _collect_differences(config_path)
+    except (RuntimeError, ModuleNotFoundError, ImportError) as exc:
+        print(
+            f"[FAIL] Nie udało się odczytać konfiguracji Stage6 z {_format_path(config_path)}: {exc}",
+            file=sys.stderr,
+        )
+        return 1
+
     exit_code = _print_result(differences, config_path)
 
     if args.json_report:
@@ -123,4 +132,5 @@ def main(argv: list[str] | None = None) -> int:
 
 
 if __name__ == "__main__":  # pragma: no cover - CLI entrypoint
+    configure_cli_stdio()
     sys.exit(main())
