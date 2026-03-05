@@ -692,11 +692,7 @@ if(BUILD_TESTING)
     )
     target_link_libraries(strategy_workbench_e2e_tests
         PRIVATE
-            Qt6::Core
-            Qt6::Gui
-            Qt6::Qml
-            Qt6::Quick
-            Qt6::QuickControls2
+            ui_core
             Qt6::Test
     )
     add_test(NAME strategy_workbench_e2e_tests COMMAND strategy_workbench_e2e_tests)
@@ -711,21 +707,15 @@ if(BUILD_TESTING)
 
     add_executable(bot_core_local_service_tests
         tests/BotCoreLocalServiceTest.cpp
-        src/grpc/BotCoreLocalService.cpp
-        src/grpc/TradingClient.cpp
     )
     target_include_directories(bot_core_local_service_tests PRIVATE src ${GENERATED_DIR})
     target_link_libraries(bot_core_local_service_tests
         PRIVATE
-            ui_tests_qt_gui
-            ui_tests_qt_net
-            Qt6::Qml
-            Qt6::Quick
-            trading_proto
-            protobuf::libprotobuf
-            gRPC::grpc++
+            ui_core
+            Qt6::Test
     )
     add_test(NAME bot_core_local_service_tests COMMAND bot_core_local_service_tests)
+    append_ui_telemetry_test_env(bot_core_local_service_tests)
 
     append_ui_telemetry_test_env(
         frame_rate_monitor_tests
@@ -739,18 +729,15 @@ if(BUILD_TESTING)
 
     add_executable(trading_client_auth_metadata_tests
         tests/TradingClientAuthMetadataTest.cpp
-        src/grpc/TradingClient.cpp
     )
     target_include_directories(trading_client_auth_metadata_tests PRIVATE src ${GENERATED_DIR})
     target_link_libraries(trading_client_auth_metadata_tests
         PRIVATE
-            ui_tests_qt_gui
-            ui_tests_qt_net
-            trading_proto
-            protobuf::libprotobuf
-            gRPC::grpc++
+            ui_core
+            Qt6::Test
     )
     add_test(NAME trading_client_auth_metadata_tests COMMAND trading_client_auth_metadata_tests)
+    append_ui_telemetry_test_env(trading_client_auth_metadata_tests)
 
     add_executable(trading_client_transport_tests
         tests/TradingClientTransportTest.cpp
