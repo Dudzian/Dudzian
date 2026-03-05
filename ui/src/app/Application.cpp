@@ -2841,7 +2841,11 @@ void Application::ensureLicenseRefreshTimerConfigured()
     m_licenseRefreshTimer.setTimerType(Qt::VeryCoarseTimer);
     m_licenseRefreshTimer.setSingleShot(false);
     m_licenseRefreshTimer.setParent(this);
-    connect(&m_licenseRefreshTimer, &QTimer::timeout, this, &Application::refreshSecurityArtifacts);
+    connect(&m_licenseRefreshTimer, &QTimer::timeout, this, [this]() {
+        if (!m_started)
+            return;
+        refreshSecurityArtifacts();
+    });
     m_licenseRefreshTimerConfigured = true;
 }
 
@@ -4440,6 +4444,93 @@ QVariantList Application::listTradableInstruments(const QString& exchange)
         result.append(map);
     }
     return result;
+}
+
+bool Application::setLicenseRefreshEnabled(bool enabled)
+{
+    const int interval = m_securityCache.value(QStringLiteral("refreshIntervalSeconds"),
+                                               m_licenseRefreshIntervalSeconds).toInt();
+    const bool active = enabled && interval > 0;
+
+    m_securityCache.insert(QStringLiteral("refreshActive"), active);
+    m_licenseRefreshIntervalSeconds = interval;
+
+    if (!active) {
+        ensureLicenseRefreshTimerConfigured();
+        m_licenseRefreshTimer.stop();
+        m_nextLicenseRefreshUtc = {};
+    } else {
+        ensureLicenseRefreshTimerConfigured();
+        m_licenseRefreshTimer.setInterval(m_licenseRefreshIntervalSeconds * 1000);
+        if (!m_licenseRefreshTimer.isActive())
+            m_licenseRefreshTimer.start();
+        m_nextLicenseRefreshUtc = QDateTime::currentDateTimeUtc().addSecs(m_licenseRefreshIntervalSeconds);
+    }
+
+    persistSecurityCache();
+    Q_EMIT securityCacheChanged();
+    Q_EMIT licenseRefreshScheduleChanged();
+    return !enabled || active;
+}
+
+bool Application::setLicenseRefreshIntervalSeconds(int intervalSeconds)
+{
+    const int clamped = qBound(0, intervalSeconds, kMaxLicenseRefreshIntervalSeconds);
+
+    m_licenseRefreshIntervalSeconds = clamped;
+    m_securityCache.insert(QStringLiteral("refreshIntervalSeconds"), clamped);
+
+    const bool shouldBeActive = m_securityCache.value(QStringLiteral("refreshActive")).toBool() && clamped > 0;
+    if (!shouldBeActive) {
+        m_securityCache.insert(QStringLiteral("refreshActive"), false);
+        ensureLicenseRefreshTimerConfigured();
+        m_licenseRefreshTimer.stop();
+        m_nextLicenseRefreshUtc = {};
+    } else {
+        ensureLicenseRefreshTimerConfigured();
+        m_licenseRefreshTimer.setInterval(m_licenseRefreshIntervalSeconds * 1000);
+        if (!m_licenseRefreshTimer.isActive())
+            m_licenseRefreshTimer.start();
+        m_nextLicenseRefreshUtc = QDateTime::currentDateTimeUtc().addSecs(m_licenseRefreshIntervalSeconds);
+    }
+
+    persistSecurityCache();
+    Q_EMIT securityCacheChanged();
+    Q_EMIT licenseRefreshScheduleChanged();
+    return true;
+}
+
+bool Application::triggerLicenseRefreshNow()
+{
+    const bool active = m_securityCache.value(QStringLiteral("refreshActive")).toBool();
+    if (!active)
+        return false;
+
+    const int intervalSeconds = m_securityCache.value(QStringLiteral("refreshIntervalSeconds"),
+                                                      m_licenseRefreshIntervalSeconds).toInt();
+
+    const QDateTime requestTime = QDateTime::currentDateTimeUtc();
+    m_lastLicenseRefreshRequestUtc = requestTime;
+
+    if (intervalSeconds > 0) {
+        m_licenseRefreshIntervalSeconds = intervalSeconds;
+        m_nextLicenseRefreshUtc = requestTime.addSecs(intervalSeconds);
+
+        if (m_started) {
+            ensureLicenseRefreshTimerConfigured();
+            m_licenseRefreshTimer.setInterval(intervalSeconds * 1000);
+            m_licenseRefreshTimer.start();
+        }
+    } else {
+        ensureLicenseRefreshTimerConfigured();
+        m_licenseRefreshTimer.stop();
+        m_nextLicenseRefreshUtc = {};
+    }
+
+    Q_EMIT licenseRefreshScheduleChanged();
+
+    refreshSecurityArtifacts();
+    return true;
 }
 
 bool Application::triggerRiskRefreshNow()

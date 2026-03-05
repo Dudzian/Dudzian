@@ -223,6 +223,9 @@ public slots:
     Q_INVOKABLE bool updateRiskRefresh(bool enabled, double intervalSeconds);
     Q_INVOKABLE QVariantList listTradableInstruments(const QString& exchange);
     Q_INVOKABLE bool triggerRiskRefreshNow();
+    Q_INVOKABLE bool setLicenseRefreshEnabled(bool enabled);
+    Q_INVOKABLE bool setLicenseRefreshIntervalSeconds(int intervalSeconds);
+    Q_INVOKABLE bool triggerLicenseRefreshNow();
     Q_INVOKABLE bool updateRiskHistoryLimit(int maximumEntries);
     Q_INVOKABLE void clearRiskHistory();
     Q_INVOKABLE bool exportRiskHistoryToCsv(const QUrl& destination, int limit = -1);
