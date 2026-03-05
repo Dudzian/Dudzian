@@ -2,13 +2,17 @@
 
 from __future__ import annotations
 
+import importlib.util
 import json
-import subprocess
 import sys
 from datetime import datetime
 from pathlib import Path
 
 import pytest
+
+from tests._subprocess import run_cli_utf8
+
+import scripts.verify_stage6_thresholds as verify_stage6_thresholds
 
 from bot_core.config.loader import load_core_config
 from bot_core.config.stage6_thresholds import (
@@ -22,7 +26,15 @@ from bot_core.config.stage6_thresholds import (
 )
 
 
+ROOT = Path(__file__).resolve().parents[1]
+HAS_PYYAML = importlib.util.find_spec("yaml") is not None
+REQUIRES_PYYAML = pytest.mark.skipif(
+    not HAS_PYYAML, reason="PyYAML wymagany do audytu Stage6 thresholds"
+)
+
+
 @pytest.mark.parametrize("config_path", [Path("config/core.yaml")])
+@REQUIRES_PYYAML
 def test_stage6_thresholds_aligned_with_workshop(config_path: Path) -> None:
     """Zapewnia, że kluczowe progi Stage6 pozostają zgodne z ustaleniami warsztatowymi."""
     core_config = load_core_config(str(config_path))
@@ -75,13 +87,14 @@ def test_stage6_thresholds_aligned_with_workshop(config_path: Path) -> None:
     assert collect_stage6_threshold_differences(core_config) == []
 
 
+@REQUIRES_PYYAML
 def test_stage6_threshold_verifier_cli() -> None:
     """Uruchamia skrypt CLI i oczekuje sukcesu bez rozbieżności."""
-    result = subprocess.run(
+    result = run_cli_utf8(
         [sys.executable, "scripts/verify_stage6_thresholds.py", "--config", "config/core.yaml"],
         check=False,
         capture_output=True,
-        text=True,
+        cwd=ROOT,
     )
 
     stdout = result.stdout.strip()
@@ -91,10 +104,11 @@ def test_stage6_threshold_verifier_cli() -> None:
     assert "[OK]" in stdout
 
 
+@REQUIRES_PYYAML
 def test_stage6_threshold_verifier_cli_json_report(tmp_path: Path) -> None:
     """Generuje raport JSON zgodny z oczekiwaniami audytu."""
     report_path = tmp_path / "stage6_thresholds.json"
-    result = subprocess.run(
+    result = run_cli_utf8(
         [
             sys.executable,
             "scripts/verify_stage6_thresholds.py",
@@ -105,7 +119,7 @@ def test_stage6_threshold_verifier_cli_json_report(tmp_path: Path) -> None:
         ],
         check=False,
         capture_output=True,
-        text=True,
+        cwd=ROOT,
     )
 
     stdout = result.stdout.strip()
@@ -122,6 +136,7 @@ def test_stage6_threshold_verifier_cli_json_report(tmp_path: Path) -> None:
     datetime.fromisoformat(payload["timestamp"].replace("Z", "+00:00"))
 
 
+@REQUIRES_PYYAML
 def test_stage6_threshold_verifier_cli_json_report_mismatch(tmp_path: Path) -> None:
     """Raport JSON zawiera rozbieżności, gdy konfiguracja odbiega od progów."""
     config_copy = tmp_path / "core.yaml"
@@ -136,7 +151,7 @@ def test_stage6_threshold_verifier_cli_json_report_mismatch(tmp_path: Path) -> N
     )
 
     report_path = tmp_path / "audit.json"
-    result = subprocess.run(
+    result = run_cli_utf8(
         [
             sys.executable,
             "scripts/verify_stage6_thresholds.py",
@@ -147,7 +162,7 @@ def test_stage6_threshold_verifier_cli_json_report_mismatch(tmp_path: Path) -> N
         ],
         check=False,
         capture_output=True,
-        text=True,
+        cwd=ROOT,
     )
 
     stdout = result.stdout.strip()
@@ -161,3 +176,22 @@ def test_stage6_threshold_verifier_cli_json_report_mismatch(tmp_path: Path) -> N
     assert payload["status"] == "mismatch"
     assert payload["differences"]
     assert any("market_intel.default_weight" in diff for diff in payload["differences"])
+
+
+def test_stage6_threshold_verifier_cli_reports_loader_runtime_error(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Zwraca czytelny [FAIL], gdy loader konfiguracji rzuca RuntimeError (np. brak PyYAML)."""
+
+    def _raise_runtime_error(_: Path) -> list[str]:
+        raise RuntimeError("PyYAML nie jest zainstalowany")
+
+    monkeypatch.setattr(verify_stage6_thresholds, "_collect_differences", _raise_runtime_error)
+
+    exit_code = verify_stage6_thresholds.main(["--config", str(ROOT / "config/core.yaml")])
+
+    captured = capsys.readouterr()
+    assert exit_code == 1
+    assert "[FAIL]" in captured.err
+    assert "PyYAML nie jest zainstalowany" in captured.err
+    assert "Traceback" not in captured.err
