@@ -217,8 +217,9 @@ install(TARGETS bot_trading_shell RUNTIME DESTINATION bin)
 # --- Tests ---
 if(BUILD_TESTING)
     # Shared Qt module bundles for test targets.
-    # Quick include→module map: QColor/QBrush/QImage/QPainter/QFont→Gui,
-    # QSsl*/QNetwork*→Network, QtConcurrent→Concurrent.
+    # Quick/QML include→module map: QColor/QBrush/QImage/QPainter/QFont→Gui,
+    # QQml*→Qml, QQuickWindow/QQuickItem→Quick, QSsl*/QNetwork*→Network,
+    # QtConcurrent→Concurrent.
     if(NOT TARGET ui_tests_qt_base)
         add_library(ui_tests_qt_base INTERFACE)
         target_link_libraries(ui_tests_qt_base INTERFACE Qt6::Core Qt6::Test)
@@ -227,6 +228,16 @@ if(BUILD_TESTING)
     if(NOT TARGET ui_tests_qt_gui)
         add_library(ui_tests_qt_gui INTERFACE)
         target_link_libraries(ui_tests_qt_gui INTERFACE ui_tests_qt_base Qt6::Gui)
+    endif()
+
+    if(NOT TARGET ui_tests_qt_qml)
+        add_library(ui_tests_qt_qml INTERFACE)
+        target_link_libraries(ui_tests_qt_qml INTERFACE ui_tests_qt_gui Qt6::Qml)
+    endif()
+
+    if(NOT TARGET ui_tests_qt_quick)
+        add_library(ui_tests_qt_quick INTERFACE)
+        target_link_libraries(ui_tests_qt_quick INTERFACE ui_tests_qt_qml Qt6::Quick)
     endif()
 
     if(NOT TARGET ui_tests_qt_net)
@@ -281,10 +292,9 @@ if(BUILD_TESTING)
     target_include_directories(ui_application_telemetry_tests PRIVATE src ${GENERATED_DIR})
     target_link_libraries(ui_application_telemetry_tests
         PRIVATE
-            ui_tests_qt_gui
+            ui_tests_qt_quick
             ui_tests_qt_net
             ui_tests_qt_concurrent
-            Qt6::Quick
             trading_proto
             protobuf::libprotobuf
             gRPC::grpc++
@@ -376,10 +386,9 @@ if(BUILD_TESTING)
     target_include_directories(application_risk_refresh_tests PRIVATE src ${GENERATED_DIR})
     target_link_libraries(application_risk_refresh_tests
         PRIVATE
-            ui_tests_qt_gui
+            ui_tests_qt_quick
             ui_tests_qt_net
             ui_tests_qt_concurrent
-            Qt6::Quick
             trading_proto
             protobuf::libprotobuf
             gRPC::grpc++
@@ -410,10 +419,9 @@ if(BUILD_TESTING)
     target_include_directories(application_settings_persistence_tests PRIVATE src ${GENERATED_DIR})
     target_link_libraries(application_settings_persistence_tests
         PRIVATE
-            ui_tests_qt_gui
+            ui_tests_qt_quick
             ui_tests_qt_net
             ui_tests_qt_concurrent
-            Qt6::Quick
             trading_proto
             protobuf::libprotobuf
             gRPC::grpc++
@@ -477,10 +485,9 @@ if(BUILD_TESTING)
     target_include_directories(application_risk_history_auto_export_tests PRIVATE src ${GENERATED_DIR})
     target_link_libraries(application_risk_history_auto_export_tests
         PRIVATE
-            ui_tests_qt_gui
+            ui_tests_qt_quick
             ui_tests_qt_net
             ui_tests_qt_concurrent
-            Qt6::Quick
             trading_proto
             protobuf::libprotobuf
             gRPC::grpc++
@@ -514,10 +521,9 @@ if(BUILD_TESTING)
     target_include_directories(application_decision_log_tests PRIVATE src ${GENERATED_DIR})
     target_link_libraries(application_decision_log_tests
         PRIVATE
-            ui_tests_qt_gui
+            ui_tests_qt_quick
             ui_tests_qt_net
             ui_tests_qt_concurrent
-            Qt6::Quick
             trading_proto
             protobuf::libprotobuf
             gRPC::grpc++
@@ -551,10 +557,9 @@ if(BUILD_TESTING)
     target_include_directories(application_ui_modules_tests PRIVATE src ${GENERATED_DIR})
     target_link_libraries(application_ui_modules_tests
         PRIVATE
-            ui_tests_qt_gui
+            ui_tests_qt_quick
             ui_tests_qt_net
             ui_tests_qt_concurrent
-            Qt6::Quick
             trading_proto
             protobuf::libprotobuf
             gRPC::grpc++
@@ -568,7 +573,7 @@ if(BUILD_TESTING)
         src/utils/FrameRateMonitor.cpp
     )
     target_include_directories(frame_rate_monitor_tests PRIVATE src)
-    target_link_libraries(frame_rate_monitor_tests PRIVATE ui_tests_qt_base)
+    target_link_libraries(frame_rate_monitor_tests PRIVATE ui_tests_qt_quick)
     add_test(NAME frame_rate_monitor_tests COMMAND frame_rate_monitor_tests)
 
     add_executable(translation_loader_tests
