@@ -781,6 +781,7 @@ if(BUILD_TESTING)
     add_executable(support_bundle_controller_tests
         tests/SupportBundleControllerTest.cpp
         src/support/SupportBundleController.cpp
+        src/utils/PathUtils.cpp
     )
     target_include_directories(support_bundle_controller_tests PRIVATE src ${GENERATED_DIR})
     target_link_libraries(support_bundle_controller_tests PRIVATE ui_tests_qt_base)
