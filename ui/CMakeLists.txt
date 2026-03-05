@@ -760,6 +760,7 @@ if(BUILD_TESTING)
     add_executable(report_center_controller_tests
         tests/ReportCenterControllerTest.cpp
         src/reporting/ReportCenterController.cpp
+        src/utils/PathUtils.cpp
     )
     target_include_directories(report_center_controller_tests PRIVATE src)
     target_link_libraries(report_center_controller_tests
