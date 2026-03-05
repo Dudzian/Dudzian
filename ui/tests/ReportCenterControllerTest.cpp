@@ -36,13 +36,15 @@ void ReportCenterControllerTest::refreshesWhenExportCreated()
     controller.setReportsDirectory(QDir(tempDir.path()).absolutePath());
 
     QSignalSpy overviewSpy(&controller, &ReportCenterController::overviewReady);
-    const auto takeLastOverviewResult = [&overviewSpy]() {
-        QVERIFY(!overviewSpy.isEmpty());
-        const auto signals = overviewSpy.takeFirst();
-        bool result = signals.at(0).toBool();
-        while (!overviewSpy.isEmpty())
-            result = overviewSpy.takeFirst().at(0).toBool();
-        return result;
+    const auto takeLastOverviewResult = [&overviewSpy]() -> bool {
+        if (overviewSpy.isEmpty()) {
+            QTest::qFail("overviewReady spy queue is empty (missing wait()?)", __FILE__, __LINE__);
+            return false;
+        }
+
+        const auto args = overviewSpy.takeLast();
+        overviewSpy.clear();
+        return args.at(0).toBool();
     };
 
     QVERIFY(controller.refresh());
