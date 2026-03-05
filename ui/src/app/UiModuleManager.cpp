@@ -79,7 +79,7 @@ bool UiModuleManager::registerService(const QString& moduleId, const ServiceDesc
 
     ServiceEntry entry{moduleId, descriptor, {}};
     m_services.insert(descriptor.id, entry);
-    emit serviceRegistered(moduleId, descriptor.id);
+    emit serviceRegistered(moduleId, serializeService(descriptor, moduleId));
     return true;
 }
 
@@ -104,6 +104,24 @@ QVariantList UiModuleManager::availableViews(const QString& category) const
             continue;
         }
         result.append(serializeView(entry.descriptor, entry.moduleId));
+    }
+
+    std::sort(result.begin(), result.end(), [](const QVariant& lhs, const QVariant& rhs) {
+        const QVariantMap left = lhs.toMap();
+        const QVariantMap right = rhs.toMap();
+        return left.value(QStringLiteral("name")).toString() < right.value(QStringLiteral("name")).toString();
+    });
+
+    return result;
+}
+
+QVariantList UiModuleManager::availableServices() const
+{
+    QVariantList result;
+    result.reserve(m_services.size());
+    for (auto it = m_services.constBegin(); it != m_services.constEnd(); ++it) {
+        const ServiceEntry& entry = it.value();
+        result.append(serializeService(entry.descriptor, entry.moduleId));
     }
 
     std::sort(result.begin(), result.end(), [](const QVariant& lhs, const QVariant& rhs) {
@@ -294,6 +312,17 @@ QVariantMap UiModuleManager::serializeView(const ViewDescriptor& descriptor, con
     return map;
 }
 
+QVariantMap UiModuleManager::serializeService(const ServiceDescriptor& descriptor, const QString& moduleId) const
+{
+    QVariantMap map;
+    map.insert(QStringLiteral("id"), descriptor.id);
+    map.insert(QStringLiteral("name"), descriptor.name);
+    map.insert(QStringLiteral("moduleId"), moduleId);
+    map.insert(QStringLiteral("singleton"), descriptor.singleton);
+    map.insert(QStringLiteral("metadata"), descriptor.metadata);
+    return map;
+}
+
 QObject* UiModuleManager::ensureServiceInstance(const ServiceEntry& entry) const
 {
     if (!entry.descriptor.factory) {
@@ -320,4 +349,3 @@ bool UiModuleManager::isValidLibraryPath(const QString& path) const
 {
     return hasLibrarySuffix(path);
 }
-
