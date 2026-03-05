@@ -44,7 +44,12 @@ QString writeFingerprintDocument(const QString& dir, const QString& fingerprint)
     QJsonObject signature{{QStringLiteral("algorithm"), QStringLiteral("HMAC-SHA384")},
                            {QStringLiteral("value"), QStringLiteral("stub")}};
     QFile file(path);
-    file.open(QIODevice::WriteOnly | QIODevice::Text);
+    if (!file.open(QIODevice::WriteOnly | QIODevice::Text)) {
+        QTest::qFail(qPrintable(QStringLiteral("Unable to write fingerprint file %1: %2")
+                                    .arg(path, file.errorString())),
+                     __FILE__, __LINE__);
+        return {};
+    }
     file.write(QJsonDocument(QJsonObject{{QStringLiteral("payload"), payload},
                                         {QStringLiteral("signature"), signature}})
                    .toJson(QJsonDocument::Indented));
@@ -61,7 +66,7 @@ void writeLicenseFile(const QString& path, const QJsonDocument& doc)
     file.close();
 }
 
-class MockBindingSecretJob : public LicenseActivationController::BindingSecretJob {
+class MockBindingSecretJob : public BindingSecretJob {
 public:
     enum Mode {
         AutoSuccess,
@@ -70,7 +75,7 @@ public:
     };
 
     explicit MockBindingSecretJob(Mode mode, QObject* parent = nullptr)
-        : LicenseActivationController::BindingSecretJob(parent)
+        : BindingSecretJob(parent)
         , m_mode(mode)
     {
         s_lastInstance = this;
@@ -143,7 +148,8 @@ void LicenseActivationControllerTest::activatesWithValidLicense()
     QDir().mkpath(licenseDir);
 
     const QString expectedFingerprint = QStringLiteral("DEVICE-12345");
-    writeFingerprintDocument(configDir, expectedFingerprint);
+    const QString fingerprintPath = writeFingerprintDocument(configDir, expectedFingerprint);
+    QVERIFY2(!fingerprintPath.isEmpty(), "Fingerprint document path should not be empty (initial expected fingerprint)");
 
     const QString licenseFile = tempDir.filePath(QStringLiteral("license.json"));
     writeLicenseFile(licenseFile, buildLicenseDocument(expectedFingerprint));
@@ -181,7 +187,8 @@ void LicenseActivationControllerTest::rejectsMismatchedFingerprint()
 
     const QString configDir = tempDir.filePath(QStringLiteral("config"));
     QDir().mkpath(configDir);
-    writeFingerprintDocument(configDir, QStringLiteral("DEVICE-AAA"));
+    const QString fingerprintPath = writeFingerprintDocument(configDir, QStringLiteral("DEVICE-AAA"));
+    QVERIFY2(!fingerprintPath.isEmpty(), "Fingerprint document path should not be empty (mismatched fingerprint test)");
 
     LicenseActivationController controller;
     controller.setBindingSecretJobFactory([](QObject* owner) {
@@ -211,7 +218,8 @@ void LicenseActivationControllerTest::acceptsBase64Payload()
     const QString configDir = tempDir.filePath(QStringLiteral("config"));
     QDir().mkpath(configDir);
     const QString fingerprint = QStringLiteral("DEVICE-999");
-    writeFingerprintDocument(configDir, fingerprint);
+    const QString fingerprintPath = writeFingerprintDocument(configDir, fingerprint);
+    QVERIFY(!fingerprintPath.isEmpty());
 
     LicenseActivationController controller;
     controller.setBindingSecretJobFactory([](QObject* owner) {
@@ -243,7 +251,8 @@ void LicenseActivationControllerTest::cancelsBindingSecretPriming()
     const QString configDir = tempDir.filePath(QStringLiteral("config"));
     QDir().mkpath(configDir);
     const QString fingerprint = QStringLiteral("DEVICE-CANCEL");
-    writeFingerprintDocument(configDir, fingerprint);
+    const QString fingerprintPath = writeFingerprintDocument(configDir, fingerprint);
+    QVERIFY(!fingerprintPath.isEmpty());
 
     LicenseActivationController controller;
     controller.setBindingSecretJobFactory([](QObject* owner) {
@@ -281,7 +290,8 @@ void LicenseActivationControllerTest::propagatesBindingSecretFailureStatus()
     const QString configDir = tempDir.filePath(QStringLiteral("config"));
     QDir().mkpath(configDir);
     const QString fingerprint = QStringLiteral("DEVICE-FAILURE");
-    writeFingerprintDocument(configDir, fingerprint);
+    const QString fingerprintPath = writeFingerprintDocument(configDir, fingerprint);
+    QVERIFY(!fingerprintPath.isEmpty());
 
     LicenseActivationController controller;
     controller.setBindingSecretJobFactory([](QObject* owner) {
@@ -358,7 +368,8 @@ void LicenseActivationControllerTest::autoProvisionRunsDuringInitialize()
     QDir().mkpath(inboxDir);
 
     const QString fingerprint = QStringLiteral("BOOT-INIT-001");
-    writeFingerprintDocument(configDir, fingerprint);
+    const QString fingerprintPath = writeFingerprintDocument(configDir, fingerprint);
+    QVERIFY(!fingerprintPath.isEmpty());
     const QString licenseFile = QDir(inboxDir).filePath(QStringLiteral("license.json"));
     writeLicenseFile(licenseFile, buildLicenseDocument(fingerprint));
 
@@ -399,13 +410,15 @@ void LicenseActivationControllerTest::updatesFingerprintWhenDocumentCreated()
     QSignalSpy spy(&controller, &LicenseActivationController::expectedFingerprintChanged);
 
     const QString fingerprint = QStringLiteral("WATCH-12345");
-    writeFingerprintDocument(configDir, fingerprint);
+    const QString fingerprintPath = writeFingerprintDocument(configDir, fingerprint);
+    QVERIFY(!fingerprintPath.isEmpty());
 
     QTRY_VERIFY_WITH_TIMEOUT(spy.count() > 0, 1000);
     QCOMPARE(controller.expectedFingerprint(), fingerprint);
 
     const QString fingerprint2 = QStringLiteral("WATCH-ABCDE");
-    writeFingerprintDocument(configDir, fingerprint2);
+    const QString fingerprintPath2 = writeFingerprintDocument(configDir, fingerprint2);
+    QVERIFY2(!fingerprintPath2.isEmpty(), "Updated fingerprint document path should not be empty (watch test)");
 
     QTRY_VERIFY_WITH_TIMEOUT(spy.count() > 1, 1000);
     QCOMPARE(controller.expectedFingerprint(), fingerprint2);
@@ -419,7 +432,8 @@ void LicenseActivationControllerTest::tracksExternalLicenseChanges()
     const QString configDir = tempDir.filePath(QStringLiteral("config"));
     QDir().mkpath(configDir);
     const QString fingerprint = QStringLiteral("TRACK-777");
-    writeFingerprintDocument(configDir, fingerprint);
+    const QString fingerprintPath = writeFingerprintDocument(configDir, fingerprint);
+    QVERIFY(!fingerprintPath.isEmpty());
 
     const QString licensePath = tempDir.filePath(QStringLiteral("var/licenses/active/license.json"));
 
