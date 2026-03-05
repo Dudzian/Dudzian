@@ -870,7 +870,11 @@ if(BUILD_TESTING)
         src/reporting/ReportCenterController.cpp
     )
     target_include_directories(report_center_controller_tests PRIVATE src)
-    target_link_libraries(report_center_controller_tests PRIVATE ui_tests_qt_concurrent)
+    target_link_libraries(report_center_controller_tests
+        PRIVATE
+            ui_tests_qt_gui
+            ui_tests_qt_concurrent
+    )
     add_test(NAME report_center_controller_tests COMMAND report_center_controller_tests)
 
     add_executable(strategy_config_controller_tests
