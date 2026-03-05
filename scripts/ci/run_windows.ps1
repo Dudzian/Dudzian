@@ -68,7 +68,7 @@ function Lint-And-Test {
     Pip-Install "pytest pytest-cov pre-commit"
     Run "python scripts/lint_paths.py"
     Run "pre-commit run --all-files --show-diff-on-failure"
-    Run "pytest --cov=bot_core.strategies --cov=bot_core.runtime.multi_strategy_scheduler --cov=bot_core.runtime.journal --cov-config=.coveragerc --cov-report=xml --cov-report=term --cov-fail-under=75 tests/test_pipeline_paper.py tests/test_risk_profiles.py tests/test_mean_reversion_strategy.py tests/test_volatility_target_strategy.py tests/test_cross_exchange_arbitrage_strategy.py tests/test_multi_strategy_scheduler.py tests/test_backtest_dataset_library.py tests/test_telemetry_risk_profiles.py tests/test_trading_decision_journal.py tests/test_smoke_demo_strategies_cli.py"
+    Run "pytest --cov=bot_core.strategies --cov=bot_core.runtime.multi_strategy_scheduler --cov=bot_core.runtime.journal --cov-config=.coveragerc --cov-report=xml --cov-report=term --cov-fail-under=75 tests/test_pipeline_paper.py tests/test_risk_profiles.py tests/test_mean_reversion_strategy.py tests/test_volatility_target_strategy.py tests/test_cross_exchange_arbitrage_strategy.py tests/test_multi_strategy_scheduler.py tests/test_backtest_dataset_library.py tests/test_telemetry_risk_profiles.py tests/test_trading_decision_journal.py tests/test_smoke_demo_strategies_cli.py tests/runtime/test_stage6_hypercare_cycle_runtime.py tests/runtime/test_multi_strategy_scheduler_async.py tests/test_journal_analysis.py tests/strategies/test_regime_workflow.py tests/strategies/test_day_trading_strategy.py tests/test_futures_spread_strategy.py tests/test_cross_exchange_hedge_strategy.py"
 }
 
 function Bot-Core-Fast-Tests {

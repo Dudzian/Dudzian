@@ -143,7 +143,14 @@ lint_and_test() {
     tests/test_backtest_dataset_library.py \
     tests/test_telemetry_risk_profiles.py \
     tests/test_trading_decision_journal.py \
-    tests/test_smoke_demo_strategies_cli.py
+    tests/test_smoke_demo_strategies_cli.py \
+    tests/runtime/test_stage6_hypercare_cycle_runtime.py \
+    tests/runtime/test_multi_strategy_scheduler_async.py \
+    tests/test_journal_analysis.py \
+    tests/strategies/test_regime_workflow.py \
+    tests/strategies/test_day_trading_strategy.py \
+    tests/test_futures_spread_strategy.py \
+    tests/test_cross_exchange_hedge_strategy.py
 }
 
 prepare_wheelhouse() {
