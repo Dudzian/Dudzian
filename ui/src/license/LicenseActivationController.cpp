@@ -18,7 +18,7 @@
 
 #include "utils/PathUtils.hpp"
 
-Q_LOGGING_CATEGORY(lcActivation, "bot.shell.license")
+Q_LOGGING_CATEGORY(lcLicenseActivation, "bot.shell.license")
 
 using bot::shell::utils::watchableDirectories;
 
@@ -1058,7 +1058,7 @@ bool LicenseActivationController::runProvisioningScan(const QString& expectedFin
                              .arg(normalized, provisioningDir),
                          true);
     } else {
-        qCDebug(lcActivation) << "Provisioning scan completed without match" << provisioningDir;
+        qCDebug(lcLicenseActivation) << "Provisioning scan completed without match" << provisioningDir;
     }
 
     return false;
@@ -1095,7 +1095,7 @@ bool LicenseActivationController::tryProvisionFile(const QString& path, const QS
         if (QFile::exists(archived))
             QFile::remove(archived);
         if (!QFile::rename(path, archived))
-            qCWarning(lcActivation) << "Nie udało się oznaczyć przetworzonej licencji" << path;
+            qCWarning(lcLicenseActivation) << "Nie udało się oznaczyć przetworzonej licencji" << path;
     };
 
     QString parseError;

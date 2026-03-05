@@ -90,6 +90,7 @@ set(UI_SOURCES
     src/app/HypercareController.cpp
     src/app/UiModuleManager.cpp
     src/app/UiModuleViewsModel.cpp
+    src/app/UiModuleServicesModel.cpp
     src/app/ActivationController.cpp
     src/app/ConfigurationWizardController.cpp
     src/app/DecisionMonitorController.cpp
@@ -139,6 +140,7 @@ set(UI_HEADERS
     src/app/UiModuleManager.hpp
     src/app/UiModuleInterface.hpp
     src/app/UiModuleViewsModel.hpp
+    src/app/UiModuleServicesModel.hpp
     src/app/ActivationController.hpp
     src/app/ConfigurationWizardController.hpp
     src/app/StrategyConfigController.hpp
@@ -183,22 +185,16 @@ set(UI_HEADERS
     src/update/OfflineUpdateManager.hpp
 )
 
-qt_add_executable(bot_trading_shell
-    ${UI_SOURCES}
+set(UI_CORE_SOURCES ${UI_SOURCES})
+list(REMOVE_ITEM UI_CORE_SOURCES src/main.cpp)
+
+qt_add_library(ui_core STATIC
+    ${UI_CORE_SOURCES}
     ${UI_HEADERS}
-    qml/qml.qrc
 )
-
-qt_add_translations(bot_trading_shell
-    TS_FILES ${UI_TRANSLATIONS}
-    SOURCES ${UI_SOURCES} ${UI_HEADERS}
-    RESOURCE_PREFIX "/i18n"
-    LUPDATE_OPTIONS -no-obsolete
-)
-
-target_include_directories(bot_trading_shell PRIVATE src ${GENERATED_DIR})
-target_link_libraries(bot_trading_shell
-    PRIVATE
+target_include_directories(ui_core PUBLIC src ${GENERATED_DIR})
+target_link_libraries(ui_core
+    PUBLIC
         Qt6::Quick
         Qt6::QuickControls2
         Qt6::Charts
@@ -208,9 +204,22 @@ target_link_libraries(bot_trading_shell
         trading_proto
 )
 if(LibArchive_FOUND)
-    target_link_libraries(bot_trading_shell PRIVATE LibArchive::LibArchive)
-    target_compile_definitions(bot_trading_shell PRIVATE HAS_LIBARCHIVE_FALLBACK=1)
+    target_link_libraries(ui_core PUBLIC LibArchive::LibArchive)
+    target_compile_definitions(ui_core PUBLIC HAS_LIBARCHIVE_FALLBACK=1)
 endif()
+
+qt_add_executable(bot_trading_shell
+    src/main.cpp
+    qml/qml.qrc
+)
+target_link_libraries(bot_trading_shell PRIVATE ui_core)
+
+qt_add_translations(bot_trading_shell
+    TS_FILES ${UI_TRANSLATIONS}
+    SOURCES ${UI_SOURCES} ${UI_HEADERS}
+    RESOURCE_PREFIX "/i18n"
+    LUPDATE_OPTIONS -no-obsolete
+)
 
 install(TARGETS bot_trading_shell RUNTIME DESTINATION bin)
 
@@ -255,6 +264,7 @@ if(BUILD_TESTING)
         tests/UiTelemetryReporterTest.cpp
         src/utils/PerformanceGuard.cpp
         src/telemetry/UiTelemetryReporter.cpp
+        src/grpc/MetricsClient.cpp
     )
     target_include_directories(ui_telemetry_tests PRIVATE src ${GENERATED_DIR})
     target_link_libraries(ui_telemetry_tests
@@ -267,39 +277,41 @@ if(BUILD_TESTING)
     )
     add_test(NAME ui_telemetry_tests COMMAND ui_telemetry_tests)
 
-    # Application-level telemetry tests
-    add_executable(ui_application_telemetry_tests
-        tests/ApplicationTelemetryTest.cpp
-        tests/ApplicationHealthConfigTest.cpp
-        tests/ApplicationAuthTokenWatcherTest.cpp
-        tests/ApplicationTransportValidationTest.cpp
-        src/app/Application.cpp
-        src/app/UiModuleViewsModel.cpp
-        src/models/DecisionLogModel.cpp
-        src/runtime/RuntimeDecisionBridge.cpp
-        src/utils/PathUtils.cpp
-        src/grpc/TradingClient.cpp
-        src/grpc/HealthClient.cpp
-        src/health/HealthStatusController.cpp
-        src/models/AlertsModel.cpp
-        src/models/AlertsFilterProxyModel.cpp
-        src/models/OhlcvListModel.cpp
-        src/models/RiskHistoryModel.cpp
-        src/utils/PerformanceGuard.cpp
-        src/utils/FrameRateMonitor.cpp
-        src/telemetry/UiTelemetryReporter.cpp
+    # Application-level telemetry tests (one executable per test file to avoid multiple QTEST_MAIN symbols)
+    foreach(test_name IN ITEMS
+        ApplicationTelemetryTest
+        ApplicationHealthConfigTest
+        ApplicationAuthTokenWatcherTest
+        ApplicationTransportValidationTest
     )
-    target_include_directories(ui_application_telemetry_tests PRIVATE src ${GENERATED_DIR})
-    target_link_libraries(ui_application_telemetry_tests
-        PRIVATE
-            ui_tests_qt_quick
-            ui_tests_qt_net
-            ui_tests_qt_concurrent
-            trading_proto
-            protobuf::libprotobuf
-            gRPC::grpc++
+        set(target_name "ui_${test_name}")
+        add_executable(${target_name}
+            tests/${test_name}.cpp
+        )
+        target_include_directories(${target_name} PRIVATE src ${GENERATED_DIR})
+        target_link_libraries(${target_name}
+            PRIVATE
+                ui_core
+                Qt6::Test
+        )
+        add_test(NAME ${target_name} COMMAND ${target_name})
+    endforeach()
+
+    set(UI_APP_TELEMETRY_TEST_ENV
+        "QT_QPA_PLATFORM=offscreen"
+        "QSG_RHI_BACKEND=software"
     )
-    add_test(NAME ui_application_telemetry_tests COMMAND ui_application_telemetry_tests)
+    if(DEFINED ENV{CI} AND "$ENV{CI}" MATCHES "^(1|true|TRUE|yes|YES)$")
+        list(APPEND UI_APP_TELEMETRY_TEST_ENV "QSG_INFO=1")
+    endif()
+
+    set_tests_properties(
+        ui_ApplicationTelemetryTest
+        ui_ApplicationHealthConfigTest
+        ui_ApplicationAuthTokenWatcherTest
+        ui_ApplicationTransportValidationTest
+        PROPERTIES ENVIRONMENT "${UI_APP_TELEMETRY_TEST_ENV}"
+    )
 
     add_executable(metrics_client_preflight_tests
         tests/MetricsClientPreflightTest.cpp
