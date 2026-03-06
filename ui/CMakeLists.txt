@@ -792,6 +792,8 @@ if(BUILD_TESTING)
         ui_ApplicationTelemetryTest
         ui_ApplicationHealthConfigTest
         ui_ApplicationAuthTokenWatcherTest
+        ui_ApplicationTransportValidationTest
+        application_ui_modules_tests
         application_decision_log_tests
         security_admin_controller_tests
         report_center_controller_tests

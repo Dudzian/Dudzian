@@ -136,6 +136,17 @@ private Q_SLOTS:
         QCOMPARE(dirs.size(), 1);
         QCOMPARE(QDir(dirs.first()).canonicalPath(), QDir(dir.path()).canonicalPath());
     }
+
+    void watchableDirectories_missingPathDoesNotFallbackToRoot()
+    {
+#ifdef Q_OS_WIN
+        const QString missing = QStringLiteral("Z:/bot-core-ui-definitely-missing/a/b/c");
+#else
+        const QString missing = QStringLiteral("/bot-core-ui-definitely-missing/a/b/c");
+#endif
+        const QStringList dirs = watchableDirectories(missing);
+        QVERIFY(dirs.isEmpty());
+    }
 };
 
 QTEST_MAIN(PathUtilsTest)

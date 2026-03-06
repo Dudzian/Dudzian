@@ -197,36 +197,32 @@ QString expandPath(const QString& path)
 
 QStringList watchableDirectories(const QString& directoryPath)
 {
-    QString cleaned = directoryPath.trimmed();
+    const QString cleaned = directoryPath.trimmed();
     if (cleaned.isEmpty())
         return {};
 
-    QDir dir(cleaned);
-    QStringList result;
+    QString candidate = QDir::cleanPath(cleaned);
+    if (QDir::isRelativePath(candidate))
+        candidate = QDir::current().absoluteFilePath(candidate);
 
-    if (dir.exists()) {
-        result.append(dir.absolutePath());
-        return result;
-    }
+    const bool requestedRoot = QDir(candidate).isRoot();
 
-    QDir cursor(dir);
-    QString previous;
-    while (true) {
-        const QString current = cursor.absolutePath();
-        if (current.isEmpty() || current == previous)
-            break;
-
-        if (cursor.exists()) {
-            result.append(cursor.absolutePath());
-            break;
+    while (!candidate.isEmpty()) {
+        const QFileInfo info(candidate);
+        if (info.exists() && info.isDir()) {
+            const QDir existingDir(candidate);
+            if (existingDir.isRoot() && !requestedRoot)
+                return {};
+            return {existingDir.absolutePath()};
         }
 
-        previous = current;
-        if (!cursor.cdUp())
+        const QString parent = QFileInfo(candidate).dir().absolutePath();
+        if (parent.isEmpty() || parent == candidate)
             break;
+        candidate = parent;
     }
 
-    return result;
+    return {};
 }
 
 } // namespace bot::shell::utils
