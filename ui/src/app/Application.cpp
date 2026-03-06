@@ -2115,8 +2115,9 @@ void Application::configureSupportBundle(const QCommandLineParser& parser)
     if (const QString pythonExec = pickPathOption(QStringLiteral("support-bundle-python"),
                                                   QByteArrayLiteral("BOT_CORE_UI_SUPPORT_PYTHON"));
         !pythonExec.isEmpty()) {
-        if (const QString normalized = normalizePathInput(pythonExec); !normalized.isEmpty())
-            m_supportController->setPythonExecutable(normalized);
+        const QString trimmedPython = pythonExec.trimmed();
+        if (!trimmedPython.isEmpty())
+            m_supportController->setPythonExecutable(trimmedPython);
     }
 
     if (const QString scriptPath = pickPathOption(QStringLiteral("support-bundle-script"),

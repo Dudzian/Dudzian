@@ -1,6 +1,7 @@
 #include "SupportBundleController.hpp"
 
 #include <QDir>
+#include <QFileInfo>
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QLoggingCategory>
@@ -61,10 +62,19 @@ SupportBundleController::~SupportBundleController()
 
 void SupportBundleController::setPythonExecutable(const QString& executable)
 {
-    const QString expanded = expandPath(executable);
-    if (expanded == m_pythonExecutable)
+    const QString trimmed = executable.trimmed();
+
+    QString resolved;
+    if (trimmed.isEmpty()) {
+        resolved = QStringLiteral("python3");
+    } else {
+        const bool hasPathSeparator = trimmed.contains(QLatin1Char('/')) || trimmed.contains(QLatin1Char('\\'));
+        resolved = hasPathSeparator || QFileInfo(trimmed).isAbsolute() ? expandPath(trimmed) : trimmed;
+    }
+
+    if (resolved == m_pythonExecutable)
         return;
-    m_pythonExecutable = expanded.isEmpty() ? QStringLiteral("python3") : expanded;
+    m_pythonExecutable = resolved;
     Q_EMIT pythonExecutableChanged();
 }
 
