@@ -47,6 +47,16 @@ _PACKAGE_VERSION_REF_PATTERN = re.compile(
 _MARKETPLACE_DIR = REPO_ROOT / "config" / "marketplace"
 
 
+def _ensure_utf8_stdio() -> None:
+    """Konfiguruje UTF-8 na stdout/stderr, aby uniknąć błędów kodowania terminala."""
+
+    for stream in (sys.stdout, sys.stderr):
+        try:
+            stream.reconfigure(encoding="utf-8", errors="replace")
+        except Exception:  # pragma: no cover - zależne od środowiska uruchomieniowego
+            pass
+
+
 def _parse_signed_at(value: str | None) -> datetime | None:
     if not value:
         return None
@@ -623,6 +633,7 @@ def _build_parser() -> argparse.ArgumentParser:
 
 
 def main(argv: Sequence[str] | None = None) -> int:
+    _ensure_utf8_stdio()
     parser = _build_parser()
     args = parser.parse_args(argv)
     repo = MarketplaceRepository(Path(args.root))
