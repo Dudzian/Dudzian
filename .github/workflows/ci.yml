@@ -648,7 +648,7 @@ jobs:
         run: docker compose -f deploy/compose/loopback-tests.yml down -v
 
   marketing-bundle-parity:
-    if: github.event_name != 'schedule'
+    if: github.event_name != 'schedule' && github.actor != 'dependabot[bot]' && ((github.event_name != 'pull_request' && github.event_name != 'pull_request_target') || github.event.pull_request.head.repo.full_name == github.repository)
     name: Marketing bundle parity
     runs-on: ubuntu-latest
     needs: exchange-report
@@ -700,7 +700,18 @@ jobs:
       - name: Ensure mirror location configured
         run: |
           if [ -z "${MIRROR_ROOT:-}" ]; then
-            echo "Mirror location not configured; set MARKETING_PARITY_MIRROR_S3 or MARKETING_PARITY_MIRROR_GIT." >&2
+            echo "::error::Mirror location not configured. Set MARKETING_PARITY_MIRROR_S3 or MARKETING_PARITY_MIRROR_GIT."
+            if [ -n "${MIRROR_S3_URI:-}" ]; then
+              echo "MIRROR_S3_URI=[set] (len=${#MIRROR_S3_URI})" >&2
+            else
+              echo "MIRROR_S3_URI=[empty]" >&2
+            fi
+            if [ -n "${MIRROR_GIT_REPO:-}" ]; then
+              echo "MIRROR_GIT_REPO=[set] (len=${#MIRROR_GIT_REPO})" >&2
+            else
+              echo "MIRROR_GIT_REPO=[empty]" >&2
+            fi
+            echo "MIRROR_SUBPATH='${MIRROR_SUBPATH:-benchmark}'" >&2
             exit 1
           fi
 
